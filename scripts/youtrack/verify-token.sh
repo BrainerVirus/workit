@@ -2,7 +2,7 @@
 # Read-only YouTrack token check — GET /api/users/me (no work items created).
 set -euo pipefail
 
-CONFIG="${WORKFLOW_YOUTRACK_CONFIG:-$HOME/.config/workflow-toolkit/youtrack.json}"
+CONFIG="${WORKFLOW_YOUTRACK_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/workflow-toolkit/youtrack.json}"
 
 python3 - "$CONFIG" <<'PY'
 import json, os, subprocess, sys
@@ -17,6 +17,9 @@ cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
 token_path = Path(os.path.expanduser(cfg.get("tokenFile", "")))
 if not token_path.is_file():
     print(json.dumps({"ok": False, "error": "missing youtrack.token"}))
+    sys.exit(1)
+if token_path.stat().st_mode & 0o777 != 0o600:
+    print(json.dumps({"ok": False, "error": "youtrack.token mode must be 0600"}))
     sys.exit(1)
 
 token = token_path.read_text(encoding="utf-8").strip()

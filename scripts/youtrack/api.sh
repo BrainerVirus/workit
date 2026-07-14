@@ -2,16 +2,21 @@
 set -euo pipefail
 CMD="${1:-}"
 shift || true
-CONFIG="${WORKFLOW_YOUTRACK_CONFIG:-$HOME/.config/workflow-toolkit/youtrack.json}"
+CONFIG="${WORKFLOW_YOUTRACK_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/workflow-toolkit/youtrack.json}"
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 python3 - "$CONFIG" "$SCRIPT_DIR" "$CMD" "$@" <<'PY'
 import json, os, subprocess, sys
+from pathlib import Path
 
 cfg = json.load(open(os.path.expanduser(sys.argv[1]), encoding="utf-8"))
 script_dir = sys.argv[2]
 cmd = sys.argv[3]
 args = sys.argv[4:]
-token = open(os.path.expanduser(cfg["tokenFile"]), encoding="utf-8").read().strip()
+token_path = Path(os.path.expanduser(cfg["tokenFile"]))
+if token_path.stat().st_mode & 0o777 != 0o600:
+    print(json.dumps({"ok": False, "error": "youtrack.token mode must be 0600"}))
+    sys.exit(1)
+token = token_path.read_text(encoding="utf-8").strip()
 base = cfg["baseUrl"].rstrip("/")
 auth = ["curl", "-fsS", "-H", f"Authorization: Bearer {token}", "-H", "Accept: application/json"]
 
@@ -23,11 +28,15 @@ def resolve_date_ms(date_raw):
     return json.loads(out)["dateMs"]
 
 def post_json(url, body):
-    return subprocess.check_output(
-        auth + ["-H", "Content-Type: application/json", "-d", body, url],
-        stderr=subprocess.STDOUT,
-        text=True,
-    )
+    try:
+        return subprocess.check_output(
+            auth + ["-H", "Content-Type: application/json", "-d", body, url],
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+    except subprocess.CalledProcessError:
+        print(json.dumps({"ok": False, "error": "YouTrack HTTP request failed"}))
+        sys.exit(1)
 
 if cmd == "log-time":
     issue, minutes, text = args[0], int(args[1]), args[2]

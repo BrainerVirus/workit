@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-CONFIG="${1:-$HOME/.config/workflow-toolkit/youtrack.json}"
+CONFIG="${1:-${XDG_CONFIG_HOME:-$HOME/.config}/workflow-toolkit/youtrack.json}"
 python3 - "$CONFIG" <<'PY'
 import json, os, sys
 from datetime import datetime

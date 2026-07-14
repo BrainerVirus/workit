@@ -1,0 +1,139 @@
+import { expect, test } from "bun:test";
+import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { spawnSync } from "node:child_process";
+import {
+  configPath,
+  createYouTrackTools,
+  postUpdate,
+  readCredentials,
+  redact,
+} from "../src/tools/youtrack";
+
+test("comment success plus time failure retries time only", async () => {
+  const result = await postUpdate({
+    confirmed: true, issueId: "NSR-40", markdown: "Revisado", minutes: 30,
+  }, {
+    postComment: async () => ({ ok: true }),
+    logTime: async () => { throw new Error("time failed"); },
+  });
+  expect(result).toEqual({
+    ok: false,
+    data: { issueId: "NSR-40", postedComment: true, loggedMinutes: 0, retry: "workflow_youtrack_log_time" },
+    error: "time failed",
+  });
+});
+
+test("comment failure records no completed effects and does not log time", async () => {
+  let logged = false;
+  const result = await postUpdate({
+    confirmed: true, issueId: "NSR-40", markdown: "Revisado", minutes: 30,
+  }, {
+    postComment: async () => { throw new Error("comment failed"); },
+    logTime: async () => { logged = true; },
+  });
+  expect(logged).toBe(false);
+  expect(result).toEqual({
+    ok: false,
+    data: { issueId: "NSR-40", postedComment: false, loggedMinutes: 0, retry: "workflow_youtrack_post" },
+    error: "comment failed",
+  });
+});
+
+test("posting requires explicit confirmation before either effect", async () => {
+  let calls = 0;
+  const result = await postUpdate({
+    confirmed: false, issueId: "NSR-40", markdown: "Revisado", minutes: 30,
+  }, {
+    postComment: async () => { calls++; },
+    logTime: async () => { calls++; },
+  });
+  expect(calls).toBe(0);
+  expect(result).toEqual({ ok: false, data: null, error: "confirmed: true required" });
+});
+
+test("tokens are removed from errors", () => {
+  expect(redact("request Bearer secret-token failed", "secret-token"))
+    .toBe("request Bearer [REDACTED] failed");
+});
+
+test("credentials use neutral XDG config and require token mode 0600", () => {
+  const xdg = mkdtempSync(path.join(os.tmpdir(), "wf-youtrack-"));
+  const directory = path.join(xdg, "workflow-toolkit");
+  mkdirSync(directory);
+  const tokenPath = path.join(directory, "youtrack.token");
+  writeFileSync(tokenPath, "dummy-token\n", { mode: 0o644 });
+  writeFileSync(path.join(directory, "youtrack.json"), JSON.stringify({ tokenFile: tokenPath }));
+
+  expect(configPath({ XDG_CONFIG_HOME: xdg } as NodeJS.ProcessEnv, "/unused"))
+    .toBe(path.join(directory, "youtrack.json"));
+  expect(() => readCredentials({ XDG_CONFIG_HOME: xdg } as NodeJS.ProcessEnv, "/unused"))
+    .toThrow("youtrack.token mode must be 0600");
+
+  chmodSync(tokenPath, 0o600);
+  expect(readCredentials({ XDG_CONFIG_HOME: xdg } as NodeJS.ProcessEnv, "/unused"))
+    .toEqual({ configPath: path.join(directory, "youtrack.json"), token: "dummy-token" });
+});
+
+test("bundled YouTrack scripts honor XDG_CONFIG_HOME", () => {
+  const xdg = mkdtempSync(path.join(os.tmpdir(), "wf-youtrack-script-"));
+  const directory = path.join(xdg, "workflow-toolkit");
+  mkdirSync(directory);
+  const tokenPath = path.join(directory, "youtrack.token");
+  writeFileSync(tokenPath, "dummy-token\n", { mode: 0o600 });
+  writeFileSync(path.join(directory, "youtrack.json"), JSON.stringify({
+    tokenFile: tokenPath, baseUrl: "https://youtrack.example.test", meetingIssue: "IRPT-12",
+  }));
+
+  const result = spawnSync("bash", ["scripts/youtrack/config.sh", "load"], {
+    cwd: path.resolve(import.meta.dir, ".."),
+    encoding: "utf8",
+    env: { ...process.env, HOME: path.join(xdg, "unused-home"), XDG_CONFIG_HOME: xdg },
+  });
+  expect(result.status).toBe(0);
+  expect(JSON.parse(result.stdout).meetingIssue).toBe("IRPT-12");
+});
+
+test("bundled API failures never expose the token or authorization header", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wf-youtrack-redact-"));
+  const bin = path.join(root, "bin");
+  mkdirSync(bin);
+  const curl = path.join(bin, "curl");
+  writeFileSync(curl, "#!/usr/bin/env bash\nexit 22\n", { mode: 0o755 });
+  const tokenPath = path.join(root, "youtrack.token");
+  const config = path.join(root, "youtrack.json");
+  writeFileSync(tokenPath, "secret-token\n", { mode: 0o600 });
+  writeFileSync(config, JSON.stringify({ tokenFile: tokenPath, baseUrl: "https://youtrack.example.test" }));
+
+  const result = spawnSync("bash", ["scripts/youtrack/api.sh", "post-comment", "NSR-40", "Revisado"], {
+    cwd: path.resolve(import.meta.dir, ".."),
+    encoding: "utf8",
+    env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, WORKFLOW_YOUTRACK_CONFIG: config },
+  });
+  expect(result.status).toBe(1);
+  expect(result.stdout + result.stderr).not.toContain("secret-token");
+  expect(result.stdout + result.stderr).not.toContain("Authorization");
+});
+
+test("registers seven standard tools without workspace_root and guards mutations", async () => {
+  const tools = createYouTrackTools({
+    verifyToken: async () => ({}),
+    context: async () => ({}),
+    parseDuration: async () => ({ minutes: 30 }),
+    postComment: async () => ({}),
+    logTime: async () => ({}),
+  });
+  expect(Object.keys(tools).sort()).toEqual([
+    "workflow_youtrack_verify_token", "workflow_youtrack_parse_issue", "workflow_youtrack_context",
+    "workflow_youtrack_parse_duration", "workflow_youtrack_draft", "workflow_youtrack_log_time",
+    "workflow_youtrack_post",
+  ].sort());
+  for (const definition of Object.values(tools)) {
+    expect("workspace_root" in definition.args).toBe(false);
+  }
+  for (const name of ["workflow_youtrack_log_time", "workflow_youtrack_post"] as const) {
+    const raw = await tools[name].execute({ confirmed: false } as never, { worktree: "/repo" } as never);
+    expect(JSON.parse(raw as string).error).toBe("confirmed: true required");
+  }
+});

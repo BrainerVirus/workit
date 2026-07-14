@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Resolve work-item date as epoch milliseconds (YouTrack kotlin.Long).
 set -euo pipefail
-CONFIG="${WORKFLOW_YOUTRACK_CONFIG:-$HOME/.config/workflow-toolkit/youtrack.json}"
+CONFIG="${WORKFLOW_YOUTRACK_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/workflow-toolkit/youtrack.json}"
 DATE_INPUT="${1:-auto}"
 python3 - "$CONFIG" "$DATE_INPUT" <<'PY'
 import json, os, sys
