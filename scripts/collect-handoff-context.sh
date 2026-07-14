@@ -56,7 +56,7 @@ resolve_from_message_paths() {
   return 1
 }
 
-# ponytail: newest linked spec+plan pair — upgrade path is explicit paths in message
+# ponytail: newest linked or basename-matched pair — upgrade path is explicit paths in message
 resolve_active_pair() {
   local resolved
   resolved=$(SPECS_DIR="$SPECS_DIR" PLANS_DIR="$PLANS_DIR" python3 <<'PY'
@@ -69,6 +69,7 @@ spec_pat = re.compile(r"docs/(?:superpowers/)?specs/[^\s`]+\.md")
 best = None
 for plan in glob.glob(os.path.join(plans_dir, "*.md")):
     spec = None
+    source = "active_pair"
     with open(plan, encoding="utf-8") as fh:
         for line in fh:
             if line.startswith("**Spec:**"):
@@ -80,23 +81,34 @@ for plan in glob.glob(os.path.join(plans_dir, "*.md")):
         alt = os.path.join("docs/superpowers/specs", os.path.basename(spec))
         if os.path.isfile(alt):
             spec = alt
+    if spec is None:
+        stem = os.path.splitext(os.path.basename(plan))[0]
+        for name in (f"{stem}-design.md", f"{stem}.md"):
+            candidate = os.path.join(specs_dir, name)
+            if os.path.isfile(candidate):
+                spec = candidate
+                source = "matching_pair"
+                break
     if not spec or not os.path.isfile(spec):
         continue
     score = max(os.path.getmtime(spec), os.path.getmtime(plan))
     if best is None or score > best[0]:
-        best = (score, spec, plan)
+        best = (score, spec, plan, source)
 
 if best is None:
     sys.exit(2)
 print(best[1])
 print(best[2])
+print(best[3])
 PY
 ) || return $?
 
   SPEC=$(printf '%s\n' "$resolved" | sed -n '1p')
   PLAN=$(printf '%s\n' "$resolved" | sed -n '2p')
+  local source
+  source=$(printf '%s\n' "$resolved" | sed -n '3p')
   [ -n "$SPEC" ] && [ -n "$PLAN" ] && [ -f "$SPEC" ] && [ -f "$PLAN" ] || return 2
-  printf 'RESOLVE=active_pair spec=%s plan=%s\n' "$SPEC" "$PLAN" >&2
+  printf 'RESOLVE=%s spec=%s plan=%s\n' "$source" "$SPEC" "$PLAN" >&2
   return 0
 }
 

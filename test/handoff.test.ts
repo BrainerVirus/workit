@@ -295,3 +295,31 @@ test("handoff context is read-only when the SDD workspace is absent", async () =
     expect(existsSync(path.join(root, "docs/superpowers/sdd/x"))).toBe(false);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+test("handoff resolves a matching local spec and plan when slash arguments are empty", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wf-handoff-matching-pair-"));
+  try {
+    mkdirSync(path.join(root, "docs/superpowers/specs"), { recursive: true });
+    mkdirSync(path.join(root, "docs/superpowers/plans"), { recursive: true });
+    writeFileSync(
+      path.join(root, "docs/superpowers/specs/2026-07-14-mfe-tasks-base-design.md"),
+      "# MFE Tasks Base Design\n",
+    );
+    writeFileSync(
+      path.join(root, "docs/superpowers/plans/2026-07-14-mfe-tasks-base.md"),
+      "# MFE Tasks Base Plan\n\n**Goal:** Build the MFE.\n\n### Task 1: Setup\n- [ ] Step\n",
+    );
+
+    const result = spawnSync(
+      "bash",
+      [path.resolve(import.meta.dir, "../scripts/collect-handoff-context.sh"),
+        "Load the wf-handoff skill and follow it. Arguments:"],
+      { cwd: root, encoding: "utf8" },
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toContain("RESOLVE=matching_pair");
+    expect(result.stdout).toContain("**Spec:** docs/superpowers/specs/2026-07-14-mfe-tasks-base-design.md");
+    expect(result.stdout).toContain("**Plan:** docs/superpowers/plans/2026-07-14-mfe-tasks-base.md");
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});

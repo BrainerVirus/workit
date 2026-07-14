@@ -33,6 +33,17 @@ describe("plugin registration", () => {
     expect(config.skills.paths).toEqual([skillPath]);
   });
 
+  test("blocks git worktree commands with the in-place branch instruction", async () => {
+    const hooks = await plugin({ directory: "/repo", worktree: "/repo", serverUrl: new URL("http://localhost") } as never);
+    const before = hooks["tool.execute.before"];
+
+    expect(before).toBeDefined();
+    await expect(before?.(
+      { tool: "bash", sessionID: "session", callID: "call" },
+      { args: { command: 'git -C "/repo" worktree add /tmp/repo -b feature/test' } },
+    )).rejects.toThrow("worktrees are forbidden");
+  });
+
   test.serial("all native tool schemas return the standard JSON envelope for safe fixtures", async () => {
     const root = mkdtempSync(path.join(os.tmpdir(), "wf-plugin-tools-"));
     const envKeys = [

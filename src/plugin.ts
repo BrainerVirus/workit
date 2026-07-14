@@ -22,6 +22,15 @@ const descriptions: Record<string, string> = {
   "wf-issue-update": "Post a confirmed YouTrack work update",
 };
 
+const shellWord = String.raw`(?:"(?:\\.|[^"])*"|'[^']*'|[^\s;&|()]+)`;
+const gitWorktree = new RegExp(
+  String.raw`(?:^|[\n;&|()])\s*(?:(?:command|env|sudo)\s+)*(?:[^\s;&|()]*/)?git(?:\s+${shellWord})*?\s+worktree(?=$|[\s;&|()])`,
+  "m",
+);
+
+export const isGitWorktreeCommand = (command: unknown) =>
+  typeof command === "string" && gitWorktree.test(command);
+
 const plugin: Plugin = async ({ client }) => {
   const state = new WorkflowStateStore();
   return {
@@ -39,6 +48,13 @@ const plugin: Plugin = async ({ client }) => {
       mutable.skills.paths ??= [];
       const skillPath = path.join(root, "skills");
       if (!mutable.skills.paths.includes(skillPath)) mutable.skills.paths.push(skillPath);
+    },
+    "tool.execute.before": async (input, output) => {
+      if (input.tool === "bash" && isGitWorktreeCommand(output.args?.command)) {
+        throw new Error(
+          "Workflow Toolkit: worktrees are forbidden; use workflow_resolve_branch and workflow_branch_setup for an in-place feature/* or bugfix/* branch.",
+        );
+      }
     },
     "experimental.session.compacting": async ({ sessionID }, output) => {
       const context = state.compactionContext(sessionID);
