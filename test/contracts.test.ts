@@ -21,6 +21,7 @@ test("meetings logs the sole configured target with explicit confirmation", () =
   const text = skill("wf-meetings");
   expect(text).not.toContain("Pick meeting type");
   expect(text).toContain("`confirmed: true`, `issueId`, `minutes`, `text`");
+  expect(text).toContain("correct invalid input before retrying");
 });
 
 test("issue update consumes the Result envelope and retries only proven missing time", () => {

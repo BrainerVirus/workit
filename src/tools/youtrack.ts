@@ -197,6 +197,19 @@ const requireConfirmed = (confirmed: boolean) => confirmed === true
   ? null
   : output(fail("confirmed: true required"));
 
+const rejectedTimeInput = (issueId: string, minutes: number) => {
+  const error = !ISSUE_RE.test(issueId)
+    ? "invalid issueId"
+    : !Number.isFinite(minutes) || minutes <= 0
+      ? "minutes must be positive"
+      : null;
+  return error ? output(fail(error, {
+    issueId, loggedMinutes: 0, outcome: "not_applied",
+    retry: "workflow_youtrack_log_time",
+    instructions: "Correct the invalid input, then retry workflow_youtrack_log_time once.",
+  })) : null;
+};
+
 export function createYouTrackTools(operations: YouTrackOperations = defaultOperations) {
   return {
     workflow_youtrack_verify_token: tool({
@@ -273,6 +286,8 @@ export function createYouTrackTools(operations: YouTrackOperations = defaultOper
       execute: async ({ confirmed, ...input }, context: ToolContext) => {
         const rejected = requireConfirmed(confirmed);
         if (rejected) return rejected;
+        const invalid = rejectedTimeInput(input.issueId, input.minutes);
+        if (invalid) return invalid;
         let token = "";
         try { token = credentials().token; } catch (error) { return output(fail(message(error))); }
         const result = await logTimeUpdate({ ...input, workspace_root: context.directory }, operations);

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -122,6 +122,46 @@ test("standalone time logging preserves ambiguous and not-applied outcomes", asy
     }
   } finally {
     if (previous === undefined) delete process.env.XDG_CONFIG_HOME; else process.env.XDG_CONFIG_HOME = previous;
+  }
+});
+
+test("bundled standalone time logging rejects invalid inputs before credentials or HTTP", async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wf-youtrack-preflight-"));
+  const bin = path.join(root, "bin");
+  const sentinel = path.join(root, "http-dispatched");
+  mkdirSync(bin);
+  writeFileSync(path.join(bin, "curl"), `#!/bin/sh\ntouch '${sentinel}'\nexit 99\n`, { mode: 0o755 });
+  const previousPath = process.env.PATH;
+  const previousXdg = process.env.XDG_CONFIG_HOME;
+  process.env.PATH = `${bin}:${previousPath}`;
+  process.env.XDG_CONFIG_HOME = path.join(root, "missing-config");
+  try {
+    const tools = createYouTrackTools();
+    for (const [input, error] of [
+      [{ confirmed: true, issueId: "bad", minutes: 30 }, "invalid issueId"],
+      [{ confirmed: true, issueId: "NSR-40", minutes: 0 }, "minutes must be positive"],
+      [{ confirmed: true, issueId: "NSR-40", minutes: -1 }, "minutes must be positive"],
+    ] as const) {
+      const raw = await tools.workflow_youtrack_log_time.execute(
+        input, { directory: root, worktree: root } as never,
+      );
+      expect(JSON.parse(raw as string)).toEqual({
+        ok: false,
+        data: {
+          issueId: input.issueId,
+          loggedMinutes: 0,
+          outcome: "not_applied",
+          retry: "workflow_youtrack_log_time",
+          instructions: "Correct the invalid input, then retry workflow_youtrack_log_time once.",
+        },
+        error,
+      });
+    }
+    expect(existsSync(sentinel)).toBe(false);
+  } finally {
+    process.env.PATH = previousPath;
+    if (previousXdg === undefined) delete process.env.XDG_CONFIG_HOME; else process.env.XDG_CONFIG_HOME = previousXdg;
+    rmSync(root, { recursive: true, force: true });
   }
 });
 
