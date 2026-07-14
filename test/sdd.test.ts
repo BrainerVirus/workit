@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import { createSddTools } from "../src/tools/sdd";
 import { WorkflowStateStore } from "../src/state";
 
@@ -21,6 +22,28 @@ test("plan parser returns only top-level Task sections and records state", async
     plan: "docs/superpowers/plans/x.md",
     sdd: "docs/superpowers/sdd/x",
   });
+});
+
+test("plan parser honors an explicit contained spec path and returns its branch", async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wf-sdd-spec-"));
+  mkdirSync(path.join(root, "docs/superpowers/plans"), { recursive: true });
+  mkdirSync(path.join(root, "docs/superpowers/specs"), { recursive: true });
+  writeFileSync(path.join(root, "docs/superpowers/specs/exact.md"), "# Exact\n**Branch:** `feature/exact`\n");
+  writeFileSync(path.join(root, "docs/superpowers/specs/other.md"), "# Other\n**Branch:** `feature/other`\n");
+  writeFileSync(path.join(root, "docs/superpowers/plans/x.md"), "# X\n**Spec:** `docs/superpowers/specs/other.md`\n### Task 1: One\n- [ ] Step\n");
+  const state = new WorkflowStateStore();
+  const tools = createSddTools(state);
+  const raw = await tools.workflow_plan_tasks.execute({
+    plan_path: "docs/superpowers/plans/x.md",
+    spec_path: "docs/superpowers/specs/exact.md",
+  }, { worktree: root, sessionID: "spec" } as never);
+  expect(JSON.parse(raw as string).data.branch).toBe("feature/exact");
+  expect(state.get("spec")?.spec).toBe("docs/superpowers/specs/exact.md");
+
+  const outside = await createSddTools(new WorkflowStateStore()).workflow_plan_tasks.execute({
+    plan_path: "docs/superpowers/plans/x.md", spec_path: "../outside.md",
+  }, { worktree: root, sessionID: "outside" } as never);
+  expect(JSON.parse(outside as string).error).toContain("inside repository root");
 });
 
 test("SDD paths outside the repository are rejected", async () => {
@@ -72,4 +95,49 @@ test("confirmed SDD writes use repository-relative paths and standard results", 
     },
     error: null,
   });
+});
+
+test("branch resolution returns repository and plan facts", async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wf-sdd-branch-"));
+  mkdirSync(path.join(root, "docs"));
+  writeFileSync(path.join(root, "docs/spec.md"), "# Spec\n**Branch:** `feature/fixture`\n");
+  writeFileSync(path.join(root, "docs/plan.md"), "# Plan\n");
+  expect(spawnSync("git", ["init", "-q", "-b", "main"], { cwd: root }).status).toBe(0);
+  spawnSync("git", ["config", "user.name", "Workflow Test"], { cwd: root });
+  spawnSync("git", ["config", "user.email", "workflow@example.test"], { cwd: root });
+  spawnSync("git", ["add", "docs"], { cwd: root });
+  spawnSync("git", ["commit", "-q", "-m", "fixture"], { cwd: root });
+  const raw = await createSddTools(new WorkflowStateStore()).workflow_resolve_branch.execute({
+    spec_path: "docs/spec.md", plan_path: "docs/plan.md",
+  }, { worktree: root } as never);
+  expect(JSON.parse(raw as string)).toEqual({
+    ok: true,
+    data: {
+      branch: "feature/fixture", source: "spec", current_branch: "main",
+      dirty: false, needs_checkout: true,
+    },
+    error: null,
+  });
+});
+
+test("confirmed review package writes its diff inside the repository", async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wf-sdd-review-"));
+  const git = (args: string[]) => spawnSync("git", args, { cwd: root, encoding: "utf8" });
+  expect(git(["init", "-q", "-b", "feature/review"]).status).toBe(0);
+  git(["config", "user.name", "Workflow Test"]);
+  git(["config", "user.email", "workflow@example.test"]);
+  writeFileSync(path.join(root, "file.txt"), "one\n");
+  git(["add", "file.txt"]);
+  git(["commit", "-q", "-m", "base"]);
+  const base = git(["rev-parse", "HEAD"]).stdout.trim();
+  writeFileSync(path.join(root, "file.txt"), "one\ntwo\n");
+  git(["commit", "-q", "-am", "head"]);
+  const head = git(["rev-parse", "HEAD"]).stdout.trim();
+  const raw = await createSddTools(new WorkflowStateStore()).workflow_sdd_review_package.execute({
+    confirmed: true, sdd_dir: "docs/superpowers/sdd/review", base_sha: base, head_sha: head,
+  }, { worktree: root } as never);
+  const result = JSON.parse(raw as string);
+  expect(result.ok).toBe(true);
+  expect(result.data.diff_path).toBe(`docs/superpowers/sdd/review/review-${base.slice(0, 7)}..${head.slice(0, 7)}.diff`);
+  expect(readFileSync(path.join(root, result.data.diff_path), "utf8")).toContain("+two");
 });

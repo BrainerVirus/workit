@@ -35,10 +35,10 @@ const invoke = (operation: () => Record<string, unknown>) => {
   }
 };
 
-const planPaths = (root: string, planPath: string) => {
+const planPaths = (root: string, planPath: string, suppliedSpecPath?: string) => {
   const resolved = resolveInside(root, planPath);
   const match = readFileSync(resolved, "utf8").match(/^\*\*Spec:\*\*\s*(?:`([^`]+)`|(\S+))/m);
-  const spec_path = match?.[1] ?? match?.[2] ?? "";
+  const spec_path = suppliedSpecPath ?? match?.[1] ?? match?.[2] ?? "";
   if (spec_path) relativePath(root, spec_path);
   return {
     spec_path,
@@ -57,12 +57,17 @@ export function createSddTools(state: WorkflowStateStore) {
   return {
     workflow_plan_tasks: tool({
       description: "Parse top-level tasks from a workflow plan",
-      args: { plan_path: tool.schema.string() },
-      execute: async ({ plan_path }, context) => invoke(() => {
+      args: { plan_path: tool.schema.string(), spec_path: tool.schema.string().optional() },
+      execute: async ({ plan_path, spec_path }, context) => invoke(() => {
         relativePath(context.worktree, plan_path);
+        const paths = planPaths(context.worktree, plan_path, spec_path);
         const parsed = parsePlanTasks(plan_path, context.worktree) as Record<string, unknown>;
         if (parsed.error) return parsed;
-        const data = { ...parsed, ...planPaths(context.worktree, plan_path) };
+        const branch = paths.spec_path
+          ? resolveHandoffBranch(paths.spec_path, plan_path, context.worktree) as Record<string, unknown>
+          : {};
+        if (branch.error) return branch;
+        const data = { ...parsed, ...paths, ...branch };
         record(context, data);
         return data;
       }),
