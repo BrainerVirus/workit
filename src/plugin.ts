@@ -22,14 +22,130 @@ const descriptions: Record<string, string> = {
   "wf-issue-update": "Post a confirmed YouTrack work update",
 };
 
-const shellWord = String.raw`(?:"(?:\\.|[^"])*"|'[^']*'|[^\s;&|()]+)`;
-const gitWorktree = new RegExp(
-  String.raw`(?:^|[\n;&|()])\s*(?:(?:command|env|sudo)\s+)*(?:[^\s;&|()]*/)?git(?:\s+${shellWord})*?\s+worktree(?=$|[\s;&|()])`,
-  "m",
-);
+const withoutHeredocBodies = (source: string) => {
+  const lines = source.split("\n");
+  const kept: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    kept.push(line);
+    const marker = line.match(/<<(-)?\s*['"]?([A-Za-z_][A-Za-z0-9_]*)['"]?/);
+    if (!marker) continue;
+    const delimiter = marker[2];
+    while (++i < lines.length && (marker[1] ? lines[i].replace(/^\t+/, "") : lines[i]) !== delimiter) {
+      // Heredoc bodies are data, not shell commands.
+    }
+  }
+  return kept.join("\n");
+};
 
-export const isGitWorktreeCommand = (command: unknown) =>
-  typeof command === "string" && gitWorktree.test(command);
+const substitutions = (source: string) => {
+  const found: string[] = [];
+  let single = false;
+  let double = false;
+  for (let i = 0; i < source.length; i++) {
+    const char = source[i];
+    if (char === "\\") { i++; continue; }
+    if (char === "'" && !double) { single = !single; continue; }
+    if (char === '"' && !single) { double = !double; continue; }
+    if (single) continue;
+    if (char === "`") {
+      const end = source.indexOf("`", i + 1);
+      if (end !== -1) { found.push(source.slice(i + 1, end)); i = end; }
+      continue;
+    }
+    if (char === "$" && source[i + 1] === "(") {
+      let depth = 1;
+      let end = i + 2;
+      for (; end < source.length && depth; end++) {
+        if (source[end] === "(") depth++;
+        else if (source[end] === ")") depth--;
+      }
+      if (depth === 0) { found.push(source.slice(i + 2, end - 1)); i = end - 1; }
+    }
+  }
+  return found;
+};
+
+const shellSegments = (source: string) => {
+  const segments: string[][] = [[]];
+  let word = "";
+  let quote = "";
+  const push = () => { if (word) segments.at(-1)?.push(word); word = ""; };
+  for (let i = 0; i < source.length; i++) {
+    const char = source[i];
+    if (quote) {
+      if (char === quote) quote = "";
+      else if (char === "\\" && quote === '"' && i + 1 < source.length) word += source[++i];
+      else word += char;
+      continue;
+    }
+    if (char === "'" || char === '"') { quote = char; continue; }
+    if (char === "\\" && i + 1 < source.length) { word += source[++i]; continue; }
+    if (/\s/.test(char)) { push(); continue; }
+    if (";&|()".includes(char)) { push(); segments.push([]); continue; }
+    word += char;
+  }
+  push();
+  return segments.filter((segment) => segment.length);
+};
+
+const unwrapCommand = (words: string[]) => {
+  let index = 0;
+  while (/^[A-Za-z_][A-Za-z0-9_]*=/.test(words[index] ?? "")) index++;
+  while (index < words.length) {
+    const command = path.basename(words[index]);
+    if (command === "command") {
+      index++;
+      while (words[index]?.startsWith("-") && words[index] !== "--") index++;
+      if (words[index] === "--") index++;
+      continue;
+    }
+    if (command === "env") {
+      index++;
+      while (index < words.length) {
+        const word = words[index];
+        if (word === "--") { index++; break; }
+        if (word === "-u" || word === "--unset") { index += 2; continue; }
+        if (word.startsWith("-") || /^[A-Za-z_][A-Za-z0-9_]*=/.test(word)) { index++; continue; }
+        break;
+      }
+      continue;
+    }
+    if (command === "sudo") {
+      const takesValue = new Set(["-u", "-g", "-h", "-p", "-C", "-T", "-r", "-t"]);
+      index++;
+      while (words[index]?.startsWith("-")) index += takesValue.has(words[index]) ? 2 : 1;
+      continue;
+    }
+    break;
+  }
+  return words.slice(index);
+};
+
+const segmentUsesGitWorktree = (segment: string[]): boolean => {
+  const words = unwrapCommand(segment);
+  const command = path.basename(words[0] ?? "");
+  if (["bash", "sh", "zsh"].includes(command)) {
+    const option = words.findIndex((word) => /^-[^-]*c/.test(word) || word === "--command");
+    return option !== -1 && isGitWorktreeCommand(words[option + 1]);
+  }
+  if (command !== "git") return false;
+  const takesValue = new Set(["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--super-prefix", "--config-env"]);
+  for (let i = 1; i < words.length; i++) {
+    const word = words[i];
+    if (word === "--") return words[i + 1] === "worktree";
+    if (!word.startsWith("-")) return word === "worktree";
+    if (takesValue.has(word)) i++;
+  }
+  return false;
+};
+
+export const isGitWorktreeCommand = (command: unknown): boolean => {
+  if (typeof command !== "string") return false;
+  const source = withoutHeredocBodies(command);
+  return substitutions(source).some(isGitWorktreeCommand)
+    || shellSegments(source).some(segmentUsesGitWorktree);
+};
 
 const plugin: Plugin = async ({ client }) => {
   const state = new WorkflowStateStore();

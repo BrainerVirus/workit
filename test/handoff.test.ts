@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -321,5 +321,38 @@ test("handoff resolves a matching local spec and plan when slash arguments are e
     expect(result.stderr).toContain("RESOLVE=matching_pair");
     expect(result.stdout).toContain("**Spec:** docs/superpowers/specs/2026-07-14-mfe-tasks-base-design.md");
     expect(result.stdout).toContain("**Plan:** docs/superpowers/plans/2026-07-14-mfe-tasks-base.md");
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("handoff matching-pair ties resolve deterministically", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wf-handoff-pair-tie-"));
+  try {
+    const specs = path.join(root, "docs/superpowers/specs");
+    const plans = path.join(root, "docs/superpowers/plans");
+    mkdirSync(specs, { recursive: true });
+    mkdirSync(plans, { recursive: true });
+    const files = [
+      path.join(specs, "2026-07-14-alpha-design.md"),
+      path.join(plans, "2026-07-14-alpha.md"),
+      path.join(specs, "2026-07-14-zulu-design.md"),
+      path.join(plans, "2026-07-14-zulu.md"),
+    ];
+    writeFileSync(files[0], "# Alpha\n");
+    writeFileSync(files[1], "# Alpha\n### Task 1: Alpha\n- [ ] Step\n");
+    writeFileSync(files[2], "# Zulu\n");
+    writeFileSync(files[3], "# Zulu\n### Task 1: Zulu\n- [ ] Step\n");
+    const sameTime = new Date("2026-07-14T12:00:00Z");
+    for (const file of files) utimesSync(file, sameTime, sameTime);
+
+    const result = spawnSync(
+      "bash",
+      [path.resolve(import.meta.dir, "../scripts/collect-handoff-context.sh"),
+        "Load the wf-handoff skill and follow it. Arguments:"],
+      { cwd: root, encoding: "utf8" },
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("**Spec:** docs/superpowers/specs/2026-07-14-alpha-design.md");
+    expect(result.stdout).toContain("**Plan:** docs/superpowers/plans/2026-07-14-alpha.md");
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

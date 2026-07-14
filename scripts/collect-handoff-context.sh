@@ -67,7 +67,7 @@ plans_dir = os.environ["PLANS_DIR"]
 spec_pat = re.compile(r"docs/(?:superpowers/)?specs/[^\s`]+\.md")
 
 best = None
-for plan in glob.glob(os.path.join(plans_dir, "*.md")):
+for plan in sorted(glob.glob(os.path.join(plans_dir, "*.md"))):
     spec = None
     source = "active_pair"
     with open(plan, encoding="utf-8") as fh:
@@ -92,7 +92,8 @@ for plan in glob.glob(os.path.join(plans_dir, "*.md")):
     if not spec or not os.path.isfile(spec):
         continue
     score = max(os.path.getmtime(spec), os.path.getmtime(plan))
-    if best is None or score > best[0]:
+    if (best is None or score > best[0] or
+            (score == best[0] and (spec, plan) < (best[1], best[2]))):
         best = (score, spec, plan, source)
 
 if best is None:
@@ -150,7 +151,7 @@ resolve_paths() {
   fi
 
   printf 'ERROR: could not resolve spec and plan for this thread\n' >&2
-  printf 'Hint: mention paths in your message, or ensure the plan has a **Spec:** link\n' >&2
+  printf 'Hint: mention paths, add a **Spec:** link, or use matching <slug>.md and <slug>-design.md names\n' >&2
   list_candidates
   return 1
 }

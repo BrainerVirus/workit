@@ -33,15 +33,43 @@ describe("plugin registration", () => {
     expect(config.skills.paths).toEqual([skillPath]);
   });
 
-  test("blocks git worktree commands with the in-place branch instruction", async () => {
+  test("blocks direct and wrapped git worktree commands", async () => {
     const hooks = await plugin({ directory: "/repo", worktree: "/repo", serverUrl: new URL("http://localhost") } as never);
     const before = hooks["tool.execute.before"];
 
     expect(before).toBeDefined();
-    await expect(before?.(
-      { tool: "bash", sessionID: "session", callID: "call" },
-      { args: { command: 'git -C "/repo" worktree add /tmp/repo -b feature/test' } },
-    )).rejects.toThrow("worktrees are forbidden");
+    for (const command of [
+      'git -C "/repo" worktree add /tmp/repo -b feature/test',
+      "env -i git worktree add /tmp/repo",
+      "command -- git worktree add /tmp/repo",
+      "sudo -u user git worktree add /tmp/repo",
+      "bash -c 'git worktree add /tmp/repo'",
+      "/usr/bin/git worktree add /tmp/repo",
+      "echo `git worktree add /tmp/repo`",
+      "echo $(git worktree add /tmp/repo)",
+    ]) {
+      await expect(before?.(
+        { tool: "bash", sessionID: "session", callID: "call" },
+        { args: { command } },
+      )).rejects.toThrow("worktrees are forbidden");
+    }
+  });
+
+  test("does not block worktree text that the shell will not execute", async () => {
+    const hooks = await plugin({ directory: "/repo", worktree: "/repo", serverUrl: new URL("http://localhost") } as never);
+    const before = hooks["tool.execute.before"];
+
+    for (const command of [
+      'echo "safe; git worktree add /tmp/repo"',
+      "printf '%s\\n' 'git worktree add /tmp/repo'",
+      "git status && echo worktree",
+      "cat <<'EOF'\ngit worktree add /tmp/repo\nEOF",
+    ]) {
+      await expect(before?.(
+        { tool: "bash", sessionID: "session", callID: "call" },
+        { args: { command } },
+      )).resolves.toBeUndefined();
+    }
   });
 
   test.serial("all native tool schemas return the standard JSON envelope for safe fixtures", async () => {
