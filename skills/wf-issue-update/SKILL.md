@@ -88,7 +88,12 @@ Use native `AskQuestion`: title `Post to YouTrack`; prompt `Post this reviewed u
 
 `workflow_youtrack_post` with `confirmed: true`, `issueId`, `markdown`, `minutes`. **Do not pass `date`.**
 
-If the result has `partial: true`, the comment already posted. Report the time-log failure and retry only with `workflow_youtrack_log_time` using the same `issueId` and `minutes`; never call `workflow_youtrack_post` again.
+Consume the standard Result envelope:
+
+- If `result.ok` is true, report success from `result.data`.
+- If `result.ok` is false, use `result.data.postedComment` and `result.data.loggedMinutes` to report only known completed effects.
+- Retry only when `result.data.retry` is exactly `workflow_youtrack_log_time`. Call it once with `confirmed: true`, `issueId`, `minutes`; never call `workflow_youtrack_post` again after the comment is known to be posted.
+- If `result.data.retry` is absent and the outcome is `unknown`, show `result.data.instructions`, reconcile in YouTrack manually, and do not call either mutation again.
 
 ## Rules
 

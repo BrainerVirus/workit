@@ -1,17 +1,18 @@
 import { expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import {
   configPath,
   createYouTrackTools,
+  normalizeContext,
   postUpdate,
   readCredentials,
   redact,
 } from "../src/tools/youtrack";
 
-test("comment success plus time failure retries time only", async () => {
+test("comment success plus ambiguous time failure does not recommend retry", async () => {
   const result = await postUpdate({
     confirmed: true, issueId: "NSR-40", markdown: "Revisado", minutes: 30,
   }, {
@@ -20,12 +21,15 @@ test("comment success plus time failure retries time only", async () => {
   });
   expect(result).toEqual({
     ok: false,
-    data: { issueId: "NSR-40", postedComment: true, loggedMinutes: 0, retry: "workflow_youtrack_log_time" },
+    data: {
+      issueId: "NSR-40", postedComment: true, loggedMinutes: 0, outcome: "unknown",
+      instructions: "Check YouTrack time entries manually; do not retry while the outcome is unknown.",
+    },
     error: "time failed",
   });
 });
 
-test("comment failure records no completed effects and does not log time", async () => {
+test("ambiguous comment failure records known effects and does not recommend retry", async () => {
   let logged = false;
   const result = await postUpdate({
     confirmed: true, issueId: "NSR-40", markdown: "Revisado", minutes: 30,
@@ -36,8 +40,45 @@ test("comment failure records no completed effects and does not log time", async
   expect(logged).toBe(false);
   expect(result).toEqual({
     ok: false,
-    data: { issueId: "NSR-40", postedComment: false, loggedMinutes: 0, retry: "workflow_youtrack_post" },
+    data: {
+      issueId: "NSR-40", postedComment: false, loggedMinutes: 0, outcome: "unknown",
+      instructions: "Check YouTrack comments manually; do not retry while the outcome is unknown.",
+    },
     error: "comment failed",
+  });
+});
+
+test("explicit not_applied time failure safely retries time only", async () => {
+  const result = await postUpdate({
+    confirmed: true, issueId: "NSR-40", markdown: "Revisado", minutes: 30,
+  }, {
+    postComment: async () => ({ ok: true }),
+    logTime: async () => ({ ok: false, error: "rejected before request", outcome: "not_applied" }),
+  });
+  expect(result).toEqual({
+    ok: false,
+    data: {
+      issueId: "NSR-40", postedComment: true, loggedMinutes: 0,
+      outcome: "not_applied", retry: "workflow_youtrack_log_time",
+    },
+    error: "rejected before request",
+  });
+});
+
+test("explicit not_applied comment failure safely retries the missing effects", async () => {
+  const result = await postUpdate({
+    confirmed: true, issueId: "NSR-40", markdown: "Revisado", minutes: 30,
+  }, {
+    postComment: async () => ({ ok: false, error: "rejected before request", outcome: "not_applied" }),
+    logTime: async () => ({ ok: true }),
+  });
+  expect(result).toEqual({
+    ok: false,
+    data: {
+      issueId: "NSR-40", postedComment: false, loggedMinutes: 0,
+      outcome: "not_applied", retry: "workflow_youtrack_post",
+    },
+    error: "rejected before request",
   });
 });
 
@@ -93,6 +134,52 @@ test("bundled YouTrack scripts honor XDG_CONFIG_HOME", () => {
   });
   expect(result.status).toBe(0);
   expect(JSON.parse(result.stdout).meetingIssue).toBe("IRPT-12");
+});
+
+test("init scaffolding and status share the neutral XDG config directory", () => {
+  const xdg = mkdtempSync(path.join(os.tmpdir(), "wf-youtrack-init-"));
+  const env = {
+    ...process.env,
+    HOME: path.join(xdg, "unused-home"),
+    XDG_CONFIG_HOME: xdg,
+  };
+  const apply = spawnSync("bash", ["scripts/init/apply.sh", "youtrack_scaffold", "true"], {
+    cwd: path.resolve(import.meta.dir, ".."), encoding: "utf8", env,
+  });
+  expect(apply.status).toBe(0);
+  const directory = path.join(xdg, "workflow-toolkit");
+  const config = JSON.parse(readFileSync(path.join(directory, "youtrack.json"), "utf8"));
+  expect(config.tokenFile).toBe(path.join(directory, "youtrack.token"));
+
+  const status = spawnSync("bash", ["scripts/init/status.sh"], {
+    cwd: path.resolve(import.meta.dir, ".."), encoding: "utf8", env,
+  });
+  expect(status.status).toBe(0);
+  expect(JSON.parse(status.stdout).youtrack_config.config_edit_path)
+    .toBe(path.join(directory, "youtrack.json"));
+});
+
+test("meeting context exposes only the configured meetingIssue", () => {
+  expect(normalizeContext({
+    config: {
+      meetingIssue: "IRPT-12",
+      meetingIssues: { web: { issue: "NSXFT-21" } },
+    },
+    meetingOptions: [
+      { key: "general", issue: "IRPT-12", label: "General", workItemText: "Reuniones" },
+      { key: "web", issue: "NSXFT-21", label: "Web", workItemText: "Reuniones web" },
+    ],
+    requiresMeetingChoice: true,
+    issueId: null,
+  }, "meetings")).toEqual({
+    config: { meetingIssue: "IRPT-12" },
+    meetingOptions: [
+      { key: "general", issue: "IRPT-12", label: "General", workItemText: "Reuniones" },
+    ],
+    requiresMeetingChoice: false,
+    issueId: "IRPT-12",
+    workItemText: "Reuniones",
+  });
 });
 
 test("bundled API failures never expose the token or authorization header", () => {

@@ -5,7 +5,7 @@ TOKEN_PLACEHOLDER='YOUR_TOKEN_HERE'
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 PLUGIN_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/../.." && pwd)
-CONFIG_DIR="${WORKFLOW_TOOLKIT_CONFIG:-$HOME/.config/workflow-toolkit}"
+CONFIG_DIR="${WORKFLOW_TOOLKIT_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/workflow-toolkit}"
 YOUTRACK_JSON="$CONFIG_DIR/youtrack.json"
 YOUTRACK_TOKEN="$CONFIG_DIR/youtrack.token"
 VCS_JSON="$CONFIG_DIR/vcs.json"

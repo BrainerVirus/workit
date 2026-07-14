@@ -36,6 +36,7 @@ export const redact = (text: string, token: string) =>
 
 type MaybePromise<T> = T | Promise<T>;
 type LegacyValue = Record<string, unknown> | void;
+export type NotApplied = { ok: false; error: string; outcome: "not_applied" };
 
 export type YouTrackOperations = {
   verifyToken(): MaybePromise<LegacyValue>;
@@ -74,8 +75,13 @@ type PostData = {
   issueId: string;
   postedComment: boolean;
   loggedMinutes: number;
+  outcome?: "unknown" | "not_applied";
+  instructions?: string;
   retry?: "workflow_youtrack_post" | "workflow_youtrack_log_time";
 };
+
+const notApplied = (value: LegacyValue): value is NotApplied =>
+  value?.ok === false && value.outcome === "not_applied";
 
 export async function postUpdate(
   input: PostInput,
@@ -87,24 +93,36 @@ export async function postUpdate(
   if (input.minutes != null && input.minutes <= 0) return fail("minutes must be positive");
 
   try {
-    unwrap(await operations.postComment(input.issueId, input.markdown, input.workspace_root));
+    const comment = await operations.postComment(input.issueId, input.markdown, input.workspace_root);
+    if (notApplied(comment)) return fail(comment.error, {
+      issueId: input.issueId, postedComment: false, loggedMinutes: 0,
+      outcome: "not_applied", retry: "workflow_youtrack_post",
+    });
+    unwrap(comment);
   } catch (error) {
     return fail(message(error), {
-      issueId: input.issueId, postedComment: false, loggedMinutes: 0, retry: "workflow_youtrack_post",
+      issueId: input.issueId, postedComment: false, loggedMinutes: 0, outcome: "unknown",
+      instructions: "Check YouTrack comments manually; do not retry while the outcome is unknown.",
     });
   }
 
   if (input.minutes != null) {
     try {
-      unwrap(await operations.logTime({
+      const time = await operations.logTime({
         issueId: input.issueId,
         minutes: input.minutes,
         text: "workflow-toolkit update",
         workspace_root: input.workspace_root,
-      }));
+      });
+      if (notApplied(time)) return fail(time.error, {
+        issueId: input.issueId, postedComment: true, loggedMinutes: 0,
+        outcome: "not_applied", retry: "workflow_youtrack_log_time",
+      });
+      unwrap(time);
     } catch (error) {
       return fail(message(error), {
-        issueId: input.issueId, postedComment: true, loggedMinutes: 0, retry: "workflow_youtrack_log_time",
+        issueId: input.issueId, postedComment: true, loggedMinutes: 0, outcome: "unknown",
+        instructions: "Check YouTrack time entries manually; do not retry while the outcome is unknown.",
       });
     }
   }
@@ -114,6 +132,27 @@ export async function postUpdate(
     postedComment: true,
     loggedMinutes: input.minutes ?? 0,
   });
+}
+
+export function normalizeContext(value: LegacyValue, mode?: string): LegacyValue {
+  if (!value || mode !== "meetings") return value;
+  const config = value.config as Record<string, unknown> | undefined;
+  const issue = String(config?.meetingIssue || "IRPT-12");
+  const { meetingIssues: _meetingIssues, ...singleMeetingConfig } = config ?? {};
+  const options = Array.isArray(value.meetingOptions)
+    ? value.meetingOptions as Array<Record<string, unknown>>
+    : [];
+  const selected = options.find((option) => option.issue === issue) ?? {
+    key: "general", issue, label: issue, workItemText: "Reuniones",
+  };
+  return {
+    ...value,
+    config: singleMeetingConfig,
+    meetingOptions: [selected],
+    requiresMeetingChoice: false,
+    issueId: issue,
+    workItemText: selected.workItemText ?? "Reuniones",
+  };
 }
 
 const standardResult = (value: LegacyValue, token = "") => {
@@ -168,7 +207,9 @@ export function createYouTrackTools(operations: YouTrackOperations = defaultOper
       execute: async (input, context) => {
         let token = "";
         try { token = credentials().token; } catch (error) { return output(fail(message(error))); }
-        return invoke(() => operations.context({ ...input, workspace_root: context.worktree }), token);
+        return invoke(async () => normalizeContext(
+          await operations.context({ ...input, workspace_root: context.worktree }), input.mode,
+        ), token);
       },
     }),
     workflow_youtrack_parse_duration: tool({

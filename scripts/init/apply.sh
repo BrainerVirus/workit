@@ -5,7 +5,7 @@ ACTION="${1:-}"
 CONFIRMED="${2:-false}"
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 PLUGIN_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/../.." && pwd)
-CONFIG_DIR="${WORKFLOW_TOOLKIT_CONFIG:-$HOME/.config/workflow-toolkit}"
+CONFIG_DIR="${WORKFLOW_TOOLKIT_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/workflow-toolkit}"
 TOKEN_PLACEHOLDER='YOUR_TOKEN_HERE'
 
 if [ "$CONFIRMED" != "true" ]; then
@@ -23,7 +23,7 @@ from pathlib import Path
 out = Path(sys.argv[1])
 cfg = {
     "baseUrl": os.environ.get("WORKFLOW_YT_BASE_URL", "https://enghouseamg.youtrack.cloud"),
-    "tokenFile": os.environ.get("WORKFLOW_YT_TOKEN_FILE", str(Path.home() / ".config/workflow-toolkit/youtrack.token")),
+    "tokenFile": os.environ.get("WORKFLOW_YT_TOKEN_FILE", str(out.parent / "youtrack.token")),
     "timezone": os.environ.get("WORKFLOW_YT_TIMEZONE", "America/Santiago"),
     "locale": "es-CL",
     "defaultMention": os.environ.get("WORKFLOW_YT_MENTION", "Alejandra.Flores"),

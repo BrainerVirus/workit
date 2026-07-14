@@ -1,6 +1,6 @@
 ---
 name: wf-meetings
-description: Log meeting time only via workflow-toolkit MCP — general (IRPT-12) or web (NSXFT-21). No comments. Use /wf-meetings.
+description: Log meeting time only to the configured YouTrack meeting issue (default IRPT-12). No comments. Use /wf-meetings.
 disable-model-invocation: true
 ---
 
@@ -18,15 +18,9 @@ If unsure, call `workflow_toolkit_status`. Stop if `ready: false`.
 
 Call MCP `workflow_youtrack_context` with `mode: "meetings"` (no `issue_id` yet). Stop on error.
 
-## Step 2 — Pick meeting type (required)
+## Step 2 — Use the configured target
 
-Use native **AskQuestion** with `meetingOptions` from context:
-
-- Title: `Meeting type`
-- Prompt: `Where should this time be logged?`
-- Options: one `id:label` pair per option — use `key` as id, `label` as label (include issue id in label, e.g. `IRPT-12 — General meetings`)
-
-→ **AskQuestion** → map selected `key` to `issue` and `workItemText` from `meetingOptions`.
+Use the sole entry in `meetingOptions` returned by context. Do not ask the user to pick a meeting type; the configured `meetingIssue` is authoritative.
 
 ## Step 3 — Duration
 
@@ -40,7 +34,7 @@ Use native **AskQuestion** to confirm logging the shown meeting time; on yes:
 
 ## Step 5 — Log time only
 
-Call `workflow_youtrack_log_time` with `issueId`, `minutes`, `text` (from `workItemText`). **Do not pass `date`** — tool uses epoch ms automatically.
+Call `workflow_youtrack_log_time` with `confirmed: true`, `issueId`, `minutes`, `text` (from `workItemText`). **Do not pass `date`** — tool uses epoch ms automatically.
 
 **Never** call `workflow_youtrack_post` from this skill.
 
