@@ -1,7 +1,6 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { tool } from "@opencode-ai/plugin";
-import type { OpencodeClient } from "@opencode-ai/sdk/v2/client";
+import { tool, type PluginInput } from "@opencode-ai/plugin";
 import { fail, ok, run, type Result } from "../core";
 import { WorkflowStateStore } from "../state";
 
@@ -30,29 +29,15 @@ export type HandoffClient = {
   };
 };
 
-type V2HandoffClient = {
+export const adaptPluginHandoffClient = (client: PluginInput["client"]): HandoffClient => ({
   session: {
-    create(input: NonNullable<Parameters<OpencodeClient["session"]["create"]>[0]>): ApiResult<{ id: string }>;
-    promptAsync(input: Parameters<OpencodeClient["session"]["promptAsync"]>[0]): ApiVoidResult;
-  };
-  tui: {
-    selectSession(input: NonNullable<Parameters<OpencodeClient["tui"]["selectSession"]>[0]>): ApiUnknownResult;
-  };
-};
-
-export const adaptHandoffClient = (client: V2HandoffClient): HandoffClient => ({
-  session: {
-    create: ({ body, query }) => client.session.create({ ...body, directory: query.directory }),
-    promptAsync: ({ path: requestPath, query, body }) => client.session.promptAsync({
-      sessionID: requestPath.id,
-      directory: query.directory,
-      parts: body.parts,
-    }),
+    create: (input) => client.session.create(input),
+    promptAsync: (input) => client.session.promptAsync(input),
   },
   tui: {
-    selectSession: ({ body, query }) => client.tui.selectSession({
-      sessionID: body.sessionID,
-      directory: query.directory,
+    selectSession: ({ body, query }) => client.tui.publish({
+      body: { type: "tui.session.select", properties: { sessionID: body.sessionID } } as never,
+      query,
     }),
   },
 });

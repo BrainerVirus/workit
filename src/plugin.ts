@@ -2,9 +2,8 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Plugin } from "@opencode-ai/plugin";
-import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 import { createTools } from "./tools";
-import { adaptHandoffClient } from "./tools/handoff";
+import { adaptPluginHandoffClient } from "./tools/handoff";
 import { WorkflowStateStore } from "./state";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -23,11 +22,10 @@ const descriptions: Record<string, string> = {
   "wf-issue-update": "Post a confirmed YouTrack work update",
 };
 
-const plugin: Plugin = async ({ serverUrl }) => {
+const plugin: Plugin = async ({ client }) => {
   const state = new WorkflowStateStore();
-  const client = createOpencodeClient({ baseUrl: serverUrl.toString() });
   return {
-    tool: createTools(adaptHandoffClient(client), state),
+    tool: createTools(adaptPluginHandoffClient(client), state),
     config: async (config) => {
       const mutable = config as typeof config & { skills?: { paths?: string[] } };
       config.command ??= {};

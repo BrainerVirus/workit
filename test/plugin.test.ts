@@ -146,6 +146,41 @@ describe("plugin registration", () => {
     }
   }, 20_000);
 
+  test("handoff uses the live client supplied by OpenCode", async () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "wf-plugin-handoff-"));
+    const calls: string[] = [];
+    try {
+      mkdirSync(path.join(root, "docs/superpowers/plans"), { recursive: true });
+      mkdirSync(path.join(root, "docs/superpowers/specs"), { recursive: true });
+      writeFileSync(path.join(root, "docs/superpowers/specs/x-design.md"), "# X\n");
+      writeFileSync(
+        path.join(root, "docs/superpowers/plans/x.md"),
+        "# X\n**Spec:** `docs/superpowers/specs/x-design.md`\n### Task 1: One\n",
+      );
+      const client = {
+        session: {
+          async create() { calls.push("create"); return { data: { id: "child-live" } }; },
+          async promptAsync() { calls.push("seed"); return { data: undefined }; },
+        },
+        tui: { async publish() { calls.push("publish"); return { data: true }; } },
+      };
+      const hooks = await plugin({
+        client, directory: root, worktree: root, serverUrl: new URL("http://unreachable.invalid"),
+      } as never);
+      const raw = await hooks.tool?.workflow_handoff_session.execute({
+        message: "docs/superpowers/specs/x-design.md docs/superpowers/plans/x.md",
+        stay: true,
+      }, { directory: root, worktree: root, sessionID: "parent" } as never);
+
+      expect(JSON.parse(raw as string)).toEqual({
+        ok: true, data: { sessionID: "child-live", seeded: true, selected: false }, error: null,
+      });
+      expect(calls).toEqual(["create", "seed"]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test("compaction includes only active workflow paths", async () => {
     const root = mkdtempSync(path.join(os.tmpdir(), "wf-plugin-"));
     mkdirSync(path.join(root, "docs/superpowers/plans"), { recursive: true });

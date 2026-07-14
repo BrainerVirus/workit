@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { adaptHandoffClient, createHandoffTools, handoffSession } from "../src/tools/handoff";
+import { adaptPluginHandoffClient, createHandoffTools, handoffSession } from "../src/tools/handoff";
 import { WorkflowStateStore } from "../src/state";
 
 const request = {
@@ -231,45 +231,49 @@ test("native handoff resolves relative paths from the session directory, not the
   expect(roots).toEqual(["/repo/session"]);
 });
 
-test("v2 adapter maps the handoff boundary to flat SDK calls", async () => {
+test("plugin client adapter publishes the native session selection event", async () => {
   const calls: unknown[] = [];
-  const client = adaptHandoffClient({
+  const client = adaptPluginHandoffClient({
     session: {
-      async create(input) {
+      async create(input: unknown) {
         calls.push(["create", input]);
-        return { data: { id: "child-v2" } };
+        return { data: { id: "child-live" } };
       },
-      async promptAsync(input) {
+      async promptAsync(input: unknown) {
         calls.push(["promptAsync", input]);
         return { data: undefined };
       },
     },
     tui: {
-      async selectSession(input) {
-        calls.push(["selectSession", input]);
+      async publish(input: unknown) {
+        calls.push(["publish", input]);
         return { data: true };
       },
     },
-  });
+  } as never);
 
   expect(await client.session.create({
     body: { parentID: "parent", title: "Continue x" },
     query: { directory: "/repo" },
-  })).toEqual({ data: { id: "child-v2" } });
+  })).toEqual({ data: { id: "child-live" } });
   expect(await client.session.promptAsync({
-    path: { id: "child-v2" },
+    path: { id: "child-live" },
     query: { directory: "/repo" },
     body: { parts: [{ type: "text", text: "Continue" }] },
   })).toEqual({ data: undefined });
   expect(await client.tui.selectSession({
-    body: { sessionID: "child-v2" },
+    body: { sessionID: "child-live" },
     query: { directory: "/repo" },
   })).toEqual({ data: true });
   expect(calls).toEqual([
-    ["create", { parentID: "parent", title: "Continue x", directory: "/repo" }],
+    ["create", { body: { parentID: "parent", title: "Continue x" }, query: { directory: "/repo" } }],
     ["promptAsync", {
-      sessionID: "child-v2", directory: "/repo", parts: [{ type: "text", text: "Continue" }],
+      path: { id: "child-live" }, query: { directory: "/repo" },
+      body: { parts: [{ type: "text", text: "Continue" }] },
     }],
-    ["selectSession", { sessionID: "child-v2", directory: "/repo" }],
+    ["publish", {
+      body: { type: "tui.session.select", properties: { sessionID: "child-live" } },
+      query: { directory: "/repo" },
+    }],
   ]);
 });
