@@ -56,6 +56,22 @@ test("selection failure preserves the seeded session ID", async () => {
   });
 });
 
+test("false selection response preserves the seeded session ID", async () => {
+  const client = {
+    session: {
+      async create() { return { data: { id: "child-false" } }; },
+      async promptAsync() { return { data: undefined }; },
+    },
+    tui: { async selectSession() { return { data: false }; } },
+  };
+
+  expect(await handoffSession(client, request)).toEqual({
+    ok: false,
+    data: { sessionID: "child-false", seeded: true, selected: false, stage: "select" },
+    error: "session selection unavailable",
+  });
+});
+
 test("stay seeds without selecting", async () => {
   let selected = false;
   const client = {

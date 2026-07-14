@@ -115,6 +115,7 @@ export async function handoffSession(
       query: { directory: request.directory },
     });
     if (apiError(selected)) throw apiError(selected);
+    if (selected?.data !== true) throw new Error("session selection unavailable");
     return ok({ sessionID, seeded: true, selected: true });
   } catch (error) {
     return fail(message(error), { sessionID, seeded: true, selected: false, stage: "select" });
