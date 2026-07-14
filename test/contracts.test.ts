@@ -32,3 +32,33 @@ test("issue update consumes the Result envelope and retries only proven missing 
   expect(text).toContain("outcome is `unknown`");
   expect(text).not.toContain("partial: true");
 });
+
+test("implement confirms every branch setup after previewing branch and stash behavior", () => {
+  const text = skill("wf-implement");
+  const contract = readFileSync(path.join(import.meta.dir, "..", "templates", "execution-contract.md"), "utf8");
+  for (const source of [text, contract]) {
+    expect(source).toContain("current branch");
+    expect(source).toContain("target branch");
+    expect(source).toContain("stash behavior");
+    expect(source).toContain("clean tree");
+    expect(source).toContain("proceed or cancel");
+    expect(source).toContain("workflow_branch_setup");
+    expect(source).toContain("confirmed: true");
+  }
+});
+
+test("issue update names both safe retries and bounds each retry to one attempt", () => {
+  const text = skill("wf-issue-update");
+  expect(text).toContain('result.data.retry === "workflow_youtrack_post"');
+  expect(text).toContain('result.data.retry === "workflow_youtrack_log_time"');
+  expect(text).toContain("unchanged reviewed `issueId`, `markdown`, and `minutes`");
+  expect(text).toContain("same `issueId` and `minutes`");
+  expect(text).toContain("at most once");
+  expect(text).toContain("second attempt fails");
+});
+
+test("status uses only the aggregate toolkit status tool", () => {
+  const text = skill("wf-status");
+  expect(text).toContain("Use only `workflow_toolkit_status`");
+  expect(text).not.toContain("workflow_youtrack_verify_token");
+});

@@ -21,5 +21,7 @@ Consume the standard Result envelope:
 
 - If `result.ok` is true, report only effects proven by `result.data`.
 - If false, use `result.data.postedComment` and `result.data.loggedMinutes` to distinguish completed effects.
-- Retry only the missing effect named by `result.data.retry`. If it is `workflow_youtrack_log_time`, call that tool once with `confirmed: true`, `issueId`, `minutes`; never repost a known posted comment.
-- When outcome is `unknown`, show `result.data.instructions`, reconcile manually, and do not retry either mutation.
+- If `result.data.retry === "workflow_youtrack_post"`, use native `question` to ask whether to retry the unchanged reviewed `issueId`, `markdown`, and `minutes`. On approval, call `workflow_youtrack_post` with `confirmed: true` at most once; never loop.
+- If `result.data.retry === "workflow_youtrack_log_time"`, use native `question` to ask whether to retry the same `issueId` and `minutes`. On approval, call `workflow_youtrack_log_time` with `confirmed: true`, `issueId`, `minutes` at most once; never repost a known posted comment.
+- If the second attempt fails, stop and report its structured result. Never switch retry tools or infer that either effect succeeded.
+- If outcome is `unknown` or `result.data.retry` is absent, show `result.data.instructions` when present, reconcile manually, and do not retry either mutation.

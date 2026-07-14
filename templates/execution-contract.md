@@ -19,7 +19,9 @@ Load `using-superpowers`, `subagent-driven-development`, `test-driven-developmen
 1. Call `workflow_sdd_context` with `<PLAN_PATH>` and initialize `todowrite` from returned tasks.
 2. Call `workflow_plan_tasks`; cache each top-level task's `section_text`.
 3. Mark IDs in `completed_task_ids` completed and never redispatch them.
-4. Call `workflow_resolve_branch`. Preview any in-place checkout or stash with `question`, then call `workflow_branch_setup` with `confirmed: true` after approval.
+4. Call `workflow_resolve_branch`, then show the current branch, target branch, and stash behavior before any in-place checkout/setup mutation.
+5. Always use `question`: for a clean tree ask whether to proceed or cancel; for a dirty tree add the stash choice and describe what will be stashed.
+6. Call `workflow_branch_setup` with `confirmed: true` only after approval.
 
 ## Remaining-task loop
 

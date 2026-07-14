@@ -13,9 +13,10 @@ The parent agent is coordinator-only. It must not edit product code or perform d
 1. Load this skill explicitly through OpenCode's `skill` tool.
 2. Call read-only `workflow_plan_tasks` and `workflow_sdd_context`; their structured results are ground truth.
 3. Initialize native `todowrite` from returned tasks and mark ledger-completed task IDs completed.
-4. Draft the in-place feature/bugfix branch action. If checkout would affect a dirty tree, use native `question` with concise choices and allow a custom answer.
-5. Call `workflow_resolve_branch`, then `workflow_branch_setup` only after approval with `confirmed: true`; never use worktrees.
-6. Report any setup failure stage or partial result; never infer success.
+4. Call `workflow_resolve_branch`, then show the current branch, target branch, and stash behavior before any branch checkout/setup mutation.
+5. Always use native `question` before that mutation. For a clean tree, ask whether to proceed or cancel. For a dirty tree, add the stash choice and state what will be stashed; allow a custom answer.
+6. Call `workflow_branch_setup` with `confirmed: true` only after approval; never use worktrees.
+7. Report any setup failure stage or partial result; never infer success.
 
 State lives only in tracked `docs/superpowers/sdd/<slug>/`. Never use an untracked or legacy SDD directory. Load the package-neutral execution contract by name, not an installation-specific path.
 
