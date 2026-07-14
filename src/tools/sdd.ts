@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { tool, type ToolContext } from "@opencode-ai/plugin";
-import { fail, ok, resolveInside } from "../core";
+import { fail, ok, resolveGitRevision, resolveInside } from "../core";
 import { resolveBranch } from "../legacy/branch-resolve.js";
 import { parsePlanTasks, resolveHandoffBranch } from "../legacy/plan-tasks.js";
 import {
@@ -128,6 +128,8 @@ export function createSddTools(state: WorkflowStateStore) {
         if (rejected) return rejected;
         return invoke(() => {
           relativePath(context.directory, sdd_dir);
+          resolveGitRevision(context.directory, base_sha);
+          resolveGitRevision(context.directory, head_sha);
           return sddReviewPackage({ sdd_dir, base_sha, head_sha, workspace_root: context.directory });
         });
       },

@@ -1,6 +1,6 @@
 import { resolveWorkspaceRoot } from "./resolve-workspace-root.js";
 
-/** Attach resolved repo root to every repo-scoped MCP tool response. */
+/** Attach the resolved repository root to each repository tool response. */
 export function withWorkspace(workspaceRoot, data = {}) {
   return {
     workspace_root: resolveWorkspaceRoot(workspaceRoot),

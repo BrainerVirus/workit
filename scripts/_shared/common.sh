@@ -53,47 +53,6 @@ is_pr_branch() {
   esac
 }
 
-# ponytail: fetch + ff-only — never merge/rebase; warns and continues on failure
-sync_pr_refs() {
-  branch=$(current_branch)
-  notes=""
-
-  if git fetch --prune >/dev/null 2>&1; then
-    notes="fetch: ok"
-  else
-    printf 'WARN: git fetch failed — using local refs only\n' >&2
-    PR_SYNC_NOTES="fetch: failed"
-    export PR_SYNC_NOTES
-    return 0
-  fi
-
-  upstream=$(git rev-parse --abbrev-ref '@{u}' 2>/dev/null) || upstream=""
-  if [ -n "$upstream" ]; then
-    if git pull --ff-only >/dev/null 2>&1; then
-      notes="fetch: ok; branch($branch): ff-only from $upstream"
-    else
-      printf 'WARN: could not fast-forward %s from %s\n' "$branch" "$upstream" >&2
-      notes="fetch: ok; branch($branch): pull skipped"
-    fi
-  else
-    notes="fetch: ok; branch($branch): no upstream"
-  fi
-
-  if git show-ref --verify --quiet refs/heads/develop \
-    && git show-ref --verify --quiet refs/remotes/origin/develop; then
-    if git fetch origin develop:develop >/dev/null 2>&1; then
-      notes="$notes; develop: ff from origin/develop"
-    else
-      notes="$notes; develop: local update skipped"
-    fi
-  elif git show-ref --verify --quiet refs/remotes/origin/develop; then
-    notes="$notes; develop: origin/develop fetched"
-  fi
-
-  PR_SYNC_NOTES=$notes
-  export PR_SYNC_NOTES
-}
-
 # ponytail: develop-only base — main is release-only in this workflow; never compare PRs to main
 resolve_pr_branch_context() {
   branch=$(current_branch)
@@ -105,7 +64,7 @@ resolve_pr_branch_context() {
 
   if ! is_pr_branch "$branch"; then
     if [ "$branch" = "unknown" ]; then
-      printf 'ERROR: not in a git repository at %s — pass workspace_root to the MCP tool or open the target repo as the Cursor workspace\n' "$(pwd)" >&2
+      printf 'ERROR: not in a git repository at %s — open the target repository as the OpenCode session directory\n' "$(pwd)" >&2
     else
       printf 'ERROR: branch %s is not feature/* or bugfix/* — checkout a feature branch or pass an explicit git range\n' "$branch" >&2
     fi
@@ -128,19 +87,11 @@ resolve_pr_branch_context() {
     return 1
   fi
 
-  sync_pr_refs
-
-  mb=$(git merge-base "$best_ref" HEAD 2>/dev/null) || {
-    printf 'ERROR: cannot compute merge base for %s and HEAD after sync\n' "$best_ref" >&2
-    return 1
-  }
-  best_mb=$mb
-
   PR_BASE_REF=$best_ref
   PR_MERGE_BASE=$best_mb
   PR_RANGE="${best_ref}..HEAD"
   PR_DIFF_RANGE="${best_mb}..HEAD"
-  export PR_BASE_REF PR_MERGE_BASE PR_RANGE PR_DIFF_RANGE PR_SYNC_NOTES
+  export PR_BASE_REF PR_MERGE_BASE PR_RANGE PR_DIFF_RANGE
   return 0
 }
 
@@ -193,15 +144,15 @@ TEMPLATE
 
 changed_files_for_range() {
   range=$1
-  git diff --name-only "$range" 2>/dev/null || git diff --name-only 2>/dev/null || true
+  git diff --name-only "$range" -- 2>/dev/null || git diff --name-only -- 2>/dev/null || true
 }
 
 commit_log_for_range() {
   range=$1
-  git log --oneline --decorate --no-merges "$range" 2>/dev/null || git log --oneline --decorate -10 2>/dev/null || true
+  git log --oneline --decorate --no-merges "$range" -- 2>/dev/null || git log --oneline --decorate -10 -- 2>/dev/null || true
 }
 
 diff_stat_for_range() {
   range=$1
-  git diff --stat "$range" 2>/dev/null || git diff --stat 2>/dev/null || true
+  git diff --stat "$range" -- 2>/dev/null || git diff --stat -- 2>/dev/null || true
 }

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -94,6 +94,64 @@ test("posting requires explicit confirmation before either effect", async () => 
   expect(result).toEqual({ ok: false, data: null, error: "confirmed: true required" });
 });
 
+test("standalone time logging preserves ambiguous and not-applied outcomes", async () => {
+  const xdg = mkdtempSync(path.join(os.tmpdir(), "wf-youtrack-outcome-"));
+  const directory = path.join(xdg, "workflow-toolkit");
+  mkdirSync(directory);
+  const tokenPath = path.join(directory, "youtrack.token");
+  writeFileSync(tokenPath, "dummy-token\n", { mode: 0o600 });
+  writeFileSync(path.join(directory, "youtrack.json"), JSON.stringify({ tokenFile: tokenPath }));
+  const previous = process.env.XDG_CONFIG_HOME;
+  process.env.XDG_CONFIG_HOME = xdg;
+  try {
+    for (const [operation, outcome, retry] of [
+      [async () => { throw new Error("transport lost"); }, "unknown", undefined],
+      [async () => ({ ok: false, error: "not sent", outcome: "not_applied" }), "not_applied", "workflow_youtrack_log_time"],
+    ] as const) {
+      const tools = createYouTrackTools({
+        verifyToken: async () => ({}), context: async () => ({}), parseDuration: async () => ({}),
+        postComment: async () => ({}), logTime: operation,
+      });
+      const raw = await tools.workflow_youtrack_log_time.execute(
+        { confirmed: true, issueId: "NSR-40", minutes: 30 }, { directory: "/repo", worktree: "/repo" } as never,
+      );
+      const result = JSON.parse(raw as string);
+      expect(result.data.outcome).toBe(outcome);
+      expect(result.data.retry).toBe(retry);
+      if (outcome === "unknown") expect(result.data.instructions).toContain("do not retry");
+    }
+  } finally {
+    if (previous === undefined) delete process.env.XDG_CONFIG_HOME; else process.env.XDG_CONFIG_HOME = previous;
+  }
+});
+
+test("YouTrack context rejects escaped spec and plan paths before credentials or operations", async () => {
+  const parent = mkdtempSync(path.join(os.tmpdir(), "wf-youtrack-path-"));
+  const root = path.join(parent, "repo");
+  mkdirSync(root);
+  let calls = 0;
+  const tools = createYouTrackTools({
+    verifyToken: async () => { calls++; }, context: async () => { calls++; return {}; },
+    parseDuration: async () => ({}), postComment: async () => ({}), logTime: async () => ({}),
+  });
+  for (const input of [
+    { spec_path: "/tmp/outside" },
+    { plan_path: "../outside" },
+  ]) {
+    const raw = await tools.workflow_youtrack_context.execute(input as never, { directory: root, worktree: root } as never);
+    expect(JSON.parse(raw as string).error).toContain("repository-relative");
+  }
+  const outside = path.join(parent, "outside.md");
+  writeFileSync(outside, "**YouTrack:** NSR-40\n");
+  symlinkSync(outside, path.join(root, "linked.md"));
+  const linked = await tools.workflow_youtrack_context.execute(
+    { spec_path: "linked.md" }, { directory: root, worktree: root } as never,
+  );
+  expect(JSON.parse(linked as string).error).toContain("repository-relative");
+  expect(calls).toBe(0);
+  rmSync(parent, { recursive: true, force: true });
+});
+
 test("tokens are removed from errors", () => {
   expect(redact("request Bearer secret-token failed", "secret-token"))
     .toBe("request Bearer [REDACTED] failed");
@@ -150,6 +208,8 @@ test("init scaffolding and status share the neutral XDG config directory", () =>
   const directory = path.join(xdg, "workflow-toolkit");
   const config = JSON.parse(readFileSync(path.join(directory, "youtrack.json"), "utf8"));
   expect(config.tokenFile).toBe(path.join(directory, "youtrack.token"));
+  expect(config.tokenDefaults.description).toContain("OpenCode workflow-toolkit");
+  expect(config.tokenDefaults.description).not.toContain("Cursor");
 
   const status = spawnSync("bash", ["scripts/init/status.sh"], {
     cwd: path.resolve(import.meta.dir, ".."), encoding: "utf8", env,
@@ -157,6 +217,20 @@ test("init scaffolding and status share the neutral XDG config directory", () =>
   expect(status.status).toBe(0);
   expect(JSON.parse(status.stdout).youtrack_config.config_edit_path)
     .toBe(path.join(directory, "youtrack.json"));
+});
+
+test("token helper runtime output uses OpenCode-neutral descriptions", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wf-token-help-"));
+  const config = path.join(root, "youtrack.json");
+  writeFileSync(config, JSON.stringify({ baseUrl: "https://example.youtrack.cloud" }));
+  const result = spawnSync("bash", ["scripts/youtrack/token-create-url.sh"], {
+    cwd: path.resolve(import.meta.dir, ".."), encoding: "utf8",
+    env: { ...process.env, WORKFLOW_YOUTRACK_CONFIG: config },
+  });
+  const output = JSON.parse(result.stdout);
+  expect(output.tokenDescription).toContain("OpenCode workflow-toolkit");
+  expect(JSON.stringify(output)).not.toContain("Cursor");
+  rmSync(root, { recursive: true, force: true });
 });
 
 test("meeting context exposes only the configured meetingIssue", () => {

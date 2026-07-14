@@ -1,4 +1,8 @@
 import { expect, test } from "bun:test";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { spawnSync } from "node:child_process";
 import { adaptPluginHandoffClient, createHandoffTools, handoffSession } from "../src/tools/handoff";
 import { WorkflowStateStore } from "../src/state";
 
@@ -276,4 +280,18 @@ test("plugin client adapter publishes the native session selection event", async
       query: { directory: "/repo" },
     }],
   ]);
+});
+
+test("handoff context is read-only when the SDD workspace is absent", async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wf-handoff-readonly-"));
+  try {
+    mkdirSync(path.join(root, "docs/superpowers/specs"), { recursive: true });
+    mkdirSync(path.join(root, "docs/superpowers/plans"), { recursive: true });
+    writeFileSync(path.join(root, "docs/superpowers/specs/x.md"), "# X\n**Branch:** `feature/x`\n");
+    writeFileSync(path.join(root, "docs/superpowers/plans/x.md"), "# X\n**Spec:** `docs/superpowers/specs/x.md`\n### Task 1: One\n");
+    const result = spawnSync("bash", [path.resolve(import.meta.dir, "../scripts/collect-handoff-context.sh"),
+      "docs/superpowers/specs/x.md docs/superpowers/plans/x.md"], { cwd: root, encoding: "utf8" });
+    expect(result.status).toBe(0);
+    expect(existsSync(path.join(root, "docs/superpowers/sdd/x"))).toBe(false);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });

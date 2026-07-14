@@ -150,7 +150,6 @@ resolve_paths
 BRANCH=$(bash "$PLUGIN_ROOT/scripts/lib/resolve-handoff-branch.sh" "$SPEC" "$PLAN")
 SLUG=$(basename "$PLAN" .md)
 SDD_DIR="docs/superpowers/sdd/${SLUG}"
-bash "$PLUGIN_ROOT/scripts/sdd/sdd-workspace.sh" "$SLUG" >/dev/null
 printf 'BRANCH=%s\n' "$BRANCH" >&2
 printf 'SDD_DIR=%s\n' "$SDD_DIR" >&2
 

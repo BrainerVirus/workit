@@ -12,7 +12,7 @@ from urllib.parse import quote, urlencode
 
 cfg_path = Path(sys.argv[1]).expanduser()
 token_name = sys.argv[2]
-description = "Cursor workflow-toolkit — /wf-pr and glab/gh"
+description = "OpenCode workflow-toolkit — /wf-pr and glab/gh"
 
 def load_cfg():
     if not cfg_path.is_file():

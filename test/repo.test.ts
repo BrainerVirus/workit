@@ -58,6 +58,36 @@ test("release notes rejects a missing range before running a script", async () =
   expect(calls).toHaveLength(0);
 });
 
+test("revision context rejects option-like inputs before scripts run", async () => {
+  calls.length = 0;
+  for (const [name, args] of [
+    ["workflow_pr_context", { range: "--output=/tmp/owned" }],
+    ["workflow_changelog_context", { range: "-p" }],
+    ["workflow_release_notes_context", { range_or_tag: "--help" }],
+  ] as const) {
+    const result = await execute(name, args);
+    expect(result.error).toContain("invalid Git revision");
+  }
+  expect(calls).toHaveLength(0);
+});
+
+test("revision context resolves revisions and cannot create option-selected files", async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wf-revision-"));
+  const outside = path.join(path.dirname(root), `wf-owned-${path.basename(root)}`);
+  try {
+    spawnSync("git", ["init", "-q", "-b", "feature/range"], { cwd: root });
+    const raw = await createRepoTools().workflow_changelog_context.execute(
+      { range: `--output=${outside}` }, { directory: root, worktree: root } as never,
+    );
+    expect(JSON.parse(raw as string).error).toContain("invalid Git revision");
+    expect(existsSync(outside)).toBe(false);
+    const missing = await createRepoTools().workflow_changelog_context.execute(
+      { range: "does-not-exist" }, { directory: root, worktree: root } as never,
+    );
+    expect(JSON.parse(missing as string).error).toContain("invalid Git revision");
+  } finally { rmSync(root, { recursive: true, force: true }); rmSync(outside, { force: true }); }
+});
+
 test("script tools use ToolContext.directory", async () => {
   calls.length = 0;
   await execute("workflow_verify", { dry_run: true });
@@ -189,6 +219,65 @@ test("commit accepts only feature or bugfix branches and never stages files", as
   expect(JSON.parse(emptySuffix as string).error).toBe("commit requires feature/* or bugfix/* branch");
 });
 
+test("PR creation rejects protected and unsupported branches before external work", async () => {
+  for (const branch of ["main", "master", "develop", "prod", "release/1.0", "feature/"]) {
+    let externalCalls = 0;
+    const guarded = createRepoTools({
+      ...runtime,
+      git: (root, args) => ({ exitCode: 0, stdout: args[0] === "branch" ? `${branch}\n` : "", stderr: "", cwd: root }),
+      runScript: (root) => {
+        externalCalls++;
+        return { exitCode: 0, stdout: "{}", stderr: "", cwd: root };
+      },
+    });
+    const raw = await guarded.workflow_pr_create.execute(
+      { confirmed: true, title: "No" }, { directory: "/repo", worktree: "/repo" } as never,
+    );
+    expect(JSON.parse(raw as string).error).toContain("feature/* or bugfix/*");
+    expect(externalCalls).toBe(0);
+  }
+});
+
+test("PR context is read-only even with a remote and upstream", async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wf-pr-readonly-"));
+  const remote = mkdtempSync(path.join(os.tmpdir(), "wf-pr-remote-"));
+  const git = (cwd: string, args: string[]) => spawnSync("git", args, { cwd, encoding: "utf8" });
+  try {
+    git(remote, ["init", "-q", "--bare"]);
+    git(root, ["init", "-q", "-b", "develop"]);
+    git(root, ["config", "user.name", "Workflow Test"]);
+    git(root, ["config", "user.email", "workflow@example.test"]);
+    writeFileSync(path.join(root, "tracked.txt"), "base\n");
+    git(root, ["add", "tracked.txt"]); git(root, ["commit", "-q", "-m", "base"]);
+    git(root, ["remote", "add", "origin", remote]); git(root, ["push", "-q", "-u", "origin", "develop"]);
+    git(root, ["checkout", "-q", "-b", "feature/read-only"]);
+    writeFileSync(path.join(root, "tracked.txt"), "base\nfeature\n");
+    git(root, ["commit", "-q", "-am", "feature"]); git(root, ["push", "-q", "-u", "origin", "feature/read-only"]);
+    writeFileSync(path.join(root, "tracked.txt"), "base\nfeature\nunstaged\n");
+    writeFileSync(path.join(root, "untracked.txt"), "keep\n");
+    const remoteCalled = path.join(root, "remote-called");
+    const uploadPack = path.join(root, "upload-pack.sh");
+    writeFileSync(uploadPack, `#!/bin/sh\ntouch '${remoteCalled}'\nexec git-upload-pack "$@"\n`, { mode: 0o755 });
+    git(root, ["config", "remote.origin.uploadpack", uploadPack]);
+    const snapshot = () => ({
+      head: git(root, ["rev-parse", "HEAD"]).stdout,
+      refs: git(root, ["show-ref"]).stdout,
+      index: readFileSync(path.join(root, ".git/index")).toString("base64"),
+      status: git(root, ["status", "--porcelain=v1"]).stdout,
+      tracked: readFileSync(path.join(root, "tracked.txt"), "utf8"),
+      untracked: readFileSync(path.join(root, "untracked.txt"), "utf8"),
+    });
+    const before = snapshot();
+    const raw = await createRepoTools().workflow_pr_context.execute({}, { directory: root, worktree: root } as never);
+    expect(JSON.parse(raw as string).ok).toBe(true);
+    expect(snapshot()).toEqual(before);
+    expect(existsSync(remoteCalled)).toBe(false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(remote, { recursive: true, force: true });
+  }
+});
+
 test("branch setup can leave main for a valid feature branch", async () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "workflow-toolkit-branch-"));
   try {
@@ -216,6 +305,19 @@ test("reapply stash dispatches without a target branch", async () => {
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("branch setup treats quote-bearing manifest paths as data", async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "workflow-toolkit-quote-"));
+  try {
+    spawnSync("git", ["init", "-q", "-b", "feature/x"], { cwd: root });
+    const injected = "docs/sdd/x'); __import__('pathlib').Path('sentinel').write_text('owned'); #";
+    const raw = await createRepoTools().workflow_branch_setup.execute({
+      confirmed: true, action: "reapply_stash", sdd_dir: injected,
+    }, { directory: root, worktree: root } as never);
+    expect(JSON.parse(raw as string).error).toContain("no stash_ref");
+    expect(existsSync(path.join(root, "sentinel"))).toBe(false);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test("confirmed script mutations use package scripts, argument arrays, and scoped environment", async () => {

@@ -2,7 +2,7 @@ import path from "node:path";
 import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { tool, type ToolContext } from "@opencode-ai/plugin";
-import { fail, ok, resolveInside, run } from "../core";
+import { fail, gitRevisionParts, ok, resolveInside, run } from "../core";
 import { changelogApply } from "../legacy/changelog-apply.js";
 import { gitContext } from "../legacy/git-context.js";
 import { parseKeyValueLines, parseSections } from "../legacy/parse-sections.js";
@@ -121,6 +121,20 @@ const parseDocs = (stdout: string) => {
 };
 
 export function createRepoTools(runtime: RepoRuntime = defaultRuntime) {
+  const validateRange = (root: string, value: string) => {
+    for (const revision of gitRevisionParts(value)) {
+      const resolved = runtime.git(root, ["rev-parse", "--verify", "--quiet", "--end-of-options", `${revision}^{commit}`]);
+      if (resolved.exitCode !== 0) throw new Error(`invalid Git revision or range: ${value}`);
+    }
+  };
+  const contextWithRange = (
+    root: string, script: string, value: string | undefined,
+    parse: (stdout: string) => Record<string, unknown>,
+  ) => {
+    try { if (value) validateRange(root, value); }
+    catch (error) { return output(fail(error instanceof Error ? error.message : "invalid Git revision or range")); }
+    return output(scriptResult(runtime.runScript(root, script, value ? [value] : []), parse));
+  };
   const invoke = (script: string, parse: (stdout: string) => Record<string, unknown>, args: string[] = []) =>
     async (_input: unknown, context: ToolContext) => output(scriptResult(runtime.runScript(context.directory, script, args), parse));
 
@@ -146,25 +160,19 @@ export function createRepoTools(runtime: RepoRuntime = defaultRuntime) {
     workflow_pr_context: tool({
       description: "Gather branch-exclusive PR context",
       args: { range: tool.schema.string().optional() },
-      execute: async ({ range }, context) => output(scriptResult(
-        runtime.runScript(context.directory, "pr-ready-context.sh", range ? [range] : []), parsePr,
-      )),
+      execute: async ({ range }, context) => contextWithRange(context.directory, "pr-ready-context.sh", range, parsePr),
     }),
     workflow_changelog_context: tool({
       description: "Gather changelog context",
       args: { range: tool.schema.string().optional() },
-      execute: async ({ range }, context) => output(scriptResult(
-        runtime.runScript(context.directory, "changelog-context.sh", range ? [range] : []), parseChangelog,
-      )),
+      execute: async ({ range }, context) => contextWithRange(context.directory, "changelog-context.sh", range, parseChangelog),
     }),
     workflow_release_notes_context: tool({
       description: "Gather release notes for an explicit range",
       args: { range_or_tag: tool.schema.string() },
       execute: async ({ range_or_tag }, context) => !range_or_tag.trim()
         ? output(fail("release tag or range required"))
-        : output(scriptResult(
-          runtime.runScript(context.directory, "release-notes-context.sh", [range_or_tag]), parseRelease,
-        )),
+        : contextWithRange(context.directory, "release-notes-context.sh", range_or_tag, parseRelease),
     }),
     workflow_docs_context: tool({
       description: "Gather documentation refresh context",
@@ -248,6 +256,14 @@ export function createRepoTools(runtime: RepoRuntime = defaultRuntime) {
       execute: async ({ confirmed, title, body, draft, target_branch }, context) => {
         const rejected = requireConfirmed(confirmed);
         if (rejected) return rejected;
+        const branch = runtime.git(context.directory, ["branch", "--show-current"]);
+        if (branch.exitCode !== 0) return output(fail(
+          branch.stderr.trim() || branch.stdout.trim() || "unable to read current branch", diagnostics(branch),
+        ));
+        const name = branch.stdout.trim();
+        if (!/^(feature|bugfix)\/.+/.test(name)) {
+          return output(fail("PR creation requires feature/* or bugfix/* branch"));
+        }
         return output(legacyScriptResult(runtime.runScript(context.directory, "pr-create.sh", [], {
           WF_PR_TITLE: title,
           WF_PR_BODY: body ?? "",

@@ -9,7 +9,7 @@ export function slugFromPlan(planPath) {
   return path.basename(planPath, ".md");
 }
 
-/** Cursor TodoWrite payload — UI tracking. SDD ledger is persistence, not a UI substitute. */
+/** OpenCode todowrite payload. SDD ledger is persistence, not a UI substitute. */
 export function todosFromTasks(tasks, completedTaskIds = []) {
   const done = new Set(
     (completedTaskIds ?? []).map((id) => Number(id)),
@@ -39,12 +39,7 @@ export function sddContext({ slug, plan_path, workspace_root }) {
   }
   if (!resolvedSlug) return { error: "slug or plan_path required" };
 
-  const ws = runScript("sdd/sdd-workspace.sh", [resolvedSlug], cwd);
-  if (ws.exitCode !== 0) {
-    return { error: (ws.stderr || ws.stdout || "sdd-workspace failed").trim() };
-  }
-
-  const sdd_dir = ws.stdout.trim();
+  const sdd_dir = path.join("docs/superpowers/sdd", resolvedSlug);
   const progress_path = path.join(sdd_dir, "progress.md");
   const manifest_path = path.join(sdd_dir, "manifest.json");
 
@@ -81,7 +76,7 @@ export function sddContext({ slug, plan_path, workspace_root }) {
     progress_lines: progress.progress_lines ?? [],
     completed_task_ids,
     manifest,
-    created: true,
+    created: fs.existsSync(path.join(cwd, sdd_dir)),
     forbidden_legacy_path: ".superpowers/sdd",
     legacy_sdd_exists: legacy_exists,
     warning: legacy_exists
@@ -89,9 +84,9 @@ export function sddContext({ slug, plan_path, workspace_root }) {
       : undefined,
     todos,
     task_count,
-    todo_write_required: true,
-    todo_write_hint:
-      "REQUIRED: Call Cursor TodoWrite with todos from this result (merge: false) so the native task list UI shows progress. SDD ledger is persistence only — not a UI substitute. Before each task set status in_progress; after workflow_sdd_append_progress set that todo completed.",
+    todowrite_required: true,
+    todowrite_hint:
+      "REQUIRED: Call OpenCode todowrite with todos from this result so the native task list shows progress. Before each task set status in_progress; after workflow_sdd_append_progress set it completed.",
   };
 }
 

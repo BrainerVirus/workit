@@ -11,5 +11,9 @@ mkdir -p "$SDD_DIR"
 BASE7="${BASE:0:7}"
 HEAD7="${HEAD:0:7}"
 DIFF="$SDD_DIR/review-${BASE7}..${HEAD7}.diff"
-git diff "$BASE" "$HEAD" > "$DIFF"
-python3 -c "import json; print(json.dumps({'diff_path': '$DIFF', 'base_sha': '$BASE', 'head_sha': '$HEAD', 'base7': '$BASE7', 'head7': '$HEAD7'}))"
+git diff "$BASE" "$HEAD" -- > "$DIFF"
+python3 - "$DIFF" "$BASE" "$HEAD" "$BASE7" "$HEAD7" <<'PY'
+import json, sys
+diff_path, base, head, base7, head7 = sys.argv[1:]
+print(json.dumps({"diff_path": diff_path, "base_sha": base, "head_sha": head, "base7": base7, "head7": head7}))
+PY

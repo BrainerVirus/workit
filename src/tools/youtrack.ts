@@ -2,7 +2,7 @@ import { readFileSync, statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { tool, type ToolContext } from "@opencode-ai/plugin";
-import { fail, ok, type Result } from "../core";
+import { fail, ok, resolveInside, type Result } from "../core";
 import {
   buildDraft as legacyBuildDraft,
   context as legacyContext,
@@ -134,6 +134,25 @@ export async function postUpdate(
   });
 }
 
+export async function logTimeUpdate(
+  input: Record<string, unknown>,
+  operation: Pick<YouTrackOperations, "logTime"> = defaultOperations,
+): Promise<Result<Record<string, unknown>>> {
+  try {
+    const value = await operation.logTime(input);
+    if (notApplied(value)) return fail(value.error, {
+      issueId: input.issueId, loggedMinutes: 0, outcome: "not_applied",
+      retry: "workflow_youtrack_log_time",
+    });
+    return ok(unwrap(value));
+  } catch (error) {
+    return fail(message(error), {
+      issueId: input.issueId, loggedMinutes: 0, outcome: "unknown",
+      instructions: "Check YouTrack time entries manually; do not retry while the outcome is unknown.",
+    });
+  }
+}
+
 export function normalizeContext(value: LegacyValue, mode?: string): LegacyValue {
   if (!value || mode !== "meetings") return value;
   const config = value.config as Record<string, unknown> | undefined;
@@ -205,6 +224,15 @@ export function createYouTrackTools(operations: YouTrackOperations = defaultOper
         plan_path: tool.schema.string().optional(),
       },
       execute: async (input, context) => {
+        try {
+          for (const candidate of [input.spec_path, input.plan_path].filter(Boolean) as string[]) {
+            if (path.isAbsolute(candidate)) throw new Error("path must be repository-relative");
+            resolveInside(context.directory, candidate);
+          }
+        } catch (error) {
+          const detail = message(error);
+          return output(fail(detail.includes("repository-relative") ? detail : `path must be repository-relative: ${detail}`));
+        }
         let token = "";
         try { token = credentials().token; } catch (error) { return output(fail(message(error))); }
         return invoke(async () => normalizeContext(
@@ -247,7 +275,8 @@ export function createYouTrackTools(operations: YouTrackOperations = defaultOper
         if (rejected) return rejected;
         let token = "";
         try { token = credentials().token; } catch (error) { return output(fail(message(error))); }
-        return invoke(() => operations.logTime({ ...input, workspace_root: context.directory }), token);
+        const result = await logTimeUpdate({ ...input, workspace_root: context.directory }, operations);
+        return output(result.ok ? result : { ...result, error: redact(result.error, token) });
       },
     }),
     workflow_youtrack_post: tool({

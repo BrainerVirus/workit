@@ -21,7 +21,7 @@ cat <<'RULES'
 - Entries should be human-readable and user-facing.
 - Do not use raw commit messages as changelog bullets.
 - MERGE into existing ### Category under [Unreleased] — never append a second ### Added / ### Fixed block.
-- Apply with MCP workflow_changelog_apply only (not hand-edits under Unreleased).
+- Apply with the native workflow_changelog_apply tool only (not hand-edits under Unreleased).
 - If Unreleased already has duplicate category headings, normalize_only first.
 RULES
 

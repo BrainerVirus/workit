@@ -62,3 +62,15 @@ test("status uses only the aggregate toolkit status tool", () => {
   expect(text).toContain("Use only `workflow_toolkit_status`");
   expect(text).not.toContain("workflow_youtrack_verify_token");
 });
+
+test("native runtime outputs use OpenCode-neutral vocabulary", () => {
+  const root = path.resolve(import.meta.dir, "..");
+  const sources = [
+    "src/legacy/sdd-context.js", "scripts/_shared/common.sh", "scripts/changelog-context.sh",
+    "scripts/init/apply.sh", "scripts/vcs/token-create-urls.sh",
+  ].map((file) => readFileSync(path.join(root, file), "utf8")).join("\n");
+  for (const stale of ["Cursor TodoWrite", "Cursor AskQuestion", "Cursor plugin", "MCP tool", "Cursor workspace"]) {
+    expect(sources).not.toContain(stale);
+  }
+  expect(sources).toContain("OpenCode");
+});

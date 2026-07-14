@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -51,6 +51,20 @@ test("SDD paths outside the repository are rejected", async () => {
     { plan_path: "../outside.md" }, { directory: os.tmpdir(), worktree: os.tmpdir(), sessionID: "s1" } as never,
   );
   expect(JSON.parse(raw as string).error).toContain("inside repository root");
+});
+
+test("SDD context computes absent paths without creating repository files", async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wf-sdd-readonly-"));
+  try {
+    mkdirSync(path.join(root, "docs/superpowers/plans"), { recursive: true });
+    writeFileSync(path.join(root, "docs/superpowers/plans/x.md"), "# X\n### Task 1: One\n");
+    const raw = await createSddTools(new WorkflowStateStore()).workflow_sdd_context.execute(
+      { plan_path: "docs/superpowers/plans/x.md" },
+      { directory: root, worktree: root, sessionID: "readonly" } as never,
+    );
+    expect(JSON.parse(raw as string).ok).toBe(true);
+    expect(existsSync(path.join(root, "docs/superpowers/sdd/x"))).toBe(false);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test("SDD tools expose standard schemas and guard writes", async () => {
@@ -140,4 +154,40 @@ test("confirmed review package writes its diff inside the repository", async () 
   expect(result.ok).toBe(true);
   expect(result.data.diff_path).toBe(`docs/superpowers/sdd/review/review-${base.slice(0, 7)}..${head.slice(0, 7)}.diff`);
   expect(readFileSync(path.join(root, result.data.diff_path), "utf8")).toContain("+two");
+});
+
+test("review package rejects unsafe revisions and quote-bearing paths cannot execute code", async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wf-sdd-injection-"));
+  const sentinel = path.join(root, "sentinel");
+  try {
+    const tools = createSddTools(new WorkflowStateStore());
+    const raw = await tools.workflow_sdd_review_package.execute({
+      confirmed: true,
+      sdd_dir: "docs/superpowers/sdd/quote'$(touch sentinel)",
+      base_sha: "--output=outside",
+      head_sha: "HEAD'; touch sentinel; #",
+    }, { directory: root, worktree: root } as never);
+    expect(JSON.parse(raw as string).error).toContain("invalid Git revision");
+    expect(existsSync(sentinel)).toBe(false);
+    expect(existsSync(path.join(path.dirname(root), "outside"))).toBe(false);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("review package safely writes to a quote-bearing contained path", async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wf-sdd-quoted-path-"));
+  const git = (args: string[]) => spawnSync("git", args, { cwd: root, encoding: "utf8" });
+  try {
+    git(["init", "-q", "-b", "feature/review"]); git(["config", "user.name", "Workflow Test"]);
+    git(["config", "user.email", "workflow@example.test"]);
+    writeFileSync(path.join(root, "file.txt"), "one\n"); git(["add", "."]); git(["commit", "-q", "-m", "base"]);
+    const base = git(["rev-parse", "HEAD"]).stdout.trim();
+    writeFileSync(path.join(root, "file.txt"), "two\n"); git(["commit", "-q", "-am", "head"]);
+    const head = git(["rev-parse", "HEAD"]).stdout.trim();
+    const raw = await createSddTools(new WorkflowStateStore()).workflow_sdd_review_package.execute({
+      confirmed: true, sdd_dir: "docs/superpowers/sdd/review'quoted", base_sha: base, head_sha: head,
+    }, { directory: root, worktree: root } as never);
+    const result = JSON.parse(raw as string);
+    expect(result.ok).toBe(true);
+    expect(existsSync(path.join(root, result.data.diff_path))).toBe(true);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });

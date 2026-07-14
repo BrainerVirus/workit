@@ -18,7 +18,12 @@ MANIFEST="$SDD_DIR/manifest.json"
 mkdir -p "$SDD_DIR"
 
 if [ "$ACTION" = "reapply_stash" ]; then
-  ref=$(python3 -c "import json; print(json.load(open('$MANIFEST')).get('stash_ref',''))" 2>/dev/null || true)
+  ref=$(python3 - "$MANIFEST" <<'PY' 2>/dev/null || true
+import json, sys
+from pathlib import Path
+print(json.loads(Path(sys.argv[1]).read_text(encoding="utf-8")).get("stash_ref", ""))
+PY
+)
   [ -n "$ref" ] || { echo 'ERROR: no stash_ref in manifest' >&2; exit 1; }
   git stash pop "$ref"
   python3 - "$MANIFEST" <<'PY'
@@ -42,7 +47,7 @@ stash_ref=""
 if [ "$current" != "$TARGET" ]; then
   if [ -n "$(git status --porcelain)" ]; then
     [ "$STASH" = "yes" ] || {
-      echo 'ERROR: dirty working tree — ask with native AskQuestion, then call workflow_branch_setup with stash=yes' >&2
+      echo 'ERROR: dirty working tree — ask with OpenCode question, then call workflow_branch_setup with stash=yes' >&2
       exit 1
     }
     git stash push -u -m "workflow-toolkit: pre-checkout $TARGET"
