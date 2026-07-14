@@ -59,12 +59,12 @@ export function createSddTools(state: WorkflowStateStore) {
       description: "Parse top-level tasks from a workflow plan",
       args: { plan_path: tool.schema.string(), spec_path: tool.schema.string().optional() },
       execute: async ({ plan_path, spec_path }, context) => invoke(() => {
-        relativePath(context.worktree, plan_path);
-        const paths = planPaths(context.worktree, plan_path, spec_path);
-        const parsed = parsePlanTasks(plan_path, context.worktree) as Record<string, unknown>;
+        relativePath(context.directory, plan_path);
+        const paths = planPaths(context.directory, plan_path, spec_path);
+        const parsed = parsePlanTasks(plan_path, context.directory) as Record<string, unknown>;
         if (parsed.error) return parsed;
         const branch = paths.spec_path
-          ? resolveHandoffBranch(paths.spec_path, plan_path, context.worktree) as Record<string, unknown>
+          ? resolveHandoffBranch(paths.spec_path, plan_path, context.directory) as Record<string, unknown>
           : {};
         if (branch.error) return branch;
         const data = { ...parsed, ...paths, ...branch };
@@ -76,24 +76,24 @@ export function createSddTools(state: WorkflowStateStore) {
       description: "Resolve a branch from repository spec and plan metadata",
       args: { spec_path: tool.schema.string(), plan_path: tool.schema.string() },
       execute: async ({ spec_path, plan_path }, context) => invoke(() => {
-        relativePath(context.worktree, spec_path);
-        relativePath(context.worktree, plan_path);
-        return resolveBranch({ spec_path, plan_path, workspace_root: context.worktree });
+        relativePath(context.directory, spec_path);
+        relativePath(context.directory, plan_path);
+        return resolveBranch({ spec_path, plan_path, workspace_root: context.directory });
       }),
     }),
     workflow_sdd_context: tool({
       description: "Resolve the SDD workspace and progress ledger",
       args: { plan_path: tool.schema.string() },
       execute: async ({ plan_path }, context) => invoke(() => {
-        relativePath(context.worktree, plan_path);
-        const parsed = sddContext({ slug: undefined, plan_path, workspace_root: context.worktree }) as Record<string, unknown>;
+        relativePath(context.directory, plan_path);
+        const parsed = sddContext({ slug: undefined, plan_path, workspace_root: context.directory }) as Record<string, unknown>;
         if (parsed.error) return parsed;
         const todos = Array.isArray(parsed.todos)
           ? parsed.todos.map((todo: Record<string, unknown>) => todo.status === "in_progress"
             ? { ...todo, status: "pending" }
             : todo)
           : [];
-        const data = { ...parsed, todos, ...planPaths(context.worktree, plan_path), sdd_dir: parsed.sdd_dir };
+        const data = { ...parsed, todos, ...planPaths(context.directory, plan_path), sdd_dir: parsed.sdd_dir };
         record(context, data);
         return data;
       }),
@@ -110,8 +110,8 @@ export function createSddTools(state: WorkflowStateStore) {
         const rejected = requireConfirmed(confirmed);
         if (rejected) return rejected;
         return invoke(() => {
-          relativePath(context.worktree, sdd_dir);
-          return sddTaskBrief({ sdd_dir, task_id, section_text, workspace_root: context.worktree });
+          relativePath(context.directory, sdd_dir);
+          return sddTaskBrief({ sdd_dir, task_id, section_text, workspace_root: context.directory });
         });
       },
     }),
@@ -127,8 +127,8 @@ export function createSddTools(state: WorkflowStateStore) {
         const rejected = requireConfirmed(confirmed);
         if (rejected) return rejected;
         return invoke(() => {
-          relativePath(context.worktree, sdd_dir);
-          return sddReviewPackage({ sdd_dir, base_sha, head_sha, workspace_root: context.worktree });
+          relativePath(context.directory, sdd_dir);
+          return sddReviewPackage({ sdd_dir, base_sha, head_sha, workspace_root: context.directory });
         });
       },
     }),
@@ -143,8 +143,8 @@ export function createSddTools(state: WorkflowStateStore) {
         const rejected = requireConfirmed(confirmed);
         if (rejected) return rejected;
         return invoke(() => {
-          relativePath(context.worktree, progress_path);
-          return sddAppendProgress({ progress_path, line, workspace_root: context.worktree });
+          relativePath(context.directory, progress_path);
+          return sddAppendProgress({ progress_path, line, workspace_root: context.directory });
         });
       },
     }),

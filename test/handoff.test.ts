@@ -182,7 +182,7 @@ test("native handoff resolves package context, records paths, and seeds from Too
 
   const raw = await createHandoffTools(client, state, runtime).workflow_handoff_session.execute(
     { message: "please continue", stay: true },
-    { worktree: "/repo", sessionID: "parent" } as never,
+    { directory: "/repo", worktree: "/repo", sessionID: "parent" } as never,
   );
 
   expect(JSON.parse(raw as string)).toEqual({
@@ -200,6 +200,35 @@ test("native handoff resolves package context, records paths, and seeds from Too
     plan: "docs/superpowers/plans/x.md",
     sdd: "docs/superpowers/sdd/x",
   });
+});
+
+test("native handoff resolves relative paths from the session directory, not the VCS worktree", async () => {
+  const roots: string[] = [];
+  const client = {
+    session: {
+      async create() { return { data: { id: "child-directory" } }; },
+      async promptAsync() { return { data: undefined }; },
+    },
+    tui: { async selectSession() { return { data: true }; } },
+  };
+  const runtime = {
+    runScript(root: string) {
+      roots.push(root);
+      return {
+        exitCode: 1,
+        stdout: "",
+        stderr: "stop after root capture",
+        cwd: root,
+      };
+    },
+  };
+
+  await createHandoffTools(client, new WorkflowStateStore(), runtime).workflow_handoff_session.execute(
+    { message: "continue", stay: true },
+    { directory: "/repo/session", worktree: "/repo", sessionID: "parent" } as never,
+  );
+
+  expect(roots).toEqual(["/repo/session"]);
 });
 
 test("v2 adapter maps the handoff boundary to flat SDK calls", async () => {

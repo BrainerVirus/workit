@@ -14,7 +14,7 @@ test("plan parser returns only top-level Task sections and records state", async
   writeFileSync(path.join(root, "docs/superpowers/plans/x.md"), "# X\n**Spec:** `docs/superpowers/specs/x-design.md`\n### Task 1: One\n- [ ] Step\n### Task 2: Two\n- [ ] Step\n");
   const state = new WorkflowStateStore();
   const tools = createSddTools(state);
-  const raw = await tools.workflow_plan_tasks.execute({ plan_path: "docs/superpowers/plans/x.md" }, { worktree: root, sessionID: "s1" } as never);
+  const raw = await tools.workflow_plan_tasks.execute({ plan_path: "docs/superpowers/plans/x.md" }, { directory: root, worktree: root, sessionID: "s1" } as never);
   const result = JSON.parse(raw as string);
   expect(result.data.tasks.map((task: any) => task.title)).toEqual(["One", "Two"]);
   expect(state.get("s1")).toEqual({
@@ -36,19 +36,19 @@ test("plan parser honors an explicit contained spec path and returns its branch"
   const raw = await tools.workflow_plan_tasks.execute({
     plan_path: "docs/superpowers/plans/x.md",
     spec_path: "docs/superpowers/specs/exact.md",
-  }, { worktree: root, sessionID: "spec" } as never);
+  }, { directory: root, worktree: root, sessionID: "spec" } as never);
   expect(JSON.parse(raw as string).data.branch).toBe("feature/exact");
   expect(state.get("spec")?.spec).toBe("docs/superpowers/specs/exact.md");
 
   const outside = await createSddTools(new WorkflowStateStore()).workflow_plan_tasks.execute({
     plan_path: "docs/superpowers/plans/x.md", spec_path: "../outside.md",
-  }, { worktree: root, sessionID: "outside" } as never);
+  }, { directory: root, worktree: root, sessionID: "outside" } as never);
   expect(JSON.parse(outside as string).error).toContain("inside repository root");
 });
 
 test("SDD paths outside the repository are rejected", async () => {
   const raw = await createSddTools(new WorkflowStateStore()).workflow_sdd_context.execute(
-    { plan_path: "../outside.md" }, { worktree: os.tmpdir(), sessionID: "s1" } as never,
+    { plan_path: "../outside.md" }, { directory: os.tmpdir(), worktree: os.tmpdir(), sessionID: "s1" } as never,
   );
   expect(JSON.parse(raw as string).error).toContain("inside repository root");
 });
@@ -65,7 +65,7 @@ test("SDD tools expose standard schemas and guard writes", async () => {
   for (const name of [
     "workflow_sdd_task_brief", "workflow_sdd_review_package", "workflow_sdd_append_progress",
   ] as const) {
-    const raw = await tools[name].execute({ confirmed: false } as never, { worktree: "/repo" } as never);
+    const raw = await tools[name].execute({ confirmed: false } as never, { directory: "/repo", worktree: "/repo"} as never);
     expect(JSON.parse(raw as string).error).toBe("confirmed: true required");
   }
 });
@@ -78,7 +78,7 @@ test("confirmed SDD writes use repository-relative paths and standard results", 
     sdd_dir: "docs/superpowers/sdd/x",
     task_id: 2,
     section_text: "- [ ] Implement it\n",
-  }, { worktree: root } as never) as string);
+  }, { directory: root, worktree: root} as never) as string);
   expect(brief.data.brief_path).toBe("docs/superpowers/sdd/x/task-2-brief.md");
   expect(readFileSync(path.join(root, brief.data.brief_path), "utf8")).toContain("Implement it");
 
@@ -86,7 +86,7 @@ test("confirmed SDD writes use repository-relative paths and standard results", 
     confirmed: true,
     progress_path: "docs/superpowers/sdd/x/progress.md",
     line: "Task 2: complete (commits abcdef0..1234567, tests pass)",
-  }, { worktree: root } as never) as string);
+  }, { directory: root, worktree: root} as never) as string);
   expect(progress).toEqual({
     ok: true,
     data: {
@@ -109,7 +109,7 @@ test("branch resolution returns repository and plan facts", async () => {
   spawnSync("git", ["commit", "-q", "-m", "fixture"], { cwd: root });
   const raw = await createSddTools(new WorkflowStateStore()).workflow_resolve_branch.execute({
     spec_path: "docs/spec.md", plan_path: "docs/plan.md",
-  }, { worktree: root } as never);
+  }, { directory: root, worktree: root} as never);
   expect(JSON.parse(raw as string)).toEqual({
     ok: true,
     data: {
@@ -135,7 +135,7 @@ test("confirmed review package writes its diff inside the repository", async () 
   const head = git(["rev-parse", "HEAD"]).stdout.trim();
   const raw = await createSddTools(new WorkflowStateStore()).workflow_sdd_review_package.execute({
     confirmed: true, sdd_dir: "docs/superpowers/sdd/review", base_sha: base, head_sha: head,
-  }, { worktree: root } as never);
+  }, { directory: root, worktree: root} as never);
   const result = JSON.parse(raw as string);
   expect(result.ok).toBe(true);
   expect(result.data.diff_path).toBe(`docs/superpowers/sdd/review/review-${base.slice(0, 7)}..${head.slice(0, 7)}.diff`);

@@ -220,7 +220,7 @@ test("registers seven standard tools without workspace_root and guards mutations
     expect("workspace_root" in definition.args).toBe(false);
   }
   for (const name of ["workflow_youtrack_log_time", "workflow_youtrack_post"] as const) {
-    const raw = await tools[name].execute({ confirmed: false } as never, { worktree: "/repo" } as never);
+    const raw = await tools[name].execute({ confirmed: false } as never, { directory: "/repo", worktree: "/repo"} as never);
     expect(JSON.parse(raw as string).error).toBe("confirmed: true required");
   }
 });

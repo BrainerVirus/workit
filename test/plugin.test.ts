@@ -13,7 +13,7 @@ const names = [
 
 describe("plugin registration", () => {
   test("registers exactly the twelve wf commands and one skill path", async () => {
-    const hooks = await plugin({ worktree: "/repo", serverUrl: new URL("http://localhost") } as never);
+    const hooks = await plugin({ directory: "/repo", worktree: "/repo", serverUrl: new URL("http://localhost") } as never);
     const config: Record<string, any> = {};
     await hooks.config?.(config);
     expect(Object.keys(config.command).sort()).toEqual([...names].sort());
@@ -22,7 +22,7 @@ describe("plugin registration", () => {
   });
 
   test("registration is idempotent with a preexisting skill path", async () => {
-    const hooks = await plugin({ worktree: "/repo", serverUrl: new URL("http://localhost") } as never);
+    const hooks = await plugin({ directory: "/repo", worktree: "/repo", serverUrl: new URL("http://localhost") } as never);
     const skillPath = path.resolve(import.meta.dir, "../skills");
     const config: Record<string, any> = { skills: { paths: [skillPath] } };
 
@@ -84,7 +84,7 @@ describe("plugin registration", () => {
         WORKFLOW_YOUTRACK_CONFIG: path.join(isolatedToolkit, "youtrack.json"),
         WORKFLOW_VCS_CONFIG: path.join(isolatedToolkit, "vcs.json"),
       });
-      const hooks = await plugin({ worktree: root, serverUrl: new URL("http://localhost") } as never);
+      const hooks = await plugin({ directory: root, worktree: root, serverUrl: new URL("http://localhost") } as never);
       const fixtures: Record<string, Record<string, unknown>> = {
         workflow_toolkit_init_status: {},
         workflow_toolkit_status: {},
@@ -125,7 +125,7 @@ describe("plugin registration", () => {
       expect(Object.keys(hooks.tool ?? {}).sort()).toEqual(Object.keys(fixtures).sort());
       for (const [name, definition] of Object.entries(hooks.tool ?? {})) {
         const raw = await definition.execute(fixtures[name] as never, {
-          worktree: root, sessionID: "fixture-session",
+          directory: root, worktree: root, sessionID: "fixture-session",
         } as never);
         const result = JSON.parse(raw as string);
         results[name] = result;
@@ -155,10 +155,10 @@ describe("plugin registration", () => {
       path.join(root, "docs/superpowers/plans/x.md"),
       "# X\n**Spec:** `docs/superpowers/specs/x-design.md`\n### Task 1: One\n",
     );
-    const hooks = await plugin({ worktree: root, serverUrl: new URL("http://localhost") } as never);
+    const hooks = await plugin({ directory: root, worktree: root, serverUrl: new URL("http://localhost") } as never);
     await hooks.tool?.workflow_plan_tasks.execute(
       { plan_path: "docs/superpowers/plans/x.md" },
-      { worktree: root, sessionID: "s1" } as never,
+      { directory: root, worktree: root, sessionID: "s1" } as never,
     );
     const output = { context: [] as string[] };
 

@@ -122,7 +122,7 @@ const parseDocs = (stdout: string) => {
 
 export function createRepoTools(runtime: RepoRuntime = defaultRuntime) {
   const invoke = (script: string, parse: (stdout: string) => Record<string, unknown>, args: string[] = []) =>
-    async (_input: unknown, context: ToolContext) => output(scriptResult(runtime.runScript(context.worktree, script, args), parse));
+    async (_input: unknown, context: ToolContext) => output(scriptResult(runtime.runScript(context.directory, script, args), parse));
 
   return {
     workflow_toolkit_init_status: tool({
@@ -134,27 +134,27 @@ export function createRepoTools(runtime: RepoRuntime = defaultRuntime) {
     workflow_git_context: tool({
       description: "Read Git branch and change context",
       args: { paths: tool.schema.array(tool.schema.string()).optional() },
-      execute: async ({ paths }, context) => output(ok(gitContext(context.worktree, paths ?? []))),
+      execute: async ({ paths }, context) => output(ok(gitContext(context.directory, paths ?? []))),
     }),
     workflow_verify: tool({
       description: "Discover and run repository verification",
       args: { dry_run: tool.schema.boolean().optional() },
       execute: async ({ dry_run }, context) => output(scriptResult(
-        runtime.runScript(context.worktree, "verify-project.sh", dry_run ? ["--dry-run"] : []), parseVerifyOutput,
+        runtime.runScript(context.directory, "verify-project.sh", dry_run ? ["--dry-run"] : []), parseVerifyOutput,
       )),
     }),
     workflow_pr_context: tool({
       description: "Gather branch-exclusive PR context",
       args: { range: tool.schema.string().optional() },
       execute: async ({ range }, context) => output(scriptResult(
-        runtime.runScript(context.worktree, "pr-ready-context.sh", range ? [range] : []), parsePr,
+        runtime.runScript(context.directory, "pr-ready-context.sh", range ? [range] : []), parsePr,
       )),
     }),
     workflow_changelog_context: tool({
       description: "Gather changelog context",
       args: { range: tool.schema.string().optional() },
       execute: async ({ range }, context) => output(scriptResult(
-        runtime.runScript(context.worktree, "changelog-context.sh", range ? [range] : []), parseChangelog,
+        runtime.runScript(context.directory, "changelog-context.sh", range ? [range] : []), parseChangelog,
       )),
     }),
     workflow_release_notes_context: tool({
@@ -163,14 +163,14 @@ export function createRepoTools(runtime: RepoRuntime = defaultRuntime) {
       execute: async ({ range_or_tag }, context) => !range_or_tag.trim()
         ? output(fail("release tag or range required"))
         : output(scriptResult(
-          runtime.runScript(context.worktree, "release-notes-context.sh", [range_or_tag]), parseRelease,
+          runtime.runScript(context.directory, "release-notes-context.sh", [range_or_tag]), parseRelease,
         )),
     }),
     workflow_docs_context: tool({
       description: "Gather documentation refresh context",
       args: { range: tool.schema.string().optional() },
       execute: async ({ range }, context) => output(scriptResult(
-        runtime.runScript(context.worktree, "docs-refresh-context.sh", range ? [range] : []), parseDocs,
+        runtime.runScript(context.directory, "docs-refresh-context.sh", range ? [range] : []), parseDocs,
       )),
     }),
     workflow_changelog_apply: tool({
@@ -188,12 +188,12 @@ export function createRepoTools(runtime: RepoRuntime = defaultRuntime) {
         const rejected = requireConfirmed(confirmed);
         if (rejected) return rejected;
         try {
-          changelogPath = resolveInside(context.worktree, changelogPath ?? "CHANGELOG.md");
+          changelogPath = resolveInside(context.directory, changelogPath ?? "CHANGELOG.md");
         } catch (error) {
           return output(fail(error instanceof Error ? error.message : "invalid changelog path"));
         }
         return output(normalizeLegacyResult(changelogApply({
-          entries, path: changelogPath, normalize_only, workspace_root: realpathSync(context.worktree),
+          entries, path: changelogPath, normalize_only, workspace_root: realpathSync(context.directory),
         }) as Record<string, unknown>));
       },
     }),
@@ -210,11 +210,11 @@ export function createRepoTools(runtime: RepoRuntime = defaultRuntime) {
         const rejected = requireConfirmed(confirmed);
         if (rejected) return rejected;
         try {
-          sdd_dir = resolveInside(context.worktree, sdd_dir ?? "docs/superpowers/sdd");
+          sdd_dir = resolveInside(context.directory, sdd_dir ?? "docs/superpowers/sdd");
         } catch (error) {
           return output(fail(error instanceof Error ? error.message : "invalid SDD path"));
         }
-        return output(legacyScriptResult(runtime.runScript(context.worktree, "branch/setup-branch.sh", [
+        return output(legacyScriptResult(runtime.runScript(context.directory, "branch/setup-branch.sh", [
           action ?? "setup", sdd_dir ?? "docs/superpowers/sdd", target_branch ?? "", stash ?? "no",
         ])));
       },
@@ -225,14 +225,14 @@ export function createRepoTools(runtime: RepoRuntime = defaultRuntime) {
       execute: async ({ confirmed, message }, context) => {
         const rejected = requireConfirmed(confirmed);
         if (rejected) return rejected;
-        const branch = runtime.git(context.worktree, ["branch", "--show-current"]);
+        const branch = runtime.git(context.directory, ["branch", "--show-current"]);
         if (branch.exitCode !== 0) return output(fail(
           branch.stderr.trim() || branch.stdout.trim() || "unable to read current branch", diagnostics(branch),
         ));
         const name = branch.stdout.trim();
         if (protectedBranches.has(name)) return output(fail(`cannot commit on protected branch ${name}`));
         if (!/^(feature|bugfix)\/.+/.test(name)) return output(fail("commit requires feature/* or bugfix/* branch"));
-        return output(scriptResult(runtime.git(context.worktree, ["commit", "-m", message]),
+        return output(scriptResult(runtime.git(context.directory, ["commit", "-m", message]),
           (stdout) => ({ stdout: stdout.trim() })));
       },
     }),
@@ -248,7 +248,7 @@ export function createRepoTools(runtime: RepoRuntime = defaultRuntime) {
       execute: async ({ confirmed, title, body, draft, target_branch }, context) => {
         const rejected = requireConfirmed(confirmed);
         if (rejected) return rejected;
-        return output(legacyScriptResult(runtime.runScript(context.worktree, "pr-create.sh", [], {
+        return output(legacyScriptResult(runtime.runScript(context.directory, "pr-create.sh", [], {
           WF_PR_TITLE: title,
           WF_PR_BODY: body ?? "",
           WF_PR_CONFIRMED: "true",
@@ -283,7 +283,7 @@ export function createRepoTools(runtime: RepoRuntime = defaultRuntime) {
           WORKFLOW_VCS_TARGET_BRANCH: vcs_target_branch,
         }).filter((entry): entry is [string, string] => entry[1] !== undefined));
         return output(legacyScriptResult(runtime.runScript(
-          context.worktree, "init/apply.sh", [action, "true"], env,
+          context.directory, "init/apply.sh", [action, "true"], env,
         )));
       },
     }),

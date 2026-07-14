@@ -208,14 +208,14 @@ export function createYouTrackTools(operations: YouTrackOperations = defaultOper
         let token = "";
         try { token = credentials().token; } catch (error) { return output(fail(message(error))); }
         return invoke(async () => normalizeContext(
-          await operations.context({ ...input, workspace_root: context.worktree }), input.mode,
+          await operations.context({ ...input, workspace_root: context.directory }), input.mode,
         ), token);
       },
     }),
     workflow_youtrack_parse_duration: tool({
       description: "Parse duration text into integer minutes",
       args: { text: tool.schema.string() },
-      execute: async ({ text }, context) => invoke(() => operations.parseDuration(text, context.worktree)),
+      execute: async ({ text }, context) => invoke(() => operations.parseDuration(text, context.directory)),
     }),
     workflow_youtrack_draft: tool({
       description: "Build an es-CL update comment without posting it",
@@ -247,7 +247,7 @@ export function createYouTrackTools(operations: YouTrackOperations = defaultOper
         if (rejected) return rejected;
         let token = "";
         try { token = credentials().token; } catch (error) { return output(fail(message(error))); }
-        return invoke(() => operations.logTime({ ...input, workspace_root: context.worktree }), token);
+        return invoke(() => operations.logTime({ ...input, workspace_root: context.directory }), token);
       },
     }),
     workflow_youtrack_post: tool({
@@ -263,7 +263,7 @@ export function createYouTrackTools(operations: YouTrackOperations = defaultOper
         if (rejected) return rejected;
         let token = "";
         try { token = credentials().token; } catch (error) { return output(fail(message(error))); }
-        const result = await postUpdate({ ...input, workspace_root: context.worktree }, operations);
+        const result = await postUpdate({ ...input, workspace_root: context.directory }, operations);
         return output(result.ok ? result : { ...result, error: redact(result.error, token) });
       },
     }),

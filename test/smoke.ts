@@ -27,14 +27,14 @@ test("feature branch staged file exposes context and can be committed", async ()
     git(["add", "staged.txt"]);
     const tools = createRepoTools();
     const context = JSON.parse(await tools.workflow_git_context.execute(
-      {}, { worktree: root } as never,
+      {}, { directory: root, worktree: root} as never,
     ) as string);
     expect(context.ok).toBe(true);
     expect(context.data.branch).toBe("feature/test");
     expect(context.data.staged).toContain("staged.txt");
 
     const committed = JSON.parse(await tools.workflow_commit.execute(
-      { confirmed: true, message: "test: staged fixture" }, { worktree: root } as never,
+      { confirmed: true, message: "test: staged fixture" }, { directory: root, worktree: root} as never,
     ) as string);
     expect(committed.ok).toBe(true);
     expect(git(["status", "--short"]).stdout).toBe("");
@@ -49,7 +49,7 @@ test("main branch rejects workflow commits", async () => {
     writeFileSync(path.join(root, "staged.txt"), "staged\n");
     git(["add", "staged.txt"]);
     const raw = await createRepoTools().workflow_commit.execute(
-      { confirmed: true, message: "test: must reject" }, { worktree: root } as never,
+      { confirmed: true, message: "test: must reject" }, { directory: root, worktree: root} as never,
     );
     expect(JSON.parse(raw as string).error).toBe("cannot commit on protected branch main");
   } finally {
@@ -84,7 +84,7 @@ Keep custom heading.
 `);
     const raw = await createRepoTools().workflow_changelog_apply.execute({
       confirmed: true, entries: { Added: ["New item"] },
-    }, { worktree: root } as never);
+    }, { directory: root, worktree: root} as never);
     expect(JSON.parse(raw as string).ok).toBe(true);
     const output = readFileSync(changelog, "utf8");
     for (const preserved of [
@@ -112,7 +112,7 @@ test("SDD context reports completed and pending tasks from the ledger", async ()
     );
     const raw = await createSddTools(new WorkflowStateStore()).workflow_sdd_context.execute(
       { plan_path: "docs/superpowers/plans/smoke.md" },
-      { worktree: root, sessionID: "smoke" } as never,
+      { directory: root, worktree: root, sessionID: "smoke" } as never,
     );
     const todos = JSON.parse(raw as string).data.todos;
     expect(todos.map(({ id, status }: { id: string; status: string }) => ({ id, status }))).toEqual([
@@ -128,7 +128,7 @@ test("plugin registers without a Cursor runtime path", async () => {
   const { root } = repository("feature/test");
   try {
     expect(existsSync(path.join(root, ".cursor/plugins/local/workflow-toolkit"))).toBe(false);
-    const hooks = await plugin({ worktree: root, serverUrl: new URL("http://localhost") } as never);
+    const hooks = await plugin({ directory: root, worktree: root, serverUrl: new URL("http://localhost") } as never);
     const config: Record<string, any> = {};
     await hooks.config?.(config);
     expect(Object.keys(config.command)).toHaveLength(12);

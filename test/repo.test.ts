@@ -34,7 +34,7 @@ const runtime = {
 
 const execute = async (name: keyof ReturnType<typeof createRepoTools>, args: Record<string, unknown> = {}) => {
   const tools = createRepoTools(runtime);
-  return JSON.parse(await tools[name].execute(args as never, { worktree: "/repo" } as never) as string);
+  return JSON.parse(await tools[name].execute(args as never, { directory: "/repo", worktree: "/repo"} as never) as string);
 };
 
 test("repo tools expose native names without workspace override", () => {
@@ -58,7 +58,7 @@ test("release notes rejects a missing range before running a script", async () =
   expect(calls).toHaveLength(0);
 });
 
-test("script tools use ToolContext.worktree", async () => {
+test("script tools use ToolContext.directory", async () => {
   calls.length = 0;
   await execute("workflow_verify", { dry_run: true });
   expect(calls).toEqual([{ root: "/repo", script: "verify-project.sh", args: ["--dry-run"] }]);
@@ -119,7 +119,7 @@ test("script failures keep diagnostics in a failed Result", async () => {
     ...runtime,
     runScript: (root: string) => ({ exitCode: 2, stdout: "partial", stderr: "broken", cwd: root }),
   });
-  const raw = await failing.workflow_docs_context.execute({}, { worktree: "/repo" } as never);
+  const raw = await failing.workflow_docs_context.execute({}, { directory: "/repo", worktree: "/repo"} as never);
   expect(JSON.parse(raw as string)).toEqual({
     ok: false,
     data: { stdout: "partial", stderr: "broken", exitCode: 2 },
@@ -135,7 +135,7 @@ test("mutations reject missing confirmation", async () => {
     "workflow_changelog_apply", "workflow_branch_setup", "workflow_commit",
     "workflow_pr_create", "workflow_toolkit_init_apply",
   ] as const) {
-    const raw = await tools[name].execute({ confirmed: false } as never, { worktree: "/repo" } as never);
+    const raw = await tools[name].execute({ confirmed: false } as never, { directory: "/repo", worktree: "/repo"} as never);
     expect(JSON.parse(raw as string).error).toBe("confirmed: true required");
   }
   expect(calls).toHaveLength(0);
@@ -150,7 +150,7 @@ test("commit blocks protected branches", async () => {
       : { exitCode: 0, stdout: "", stderr: "", cwd: "/repo" },
   };
   const raw = await createRepoTools(protectedRuntime).workflow_commit.execute(
-    { confirmed: true, message: "fix: no" }, { worktree: "/repo" } as never,
+    { confirmed: true, message: "fix: no" }, { directory: "/repo", worktree: "/repo"} as never,
   );
   expect(JSON.parse(raw as string).error).toContain("protected branch main");
 });
@@ -172,7 +172,7 @@ test("commit accepts only feature or bugfix branches and never stages files", as
       exitCode: 0, stdout: args[0] === "branch" ? "release/1.0\n" : "", stderr: "", cwd: root,
     }),
   }).workflow_commit.execute(
-    { confirmed: true, message: "release: no" }, { worktree: "/repo" } as never,
+    { confirmed: true, message: "release: no" }, { directory: "/repo", worktree: "/repo"} as never,
   );
   expect(JSON.parse(raw as string)).toEqual({
     ok: false, data: null, error: "commit requires feature/* or bugfix/* branch",
@@ -184,7 +184,7 @@ test("commit accepts only feature or bugfix branches and never stages files", as
       exitCode: 0, stdout: args[0] === "branch" ? "feature/\n" : "", stderr: "", cwd: root,
     }),
   }).workflow_commit.execute(
-    { confirmed: true, message: "fix: no empty suffix" }, { worktree: "/repo" } as never,
+    { confirmed: true, message: "fix: no empty suffix" }, { directory: "/repo", worktree: "/repo"} as never,
   );
   expect(JSON.parse(emptySuffix as string).error).toBe("commit requires feature/* or bugfix/* branch");
 });
@@ -195,7 +195,7 @@ test("branch setup can leave main for a valid feature branch", async () => {
     expect(spawnSync("git", ["init", "-q", "-b", "main"], { cwd: root }).status).toBe(0);
     const raw = await createRepoTools().workflow_branch_setup.execute({
       confirmed: true, target_branch: "feature/x", stash: "no",
-    }, { worktree: root } as never);
+    }, { directory: root, worktree: root} as never);
     expect(JSON.parse(raw as string).ok).toBe(true);
     expect(spawnSync("git", ["branch", "--show-current"], { cwd: root, encoding: "utf8" }).stdout.trim()).toBe("feature/x");
   } finally {
@@ -209,7 +209,7 @@ test("reapply stash dispatches without a target branch", async () => {
     spawnSync("git", ["init", "-q", "-b", "feature/x"], { cwd: root });
     const raw = await createRepoTools().workflow_branch_setup.execute({
       confirmed: true, action: "reapply_stash",
-    }, { worktree: root } as never);
+    }, { directory: root, worktree: root} as never);
     const result = JSON.parse(raw as string);
     expect(result.error).toContain("no stash_ref");
     expect(result.error).not.toContain("target branch required");
@@ -224,7 +224,7 @@ test("confirmed script mutations use package scripts, argument arrays, and scope
   const sdd = path.join(root, "docs/superpowers/sdd");
   const branchRaw = await createRepoTools(runtime).workflow_branch_setup.execute({
     confirmed: true, target_branch: "feature/native-tools", stash: "yes",
-  }, { worktree: root } as never);
+  }, { directory: root, worktree: root} as never);
   expect(JSON.parse(branchRaw as string)).toEqual({
     ok: true, data: { branch: "feature/native-tools", exitCode: 0 }, error: null,
   });
@@ -266,7 +266,7 @@ test("mutation scripts normalize legacy errors into a failed Result", async () =
       exitCode: 1, stdout: JSON.stringify({ error: "legacy failure" }), stderr: "", cwd: root,
     }),
   }).workflow_branch_setup.execute(
-    { confirmed: true, target_branch: "feature/native-tools" }, { worktree: root } as never,
+    { confirmed: true, target_branch: "feature/native-tools" }, { directory: root, worktree: root} as never,
   );
   expect(JSON.parse(raw as string)).toEqual({
     ok: false,
@@ -288,7 +288,7 @@ test("legacy ok false values normalize to failures", async () => {
         exitCode: 0, stdout: JSON.stringify({ ok: false }), stderr: "", cwd,
       }),
     }).workflow_branch_setup.execute(
-      { confirmed: true, target_branch: "feature/x" }, { worktree: root } as never,
+      { confirmed: true, target_branch: "feature/x" }, { directory: root, worktree: root} as never,
     );
     expect(JSON.parse(raw as string)).toEqual({
       ok: false,
@@ -300,7 +300,7 @@ test("legacy ok false values normalize to failures", async () => {
   }
 });
 
-test("mutation paths cannot escape ToolContext.worktree", async () => {
+test("mutation paths cannot escape ToolContext.directory", async () => {
   calls.length = 0;
   const parent = mkdtempSync(path.join(os.tmpdir(), "workflow-toolkit-boundary-"));
   try {
@@ -310,7 +310,7 @@ test("mutation paths cannot escape ToolContext.worktree", async () => {
     mkdirSync(outside);
     const branchRaw = await createRepoTools(runtime).workflow_branch_setup.execute({
       confirmed: true, target_branch: "feature/native-tools", sdd_dir: "../outside",
-    }, { worktree: root } as never);
+    }, { directory: root, worktree: root} as never);
     expect(JSON.parse(branchRaw as string).error).toBe("path must stay inside repository root");
     expect(calls).toHaveLength(0);
 
@@ -318,7 +318,7 @@ test("mutation paths cannot escape ToolContext.worktree", async () => {
     symlinkSync(path.join(outside, "CHANGELOG.md"), path.join(root, "CHANGELOG.md"));
     const changelogRaw = await createRepoTools(runtime).workflow_changelog_apply.execute({
       confirmed: true, entries: { Fixed: ["must stay inside"] },
-    }, { worktree: root } as never);
+    }, { directory: root, worktree: root} as never);
     expect(JSON.parse(changelogRaw as string).error).toBe("path must stay inside repository root");
     expect(readFileSync(path.join(outside, "CHANGELOG.md"), "utf8")).toBe("# Outside\n");
   } finally {
@@ -369,7 +369,7 @@ Keep this custom section.
 `);
     const raw = await createRepoTools(runtime).workflow_changelog_apply.execute({
       confirmed: true, entries: { Added: ["New feature", "Existing feature"] },
-    }, { worktree: root } as never);
+    }, { directory: root, worktree: root} as never);
     expect(JSON.parse(raw as string).ok).toBe(true);
     const output = readFileSync(changelog, "utf8");
     const unreleased = output.split("## [1.0.0]")[0];
@@ -393,7 +393,7 @@ test("confirmed changelog apply without entries fails without editing", async ()
     writeFileSync(changelog, before);
     const raw = await createRepoTools(runtime).workflow_changelog_apply.execute({
       confirmed: true,
-    }, { worktree: root } as never);
+    }, { directory: root, worktree: root} as never);
     expect(JSON.parse(raw as string)).toEqual({
       ok: false, data: null, error: "entries required unless normalize_only",
     });
@@ -403,7 +403,7 @@ test("confirmed changelog apply without entries fails without editing", async ()
   }
 });
 
-test("changelog apply accepts a symlink-spelled ToolContext worktree", async () => {
+test("changelog apply accepts a symlink-spelled ToolContext directory", async () => {
   const parent = mkdtempSync(path.join(os.tmpdir(), "workflow-toolkit-linked-root-"));
   try {
     const root = path.join(parent, "repo");
@@ -413,7 +413,7 @@ test("changelog apply accepts a symlink-spelled ToolContext worktree", async () 
     writeFileSync(path.join(root, "CHANGELOG.md"), "# Changelog\n\n## [Unreleased]\n");
     const raw = await createRepoTools(runtime).workflow_changelog_apply.execute({
       confirmed: true, entries: { Fixed: ["Canonical root"] },
-    }, { worktree: linkedRoot } as never);
+    }, { directory: linkedRoot, worktree: linkedRoot} as never);
     expect(JSON.parse(raw as string).ok).toBe(true);
     expect(readFileSync(path.join(root, "CHANGELOG.md"), "utf8")).toContain("- Canonical root");
   } finally {

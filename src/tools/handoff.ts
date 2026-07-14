@@ -154,7 +154,7 @@ export function createHandoffTools(
       description: "Create, seed, and optionally select a continuation session",
       args: { message: tool.schema.string(), stay: tool.schema.boolean().optional() },
       execute: async ({ message: userMessage, stay }, context) => {
-        const resolved = runtime.runScript(context.worktree, "collect-handoff-context.sh", [userMessage]);
+        const resolved = runtime.runScript(context.directory, "collect-handoff-context.sh", [userMessage]);
         if (resolved.exitCode !== 0) {
           return output(fail(resolved.stderr.trim() || resolved.stdout.trim() || "handoff context failed"));
         }
@@ -163,7 +163,7 @@ export function createHandoffTools(
           state.set(context.sessionID, { spec: active.spec, plan: active.plan, sdd: active.sdd });
           return output(await handoffSession(client, {
             parentID: context.sessionID,
-            directory: context.worktree,
+            directory: context.directory,
             title: `Continue ${path.basename(active.plan, ".md")}`,
             prompt: active.prompt,
             stay: stay === true,
