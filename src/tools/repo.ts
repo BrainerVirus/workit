@@ -1,4 +1,5 @@
 import path from "node:path";
+import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { tool, type ToolContext } from "@opencode-ai/plugin";
 import { fail, ok, resolveInside, run } from "../core";
@@ -192,7 +193,7 @@ export function createRepoTools(runtime: RepoRuntime = defaultRuntime) {
           return output(fail(error instanceof Error ? error.message : "invalid changelog path"));
         }
         return output(normalizeLegacyResult(changelogApply({
-          entries, path: changelogPath, normalize_only, workspace_root: context.worktree,
+          entries, path: changelogPath, normalize_only, workspace_root: realpathSync(context.worktree),
         }) as Record<string, unknown>));
       },
     }),

@@ -403,6 +403,24 @@ test("confirmed changelog apply without entries fails without editing", async ()
   }
 });
 
+test("changelog apply accepts a symlink-spelled ToolContext worktree", async () => {
+  const parent = mkdtempSync(path.join(os.tmpdir(), "workflow-toolkit-linked-root-"));
+  try {
+    const root = path.join(parent, "repo");
+    const linkedRoot = path.join(parent, "repo-link");
+    mkdirSync(root);
+    symlinkSync(root, linkedRoot);
+    writeFileSync(path.join(root, "CHANGELOG.md"), "# Changelog\n\n## [Unreleased]\n");
+    const raw = await createRepoTools(runtime).workflow_changelog_apply.execute({
+      confirmed: true, entries: { Fixed: ["Canonical root"] },
+    }, { worktree: linkedRoot } as never);
+    expect(JSON.parse(raw as string).ok).toBe(true);
+    expect(readFileSync(path.join(root, "CHANGELOG.md"), "utf8")).toContain("- Canonical root");
+  } finally {
+    rmSync(parent, { recursive: true, force: true });
+  }
+});
+
 test("OpenCode init omits obsolete MCP dependency installation", () => {
   const action = createRepoTools(runtime).workflow_toolkit_init_apply.args.action;
   expect(action.safeParse("npm_install").success).toBe(false);
