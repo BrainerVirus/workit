@@ -1,3 +1,7 @@
 import { createRepoTools } from "./repo";
+import { WorkflowStateStore } from "../state";
+import { createSddTools } from "./sdd";
 
-export const createTools = () => ({ ...createRepoTools() });
+const state = new WorkflowStateStore();
+
+export const createTools = () => ({ ...createRepoTools(), ...createSddTools(state) });
