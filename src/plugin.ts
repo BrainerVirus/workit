@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Plugin } from "@opencode-ai/plugin";
+import { createTools } from "./tools";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const descriptions: Record<string, string> = {
@@ -20,6 +21,7 @@ const descriptions: Record<string, string> = {
 };
 
 const plugin: Plugin = async () => ({
+  tool: createTools(),
   config: async (config) => {
     const mutable = config as typeof config & { skills?: { paths?: string[] } };
     config.command ??= {};
