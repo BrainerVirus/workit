@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { realpathSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import path from "node:path";
 
 export type Result<T> =
@@ -13,6 +13,13 @@ export function resolveInside(root: string, candidate: string): string {
   const base = realpathSync(root);
   const target = path.resolve(base, candidate);
   if (target !== base && !target.startsWith(base + path.sep)) {
+    throw new Error("path must stay inside repository root");
+  }
+
+  let ancestor = target;
+  while (!existsSync(ancestor)) ancestor = path.dirname(ancestor);
+  const canonicalAncestor = realpathSync(ancestor);
+  if (canonicalAncestor !== base && !canonicalAncestor.startsWith(base + path.sep)) {
     throw new Error("path must stay inside repository root");
   }
   return target;

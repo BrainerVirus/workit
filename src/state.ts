@@ -4,7 +4,7 @@ export class WorkflowStateStore {
   #sessions = new Map<string, WorkflowState>();
 
   set(sessionID: string, state: WorkflowState) {
-    this.#sessions.set(sessionID, state);
+    this.#sessions.set(sessionID, { spec: state.spec, plan: state.plan, sdd: state.sdd });
   }
 
   get(sessionID: string) {
