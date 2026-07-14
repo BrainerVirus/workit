@@ -11,23 +11,12 @@ YOUTRACK_TOKEN="$CONFIG_DIR/youtrack.token"
 VCS_JSON="$CONFIG_DIR/vcs.json"
 GITLAB_TOKEN="$CONFIG_DIR/gitlab.token"
 GITHUB_TOKEN="$CONFIG_DIR/github.token"
-MCP_DIR="$PLUGIN_ROOT/mcp"
-
-python3 - "$CONFIG_DIR" "$YOUTRACK_JSON" "$YOUTRACK_TOKEN" "$VCS_JSON" "$GITLAB_TOKEN" "$GITHUB_TOKEN" "$MCP_DIR" "$TOKEN_PLACEHOLDER" <<'PY'
+python3 - "$CONFIG_DIR" "$YOUTRACK_JSON" "$YOUTRACK_TOKEN" "$VCS_JSON" "$GITLAB_TOKEN" "$GITHUB_TOKEN" "$PLUGIN_ROOT" "$TOKEN_PLACEHOLDER" <<'PY'
 import json, os, sys
 from pathlib import Path
 
-config_dir, yt_json, yt_token, vcs_json, gl_token, gh_token, mcp_dir, placeholder = sys.argv[1:9]
+config_dir, yt_json, yt_token, vcs_json, gl_token, gh_token, plugin_root, placeholder = sys.argv[1:9]
 items = []
-
-sdk = Path(mcp_dir) / "node_modules/@modelcontextprotocol/sdk"
-items.append({
-    "id": "mcp_deps",
-    "label": "MCP npm dependencies",
-    "ok": sdk.is_dir(),
-    "path": str(mcp_dir),
-    "fix": "workflow_toolkit_init_apply action=npm_install",
-})
 
 p = Path(yt_json)
 json_abs = str(p.resolve()) if p.is_file() else str(p.expanduser().resolve())
@@ -98,7 +87,7 @@ token_ok = mode_ok and bool(token_text) and not is_placeholder
 youtrack_token_create = None
 if p.is_file():
     import subprocess
-    yt_urls_script = Path(mcp_dir).parent / "scripts/youtrack/token-create-url.sh"
+    yt_urls_script = Path(plugin_root) / "scripts/youtrack/token-create-url.sh"
     if yt_urls_script.is_file():
         r = subprocess.run(
             ["bash", str(yt_urls_script)],
@@ -172,7 +161,7 @@ prov_active = (vcs_config or {}).get("provider") if vcs_config and "error" not i
 token_create_urls = None
 if vp.is_file():
     import subprocess
-    urls_script = Path(mcp_dir).parent / "scripts/vcs/token-create-urls.sh"
+    urls_script = Path(plugin_root) / "scripts/vcs/token-create-urls.sh"
     if urls_script.is_file():
         r = subprocess.run(
             ["bash", str(urls_script)],
@@ -225,7 +214,7 @@ items.append(token_item("github_token", "GitHub token (mode 600, not placeholder
 
 print(json.dumps({
     "config_dir": config_dir,
-    "plugin_root": str(Path(mcp_dir).parent),
+    "plugin_root": str(Path(plugin_root)),
     "token_placeholder": placeholder,
     "youtrack_config": youtrack_config,
     "vcs_config": vcs_config,

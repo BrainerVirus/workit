@@ -2,7 +2,8 @@ import { expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createRepoTools } from "../src/tools/repo";
+import { spawnSync } from "node:child_process";
+import { createRepoTools, normalizeLegacyResult } from "../src/tools/repo";
 import { PLUGIN_ROOT } from "../src/legacy/plugin-root.js";
 
 const calls: Array<{ root: string; script: string; args: string[]; env?: Record<string, string> }> = [];
@@ -176,6 +177,45 @@ test("commit accepts only feature or bugfix branches and never stages files", as
   expect(JSON.parse(raw as string)).toEqual({
     ok: false, data: null, error: "commit requires feature/* or bugfix/* branch",
   });
+
+  const emptySuffix = await createRepoTools({
+    ...runtime,
+    git: (root: string, args: string[]) => ({
+      exitCode: 0, stdout: args[0] === "branch" ? "feature/\n" : "", stderr: "", cwd: root,
+    }),
+  }).workflow_commit.execute(
+    { confirmed: true, message: "fix: no empty suffix" }, { worktree: "/repo" } as never,
+  );
+  expect(JSON.parse(emptySuffix as string).error).toBe("commit requires feature/* or bugfix/* branch");
+});
+
+test("branch setup can leave main for a valid feature branch", async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "workflow-toolkit-branch-"));
+  try {
+    expect(spawnSync("git", ["init", "-q", "-b", "main"], { cwd: root }).status).toBe(0);
+    const raw = await createRepoTools().workflow_branch_setup.execute({
+      confirmed: true, target_branch: "feature/x", stash: "no",
+    }, { worktree: root } as never);
+    expect(JSON.parse(raw as string).ok).toBe(true);
+    expect(spawnSync("git", ["branch", "--show-current"], { cwd: root, encoding: "utf8" }).stdout.trim()).toBe("feature/x");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("reapply stash dispatches without a target branch", async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "workflow-toolkit-reapply-"));
+  try {
+    spawnSync("git", ["init", "-q", "-b", "feature/x"], { cwd: root });
+    const raw = await createRepoTools().workflow_branch_setup.execute({
+      confirmed: true, action: "reapply_stash",
+    }, { worktree: root } as never);
+    const result = JSON.parse(raw as string);
+    expect(result.error).toContain("no stash_ref");
+    expect(result.error).not.toContain("target branch required");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("confirmed script mutations use package scripts, argument arrays, and scoped environment", async () => {
@@ -234,6 +274,30 @@ test("mutation scripts normalize legacy errors into a failed Result", async () =
     error: "legacy failure",
   });
   rmSync(root, { recursive: true, force: true });
+});
+
+test("legacy ok false values normalize to failures", async () => {
+  expect(normalizeLegacyResult({ ok: false })).toEqual({
+    ok: false, data: null, error: "legacy operation reported failure",
+  });
+  const root = mkdtempSync(path.join(os.tmpdir(), "workflow-toolkit-false-"));
+  try {
+    const raw = await createRepoTools({
+      ...runtime,
+      runScript: (cwd: string) => ({
+        exitCode: 0, stdout: JSON.stringify({ ok: false }), stderr: "", cwd,
+      }),
+    }).workflow_branch_setup.execute(
+      { confirmed: true, target_branch: "feature/x" }, { worktree: root } as never,
+    );
+    expect(JSON.parse(raw as string)).toEqual({
+      ok: false,
+      data: { stdout: JSON.stringify({ ok: false }), stderr: "", exitCode: 0 },
+      error: "legacy operation reported failure",
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("mutation paths cannot escape ToolContext.worktree", async () => {
@@ -318,5 +382,46 @@ Keep this custom section.
     ]) expect(output).toContain(preserved);
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("confirmed changelog apply without entries fails without editing", async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "workflow-toolkit-empty-changelog-"));
+  try {
+    const changelog = path.join(root, "CHANGELOG.md");
+    const before = "# Changelog\n\n## [Unreleased]\n";
+    writeFileSync(changelog, before);
+    const raw = await createRepoTools(runtime).workflow_changelog_apply.execute({
+      confirmed: true,
+    }, { worktree: root } as never);
+    expect(JSON.parse(raw as string)).toEqual({
+      ok: false, data: null, error: "entries required unless normalize_only",
+    });
+    expect(readFileSync(changelog, "utf8")).toBe(before);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("OpenCode init omits obsolete MCP dependency installation", () => {
+  const action = createRepoTools(runtime).workflow_toolkit_init_apply.args.action;
+  expect(action.safeParse("npm_install").success).toBe(false);
+
+  const config = mkdtempSync(path.join(os.tmpdir(), "workflow-toolkit-init-"));
+  try {
+    const status = spawnSync("bash", [path.join(PLUGIN_ROOT, "scripts/init/status.sh")], {
+      encoding: "utf8", env: { ...process.env, WORKFLOW_TOOLKIT_CONFIG: config },
+    });
+    expect(status.status).toBe(0);
+    const data = JSON.parse(status.stdout);
+    expect(data.items.some((item: { id: string }) => item.id === "mcp_deps")).toBe(false);
+
+    const apply = spawnSync("bash", [path.join(PLUGIN_ROOT, "scripts/init/apply.sh"), "npm_install", "true"], {
+      encoding: "utf8", env: { ...process.env, WORKFLOW_TOOLKIT_CONFIG: config },
+    });
+    expect(apply.status).not.toBe(0);
+    expect(apply.stderr).toContain("unknown action npm_install");
+  } finally {
+    rmSync(config, { recursive: true, force: true });
   }
 });

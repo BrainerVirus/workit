@@ -8,14 +8,10 @@ TARGET="${3:-}"
 STASH="${4:-no}"
 
 PROTECTED='^(main|master|develop|prod|production)$'
-BRANCH_OK='^(feature|bugfix)/'
+BRANCH_OK='^(feature|bugfix)/.+'
 
 current=$(git branch --show-current 2>/dev/null || true)
 [ -n "$current" ] || { echo 'ERROR: not in a git repository' >&2; exit 1; }
-[ -n "$TARGET" ] || { echo 'ERROR: target branch required' >&2; exit 1; }
-[[ "$TARGET" =~ $PROTECTED ]] && { echo "ERROR: protected branch $TARGET" >&2; exit 1; }
-[[ "$TARGET" =~ $BRANCH_OK ]] || { echo "ERROR: target must be feature/* or bugfix/* — got $TARGET" >&2; exit 1; }
-[[ "$current" =~ $PROTECTED ]] && { echo "ERROR: on protected branch $current — checkout feature/* or bugfix/* first" >&2; exit 1; }
 
 [ -n "$SDD_DIR" ] || SDD_DIR="docs/superpowers/sdd"
 MANIFEST="$SDD_DIR/manifest.json"
@@ -37,6 +33,10 @@ PY
   python3 -c "import json; print(json.dumps({'action':'reapply_stash','ok':True}))"
   exit 0
 fi
+
+[ -n "$TARGET" ] || { echo 'ERROR: target branch required' >&2; exit 1; }
+[[ "$TARGET" =~ $PROTECTED ]] && { echo "ERROR: protected branch $TARGET" >&2; exit 1; }
+[[ "$TARGET" =~ $BRANCH_OK ]] || { echo "ERROR: target must be feature/* or bugfix/* — got $TARGET" >&2; exit 1; }
 
 stash_ref=""
 if [ "$current" != "$TARGET" ]; then

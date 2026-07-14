@@ -41,10 +41,12 @@ const json = (stdout: string) => JSON.parse(stdout.trim()) as Record<string, unk
 const legacyScriptResult = (result: RunResult) => {
   let parsed: Record<string, unknown> | null = null;
   try { parsed = json(result.stdout); } catch { /* handled below */ }
-  if (result.exitCode !== 0 || parsed?.error) return fail(
+  if (result.exitCode !== 0 || parsed?.error || parsed?.ok === false) return fail(
     parsed?.error
       ? String(parsed.error)
-      : result.stderr.trim() || result.stdout.trim() || "workflow script failed",
+      : parsed?.ok === false
+        ? "legacy operation reported failure"
+        : result.stderr.trim() || result.stdout.trim() || "workflow script failed",
     diagnostics(result),
   );
   if (!parsed) return fail("workflow output parse failed", diagnostics(result));
@@ -56,8 +58,9 @@ const optionalJson = (value: string | undefined) => {
   try { return JSON.parse(value); } catch { return null; }
 };
 const sections = (stdout: string) => parseSections(stdout) as Record<string, string>;
-const legacyResult = (value: Record<string, unknown>) => {
+export const normalizeLegacyResult = (value: Record<string, unknown>) => {
   if (value.error) return fail(String(value.error));
+  if (value.ok === false) return fail("legacy operation reported failure");
   const { ok: _legacyOk, ...data } = value;
   return ok(data);
 };
@@ -188,7 +191,7 @@ export function createRepoTools(runtime: RepoRuntime = defaultRuntime) {
         } catch (error) {
           return output(fail(error instanceof Error ? error.message : "invalid changelog path"));
         }
-        return output(legacyResult(changelogApply({
+        return output(normalizeLegacyResult(changelogApply({
           entries, path: changelogPath, normalize_only, workspace_root: context.worktree,
         }) as Record<string, unknown>));
       },
@@ -227,7 +230,7 @@ export function createRepoTools(runtime: RepoRuntime = defaultRuntime) {
         ));
         const name = branch.stdout.trim();
         if (protectedBranches.has(name)) return output(fail(`cannot commit on protected branch ${name}`));
-        if (!/^(feature|bugfix)\//.test(name)) return output(fail("commit requires feature/* or bugfix/* branch"));
+        if (!/^(feature|bugfix)\/.+/.test(name)) return output(fail("commit requires feature/* or bugfix/* branch"));
         return output(scriptResult(runtime.git(context.worktree, ["commit", "-m", message]),
           (stdout) => ({ stdout: stdout.trim() })));
       },
@@ -258,8 +261,7 @@ export function createRepoTools(runtime: RepoRuntime = defaultRuntime) {
       args: {
         confirmed: tool.schema.boolean(),
         action: tool.schema.enum([
-          "npm_install", "youtrack_scaffold", "youtrack_json",
-          "youtrack_token_placeholder", "vcs_scaffold",
+          "youtrack_scaffold", "youtrack_json", "youtrack_token_placeholder", "vcs_scaffold",
         ]),
         base_url: tool.schema.string().optional(),
         default_mention: tool.schema.string().optional(),

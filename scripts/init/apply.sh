@@ -131,10 +131,6 @@ PY
 }
 
 case "$ACTION" in
-  npm_install)
-    (cd "$PLUGIN_ROOT/mcp" && npm install --silent)
-    python3 -c "import json; print(json.dumps({'action':'npm_install','ok':True}))"
-    ;;
   youtrack_json)
     write_youtrack_json | python3 -c "import json,sys; d=json.load(sys.stdin); print(json.dumps({'action':'youtrack_json','ok':True,**d}))"
     ;;
@@ -267,7 +263,7 @@ print(json.dumps({
 PY
     ;;
   *)
-    echo "ERROR: unknown action $ACTION (npm_install|youtrack_scaffold|youtrack_json|youtrack_token_placeholder|vcs_scaffold)" >&2
+    echo "ERROR: unknown action $ACTION (youtrack_scaffold|youtrack_json|youtrack_token_placeholder|vcs_scaffold)" >&2
     exit 1
     ;;
 esac
