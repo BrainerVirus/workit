@@ -1,7 +1,8 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { tool, type ToolContext } from "@opencode-ai/plugin";
-import { fail, ok, run } from "../core";
+import { fail, ok, resolveInside, run } from "../core";
+import { changelogApply } from "../legacy/changelog-apply.js";
 import { gitContext } from "../legacy/git-context.js";
 import { parseKeyValueLines, parseSections } from "../legacy/parse-sections.js";
 import { parseVerifyOutput } from "../legacy/verify-parse.js";
@@ -11,17 +12,19 @@ const scripts = path.join(packageRoot, "scripts");
 type RunResult = ReturnType<typeof run>;
 
 export type RepoRuntime = {
-  runScript(root: string, script: string, args: string[]): RunResult;
+  runScript(root: string, script: string, args: string[], env?: Record<string, string>): RunResult;
   git(root: string, args: string[]): RunResult;
 };
 
 const defaultRuntime: RepoRuntime = {
-  runScript: (root, script, args) => run(root, path.join(scripts, script), args),
+  runScript: (root, script, args, env) => run(root, path.join(scripts, script), args, env),
   git: (root, args) => run(root, "git", args),
 };
 
 const output = (value: unknown) => JSON.stringify(value, null, 2);
 const diagnostics = ({ stdout, stderr, exitCode }: RunResult) => ({ stdout, stderr, exitCode });
+const requireConfirmed = (confirmed: boolean) => confirmed === true ? null : output(fail("confirmed: true required"));
+const protectedBranches = new Set(["main", "master", "develop", "prod"]);
 
 function scriptResult<T extends object>(result: RunResult, parse: (stdout: string) => T) {
   if (result.exitCode !== 0) {
@@ -35,11 +38,29 @@ function scriptResult<T extends object>(result: RunResult, parse: (stdout: strin
 }
 
 const json = (stdout: string) => JSON.parse(stdout.trim()) as Record<string, unknown>;
+const legacyScriptResult = (result: RunResult) => {
+  let parsed: Record<string, unknown> | null = null;
+  try { parsed = json(result.stdout); } catch { /* handled below */ }
+  if (result.exitCode !== 0 || parsed?.error) return fail(
+    parsed?.error
+      ? String(parsed.error)
+      : result.stderr.trim() || result.stdout.trim() || "workflow script failed",
+    diagnostics(result),
+  );
+  if (!parsed) return fail("workflow output parse failed", diagnostics(result));
+  const { ok: _legacyOk, ...data } = parsed;
+  return ok({ ...data, exitCode: 0, ...(result.stderr ? { stderr: result.stderr } : {}) });
+};
 const optionalJson = (value: string | undefined) => {
   if (!value?.trim()) return null;
   try { return JSON.parse(value); } catch { return null; }
 };
 const sections = (stdout: string) => parseSections(stdout) as Record<string, string>;
+const legacyResult = (value: Record<string, unknown>) => {
+  if (value.error) return fail(String(value.error));
+  const { ok: _legacyOk, ...data } = value;
+  return ok(data);
+};
 
 const parsePr = (stdout: string) => {
   const part = sections(stdout);
@@ -147,6 +168,121 @@ export function createRepoTools(runtime: RepoRuntime = defaultRuntime) {
       execute: async ({ range }, context) => output(scriptResult(
         runtime.runScript(context.worktree, "docs-refresh-context.sh", range ? [range] : []), parseDocs,
       )),
+    }),
+    workflow_changelog_apply: tool({
+      description: "Apply confirmed Keep a Changelog entries to Unreleased",
+      args: {
+        confirmed: tool.schema.boolean(),
+        entries: tool.schema.union([
+          tool.schema.record(tool.schema.string(), tool.schema.array(tool.schema.string())),
+          tool.schema.array(tool.schema.object({ category: tool.schema.string(), text: tool.schema.string() })),
+        ]).optional(),
+        path: tool.schema.string().optional(),
+        normalize_only: tool.schema.boolean().optional(),
+      },
+      execute: async ({ confirmed, entries, path: changelogPath, normalize_only }, context) => {
+        const rejected = requireConfirmed(confirmed);
+        if (rejected) return rejected;
+        try {
+          changelogPath = resolveInside(context.worktree, changelogPath ?? "CHANGELOG.md");
+        } catch (error) {
+          return output(fail(error instanceof Error ? error.message : "invalid changelog path"));
+        }
+        return output(legacyResult(changelogApply({
+          entries, path: changelogPath, normalize_only, workspace_root: context.worktree,
+        }) as Record<string, unknown>));
+      },
+    }),
+    workflow_branch_setup: tool({
+      description: "Apply a confirmed in-place feature or bugfix branch setup",
+      args: {
+        confirmed: tool.schema.boolean(),
+        action: tool.schema.enum(["setup", "reapply_stash"]).optional(),
+        sdd_dir: tool.schema.string().optional(),
+        target_branch: tool.schema.string().optional(),
+        stash: tool.schema.enum(["yes", "no"]).optional(),
+      },
+      execute: async ({ confirmed, action, sdd_dir, target_branch, stash }, context) => {
+        const rejected = requireConfirmed(confirmed);
+        if (rejected) return rejected;
+        try {
+          sdd_dir = resolveInside(context.worktree, sdd_dir ?? "docs/superpowers/sdd");
+        } catch (error) {
+          return output(fail(error instanceof Error ? error.message : "invalid SDD path"));
+        }
+        return output(legacyScriptResult(runtime.runScript(context.worktree, "branch/setup-branch.sh", [
+          action ?? "setup", sdd_dir ?? "docs/superpowers/sdd", target_branch ?? "", stash ?? "no",
+        ])));
+      },
+    }),
+    workflow_commit: tool({
+      description: "Commit the current index on a feature or bugfix branch without staging files",
+      args: { confirmed: tool.schema.boolean(), message: tool.schema.string() },
+      execute: async ({ confirmed, message }, context) => {
+        const rejected = requireConfirmed(confirmed);
+        if (rejected) return rejected;
+        const branch = runtime.git(context.worktree, ["branch", "--show-current"]);
+        if (branch.exitCode !== 0) return output(fail(
+          branch.stderr.trim() || branch.stdout.trim() || "unable to read current branch", diagnostics(branch),
+        ));
+        const name = branch.stdout.trim();
+        if (protectedBranches.has(name)) return output(fail(`cannot commit on protected branch ${name}`));
+        if (!/^(feature|bugfix)\//.test(name)) return output(fail("commit requires feature/* or bugfix/* branch"));
+        return output(scriptResult(runtime.git(context.worktree, ["commit", "-m", message]),
+          (stdout) => ({ stdout: stdout.trim() })));
+      },
+    }),
+    workflow_pr_create: tool({
+      description: "Create a confirmed pull or merge request",
+      args: {
+        confirmed: tool.schema.boolean(),
+        title: tool.schema.string(),
+        body: tool.schema.string().optional(),
+        draft: tool.schema.boolean().optional(),
+        target_branch: tool.schema.string().optional(),
+      },
+      execute: async ({ confirmed, title, body, draft, target_branch }, context) => {
+        const rejected = requireConfirmed(confirmed);
+        if (rejected) return rejected;
+        return output(legacyScriptResult(runtime.runScript(context.worktree, "pr-create.sh", [], {
+          WF_PR_TITLE: title,
+          WF_PR_BODY: body ?? "",
+          WF_PR_CONFIRMED: "true",
+          WF_PR_DRAFT: draft ? "true" : "false",
+          WF_PR_TARGET: target_branch ?? "",
+        })));
+      },
+    }),
+    workflow_toolkit_init_apply: tool({
+      description: "Apply a confirmed toolkit initialization action",
+      args: {
+        confirmed: tool.schema.boolean(),
+        action: tool.schema.enum([
+          "npm_install", "youtrack_scaffold", "youtrack_json",
+          "youtrack_token_placeholder", "vcs_scaffold",
+        ]),
+        base_url: tool.schema.string().optional(),
+        default_mention: tool.schema.string().optional(),
+        meeting_issue: tool.schema.string().optional(),
+        vcs_provider: tool.schema.enum(["gitlab", "github"]).optional(),
+        vcs_target_branch: tool.schema.string().optional(),
+      },
+      execute: async ({
+        confirmed, action, base_url, default_mention, meeting_issue, vcs_provider, vcs_target_branch,
+      }, context) => {
+        const rejected = requireConfirmed(confirmed);
+        if (rejected) return rejected;
+        const env = Object.fromEntries(Object.entries({
+          WORKFLOW_YT_BASE_URL: base_url,
+          WORKFLOW_YT_MENTION: default_mention,
+          WORKFLOW_YT_MEETING_ISSUE: meeting_issue,
+          WORKFLOW_VCS_PROVIDER: vcs_provider,
+          WORKFLOW_VCS_TARGET_BRANCH: vcs_target_branch,
+        }).filter((entry): entry is [string, string] => entry[1] !== undefined));
+        return output(legacyScriptResult(runtime.runScript(
+          context.worktree, "init/apply.sh", [action, "true"], env,
+        )));
+      },
     }),
   };
 }

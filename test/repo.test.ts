@@ -1,7 +1,12 @@
 import { expect, test } from "bun:test";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { createRepoTools } from "../src/tools/repo";
+import { PLUGIN_ROOT } from "../src/legacy/plugin-root.js";
 
-const calls: Array<{ root: string; script: string; args: string[] }> = [];
+const calls: Array<{ root: string; script: string; args: string[]; env?: Record<string, string> }> = [];
+const gitCalls: Array<{ root: string; args: string[] }> = [];
 const outputs: Record<string, string> = {
   "init/status.sh": JSON.stringify({ ready: false, items: [{ id: "config", ok: true }] }),
   "init/toolkit-status.sh": JSON.stringify({ ready: true, next_step: "All checks passed" }),
@@ -10,14 +15,20 @@ const outputs: Record<string, string> = {
   "changelog-context.sh": "# Context\n\n## Repository\nbranch: feature/native-tools\nrange: HEAD~1..HEAD\n\n## Keep a Changelog Rules\n- Human readable\n\n## Existing CHANGELOG.md\n[Unreleased]\n\n## Commits\nabc feat: tools\n\n## Diff Stat\n2 files changed\n\n## Changed Files\nsrc/tools/repo.ts\n",
   "release-notes-context.sh": "# Context\n\n## Repository\nrequested: v1.0.0\nrange: v1.0.0..HEAD\n\n## Tags\nv1.0.0\n\n## Commits\nabc feat: tools\n\n## Diff Stat\n2 files changed\n\n## Changed Files\nsrc/tools/repo.ts\n\n## Existing Release Files\nCHANGELOG.md\n",
   "docs-refresh-context.sh": "# Context\n\n## Repository\nbranch: feature/native-tools\nrange: HEAD~1..HEAD\n\n## Changed Files\nsrc/plugin.ts\n\n## Documentation Files\nREADME.md\n\n## README Preview\n# Toolkit\n\n## Package Scripts\n{\"test\":\"bun test\"}\n",
+  "branch/setup-branch.sh": JSON.stringify({ ok: true, branch: "feature/native-tools" }),
+  "pr-create.sh": JSON.stringify({ ok: true, provider: "github", output: "https://example.test/pr/1" }),
+  "init/apply.sh": JSON.stringify({ ok: true, action: "youtrack_json" }),
 };
 
 const runtime = {
-  runScript: (root: string, script: string, args: string[]) => {
-    calls.push({ root, script, args });
+  runScript: (root: string, script: string, args: string[], env?: Record<string, string>) => {
+    calls.push({ root, script, args, ...(env ? { env } : {}) });
     return { exitCode: 0, stdout: outputs[script] ?? "", stderr: "", cwd: root };
   },
-  git: (_root: string, _args: string[]) => ({ exitCode: 0, stdout: "", stderr: "", cwd: "/repo" }),
+  git: (root: string, args: string[]) => {
+    gitCalls.push({ root, args });
+    return { exitCode: 0, stdout: args[0] === "branch" ? "feature/native-tools\n" : "committed\n", stderr: "", cwd: root };
+  },
 };
 
 const execute = async (name: keyof ReturnType<typeof createRepoTools>, args: Record<string, unknown> = {}) => {
@@ -30,7 +41,8 @@ test("repo tools expose native names without workspace override", () => {
   expect(Object.keys(tools).sort()).toEqual([
     "workflow_changelog_context", "workflow_docs_context", "workflow_git_context",
     "workflow_pr_context", "workflow_release_notes_context", "workflow_toolkit_init_status",
-    "workflow_toolkit_status", "workflow_verify",
+    "workflow_toolkit_status", "workflow_verify", "workflow_changelog_apply",
+    "workflow_branch_setup", "workflow_commit", "workflow_pr_create", "workflow_toolkit_init_apply",
   ].sort());
   for (const definition of Object.values(tools)) {
     expect("workspace_root" in definition.args).toBe(false);
@@ -112,4 +124,199 @@ test("script failures keep diagnostics in a failed Result", async () => {
     data: { stdout: "partial", stderr: "broken", exitCode: 2 },
     error: "broken",
   });
+});
+
+test("mutations reject missing confirmation", async () => {
+  calls.length = 0;
+  gitCalls.length = 0;
+  const tools = createRepoTools(runtime);
+  for (const name of [
+    "workflow_changelog_apply", "workflow_branch_setup", "workflow_commit",
+    "workflow_pr_create", "workflow_toolkit_init_apply",
+  ] as const) {
+    const raw = await tools[name].execute({ confirmed: false } as never, { worktree: "/repo" } as never);
+    expect(JSON.parse(raw as string).error).toBe("confirmed: true required");
+  }
+  expect(calls).toHaveLength(0);
+  expect(gitCalls).toHaveLength(0);
+});
+
+test("commit blocks protected branches", async () => {
+  const protectedRuntime = {
+    ...runtime,
+    git: (_root: string, args: string[]) => args[0] === "branch"
+      ? { exitCode: 0, stdout: "main\n", stderr: "", cwd: "/repo" }
+      : { exitCode: 0, stdout: "", stderr: "", cwd: "/repo" },
+  };
+  const raw = await createRepoTools(protectedRuntime).workflow_commit.execute(
+    { confirmed: true, message: "fix: no" }, { worktree: "/repo" } as never,
+  );
+  expect(JSON.parse(raw as string).error).toContain("protected branch main");
+});
+
+test("commit accepts only feature or bugfix branches and never stages files", async () => {
+  gitCalls.length = 0;
+  const result = await execute("workflow_commit", { confirmed: true, message: "feat: native mutation" });
+  expect(result).toEqual({
+    ok: true, data: { stdout: "committed", exitCode: 0 }, error: null,
+  });
+  expect(gitCalls).toEqual([
+    { root: "/repo", args: ["branch", "--show-current"] },
+    { root: "/repo", args: ["commit", "-m", "feat: native mutation"] },
+  ]);
+
+  const raw = await createRepoTools({
+    ...runtime,
+    git: (root: string, args: string[]) => ({
+      exitCode: 0, stdout: args[0] === "branch" ? "release/1.0\n" : "", stderr: "", cwd: root,
+    }),
+  }).workflow_commit.execute(
+    { confirmed: true, message: "release: no" }, { worktree: "/repo" } as never,
+  );
+  expect(JSON.parse(raw as string)).toEqual({
+    ok: false, data: null, error: "commit requires feature/* or bugfix/* branch",
+  });
+});
+
+test("confirmed script mutations use package scripts, argument arrays, and scoped environment", async () => {
+  calls.length = 0;
+  const root = mkdtempSync(path.join(os.tmpdir(), "workflow-toolkit-scripts-"));
+  const sdd = path.join(root, "docs/superpowers/sdd");
+  const branchRaw = await createRepoTools(runtime).workflow_branch_setup.execute({
+    confirmed: true, target_branch: "feature/native-tools", stash: "yes",
+  }, { worktree: root } as never);
+  expect(JSON.parse(branchRaw as string)).toEqual({
+    ok: true, data: { branch: "feature/native-tools", exitCode: 0 }, error: null,
+  });
+  expect(await execute("workflow_pr_create", {
+    confirmed: true, title: "Native tools", body: "Ready", draft: true, target_branch: "develop",
+  })).toEqual({
+    ok: true,
+    data: { provider: "github", output: "https://example.test/pr/1", exitCode: 0 },
+    error: null,
+  });
+  expect(await execute("workflow_toolkit_init_apply", {
+    confirmed: true, action: "youtrack_json", base_url: "https://youtrack.example.test",
+  })).toEqual({ ok: true, data: { action: "youtrack_json", exitCode: 0 }, error: null });
+
+  expect(calls).toEqual([
+    {
+      root, script: "branch/setup-branch.sh",
+      args: ["setup", sdd, "feature/native-tools", "yes"],
+    },
+    {
+      root: "/repo", script: "pr-create.sh", args: [], env: {
+        WF_PR_TITLE: "Native tools", WF_PR_BODY: "Ready", WF_PR_CONFIRMED: "true",
+        WF_PR_DRAFT: "true", WF_PR_TARGET: "develop",
+      },
+    },
+    {
+      root: "/repo", script: "init/apply.sh", args: ["youtrack_json", "true"],
+      env: { WORKFLOW_YT_BASE_URL: "https://youtrack.example.test" },
+    },
+  ]);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("mutation scripts normalize legacy errors into a failed Result", async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "workflow-toolkit-error-"));
+  const raw = await createRepoTools({
+    ...runtime,
+    runScript: (root: string) => ({
+      exitCode: 1, stdout: JSON.stringify({ error: "legacy failure" }), stderr: "", cwd: root,
+    }),
+  }).workflow_branch_setup.execute(
+    { confirmed: true, target_branch: "feature/native-tools" }, { worktree: root } as never,
+  );
+  expect(JSON.parse(raw as string)).toEqual({
+    ok: false,
+    data: { stdout: JSON.stringify({ error: "legacy failure" }), stderr: "", exitCode: 1 },
+    error: "legacy failure",
+  });
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("mutation paths cannot escape ToolContext.worktree", async () => {
+  calls.length = 0;
+  const parent = mkdtempSync(path.join(os.tmpdir(), "workflow-toolkit-boundary-"));
+  try {
+    const root = path.join(parent, "repo");
+    const outside = path.join(parent, "outside");
+    mkdirSync(root);
+    mkdirSync(outside);
+    const branchRaw = await createRepoTools(runtime).workflow_branch_setup.execute({
+      confirmed: true, target_branch: "feature/native-tools", sdd_dir: "../outside",
+    }, { worktree: root } as never);
+    expect(JSON.parse(branchRaw as string).error).toBe("path must stay inside repository root");
+    expect(calls).toHaveLength(0);
+
+    writeFileSync(path.join(outside, "CHANGELOG.md"), "# Outside\n");
+    symlinkSync(path.join(outside, "CHANGELOG.md"), path.join(root, "CHANGELOG.md"));
+    const changelogRaw = await createRepoTools(runtime).workflow_changelog_apply.execute({
+      confirmed: true, entries: { Fixed: ["must stay inside"] },
+    }, { worktree: root } as never);
+    expect(JSON.parse(changelogRaw as string).error).toBe("path must stay inside repository root");
+    expect(readFileSync(path.join(outside, "CHANGELOG.md"), "utf8")).toBe("# Outside\n");
+  } finally {
+    rmSync(parent, { recursive: true, force: true });
+  }
+});
+
+test("changelog script path is package-owned", () => {
+  const expectedRoot = path.resolve(import.meta.dir, "..");
+  const script = path.join(PLUGIN_ROOT, "scripts/changelog/apply-unreleased.py");
+  expect(PLUGIN_ROOT).toBe(expectedRoot);
+  expect(script.startsWith(`${PLUGIN_ROOT}${path.sep}`)).toBe(true);
+  expect(script).not.toContain(".cursor/plugins");
+  expect(existsSync(script)).toBe(true);
+});
+
+test("changelog preserves rich Markdown while consolidating categories", async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "workflow-toolkit-"));
+  try {
+    const changelog = path.join(root, "CHANGELOG.md");
+    writeFileSync(changelog, `# Changelog
+
+## [Unreleased]
+
+<!-- keep this comment -->
+
+### Added
+
+- Existing feature
+  - nested detail
+  continuation text
+
+### Notes
+
+Keep this custom section.
+
+### Added
+
+- Existing feature
+- Second feature
+  with continuation
+
+## [1.0.0] - 2026-01-01
+
+### Added
+
+- Historical feature
+`);
+    const raw = await createRepoTools(runtime).workflow_changelog_apply.execute({
+      confirmed: true, entries: { Added: ["New feature", "Existing feature"] },
+    }, { worktree: root } as never);
+    expect(JSON.parse(raw as string).ok).toBe(true);
+    const output = readFileSync(changelog, "utf8");
+    const unreleased = output.split("## [1.0.0]")[0];
+    expect((unreleased.match(/^### Added$/gm) ?? []).length).toBe(1);
+    expect((unreleased.match(/^- Existing feature$/gm) ?? []).length).toBe(1);
+    expect((unreleased.match(/^- New feature$/gm) ?? []).length).toBe(1);
+    for (const preserved of [
+      "<!-- keep this comment -->", "  - nested detail", "  continuation text", "### Notes",
+      "Keep this custom section.", "  with continuation", "## [1.0.0] - 2026-01-01", "- Historical feature",
+    ]) expect(output).toContain(preserved);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
