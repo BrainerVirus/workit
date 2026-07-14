@@ -1,20 +1,16 @@
 ---
 name: wf-handoff
-description: Create, seed, and optionally open a clean OpenCode continuation session. Explicit /wf-handoff only.
+description: Create and optionally select a seeded OpenCode continuation session.
 disable-model-invocation: true
 ---
 
 # Handoff
 
-Call `workflow_handoff_session` with the full user message as `message`. Set `stay: true` only when the command arguments include `--stay`.
+1. Load this skill explicitly through OpenCode's `skill` tool.
+2. Call the automatic `workflow_handoff_session` tool with the full user message as `message`; its result is ground truth.
+3. The tool resolves the tracked spec, plan, and SDD context and seeds the continuation session.
+4. This workflow needs no `question`: the explicit invocation is approval.
+5. Forward `--stay` as `stay: true`; otherwise let the tool select the new session.
+6. Report the structured success, failure stage, or partial result; never infer success.
 
-The tool resolves the active spec, plan, and SDD paths, creates a child of the current session, seeds its continuation prompt, and selects it unless `--stay` was requested. Use its result as ground truth. Do not emit or ask the user to copy a prompt.
-
-## Success
-
-- When `selected` is `true`, the TUI normally switches immediately. Only if this session remains visible, report `Opened session <sessionID>`.
-- When `selected` is `false`, report `Seeded session <sessionID>; staying in the current session.`
-
-## Failure
-
-Report the returned `stage` and `error`. If `sessionID` is present, state that the session was preserved and can be opened from the OpenCode session picker (`/sessions`) using that ID. Never delete or recreate it automatically.
+Never emit a continuation prompt, use the clipboard, or ask the user to copy text. If selected, report the session ID only if the current session remains visible. If staying, report the seeded session ID. On failure, report `stage` and `error`; preserve any returned session for the session picker and never recreate it automatically. `todowrite` and `task` are unnecessary here.

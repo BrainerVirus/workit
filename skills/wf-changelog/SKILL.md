@@ -1,75 +1,15 @@
 ---
 name: wf-changelog
-description: Update CHANGELOG.md via workflow_changelog_context + workflow_changelog_apply. Use for /wf-changelog or "update the changelog".
+description: Preview and apply a Keep a Changelog update.
 ---
 
-# Changelog — Keep a Changelog Update
+# Changelog
 
-Update `CHANGELOG.md` for the current repository.
+1. Load this skill explicitly through OpenCode's `skill` tool.
+2. Call the read-only `workflow_changelog_context` context tool; its result is ground truth.
+3. Draft the exact insertion preview, including target heading, categories, and bullets.
+4. Use native `question` with concise choices and allow a custom answer before changing the file.
+5. Call `workflow_changelog_apply` only after approval with `confirmed: true`.
+6. Report the structured success, failure stage, or partial result; never infer success.
 
-## Step 1 — Gather facts (required)
-
-Call MCP tool `workflow_changelog_context` with arguments from the user's message (range, version, paths, etc.).
-
-**Workspace root:** defaults to the Cursor workspace. Pass `workspace_root` when the user names a different repository path.
-
-Use the tool return value as ground truth. Do not read git, run npm, or infer repo state yourself.
-If the tool errors, report the error and stop.
-
-If `unreleased.needs_normalize` is true, call `workflow_changelog_apply` with `normalize_only: true` before merging new bullets.
-
-## Step 2 — Decide entries (do not edit the file yet)
-
-Follow Keep a Changelog 1.1.0:
-
-- Target `## [Unreleased]` only (unless the user asks to cut a version).
-- Categories: `Added`, `Changed`, `Deprecated`, `Removed`, `Fixed`, `Security`.
-- Human-readable bullets, not raw commit messages.
-- Group by user-visible behavior, not by file.
-- Skip internal refactors / CI / tests / formatting unless they affect users.
-- If there are no meaningful user-visible changes, stop — do not invent entries.
-
-## Step 3 — Apply via tool (required)
-
-Call MCP `workflow_changelog_apply` with the new bullets. Examples:
-
-```json
-{
-  "entries": {
-    "Added": ["**Foo API** — public endpoint for bar"],
-    "Fixed": ["**Login redirect** — stop loop on expired session"]
-  }
-}
-```
-
-or
-
-```json
-{
-  "entries": [
-    { "category": "Added", "text": "**Foo API** — public endpoint for bar" }
-  ]
-}
-```
-
-### HARD-GATE
-
-- **NEVER** hand-edit `CHANGELOG.md` to append a new `### Added` / `### Changed` / … block under `[Unreleased]`.
-- The apply tool **merges** into the existing category heading (or creates one category once).
-- Duplicate identical bullets are skipped.
-- Do not update package versions or tags.
-- Do not commit.
-
-## Output
-
-After the tool returns ok, summarize:
-
-```md
-Changelog update:
-
-- <entry or reason no update was needed>
-
-Files changed:
-
-- CHANGELOG.md
-```
+Target `## [Unreleased]` unless the user requests a release. Use only Added, Changed, Deprecated, Removed, Fixed, or Security; group user-visible behavior and skip internal-only work. The apply tool must merge into existing category headings, preserve all unrelated lines, and skip duplicate bullets. If normalization is needed, include it in the same preview and approval. Do not hand-edit the changelog, version packages, tag, or commit. `todowrite` and `task` are unnecessary here.

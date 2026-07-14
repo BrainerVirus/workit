@@ -1,85 +1,16 @@
 ---
 name: wf-status
-description: Full workflow-toolkit health check — MCP deps, YouTrack + VCS (GitLab/GitHub) API verify. Use /wf-status after editing token files.
+description: Report workflow-toolkit, YouTrack, and VCS health.
 disable-model-invocation: true
 ---
 
 # Status
 
-Deterministic health check. **Tools only — no manual git/curl.**
+1. Load this skill explicitly through OpenCode's `skill` tool.
+2. Call the read-only `workflow_toolkit_status` context tool once; its result is ground truth.
+3. Draft the health report from structured facts.
+4. This workflow has no guarded mutation and does not need `question`.
+5. Do not call any mutation tool.
+6. Report the structured success, failure stage, or partial result; never infer success.
 
-**Agent language:** English unless the user writes in another language.
-
-## Step 1 — Full status (required)
-
-Call MCP `workflow_toolkit_status` once.
-
-Use the return value as ground truth. Do not infer state yourself.
-
-## Step 2 — Report (English)
-
-Show a table from `items[]`:
-
-| Item                 | OK                       | Notes                              |
-| -------------------- | ------------------------ | ---------------------------------- |
-| MCP npm dependencies | items[mcp_deps].ok       | path                               |
-| YouTrack config      | items[youtrack_json].ok  | path                               |
-| YouTrack token file  | items[youtrack_token].ok | placeholder? → show `token_create_url` + `token_edit_path` |
-| VCS config           | items[vcs_json].ok       | path                               |
-| GitLab token         | items[gitlab_token].ok   | required when provider=gitlab      |
-| GitHub token         | items[github_token].ok   | required when provider=github      |
-
-### YouTrack settings (required when `youtrack_config` present)
-
-Always show this block from tool output — user expects to see meeting issue and time-logging targets:
-
-| Setting | Value |
-|---------|-------|
-| Config file | clickable `youtrack_config.config_edit_path` |
-| Meeting issue | `meetingIssue` — time only via `/wf-meetings` |
-| Meeting URL | `meetingIssueUrl` as markdown link |
-| Manager tag | `@` + `defaultMention` |
-| Task issue (time + comment) | from active spec/plan `**YouTrack:**` — not stored in json |
-| Timezone | `timezone` |
-
-Then **YouTrack API** from `youtrack_verify`:
-
-- `ok: true` → show `login`, `name`, `meetingIssue`, `meetingIssueSummary` if present
-- `ok: false` → show `error` and `next_step` from tool
-
-### VCS / PR settings (when `vcs_config` present)
-
-| Setting | Value |
-|---------|-------|
-| Config | `vcs_config.config_edit_path` |
-| Provider | `provider` (`gitlab` / `github`) |
-| Target branch | `defaultTargetBranch` |
-| Squash on merge | `pr.squashOnMerge` |
-| Remove source branch | `pr.removeSourceBranch` |
-
-**VCS API** from `vcs_verify`:
-
-- `ok: true` → show `username`, `provider`
-- `ok: false` → show `vcs_token_edit_path` or token `fix` from items when placeholder
-
-## Step 3 — Verdict
-
-- `ready: true` → "All checks passed. Toolkit is ready."
-- `ready: false` with `placeholder: true` on **YouTrack** → show both links:
-
-```markdown
-1. [Create YouTrack token](<token_create_url>) — New token → name **workflow-toolkit**, scope **YouTrack**
-2. Paste into [youtrack.token](<token_edit_path>) — replace `YOUR_TOKEN_HERE`, save, then `/wf-status`
-```
-
-Use `items[youtrack_token].token_create_url` / `token_edit_path`, or top-level `token_create_url` + `token_edit_path` from tool output.
-
-- `ready: false` with VCS placeholder → show **`vcs_token_edit_path`** and active provider `token_create_url` from items.
-
-- `ready: false` (other) → show `next_step` and `youtrack_verify.error` from tool output.
-
-## Rules
-
-- Do not call YouTrack HTTP directly — `workflow_toolkit_status` includes verify.
-- Do not ask user to paste token — point them to edit the token file if `placeholder: true`.
-- Optional: `workflow_youtrack_verify_token` only if user asks to re-test API alone.
+Show every `items[]` result, the resolved YouTrack settings and verification, the VCS provider and verification, and the exact `ready` verdict. For placeholders, point to the returned token creation and edit paths; never request tokens in chat. Use only `workflow_toolkit_status`, except `workflow_youtrack_verify_token` when the user explicitly requests that isolated check. Do not run shell, Git, or direct HTTP commands. `todowrite` and `task` are unnecessary for this read-only workflow.

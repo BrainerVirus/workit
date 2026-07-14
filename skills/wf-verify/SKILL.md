@@ -1,48 +1,16 @@
 ---
 name: wf-verify
-description: Run project validation via workflow_verify MCP tool. Use for /wf-verify or when user says "use verify skill".
+description: Discover and run project validation with workflow_verify.
 disable-model-invocation: true
 ---
 
-# Verify — Project Validation
+# Verify
 
-Run the repository's validation checks and report exact results.
+1. Load this skill explicitly through OpenCode's `skill` tool.
+2. Call the read-only `workflow_verify` context tool with `dry_run: true`; its result is ground truth.
+3. Draft the discovered checks and the proposed selected run from structured facts.
+4. When the user must choose checks, use native `question` with concise choices and allow a custom answer.
+5. Call `workflow_verify` with `dry_run: false` only for the approved run.
+6. Report the structured success, failure stage, or partial result; never infer success.
 
-## Step 1 — Gather facts (required)
-
-Call MCP tool `workflow_verify` with arguments from the user's message (range, version, paths, etc.).
-
-**Workspace root:** defaults to the Cursor workspace. Pass `workspace_root` when the user names a different repository path.
-
-Use the tool return value as ground truth. Do not read git, run npm, or infer repo state yourself.
-If the tool errors, report the error and stop.
-
-Map `--dry-run` or `dry-run` in the user message to `dry_run: true`.
-
-## Rules
-
-- Do not edit files.
-- Do not fix failures.
-- Do not claim success unless every executed command exits 0.
-- If a command is skipped, report the skip reason.
-- If a command fails, report the failed command and the relevant output.
-- If validation commands are detected but not run because arguments requested a dry run, clearly say that.
-
-## Output
-
-Return only:
-
-```md
-Validation summary:
-
-- Passed: <count>
-- Failed: <count>
-- Skipped: <count>
-
-Commands:
-
-- `<command>`: pass|fail|skipped - <short reason>
-
-Next action:
-<one concise recommendation>
-```
+Do not edit files or fix failures. Report every check exactly as pass, fail, or skipped, including its command, exit code, and skip reason. Success requires every executed check to exit 0. If the user's message says `--dry-run`, stop after discovery.

@@ -1,88 +1,42 @@
-/using-superpowers
-
-Load the REQUIRED Superpowers skills listed below by name (in addition to using-superpowers).
-
-Implement the plan below. Do not re-plan.
+Load `using-superpowers`, `subagent-driven-development`, `test-driven-development`, and `verification-before-completion` through OpenCode's `skill` tool. Implement the existing plan; do not re-plan.
 
 **Spec:** <SPEC_PATH>
 **Plan:** <PLAN_PATH>
 **Branch:** <BRANCH>
-**SDD:** `<SDD_DIR>` (tracked — use MCP `workflow_sdd_context` only)
+**SDD:** `<SDD_DIR>`
 
-## FORBIDDEN — no worktrees
+## Hard gates
 
-- **NEVER** invoke `using-git-worktrees` or any `git worktree` command.
-- Branch changes are **in-place checkout only** via MCP `workflow_branch_setup`.
-- Allowed branches: `feature/*` and `bugfix/*` only. Never commit on `main`, `develop`, `master`, or `prod`.
+- The parent is coordinator-only: it does not edit product code or perform delegated exploration.
+- Never use a worktree. Branch changes are in-place through `workflow_branch_setup` on `feature/*` or `bugfix/*`; never commit on protected branches.
+- Tracked state, briefs, ledgers, and review diffs live only under `<SDD_DIR>` in `docs/superpowers/sdd/<slug>/` and use `workflow_sdd_*` tools.
+- Use native `todowrite` for visible task state as well as the tracked ledger.
+- Use native `question` for branch/stash choices and guarded external mutations; call mutation tools only after approval with `confirmed: true`.
+- Use native `task` with only the built-in `explore` and `general` agents.
 
-## FORBIDDEN — SDD path
+## Setup
 
-- **NEVER** read or write `.superpowers/sdd/` or run Superpowers `sdd-workspace` script.
-- **NEVER** `cat .superpowers/sdd/progress.md` — empty/missing ledger there is NOT ground truth.
-- **ALWAYS** use MCP `workflow_sdd_context` with `plan_path: <PLAN_PATH>` — creates `<SDD_DIR>` on fresh projects.
-- Progress ledger, briefs, review diffs → **only** under `<SDD_DIR>` via `workflow_sdd_*` tools.
+1. Call `workflow_sdd_context` with `<PLAN_PATH>` and initialize `todowrite` from returned tasks.
+2. Call `workflow_plan_tasks`; cache each top-level task's `section_text`.
+3. Mark IDs in `completed_task_ids` completed and never redispatch them.
+4. Call `workflow_resolve_branch`. Preview any in-place checkout or stash with `question`, then call `workflow_branch_setup` with `confirmed: true` after approval.
 
-## REQUIRED — Cursor TodoWrite UI
+## Remaining-task loop
 
-SDD ledger = persistence. **TodoWrite = native Cursor task list UI.** Both are mandatory.
+For each top-level task absent from `completed_task_ids`:
 
-- After `workflow_sdd_context`, **immediately** call Cursor **TodoWrite** with the returned `todos` array (`merge: false`).
-- Do **not** skip TodoWrite because SDD exists — the user must see remaining/completed tasks in the UI.
-- Before dispatching a task: set that todo `in_progress` (`merge: true`).
-- After `workflow_sdd_append_progress` for that task: set todo `completed`; set next remaining todo `in_progress`.
-- Todo ids are `task-N` matching plan task ids.
+1. Mark it `in_progress` with `todowrite`.
+2. Create a tracked brief with `workflow_sdd_task_brief` and `confirmed: true`.
+3. Delegate read-only discovery, when needed, to an `explore` agent. Delegate implementation to a fresh `general` agent. Product changes follow TDD.
+4. Create a tracked diff with `workflow_sdd_review_package` and `confirmed: true`.
+5. Delegate spec-compliance review and code-quality review to separate `general` agents.
+6. Important, Critical, or spec-compliance findings block progress. Return them to the implementer and repeat both reviews until clean.
+7. Append the validated ledger entry with `workflow_sdd_append_progress` and `confirmed: true`; mark the todo completed.
 
-## REQUIRED Superpowers skills
+## Final gate
 
-**Load `subagent-driven-development` first.** You are the COORDINATOR — not an implementer.
+Run a separate full-branch code review, then `workflow_verify`. Report exact check results and never infer success. Use `workflow_git_context` for a commit preview and load `wf-commit` through `skill` for an approved commit. If tracked state contains a stash reference, preview reapplication through `question`, then call `workflow_branch_setup` with `confirmed: true` after approval.
 
-1. **subagent-driven-development** — Follow exactly: fresh subagent per task, two-stage review after each task, review loops until clean.
-2. **test-driven-development** — Implementer subagents follow TDD when the task says so.
-3. **verification-before-completion** — Before claiming the plan complete.
-
-## Coordinator setup (once, before Task 1)
-
-1. **SDD workspace (required, even on fresh projects):** Call MCP `workflow_sdd_context` with `plan_path: <PLAN_PATH>`. Cache `sdd_dir`, `progress_path`, `completed_task_ids`, **`todos`**.
-2. **Cursor TodoWrite (required for UI):** Call TodoWrite with `todos` from step 1, `merge: false`. Skip only if `todos` is empty (tool error — fix before continuing).
-3. **Call MCP `workflow_plan_tasks`** with `plan_path: <PLAN_PATH>`. Cache `tasks[]` — ground truth for `section_text`.
-4. **Branch setup (in-place, tools only):**
-   - Call MCP `workflow_resolve_branch` with `spec_path` + `plan_path`.
-   - If `needs_checkout: true` and `dirty: true` → native **AskQuestion** asks whether to stash → on yes: `workflow_branch_setup` with `target_branch`, `stash: yes`, `sdd_dir: <SDD_DIR>`; on no: stop.
-   - If `needs_checkout: true` and `dirty: false` → `workflow_branch_setup` with `stash: no`, `sdd_dir: <SDD_DIR>`.
-   - If `needs_checkout: false` → stay on current branch.
-5. Pass task content via `workflow_sdd_task_brief` → `brief_path` to subagents. **Subagents must not read the plan file.**
-
-## COORDINATOR HARD-GATES
-
-- Do NOT edit product code in this thread (globs: src/**, lib/**, app/**, packages/**, mcp/**, scripts/**).
-- Do NOT implement tasks yourself — Task tool → implementer subagent with `brief_path` + relevant spec excerpt.
-- Do NOT explore unfamiliar code yourself — Task tool → explore subagent (readonly).
-- Do NOT skip spec-compliance or code-quality reviewer subagents.
-- Do NOT proceed while spec compliance is ❌ or any **Critical** / **Important** code issue is open.
-- Do NOT use worktrees — `workflow_branch_setup` only.
-- Do NOT use `.superpowers/sdd` — `workflow_sdd_*` only.
-- Do NOT skip TodoWrite — Cursor UI task tracking is required alongside SDD.
-
-## Per-task loop (every task in MCP tasks[] not in completed_task_ids)
-
-1. **TodoWrite** — set current task `in_progress` (`merge: true`).
-2. **Brief** — `workflow_sdd_task_brief` with `sdd_dir`, `task_id`, `section_text` from `workflow_plan_tasks`.
-3. **Implementer** — Task tool with `brief_path` from tool (not plan file). Commits: **/wf-commit** (MCP `workflow_git_context` first).
-4. **Review package** — `workflow_sdd_review_package` with `base_sha` / `head_sha` → dispatch reviewers with `diff_path` from tool.
-5. **Spec compliance review** — loop until ✅.
-6. **Code quality review** — loop until no Critical/Important.
-7. **Progress** — `workflow_sdd_append_progress` with validated ledger line; TodoWrite mark current `completed` and next remaining `in_progress`.
-8. **Next task.**
-
-## After all tasks
-
-1. Final `code-reviewer` pass on full branch delta (requesting-code-review pattern).
-2. **finishing-a-development-branch** skill.
-3. workflow-toolkit **/wf-verify** then **/wf-commit** (commit skill, MCP-first).
-4. If `<SDD_DIR>/manifest.json` has `stash_ref` → native **AskQuestion** asks whether to reapply it → on yes: `workflow_branch_setup` action=`reapply_stash`, `sdd_dir: <SDD_DIR>`.
-
-## Task order (top-level only)
+## Task order
 
 <TASK_LIST>
-
-Start with Task 1. Do not re-plan.

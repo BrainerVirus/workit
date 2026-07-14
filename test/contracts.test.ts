@@ -1,8 +1,21 @@
 import { expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 const skill = (name: string) => readFileSync(path.join(import.meta.dir, "..", "skills", name, "SKILL.md"), "utf8");
+
+test("all native skills exist and contain no Cursor runtime vocabulary", () => {
+  const root = path.resolve(import.meta.dir, "..");
+  const dirs = readdirSync(path.join(root, "skills")).filter((name) => name.startsWith("wf-"));
+  expect(dirs).toHaveLength(12);
+  const source = dirs.map((dir) => readFileSync(path.join(root, "skills", dir, "SKILL.md"), "utf8")).join("\n");
+  for (const forbidden of ["Cursor TodoWrite", "Cursor AskQuestion", "${workspaceFolder}", "~/.cursor/plugins", "copy-paste prompt", "MCP tool", "/handoff-next-session", "/implement-from-plan"]) {
+    expect(source).not.toContain(forbidden);
+  }
+  for (const required of ["question", "todowrite", "task", "workflow_handoff_session", "workflow_verify"]) {
+    expect(source).toContain(required);
+  }
+});
 
 test("meetings logs the sole configured target with explicit confirmation", () => {
   const text = skill("wf-meetings");

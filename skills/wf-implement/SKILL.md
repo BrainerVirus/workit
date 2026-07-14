@@ -1,39 +1,38 @@
 ---
 name: wf-implement
-description: Execute a Superpowers plan as SDD coordinator with subagent-per-task and mandatory review loops. Use for /wf-implement or "implement from plan using subagent-driven-development".
+description: Coordinate a tracked Superpowers plan with delegated implementation and reviews.
 disable-model-invocation: true
 ---
 
 # Implement
 
-Execute a plan as **coordinator only** (subagent-driven-development). Do not edit product code in this thread.
+The parent agent is coordinator-only. It must not edit product code or perform delegated exploration.
 
-## Step 1 — Gather facts (required)
+## Native setup
 
-Call MCP tool `workflow_plan_tasks` with `plan_path` from the user's message and `spec_path` when known.
+1. Load this skill explicitly through OpenCode's `skill` tool.
+2. Call read-only `workflow_plan_tasks` and `workflow_sdd_context`; their structured results are ground truth.
+3. Initialize native `todowrite` from returned tasks and mark ledger-completed task IDs completed.
+4. Draft the in-place feature/bugfix branch action. If checkout would affect a dirty tree, use native `question` with concise choices and allow a custom answer.
+5. Call `workflow_resolve_branch`, then `workflow_branch_setup` only after approval with `confirmed: true`; never use worktrees.
+6. Report any setup failure stage or partial result; never infer success.
 
-**Workspace root:** defaults to the Cursor workspace. Pass `workspace_root` when plan/spec paths are relative to a different repository.
+State lives only in tracked `docs/superpowers/sdd/<slug>/`. Never use an untracked or legacy SDD directory. Load the package-neutral execution contract by name, not an installation-specific path.
 
-Use the returned `tasks[]` as ground truth. Cache each `section_text` for subagent prompts. Do not read the plan file for task text.
+## Per-task loop
 
-## Step 2 — Load execution contract
+For every plan task whose ID is absent from `completed_task_ids`:
 
-Resolve plugin root: `WORKFLOW_TOOLKIT_ROOT` env or `~/.cursor/plugins/local/workflow-toolkit/`.
+1. Mark it `in_progress` with `todowrite`.
+2. Create its brief with `workflow_sdd_task_brief` using `confirmed: true` and the parsed `section_text`.
+3. Use `task` with the built-in `explore` agent for read-only discovery when needed, then a fresh built-in `general` agent to implement from the brief. The parent remains coordinator-only.
+4. Require product changes to follow TDD: failing check first, minimal implementation, passing focused check.
+5. Create the review package with `workflow_sdd_review_package` using `confirmed: true`.
+6. Dispatch separate `general` agents for spec-compliance review and code-quality review. Important, Critical, or spec-compliance findings block the next task; send fixes back to the implementer and repeat both reviews until clean.
+7. Append the validated ledger line with `workflow_sdd_append_progress` using `confirmed: true`, then mark the task completed with `todowrite`.
 
-Load `templates/execution-contract.md`. Substitute `<SPEC_PATH>`, `<PLAN_PATH>`, `<BRANCH>`, `<SDD_DIR>`, `<TASK_LIST>` from MCP. If template missing, stop with error.
+Never redispatch completed task IDs. Pass task briefs and review diffs to agents; do not make them reparse the plan. Keep commits on the in-place feature/bugfix branch.
 
-## Step 3 — Follow contract
+## Final gate
 
-Announce: "Using implement + subagent-driven-development."
-
-**Before Task 1 — SDD + TodoWrite UI + branch (no worktrees):**
-
-1. `workflow_sdd_context` with `plan_path` — cache `sdd_dir`, `completed_task_ids`, **`todos`**
-2. **TodoWrite** with `todos` from step 1 (`merge: false`) — required for Cursor native task list UI (SDD is not a UI substitute)
-3. `workflow_resolve_branch` with spec + plan paths
-4. If `needs_checkout` and `dirty` → native **AskQuestion** asks whether to stash before checkout
-5. `workflow_branch_setup` with `target_branch`, `stash`, `sdd_dir` from step 1
-
-Follow the contract verbatim. Keep TodoWrite `in_progress`/`completed` in sync each task. At verify/commit phase use `workflow_verify` and `workflow_git_context` MCP tools.
-
-Do not emit a handoff fence — this is in-session execution.
+After all remaining tasks, dispatch a final full-branch code review, run `workflow_verify`, and report exact per-check results. Use `workflow_git_context` for the final commit preview and the `wf-commit` skill for any approved commit. If a tracked stash reference exists, preview reapplication with `question`, then call `workflow_branch_setup` with `confirmed: true` only after approval.

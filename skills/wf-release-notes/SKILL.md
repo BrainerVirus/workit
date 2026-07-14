@@ -1,57 +1,15 @@
 ---
 name: wf-release-notes
-description: Draft release notes via workflow_release_notes_context. Use for /wf-release-notes or "draft release notes".
+description: Draft user-facing release notes for an explicit range.
 ---
 
-# Release Notes — User-Facing Release Notes
+# Release notes
 
-Draft release notes for a given release, version, tag, or commit range.
+1. Load this skill explicitly through OpenCode's `skill` tool.
+2. Require an exact version, tag, or commit range, then call the read-only `workflow_release_notes_context`; its result is ground truth.
+3. Draft notes from structured facts and include both requested and resolved range metadata.
+4. Use native `question` only when the exact range must be supplied or corrected; allow a custom answer.
+5. This workflow has no mutation tool.
+6. Report the structured success, failure stage, or partial result; never infer success.
 
-## Step 1 — Gather facts (required)
-
-If the user did not provide an exact tag, version, or commit range, ask for it before calling the tool.
-
-Call MCP tool `workflow_release_notes_context` with arguments from the user's message (range, version, paths, etc.).
-
-**Workspace root:** defaults to the Cursor workspace. Pass `workspace_root` when the user names a different repository path.
-
-Use the tool return value as ground truth. Do not read git, run npm, or infer repo state yourself.
-If the tool errors, report the error and stop.
-
-Pass tag or range strings as `range_or_tag`.
-
-## Rules
-
-- Do not edit files unless the user explicitly asks for an edit target.
-- Do not create or publish a release.
-- Write for users, not maintainers.
-- Mention features, behavior changes, fixes, migration notes, installation/update notes, and known issues when supported by context.
-- Do not mention CI, tests, refactors, formatting, dependency bumps, or internal tooling unless they directly affect users.
-- If the requested release/range is missing or ambiguous, ask for the exact tag, version, or commit range.
-- If there are no user-facing changes, say that directly.
-
-## Output
-
-Return only:
-
-```md
-# <Release title>
-
-## Highlights
-
-- ...
-
-## Fixes
-
-- ...
-
-## Upgrade Notes
-
-- ...
-
-## Known Issues
-
-- ...
-```
-
-Omit empty sections except `Highlights`. If `Highlights` would be empty, output a short note explaining why.
+Write for users: supported highlights, fixes, upgrade notes, and known issues only. Omit empty sections except Highlights, and say directly when the resolved range contains no user-facing changes. Do not edit files, publish a release, or infer a range. `todowrite` and `task` are unnecessary here.
