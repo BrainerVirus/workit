@@ -23,15 +23,37 @@ const descriptions: Record<string, string> = {
 };
 
 const withoutHeredocBodies = (source: string) => {
+const heredocMarker = (line: string) => {
+  let single = false;
+  let double = false;
+  for (let i = 0; i < line.length - 1; i++) {
+    const char = line[i];
+    if (char === "\\") { i++; continue; }
+    if (char === "'" && !double) { single = !single; continue; }
+    if (char === '"' && !single) { double = !double; continue; }
+    if (single || double || char !== "<" || line[i + 1] !== "<") continue;
+    let cursor = i + 2;
+    const stripTabs = line[cursor] === "-";
+    if (stripTabs) cursor++;
+    while (/\s/.test(line[cursor] ?? "")) cursor++;
+    const quote = line[cursor] === "'" || line[cursor] === '"' ? line[cursor++] : "";
+    const start = cursor;
+    if (quote) while (cursor < line.length && line[cursor] !== quote) cursor++;
+    else while (cursor < line.length && !/[\s;&|()<>]/.test(line[cursor])) cursor++;
+    const delimiter = line.slice(start, cursor);
+    return delimiter ? { delimiter, stripTabs } : undefined;
+  }
+  return undefined;
+};
+
   const lines = source.split("\n");
   const kept: string[] = [];
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     kept.push(line);
-    const marker = line.match(/<<(-)?\s*['"]?([A-Za-z_][A-Za-z0-9_]*)['"]?/);
+    const marker = heredocMarker(line);
     if (!marker) continue;
-    const delimiter = marker[2];
-    while (++i < lines.length && (marker[1] ? lines[i].replace(/^\t+/, "") : lines[i]) !== delimiter) {
+    while (++i < lines.length && (marker.stripTabs ? lines[i].replace(/^\t+/, "") : lines[i]) !== marker.delimiter) {
       // Heredoc bodies are data, not shell commands.
     }
   }
@@ -81,8 +103,8 @@ const shellSegments = (source: string) => {
     }
     if (char === "'" || char === '"') { quote = char; continue; }
     if (char === "\\" && i + 1 < source.length) { word += source[++i]; continue; }
+    if (char === "\n" || ";&|(){}".includes(char)) { push(); segments.push([]); continue; }
     if (/\s/.test(char)) { push(); continue; }
-    if (";&|()".includes(char)) { push(); segments.push([]); continue; }
     word += char;
   }
   push();
@@ -92,8 +114,10 @@ const shellSegments = (source: string) => {
 const unwrapCommand = (words: string[]) => {
   let index = 0;
   while (/^[A-Za-z_][A-Za-z0-9_]*=/.test(words[index] ?? "")) index++;
+  const controlWords = new Set(["!", "if", "then", "elif", "else", "while", "until", "do", "time"]);
   while (index < words.length) {
     const command = path.basename(words[index]);
+    if (controlWords.has(words[index])) { index++; continue; }
     if (command === "command") {
       index++;
       while (words[index]?.startsWith("-") && words[index] !== "--") index++;

@@ -47,11 +47,14 @@ describe("plugin registration", () => {
       "/usr/bin/git worktree add /tmp/repo",
       "echo `git worktree add /tmp/repo`",
       "echo $(git worktree add /tmp/repo)",
+      "echo safe\ngit worktree add /tmp/repo",
+      "echo '<<EOF-1'\ngit worktree add /tmp/repo",
+      "if true; then git worktree add /tmp/repo; fi",
     ]) {
       await expect(before?.(
         { tool: "bash", sessionID: "session", callID: "call" },
         { args: { command } },
-      )).rejects.toThrow("worktrees are forbidden");
+      ), command).rejects.toThrow("worktrees are forbidden");
     }
   });
 
