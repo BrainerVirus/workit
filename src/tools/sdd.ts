@@ -88,7 +88,12 @@ export function createSddTools(state: WorkflowStateStore) {
         relativePath(context.worktree, plan_path);
         const parsed = sddContext({ slug: undefined, plan_path, workspace_root: context.worktree }) as Record<string, unknown>;
         if (parsed.error) return parsed;
-        const data = { ...parsed, ...planPaths(context.worktree, plan_path), sdd_dir: parsed.sdd_dir };
+        const todos = Array.isArray(parsed.todos)
+          ? parsed.todos.map((todo: Record<string, unknown>) => todo.status === "in_progress"
+            ? { ...todo, status: "pending" }
+            : todo)
+          : [];
+        const data = { ...parsed, todos, ...planPaths(context.worktree, plan_path), sdd_dir: parsed.sdd_dir };
         record(context, data);
         return data;
       }),

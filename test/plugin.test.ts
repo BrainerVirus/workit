@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import plugin from "../src/plugin";
 
 const names = [
@@ -19,6 +20,74 @@ describe("plugin registration", () => {
     expect(config.skills.paths).toHaveLength(1);
     expect(config.skills.paths[0]).toEndWith("workflow-toolkit-opencode/skills");
   });
+
+  test("registration is idempotent with a preexisting skill path", async () => {
+    const hooks = await plugin({ worktree: "/repo", serverUrl: new URL("http://localhost") } as never);
+    const skillPath = path.resolve(import.meta.dir, "../skills");
+    const config: Record<string, any> = { skills: { paths: [skillPath] } };
+
+    await hooks.config?.(config);
+    await hooks.config?.(config);
+
+    expect(Object.keys(config.command).sort()).toEqual([...names].sort());
+    expect(config.skills.paths).toEqual([skillPath]);
+  });
+
+  test("all native tool schemas return the standard JSON envelope for safe fixtures", async () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "wf-plugin-tools-"));
+    try {
+      spawnSync("git", ["init", "-q", "-b", "feature/fixture"], { cwd: root });
+      writeFileSync(path.join(root, "README.md"), "# Fixture\n");
+      const hooks = await plugin({ worktree: root, serverUrl: new URL("http://localhost") } as never);
+      const fixtures: Record<string, Record<string, unknown>> = {
+        workflow_toolkit_init_status: {},
+        workflow_toolkit_status: {},
+        workflow_git_context: { paths: [] },
+        workflow_verify: { dry_run: true },
+        workflow_pr_context: {},
+        workflow_changelog_context: {},
+        workflow_release_notes_context: { range_or_tag: "HEAD" },
+        workflow_docs_context: {},
+        workflow_changelog_apply: { confirmed: false },
+        workflow_branch_setup: { confirmed: false },
+        workflow_commit: { confirmed: false, message: "test: fixture" },
+        workflow_pr_create: { confirmed: false, title: "Fixture" },
+        workflow_toolkit_init_apply: { confirmed: false, action: "youtrack_scaffold" },
+        workflow_plan_tasks: { plan_path: "missing-plan.md" },
+        workflow_resolve_branch: { spec_path: "missing-spec.md", plan_path: "missing-plan.md" },
+        workflow_sdd_context: { plan_path: "missing-plan.md" },
+        workflow_sdd_task_brief: {
+          confirmed: false, sdd_dir: "docs/superpowers/sdd/fixture", task_id: 1, section_text: "Task",
+        },
+        workflow_sdd_review_package: {
+          confirmed: false, sdd_dir: "docs/superpowers/sdd/fixture", base_sha: "HEAD", head_sha: "HEAD",
+        },
+        workflow_sdd_append_progress: {
+          confirmed: false, progress_path: "docs/superpowers/sdd/fixture/progress.md", line: "Task 1: complete",
+        },
+        workflow_handoff_session: { message: "safe fixture", stay: true },
+        workflow_youtrack_verify_token: {},
+        workflow_youtrack_parse_issue: { issue_ref: "TEST-1" },
+        workflow_youtrack_context: { mode: "task", issue_id: "TEST-1" },
+        workflow_youtrack_parse_duration: { text: "30m" },
+        workflow_youtrack_draft: { issueId: "TEST-1", userNotes: "Fixture" },
+        workflow_youtrack_log_time: { confirmed: false, issueId: "TEST-1", minutes: 30 },
+        workflow_youtrack_post: { confirmed: false, issueId: "TEST-1", markdown: "Fixture" },
+      };
+
+      expect(Object.keys(hooks.tool ?? {}).sort()).toEqual(Object.keys(fixtures).sort());
+      for (const [name, definition] of Object.entries(hooks.tool ?? {})) {
+        const raw = await definition.execute(fixtures[name] as never, {
+          worktree: root, sessionID: "fixture-session",
+        } as never);
+        const result = JSON.parse(raw as string);
+        expect(Object.keys(result).sort(), name).toEqual(["data", "error", "ok"]);
+      }
+      expect(existsSync(path.join(root, ".cursor/plugins/local/workflow-toolkit"))).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 20_000);
 
   test("compaction includes only active workflow paths", async () => {
     const root = mkdtempSync(path.join(os.tmpdir(), "wf-plugin-"));
