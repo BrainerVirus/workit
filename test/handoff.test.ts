@@ -185,7 +185,7 @@ test("native handoff resolves package context, records paths, and seeds from Too
   };
 
   const raw = await createHandoffTools(client, state, runtime).workflow_handoff_session.execute(
-    { message: "please continue", stay: true },
+    { message: "please continue --stay" },
     { directory: "/repo", worktree: "/repo", sessionID: "parent" } as never,
   );
 
@@ -195,7 +195,7 @@ test("native handoff resolves package context, records paths, and seeds from Too
     error: null,
   });
   expect(calls).toEqual([
-    "script:/repo:collect-handoff-context.sh:please continue",
+    "script:/repo:collect-handoff-context.sh:please continue --stay",
     "create:parent:Continue x",
     "seed:child-5:Continue now\n**Spec:** docs/superpowers/specs/x-design.md\n**Plan:** docs/superpowers/plans/x.md\n**SDD:** `docs/superpowers/sdd/x` (tracked)",
   ]);
@@ -203,6 +203,56 @@ test("native handoff resolves package context, records paths, and seeds from Too
     spec: "docs/superpowers/specs/x-design.md",
     plan: "docs/superpowers/plans/x.md",
     sdd: "docs/superpowers/sdd/x",
+  });
+});
+
+test("native handoff ignores a hallucinated stay argument when the message has no --stay flag", async () => {
+  const calls: string[] = [];
+  const client = {
+    session: {
+      async create() { return { data: { id: "child-select" } }; },
+      async promptAsync() { return { data: undefined }; },
+    },
+    tui: {
+      async selectSession(input: { body: { sessionID: string } }) {
+        calls.push(input.body.sessionID);
+        return { data: true };
+      },
+    },
+  };
+  const runtime = {
+    runScript(root: string) {
+      return {
+        exitCode: 0,
+        stdout: [
+          "PROMPT_START",
+          "Continue now",
+          "**Spec:** docs/superpowers/specs/x-design.md",
+          "**Plan:** docs/superpowers/plans/x.md",
+          "**SDD:** `docs/superpowers/sdd/x` (tracked)",
+          "PROMPT_END",
+          "",
+        ].join("\n"),
+        stderr: "",
+        cwd: root,
+      };
+    },
+  };
+
+  const raw = await createHandoffTools(
+    client,
+    new WorkflowStateStore(),
+    runtime,
+  ).workflow_handoff_session.execute(
+    { message: "Load the wf-handoff skill and follow it. Arguments:", stay: true } as never,
+    { directory: "/repo", worktree: "/repo", sessionID: "parent" } as never,
+  );
+
+  expect(calls).toEqual(["child-select"]);
+  expect(JSON.parse(raw as string)).toEqual({
+    ok: true,
+    data: { sessionID: "child-select", seeded: true, selected: true },
+    error: null,
   });
 });
 
@@ -228,7 +278,7 @@ test("native handoff resolves relative paths from the session directory, not the
   };
 
   await createHandoffTools(client, new WorkflowStateStore(), runtime).workflow_handoff_session.execute(
-    { message: "continue", stay: true },
+    { message: "continue" },
     { directory: "/repo/session", worktree: "/repo", sessionID: "parent" } as never,
   );
 

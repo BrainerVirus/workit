@@ -136,9 +136,9 @@ export function createHandoffTools(
 ) {
   return {
     workflow_handoff_session: tool({
-      description: "Create, seed, and optionally select a continuation session",
-      args: { message: tool.schema.string(), stay: tool.schema.boolean().optional() },
-      execute: async ({ message: userMessage, stay }, context) => {
+      description: "Create, seed, and select a continuation session; --stay in the message skips selection",
+      args: { message: tool.schema.string() },
+      execute: async ({ message: userMessage }, context) => {
         const resolved = runtime.runScript(context.directory, "collect-handoff-context.sh", [userMessage]);
         if (resolved.exitCode !== 0) {
           return output(fail(resolved.stderr.trim() || resolved.stdout.trim() || "handoff context failed"));
@@ -151,7 +151,7 @@ export function createHandoffTools(
             directory: context.directory,
             title: `Continue ${path.basename(active.plan, ".md")}`,
             prompt: active.prompt,
-            stay: stay === true,
+            stay: /(?:^|\s)--stay(?:\s|$)/.test(userMessage),
           }));
         } catch (error) {
           return output(fail(message(error)));

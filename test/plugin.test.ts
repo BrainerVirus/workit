@@ -265,7 +265,7 @@ describe("plugin registration", () => {
             progress_path: "docs/superpowers/sdd/fixture/progress.md",
             line: "Task 1: complete",
           },
-          workflow_handoff_session: { message: "safe fixture", stay: true },
+          workflow_handoff_session: { message: "safe fixture --stay" },
           workflow_youtrack_verify_token: {},
           workflow_youtrack_parse_issue: { issue_ref: "TEST-1" },
           workflow_youtrack_context: { mode: "task", issue_id: "TEST-1" },
@@ -366,8 +366,7 @@ describe("plugin registration", () => {
       const raw = await hooks.tool?.workflow_handoff_session.execute(
         {
           message:
-            "docs/superpowers/specs/x-design.md docs/superpowers/plans/x.md",
-          stay: true,
+            "docs/superpowers/specs/x-design.md docs/superpowers/plans/x.md --stay",
         },
         { directory: root, worktree: root, sessionID: "parent" } as never,
       );
