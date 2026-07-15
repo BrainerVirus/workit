@@ -7,18 +7,22 @@ import { adaptPluginHandoffClient, createHandoffTools, handoffSession } from "..
 import { WorkflowStateStore } from "../src/state";
 
 const request = {
-  parentID: "parent",
   directory: "/repo",
   title: "Continue x",
   prompt: "Continue",
   stay: false,
 };
 
-test("handoff creates, seeds, then selects the exact child session", async () => {
+test("handoff creates a top-level session, seeds it, then selects it", async () => {
   const calls: string[] = [];
+  const createBodies: unknown[] = [];
   const client = {
     session: {
-      async create() { calls.push("create"); return { data: { id: "child-1" } }; },
+      async create(input: { body: unknown }) {
+        calls.push("create");
+        createBodies.push(input.body);
+        return { data: { id: "child-1" } };
+      },
       async promptAsync(input: { path: { id: string } }) {
         calls.push(`seed:${input.path.id}`);
         return { data: undefined };
@@ -35,6 +39,7 @@ test("handoff creates, seeds, then selects the exact child session", async () =>
   const result = await handoffSession(client, request);
 
   expect(calls).toEqual(["create", "seed:child-1", "select:child-1"]);
+  expect(createBodies).toEqual([{ title: "Continue x" }]);
   expect(result).toEqual({
     ok: true,
     data: { sessionID: "child-1", seeded: true, selected: true },
@@ -152,8 +157,8 @@ test("native handoff resolves package context, records paths, and seeds from Too
   const calls: string[] = [];
   const client = {
     session: {
-      async create(input: { body: { parentID: string; title: string } }) {
-        calls.push(`create:${input.body.parentID}:${input.body.title}`);
+      async create(input: { body: { title: string } }) {
+        calls.push(`create:${input.body.title}`);
         return { data: { id: "child-5" } };
       },
       async promptAsync(input: { path: { id: string }; body: { parts: [{ text: string }] } }) {
@@ -196,7 +201,7 @@ test("native handoff resolves package context, records paths, and seeds from Too
   });
   expect(calls).toEqual([
     "script:/repo:collect-handoff-context.sh:please continue --stay",
-    "create:parent:Continue x",
+    "create:Continue x",
     "seed:child-5:Continue now\n**Spec:** docs/superpowers/specs/x-design.md\n**Plan:** docs/superpowers/plans/x.md\n**SDD:** `docs/superpowers/sdd/x` (tracked)",
   ]);
   expect(state.get("parent")).toEqual({
@@ -307,7 +312,7 @@ test("plugin client adapter publishes the native session selection event", async
   } as never);
 
   expect(await client.session.create({
-    body: { parentID: "parent", title: "Continue x" },
+    body: { title: "Continue x" },
     query: { directory: "/repo" },
   })).toEqual({ data: { id: "child-live" } });
   expect(await client.session.promptAsync({
@@ -320,7 +325,7 @@ test("plugin client adapter publishes the native session selection event", async
     query: { directory: "/repo" },
   })).toEqual({ data: true });
   expect(calls).toEqual([
-    ["create", { body: { parentID: "parent", title: "Continue x" }, query: { directory: "/repo" } }],
+    ["create", { body: { title: "Continue x" }, query: { directory: "/repo" } }],
     ["promptAsync", {
       path: { id: "child-live" }, query: { directory: "/repo" },
       body: { parts: [{ type: "text", text: "Continue" }] },

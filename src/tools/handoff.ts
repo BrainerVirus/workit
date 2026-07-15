@@ -12,7 +12,7 @@ type ApiUnknownResult = Promise<ApiResponse<unknown> | void>;
 export type HandoffClient = {
   session: {
     create(input: {
-      body: { parentID: string; title: string };
+      body: { title: string };
       query: { directory: string };
     }): ApiResult<{ id: string }>;
     promptAsync(input: {
@@ -43,7 +43,6 @@ export const adaptPluginHandoffClient = (client: PluginInput["client"]): Handoff
 });
 
 export type HandoffRequest = {
-  parentID: string;
   directory: string;
   title: string;
   prompt: string;
@@ -71,7 +70,7 @@ export async function handoffSession(
   let sessionID: string | undefined;
   try {
     const created = await client.session.create({
-      body: { parentID: request.parentID, title: request.title },
+      body: { title: request.title },
       query: { directory: request.directory },
     });
     if (apiError(created)) throw apiError(created);
@@ -147,7 +146,6 @@ export function createHandoffTools(
           const active = handoffContext(resolved.stdout);
           state.set(context.sessionID, { spec: active.spec, plan: active.plan, sdd: active.sdd });
           return output(await handoffSession(client, {
-            parentID: context.sessionID,
             directory: context.directory,
             title: `Continue ${path.basename(active.plan, ".md")}`,
             prompt: active.prompt,
