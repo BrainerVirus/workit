@@ -64,6 +64,12 @@ test("status uses only the aggregate toolkit status tool", () => {
   expect(text).not.toContain("workflow_youtrack_verify_token");
 });
 
+test("handoff always ends the originating turn and never falls back inline", () => {
+  const text = skill("wf-handoff");
+  expect(text).toContain("After any `workflow_handoff_session` result—success, partial, or failure—end the originating turn immediately");
+  expect(text).toContain("Never create todos, execute the plan inline, modify files, retry handoff, or call another tool");
+});
+
 test("native runtime outputs use OpenCode-neutral vocabulary", () => {
   const root = path.resolve(import.meta.dir, "..");
   const sources = [
