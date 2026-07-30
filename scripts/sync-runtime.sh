@@ -13,7 +13,6 @@ LOCK="${XDG_RUNTIME_DIR:-/tmp}/workflow-toolkit-sync.lock"
 
 exec 9>"$LOCK"
 if ! flock -n 9; then
-  # Another sync in progress — skip
   exit 0
 fi
 
@@ -34,6 +33,7 @@ fi
 
 if [ "$SRC" != "$SHARE" ]; then
   mkdir -p "$SHARE"
+  # Keep .git if share is a clone; never wipe it when syncing from the monorepo
   rsync -a --delete \
     --exclude '.git' \
     --exclude 'node_modules' \
@@ -55,23 +55,8 @@ if [ ! -d "$PLUGIN_DIR/mcp/node_modules" ]; then
   (cd "$PLUGIN_DIR/mcp" && npm install --silent) || true
 fi
 
-# OpenCode live loader — bypasses bun plugin cache
-mkdir -p "$OPENCODE_PLUGINS"
-python3 - "$SHARE" "${OPENCODE_PLUGINS}/workflow-toolkit.ts" <<'PY'
-import json, sys
-share, out = sys.argv[1], sys.argv[2]
-open(out, "w").write(
-    "import { spawnSync } from \"node:child_process\"\n"
-    "import path from \"node:path\"\n"
-    "import { pathToFileURL } from \"node:url\"\n"
-    f"\nconst share = {json.dumps(share)}\n"
-    "spawnSync(\"bash\", [path.join(share, \"scripts\", \"sync-runtime.sh\")], {\n"
-    "  stdio: \"ignore\",\n"
-    "})\n"
-    "const mod = await import(pathToFileURL(path.join(share, \"src\", \"plugin.ts\")).href)\n"
-    "export default mod.default\n"
-)
-PY
+# Remove broken TLA live-loader if present (OpenCode ignored it; /wf-* vanished)
+rm -f "${OPENCODE_PLUGINS}/workflow-toolkit.ts"
 
 # Ensure OpenCode has plugin peer dep
 PKG="${HOME}/.config/opencode/package.json"
@@ -88,5 +73,8 @@ with open(path, "w") as f:
     f.write("\n")
 PY
 fi
+
+# Drop bun package cache so old github/file installs cannot shadow file:// plugin.ts
+rm -rf "${HOME}/.cache/opencode/packages/workflow-toolkit-opencode@"* 2>/dev/null || true
 
 exit 0

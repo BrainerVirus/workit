@@ -12,7 +12,7 @@ Config directory (both platforms): `~/.config/workflow-toolkit/`
 
 ## Getting started
 
-Install once. After that, **Cursor auto-syncs on every new chat** and **OpenCode reloads from disk on every start** (live monorepo or `git pull` of the share clone). OpenCode does **not** auto-update npm/git pins from cache — we use a local live loader instead.
+Install once. After that, **Cursor auto-syncs on every new chat** and **OpenCode syncs via your `opencode()` shell wrapper**, then loads the plugin from disk with `file://…/src/plugin.ts` (no stuck bun cache).
 
 <details>
   <summary><strong>Cursor</strong> (full plugin + MCP + auto-update)</summary>
@@ -49,7 +49,7 @@ Or from your monorepo clone:
 </details>
 
 <details>
-  <summary><strong>OpenCode</strong> (live loader — no bun cache pin)</summary>
+  <summary><strong>OpenCode</strong> (file:// load + sync on launch)</summary>
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/BrainerVirus/workflow-toolkit/main/scripts/install-opencode-plugin.sh | bash
@@ -61,11 +61,15 @@ Or from a clone:
 ./scripts/install-opencode-plugin.sh
 ```
 
-This writes `~/.config/opencode/plugins/workflow-toolkit.ts`, which syncs then imports `~/.local/share/workflow-toolkit/src/plugin.ts` on **every OpenCode start**. Repo edits (or `git pull` in the share) show up after restart — no cache clear, no version bump.
+This pins OpenCode to:
 
-It also removes any `workflow-toolkit-opencode@github:…` / `file://…` pins from `opencode.json` so they cannot shadow the live loader.
+```json
+"file:///HOME/.local/share/workflow-toolkit/src/plugin.ts"
+```
 
-Restart OpenCode. Prefer `opencode --auto` for permission auto-approve.
+That loads the plugin **directly from disk** (no bun package cache). Your `~/.zshrc` `opencode()` wrapper runs `sync-runtime.sh` before each launch so the share tree matches the monorepo.
+
+Restart OpenCode (new shell so `.zshrc` reloads), then type `/wf-commit`.
 
 </details>
 
@@ -74,10 +78,10 @@ Restart OpenCode. Prefer `opencode --auto` for permission auto-approve.
 
 | | Cursor | OpenCode |
 | --- | --- | --- |
-| Trigger | `sessionStart` hook | Plugin load on process start |
-| Source | Dev monorepo if present, else `git pull` share | Same sync, then live `import` |
+| Trigger | `sessionStart` hook | `opencode()` wrapper sync, then start |
+| Source | Dev monorepo if present, else `git pull` share | Same |
 | Share path | `~/.local/share/workflow-toolkit` | same |
-| IDE package | copy → `~/.cursor/plugins/local/workflow-toolkit` | n/a |
+| Load mechanism | copy → `~/.cursor/plugins/local/…` | `file://…/src/plugin.ts` in `opencode.json` |
 | Manual sync | `./scripts/sync-runtime.sh` | same |
 
 Dev path override: `WORKFLOW_TOOLKIT_DEV=/path/to/clone`.
