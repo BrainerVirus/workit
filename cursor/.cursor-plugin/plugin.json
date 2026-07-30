@@ -1,0 +1,10 @@
+{
+  "name": "wf",
+  "displayName": "Workflow Toolkit",
+  "description": "OpenCode-style verify, PR, changelog, commit, and session handoff for Cursor",
+  "version": "0.3.18",
+  "skills": "./skills/",
+  "rules": "./rules/",
+  "mcpServers": "./mcp.json",
+  "hooks": "./hooks/hooks-cursor.json"
+}

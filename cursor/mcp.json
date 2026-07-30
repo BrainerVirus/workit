@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "workflow-toolkit": {
+      "command": "/home/cristhofer-pincetti/.config/opencode/workflow-toolkit-opencode/cursor/mcp/run-server.sh",
+      "args": ["${workspaceFolder}"]
+    }
+  }
+}

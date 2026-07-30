@@ -1,0 +1,45 @@
+---
+description: ALL user choices must use Cursor AskQuestion — never A/B/C in chat
+alwaysApply: true
+---
+
+# AskQuestion only (HARD-GATE)
+
+**Overrides** Superpowers brainstorming “ask in chat / A/B/C text options” and any skill that suggests conversational multiple choice.
+
+## Required path for every decision
+
+When the user must choose (clarifying questions, product identity, layout, yes/no, confirm, branch, stash, YouTrack, approaches, or how to execute a completed plan):
+
+1. Call Cursor's native **`AskQuestion`** with a workflow-specific title, prompt, and options.
+2. Wait for the tool result — do **not** also paste the options in the chat message.
+3. If native `AskQuestion` is unavailable in the current mode, ask one concise plain-text question.
+
+## Forbidden (always)
+
+- Letter options in markdown: `A)`, `B)`, `C)`, `Reply with A, B, or C`
+- Bullet / numbered choice lists meant as the answer UI
+- “First clarifying question” blocks that list options in prose
+- Asking the user to type yes/no when `yes_no` + AskQuestion exists
+
+## Mapping
+
+| Need | Kind |
+|------|------|
+| 2+ custom choices (brainstorming, identity, layout, …) | `pick_option` + title, prompt, `id:label` args |
+| Yes / no | `yes_no` |
+| Branch / stash / YouTrack / VCS | named kinds from the tool |
+| Plan completed; choose execution method | `plan_execution` + saved plan path |
+
+One AskQuestion per turn when possible. Open-ended free text (no options) may stay in chat — **as soon as there are options, AskQuestion is mandatory**.
+
+## Superpowers writing-plans override
+
+After writing a plan, **do not emit** Superpowers' inline text beginning “Two execution options”.
+
+Call Cursor `AskQuestion` directly with the saved plan path. The native UI presents:
+
+- Subagent-driven
+- Inline execution
+- Workflow handoff (`/wf-handoff`)
+- Cursor's built-in **Other** response, always last

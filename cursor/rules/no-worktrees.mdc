@@ -1,0 +1,26 @@
+---
+description: NEVER use git worktrees — in-place feature/* or bugfix/* checkout only
+alwaysApply: true
+---
+
+# No worktrees (HARD-GATE)
+
+**Overrides** Superpowers `using-git-worktrees` skill and any execution contract that mentions worktrees.
+
+## Policy
+
+- **NEVER** invoke `using-git-worktrees`
+- **NEVER** run `git worktree add` or any worktree command
+- Branch work is **in-place only**: `feature/*` or `bugfix/*`
+- Never commit on `main`, `develop`, `master`, or `prod`
+
+## Required flow (before Task 1)
+
+1. MCP `workflow_resolve_branch` with spec + plan paths
+2. If `needs_checkout` and `dirty` → native **AskQuestion** asks whether to stash before checkout
+3. MCP `workflow_branch_setup` with `target_branch` and `stash: yes|no`
+4. After all tasks, if manifest has `stash_ref` → AskQuestion → `workflow_branch_setup` action=`reapply_stash`
+
+## Tools only
+
+Do not infer branch or stash state from manual `git status`. Use MCP tools.

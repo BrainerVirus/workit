@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Plugin } from "@opencode-ai/plugin";
+import { getWorkflowBootstrap, isWorkflowBootstrap } from "./bootstrap";
 import { createTools } from "./tools";
 import { adaptPluginHandoffClient } from "./tools/handoff";
 import { WorkflowStateStore } from "./state";
@@ -84,6 +85,18 @@ const plugin: Plugin = async ({ client }) => {
     "experimental.session.compacting": async ({ sessionID }, output) => {
       const context = state.compactionContext(sessionID);
       if (context) output.context.push(context);
+    },
+    // ponytail: mirrors Superpowers bootstrap — inject once on the first user turn
+    "experimental.chat.messages.transform": async (_input, output) => {
+      const bootstrap = getWorkflowBootstrap();
+      if (!bootstrap || !output.messages.length) return;
+      const firstUser = output.messages.find((m) => m.info.role === "user");
+      if (!firstUser?.parts.length) return;
+      if (firstUser.parts.some(
+        (part) => part.type === "text" && isWorkflowBootstrap(part.text),
+      )) return;
+      const ref = firstUser.parts[0];
+      firstUser.parts.unshift({ ...ref, type: "text", text: bootstrap });
     },
   };
 };

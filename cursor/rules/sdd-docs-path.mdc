@@ -1,0 +1,22 @@
+---
+description: SDD artifacts live under docs/superpowers/sdd — never .superpowers/sdd
+alwaysApply: true
+---
+
+# SDD path (HARD-GATE)
+
+**Overrides** Superpowers `subagent-driven-development` ledger check at `.superpowers/sdd/progress.md`.
+
+## Required
+
+1. MCP `workflow_sdd_context` with `plan_path` — **always**, including fresh projects
+2. Use returned `sdd_dir` (`docs/superpowers/sdd/<plan-basename>/`) for all SDD artifacts
+3. `workflow_sdd_task_brief`, `workflow_sdd_review_package`, `workflow_sdd_append_progress` — never Superpowers `sdd-workspace` script
+
+## Forbidden
+
+- `.superpowers/sdd/` for progress, briefs, or review diffs
+- `cat .superpowers/sdd/progress.md` — missing file there does NOT mean "start fresh"
+- Superpowers `task-brief` / `review-package` scripts under `.agents/skills/`
+
+Fresh project with no ledger → `workflow_sdd_context` **creates** `docs/superpowers/sdd/<slug>/progress.md`.

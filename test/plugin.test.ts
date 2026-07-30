@@ -281,6 +281,14 @@ describe("plugin registration", () => {
             issueId: "TEST-1",
             markdown: "Fixture",
           },
+          workflow_present_ascii: {
+            title: "Fixture",
+            rows: [{ type: "header", label: "Title" }],
+          },
+          workflow_present_flow: {
+            nodes: [{ id: "a", label: "Start" }],
+            edges: [],
+          },
         };
 
         const results: Record<string, Record<string, unknown>> = {};
