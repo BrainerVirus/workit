@@ -1,15 +1,11 @@
 #!/usr/bin/env bash
-# Install / refresh Cursor plugin from this repo or from GitHub.
-# Copies into ~/.cursor/plugins/local (real dir — symlinks break IDE discovery)
-# and keeps a sync copy at ~/.local/share/workflow-toolkit for MCP + scripts.
+# Install / refresh Cursor plugin (+ OpenCode live loader via sync-runtime).
 set -euo pipefail
 
 REPO_SLUG="${WORKFLOW_TOOLKIT_REPO:-BrainerVirus/workflow-toolkit}"
 SHARE="${HOME}/.local/share/workflow-toolkit"
-PLUGIN_DIR="${HOME}/.cursor/plugins/local/workflow-toolkit"
 SKILLS_DIR="${HOME}/.cursor/skills"
 
-# When piped via curl|bash -s, $0 is not a path — force GitHub install.
 FROM_GITHUB=0
 LOCAL_ROOT=""
 if [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "${BASH_SOURCE[0]}" ]; then
@@ -39,44 +35,22 @@ if [ "$FROM_GITHUB" -eq 1 ]; then
     rm -rf "$SHARE"
     git clone --depth 1 "git@github.com:${REPO_SLUG}.git" "$SHARE"
   fi
-  SRC="$SHARE"
+  ROOT="$SHARE"
 else
-  SRC="$LOCAL_ROOT"
-  mkdir -p "$SHARE"
-  rsync -a --delete \
-    --exclude '.git' \
-    --exclude 'node_modules' \
-    --exclude 'cursor/mcp/node_modules' \
-    --exclude '.cache' \
-    "$SRC/" "$SHARE/"
-  SRC="$SHARE"
+  ROOT="$LOCAL_ROOT"
 fi
 
-mkdir -p "${HOME}/.cursor/plugins/local"
-rm -rf "$PLUGIN_DIR"
-mkdir -p "$PLUGIN_DIR"
-rsync -a --delete \
-  --exclude 'mcp/node_modules' \
-  "$SRC/cursor/" "$PLUGIN_DIR/"
-printf '%s\n' "$SRC" >"$PLUGIN_DIR/.workflow-toolkit-root"
-
-chmod +x \
-  "$PLUGIN_DIR/hooks/session-start" \
-  "$PLUGIN_DIR/mcp/run-server.sh" \
-  "$SRC/scripts/run-cursor-mcp.sh" \
-  "$SRC/scripts/install-cursor-plugin.sh" \
-  "$SRC/scripts/install-opencode-plugin.sh" 2>/dev/null || true
-
-(cd "$PLUGIN_DIR/mcp" && npm install --silent)
+chmod +x "$ROOT/scripts/sync-runtime.sh" "$ROOT/scripts/"*.sh
+# Prefer syncing from this ROOT (dev or freshly cloned share)
+WORKFLOW_TOOLKIT_DEV="$ROOT" "$ROOT/scripts/sync-runtime.sh"
 
 # Drop stale CLI skill symlinks (duplicate /wf-* entries)
 if [ -d "$SKILLS_DIR" ]; then
   rm -f "$SKILLS_DIR"/wf-*
 fi
 
-python3 - "$PLUGIN_DIR" <<'PY'
-import json, os, sys
-plugin = sys.argv[1]
+python3 - <<'PY'
+import json, os
 path = os.path.expanduser("~/.cursor/settings.json")
 data = {}
 if os.path.exists(path):
@@ -85,6 +59,7 @@ if os.path.exists(path):
 prev = data.get("enabled_plugins")
 if not isinstance(prev, dict):
     prev = {}
+plugin = os.path.expanduser("~/.cursor/plugins/local/workflow-toolkit")
 data["enabled_plugins"] = {
     **prev,
     "workflow-toolkit": True,
@@ -103,7 +78,6 @@ data = {"mcpServers": {}}
 if os.path.exists(path):
     with open(path) as f:
         data = json.load(f)
-# Stable share path — works with Cursor install-mcp deeplink too
 data.setdefault("mcpServers", {})["workflow-toolkit"] = {
     "command": "bash",
     "args": [
@@ -117,7 +91,6 @@ with open(path, "w") as f:
     f.write("\n")
 PY
 
-echo "Share tree:  $SRC"
-echo "Cursor plugin: $PLUGIN_DIR"
-echo "Fully quit Cursor IDE + Agent CLI, then reopen."
-ls "$PLUGIN_DIR/skills" | grep '^wf-' || true
+echo "Cursor plugin installed + auto-sync enabled (sessionStart)."
+echo "Share: $SHARE"
+ls "$HOME/.cursor/plugins/local/workflow-toolkit/skills" | grep '^wf-' || true

@@ -1,20 +1,19 @@
 #!/usr/bin/env bash
-# Pin workflow-toolkit OpenCode plugin in ~/.config/opencode/opencode.json
+# Install OpenCode live loader (no bun cache pin — updates on every OpenCode start).
 set -euo pipefail
 
-REPO_SLUG="${WORKFLOW_TOOLKIT_REPO:-BrainerVirus/workflow-toolkit}"
-REF="${1:-v0.3.18}"
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+ROOT="$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)"
 CONFIG="${HOME}/.config/opencode/opencode.json"
-PIN="workflow-toolkit-opencode@github:${REPO_SLUG}#${REF}"
 
-mkdir -p "$(dirname "$CONFIG")"
-if [ ! -f "$CONFIG" ]; then
-  printf '%s\n' "{}" >"$CONFIG"
-fi
+chmod +x "$ROOT/scripts/sync-runtime.sh"
+"$ROOT/scripts/sync-runtime.sh"
 
-python3 - "$CONFIG" "$PIN" <<'PY'
+# Drop github/file pins for this package — live loader replaces them
+if [ -f "$CONFIG" ]; then
+  python3 - "$CONFIG" <<'PY'
 import json, sys
-path, pin = sys.argv[1], sys.argv[2]
+path = sys.argv[1]
 with open(path) as f:
     data = json.load(f)
 plugins = data.get("plugin")
@@ -22,23 +21,22 @@ if plugins is None:
     plugins = []
 elif isinstance(plugins, str):
     plugins = [plugins]
-elif not isinstance(plugins, list):
-    plugins = list(plugins)
-
-# Drop old file:// or prior github pins for this package
 kept = []
 for p in plugins:
     s = str(p)
-    if "workflow-toolkit-opencode@" in s or s.endswith("workflow-toolkit-opencode"):
+    if "workflow-toolkit-opencode" in s:
         continue
     kept.append(p)
-kept.append(pin)
 data["plugin"] = kept
 with open(path, "w") as f:
     json.dump(data, f, indent=2)
     f.write("\n")
-print(f"Pinned: {pin}")
-print(f"Wrote: {path}")
+print("Removed workflow-toolkit-opencode pin(s); using ~/.config/opencode/plugins/workflow-toolkit.ts")
 PY
+fi
 
-echo "Restart OpenCode (or start a new session) to load the plugin."
+# Clear stale bun installs so they cannot shadow the live loader
+rm -rf "${HOME}/.cache/opencode/packages/workflow-toolkit-opencode@"* 2>/dev/null || true
+
+echo "OpenCode live loader ready at ~/.config/opencode/plugins/workflow-toolkit.ts"
+echo "Restart OpenCode to load. Edits in the monorepo sync on each start."
