@@ -11,11 +11,11 @@ export function createPresentTools() {
       args: {
         title: tool.schema.string().optional(),
         width: tool.schema.number().optional(),
-        rows: tool.schema.array(tool.schema.record(tool.schema.any())),
+        rows: tool.schema.array(tool.schema.record(tool.schema.string(), tool.schema.any())),
       },
       execute: async (spec) => {
         const result = asciiWireframe(spec);
-        if (result.error) return output(fail(result.error));
+        if ("error" in result) return output(fail(result.error));
         return output(ok(result.data));
       },
     }),
@@ -37,7 +37,7 @@ export function createPresentTools() {
       },
       execute: async (spec) => {
         const result = flowDiagram(spec);
-        if (result.error) return output(fail(result.error));
+        if ("error" in result) return output(fail(result.error));
         return output(ok(result.data));
       },
     }),

@@ -37,9 +37,7 @@ describe("plugin registration", () => {
     await hooks.config?.(config);
     expect(Object.keys(config.command).sort()).toEqual([...names].sort());
     expect(config.skills.paths).toHaveLength(1);
-    expect(config.skills.paths[0]).toEndWith(
-      "workflow-toolkit-opencode/skills",
-    );
+    expect(config.skills.paths[0]).toEndWith("workflow-toolkit/skills");
   });
 
   test("registration is idempotent with a preexisting skill path", async () => {

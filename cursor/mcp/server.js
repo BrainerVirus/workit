@@ -39,7 +39,7 @@ const workspaceRootSchema = z
 
 const server = new McpServer({
   name: "workflow-toolkit",
-  version: "0.3.13",
+  version: "0.3.18",
 });
 
 function extractPlanPath(prompt) {

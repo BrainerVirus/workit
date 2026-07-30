@@ -16,7 +16,8 @@ import { spawnSync } from "node:child_process";
 import { changelogApply } from "../lib/changelog-apply.js";
 import { postUpdate } from "../lib/youtrack.js";
 
-const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+const CURSOR_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+const REPO_ROOT = path.resolve(CURSOR_ROOT, "..");
 
 function temporaryDirectory(t) {
   const dir = mkdtempSync(path.join(os.tmpdir(), "workflow-toolkit-"));
@@ -92,7 +93,7 @@ Keep this custom section.
 
   const result = spawnSync(
     "python3",
-    [path.join(PLUGIN_ROOT, "scripts/changelog/apply-unreleased.py")],
+    [path.join(REPO_ROOT, "scripts/changelog/apply-unreleased.py")],
     {
       cwd: root,
       encoding: "utf8",
@@ -154,7 +155,7 @@ test("handoff includes every parsed task row", (t) => {
   const result = spawnSync(
     "bash",
     [
-      path.join(PLUGIN_ROOT, "scripts/collect-handoff-context.sh"),
+      path.join(REPO_ROOT, "scripts/collect-handoff-context.sh"),
       "docs/superpowers/specs/repair-design.md docs/superpowers/plans/repair.md",
     ],
     { cwd: root, encoding: "utf8" },
@@ -167,26 +168,26 @@ test("handoff includes every parsed task row", (t) => {
 
 test("question choices use Cursor AskQuestion without an MCP adapter", () => {
   const targets = [
-    "mcp",
-    "skills",
-    "rules",
-    "templates",
-    "hooks",
-    "scripts",
-    "README.md",
-  ].flatMap((target) => filesUnder(path.join(PLUGIN_ROOT, target)));
+    path.join(CURSOR_ROOT, "mcp"),
+    path.join(CURSOR_ROOT, "skills"),
+    path.join(CURSOR_ROOT, "rules"),
+    path.join(REPO_ROOT, "templates"),
+    path.join(CURSOR_ROOT, "hooks"),
+    path.join(REPO_ROOT, "scripts"),
+    path.join(CURSOR_ROOT, "README.md"),
+  ].flatMap((target) => filesUnder(target));
   const offenders = targets
     .filter((file) => !file.includes(`${path.sep}mcp${path.sep}test${path.sep}`))
     .filter((file) => {
       const source = readFileSafe(file);
       return source?.includes("workflow_prepare_question") || source?.includes("prepare-question.sh");
     })
-    .map((file) => path.relative(PLUGIN_ROOT, file));
+    .map((file) => path.relative(REPO_ROOT, file));
 
   assert.deepEqual(offenders, []);
-  const pr = readFileSync(path.join(PLUGIN_ROOT, "skills/wf-pr/SKILL.md"), "utf8");
+  const pr = readFileSync(path.join(CURSOR_ROOT, "skills/wf-pr/SKILL.md"), "utf8");
   const issue = readFileSync(
-    path.join(PLUGIN_ROOT, "skills/wf-issue-update/SKILL.md"),
+    path.join(CURSOR_ROOT, "skills/wf-issue-update/SKILL.md"),
     "utf8",
   );
   assert.match(pr, /AskQuestion/);
@@ -242,7 +243,7 @@ test("release notes require and expose an explicit range", (t) => {
   writeFileSync(path.join(root, "file.txt"), "release\n");
   spawnSync("git", ["add", "file.txt"], { cwd: root });
   spawnSync("git", ["commit", "-q", "-m", "release fixture"], { cwd: root });
-  const script = path.join(PLUGIN_ROOT, "scripts/release-notes-context.sh");
+  const script = path.join(REPO_ROOT, "scripts/release-notes-context.sh");
 
   const missing = spawnSync("bash", [script], { cwd: root, encoding: "utf8" });
   assert.notEqual(missing.status, 0);
@@ -256,18 +257,21 @@ test("release notes require and expose an explicit range", (t) => {
   assert.match(explicit.stdout, /^requested: HEAD$/m);
   assert.match(explicit.stdout, /^range: .+$/m);
 
-  const server = readFileSync(path.join(PLUGIN_ROOT, "mcp/server.js"), "utf8");
+  const server = readFileSync(path.join(CURSOR_ROOT, "mcp/server.js"), "utf8");
   assert.match(server, /range_or_tag:\s*z\.string\(\)\.min\(1\)/);
   assert.match(server, /requested:\s*repo\.requested/);
   assert.match(server, /range:\s*repo\.range/);
 });
 
-test("plugin and MCP versions are synchronized at 0.3.13", () => {
+test("plugin and MCP versions are synchronized", () => {
   const manifest = JSON.parse(
-    readFileSync(path.join(PLUGIN_ROOT, ".cursor-plugin/plugin.json"), "utf8"),
+    readFileSync(path.join(CURSOR_ROOT, ".cursor-plugin/plugin.json"), "utf8"),
   );
-  const server = readFileSync(path.join(PLUGIN_ROOT, "mcp/server.js"), "utf8");
+  const opencode = JSON.parse(
+    readFileSync(path.join(REPO_ROOT, "package.json"), "utf8"),
+  );
+  const server = readFileSync(path.join(CURSOR_ROOT, "mcp/server.js"), "utf8");
   const mcpVersion = server.match(/new McpServer\(\{[\s\S]*?version:\s*"([^"]+)"/)[1];
-  assert.equal(manifest.version, "0.3.13");
+  assert.equal(manifest.version, opencode.version);
   assert.equal(mcpVersion, manifest.version);
 });

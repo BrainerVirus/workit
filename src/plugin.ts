@@ -95,8 +95,14 @@ const plugin: Plugin = async ({ client }) => {
       if (firstUser.parts.some(
         (part) => part.type === "text" && isWorkflowBootstrap(part.text),
       )) return;
-      const ref = firstUser.parts[0];
-      firstUser.parts.unshift({ ...ref, type: "text", text: bootstrap });
+      const anchor = firstUser.parts.find((part) => part.type === "text") ?? firstUser.parts[0];
+      firstUser.parts.unshift({
+        id: anchor.id,
+        sessionID: anchor.sessionID,
+        messageID: anchor.messageID,
+        type: "text",
+        text: bootstrap,
+      });
     },
   };
 };

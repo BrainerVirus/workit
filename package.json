@@ -9,8 +9,9 @@
   },
   "scripts": {
     "test": "bun test",
+    "test:cursor": "npm --prefix cursor/mcp test",
     "typecheck": "tsc --noEmit",
-    "check": "bun test && tsc --noEmit"
+    "check": "bun test && tsc --noEmit && npm --prefix cursor/mcp ci && npm --prefix cursor/mcp test"
   },
   "dependencies": {
     "@opencode-ai/plugin": "1.17.7"

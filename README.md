@@ -2,72 +2,86 @@
 
 Multi-platform Superpowers workflow plugin: verify, PR, changelog, commits, SDD implementation, session handoff, YouTrack, and deterministic UI presentation.
 
+**Repo:** `~/Documents/projects/personal/workflow-toolkit`
+
 | Platform | Path | Version |
 | --- | --- | --- |
 | **OpenCode** | repo root (`package.json`, `src/plugin.ts`) | 0.3.18 |
 | **Cursor** | `cursor/` (MCP + hooks + rules) | 0.3.18 |
-| **Shared** | `scripts/`, `templates/`, `skills/` | — |
+| **Shared** | `scripts/`, `templates/` | — |
+| **Skills** | `skills/` (OpenCode) + `cursor/skills/` (Cursor) | platform-specific |
 
 Config directory (both platforms): `~/.config/workflow-toolkit/`
+
+## Repo layout
+
+```
+workflow-toolkit/
+├── src/              # OpenCode plugin (TypeScript)
+├── scripts/          # shared shell/python
+├── templates/        # execution + superpowers contracts
+├── skills/           # OpenCode-native skills
+├── cursor/           # Cursor plugin (MCP, hooks, rules)
+├── .github/workflows/ci.yml
+└── test/             # bun tests (OpenCode plugin)
+```
 
 ## Install
 
 ### OpenCode
 
-Add to `~/.config/opencode/opencode.json`:
+`~/.config/opencode/opencode.json`:
 
 ```json
 "plugin": [
-  "workflow-toolkit-opencode@git+file:///ABS/PATH/workflow-toolkit#v0.3.18"
+  "workflow-toolkit-opencode@git+file:///home/cristhofer-pincetti/Documents/projects/personal/workflow-toolkit#v0.3.18"
 ]
 ```
 
-The plugin auto-injects the workflow contract on every session via `experimental.chat.messages.transform` (same role as Cursor's `sessionStart` hook).
+After GitHub remote:
+
+```json
+"workflow-toolkit-opencode@github:YOUR_USER/workflow-toolkit#v0.3.18"
+```
+
+Session bootstrap + `workflow_present_*` tools ship in v0.3.18+. Use `opencode --auto` (see `~/.zshrc` wrapper) for permission auto-approve.
 
 ### Cursor
 
 ```bash
-ln -sfn /ABS/PATH/workflow-toolkit/cursor ~/.cursor/plugins/local/workflow-toolkit
+ln -sfn ~/Documents/projects/personal/workflow-toolkit/cursor ~/.cursor/plugins/local/workflow-toolkit
 cd ~/.cursor/plugins/local/workflow-toolkit/mcp && npm install
 ```
 
-Edit `cursor/mcp.json` if your clone path differs from the bundled absolute `command` path.
+Reload Cursor.
 
-Reload Cursor. Session start injects hard gates + `templates/superpowers-doc-contract.md`.
+## CI / local checks
+
+```bash
+cd ~/Documents/projects/personal/workflow-toolkit
+bun run check    # bun test + tsc + cursor MCP regressions
+```
+
+GitHub Actions runs the same on push/PR to `main`.
+
+## Publish to GitHub
+
+```bash
+cd ~/Documents/projects/personal/workflow-toolkit
+gh auth login
+gh repo create workflow-toolkit --private --source=. --remote=origin
+git push -u origin main --tags
+```
 
 ## Architecture
 
-```
-User → platform skill (/wf-*) → workflow_* tool → shared shell script → agent formats output
-```
-
-- **OpenCode:** tools are native plugin tools (`src/tools/*`)
-- **Cursor:** tools are MCP (`cursor/mcp/server.js`) calling the same `scripts/`
-- **Handoff:** OpenCode seeds a new session with `execution-contract.md`; Cursor uses `workflow_handoff_prompt`
-
-## Docs for OpenCode
-
-Add Context7 MCP to `opencode.json` for live library docs (same idea as Cursor's context7 plugin):
-
-```json
-"context7": {
-  "enabled": true,
-  "type": "http",
-  "url": "https://mcp.context7.com/mcp"
-}
-```
-
-The injected workflow contract tells agents to prefer Context7 for API/library questions.
-
-## Development
-
-```bash
-cd /path/to/workflow-toolkit
-npx bun test          # OpenCode plugin tests
-npx bun run typecheck
-git tag v0.3.18       # bump package.json + cursor/.cursor-plugin/plugin.json together
-```
+| Concern | OpenCode | Cursor |
+| --- | --- | --- |
+| Tools | native plugin | MCP server |
+| Session contract | messages.transform | sessionStart hook |
+| Handoff | spawns OpenCode session | handoff prompt |
+| Shared logic | `scripts/` | `scripts/` via `PLUGIN_ROOT` |
 
 ## Future: Codex CLI
 
-Add `codex/` with harness-specific adapter; keep `scripts/`, `templates/`, `skills/` shared at repo root.
+Add `codex/` adapter; reuse `scripts/` and `templates/`.
