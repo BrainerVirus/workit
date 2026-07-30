@@ -1,8 +1,12 @@
 {
   "mcpServers": {
     "workflow-toolkit": {
-      "command": "/home/cristhofer-pincetti/.cursor/plugins/local/workflow-toolkit/mcp/run-server.sh",
-      "args": ["${workspaceFolder}"]
+      "command": "bash",
+      "args": [
+        "-lc",
+        "exec \"$HOME/.local/share/workflow-toolkit/scripts/run-cursor-mcp.sh\" \"$0\"",
+        "${workspaceFolder}"
+      ]
     }
   }
 }

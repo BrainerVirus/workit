@@ -1,5 +1,5 @@
 {
-  "name": "wf",
+  "name": "workflow-toolkit",
   "displayName": "Workflow Toolkit",
   "description": "OpenCode-style verify, PR, changelog, commit, and session handoff for Cursor",
   "version": "0.3.18",

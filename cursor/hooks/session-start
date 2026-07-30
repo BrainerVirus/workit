@@ -3,7 +3,18 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
-REPO_ROOT="${WORKFLOW_TOOLKIT_ROOT:-$(CDPATH= cd -- "$SCRIPT_DIR/../.." && pwd)}"
+PLUGIN_DIR="$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)"
+MARKER="${PLUGIN_DIR}/.workflow-toolkit-root"
+SHARE="${HOME}/.local/share/workflow-toolkit"
+if [ -n "${WORKFLOW_TOOLKIT_ROOT:-}" ] && [ -d "${WORKFLOW_TOOLKIT_ROOT}/templates" ]; then
+  REPO_ROOT="$WORKFLOW_TOOLKIT_ROOT"
+elif [ -f "$MARKER" ]; then
+  REPO_ROOT="$(tr -d '\n' <"$MARKER")"
+elif [ -d "${SHARE}/templates" ]; then
+  REPO_ROOT="$SHARE"
+else
+  REPO_ROOT="$(CDPATH= cd -- "$SCRIPT_DIR/../.." && pwd)"
+fi
 CONTRACT="${REPO_ROOT}/templates/superpowers-doc-contract.md"
 
 if [ ! -f "$CONTRACT" ]; then
