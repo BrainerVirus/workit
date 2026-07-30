@@ -55,6 +55,11 @@ if [ ! -d "$PLUGIN_DIR/mcp/node_modules" ]; then
   (cd "$PLUGIN_DIR/mcp" && npm install --silent) || true
 fi
 
+# Share MCP also needs deps when launched via run-cursor-mcp fallback
+if [ ! -d "$SHARE/cursor/mcp/node_modules" ]; then
+  (cd "$SHARE/cursor/mcp" && npm install --silent) || true
+fi
+
 # Remove broken TLA live-loader if present (OpenCode ignored it; /wf-* vanished)
 rm -f "${OPENCODE_PLUGINS}/workflow-toolkit.ts"
 
