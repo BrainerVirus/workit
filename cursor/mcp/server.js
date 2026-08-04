@@ -8,6 +8,7 @@ import { gitContext } from "./lib/git-context.js";
 import { parsePlanTasks, resolveHandoffBranch } from "./lib/plan-tasks.js";
 import { initStatus, initApply, toolkitStatus } from "./lib/init.js";
 import { resolveBranch, branchSetup } from "./lib/branch-resolve.js";
+import { docsValidate } from "./lib/docs-validate.js";
 import {
   sddContext,
   sddTaskBrief,
@@ -531,6 +532,26 @@ server.registerTool(
 );
 
 server.registerTool(
+  "workflow_docs_validate",
+  {
+    description:
+      "Hard-fail validate spec/plan headers, link, branch, and task order. Defaults to Cursor workspace; pass workspace_root when paths are relative to another repo.",
+    inputSchema: {
+      spec_path: z.string(),
+      plan_path: z.string(),
+      workspace_root: workspaceRootSchema,
+    },
+  },
+  async ({ spec_path, plan_path, workspace_root }) => {
+    const data = docsValidate({ spec_path, plan_path, workspace_root });
+    if (data.error) {
+      return jsonResult(withWorkspace(workspace_root, { error: data.error, errors: data.errors ?? [] }));
+    }
+    return jsonResult(withWorkspace(workspace_root, data));
+  },
+);
+
+server.registerTool(
   "workflow_plan_tasks",
   {
     description:
@@ -601,6 +622,22 @@ server.registerTool(
               error: "Could not extract plan path from prompt",
             }),
           );
+        }
+        if (specPath) {
+          const valid = docsValidate({
+            spec_path: specPath,
+            plan_path: planPath,
+            workspace_root,
+          });
+          if (valid.error) {
+            return jsonResult(
+              withWorkspace(workspace_root, {
+                error: valid.error,
+                errors: valid.errors ?? [],
+                workspace_root: cwd,
+              }),
+            );
+          }
         }
         const tasksData = parsePlanTasks(planPath, workspace_root);
         if (tasksData.error) {
