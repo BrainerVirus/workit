@@ -70,6 +70,65 @@ test("handoff always ends the originating turn and never falls back inline", () 
   expect(text).toContain("Never create todos, execute the plan inline, modify files, retry handoff, or call another tool");
 });
 
+test("wf commands never emit a bare Arguments: label", () => {
+  const dir = path.join(import.meta.dir, "..", "commands");
+  for (const file of readdirSync(dir)) {
+    const text = readFileSync(path.join(dir, file), "utf8");
+    expect(text).not.toMatch(/Arguments:\s*\$ARGUMENTS/);
+    expect(text).not.toMatch(/Arguments:\s*$/m);
+  }
+});
+
+test("post-plan override lists five fixed options and forbids two-option prose", () => {
+  const root = path.resolve(import.meta.dir, "..");
+  const surfaces = [
+    readFileSync(path.join(root, "templates", "superpowers-doc-contract.md"), "utf8"),
+    readFileSync(path.join(root, "src", "bootstrap.ts"), "utf8"),
+    readFileSync(path.join(root, "cursor", "rules", "ask-question-only.mdc"), "utf8"),
+  ].join("\n");
+  for (const label of [
+    "Subagent-driven",
+    "Inline",
+    "Handoff",
+    "Review spec first",
+    "Review plan first",
+  ]) {
+    expect(surfaces).toContain(label);
+  }
+  const stripped = surfaces.replace(/do not emit[^\n]+/gi, "");
+  expect(stripped).not.toMatch(/Two execution options:\s*\n/);
+  expect(stripped).not.toContain("1. Subagent-Driven (recommended)");
+  expect(surfaces).toMatch(/no stay|No `--stay` option/i);
+  expect(surfaces).toContain("workflow_docs_validate");
+});
+
+test("implement review policy caps blockers and defers advisories", () => {
+  const text = skill("wf-implement");
+  const contract = readFileSync(path.join(import.meta.dir, "..", "templates", "execution-contract.md"), "utf8");
+  for (const source of [text, contract]) {
+    expect(source).toMatch(/two|2/);
+    expect(source).toMatch(/advisory|Advisory/i);
+    expect(source).toMatch(/Critical|Important|spec-compliance/);
+  }
+});
+
+test("PR skills show title and body before create confirmation", () => {
+  const root = path.resolve(import.meta.dir, "..");
+  for (const rel of [
+    "skills/wf-pr/SKILL.md",
+    "cursor/skills/wf-pr/SKILL.md",
+  ]) {
+    const text = readFileSync(path.join(root, rel), "utf8");
+    const body = text.split("## Rules")[0] ?? text;
+    const showIdx = body.search(/\*\*Show\*\*|Show title|Show the exact Title|Title:\s*\n|<copy-paste title>/i);
+    const createQ = body.search(/Create the reviewed|create this MR\/PR|Create MR\/PR now|before creation/i);
+    const createTool = body.indexOf("workflow_pr_create");
+    expect(showIdx).toBeGreaterThanOrEqual(0);
+    expect(createQ).toBeGreaterThan(showIdx);
+    expect(createTool).toBeGreaterThan(createQ);
+  }
+});
+
 test("native runtime outputs use OpenCode-neutral vocabulary", () => {
   const root = path.resolve(import.meta.dir, "..");
   const sources = [

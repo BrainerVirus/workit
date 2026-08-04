@@ -249,7 +249,7 @@ test("native handoff ignores a hallucinated stay argument when the message has n
     new WorkflowStateStore(),
     runtime,
   ).workflow_handoff_session.execute(
-    { message: "Load the wf-handoff skill and follow it. Arguments:", stay: true } as never,
+    { message: "Load the wf-handoff skill and follow it.", stay: true } as never,
     { directory: "/repo", worktree: "/repo", sessionID: "parent" } as never,
   );
 
@@ -371,7 +371,7 @@ test("handoff resolves a matching local spec and plan when slash arguments are e
     const result = spawnSync(
       "bash",
       [path.resolve(import.meta.dir, "../scripts/collect-handoff-context.sh"),
-        "Load the wf-handoff skill and follow it. Arguments:"],
+        "Load the wf-handoff skill and follow it."],
       { cwd: root, encoding: "utf8" },
     );
 
@@ -411,7 +411,7 @@ test("handoff matching-pair ties resolve deterministically", () => {
     const result = spawnSync(
       "bash",
       [path.resolve(import.meta.dir, "../scripts/collect-handoff-context.sh"),
-        "Load the wf-handoff skill and follow it. Arguments:"],
+        "Load the wf-handoff skill and follow it."],
       { cwd: root, encoding: "utf8" },
     );
 

@@ -4,8 +4,8 @@ Multi-platform Superpowers workflow plugin for **Cursor** and **OpenCode**: veri
 
 | Platform | Path | Version |
 | --- | --- | --- |
-| **OpenCode** | repo root (`package.json`, `src/plugin.ts`) | 0.3.18 |
-| **Cursor** | `cursor/` (MCP + hooks + rules + skills) | 0.3.18 |
+| **OpenCode** | repo root (`package.json`, `src/plugin.ts`) | 0.3.19 |
+| **Cursor** | `cursor/` (MCP + hooks + rules + skills) | 0.3.19 |
 | **Shared** | `scripts/`, `templates/` | — |
 
 Config directory (both platforms): `~/.config/workflow-toolkit/`

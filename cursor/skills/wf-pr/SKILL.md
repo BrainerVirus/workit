@@ -23,14 +23,7 @@ Use the tool return as ground truth. Pay attention to:
 - `vcs_config` — provider, `defaultTargetBranch`, `pr.squashOnMerge`, `pr.removeSourceBranch`
 - `commits`, `diff_stat`, `files` — **for drafting only**, never paste into the published body
 
-## Step 2 — Mode
-
-Use native `AskQuestion`: title `Create MR/PR`; prompt `Create this MR/PR on GitLab/GitHub after you review the title and body?`; options `Yes` and `No`.
-
-- **No** → copy-paste output only (Step 4 format)
-- **Yes** → continue to Step 5 after review
-
-## Step 3 — Draft body (required)
+## Step 2 — Draft body (required)
 
 Write title + body per rules below. Read `merged_pr_style` if present.
 
@@ -51,7 +44,7 @@ Write title + body per rules below. Read `merged_pr_style` if present.
 
 Title: Conventional Commits — `type(scope): subject`, imperative, lowercase, no trailing period.
 
-## Step 4 — Review (draft-only path)
+## Step 3 — Review (show before confirm)
 
 Show:
 
@@ -63,11 +56,7 @@ Body:
 <copy-paste body>
 ```
 
-Stop here if user chose draft-only.
-
-## Step 5 — Create (optional)
-
-Show title + body again. User may edit in chat.
+## Step 4 — Create (optional)
 
 Use native `AskQuestion`: title `Create MR/PR`; prompt `Create the reviewed MR/PR now?`; options `Create` and `Cancel`. On `Create`:
 

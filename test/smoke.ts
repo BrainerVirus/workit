@@ -102,9 +102,20 @@ test("SDD context reports completed and pending tasks from the ledger", async ()
     mkdirSync(path.join(root, "docs/superpowers/plans"), { recursive: true });
     mkdirSync(path.join(root, "docs/superpowers/specs"), { recursive: true });
     mkdirSync(path.join(root, "docs/superpowers/sdd/smoke"), { recursive: true });
-    writeFileSync(path.join(root, "docs/superpowers/specs/smoke-design.md"), "# Smoke\n");
+    writeFileSync(path.join(root, "docs/superpowers/specs/smoke-design.md"), "# Smoke\n\n**Branch:** `feature/smoke`\n");
     writeFileSync(path.join(root, "docs/superpowers/plans/smoke.md"), [
-      "# Smoke", "**Spec:** `docs/superpowers/specs/smoke-design.md`", "### Task 1: One", "### Task 2: Two", "",
+      "# Smoke",
+      "**Spec:** `docs/superpowers/specs/smoke-design.md`",
+      "**Branch:** `feature/smoke`",
+      "",
+      "### Task 1: One",
+      "",
+      "- [ ] **Step 1:** Work",
+      "",
+      "### Task 2: Two",
+      "",
+      "- [ ] **Step 1:** Work",
+      "",
     ].join("\n"));
     writeFileSync(
       path.join(root, "docs/superpowers/sdd/smoke/progress.md"),
@@ -133,7 +144,7 @@ test("plugin registers without a Cursor runtime path", async () => {
     await hooks.config?.(config);
     expect(Object.keys(config.command)).toHaveLength(12);
     expect(config.skills.paths).toEqual([path.resolve(import.meta.dir, "../skills")]);
-    expect(Object.keys(hooks.tool ?? {})).toHaveLength(29);
+    expect(Object.keys(hooks.tool ?? {})).toHaveLength(31);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

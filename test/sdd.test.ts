@@ -11,7 +11,7 @@ test("plan parser returns only top-level Task sections and records state", async
   mkdirSync(path.join(root, "docs/superpowers/plans"), { recursive: true });
   mkdirSync(path.join(root, "docs/superpowers/specs"), { recursive: true });
   writeFileSync(path.join(root, "docs/superpowers/specs/x-design.md"), "# X\n**Branch:** `feature/x`\n");
-  writeFileSync(path.join(root, "docs/superpowers/plans/x.md"), "# X\n**Spec:** `docs/superpowers/specs/x-design.md`\n### Task 1: One\n- [ ] Step\n### Task 2: Two\n- [ ] Step\n");
+  writeFileSync(path.join(root, "docs/superpowers/plans/x.md"), "# X\n**Spec:** `docs/superpowers/specs/x-design.md`\n**Branch:** `feature/x`\n\n### Task 1: One\n\n- [ ] Step\n\n### Task 2: Two\n\n- [ ] Step\n");
   const state = new WorkflowStateStore();
   const tools = createSddTools(state);
   const raw = await tools.workflow_plan_tasks.execute({ plan_path: "docs/superpowers/plans/x.md" }, { directory: root, worktree: root, sessionID: "s1" } as never);
@@ -30,7 +30,7 @@ test("plan parser honors an explicit contained spec path and returns its branch"
   mkdirSync(path.join(root, "docs/superpowers/specs"), { recursive: true });
   writeFileSync(path.join(root, "docs/superpowers/specs/exact.md"), "# Exact\n**Branch:** `feature/exact`\n");
   writeFileSync(path.join(root, "docs/superpowers/specs/other.md"), "# Other\n**Branch:** `feature/other`\n");
-  writeFileSync(path.join(root, "docs/superpowers/plans/x.md"), "# X\n**Spec:** `docs/superpowers/specs/other.md`\n### Task 1: One\n- [ ] Step\n");
+  writeFileSync(path.join(root, "docs/superpowers/plans/x.md"), "# X\n**Spec:** `docs/superpowers/specs/other.md`\n**Branch:** `feature/other`\n\n### Task 1: One\n\n- [ ] Step\n");
   const state = new WorkflowStateStore();
   const tools = createSddTools(state);
   const raw = await tools.workflow_plan_tasks.execute({
@@ -57,7 +57,12 @@ test("SDD context computes absent paths without creating repository files", asyn
   const root = mkdtempSync(path.join(os.tmpdir(), "wf-sdd-readonly-"));
   try {
     mkdirSync(path.join(root, "docs/superpowers/plans"), { recursive: true });
-    writeFileSync(path.join(root, "docs/superpowers/plans/x.md"), "# X\n### Task 1: One\n");
+    mkdirSync(path.join(root, "docs/superpowers/specs"), { recursive: true });
+    writeFileSync(path.join(root, "docs/superpowers/specs/x-design.md"), "# X\n**Branch:** `feature/x`\n");
+    writeFileSync(
+      path.join(root, "docs/superpowers/plans/x.md"),
+      "# X\n\n**Spec:** `docs/superpowers/specs/x-design.md`\n**Branch:** `feature/x`\n\n### Task 1: One\n\n- [ ] Step\n",
+    );
     const raw = await createSddTools(new WorkflowStateStore()).workflow_sdd_context.execute(
       { plan_path: "docs/superpowers/plans/x.md" },
       { directory: root, worktree: root, sessionID: "readonly" } as never,
@@ -70,7 +75,7 @@ test("SDD context computes absent paths without creating repository files", asyn
 test("SDD tools expose standard schemas and guard writes", async () => {
   const tools = createSddTools(new WorkflowStateStore());
   expect(Object.keys(tools).sort()).toEqual([
-    "workflow_plan_tasks", "workflow_resolve_branch", "workflow_sdd_context",
+    "workflow_docs_branch", "workflow_docs_validate", "workflow_plan_tasks", "workflow_resolve_branch", "workflow_sdd_context",
     "workflow_sdd_task_brief", "workflow_sdd_review_package", "workflow_sdd_append_progress",
   ].sort());
   for (const definition of Object.values(tools)) {

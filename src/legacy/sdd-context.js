@@ -4,6 +4,7 @@ import os from "node:os";
 import { runScript, runScriptJson } from "./run-script.js";
 import { resolveWorkspaceRoot } from "./resolve-workspace-root.js";
 import { parsePlanTasks } from "./plan-tasks.js";
+import { docsValidate } from "./docs-validate.js";
 
 export function slugFromPlan(planPath) {
   return path.basename(planPath, ".md");
@@ -61,6 +62,19 @@ export function sddContext({ slug, plan_path, workspace_root }) {
   let todos = [];
   let task_count = 0;
   if (plan_path) {
+    const absPlan = path.isAbsolute(plan_path) ? plan_path : path.join(cwd, plan_path);
+    const planText = fs.readFileSync(absPlan, "utf8");
+    const specMatch = planText.match(/^\*\*Spec:\*\*\s*(?:`([^`]+)`|(\S+))/m);
+    const spec_path = specMatch?.[1] ?? specMatch?.[2] ?? "";
+    if (spec_path) {
+      const validated = docsValidate({
+        spec_path,
+        plan_path,
+        workspace_root: cwd,
+      });
+      if (validated.error) return validated;
+      if (validated.ok === false) return validated;
+    }
     const tasksData = parsePlanTasks(plan_path, workspace_root);
     if (!tasksData.error && Array.isArray(tasksData.tasks)) {
       task_count = tasksData.task_count ?? tasksData.tasks.length;

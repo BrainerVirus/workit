@@ -26,8 +26,9 @@ Load `templates/execution-contract.md`. Substitute `<SPEC_PATH>`, `<PLAN_PATH>`,
 
 Announce: "Using implement + subagent-driven-development."
 
-**Before Task 1 — SDD + TodoWrite UI + branch (no worktrees):**
+**Before Task 1 — validate + SDD + TodoWrite UI + branch (no worktrees):**
 
+0. `workflow_docs_validate` with spec + plan paths — hard-fail before any SDD mutation
 1. `workflow_sdd_context` with `plan_path` — cache `sdd_dir`, `completed_task_ids`, **`todos`**
 2. **TodoWrite** with `todos` from step 1 (`merge: false`) — required for Cursor native task list UI (SDD is not a UI substitute)
 3. `workflow_resolve_branch` with spec + plan paths
