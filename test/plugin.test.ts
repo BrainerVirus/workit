@@ -232,6 +232,11 @@ describe("plugin registration", () => {
           workflow_changelog_context: {},
           workflow_release_notes_context: { range_or_tag: "HEAD" },
           workflow_docs_context: {},
+          workflow_docs_validate: {
+            spec_path: "missing-spec.md",
+            plan_path: "missing-plan.md",
+          },
+          workflow_docs_branch: {},
           workflow_changelog_apply: { confirmed: false },
           workflow_branch_setup: { confirmed: false },
           workflow_commit: { confirmed: false, message: "test: fixture" },
@@ -339,11 +344,11 @@ describe("plugin registration", () => {
       mkdirSync(path.join(root, "docs/superpowers/specs"), { recursive: true });
       writeFileSync(
         path.join(root, "docs/superpowers/specs/x-design.md"),
-        "# X\n",
+        "# X\n\n**Branch:** `feature/x`\n",
       );
       writeFileSync(
         path.join(root, "docs/superpowers/plans/x.md"),
-        "# X\n**Spec:** `docs/superpowers/specs/x-design.md`\n### Task 1: One\n",
+        "# X\n\n**Spec:** `docs/superpowers/specs/x-design.md`\n**Branch:** `feature/x`\n\n### Task 1: One\n\n- [ ] **Step 1:** Work\n",
       );
       const client = {
         session: {

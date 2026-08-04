@@ -160,6 +160,15 @@ resolve_paths
 
 [ -f "$TEMPLATE" ] || { printf 'ERROR: missing template %s\n' "$TEMPLATE" >&2; exit 1; }
 
+set +e
+VALIDATE_JSON=$(bash "$PLUGIN_ROOT/scripts/lib/docs-validate.sh" "$SPEC" "$PLAN" 2>&1)
+VALIDATE_RC=$?
+set -e
+if [ "$VALIDATE_RC" -ne 0 ]; then
+  printf 'ERROR: docs validation failed\n%s\n' "$VALIDATE_JSON" >&2
+  exit 1
+fi
+
 BRANCH=$(bash "$PLUGIN_ROOT/scripts/lib/resolve-handoff-branch.sh" "$SPEC" "$PLAN")
 SLUG=$(basename "$PLAN" .md)
 SDD_DIR="docs/superpowers/sdd/${SLUG}"

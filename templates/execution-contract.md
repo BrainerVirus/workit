@@ -16,6 +16,7 @@ Load `using-superpowers`, `subagent-driven-development`, `test-driven-developmen
 
 ## Setup
 
+0. Call `workflow_docs_validate` with the linked spec/plan paths. Hard-fail on any error before todos or branch setup.
 1. Call `workflow_sdd_context` with `<PLAN_PATH>` and initialize `todowrite` from returned tasks.
 2. Call `workflow_plan_tasks`; cache each top-level task's `section_text`.
 3. Mark IDs in `completed_task_ids` completed and never redispatch them.
@@ -32,12 +33,12 @@ For each top-level task absent from `completed_task_ids`:
 3. Delegate read-only discovery, when needed, to an `explore` agent. Delegate implementation to a fresh `general` agent. Product changes follow TDD.
 4. Create a tracked diff with `workflow_sdd_review_package` and `confirmed: true`.
 5. Delegate spec-compliance review and code-quality review to separate `general` agents.
-6. Important, Critical, or spec-compliance findings block progress. Return them to the implementer and repeat both reviews until clean.
+6. **Blocking** findings (Critical, Important, or spec-compliance) may trigger at most **two** fix+re-review rounds per task. **Advisory** findings (Minor, style, YAGNI, taste) never pause the loop — append them to `<SDD_DIR>/advisories.md`.
 7. Append the validated ledger entry with `workflow_sdd_append_progress` and `confirmed: true`; mark the todo completed.
 
 ## Final gate
 
-Run a separate full-branch code review, then `workflow_verify`. Report exact check results and never infer success. Use `workflow_git_context` for a commit preview and load `wf-commit` through `skill` for an approved commit. If tracked state contains a stash reference, preview reapplication through `question`, then call `workflow_branch_setup` with `confirmed: true` after approval.
+Run a separate full-branch code review, then `workflow_verify`. Present the full `<SDD_DIR>/advisories.md` roll-up once, then use native `question` so the user can choose which advisory items to fix, discuss, or discard. Report exact check results and never infer success. Use `workflow_git_context` for a commit preview and load `wf-commit` through `skill` for an approved commit. If tracked state contains a stash reference, preview reapplication through `question`, then call `workflow_branch_setup` with `confirmed: true` after approval.
 
 ## Task order
 

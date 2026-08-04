@@ -68,6 +68,7 @@ if [ "$current" != "$TARGET" ]; then
     fi
     rm -f "$checkout_err"
   else
+    bash "$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)/lib/ensure-develop-base.sh"
     git checkout -b "$TARGET"
   fi
 fi

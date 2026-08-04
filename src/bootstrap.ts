@@ -32,6 +32,12 @@ ${contract}
 - NEVER hand-draw ASCII wireframes or mermaid in chat without calling the tool first.
 - For bounded user choices use OpenCode native \`question\`; never A/B/C option lists in chat prose.
 
+## Post-plan execution choice
+
+After saving a plan, call \`workflow_docs_validate\` on the spec/plan pair. On failure, stop — do not offer execution.
+
+On success, use native \`question\` with exactly: Subagent-driven, Inline, Handoff (new session only), Review spec first, Review plan first. Never emit Superpowers “Two execution options” prose. No \`--stay\` in this menu.
+
 ## Library documentation
 
 When the user asks about a library, framework, or API reference, prefer live docs (e.g. Context7 MCP \`resolve-library-id\` + \`query-docs\`) over training-data guesses.

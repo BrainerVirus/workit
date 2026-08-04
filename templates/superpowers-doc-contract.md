@@ -27,6 +27,8 @@ Plans require:
 
 `bugfix/<slug>` is also valid. Never use `main`, `develop`, `master`, or `prod`. Use plain backtick paths. Top-level headings are exactly `### Task N: Title`; steps use `- [ ] **Step N:** ...`; task headings never appear inside fences.
 
+Before writing **Branch:** into a new spec or plan, call `workflow_docs_branch` and write the returned `branch` verbatim. When `action` is `keep`, use the current feature/bugfix branch. When `action` is `create_from_develop`, create the branch only through `workflow_branch_setup` (never branch from `main`/`master`).
+
 ## Execution and handoff
 
 - Implementation uses `wf-implement` and subagent-driven development, with native `todowrite` and `task`.
@@ -42,4 +44,20 @@ Chat follows the user's language. YouTrack task comments are Spanish (`es-CL`) a
 
 ## Final self-check
 
+Before handoff, call `workflow_docs_validate` on the linked spec/plan pair. Hard-fail on any error; never offer execution when validation fails.
+
 Before handoff, verify the saved spec path, plan path, declared branch, top-level task numbering, and tracked SDD directory through the registered read-only workflow tools. Report structured failures; never infer success.
+
+## Post-plan execution choice
+
+After saving a plan, call `workflow_docs_validate` on the spec/plan pair. On failure, stop and fix docs — do not offer execution.
+
+On success, use native `question` / Cursor `AskQuestion` with exactly these options (no stay, no A/B/C prose duplicate):
+
+1. Subagent-driven → load `wf-implement`
+2. Inline → execute in this session
+3. Handoff → load `wf-handoff` (new session only)
+4. Review spec first
+5. Review plan first
+
+Never emit Superpowers text beginning “Two execution options”.

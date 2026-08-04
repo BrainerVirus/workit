@@ -29,11 +29,11 @@ For every plan task whose ID is absent from `completed_task_ids`:
 3. Use `task` with the built-in `explore` agent for read-only discovery when needed, then a fresh built-in `general` agent to implement from the brief. The parent remains coordinator-only.
 4. Require product changes to follow TDD: failing check first, minimal implementation, passing focused check.
 5. Create the review package with `workflow_sdd_review_package` using `confirmed: true`.
-6. Dispatch separate `general` agents for spec-compliance review and code-quality review. Important, Critical, or spec-compliance findings block the next task; send fixes back to the implementer and repeat both reviews until clean.
+6. Dispatch separate `general` agents for spec-compliance review and code-quality review. **Blocking findings** (Critical, Important, or spec-compliance) may trigger at most **two** fix+re-review rounds per task. **Advisory** findings (Minor, style, YAGNI, taste) never pause the loop — append them to `<SDD_DIR>/advisories.md` with the task id.
 7. Append the validated ledger line with `workflow_sdd_append_progress` using `confirmed: true`, then mark the task completed with `todowrite`.
 
 Never redispatch completed task IDs. Pass task briefs and review diffs to agents; do not make them reparse the plan. Keep commits on the in-place feature/bugfix branch.
 
 ## Final gate
 
-After all remaining tasks, dispatch a final full-branch code review, run `workflow_verify`, and report exact per-check results. Use `workflow_git_context` for the final commit preview and the `wf-commit` skill for any approved commit. If a tracked stash reference exists, preview reapplication with `question`, then call `workflow_branch_setup` with `confirmed: true` only after approval.
+After all remaining tasks, dispatch a final full-branch code review, run `workflow_verify`, and report exact per-check results. Present the full `<SDD_DIR>/advisories.md` roll-up once, then use native `question` so the user can choose which advisory items to fix, discuss, or discard. Only then may advisory fixes run. Use `workflow_git_context` for the final commit preview and the `wf-commit` skill for any approved commit. If a tracked stash reference exists, preview reapplication with `question`, then call `workflow_branch_setup` with `confirmed: true` only after approval.

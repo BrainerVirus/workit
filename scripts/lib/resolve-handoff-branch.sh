@@ -68,6 +68,15 @@ for path in (spec, plan):
         )
         sys.exit(1)
 
+try:
+    head = subprocess.check_output(
+        ["git", "branch", "--show-current"], text=True, stderr=subprocess.DEVNULL
+    ).strip()
+except subprocess.CalledProcessError:
+    head = ""
+if head and branch_pat.match(head):
+    finish(head, "keep-current")
+
 for path in (spec, plan):
     if not path.is_file():
         continue

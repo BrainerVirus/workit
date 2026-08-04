@@ -166,6 +166,31 @@ test("handoff includes every parsed task row", (t) => {
   assert.match(result.stdout, /- Task 2: Second repair/);
 });
 
+test("docs validate rejects task number gaps", (t) => {
+  const root = temporaryDirectory(t);
+  const specs = path.join(root, "docs/superpowers/specs");
+  const plans = path.join(root, "docs/superpowers/plans");
+  mkdirSync(specs, { recursive: true });
+  mkdirSync(plans, { recursive: true });
+  const spec = "docs/superpowers/specs/gap-design.md";
+  const plan = "docs/superpowers/plans/gap.md";
+  writeFileSync(path.join(root, spec), "# Gap\n\n**Branch:** `feature/gap`\n");
+  writeFileSync(
+    path.join(root, plan),
+    `# Gap\n\n**Spec:** \`${spec}\`\n**Branch:** \`feature/gap\`\n\n### Task 1: One\n\n- [ ] **Step 1:** x**\n\n### Task 3: Skip\n\n- [ ] **Step 1:** x**\n`,
+  );
+
+  const result = spawnSync(
+    "bash",
+    [path.join(REPO_ROOT, "scripts/lib/docs-validate.sh"), spec, plan],
+    { cwd: root, encoding: "utf8" },
+  );
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stdout, /"ok":\s*false/);
+  assert.match(result.stdout, /task/i);
+});
+
 test("question choices use Cursor AskQuestion without an MCP adapter", () => {
   const targets = [
     path.join(CURSOR_ROOT, "mcp"),

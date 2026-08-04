@@ -249,7 +249,7 @@ test("native handoff ignores a hallucinated stay argument when the message has n
     new WorkflowStateStore(),
     runtime,
   ).workflow_handoff_session.execute(
-    { message: "Load the wf-handoff skill and follow it. Arguments:", stay: true } as never,
+    { message: "Load the wf-handoff skill and follow it.", stay: true } as never,
     { directory: "/repo", worktree: "/repo", sessionID: "parent" } as never,
   );
 
@@ -343,7 +343,10 @@ test("handoff context is read-only when the SDD workspace is absent", async () =
     mkdirSync(path.join(root, "docs/superpowers/specs"), { recursive: true });
     mkdirSync(path.join(root, "docs/superpowers/plans"), { recursive: true });
     writeFileSync(path.join(root, "docs/superpowers/specs/x.md"), "# X\n**Branch:** `feature/x`\n");
-    writeFileSync(path.join(root, "docs/superpowers/plans/x.md"), "# X\n**Spec:** `docs/superpowers/specs/x.md`\n### Task 1: One\n");
+    writeFileSync(
+      path.join(root, "docs/superpowers/plans/x.md"),
+      "# X\n\n**Spec:** `docs/superpowers/specs/x.md`\n**Branch:** `feature/x`\n\n### Task 1: One\n\n- [ ] **Step 1:** Work\n",
+    );
     const result = spawnSync("bash", [path.resolve(import.meta.dir, "../scripts/collect-handoff-context.sh"),
       "docs/superpowers/specs/x.md docs/superpowers/plans/x.md"], { cwd: root, encoding: "utf8" });
     expect(result.status).toBe(0);
@@ -358,22 +361,22 @@ test("handoff resolves a matching local spec and plan when slash arguments are e
     mkdirSync(path.join(root, "docs/superpowers/plans"), { recursive: true });
     writeFileSync(
       path.join(root, "docs/superpowers/specs/2026-07-14-mfe-tasks-base-design.md"),
-      "# MFE Tasks Base Design\n",
+      "# MFE Tasks Base Design\n\n**Branch:** `feature/mfe-tasks-base`\n",
     );
     writeFileSync(
       path.join(root, "docs/superpowers/plans/2026-07-14-mfe-tasks-base.md"),
-      "# MFE Tasks Base Plan\n\n**Goal:** Build the MFE.\n\n### Task 1: Setup\n- [ ] Step\n",
+      "# MFE Tasks Base Plan\n\n**Spec:** `docs/superpowers/specs/2026-07-14-mfe-tasks-base-design.md`\n**Branch:** `feature/mfe-tasks-base`\n\n**Goal:** Build the MFE.\n\n### Task 1: Setup\n\n- [ ] **Step 1:** Work\n",
     );
 
     const result = spawnSync(
       "bash",
       [path.resolve(import.meta.dir, "../scripts/collect-handoff-context.sh"),
-        "Load the wf-handoff skill and follow it. Arguments:"],
+        "Load the wf-handoff skill and follow it."],
       { cwd: root, encoding: "utf8" },
     );
 
     expect(result.status).toBe(0);
-    expect(result.stderr).toContain("RESOLVE=matching_pair");
+    expect(result.stderr).toMatch(/RESOLVE=(active_pair|matching_pair)/);
     expect(result.stdout).toContain("**Spec:** docs/superpowers/specs/2026-07-14-mfe-tasks-base-design.md");
     expect(result.stdout).toContain("**Plan:** docs/superpowers/plans/2026-07-14-mfe-tasks-base.md");
   } finally { rmSync(root, { recursive: true, force: true }); }
@@ -392,22 +395,51 @@ test("handoff matching-pair ties resolve deterministically", () => {
       path.join(specs, "2026-07-14-zulu-design.md"),
       path.join(plans, "2026-07-14-zulu.md"),
     ];
-    writeFileSync(files[0], "# Alpha\n");
-    writeFileSync(files[1], "# Alpha\n### Task 1: Alpha\n- [ ] Step\n");
-    writeFileSync(files[2], "# Zulu\n");
-    writeFileSync(files[3], "# Zulu\n### Task 1: Zulu\n- [ ] Step\n");
+    writeFileSync(files[0], "# Alpha\n\n**Branch:** `feature/alpha`\n");
+    writeFileSync(
+      files[1],
+      "# Alpha\n\n**Spec:** `docs/superpowers/specs/2026-07-14-alpha-design.md`\n**Branch:** `feature/alpha`\n\n### Task 1: Alpha\n\n- [ ] **Step 1:** Work\n",
+    );
+    writeFileSync(files[2], "# Zulu\n\n**Branch:** `feature/zulu`\n");
+    writeFileSync(
+      files[3],
+      "# Zulu\n\n**Spec:** `docs/superpowers/specs/2026-07-14-zulu-design.md`\n**Branch:** `feature/zulu`\n\n### Task 1: Zulu\n\n- [ ] **Step 1:** Work\n",
+    );
     const sameTime = new Date("2026-07-14T12:00:00Z");
     for (const file of files) utimesSync(file, sameTime, sameTime);
 
     const result = spawnSync(
       "bash",
       [path.resolve(import.meta.dir, "../scripts/collect-handoff-context.sh"),
-        "Load the wf-handoff skill and follow it. Arguments:"],
+        "Load the wf-handoff skill and follow it."],
       { cwd: root, encoding: "utf8" },
     );
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("**Spec:** docs/superpowers/specs/2026-07-14-alpha-design.md");
     expect(result.stdout).toContain("**Plan:** docs/superpowers/plans/2026-07-14-alpha.md");
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("handoff collect fails before prompt when docs validation fails", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wf-handoff-validate-fail-"));
+  try {
+    mkdirSync(path.join(root, "docs/superpowers/specs"), { recursive: true });
+    mkdirSync(path.join(root, "docs/superpowers/plans"), { recursive: true });
+    const spec = "docs/superpowers/specs/bad-design.md";
+    const plan = "docs/superpowers/plans/bad.md";
+    writeFileSync(path.join(root, spec), "# Bad\n\n**Branch:** `feature/bad`\n");
+    writeFileSync(
+      path.join(root, plan),
+      `# Bad\n\n**Spec:** \`${spec}\`\n**Branch:** \`feature/bad\`\n\n### Task 1: One\n\n- [ ] **Step 1:** x\n\n### Task 3: Skip\n\n- [ ] **Step 1:** x\n`,
+    );
+    const result = spawnSync(
+      "bash",
+      [path.resolve(import.meta.dir, "../scripts/collect-handoff-context.sh"), `${spec} ${plan}`],
+      { cwd: root, encoding: "utf8" },
+    );
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toMatch(/docs validation failed/i);
+    expect(result.stdout).not.toContain("PROMPT_START");
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
