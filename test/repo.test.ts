@@ -278,17 +278,30 @@ test("PR context is read-only even with a remote and upstream", async () => {
   }
 });
 
-test("branch setup can leave main for a valid feature branch", async () => {
+test("branch setup requires develop remote before creating from main", async () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "workflow-toolkit-branch-"));
+  const remote = mkdtempSync(path.join(os.tmpdir(), "workflow-toolkit-branch-remote-"));
+  const git = (cwd: string, args: string[]) => spawnSync("git", args, { cwd, encoding: "utf8" });
   try {
-    expect(spawnSync("git", ["init", "-q", "-b", "main"], { cwd: root }).status).toBe(0);
+    git(remote, ["init", "-q", "--bare"]);
+    expect(git(root, ["init", "-q", "-b", "develop"]).status).toBe(0);
+    git(root, ["config", "user.name", "Workflow Test"]);
+    git(root, ["config", "user.email", "workflow@example.test"]);
+    writeFileSync(path.join(root, "README.md"), "base\n");
+    git(root, ["add", "README.md"]);
+    git(root, ["commit", "-q", "-m", "base"]);
+    git(root, ["remote", "add", "origin", remote]);
+    git(root, ["push", "-q", "-u", "origin", "develop"]);
+    git(root, ["branch", "main"]);
+    git(root, ["checkout", "-q", "main"]);
     const raw = await createRepoTools().workflow_branch_setup.execute({
       confirmed: true, target_branch: "feature/x", stash: "no",
     }, { directory: root, worktree: root} as never);
     expect(JSON.parse(raw as string).ok).toBe(true);
-    expect(spawnSync("git", ["branch", "--show-current"], { cwd: root, encoding: "utf8" }).stdout.trim()).toBe("feature/x");
+    expect(git(root, ["branch", "--show-current"]).stdout.trim()).toBe("feature/x");
   } finally {
     rmSync(root, { recursive: true, force: true });
+    rmSync(remote, { recursive: true, force: true });
   }
 });
 

@@ -9,6 +9,7 @@ import { parsePlanTasks, resolveHandoffBranch } from "./lib/plan-tasks.js";
 import { initStatus, initApply, toolkitStatus } from "./lib/init.js";
 import { resolveBranch, branchSetup } from "./lib/branch-resolve.js";
 import { docsValidate } from "./lib/docs-validate.js";
+import { docsBranch } from "./lib/docs-branch.js";
 import {
   sddContext,
   sddTaskBrief,
@@ -527,6 +528,24 @@ server.registerTool(
   async ({ progress_path, line, workspace_root }) => {
     const data = sddAppendProgress({ progress_path, line, workspace_root });
     if (data.error) return jsonResult({ error: data.error });
+    return jsonResult(withWorkspace(workspace_root, data));
+  },
+);
+
+server.registerTool(
+  "workflow_docs_branch",
+  {
+    description:
+      "Resolve branch for spec/plan authors: keep current feature|bugfix or create from develop.",
+    inputSchema: {
+      plan_path: z.string().optional(),
+      kind: z.enum(["feature", "bugfix"]).optional(),
+      workspace_root: workspaceRootSchema,
+    },
+  },
+  async ({ plan_path, kind, workspace_root }) => {
+    const data = docsBranch({ plan_path, kind, workspace_root });
+    if (data.error) return jsonResult(withWorkspace(workspace_root, { error: data.error }));
     return jsonResult(withWorkspace(workspace_root, data));
   },
 );

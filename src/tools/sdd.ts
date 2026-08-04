@@ -4,6 +4,7 @@ import { tool, type ToolContext } from "@opencode-ai/plugin";
 import { fail, ok, resolveGitRevision, resolveInside } from "../core";
 import { resolveBranch } from "../legacy/branch-resolve.js";
 import { docsValidate } from "../legacy/docs-validate.js";
+import { docsBranch } from "../legacy/docs-branch.js";
 import { parsePlanTasks, resolveHandoffBranch } from "../legacy/plan-tasks.js";
 import {
   sddAppendProgress, sddContext, sddReviewPackage, sddTaskBrief,
@@ -56,6 +57,21 @@ export function createSddTools(state: WorkflowStateStore) {
   });
 
   return {
+    workflow_docs_branch: tool({
+      description: "Resolve branch for spec/plan authors: keep current feature|bugfix or create from develop",
+      args: {
+        plan_path: tool.schema.string().optional(),
+        kind: tool.schema.enum(["feature", "bugfix"]).optional(),
+      },
+      execute: async ({ plan_path, kind }, context) => invoke(() => {
+        if (plan_path) relativePath(context.directory, plan_path);
+        return docsBranch({
+          plan_path,
+          kind,
+          workspace_root: context.directory,
+        }) as Record<string, unknown>;
+      }),
+    }),
     workflow_docs_validate: tool({
       description: "Hard-fail validate spec/plan headers, link, branch, and task order",
       args: {
