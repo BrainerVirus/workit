@@ -65,3 +65,103 @@ test("linkDocsRepo requires confirmed and writes config", () => {
     expect(docsRepoPath()).toBe(repo);
   } finally { rmSync(repo, { recursive: true, force: true }); }
 });
+
+import { promoteSpec } from "../src/core/docs-repo";
+
+const goodSpec = (slug: string) => `# Spec: ${slug}
+
+**Branch:** \`feature/${slug}\`
+
+## Context
+
+Promotes ${slug} to the docs repo.
+
+## Goals
+
+- Ship ${slug}
+
+## Non-goals
+
+- Nothing
+
+## Architecture
+
+No flow here.
+
+## Acceptance criteria
+
+- CA-01 done
+`;
+
+test("promoteSpec copies spec+plan, writes README, updates index", () => {
+  const repo = makeRepo();
+  const work = makeRepo();
+  try {
+    writeDocsRepoConfig(repo);
+    mkdirSync(path.join(work, "docs", "alpha"), { recursive: true });
+    writeFileSync(path.join(work, "docs/alpha/spec.md"), goodSpec("alpha"));
+    writeFileSync(
+      path.join(work, "docs/alpha/plan.md"),
+      "# Plan\n\n**Spec:** `docs/alpha/spec.md`\n**Branch:** `feature/alpha`\n\n### Task 1: One\n\n- [ ] **Step 1:** Work\n",
+    );
+
+    const result = promoteSpec(work, "alpha", { confirmed: true });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.files).toEqual(expect.arrayContaining(["spec.md", "plan.md", "README.md"]));
+      const target = result.target_dir;
+      expect(existsSync(path.join(target, "spec.md"))).toBe(true);
+      expect(existsSync(path.join(target, "plan.md"))).toBe(true);
+      expect(existsSync(path.join(target, "README.md"))).toBe(true);
+      const readme = readFileSync(path.join(target, "README.md"), "utf8");
+      expect(readme).toContain("# Feature: Spec: alpha");
+      expect(readme).toContain("Spec en revisión");
+      const index = readFileSync(path.join(repo, "features", "README.md"), "utf8");
+      expect(index).toContain("alpha");
+    }
+  } finally { rmSync(repo, { recursive: true, force: true }); rmSync(work, { recursive: true, force: true }); }
+});
+
+test("promoteSpec refuses on hard quality findings unless force", () => {
+  const repo = makeRepo();
+  const work = makeRepo();
+  try {
+    writeDocsRepoConfig(repo);
+    mkdirSync(path.join(work, "docs", "bad"), { recursive: true });
+    writeFileSync(path.join(work, "docs/bad/spec.md"), "# Spec\n\n**Branch:** `feature/bad`\n");
+
+    const refused = promoteSpec(work, "bad", { confirmed: true });
+    expect(refused.ok).toBe(false);
+    if (!refused.ok) expect(refused.findings?.length).toBeGreaterThan(0);
+
+    const forced = promoteSpec(work, "bad", { confirmed: true, force: true });
+    expect(forced.ok).toBe(true);
+  } finally { rmSync(repo, { recursive: true, force: true }); rmSync(work, { recursive: true, force: true }); }
+});
+
+test("promoteSpec is idempotent on re-promote", () => {
+  const repo = makeRepo();
+  const work = makeRepo();
+  try {
+    writeDocsRepoConfig(repo);
+    mkdirSync(path.join(work, "docs", "gamma"), { recursive: true });
+    writeFileSync(path.join(work, "docs/gamma/spec.md"), goodSpec("gamma"));
+    promoteSpec(work, "gamma", { confirmed: true });
+    const again = promoteSpec(work, "gamma", { confirmed: true });
+    expect(again.ok).toBe(true);
+    if (again.ok) {
+      const index = readFileSync(path.join(repo, "features", "README.md"), "utf8");
+      expect((index.match(/^\| \[gamma\]/gm) ?? []).length).toBe(1);
+    }
+  } finally { rmSync(repo, { recursive: true, force: true }); rmSync(work, { recursive: true, force: true }); }
+});
+
+test("promoteSpec errors when docs repo not linked", () => {
+  const work = makeRepo();
+  try {
+    process.env.WORKFLOW_DOCS_REPO_CONFIG = path.join(os.tmpdir(), "wf-docsrepo-unlinked.json");
+    const result = promoteSpec(work, "alpha", { confirmed: true });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain("docs repo not linked");
+  } finally { rmSync(work, { recursive: true, force: true }); }
+});
