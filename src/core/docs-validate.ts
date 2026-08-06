@@ -75,7 +75,7 @@ export const docsValidate = ({
   plan_path: string;
   workspace_root: string;
 }):
-  | { ok: true; spec: string; plan: string; branch: string; task_count: number }
+  | { ok: true; spec: string; plan: string; branch: string; task_count: number; quality: QualityFinding[] }
   | { ok: false; errors: DocError[]; error: string } => {
   const cwd = path.resolve(workspace_root);
   const specAbs = path.isAbsolute(spec_path) ? spec_path : path.join(cwd, spec_path);
@@ -131,5 +131,69 @@ export const docsValidate = ({
 
   const relSpec = path.isAbsolute(spec_path) ? path.relative(cwd, specAbs) : spec_path;
   const relPlan = path.isAbsolute(plan_path) ? path.relative(cwd, planAbs) : plan_path;
-  return { ok: true, spec: relSpec, plan: relPlan, branch: specBranch!, task_count: tasks.length };
+  return {
+    ok: true,
+    spec: relSpec,
+    plan: relPlan,
+    branch: specBranch!,
+    task_count: tasks.length,
+    quality: qualitySpec(specText!),
+  };
+};
+
+export type QualityFinding = {
+  code: string;
+  message: string;
+  severity: "warning" | "hard";
+};
+
+const REQUIRED_SECTIONS = [
+  "## Context",
+  "## Goals",
+  "## Non-goals",
+  "## Architecture",
+  "## Acceptance criteria",
+];
+
+const UI_KEYWORDS = ["ui", "interface", "screen", "modal", "form", "component"];
+const FLOW_KEYWORDS = ["flow", "pipeline", "sequence", "architecture", "diagram", "workflow"];
+const GLOSSARY_KEYWORDS = ["glossary", "contract", "scope"];
+
+const finding = (code: string, message: string, severity: "warning" | "hard"): QualityFinding =>
+  ({ code, message, severity });
+
+export const qualitySpec = (text: string): QualityFinding[] => {
+  const findings: QualityFinding[] = [];
+  const lower = text.toLowerCase();
+
+  for (const section of REQUIRED_SECTIONS) {
+    if (!text.includes(section)) {
+      findings.push(finding("missing_section", `required section ${section} missing`, "hard"));
+    }
+  }
+
+  const hasCa = /(?:^|\n)\s*(?:- CA-\d+|CA-\d+[.:])/m.test(text);
+  if (!hasCa) {
+    findings.push(finding("missing_acceptance_criteria", "no enumerable CA-XX acceptance criteria found", "hard"));
+  }
+
+  const hasAsciiFence = /```(?:text|ascii)/.test(text);
+  const mentionsUi = UI_KEYWORDS.some((k) => lower.includes(k));
+  if (mentionsUi && !hasAsciiFence) {
+    findings.push(finding("missing_ascii_for_ui", "spec mentions UI but has no ASCII wireframe fence", "warning"));
+  }
+
+  const hasMermaid = /```mermaid/.test(text);
+  const mentionsFlow = FLOW_KEYWORDS.some((k) => lower.includes(k));
+  if (mentionsFlow && !hasMermaid) {
+    findings.push(finding("missing_mermaid_for_flow", "spec describes flow/architecture but has no mermaid fence", "warning"));
+  }
+
+  const hasTable = /^\s*\|.+\|.+\|/m.test(text);
+  const mentionsGlossary = GLOSSARY_KEYWORDS.some((k) => lower.includes(k));
+  if (mentionsGlossary && !hasTable) {
+    findings.push(finding("missing_table", "spec has glossary/contract/scope content but no markdown table", "warning"));
+  }
+
+  return findings;
 };
