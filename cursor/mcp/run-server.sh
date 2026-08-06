@@ -33,4 +33,6 @@ if [ -z "$BUN_BIN" ]; then
   echo "workflow-toolkit: bun not found (required for MCP server)" >&2
   exit 1
 fi
-exec "$BUN_BIN" "${MCP_DIR}/server.ts"
+# Execute the server from the resolved ROOT (not the plugin copy): server.ts
+# imports ../../src/core/* which only resolve where the full monorepo tree lives.
+exec "$BUN_BIN" "${ROOT}/cursor/mcp/server.ts"
