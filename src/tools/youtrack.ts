@@ -11,7 +11,7 @@ import {
   parseIssueRef,
   postUpdate as legacyPostUpdate,
   verifyYouTrackToken,
-} from "../legacy/youtrack.js";
+} from "../core/youtrack";
 
 const ISSUE_RE = /^[A-Z]+-\d+$/;
 const output = (value: unknown) => JSON.stringify(value, null, 2);

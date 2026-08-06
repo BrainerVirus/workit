@@ -1,13 +1,13 @@
 import fs from "node:fs";
 import path from "node:path";
-import { runScript, runScriptJson } from "./run-script.js";
-import { PLUGIN_ROOT } from "./plugin-root.js";
-import { resolveWorkspaceRoot } from "./resolve-workspace-root.js";
+import { runScript, runScriptJson } from "./scripts";
+import { PLUGIN_ROOT } from "./scripts";
+import { resolveWorkspaceRoot } from "./scripts";
 
 const ISSUE_RE = /^[A-Z]+-\d+$/;
 
 /** Parse bare id (NSR-40) or YouTrack URL into issue id. */
-export function parseIssueRef(input) {
+export function parseIssueRef(input: unknown): { issueId: string; source: string } | { error: string } {
   const trimmed = String(input ?? "").trim();
   if (!trimmed) return { error: "empty issue reference" };
 
@@ -28,13 +28,13 @@ export function parseIssueRef(input) {
   return { error: `could not parse issue id from: ${trimmed}` };
 }
 
-export function verifyYouTrackToken() {
+export function verifyYouTrackToken(): Record<string, any> {
   return runScriptJson("youtrack/verify-token.sh", [], PLUGIN_ROOT);
 }
 
-function resolveYouTrackFromPaths(spec_path, plan_path, workspace_root) {
+function resolveYouTrackFromPaths(spec_path: string | undefined, plan_path: string | undefined, workspace_root: string): string | null {
   const root = resolveWorkspaceRoot(workspace_root);
-  for (const rel of [spec_path, plan_path].filter(Boolean)) {
+  for (const rel of [spec_path, plan_path].filter(Boolean) as string[]) {
     const full = path.isAbsolute(rel) ? rel : path.join(root, rel);
     if (!fs.existsSync(full)) continue;
     const text = fs.readFileSync(full, "utf8");
@@ -44,10 +44,10 @@ function resolveYouTrackFromPaths(spec_path, plan_path, workspace_root) {
   return null;
 }
 
-function meetingOptionsFromConfig(cfg) {
+function meetingOptionsFromConfig(cfg: any): Record<string, any>[] {
   const base = (cfg.baseUrl || "").replace(/\/$/, "");
   if (cfg.meetingIssues && typeof cfg.meetingIssues === "object") {
-    return Object.entries(cfg.meetingIssues).map(([key, item]) => ({
+    return Object.entries(cfg.meetingIssues).map(([key, item]: [string, any]) => ({
       key,
       issue: item.issue,
       label: item.label ?? item.issue,
@@ -67,7 +67,7 @@ function meetingOptionsFromConfig(cfg) {
   ];
 }
 
-export function context({ spec_path, plan_path, issue_id, issue_url, issue_ref, mode, workspace_root }) {
+export function context({ spec_path, plan_path, issue_id, issue_url, issue_ref, mode, workspace_root }: { spec_path?: string; plan_path?: string; issue_id?: string; issue_url?: string; issue_ref?: string; mode?: string; workspace_root: string }): Record<string, any> {
   const cfg = runScriptJson("youtrack/config.sh", ["load"], workspace_root);
   if (cfg.error) return { error: cfg.error };
 
@@ -92,11 +92,11 @@ export function context({ spec_path, plan_path, issue_id, issue_url, issue_ref, 
   let issue = issue_id;
   if (!issue && (issue_url || issue_ref)) {
     const parsed = parseIssueRef(issue_url ?? issue_ref);
-    if (parsed.error) return { error: parsed.error };
+    if ("error" in parsed) return { error: parsed.error };
     issue = parsed.issueId;
   }
   if (!issue && mode === "meetings") issue = meetingOptions[0]?.issue ?? cfg.data.meetingIssue;
-  if (!issue) issue = resolveYouTrackFromPaths(spec_path, plan_path, workspace_root);
+  if (!issue) issue = resolveYouTrackFromPaths(spec_path, plan_path, workspace_root) ?? undefined;
   if (!issue || !ISSUE_RE.test(issue)) {
     return {
       error: "invalid or missing issue id — pass issue_url, issue_id, or spec/plan with **YouTrack:**",
@@ -120,13 +120,13 @@ export function context({ spec_path, plan_path, issue_id, issue_url, issue_ref, 
   };
 }
 
-export function parseDuration(text, workspace_root) {
+export function parseDuration(text: string, workspace_root: string): Record<string, any> {
   const out = runScriptJson("youtrack/parse-duration.sh", [text], workspace_root);
   if (out.error) return { error: out.error };
   return out.data;
 }
 
-export function logTime({ issueId, minutes, text, date, dateMs, workspace_root }) {
+export function logTime({ issueId, minutes, text, date, dateMs, workspace_root }: { issueId: string; minutes: number; text?: string; date?: string; dateMs?: number; workspace_root: string }): Record<string, any> {
   if (!issueId || !ISSUE_RE.test(issueId)) return { error: "invalid issueId" };
   if (!minutes || minutes <= 0) return { error: "minutes must be positive" };
   const workText = text ?? "workflow-toolkit";
@@ -145,7 +145,7 @@ export function logTime({ issueId, minutes, text, date, dateMs, workspace_root }
   return { issueId, minutes, text: workText, ...out.data, ok: true };
 }
 
-export function buildDraft({ issueId, projectName, userNotes, greeting, facts, includeProjectOpener, includeFacts }) {
+export function buildDraft({ issueId, projectName, userNotes, greeting, facts, includeProjectOpener, includeFacts }: { issueId: string; projectName?: string; userNotes?: string; greeting?: string; facts?: any; includeProjectOpener?: boolean; includeFacts?: boolean }): Record<string, any> {
   const header = "# Actualización\n\n";
   const open = greeting ? `${greeting}\n\n` : "";
   const project =
@@ -153,11 +153,11 @@ export function buildDraft({ issueId, projectName, userNotes, greeting, facts, i
   const narrative = (userNotes ?? "").trim();
   const factsBlock =
     includeFacts && facts?.progress_excerpt?.length
-      ? "\n\n" + facts.progress_excerpt.map((l) => `- ${l}`).join("\n")
+      ? "\n\n" + facts.progress_excerpt.map((l: string) => `- ${l}`).join("\n")
       : "";
   const commitsBlock =
     includeFacts && facts?.git_commits?.length
-      ? "\n\n" + facts.git_commits.map((c) => `- ${c}`).join("\n")
+      ? "\n\n" + facts.git_commits.map((c: string) => `- ${c}`).join("\n")
       : "";
   return {
     issueId,
@@ -165,13 +165,13 @@ export function buildDraft({ issueId, projectName, userNotes, greeting, facts, i
   };
 }
 
-export function postUpdate({ confirmed, issueId, markdown, minutes, workspace_root }, operations) {
+export function postUpdate({ confirmed, issueId, markdown, minutes, workspace_root }: { confirmed: boolean; issueId: string; markdown: string; minutes?: number; workspace_root?: string }, operations?: Record<string, any>): Record<string, any> {
   operations ??= {};
   if (!confirmed) return { error: "confirmed: true required" };
   if (!issueId || !ISSUE_RE.test(issueId)) return { error: "invalid issueId" };
   if (!markdown?.trim()) return { error: "markdown required" };
 
-  const postComment = operations.postComment ?? ((id, text, root) =>
+  const postComment = operations.postComment ?? ((id: string, text: string, root: string) =>
     runScriptJson("youtrack/api.sh", ["post-comment", id, text], root));
   const logTimeOperation = operations.logTime ?? logTime;
   const comment = postComment(issueId, markdown, workspace_root);

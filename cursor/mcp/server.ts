@@ -1,21 +1,23 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { runScript } from "./lib/run-script.js";
-import { parseSections, parseKeyValueLines } from "./lib/parse-sections.js";
-import { parseVerifyOutput } from "./lib/verify-parse.js";
-import { gitContext } from "./lib/git-context.js";
-import { parsePlanTasks, resolveHandoffBranch } from "./lib/plan-tasks.js";
-import { initStatus, initApply, toolkitStatus } from "./lib/init.js";
-import { resolveBranch, branchSetup } from "./lib/branch-resolve.js";
-import { docsValidate } from "./lib/docs-validate.js";
-import { docsBranch } from "./lib/docs-branch.js";
+import { runScript } from "../../src/core/scripts";
+import { parseSections, parseKeyValueLines } from "../../src/core/parse-sections";
+import { parseVerifyOutput } from "../../src/core/verify-parse";
+import { gitContext } from "../../src/core/git";
+import { parsePlanTasks, resolveHandoffBranch } from "../../src/core/plan-tasks";
+import { buildHandoffPrompt } from "../../src/tools/handoff";
+import { readFlowState, transitionSpec, transitionPlan, recordMenuChoice, slugFromPath } from "../../src/core/flow-state";
+import { initStatus, initApply, toolkitStatus } from "../../src/core/init";
+import { resolveBranch, branchSetup } from "../../src/core/branch";
+import { docsValidate } from "../../src/core/docs-validate";
+import { docsBranch } from "../../src/core/branch";
 import {
   sddContext,
   sddTaskBrief,
   sddReviewPackage,
   sddAppendProgress,
-} from "./lib/sdd-context.js";
+} from "../../src/core/sdd";
 import {
   verifyYouTrackToken,
   context as youtrackContext,
@@ -24,13 +26,13 @@ import {
   logTime as youtrackLogTime,
   buildDraft as youtrackBuildDraft,
   postUpdate as youtrackPostUpdate,
-} from "./lib/youtrack.js";
-import { asciiWireframe, flowDiagram } from "./lib/present.js";
-import { withWorkspace } from "./lib/repo-tool.js";
+} from "../../src/core/youtrack";
+import { asciiWireframe, flowDiagram } from "../../src/core/present";
+import { withWorkspace } from "../../src/core/repo-tool";
 import {
   changelogApply,
   changelogUnreleasedStats,
-} from "./lib/changelog-apply.js";
+} from "../../src/core/changelog";
 
 const workspaceRootSchema = z
   .string()
@@ -619,340 +621,56 @@ server.registerTool(
     },
   },
   async ({ message, workspace_root }) => {
-    const args = message.trim() ? [message] : [];
-    const { stdout, stderr, exitCode, cwd } = runScript(
-      "collect-handoff-context.sh",
-      args,
-      workspace_root,
-    );
+    const root = workspace_root ?? process.cwd();
+    const built = buildHandoffPrompt(root, message ?? "");
+    if ("error" in built) {
+      return jsonResult(withWorkspace(workspace_root, { error: built.error }));
+    }
+    const { prompt, spec: specPath, plan: planPath } = built;
 
-    if (exitCode === 0) {
-      const start = stdout.indexOf("PROMPT_START\n");
-      const end = stdout.indexOf("\nPROMPT_END");
-      if (start !== -1 && end !== -1) {
-        const prompt = stdout.slice(start + "PROMPT_START\n".length, end);
-        const planPath = extractPlanPath(prompt);
-        const specPath = extractSpecPath(prompt);
-        if (!planPath) {
-          return jsonResult(
-            withWorkspace(workspace_root, {
-              prompt,
-              workspace_root: cwd,
-              error: "Could not extract plan path from prompt",
-            }),
-          );
-        }
-        if (specPath) {
-          const valid = docsValidate({
-            spec_path: specPath,
-            plan_path: planPath,
-            workspace_root,
-          });
-          if (valid.error) {
-            return jsonResult(
-              withWorkspace(workspace_root, {
-                error: valid.error,
-                errors: valid.errors ?? [],
-                workspace_root: cwd,
-              }),
-            );
-          }
-        }
-        const tasksData = parsePlanTasks(planPath, workspace_root);
-        if (tasksData.error) {
-          return jsonResult(
-            withWorkspace(workspace_root, {
-              prompt,
-              workspace_root: cwd,
-              error: tasksData.error,
-            }),
-          );
-        }
-        const payload = {
-          prompt,
-          tasks: tasksData.tasks,
-          task_count: tasksData.task_count,
-          workspace_root: cwd,
-        };
-        if (specPath) {
-          const branchData = resolveHandoffBranch(
-            specPath,
-            planPath,
-            workspace_root,
-          );
-          if (!branchData.error) {
-            payload.branch = branchData.branch;
-          }
-        }
-        const sdd = sddContext({ plan_path: planPath, workspace_root });
-        if (!sdd.error) {
-          payload.slug = sdd.slug;
-          payload.sdd_dir = sdd.sdd_dir;
-          payload.progress_path = sdd.progress_path;
-          payload.completed_task_ids = sdd.completed_task_ids;
-          payload.todos = sdd.todos;
-          payload.todo_write_required = true;
-        }
-        return jsonResult(withWorkspace(workspace_root, payload));
+    if (planPath) {
+      const tasksData = parsePlanTasks(planPath, root);
+      if (tasksData.error) {
+        return jsonResult(
+          withWorkspace(workspace_root, {
+            prompt,
+            error: tasksData.error,
+          }),
+        );
       }
-      return jsonResult(
-        withWorkspace(workspace_root, {
-          error: "Prompt markers missing from script output",
-          workspace_root: cwd,
-          stdout,
-        }),
-      );
+      const payload: Record<string, unknown> = {
+        prompt,
+        tasks: tasksData.tasks,
+        task_count: tasksData.task_count,
+        workspace_root: root,
+      };
+      if (specPath) {
+        const branchData = resolveHandoffBranch(
+          specPath,
+          planPath,
+          root,
+        );
+        if (!branchData.error) {
+          payload.branch = branchData.branch;
+        }
+      }
+      const sdd = sddContext({ plan_path: planPath, workspace_root: root });
+      if (!sdd.error) {
+        payload.slug = sdd.slug;
+        payload.sdd_dir = sdd.sdd_dir;
+        payload.progress_path = sdd.progress_path;
+        payload.completed_task_ids = sdd.completed_task_ids;
+        payload.todos = sdd.todos;
+        payload.todo_write_required = true;
+      }
+      return jsonResult(withWorkspace(workspace_root, payload));
     }
 
-    const errLines = (stderr + "\n" + stdout).split("\n");
-    const error =
-      errLines.find((l) => l.startsWith("ERROR:")) ?? "Handoff failed";
-    const candidates = { specs: [], plans: [] };
-    for (const line of errLines) {
-      if (line.startsWith("SPEC: ")) candidates.specs.push(line.slice(6));
-      if (line.startsWith("PLAN: ")) candidates.plans.push(line.slice(6));
-    }
     return jsonResult(
       withWorkspace(workspace_root, {
-        error,
-        candidates:
-          candidates.specs.length || candidates.plans.length
-            ? candidates
-            : undefined,
-        stderr: stderr || undefined,
+        error: "Could not resolve spec and plan for handoff",
       }),
     );
-  },
-);
-
-server.registerTool(
-  "workflow_toolkit_init_status",
-  {
-    description:
-      "Check workflow-toolkit setup (MCP deps, YouTrack config, token)",
-    inputSchema: {},
-  },
-  async () => {
-    const data = initStatus();
-    if (data.error) return jsonResult({ error: data.error });
-    return jsonResult(data);
-  },
-);
-
-server.registerTool(
-  "workflow_toolkit_status",
-  {
-    description:
-      "Full health check: MCP deps, config files, YouTrack API verify. Use after editing token file.",
-    inputSchema: {},
-  },
-  async () => {
-    const data = toolkitStatus();
-    if (data.error) return jsonResult({ error: data.error });
-    return jsonResult(data);
-  },
-);
-
-server.registerTool(
-  "workflow_toolkit_init_apply",
-  {
-    description:
-      "Apply init action. Requires confirmed: true. Token is NOT accepted here — user edits token file locally.",
-    inputSchema: {
-      action: z.enum([
-        "npm_install",
-        "youtrack_scaffold",
-        "youtrack_json",
-        "youtrack_token_placeholder",
-        "vcs_scaffold",
-      ]),
-      confirmed: z.boolean(),
-      base_url: z.string().optional(),
-      default_mention: z.string().optional(),
-      meeting_issue: z.string().optional(),
-      vcs_provider: z.enum(["gitlab", "github"]).optional(),
-      vcs_target_branch: z.string().optional(),
-    },
-  },
-  async ({
-    action,
-    confirmed,
-    base_url,
-    default_mention,
-    meeting_issue,
-    vcs_provider,
-    vcs_target_branch,
-  }) => {
-    const env = {};
-    if (base_url) env.WORKFLOW_YT_BASE_URL = base_url;
-    if (default_mention) env.WORKFLOW_YT_MENTION = default_mention;
-    if (meeting_issue) env.WORKFLOW_YT_MEETING_ISSUE = meeting_issue;
-    if (vcs_provider) env.WORKFLOW_VCS_PROVIDER = vcs_provider;
-    if (vcs_target_branch) env.WORKFLOW_VCS_TARGET_BRANCH = vcs_target_branch;
-    const data = initApply({ action, confirmed, env });
-    if (data.error) return jsonResult({ error: data.error });
-    return jsonResult(data.data);
-  },
-);
-
-server.registerTool(
-  "workflow_youtrack_verify_token",
-  {
-    description:
-      "Read-only YouTrack token test (GET /api/users/me). No work items created.",
-    inputSchema: {},
-  },
-  async () => {
-    const result = verifyYouTrackToken();
-    if (result.error) return jsonResult({ error: result.error });
-    const data = result.data;
-    if (!data.ok)
-      return jsonResult({ error: data.error ?? "token invalid", ...data });
-    return jsonResult(data);
-  },
-);
-
-server.registerTool(
-  "workflow_youtrack_parse_issue",
-  {
-    description:
-      "Parse YouTrack issue URL or bare id (e.g. NSR-40) into issueId",
-    inputSchema: {
-      issue_ref: z
-        .string()
-        .describe("YouTrack URL or issue id, e.g. https://…/issue/NSR-40 or NSR-40"),
-    },
-  },
-  async ({ issue_ref }) => {
-    const data = youtrackParseIssueRef(issue_ref);
-    if (data.error) return jsonResult({ error: data.error });
-    return jsonResult(data);
-  },
-);
-
-server.registerTool(
-  "workflow_youtrack_context",
-  {
-    description:
-      "YouTrack config, greeting, issue resolution (from issue_url/id or meetings)",
-    inputSchema: {
-      mode: z.enum(["meetings", "task"]).optional(),
-      issue_id: z.string().optional(),
-      issue_url: z.string().optional(),
-      issue_ref: z.string().optional(),
-      spec_path: z.string().optional(),
-      plan_path: z.string().optional(),
-      workspace_root: workspaceRootSchema,
-    },
-  },
-  async ({
-    mode,
-    issue_id,
-    issue_url,
-    issue_ref,
-    spec_path,
-    plan_path,
-    workspace_root,
-  }) => {
-    const data = youtrackContext({
-      mode,
-      issue_id,
-      issue_url,
-      issue_ref,
-      spec_path,
-      plan_path,
-      workspace_root,
-    });
-    if (data.error) {
-      return jsonResult({
-        error: data.error,
-        ...(data.requiresIssueInput ? { requiresIssueInput: true } : {}),
-      });
-    }
-    return jsonResult(withWorkspace(workspace_root, data));
-  },
-);
-
-server.registerTool(
-  "workflow_youtrack_parse_duration",
-  {
-    description: "Parse duration text (e.g. 1h 30m) to integer minutes",
-    inputSchema: {
-      text: z.string(),
-      workspace_root: workspaceRootSchema,
-    },
-  },
-  async ({ text, workspace_root }) => {
-    const data = youtrackParseDuration(text, workspace_root);
-    if (data.error) return jsonResult({ error: data.error });
-    return jsonResult(withWorkspace(workspace_root, data));
-  },
-);
-
-server.registerTool(
-  "workflow_youtrack_log_time",
-  {
-    description: "POST YouTrack work item (time only, no comment)",
-    inputSchema: {
-      issueId: z.string(),
-      minutes: z.number(),
-      text: z.string().optional(),
-      dateMs: z.number().optional().describe("Epoch ms for work item date; omit for today in config timezone"),
-      workspace_root: workspaceRootSchema,
-    },
-  },
-  async ({ issueId, minutes, text, dateMs, workspace_root }) => {
-    const data = youtrackLogTime({
-      issueId,
-      minutes,
-      text,
-      dateMs,
-      workspace_root,
-    });
-    if (data.error) return jsonResult({ error: data.error });
-    return jsonResult(withWorkspace(workspace_root, data));
-  },
-);
-
-server.registerTool(
-  "workflow_youtrack_draft",
-  {
-    description: "Build ES-CL comment markdown without posting (envelope only by default)",
-    inputSchema: {
-      issueId: z.string(),
-      userNotes: z.string(),
-      greeting: z.string().optional(),
-      projectName: z.string().optional(),
-      includeProjectOpener: z.boolean().optional(),
-      includeFacts: z.boolean().optional(),
-      facts: z.record(z.any()).optional(),
-    },
-  },
-  async (input) => jsonResult(youtrackBuildDraft(input)),
-);
-
-server.registerTool(
-  "workflow_youtrack_post",
-  {
-    description: "Post YouTrack comment and optional time — requires confirmed: true",
-    inputSchema: {
-      confirmed: z.boolean(),
-      issueId: z.string(),
-      markdown: z.string(),
-      minutes: z.number().optional(),
-      workspace_root: workspaceRootSchema,
-    },
-  },
-  async ({ confirmed, issueId, markdown, minutes, workspace_root }) => {
-    const data = youtrackPostUpdate({
-      confirmed,
-      issueId,
-      markdown,
-      minutes,
-      workspace_root,
-    });
-    if (data.error && !data.partial) return jsonResult({ error: data.error });
-    return jsonResult(withWorkspace(workspace_root, data));
   },
 );
 
@@ -1000,6 +718,89 @@ server.registerTool(
     const data = flowDiagram(spec);
     if (data.error) return jsonResult({ error: data.error });
     return jsonResult(data.data);
+  },
+);
+
+server.registerTool(
+  "workflow_flow_status",
+  {
+    description: "Read the spec/plan approval flow state for a workflow",
+    inputSchema: {
+      plan_path: z.string().optional(),
+      spec_path: z.string().optional(),
+      workspace_root: workspaceRootSchema,
+    },
+  },
+  async ({ plan_path, spec_path, workspace_root }) => {
+    const root = workspace_root ?? process.cwd();
+    const slug = slugFromPath(plan_path ?? spec_path ?? "");
+    if (!slug) return jsonResult({ error: "plan_path or spec_path required" });
+    const state = readFlowState(root, slug);
+    return jsonResult({
+      slug,
+      spec: state.spec,
+      plan: state.plan,
+      menu: state.menu,
+      flow_path: `docs/superpowers/sdd/${slug}/flow.json`,
+    });
+  },
+);
+
+server.registerTool(
+  "workflow_spec_approve",
+  {
+    description: "Advance spec status: first call self_reviewed, second call approved (after user approval)",
+    inputSchema: {
+      confirmed: z.boolean(),
+      spec_path: z.string(),
+      workspace_root: workspaceRootSchema,
+    },
+  },
+  async ({ confirmed, spec_path, workspace_root }) => {
+    const root = workspace_root ?? process.cwd();
+    const slug = slugFromPath(spec_path);
+    const result = transitionSpec(root, slug, spec_path, confirmed);
+    if (result.ok === false) return jsonResult({ error: result.error });
+    return jsonResult({ spec: spec_path, status: readFlowState(root, slug).spec.status });
+  },
+);
+
+server.registerTool(
+  "workflow_plan_approve",
+  {
+    description: "Advance plan status: first call self_reviewed, second call approved. Requires approved spec.",
+    inputSchema: {
+      confirmed: z.boolean(),
+      plan_path: z.string(),
+      workspace_root: workspaceRootSchema,
+    },
+  },
+  async ({ confirmed, plan_path, workspace_root }) => {
+    const root = workspace_root ?? process.cwd();
+    const slug = slugFromPath(plan_path);
+    const result = transitionPlan(root, slug, plan_path, confirmed);
+    if (result.ok === false) return jsonResult({ error: result.error });
+    return jsonResult({ plan: plan_path, status: readFlowState(root, slug).plan.status });
+  },
+);
+
+server.registerTool(
+  "workflow_plan_menu",
+  {
+    description: "Record the answered post-plan choice menu (called after native question)",
+    inputSchema: {
+      confirmed: z.boolean(),
+      plan_path: z.string(),
+      choice: z.enum(["subagent-driven", "inline", "handoff", "review-spec", "review-plan"]),
+      workspace_root: workspaceRootSchema,
+    },
+  },
+  async ({ confirmed, plan_path, choice, workspace_root }) => {
+    const root = workspace_root ?? process.cwd();
+    const slug = slugFromPath(plan_path);
+    const result = recordMenuChoice(root, slug, plan_path, choice, confirmed);
+    if (result.ok === false) return jsonResult({ error: result.error });
+    return jsonResult({ menu: { presented: true, chosen: choice } });
   },
 );
 

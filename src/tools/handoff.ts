@@ -1,8 +1,9 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { tool, type PluginInput } from "@opencode-ai/plugin";
-import { fail, ok, run, type Result } from "../core";
+import { fail, ok, type Result } from "../core";
 import { assertFlowGates } from "../core/flow-state";
+import { resolveWorkflowPaths, buildHandoffContract } from "../core/handoff-context";
 import { WorkflowStateStore } from "../state";
 
 type ApiResponse<T> = { data?: T; error?: unknown };
@@ -107,16 +108,34 @@ export async function handoffSession(
   }
 }
 
-type RunResult = ReturnType<typeof run>;
+export type RunResult = {
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+  cwd: string;
+};
 export type HandoffRuntime = {
   runScript(root: string, script: string, args: string[]): RunResult;
 };
 
-const scripts = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../scripts");
-const defaultRuntime: HandoffRuntime = {
-  runScript: (root, script, args) => run(root, path.join(scripts, script), args),
-};
 const output = (value: unknown) => JSON.stringify(value, null, 2);
+
+export type HandoffContextResult =
+  | { prompt: string; spec: string; plan: string; sdd: string }
+  | { error: string };
+
+export const buildHandoffPrompt = (root: string, message: string): HandoffContextResult => {
+  const resolved = resolveWorkflowPaths(root, message);
+  if ("error" in resolved) return { error: resolved.error };
+  const templatePath = path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "../../templates/execution-contract.md",
+  );
+  const contract = buildHandoffContract({ root, spec: resolved.spec, plan: resolved.plan, templatePath });
+  if ("error" in contract) return { error: contract.error };
+  const sdd = `docs/superpowers/sdd/${path.basename(resolved.plan, ".md")}`;
+  return { prompt: contract.prompt, spec: resolved.spec, plan: resolved.plan, sdd };
+};
 
 const handoffContext = (stdout: string) => {
   const prompt = stdout.match(/^PROMPT_START\n([\s\S]*?)\nPROMPT_END\s*$/)?.[1];
@@ -132,19 +151,26 @@ const handoffContext = (stdout: string) => {
 export function createHandoffTools(
   client: HandoffClient,
   state: WorkflowStateStore,
-  runtime: HandoffRuntime = defaultRuntime,
+  runtime: HandoffRuntime | null = null,
 ) {
   return {
     workflow_handoff_session: tool({
       description: "Create, seed, and select a continuation session; --stay in the message skips selection",
       args: { message: tool.schema.string() },
       execute: async ({ message: userMessage }, context) => {
-        const resolved = runtime.runScript(context.directory, "collect-handoff-context.sh", [userMessage]);
-        if (resolved.exitCode !== 0) {
-          return output(fail(resolved.stderr.trim() || resolved.stdout.trim() || "handoff context failed"));
+        let active: { prompt: string; spec: string; plan: string; sdd: string };
+        if (runtime) {
+          const resolved = runtime.runScript(context.directory, "collect-handoff-context.sh", [userMessage]);
+          if (resolved.exitCode !== 0) {
+            return output(fail(resolved.stderr.trim() || resolved.stdout.trim() || "handoff context failed"));
+          }
+          active = handoffContext(resolved.stdout);
+        } else {
+          const built = buildHandoffPrompt(context.directory, userMessage);
+          if ("error" in built) return output(fail(built.error));
+          active = built;
         }
         try {
-          const active = handoffContext(resolved.stdout);
           const gate = assertFlowGates(context.directory, active.plan);
           if (!gate.ok) return output(fail(gate.error));
           state.set(context.sessionID, { spec: active.spec, plan: active.plan, sdd: active.sdd });

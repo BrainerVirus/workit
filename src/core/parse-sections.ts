@@ -1,6 +1,6 @@
 /** Split script stdout on ## Section headers (print_section output). */
-export function parseSections(stdout) {
-  const sections = {};
+export function parseSections(stdout: string): Record<string, string> {
+  const sections: Record<string, string> = {};
   const parts = stdout.split(/\n## /);
   for (const part of parts.slice(1)) {
     const nl = part.indexOf('\n');
@@ -10,8 +10,8 @@ export function parseSections(stdout) {
   return sections;
 }
 
-export function parseKeyValueLines(text, keys) {
-  const out = {};
+export function parseKeyValueLines(text: string, keys: string[]): Record<string, string> {
+  const out: Record<string, string> = {};
   for (const line of text.split('\n')) {
     for (const key of keys) {
       const prefix = `${key}: `;

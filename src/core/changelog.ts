@@ -1,8 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { PLUGIN_ROOT } from "./plugin-root.js";
-import { resolveWorkspaceRoot } from "./resolve-workspace-root.js";
+import { PLUGIN_ROOT } from "./scripts";
+import { resolveWorkspaceRoot } from "./scripts";
 
 const CATEGORIES = [
   "Added",
@@ -13,10 +13,10 @@ const CATEGORIES = [
   "Security",
 ];
 
-function normalizeEntries(entries) {
+function normalizeEntries(entries: any): { data: Record<string, string[]> } | { error: string } {
   if (!entries) return { data: {} };
   if (Array.isArray(entries)) {
-    const grouped = {};
+    const grouped: Record<string, string[]> = {};
     for (const item of entries) {
       const cat = item.category ?? item.type;
       const text = item.text ?? item.entry ?? "";
@@ -30,7 +30,7 @@ function normalizeEntries(entries) {
     return { data: grouped };
   }
   if (typeof entries === "object") {
-    const grouped = {};
+    const grouped: Record<string, string[]> = {};
     for (const [cat, bullets] of Object.entries(entries)) {
       const canon = CATEGORIES.find((c) => c.toLowerCase() === String(cat).toLowerCase());
       if (!canon) return { error: `invalid category: ${cat}` };
@@ -47,12 +47,17 @@ export function changelogApply({
   path: changelogPath,
   normalize_only,
   workspace_root,
-}) {
+}: {
+  entries?: any;
+  path?: string;
+  normalize_only?: boolean;
+  workspace_root: string;
+}): Record<string, any> {
   const cwd = resolveWorkspaceRoot(workspace_root);
   const normalized = normalize_only
-    ? { data: {} }
+    ? { data: {} as Record<string, string[]> }
     : normalizeEntries(entries);
-  if (normalized.error) return { error: normalized.error };
+  if ("error" in normalized) return { error: normalized.error };
   if (!normalize_only && Object.keys(normalized.data).length === 0) {
     return { error: "entries required unless normalize_only" };
   }
@@ -93,7 +98,7 @@ export function changelogApply({
   }
 }
 
-export function changelogUnreleasedStats(workspace_root, changelogPath = "CHANGELOG.md") {
+export function changelogUnreleasedStats(workspace_root: string, changelogPath = "CHANGELOG.md") {
   const cwd = resolveWorkspaceRoot(workspace_root);
   const abs = path.isAbsolute(changelogPath)
     ? changelogPath

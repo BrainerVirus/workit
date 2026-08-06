@@ -2,8 +2,7 @@ import { expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
-import { adaptPluginHandoffClient, createHandoffTools, handoffSession } from "../src/tools/handoff";
+import { adaptPluginHandoffClient, buildHandoffPrompt, createHandoffTools, handoffSession } from "../src/tools/handoff";
 import { WorkflowStateStore } from "../src/state";
 
 const request = {
@@ -367,9 +366,12 @@ test("handoff context is read-only when the SDD workspace is absent", async () =
       path.join(root, "docs/superpowers/plans/x.md"),
       "# X\n\n**Spec:** `docs/superpowers/specs/x.md`\n**Branch:** `feature/x`\n\n### Task 1: One\n\n- [ ] **Step 1:** Work\n",
     );
-    const result = spawnSync("bash", [path.resolve(import.meta.dir, "../scripts/collect-handoff-context.sh"),
-      "docs/superpowers/specs/x.md docs/superpowers/plans/x.md"], { cwd: root, encoding: "utf8" });
-    expect(result.status).toBe(0);
+    const result = buildHandoffPrompt(root, "docs/superpowers/specs/x.md docs/superpowers/plans/x.md");
+    expect("error" in result).toBe(false);
+    if (!("error" in result)) {
+      expect(result.prompt).toContain("**Spec:** docs/superpowers/specs/x.md");
+      expect(result.prompt).toContain("**Plan:** docs/superpowers/plans/x.md");
+    }
     expect(existsSync(path.join(root, "docs/superpowers/sdd/x"))).toBe(false);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
@@ -388,17 +390,12 @@ test("handoff resolves a matching local spec and plan when slash arguments are e
       "# MFE Tasks Base Plan\n\n**Spec:** `docs/superpowers/specs/2026-07-14-mfe-tasks-base-design.md`\n**Branch:** `feature/mfe-tasks-base`\n\n**Goal:** Build the MFE.\n\n### Task 1: Setup\n\n- [ ] **Step 1:** Work\n",
     );
 
-    const result = spawnSync(
-      "bash",
-      [path.resolve(import.meta.dir, "../scripts/collect-handoff-context.sh"),
-        "Load the wf-handoff skill and follow it."],
-      { cwd: root, encoding: "utf8" },
-    );
-
-    expect(result.status).toBe(0);
-    expect(result.stderr).toMatch(/RESOLVE=(active_pair|matching_pair)/);
-    expect(result.stdout).toContain("**Spec:** docs/superpowers/specs/2026-07-14-mfe-tasks-base-design.md");
-    expect(result.stdout).toContain("**Plan:** docs/superpowers/plans/2026-07-14-mfe-tasks-base.md");
+    const result = buildHandoffPrompt(root, "Load the wf-handoff skill and follow it.");
+    expect("error" in result).toBe(false);
+    if (!("error" in result)) {
+      expect(result.spec).toBe("docs/superpowers/specs/2026-07-14-mfe-tasks-base-design.md");
+      expect(result.plan).toBe("docs/superpowers/plans/2026-07-14-mfe-tasks-base.md");
+    }
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -428,16 +425,12 @@ test("handoff matching-pair ties resolve deterministically", () => {
     const sameTime = new Date("2026-07-14T12:00:00Z");
     for (const file of files) utimesSync(file, sameTime, sameTime);
 
-    const result = spawnSync(
-      "bash",
-      [path.resolve(import.meta.dir, "../scripts/collect-handoff-context.sh"),
-        "Load the wf-handoff skill and follow it."],
-      { cwd: root, encoding: "utf8" },
-    );
-
-    expect(result.status).toBe(0);
-    expect(result.stdout).toContain("**Spec:** docs/superpowers/specs/2026-07-14-alpha-design.md");
-    expect(result.stdout).toContain("**Plan:** docs/superpowers/plans/2026-07-14-alpha.md");
+    const result = buildHandoffPrompt(root, "Load the wf-handoff skill and follow it.");
+    expect("error" in result).toBe(false);
+    if (!("error" in result)) {
+      expect(result.spec).toBe("docs/superpowers/specs/2026-07-14-alpha-design.md");
+      expect(result.plan).toBe("docs/superpowers/plans/2026-07-14-alpha.md");
+    }
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -453,14 +446,9 @@ test("handoff collect fails before prompt when docs validation fails", () => {
       path.join(root, plan),
       `# Bad\n\n**Spec:** \`${spec}\`\n**Branch:** \`feature/bad\`\n\n### Task 1: One\n\n- [ ] **Step 1:** x\n\n### Task 3: Skip\n\n- [ ] **Step 1:** x\n`,
     );
-    const result = spawnSync(
-      "bash",
-      [path.resolve(import.meta.dir, "../scripts/collect-handoff-context.sh"), `${spec} ${plan}`],
-      { cwd: root, encoding: "utf8" },
-    );
-    expect(result.status).not.toBe(0);
-    expect(result.stderr).toMatch(/docs validation failed/i);
-    expect(result.stdout).not.toContain("PROMPT_START");
+    const result = buildHandoffPrompt(root, `${spec} ${plan}`);
+    expect("error" in result).toBe(true);
+    if ("error" in result) expect(result.error).toMatch(/docs validation failed/i);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

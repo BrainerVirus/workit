@@ -3,10 +3,10 @@ import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { tool, type ToolContext } from "@opencode-ai/plugin";
 import { fail, gitRevisionParts, ok, resolveInside, run } from "../core";
-import { changelogApply } from "../legacy/changelog-apply.js";
-import { gitContext } from "../legacy/git-context.js";
-import { parseKeyValueLines, parseSections } from "../legacy/parse-sections.js";
-import { parseVerifyOutput } from "../legacy/verify-parse.js";
+import { changelogApply } from "../core/changelog";
+import { gitContext } from "../core/git";
+import { parseKeyValueLines, parseSections } from "../core/parse-sections";
+import { parseVerifyOutput } from "../core/verify-parse";
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const scripts = path.join(packageRoot, "scripts");

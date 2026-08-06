@@ -1,8 +1,8 @@
 import { spawnSync } from "node:child_process";
 import path from "node:path";
-import { PLUGIN_ROOT } from "./plugin-root.js";
+import { PLUGIN_ROOT } from "./scripts";
 
-function runPresent(script, input) {
+function runPresent(script: string, input: unknown): { error: string } | { data: string } {
   const scriptPath = path.join(PLUGIN_ROOT, "scripts", "present", script);
   const result = spawnSync("bash", [scriptPath], {
     input: typeof input === "string" ? input : JSON.stringify(input),
@@ -16,14 +16,14 @@ function runPresent(script, input) {
   return { data: (result.stdout ?? "").trimEnd() };
 }
 
-export function asciiWireframe(spec) {
+export function asciiWireframe(spec: unknown): Record<string, any> {
   const out = runPresent("ascii-wireframe.sh", spec);
-  if (out.error) return out;
+  if ("error" in out) return out;
   return { data: { ascii: out.data, format: "ascii-wireframe" } };
 }
 
-export function flowDiagram(spec) {
+export function flowDiagram(spec: unknown): Record<string, any> {
   const out = runPresent("flow-diagram.sh", spec);
-  if (out.error) return out;
+  if ("error" in out) return out;
   return { data: { mermaid: out.data, format: "mermaid" } };
 }

@@ -1,9 +1,18 @@
 import { spawnSync } from "node:child_process";
 import path from "node:path";
-import { PLUGIN_ROOT } from "./plugin-root.js";
-import { resolveWorkspaceRoot } from "./resolve-workspace-root.js";
+import { fileURLToPath } from "node:url";
 
-export function runScript(scriptName, args, workspaceRoot, extraEnv) {
+const dirname = path.dirname(fileURLToPath(import.meta.url));
+export const PLUGIN_ROOT = path.resolve(dirname, "../..");
+
+export const resolveWorkspaceRoot = (explicit?: string) => explicit || process.cwd();
+
+export function runScript(
+  scriptName: string,
+  args: string[],
+  workspaceRoot: string,
+  extraEnv?: Record<string, string>,
+) {
   const cwd = resolveWorkspaceRoot(workspaceRoot);
   const scriptPath = path.join(PLUGIN_ROOT, "scripts", scriptName);
   const result = spawnSync("bash", [scriptPath, ...args], {
@@ -20,12 +29,8 @@ export function runScript(scriptName, args, workspaceRoot, extraEnv) {
   };
 }
 
-export function runScriptJson(scriptName, args, workspaceRoot) {
-  const { stdout, stderr, exitCode } = runScript(
-    scriptName,
-    args,
-    workspaceRoot,
-  );
+export function runScriptJson(scriptName: string, args: string[], workspaceRoot: string) {
+  const { stdout, stderr, exitCode } = runScript(scriptName, args, workspaceRoot);
   if (exitCode !== 0) {
     return { error: (stderr || stdout || "script failed").trim(), exitCode };
   }

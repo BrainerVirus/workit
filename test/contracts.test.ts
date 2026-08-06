@@ -132,7 +132,7 @@ test("PR skills show title and body before create confirmation", () => {
 test("native runtime outputs use OpenCode-neutral vocabulary", () => {
   const root = path.resolve(import.meta.dir, "..");
   const sources = [
-    "src/legacy/sdd-context.js", "scripts/_shared/common.sh", "scripts/changelog-context.sh",
+    "src/core/sdd.ts", "scripts/_shared/common.sh", "scripts/changelog-context.sh",
     "scripts/init/apply.sh", "scripts/vcs/token-create-urls.sh",
   ].map((file) => readFileSync(path.join(root, file), "utf8")).join("\n");
   for (const stale of ["Cursor TodoWrite", "Cursor AskQuestion", "Cursor plugin", "MCP tool", "Cursor workspace"]) {

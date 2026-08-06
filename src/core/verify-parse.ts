@@ -1,5 +1,5 @@
 /** Parse verify-project.sh stdout (# Summary + ## check sections). */
-export function parseVerifyOutput(stdout) {
+export function parseVerifyOutput(stdout: string): Record<string, any> {
   const commands = [];
   const parts = stdout.split(/\n## /);
   for (const part of parts.slice(1)) {

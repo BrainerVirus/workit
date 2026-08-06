@@ -1,6 +1,6 @@
 import { tool } from "@opencode-ai/plugin";
 import { fail, ok } from "../core";
-import { asciiWireframe, flowDiagram } from "../legacy/present.js";
+import { asciiWireframe, flowDiagram } from "../core/present";
 
 const output = (value: unknown) => JSON.stringify(value, null, 2);
 

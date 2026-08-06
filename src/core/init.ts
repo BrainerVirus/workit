@@ -1,9 +1,9 @@
 import { spawnSync } from "node:child_process";
 import path from "node:path";
-import { PLUGIN_ROOT } from "./plugin-root.js";
-import { runScript, runScriptJson } from "./run-script.js";
+import { PLUGIN_ROOT } from "./scripts";
+import { runScript, runScriptJson } from "./scripts";
 
-function runInitScript(script, args, env = {}) {
+function runInitScript(script: string, args: string[], env: Record<string, string> = {}): Record<string, any> {
   const scriptPath = path.join(PLUGIN_ROOT, "scripts", "init", script);
   const result = spawnSync("bash", [scriptPath, ...args], {
     cwd: PLUGIN_ROOT,
@@ -22,19 +22,19 @@ function runInitScript(script, args, env = {}) {
   }
 }
 
-export function initStatus() {
+export function initStatus(): Record<string, any> {
   const result = runScriptJson("init/status.sh", [], PLUGIN_ROOT);
   if (result.error) return { error: result.error };
   return result.data;
 }
 
-export function toolkitStatus() {
+export function toolkitStatus(): Record<string, any> {
   const result = runScriptJson("init/toolkit-status.sh", [], PLUGIN_ROOT);
   if (result.error) return { error: result.error };
   return result.data;
 }
 
-export function initApply({ action, confirmed, env }) {
+export function initApply({ action, confirmed, env }: { action: string; confirmed: boolean; env?: Record<string, string> }): Record<string, any> {
   if (!confirmed) return { error: "confirmed: true required" };
 
   const scriptPath = path.join(PLUGIN_ROOT, "scripts", "init", "apply.sh");

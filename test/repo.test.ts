@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { createRepoTools, normalizeLegacyResult } from "../src/tools/repo";
-import { PLUGIN_ROOT } from "../src/legacy/plugin-root.js";
+import { PLUGIN_ROOT } from "../src/core/scripts";
 
 const calls: Array<{ root: string; script: string; args: string[]; env?: Record<string, string> }> = [];
 const gitCalls: Array<{ root: string; args: string[] }> = [];
