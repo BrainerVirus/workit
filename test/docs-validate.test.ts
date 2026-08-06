@@ -7,10 +7,9 @@ import { WorkflowStateStore } from "../src/state";
 
 const fixture = () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "wf-docs-validate-"));
-  mkdirSync(path.join(root, "docs/superpowers/specs"), { recursive: true });
-  mkdirSync(path.join(root, "docs/superpowers/plans"), { recursive: true });
-  const spec = "docs/superpowers/specs/2026-08-04-gates-design.md";
-  const plan = "docs/superpowers/plans/2026-08-04-gates.md";
+  mkdirSync(path.join(root, "docs", "2026-08-04-gates"), { recursive: true });
+  const spec = "docs/2026-08-04-gates/spec.md";
+  const plan = "docs/2026-08-04-gates/plan.md";
   writeFileSync(path.join(root, spec), "# Gates\n\n**Branch:** `feature/gates`\n");
   writeFileSync(
     path.join(root, plan),
@@ -58,7 +57,7 @@ test("workflow_docs_validate hard-fails on Spec link or branch mismatch", async 
   const { root, spec, plan } = fixture();
   writeFileSync(
     path.join(root, plan),
-    `# Gates Plan\n\n**Spec:** \`docs/superpowers/specs/other-design.md\`\n**Branch:** \`feature/other\`\n\n### Task 1: One\n\n- [ ] **Step 1: x**\n`,
+    `# Gates Plan\n\n**Spec:** \`docs/other/spec.md\`\n**Branch:** \`feature/other\`\n\n### Task 1: One\n\n- [ ] **Step 1: x**\n`,
   );
   try {
     const raw = await createSddTools(new WorkflowStateStore()).workflow_docs_validate.execute(

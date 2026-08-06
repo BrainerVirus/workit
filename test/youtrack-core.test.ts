@@ -71,10 +71,10 @@ test("context falls back to meeting issue and spec/plan YouTrack ref", () => {
 
   const root = mkdtempSync(path.join(os.tmpdir(), "wf-yt-paths-"));
   try {
-    mkdirSync(path.join(root, "docs/superpowers/specs"), { recursive: true });
-    writeFileSync(path.join(root, "docs/superpowers/specs/s.md"), "# S\n\n**YouTrack:** `ABC-7`\n");
+    mkdirSync(path.join(root, "docs", "s"), { recursive: true });
+    writeFileSync(path.join(root, "docs/s/spec.md"), "# S\n\n**YouTrack:** `ABC-7`\n");
     const fromSpec = context(
-      { spec_path: "docs/superpowers/specs/s.md", workspace_root: root },
+      { spec_path: "docs/s/spec.md", workspace_root: root },
       scripts(),
     );
     expect(fromSpec.issueId).toBe("ABC-7");
@@ -198,10 +198,10 @@ test("postUpdate surfaces comment errors and success with minutes", () => {
 test("resolveYouTrackFromPaths returns null when no file has a YouTrack ref", () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "wf-yt-noref-"));
   try {
-    mkdirSync(path.join(root, "docs/superpowers/specs"), { recursive: true });
-    writeFileSync(path.join(root, "docs/superpowers/specs/s.md"), "# S\n\n**Branch:** `feature/s`\n");
+    mkdirSync(path.join(root, "docs", "s"), { recursive: true });
+    writeFileSync(path.join(root, "docs/s/spec.md"), "# S\n\n**Branch:** `feature/s`\n");
     const result = context(
-      { spec_path: "docs/superpowers/specs/s.md", workspace_root: root },
+      { spec_path: "docs/s/spec.md", workspace_root: root },
       scripts(),
     );
     expect(result.error).toContain("invalid or missing issue id");

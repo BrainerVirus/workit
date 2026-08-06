@@ -17,7 +17,7 @@ const SLUG_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
 const flowPath = (root: string, slug: string) => {
   if (!SLUG_RE.test(slug)) throw new Error(`invalid slug: ${JSON.stringify(slug)}`);
-  return path.join(root, "docs/superpowers/sdd", slug, "flow.json");
+  return path.join(root, "docs", slug, "sdd", "flow.json");
 };
 
 export const readFlowState = (root: string, slug: string): FlowState => {
@@ -145,8 +145,10 @@ export const recordMenuChoice = (
   return { ok: true };
 };
 
-export const slugFromPath = (p: string) =>
-  path.basename(p, ".md").replace(/-design$/, "");
+export const slugFromPath = (p: string) => {
+  const dirName = path.basename(path.dirname(p));
+  return dirName === "." || dirName === "/" || dirName === "" ? "" : dirName;
+};
 
 export const assertFlowGates = (
   root: string,

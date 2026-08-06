@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 
 export type DocError = { code: string; message: string; path?: string };
@@ -102,14 +102,7 @@ export const docsValidate = ({
     errors.push(err("missing_spec_link", "**Spec:** link required in plan", plan_path));
   } else {
     const linked = (linkMatch[1] ?? linkMatch[2] ?? "").trim();
-    // Mirror path support: docs/specs/<file>.md resolves to docs/superpowers/specs/<file>.md
-    // when the canonical copy exists (same rule as handoff path resolution).
-    let linkedNormalized = linked;
-    if (linked.startsWith("docs/specs/")) {
-      const alt = path.posix.join("docs/superpowers/specs", path.basename(linked));
-      if (existsSync(path.join(cwd, alt))) linkedNormalized = alt;
-    }
-    const linkedAbs = path.isAbsolute(linkedNormalized) ? linkedNormalized : path.join(cwd, linkedNormalized);
+    const linkedAbs = path.isAbsolute(linked) ? linked : path.join(cwd, linked);
     if (path.resolve(linkedAbs) !== path.resolve(specAbs)) {
       errors.push(err("spec_mismatch", `plan **Spec:** ${linked} does not match spec_path ${spec_path}`, plan_path));
     }

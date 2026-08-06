@@ -6,7 +6,7 @@ import { docsValidate } from "./docs-validate";
 import { readFlowState } from "./flow-state";
 
 export function slugFromPlan(planPath: string) {
-  return path.basename(planPath, ".md");
+  return path.basename(path.dirname(planPath));
 }
 
 /** OpenCode todowrite payload. SDD ledger is persistence, not a UI substitute. */
@@ -46,7 +46,7 @@ export function sddContext({
   }
   if (!resolvedSlug) return { error: "slug or plan_path required" };
 
-  const sdd_dir = path.join("docs/superpowers/sdd", resolvedSlug);
+  const sdd_dir = path.join("docs", resolvedSlug, "sdd");
   const progress_path = path.join(sdd_dir, "progress.md");
   const manifest_path = path.join(sdd_dir, "manifest.json");
 

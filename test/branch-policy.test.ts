@@ -47,8 +47,8 @@ test("workflow_docs_branch keeps current feature branch", async () => {
 
 test("workflow_docs_branch proposes create_from_develop on main", async () => {
   const { root, remote } = repoWithDevelop();
-  mkdirSync(path.join(root, "docs/superpowers/plans"), { recursive: true });
-  const plan = "docs/superpowers/plans/2026-08-04-gates.md";
+  mkdirSync(path.join(root, "docs", "2026-08-04-gates"), { recursive: true });
+  const plan = "docs/2026-08-04-gates/plan.md";
   writeFileSync(path.join(root, plan), "# Plan\n");
   try {
     const raw = await createSddTools(new WorkflowStateStore()).workflow_docs_branch.execute(
@@ -58,7 +58,7 @@ test("workflow_docs_branch proposes create_from_develop on main", async () => {
     const result = JSON.parse(raw as string);
     expect(result.ok).toBe(true);
     expect(result.data.action).toBe("create_from_develop");
-    expect(result.data.branch).toBe("feature/gates");
+    expect(result.data.branch).toBe("feature/2026-08-04-gates");
     expect(result.data.current_branch).toBe("main");
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -120,26 +120,29 @@ test("branch resolution honors use-current and bugfix slug/kind derivation", asy
     run(["branch", "feature/base"]);
     run(["checkout", "-q", "feature/base"]);
 
-    mkdirSync(path.join(dir, "docs/superpowers/specs"), { recursive: true });
-    mkdirSync(path.join(dir, "docs/superpowers/plans"), { recursive: true });
-    writeFileSync(path.join(dir, "docs/superpowers/specs/uc-design.md"), "# UC\n\n**Branch:** use-current\n");
-    writeFileSync(path.join(dir, "docs/superpowers/plans/uc.md"), "# UC\n\n**Spec:** `docs/superpowers/specs/uc-design.md`\n\n### Task 1: One\n\n- [ ] **Step 1:** Work\n");
-    const useCurrent = resolveBranch({ spec_path: "docs/superpowers/specs/uc-design.md", plan_path: "docs/superpowers/plans/uc.md", workspace_root: dir });
+    mkdirSync(path.join(dir, "docs", "uc"), { recursive: true });
+    mkdirSync(path.join(dir, "docs", "x"), { recursive: true });
+    mkdirSync(path.join(dir, "docs", "fix-x"), { recursive: true });
+    mkdirSync(path.join(dir, "docs", "g"), { recursive: true });
+    mkdirSync(path.join(dir, "docs", "feat"), { recursive: true });
+    writeFileSync(path.join(dir, "docs/uc/spec.md"), "# UC\n\n**Branch:** use-current\n");
+    writeFileSync(path.join(dir, "docs/uc/plan.md"), "# UC\n\n**Spec:** `docs/uc/spec.md`\n\n### Task 1: One\n\n- [ ] **Step 1:** Work\n");
+    const useCurrent = resolveBranch({ spec_path: "docs/uc/spec.md", plan_path: "docs/uc/plan.md", workspace_root: dir });
     expect("error" in useCurrent ? useCurrent.error : useCurrent.source).toBe("use-current");
     expect("error" in useCurrent ? useCurrent.error : useCurrent.branch).toBe("feature/base");
 
     run(["branch", "main"]);
     run(["checkout", "-q", "main"]);
-    writeFileSync(path.join(dir, "docs/superpowers/plans/fix-x.md"), "# Fix x\n\n### Task 1: One\n\n- [ ] **Step 1:** Work\n");
-    const fixSlug = resolveBranch({ spec_path: "missing.md", plan_path: "docs/superpowers/plans/fix-x.md", workspace_root: dir });
+    writeFileSync(path.join(dir, "docs/fix-x/plan.md"), "# Fix x\n\n### Task 1: One\n\n- [ ] **Step 1:** Work\n");
+    const fixSlug = resolveBranch({ spec_path: "missing.md", plan_path: "docs/fix-x/plan.md", workspace_root: dir });
     expect("error" in fixSlug ? fixSlug.error : fixSlug.branch).toBe("bugfix/fix-x");
 
-    writeFileSync(path.join(dir, "docs/superpowers/plans/g.md"), "# G\n\n**Goal:** bug fix without adding features\n\n### Task 1: One\n\n- [ ] **Step 1:** Work\n");
-    const goal = resolveBranch({ spec_path: "missing.md", plan_path: "docs/superpowers/plans/g.md", workspace_root: dir });
+    writeFileSync(path.join(dir, "docs/g/plan.md"), "# G\n\n**Goal:** bug fix without adding features\n\n### Task 1: One\n\n- [ ] **Step 1:** Work\n");
+    const goal = resolveBranch({ spec_path: "missing.md", plan_path: "docs/g/plan.md", workspace_root: dir });
     expect("error" in goal ? goal.error : goal.branch).toBe("bugfix/g");
 
-    writeFileSync(path.join(dir, "docs/superpowers/plans/feat.md"), "# F\n\n**Goal:** Add cool feature\n\n### Task 1: One\n\n- [ ] **Step 1:** Work\n");
-    const feat = resolveBranch({ spec_path: "missing.md", plan_path: "docs/superpowers/plans/feat.md", workspace_root: dir });
+    writeFileSync(path.join(dir, "docs/feat/plan.md"), "# F\n\n**Goal:** Add cool feature\n\n### Task 1: One\n\n- [ ] **Step 1:** Work\n");
+    const feat = resolveBranch({ spec_path: "missing.md", plan_path: "docs/feat/plan.md", workspace_root: dir });
     expect("error" in feat ? feat.error : feat.branch).toBe("feature/feat");
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
@@ -259,9 +262,9 @@ test("docsBranch reports keep and create_from_develop and HEAD errors", () => {
     expect(kept.branch).toBe("feature/current");
 
     run(["checkout", "-q", "-b", "develop"]);
-    mkdirSync(path.join(dir, "docs/superpowers/plans"), { recursive: true });
-    writeFileSync(path.join(dir, "docs/superpowers/plans/2026-08-06-x.md"), "# X\n");
-    const created = docsBranch({ plan_path: "docs/superpowers/plans/2026-08-06-x.md", kind: "bugfix", workspace_root: dir });
+    mkdirSync(path.join(dir, "docs", "x"), { recursive: true });
+    writeFileSync(path.join(dir, "docs/x/plan.md"), "# X\n");
+    const created = docsBranch({ plan_path: "docs/x/plan.md", kind: "bugfix", workspace_root: dir });
     expect(created.action).toBe("create_from_develop");
     expect(created.branch).toBe("bugfix/x");
   } finally { rmSync(dir, { recursive: true, force: true }); }

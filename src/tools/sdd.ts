@@ -44,7 +44,7 @@ const planPaths = (root: string, planPath: string, suppliedSpecPath?: string) =>
   return {
     spec_path,
     plan_path: planPath,
-    sdd_dir: path.posix.join("docs/superpowers/sdd", path.basename(planPath, ".md")),
+    sdd_dir: path.posix.join("docs", path.basename(path.dirname(planPath)), "sdd"),
   };
 };
 
