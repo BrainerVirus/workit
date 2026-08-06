@@ -8,6 +8,7 @@ import { gitContext } from "../../src/core/git";
 import { parsePlanTasks, resolveHandoffBranch } from "../../src/core/plan-tasks";
 import { buildHandoffPrompt } from "../../src/tools/handoff";
 import { readFlowState, transitionSpec, transitionPlan, recordMenuChoice, slugFromPath } from "../../src/core/flow-state";
+import { linkDocsRepo, listSpecs, promoteSpec } from "../../src/core/docs-repo";
 import { initStatus, initApply, toolkitStatus } from "../../src/core/init";
 import { resolveBranch, branchSetup } from "../../src/core/branch";
 import { docsValidate } from "../../src/core/docs-validate";
@@ -1032,6 +1033,49 @@ server.registerTool(
     const result = recordMenuChoice(root, slug, plan_path, choice, confirmed);
     if (result.ok === false) return jsonResult({ error: result.error });
     return jsonResult({ menu: { presented: true, chosen: choice } });
+  },
+);
+
+server.registerTool(
+  "workflow_docs_repo_link",
+  {
+    description: "Link the component docs repo in the toolkit config",
+    inputSchema: {
+      path: z.string(),
+      confirmed: z.boolean(),
+    },
+  },
+  async ({ path: docsPath, confirmed }) => {
+    const result = linkDocsRepo(docsPath, confirmed);
+    if (!result.ok) return jsonResult({ error: result.error });
+    return jsonResult({ path: result.path });
+  },
+);
+
+server.registerTool(
+  "workflow_docs_list",
+  {
+    description: "List local specs with docs-repo promotion status",
+    inputSchema: { workspace_root: workspaceRootSchema },
+  },
+  async ({ workspace_root }) => jsonResult(listSpecs(workspace_root ?? process.cwd())),
+);
+
+server.registerTool(
+  "workflow_docs_promote",
+  {
+    description: "Promote a spec (+plan) to the linked docs repo with quality gate",
+    inputSchema: {
+      slug: z.string(),
+      confirmed: z.boolean(),
+      force: z.boolean().optional(),
+      workspace_root: workspaceRootSchema,
+    },
+  },
+  async ({ slug, confirmed, force, workspace_root }) => {
+    const result = promoteSpec(workspace_root ?? process.cwd(), slug, { confirmed, force });
+    if (!result.ok) return jsonResult({ error: result.error, findings: result.findings ?? [] });
+    return jsonResult({ target_dir: result.target_dir, files: result.files, index_updated: result.index_updated });
   },
 );
 
