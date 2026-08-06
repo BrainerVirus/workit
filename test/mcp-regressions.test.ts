@@ -284,3 +284,48 @@ test("plugin and MCP versions are synchronized", () => {
   );
   expect(manifest.version).toBe(opencode.version);
 });
+
+test("cursor MCP server registers the full required tool surface", () => {
+  const server = readFileSync(path.join(CURSOR_ROOT, "mcp/server.ts"), "utf8");
+  const required = [
+    "workflow_toolkit_init_status",
+    "workflow_toolkit_status",
+    "workflow_toolkit_init_apply",
+    "workflow_docs_validate",
+    "workflow_flow_status",
+    "workflow_spec_approve",
+    "workflow_plan_approve",
+    "workflow_plan_menu",
+    "workflow_handoff_prompt",
+    "workflow_youtrack_verify_token",
+    "workflow_youtrack_parse_issue",
+    "workflow_youtrack_context",
+    "workflow_youtrack_parse_duration",
+    "workflow_youtrack_log_time",
+    "workflow_youtrack_draft",
+    "workflow_youtrack_post",
+    "workflow_present_ascii",
+    "workflow_present_flow",
+  ];
+  const registered = (server.match(/registerTool\(\s*\n?\s*"([a-z_]+)"/g) ?? []).join("\n");
+  for (const name of required) {
+    expect(registered).toContain(`"${name}"`);
+  }
+});
+
+test("docs validate accepts a mirror docs/specs link when the canonical spec exists", () => {
+  const root = temporaryDirectory();
+  try {
+    mkdirSync(path.join(root, "docs/superpowers/specs"), { recursive: true });
+    mkdirSync(path.join(root, "docs/superpowers/plans"), { recursive: true });
+    const spec = "docs/superpowers/specs/mirror-design.md";
+    const plan = "docs/superpowers/plans/mirror.md";
+    writeFileSync(path.join(root, spec), "# Mirror\n\n**Branch:** `feature/mirror`\n");
+    writeFileSync(
+      path.join(root, plan),
+      `# Mirror\n\n**Spec:** \`docs/specs/mirror-design.md\`\n**Branch:** \`feature/mirror\`\n\n### Task 1: One\n\n- [ ] **Step 1:** Work\n`,
+    );
+    const result = docsValidate({ spec_path: spec, plan_path: plan, workspace_root: root });
+    expect(result.ok).toBe(true);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});

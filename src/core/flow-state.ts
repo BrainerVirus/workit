@@ -13,8 +13,12 @@ export type FlowState = {
 
 type Result = { ok: true } | { ok: false; error: string };
 
-const flowPath = (root: string, slug: string) =>
-  path.join(root, "docs/superpowers/sdd", slug, "flow.json");
+const SLUG_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+const flowPath = (root: string, slug: string) => {
+  if (!SLUG_RE.test(slug)) throw new Error(`invalid slug: ${JSON.stringify(slug)}`);
+  return path.join(root, "docs/superpowers/sdd", slug, "flow.json");
+};
 
 export const readFlowState = (root: string, slug: string): FlowState => {
   const file = flowPath(root, slug);
@@ -69,7 +73,15 @@ export const transitionSpec = (
   specPath: string,
   confirmed: boolean,
 ): Result => {
-  const state = readFlowState(root, slug);
+  let state: FlowState;
+  try {
+    state = readFlowState(root, slug);
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : "invalid flow state" };
+  }
+  if (!existsSync(path.isAbsolute(specPath) ? specPath : path.join(root, specPath))) {
+    return { ok: false, error: `spec not found: ${specPath}` };
+  }
   const step = nextStatus(state.spec.status, confirmed);
   if (!step.ok) return { ok: false, error: step.error };
   writeFlowState(root, {
@@ -86,7 +98,15 @@ export const transitionPlan = (
   planPath: string,
   confirmed: boolean,
 ): Result => {
-  const state = readFlowState(root, slug);
+  let state: FlowState;
+  try {
+    state = readFlowState(root, slug);
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : "invalid flow state" };
+  }
+  if (!existsSync(path.isAbsolute(planPath) ? planPath : path.join(root, planPath))) {
+    return { ok: false, error: `plan not found: ${planPath}` };
+  }
   if (state.spec.status !== "approved") {
     return { ok: false, error: "spec must be approved before the plan can be approved" };
   }
@@ -108,7 +128,12 @@ export const recordMenuChoice = (
   confirmed: boolean,
 ): Result => {
   if (!confirmed) return { ok: false, error: "confirmed: true required" };
-  const state = readFlowState(root, slug);
+  let state: FlowState;
+  try {
+    state = readFlowState(root, slug);
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : "invalid flow state" };
+  }
   writeFlowState(root, {
     ...state,
     plan: state.plan.path ? state.plan : { path: planPath, status: state.plan.status },

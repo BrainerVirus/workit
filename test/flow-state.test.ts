@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, rmSync, readFileSync, existsSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, readFileSync, existsSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -11,6 +11,10 @@ import {
 
 const fixture = () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "wf-flow-"));
+  mkdirSync(path.join(root, "docs/superpowers/specs"), { recursive: true });
+  mkdirSync(path.join(root, "docs/superpowers/plans"), { recursive: true });
+  writeFileSync(path.join(root, "docs/superpowers/specs/a-design.md"), "# A\n\n**Branch:** `feature/a`\n");
+  writeFileSync(path.join(root, "docs/superpowers/plans/a.md"), "# A\n\n**Branch:** `feature/a`\n");
   return { root, slug: "my-feature" };
 };
 
@@ -115,15 +119,30 @@ test("assertFlowGates fails without approvals", () => {
 test("assertFlowGates requires menu when requested", () => {
   const { root, slug } = fixture();
   try {
-    transitionSpec(root, slug, `docs/superpowers/specs/${slug}-design.md`, true);
-    transitionSpec(root, slug, `docs/superpowers/specs/${slug}-design.md`, true);
-    transitionPlan(root, slug, `docs/superpowers/plans/${slug}.md`, true);
-    transitionPlan(root, slug, `docs/superpowers/plans/${slug}.md`, true);
-    const withoutMenu = assertFlowGates(root, `docs/superpowers/plans/${slug}.md`, { requireMenu: true });
+    const spec = `docs/superpowers/specs/${slug}-design.md`;
+    const plan = `docs/superpowers/plans/${slug}.md`;
+    writeFileSync(path.join(root, spec), `# ${slug}\n\n**Branch:** \`feature/${slug}\`\n`);
+    writeFileSync(path.join(root, plan), `# ${slug}\n\n**Branch:** \`feature/${slug}\`\n`);
+    transitionSpec(root, slug, spec, true);
+    transitionSpec(root, slug, spec, true);
+    transitionPlan(root, slug, plan, true);
+    transitionPlan(root, slug, plan, true);
+    const withoutMenu = assertFlowGates(root, plan, { requireMenu: true });
     expect(withoutMenu.ok).toBe(false);
-    recordMenuChoice(root, slug, `docs/superpowers/plans/${slug}.md`, "inline", true);
-    const withMenu = assertFlowGates(root, `docs/superpowers/plans/${slug}.md`, { requireMenu: true });
+    recordMenuChoice(root, slug, plan, "inline", true);
+    const withMenu = assertFlowGates(root, plan, { requireMenu: true });
     expect(withMenu.ok).toBe(true);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("invalid slug is rejected before any write", () => {
+  const { root } = fixture();
+  try {
+    const result = transitionSpec(root, "..", "docs/superpowers/specs/a-design.md", true);
+    expect(result.ok).toBe(false);
+    expect(String((result as { error: string }).error)).toContain("invalid slug");
   } finally {
     cleanup(root);
   }

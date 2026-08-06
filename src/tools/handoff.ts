@@ -108,16 +108,6 @@ export async function handoffSession(
   }
 }
 
-export type RunResult = {
-  stdout: string;
-  stderr: string;
-  exitCode: number;
-  cwd: string;
-};
-export type HandoffRuntime = {
-  runScript(root: string, script: string, args: string[]): RunResult;
-};
-
 const output = (value: unknown) => JSON.stringify(value, null, 2);
 
 export type HandoffContextResult =
@@ -137,39 +127,20 @@ export const buildHandoffPrompt = (root: string, message: string): HandoffContex
   return { prompt: contract.prompt, spec: resolved.spec, plan: resolved.plan, sdd };
 };
 
-const handoffContext = (stdout: string) => {
-  const prompt = stdout.match(/^PROMPT_START\n([\s\S]*?)\nPROMPT_END\s*$/)?.[1];
-  if (!prompt) throw new Error("handoff context returned no prompt");
-  const field = (name: string) => prompt.match(new RegExp(`^\\*\\*${name}:\\*\\*\\s+\`?([^\`\\n]+)`, "m"))?.[1].trim() ?? "";
-  const spec = field("Spec");
-  const plan = field("Plan");
-  const sdd = field("SDD");
-  if (!spec || !plan || !sdd) throw new Error("handoff context returned incomplete workflow paths");
-  return { prompt, spec, plan, sdd };
-};
+
 
 export function createHandoffTools(
   client: HandoffClient,
   state: WorkflowStateStore,
-  runtime: HandoffRuntime | null = null,
 ) {
   return {
     workflow_handoff_session: tool({
       description: "Create, seed, and select a continuation session; --stay in the message skips selection",
       args: { message: tool.schema.string() },
       execute: async ({ message: userMessage }, context) => {
-        let active: { prompt: string; spec: string; plan: string; sdd: string };
-        if (runtime) {
-          const resolved = runtime.runScript(context.directory, "collect-handoff-context.sh", [userMessage]);
-          if (resolved.exitCode !== 0) {
-            return output(fail(resolved.stderr.trim() || resolved.stdout.trim() || "handoff context failed"));
-          }
-          active = handoffContext(resolved.stdout);
-        } else {
-          const built = buildHandoffPrompt(context.directory, userMessage);
-          if ("error" in built) return output(fail(built.error));
-          active = built;
-        }
+        const built = buildHandoffPrompt(context.directory, userMessage);
+        if ("error" in built) return output(fail(built.error));
+        const active = built;
         try {
           const gate = assertFlowGates(context.directory, active.plan);
           if (!gate.ok) return output(fail(gate.error));

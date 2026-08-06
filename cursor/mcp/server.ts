@@ -675,6 +675,237 @@ server.registerTool(
 );
 
 server.registerTool(
+  "workflow_toolkit_init_status",
+  {
+    description:
+      "Check workflow-toolkit setup (MCP deps, YouTrack config, token)",
+    inputSchema: {},
+  },
+  async () => {
+    const data = initStatus();
+    if (data.error) return jsonResult({ error: data.error });
+    return jsonResult(data);
+  },
+);
+
+server.registerTool(
+  "workflow_toolkit_status",
+  {
+    description:
+      "Full health check: MCP deps, config files, YouTrack API verify. Use after editing token file.",
+    inputSchema: {},
+  },
+  async () => {
+    const data = toolkitStatus();
+    if (data.error) return jsonResult({ error: data.error });
+    return jsonResult(data);
+  },
+);
+
+server.registerTool(
+  "workflow_toolkit_init_apply",
+  {
+    description:
+      "Apply init action. Requires confirmed: true. Token is NOT accepted here — user edits token file locally.",
+    inputSchema: {
+      action: z.enum([
+        "npm_install",
+        "youtrack_scaffold",
+        "youtrack_json",
+        "youtrack_token_placeholder",
+        "vcs_scaffold",
+      ]),
+      confirmed: z.boolean(),
+      base_url: z.string().optional(),
+      default_mention: z.string().optional(),
+      meeting_issue: z.string().optional(),
+      vcs_provider: z.enum(["gitlab", "github"]).optional(),
+      vcs_target_branch: z.string().optional(),
+    },
+  },
+  async ({
+    action,
+    confirmed,
+    base_url,
+    default_mention,
+    meeting_issue,
+    vcs_provider,
+    vcs_target_branch,
+  }) => {
+    const env = {};
+    if (base_url) env.WORKFLOW_YT_BASE_URL = base_url;
+    if (default_mention) env.WORKFLOW_YT_MENTION = default_mention;
+    if (meeting_issue) env.WORKFLOW_YT_MEETING_ISSUE = meeting_issue;
+    if (vcs_provider) env.WORKFLOW_VCS_PROVIDER = vcs_provider;
+    if (vcs_target_branch) env.WORKFLOW_VCS_TARGET_BRANCH = vcs_target_branch;
+    const data = initApply({ action, confirmed, env });
+    if (data.error) return jsonResult({ error: data.error });
+    return jsonResult(data.data);
+  },
+);
+
+server.registerTool(
+  "workflow_youtrack_verify_token",
+  {
+    description:
+      "Read-only YouTrack token test (GET /api/users/me). No work items created.",
+    inputSchema: {},
+  },
+  async () => {
+    const result = verifyYouTrackToken();
+    if (result.error) return jsonResult({ error: result.error });
+    const data = result.data;
+    if (!data.ok)
+      return jsonResult({ error: data.error ?? "token invalid", ...data });
+    return jsonResult(data);
+  },
+);
+
+server.registerTool(
+  "workflow_youtrack_parse_issue",
+  {
+    description:
+      "Parse YouTrack issue URL or bare id (e.g. NSR-40) into issueId",
+    inputSchema: {
+      issue_ref: z
+        .string()
+        .describe("YouTrack URL or issue id, e.g. https://…/issue/NSR-40 or NSR-40"),
+    },
+  },
+  async ({ issue_ref }) => {
+    const data = youtrackParseIssueRef(issue_ref);
+    if (data.error) return jsonResult({ error: data.error });
+    return jsonResult(data);
+  },
+);
+
+server.registerTool(
+  "workflow_youtrack_context",
+  {
+    description:
+      "YouTrack config, greeting, issue resolution (from issue_url/id or meetings)",
+    inputSchema: {
+      mode: z.enum(["meetings", "task"]).optional(),
+      issue_id: z.string().optional(),
+      issue_url: z.string().optional(),
+      issue_ref: z.string().optional(),
+      spec_path: z.string().optional(),
+      plan_path: z.string().optional(),
+      workspace_root: workspaceRootSchema,
+    },
+  },
+  async ({
+    mode,
+    issue_id,
+    issue_url,
+    issue_ref,
+    spec_path,
+    plan_path,
+    workspace_root,
+  }) => {
+    const data = youtrackContext({
+      mode,
+      issue_id,
+      issue_url,
+      issue_ref,
+      spec_path,
+      plan_path,
+      workspace_root,
+    });
+    if (data.error) {
+      return jsonResult({
+        error: data.error,
+        ...(data.requiresIssueInput ? { requiresIssueInput: true } : {}),
+      });
+    }
+    return jsonResult(withWorkspace(workspace_root, data));
+  },
+);
+
+server.registerTool(
+  "workflow_youtrack_parse_duration",
+  {
+    description: "Parse duration text (e.g. 1h 30m) to integer minutes",
+    inputSchema: {
+      text: z.string(),
+      workspace_root: workspaceRootSchema,
+    },
+  },
+  async ({ text, workspace_root }) => {
+    const data = youtrackParseDuration(text, workspace_root);
+    if (data.error) return jsonResult({ error: data.error });
+    return jsonResult(withWorkspace(workspace_root, data));
+  },
+);
+
+server.registerTool(
+  "workflow_youtrack_log_time",
+  {
+    description: "POST YouTrack work item (time only, no comment)",
+    inputSchema: {
+      issueId: z.string(),
+      minutes: z.number(),
+      text: z.string().optional(),
+      dateMs: z.number().optional().describe("Epoch ms for work item date; omit for today in config timezone"),
+      workspace_root: workspaceRootSchema,
+    },
+  },
+  async ({ issueId, minutes, text, dateMs, workspace_root }) => {
+    const data = youtrackLogTime({
+      issueId,
+      minutes,
+      text,
+      dateMs,
+      workspace_root,
+    });
+    if (data.error) return jsonResult({ error: data.error });
+    return jsonResult(withWorkspace(workspace_root, data));
+  },
+);
+
+server.registerTool(
+  "workflow_youtrack_draft",
+  {
+    description: "Build ES-CL comment markdown without posting (envelope only by default)",
+    inputSchema: {
+      issueId: z.string(),
+      userNotes: z.string(),
+      greeting: z.string().optional(),
+      projectName: z.string().optional(),
+      includeProjectOpener: z.boolean().optional(),
+      includeFacts: z.boolean().optional(),
+      facts: z.record(z.any()).optional(),
+    },
+  },
+  async (input) => jsonResult(youtrackBuildDraft(input)),
+);
+
+server.registerTool(
+  "workflow_youtrack_post",
+  {
+    description: "Post YouTrack comment and optional time — requires confirmed: true",
+    inputSchema: {
+      confirmed: z.boolean(),
+      issueId: z.string(),
+      markdown: z.string(),
+      minutes: z.number().optional(),
+      workspace_root: workspaceRootSchema,
+    },
+  },
+  async ({ confirmed, issueId, markdown, minutes, workspace_root }) => {
+    const data = youtrackPostUpdate({
+      confirmed,
+      issueId,
+      markdown,
+      minutes,
+      workspace_root,
+    });
+    if (data.error && !data.partial) return jsonResult({ error: data.error });
+    return jsonResult(withWorkspace(workspace_root, data));
+  },
+);
+
+server.registerTool(
   "workflow_present_ascii",
   {
     description: "Render deterministic ASCII UI wireframe from JSON spec",

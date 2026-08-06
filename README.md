@@ -25,7 +25,7 @@ export PATH="$HOME/.bun/bin:$PATH"
 ```
 
 - **Git** — branch resolution, SDD review diffs, and verify gates.
-- (Optional) **Python 3** — no longer required by the toolkit itself (legacy bash/python helpers were consolidated into `src/core`), keep it only if other tooling needs it.
+- (Optional) **Python 3** — required only for `workflow_changelog_apply` (runs `scripts/changelog/apply-unreleased.py`). Everything else is pure TS via bun.
 
 ## Getting started
 
@@ -147,3 +147,10 @@ git push origin v0.4.0
 ## Future: Codex CLI
 
 Add `codex/` adapter; reuse `scripts/` and `templates/`.
+
+## Workflow docs are working files
+
+`docs/superpowers/` (specs, plans, SDD ledger, and `flow.json` approval state) is **gitignored** on purpose: they are working files for the current cycle, not versioned artifacts. Consequences:
+
+- A fresh clone starts every workflow at `draft` — the flow gates (`workflow_spec_approve` / `workflow_plan_approve` / `workflow_plan_menu`) must be re-run after checkout.
+- The spec/plan for a branch do not travel with the branch. Use the `docs/specs/` mirror (committed) if you need a persistent record, or push the docs explicitly when the workflow must continue in a new session.

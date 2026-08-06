@@ -12,11 +12,12 @@ The parent agent is coordinator-only. It must not edit product code or perform d
 
 1. Load this skill explicitly through OpenCode's `skill` tool.
 2. Call read-only `workflow_plan_tasks` and `workflow_sdd_context`; their structured results are ground truth.
-3. Initialize native `todowrite` from returned tasks and mark ledger-completed task IDs completed.
-4. Call `workflow_resolve_branch`, then show the current branch, target branch, and stash behavior before any branch checkout/setup mutation.
-5. Always use native `question` before that mutation. For a clean tree, ask whether to proceed or cancel. For a dirty tree, add the stash choice and state what will be stashed; allow a custom answer.
-6. Call `workflow_branch_setup` with `confirmed: true` only after approval; never use worktrees.
-7. Report any setup failure stage or partial result; never infer success.
+3. Call `workflow_flow_status` with the plan path and hard-stop unless `spec.status === "approved"`, `plan.status === "approved"`, and `menu.presented === true`. If any gate is missing, run the required approval flow (`workflow_spec_approve`/`workflow_plan_approve` after the user's native-question approval, `workflow_plan_menu` after the post-plan menu) and re-check — never start tasks on a draft or unapproved plan.
+4. Initialize native `todowrite` from returned tasks and mark ledger-completed task IDs completed.
+5. Call `workflow_resolve_branch`, then show the current branch, target branch, and stash behavior before any branch checkout/setup mutation.
+6. Always use native `question` before that mutation. For a clean tree, ask whether to proceed or cancel. For a dirty tree, add the stash choice and state what will be stashed; allow a custom answer.
+7. Call `workflow_branch_setup` with `confirmed: true` only after approval; never use worktrees.
+8. Report any setup failure stage or partial result; never infer success.
 
 State lives only in tracked `docs/superpowers/sdd/<slug>/`. Never use an untracked or legacy SDD directory. Load the package-neutral execution contract by name, not an installation-specific path.
 

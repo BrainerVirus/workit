@@ -1,11 +1,15 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createFlowTools } from "../src/tools/flow";
 
 const fixture = () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "wf-flowtools-"));
+  mkdirSync(path.join(root, "docs/superpowers/specs"), { recursive: true });
+  mkdirSync(path.join(root, "docs/superpowers/plans"), { recursive: true });
+  writeFileSync(path.join(root, "docs/superpowers/specs/2026-08-06-x-design.md"), "# X\n\n**Branch:** `feature/x`\n");
+  writeFileSync(path.join(root, "docs/superpowers/plans/2026-08-06-x.md"), "# X\n\n**Spec:** `docs/superpowers/specs/2026-08-06-x-design.md`\n**Branch:** `feature/x`\n\n### Task 1: One\n\n- [ ] **Step 1:** Work\n");
   const tools = createFlowTools();
   const ctx = { directory: root } as any;
   return { root, tools, ctx };

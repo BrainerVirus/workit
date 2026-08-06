@@ -7,6 +7,7 @@ import { changelogApply } from "../core/changelog";
 import { gitContext } from "../core/git";
 import { parseKeyValueLines, parseSections } from "../core/parse-sections";
 import { parseVerifyOutput } from "../core/verify-parse";
+import { branchSetup } from "../core/branch";
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const scripts = path.join(packageRoot, "scripts");
@@ -217,14 +218,21 @@ export function createRepoTools(runtime: RepoRuntime = defaultRuntime) {
       execute: async ({ confirmed, action, sdd_dir, target_branch, stash }, context) => {
         const rejected = requireConfirmed(confirmed);
         if (rejected) return rejected;
+        let resolvedSdd = sdd_dir ?? "docs/superpowers/sdd";
         try {
-          sdd_dir = resolveInside(context.directory, sdd_dir ?? "docs/superpowers/sdd");
+          resolvedSdd = resolveInside(context.directory, resolvedSdd);
         } catch (error) {
           return output(fail(error instanceof Error ? error.message : "invalid SDD path"));
         }
-        return output(legacyScriptResult(runtime.runScript(context.directory, "branch/setup-branch.sh", [
-          action ?? "setup", sdd_dir ?? "docs/superpowers/sdd", target_branch ?? "", stash ?? "no",
-        ])));
+        const result = branchSetup({
+          action, sdd_dir: resolvedSdd, target_branch, stash, workspace_root: context.directory,
+        });
+        return output(legacyScriptResult({
+          stdout: JSON.stringify(result),
+          stderr: "",
+          exitCode: result.error ? 1 : 0,
+          cwd: context.directory,
+        }));
       },
     }),
     workflow_commit: tool({

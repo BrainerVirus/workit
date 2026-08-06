@@ -212,16 +212,17 @@ export const branchSetup = ({
         return { error: `branch ${target} is locked by an existing git worktree — remove it first (we do not use worktrees)` };
       }
       try {
-        const base = gitContext(cwd).branch;
-        if (base === "main" || base === "master") {
+        // Branch does not exist yet: base it on develop (never main/master).
+        const current = gitContext(cwd).branch;
+        if (current === "main" || current === "master") {
           const baseResult = ensureDevelopBase(cwd);
-          if (!baseResult.ok && baseResult.error?.includes("origin/develop")) return { error: baseResult.error };
-          try { exec(["checkout", "-b", target]); } catch (createError) {
-            return { error: createError instanceof Error ? createError.message : "branch create failed" };
-          }
+          if (!baseResult.ok) return { error: baseResult.error };
         } else {
-          exec(["checkout", "-b", target]);
+          // Already on develop or another feature branch: still require origin/develop to exist.
+          const baseResult = ensureDevelopBase(cwd);
+          if (!baseResult.ok) return { error: baseResult.error };
         }
+        exec(["checkout", "-b", target]);
       } catch (createError) {
         return { error: createError instanceof Error ? createError.message : "branch create failed" };
       }
