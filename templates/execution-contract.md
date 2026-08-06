@@ -9,7 +9,7 @@ Load `using-superpowers`, `subagent-driven-development`, `test-driven-developmen
 
 - The parent is coordinator-only: it does not edit product code or perform delegated exploration.
 - Never use a worktree. Branch changes are in-place through `workflow_branch_setup` on `feature/*` or `bugfix/*`; never commit on protected branches.
-- Tracked state, briefs, ledgers, and review diffs live only under `<SDD_DIR>` in `docs/superpowers/sdd/<slug>/` and use `workflow_sdd_*` tools.
+- Tracked state, briefs, ledgers, and review diffs live only under `<SDD_DIR>` in `docs/<slug>/sdd/` and use `workflow_sdd_*` tools.
 - Use native `todowrite` for visible task state as well as the tracked ledger.
 - Use native `question` for branch/stash choices and guarded external mutations; call mutation tools only after approval with `confirmed: true`.
 - Use native `task` with only the built-in `explore` and `general` agents.
