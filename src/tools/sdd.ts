@@ -3,7 +3,7 @@ import path from "node:path";
 import { tool, type ToolContext } from "@opencode-ai/plugin";
 import { fail, ok, resolveGitRevision, resolveInside } from "../core";
 import { resolveBranch } from "../legacy/branch-resolve.js";
-import { docsValidate } from "../legacy/docs-validate.js";
+import { docsValidate } from "../core/docs-validate";
 import { docsBranch } from "../legacy/docs-branch.js";
 import { parsePlanTasks, resolveHandoffBranch } from "../legacy/plan-tasks.js";
 import {
