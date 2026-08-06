@@ -14,6 +14,12 @@ Load `using-superpowers`, `subagent-driven-development`, `test-driven-developmen
 - Use native `question` for branch/stash choices and guarded external mutations; call mutation tools only after approval with `confirmed: true`.
 - Use native `task` with only the built-in `explore` and `general` agents.
 
+## Flow gates (HARD)
+
+- `wf-implement` refuses to run unless the plan is `approved` (flow.json) and the post-plan menu was presented.
+- `wf-handoff` refuses to run unless both spec and plan are `approved`.
+- Sequence is enforced by tools: `workflow_spec_approve` (×2), `workflow_plan_approve` (×2), `workflow_plan_menu` — never skip a step.
+
 ## Setup
 
 0. Call `workflow_docs_validate` with the linked spec/plan paths. Hard-fail on any error before todos or branch setup.

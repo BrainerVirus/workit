@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { getWorkflowBootstrap, isWorkflowBootstrap } from "../src/bootstrap";
+import path from "node:path";
+import { getWorkflowBootstrap, isWorkflowBootstrap, loadWorkflowBootstrap } from "../src/bootstrap";
 import plugin from "../src/plugin";
 
 describe("session bootstrap", () => {
@@ -30,4 +31,14 @@ describe("session bootstrap", () => {
     await hooks["experimental.chat.messages.transform"]?.({} as never, output as never);
     expect(output.messages[0].parts).toHaveLength(2);
   });
+});
+
+
+test("loadWorkflowBootstrap returns null for a missing template root", () => {
+  expect(loadWorkflowBootstrap("/nonexistent-toolkit-root")).toBeNull();
+});
+
+test("loadWorkflowBootstrap reads the real contract template", () => {
+  const contract = loadWorkflowBootstrap(path.resolve(import.meta.dir, ".."));
+  expect(contract).toContain("**Spec:**");
 });

@@ -22,4 +22,15 @@ export WORKFLOW_TOOLKIT_ROOT="$ROOT"
 if [ "${1:-}" != "" ]; then
   export WORKFLOW_WORKSPACE_ROOT="$1"
 fi
-exec node "${MCP_DIR}/server.js"
+
+BUN_BIN="${BUN:-}"
+if [ -z "$BUN_BIN" ]; then
+  for candidate in "$HOME/.bun/bin/bun" /usr/local/bin/bun /usr/bin/bun; do
+    [ -x "$candidate" ] && BUN_BIN="$candidate" && break
+  done
+fi
+if [ -z "$BUN_BIN" ]; then
+  echo "workflow-toolkit: bun not found (required for MCP server)" >&2
+  exit 1
+fi
+exec "$BUN_BIN" "${MCP_DIR}/server.ts"

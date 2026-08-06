@@ -338,3 +338,73 @@ test("registers seven standard tools without workspace_root and guards mutations
     expect(JSON.parse(raw as string).error).toBe("confirmed: true required");
   }
 });
+
+test("verify token, parse issue, parse duration, and draft tools execute", async () => {
+  const tools = createYouTrackTools({
+    verifyToken: async () => ({ data: { ok: true } }),
+    context: async () => ({ data: { issueId: "NSR-1" } }),
+    parseDuration: async () => ({ minutes: 30 }),
+    postComment: async () => ({ data: { ok: true } }),
+    logTime: async () => ({ data: { ok: true } }),
+  });
+  const ctx = { directory: "/repo", worktree: "/repo" } as never;
+
+  const verify = JSON.parse(await tools.workflow_youtrack_verify_token.execute({}, ctx) as string);
+  expect(verify.ok).toBe(true);
+
+  const parsed = JSON.parse(await tools.workflow_youtrack_parse_issue.execute({ issue_ref: "NSR-40" }, ctx) as string);
+  expect(parsed.ok).toBe(true);
+  expect(parsed.data.issueId).toBe("NSR-40");
+
+  const duration = JSON.parse(await tools.workflow_youtrack_parse_duration.execute({ text: "30m" }, ctx) as string);
+  expect(duration.ok).toBe(true);
+  expect(duration.data.minutes).toBe(30);
+
+  const draft = JSON.parse(await tools.workflow_youtrack_draft.execute({
+    issueId: "NSR-40", userNotes: "Avance",
+  }, ctx) as string);
+  expect(draft.ok).toBe(true);
+  expect(draft.data.markdown).toContain("Avance");
+});
+
+test("log_time and post tools execute with confirmed and redact tokens from errors", async () => {
+  const tools = createYouTrackTools({
+    verifyToken: async () => ({}),
+    context: async () => ({}),
+    parseDuration: async () => ({ minutes: 30 }),
+    postComment: async () => ({}),
+    logTime: async () => ({ error: "boom with secret" }),
+  });
+  const ctx = { directory: "/repo", worktree: "/repo" } as never;
+
+  const logged = JSON.parse(await tools.workflow_youtrack_log_time.execute({
+    confirmed: true, issueId: "NSR-1", minutes: 30,
+  }, ctx) as string);
+  expect(logged.ok).toBe(false);
+  expect(logged.error).toContain("boom");
+
+  const posted = JSON.parse(await tools.workflow_youtrack_post.execute({
+    confirmed: true, issueId: "NSR-1", markdown: "Actualización",
+  }, ctx) as string);
+  expect(posted.ok).toBe(true);
+});
+
+test("context tool normalizes meetings mode and rejects escaped paths", async () => {
+  const tools = createYouTrackTools({
+    verifyToken: async () => ({}),
+    context: async (input: any) => ({ data: { issueId: input.mode === "meetings" ? "MEET-1" : null } }),
+    parseDuration: async () => ({ minutes: 30 }),
+    postComment: async () => ({}),
+    logTime: async () => ({}),
+  });
+  const ctx = { directory: "/repo", worktree: "/repo" } as never;
+  const meetings = JSON.parse(await tools.workflow_youtrack_context.execute({
+    mode: "meetings",
+  }, ctx) as string);
+  expect(meetings.ok).toBe(true);
+
+  const escaped = JSON.parse(await tools.workflow_youtrack_context.execute({
+    spec_path: "../outside.md",
+  }, ctx) as string);
+  expect(escaped.ok).toBe(false);
+});

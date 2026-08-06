@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { createRepoTools, normalizeLegacyResult } from "../src/tools/repo";
-import { PLUGIN_ROOT } from "../src/legacy/plugin-root.js";
+import { PLUGIN_ROOT } from "../src/core/scripts";
 
 const calls: Array<{ root: string; script: string; args: string[]; env?: Record<string, string> }> = [];
 const gitCalls: Array<{ root: string; args: string[] }> = [];
@@ -336,13 +336,6 @@ test("branch setup treats quote-bearing manifest paths as data", async () => {
 test("confirmed script mutations use package scripts, argument arrays, and scoped environment", async () => {
   calls.length = 0;
   const root = mkdtempSync(path.join(os.tmpdir(), "workflow-toolkit-scripts-"));
-  const sdd = path.join(root, "docs/superpowers/sdd");
-  const branchRaw = await createRepoTools(runtime).workflow_branch_setup.execute({
-    confirmed: true, target_branch: "feature/native-tools", stash: "yes",
-  }, { directory: root, worktree: root} as never);
-  expect(JSON.parse(branchRaw as string)).toEqual({
-    ok: true, data: { branch: "feature/native-tools", exitCode: 0 }, error: null,
-  });
   expect(await execute("workflow_pr_create", {
     confirmed: true, title: "Native tools", body: "Ready", draft: true, target_branch: "develop",
   })).toEqual({
@@ -355,10 +348,6 @@ test("confirmed script mutations use package scripts, argument arrays, and scope
   })).toEqual({ ok: true, data: { action: "youtrack_json", exitCode: 0 }, error: null });
 
   expect(calls).toEqual([
-    {
-      root, script: "branch/setup-branch.sh",
-      args: ["setup", sdd, "feature/native-tools", "yes"],
-    },
     {
       root: "/repo", script: "pr-create.sh", args: [], env: {
         WF_PR_TITLE: "Native tools", WF_PR_BODY: "Ready", WF_PR_CONFIRMED: "true",
@@ -380,8 +369,8 @@ test("mutation scripts normalize legacy errors into a failed Result", async () =
     runScript: (root: string) => ({
       exitCode: 1, stdout: JSON.stringify({ error: "legacy failure" }), stderr: "", cwd: root,
     }),
-  }).workflow_branch_setup.execute(
-    { confirmed: true, target_branch: "feature/native-tools" }, { directory: root, worktree: root} as never,
+  }).workflow_pr_create.execute(
+    { confirmed: true, title: "Broken" }, { directory: root, worktree: root} as never,
   );
   expect(JSON.parse(raw as string)).toEqual({
     ok: false,
@@ -402,8 +391,8 @@ test("legacy ok false values normalize to failures", async () => {
       runScript: (cwd: string) => ({
         exitCode: 0, stdout: JSON.stringify({ ok: false }), stderr: "", cwd,
       }),
-    }).workflow_branch_setup.execute(
-      { confirmed: true, target_branch: "feature/x" }, { directory: root, worktree: root} as never,
+    }).workflow_toolkit_init_apply.execute(
+      { confirmed: true, action: "youtrack_scaffold" }, { directory: root, worktree: root} as never,
     );
     expect(JSON.parse(raw as string)).toEqual({
       ok: false,

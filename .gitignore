@@ -1,2 +1,5 @@
 node_modules/
 cursor/mcp/node_modules/
+
+# Superpowers workflow docs are working files, not versioned
+docs/superpowers/

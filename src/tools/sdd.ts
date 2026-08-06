@@ -2,13 +2,12 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { tool, type ToolContext } from "@opencode-ai/plugin";
 import { fail, ok, resolveGitRevision, resolveInside } from "../core";
-import { resolveBranch } from "../legacy/branch-resolve.js";
-import { docsValidate } from "../legacy/docs-validate.js";
-import { docsBranch } from "../legacy/docs-branch.js";
-import { parsePlanTasks, resolveHandoffBranch } from "../legacy/plan-tasks.js";
+import { resolveBranch, docsBranch } from "../core/branch";
+import { docsValidate } from "../core/docs-validate";
+import { parsePlanTasks, resolveHandoffBranch } from "../core/plan-tasks";
 import {
   sddAppendProgress, sddContext, sddReviewPackage, sddTaskBrief,
-} from "../legacy/sdd-context.js";
+} from "../core/sdd";
 import { WorkflowStateStore } from "../state";
 
 const output = (value: unknown) => JSON.stringify(value, null, 2);

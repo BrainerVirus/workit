@@ -7,14 +7,20 @@ const marker = "<workflow-toolkit-contract>";
 
 let cached: string | null | undefined;
 
+export const loadWorkflowBootstrap = (rootDir: string): string | null => {
+  const contractPath = path.join(rootDir, "templates", "superpowers-doc-contract.md");
+  try {
+    return readFileSync(contractPath, "utf8");
+  } catch {
+    return null;
+  }
+};
+
 export const getWorkflowBootstrap = (): string | null => {
   if (cached !== undefined) return cached;
 
-  const contractPath = path.join(root, "templates", "superpowers-doc-contract.md");
-  let contract: string;
-  try {
-    contract = readFileSync(contractPath, "utf8");
-  } catch {
+  const contract = loadWorkflowBootstrap(root);
+  if (contract === null) {
     cached = null;
     return null;
   }

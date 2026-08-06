@@ -2,6 +2,17 @@
 set -euo pipefail
 CMD="${1:-}"
 shift || true
+
+# Safety guard: write operations (log-time, post-comment) require an explicit
+# confirmation environment variable. This makes it impossible for tests, scripts,
+# or stray calls to mutate a real YouTrack instance by accident.
+if [ "$CMD" = "log-time" ] || [ "$CMD" = "post-comment" ]; then
+  if [ "${WORKFLOW_YT_WRITE:-}" != "1" ]; then
+    echo "ERROR: YouTrack write operations require WORKFLOW_YT_WRITE=1 (refusing to mutate production)" >&2
+    exit 1
+  fi
+fi
+
 CONFIG="${WORKFLOW_YOUTRACK_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/workflow-toolkit/youtrack.json}"
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 python3 - "$CONFIG" "$SCRIPT_DIR" "$CMD" "$@" <<'PY'

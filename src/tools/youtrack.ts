@@ -11,7 +11,7 @@ import {
   parseIssueRef,
   postUpdate as legacyPostUpdate,
   verifyYouTrackToken,
-} from "../legacy/youtrack.js";
+} from "../core/youtrack";
 
 const ISSUE_RE = /^[A-Z]+-\d+$/;
 const output = (value: unknown) => JSON.stringify(value, null, 2);
@@ -82,6 +82,17 @@ type PostData = {
 
 const notApplied = (value: LegacyValue): value is NotApplied =>
   value?.ok === false && value.outcome === "not_applied";
+
+const withWriteFlag = async <T>(fn: () => Promise<T>): Promise<T> => {
+  const previous = process.env.WORKFLOW_YT_WRITE;
+  process.env.WORKFLOW_YT_WRITE = "1";
+  try {
+    return await fn();
+  } finally {
+    if (previous === undefined) delete process.env.WORKFLOW_YT_WRITE;
+    else process.env.WORKFLOW_YT_WRITE = previous;
+  }
+};
 
 export async function postUpdate(
   input: PostInput,
@@ -290,7 +301,8 @@ export function createYouTrackTools(operations: YouTrackOperations = defaultOper
         if (invalid) return invalid;
         let token = "";
         try { token = credentials().token; } catch (error) { return output(fail(message(error))); }
-        const result = await logTimeUpdate({ ...input, workspace_root: context.directory }, operations);
+        const result = await withWriteFlag(() =>
+          logTimeUpdate({ ...input, workspace_root: context.directory }, operations));
         return output(result.ok ? result : { ...result, error: redact(result.error, token) });
       },
     }),
@@ -307,7 +319,8 @@ export function createYouTrackTools(operations: YouTrackOperations = defaultOper
         if (rejected) return rejected;
         let token = "";
         try { token = credentials().token; } catch (error) { return output(fail(message(error))); }
-        const result = await postUpdate({ ...input, workspace_root: context.directory }, operations);
+        const result = await withWriteFlag(() =>
+          postUpdate({ ...input, workspace_root: context.directory }, operations));
         return output(result.ok ? result : { ...result, error: redact(result.error, token) });
       },
     }),

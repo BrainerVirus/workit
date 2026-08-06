@@ -4,11 +4,28 @@ Multi-platform Superpowers workflow plugin for **Cursor** and **OpenCode**: veri
 
 | Platform | Path | Version |
 | --- | --- | --- |
-| **OpenCode** | repo root (`package.json`, `src/plugin.ts`) | 0.3.19 |
-| **Cursor** | `cursor/` (MCP + hooks + rules + skills) | 0.3.19 |
+| **OpenCode** | repo root (`package.json`, `src/plugin.ts`) | 0.4.0 |
+| **Cursor** | `cursor/` (MCP + hooks + rules + skills) | 0.4.0 |
 | **Shared** | `scripts/`, `templates/` | — |
 
 Config directory (both platforms): `~/.config/workflow-toolkit/`
+
+## Requirements
+
+- **Bun ≥ 1.0** — runtime for the shared `src/core` logic, the OpenCode plugin, and the Cursor MCP server (`bun server.ts`). Install once:
+
+```bash
+curl -fsSL https://bun.sh/install | bash
+```
+
+Then add to your shell profile (or rely on the MCP launcher's `~/.bun/bin/bun` fallback):
+
+```bash
+export PATH="$HOME/.bun/bin:$PATH"
+```
+
+- **Git** — branch resolution, SDD review diffs, and verify gates.
+- (Optional) **Python 3** — required only for `workflow_changelog_apply` (runs `scripts/changelog/apply-unreleased.py`). Everything else is pure TS via bun.
 
 ## Getting started
 
@@ -113,8 +130,8 @@ GitHub Actions:
 - **Release** — on tag `v*`: same checks, then `softprops/action-gh-release@v3`
 
 ```bash
-git tag v0.3.19
-git push origin v0.3.19
+git tag v0.4.0
+git push origin v0.4.0
 ```
 
 ## Architecture
@@ -130,3 +147,10 @@ git push origin v0.3.19
 ## Future: Codex CLI
 
 Add `codex/` adapter; reuse `scripts/` and `templates/`.
+
+## Workflow docs are working files
+
+`docs/superpowers/` (specs, plans, SDD ledger, and `flow.json` approval state) is **gitignored** on purpose: they are working files for the current cycle, not versioned artifacts. Consequences:
+
+- A fresh clone starts every workflow at `draft` — the flow gates (`workflow_spec_approve` / `workflow_plan_approve` / `workflow_plan_menu`) must be re-run after checkout.
+- The spec/plan for a branch do not travel with the branch. Use the `docs/specs/` mirror (committed) if you need a persistent record, or push the docs explicitly when the workflow must continue in a new session.

@@ -10,6 +10,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import plugin from "../src/plugin";
+import { WorkflowStateStore } from "../src/state";
 
 const names = [
   "wf-init",
@@ -250,6 +251,20 @@ describe("plugin registration", () => {
             spec_path: "missing-spec.md",
             plan_path: "missing-plan.md",
           },
+          workflow_flow_status: { plan_path: "missing-plan.md" },
+          workflow_spec_approve: {
+            confirmed: false,
+            spec_path: "missing-spec.md",
+          },
+          workflow_plan_approve: {
+            confirmed: false,
+            plan_path: "missing-plan.md",
+          },
+          workflow_plan_menu: {
+            confirmed: false,
+            plan_path: "missing-plan.md",
+            choice: "inline",
+          },
           workflow_sdd_context: { plan_path: "missing-plan.md" },
           workflow_sdd_task_brief: {
             confirmed: false,
@@ -350,6 +365,14 @@ describe("plugin registration", () => {
         path.join(root, "docs/superpowers/plans/x.md"),
         "# X\n\n**Spec:** `docs/superpowers/specs/x-design.md`\n**Branch:** `feature/x`\n\n### Task 1: One\n\n- [ ] **Step 1:** Work\n",
       );
+      mkdirSync(path.join(root, "docs/superpowers/sdd/x"), { recursive: true });
+      writeFileSync(path.join(root, "docs/superpowers/sdd/x/flow.json"), JSON.stringify({
+        slug: "x",
+        spec: { path: "docs/superpowers/specs/x-design.md", status: "approved" },
+        plan: { path: "docs/superpowers/plans/x.md", status: "approved" },
+        menu: { presented: true, chosen: "handoff" },
+        updated_at: Date.now(),
+      }));
       const client = {
         session: {
           async create() {
@@ -425,4 +448,12 @@ describe("plugin registration", () => {
       "Active workflow:\nSpec: docs/superpowers/specs/x-design.md\nPlan: docs/superpowers/plans/x.md\nSDD: docs/superpowers/sdd/x",
     ]);
   });
+});
+
+test("compaction context includes active workflow paths only", () => {
+  const state = new WorkflowStateStore();
+  expect(state.compactionContext("missing")).toBeNull();
+  state.set("s1", { spec: "a.md", plan: "b.md", sdd: "sdd/x" });
+  expect(state.compactionContext("s1")).toContain("Spec: a.md");
+  expect(state.compactionContext("s1")).toContain("SDD: sdd/x");
 });

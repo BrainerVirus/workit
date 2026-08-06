@@ -69,8 +69,8 @@ test("session state is unchanged by later caller mutation", () => {
 });
 
 test("copied runtime cannot redirect assets or workspace through Cursor environment", () => {
-  const pluginRootSource = readFileSync(path.resolve(import.meta.dir, "../src/legacy/plugin-root.js"), "utf8");
-  const workspaceSource = readFileSync(path.resolve(import.meta.dir, "../src/legacy/resolve-workspace-root.js"), "utf8");
+  const pluginRootSource = readFileSync(path.resolve(import.meta.dir, "../src/core/scripts.ts"), "utf8");
+  const workspaceSource = readFileSync(path.resolve(import.meta.dir, "../src/core/scripts.ts"), "utf8");
   expect(pluginRootSource).not.toContain("WORKFLOW_TOOLKIT_ROOT");
   expect(workspaceSource).not.toContain("WORKFLOW_WORKSPACE_ROOT");
 });
