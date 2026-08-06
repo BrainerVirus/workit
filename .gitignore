@@ -3,3 +3,5 @@ cursor/mcp/node_modules/
 
 # Feature SDD state is working files, not versioned (spec.md/plan.md stay tracked)
 docs/*/sdd/
+# Stray branch-setup manifest when sdd_dir is not supplied
+docs/manifest.json

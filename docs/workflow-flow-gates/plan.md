@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Spec:** `docs/superpowers/specs/2026-08-06-workflow-flow-gates-design.md`
+**Spec:** `docs/workflow-flow-gates/spec.md`
 **Branch:** `feature/workflow-flow-gates`
 
 **Goal:** Make the spec→plan→approval→post-plan-choice flow tool-enforced (flow.json state + hard-fail gates on both platforms) and consolidate all duplicated JS/bash logic into one TS+zod core.

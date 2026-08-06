@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Spec:** `docs/superpowers/specs/2026-08-06-vendor-superpowers-design.md`
+**Spec:** `docs/vendor-superpowers/spec.md`
 **Branch:** `feature/vendor-superpowers`
 
 **Goal:** Vendor the 14 Superpowers skills into the toolkit (removing the external plugin from OpenCode/Cursor) and migrate workflow docs from `docs/superpowers/{specs,plans,sdd}/` to a feature-scoped `docs/<slug>/{spec.md,plan.md,sdd/}` layout with spec+plan committed and `sdd/` gitignored.

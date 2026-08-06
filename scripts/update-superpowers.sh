@@ -34,6 +34,23 @@ cd "$ROOT"
 rm -rf "$VENDOR/skills"
 mkdir -p "$VENDOR"
 cp -R "$STAGE/sp/skills" "$VENDOR/skills"
+
+# Patch vendored skills to the toolkit's docs layout and contract rules.
+# The upstream skills teach docs/superpowers/... and the forbidden
+# "Two execution options" menu — both overridden by our contract.
+find "$VENDOR/skills" -type f \( -name '*.md' -o -name '*.ts' \) -print0 | while IFS= read -r -d '' f; do
+  sed -i \
+    -e 's|docs/superpowers/plans/YYYY-MM-DD-<feature-name>.md|docs/<slug>/plan.md|g' \
+    -e 's|docs/superpowers/plans/<filename>.md|docs/<slug>/plan.md|g' \
+    -e 's|docs/superpowers/plans/feature-plan.md|docs/<slug>/plan.md|g' \
+    -e 's|docs/superpowers/plans/deployment-plan.md|docs/deployment-plan/plan.md|g' \
+    -e 's|docs/superpowers/specs/YYYY-MM-DD-<topic>-design.md|docs/<slug>/spec.md|g' \
+    -e 's|docs/superpowers/specs/|docs/<slug>/|g' \
+    -e 's|docs/superpowers/plans/|docs/<slug>/|g' \
+    -e 's|"Plan complete and saved to `docs/<slug>/plan.md`. Two execution options:\*\*|"Plan complete and saved to `docs/<slug>/plan.md`.**|g' \
+    "$f"
+done
+
 printf '%s\n' "$VERSION" > "$VENDOR/VERSION"
-echo "Vendored superpowers $VERSION -> $VENDOR"
+echo "Vendored superpowers $VERSION -> $VENDOR (patched to docs/<slug>/ layout)"
 echo "Review with: git status && git diff --stat"
