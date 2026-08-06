@@ -63,7 +63,7 @@ export const listSpecs = (
       if (repoPath) {
         const featuresDir = path.join(repoPath, "features");
         if (existsSync(featuresDir)) {
-          const match = readdirSync(featuresDir).find((d) => d.endsWith(`-${slug}`));
+          const match = readdirSync(featuresDir).find((d) => new RegExp(`^20\\d{2}-\\d{2}-${slug}$`).test(d));
           if (match) {
             promoted = true;
             target = path.join(repoPath, "features", match);
@@ -88,7 +88,7 @@ const readSafe = (p: string): string | null => {
 };
 
 const specSummary = (specText: string): string => {
-  const contextMatch = specText.match(/## Context\n\n([\s\S]*?)(?=\n## )/);
+  const contextMatch = specText.match(/## Context\n\n([\s\S]*?)(?=\n## |\Z)/);
   if (!contextMatch) return "";
   const first = contextMatch[1].trim().split("\n").find((l) => l.trim() && !l.startsWith("<!--"));
   return (first ?? "").trim();
@@ -99,6 +99,8 @@ const specRepos = (specText: string): string => {
   return match?.[1]?.trim() ?? "—";
 };
 
+const SLUG_RE = /^[a-z0-9][a-z0-9._-]*$/i;
+
 export const promoteSpec = (
   workspaceRoot: string,
   slug: string,
@@ -106,8 +108,11 @@ export const promoteSpec = (
 ): { ok: true; target_dir: string; files: string[]; index_updated: boolean }
   | { ok: false; error: string; findings?: unknown[] } => {
   if (!opts.confirmed) return { ok: false, error: "confirmed: true required" };
+  if (!SLUG_RE.test(slug)) return { ok: false, error: `invalid slug: ${JSON.stringify(slug)}` };
   const repoPath = docsRepoPath();
   if (!repoPath) return { ok: false, error: "docs repo not linked — run workflow_docs_repo_link" };
+  const repoValid = validateDocsRepo(repoPath);
+  if (!repoValid.ok) return { ok: false, error: repoValid.error };
 
   const specRel = path.posix.join("docs", slug, "spec.md");
   const planRel = path.posix.join("docs", slug, "plan.md");
@@ -127,7 +132,11 @@ export const promoteSpec = (
   }
 
   const prefix = monthPrefix();
-  const targetDir = path.join(repoPath, "features", `${prefix}-${slug}`);
+  const featuresDir = path.join(repoPath, "features");
+  const existing = existsSync(featuresDir)
+    ? readdirSync(featuresDir).find((d) => new RegExp(`^20\\d{2}-\\d{2}-${slug}$`).test(d))
+    : undefined;
+  const targetDir = path.join(featuresDir, existing ?? `${prefix}-${slug}`);
   mkdirSync(targetDir, { recursive: true });
 
   const files: string[] = ["spec.md"];

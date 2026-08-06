@@ -165,3 +165,33 @@ test("promoteSpec errors when docs repo not linked", () => {
     if (!result.ok) expect(result.error).toContain("docs repo not linked");
   } finally { rmSync(work, { recursive: true, force: true }); }
 });
+
+test("promoteSpec rejects traversal and regex-special slugs", () => {
+  const repo = makeRepo();
+  const work = makeRepo();
+  try {
+    writeDocsRepoConfig(repo);
+    const traversal = promoteSpec(work, "../evil", { confirmed: true });
+    expect(traversal.ok).toBe(false);
+    if (!traversal.ok) expect(traversal.error).toContain("invalid slug");
+
+    const regexSpecial = promoteSpec(work, "c++", { confirmed: true });
+    expect(regexSpecial.ok).toBe(false);
+    if (!regexSpecial.ok) expect(regexSpecial.error).toContain("invalid slug");
+  } finally { rmSync(repo, { recursive: true, force: true }); rmSync(work, { recursive: true, force: true }); }
+});
+
+test("promoteSpec with a dotted slug works and stays in features/", () => {
+  const repo = makeRepo();
+  const work = makeRepo();
+  try {
+    writeDocsRepoConfig(repo);
+    mkdirSync(path.join(work, "docs", "dot.8"), { recursive: true });
+    writeFileSync(path.join(work, "docs/dot.8/spec.md"), goodSpec("dot.8"));
+    const result = promoteSpec(work, "dot.8", { confirmed: true });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.target_dir).toContain(path.join(repo, "features"));
+    }
+  } finally { rmSync(repo, { recursive: true, force: true }); rmSync(work, { recursive: true, force: true }); }
+});
