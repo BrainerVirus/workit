@@ -37,8 +37,9 @@ describe("plugin registration", () => {
     const config: Record<string, any> = {};
     await hooks.config?.(config);
     expect(Object.keys(config.command).sort()).toEqual([...names].sort());
-    expect(config.skills.paths).toHaveLength(1);
+    expect(config.skills.paths).toHaveLength(2);
     expect(config.skills.paths[0]).toEndWith("workflow-toolkit/skills");
+    expect(config.skills.paths[1]).toEndWith("vendor/superpowers/skills");
   });
 
   test("registration is idempotent with a preexisting skill path", async () => {
@@ -54,7 +55,10 @@ describe("plugin registration", () => {
     await hooks.config?.(config);
 
     expect(Object.keys(config.command).sort()).toEqual([...names].sort());
-    expect(config.skills.paths).toEqual([skillPath]);
+    expect(config.skills.paths).toEqual([
+      skillPath,
+      path.resolve(import.meta.dir, "../vendor/superpowers/skills"),
+    ]);
   });
   test("registers native bash deny rules for worktree creation", async () => {
     const hooks = await plugin({
@@ -456,4 +460,16 @@ test("compaction context includes active workflow paths only", () => {
   state.set("s1", { spec: "a.md", plan: "b.md", sdd: "sdd/x" });
   expect(state.compactionContext("s1")).toContain("Spec: a.md");
   expect(state.compactionContext("s1")).toContain("SDD: sdd/x");
+});
+
+test("config registers vendored superpowers skills alongside toolkit skills", async () => {
+  const hooks = await plugin({
+    directory: "/repo", worktree: "/repo",
+    serverUrl: new URL("http://localhost"),
+  } as never);
+  const config: Record<string, any> = {};
+  await hooks.config?.(config);
+  const paths = config.skills.paths as string[];
+  expect(paths.some((p) => p.endsWith("/skills"))).toBe(true);
+  expect(paths.some((p) => p.endsWith("/vendor/superpowers/skills"))).toBe(true);
 });

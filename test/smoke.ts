@@ -143,7 +143,10 @@ test("plugin registers without a Cursor runtime path", async () => {
     const config: Record<string, any> = {};
     await hooks.config?.(config);
     expect(Object.keys(config.command)).toHaveLength(12);
-    expect(config.skills.paths).toEqual([path.resolve(import.meta.dir, "../skills")]);
+    expect(config.skills.paths).toEqual([
+      path.resolve(import.meta.dir, "../skills"),
+      path.resolve(import.meta.dir, "../vendor/superpowers/skills"),
+    ]);
     expect(Object.keys(hooks.tool ?? {})).toHaveLength(35);
   } finally {
     rmSync(root, { recursive: true, force: true });
