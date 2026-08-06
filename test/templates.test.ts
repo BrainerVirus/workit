@@ -27,7 +27,7 @@ test("spec template mandates CA-XX list and tables", () => {
 
 test("plan template contains task criteria and status table", () => {
   const tpl = read("plan-template.md");
-  expect(tpl).toMatch(/### Task \d/);
+  expect(tpl).toMatch(/### Task [N\d]/);
   expect(tpl).toMatch(/criteri/i);
   expect(tpl).toContain("| ");
 });
