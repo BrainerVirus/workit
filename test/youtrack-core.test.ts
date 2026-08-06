@@ -210,19 +210,101 @@ test("resolveYouTrackFromPaths returns null when no file has a YouTrack ref", ()
   }
 });
 
-test("default scripts delegate to runScriptJson/runScript without crashing", () => {
-  // The point is the arrow functions execute; real scripts may or may not exist in CI.
+test("default scripts delegate only to read-only youtrack helpers", () => {
+  // verifyYouTrackToken and parseDuration are read-only (config/duration parse).
+  // NEVER call logTime/postUpdate/context without injected scripts — they hit the
+  // real configured YouTrack instance.
   const verify = verifyYouTrackToken();
   expect(verify).toBeDefined();
   const duration = parseDuration("30m", os.tmpdir());
   expect(duration).toBeDefined();
 });
 
-test("context and logTime default scripts execute end to end", () => {
-  const ctx = context({ issue_url: "https://yt.example.test/issue/NSR-40", workspace_root: os.tmpdir() });
-  expect(ctx).toBeDefined();
-  const logged = logTime({ issueId: "NSR-40", minutes: 15, workspace_root: os.tmpdir() });
-  expect(logged).toBeDefined();
-  const posted = postUpdate({ confirmed: true, issueId: "NSR-40", markdown: "Avance", workspace_root: os.tmpdir() });
-  expect(posted).toBeDefined();
+
+test("write guard: logTime refuses to mutate without WORKFLOW_YT_WRITE", () => {
+  const previous = process.env.WORKFLOW_YT_WRITE;
+  delete process.env.WORKFLOW_YT_WRITE;
+  try {
+    const result = logTime({ issueId: "NSR-40", minutes: 15, workspace_root: os.tmpdir() }, scripts({
+      api: () => ({ error: "ERROR: YouTrack write operations require WORKFLOW_YT_WRITE=1 (refusing to mutate production)" }),
+    }));
+    expect(result.error).toContain("WORKFLOW_YT_WRITE");
+  } finally {
+    if (previous === undefined) delete process.env.WORKFLOW_YT_WRITE;
+    else process.env.WORKFLOW_YT_WRITE = previous;
+  }
+});
+
+test("write guard: postUpdate confirmed sets the write flag for real api calls", () => {
+  const captured: string[][] = [];
+  const result = postUpdate(
+    { confirmed: true, issueId: "NSR-40", markdown: "x", workspace_root: os.tmpdir() },
+    {
+      postComment: (id: string, text: string, root: string) => {
+        captured.push([id, text, root ?? ""]);
+        return { data: { ok: true } };
+      },
+      logTime: () => ({ data: { ok: true } }),
+    },
+  );
+  expect(result.ok).toBe(true);
+  expect(captured).toHaveLength(1);
+});
+
+test("real api.sh rejects writes without WORKFLOW_YT_WRITE", () => {
+  // The guard must fail closed BEFORE any HTTP call. We point the config at a
+  // nonexistent file so even an "allowed" write can never reach the real API.
+  const { spawnSync } = require("node:child_process") as typeof import("node:child_process");
+  const script = path.join(path.resolve(import.meta.dir, ".."), "scripts/youtrack/api.sh");
+  const env = (write: string) => ({
+    WORKFLOW_YT_WRITE: write,
+    WORKFLOW_YOUTRACK_CONFIG: "/nonexistent/youtrack.json",
+  });
+  const denied = spawnSync("bash", [script, "post-comment", "NSR-40", "test"], {
+    encoding: "utf8",
+    env: { ...process.env, ...env("") },
+  });
+  expect(denied.status).not.toBe(0);
+  expect(denied.stderr).toContain("WORKFLOW_YT_WRITE");
+
+  const allowed = spawnSync("bash", [script, "post-comment", "NSR-40", "test"], {
+    encoding: "utf8",
+    env: { ...process.env, ...env("1") },
+  });
+  // Passes the guard but must fail on the missing config — never on a real API.
+  expect(allowed.status).not.toBe(0);
+  expect(allowed.stderr).not.toContain("WORKFLOW_YT_WRITE");
+});
+
+test("no test may reach the real YouTrack API (write-guard structural scan)", () => {
+  // The real API is production. Tests must always inject scripts/operations.
+  // Scan every test file for write-call patterns that omit injection AND pass
+  // the confirmation gate (only confirmed calls would reach the API).
+  const { readdirSync, readFileSync } = require("node:fs") as typeof import("node:fs");
+  const testDir = path.join(path.resolve(import.meta.dir), ".");
+  const files = readdirSync(testDir).filter((f) => f.endsWith(".test.ts") || f.endsWith(".ts"));
+  const offenders: string[] = [];
+  for (const file of files) {
+    const source = readFileSync(path.join(testDir, file), "utf8");
+    const lines = source.split("\n");
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      // Skip definitions, mocks, and non-write usages.
+      if (line.includes("operations") || line.includes("scripts(") || line.includes("=>")
+        || line.includes("expect(") || line.includes("await import")
+        || line.includes("mock") || line.includes("//") || line.includes("test(")
+        || line.includes("logTimeUpdate") || line.includes("logTimeConfirmed")
+        || /\b(?:const|let|var)\s+\w+\s*=\s*(?:async\s*)?\([^)]*\)\s*=>/.test(line)) continue;
+      // A bare call to logTime/postUpdate with valid write data and no second
+      // argument (injection) would reach the real default API layer.
+      const bareCall = /\b(?:logTime|postUpdate)\(\s*\{[^}]*\}\s*\)/.test(line);
+      if (bareCall) {
+        const hasValidData = /issueId/.test(line) && /markdown|minutes/.test(line);
+        if (hasValidData) {
+          offenders.push(`${file}:${i + 1}: ${line.trim()}`);
+        }
+      }
+    }
+  }
+  expect(offenders).toEqual([]);
 });

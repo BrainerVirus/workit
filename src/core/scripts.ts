@@ -29,8 +29,8 @@ export function runScript(
   };
 }
 
-export function runScriptJson(scriptName: string, args: string[], workspaceRoot: string) {
-  const { stdout, stderr, exitCode } = runScript(scriptName, args, workspaceRoot);
+export function runScriptJson(scriptName: string, args: string[], workspaceRoot: string, extraEnv?: Record<string, string>) {
+  const { stdout, stderr, exitCode } = runScript(scriptName, args, workspaceRoot, extraEnv);
   if (exitCode !== 0) {
     return { error: (stderr || stdout || "script failed").trim(), exitCode };
   }

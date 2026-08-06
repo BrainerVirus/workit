@@ -39,7 +39,11 @@ const defaultScripts: YouTrackScripts = {
   config: () => runScriptJson("youtrack/config.sh", ["load"], PLUGIN_ROOT),
   greeting: () => runScript("youtrack/greeting.sh", [], PLUGIN_ROOT),
   parseDuration: (text) => runScriptJson("youtrack/parse-duration.sh", [text], PLUGIN_ROOT),
-  api: (args) => runScriptJson("youtrack/api.sh", args, PLUGIN_ROOT),
+  api: (args) =>
+    runScriptJson("youtrack/api.sh", args, PLUGIN_ROOT, {
+      // Write ops require explicit opt-in; set by the confirmed flows only.
+      WORKFLOW_YT_WRITE: process.env.WORKFLOW_YT_WRITE ?? "",
+    }),
 };
 
 export function verifyYouTrackToken(scripts: YouTrackScripts = defaultScripts): Record<string, any> {
@@ -155,6 +159,7 @@ export function logTime({ issueId, minutes, text, date, dateMs, workspace_root }
   return { issueId, minutes, text: workText, ...out.data, ok: true };
 }
 
+
 export function buildDraft({ issueId, projectName, userNotes, greeting, facts, includeProjectOpener, includeFacts }: { issueId: string; projectName?: string; userNotes?: string; greeting?: string; facts?: any; includeProjectOpener?: boolean; includeFacts?: boolean }): Record<string, any> {
   const header = "# Actualización\n\n";
   const open = greeting ? `${greeting}\n\n` : "";
@@ -182,7 +187,9 @@ export function postUpdate({ confirmed, issueId, markdown, minutes, workspace_ro
   if (!markdown?.trim()) return { error: "markdown required" };
 
   const postComment = operations.postComment ?? ((id: string, text: string, root: string) =>
-    runScriptJson("youtrack/api.sh", ["post-comment", id, text], root ?? PLUGIN_ROOT));
+    runScriptJson("youtrack/api.sh", ["post-comment", id, text], root ?? PLUGIN_ROOT, {
+      WORKFLOW_YT_WRITE: process.env.WORKFLOW_YT_WRITE ?? "",
+    }));
   const logTimeOperation = operations.logTime ?? logTime;
   const comment = postComment(issueId, markdown, workspace_root);
   if (comment.error) return { error: comment.error };
