@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, writeFileSync, existsSync } from "node:fs";
 import path from "node:path";
 
 export type FlowStatus = "draft" | "self_reviewed" | "approved";
@@ -54,7 +54,9 @@ export const readFlowState = (root: string, slug: string): FlowState => {
 export const writeFlowState = (root: string, state: FlowState) => {
   const file = flowPath(root, state.slug);
   mkdirSync(path.dirname(file), { recursive: true });
-  writeFileSync(file, JSON.stringify(state, null, 2) + "\n", "utf8");
+  const tmp = `${file}.tmp`;
+  writeFileSync(tmp, JSON.stringify(state, null, 2) + "\n", "utf8");
+  renameSync(tmp, file);
 };
 
 const nextStatus = (

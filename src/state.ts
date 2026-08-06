@@ -3,6 +3,8 @@ export type WorkflowState = { spec: string; plan: string; sdd: string };
 export class WorkflowStateStore {
   #sessions = new Map<string, WorkflowState>();
 
+  constructor() {}
+
   set(sessionID: string, state: WorkflowState) {
     this.#sessions.set(sessionID, { spec: state.spec, plan: state.plan, sdd: state.sdd });
   }

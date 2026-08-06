@@ -10,6 +10,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import plugin from "../src/plugin";
+import { WorkflowStateStore } from "../src/state";
 
 const names = [
   "wf-init",
@@ -447,4 +448,12 @@ describe("plugin registration", () => {
       "Active workflow:\nSpec: docs/superpowers/specs/x-design.md\nPlan: docs/superpowers/plans/x.md\nSDD: docs/superpowers/sdd/x",
     ]);
   });
+});
+
+test("compaction context includes active workflow paths only", () => {
+  const state = new WorkflowStateStore();
+  expect(state.compactionContext("missing")).toBeNull();
+  state.set("s1", { spec: "a.md", plan: "b.md", sdd: "sdd/x" });
+  expect(state.compactionContext("s1")).toContain("Spec: a.md");
+  expect(state.compactionContext("s1")).toContain("SDD: sdd/x");
 });

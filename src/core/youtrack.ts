@@ -28,8 +28,22 @@ export function parseIssueRef(input: unknown): { issueId: string; source: string
   return { error: `could not parse issue id from: ${trimmed}` };
 }
 
-export function verifyYouTrackToken(): Record<string, any> {
-  return runScriptJson("youtrack/verify-token.sh", [], PLUGIN_ROOT);
+export type YouTrackScripts = {
+  config(): Record<string, any>;
+  greeting(): { stdout: string; exitCode: number; stderr: string };
+  parseDuration(text: string): Record<string, any>;
+  api(args: string[]): Record<string, any>;
+};
+
+const defaultScripts: YouTrackScripts = {
+  config: () => runScriptJson("youtrack/config.sh", ["load"], PLUGIN_ROOT),
+  greeting: () => runScript("youtrack/greeting.sh", [], PLUGIN_ROOT),
+  parseDuration: (text) => runScriptJson("youtrack/parse-duration.sh", [text], PLUGIN_ROOT),
+  api: (args) => runScriptJson("youtrack/api.sh", args, PLUGIN_ROOT),
+};
+
+export function verifyYouTrackToken(scripts: YouTrackScripts = defaultScripts): Record<string, any> {
+  return scripts.config();
 }
 
 function resolveYouTrackFromPaths(spec_path: string | undefined, plan_path: string | undefined, workspace_root: string): string | null {
@@ -67,11 +81,11 @@ function meetingOptionsFromConfig(cfg: any): Record<string, any>[] {
   ];
 }
 
-export function context({ spec_path, plan_path, issue_id, issue_url, issue_ref, mode, workspace_root }: { spec_path?: string; plan_path?: string; issue_id?: string; issue_url?: string; issue_ref?: string; mode?: string; workspace_root: string }): Record<string, any> {
-  const cfg = runScriptJson("youtrack/config.sh", ["load"], workspace_root);
+export function context({ spec_path, plan_path, issue_id, issue_url, issue_ref, mode, workspace_root }: { spec_path?: string; plan_path?: string; issue_id?: string; issue_url?: string; issue_ref?: string; mode?: string; workspace_root: string }, scripts: YouTrackScripts = defaultScripts): Record<string, any> {
+  const cfg = scripts.config();
   if (cfg.error) return { error: cfg.error };
 
-  const greeting = runScript("youtrack/greeting.sh", [], workspace_root);
+  const greeting = scripts.greeting();
   if (greeting.exitCode !== 0) {
     return { error: (greeting.stderr || greeting.stdout || "greeting failed").trim() };
   }
@@ -120,13 +134,13 @@ export function context({ spec_path, plan_path, issue_id, issue_url, issue_ref, 
   };
 }
 
-export function parseDuration(text: string, workspace_root: string): Record<string, any> {
-  const out = runScriptJson("youtrack/parse-duration.sh", [text], workspace_root);
+export function parseDuration(text: string, _workspace_root: string, scripts: YouTrackScripts = defaultScripts): Record<string, any> {
+  const out = scripts.parseDuration(text);
   if (out.error) return { error: out.error };
   return out.data;
 }
 
-export function logTime({ issueId, minutes, text, date, dateMs, workspace_root }: { issueId: string; minutes: number; text?: string; date?: string; dateMs?: number; workspace_root: string }): Record<string, any> {
+export function logTime({ issueId, minutes, text, date, dateMs, workspace_root }: { issueId: string; minutes: number; text?: string; date?: string; dateMs?: number; workspace_root: string }, scripts: YouTrackScripts = defaultScripts): Record<string, any> {
   if (!issueId || !ISSUE_RE.test(issueId)) return { error: "invalid issueId" };
   if (!minutes || minutes <= 0) return { error: "minutes must be positive" };
   const workText = text ?? "workflow-toolkit";
@@ -136,11 +150,7 @@ export function logTime({ issueId, minutes, text, date, dateMs, workspace_root }
       : date && /^\d+$/.test(String(date))
         ? String(date)
         : "auto";
-  const out = runScriptJson(
-    "youtrack/api.sh",
-    ["log-time", issueId, String(minutes), workText, dateArg],
-    workspace_root,
-  );
+  const out = scripts.api(["log-time", issueId, String(minutes), workText, dateArg]);
   if (out.error) return { error: out.error };
   return { issueId, minutes, text: workText, ...out.data, ok: true };
 }
@@ -172,7 +182,7 @@ export function postUpdate({ confirmed, issueId, markdown, minutes, workspace_ro
   if (!markdown?.trim()) return { error: "markdown required" };
 
   const postComment = operations.postComment ?? ((id: string, text: string, root: string) =>
-    runScriptJson("youtrack/api.sh", ["post-comment", id, text], root));
+    runScriptJson("youtrack/api.sh", ["post-comment", id, text], root ?? PLUGIN_ROOT));
   const logTimeOperation = operations.logTime ?? logTime;
   const comment = postComment(issueId, markdown, workspace_root);
   if (comment.error) return { error: comment.error };

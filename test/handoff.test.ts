@@ -503,3 +503,105 @@ test("handoff proceeds when flow gates are approved", async () => {
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("handoff normalizes a docs/specs mirror path in the message", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wf-handoff-mirror-msg-"));
+  try {
+    mkdirSync(path.join(root, "docs/superpowers/specs"), { recursive: true });
+    mkdirSync(path.join(root, "docs/superpowers/plans"), { recursive: true });
+    writeFileSync(path.join(root, "docs/superpowers/specs/m-design.md"), "# M\n\n**Branch:** `feature/m`\n");
+    writeFileSync(
+      path.join(root, "docs/superpowers/plans/m.md"),
+      "# M\n\n**Spec:** `docs/superpowers/specs/m-design.md`\n**Branch:** `feature/m`\n\n### Task 1: One\n\n- [ ] **Step 1:** Work\n",
+    );
+    const result = buildHandoffPrompt(root, "docs/specs/m-design.md docs/superpowers/plans/m.md");
+    expect("error" in result).toBe(false);
+    if (!("error" in result)) expect(result.spec).toBe("docs/superpowers/specs/m-design.md");
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("handoff rejects multiple specs or plans in the message", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wf-handoff-multi-"));
+  try {
+    const result = buildHandoffPrompt(
+      root,
+      "docs/superpowers/specs/a.md docs/superpowers/specs/b.md docs/superpowers/plans/p.md",
+    );
+    expect("error" in result).toBe(true);
+    if ("error" in result) expect(result.error).toContain("multiple specs or plans");
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("handoff reports missing specs/plans directories", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wf-handoff-empty-"));
+  try {
+    const noSpecs = buildHandoffPrompt(root, "no paths here");
+    expect("error" in noSpecs).toBe(true);
+    mkdirSync(path.join(root, "docs/superpowers/specs"), { recursive: true });
+    writeFileSync(path.join(root, "docs/superpowers/specs/s.md"), "# S\n\n**Branch:** `feature/s`\n");
+    const noPlans = buildHandoffPrompt(root, "no paths here");
+    expect("error" in noPlans).toBe(true);
+    if ("error" in noPlans) expect(noPlans.error).toContain("no plan under");
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("handoff matching pair skips plans whose spec link is missing", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wf-handoff-nolink-"));
+  try {
+    mkdirSync(path.join(root, "docs/superpowers/specs"), { recursive: true });
+    mkdirSync(path.join(root, "docs/superpowers/plans"), { recursive: true });
+    writeFileSync(path.join(root, "docs/superpowers/specs/ok-design.md"), "# Ok\n\n**Branch:** `feature/ok`\n");
+    writeFileSync(
+      path.join(root, "docs/superpowers/plans/ok.md"),
+      "# Ok\n\n**Spec:** `docs/superpowers/specs/ok-design.md`\n**Branch:** `feature/ok`\n\n### Task 1: One\n\n- [ ] **Step 1:** Work\n",
+    );
+    writeFileSync(
+      path.join(root, "docs/superpowers/plans/orphan.md"),
+      "# Orphan\n\n### Task 1: One\n\n- [ ] **Step 1:** Work\n",
+    );
+    const result = buildHandoffPrompt(root, "Load the wf-handoff skill and follow it.");
+    expect("error" in result).toBe(false);
+    if (!("error" in result)) {
+      expect(result.spec).toBe("docs/superpowers/specs/ok-design.md");
+      expect(result.plan).toBe("docs/superpowers/plans/ok.md");
+    }
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("handoff matching pair resolves a mirror docs/specs link", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wf-handoff-pair-mirror-"));
+  try {
+    mkdirSync(path.join(root, "docs/superpowers/specs"), { recursive: true });
+    mkdirSync(path.join(root, "docs/superpowers/plans"), { recursive: true });
+    writeFileSync(path.join(root, "docs/superpowers/specs/mm-design.md"), "# MM\n\n**Branch:** `feature/mm`\n");
+    writeFileSync(
+      path.join(root, "docs/superpowers/plans/mm.md"),
+      "# MM\n\n**Spec:** `docs/specs/mm-design.md`\n**Branch:** `feature/mm`\n\n### Task 1: One\n\n- [ ] **Step 1:** Work\n",
+    );
+    const result = buildHandoffPrompt(root, "Load the wf-handoff skill and follow it.");
+    expect("error" in result).toBe(false);
+    if (!("error" in result)) {
+      expect(result.spec).toBe("docs/superpowers/specs/mm-design.md");
+    }
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("handoff matching pair falls back to basename when plan Spec link is missing", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wf-handoff-pair-basename-"));
+  try {
+    mkdirSync(path.join(root, "docs/superpowers/specs"), { recursive: true });
+    mkdirSync(path.join(root, "docs/superpowers/plans"), { recursive: true });
+    writeFileSync(path.join(root, "docs/superpowers/specs/bb-design.md"), "# BB\n\n**Branch:** `feature/bb`\n");
+    writeFileSync(
+      path.join(root, "docs/superpowers/plans/bb.md"),
+      "# BB\n\n**Branch:** `feature/bb`\n\n### Task 1: One\n\n- [ ] **Step 1:** Work\n",
+    );
+    const { resolveWorkflowPaths } = require("../src/core/handoff-context");
+    const resolved = resolveWorkflowPaths(root, "Load the wf-handoff skill and follow it.");
+    expect("error" in resolved).toBe(false);
+    if (!("error" in resolved)) {
+      expect(resolved.spec).toBe("docs/superpowers/specs/bb-design.md");
+      expect(resolved.plan).toBe("docs/superpowers/plans/bb.md");
+    }
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});

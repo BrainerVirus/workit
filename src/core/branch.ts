@@ -166,8 +166,8 @@ export const branchSetup = ({
   const current = gitContext(cwd).branch;
   if (!current || current === "unknown") return { error: "not in a git repository" };
   const sdd = sdd_dir ?? "docs/superpowers/sdd";
-  const manifestPath = path.join(cwd, sdd, "manifest.json");
-  mkdirSync(path.dirname(manifestPath), { recursive: true });
+  const manifestPath = path.isAbsolute(sdd) ? path.join(sdd, "manifest.json") : path.join(cwd, sdd, "manifest.json");
+  mkdirSync(path.dirname(manifestPath), { recursive: true, mode: 0o755 });
   const readManifest = (): Record<string, unknown> => {
     try { return JSON.parse(readFileSync(manifestPath, "utf8")); } catch { return {}; }
   };
@@ -199,7 +199,9 @@ export const branchSetup = ({
       if (stash !== "yes") {
         return { error: "dirty working tree — ask with native question, then call workflow_branch_setup with stash=yes" };
       }
-      try { exec(["stash", "push", "-u", "-m", `workflow-toolkit: pre-checkout ${target}`]); } catch (error) {
+      try {
+        exec(["stash", "push", "-u", "-m", `workflow-toolkit: pre-checkout ${target}`, "--", ":!docs/superpowers"]);
+      } catch (error) {
         return { error: error instanceof Error ? error.message : "stash push failed" };
       }
       stash_ref = "stash@{0}";

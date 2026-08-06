@@ -329,3 +329,71 @@ test("docs validate accepts a mirror docs/specs link when the canonical spec exi
     expect(result.ok).toBe(true);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+import { changelogUnreleasedStats } from "../src/core/changelog";
+
+test("changelog accepts array entries with type/text", () => {
+  const root = temporaryDirectory();
+  try {
+    writeFileSync(path.join(root, "CHANGELOG.md"), "# Changelog\n\n## [Unreleased]\n\n### Fixed\n\n- Old\n");
+    const result = changelogApply({
+      entries: [
+        { type: "fixed", text: "Array fix" },
+        { category: "added", entry: "Array add" },
+      ],
+      workspace_root: root,
+    });
+    expect(result.error).toBeUndefined();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("changelog rejects entries missing category or text", () => {
+  expect(changelogApply({ entries: [{ category: "Fixed" }], workspace_root: os.tmpdir() }).error)
+    .toMatch(/category \+ text/);
+  expect(changelogApply({ entries: [{ text: "x" }], workspace_root: os.tmpdir() }).error)
+    .toMatch(/category \+ text/);
+});
+
+test("changelog rejects invalid categories", () => {
+  expect(changelogApply({ entries: [{ category: "Nope", text: "x" }], workspace_root: os.tmpdir() }).error)
+    .toMatch(/invalid category/);
+  expect(changelogApply({ entries: { Nope: ["x"] }, workspace_root: os.tmpdir() }).error)
+    .toMatch(/invalid category/);
+});
+
+test("changelog rejects non-object non-array entries", () => {
+  expect(changelogApply({ entries: "nonsense", workspace_root: os.tmpdir() }).error)
+    .toMatch(/object or array/);
+});
+
+test("changelog stats: missing file, no unreleased, and duplicate headings", () => {
+  const root = temporaryDirectory();
+  try {
+    expect(changelogUnreleasedStats(root)).toEqual({ exists: false });
+    writeFileSync(path.join(root, "CHANGELOG.md"), "# Changelog\n\n## [1.0.0] - 2026-01-01\n\n### Added\n- x\n");
+    expect(changelogUnreleasedStats(root)).toEqual({ exists: true, has_unreleased: false });
+    writeFileSync(path.join(root, "CHANGELOG.md"), "# Changelog\n\n## [Unreleased]\n\n### Added\n- a\n\n### Added\n- b\n");
+    const stats = changelogUnreleasedStats(root);
+    expect(stats.exists).toBe(true);
+    expect(stats.has_unreleased).toBe(true);
+    expect(stats.category_headings).toEqual(["Added", "Added"]);
+    expect(stats.duplicate_category_headings).toEqual(["Added"]);
+    expect(stats.needs_normalize).toBe(true);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+import { asciiWireframe, flowDiagram } from "../src/core/present";
+
+test("present renders ascii and mermaid via real scripts", () => {
+  const ascii = asciiWireframe({ title: "T", rows: [{ type: "header", label: "Title" }] });
+  expect(ascii.error).toBeUndefined();
+  expect(ascii.data.format).toBe("ascii-wireframe");
+  const flow = flowDiagram({ nodes: [{ id: "a", label: "Start" }], edges: [] });
+  expect(flow.error).toBeUndefined();
+  expect(flow.data.format).toBe("mermaid");
+});
+
+test("present surfaces script failures", () => {
+  const broken = asciiWireframe("not-json{");
+  expect(broken.error).toBeDefined();
+});

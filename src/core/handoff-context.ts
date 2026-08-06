@@ -99,6 +99,7 @@ const resolveActivePair = (root: string): Resolved => {
 export const resolveWorkflowPaths = (root: string, message: string): Resolved => {
   const fromMessage = resolveFromMessagePaths(root, message);
   if (!("error" in fromMessage)) return fromMessage;
+  if (fromMessage.error !== "no paths") return fromMessage;
   const active = resolveActivePair(root);
   if (!("error" in active)) return active;
 

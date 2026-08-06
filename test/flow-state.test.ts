@@ -147,3 +147,49 @@ test("invalid slug is rejected before any write", () => {
     cleanup(root);
   }
 });
+
+test("corrupt flow.json falls back to draft without throwing", () => {
+  const { root, slug } = fixture();
+  try {
+    mkdirSync(path.join(root, "docs/superpowers/sdd", slug), { recursive: true });
+    writeFileSync(path.join(root, "docs/superpowers/sdd", slug, "flow.json"), "{not-json", "utf8");
+    const state = readFlowState(root, slug);
+    expect(state.spec.status).toBe("draft");
+    expect(state.plan.status).toBe("draft");
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("already approved spec rejects further transitions", () => {
+  const { root, slug } = fixture();
+  try {
+    const spec = `docs/superpowers/specs/${slug}-design.md`;
+    const plan = `docs/superpowers/plans/${slug}.md`;
+    writeFileSync(path.join(root, spec), `# ${slug}\n\n**Branch:** \`feature/${slug}\`\n`);
+    writeFileSync(path.join(root, plan), `# ${slug}\n\n**Branch:** \`feature/${slug}\`\n`);
+    transitionSpec(root, slug, spec, true);
+    transitionSpec(root, slug, spec, true);
+    const third = transitionSpec(root, slug, spec, true);
+    expect(third.ok).toBe(false);
+    expect(String((third as { error: string }).error)).toContain("already approved");
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("transitions reject a missing doc file", () => {
+  const { root, slug } = fixture();
+  try {
+    const spec = `docs/superpowers/specs/${slug}-design.md`;
+    const plan = `docs/superpowers/plans/${slug}.md`;
+    writeFileSync(path.join(root, spec), `# ${slug}\n\n**Branch:** \`feature/${slug}\`\n`);
+    transitionSpec(root, slug, spec, true);
+    transitionSpec(root, slug, spec, true);
+    const result = transitionPlan(root, slug, plan, true);
+    expect(result.ok).toBe(false);
+    expect(String((result as { error: string }).error)).toContain("plan not found");
+  } finally {
+    cleanup(root);
+  }
+});

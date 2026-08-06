@@ -1,11 +1,12 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { createRepoTools } from "../src/tools/repo";
 import { createSddTools } from "../src/tools/sdd";
 import { WorkflowStateStore } from "../src/state";
+import { docsBranch, resolveBranch } from "../src/core/branch";
 
 const git = (cwd: string, args: string[]) => spawnSync("git", args, { cwd, encoding: "utf8" });
 
@@ -103,4 +104,165 @@ test("branch setup errors when origin develop is missing", async () => {
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("branch resolution honors use-current and bugfix slug/kind derivation", async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "wf-branch-derive-"));
+  try {
+    const run = (args: string[]) => spawnSync("git", args, { cwd: dir, encoding: "utf8" });
+    run(["init", "-q", "-b", "develop"]);
+    run(["config", "user.name", "T"]);
+    run(["config", "user.email", "t@t"]);
+    writeFileSync(path.join(dir, "r.md"), "x");
+    run(["add", "r.md"]);
+    run(["commit", "-q", "-m", "base"]);
+    run(["branch", "feature/current"]);
+    run(["branch", "feature/base"]);
+    run(["checkout", "-q", "feature/base"]);
+
+    mkdirSync(path.join(dir, "docs/superpowers/specs"), { recursive: true });
+    mkdirSync(path.join(dir, "docs/superpowers/plans"), { recursive: true });
+    writeFileSync(path.join(dir, "docs/superpowers/specs/uc-design.md"), "# UC\n\n**Branch:** use-current\n");
+    writeFileSync(path.join(dir, "docs/superpowers/plans/uc.md"), "# UC\n\n**Spec:** `docs/superpowers/specs/uc-design.md`\n\n### Task 1: One\n\n- [ ] **Step 1:** Work\n");
+    const useCurrent = resolveBranch({ spec_path: "docs/superpowers/specs/uc-design.md", plan_path: "docs/superpowers/plans/uc.md", workspace_root: dir });
+    expect("error" in useCurrent ? useCurrent.error : useCurrent.source).toBe("use-current");
+    expect("error" in useCurrent ? useCurrent.error : useCurrent.branch).toBe("feature/base");
+
+    run(["branch", "main"]);
+    run(["checkout", "-q", "main"]);
+    writeFileSync(path.join(dir, "docs/superpowers/plans/fix-x.md"), "# Fix x\n\n### Task 1: One\n\n- [ ] **Step 1:** Work\n");
+    const fixSlug = resolveBranch({ spec_path: "missing.md", plan_path: "docs/superpowers/plans/fix-x.md", workspace_root: dir });
+    expect("error" in fixSlug ? fixSlug.error : fixSlug.branch).toBe("bugfix/fix-x");
+
+    writeFileSync(path.join(dir, "docs/superpowers/plans/g.md"), "# G\n\n**Goal:** bug fix without adding features\n\n### Task 1: One\n\n- [ ] **Step 1:** Work\n");
+    const goal = resolveBranch({ spec_path: "missing.md", plan_path: "docs/superpowers/plans/g.md", workspace_root: dir });
+    expect("error" in goal ? goal.error : goal.branch).toBe("bugfix/g");
+
+    writeFileSync(path.join(dir, "docs/superpowers/plans/feat.md"), "# F\n\n**Goal:** Add cool feature\n\n### Task 1: One\n\n- [ ] **Step 1:** Work\n");
+    const feat = resolveBranch({ spec_path: "missing.md", plan_path: "docs/superpowers/plans/feat.md", workspace_root: dir });
+    expect("error" in feat ? feat.error : feat.branch).toBe("feature/feat");
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("branch setup guards protected targets, missing targets, and dirty stash flow", async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "wf-branch-guards-"));
+  try {
+    const run = (args: string[]) => spawnSync("git", args, { cwd: dir, encoding: "utf8" });
+    run(["init", "-q", "-b", "develop"]);
+    run(["config", "user.name", "T"]);
+    run(["config", "user.email", "t@t"]);
+    writeFileSync(path.join(dir, "r.md"), "x");
+    run(["add", "r.md"]);
+    run(["commit", "-q", "-m", "base"]);
+    run(["branch", "main"]);
+    run(["checkout", "-q", "main"]);
+
+    const tools = createRepoTools();
+    const ctx = { directory: dir, worktree: dir } as never;
+    const noTarget = JSON.parse(await tools.workflow_branch_setup.execute({ confirmed: true }, ctx) as string);
+    expect(noTarget.error).toContain("target branch required");
+    const protected_ = JSON.parse(await tools.workflow_branch_setup.execute({ confirmed: true, target_branch: "main" }, ctx) as string);
+    expect(protected_.error).toContain("protected branch");
+    const badKind = JSON.parse(await tools.workflow_branch_setup.execute({ confirmed: true, target_branch: "random/x" }, ctx) as string);
+    expect(badKind.error).toContain("feature/* or bugfix/*");
+
+    run(["checkout", "-q", "-b", "feature/dirty"]);
+    writeFileSync(path.join(dir, "dirty.txt"), "uncommitted");
+    const dirty = JSON.parse(await tools.workflow_branch_setup.execute({ confirmed: true, target_branch: "feature/next", stash: "no" }, ctx) as string);
+    expect(dirty.error).toContain("dirty working tree");
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("branch setup reapply_stash requires a recorded stash ref", async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "wf-branch-reapply-"));
+  try {
+    const run = (args: string[]) => spawnSync("git", args, { cwd: dir, encoding: "utf8" });
+    run(["init", "-q", "-b", "develop"]);
+    run(["config", "user.name", "T"]);
+    run(["config", "user.email", "t@t"]);
+    writeFileSync(path.join(dir, "r.md"), "x");
+    run(["add", "r.md"]);
+    run(["commit", "-q", "-m", "base"]);
+
+    const tools = createRepoTools();
+    const ctx = { directory: dir, worktree: dir } as never;
+    const noRef = JSON.parse(await tools.workflow_branch_setup.execute({ confirmed: true, action: "reapply_stash" }, ctx) as string);
+    expect(noRef.error).toContain("no stash_ref");
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("branch setup stash + reapply round trip restores changes", async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "wf-branch-stash-roundtrip-"));
+  try {
+    const run = (args: string[]) => spawnSync("git", args, { cwd: dir, encoding: "utf8" });
+    run(["init", "-q", "-b", "develop"]);
+    run(["config", "user.name", "T"]);
+    run(["config", "user.email", "t@t"]);
+    writeFileSync(path.join(dir, "r.md"), "x");
+    run(["add", "r.md"]);
+    run(["commit", "-q", "-m", "base"]);
+    run(["checkout", "-q", "-b", "feature/dirty"]);
+    run(["checkout", "-q", "-b", "feature/next"]);
+    run(["checkout", "-q", "feature/dirty"]);
+    writeFileSync(path.join(dir, "dirty.txt"), "wip");
+
+    const tools = createRepoTools();
+    const ctx = { directory: dir, worktree: dir } as never;
+    const setup = JSON.parse(await tools.workflow_branch_setup.execute({
+      confirmed: true, target_branch: "feature/next", stash: "yes",
+    }, ctx) as string);
+    expect(setup.ok).toBe(true);
+    expect(existsSync(path.join(dir, "dirty.txt"))).toBe(false);
+
+    const reapply = JSON.parse(await tools.workflow_branch_setup.execute({
+      confirmed: true, action: "reapply_stash",
+    }, ctx) as string);
+    expect(reapply.ok).toBe(true);
+    expect(existsSync(path.join(dir, "dirty.txt"))).toBe(true);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("branch setup fails from a feature branch when origin develop is missing", async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "wf-branch-no-origin-"));
+  try {
+    const run = (args: string[]) => spawnSync("git", args, { cwd: dir, encoding: "utf8" });
+    run(["init", "-q", "-b", "develop"]);
+    run(["config", "user.name", "T"]);
+    run(["config", "user.email", "t@t"]);
+    writeFileSync(path.join(dir, "r.md"), "x");
+    run(["add", "r.md"]);
+    run(["commit", "-q", "-m", "base"]);
+    run(["checkout", "-q", "-b", "feature/start"]);
+
+    const tools = createRepoTools();
+    const ctx = { directory: dir, worktree: dir } as never;
+    const raw = JSON.parse(await tools.workflow_branch_setup.execute({
+      confirmed: true, target_branch: "feature/new",
+    }, ctx) as string);
+    expect(raw.ok).toBe(false);
+    expect(raw.ok).toBe(false);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("docsBranch reports keep and create_from_develop and HEAD errors", () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "wf-docs-branch-"));
+  try {
+    const run = (args: string[]) => spawnSync("git", args, { cwd: dir, encoding: "utf8" });
+    run(["init", "-q", "-b", "feature/current"]);
+    run(["config", "user.name", "T"]);
+    run(["config", "user.email", "t@t"]);
+    writeFileSync(path.join(dir, "r.md"), "x");
+    run(["add", "r.md"]);
+    run(["commit", "-q", "-m", "base"]);
+    const kept = docsBranch({ kind: "feature", workspace_root: dir });
+    expect(kept.action).toBe("keep");
+    expect(kept.branch).toBe("feature/current");
+
+    run(["checkout", "-q", "-b", "develop"]);
+    mkdirSync(path.join(dir, "docs/superpowers/plans"), { recursive: true });
+    writeFileSync(path.join(dir, "docs/superpowers/plans/2026-08-06-x.md"), "# X\n");
+    const created = docsBranch({ plan_path: "docs/superpowers/plans/2026-08-06-x.md", kind: "bugfix", workspace_root: dir });
+    expect(created.action).toBe("create_from_develop");
+    expect(created.branch).toBe("bugfix/x");
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });
