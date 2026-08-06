@@ -123,7 +123,7 @@ export const buildHandoffPrompt = (root: string, message: string): HandoffContex
   );
   const contract = buildHandoffContract({ root, spec: resolved.spec, plan: resolved.plan, templatePath });
   if ("error" in contract) return { error: contract.error };
-  const sdd = `docs/superpowers/sdd/${path.basename(resolved.plan, ".md")}`;
+  const sdd = `docs/${path.basename(path.dirname(resolved.plan))}/sdd`;
   return { prompt: contract.prompt, spec: resolved.spec, plan: resolved.plan, sdd };
 };
 
@@ -147,7 +147,7 @@ export function createHandoffTools(
           state.set(context.sessionID, { spec: active.spec, plan: active.plan, sdd: active.sdd });
           return output(await handoffSession(client, {
             directory: context.directory,
-            title: `Continue ${path.basename(active.plan, ".md")}`,
+            title: `Continue ${path.basename(path.dirname(active.plan))}`,
             prompt: active.prompt,
             stay: /(?:^|\s)--stay(?:\s|$)/.test(userMessage),
           }));

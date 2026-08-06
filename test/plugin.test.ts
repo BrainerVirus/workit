@@ -37,8 +37,9 @@ describe("plugin registration", () => {
     const config: Record<string, any> = {};
     await hooks.config?.(config);
     expect(Object.keys(config.command).sort()).toEqual([...names].sort());
-    expect(config.skills.paths).toHaveLength(1);
+    expect(config.skills.paths).toHaveLength(2);
     expect(config.skills.paths[0]).toEndWith("workflow-toolkit/skills");
+    expect(config.skills.paths[1]).toEndWith("vendor/superpowers/skills");
   });
 
   test("registration is idempotent with a preexisting skill path", async () => {
@@ -54,7 +55,10 @@ describe("plugin registration", () => {
     await hooks.config?.(config);
 
     expect(Object.keys(config.command).sort()).toEqual([...names].sort());
-    expect(config.skills.paths).toEqual([skillPath]);
+    expect(config.skills.paths).toEqual([
+      skillPath,
+      path.resolve(import.meta.dir, "../vendor/superpowers/skills"),
+    ]);
   });
   test("registers native bash deny rules for worktree creation", async () => {
     const hooks = await plugin({
@@ -268,19 +272,19 @@ describe("plugin registration", () => {
           workflow_sdd_context: { plan_path: "missing-plan.md" },
           workflow_sdd_task_brief: {
             confirmed: false,
-            sdd_dir: "docs/superpowers/sdd/fixture",
+            sdd_dir: "docs/fixture/sdd",
             task_id: 1,
             section_text: "Task",
           },
           workflow_sdd_review_package: {
             confirmed: false,
-            sdd_dir: "docs/superpowers/sdd/fixture",
+            sdd_dir: "docs/fixture/sdd",
             base_sha: "HEAD",
             head_sha: "HEAD",
           },
           workflow_sdd_append_progress: {
             confirmed: false,
-            progress_path: "docs/superpowers/sdd/fixture/progress.md",
+            progress_path: "docs/fixture/sdd/progress.md",
             line: "Task 1: complete",
           },
           workflow_handoff_session: { message: "safe fixture --stay" },
@@ -355,21 +359,21 @@ describe("plugin registration", () => {
     const root = mkdtempSync(path.join(os.tmpdir(), "wf-plugin-handoff-"));
     const calls: string[] = [];
     try {
-      mkdirSync(path.join(root, "docs/superpowers/plans"), { recursive: true });
-      mkdirSync(path.join(root, "docs/superpowers/specs"), { recursive: true });
+      mkdirSync(path.join(root, "docs", "x"), { recursive: true });
+      mkdirSync(path.join(root, "docs", "x"), { recursive: true });
       writeFileSync(
-        path.join(root, "docs/superpowers/specs/x-design.md"),
+        path.join(root, "docs/x/spec.md"),
         "# X\n\n**Branch:** `feature/x`\n",
       );
       writeFileSync(
-        path.join(root, "docs/superpowers/plans/x.md"),
-        "# X\n\n**Spec:** `docs/superpowers/specs/x-design.md`\n**Branch:** `feature/x`\n\n### Task 1: One\n\n- [ ] **Step 1:** Work\n",
+        path.join(root, "docs/x/plan.md"),
+        "# X\n\n**Spec:** `docs/x/spec.md`\n**Branch:** `feature/x`\n\n### Task 1: One\n\n- [ ] **Step 1:** Work\n",
       );
-      mkdirSync(path.join(root, "docs/superpowers/sdd/x"), { recursive: true });
-      writeFileSync(path.join(root, "docs/superpowers/sdd/x/flow.json"), JSON.stringify({
+      mkdirSync(path.join(root, "docs", "x", "sdd"), { recursive: true });
+      writeFileSync(path.join(root, "docs/x/sdd/flow.json"), JSON.stringify({
         slug: "x",
-        spec: { path: "docs/superpowers/specs/x-design.md", status: "approved" },
-        plan: { path: "docs/superpowers/plans/x.md", status: "approved" },
+        spec: { path: "docs/x/spec.md", status: "approved" },
+        plan: { path: "docs/x/plan.md", status: "approved" },
         menu: { presented: true, chosen: "handoff" },
         updated_at: Date.now(),
       }));
@@ -400,7 +404,7 @@ describe("plugin registration", () => {
       const raw = await hooks.tool?.workflow_handoff_session.execute(
         {
           message:
-            "docs/superpowers/specs/x-design.md docs/superpowers/plans/x.md --stay",
+            "docs/x/spec.md docs/x/plan.md --stay",
         },
         { directory: root, worktree: root, sessionID: "parent" } as never,
       );
@@ -418,15 +422,15 @@ describe("plugin registration", () => {
 
   test("compaction includes only active workflow paths", async () => {
     const root = mkdtempSync(path.join(os.tmpdir(), "wf-plugin-"));
-    mkdirSync(path.join(root, "docs/superpowers/plans"), { recursive: true });
-    mkdirSync(path.join(root, "docs/superpowers/specs"), { recursive: true });
+    mkdirSync(path.join(root, "docs", "x"), { recursive: true });
+    mkdirSync(path.join(root, "docs", "x"), { recursive: true });
     writeFileSync(
-      path.join(root, "docs/superpowers/specs/x-design.md"),
+      path.join(root, "docs/x/spec.md"),
       "# X\n",
     );
     writeFileSync(
-      path.join(root, "docs/superpowers/plans/x.md"),
-      "# X\n**Spec:** `docs/superpowers/specs/x-design.md`\n### Task 1: One\n",
+      path.join(root, "docs/x/plan.md"),
+      "# X\n**Spec:** `docs/x/spec.md`\n### Task 1: One\n",
     );
     const hooks = await plugin({
       directory: root,
@@ -434,7 +438,7 @@ describe("plugin registration", () => {
       serverUrl: new URL("http://localhost"),
     } as never);
     await hooks.tool?.workflow_plan_tasks.execute(
-      { plan_path: "docs/superpowers/plans/x.md" },
+      { plan_path: "docs/x/plan.md" },
       { directory: root, worktree: root, sessionID: "s1" } as never,
     );
     const output = { context: [] as string[] };
@@ -445,7 +449,7 @@ describe("plugin registration", () => {
     );
 
     expect(output.context).toEqual([
-      "Active workflow:\nSpec: docs/superpowers/specs/x-design.md\nPlan: docs/superpowers/plans/x.md\nSDD: docs/superpowers/sdd/x",
+      "Active workflow:\nSpec: docs/x/spec.md\nPlan: docs/x/plan.md\nSDD: docs/x/sdd",
     ]);
   });
 });
@@ -456,4 +460,16 @@ test("compaction context includes active workflow paths only", () => {
   state.set("s1", { spec: "a.md", plan: "b.md", sdd: "sdd/x" });
   expect(state.compactionContext("s1")).toContain("Spec: a.md");
   expect(state.compactionContext("s1")).toContain("SDD: sdd/x");
+});
+
+test("config registers vendored superpowers skills alongside toolkit skills", async () => {
+  const hooks = await plugin({
+    directory: "/repo", worktree: "/repo",
+    serverUrl: new URL("http://localhost"),
+  } as never);
+  const config: Record<string, any> = {};
+  await hooks.config?.(config);
+  const paths = config.skills.paths as string[];
+  expect(paths.some((p) => p.endsWith("/skills"))).toBe(true);
+  expect(paths.some((p) => p.endsWith("/vendor/superpowers/skills"))).toBe(true);
 });

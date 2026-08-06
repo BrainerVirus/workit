@@ -7,8 +7,6 @@ const PROTECTED = new Set(["main", "develop", "master", "prod", "production"]);
 const DECLARE_RE = /^\s*\*+Branch:\*+\s*`?((?:feature|bugfix)\/[^`\s|]+)`?\s*$/gim;
 const USE_CURRENT_RE = /^\s*\*+Branch:\*+\s*use-current\s*$/im;
 const BRANCH_PAT = /^(feature|bugfix)\/[a-z0-9][a-z0-9._/-]*$/i;
-const DATE_PREFIX_RE = /^\d{4}-\d{2}-\d{2}-/;
-
 const readSafe = (p: string): string | null => {
   try { return readFileSync(p, "utf8"); } catch { return null; }
 };
@@ -24,11 +22,9 @@ const normalizeBranch = (name: string): string | null => {
 };
 
 const deriveSlug = (planPath: string): string => {
-  const stem = path.basename(planPath, ".md");
-  let slug = stem.replace(DATE_PREFIX_RE, "");
-  slug = slug.replace(/-design$/i, "");
-  slug = slug.toLowerCase().replace(/[^\w.-]+/g, "-").replace(/^-+|-+$/g, "").replace(/-{2,}/g, "-");
-  return slug;
+  // New layout: plan lives at docs/<slug>/plan.md — slug is the dir name.
+  const dirName = path.basename(path.dirname(planPath));
+  return dirName === "." || dirName === "/" || dirName === "" ? "" : dirName;
 };
 
 const deriveKind = (planPath: string, fallback: "feature" | "bugfix" = "feature"): "feature" | "bugfix" => {
@@ -165,7 +161,7 @@ export const branchSetup = ({
     execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] });
   const current = gitContext(cwd).branch;
   if (!current || current === "unknown") return { error: "not in a git repository" };
-  const sdd = sdd_dir ?? "docs/superpowers/sdd";
+  const sdd = sdd_dir ?? "docs";
   const manifestPath = path.isAbsolute(sdd) ? path.join(sdd, "manifest.json") : path.join(cwd, sdd, "manifest.json");
   mkdirSync(path.dirname(manifestPath), { recursive: true, mode: 0o755 });
   const readManifest = (): Record<string, unknown> => {
@@ -200,7 +196,7 @@ export const branchSetup = ({
         return { error: "dirty working tree — ask with native question, then call workflow_branch_setup with stash=yes" };
       }
       try {
-        exec(["stash", "push", "-u", "-m", `workflow-toolkit: pre-checkout ${target}`, "--", ":!docs/superpowers"]);
+        exec(["stash", "push", "-u", "-m", `workflow-toolkit: pre-checkout ${target}`, "--", ":!docs/*/sdd"]);
       } catch (error) {
         return { error: error instanceof Error ? error.message : "stash push failed" };
       }

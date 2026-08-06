@@ -5,9 +5,10 @@ import { parseTasksFromPlan } from "./docs-validate";
 import { docsValidate } from "./docs-validate";
 import { readFlowState } from "./flow-state";
 
-export function slugFromPlan(planPath: string) {
-  return path.basename(planPath, ".md");
-}
+export const slugFromPlan = (planPath: string) => {
+  const dirName = path.basename(path.dirname(planPath));
+  return dirName === "." || dirName === "/" || dirName === "" ? "" : dirName;
+};
 
 /** OpenCode todowrite payload. SDD ledger is persistence, not a UI substitute. */
 export function todosFromTasks(
@@ -46,7 +47,7 @@ export function sddContext({
   }
   if (!resolvedSlug) return { error: "slug or plan_path required" };
 
-  const sdd_dir = path.join("docs/superpowers/sdd", resolvedSlug);
+  const sdd_dir = path.join("docs", resolvedSlug, "sdd");
   const progress_path = path.join(sdd_dir, "progress.md");
   const manifest_path = path.join(sdd_dir, "manifest.json");
 

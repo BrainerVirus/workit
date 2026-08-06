@@ -99,13 +99,13 @@ Keep custom heading.
 test("SDD context reports completed and pending tasks from the ledger", async () => {
   const { root } = repository("feature/test");
   try {
-    mkdirSync(path.join(root, "docs/superpowers/plans"), { recursive: true });
-    mkdirSync(path.join(root, "docs/superpowers/specs"), { recursive: true });
-    mkdirSync(path.join(root, "docs/superpowers/sdd/smoke"), { recursive: true });
-    writeFileSync(path.join(root, "docs/superpowers/specs/smoke-design.md"), "# Smoke\n\n**Branch:** `feature/smoke`\n");
-    writeFileSync(path.join(root, "docs/superpowers/plans/smoke.md"), [
+    mkdirSync(path.join(root, "docs", "smoke"), { recursive: true });
+    mkdirSync(path.join(root, "docs", "smoke"), { recursive: true });
+    mkdirSync(path.join(root, "docs/smoke/sdd"), { recursive: true });
+    writeFileSync(path.join(root, "docs/smoke/spec.md"), "# Smoke\n\n**Branch:** `feature/smoke`\n");
+    writeFileSync(path.join(root, "docs/smoke/plan.md"), [
       "# Smoke",
-      "**Spec:** `docs/superpowers/specs/smoke-design.md`",
+      "**Spec:** `docs/smoke/spec.md`",
       "**Branch:** `feature/smoke`",
       "",
       "### Task 1: One",
@@ -118,11 +118,11 @@ test("SDD context reports completed and pending tasks from the ledger", async ()
       "",
     ].join("\n"));
     writeFileSync(
-      path.join(root, "docs/superpowers/sdd/smoke/progress.md"),
+      path.join(root, "docs/smoke/sdd/progress.md"),
       "Task 1: complete (commits abcdef0..1234567, tests pass)\n",
     );
     const raw = await createSddTools(new WorkflowStateStore()).workflow_sdd_context.execute(
-      { plan_path: "docs/superpowers/plans/smoke.md" },
+      { plan_path: "docs/smoke/plan.md" },
       { directory: root, worktree: root, sessionID: "smoke" } as never,
     );
     const todos = JSON.parse(raw as string).data.todos;
@@ -143,7 +143,10 @@ test("plugin registers without a Cursor runtime path", async () => {
     const config: Record<string, any> = {};
     await hooks.config?.(config);
     expect(Object.keys(config.command)).toHaveLength(12);
-    expect(config.skills.paths).toEqual([path.resolve(import.meta.dir, "../skills")]);
+    expect(config.skills.paths).toEqual([
+      path.resolve(import.meta.dir, "../skills"),
+      path.resolve(import.meta.dir, "../vendor/superpowers/skills"),
+    ]);
     expect(Object.keys(hooks.tool ?? {})).toHaveLength(35);
   } finally {
     rmSync(root, { recursive: true, force: true });

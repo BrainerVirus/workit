@@ -6,9 +6,9 @@ Use OpenCode's native `question` for every bounded user choice. Give concise cho
 
 | Document | Path |
 | --- | --- |
-| Spec | `docs/superpowers/specs/YYYY-MM-DD-<slug>-design.md` |
-| Plan | `docs/superpowers/plans/YYYY-MM-DD-<slug>.md` |
-| SDD state | `docs/superpowers/sdd/<slug>/` |
+| Spec | `docs/<slug>/spec.md` |
+| Plan | `docs/<slug>/plan.md` |
+| SDD state | `docs/<slug>/sdd/` |
 
 An optional human mirror may live at `docs/specs/<same-basename>.md`; when present, keep its branch identical.
 
@@ -21,7 +21,7 @@ Specs require:
 Plans require:
 
 ```markdown
-**Spec:** `docs/superpowers/specs/YYYY-MM-DD-<slug>-design.md`
+**Spec:** `docs/<slug>/spec.md`
 **Branch:** `feature/<slug>`
 ```
 
@@ -35,7 +35,7 @@ Before writing **Branch:** into a new spec or plan, call `workflow_docs_branch` 
 - Commits use `wf-commit` after its native `question` confirmation.
 - Continuation uses `wf-handoff`, whose `workflow_handoff_session` creates and seeds the OpenCode session automatically.
 - Never use worktrees. Resolve the declared branch with `workflow_resolve_branch`, preview dirty-tree stash choices with `question`, and apply an approved in-place checkout through `workflow_branch_setup` with `confirmed: true`.
-- Keep all SDD state tracked under `docs/superpowers/sdd/<slug>/`; use `workflow_sdd_context` and the registered `workflow_sdd_*` tools.
+- Keep all SDD state tracked under `docs/<slug>/sdd/`; use `workflow_sdd_context` and the registered `workflow_sdd_*` tools.
 - After implementation, use `question` before an approved stash reapply through `workflow_branch_setup` with `confirmed: true`.
 
 ## YouTrack content

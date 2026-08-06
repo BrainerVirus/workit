@@ -48,6 +48,11 @@ mkdir -p "$PLUGIN_DIR"
 rsync -a --delete \
   --exclude 'mcp/node_modules' \
   "$SHARE/cursor/" "$PLUGIN_DIR/"
+# Vendored skills for Cursor (same folder layout as OpenCode registration)
+mkdir -p "$PLUGIN_DIR/vendor/superpowers"
+if [ -d "$SHARE/vendor/superpowers/skills" ]; then
+  rsync -a --delete "$SHARE/vendor/superpowers/skills" "$PLUGIN_DIR/vendor/superpowers/"
+fi
 printf '%s\n' "$SHARE" >"$PLUGIN_DIR/.workflow-toolkit-root"
 chmod +x "$PLUGIN_DIR/hooks/session-start" "$PLUGIN_DIR/mcp/run-server.sh" 2>/dev/null || true
 

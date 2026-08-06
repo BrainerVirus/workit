@@ -218,7 +218,7 @@ export function createRepoTools(runtime: RepoRuntime = defaultRuntime) {
       execute: async ({ confirmed, action, sdd_dir, target_branch, stash }, context) => {
         const rejected = requireConfirmed(confirmed);
         if (rejected) return rejected;
-        let resolvedSdd = sdd_dir ?? "docs/superpowers/sdd";
+        let resolvedSdd = sdd_dir ?? "docs";
         try {
           resolvedSdd = resolveInside(context.directory, resolvedSdd);
         } catch (error) {

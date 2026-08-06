@@ -11,11 +11,11 @@ import {
 
 const fixture = () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "wf-flow-"));
-  mkdirSync(path.join(root, "docs/superpowers/specs"), { recursive: true });
-  mkdirSync(path.join(root, "docs/superpowers/plans"), { recursive: true });
-  writeFileSync(path.join(root, "docs/superpowers/specs/a-design.md"), "# A\n\n**Branch:** `feature/a`\n");
-  writeFileSync(path.join(root, "docs/superpowers/plans/a.md"), "# A\n\n**Branch:** `feature/a`\n");
-  return { root, slug: "my-feature" };
+  const slug = "my-feature";
+  mkdirSync(path.join(root, "docs", slug), { recursive: true });
+  writeFileSync(path.join(root, "docs", slug, "spec.md"), `# ${slug}\n\n**Branch:** \`feature/${slug}\`\n`);
+  writeFileSync(path.join(root, "docs", slug, "plan.md"), `# ${slug}\n\n**Branch:** \`feature/${slug}\`\n`);
+  return { root, slug };
 };
 
 const cleanup = (root: string) => rmSync(root, { recursive: true, force: true });
@@ -35,11 +35,11 @@ test("missing flow.json reads as draft with no menu", () => {
 test("spec transitions draft -> self_reviewed -> approved", () => {
   const { root, slug } = fixture();
   try {
-    const first = transitionSpec(root, slug, "docs/superpowers/specs/a-design.md", true);
+    const first = transitionSpec(root, slug, `docs/${slug}/spec.md`, true);
     expect(first.ok).toBe(true);
     expect(readFlowState(root, slug).spec.status).toBe("self_reviewed");
 
-    const second = transitionSpec(root, slug, "docs/superpowers/specs/a-design.md", true);
+    const second = transitionSpec(root, slug, `docs/${slug}/spec.md`, true);
     expect(second.ok).toBe(true);
     expect(readFlowState(root, slug).spec.status).toBe("approved");
   } finally {
@@ -50,7 +50,7 @@ test("spec transitions draft -> self_reviewed -> approved", () => {
 test("confirmed:false never transitions", () => {
   const { root, slug } = fixture();
   try {
-    const result = transitionSpec(root, slug, "docs/superpowers/specs/a-design.md", false);
+    const result = transitionSpec(root, slug, `docs/${slug}/spec.md`, false);
     expect(result.ok).toBe(false);
     expect(readFlowState(root, slug).spec.status).toBe("draft");
   } finally {
@@ -61,7 +61,7 @@ test("confirmed:false never transitions", () => {
 test("plan approve hard-fails while spec is draft", () => {
   const { root, slug } = fixture();
   try {
-    const result = transitionPlan(root, slug, "docs/superpowers/plans/a.md", true);
+    const result = transitionPlan(root, slug, `docs/${slug}/plan.md`, true);
     expect(result.ok).toBe(false);
     expect(String((result as { error: string }).error)).toContain("spec");
     expect(readFlowState(root, slug).plan.status).toBe("draft");
@@ -73,12 +73,12 @@ test("plan approve hard-fails while spec is draft", () => {
 test("plan approve requires spec approved", () => {
   const { root, slug } = fixture();
   try {
-    transitionSpec(root, slug, "docs/superpowers/specs/a-design.md", true);
-    transitionSpec(root, slug, "docs/superpowers/specs/a-design.md", true);
-    const first = transitionPlan(root, slug, "docs/superpowers/plans/a.md", true);
+    transitionSpec(root, slug, `docs/${slug}/spec.md`, true);
+    transitionSpec(root, slug, `docs/${slug}/spec.md`, true);
+    const first = transitionPlan(root, slug, `docs/${slug}/plan.md`, true);
     expect(first.ok).toBe(true);
     expect(readFlowState(root, slug).plan.status).toBe("self_reviewed");
-    const second = transitionPlan(root, slug, "docs/superpowers/plans/a.md", true);
+    const second = transitionPlan(root, slug, `docs/${slug}/plan.md`, true);
     expect(second.ok).toBe(true);
     expect(readFlowState(root, slug).plan.status).toBe("approved");
   } finally {
@@ -89,7 +89,7 @@ test("plan approve requires spec approved", () => {
 test("menu choice records presented + chosen", () => {
   const { root, slug } = fixture();
   try {
-    const result = recordMenuChoice(root, slug, "docs/superpowers/plans/a.md", "handoff", true);
+    const result = recordMenuChoice(root, slug, `docs/${slug}/plan.md`, "handoff", true);
     expect(result.ok).toBe(true);
     const state = readFlowState(root, slug);
     expect(state.menu.presented).toBe(true);
@@ -102,14 +102,14 @@ test("menu choice records presented + chosen", () => {
 import { assertFlowGates, slugFromPath } from "../src/core/flow-state";
 
 test("slugFromPath strips -design suffix", () => {
-  expect(slugFromPath("docs/superpowers/plans/2026-08-06-x.md")).toBe("2026-08-06-x");
-  expect(slugFromPath("docs/superpowers/specs/2026-08-06-x-design.md")).toBe("2026-08-06-x");
+  expect(slugFromPath("docs/x/plan.md")).toBe("x");
+  expect(slugFromPath("docs/x/spec.md")).toBe("x");
 });
 
 test("assertFlowGates fails without approvals", () => {
   const { root, slug } = fixture();
   try {
-    const result = assertFlowGates(root, `docs/superpowers/plans/${slug}.md`);
+    const result = assertFlowGates(root, `docs/${slug}/plan.md`);
     expect(result.ok).toBe(false);
   } finally {
     cleanup(root);
@@ -119,8 +119,8 @@ test("assertFlowGates fails without approvals", () => {
 test("assertFlowGates requires menu when requested", () => {
   const { root, slug } = fixture();
   try {
-    const spec = `docs/superpowers/specs/${slug}-design.md`;
-    const plan = `docs/superpowers/plans/${slug}.md`;
+    const spec = `docs/${slug}/spec.md`;
+    const plan = `docs/${slug}/plan.md`;
     writeFileSync(path.join(root, spec), `# ${slug}\n\n**Branch:** \`feature/${slug}\`\n`);
     writeFileSync(path.join(root, plan), `# ${slug}\n\n**Branch:** \`feature/${slug}\`\n`);
     transitionSpec(root, slug, spec, true);
@@ -138,9 +138,9 @@ test("assertFlowGates requires menu when requested", () => {
 });
 
 test("invalid slug is rejected before any write", () => {
-  const { root } = fixture();
+  const { root, slug } = fixture();
   try {
-    const result = transitionSpec(root, "..", "docs/superpowers/specs/a-design.md", true);
+    const result = transitionSpec(root, "..", `docs/${slug}/spec.md`, true);
     expect(result.ok).toBe(false);
     expect(String((result as { error: string }).error)).toContain("invalid slug");
   } finally {
@@ -151,8 +151,8 @@ test("invalid slug is rejected before any write", () => {
 test("corrupt flow.json falls back to draft without throwing", () => {
   const { root, slug } = fixture();
   try {
-    mkdirSync(path.join(root, "docs/superpowers/sdd", slug), { recursive: true });
-    writeFileSync(path.join(root, "docs/superpowers/sdd", slug, "flow.json"), "{not-json", "utf8");
+    mkdirSync(path.join(root, "docs", slug, "sdd"), { recursive: true });
+    writeFileSync(path.join(root, "docs", slug, "flow.json"), "{not-json", "utf8");
     const state = readFlowState(root, slug);
     expect(state.spec.status).toBe("draft");
     expect(state.plan.status).toBe("draft");
@@ -164,8 +164,8 @@ test("corrupt flow.json falls back to draft without throwing", () => {
 test("already approved spec rejects further transitions", () => {
   const { root, slug } = fixture();
   try {
-    const spec = `docs/superpowers/specs/${slug}-design.md`;
-    const plan = `docs/superpowers/plans/${slug}.md`;
+    const spec = `docs/${slug}/spec.md`;
+    const plan = `docs/${slug}/plan.md`;
     writeFileSync(path.join(root, spec), `# ${slug}\n\n**Branch:** \`feature/${slug}\`\n`);
     writeFileSync(path.join(root, plan), `# ${slug}\n\n**Branch:** \`feature/${slug}\`\n`);
     transitionSpec(root, slug, spec, true);
@@ -181,12 +181,11 @@ test("already approved spec rejects further transitions", () => {
 test("transitions reject a missing doc file", () => {
   const { root, slug } = fixture();
   try {
-    const spec = `docs/superpowers/specs/${slug}-design.md`;
-    const plan = `docs/superpowers/plans/${slug}.md`;
-    writeFileSync(path.join(root, spec), `# ${slug}\n\n**Branch:** \`feature/${slug}\`\n`);
+    const spec = `docs/${slug}/spec.md`;
+    const missingPlan = `docs/${slug}/missing-plan.md`;
     transitionSpec(root, slug, spec, true);
     transitionSpec(root, slug, spec, true);
-    const result = transitionPlan(root, slug, plan, true);
+    const result = transitionPlan(root, slug, missingPlan, true);
     expect(result.ok).toBe(false);
     expect(String((result as { error: string }).error)).toContain("plan not found");
   } finally {

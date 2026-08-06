@@ -120,19 +120,16 @@ Keep this custom section.
 test("handoff includes every parsed task row", () => {
   const root = temporaryDirectory();
   try {
-    const specs = path.join(root, "docs/superpowers/specs");
-    const plans = path.join(root, "docs/superpowers/plans");
-    mkdirSync(specs, { recursive: true });
-    mkdirSync(plans, { recursive: true });
+    mkdirSync(path.join(root, "docs", "repair"), { recursive: true });
     writeFileSync(
-      path.join(specs, "repair-design.md"),
+      path.join(root, "docs", "repair", "spec.md"),
       "# Repair\n\n**Branch:** `bugfix/handoff-test`\n",
     );
     writeFileSync(
-      path.join(plans, "repair.md"),
+      path.join(root, "docs", "repair", "plan.md"),
       `# Repair plan
 
-**Spec:** \`docs/superpowers/specs/repair-design.md\`
+**Spec:** \`docs/repair/spec.md\`
 **Branch:** \`bugfix/handoff-test\`
 
 ### Task 1: First repair
@@ -148,7 +145,7 @@ test("handoff includes every parsed task row", () => {
 
     const result = buildHandoffPrompt(
       root,
-      "docs/superpowers/specs/repair-design.md docs/superpowers/plans/repair.md",
+      "docs/repair/plan.md",
     );
     expect("error" in result).toBe(false);
     if (!("error" in result)) {
@@ -161,12 +158,9 @@ test("handoff includes every parsed task row", () => {
 test("docs validate rejects task number gaps", () => {
   const root = temporaryDirectory();
   try {
-    const specs = path.join(root, "docs/superpowers/specs");
-    const plans = path.join(root, "docs/superpowers/plans");
-    mkdirSync(specs, { recursive: true });
-    mkdirSync(plans, { recursive: true });
-    const spec = "docs/superpowers/specs/gap-design.md";
-    const plan = "docs/superpowers/plans/gap.md";
+    mkdirSync(path.join(root, "docs", "gap"), { recursive: true });
+    const spec = "docs/gap/spec.md";
+    const plan = "docs/gap/plan.md";
     writeFileSync(path.join(root, spec), "# Gap\n\n**Branch:** `feature/gap`\n");
     writeFileSync(
       path.join(root, plan),
@@ -313,17 +307,16 @@ test("cursor MCP server registers the full required tool surface", () => {
   }
 });
 
-test("docs validate accepts a mirror docs/specs link when the canonical spec exists", () => {
+test("docs validate accepts the new docs/<slug> layout", () => {
   const root = temporaryDirectory();
   try {
-    mkdirSync(path.join(root, "docs/superpowers/specs"), { recursive: true });
-    mkdirSync(path.join(root, "docs/superpowers/plans"), { recursive: true });
-    const spec = "docs/superpowers/specs/mirror-design.md";
-    const plan = "docs/superpowers/plans/mirror.md";
+    mkdirSync(path.join(root, "docs", "mirror"), { recursive: true });
+    const spec = "docs/mirror/spec.md";
+    const plan = "docs/mirror/plan.md";
     writeFileSync(path.join(root, spec), "# Mirror\n\n**Branch:** `feature/mirror`\n");
     writeFileSync(
       path.join(root, plan),
-      `# Mirror\n\n**Spec:** \`docs/specs/mirror-design.md\`\n**Branch:** \`feature/mirror\`\n\n### Task 1: One\n\n- [ ] **Step 1:** Work\n`,
+      `# Mirror\n\n**Spec:** \`docs/mirror/spec.md\`\n**Branch:** \`feature/mirror\`\n\n### Task 1: One\n\n- [ ] **Step 1:** Work\n`,
     );
     const result = docsValidate({ spec_path: spec, plan_path: plan, workspace_root: root });
     expect(result.ok).toBe(true);
@@ -396,4 +389,28 @@ test("present renders ascii and mermaid via real scripts", () => {
 test("present surfaces script failures", () => {
   const broken = asciiWireframe("not-json{");
   expect(broken.error).toBeDefined();
+});
+
+test("no docs/superpowers paths remain in sources", () => {
+  const { readdirSync, statSync } = require("node:fs") as typeof import("node:fs");
+  const root = path.resolve(import.meta.dir, "..");
+  const skipDirs = new Set(["node_modules", ".git", ".cache", "docs", "vendor"]);
+  const selfFile = path.basename(import.meta.file ?? "");
+  const offenders: string[] = [];
+  const walk = (dir: string) => {
+    for (const entry of readdirSync(dir)) {
+      if (skipDirs.has(entry)) continue;
+      const full = path.join(dir, entry);
+      if (statSync(full).isDirectory()) { walk(full); continue; }
+      if (!/\.(ts|js|sh|md|json)$/.test(entry)) continue;
+      if (entry === selfFile) continue;
+      if (full.includes("scripts/update-superpowers.sh")) continue; // sed patterns intentionally reference the old layout
+      const content = readFileSync(full, "utf8");
+      if (content.includes("docs/superpowers")) {
+        offenders.push(path.relative(root, full));
+      }
+    }
+  };
+  walk(root);
+  expect(offenders).toEqual([]);
 });

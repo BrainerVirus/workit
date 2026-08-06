@@ -6,10 +6,9 @@ import { createFlowTools } from "../src/tools/flow";
 
 const fixture = () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "wf-flowtools-"));
-  mkdirSync(path.join(root, "docs/superpowers/specs"), { recursive: true });
-  mkdirSync(path.join(root, "docs/superpowers/plans"), { recursive: true });
-  writeFileSync(path.join(root, "docs/superpowers/specs/2026-08-06-x-design.md"), "# X\n\n**Branch:** `feature/x`\n");
-  writeFileSync(path.join(root, "docs/superpowers/plans/2026-08-06-x.md"), "# X\n\n**Spec:** `docs/superpowers/specs/2026-08-06-x-design.md`\n**Branch:** `feature/x`\n\n### Task 1: One\n\n- [ ] **Step 1:** Work\n");
+  mkdirSync(path.join(root, "docs", "x"), { recursive: true });
+  writeFileSync(path.join(root, "docs/x/spec.md"), "# X\n\n**Branch:** `feature/x`\n");
+  writeFileSync(path.join(root, "docs/x/plan.md"), "# X\n\n**Spec:** `docs/x/spec.md`\n**Branch:** `feature/x`\n\n### Task 1: One\n\n- [ ] **Step 1:** Work\n");
   const tools = createFlowTools();
   const ctx = { directory: root } as any;
   return { root, tools, ctx };
@@ -24,12 +23,12 @@ test("flow_status returns draft when no state exists", async () => {
   const { root, tools, ctx } = fixture();
   try {
     const out = await run(tools, "workflow_flow_status", {
-      plan_path: "docs/superpowers/plans/2026-08-06-x.md",
+      plan_path: "docs/x/plan.md",
     }, ctx);
     expect(out.ok).toBe(true);
     expect(out.data.spec.status).toBe("draft");
     expect(out.data.menu.presented).toBe(false);
-    expect(out.data.flow_path).toContain("docs/superpowers/sdd/2026-08-06-x/flow.json");
+    expect(out.data.flow_path).toContain("docs/x/sdd/flow.json");
   } finally {
     cleanup(root);
   }
@@ -40,7 +39,7 @@ test("spec_approve without confirmed fails", async () => {
   try {
     const out = await run(tools, "workflow_spec_approve", {
       confirmed: false,
-      spec_path: "docs/superpowers/specs/2026-08-06-x-design.md",
+      spec_path: "docs/x/spec.md",
     }, ctx);
     expect(out.ok).toBe(false);
   } finally {
@@ -51,8 +50,8 @@ test("spec_approve without confirmed fails", async () => {
 test("full flow: spec approve x2 -> plan approve x2 -> menu", async () => {
   const { root, tools, ctx } = fixture();
   try {
-    const spec = "docs/superpowers/specs/2026-08-06-x-design.md";
-    const plan = "docs/superpowers/plans/2026-08-06-x.md";
+    const spec = "docs/x/spec.md";
+    const plan = "docs/x/plan.md";
     await run(tools, "workflow_spec_approve", { confirmed: true, spec_path: spec }, ctx);
     await run(tools, "workflow_spec_approve", { confirmed: true, spec_path: spec }, ctx);
     const planFirst = await run(tools, "workflow_plan_approve", { confirmed: true, plan_path: plan }, ctx);
@@ -75,7 +74,7 @@ test("full flow: spec approve x2 -> plan approve x2 -> menu", async () => {
 test("plan_approve hard-fails while spec is draft", async () => {
   const { root, tools, ctx } = fixture();
   try {
-    const plan = "docs/superpowers/plans/2026-08-06-x.md";
+    const plan = "docs/x/plan.md";
     const out = await run(tools, "workflow_plan_approve", { confirmed: true, plan_path: plan }, ctx);
     expect(out.ok).toBe(false);
     expect(out.error).toContain("spec");

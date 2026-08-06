@@ -8,40 +8,41 @@ import { WorkflowStateStore } from "../src/state";
 
 test("plan parser returns only top-level Task sections and records state", async () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "wf-sdd-"));
-  mkdirSync(path.join(root, "docs/superpowers/plans"), { recursive: true });
-  mkdirSync(path.join(root, "docs/superpowers/specs"), { recursive: true });
-  writeFileSync(path.join(root, "docs/superpowers/specs/x-design.md"), "# X\n**Branch:** `feature/x`\n");
-  writeFileSync(path.join(root, "docs/superpowers/plans/x.md"), "# X\n**Spec:** `docs/superpowers/specs/x-design.md`\n**Branch:** `feature/x`\n\n### Task 1: One\n\n- [ ] Step\n\n### Task 2: Two\n\n- [ ] Step\n");
+  mkdirSync(path.join(root, "docs", "x"), { recursive: true });
+  mkdirSync(path.join(root, "docs", "x"), { recursive: true });
+  writeFileSync(path.join(root, "docs/x/spec.md"), "# X\n**Branch:** `feature/x`\n");
+  writeFileSync(path.join(root, "docs/x/plan.md"), "# X\n**Spec:** `docs/x/spec.md`\n**Branch:** `feature/x`\n\n### Task 1: One\n\n- [ ] Step\n\n### Task 2: Two\n\n- [ ] Step\n");
   const state = new WorkflowStateStore();
   const tools = createSddTools(state);
-  const raw = await tools.workflow_plan_tasks.execute({ plan_path: "docs/superpowers/plans/x.md" }, { directory: root, worktree: root, sessionID: "s1" } as never);
+  const raw = await tools.workflow_plan_tasks.execute({ plan_path: "docs/x/plan.md" }, { directory: root, worktree: root, sessionID: "s1" } as never);
   const result = JSON.parse(raw as string);
   expect(result.data.tasks.map((task: any) => task.title)).toEqual(["One", "Two"]);
   expect(state.get("s1")).toEqual({
-    spec: "docs/superpowers/specs/x-design.md",
-    plan: "docs/superpowers/plans/x.md",
-    sdd: "docs/superpowers/sdd/x",
+    spec: "docs/x/spec.md",
+    plan: "docs/x/plan.md",
+    sdd: "docs/x/sdd",
   });
 });
 
 test("plan parser honors an explicit contained spec path and returns its branch", async () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "wf-sdd-spec-"));
-  mkdirSync(path.join(root, "docs/superpowers/plans"), { recursive: true });
-  mkdirSync(path.join(root, "docs/superpowers/specs"), { recursive: true });
-  writeFileSync(path.join(root, "docs/superpowers/specs/exact.md"), "# Exact\n**Branch:** `feature/exact`\n");
-  writeFileSync(path.join(root, "docs/superpowers/specs/other.md"), "# Other\n**Branch:** `feature/other`\n");
-  writeFileSync(path.join(root, "docs/superpowers/plans/x.md"), "# X\n**Spec:** `docs/superpowers/specs/other.md`\n**Branch:** `feature/other`\n\n### Task 1: One\n\n- [ ] Step\n");
+  mkdirSync(path.join(root, "docs", "x"), { recursive: true });
+  mkdirSync(path.join(root, "docs", "exact"), { recursive: true });
+  mkdirSync(path.join(root, "docs", "other"), { recursive: true });
+  writeFileSync(path.join(root, "docs/exact/spec.md"), "# Exact\n**Branch:** `feature/exact`\n");
+  writeFileSync(path.join(root, "docs/other/spec.md"), "# Other\n**Branch:** `feature/other`\n");
+  writeFileSync(path.join(root, "docs/x/plan.md"), "# X\n**Spec:** `docs/other/spec.md`\n**Branch:** `feature/other`\n\n### Task 1: One\n\n- [ ] Step\n");
   const state = new WorkflowStateStore();
   const tools = createSddTools(state);
   const raw = await tools.workflow_plan_tasks.execute({
-    plan_path: "docs/superpowers/plans/x.md",
-    spec_path: "docs/superpowers/specs/exact.md",
+    plan_path: "docs/x/plan.md",
+    spec_path: "docs/exact/spec.md",
   }, { directory: root, worktree: root, sessionID: "spec" } as never);
   expect(JSON.parse(raw as string).data.branch).toBe("feature/exact");
-  expect(state.get("spec")?.spec).toBe("docs/superpowers/specs/exact.md");
+  expect(state.get("spec")?.spec).toBe("docs/exact/spec.md");
 
   const outside = await createSddTools(new WorkflowStateStore()).workflow_plan_tasks.execute({
-    plan_path: "docs/superpowers/plans/x.md", spec_path: "../outside.md",
+    plan_path: "docs/x/plan.md", spec_path: "../outside.md",
   }, { directory: root, worktree: root, sessionID: "outside" } as never);
   expect(JSON.parse(outside as string).error).toContain("inside repository root");
 });
@@ -56,19 +57,19 @@ test("SDD paths outside the repository are rejected", async () => {
 test("SDD context computes absent paths without creating repository files", async () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "wf-sdd-readonly-"));
   try {
-    mkdirSync(path.join(root, "docs/superpowers/plans"), { recursive: true });
-    mkdirSync(path.join(root, "docs/superpowers/specs"), { recursive: true });
-    writeFileSync(path.join(root, "docs/superpowers/specs/x-design.md"), "# X\n**Branch:** `feature/x`\n");
+    mkdirSync(path.join(root, "docs", "x"), { recursive: true });
+    mkdirSync(path.join(root, "docs", "x"), { recursive: true });
+    writeFileSync(path.join(root, "docs/x/spec.md"), "# X\n**Branch:** `feature/x`\n");
     writeFileSync(
-      path.join(root, "docs/superpowers/plans/x.md"),
-      "# X\n\n**Spec:** `docs/superpowers/specs/x-design.md`\n**Branch:** `feature/x`\n\n### Task 1: One\n\n- [ ] Step\n",
+      path.join(root, "docs/x/plan.md"),
+      "# X\n\n**Spec:** `docs/x/spec.md`\n**Branch:** `feature/x`\n\n### Task 1: One\n\n- [ ] Step\n",
     );
     const raw = await createSddTools(new WorkflowStateStore()).workflow_sdd_context.execute(
-      { plan_path: "docs/superpowers/plans/x.md" },
+      { plan_path: "docs/x/plan.md" },
       { directory: root, worktree: root, sessionID: "readonly" } as never,
     );
     expect(JSON.parse(raw as string).ok).toBe(true);
-    expect(existsSync(path.join(root, "docs/superpowers/sdd/x"))).toBe(false);
+    expect(existsSync(path.join(root, "docs/x/sdd"))).toBe(false);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -94,23 +95,23 @@ test("confirmed SDD writes use repository-relative paths and standard results", 
   const tools = createSddTools(new WorkflowStateStore());
   const brief = JSON.parse(await tools.workflow_sdd_task_brief.execute({
     confirmed: true,
-    sdd_dir: "docs/superpowers/sdd/x",
+    sdd_dir: "docs/x/sdd",
     task_id: 2,
     section_text: "- [ ] Implement it\n",
   }, { directory: root, worktree: root} as never) as string);
-  expect(brief.data.brief_path).toBe("docs/superpowers/sdd/x/task-2-brief.md");
+  expect(brief.data.brief_path).toBe("docs/x/sdd/task-2-brief.md");
   expect(readFileSync(path.join(root, brief.data.brief_path), "utf8")).toContain("Implement it");
 
   const progress = JSON.parse(await tools.workflow_sdd_append_progress.execute({
     confirmed: true,
-    progress_path: "docs/superpowers/sdd/x/progress.md",
+    progress_path: "docs/x/sdd/progress.md",
     line: "Task 2: complete (commits abcdef0..1234567, tests pass)",
   }, { directory: root, worktree: root} as never) as string);
   expect(progress).toEqual({
     ok: true,
     data: {
       line: "Task 2: complete (commits abcdef0..1234567, tests pass)",
-      progress_path: "docs/superpowers/sdd/x/progress.md",
+      progress_path: "docs/x/sdd/progress.md",
     },
     error: null,
   });
@@ -153,11 +154,11 @@ test("confirmed review package writes its diff inside the repository", async () 
   git(["commit", "-q", "-am", "head"]);
   const head = git(["rev-parse", "HEAD"]).stdout.trim();
   const raw = await createSddTools(new WorkflowStateStore()).workflow_sdd_review_package.execute({
-    confirmed: true, sdd_dir: "docs/superpowers/sdd/review", base_sha: base, head_sha: head,
+    confirmed: true, sdd_dir: "docs/review/sdd", base_sha: base, head_sha: head,
   }, { directory: root, worktree: root} as never);
   const result = JSON.parse(raw as string);
   expect(result.ok).toBe(true);
-  expect(result.data.diff_path).toBe(`docs/superpowers/sdd/review/review-${base.slice(0, 7)}..${head.slice(0, 7)}.diff`);
+  expect(result.data.diff_path).toBe(`docs/review/sdd/review-${base.slice(0, 7)}..${head.slice(0, 7)}.diff`);
   expect(readFileSync(path.join(root, result.data.diff_path), "utf8")).toContain("+two");
 });
 
@@ -168,7 +169,7 @@ test("review package rejects unsafe revisions and quote-bearing paths cannot exe
     const tools = createSddTools(new WorkflowStateStore());
     const raw = await tools.workflow_sdd_review_package.execute({
       confirmed: true,
-      sdd_dir: "docs/superpowers/sdd/quote'$(touch sentinel)",
+      sdd_dir: "docs/quote/sdd'$(touch sentinel)",
       base_sha: "--output=outside",
       head_sha: "HEAD'; touch sentinel; #",
     }, { directory: root, worktree: root } as never);
@@ -189,7 +190,7 @@ test("review package safely writes to a quote-bearing contained path", async () 
     writeFileSync(path.join(root, "file.txt"), "two\n"); git(["commit", "-q", "-am", "head"]);
     const head = git(["rev-parse", "HEAD"]).stdout.trim();
     const raw = await createSddTools(new WorkflowStateStore()).workflow_sdd_review_package.execute({
-      confirmed: true, sdd_dir: "docs/superpowers/sdd/review'quoted", base_sha: base, head_sha: head,
+      confirmed: true, sdd_dir: "docs/review/sdd'quoted", base_sha: base, head_sha: head,
     }, { directory: root, worktree: root } as never);
     const result = JSON.parse(raw as string);
     expect(result.ok).toBe(true);

@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Plugin } from "@opencode-ai/plugin";
@@ -69,8 +69,12 @@ const plugin: Plugin = async ({ client }) => {
       mutable.skills ??= {};
       mutable.skills.paths ??= [];
       const skillPath = path.join(root, "skills");
-      if (!mutable.skills.paths.includes(skillPath))
-        mutable.skills.paths.push(skillPath);
+      const vendoredSkillsPath = path.join(root, "vendor", "superpowers", "skills");
+      for (const p of [skillPath, vendoredSkillsPath]) {
+        if (existsSync(p) && !mutable.skills.paths.includes(p)) {
+          mutable.skills.paths.push(p);
+        }
+      }
       // Current OpenCode accepts top-level shorthand before the installed SDK types do.
       config.permission = withWorktreeDenials(
         config.permission,

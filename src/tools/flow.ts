@@ -12,7 +12,7 @@ import path from "node:path";
 const output = (value: unknown) => JSON.stringify(value, null, 2);
 
 const flowPathFor = (slug: string) =>
-  path.posix.join("docs/superpowers/sdd", slug, "flow.json");
+  path.posix.join("docs", slug, "sdd", "flow.json");
 
 export function createFlowTools() {
   return {
