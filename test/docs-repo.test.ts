@@ -21,7 +21,14 @@ const makeRepo = (): string => {
 };
 
 test("readDocsRepoConfig returns null when missing", () => {
-  expect(readDocsRepoConfig()).toBeNull();
+  const previous = process.env.WORKFLOW_DOCS_REPO_CONFIG;
+  process.env.WORKFLOW_DOCS_REPO_CONFIG = path.join(os.tmpdir(), "wf-docsrepo-missing.json");
+  try {
+    expect(readDocsRepoConfig()).toBeNull();
+  } finally {
+    if (previous === undefined) delete process.env.WORKFLOW_DOCS_REPO_CONFIG;
+    else process.env.WORKFLOW_DOCS_REPO_CONFIG = previous;
+  }
 });
 
 test("writeDocsRepoConfig + readDocsRepoConfig round trip", () => {
