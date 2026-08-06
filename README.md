@@ -4,8 +4,8 @@ Multi-platform Superpowers workflow plugin for **Cursor** and **OpenCode**: veri
 
 | Platform | Path | Version |
 | --- | --- | --- |
-| **OpenCode** | repo root (`package.json`, `src/plugin.ts`) | 0.3.19 |
-| **Cursor** | `cursor/` (MCP + hooks + rules + skills) | 0.3.19 |
+| **OpenCode** | repo root (`package.json`, `src/plugin.ts`) | 0.4.0 |
+| **Cursor** | `cursor/` (MCP + hooks + rules + skills) | 0.4.0 |
 | **Shared** | `scripts/`, `templates/` | — |
 
 Config directory (both platforms): `~/.config/workflow-toolkit/`
@@ -130,8 +130,8 @@ GitHub Actions:
 - **Release** — on tag `v*`: same checks, then `softprops/action-gh-release@v3`
 
 ```bash
-git tag v0.3.19
-git push origin v0.3.19
+git tag v0.4.0
+git push origin v0.4.0
 ```
 
 ## Architecture
