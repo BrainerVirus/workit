@@ -154,6 +154,15 @@ test("missing created session ID reports the create stage", async () => {
 });
 
 test("native handoff resolves package context, records paths, and seeds from ToolContext", async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wf-handoff-native-"));
+  mkdirSync(path.join(root, "docs/superpowers/sdd/x"), { recursive: true });
+  writeFileSync(path.join(root, "docs/superpowers/sdd/x/flow.json"), JSON.stringify({
+    slug: "x",
+    spec: { path: "docs/superpowers/specs/x-design.md", status: "approved" },
+    plan: { path: "docs/superpowers/plans/x.md", status: "approved" },
+    menu: { presented: true, chosen: "handoff" },
+    updated_at: Date.now(),
+  }));
   const calls: string[] = [];
   const client = {
     session: {
@@ -191,7 +200,7 @@ test("native handoff resolves package context, records paths, and seeds from Too
 
   const raw = await createHandoffTools(client, state, runtime).workflow_handoff_session.execute(
     { message: "please continue --stay" },
-    { directory: "/repo", worktree: "/repo", sessionID: "parent" } as never,
+    { directory: root, worktree: root, sessionID: "parent" } as never,
   );
 
   expect(JSON.parse(raw as string)).toEqual({
@@ -200,7 +209,7 @@ test("native handoff resolves package context, records paths, and seeds from Too
     error: null,
   });
   expect(calls).toEqual([
-    "script:/repo:collect-handoff-context.sh:please continue --stay",
+    `script:${root}:collect-handoff-context.sh:please continue --stay`,
     "create:Continue x",
     "seed:child-5:Continue now\n**Spec:** docs/superpowers/specs/x-design.md\n**Plan:** docs/superpowers/plans/x.md\n**SDD:** `docs/superpowers/sdd/x` (tracked)",
   ]);
@@ -209,9 +218,19 @@ test("native handoff resolves package context, records paths, and seeds from Too
     plan: "docs/superpowers/plans/x.md",
     sdd: "docs/superpowers/sdd/x",
   });
+  rmSync(root, { recursive: true, force: true });
 });
 
 test("native handoff ignores a hallucinated stay argument when the message has no --stay flag", async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wf-handoff-stay-"));
+  mkdirSync(path.join(root, "docs/superpowers/sdd/x"), { recursive: true });
+  writeFileSync(path.join(root, "docs/superpowers/sdd/x/flow.json"), JSON.stringify({
+    slug: "x",
+    spec: { path: "docs/superpowers/specs/x-design.md", status: "approved" },
+    plan: { path: "docs/superpowers/plans/x.md", status: "approved" },
+    menu: { presented: true, chosen: "handoff" },
+    updated_at: Date.now(),
+  }));
   const calls: string[] = [];
   const client = {
     session: {
@@ -250,7 +269,7 @@ test("native handoff ignores a hallucinated stay argument when the message has n
     runtime,
   ).workflow_handoff_session.execute(
     { message: "Load the wf-handoff skill and follow it.", stay: true } as never,
-    { directory: "/repo", worktree: "/repo", sessionID: "parent" } as never,
+    { directory: root, worktree: root, sessionID: "parent" } as never,
   );
 
   expect(calls).toEqual(["child-select"]);
@@ -259,6 +278,7 @@ test("native handoff ignores a hallucinated stay argument when the message has n
     data: { sessionID: "child-select", seeded: true, selected: true },
     error: null,
   });
+  rmSync(root, { recursive: true, force: true });
 });
 
 test("native handoff resolves relative paths from the session directory, not the VCS worktree", async () => {
@@ -442,4 +462,93 @@ test("handoff collect fails before prompt when docs validation fails", () => {
     expect(result.stderr).toMatch(/docs validation failed/i);
     expect(result.stdout).not.toContain("PROMPT_START");
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("handoff hard-fails when flow gates are not approved", async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wf-handoff-gate-"));
+  try {
+    const runtime = {
+      runScript() {
+        return {
+          exitCode: 0,
+          stdout: [
+            "PROMPT_START",
+            "Continue now",
+            "**Spec:** docs/superpowers/specs/x-design.md",
+            "**Plan:** docs/superpowers/plans/x.md",
+            "**SDD:** `docs/superpowers/sdd/x` (tracked)",
+            "PROMPT_END",
+            "",
+          ].join("\n"),
+          stderr: "",
+          cwd: root,
+        };
+      },
+    };
+    const raw = await createHandoffTools(
+      {} as never,
+      new WorkflowStateStore(),
+      runtime as never,
+    ).workflow_handoff_session.execute(
+      { message: "continue" },
+      { directory: root, sessionID: "parent" } as never,
+    );
+    const out = JSON.parse(raw as string);
+    expect(out.ok).toBe(false);
+    expect(out.error).toContain("spec not approved");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("handoff proceeds when flow gates are approved", async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wf-handoff-gate-ok-"));
+  try {
+    mkdirSync(path.join(root, "docs/superpowers/sdd/x"), { recursive: true });
+    writeFileSync(path.join(root, "docs/superpowers/sdd/x/flow.json"), JSON.stringify({
+      slug: "x",
+      spec: { path: "docs/superpowers/specs/x-design.md", status: "approved" },
+      plan: { path: "docs/superpowers/plans/x.md", status: "approved" },
+      menu: { presented: true, chosen: "handoff" },
+      updated_at: Date.now(),
+    }));
+    const calls: string[] = [];
+    const client = {
+      session: {
+        async create() { calls.push("create"); return { data: { id: "child-gate" } }; },
+        async promptAsync() { calls.push("seed"); return { data: undefined }; },
+      },
+      tui: { async selectSession() { calls.push("select"); return { data: true }; } },
+    };
+    const runtime = {
+      runScript() {
+        return {
+          exitCode: 0,
+          stdout: [
+            "PROMPT_START",
+            "Continue now",
+            "**Spec:** docs/superpowers/specs/x-design.md",
+            "**Plan:** docs/superpowers/plans/x.md",
+            "**SDD:** `docs/superpowers/sdd/x` (tracked)",
+            "PROMPT_END",
+            "",
+          ].join("\n"),
+          stderr: "",
+          cwd: root,
+        };
+      },
+    };
+    const raw = await createHandoffTools(
+      client as never,
+      new WorkflowStateStore(),
+      runtime as never,
+    ).workflow_handoff_session.execute(
+      { message: "continue" },
+      { directory: root, sessionID: "parent" } as never,
+    );
+    expect(JSON.parse(raw as string)).toMatchObject({ ok: true });
+    expect(calls).toEqual(["create", "seed", "select"]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

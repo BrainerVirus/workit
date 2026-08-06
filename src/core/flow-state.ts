@@ -53,7 +53,10 @@ export const writeFlowState = (root: string, state: FlowState) => {
   writeFileSync(file, JSON.stringify(state, null, 2) + "\n", "utf8");
 };
 
-const nextStatus = (current: FlowStatus, confirmed: boolean): Result & { next?: FlowStatus } => {
+const nextStatus = (
+  current: FlowStatus,
+  confirmed: boolean,
+): { ok: false; error: string } | { ok: true; next: FlowStatus } => {
   if (!confirmed) return { ok: false, error: "confirmed: true required" };
   if (current === "draft") return { ok: true, next: "self_reviewed" };
   if (current === "self_reviewed") return { ok: true, next: "approved" };
@@ -68,7 +71,7 @@ export const transitionSpec = (
 ): Result => {
   const state = readFlowState(root, slug);
   const step = nextStatus(state.spec.status, confirmed);
-  if (!step.ok || !step.next) return { ok: false, error: step.error };
+  if (!step.ok) return { ok: false, error: step.error };
   writeFlowState(root, {
     ...state,
     spec: { path: specPath, status: step.next },
@@ -88,7 +91,7 @@ export const transitionPlan = (
     return { ok: false, error: "spec must be approved before the plan can be approved" };
   }
   const step = nextStatus(state.plan.status, confirmed);
-  if (!step.ok || !step.next) return { ok: false, error: step.error };
+  if (!step.ok) return { ok: false, error: step.error };
   writeFlowState(root, {
     ...state,
     plan: { path: planPath, status: step.next },

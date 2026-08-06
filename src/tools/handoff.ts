@@ -2,6 +2,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { tool, type PluginInput } from "@opencode-ai/plugin";
 import { fail, ok, run, type Result } from "../core";
+import { assertFlowGates } from "../core/flow-state";
 import { WorkflowStateStore } from "../state";
 
 type ApiResponse<T> = { data?: T; error?: unknown };
@@ -144,6 +145,8 @@ export function createHandoffTools(
         }
         try {
           const active = handoffContext(resolved.stdout);
+          const gate = assertFlowGates(context.directory, active.plan);
+          if (!gate.ok) return output(fail(gate.error));
           state.set(context.sessionID, { spec: active.spec, plan: active.plan, sdd: active.sdd });
           return output(await handoffSession(client, {
             directory: context.directory,

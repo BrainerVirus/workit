@@ -94,3 +94,37 @@ test("menu choice records presented + chosen", () => {
     cleanup(root);
   }
 });
+
+import { assertFlowGates, slugFromPath } from "../src/core/flow-state";
+
+test("slugFromPath strips -design suffix", () => {
+  expect(slugFromPath("docs/superpowers/plans/2026-08-06-x.md")).toBe("2026-08-06-x");
+  expect(slugFromPath("docs/superpowers/specs/2026-08-06-x-design.md")).toBe("2026-08-06-x");
+});
+
+test("assertFlowGates fails without approvals", () => {
+  const { root, slug } = fixture();
+  try {
+    const result = assertFlowGates(root, `docs/superpowers/plans/${slug}.md`);
+    expect(result.ok).toBe(false);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("assertFlowGates requires menu when requested", () => {
+  const { root, slug } = fixture();
+  try {
+    transitionSpec(root, slug, `docs/superpowers/specs/${slug}-design.md`, true);
+    transitionSpec(root, slug, `docs/superpowers/specs/${slug}-design.md`, true);
+    transitionPlan(root, slug, `docs/superpowers/plans/${slug}.md`, true);
+    transitionPlan(root, slug, `docs/superpowers/plans/${slug}.md`, true);
+    const withoutMenu = assertFlowGates(root, `docs/superpowers/plans/${slug}.md`, { requireMenu: true });
+    expect(withoutMenu.ok).toBe(false);
+    recordMenuChoice(root, slug, `docs/superpowers/plans/${slug}.md`, "inline", true);
+    const withMenu = assertFlowGates(root, `docs/superpowers/plans/${slug}.md`, { requireMenu: true });
+    expect(withMenu.ok).toBe(true);
+  } finally {
+    cleanup(root);
+  }
+});

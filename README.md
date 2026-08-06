@@ -10,6 +10,23 @@ Multi-platform Superpowers workflow plugin for **Cursor** and **OpenCode**: veri
 
 Config directory (both platforms): `~/.config/workflow-toolkit/`
 
+## Requirements
+
+- **Bun ≥ 1.0** — runtime for the shared `src/core` logic, the OpenCode plugin, and the Cursor MCP server (`bun server.ts`). Install once:
+
+```bash
+curl -fsSL https://bun.sh/install | bash
+```
+
+Then add to your shell profile (or rely on the MCP launcher's `~/.bun/bin/bun` fallback):
+
+```bash
+export PATH="$HOME/.bun/bin:$PATH"
+```
+
+- **Git** — branch resolution, SDD review diffs, and verify gates.
+- (Optional) **Python 3** — no longer required by the toolkit itself (legacy bash/python helpers were consolidated into `src/core`), keep it only if other tooling needs it.
+
 ## Getting started
 
 Install once. After that, **Cursor auto-syncs on every new chat** and **OpenCode syncs via your `opencode()` shell wrapper**, then loads the plugin from disk with `file://…/src/plugin.ts` (no stuck bun cache).
