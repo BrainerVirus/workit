@@ -53,4 +53,4 @@ Run a separate full-branch code review, then `workflow_verify`. Present the full
 ## Quality gate (HARD)
 
 - Specs/plans are written from `templates/spec-template.md` / `templates/plan-template.md`.
-- After `workflow_docs_validate`, surface `quality` findings. Hard findings (missing required section, missing CA-XX) block task start unless the user explicitly waives them. Warnings are advisory.
+- After `workflow_docs_validate`, surface `quality` findings (spec scan). Hard findings (missing required section, missing CA-XX) block task start unless the user explicitly waives them. Warnings are advisory.

@@ -72,7 +72,7 @@ export function createSddTools(state: WorkflowStateStore) {
       }),
     }),
     workflow_docs_validate: tool({
-      description: "Hard-fail validate spec/plan headers, link, branch, and task order",
+      description: "Hard-fail validate spec/plan headers, link, branch, task order; returns quality findings (hard/warning)",
       args: {
         spec_path: tool.schema.string(),
         plan_path: tool.schema.string(),

@@ -79,3 +79,95 @@ test("CA-XX bullets are detected as enumerable criteria", () => {
   const findings = qualitySpec(GOOD);
   expect(findings.some((f) => f.code === "missing_acceptance_criteria")).toBe(false);
 });
+
+test("fenced template copy does not satisfy the checks (fence blindness)", () => {
+  const quoted = `# Spec
+
+**Branch:** \`feature/x\`
+
+\`\`\`markdown
+## Context
+x
+
+## Goals
+- y
+
+## Non-goals
+- z
+
+## Architecture
+
+\`\`\`mermaid
+flowchart TD
+  A --> B
+\`\`\`
+
+## Acceptance criteria
+
+- CA-01 works
+\`\`\`
+`;
+  const findings = qualitySpec(quoted);
+  expect(findings.some((f) => f.code === "missing_section")).toBe(true);
+  expect(findings.some((f) => f.code === "missing_acceptance_criteria")).toBe(true);
+});
+
+test("prose mentioning workflow/format/scope does not false-positive", () => {
+  const prose = `# Spec
+
+**Branch:** \`feature/x\`
+
+## Context
+
+Extends the workflow-toolkit and its code formatting rules; out of scope items are listed below.
+
+## Goals
+
+- Add a thing
+
+## Non-goals
+
+- Skip
+
+## Architecture
+
+No flow here.
+
+## Acceptance criteria
+
+- CA-01 done
+`;
+  const findings = qualitySpec(prose);
+  expect(findings.some((f) => f.code === "missing_ascii_for_ui")).toBe(false);
+  expect(findings.some((f) => f.code === "missing_mermaid_for_flow")).toBe(false);
+  expect(findings.some((f) => f.code === "missing_table")).toBe(false);
+});
+
+test("architecture section alone does not force a mermaid warning", () => {
+  const noFlow = `# Spec
+
+**Branch:** \`feature/x\`
+
+## Context
+
+Bumps a dependency.
+
+## Goals
+
+- Bump
+
+## Non-goals
+
+- Nothing
+
+## Architecture
+
+Single module, no pipeline.
+
+## Acceptance criteria
+
+- CA-01 bump is applied
+`;
+  const findings = qualitySpec(noFlow);
+  expect(findings.some((f) => f.code === "missing_mermaid_for_flow")).toBe(false);
+});

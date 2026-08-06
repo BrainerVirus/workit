@@ -556,7 +556,7 @@ server.registerTool(
   "workflow_docs_validate",
   {
     description:
-      "Hard-fail validate spec/plan headers, link, branch, and task order. Defaults to Cursor workspace; pass workspace_root when paths are relative to another repo.",
+      "Hard-fail validate spec/plan headers, link, branch, task order; returns quality findings (hard/warning). Defaults to Cursor workspace; pass workspace_root when paths are relative to another repo.",
     inputSchema: {
       spec_path: z.string(),
       plan_path: z.string(),

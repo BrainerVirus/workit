@@ -155,43 +155,63 @@ const REQUIRED_SECTIONS = [
   "## Acceptance criteria",
 ];
 
-const UI_KEYWORDS = ["ui", "interface", "screen", "modal", "form", "component"];
-const FLOW_KEYWORDS = ["flow", "pipeline", "sequence", "architecture", "diagram", "workflow"];
-const GLOSSARY_KEYWORDS = ["glossary", "contract", "scope"];
+const UI_KEYWORDS = [/\bui\b/, /\binterface\b/, /\bscreen\b/, /\bmodal\b/, /\bform\b/, /\bcomponent\b/];
+const FLOW_KEYWORDS = [/\bflow\b/, /\bpipeline\b/, /\bsequence\b/, /\bdiagram\b/];
+const GLOSSARY_KEYWORDS = [/\bglossary\b/, /\bcontracts?\b/, /\bscope\b/];
 
 const finding = (code: string, message: string, severity: "warning" | "hard"): QualityFinding =>
   ({ code, message, severity });
 
+// Replace fenced code blocks with a single marker line so their content cannot
+// satisfy the checks, but the fence itself (and its language) stays detectable.
+const stripFences = (text: string): string => {
+  const lines = text.split("\n");
+  const out: string[] = [];
+  let inFence = false;
+  for (const line of lines) {
+    if (line.startsWith("```")) {
+      if (!inFence) out.push(line); // opening fence: keep the ```lang marker
+      inFence = !inFence;
+      continue;
+    }
+    if (!inFence) out.push(line);
+  }
+  return out.join("\n");
+};
+
 export const qualitySpec = (text: string): QualityFinding[] => {
   const findings: QualityFinding[] = [];
-  const lower = text.toLowerCase();
+  const body = stripFences(text);
+  const lower = body.toLowerCase();
 
   for (const section of REQUIRED_SECTIONS) {
-    if (!text.includes(section)) {
+    if (!body.includes(section)) {
       findings.push(finding("missing_section", `required section ${section} missing`, "hard"));
     }
   }
 
-  const hasCa = /(?:^|\n)\s*(?:- CA-\d+|CA-\d+[.:])/m.test(text);
+  const hasCa = /^\s*(?:- CA-\d+|CA-\d+[.:])/m.test(body); // M1: ^ with /m covers line starts
   if (!hasCa) {
     findings.push(finding("missing_acceptance_criteria", "no enumerable CA-XX acceptance criteria found", "hard"));
   }
 
-  const hasAsciiFence = /```(?:text|ascii)/.test(text);
-  const mentionsUi = UI_KEYWORDS.some((k) => lower.includes(k));
+  const hasAsciiFence = /```(?:text|ascii)/.test(body);
+  const mentionsUi = UI_KEYWORDS.some((k) => k.test(lower));
   if (mentionsUi && !hasAsciiFence) {
     findings.push(finding("missing_ascii_for_ui", "spec mentions UI but has no ASCII wireframe fence", "warning"));
   }
 
-  const hasMermaid = /```mermaid/.test(text);
-  const mentionsFlow = FLOW_KEYWORDS.some((k) => lower.includes(k));
-  if (mentionsFlow && !hasMermaid) {
-    findings.push(finding("missing_mermaid_for_flow", "spec describes flow/architecture but has no mermaid fence", "warning"));
+  const hasMermaid = /```mermaid/.test(body);
+  const explicitlyNoFlow = /\bno (?:flow|pipeline|sequence|diagram)\b/.test(lower);
+  const mentionsFlow = FLOW_KEYWORDS.some((k) => k.test(lower));
+  if (mentionsFlow && !hasMermaid && !explicitlyNoFlow) {
+    findings.push(finding("missing_mermaid_for_flow", "spec describes a flow/pipeline/sequence but has no mermaid fence", "warning"));
   }
 
-  const hasTable = /^\s*\|.+\|.+\|/m.test(text);
-  const mentionsGlossary = GLOSSARY_KEYWORDS.some((k) => lower.includes(k));
-  if (mentionsGlossary && !hasTable) {
+  const hasTable = /^\s*\|.+\|.+\|/m.test(body);
+  const mentionsGlossary = GLOSSARY_KEYWORDS.some((k) => k.test(lower));
+  const onlyOutOfScope = /\bout of scope\b/.test(lower) && !/\bglossary\b/.test(lower) && !/\bcontracts?\b/.test(lower);
+  if (mentionsGlossary && !hasTable && !onlyOutOfScope) {
     findings.push(finding("missing_table", "spec has glossary/contract/scope content but no markdown table", "warning"));
   }
 
