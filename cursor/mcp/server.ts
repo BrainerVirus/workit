@@ -457,7 +457,7 @@ server.registerTool(
   "workflow_sdd_context",
   {
     description:
-      "Ensure docs/superpowers/sdd/<slug>/ exists; return progress ledger + Cursor TodoWrite todos[]. NEVER use .superpowers/sdd.",
+      "Ensure docs/<slug>/sdd/ exists; return progress ledger + Cursor TodoWrite todos[]. NEVER use .superpowers/sdd.",
     inputSchema: {
       slug: z.string().optional(),
       plan_path: z.string().optional(),
@@ -474,7 +474,7 @@ server.registerTool(
 server.registerTool(
   "workflow_sdd_task_brief",
   {
-    description: "Write task-N-brief.md under docs/superpowers/sdd/<slug>/",
+    description: "Write task-N-brief.md under docs/<slug>/sdd/",
     inputSchema: {
       sdd_dir: z.string(),
       task_id: z.number(),
@@ -520,7 +520,7 @@ server.registerTool(
 server.registerTool(
   "workflow_sdd_append_progress",
   {
-    description: "Append one validated line to docs/superpowers/sdd/<slug>/progress.md",
+    description: "Append one validated line to docs/<slug>/sdd/progress.md",
     inputSchema: {
       progress_path: z.string(),
       line: z.string(),
@@ -972,7 +972,7 @@ server.registerTool(
       spec: state.spec,
       plan: state.plan,
       menu: state.menu,
-      flow_path: `docs/superpowers/sdd/${slug}/flow.json`,
+      flow_path: `docs/${slug}/sdd/flow.json`,
     });
   },
 );

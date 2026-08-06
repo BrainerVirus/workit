@@ -148,9 +148,14 @@ git push origin v0.4.0
 
 Add `codex/` adapter; reuse `scripts/` and `templates/`.
 
-## Workflow docs are working files
+## Workflow docs layout
 
-`docs/superpowers/` (specs, plans, SDD ledger, and `flow.json` approval state) is **gitignored** on purpose: they are working files for the current cycle, not versioned artifacts. Consequences:
+Features live in `docs/<slug>/`:
+
+- `docs/<slug>/spec.md` and `docs/<slug>/plan.md` are **committed** (they travel with the branch).
+- `docs/<slug>/sdd/` (progress ledger, `flow.json` approval state, briefs, review diffs) is **gitignored** — working state for the current cycle.
+
+Consequences:
 
 - A fresh clone starts every workflow at `draft` — the flow gates (`workflow_spec_approve` / `workflow_plan_approve` / `workflow_plan_menu`) must be re-run after checkout.
-- The spec/plan for a branch do not travel with the branch. Use the `docs/specs/` mirror (committed) if you need a persistent record, or push the docs explicitly when the workflow must continue in a new session.
+- The SDD state does not travel with the branch; spec/plan do.

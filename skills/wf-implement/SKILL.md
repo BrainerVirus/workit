@@ -19,7 +19,7 @@ The parent agent is coordinator-only. It must not edit product code or perform d
 7. Call `workflow_branch_setup` with `confirmed: true` only after approval; never use worktrees.
 8. Report any setup failure stage or partial result; never infer success.
 
-State lives only in tracked `docs/superpowers/sdd/<slug>/`. Never use an untracked or legacy SDD directory. Load the package-neutral execution contract by name, not an installation-specific path.
+State lives only in tracked `docs/<slug>/sdd/<slug>/`. Never use an untracked or legacy SDD directory. Load the package-neutral execution contract by name, not an installation-specific path.
 
 ## Per-task loop
 

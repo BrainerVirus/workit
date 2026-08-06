@@ -161,7 +161,7 @@ export const branchSetup = ({
     execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] });
   const current = gitContext(cwd).branch;
   if (!current || current === "unknown") return { error: "not in a git repository" };
-  const sdd = sdd_dir ?? "docs/superpowers/sdd";
+  const sdd = sdd_dir ?? "docs";
   const manifestPath = path.isAbsolute(sdd) ? path.join(sdd, "manifest.json") : path.join(cwd, sdd, "manifest.json");
   mkdirSync(path.dirname(manifestPath), { recursive: true, mode: 0o755 });
   const readManifest = (): Record<string, unknown> => {

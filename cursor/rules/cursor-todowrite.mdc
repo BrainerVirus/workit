@@ -8,7 +8,7 @@ alwaysApply: true
 When executing a plan / SDD handoff:
 
 1. MCP `workflow_sdd_context` returns `todos` — call Cursor **TodoWrite** with that array (`merge: false`) before Task 1.
-2. SDD under `docs/superpowers/sdd/` is persistence only — **not** a substitute for the Cursor task list UI.
+2. SDD under `docs/<slug>/sdd/` is persistence only — **not** a substitute for the Cursor task list UI.
 3. Per task: `in_progress` before dispatch; `completed` after `workflow_sdd_append_progress`.
 
 Never skip TodoWrite because the SDD ledger exists.

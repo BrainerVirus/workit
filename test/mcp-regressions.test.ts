@@ -390,3 +390,26 @@ test("present surfaces script failures", () => {
   const broken = asciiWireframe("not-json{");
   expect(broken.error).toBeDefined();
 });
+
+test("no docs/superpowers paths remain in sources", () => {
+  const { readdirSync, statSync } = require("node:fs") as typeof import("node:fs");
+  const root = path.resolve(import.meta.dir, "..");
+  const skipDirs = new Set(["node_modules", ".git", ".cache", "docs", "vendor"]);
+  const selfFile = path.basename(import.meta.file ?? "");
+  const offenders: string[] = [];
+  const walk = (dir: string) => {
+    for (const entry of readdirSync(dir)) {
+      if (skipDirs.has(entry)) continue;
+      const full = path.join(dir, entry);
+      if (statSync(full).isDirectory()) { walk(full); continue; }
+      if (!/\.(ts|js|sh|md|json)$/.test(entry)) continue;
+      if (entry === selfFile) continue;
+      const content = readFileSync(full, "utf8");
+      if (content.includes("docs/superpowers")) {
+        offenders.push(path.relative(root, full));
+      }
+    }
+  };
+  walk(root);
+  expect(offenders).toEqual([]);
+});
