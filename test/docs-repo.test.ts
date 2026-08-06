@@ -158,12 +158,17 @@ test("promoteSpec is idempotent on re-promote", () => {
 
 test("promoteSpec errors when docs repo not linked", () => {
   const work = makeRepo();
+  const previous = process.env.WORKFLOW_DOCS_REPO_CONFIG;
+  process.env.WORKFLOW_DOCS_REPO_CONFIG = path.join(os.tmpdir(), `wf-docsrepo-unlinked-${Date.now()}.json`);
   try {
-    process.env.WORKFLOW_DOCS_REPO_CONFIG = path.join(os.tmpdir(), "wf-docsrepo-unlinked.json");
     const result = promoteSpec(work, "alpha", { confirmed: true });
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error).toContain("docs repo not linked");
-  } finally { rmSync(work, { recursive: true, force: true }); }
+  } finally {
+    if (previous === undefined) delete process.env.WORKFLOW_DOCS_REPO_CONFIG;
+    else process.env.WORKFLOW_DOCS_REPO_CONFIG = previous;
+    rmSync(work, { recursive: true, force: true });
+  }
 });
 
 test("promoteSpec rejects traversal and regex-special slugs", () => {
