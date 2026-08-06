@@ -140,3 +140,13 @@ test("native runtime outputs use OpenCode-neutral vocabulary", () => {
   }
   expect(sources).toContain("OpenCode");
 });
+
+test("quality templates and findings are wired into contracts", () => {
+  const implement = readFileSync(path.resolve(import.meta.dir, "../skills/wf-implement/SKILL.md"), "utf8");
+  const exec = readFileSync(path.resolve(import.meta.dir, "../templates/execution-contract.md"), "utf8");
+  const specContract = readFileSync(path.resolve(import.meta.dir, "../templates/superpowers-doc-contract.md"), "utf8");
+  expect(implement).toMatch(/spec-template\.md|plan-template\.md/);
+  expect(implement).toMatch(/quality/);
+  expect(exec).toMatch(/quality/);
+  expect(specContract).toMatch(/spec-template\.md/);
+});

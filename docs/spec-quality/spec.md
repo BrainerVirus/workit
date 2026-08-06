@@ -1,6 +1,6 @@
 # Spec: Systematic spec formatting (diagrams, mermaid, tables)
 
-**Branch:** `feature/vendor-superpowers` (implemented after Spec 3)
+**Branch:** `feature/spec-quality`
 
 ## Context
 

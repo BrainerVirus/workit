@@ -61,3 +61,5 @@ On success, use native `question` / Cursor `AskQuestion` with exactly these opti
 5. Review plan first
 
 Never emit Superpowers text beginning “Two execution options”.
+
+- Specs/plans must follow `templates/spec-template.md` / `templates/plan-template.md` (mandated diagrams, tables, CA-XX).
