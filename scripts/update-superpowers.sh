@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Re-sync vendored Superpowers skills from upstream. Never pushes or commits.
+set -euo pipefail
+
+REPO="https://github.com/obra/superpowers.git"
+VENDOR="vendor/superpowers"
+PIN=""
+for arg in "$@"; do
+  case "$arg" in
+    --https) REPO="https://github.com/obra/superpowers.git" ;;
+    --ssh) REPO="git@github.com:obra/superpowers.git" ;;
+    --pin=*) PIN="${arg#--pin=}" ;;
+    *) if [ -z "$PIN" ]; then PIN="$arg"; fi ;;
+  esac
+done
+
+ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+STAGE="$(mktemp -d)"
+trap 'rm -rf "$STAGE"' EXIT
+
+echo "Cloning upstream..."
+git clone --quiet --depth 1 "$REPO" "$STAGE/sp"
+cd "$STAGE/sp"
+if [ -n "$PIN" ]; then
+  git fetch --quiet --depth 1 origin "refs/tags/$PIN" 2>/dev/null || {
+    echo "ERROR: pin $PIN not found upstream" >&2
+    exit 1
+  }
+  git checkout --quiet "$PIN"
+fi
+VERSION="$(grep -m1 '"version"' package.json | sed -E 's/.*"version": "([^"]+)".*/\1/')"
+
+cd "$ROOT"
+rm -rf "$VENDOR/skills"
+mkdir -p "$VENDOR"
+cp -R "$STAGE/sp/skills" "$VENDOR/skills"
+printf '%s\n' "$VERSION" > "$VENDOR/VERSION"
+echo "Vendored superpowers $VERSION -> $VENDOR"
+echo "Review with: git status && git diff --stat"
