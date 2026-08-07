@@ -16,10 +16,13 @@ Config directory (both platforms): `~/.config/workflow-toolkit/`
 
 ## Install
 
-**Consumers** — the plugin is published to npm as `flowkit`:
+**Quick start (wizard)** — the interactive wizard picks OpenCode and/or Cursor and configures tokens and project files:
+
+Requires bun (`curl -fsSL https://bun.sh/install | bash`).
 
 ```bash
 npm i flowkit
+npx flowkit init
 ```
 
 **Local development** — use the repo path instead; no package cache, disk is the source of truth:
@@ -28,7 +31,11 @@ npm i flowkit
 bun i
 ```
 
+**Manual setup (skip the wizard)** — configure each tool by hand; see [Usage](#usage) for the OpenCode plugin entry and Cursor MCP server.
+
 ## Usage
+
+Manual setup for those who skipped the wizard (`npx flowkit init`):
 
 **OpenCode** — reference the plugin entry in `opencode.json` / `opencode.jsonc` (`~/.config/opencode/opencode.json`):
 
@@ -79,84 +86,6 @@ export PATH="$HOME/.bun/bin:$PATH"
 
 - **Git** — branch resolution, SDD review diffs, and verify gates.
 - (Optional) **Python 3** — required only for `workflow_changelog_apply` (runs `scripts/changelog/apply-unreleased.py`). Everything else is pure TS via bun.
-
-## Getting started
-
-Install once. After that, **Cursor auto-syncs on every new chat** and **OpenCode syncs via your `opencode()` shell wrapper**, then loads the plugin from disk with `file://…/src/plugin.ts` (no stuck bun cache).
-
-<details>
-  <summary><strong>Cursor</strong> (full plugin + MCP + auto-update)</summary>
-
-**1. Install once:**
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/BrainerVirus/workflow-toolkit/main/scripts/install-cursor-plugin.sh | bash -s -- --github
-```
-
-Or from your monorepo clone:
-
-```bash
-./scripts/install-cursor-plugin.sh
-```
-
-**2. Fully quit Cursor IDE + Agent CLI, then reopen.**
-
-**Auto-update:** each new Agent session runs `scripts/sync-runtime.sh` (≤20s). If `~/Documents/projects/personal/workflow-toolkit` exists, that tree is the source of truth; otherwise the share clone at `~/.local/share/workflow-toolkit` `git pull`s `main`.
-
-**3. Optional — MCP button** (after step 1):
-
-[![Install in Cursor](https://cursor.com/deeplink/mcp-install-dark.svg)](https://cursor.com/en/install-mcp?name=workflow-toolkit&config=eyJjb21tYW5kIjoiYmFzaCAtbGMgJ2V4ZWMgXCIkSE9NRS8ubG9jYWwvc2hhcmUvd29ya2Zsb3ctdG9vbGtpdC9zY3JpcHRzL3J1bi1jdXJzb3ItbWNwLnNoXCIgXCIkQFwiJyBfICR7d29ya3NwYWNlRm9sZGVyfSJ9)
-
-> [!NOTE]
-> The button adds the **MCP server** only. Slash skills (`/wf-commit`, …) come from the install script.
-
-**Troubleshooting**
-
-- Enable **Include third-party Plugins, Skills, and other configs**.
-- Type `/wf-commit` in Agent chat.
-- MCP code changes: toggle the MCP server off/on (long-lived process).
-
-</details>
-
-<details>
-  <summary><strong>OpenCode</strong> (file:// load + sync on launch)</summary>
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/BrainerVirus/workflow-toolkit/main/scripts/install-opencode-plugin.sh | bash
-```
-
-Or from a clone:
-
-```bash
-./scripts/install-opencode-plugin.sh
-```
-
-This pins OpenCode to:
-
-```json
-"file:///HOME/.local/share/workflow-toolkit/src/plugin.ts"
-```
-
-That loads the plugin **directly from disk** (no bun package cache). Your `~/.zshrc` `opencode()` wrapper runs `sync-runtime.sh` before each launch so the share tree matches the monorepo.
-
-Restart OpenCode (new shell so `.zshrc` reloads), then type `/wf-commit`.
-
-</details>
-
-<details>
-  <summary><strong>How auto-update works</strong></summary>
-
-| | Cursor | OpenCode |
-| --- | --- | --- |
-| Trigger | `sessionStart` hook | `opencode()` wrapper sync, then start |
-| Source | Dev monorepo if present, else `git pull` share | Same |
-| Share path | `~/.local/share/workflow-toolkit` | same |
-| Load mechanism | copy → `~/.cursor/plugins/local/…` | `file://…/src/plugin.ts` in `opencode.json` |
-| Manual sync | `./scripts/sync-runtime.sh` | same |
-
-Dev path override: `WORKFLOW_TOOLKIT_DEV=/path/to/clone`.
-
-</details>
 
 ## Repo layout
 
