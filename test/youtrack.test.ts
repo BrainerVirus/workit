@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -280,7 +280,7 @@ test("init scaffolding and status share the neutral XDG config directory", () =>
   });
   expect(status.status).toBe(0);
   expect(JSON.parse(status.stdout).youtrack_config.config_edit_path)
-    .toBe(path.join(directory, "youtrack.json"));
+    .toBe(path.join(realpathSync(directory), "youtrack.json"));
 });
 
 test("token helper runtime output uses OpenCode-neutral descriptions", () => {
