@@ -22,7 +22,7 @@ export const configDir = (): string =>
   process.env.WORKFLOW_TOOLKIT_CONFIG_DIR
   ?? path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config"), "workflow-toolkit");
 
-const LOCALE_RE = /^[a-z]{2,3}(-[A-Z]{2})?$/;
+export const LOCALE_RE = /^[a-z]{2,3}(-[A-Z]{2})?$/;
 
 const DEFAULTS: ToolkitConfig = {
   locale: "en",

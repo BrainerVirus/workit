@@ -18,6 +18,8 @@ Config directory (both platforms): `~/.config/workflow-toolkit/`
 
 **Quick start (wizard)** — the interactive wizard picks OpenCode and/or Cursor and configures tokens and project files:
 
+Requires bun (`curl -fsSL https://bun.sh/install | bash`).
+
 ```bash
 npm i flowkit
 npx flowkit init

@@ -1,13 +1,10 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { PRESETS, type BranchPreset, type ToolkitConfig } from "../core/config";
+import { PRESETS, LOCALE_RE, type BranchPreset, type ToolkitConfig } from "../core/config";
 import { ensureProjectGitignore } from "../core/gitignore";
 import { ensureHygieneFiles, hygieneFiles } from "../core/hygiene";
 
 export const TOKEN_PLACEHOLDER = "YOUR_TOKEN_HERE";
-
-// ponytail: mirrors the private LOCALE_RE in src/core/config.ts; wizard needs it here for re-ask validation
-export const LOCALE_RE = /^[a-z]{2,3}(-[A-Z]{2})?$/;
 
 export function validateLocale(locale: string): string | null {
   if (!LOCALE_RE.test(locale)) {
@@ -94,6 +91,8 @@ export type YouTrackScaffold = {
 
 // ponytail: mirrors scripts/init/apply.sh write_youtrack_json + write_token_placeholder +
 // scripts/youtrack/token-create-url.sh in TS — initApply shells out to bash (CA-01 forbids bash)
+// ponytail: mirrors apply.sh; WORKFLOW_YT_*/WORKFLOW_VCS_* env overrides intentionally ignored
+// (wizard takes values from prompts instead of env; parity pinned by test/scaffold-parity.test.ts)
 export function scaffoldYouTrack(dir: string, baseUrl: string, opts: { locale?: string; timezone?: string } = {}): YouTrackScaffold {
   mkdirSync(dir, { recursive: true });
   const youtrackJson = path.join(dir, "youtrack.json");

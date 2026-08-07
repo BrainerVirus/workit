@@ -1,6 +1,6 @@
 import { Box, Text, useInput } from "ink";
 import { ConfirmInput, MultiSelect, Select, TextInput } from "@inkjs/ui";
-import { useEffect, useState, type Dispatch, type JSX, type SetStateAction } from "react";
+import { useState, type Dispatch, type JSX, type SetStateAction } from "react";
 import { configDir, readConfig, writeConfig, type BranchPreset, type ToolkitConfig } from "../core/config";
 import {
   collectConfigValues,
@@ -204,6 +204,7 @@ function YouTrackStep({ results, setResults, onDone }: StepProps): JSX.Element {
       <Text dimColor>Base URL (https):</Text>
       <TextInput
         defaultValue={baseUrl}
+        isDisabled={scaffold !== null}
         onSubmit={(v) => {
           const err = validateBaseUrl(v);
           if (err) {
@@ -221,36 +222,45 @@ function YouTrackStep({ results, setResults, onDone }: StepProps): JSX.Element {
         }}
       />
       {urlError && <Text color="red">{urlError}</Text>}
-      {scaffold && (
-        <Box flexDirection="column" gap={0}>
-          <Text color="green">Scaffolded {scaffold.youtrackJson}</Text>
-          <Text>Token placeholder: {scaffold.tokenPath}</Text>
-          <Text>Create token: {scaffold.tokenCreateUrl}</Text>
-        </Box>
+      {scaffold ? (
+        <>
+          <Box flexDirection="column" gap={0}>
+            <Text color="green">Scaffolded {scaffold.youtrackJson}</Text>
+            <Text>Token placeholder: {scaffold.tokenPath}</Text>
+            <Text>Create token: {scaffold.tokenCreateUrl}</Text>
+          </Box>
+          {/* ponytail: @inkjs/ui has no focus system — render the ConfirmInput only once the scaffold
+              exists and disable the TextInput, so y reaches only the confirm (hint stays truthful) */}
+          <ConfirmInput
+            defaultChoice="confirm"
+            submitOnEnter={false}
+            onConfirm={onDone}
+            onCancel={() => {}}
+          />
+          <Text dimColor>{continueLabel()}</Text>
+        </>
+      ) : (
+        <Text dimColor>Enter to submit the URL — then y to continue</Text>
       )}
-      <ConfirmInput
-        isDisabled={!scaffold}
-        defaultChoice="confirm"
-        submitOnEnter={false}
-        onConfirm={onDone}
-        onCancel={() => {}}
-      />
-      <Text dimColor>{continueLabel()}</Text>
     </Box>
   );
 }
 
 function VcsStep({ results, setResults, onDone }: StepProps): JSX.Element {
   const [provider, setProvider] = useState<VcsProvider>(results.vcs?.provider ?? "gitlab");
-  // ponytail: Select only fires onChange on change — scaffold the default provider on mount so the
-  // default "gitlab" choice is still continuable (idempotent placeholder write)
-  const [scaffold, setScaffold] = useState<VcsScaffold | null>(() => results.vcs ?? scaffoldVcs(configDir(), "gitlab"));
+  const [scaffold, setScaffold] = useState<VcsScaffold | null>(results.vcs);
 
-  useEffect(() => {
-    if (!results.vcs) {
-      setResults((r) => ({ ...r, vcs: scaffold }));
-    }
-  }, []);
+  const apply = (p: VcsProvider) => {
+    const s = scaffoldVcs(configDir(), p);
+    setScaffold(s);
+    setResults((r) => ({ ...r, vcs: s }));
+  };
+
+  // ponytail: Select's onChange only fires when Enter picks a different option — this useInput
+  // covers Enter on the default provider; scaffoldVcs is idempotent so double-apply is harmless
+  useInput((_input, key) => {
+    if (key.return) apply(provider);
+  });
 
   return (
     <Box flexDirection="column" gap={1}>
@@ -262,51 +272,43 @@ function VcsStep({ results, setResults, onDone }: StepProps): JSX.Element {
         onChange={(v) => {
           const p = v as VcsProvider;
           setProvider(p);
-          const s = scaffoldVcs(configDir(), p);
-          setScaffold(s);
-          setResults((r) => ({ ...r, vcs: s }));
+          apply(p);
         }}
       />
-      {scaffold && (
-        <Box flexDirection="column" gap={0}>
-          <Text color="green">Scaffolded {scaffold.vcsJson} (provider: {scaffold.provider})</Text>
-          <Text>Token placeholder: {scaffold.activeTokenPath}</Text>
-          <Text>Create token: {scaffold.tokenCreateUrl}</Text>
-        </Box>
+      {scaffold ? (
+        <>
+          <Box flexDirection="column" gap={0}>
+            <Text color="green">Scaffolded {scaffold.vcsJson} (provider: {scaffold.provider})</Text>
+            <Text>Token placeholder: {scaffold.activeTokenPath}</Text>
+            <Text>Create token: {scaffold.tokenCreateUrl}</Text>
+          </Box>
+          <ConfirmInput
+            defaultChoice="confirm"
+            submitOnEnter={false}
+            onConfirm={onDone}
+            onCancel={() => {}}
+          />
+          <Text dimColor>{continueLabel()}</Text>
+        </>
+      ) : (
+        <Text dimColor>Enter to confirm the provider — then y to continue</Text>
       )}
-      <ConfirmInput
-        isDisabled={!scaffold}
-        defaultChoice="confirm"
-        submitOnEnter={false}
-        onConfirm={onDone}
-        onCancel={() => {}}
-      />
-      <Text dimColor>{continueLabel()}</Text>
     </Box>
   );
 }
 
 function ProjectStep({ setResults, onDone }: StepProps): JSX.Element {
-  const [result] = useState(() => runProjectSetup(process.cwd()));
-
-  useEffect(() => {
+  const apply = () => {
+    const result = runProjectSetup(process.cwd());
     setResults((r) => ({ ...r, project: result }));
-  }, [result, setResults]);
+    onDone();
+  };
 
   return (
     <Box flexDirection="column" gap={1}>
       <Text bold>Step 5 — Project setup</Text>
-      <Text dimColor>Applying gitignore + hygiene in {process.cwd()} (existing files are never overwritten):</Text>
-      {result.created.length === 0 ? (
-        <Text dimColor>Nothing to add — files already present.</Text>
-      ) : (
-        result.created.map((file) => (
-          <Text key={file} color="green">
-            + {file}
-          </Text>
-        ))
-      )}
-      <ConfirmInput defaultChoice="confirm" submitOnEnter={false} onConfirm={onDone} onCancel={() => {}} />
+      <Text dimColor>Will apply gitignore + hygiene in {process.cwd()} (existing files are never overwritten):</Text>
+      <ConfirmInput defaultChoice="confirm" submitOnEnter={false} onConfirm={apply} onCancel={() => {}} />
       <Text dimColor>{continueLabel()}</Text>
     </Box>
   );
