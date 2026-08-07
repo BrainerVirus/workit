@@ -4,8 +4,8 @@ import { fileURLToPath } from "node:url";
 import type { Plugin } from "@opencode-ai/plugin";
 
 import { getWorkflowBootstrap, isWorkflowBootstrap } from "./bootstrap";
-import { REMINDER_TEXT, DETECTION_TEXT, DOC_DELIVERY_TEXT } from "./core/reminder";
-import { detectProseChoices, detectBacktickDocRefs } from "./core/detector";
+import { REMINDER_TEXT, DETECTION_TEXT, DOC_DELIVERY_TEXT, SDD_REMINDER_TEXT, shouldInjectSddReminder } from "./core/reminder";
+import { detectProseChoices, detectBacktickDocRefs, findActiveSubagentDrivenPlans } from "./core/detector";
 import { createTools } from "./tools";
 import { adaptPluginHandoffClient } from "./tools/handoff";
 import { WorkflowStateStore } from "./state";
@@ -124,8 +124,8 @@ const plugin: Plugin = async ({ client }) => {
 
         // Every turn: compact reminder anchored to the CURRENT user message (idempotent)
         const anchor = currentUser.parts.find((part) => part.type === "text") ?? currentUser.parts[0];
-        const makePart = (text: string) => ({
-          id: `${anchor.id}-r${Date.now()}`,
+        const makePart = (text: string, tag = "r") => ({
+          id: `${anchor.id}-${tag}${Date.now()}`,
           sessionID: anchor.sessionID,
           messageID: anchor.messageID,
           type: "text" as const,
@@ -151,12 +151,19 @@ const plugin: Plugin = async ({ client }) => {
             (p) => (p as { tool?: string }).tool === "question",
           );
           if (detectProseChoices(assistantText) && !usedQuestionTool && !currentText.includes("workflow-detection")) {
-            currentUser.parts.unshift(makePart(DETECTION_TEXT));
+            currentUser.parts.unshift(makePart(DETECTION_TEXT, "d"));
           }
           const docRefs = detectBacktickDocRefs(assistantText);
           if (docRefs && !currentText.includes("workflow-doc-delivery")) {
-            currentUser.parts.unshift(makePart(DOC_DELIVERY_TEXT));
+            currentUser.parts.unshift(makePart(DOC_DELIVERY_TEXT, "dd"));
           }
+        }
+
+        // Every turn: subagent-driven rail — active approved plans get one reminder (idempotent)
+        // ponytail: process.cwd() ceiling — sessions launched from another directory scan the wrong docs/ tree
+        const activePlans = findActiveSubagentDrivenPlans(process.cwd());
+        if (activePlans.length > 0 && shouldInjectSddReminder(currentText)) {
+          currentUser.parts.unshift(makePart(SDD_REMINDER_TEXT, "sdd"));
         }
       } catch {
         // never break the session from a hook

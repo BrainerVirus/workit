@@ -9,13 +9,13 @@ disable-model-invocation: true
 Read [references/youtrack-update-style.md](references/youtrack-update-style.md) before drafting. Chat follows the user's language; the comment body is manager-friendly Spanish (`es-CL`).
 
 1. Load this skill explicitly through OpenCode's `skill` tool.
-2. Require the user-provided issue URL or ID, call `workflow_youtrack_parse_issue`, then read-only `workflow_youtrack_context`; structured results are ground truth.
+2. Ask in plain prose for the user-provided issue URL or ID, call `workflow_youtrack_parse_issue`, then read-only `workflow_youtrack_context`; structured results are ground truth.
 3. Gather the user's notes, call `workflow_youtrack_parse_duration`, polish only supported facts, and call `workflow_youtrack_draft` for the exact comment preview.
 4. Use native `question` with concise choices and allow a custom answer to approve the reviewed comment and time entry.
 5. Call `workflow_youtrack_post` only after approval with `confirmed: true`, `issueId`, `markdown`, and `minutes`.
 6. Report the structured success, failure stage, or partial result; never infer success.
 
-Never guess the issue, compute minutes, pass a date, expose tokens, or post Git/file details as the update. Preserve the user's paragraph voice, explain technical terms plainly, and avoid robotic status bullets. `todowrite` and `task` are unnecessary here.
+Never guess the issue, compute minutes, pass a date, expose tokens, or post Git/file details as the update. Never present a clickable `question` option whose label is an instruction to type free text (e.g. "Type the issue URL/ID"): clicking an option returns the label literal, not the typed value, so ask for free text in prose instead, with the custom answer field enabled. Preserve the user's paragraph voice, explain technical terms plainly, and avoid robotic status bullets. `todowrite` and `task` are unnecessary here.
 
 Consume the standard Result envelope:
 

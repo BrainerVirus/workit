@@ -20,7 +20,10 @@ test("reminder is injected on every user turn (not duplicated)", async () => {
   const hooks = await plugin({ directory: "/repo", worktree: "/repo", serverUrl: new URL("http://localhost") } as never);
   const output = { messages: [userMessage("hello")] };
   await hooks["experimental.chat.messages.transform"]?.({} as never, output as never);
-  const firstText = output.messages[0].parts.find((p: any) => p.type === "text")!.text;
+  const firstText = output.messages[0].parts
+    .filter((p: any) => p.type === "text")
+    .map((p: any) => p.text)
+    .join("\n");
   expect(firstText).toContain(REMINDER_TEXT);
   const afterFirst = output.messages[0].parts.length;
 
