@@ -1,10 +1,34 @@
-import { expect, test } from "bun:test";
+import { afterAll, beforeAll, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { createSddTools } from "../src/tools/sdd";
 import { WorkflowStateStore } from "../src/state";
+
+// Isolate from the developer's global config: tests assume gitflow semantics
+// (PRESETS.gitflow in src/core/config.ts), like CI with no global config.
+const previousXdg = process.env.XDG_CONFIG_HOME;
+let isolatedConfig: string;
+beforeAll(() => {
+  isolatedConfig = mkdtempSync(path.join(os.tmpdir(), "wf-test-config-"));
+  writeFileSync(path.join(isolatedConfig, "config.json"), JSON.stringify({
+    locale: "en",
+    localeOptions: ["en"],
+    timezone: "UTC",
+    branchPolicy: {
+      preset: "gitflow",
+      allowed: ["feature/*", "bugfix/*", "hotfix/*", "release/*"],
+      protected: ["main", "develop", "master", "prod", "production"],
+    },
+  }, null, 2));
+  process.env.XDG_CONFIG_HOME = isolatedConfig;
+});
+afterAll(() => {
+  if (previousXdg === undefined) delete process.env.XDG_CONFIG_HOME;
+  else process.env.XDG_CONFIG_HOME = previousXdg;
+  rmSync(isolatedConfig, { recursive: true, force: true });
+});
 
 test("plan parser returns only top-level Task sections and records state", async () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "wf-sdd-"));
