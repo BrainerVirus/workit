@@ -63,7 +63,6 @@ test("no correction when assistant did not use prose choices", async () => {
   expect(userText).not.toContain("workflow-detection");
 });
 
-import { REMINDER_TEXT } from "../src/core/reminder";
 
 test("reminder includes the doc delivery rule", () => {
   expect(REMINDER_TEXT).toContain("clickable markdown link");
