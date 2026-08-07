@@ -10,6 +10,59 @@ Multi-platform Superpowers workflow plugin for **Cursor** and **OpenCode**: veri
 
 Config directory (both platforms): `~/.config/workflow-toolkit/`
 
+[![npm version](https://img.shields.io/npm/v/flowkit)](https://www.npmjs.com/package/flowkit)
+[![CI](https://img.shields.io/github/actions/workflow/status/BrainerVirus/workflow-toolkit/ci.yml?branch=main&label=CI)](https://github.com/BrainerVirus/workflow-toolkit/actions)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+## Install
+
+**Consumers** — the plugin is published to npm as `flowkit`:
+
+```bash
+npm i flowkit
+```
+
+**Local development** — use the repo path instead; no package cache, disk is the source of truth:
+
+```bash
+bun i
+```
+
+## Usage
+
+**OpenCode** — reference the plugin entry in `opencode.json` / `opencode.jsonc` (`~/.config/opencode/opencode.json`):
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugin": ["flowkit"]
+}
+```
+
+Local dev variant (absolute path to this repo):
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugin": ["file:///path/to/workflow-toolkit/src/plugin.ts"]
+}
+```
+
+**Cursor** — the MCP server runs from the package's `cursor/` directory. Add to `.cursor/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "flowkit": {
+      "command": "bun",
+      "args": ["run", "node_modules/flowkit/cursor/mcp/server.ts"]
+    }
+  }
+}
+```
+
+Local dev variant: point `WORKFLOW_TOOLKIT_ROOT` at this repo (the MCP launcher `scripts/run-cursor-mcp.sh` resolves it), or run the install script from the repo.
+
 ## Requirements
 
 - **Bun ≥ 1.0** — runtime for the shared `src/core` logic, the OpenCode plugin, and the Cursor MCP server (`bun server.ts`). Install once:
@@ -159,3 +212,9 @@ Consequences:
 
 - A fresh clone starts every workflow at `draft` — the flow gates (`workflow_spec_approve` / `workflow_plan_approve` / `workflow_plan_menu`) must be re-run after checkout.
 - The SDD state does not travel with the branch; spec/plan do.
+
+## Kudos
+
+- **Superpowers** — the vendored `vendor/superpowers/skills/` (brainstorming, writing-plans, executing-plans, TDD, …) is by [Adam Wiggins](https://github.com/obra), vendored with attribution.
+- **Ponytail mode** — the lazy-engineer skill (ponytail, ponytail-review, ponytail-audit, …) by [Dietrich Gebert](https://github.com/dietrichgebert), active in this project's OpenCode config and installed as a shared skill.
+
