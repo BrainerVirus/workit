@@ -7,6 +7,7 @@ function runPresent(script: string, input: unknown): { error: string } | { data:
   const result = spawnSync("bash", [scriptPath], {
     input: typeof input === "string" ? input : JSON.stringify(input),
     encoding: "utf8",
+    env: { ...process.env, PYTHONIOENCODING: "utf-8" },
   });
   if (result.status !== 0) {
     return {

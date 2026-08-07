@@ -38,8 +38,9 @@ describe("plugin registration", () => {
     await hooks.config?.(config);
     expect(Object.keys(config.command).sort()).toEqual([...names].sort());
     expect(config.skills.paths).toHaveLength(2);
-    expect(config.skills.paths[0]).toEndWith("workflow-toolkit/skills");
-    expect(config.skills.paths[1]).toEndWith("vendor/superpowers/skills");
+    const normalize = (p: string) => p.split(path.sep).join("/");
+    expect(normalize(config.skills.paths[0])).toEndWith("workflow-toolkit/skills");
+    expect(normalize(config.skills.paths[1])).toEndWith("vendor/superpowers/skills");
   });
 
   test("registration is idempotent with a preexisting skill path", async () => {
