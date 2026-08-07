@@ -65,6 +65,21 @@ export const detectBacktickDocRefs = (text: string): string[] | null => {
   return refs;
 };
 
+// The rail has no terminal FlowStatus — treat a fully completed SDD ledger as done.
+const isPlanComplete = (slugDir: string): boolean => {
+  const ledger = path.join(slugDir, "sdd", "progress.md");
+  if (!existsSync(ledger)) return false; // no ledger yet — not provably complete
+  try {
+    const taskLines = readFileSync(ledger, "utf8")
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => /^Task \s*\d+:/i.test(l));
+    return taskLines.length > 0 && taskLines.every((l) => /^Task \s*\d+:\s*complete\b/i.test(l));
+  } catch {
+    return true; // unreadable ledger → exclude the slug
+  }
+};
+
 export const findActiveSubagentDrivenPlans = (root: string): string[] => {
   const docsDir = path.join(root, "docs");
   if (!existsSync(docsDir)) return [];
@@ -76,7 +91,11 @@ export const findActiveSubagentDrivenPlans = (root: string): string[] => {
         menu?: { chosen?: string };
         plan?: { status?: string };
       };
-      if (flow.menu?.chosen === "subagent-driven" && flow.plan?.status === "approved") {
+      if (
+        flow.menu?.chosen === "subagent-driven" &&
+        flow.plan?.status === "approved" &&
+        !isPlanComplete(path.join(docsDir, slug))
+      ) {
         slugs.push(slug);
       }
     } catch {

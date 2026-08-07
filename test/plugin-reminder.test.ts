@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { findActiveSubagentDrivenPlans } from "../src/core/detector";
@@ -97,4 +97,63 @@ test("CA-03: reminder is injected only when the marker is absent (idempotent)", 
   expect(shouldInjectSddReminder(SDD_REMINDER_TEXT)).toBe(false);
   expect(shouldInjectSddReminder(`message with ${SDD_REMINDER_TEXT} marker`)).toBe(false);
   expect(shouldInjectSddReminder("partial <workflow-sdd-reminder> tag alone")).toBe(true);
+});
+
+test("I-1: fully complete progress.md ledger turns the rail off", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wf-reminder-"));
+  try {
+    writeFlow(root, "done", {
+      menu: { chosen: "subagent-driven" },
+      plan: { status: "approved" },
+    });
+    const dir = path.join(root, "docs", "done", "sdd");
+    writeFileSync(path.join(dir, "progress.md"), "Task 1: complete\nTask 2: COMPLETE\n");
+    expect(findActiveSubagentDrivenPlans(root)).toEqual([]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("I-1: missing or incomplete progress.md keeps the slug active", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wf-reminder-"));
+  try {
+    writeFlow(root, "no-ledger", {
+      menu: { chosen: "subagent-driven" },
+      plan: { status: "approved" },
+    });
+    writeFlow(root, "partial", {
+      menu: { chosen: "subagent-driven" },
+      plan: { status: "approved" },
+    });
+    const dir = path.join(root, "docs", "partial", "sdd");
+    writeFileSync(path.join(dir, "progress.md"), "Task 1: complete\nTask 2: in_progress\n");
+    expect(findActiveSubagentDrivenPlans(root).sort()).toEqual(["no-ledger", "partial"]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("M-3: unreadable flow.json (EACCES) is skipped without throwing", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wf-reminder-"));
+  try {
+    const dir = path.join(root, "docs", "locked", "sdd");
+    mkdirSync(dir, { recursive: true });
+    const flow = path.join(dir, "flow.json");
+    writeFileSync(
+      flow,
+      JSON.stringify({ menu: { chosen: "subagent-driven" }, plan: { status: "approved" } }),
+    );
+    chmodSync(flow, 0o000);
+    let stillReadable = true;
+    try {
+      readFileSync(flow, "utf8");
+    } catch {
+      stillReadable = false;
+    }
+    if (!stillReadable) {
+      expect(findActiveSubagentDrivenPlans(root)).toEqual([]);
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
