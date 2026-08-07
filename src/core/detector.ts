@@ -1,3 +1,6 @@
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import path from "node:path";
+
 export type Detection = { choices: string[]; pattern: "alpha" | "numeric" } | null;
 
 // Interrogative gate: a literal question mark OR explicit interrogative phrases.
@@ -60,4 +63,25 @@ export const detectBacktickDocRefs = (text: string): string[] | null => {
   if (!refs.length) return null;
   if (/\[[^\]]+\]\(docs\//.test(body)) return null;
   return refs;
+};
+
+export const findActiveSubagentDrivenPlans = (root: string): string[] => {
+  const docsDir = path.join(root, "docs");
+  if (!existsSync(docsDir)) return [];
+  const slugs: string[] = [];
+  for (const slug of readdirSync(docsDir)) {
+    const file = path.join(docsDir, slug, "sdd", "flow.json");
+    try {
+      const flow = JSON.parse(readFileSync(file, "utf8")) as {
+        menu?: { chosen?: string };
+        plan?: { status?: string };
+      };
+      if (flow.menu?.chosen === "subagent-driven" && flow.plan?.status === "approved") {
+        slugs.push(slug);
+      }
+    } catch {
+      // skip unreadable or malformed flow.json
+    }
+  }
+  return slugs;
 };

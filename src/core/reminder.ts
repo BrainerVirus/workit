@@ -13,3 +13,10 @@ That is a bounded user choice — use the native \`question\` tool instead (re-a
 export const DOC_DELIVERY_TEXT = `<workflow-doc-delivery>
 You referenced a doc with a backtick-only path. Deliver docs with a clickable markdown link \`[spec.md](docs/<slug>/spec.md)\` and a 3-5 bullet summary of the content.
 </workflow-doc-delivery>`;
+
+export const SDD_REMINDER_TEXT = `<workflow-sdd-reminder>
+An approved plan is subagent-driven — execute it via \`wf-implement\` / \`task\` delegation. Never implement the approved plan inline in the main session.
+</workflow-sdd-reminder>`;
+
+export const shouldInjectSddReminder = (currentText: string): boolean =>
+  !currentText.includes(SDD_REMINDER_TEXT);

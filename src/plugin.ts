@@ -4,8 +4,8 @@ import { fileURLToPath } from "node:url";
 import type { Plugin } from "@opencode-ai/plugin";
 
 import { getWorkflowBootstrap, isWorkflowBootstrap } from "./bootstrap";
-import { REMINDER_TEXT, DETECTION_TEXT, DOC_DELIVERY_TEXT } from "./core/reminder";
-import { detectProseChoices, detectBacktickDocRefs } from "./core/detector";
+import { REMINDER_TEXT, DETECTION_TEXT, DOC_DELIVERY_TEXT, SDD_REMINDER_TEXT, shouldInjectSddReminder } from "./core/reminder";
+import { detectProseChoices, detectBacktickDocRefs, findActiveSubagentDrivenPlans } from "./core/detector";
 import { createTools } from "./tools";
 import { adaptPluginHandoffClient } from "./tools/handoff";
 import { WorkflowStateStore } from "./state";
@@ -157,6 +157,12 @@ const plugin: Plugin = async ({ client }) => {
           if (docRefs && !currentText.includes("workflow-doc-delivery")) {
             currentUser.parts.unshift(makePart(DOC_DELIVERY_TEXT));
           }
+        }
+
+        // Every turn: subagent-driven rail — active approved plans get one reminder (idempotent)
+        const activePlans = findActiveSubagentDrivenPlans(process.cwd());
+        if (activePlans.length > 0 && shouldInjectSddReminder(currentText)) {
+          currentUser.parts.unshift(makePart(SDD_REMINDER_TEXT));
         }
       } catch {
         // never break the session from a hook
