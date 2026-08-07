@@ -42,3 +42,10 @@ export const detectProseChoices = (text: string): Detection => {
 
   return null;
 };
+
+export const detectBacktickDocRefs = (text: string): string[] | null => {
+  const refs = [...text.matchAll(/`docs\/[^`\s]+\.md`/g)].map((m) => m[0]);
+  if (!refs.length) return null;
+  if (/\[[^\]]+\]\(docs\//.test(text)) return null;
+  return refs;
+};

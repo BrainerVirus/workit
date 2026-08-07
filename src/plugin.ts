@@ -4,8 +4,8 @@ import { fileURLToPath } from "node:url";
 import type { Plugin } from "@opencode-ai/plugin";
 
 import { getWorkflowBootstrap, isWorkflowBootstrap } from "./bootstrap";
-import { REMINDER_TEXT, DETECTION_TEXT } from "./core/reminder";
-import { detectProseChoices } from "./core/detector";
+import { REMINDER_TEXT, DETECTION_TEXT, DOC_DELIVERY_TEXT } from "./core/reminder";
+import { detectProseChoices, detectBacktickDocRefs } from "./core/detector";
 import { createTools } from "./tools";
 import { adaptPluginHandoffClient } from "./tools/handoff";
 import { WorkflowStateStore } from "./state";
@@ -152,6 +152,10 @@ const plugin: Plugin = async ({ client }) => {
           );
           if (detectProseChoices(assistantText) && !usedQuestionTool && !currentText.includes("workflow-detection")) {
             currentUser.parts.unshift(makePart(DETECTION_TEXT));
+          }
+          const docRefs = detectBacktickDocRefs(assistantText);
+          if (docRefs && !currentText.includes("workflow-doc-delivery")) {
+            currentUser.parts.unshift(makePart(DOC_DELIVERY_TEXT));
           }
         }
       } catch {
