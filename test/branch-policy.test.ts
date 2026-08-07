@@ -167,7 +167,7 @@ test("branch setup guards protected targets, missing targets, and dirty stash fl
     const protected_ = JSON.parse(await tools.workflow_branch_setup.execute({ confirmed: true, target_branch: "main" }, ctx) as string);
     expect(protected_.error).toContain("protected branch");
     const badKind = JSON.parse(await tools.workflow_branch_setup.execute({ confirmed: true, target_branch: "random/x" }, ctx) as string);
-    expect(badKind.error).toContain("feature/* or bugfix/*");
+    expect(badKind.error).toContain("not allowed by the branch policy");
 
     run(["checkout", "-q", "-b", "feature/dirty"]);
     writeFileSync(path.join(dir, "dirty.txt"), "uncommitted");
@@ -267,5 +267,39 @@ test("docsBranch reports keep and create_from_develop and HEAD errors", () => {
     const created = docsBranch({ plan_path: "docs/x/plan.md", kind: "bugfix", workspace_root: dir });
     expect(created.action).toBe("create_from_develop");
     expect(created.branch).toBe("bugfix/x");
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+import { writeConfig } from "../src/core/config";
+
+test("branch policy rejects codex/ under gitflow and allows under custom", async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "wf-branch-policy-"));
+  try {
+    process.env.WORKFLOW_TOOLKIT_CONFIG_DIR = dir;
+    const repo = mkdtempSync(path.join(os.tmpdir(), "wf-branch-policy-repo-"));
+    try {
+      const run = (args: string[]) => spawnSync("git", args, { cwd: repo, encoding: "utf8" });
+      run(["init", "-q", "-b", "develop"]);
+      run(["config", "user.name", "T"]);
+      run(["config", "user.email", "t@t"]);
+      writeFileSync(path.join(repo, "r.md"), "x");
+      run(["add", "r.md"]);
+      run(["commit", "-q", "-m", "base"]);
+      run(["checkout", "-q", "-b", "main"]);
+      mkdirSync(path.join(repo, "docs", "codex-feat"), { recursive: true });
+      writeFileSync(path.join(repo, "docs/codex-feat/spec.md"), "# S\n\n**Branch:** `codex/feature/x`\n");
+      writeFileSync(path.join(repo, "docs/codex-feat/plan.md"), "# P\n\n**Spec:** `docs/codex-feat/spec.md`\n**Branch:** `codex/feature/x`\n\n### Task 1: One\n\n- [ ] **Step 1:** Work\n");
+
+      const gitflowRes = resolveBranch({ spec_path: "docs/codex-feat/spec.md", plan_path: "docs/codex-feat/plan.md", workspace_root: repo });
+      expect("error" in gitflowRes).toBe(true);
+
+      writeConfig({
+        locale: "en", localeOptions: ["en"], timezone: "UTC",
+        branchPolicy: { preset: "custom", allowed: ["codex/*"], protected: ["main"] },
+      });
+      const customRes = resolveBranch({ spec_path: "docs/codex-feat/spec.md", plan_path: "docs/codex-feat/plan.md", workspace_root: repo });
+      expect("error" in customRes).toBe(false);
+      if (!("error" in customRes)) expect(customRes.branch).toBe("codex/feature/x");
+    } finally { rmSync(repo, { recursive: true, force: true }); }
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
