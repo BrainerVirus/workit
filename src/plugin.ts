@@ -151,7 +151,7 @@ const plugin: Plugin = async ({ client }) => {
             (p) => (p as { tool?: string }).tool === "question",
           );
           if (detectProseChoices(assistantText) && !usedQuestionTool && !currentText.includes("workflow-detection")) {
-            currentUser.parts.unshift(makePart(DETECTION_TEXT));
+            currentUser.parts.unshift(makePart(DETECTION_TEXT, "d"));
           }
           const docRefs = detectBacktickDocRefs(assistantText);
           if (docRefs && !currentText.includes("workflow-doc-delivery")) {

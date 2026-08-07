@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { parseTasksFromPlan } from "./docs-validate";
 
 export type Detection = { choices: string[]; pattern: "alpha" | "numeric" } | null;
 
@@ -65,18 +66,33 @@ export const detectBacktickDocRefs = (text: string): string[] | null => {
   return refs;
 };
 
-// The rail has no terminal FlowStatus — treat a fully completed SDD ledger as done.
+// The rail has no terminal FlowStatus — a fully completed SDD ledger is done,
+// but only if its complete set covers every task id in the plan (the last
+// task's append may have been skipped, leaving an all-complete partial ledger).
 const isPlanComplete = (slugDir: string): boolean => {
   const ledger = path.join(slugDir, "sdd", "progress.md");
   if (!existsSync(ledger)) return false; // no ledger yet — not provably complete
+  let taskLines: string[];
   try {
-    const taskLines = readFileSync(ledger, "utf8")
+    taskLines = readFileSync(ledger, "utf8")
       .split("\n")
       .map((l) => l.trim())
       .filter((l) => /^Task \s*\d+:/i.test(l));
-    return taskLines.length > 0 && taskLines.every((l) => /^Task \s*\d+:\s*complete\b/i.test(l));
   } catch {
     return true; // unreadable ledger → exclude the slug
+  }
+  if (taskLines.length === 0 || !taskLines.every((l) => /^Task \s*\d+:\s*complete\b/i.test(l))) {
+    return false;
+  }
+  try {
+    const planTasks = parseTasksFromPlan(readFileSync(path.join(slugDir, "plan.md"), "utf8"));
+    if (planTasks.length === 0) return true;
+    const completeIds = new Set(
+      taskLines.map((l) => Number(/^Task\s*(\d+):/i.exec(l)?.[1])).filter(Number.isFinite),
+    );
+    return planTasks.every((t) => completeIds.has(t.id));
+  } catch {
+    return false; // unreadable/missing plan.md — not provably complete, rail stays on
   }
 };
 
