@@ -11,6 +11,7 @@ import { readFlowState, transitionSpec, transitionPlan, recordMenuChoice, slugFr
 import { linkDocsRepo, listSpecs, promoteSpec } from "../../src/core/docs-repo";
 import { configDir, readConfig, writeConfig } from "../../src/core/config";
 import { ensureProjectGitignore } from "../../src/core/gitignore";
+import { ensureHygieneFiles } from "../../src/core/hygiene";
 import { listTemplates, writeTemplate } from "../../src/core/templates";
 import { listRules, writeRule } from "../../src/core/rules";
 import { initStatus, initApply, toolkitStatus } from "../../src/core/init";
@@ -721,6 +722,7 @@ server.registerTool(
         "vcs_scaffold",
         "config",
         "gitignore",
+        "hygiene",
       ]),
       confirmed: z.boolean(),
       base_url: z.string().optional(),
@@ -734,6 +736,7 @@ server.registerTool(
       branch_policy_preset: z.enum(["gitflow", "github-flow", "trunk-based", "custom"]).optional(),
       branch_policy_allowed: z.array(z.string()).optional(),
       branch_policy_protected: z.array(z.string()).optional(),
+      include_open_source: z.boolean().optional(),
     },
   },
   async ({
@@ -750,7 +753,13 @@ server.registerTool(
     branch_policy_preset,
     branch_policy_allowed,
     branch_policy_protected,
+    include_open_source,
   }) => {
+    if (action === "hygiene") {
+      const result = ensureHygieneFiles(workspace_root ?? process.cwd(), { confirmed, includeOpenSource: include_open_source });
+      if (!result.ok) return jsonResult({ error: result.error });
+      return jsonResult(result);
+    }
     if (action === "gitignore") {
       const result = ensureProjectGitignore(workspace_root ?? process.cwd(), confirmed);
       if (!result.ok) return jsonResult({ error: result.error });

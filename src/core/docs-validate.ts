@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
+import { hygieneFiles } from "./hygiene";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 
@@ -141,6 +142,15 @@ export const docsValidate = ({
       severity: "hard",
     });
   }
+  const hygiene = hygieneFiles(cwd);
+  const hyState = hygiene.state;
+  if (hyState["CHANGELOG.md"] === "missing") quality.push({ code: "changelog_missing", message: "CHANGELOG.md missing — create it with Keep a Changelog format (run wf-init hygiene)", severity: "warning" });
+  if (hyState["CHANGELOG.md"] === "invalid") quality.push({ code: "changelog_invalid_format", message: "CHANGELOG.md lacks ## [Unreleased] — Keep a Changelog format required", severity: "warning" });
+  if (hyState["README.md"] === "missing") quality.push({ code: "readme_missing", message: "README.md missing", severity: "warning" });
+  if (hyState[".editorconfig"] === "missing") quality.push({ code: "editorconfig_missing", message: ".editorconfig missing", severity: "warning" });
+  if (hyState[".gitattributes"] === "missing") quality.push({ code: "gitattributes_missing", message: ".gitattributes missing", severity: "warning" });
+  if (hygiene.openSource && hyState.LICENSE === "missing") quality.push({ code: "license_missing", message: "LICENSE missing (open-source repo)", severity: "warning" });
+  if (hygiene.openSource && hyState["CONTRIBUTING.md"] === "missing") quality.push({ code: "contributing_missing", message: "CONTRIBUTING.md missing (open-source repo)", severity: "warning" });
   return {
     ok: true,
     spec: relSpec,

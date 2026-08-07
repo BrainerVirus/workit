@@ -27,3 +27,5 @@ When the user wants to personalize the toolkit (locale, timezone, branch policy)
 Then call `workflow_toolkit_init_apply` with `action: "config"`, `confirmed: true`, and the answered values. Report the written `config.json` path and its contents.
 
 After config, call `workflow_toolkit_init_apply` with `action: "gitignore"` and `confirmed: true` to ensure the project `.gitignore` covers `docs/*/sdd/` and common OS/editor entries (creates it if missing, preserves existing entries).
+
+After gitignore, call `workflow_toolkit_init_apply` with `action: "hygiene"`, `confirmed: true`, and `include_open_source: true` for open-source repos — creates CHANGELOG.md (Keep a Changelog), README.md, .editorconfig, .gitattributes, and optionally LICENSE + CONTRIBUTING.md. Never overwrites existing files.

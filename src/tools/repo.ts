@@ -10,6 +10,7 @@ import { parseVerifyOutput } from "../core/verify-parse";
 import { branchSetup } from "../core/branch";
 import { configDir, readConfig, writeConfig, type BranchPreset, type ToolkitConfig } from "../core/config";
 import { ensureProjectGitignore } from "../core/gitignore";
+import { ensureHygieneFiles } from "../core/hygiene";
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const scripts = path.join(packageRoot, "scripts");
@@ -291,7 +292,7 @@ export function createRepoTools(runtime: RepoRuntime = defaultRuntime) {
       args: {
         confirmed: tool.schema.boolean(),
         action: tool.schema.enum([
-          "youtrack_scaffold", "youtrack_json", "youtrack_token_placeholder", "vcs_scaffold", "config", "gitignore",
+          "youtrack_scaffold", "youtrack_json", "youtrack_token_placeholder", "vcs_scaffold", "config", "gitignore", "hygiene",
         ]),
         base_url: tool.schema.string().optional(),
         default_mention: tool.schema.string().optional(),
@@ -304,13 +305,19 @@ export function createRepoTools(runtime: RepoRuntime = defaultRuntime) {
         branch_policy_preset: tool.schema.enum(["gitflow", "github-flow", "trunk-based", "custom"]).optional(),
         branch_policy_allowed: tool.schema.array(tool.schema.string()).optional(),
         branch_policy_protected: tool.schema.array(tool.schema.string()).optional(),
+        include_open_source: tool.schema.boolean().optional(),
       },
       execute: async ({
         confirmed, action, base_url, default_mention, meeting_issue, vcs_provider, vcs_target_branch,
         locale, locale_options, timezone, branch_policy_preset, branch_policy_allowed, branch_policy_protected,
+        include_open_source,
       }, context) => {
         const rejected = requireConfirmed(confirmed);
         if (rejected) return rejected;
+        if (action === "hygiene") {
+          const result = ensureHygieneFiles(context.directory, { confirmed, includeOpenSource: include_open_source });
+          return output(result.ok ? ok(result) : fail(result.error));
+        }
         if (action === "gitignore") {
           const result = ensureProjectGitignore(context.directory, confirmed);
           return output(result.ok ? ok(result) : fail(result.error));
