@@ -4,6 +4,10 @@
   "private": false,
   "description": "Workflow rails for agentic coding: specs, plans, YouTrack, CI-gated commits",
   "license": "MIT",
+  "keywords": ["opencode", "cursor", "workflow", "mcp", "youTrack", "agent"],
+  "bugs": {
+    "url": "https://github.com/BrainerVirus/workflow-toolkit/issues"
+  },
   "repository": {
     "type": "git",
     "url": "https://github.com/BrainerVirus/workflow-toolkit.git"

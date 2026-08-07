@@ -179,7 +179,7 @@ bun run check    # bun test + tsc + cursor MCP regressions
 
 GitHub Actions:
 
-- **CI** — on push/PR to `main` (`actions/checkout@v7`, `actions/setup-node@v7`, `oven-sh/setup-bun@v2`)
+- **CI** — on push/PR to `main`: matrix of 3 OS (ubuntu, macos, windows) running `actions/checkout@v7` + `oven-sh/setup-bun@v2`, then `bun install --frozen-lockfile` + `bun run check`
 - **Release** — on tag `v*`: same checks, then `softprops/action-gh-release@v3`
 
 ```bash
@@ -212,6 +212,10 @@ Consequences:
 
 - A fresh clone starts every workflow at `draft` — the flow gates (`workflow_spec_approve` / `workflow_plan_approve` / `workflow_plan_menu`) must be re-run after checkout.
 - The SDD state does not travel with the branch; spec/plan do.
+
+## Contributing
+
+Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ## Kudos
 
