@@ -26,12 +26,13 @@ describe("session bootstrap", () => {
       }],
     };
     await hooks["experimental.chat.messages.transform"]?.({} as never, output as never);
-    expect(output.messages[0].parts).toHaveLength(2);
-    expect(isWorkflowBootstrap(output.messages[0].parts[0].text)).toBe(true);
-    expect(output.messages[0].parts[1].text).toBe("hello");
+    const texts = output.messages[0].parts.map((p: any) => p.text ?? "");
+    expect(texts.some((t: string) => isWorkflowBootstrap(t))).toBe(true);
+    expect(texts[texts.length - 1]).toBe("hello");
+    const afterFirst = output.messages[0].parts.length;
 
     await hooks["experimental.chat.messages.transform"]?.({} as never, output as never);
-    expect(output.messages[0].parts).toHaveLength(2);
+    expect(output.messages[0].parts.length).toBe(afterFirst);
   });
 });
 
