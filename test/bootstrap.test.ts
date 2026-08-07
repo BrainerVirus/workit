@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { getWorkflowBootstrap, isWorkflowBootstrap, loadWorkflowBootstrap } from "../src/bootstrap";
 import plugin from "../src/plugin";
