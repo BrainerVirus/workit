@@ -1,4 +1,5 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import path from "node:path";
 
 export type DocError = { code: string; message: string; path?: string };
@@ -131,13 +132,22 @@ export const docsValidate = ({
 
   const relSpec = path.isAbsolute(spec_path) ? path.relative(cwd, specAbs) : spec_path;
   const relPlan = path.isAbsolute(plan_path) ? path.relative(cwd, planAbs) : plan_path;
+  const quality = qualitySpec(specText!);
+  const slug = path.basename(path.dirname(spec_path));
+  if (!sddIgnored(cwd, slug)) {
+    quality.push({
+      code: "sdd_not_ignored",
+      message: `docs/${slug}/sdd/ exists but is not gitignored — add 'docs/*/sdd/' to .gitignore (or run wf-init)`,
+      severity: "hard",
+    });
+  }
   return {
     ok: true,
     spec: relSpec,
     plan: relPlan,
     branch: specBranch!,
     task_count: tasks.length,
-    quality: qualitySpec(specText!),
+    quality,
   };
 };
 
@@ -216,4 +226,15 @@ export const qualitySpec = (text: string): QualityFinding[] => {
   }
 
   return findings;
+};
+
+const sddIgnored = (cwd: string, slug: string): boolean => {
+  const sddDir = path.join(cwd, "docs", slug, "sdd");
+  if (!existsSync(sddDir)) return true;
+  try {
+    execFileSync("git", ["-C", cwd, "check-ignore", path.join("docs", slug, "sdd", "progress.md")], { stdio: "pipe" });
+    return true;
+  } catch {
+    return false;
+  }
 };
