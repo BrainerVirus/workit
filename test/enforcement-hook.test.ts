@@ -29,17 +29,25 @@ test("reminder is injected on every user turn (not duplicated)", async () => {
   expect(output.messages[0].parts.length).toBe(afterFirst);
 });
 
-test("detection injects correction when assistant used prose choices", async () => {
+test("detection injects correction into the CURRENT turn, repeatably", async () => {
   const hooks = await plugin({ directory: "/repo", worktree: "/repo", serverUrl: new URL("http://localhost") } as never);
   const output = {
     messages: [
+      userMessage("start"),
       assistantMessage("1. install\n2. configure\n3. both\nWhich one?"),
       userMessage("continue"),
     ],
   };
   await hooks["experimental.chat.messages.transform"]?.({} as never, output as never);
-  const userText = output.messages[1].parts.find((p: any) => p.type === "text")!.text;
-  expect(userText).toContain("workflow-detection");
+  const currentText = output.messages[2].parts.filter((p: any) => p.type === "text").map((p: any) => p.text).join("\n");
+  expect(currentText).toContain("workflow-detection");
+
+  // second violation, later turn: detection fires again (anchored to current turn)
+  output.messages.push(assistantMessage("A) x\nB) y\nWhich?"));
+  output.messages.push(userMessage("continue 2"));
+  await hooks["experimental.chat.messages.transform"]?.({} as never, output as never);
+  const laterText = output.messages[4].parts.filter((p: any) => p.type === "text").map((p: any) => p.text).join("\n");
+  expect(laterText).toContain("workflow-detection");
 });
 
 test("no correction when assistant did not use prose choices", async () => {

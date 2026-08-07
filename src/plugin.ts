@@ -98,34 +98,50 @@ const plugin: Plugin = async ({ client }) => {
     "experimental.chat.messages.transform": async (_input, output) => {
       try {
         if (!output.messages.length) return;
-        const firstUser = output.messages.find((m) => m.info.role === "user");
-        if (!firstUser?.parts.length) return;
-        const anchor = firstUser.parts.find((part) => part.type === "text") ?? firstUser.parts[0];
+        const users = output.messages.filter((m) => m.info.role === "user");
+        const firstUser = users[0];
+        const currentUser = users[users.length - 1];
+        if (!currentUser?.parts.length) return;
+
+        // First turn only: full bootstrap anchored to the session's first user message
+        if (firstUser?.parts.length) {
+          const firstAnchor = firstUser.parts.find((part) => part.type === "text") ?? firstUser.parts[0];
+          const firstText = firstUser.parts
+            .filter((part) => part.type === "text")
+            .map((part) => (part as { text?: string }).text ?? "")
+            .join("\n");
+          const bootstrap = getWorkflowBootstrap();
+          if (bootstrap && !firstText.includes("<workflow-toolkit-contract>")) {
+            firstUser.parts.unshift({
+              id: firstAnchor.id,
+              sessionID: firstAnchor.sessionID,
+              messageID: firstAnchor.messageID,
+              type: "text" as const,
+              text: bootstrap,
+            });
+          }
+        }
+
+        // Every turn: compact reminder anchored to the CURRENT user message (idempotent)
+        const anchor = currentUser.parts.find((part) => part.type === "text") ?? currentUser.parts[0];
         const makePart = (text: string) => ({
-          id: anchor.id,
+          id: `${anchor.id}-r${Date.now()}`,
           sessionID: anchor.sessionID,
           messageID: anchor.messageID,
           type: "text" as const,
           text,
         });
-        const allText = firstUser.parts
+        const currentText = currentUser.parts
           .filter((part) => part.type === "text")
           .map((part) => (part as { text?: string }).text ?? "")
           .join("\n");
-
-        // First turn: full bootstrap (existing behavior)
-        const bootstrap = getWorkflowBootstrap();
-        if (bootstrap && !allText.includes("<workflow-toolkit-contract>")) {
-          firstUser.parts.unshift(makePart(bootstrap));
+        if (!currentText.includes(REMINDER_TEXT)) {
+          currentUser.parts.unshift(makePart(REMINDER_TEXT));
         }
 
-        // Every turn: compact reminder (idempotent)
-        if (!allText.includes(REMINDER_TEXT)) {
-          firstUser.parts.unshift(makePart(REMINDER_TEXT));
-        }
-
-        // Post-hoc detection: last assistant message used prose choices?
-        const lastAssistant = [...output.messages].reverse().find((m) => m.info.role === "assistant");
+        // Post-hoc detection: last assistant message (before current user turn) used prose choices?
+        const beforeCurrent = output.messages.slice(0, output.messages.indexOf(currentUser));
+        const lastAssistant = [...beforeCurrent].reverse().find((m) => m.info.role === "assistant");
         if (lastAssistant) {
           const assistantText = lastAssistant.parts
             .filter((p) => p.type === "text")
@@ -134,8 +150,8 @@ const plugin: Plugin = async ({ client }) => {
           const usedQuestionTool = lastAssistant.parts.some(
             (p) => (p as { tool?: string }).tool === "question",
           );
-          if (detectProseChoices(assistantText) && !usedQuestionTool && !allText.includes("workflow-detection")) {
-            firstUser.parts.unshift(makePart(DETECTION_TEXT));
+          if (detectProseChoices(assistantText) && !usedQuestionTool && !currentText.includes("workflow-detection")) {
+            currentUser.parts.unshift(makePart(DETECTION_TEXT));
           }
         }
       } catch {

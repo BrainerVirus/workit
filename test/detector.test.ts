@@ -37,3 +37,14 @@ test("does not match non-consecutive prefixes", () => {
 test("does not match an ordinary sentence with numbers", () => {
   expect(detectProseChoices("We shipped 3 fixes today.")).toBeNull();
 });
+
+test("does not match declarative prose with want/which", () => {
+  expect(detectProseChoices("1. Update config\n2. Restart service\nI want to confirm the plan.")).toBeNull();
+  expect(detectProseChoices("1. Add detector\n2. Wire hook\nThe script which runs nightly.")).toBeNull();
+});
+
+test("matches one-line choices", () => {
+  const d = detectProseChoices("A) install B) configure C) both\nWhich one?");
+  expect(d).not.toBeNull();
+  if (d) expect(d.pattern).toBe("alpha");
+});
