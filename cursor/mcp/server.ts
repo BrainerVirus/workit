@@ -9,6 +9,7 @@ import { parsePlanTasks, resolveHandoffBranch } from "../../src/core/plan-tasks"
 import { buildHandoffPrompt } from "../../src/tools/handoff";
 import { readFlowState, transitionSpec, transitionPlan, recordMenuChoice, slugFromPath } from "../../src/core/flow-state";
 import { linkDocsRepo, listSpecs, promoteSpec } from "../../src/core/docs-repo";
+import { configDir, readConfig, writeConfig } from "../../src/core/config";
 import { initStatus, initApply, toolkitStatus } from "../../src/core/init";
 import { resolveBranch, branchSetup } from "../../src/core/branch";
 import { docsValidate } from "../../src/core/docs-validate";
@@ -715,6 +716,7 @@ server.registerTool(
         "youtrack_json",
         "youtrack_token_placeholder",
         "vcs_scaffold",
+        "config",
       ]),
       confirmed: z.boolean(),
       base_url: z.string().optional(),
@@ -722,6 +724,12 @@ server.registerTool(
       meeting_issue: z.string().optional(),
       vcs_provider: z.enum(["gitlab", "github"]).optional(),
       vcs_target_branch: z.string().optional(),
+      locale: z.string().optional(),
+      locale_options: z.array(z.string()).optional(),
+      timezone: z.string().optional(),
+      branch_policy_preset: z.enum(["gitflow", "github-flow", "trunk-based", "custom"]).optional(),
+      branch_policy_allowed: z.array(z.string()).optional(),
+      branch_policy_protected: z.array(z.string()).optional(),
     },
   },
   async ({
@@ -732,7 +740,28 @@ server.registerTool(
     meeting_issue,
     vcs_provider,
     vcs_target_branch,
+    locale,
+    locale_options,
+    timezone,
+    branch_policy_preset,
+    branch_policy_allowed,
+    branch_policy_protected,
   }) => {
+    if (action === "config") {
+      const current = readConfig();
+      const next = {
+        locale: locale ?? current.locale,
+        localeOptions: locale_options ?? current.localeOptions,
+        timezone: timezone ?? current.timezone,
+        branchPolicy: {
+          preset: (branch_policy_preset as any) ?? current.branchPolicy.preset,
+          allowed: branch_policy_allowed ?? current.branchPolicy.allowed,
+          protected: branch_policy_protected ?? current.branchPolicy.protected,
+        },
+      };
+      writeConfig(next);
+      return jsonResult({ action: "config", path: `${configDir()}/config.json`, ...next });
+    }
     const env = {};
     if (base_url) env.WORKFLOW_YT_BASE_URL = base_url;
     if (default_mention) env.WORKFLOW_YT_MENTION = default_mention;
