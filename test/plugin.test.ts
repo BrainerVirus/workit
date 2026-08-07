@@ -478,6 +478,7 @@ test("config registers vendored superpowers skills alongside toolkit skills", as
   const config: Record<string, any> = {};
   await hooks.config?.(config);
   const paths = config.skills.paths as string[];
-  expect(paths.some((p) => p.endsWith("/skills"))).toBe(true);
-  expect(paths.some((p) => p.endsWith("/vendor/superpowers/skills"))).toBe(true);
+  const normalized = paths.map((p) => p.split(path.sep).join("/"));
+  expect(normalized.some((p) => p.endsWith("/skills"))).toBe(true);
+  expect(normalized.some((p) => p.endsWith("/vendor/superpowers/skills"))).toBe(true);
 });
