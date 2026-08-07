@@ -147,7 +147,7 @@ test("plugin registers without a Cursor runtime path", async () => {
       path.resolve(import.meta.dir, "../skills"),
       path.resolve(import.meta.dir, "../vendor/superpowers/skills"),
     ]);
-    expect(Object.keys(hooks.tool ?? {})).toHaveLength(38);
+    expect(Object.keys(hooks.tool ?? {})).toHaveLength(42);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

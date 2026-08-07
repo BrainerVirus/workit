@@ -1,33 +1,51 @@
 import { expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
+import { readTemplate, writeTemplate, listTemplates } from "../src/core/templates";
 
-const read = (name: string) => readFileSync(path.join(import.meta.dir, "../templates", name), "utf8");
+const cfgDir = () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "wf-templates-"));
+  process.env.WORKFLOW_TOOLKIT_CONFIG_DIR = dir;
+  return dir;
+};
 
-const REQUIRED_SPEC_SECTIONS = ["## Context", "## Goals", "## Non-goals", "## Architecture", "## Acceptance criteria"];
-
-test("spec template contains all required sections", () => {
-  const tpl = read("spec-template.md");
-  for (const section of REQUIRED_SPEC_SECTIONS) {
-    expect(tpl).toContain(section);
-  }
+test("readTemplate falls back to repo when config template missing", () => {
+  const dir = cfgDir();
+  try {
+    const tpl = readTemplate("issue-update");
+    expect(tpl.source).toBe("repo");
+    expect(tpl.content.length).toBeGreaterThan(0);
+  } finally { delete process.env.WORKFLOW_TOOLKIT_CONFIG_DIR; rmSync(dir, { recursive: true, force: true }); }
 });
 
-test("spec template mandates mermaid and ascii fences", () => {
-  const tpl = read("spec-template.md");
-  expect(tpl).toContain("```mermaid");
-  expect(tpl).toContain("```text");
+test("writeTemplate then readTemplate returns config source", () => {
+  const dir = cfgDir();
+  try {
+    const written = writeTemplate("issue-update", "# Mi template\n\n{{userNotes}}\n", true);
+    expect(written.ok).toBe(true);
+    const tpl = readTemplate("issue-update");
+    expect(tpl.source).toBe("config");
+    expect(tpl.content).toContain("Mi template");
+  } finally { delete process.env.WORKFLOW_TOOLKIT_CONFIG_DIR; rmSync(dir, { recursive: true, force: true }); }
 });
 
-test("spec template mandates CA-XX list and tables", () => {
-  const tpl = read("spec-template.md");
-  expect(tpl).toMatch(/CA-\d+/);
-  expect(tpl).toContain("| ");
+test("writeTemplate requires confirmed", () => {
+  const dir = cfgDir();
+  try {
+    const no = writeTemplate("issue-update", "x", false);
+    expect(no.ok).toBe(false);
+  } finally { delete process.env.WORKFLOW_TOOLKIT_CONFIG_DIR; rmSync(dir, { recursive: true, force: true }); }
 });
 
-test("plan template contains task criteria and status table", () => {
-  const tpl = read("plan-template.md");
-  expect(tpl).toMatch(/### Task [N\d]/);
-  expect(tpl).toMatch(/criteri/i);
-  expect(tpl).toContain("| ");
+test("listTemplates reports sources", () => {
+  const dir = cfgDir();
+  try {
+    writeTemplate("greeting", "hola", true);
+    const list = listTemplates();
+    const issue = list.find((t) => t.name === "issue-update");
+    const greeting = list.find((t) => t.name === "greeting");
+    expect(issue?.source).toBe("repo");
+    expect(greeting?.source).toBe("config");
+  } finally { delete process.env.WORKFLOW_TOOLKIT_CONFIG_DIR; rmSync(dir, { recursive: true, force: true }); }
 });

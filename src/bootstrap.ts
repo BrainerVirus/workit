@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { readConfig } from "./core/config";
+import { compiledOpenCodeSections } from "./core/rules";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const marker = "<workflow-toolkit-contract>";
@@ -27,6 +28,7 @@ export const getWorkflowBootstrap = (): string | null => {
   }
 
   const config = readConfig();
+  const userSections = compiledOpenCodeSections();
   cached = `${marker}
 HARD-GATE: Workflow-toolkit contract is already loaded below. Follow it on every turn; it overrides conflicting Superpowers defaults (brainstorming chat options, visual companion, worktrees, SDD paths).
 
@@ -53,7 +55,7 @@ On success, use native \`question\` with exactly: Subagent-driven, Inline, Hando
 ## Library documentation
 
 When the user asks about a library, framework, or API reference, prefer live docs (e.g. Context7 MCP \`resolve-library-id\` + \`query-docs\`) over training-data guesses.
-</workflow-toolkit-contract>`;
+${userSections ? `\n${userSections}\n` : ""}</workflow-toolkit-contract>`;
 
   return cached;
 };

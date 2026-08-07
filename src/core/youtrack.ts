@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { runScript, runScriptJson } from "./scripts";
+import { readTemplate } from "./templates";
 import { PLUGIN_ROOT } from "./scripts";
 import { resolveWorkspaceRoot } from "./scripts";
 
@@ -161,23 +162,21 @@ export function logTime({ issueId, minutes, text, date, dateMs, workspace_root }
 
 
 export function buildDraft({ issueId, projectName, userNotes, greeting, facts, includeProjectOpener, includeFacts }: { issueId: string; projectName?: string; userNotes?: string; greeting?: string; facts?: any; includeProjectOpener?: boolean; includeFacts?: boolean }): Record<string, any> {
-  const header = "# Actualización\n\n";
-  const open = greeting ? `${greeting}\n\n` : "";
-  const project =
-    includeProjectOpener && projectName ? `Hoy estuve full con ${projectName}.\n\n` : "";
-  const narrative = (userNotes ?? "").trim();
-  const factsBlock =
-    includeFacts && facts?.progress_excerpt?.length
-      ? "\n\n" + facts.progress_excerpt.map((l: string) => `- ${l}`).join("\n")
-      : "";
-  const commitsBlock =
-    includeFacts && facts?.git_commits?.length
-      ? "\n\n" + facts.git_commits.map((c: string) => `- ${c}`).join("\n")
-      : "";
-  return {
-    issueId,
-    markdown: header + open + project + narrative + factsBlock + commitsBlock,
-  };
+  const tpl = readTemplate("issue-update").content;
+  const para = (value: string): string => (value ? `\n\n${value}` : "");
+  const filled = tpl
+    .replaceAll("{{greetingSection}}", para(greeting ? `${greeting}` : ""))
+    .replaceAll("{{projectSection}}", para(includeProjectOpener && projectName ? `Hoy estuve full con ${projectName}.` : ""))
+    .replaceAll("{{userNotesSection}}", para((userNotes ?? "").trim()))
+    .replaceAll("{{progressSection}}", para(includeFacts && facts?.progress_excerpt?.length
+      ? facts.progress_excerpt.map((l: string) => `- ${l}`).join("\n") : ""))
+    .replaceAll("{{gitCommitsSection}}", para(includeFacts && facts?.git_commits?.length
+      ? facts.git_commits.map((c: string) => `- ${c}`).join("\n") : ""));
+  const collapsed = filled.replace(/\n{3,}/g, "\n\n").trimEnd();
+  // Bare draft keeps the header's trailing blank line (matches legacy output);
+  // drafts with sections end right after the last one.
+  const markdown = collapsed === "# Actualización" ? `${collapsed}\n\n` : collapsed;
+  return { issueId, markdown };
 }
 
 export function postUpdate({ confirmed, issueId, markdown, minutes, workspace_root }: { confirmed: boolean; issueId: string; markdown: string; minutes?: number; workspace_root?: string }, operations?: Record<string, any>): Record<string, any> {
