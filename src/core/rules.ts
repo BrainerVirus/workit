@@ -19,17 +19,22 @@ export const parseRule = (markdown: string): CanonicalRule | { error: string } =
   const fm = markdown.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
   if (!fm) return { error: "rule must start with frontmatter (--- name/description/platforms ---)" };
   const meta: Record<string, string> = {};
+  const unquote = (v: string) => v.replace(/^["']|["']$/g, "").trim();
   for (const line of fm[1].split("\n")) {
     const idx = line.indexOf(":");
-    if (idx > 0) meta[line.slice(0, idx).trim()] = line.slice(idx + 1).trim();
+    if (idx > 0) meta[line.slice(0, idx).trim()] = unquote(line.slice(idx + 1).trim());
   }
   const name = meta.name ?? "";
   const description = meta.description ?? "";
-  const platforms = (meta.platforms ?? "")
+  const rawPlatforms = (meta.platforms ?? "")
     .replace(/^\[|\]$/g, "").split(",").map((p) => p.trim().replace(/['"]/g, ""))
-    .filter(Boolean) as RulePlatform[];
+    .filter(Boolean);
+  const platforms = rawPlatforms.filter((p): p is RulePlatform => p === "cursor" || p === "opencode");
   if (!name || !description || platforms.length === 0) {
     return { error: "rule frontmatter requires name, description, and platforms" };
+  }
+  if (platforms.length !== rawPlatforms.length) {
+    return { error: `invalid platform in frontmatter: ${rawPlatforms.join(", ")}` };
   }
   return { name, description, platforms, body: fm[2].trim() + "\n" };
 };
@@ -49,19 +54,26 @@ export const listRules = (): { name: string; platforms: string[]; source: "confi
   return result;
 };
 
-export const readRule = (name: string): { source: "config" | "repo" | "missing"; rule: CanonicalRule } => {
+export const readRule = (
+  name: string,
+): { source: "config" | "repo" | "missing"; rule: CanonicalRule } | { error: string } => {
   const file = path.join(rulesDir(), name, "rule.md");
   if (existsSync(file)) {
-    return { source: "config", rule: parseRule(readFileSync(file, "utf8")) as CanonicalRule };
+    const parsed = parseRule(readFileSync(file, "utf8"));
+    if ("error" in parsed) return { error: parsed.error };
+    return { source: "config", rule: parsed };
   }
   return { source: "missing", rule: { name, description: "", platforms: [], body: "" } };
 };
+
+const RULE_NAME_RE = /^[a-z0-9][a-z0-9-]*$/;
 
 export const writeRule = (
   rule: CanonicalRule,
   confirmed: boolean,
 ): { ok: true; path: string } | { ok: false; error: string } => {
   if (!confirmed) return { ok: false, error: "confirmed: true required" };
+  if (!RULE_NAME_RE.test(rule.name)) return { ok: false, error: `invalid rule name: ${JSON.stringify(rule.name)}` };
   const dir = path.join(rulesDir(), rule.name);
   mkdirSync(dir, { recursive: true });
   const file = path.join(dir, "rule.md");
@@ -100,6 +112,7 @@ export const writeCompiledCursorRules = (targetDir: string): string[] => {
       if (!existsSync(file)) continue;
       const parsed = parseRule(readFileSync(file, "utf8"));
       if ("error" in parsed || !parsed.platforms.includes("cursor")) continue;
+      if (!RULE_NAME_RE.test(parsed.name)) continue;
       const out = path.join(targetDir, `${parsed.name}.mdc`);
       writeFileSync(out, compileRuleCursor(parsed), "utf8");
       written.push(out);

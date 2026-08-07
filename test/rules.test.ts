@@ -49,6 +49,7 @@ test("writeRule + readRule round trip", () => {
     const written = writeRule(rule, true);
     expect(written.ok).toBe(true);
     const read = readRule("my-rule");
+    if ("error" in read) throw new Error(read.error);
     expect(read.source).toBe("config");
     expect(read.rule.name).toBe("my-rule");
   } finally { delete process.env.WORKFLOW_TOOLKIT_CONFIG_DIR; rmSync(dir, { recursive: true, force: true }); }
@@ -95,4 +96,45 @@ test("writeCompiledCursorRules writes mdc files", () => {
     expect(existsSync(path.join(target, "beta.mdc"))).toBe(true);
     rmSync(target, { recursive: true, force: true });
   } finally { delete process.env.WORKFLOW_TOOLKIT_CONFIG_DIR; rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("bootstrap appends compiled opencode rule sections", async () => {
+  const dir = cfgDir();
+  try {
+    writeRule({ name: "zeta", description: "z", platforms: ["opencode"], body: "# Zeta\n\nDo zeta.\n" }, true);
+    const fresh = await import(`../src/bootstrap?rules=${Date.now()}`);
+    const bootstrap = fresh.getWorkflowBootstrap();
+    expect(bootstrap).toContain("## zeta");
+  } finally { delete process.env.WORKFLOW_TOOLKIT_CONFIG_DIR; rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("writeRule rejects traversal rule names", () => {
+  const dir = cfgDir();
+  try {
+    const bad = writeRule({ name: "../evil", description: "x", platforms: ["cursor"], body: "# X\n" }, true);
+    expect(bad.ok).toBe(false);
+    if (!bad.ok) expect(bad.error).toContain("invalid rule name");
+    const ok = writeRule({ name: "good-rule", description: "x", platforms: ["cursor"], body: "# X\n" }, true);
+    expect(ok.ok).toBe(true);
+  } finally { delete process.env.WORKFLOW_TOOLKIT_CONFIG_DIR; rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("parseRule strips quotes and rejects unknown platforms", () => {
+  const quoted = parseRule(`---
+name: "my rule"
+description: 'desc here'
+platforms: [cursor, bogus]
+---
+Body
+`);
+  expect("error" in quoted).toBe(true);
+  const good = parseRule(`---
+name: "my-rule"
+description: "desc"
+platforms: [cursor]
+---
+Body
+`);
+  expect("error" in good).toBe(false);
+  if (!("error" in good)) expect(good.name).toBe("my-rule");
 });

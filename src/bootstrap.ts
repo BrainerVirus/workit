@@ -55,7 +55,7 @@ On success, use native \`question\` with exactly: Subagent-driven, Inline, Hando
 ## Library documentation
 
 When the user asks about a library, framework, or API reference, prefer live docs (e.g. Context7 MCP \`resolve-library-id\` + \`query-docs\`) over training-data guesses.
-</workflow-toolkit-contract>`;
+${userSections ? `\n${userSections}\n` : ""}</workflow-toolkit-contract>`;
 
   return cached;
 };

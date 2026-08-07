@@ -1,6 +1,6 @@
 # Actualización
-{{greeting}}
-{{projectOpener}}
-{{userNotes}}
-{{progressExcerpt}}
-{{gitCommits}}
+{{greetingSection}}
+{{projectSection}}
+{{userNotesSection}}
+{{progressSection}}
+{{gitCommitsSection}}

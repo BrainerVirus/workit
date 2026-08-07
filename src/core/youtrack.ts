@@ -163,17 +163,19 @@ export function logTime({ issueId, minutes, text, date, dateMs, workspace_root }
 
 export function buildDraft({ issueId, projectName, userNotes, greeting, facts, includeProjectOpener, includeFacts }: { issueId: string; projectName?: string; userNotes?: string; greeting?: string; facts?: any; includeProjectOpener?: boolean; includeFacts?: boolean }): Record<string, any> {
   const tpl = readTemplate("issue-update").content;
-  const section = (value: string): string => (value ? `\n\n${value}` : "");
+  const para = (value: string): string => (value ? `\n\n${value}` : "");
   const filled = tpl
-    .replaceAll("{{greeting}}", greeting ? `${greeting}` : "")
-    .replaceAll("{{projectOpener}}", includeProjectOpener && projectName ? `Hoy estuve full con ${projectName}.` : "")
-    .replaceAll("{{userNotes}}", (userNotes ?? "").trim())
-    .replaceAll("{{progressExcerpt}}", section(includeFacts && facts?.progress_excerpt?.length
+    .replaceAll("{{greetingSection}}", para(greeting ? `${greeting}` : ""))
+    .replaceAll("{{projectSection}}", para(includeProjectOpener && projectName ? `Hoy estuve full con ${projectName}.` : ""))
+    .replaceAll("{{userNotesSection}}", para((userNotes ?? "").trim()))
+    .replaceAll("{{progressSection}}", para(includeFacts && facts?.progress_excerpt?.length
       ? facts.progress_excerpt.map((l: string) => `- ${l}`).join("\n") : ""))
-    .replaceAll("{{gitCommits}}", section(includeFacts && facts?.git_commits?.length
-      ? facts.git_commits.map((c: string) => `- ${c}`).join("\n") : ""))
-    .replaceAll("\n\n\n", "\n");
-  const markdown = filled.replace(/\n{3,}/g, "\n\n").trimEnd() + "\n\n";
+    .replaceAll("{{gitCommitsSection}}", para(includeFacts && facts?.git_commits?.length
+      ? facts.git_commits.map((c: string) => `- ${c}`).join("\n") : ""));
+  const collapsed = filled.replace(/\n{3,}/g, "\n\n").trimEnd();
+  // Bare draft keeps the header's trailing blank line (matches legacy output);
+  // drafts with sections end right after the last one.
+  const markdown = collapsed === "# Actualización" ? `${collapsed}\n\n` : collapsed;
   return { issueId, markdown };
 }
 
