@@ -41,3 +41,29 @@ test("requires confirmed", () => {
     expect(no.ok).toBe(false);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test("existing file without trailing newline appends cleanly", () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "wf-gitignore-nl-"));
+  try {
+    writeFileSync(path.join(dir, ".gitignore"), "node_modules/", "utf8");
+    const result = ensureProjectGitignore(dir, true);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.added).toContain("docs/*/sdd/");
+      expect(result.added).not.toContain("node_modules/");
+      const content = readFileSync(path.join(dir, ".gitignore"), "utf8");
+      expect(content).toContain("node_modules/");
+      expect(content).toContain("docs/*/sdd/");
+    }
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("idempotent re-run adds nothing", () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "wf-gitignore-idem-"));
+  try {
+    ensureProjectGitignore(dir, true);
+    const again = ensureProjectGitignore(dir, true);
+    expect(again.ok).toBe(true);
+    if (again.ok) expect(again.added).toHaveLength(0);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

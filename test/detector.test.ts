@@ -64,3 +64,12 @@ test("does not detect when a markdown link is present", () => {
 test("null when no doc references", () => {
   expect(detectBacktickDocRefs("No docs here.")).toBeNull();
 });
+
+test("does not match refs inside fenced code blocks", () => {
+  const fenced = "```\n// config lives at `docs/config.md`\n```\nDone.";
+  expect(detectBacktickDocRefs(fenced)).toBeNull();
+});
+
+test("does not match plain code strings without docs/", () => {
+  expect(detectBacktickDocRefs("Use the `open` command.")).toBeNull();
+});

@@ -232,7 +232,12 @@ const sddIgnored = (cwd: string, slug: string): boolean => {
   const sddDir = path.join(cwd, "docs", slug, "sdd");
   if (!existsSync(sddDir)) return true;
   try {
-    execFileSync("git", ["-C", cwd, "check-ignore", path.join("docs", slug, "sdd", "progress.md")], { stdio: "pipe" });
+    execFileSync("git", ["-C", cwd, "rev-parse", "--is-inside-work-tree"], { stdio: "pipe" });
+  } catch {
+    return true; // not a git repo — nothing to be unignored in; validation presupposes a repo
+  }
+  try {
+    execFileSync("git", ["-C", cwd, "check-ignore", path.posix.join("docs", slug, "sdd", "progress.md")], { stdio: "pipe" });
     return true;
   } catch {
     return false;
