@@ -27,7 +27,8 @@ const defaultRuntime: RepoRuntime = {
 const output = (value: unknown) => JSON.stringify(value, null, 2);
 const diagnostics = ({ stdout, stderr, exitCode }: RunResult) => ({ stdout, stderr, exitCode });
 const requireConfirmed = (confirmed: boolean) => confirmed === true ? null : output(fail("confirmed: true required"));
-const protectedBranches = new Set(["main", "master", "develop", "prod"]);
+import { resolveBranchPolicy } from "../core/config";
+const branchPolicy = () => resolveBranchPolicy(readConfig());
 
 function scriptResult<T extends object>(result: RunResult, parse: (stdout: string) => T) {
   if (result.exitCode !== 0) {
@@ -247,8 +248,9 @@ export function createRepoTools(runtime: RepoRuntime = defaultRuntime) {
           branch.stderr.trim() || branch.stdout.trim() || "unable to read current branch", diagnostics(branch),
         ));
         const name = branch.stdout.trim();
-        if (protectedBranches.has(name)) return output(fail(`cannot commit on protected branch ${name}`));
-        if (!/^(feature|bugfix)\/.+/.test(name)) return output(fail("commit requires feature/* or bugfix/* branch"));
+        const pol = branchPolicy();
+        if (pol.protected.has(name.toLowerCase())) return output(fail(`cannot commit on protected branch ${name}`));
+        if (!pol.allowed.some((r) => r.test(name)) || name.endsWith("/")) return output(fail(`commit requires an allowed branch (current: ${name})`));
         return output(scriptResult(runtime.git(context.directory, ["commit", "-m", message]),
           (stdout) => ({ stdout: stdout.trim() })));
       },
@@ -270,8 +272,9 @@ export function createRepoTools(runtime: RepoRuntime = defaultRuntime) {
           branch.stderr.trim() || branch.stdout.trim() || "unable to read current branch", diagnostics(branch),
         ));
         const name = branch.stdout.trim();
-        if (!/^(feature|bugfix)\/.+/.test(name)) {
-          return output(fail("PR creation requires feature/* or bugfix/* branch"));
+        const pol = branchPolicy();
+        if (!pol.allowed.some((r) => r.test(name)) || name.endsWith("/")) {
+          return output(fail(`PR creation requires an allowed branch (current: ${name})`));
         }
         return output(legacyScriptResult(runtime.runScript(context.directory, "pr-create.sh", [], {
           WF_PR_TITLE: title,
@@ -308,6 +311,10 @@ export function createRepoTools(runtime: RepoRuntime = defaultRuntime) {
         const rejected = requireConfirmed(confirmed);
         if (rejected) return rejected;
         if (action === "config") {
+          const LOCALE_RE = /^[a-z]{2,3}(-[A-Z]{2})?$/;
+          if (locale !== undefined && !LOCALE_RE.test(locale)) {
+            return output(fail(`invalid locale: ${JSON.stringify(locale)} — expected BCP-47 like en or es-CL`));
+          }
           const current = readConfig();
           const next: ToolkitConfig = {
             locale: locale ?? current.locale,

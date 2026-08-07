@@ -199,14 +199,14 @@ test("commit accepts only feature or bugfix branches and never stages files", as
   const raw = await createRepoTools({
     ...runtime,
     git: (root: string, args: string[]) => ({
-      exitCode: 0, stdout: args[0] === "branch" ? "release/1.0\n" : "", stderr: "", cwd: root,
+      exitCode: 0, stdout: args[0] === "branch" ? "chore/random\n" : "", stderr: "", cwd: root,
     }),
   }).workflow_commit.execute(
-    { confirmed: true, message: "release: no" }, { directory: "/repo", worktree: "/repo"} as never,
+    { confirmed: true, message: "chore: no" }, { directory: "/repo", worktree: "/repo"} as never,
   );
-  expect(JSON.parse(raw as string)).toEqual({
-    ok: false, data: null, error: "commit requires feature/* or bugfix/* branch",
-  });
+  const rejected = JSON.parse(raw as string);
+  expect(rejected.ok).toBe(false);
+  expect(rejected.error).toContain("requires an allowed branch");
 
   const emptySuffix = await createRepoTools({
     ...runtime,
@@ -216,11 +216,11 @@ test("commit accepts only feature or bugfix branches and never stages files", as
   }).workflow_commit.execute(
     { confirmed: true, message: "fix: no empty suffix" }, { directory: "/repo", worktree: "/repo"} as never,
   );
-  expect(JSON.parse(emptySuffix as string).error).toBe("commit requires feature/* or bugfix/* branch");
+  expect(JSON.parse(emptySuffix as string).error).toContain("requires an allowed branch");
 });
 
 test("PR creation rejects protected and unsupported branches before external work", async () => {
-  for (const branch of ["main", "master", "develop", "prod", "release/1.0", "feature/"]) {
+  for (const branch of ["main", "master", "develop", "prod", "feature/"]) {
     let externalCalls = 0;
     const guarded = createRepoTools({
       ...runtime,
@@ -233,7 +233,7 @@ test("PR creation rejects protected and unsupported branches before external wor
     const raw = await guarded.workflow_pr_create.execute(
       { confirmed: true, title: "No" }, { directory: "/repo", worktree: "/repo" } as never,
     );
-    expect(JSON.parse(raw as string).error).toContain("feature/* or bugfix/*");
+    expect(JSON.parse(raw as string).error).toContain("requires an allowed branch");
     expect(externalCalls).toBe(0);
   }
 });

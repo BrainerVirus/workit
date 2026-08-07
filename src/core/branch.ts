@@ -69,14 +69,14 @@ export const resolveBranch = ({
     const text = readSafe(file);
     if (!text) continue;
     if (USE_CURRENT_RE.test(text)) {
-      if (!current || !allowedBranch(current)) {
+      if (!current || !allowedBranch(current) || isProtected(current)) {
         return { error: `use-current but HEAD ${current} is not an allowed branch` };
       }
       return finish(current, "use-current");
     }
   }
 
-  if (current && allowedBranch(current)) return finish(current, "keep-current");
+  if (current && allowedBranch(current) && !isProtected(current)) return finish(current, "keep-current");
 
   let declaredButInvalid: string | null = null;
   for (const file of [spec, plan]) {
@@ -109,7 +109,7 @@ export const docsBranch = ({
   const current = git.branch;
   const kindArg = (kind ?? "feature").toLowerCase();
 
-  if (current && allowedBranch(current)) {
+  if (current && allowedBranch(current) && !isProtected(current)) {
     return { branch: current, action: "keep", current_branch: current, base: "develop", dirty: Boolean(git.status_short.trim()) };
   }
   if (current === "main" || current === "master" || current === "develop") {

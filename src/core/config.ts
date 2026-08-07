@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -28,7 +28,7 @@ const DEFAULTS: ToolkitConfig = {
   locale: "en",
   localeOptions: ["en", "es-CL", "es-MX", "es-AR", "pt-BR"],
   timezone: "America/Santiago",
-  branchPolicy: { preset: "gitflow", allowed: PRESETS.gitflow.allowed, protected: PRESETS.gitflow.protected },
+  branchPolicy: { preset: "gitflow", allowed: [...PRESETS.gitflow.allowed], protected: [...PRESETS.gitflow.protected] },
 };
 
 const readSafe = (p: string): string | null => {
@@ -42,7 +42,7 @@ export const readConfig = (): ToolkitConfig => {
     const parsed = JSON.parse(raw) as Partial<ToolkitConfig>;
     const locale = LOCALE_RE.test(String(parsed.locale ?? "")) ? parsed.locale as string : DEFAULTS.locale;
     const preset = (parsed.branchPolicy?.preset ?? "gitflow") as BranchPreset;
-    const presetOk = preset in PRESETS ? preset : "gitflow";
+    const presetOk = Object.hasOwn(PRESETS, preset) ? preset : "gitflow";
     const presetDefs = PRESETS[presetOk];
     return {
       locale,
@@ -67,6 +67,6 @@ export const writeConfig = (config: ToolkitConfig): void => {
 
 export const resolveBranchPolicy = (config: ToolkitConfig): { allowed: RegExp[]; protected: Set<string> } => {
   const allowed = config.branchPolicy.allowed.map((p) =>
-    new RegExp(`^${p.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*")}$`));
+    new RegExp(`^${p.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*")}$`, "i"));
   return { allowed, protected: new Set(config.branchPolicy.protected.map((p) => p.toLowerCase())) };
 };

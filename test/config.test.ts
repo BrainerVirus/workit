@@ -13,13 +13,15 @@ const cfgDir = () => {
   return dir;
 };
 
+const cleanupEnv = () => { delete process.env.WORKFLOW_TOOLKIT_CONFIG_DIR; };
+
 test("readConfig returns defaults when config.json missing", () => {
   const dir = cfgDir();
   try {
     const cfg = readConfig();
     expect(cfg.locale).toBe("en");
     expect(cfg.branchPolicy.preset).toBe("gitflow");
-  } finally { rmSync(dir, { recursive: true, force: true }); }
+  } finally { cleanupEnv(); rmSync(dir, { recursive: true, force: true }); }
 });
 
 test("writeConfig + readConfig round trip", () => {
@@ -34,7 +36,7 @@ test("writeConfig + readConfig round trip", () => {
     writeConfig(cfg);
     expect(readConfig()).toEqual(cfg);
     expect(existsSync(path.join(dir, "config.json"))).toBe(true);
-  } finally { rmSync(dir, { recursive: true, force: true }); }
+  } finally { cleanupEnv(); rmSync(dir, { recursive: true, force: true }); }
 });
 
 test("invalid locale falls back to en", () => {
@@ -42,7 +44,7 @@ test("invalid locale falls back to en", () => {
   try {
     writeFileSync(path.join(dir, "config.json"), JSON.stringify({ locale: "not-valid!" }), "utf8");
     expect(readConfig().locale).toBe("en");
-  } finally { rmSync(dir, { recursive: true, force: true }); }
+  } finally { cleanupEnv(); rmSync(dir, { recursive: true, force: true }); }
 });
 
 test("presets define allowed/protected lists", () => {
@@ -67,5 +69,5 @@ test("resolveBranchPolicy honors preset and custom overrides", () => {
     const custom = resolveBranchPolicy(readConfig());
     expect(custom.allowed.some((r) => r.test("codex/feature/x"))).toBe(true);
     expect(custom.allowed.some((r) => r.test("feature/x"))).toBe(false);
-  } finally { rmSync(dir, { recursive: true, force: true }); }
+  } finally { cleanupEnv(); rmSync(dir, { recursive: true, force: true }); }
 });

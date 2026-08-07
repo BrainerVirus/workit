@@ -748,6 +748,9 @@ server.registerTool(
     branch_policy_protected,
   }) => {
     if (action === "config") {
+      if (locale !== undefined && !/^[a-z]{2,3}(-[A-Z]{2})?$/.test(locale)) {
+        return jsonResult({ error: `invalid locale: ${JSON.stringify(locale)} — expected BCP-47 like en or es-CL` });
+      }
       const current = readConfig();
       const next = {
         locale: locale ?? current.locale,
