@@ -194,7 +194,7 @@ def ensure_file(path: Path) -> str:
     if path.exists():
         return path.read_text(encoding="utf-8")
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(SKELETON, encoding="utf-8")
+    path.write_text(SKELETON, encoding="utf-8", newline="")
     return SKELETON
 
 
@@ -235,7 +235,7 @@ def apply(
     if not before.endswith("\n"):
         before += "\n"
     out = before + new_body + after
-    path.write_text(out, encoding="utf-8")
+    path.write_text(out, encoding="utf-8", newline="")
     return {
         "ok": True,
         "path": str(path),

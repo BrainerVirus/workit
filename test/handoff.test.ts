@@ -6,6 +6,8 @@ import path from "node:path";
 import { adaptPluginHandoffClient, buildHandoffPrompt, createHandoffTools, handoffSession } from "../src/tools/handoff";
 import { WorkflowStateStore } from "../src/state";
 
+const posix = (p: string) => p.split(path.sep).join("/");
+
 const request = {
   directory: "/repo",
   title: "Continue x",
@@ -202,10 +204,15 @@ test("native handoff resolves package context, records paths, and seeds from Too
     error: null,
   });
   expect(calls[0]).toBe("create:Continue x");
-  expect(calls[1]).toContain("**Spec:** docs/x/spec.md");
-  expect(calls[1]).toContain("**Plan:** docs/x/plan.md");
-  expect(calls[1]).toContain("**SDD:** `docs/x/sdd`");
-  expect(state.get("parent")).toEqual({
+  expect(posix(calls[1])).toContain("**Spec:** docs/x/spec.md");
+  expect(posix(calls[1])).toContain("**Plan:** docs/x/plan.md");
+  expect(posix(calls[1])).toContain("**SDD:** `docs/x/sdd`");
+  const stored = state.get("parent")!;
+  expect({
+    spec: posix(stored.spec),
+    plan: posix(stored.plan),
+    sdd: posix(stored.sdd),
+  }).toEqual({
     spec: "docs/x/spec.md",
     plan: "docs/x/plan.md",
     sdd: "docs/x/sdd",
@@ -382,8 +389,8 @@ test("handoff resolves a matching local spec and plan when slash arguments are e
     const result = buildHandoffPrompt(root, "Load the wf-handoff skill and follow it.");
     expect("error" in result).toBe(false);
     if (!("error" in result)) {
-      expect(result.spec).toBe("docs/2026-07-14-mfe-tasks-base/spec.md");
-      expect(result.plan).toBe("docs/2026-07-14-mfe-tasks-base/plan.md");
+      expect(posix(result.spec)).toBe("docs/2026-07-14-mfe-tasks-base/spec.md");
+      expect(posix(result.plan)).toBe("docs/2026-07-14-mfe-tasks-base/plan.md");
     }
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
@@ -417,8 +424,8 @@ test("handoff matching-pair ties resolve deterministically", () => {
     const result = buildHandoffPrompt(root, "Load the wf-handoff skill and follow it.");
     expect("error" in result).toBe(false);
     if (!("error" in result)) {
-      expect(result.spec).toBe("docs/2026-07-14-alpha/spec.md");
-      expect(result.plan).toBe("docs/2026-07-14-alpha/plan.md");
+      expect(posix(result.spec)).toBe("docs/2026-07-14-alpha/spec.md");
+      expect(posix(result.plan)).toBe("docs/2026-07-14-alpha/plan.md");
     }
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

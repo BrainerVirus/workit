@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fail, ok, resolveInside, run } from "../src/core";
@@ -35,7 +35,8 @@ test("paths allow a nonexistent file beneath an in-root parent", () => {
   mkdirSync(parent);
 
   try {
-    expect(resolveInside(root, "parent/new.md")).toBe(path.join(parent, "new.md"));
+    const base = realpathSync(root);
+    expect(resolveInside(root, "parent/new.md")).toBe(path.join(base, "parent", "new.md"));
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

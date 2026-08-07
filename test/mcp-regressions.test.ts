@@ -404,7 +404,7 @@ test("no docs/superpowers paths remain in sources", () => {
       if (statSync(full).isDirectory()) { walk(full); continue; }
       if (!/\.(ts|js|sh|md|json)$/.test(entry)) continue;
       if (entry === selfFile) continue;
-      if (full.includes("scripts/update-superpowers.sh")) continue; // sed patterns intentionally reference the old layout
+      if (full.split(path.sep).join("/").includes("scripts/update-superpowers.sh")) continue; // sed patterns intentionally reference the old layout
       const content = readFileSync(full, "utf8");
       if (content.includes("docs/superpowers")) {
         offenders.push(path.relative(root, full));
