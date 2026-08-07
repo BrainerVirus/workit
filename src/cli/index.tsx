@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
-import { Box, Text, render, useInput } from "ink";
-import { useEffect } from "react";
+import { render } from "ink";
+import { Wizard } from "./steps";
 
 const HELP = `flowkit — workflow rails for agentic coding
 
@@ -11,38 +11,12 @@ Usage:
 Run \`npx flowkit init\` to configure platforms, YouTrack, VCS and project hygiene.
 `;
 
-const STEPS = ["Platform", "Config", "YouTrack", "VCS", "Project", "Summary"];
-
-const isTTY = process.stdin.isTTY === true;
-
-function Wizard({ onExit }: { onExit: () => void }) {
-  useInput(() => onExit(), { isActive: isTTY });
-  useEffect(() => {
-    // ponytail: auto-exit fallback so non-TTY (CI) never hangs; real steps replace this in Task 2
-    const t = setTimeout(onExit, 5000);
-    return () => clearTimeout(t);
-  }, [onExit]);
-
-  return (
-    <Box flexDirection="column" gap={1}>
-      <Text bold color="cyan">
-        flowkit — workflow rails for agentic coding
-      </Text>
-      <Text dimColor>Interactive setup wizard</Text>
-      <Box flexDirection="column" gap={0}>
-        {STEPS.map((step, i) => (
-          <Text key={step}>
-            {"  "}
-            {i + 1}. {step}
-          </Text>
-        ))}
-      </Box>
-      <Text dimColor>Press any key to exit</Text>
-    </Box>
-  );
-}
-
 async function runInit() {
+  // ponytail: no-TTY guard — piping/disabling stdin would hang render(); print and exit cleanly
+  if (process.stdin.isTTY !== true) {
+    console.log("flowkit init requires an interactive terminal (TTY).");
+    process.exit(0);
+  }
   let done: () => void = () => {};
   const { waitUntilExit, unmount } = render(<Wizard onExit={() => done()} />);
   done = unmount;
