@@ -53,6 +53,15 @@ mkdir -p "$PLUGIN_DIR/vendor/superpowers"
 if [ -d "$SHARE/vendor/superpowers/skills" ]; then
   rsync -a --delete "$SHARE/vendor/superpowers/skills" "$PLUGIN_DIR/vendor/superpowers/"
 fi
+# Canonical user rules -> Cursor .mdc (compiled by the shared core)
+CONFIG_RULES_DIR="${HOME}/.config/workflow-toolkit/rules"
+if [ -d "$CONFIG_RULES_DIR" ]; then
+  "$HOME/.bun/bin/bun" -e "
+    import('${SHARE}/src/core/rules.ts').then(async ({ writeCompiledCursorRules }) => {
+      writeCompiledCursorRules('${PLUGIN_DIR}/rules');
+    });
+  " >/dev/null 2>&1 || true
+fi
 printf '%s\n' "$SHARE" >"$PLUGIN_DIR/.workflow-toolkit-root"
 chmod +x "$PLUGIN_DIR/hooks/session-start" "$PLUGIN_DIR/mcp/run-server.sh" 2>/dev/null || true
 

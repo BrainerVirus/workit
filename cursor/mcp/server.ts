@@ -11,6 +11,7 @@ import { readFlowState, transitionSpec, transitionPlan, recordMenuChoice, slugFr
 import { linkDocsRepo, listSpecs, promoteSpec } from "../../src/core/docs-repo";
 import { configDir, readConfig, writeConfig } from "../../src/core/config";
 import { listTemplates, writeTemplate } from "../../src/core/templates";
+import { listRules, writeRule } from "../../src/core/rules";
 import { initStatus, initApply, toolkitStatus } from "../../src/core/init";
 import { resolveBranch, branchSetup } from "../../src/core/branch";
 import { docsValidate } from "../../src/core/docs-validate";
@@ -1133,6 +1134,34 @@ server.registerTool(
   },
   async ({ name, content, confirmed }) => {
     const result = writeTemplate(name, content, confirmed);
+    if (!result.ok) return jsonResult({ error: result.error });
+    return jsonResult({ path: result.path });
+  },
+);
+
+server.registerTool(
+  "workflow_rule_list",
+  {
+    description: "List canonical rules (config) with platforms",
+    inputSchema: { workspace_root: workspaceRootSchema },
+  },
+  async () => jsonResult({ rules: listRules() }),
+);
+
+server.registerTool(
+  "workflow_rule_edit",
+  {
+    description: "Write a canonical rule to the toolkit config dir",
+    inputSchema: {
+      name: z.string(),
+      description: z.string(),
+      platforms: z.array(z.enum(["cursor", "opencode"])),
+      body: z.string(),
+      confirmed: z.boolean(),
+    },
+  },
+  async ({ name, description, platforms, body, confirmed }) => {
+    const result = writeRule({ name, description, platforms, body }, confirmed);
     if (!result.ok) return jsonResult({ error: result.error });
     return jsonResult({ path: result.path });
   },
