@@ -6,6 +6,7 @@ import { createYouTrackTools } from "./youtrack";
 import { createPresentTools } from "./present";
 import { createFlowTools } from "./flow";
 import { createDocsRepoTools } from "./docs-repo";
+import { createTemplateTools } from "./templates";
 
 export const createTools = (client: HandoffClient, state: WorkflowStateStore) => ({
   ...createRepoTools(),
@@ -15,4 +16,5 @@ export const createTools = (client: HandoffClient, state: WorkflowStateStore) =>
   ...createPresentTools(),
   ...createFlowTools(),
   ...createDocsRepoTools(),
+  ...createTemplateTools(),
 });

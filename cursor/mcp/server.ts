@@ -10,6 +10,7 @@ import { buildHandoffPrompt } from "../../src/tools/handoff";
 import { readFlowState, transitionSpec, transitionPlan, recordMenuChoice, slugFromPath } from "../../src/core/flow-state";
 import { linkDocsRepo, listSpecs, promoteSpec } from "../../src/core/docs-repo";
 import { configDir, readConfig, writeConfig } from "../../src/core/config";
+import { listTemplates, writeTemplate } from "../../src/core/templates";
 import { initStatus, initApply, toolkitStatus } from "../../src/core/init";
 import { resolveBranch, branchSetup } from "../../src/core/branch";
 import { docsValidate } from "../../src/core/docs-validate";
@@ -1108,6 +1109,32 @@ server.registerTool(
     const result = promoteSpec(workspace_root ?? process.cwd(), slug, { confirmed, force });
     if (!result.ok) return jsonResult({ error: result.error, findings: result.findings ?? [] });
     return jsonResult({ target_dir: result.target_dir, files: result.files, index_updated: result.index_updated });
+  },
+);
+
+server.registerTool(
+  "workflow_template_list",
+  {
+    description: "List editable templates with their source",
+    inputSchema: { workspace_root: workspaceRootSchema },
+  },
+  async () => jsonResult({ templates: listTemplates() }),
+);
+
+server.registerTool(
+  "workflow_template_edit",
+  {
+    description: "Write an edited template to the toolkit config dir",
+    inputSchema: {
+      name: z.enum(["issue-update", "greeting", "headers"]),
+      content: z.string(),
+      confirmed: z.boolean(),
+    },
+  },
+  async ({ name, content, confirmed }) => {
+    const result = writeTemplate(name, content, confirmed);
+    if (!result.ok) return jsonResult({ error: result.error });
+    return jsonResult({ path: result.path });
   },
 );
 

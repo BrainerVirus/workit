@@ -259,6 +259,8 @@ describe("plugin registration", () => {
           workflow_docs_repo_link: { path: "missing", confirmed: false },
           workflow_docs_list: {},
           workflow_docs_promote: { slug: "x", confirmed: false },
+          workflow_template_list: {},
+          workflow_template_edit: { name: "issue-update", content: "x", confirmed: false },
           workflow_spec_approve: {
             confirmed: false,
             spec_path: "missing-spec.md",
