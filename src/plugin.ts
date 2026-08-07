@@ -2,7 +2,10 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Plugin } from "@opencode-ai/plugin";
+
 import { getWorkflowBootstrap, isWorkflowBootstrap } from "./bootstrap";
+import { REMINDER_TEXT, DETECTION_TEXT } from "./core/reminder";
+import { detectProseChoices } from "./core/detector";
 import { createTools } from "./tools";
 import { adaptPluginHandoffClient } from "./tools/handoff";
 import { WorkflowStateStore } from "./state";
@@ -90,23 +93,54 @@ const plugin: Plugin = async ({ client }) => {
       const context = state.compactionContext(sessionID);
       if (context) output.context.push(context);
     },
-    // ponytail: mirrors Superpowers bootstrap — inject once on the first user turn
+    // ponytail: mirrors Superpowers bootstrap — inject once on the first user turn;
+    // plus a per-turn reminder and post-hoc prose-choice detection
     "experimental.chat.messages.transform": async (_input, output) => {
-      const bootstrap = getWorkflowBootstrap();
-      if (!bootstrap || !output.messages.length) return;
-      const firstUser = output.messages.find((m) => m.info.role === "user");
-      if (!firstUser?.parts.length) return;
-      if (firstUser.parts.some(
-        (part) => part.type === "text" && isWorkflowBootstrap(part.text),
-      )) return;
-      const anchor = firstUser.parts.find((part) => part.type === "text") ?? firstUser.parts[0];
-      firstUser.parts.unshift({
-        id: anchor.id,
-        sessionID: anchor.sessionID,
-        messageID: anchor.messageID,
-        type: "text",
-        text: bootstrap,
-      });
+      try {
+        if (!output.messages.length) return;
+        const firstUser = output.messages.find((m) => m.info.role === "user");
+        if (!firstUser?.parts.length) return;
+        const anchor = firstUser.parts.find((part) => part.type === "text") ?? firstUser.parts[0];
+        const makePart = (text: string) => ({
+          id: anchor.id,
+          sessionID: anchor.sessionID,
+          messageID: anchor.messageID,
+          type: "text" as const,
+          text,
+        });
+        const allText = firstUser.parts
+          .filter((part) => part.type === "text")
+          .map((part) => (part as { text?: string }).text ?? "")
+          .join("\n");
+
+        // First turn: full bootstrap (existing behavior)
+        const bootstrap = getWorkflowBootstrap();
+        if (bootstrap && !allText.includes("<workflow-toolkit-contract>")) {
+          firstUser.parts.unshift(makePart(bootstrap));
+        }
+
+        // Every turn: compact reminder (idempotent)
+        if (!allText.includes(REMINDER_TEXT)) {
+          firstUser.parts.unshift(makePart(REMINDER_TEXT));
+        }
+
+        // Post-hoc detection: last assistant message used prose choices?
+        const lastAssistant = [...output.messages].reverse().find((m) => m.info.role === "assistant");
+        if (lastAssistant) {
+          const assistantText = lastAssistant.parts
+            .filter((p) => p.type === "text")
+            .map((p) => (p as { text?: string }).text ?? "")
+            .join("\n");
+          const usedQuestionTool = lastAssistant.parts.some(
+            (p) => (p as { tool?: string }).tool === "question",
+          );
+          if (detectProseChoices(assistantText) && !usedQuestionTool && !allText.includes("workflow-detection")) {
+            firstUser.parts.unshift(makePart(DETECTION_TEXT));
+          }
+        }
+      } catch {
+        // never break the session from a hook
+      }
     },
   };
 };
