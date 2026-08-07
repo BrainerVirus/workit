@@ -9,15 +9,29 @@ type State = "missing" | "invalid" | "ok" | "skip";
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const templatesDir = () => path.join(repoRoot, "templates", "hygiene");
 
+const packageJson = (root: string): Record<string, unknown> | null => {
+  if (!existsSync(path.join(root, "package.json"))) return null;
+  try { return JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")); } catch { return null; }
+};
+
 const isOpenSource = (root: string): boolean => {
   if (existsSync(path.join(root, "LICENSE"))) return true;
-  if (existsSync(path.join(root, "package.json"))) {
-    try {
-      const pkg = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"));
-      if (pkg.private === false) return true;
-    } catch { /* ignore */ }
-  }
+  const pkg = packageJson(root);
+  if (pkg && !pkg.private) return true; // I2: missing `private` = public (npm default)
   return path.basename(root) === "workflow-toolkit";
+};
+
+const licenseHolder = (root: string): string => {
+  const pkg = packageJson(root);
+  if (pkg) {
+    const author = pkg.author;
+    if (typeof author === "string" && author.trim()) return author.trim();
+    if (author && typeof author === "object") {
+      const name = (author as Record<string, unknown>).name;
+      if (typeof name === "string" && name.trim()) return name.trim();
+    }
+  }
+  return "";
 };
 
 export const hygieneFiles = (root: string): { state: Record<HygieneFile, State>; openSource: boolean } => {
@@ -55,7 +69,7 @@ export const ensureHygieneFiles = (
     const content = readFileSync(tpl, "utf8")
       .replace(/<PROJECT>/g, path.basename(root))
       .replace(/<YEAR>/g, String(new Date().getFullYear()))
-      .replace(/<HOLDER>/g, "");
+      .replace(/<HOLDER>\s*/g, licenseHolder(root));
     writeFileSync(path.join(root, file), content, "utf8");
     created.push(file);
   }

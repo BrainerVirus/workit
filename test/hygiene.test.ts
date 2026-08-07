@@ -60,3 +60,24 @@ test("ensure creates missing files, preserves existing, requires confirmed", () 
     expect(readFileSync(path.join(dir, "CHANGELOG.md"), "utf8")).toContain("## [Unreleased]");
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test("openSource heuristic: missing private field is public (npm default)", () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "wf-hygiene-os3-"));
+  try {
+    writeFileSync(path.join(dir, "package.json"), JSON.stringify({ name: "x" }), "utf8");
+    expect(hygieneFiles(dir).openSource).toBe(true);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("ensure LICENSE uses package.json author when present", () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "wf-hygiene-auth-"));
+  try {
+    writeFileSync(path.join(dir, "package.json"), JSON.stringify({ name: "x", author: "Jane Doe" }), "utf8");
+    const result = ensureHygieneFiles(dir, { confirmed: true, includeOpenSource: true });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      const license = readFileSync(path.join(dir, "LICENSE"), "utf8");
+      expect(license).toContain("Jane Doe");
+    }
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

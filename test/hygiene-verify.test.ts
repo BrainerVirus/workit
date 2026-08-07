@@ -19,3 +19,13 @@ test("verify passes with valid changelog, fails without", () => {
     expect(fail.status).toBe(1);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test("verify dry-run skips changelog check", () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "wf-hygiene-verify-dry-"));
+  try {
+    const run = (args: string[]) => spawnSync("bash", args, { cwd: dir, encoding: "utf8" });
+    const result = run([path.resolve(import.meta.dir, "../scripts/verify-project.sh"), "--dry-run"]);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("skipped (dry run)");
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

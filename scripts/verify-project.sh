@@ -112,9 +112,13 @@ if [ -f pyproject.toml ] || [ -f pytest.ini ] || [ -d tests ]; then
 fi
 
 printf '\n## CHANGELOG.md format\n\n'
+printf 'command: grep -qi "## [Unreleased]" CHANGELOG.md\n\n'
 
-if [ -f CHANGELOG.md ]; then
-  if grep -q '## \[Unreleased\]' CHANGELOG.md; then
+if [ "$dry_run" = true ]; then
+  printf 'status: skipped (dry run)\n'
+  skipped=$((skipped + 1))
+elif [ -f CHANGELOG.md ]; then
+  if grep -qi '## \[Unreleased\]' CHANGELOG.md; then
     printf 'status: pass\n'
     passed=$((passed + 1))
   else
