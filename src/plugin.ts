@@ -2,7 +2,10 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Plugin } from "@opencode-ai/plugin";
+
 import { getWorkflowBootstrap, isWorkflowBootstrap } from "./bootstrap";
+import { REMINDER_TEXT, DETECTION_TEXT } from "./core/reminder";
+import { detectProseChoices } from "./core/detector";
 import { createTools } from "./tools";
 import { adaptPluginHandoffClient } from "./tools/handoff";
 import { WorkflowStateStore } from "./state";
@@ -90,23 +93,70 @@ const plugin: Plugin = async ({ client }) => {
       const context = state.compactionContext(sessionID);
       if (context) output.context.push(context);
     },
-    // ponytail: mirrors Superpowers bootstrap — inject once on the first user turn
+    // ponytail: mirrors Superpowers bootstrap — inject once on the first user turn;
+    // plus a per-turn reminder and post-hoc prose-choice detection
     "experimental.chat.messages.transform": async (_input, output) => {
-      const bootstrap = getWorkflowBootstrap();
-      if (!bootstrap || !output.messages.length) return;
-      const firstUser = output.messages.find((m) => m.info.role === "user");
-      if (!firstUser?.parts.length) return;
-      if (firstUser.parts.some(
-        (part) => part.type === "text" && isWorkflowBootstrap(part.text),
-      )) return;
-      const anchor = firstUser.parts.find((part) => part.type === "text") ?? firstUser.parts[0];
-      firstUser.parts.unshift({
-        id: anchor.id,
-        sessionID: anchor.sessionID,
-        messageID: anchor.messageID,
-        type: "text",
-        text: bootstrap,
-      });
+      try {
+        if (!output.messages.length) return;
+        const users = output.messages.filter((m) => m.info.role === "user");
+        const firstUser = users[0];
+        const currentUser = users[users.length - 1];
+        if (!currentUser?.parts.length) return;
+
+        // First turn only: full bootstrap anchored to the session's first user message
+        if (firstUser?.parts.length) {
+          const firstAnchor = firstUser.parts.find((part) => part.type === "text") ?? firstUser.parts[0];
+          const firstText = firstUser.parts
+            .filter((part) => part.type === "text")
+            .map((part) => (part as { text?: string }).text ?? "")
+            .join("\n");
+          const bootstrap = getWorkflowBootstrap();
+          if (bootstrap && !firstText.includes("<workflow-toolkit-contract>")) {
+            firstUser.parts.unshift({
+              id: firstAnchor.id,
+              sessionID: firstAnchor.sessionID,
+              messageID: firstAnchor.messageID,
+              type: "text" as const,
+              text: bootstrap,
+            });
+          }
+        }
+
+        // Every turn: compact reminder anchored to the CURRENT user message (idempotent)
+        const anchor = currentUser.parts.find((part) => part.type === "text") ?? currentUser.parts[0];
+        const makePart = (text: string) => ({
+          id: `${anchor.id}-r${Date.now()}`,
+          sessionID: anchor.sessionID,
+          messageID: anchor.messageID,
+          type: "text" as const,
+          text,
+        });
+        const currentText = currentUser.parts
+          .filter((part) => part.type === "text")
+          .map((part) => (part as { text?: string }).text ?? "")
+          .join("\n");
+        if (!currentText.includes(REMINDER_TEXT)) {
+          currentUser.parts.unshift(makePart(REMINDER_TEXT));
+        }
+
+        // Post-hoc detection: last assistant message (before current user turn) used prose choices?
+        const beforeCurrent = output.messages.slice(0, output.messages.indexOf(currentUser));
+        const lastAssistant = [...beforeCurrent].reverse().find((m) => m.info.role === "assistant");
+        if (lastAssistant) {
+          const assistantText = lastAssistant.parts
+            .filter((p) => p.type === "text")
+            .map((p) => (p as { text?: string }).text ?? "")
+            .join("\n");
+          const usedQuestionTool = lastAssistant.parts.some(
+            (p) => (p as { tool?: string }).tool === "question",
+          );
+          if (detectProseChoices(assistantText) && !usedQuestionTool && !currentText.includes("workflow-detection")) {
+            currentUser.parts.unshift(makePart(DETECTION_TEXT));
+          }
+        }
+      } catch {
+        // never break the session from a hook
+      }
     },
   };
 };
