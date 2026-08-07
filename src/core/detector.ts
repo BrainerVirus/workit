@@ -42,3 +42,22 @@ export const detectProseChoices = (text: string): Detection => {
 
   return null;
 };
+
+const stripFences = (text: string): string => {
+  const lines = text.split("\n");
+  const out: string[] = [];
+  let inFence = false;
+  for (const line of lines) {
+    if (line.startsWith("```")) { inFence = !inFence; continue; }
+    if (!inFence) out.push(line);
+  }
+  return out.join("\n");
+};
+
+export const detectBacktickDocRefs = (text: string): string[] | null => {
+  const body = stripFences(text);
+  const refs = [...body.matchAll(/`docs\/[^`\s]+\.md`/g)].map((m) => m[0]);
+  if (!refs.length) return null;
+  if (/\[[^\]]+\]\(docs\//.test(body)) return null;
+  return refs;
+};

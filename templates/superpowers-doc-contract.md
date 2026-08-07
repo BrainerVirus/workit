@@ -63,3 +63,7 @@ On success, use native `question` / Cursor `AskQuestion` with exactly these opti
 Never emit Superpowers text beginning “Two execution options”.
 
 - Specs/plans must follow `templates/spec-template.md` / `templates/plan-template.md` (mandated diagrams, tables, CA-XX).
+
+## Doc delivery
+
+When delivering a spec or plan, use a clickable markdown link (\`[spec.md](docs/<slug>/spec.md)\`) and a 3-5 bullet summary of the content (Context, Goals, key decisions, status). Never reference docs with backtick-only paths.

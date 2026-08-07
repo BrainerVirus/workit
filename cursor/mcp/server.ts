@@ -10,6 +10,7 @@ import { buildHandoffPrompt } from "../../src/tools/handoff";
 import { readFlowState, transitionSpec, transitionPlan, recordMenuChoice, slugFromPath } from "../../src/core/flow-state";
 import { linkDocsRepo, listSpecs, promoteSpec } from "../../src/core/docs-repo";
 import { configDir, readConfig, writeConfig } from "../../src/core/config";
+import { ensureProjectGitignore } from "../../src/core/gitignore";
 import { listTemplates, writeTemplate } from "../../src/core/templates";
 import { listRules, writeRule } from "../../src/core/rules";
 import { initStatus, initApply, toolkitStatus } from "../../src/core/init";
@@ -719,6 +720,7 @@ server.registerTool(
         "youtrack_token_placeholder",
         "vcs_scaffold",
         "config",
+        "gitignore",
       ]),
       confirmed: z.boolean(),
       base_url: z.string().optional(),
@@ -749,6 +751,11 @@ server.registerTool(
     branch_policy_allowed,
     branch_policy_protected,
   }) => {
+    if (action === "gitignore") {
+      const result = ensureProjectGitignore(workspace_root ?? process.cwd(), confirmed);
+      if (!result.ok) return jsonResult({ error: result.error });
+      return jsonResult(result);
+    }
     if (action === "config") {
       if (locale !== undefined && !/^[a-z]{2,3}(-[A-Z]{2})?$/.test(locale)) {
         return jsonResult({ error: `invalid locale: ${JSON.stringify(locale)} — expected BCP-47 like en or es-CL` });

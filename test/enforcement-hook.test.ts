@@ -62,3 +62,37 @@ test("no correction when assistant did not use prose choices", async () => {
   const userText = output.messages[1].parts.find((p: any) => p.type === "text")!.text;
   expect(userText).not.toContain("workflow-detection");
 });
+
+
+test("reminder includes the doc delivery rule", () => {
+  expect(REMINDER_TEXT).toContain("clickable markdown link");
+  expect(REMINDER_TEXT).toContain("3-5 bullet summary");
+});
+
+test("hook injects doc-delivery correction on backtick-only refs", async () => {
+  const hooks = await plugin({ directory: "/repo", worktree: "/repo", serverUrl: new URL("http://localhost") } as never);
+  const output = {
+    messages: [
+      userMessage("start"),
+      assistantMessage("Spec is at `docs/x/spec.md`. Please review."),
+      userMessage("ok"),
+    ],
+  };
+  await hooks["experimental.chat.messages.transform"]?.({} as never, output as never);
+  const currentText = output.messages[2].parts.filter((p: any) => p.type === "text").map((p: any) => p.text).join("\n");
+  expect(currentText).toContain("workflow-doc-delivery");
+});
+
+test("hook does not correct when markdown link used", async () => {
+  const hooks = await plugin({ directory: "/repo", worktree: "/repo", serverUrl: new URL("http://localhost") } as never);
+  const output = {
+    messages: [
+      userMessage("start"),
+      assistantMessage("See [spec.md](docs/x/spec.md) for details."),
+      userMessage("ok"),
+    ],
+  };
+  await hooks["experimental.chat.messages.transform"]?.({} as never, output as never);
+  const currentText = output.messages[2].parts.filter((p: any) => p.type === "text").map((p: any) => p.text).join("\n");
+  expect(currentText).not.toContain("workflow-doc-delivery");
+});

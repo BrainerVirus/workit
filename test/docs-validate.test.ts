@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import { createSddTools } from "../src/tools/sdd";
@@ -68,4 +69,50 @@ test("workflow_docs_validate hard-fails on Spec link or branch mismatch", async 
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("sdd_not_ignored when sdd dir exists and is not gitignored", async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wf-sdd-ignore-"));
+  try {
+    const run = (args: string[]) => spawnSync("git", args, { cwd: root, encoding: "utf8" });
+    run(["init", "-q"]);
+    run(["config", "user.email", "t@t"]);
+    run(["config", "user.name", "T"]);
+    mkdirSync(path.join(root, "docs", "x"), { recursive: true });
+    mkdirSync(path.join(root, "docs", "x", "sdd"), { recursive: true });
+    writeFileSync(path.join(root, "docs/x/spec.md"), "# Spec\n\n**Branch:** `feature/x`\n");
+    writeFileSync(path.join(root, "docs/x/plan.md"), "# Plan\n\n**Spec:** `docs/x/spec.md`\n**Branch:** `feature/x`\n\n### Task 1: One\n\n- [ ] **Step 1:** Work\n");
+    writeFileSync(path.join(root, "docs/x/sdd/progress.md"), "Task 1: complete\n");
+
+    const raw = await createSddTools(new WorkflowStateStore()).workflow_docs_validate.execute(
+      { spec_path: "docs/x/spec.md", plan_path: "docs/x/plan.md" },
+      { directory: root, worktree: root, sessionID: "s" } as never,
+    );
+    const out = JSON.parse(raw as string);
+    expect(out.ok).toBe(true);
+    expect(out.data.quality.some((f: any) => f.code === "sdd_not_ignored")).toBe(true);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("no sdd_not_ignored when sdd is gitignored", async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wf-sdd-ignore-ok-"));
+  try {
+    const run = (args: string[]) => spawnSync("git", args, { cwd: root, encoding: "utf8" });
+    run(["init", "-q"]);
+    run(["config", "user.email", "t@t"]);
+    run(["config", "user.name", "T"]);
+    writeFileSync(path.join(root, ".gitignore"), "docs/*/sdd/\n", "utf8");
+    mkdirSync(path.join(root, "docs", "x"), { recursive: true });
+    mkdirSync(path.join(root, "docs", "x", "sdd"), { recursive: true });
+    writeFileSync(path.join(root, "docs/x/spec.md"), "# Spec\n\n**Branch:** `feature/x`\n");
+    writeFileSync(path.join(root, "docs/x/plan.md"), "# Plan\n\n**Spec:** `docs/x/spec.md`\n**Branch:** `feature/x`\n\n### Task 1: One\n\n- [ ] **Step 1:** Work\n");
+    writeFileSync(path.join(root, "docs/x/sdd/progress.md"), "Task 1: complete\n");
+
+    const raw = await createSddTools(new WorkflowStateStore()).workflow_docs_validate.execute(
+      { spec_path: "docs/x/spec.md", plan_path: "docs/x/plan.md" },
+      { directory: root, worktree: root, sessionID: "s" } as never,
+    );
+    const out = JSON.parse(raw as string);
+    expect(out.data.quality.some((f: any) => f.code === "sdd_not_ignored")).toBe(false);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });

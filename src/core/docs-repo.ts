@@ -131,6 +131,18 @@ export const promoteSpec = (
     return { ok: false, error: "spec has hard quality findings; pass force: true to override", findings };
   }
 
+  // SDD working state must be gitignored before promotion
+  if (!opts.force) {
+    const sddDir = path.join(workspaceRoot, "docs", slug, "sdd");
+    if (existsSync(sddDir)) {
+      try {
+        execFileSync("git", ["-C", workspaceRoot, "check-ignore", path.posix.join("docs", slug, "sdd", "progress.md")], { stdio: "pipe" });
+      } catch {
+        return { ok: false, error: `docs/${slug}/sdd/ is not gitignored — add 'docs/*/sdd/' to .gitignore or pass force: true` };
+      }
+    }
+  }
+
   const prefix = monthPrefix();
   const featuresDir = path.join(repoPath, "features");
   const existing = existsSync(featuresDir)

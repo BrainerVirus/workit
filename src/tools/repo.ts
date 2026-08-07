@@ -9,6 +9,7 @@ import { parseKeyValueLines, parseSections } from "../core/parse-sections";
 import { parseVerifyOutput } from "../core/verify-parse";
 import { branchSetup } from "../core/branch";
 import { configDir, readConfig, writeConfig, type BranchPreset, type ToolkitConfig } from "../core/config";
+import { ensureProjectGitignore } from "../core/gitignore";
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const scripts = path.join(packageRoot, "scripts");
@@ -290,7 +291,7 @@ export function createRepoTools(runtime: RepoRuntime = defaultRuntime) {
       args: {
         confirmed: tool.schema.boolean(),
         action: tool.schema.enum([
-          "youtrack_scaffold", "youtrack_json", "youtrack_token_placeholder", "vcs_scaffold", "config",
+          "youtrack_scaffold", "youtrack_json", "youtrack_token_placeholder", "vcs_scaffold", "config", "gitignore",
         ]),
         base_url: tool.schema.string().optional(),
         default_mention: tool.schema.string().optional(),
@@ -310,6 +311,10 @@ export function createRepoTools(runtime: RepoRuntime = defaultRuntime) {
       }, context) => {
         const rejected = requireConfirmed(confirmed);
         if (rejected) return rejected;
+        if (action === "gitignore") {
+          const result = ensureProjectGitignore(context.directory, confirmed);
+          return output(result.ok ? ok(result) : fail(result.error));
+        }
         if (action === "config") {
           const LOCALE_RE = /^[a-z]{2,3}(-[A-Z]{2})?$/;
           if (locale !== undefined && !LOCALE_RE.test(locale)) {

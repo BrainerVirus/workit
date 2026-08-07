@@ -25,3 +25,5 @@ When the user wants to personalize the toolkit (locale, timezone, branch policy)
 4. **Custom branch lists** (only when preset = custom): allowed patterns (`feature/*`, `codex/*`, …) and protected names (`main`, …).
 
 Then call `workflow_toolkit_init_apply` with `action: "config"`, `confirmed: true`, and the answered values. Report the written `config.json` path and its contents.
+
+After config, call `workflow_toolkit_init_apply` with `action: "gitignore"` and `confirmed: true` to ensure the project `.gitignore` covers `docs/*/sdd/` and common OS/editor entries (creates it if missing, preserves existing entries).

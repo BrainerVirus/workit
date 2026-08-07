@@ -48,3 +48,28 @@ test("matches one-line choices", () => {
   expect(d).not.toBeNull();
   if (d) expect(d.pattern).toBe("alpha");
 });
+
+import { detectBacktickDocRefs } from "../src/core/detector";
+
+test("detects backtick-only doc references", () => {
+  const refs = detectBacktickDocRefs("Spec is at `docs/upgrade-19/spec.md`. Please review.");
+  expect(refs).not.toBeNull();
+  if (refs) expect(refs[0]).toBe("`docs/upgrade-19/spec.md`");
+});
+
+test("does not detect when a markdown link is present", () => {
+  expect(detectBacktickDocRefs("See [spec.md](docs/upgrade-19/spec.md) and `docs/upgrade-19/plan.md`.")).toBeNull();
+});
+
+test("null when no doc references", () => {
+  expect(detectBacktickDocRefs("No docs here.")).toBeNull();
+});
+
+test("does not match refs inside fenced code blocks", () => {
+  const fenced = "```\n// config lives at `docs/config.md`\n```\nDone.";
+  expect(detectBacktickDocRefs(fenced)).toBeNull();
+});
+
+test("does not match plain code strings without docs/", () => {
+  expect(detectBacktickDocRefs("Use the `open` command.")).toBeNull();
+});
