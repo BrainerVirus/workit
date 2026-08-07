@@ -7,6 +7,8 @@ import { WorkflowStateStore } from "../src/state";
 import { createFlowTools } from "../src/tools/flow";
 import { buildHandoffPrompt } from "../src/tools/handoff";
 
+const posix = (p: string) => p.split(path.sep).join("/");
+
 const fixture = () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "wf-layout-"));
   const slug = "add-some-awesome-feat";
@@ -45,7 +47,7 @@ test("sdd context resolves docs/<slug>/sdd", async () => {
     );
     const out = JSON.parse(raw as string);
     expect(out.ok).toBe(true);
-    expect(out.data.sdd_dir).toBe(`docs/${slug}/sdd`);
+    expect(posix(out.data.sdd_dir)).toBe(`docs/${slug}/sdd`);
   } finally { cleanup(root); }
 });
 
@@ -55,9 +57,9 @@ test("handoff resolves docs/<slug>/plan.md and spec.md", () => {
     const result = buildHandoffPrompt(root, `docs/${slug}/plan.md`);
     expect("error" in result).toBe(false);
     if (!("error" in result)) {
-      expect(result.plan).toBe(`docs/${slug}/plan.md`);
-      expect(result.spec).toBe(`docs/${slug}/spec.md`);
-      expect(result.sdd).toBe(`docs/${slug}/sdd`);
+      expect(posix(result.plan)).toBe(`docs/${slug}/plan.md`);
+      expect(posix(result.spec)).toBe(`docs/${slug}/spec.md`);
+      expect(posix(result.sdd)).toBe(`docs/${slug}/sdd`);
     }
   } finally { cleanup(root); }
 });
