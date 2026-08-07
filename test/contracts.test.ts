@@ -156,3 +156,9 @@ test("cursor session-start includes the contract reminder", () => {
   expect(hook).toContain("Bounded user choices");
   expect(hook).toContain("never A/B/C or 1/2/3 lists in prose");
 });
+
+test("contract includes the doc delivery section", () => {
+  const contract = readFileSync(path.resolve(import.meta.dir, "../templates/superpowers-doc-contract.md"), "utf8");
+  expect(contract).toContain("## Doc delivery");
+  expect(contract).toMatch(/\[spec\.md\]\(docs\/<slug>\/spec\.md\)/);
+});
