@@ -5,6 +5,8 @@ import { parseTasksFromPlan } from "./docs-validate";
 import { docsValidate } from "./docs-validate";
 import { readFlowState } from "./flow-state";
 
+const posix = (p: string) => p.split(path.sep).join("/");
+
 export const slugFromPlan = (planPath: string) => {
   const dirName = path.basename(path.dirname(planPath));
   return dirName === "." || dirName === "/" || dirName === "" ? "" : dirName;
@@ -47,9 +49,9 @@ export function sddContext({
   }
   if (!resolvedSlug) return { error: "slug or plan_path required" };
 
-  const sdd_dir = path.join("docs", resolvedSlug, "sdd");
-  const progress_path = path.join(sdd_dir, "progress.md");
-  const manifest_path = path.join(sdd_dir, "manifest.json");
+  const sdd_dir = path.posix.join("docs", resolvedSlug, "sdd");
+  const progress_path = path.posix.join(sdd_dir, "progress.md");
+  const manifest_path = path.posix.join(sdd_dir, "manifest.json");
 
   let progress_lines: string[] = [];
   let completed_task_ids: number[] = [];
@@ -131,7 +133,7 @@ export function sddTaskBrief({
   mkdirSync(dir, { recursive: true });
   const out = path.join(dir, `task-${task_id}-brief.md`);
   writeFileSync(out, `# Task ${task_id} brief\n\n${section_text}\n`, "utf8");
-  const rel = path.relative(cwd, out);
+  const rel = posix(path.relative(cwd, out));
   return { brief_path: rel, task_id };
 }
 
@@ -155,7 +157,7 @@ export function sddReviewPackage({
   try {
     const diff = execFileSync("git", ["diff", base_sha, head_sha], { cwd, encoding: "utf8" });
     writeFileSync(diffPath, diff, "utf8");
-    const rel = path.relative(cwd, diffPath);
+    const rel = posix(path.relative(cwd, diffPath));
     return { diff_path: rel, base_sha, head_sha, base7, head7 };
   } catch (error) {
     return { error: error instanceof Error ? error.message : "git diff failed" };
@@ -181,6 +183,6 @@ export function sddAppendProgress({
   }
   mkdirSync(path.dirname(path_), { recursive: true });
   appendFileSync(path_, trimmed + "\n", "utf8");
-  const rel = path.relative(cwd, path_);
+  const rel = posix(path.relative(cwd, path_));
   return { ok: true, line: trimmed, progress_path: rel };
 }

@@ -22,7 +22,7 @@ export type RepoRuntime = {
 };
 
 const defaultRuntime: RepoRuntime = {
-  runScript: (root, script, args, env) => run(root, path.join(scripts, script), args, env),
+  runScript: (root, script, args, env) => run(root, "bash", [path.join(scripts, script), ...args], env),
   git: (root, args) => run(root, "git", args),
 };
 
