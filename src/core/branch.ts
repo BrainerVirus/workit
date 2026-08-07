@@ -2,23 +2,25 @@ import { readFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { gitContext } from "./git";
+import { readConfig, resolveBranchPolicy } from "./config";
 
-const PROTECTED = new Set(["main", "develop", "master", "prod", "production"]);
-const DECLARE_RE = /^\s*\*+Branch:\*+\s*`?((?:feature|bugfix)\/[^`\s|]+)`?\s*$/gim;
+const policy = () => resolveBranchPolicy(readConfig());
+const allowedBranch = (name: string) => policy().allowed.some((r) => r.test(name));
+const isProtected = (name: string) => policy().protected.has(name.toLowerCase());
+const DECLARE_RE = /^\s*\*+Branch:\*+\s*`?([^`\s|]+)`?\s*$/gim;
 const USE_CURRENT_RE = /^\s*\*+Branch:\*+\s*use-current\s*$/im;
-const BRANCH_PAT = /^(feature|bugfix)\/[a-z0-9][a-z0-9._/-]*$/i;
 const readSafe = (p: string): string | null => {
   try { return readFileSync(p, "utf8"); } catch { return null; }
 };
 
 const normalizeBranch = (name: string): string | null => {
-  let n = name.trim().replace(/`/g, "").replace(/\.+$/, "");
-  if (PROTECTED.has(n.toLowerCase())) return null;
-  if (!BRANCH_PAT.test(n)) return null;
-  const [kind, ...restParts] = n.split("/");
-  const rest = restParts.join("/").toLowerCase().replace(/[^\w.-]+/g, "-").replace(/^-+|-+$/g, "").replace(/-{2,}/g, "-");
-  if (!rest) return null;
-  return `${kind.toLowerCase()}/${rest}`;
+  const n = name.trim().replace(/`/g, "").replace(/\.+$/, "");
+  if (isProtected(n)) return null;
+  if (!allowedBranch(n)) return null;
+  const parts = n.toLowerCase().split("/").map((p) =>
+    p.replace(/[^\w.-]+/g, "-").replace(/^-+|-+$/g, "").replace(/-{2,}/g, "-"));
+  if (parts.some((p) => !p)) return null;
+  return parts.join("/");
 };
 
 const deriveSlug = (planPath: string): string => {
@@ -67,22 +69,27 @@ export const resolveBranch = ({
     const text = readSafe(file);
     if (!text) continue;
     if (USE_CURRENT_RE.test(text)) {
-      if (!current || !BRANCH_PAT.test(current)) {
-        return { error: "use-current but HEAD is not feature/* or bugfix/*" };
+      if (!current || !allowedBranch(current) || isProtected(current)) {
+        return { error: `use-current but HEAD ${current} is not an allowed branch` };
       }
       return finish(current, "use-current");
     }
   }
 
-  if (current && BRANCH_PAT.test(current)) return finish(current, "keep-current");
+  if (current && allowedBranch(current) && !isProtected(current)) return finish(current, "keep-current");
 
+  let declaredButInvalid: string | null = null;
   for (const file of [spec, plan]) {
     const text = readSafe(file);
     if (!text) continue;
     for (const match of text.matchAll(DECLARE_RE)) {
       const normalized = normalizeBranch(match[1]);
       if (normalized) return finish(normalized, file === spec ? "spec" : "plan");
+      declaredButInvalid ??= match[1];
     }
+  }
+  if (declaredButInvalid) {
+    return { error: `declared branch ${JSON.stringify(declaredButInvalid)} is not allowed by the branch policy` };
   }
 
   const slug = deriveSlug(plan);
@@ -102,7 +109,7 @@ export const docsBranch = ({
   const current = git.branch;
   const kindArg = (kind ?? "feature").toLowerCase();
 
-  if (current && BRANCH_PAT.test(current)) {
+  if (current && allowedBranch(current) && !isProtected(current)) {
     return { branch: current, action: "keep", current_branch: current, base: "develop", dirty: Boolean(git.status_short.trim()) };
   }
   if (current === "main" || current === "master" || current === "develop") {
@@ -185,8 +192,8 @@ export const branchSetup = ({
 
   const target = target_branch ?? "";
   if (!target) return { error: "target branch required" };
-  if (PROTECTED.has(target)) return { error: `protected branch ${target}` };
-  if (!/^(feature|bugfix)\//.test(target)) return { error: `target must be feature/* or bugfix/* — got ${target}` };
+  if (isProtected(target)) return { error: `protected branch ${target}` };
+  if (!allowedBranch(target)) return { error: `target branch ${target} is not allowed by the branch policy` };
 
   let stash_ref: string | undefined;
   if (current !== target) {

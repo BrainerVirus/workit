@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { getWorkflowBootstrap, isWorkflowBootstrap, loadWorkflowBootstrap } from "../src/bootstrap";
 import plugin from "../src/plugin";
@@ -41,4 +43,21 @@ test("loadWorkflowBootstrap returns null for a missing template root", () => {
 test("loadWorkflowBootstrap reads the real contract template", () => {
   const contract = loadWorkflowBootstrap(path.resolve(import.meta.dir, ".."));
   expect(contract).toContain("**Spec:**");
+});
+
+test("bootstrap contract declares the configured locale", async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "wf-bootstrap-locale-"));
+  try {
+    process.env.WORKFLOW_TOOLKIT_CONFIG_DIR = dir;
+    writeFileSync(path.join(dir, "config.json"), JSON.stringify({
+      locale: "es-CL", localeOptions: ["en", "es-CL"], timezone: "UTC",
+      branchPolicy: { preset: "gitflow" },
+    }, null, 2));
+    const fresh = await import(`../src/bootstrap?locale=${Date.now()}`);
+    const bootstrap = fresh.getWorkflowBootstrap();
+    expect(bootstrap).toContain("es-CL");
+  } finally {
+    delete process.env.WORKFLOW_TOOLKIT_CONFIG_DIR;
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

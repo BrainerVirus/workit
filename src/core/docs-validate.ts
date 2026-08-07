@@ -3,7 +3,7 @@ import path from "node:path";
 
 export type DocError = { code: string; message: string; path?: string };
 
-const BRANCH_RE = /^\s*\*+Branch:\*+\s*`?((?:feature|bugfix)\/[^`\s|]+)`?\s*$/im;
+const BRANCH_RE = /^\s*\*+Branch:\*+\s*`?([^`\s|]+)`?\s*$/im;
 const SPEC_LINK_RE = /^\s*\*+Spec:\*+\s*(?:`([^`]+)`|(\S+))\s*$/im;
 const TASK_RE = /^###\s+Task\s+(\d+):\s*(.*)$/i;
 

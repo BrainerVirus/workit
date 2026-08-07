@@ -8,6 +8,7 @@ import { gitContext } from "../core/git";
 import { parseKeyValueLines, parseSections } from "../core/parse-sections";
 import { parseVerifyOutput } from "../core/verify-parse";
 import { branchSetup } from "../core/branch";
+import { configDir, readConfig, writeConfig, type BranchPreset, type ToolkitConfig } from "../core/config";
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const scripts = path.join(packageRoot, "scripts");
@@ -26,7 +27,8 @@ const defaultRuntime: RepoRuntime = {
 const output = (value: unknown) => JSON.stringify(value, null, 2);
 const diagnostics = ({ stdout, stderr, exitCode }: RunResult) => ({ stdout, stderr, exitCode });
 const requireConfirmed = (confirmed: boolean) => confirmed === true ? null : output(fail("confirmed: true required"));
-const protectedBranches = new Set(["main", "master", "develop", "prod"]);
+import { resolveBranchPolicy } from "../core/config";
+const branchPolicy = () => resolveBranchPolicy(readConfig());
 
 function scriptResult<T extends object>(result: RunResult, parse: (stdout: string) => T) {
   if (result.exitCode !== 0) {
@@ -246,8 +248,9 @@ export function createRepoTools(runtime: RepoRuntime = defaultRuntime) {
           branch.stderr.trim() || branch.stdout.trim() || "unable to read current branch", diagnostics(branch),
         ));
         const name = branch.stdout.trim();
-        if (protectedBranches.has(name)) return output(fail(`cannot commit on protected branch ${name}`));
-        if (!/^(feature|bugfix)\/.+/.test(name)) return output(fail("commit requires feature/* or bugfix/* branch"));
+        const pol = branchPolicy();
+        if (pol.protected.has(name.toLowerCase())) return output(fail(`cannot commit on protected branch ${name}`));
+        if (!pol.allowed.some((r) => r.test(name)) || name.endsWith("/")) return output(fail(`commit requires an allowed branch (current: ${name})`));
         return output(scriptResult(runtime.git(context.directory, ["commit", "-m", message]),
           (stdout) => ({ stdout: stdout.trim() })));
       },
@@ -269,8 +272,9 @@ export function createRepoTools(runtime: RepoRuntime = defaultRuntime) {
           branch.stderr.trim() || branch.stdout.trim() || "unable to read current branch", diagnostics(branch),
         ));
         const name = branch.stdout.trim();
-        if (!/^(feature|bugfix)\/.+/.test(name)) {
-          return output(fail("PR creation requires feature/* or bugfix/* branch"));
+        const pol = branchPolicy();
+        if (!pol.allowed.some((r) => r.test(name)) || name.endsWith("/")) {
+          return output(fail(`PR creation requires an allowed branch (current: ${name})`));
         }
         return output(legacyScriptResult(runtime.runScript(context.directory, "pr-create.sh", [], {
           WF_PR_TITLE: title,
@@ -286,19 +290,45 @@ export function createRepoTools(runtime: RepoRuntime = defaultRuntime) {
       args: {
         confirmed: tool.schema.boolean(),
         action: tool.schema.enum([
-          "youtrack_scaffold", "youtrack_json", "youtrack_token_placeholder", "vcs_scaffold",
+          "youtrack_scaffold", "youtrack_json", "youtrack_token_placeholder", "vcs_scaffold", "config",
         ]),
         base_url: tool.schema.string().optional(),
         default_mention: tool.schema.string().optional(),
         meeting_issue: tool.schema.string().optional(),
         vcs_provider: tool.schema.enum(["gitlab", "github"]).optional(),
         vcs_target_branch: tool.schema.string().optional(),
+        locale: tool.schema.string().optional(),
+        locale_options: tool.schema.array(tool.schema.string()).optional(),
+        timezone: tool.schema.string().optional(),
+        branch_policy_preset: tool.schema.enum(["gitflow", "github-flow", "trunk-based", "custom"]).optional(),
+        branch_policy_allowed: tool.schema.array(tool.schema.string()).optional(),
+        branch_policy_protected: tool.schema.array(tool.schema.string()).optional(),
       },
       execute: async ({
         confirmed, action, base_url, default_mention, meeting_issue, vcs_provider, vcs_target_branch,
+        locale, locale_options, timezone, branch_policy_preset, branch_policy_allowed, branch_policy_protected,
       }, context) => {
         const rejected = requireConfirmed(confirmed);
         if (rejected) return rejected;
+        if (action === "config") {
+          const LOCALE_RE = /^[a-z]{2,3}(-[A-Z]{2})?$/;
+          if (locale !== undefined && !LOCALE_RE.test(locale)) {
+            return output(fail(`invalid locale: ${JSON.stringify(locale)} — expected BCP-47 like en or es-CL`));
+          }
+          const current = readConfig();
+          const next: ToolkitConfig = {
+            locale: locale ?? current.locale,
+            localeOptions: locale_options ?? current.localeOptions,
+            timezone: timezone ?? current.timezone,
+            branchPolicy: {
+              preset: (branch_policy_preset as BranchPreset) ?? current.branchPolicy.preset,
+              allowed: branch_policy_allowed ?? current.branchPolicy.allowed,
+              protected: branch_policy_protected ?? current.branchPolicy.protected,
+            },
+          };
+          writeConfig(next);
+          return output(ok({ action: "config", path: path.join(configDir(), "config.json"), ...next }));
+        }
         const env = Object.fromEntries(Object.entries({
           WORKFLOW_YT_BASE_URL: base_url,
           WORKFLOW_YT_MENTION: default_mention,
