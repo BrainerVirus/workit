@@ -150,3 +150,9 @@ test("quality templates and findings are wired into contracts", () => {
   expect(exec).toMatch(/quality/);
   expect(specContract).toMatch(/spec-template\.md/);
 });
+
+test("cursor session-start includes the contract reminder", () => {
+  const hook = readFileSync(path.resolve(import.meta.dir, "../cursor/hooks/session-start"), "utf8");
+  expect(hook).toContain("Bounded user choices");
+  expect(hook).toContain("never A/B/C or 1/2/3 lists in prose");
+});
