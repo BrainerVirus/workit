@@ -15,7 +15,7 @@ Read [references/youtrack-update-style.md](references/youtrack-update-style.md) 
 5. Call `workflow_youtrack_post` only after approval with `confirmed: true`, `issueId`, `markdown`, and `minutes`.
 6. Report the structured success, failure stage, or partial result; never infer success.
 
-Never guess the issue, compute minutes, pass a date, expose tokens, or post Git/file details as the update. Never present a clickable `question` option whose label is an instruction to type free text (e.g. "Type the issue URL/ID"): clicking an option returns the label literal, not the typed value, so ask for free text in prose instead. Preserve the user's paragraph voice, explain technical terms plainly, and avoid robotic status bullets. `todowrite` and `task` are unnecessary here.
+Never guess the issue, compute minutes, pass a date, expose tokens, or post Git/file details as the update. Never present a clickable `question` option whose label is an instruction to type free text (e.g. "Type the issue URL/ID"): clicking an option returns the label literal, not the typed value, so ask for free text in prose instead, with the custom answer field enabled. Preserve the user's paragraph voice, explain technical terms plainly, and avoid robotic status bullets. `todowrite` and `task` are unnecessary here.
 
 Consume the standard Result envelope:
 
