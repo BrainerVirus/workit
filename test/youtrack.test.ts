@@ -3,6 +3,30 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, sy
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+
+// Minimal valid YouTrack config so tool executes (which read credentials for redact)
+// work in a clean HOME (CI has no real ~/.config/workflow-toolkit).
+const withYouTrackConfig = async (fn: () => Promise<void> | void) => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "wf-yt-config-"));
+  mkdirSync(path.join(dir, "workflow-toolkit"), { recursive: true });
+  const tokenPath = path.join(dir, "workflow-toolkit", "token");
+  writeFileSync(tokenPath, "test-token\n", "utf8");
+  chmodSync(tokenPath, 0o600);
+  writeFileSync(
+    path.join(dir, "workflow-toolkit", "youtrack.json"),
+    JSON.stringify({ baseUrl: "https://yt.example.test", tokenFile: "./token" }, null, 2),
+    "utf8",
+  );
+  const previous = process.env.XDG_CONFIG_HOME;
+  process.env.XDG_CONFIG_HOME = dir;
+  try {
+    return await fn();
+  } finally {
+    if (previous === undefined) delete process.env.XDG_CONFIG_HOME;
+    else process.env.XDG_CONFIG_HOME = previous;
+    rmSync(dir, { recursive: true, force: true });
+  }
+};
 import {
   configPath,
   createYouTrackTools,
@@ -339,7 +363,7 @@ test("registers seven standard tools without workspace_root and guards mutations
   }
 });
 
-test("verify token, parse issue, parse duration, and draft tools execute", async () => {
+test("verify token, parse issue, parse duration, and draft tools execute", async () => withYouTrackConfig(async () => {
   const tools = createYouTrackTools({
     verifyToken: async () => ({ data: { ok: true } }),
     context: async () => ({ data: { issueId: "NSR-1" } }),
@@ -365,14 +389,14 @@ test("verify token, parse issue, parse duration, and draft tools execute", async
   }, ctx) as string);
   expect(draft.ok).toBe(true);
   expect(draft.data.markdown).toContain("Avance");
-});
+}));
 
-test("log_time and post tools execute with confirmed and redact tokens from errors", async () => {
+test("log_time and post tools execute with confirmed and redact tokens from errors", async () => withYouTrackConfig(async () => {
   const tools = createYouTrackTools({
     verifyToken: async () => ({}),
     context: async () => ({}),
     parseDuration: async () => ({ minutes: 30 }),
-    postComment: async () => ({}),
+    postComment: async () => ({ data: { ok: true } }),
     logTime: async () => ({ error: "boom with secret" }),
   });
   const ctx = { directory: "/repo", worktree: "/repo" } as never;
@@ -387,9 +411,9 @@ test("log_time and post tools execute with confirmed and redact tokens from erro
     confirmed: true, issueId: "NSR-1", markdown: "Actualización",
   }, ctx) as string);
   expect(posted.ok).toBe(true);
-});
+}));
 
-test("context tool normalizes meetings mode and rejects escaped paths", async () => {
+test("context tool normalizes meetings mode and rejects escaped paths", async () => withYouTrackConfig(async () => {
   const tools = createYouTrackTools({
     verifyToken: async () => ({}),
     context: async (input: any) => ({ data: { issueId: input.mode === "meetings" ? "MEET-1" : null } }),
@@ -407,4 +431,4 @@ test("context tool normalizes meetings mode and rejects escaped paths", async ()
     spec_path: "../outside.md",
   }, ctx) as string);
   expect(escaped.ok).toBe(false);
-});
+}));
