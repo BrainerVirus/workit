@@ -256,6 +256,9 @@ describe("plugin registration", () => {
             plan_path: "missing-plan.md",
           },
           workflow_flow_status: { plan_path: "missing-plan.md" },
+          workflow_docs_repo_link: { path: "missing", confirmed: false },
+          workflow_docs_list: {},
+          workflow_docs_promote: { slug: "x", confirmed: false },
           workflow_spec_approve: {
             confirmed: false,
             spec_path: "missing-spec.md",
