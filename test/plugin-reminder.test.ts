@@ -2,8 +2,8 @@ import { expect, test } from "bun:test";
 import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { findActiveSubagentDrivenPlans } from "../src/core/detector";
-import { shouldInjectSddReminder, SDD_REMINDER_TEXT } from "../src/core/reminder";
+import { findActiveSubagentDrivenPlans, detectConfigGapError } from "../src/core/detector";
+import { shouldInjectSddReminder, SDD_REMINDER_TEXT, CONFIG_GUARD_TEXT, shouldInjectConfigGuard } from "../src/core/reminder";
 
 const writeFlow = (root: string, slug: string, flow: unknown) => {
   const dir = path.join(root, "docs", slug, "sdd");
@@ -97,6 +97,36 @@ test("CA-03: reminder is injected only when the marker is absent (idempotent)", 
   expect(shouldInjectSddReminder(SDD_REMINDER_TEXT)).toBe(false);
   expect(shouldInjectSddReminder(`message with ${SDD_REMINDER_TEXT} marker`)).toBe(false);
   expect(shouldInjectSddReminder("partial <workflow-sdd-reminder> tag alone")).toBe(true);
+});
+
+test("CA-03: config-gap marker in assistant text → detector true, guard injects", () => {
+  const assistant =
+    "Error: workflow config missing: youtrack_json. Run `npx flowkit init` or `/wf-init` to configure.";
+  expect(detectConfigGapError(assistant)).toBe(true);
+  expect(shouldInjectConfigGuard("plain user message")).toBe(true);
+});
+
+test("CA-03: no config-gap marker in assistant text → detector false, no injection", () => {
+  expect(detectConfigGapError("tool ran fine, nothing missing")).toBe(false);
+  expect(detectConfigGapError("")).toBe(false);
+});
+
+test("CA-03: idempotent — text already containing CONFIG_GUARD_TEXT → helper false", () => {
+  expect(shouldInjectConfigGuard(CONFIG_GUARD_TEXT)).toBe(false);
+  expect(shouldInjectConfigGuard(`message with ${CONFIG_GUARD_TEXT} marker`)).toBe(false);
+  expect(shouldInjectConfigGuard("partial <workflow-config-guard> tag alone")).toBe(true);
+});
+
+test("CA-05: fail-closed — detector never throws on empty/plain input", () => {
+  expect(detectConfigGapError("")).toBe(false);
+  expect(detectConfigGapError("no config mentions here")).toBe(false);
+});
+
+test("CA-04: CONFIG_GUARD_TEXT asks a native question with exactly three options", () => {
+  expect(CONFIG_GUARD_TEXT).toContain("question");
+  expect(CONFIG_GUARD_TEXT).toContain("configure only what's missing");
+  expect(CONFIG_GUARD_TEXT).toContain("npx flowkit init");
+  expect(CONFIG_GUARD_TEXT).toContain("skip");
 });
 
 test("I-1: fully complete progress.md ledger turns the rail off", () => {

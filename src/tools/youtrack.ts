@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { tool, type ToolContext } from "@opencode-ai/plugin";
 import { fail, ok, resolveInside, type Result } from "../core";
+import { configGuardError, describeConfigGaps } from "../core/config-guard";
 import {
   buildDraft as legacyBuildDraft,
   context as legacyContext,
@@ -17,15 +18,22 @@ const ISSUE_RE = /^[A-Z]+-\d+$/;
 const output = (value: unknown) => JSON.stringify(value, null, 2);
 const message = (error: unknown) => error instanceof Error ? error.message : String(error);
 
+// Both override names point at the config dir itself, same precedence as
+// src/core/config.ts and scripts/init/status.sh: WORKFLOW_TOOLKIT_CONFIG → WORKFLOW_TOOLKIT_CONFIG_DIR → XDG.
 export const configPath = (env: NodeJS.ProcessEnv = process.env, home = os.homedir()) =>
-  path.join(env.XDG_CONFIG_HOME || path.join(home, ".config"), "workflow-toolkit", "youtrack.json");
+  path.join(
+    env.WORKFLOW_TOOLKIT_CONFIG
+    ?? env.WORKFLOW_TOOLKIT_CONFIG_DIR
+    ?? path.join(env.XDG_CONFIG_HOME || path.join(home, ".config"), "workflow-toolkit"),
+    "youtrack.json",
+  );
 
 export function readCredentials(env: NodeJS.ProcessEnv = process.env, home = os.homedir()) {
   const resolvedConfig = configPath(env, home);
   const config = JSON.parse(readFileSync(resolvedConfig, "utf8")) as { tokenFile?: string };
-  if (!config.tokenFile) throw new Error("tokenFile missing in youtrack.json");
-  const tokenPath = path.resolve(path.dirname(resolvedConfig), config.tokenFile.replace(/^~(?=\/)/, home));
-  if ((statSync(tokenPath).mode & 0o777) !== 0o600) throw new Error("youtrack.token mode must be 0600");
+  const tokenFile = config.tokenFile ?? "youtrack.token";
+  const tokenPath = path.resolve(path.dirname(resolvedConfig), tokenFile.replace(/^~(?=\/)/, home));
+  if (process.platform !== "win32" && (statSync(tokenPath).mode & 0o777) !== 0o600) throw new Error("youtrack.token mode must be 0600");
   const token = readFileSync(tokenPath, "utf8").trim();
   if (!token) throw new Error("youtrack.token is empty");
   return { configPath: resolvedConfig, token };
@@ -204,6 +212,10 @@ const invoke = async (operation: () => MaybePromise<LegacyValue>, token = "") =>
 };
 
 const credentials = () => readCredentials();
+const configGap = () => {
+  const { missing } = describeConfigGaps(["youtrack_json", "youtrack_token"]);
+  return missing.length > 0 ? output(fail(configGuardError(missing))) : null;
+};
 const requireConfirmed = (confirmed: boolean) => confirmed === true
   ? null
   : output(fail("confirmed: true required"));
@@ -228,7 +240,11 @@ export function createYouTrackTools(operations: YouTrackOperations = defaultOper
       args: {},
       execute: async () => {
         let token = "";
-        try { token = credentials().token; } catch (error) { return output(fail(message(error))); }
+        try { token = credentials().token; } catch (error) {
+          const gap = configGap();
+          if (gap) return gap;
+          return output(fail(message(error)));
+        }
         return invoke(() => operations.verifyToken(), token);
       },
     }),
@@ -258,7 +274,11 @@ export function createYouTrackTools(operations: YouTrackOperations = defaultOper
           return output(fail(detail.includes("repository-relative") ? detail : `path must be repository-relative: ${detail}`));
         }
         let token = "";
-        try { token = credentials().token; } catch (error) { return output(fail(message(error))); }
+        try { token = credentials().token; } catch (error) {
+          const gap = configGap();
+          if (gap) return gap;
+          return output(fail(message(error)));
+        }
         return invoke(async () => normalizeContext(
           await operations.context({ ...input, workspace_root: context.directory }), input.mode,
         ), token);
@@ -300,7 +320,11 @@ export function createYouTrackTools(operations: YouTrackOperations = defaultOper
         const invalid = rejectedTimeInput(input.issueId, input.minutes);
         if (invalid) return invalid;
         let token = "";
-        try { token = credentials().token; } catch (error) { return output(fail(message(error))); }
+        try { token = credentials().token; } catch (error) {
+          const gap = configGap();
+          if (gap) return gap;
+          return output(fail(message(error)));
+        }
         const result = await withWriteFlag(() =>
           logTimeUpdate({ ...input, workspace_root: context.directory }, operations));
         return output(result.ok ? result : { ...result, error: redact(result.error, token) });
@@ -318,7 +342,11 @@ export function createYouTrackTools(operations: YouTrackOperations = defaultOper
         const rejected = requireConfirmed(input.confirmed);
         if (rejected) return rejected;
         let token = "";
-        try { token = credentials().token; } catch (error) { return output(fail(message(error))); }
+        try { token = credentials().token; } catch (error) {
+          const gap = configGap();
+          if (gap) return gap;
+          return output(fail(message(error)));
+        }
         const result = await withWriteFlag(() =>
           postUpdate({ ...input, workspace_root: context.directory }, operations));
         return output(result.ok ? result : { ...result, error: redact(result.error, token) });

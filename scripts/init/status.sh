@@ -5,7 +5,7 @@ TOKEN_PLACEHOLDER='YOUR_TOKEN_HERE'
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 PLUGIN_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/../.." && pwd)
-CONFIG_DIR="${WORKFLOW_TOOLKIT_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/workflow-toolkit}"
+CONFIG_DIR="${WORKFLOW_TOOLKIT_CONFIG:-${WORKFLOW_TOOLKIT_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/workflow-toolkit}}"
 YOUTRACK_JSON="$CONFIG_DIR/youtrack.json"
 YOUTRACK_TOKEN="$CONFIG_DIR/youtrack.token"
 VCS_JSON="$CONFIG_DIR/vcs.json"
@@ -39,6 +39,8 @@ if p.is_file():
                     "workItemText": item.get("workItemText", "Reuniones"),
                     "url": item.get("url") or (f"{base}/issue/{iss}" if base and iss else None),
                 })
+        expanded_token = Path(token_file).expanduser()
+        resolved_token_file = str(expanded_token.resolve() if expanded_token.is_absolute() else (Path(config_dir) / expanded_token).resolve()) if token_file else None
         youtrack_config = {
             "config_edit_path": json_abs,
             "baseUrl": base,
@@ -48,7 +50,7 @@ if p.is_file():
             "defaultMention": cfg.get("defaultMention"),
             "timezone": cfg.get("timezone"),
             "locale": cfg.get("locale"),
-            "tokenFile": str(Path(token_file).expanduser().resolve()) if token_file else None,
+            "tokenFile": resolved_token_file,
             "tokenDefaults": cfg.get("tokenDefaults"),
             "timeLogging": {
                 "meetings": {
@@ -77,11 +79,11 @@ items.append({
     "fix": "workflow_toolkit_init_apply action=youtrack_scaffold",
 })
 
-t = Path(yt_token)
+t = Path((youtrack_config or {}).get("tokenFile") or yt_token)
 token_abs = str(t.resolve()) if t.is_file() else str(t.expanduser().resolve())
 token_text = t.read_text(encoding="utf-8").strip() if t.is_file() else ""
 is_placeholder = token_text == placeholder or token_text.startswith(placeholder)
-mode_ok = t.is_file() and oct(t.stat().st_mode)[-3:] == "600"
+mode_ok = t.is_file() and (os.name == "nt" or oct(t.stat().st_mode)[-3:] == "600")
 token_ok = mode_ok and bool(token_text) and not is_placeholder
 
 youtrack_token_create = None
@@ -125,6 +127,7 @@ if youtrack_token_create:
 items.append(youtrack_token_item)
 
 vcs_config = None
+token_file = {}
 vp = Path(vcs_json)
 vcs_abs = str(vp.resolve()) if vp.is_file() else str(vp.expanduser().resolve())
 if vp.is_file():
@@ -132,7 +135,7 @@ if vp.is_file():
         vcfg = json.loads(vp.read_text(encoding="utf-8"))
         provider = (vcfg.get("provider") or "gitlab").lower()
         prov = vcfg.get(provider) or {}
-        token_file = prov.get("tokenFile") or str(Path(config_dir) / f"{provider}.token")
+        token_file = {k: (vcfg.get(k) or {}).get("tokenFile") or str(Path(config_dir) / f"{k}.token") for k in ("gitlab", "github")}
         vcs_config = {
             "config_edit_path": vcs_abs,
             "provider": provider,
@@ -178,12 +181,18 @@ if vp.is_file():
                     "github": token_create_urls.get("github"),
                 }
 
+def resolve_token_path(prov_key):
+    t = Path(token_file.get(prov_key) or str(Path(config_dir) / f"{prov_key}.token")).expanduser()
+    if not t.is_absolute():
+        t = Path(config_dir) / t
+    return str(t.resolve())
+
 def token_item(tid, label, path, provider_key):
     t = Path(path)
     abs_p = str(t.resolve()) if t.is_file() else str(t.expanduser().resolve())
     text = t.read_text(encoding="utf-8").strip() if t.is_file() else ""
     ph = text == placeholder or text.startswith(placeholder)
-    mode_ok = t.is_file() and oct(t.stat().st_mode)[-3:] == "600"
+    mode_ok = t.is_file() and (os.name == "nt" or oct(t.stat().st_mode)[-3:] == "600")
     ok = mode_ok and bool(text) and not ph
     item = {
         "id": tid,
@@ -209,8 +218,8 @@ def token_item(tid, label, path, provider_key):
             item["token_name"] = block["name"]
     return item
 
-items.append(token_item("gitlab_token", "GitLab token (mode 600, not placeholder)", gl_token, "gitlab"))
-items.append(token_item("github_token", "GitHub token (mode 600, not placeholder)", gh_token, "github"))
+items.append(token_item("gitlab_token", "GitLab token (mode 600, not placeholder)", resolve_token_path("gitlab"), "gitlab"))
+items.append(token_item("github_token", "GitHub token (mode 600, not placeholder)", resolve_token_path("github"), "github"))
 
 print(json.dumps({
     "config_dir": config_dir,

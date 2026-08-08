@@ -345,7 +345,7 @@ describe("plugin registration", () => {
         expect(results.workflow_youtrack_verify_token).toEqual({
           ok: false,
           data: null,
-          error: `ENOENT: no such file or directory, open '${path.join(root, "xdg-config/workflow-toolkit/youtrack.json")}'`,
+          error: "workflow config missing: youtrack_json, youtrack_token. Run `npx flowkit init` or `/wf-init` to configure.",
         });
         expect(existsSync(curlSentinel)).toBe(false);
         expect(

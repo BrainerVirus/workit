@@ -1,8 +1,12 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { CONFIG_GAP_MARKER } from "./config-guard";
 import { parseTasksFromPlan } from "./docs-validate";
 
 export type Detection = { choices: string[]; pattern: "alpha" | "numeric" } | null;
+
+export const detectConfigGapError = (text: string): boolean =>
+  text.includes(CONFIG_GAP_MARKER);
 
 // Interrogative gate: a literal question mark OR explicit interrogative phrases.
 // Plain "I want to confirm..." or "the script which runs" must NOT match.
