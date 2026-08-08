@@ -12,7 +12,7 @@ Multi-platform Superpowers workflow plugin for **Cursor** and **OpenCode**: veri
 Config directory (both platforms): `~/.config/workflow-toolkit/` (kept as-is for install stability).
 
 [![npm version](https://img.shields.io/npm/v/@brainervirus/workit)](https://www.npmjs.com/package/@brainervirus/workit)
-[![CI](https://img.shields.io/github/actions/workflow/status/BrainerVirus/workflow-toolkit/ci.yml?branch=main&label=CI)](https://github.com/BrainerVirus/workflow-toolkit/actions)
+[![CI](https://img.shields.io/github/actions/workflow/status/BrainerVirus/workit/ci.yml?branch=main&label=CI)](https://github.com/BrainerVirus/workit/actions)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 ## Install
@@ -22,7 +22,8 @@ Config directory (both platforms): `~/.config/workflow-toolkit/` (kept as-is for
 Requires bun (`curl -fsSL https://bun.sh/install | bash`).
 
 ```bash
-npm i @brainervirus/workit-cli
+npm i @brainervirus/workit          # core plugin (OpenCode/Cursor)
+npm i @brainervirus/workit-cli      # interactive wizard
 npx workit init
 ```
 
@@ -52,7 +53,7 @@ Local dev variant (absolute path to this repo):
 ```json
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugin": ["file:///path/to/workflow-toolkit/packages/workit/src/plugin.ts"]
+  "plugin": ["file:///path/to/workit/packages/workit/src/plugin.ts"]
 }
 ```
 
@@ -86,12 +87,12 @@ export PATH="$HOME/.bun/bin:$PATH"
 ```
 
 - **Git** — branch resolution, SDD review diffs, and verify gates.
-- (Optional) **Python 3** — required only for `workflow_changelog_apply` (runs `scripts/changelog/apply-unreleased.py`). Everything else is pure TS via bun.
+- (Optional) **Python 3** — required only for `wk-changelog` (runs `scripts/changelog/apply-unreleased.py`). Everything else is pure TS via bun.
 
 ## Repo layout
 
 ```
-workflow-toolkit/
+workit/
 ├── packages/
 │   ├── workit/             # @brainervirus/workit — plugin, skills, commands, MCP
 │   │   ├── src/            # OpenCode plugin (TypeScript)
@@ -115,12 +116,26 @@ bun run check    # bun test + tsc + cursor MCP regressions
 GitHub Actions:
 
 - **CI** — on push/PR to `main`: matrix of 3 OS (ubuntu, macos, windows) running `actions/checkout@v7` + `oven-sh/setup-bun@v2`, then `bun install --frozen-lockfile` + `bun run check`
-- **Release** — on tag `v*`: same checks, then `softprops/action-gh-release@v3`
+- **Release** — on push to `main`: [semantic-release](https://github.com/semantic-release/semantic-release) computes the next version from Conventional Commits, publishes `@brainervirus/workit` then `@brainervirus/workit-cli` to npm (with provenance), and creates the git tag + GitHub Release
+- **Code review** — on every PR: the [OpenCode GitHub integration](https://opencode.ai/docs/github/) reviews the diff (see [Code review](#code-review))
+
+No manual tags — semantic-release owns the version/tag flow:
 
 ```bash
-git tag v0.4.0
-git push origin v0.4.0
+git push origin main
 ```
+
+## Code review
+
+Every pull request is automatically reviewed by [OpenCode](https://opencode.ai/docs/github/) via `.github/workflows/opencode-review.yml` — it checks code quality, potential bugs, and this repo's own standards (the spec/plan contract, Conventional Commits, the CONTRIBUTING.md review flow). The check must be green to merge (registered as a required check in branch protection).
+
+To activate the review on a fork or fresh clone:
+
+1. Install the [OpenCode GitHub app](https://github.com/apps/opencode-agent) on the repository.
+2. Add the `ANTHROPIC_API_KEY` secret under Settings → Secrets and variables → Actions.
+3. PRs trigger the review on opened/synchronized/reopened events automatically.
+
+[Cursor Bugbot](https://cursor.com/dashboard/bugbot) is an optional alternative to the OpenCode review.
 
 ## Architecture
 
