@@ -71,7 +71,7 @@ fi
 print_section "VCS Config"
 RES=$(bash "$SCRIPT_DIR/vcs/config.sh" resolve 2>/dev/null || true)
 if [ -n "$RES" ]; then
-  printf '%s\n' "$RES" | python3 -c 'import json,sys; r=json.load(sys.stdin); print("workspace: "+str(r.get("workspace_name") or "none")); print("provider: "+str(r.get("provider","gitlab")))'
+  printf '%s\n' "$RES" | bun -e 'const r = JSON.parse(await Bun.stdin.text()); console.log("workspace: " + String(r.workspace_name || "none")); console.log("provider: " + String(r.provider || "gitlab"))'
 fi
 if bash "$SCRIPT_DIR/vcs/config.sh" summary 2>/dev/null; then
   :

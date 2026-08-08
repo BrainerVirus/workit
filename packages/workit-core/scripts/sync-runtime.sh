@@ -80,17 +80,14 @@ rm -f "${OPENCODE_PLUGINS}/workflow-toolkit.ts"
 # Ensure OpenCode has plugin peer dep
 PKG="${HOME}/.config/opencode/package.json"
 if [ -f "$PKG" ]; then
-  python3 - "$PKG" <<'PY' || true
-import json, sys
-path = sys.argv[1]
-with open(path) as f:
-    data = json.load(f)
-deps = data.setdefault("dependencies", {})
-deps.setdefault("@opencode-ai/plugin", "1.17.7")
-with open(path, "w") as f:
-    json.dump(data, f, indent=2)
-    f.write("\n")
-PY
+  PKG_PATH="$PKG" bun -e '
+import fs from "node:fs";
+const path = process.env.PKG_PATH!;
+const data = JSON.parse(fs.readFileSync(path, "utf8"));
+data.dependencies = data.dependencies ?? {};
+data.dependencies["@opencode-ai/plugin"] = data.dependencies["@opencode-ai/plugin"] ?? "1.17.7";
+fs.writeFileSync(path, JSON.stringify(data, null, 2) + "\n");
+' || true
 fi
 
 # Drop bun package cache so old github/file installs cannot shadow file:// plugin.ts

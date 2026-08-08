@@ -49,47 +49,34 @@ if [ -d "$SKILLS_DIR" ]; then
   rm -f "$SKILLS_DIR"/wf-* "$SKILLS_DIR"/wk-*
 fi
 
-python3 - <<'PY'
-import json, os
-path = os.path.expanduser("~/.cursor/settings.json")
-data = {}
-if os.path.exists(path):
-    with open(path) as f:
-        data = json.load(f)
-prev = data.get("enabled_plugins")
-if not isinstance(prev, dict):
-    prev = {}
-plugin = os.path.expanduser("~/.cursor/plugins/local/workflow-toolkit")
-data["enabled_plugins"] = {
-    **prev,
-    "workflow-toolkit": True,
-    "local/workflow-toolkit": True,
-}
-data["plugin_dirs"] = [plugin]
-with open(path, "w") as f:
-    json.dump(data, f, indent=2)
-    f.write("\n")
-PY
+CURSOR_SETTINGS="$HOME/.cursor/settings.json" bun -e '
+import fs from "node:fs";
+import os from "node:os";
+const path = process.env.CURSOR_SETTINGS!;
+let data = {};
+if (fs.existsSync(path)) data = JSON.parse(fs.readFileSync(path, "utf8"));
+const prev = data.enabled_plugins && typeof data.enabled_plugins === "object" ? data.enabled_plugins : {};
+const plugin = `${os.homedir()}/.cursor/plugins/local/workflow-toolkit`;
+data.enabled_plugins = { ...prev, "workflow-toolkit": true, "local/workflow-toolkit": true };
+data.plugin_dirs = [plugin];
+fs.writeFileSync(path, JSON.stringify(data, null, 2) + "\n");
+'
 
-python3 - <<'PY'
-import json, os
-path = os.path.expanduser("~/.cursor/mcp.json")
-data = {"mcpServers": {}}
-if os.path.exists(path):
-    with open(path) as f:
-        data = json.load(f)
-data.setdefault("mcpServers", {})["workflow-toolkit"] = {
-    "command": "bash",
-    "args": [
-        "-lc",
-        'exec "$HOME/.local/share/workflow-toolkit/packages/workit-core/scripts/run-cursor-mcp.sh" "$0"',
-        "${workspaceFolder}",
-    ],
-}
-with open(path, "w") as f:
-    json.dump(data, f, indent=2)
-    f.write("\n")
-PY
+CURSOR_MCP="$HOME/.cursor/mcp.json" bun -e '
+import fs from "node:fs";
+const path = process.env.CURSOR_MCP!;
+const data = fs.existsSync(path) ? JSON.parse(fs.readFileSync(path, "utf8")) : { mcpServers: {} };
+data.mcpServers = data.mcpServers ?? {};
+data.mcpServers["workflow-toolkit"] = {
+  command: "bash",
+  args: [
+    "-lc",
+    "exec \"$HOME/.local/share/workflow-toolkit/packages/workit-core/scripts/run-cursor-mcp.sh\" \"$0\"",
+    "${workspaceFolder}",
+  ],
+};
+fs.writeFileSync(path, JSON.stringify(data, null, 2) + "\n");
+'
 
 echo "Cursor plugin installed + auto-sync enabled (sessionStart)."
 echo "Share: $SHARE"

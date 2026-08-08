@@ -33,38 +33,26 @@ fi
 mkdir -p "$(dirname "$CONFIG")"
 [ -f "$CONFIG" ] || printf '%s\n' "{}" >"$CONFIG"
 
-python3 - "$CONFIG" "$PIN" <<'PY'
-import json, sys
-path, pin = sys.argv[1], sys.argv[2]
-with open(path) as f:
-    data = json.load(f)
-plugins = data.get("plugin") or []
-if isinstance(plugins, str):
-    plugins = [plugins]
-kept = []
-for p in plugins:
-    s = str(p)
-    if "workflow-toolkit" in s:
-        continue
-    kept.append(p)
-kept.append(pin)
-data["plugin"] = kept
-# Drop share skills.paths — native ~/.config/opencode/skills links avoid triple-load dups
-skills = data.get("skills")
-if isinstance(skills, dict):
-    paths = [
-        p
-        for p in (skills.get("paths") or [])
-        if "workflow-toolkit" not in str(p)
-    ]
-    skills["paths"] = paths
-    data["skills"] = skills
-with open(path, "w") as f:
-    json.dump(data, f, indent=2)
-    f.write("\n")
-print("Pinned:", pin)
-print("Native skills/commands via ~/.config/opencode/{skills,commands}")
-PY
+CONFIG_PATH="$CONFIG" PIN_PATH="$PIN" bun -e '
+import fs from "node:fs";
+const path = process.env.CONFIG_PATH!;
+const pin = process.env.PIN_PATH!;
+const data = JSON.parse(fs.readFileSync(path, "utf8"));
+let plugins = data.plugin || [];
+if (typeof plugins === "string") plugins = [plugins];
+// Drop stale workflow-toolkit pins — the new file:// pin is written fresh.
+data.plugin = plugins.filter((p) => !String(p).includes("workflow-toolkit"));
+data.plugin.push(pin);
+// Drop share skills.paths — native ~/.config/opencode/skills links avoid triple-load dups
+const skills = data.skills;
+if (skills && typeof skills === "object") {
+  skills.paths = (skills.paths || []).filter((p) => !String(p).includes("workflow-toolkit"));
+  data.skills = skills;
+}
+fs.writeFileSync(path, JSON.stringify(data, null, 2) + "\n");
+console.log("Pinned:", pin);
+console.log("Native skills/commands via ~/.config/opencode/{skills,commands}");
+'
 
 # file:// pin already ships skills + registers /wk-* via plugin config.
 # Remove leftover native links so OpenCode does not warn about duplicate skill names.
