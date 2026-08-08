@@ -4,15 +4,19 @@ import os from "node:os";
 import path from "node:path";
 import {
   collectConfigValues,
+  loadWorkspaces,
   parseList,
   runProjectSetup,
   scaffoldVcs,
   scaffoldYouTrack,
+  shouldWriteWorkspaces,
   TOKEN_PLACEHOLDER,
   validateBaseUrl,
   validateLocale,
   validateTimezone,
+  writeWorkspaces,
 } from "../src/cli/logic";
+import { resolveWorkspace } from "../src/core/workspaces";
 import { PRESETS, type ToolkitConfig } from "../src/core/config";
 
 const current: ToolkitConfig = {
@@ -140,4 +144,158 @@ test("scaffoldVcs writes vcs.json for provider + active placeholder token", () =
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+const withConfigDir = (fn: (dir: string) => void) => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "wf-workspaces-"));
+  const prev = process.env.WORKFLOW_TOOLKIT_CONFIG;
+  process.env.WORKFLOW_TOOLKIT_CONFIG = dir;
+  try {
+    fn(dir);
+  } finally {
+    process.env.WORKFLOW_TOOLKIT_CONFIG = prev;
+    rmSync(dir, { recursive: true, force: true });
+  }
+};
+
+const wsFile = (dir: string) => path.join(dir, "workspaces.json");
+
+const entry = (name: string, glob: string) => ({ name, glob, vcs: { provider: "gitlab" as const, defaultTargetBranch: "main" } });
+
+test("loadWorkspaces: missing file → []", () => {
+  withConfigDir(() => {
+    expect(loadWorkspaces()).toEqual([]);
+  });
+});
+
+test("loadWorkspaces: malformed JSON → []", () => {
+  withConfigDir((dir) => {
+    writeFileSync(wsFile(dir), "{ not json", "utf8");
+    expect(loadWorkspaces()).toEqual([]);
+  });
+});
+
+test("loadWorkspaces: non-object or missing array → []", () => {
+  withConfigDir((dir) => {
+    writeFileSync(wsFile(dir), "[1,2]", "utf8");
+    expect(loadWorkspaces()).toEqual([]);
+    writeFileSync(wsFile(dir), '{"foo": "bar"}', "utf8");
+    expect(loadWorkspaces()).toEqual([]);
+  });
+});
+
+test("loadWorkspaces: valid file → parsed entries", () => {
+  withConfigDir((dir) => {
+    writeFileSync(wsFile(dir), JSON.stringify({ workspaces: [entry("work", "/home/**/work/**")] }), "utf8");
+    expect(loadWorkspaces()).toEqual([entry("work", "/home/**/work/**")]);
+  });
+});
+
+test("shouldWriteWorkspaces: same list → false, different → true", () => {
+  const list = [entry("work", "/home/**/work/**")];
+  expect(shouldWriteWorkspaces(list, [...list])).toBe(false);
+  expect(shouldWriteWorkspaces([], [])).toBe(false);
+  expect(shouldWriteWorkspaces([], list)).toBe(true);
+  expect(shouldWriteWorkspaces(list, [entry("personal", "/home/**/personal/**")])).toBe(true);
+  expect(shouldWriteWorkspaces(list, [entry("work", "/home/**/other/**")])).toBe(true);
+  expect(shouldWriteWorkspaces(list, [{ ...list[0], vcs: { provider: "github" as const, defaultTargetBranch: "main" } }])).toBe(true);
+});
+
+test("writeWorkspaces replaces the whole list", () => {
+  withConfigDir((dir) => {
+    const a = writeWorkspaces([entry("work", "/home/**/work/**")]);
+    expect(a.ok).toBe(true);
+    expect(a.path).toBe(wsFile(dir));
+    expect(loadWorkspaces()).toEqual([entry("work", "/home/**/work/**")]);
+
+    writeWorkspaces([entry("personal", "/home/**/personal/**")]);
+    expect(loadWorkspaces()).toEqual([entry("personal", "/home/**/personal/**")]);
+  });
+});
+
+test("writeWorkspaces removes entries when written with fewer", () => {
+  withConfigDir((dir) => {
+    writeWorkspaces([entry("work", "/home/**/work/**"), entry("personal", "/home/**/personal/**")]);
+    writeWorkspaces([entry("work", "/home/**/work/**")]);
+    expect(loadWorkspaces()).toEqual([entry("work", "/home/**/work/**")]);
+  });
+});
+
+test("writeWorkspaces succeeds over a malformed existing file (treated as empty)", () => {
+  withConfigDir((dir) => {
+    writeFileSync(wsFile(dir), "garbage{{", "utf8");
+    const r = writeWorkspaces([entry("work", "/home/**/work/**")]);
+    expect(r.ok).toBe(true);
+    expect(loadWorkspaces()).toEqual([entry("work", "/home/**/work/**")]);
+  });
+});
+
+test("written file resolves via resolveWorkspace (parity CA-02)", () => {
+  withConfigDir((dir) => {
+    const projectDir = path.join(dir, "projects", "work", "repo");
+    writeWorkspaces([entry("work", `${path.join(dir, "projects", "work", "**").split(path.sep).join("/")}`)]);
+    expect(resolveWorkspace(projectDir)?.name).toBe("work");
+  });
+});
+
+test("skip = no writeWorkspaces call → file untouched", () => {
+  withConfigDir((dir) => {
+    const original = JSON.stringify({ workspaces: [entry("work", "/home/**/work/**")] }, null, 2) + "\n";
+    writeFileSync(wsFile(dir), original, "utf8");
+    expect(loadWorkspaces()).toEqual([entry("work", "/home/**/work/**")]);
+    expect(readFileSync(wsFile(dir), "utf8")).toBe(original);
+  });
+});
+
+test("writeWorkspaces rejects provider/linking cross-combos", () => {
+  withConfigDir((dir) => {
+    const youtrackOnGithub = writeWorkspaces([{ name: "work", glob: "/w/**", vcs: { provider: "github" }, youtrack: { link_issues: true } }]);
+    expect(youtrackOnGithub.ok).toBe(false);
+    expect(youtrackOnGithub.error).toContain("youtrack");
+    expect(youtrackOnGithub.error).toContain("github");
+
+    const issuesOnGitlab = writeWorkspaces([{ name: "personal", glob: "/p/**", vcs: { provider: "gitlab" }, issues: { provider: "github", link_on_pr: true } }]);
+    expect(issuesOnGitlab.ok).toBe(false);
+    expect(issuesOnGitlab.error).toContain("issues");
+    expect(issuesOnGitlab.error).toContain("gitlab");
+
+    const youtrackNoVcs = writeWorkspaces([{ name: "x", glob: "/x/**", youtrack: { link_issues: true } }]);
+    expect(youtrackNoVcs.ok).toBe(false);
+
+    expect(existsSync(wsFile(dir))).toBe(false);
+    expect(loadWorkspaces()).toEqual([]);
+  });
+});
+
+test("writeWorkspaces accepts matching provider/linking combos", () => {
+  withConfigDir((dir) => {
+    const gitlabYt = writeWorkspaces([{ name: "work", glob: "/w/**", vcs: { provider: "gitlab", defaultTargetBranch: "develop" }, youtrack: { link_issues: true } }]);
+    expect(gitlabYt.ok).toBe(true);
+
+    const githubIssues = writeWorkspaces([{ name: "personal", glob: "/p/**", vcs: { provider: "github", defaultTargetBranch: "main" }, issues: { provider: "github", link_on_pr: true } }]);
+    expect(githubIssues.ok).toBe(true);
+  });
+});
+
+test("writeWorkspaces validates entries: no name / no glob / bad provider / null → error, file not written", () => {
+  withConfigDir((dir) => {
+    const missingName = writeWorkspaces([{ glob: "/x/**" } as { name: string; glob: string }]);
+    expect(missingName.ok).toBe(false);
+    expect(missingName.error).toContain("name");
+
+    const missingGlob = writeWorkspaces([{ name: "work" } as { name: string; glob: string }]);
+    expect(missingGlob.ok).toBe(false);
+    expect(missingGlob.error).toContain("glob");
+
+    const badProvider = writeWorkspaces([{ name: "x", glob: "/x/**", vcs: { provider: "bitbucket" as never } }]);
+    expect(badProvider.ok).toBe(false);
+    expect(badProvider.error).toContain("bitbucket");
+
+    const nullEntry = writeWorkspaces([null as never]);
+    expect(nullEntry.ok).toBe(false);
+    expect(nullEntry.error).toContain("null");
+
+    expect(existsSync(wsFile(dir))).toBe(false);
+    expect(loadWorkspaces()).toEqual([]);
+  });
 });

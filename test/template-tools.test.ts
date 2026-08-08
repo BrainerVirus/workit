@@ -6,8 +6,10 @@ import { createTemplateTools } from "../src/tools/templates";
 
 test("template_list reports repo sources by default; template_edit writes config", async () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "wf-tpl-tools-"));
+  const prevConfig = process.env.WORKFLOW_TOOLKIT_CONFIG;
   try {
     process.env.WORKFLOW_TOOLKIT_CONFIG_DIR = dir;
+    delete process.env.WORKFLOW_TOOLKIT_CONFIG;
     const tools = createTemplateTools();
     const list = JSON.parse(await tools.workflow_template_list.execute({}, {} as never) as string);
     expect(list.ok).toBe(true);
@@ -25,6 +27,8 @@ test("template_list reports repo sources by default; template_edit writes config
     expect(no.ok).toBe(false);
   } finally {
     delete process.env.WORKFLOW_TOOLKIT_CONFIG_DIR;
+    if (prevConfig === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+    else process.env.WORKFLOW_TOOLKIT_CONFIG = prevConfig;
     rmSync(dir, { recursive: true, force: true });
   }
 });

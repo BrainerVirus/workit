@@ -298,8 +298,10 @@ import { writeConfig } from "../src/core/config";
 
 test("branch policy rejects codex/ under gitflow and allows under custom", async () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "wf-branch-policy-"));
+  const prevConfig = process.env.WORKFLOW_TOOLKIT_CONFIG;
   try {
     process.env.WORKFLOW_TOOLKIT_CONFIG_DIR = dir;
+    delete process.env.WORKFLOW_TOOLKIT_CONFIG;
     const repo = mkdtempSync(path.join(os.tmpdir(), "wf-branch-policy-repo-"));
     try {
       const run = (args: string[]) => spawnSync("git", args, { cwd: repo, encoding: "utf8" });
@@ -325,5 +327,10 @@ test("branch policy rejects codex/ under gitflow and allows under custom", async
       expect("error" in customRes).toBe(false);
       if (!("error" in customRes)) expect(customRes.branch).toBe("codex/feature/x");
     } finally { rmSync(repo, { recursive: true, force: true }); }
-  } finally { rmSync(dir, { recursive: true, force: true }); }
+  } finally {
+    delete process.env.WORKFLOW_TOOLKIT_CONFIG_DIR;
+    if (prevConfig === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+    else process.env.WORKFLOW_TOOLKIT_CONFIG = prevConfig;
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

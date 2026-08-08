@@ -4,6 +4,35 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 
+// The config chain WORKFLOW_TOOLKIT_CONFIG → WORKFLOW_TOOLKIT_CONFIG_DIR → XDG must
+// resolve via XDG alone in isolation tests: earlier test files may leak the override
+// vars into the ambient env (same fix family as config.test.ts).
+const neutralEnv = (): Record<string, string | undefined> => {
+  const env: Record<string, string | undefined> = { ...process.env };
+  delete env.WORKFLOW_TOOLKIT_CONFIG;
+  delete env.WORKFLOW_TOOLKIT_CONFIG_DIR;
+  return env;
+};
+
+const withNeutralXdg = async <T>(xdg: string, fn: () => Promise<T> | T): Promise<T> => {
+  const saved = {
+    XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
+    WORKFLOW_TOOLKIT_CONFIG: process.env.WORKFLOW_TOOLKIT_CONFIG,
+    WORKFLOW_TOOLKIT_CONFIG_DIR: process.env.WORKFLOW_TOOLKIT_CONFIG_DIR,
+  };
+  process.env.XDG_CONFIG_HOME = xdg;
+  delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+  delete process.env.WORKFLOW_TOOLKIT_CONFIG_DIR;
+  try {
+    return await fn();
+  } finally {
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+};
+
 // Minimal valid YouTrack config so tool executes (which read credentials for redact)
 // work in a clean HOME (CI has no real ~/.config/workflow-toolkit).
 const withYouTrackConfig = async (fn: () => Promise<void> | void) => {
@@ -17,15 +46,13 @@ const withYouTrackConfig = async (fn: () => Promise<void> | void) => {
     JSON.stringify({ baseUrl: "https://yt.example.test", tokenFile: "./token" }, null, 2),
     "utf8",
   );
-  const previous = process.env.XDG_CONFIG_HOME;
-  process.env.XDG_CONFIG_HOME = dir;
-  try {
-    return await fn();
-  } finally {
-    if (previous === undefined) delete process.env.XDG_CONFIG_HOME;
-    else process.env.XDG_CONFIG_HOME = previous;
-    rmSync(dir, { recursive: true, force: true });
-  }
+  return withNeutralXdg(dir, async () => {
+    try {
+      return await fn();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 };
 import {
   configPath,
@@ -125,9 +152,7 @@ test.skipIf(process.platform === "win32")("standalone time logging preserves amb
   const tokenPath = path.join(directory, "youtrack.token");
   writeFileSync(tokenPath, "dummy-token\n", { mode: 0o600 });
   writeFileSync(path.join(directory, "youtrack.json"), JSON.stringify({ tokenFile: tokenPath }));
-  const previous = process.env.XDG_CONFIG_HOME;
-  process.env.XDG_CONFIG_HOME = xdg;
-  try {
+  await withNeutralXdg(xdg, async () => {
     for (const [operation, outcome, retry] of [
       [async () => { throw new Error("transport lost"); }, "unknown", undefined],
       [async () => ({ ok: false, error: "not sent", outcome: "not_applied" }), "not_applied", "workflow_youtrack_log_time"],
@@ -144,9 +169,7 @@ test.skipIf(process.platform === "win32")("standalone time logging preserves amb
       expect(result.data.retry).toBe(retry);
       if (outcome === "unknown") expect(result.data.instructions).toContain("do not retry");
     }
-  } finally {
-    if (previous === undefined) delete process.env.XDG_CONFIG_HOME; else process.env.XDG_CONFIG_HOME = previous;
-  }
+  });
 });
 
 test("bundled standalone time logging rejects invalid inputs before credentials or HTTP", async () => {
@@ -156,35 +179,34 @@ test("bundled standalone time logging rejects invalid inputs before credentials 
   mkdirSync(bin);
   writeFileSync(path.join(bin, "curl"), `#!/bin/sh\ntouch '${sentinel}'\nexit 99\n`, { mode: 0o755 });
   const previousPath = process.env.PATH;
-  const previousXdg = process.env.XDG_CONFIG_HOME;
   process.env.PATH = `${bin}:${previousPath}`;
-  process.env.XDG_CONFIG_HOME = path.join(root, "missing-config");
   try {
-    const tools = createYouTrackTools();
-    for (const [input, error] of [
-      [{ confirmed: true, issueId: "bad", minutes: 30 }, "invalid issueId"],
-      [{ confirmed: true, issueId: "NSR-40", minutes: 0 }, "minutes must be positive"],
-      [{ confirmed: true, issueId: "NSR-40", minutes: -1 }, "minutes must be positive"],
-    ] as const) {
-      const raw = await tools.workflow_youtrack_log_time.execute(
-        input, { directory: root, worktree: root } as never,
-      );
-      expect(JSON.parse(raw as string)).toEqual({
-        ok: false,
-        data: {
-          issueId: input.issueId,
-          loggedMinutes: 0,
-          outcome: "not_applied",
-          retry: "workflow_youtrack_log_time",
-          instructions: "Correct the invalid input, then retry workflow_youtrack_log_time once.",
-        },
-        error,
-      });
-    }
-    expect(existsSync(sentinel)).toBe(false);
+    await withNeutralXdg(path.join(root, "missing-config"), async () => {
+      const tools = createYouTrackTools();
+      for (const [input, error] of [
+        [{ confirmed: true, issueId: "bad", minutes: 30 }, "invalid issueId"],
+        [{ confirmed: true, issueId: "NSR-40", minutes: 0 }, "minutes must be positive"],
+        [{ confirmed: true, issueId: "NSR-40", minutes: -1 }, "minutes must be positive"],
+      ] as const) {
+        const raw = await tools.workflow_youtrack_log_time.execute(
+          input, { directory: root, worktree: root } as never,
+        );
+        expect(JSON.parse(raw as string)).toEqual({
+          ok: false,
+          data: {
+            issueId: input.issueId,
+            loggedMinutes: 0,
+            outcome: "not_applied",
+            retry: "workflow_youtrack_log_time",
+            instructions: "Correct the invalid input, then retry workflow_youtrack_log_time once.",
+          },
+          error,
+        });
+      }
+      expect(existsSync(sentinel)).toBe(false);
+    });
   } finally {
     process.env.PATH = previousPath;
-    if (previousXdg === undefined) delete process.env.XDG_CONFIG_HOME; else process.env.XDG_CONFIG_HOME = previousXdg;
     rmSync(root, { recursive: true, force: true });
   }
 });
@@ -254,7 +276,7 @@ test.skipIf(process.platform === "win32")("bundled YouTrack scripts honor XDG_CO
   const result = spawnSync("bash", ["scripts/youtrack/config.sh", "load"], {
     cwd: path.resolve(import.meta.dir, ".."),
     encoding: "utf8",
-    env: { ...process.env, HOME: path.join(xdg, "unused-home"), XDG_CONFIG_HOME: xdg },
+    env: { ...neutralEnv(), HOME: path.join(xdg, "unused-home"), XDG_CONFIG_HOME: xdg },
   });
   expect(result.status).toBe(0);
   expect(JSON.parse(result.stdout).meetingIssue).toBe("IRPT-12");
@@ -263,7 +285,7 @@ test.skipIf(process.platform === "win32")("bundled YouTrack scripts honor XDG_CO
 test("init scaffolding and status share the neutral XDG config directory", () => {
   const xdg = mkdtempSync(path.join(os.tmpdir(), "wf-youtrack-init-"));
   const env = {
-    ...process.env,
+    ...neutralEnv(),
     HOME: path.join(xdg, "unused-home"),
     XDG_CONFIG_HOME: xdg,
   };

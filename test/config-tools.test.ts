@@ -7,8 +7,10 @@ import { readConfig } from "../src/core/config";
 
 test("init_apply writes config.json with guided values", async () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "wf-config-tools-"));
+  const prevConfig = process.env.WORKFLOW_TOOLKIT_CONFIG;
   try {
     process.env.WORKFLOW_TOOLKIT_CONFIG_DIR = dir;
+    delete process.env.WORKFLOW_TOOLKIT_CONFIG;
     const tools = createRepoTools();
     const raw = await tools.workflow_toolkit_init_apply.execute({
       confirmed: true,
@@ -26,6 +28,8 @@ test("init_apply writes config.json with guided values", async () => {
     expect(cfg.branchPolicy.allowed).toContain("codex/*");
   } finally {
     delete process.env.WORKFLOW_TOOLKIT_CONFIG_DIR;
+    if (prevConfig === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+    else process.env.WORKFLOW_TOOLKIT_CONFIG = prevConfig;
     rmSync(dir, { recursive: true, force: true });
   }
 });

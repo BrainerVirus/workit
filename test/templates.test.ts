@@ -4,10 +4,22 @@ import os from "node:os";
 import path from "node:path";
 import { readTemplate, writeTemplate, listTemplates } from "../src/core/templates";
 
+const savedEnv = new Map<string, string | undefined>();
+
 const cfgDir = () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "wf-templates-"));
+  savedEnv.set("WORKFLOW_TOOLKIT_CONFIG", process.env.WORKFLOW_TOOLKIT_CONFIG);
   process.env.WORKFLOW_TOOLKIT_CONFIG_DIR = dir;
+  delete process.env.WORKFLOW_TOOLKIT_CONFIG;
   return dir;
+};
+
+const cleanupEnv = () => {
+  const value = savedEnv.get("WORKFLOW_TOOLKIT_CONFIG");
+  if (value === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+  else process.env.WORKFLOW_TOOLKIT_CONFIG = value;
+  delete process.env.WORKFLOW_TOOLKIT_CONFIG_DIR;
+  savedEnv.clear();
 };
 
 test("readTemplate falls back to repo when config template missing", () => {
@@ -16,7 +28,7 @@ test("readTemplate falls back to repo when config template missing", () => {
     const tpl = readTemplate("issue-update");
     expect(tpl.source).toBe("repo");
     expect(tpl.content.length).toBeGreaterThan(0);
-  } finally { delete process.env.WORKFLOW_TOOLKIT_CONFIG_DIR; rmSync(dir, { recursive: true, force: true }); }
+  } finally { cleanupEnv(); rmSync(dir, { recursive: true, force: true }); }
 });
 
 test("writeTemplate then readTemplate returns config source", () => {
@@ -27,7 +39,7 @@ test("writeTemplate then readTemplate returns config source", () => {
     const tpl = readTemplate("issue-update");
     expect(tpl.source).toBe("config");
     expect(tpl.content).toContain("Mi template");
-  } finally { delete process.env.WORKFLOW_TOOLKIT_CONFIG_DIR; rmSync(dir, { recursive: true, force: true }); }
+  } finally { cleanupEnv(); rmSync(dir, { recursive: true, force: true }); }
 });
 
 test("writeTemplate requires confirmed", () => {
@@ -35,7 +47,7 @@ test("writeTemplate requires confirmed", () => {
   try {
     const no = writeTemplate("issue-update", "x", false);
     expect(no.ok).toBe(false);
-  } finally { delete process.env.WORKFLOW_TOOLKIT_CONFIG_DIR; rmSync(dir, { recursive: true, force: true }); }
+  } finally { cleanupEnv(); rmSync(dir, { recursive: true, force: true }); }
 });
 
 test("listTemplates reports sources", () => {
@@ -47,5 +59,5 @@ test("listTemplates reports sources", () => {
     const greeting = list.find((t) => t.name === "greeting");
     expect(issue?.source).toBe("repo");
     expect(greeting?.source).toBe("config");
-  } finally { delete process.env.WORKFLOW_TOOLKIT_CONFIG_DIR; rmSync(dir, { recursive: true, force: true }); }
+  } finally { cleanupEnv(); rmSync(dir, { recursive: true, force: true }); }
 });

@@ -8,10 +8,22 @@ import {
   type CanonicalRule,
 } from "../src/core/rules";
 
+const savedEnv = new Map<string, string | undefined>();
+
 const cfgDir = () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "wf-rules-"));
+  savedEnv.set("WORKFLOW_TOOLKIT_CONFIG", process.env.WORKFLOW_TOOLKIT_CONFIG);
   process.env.WORKFLOW_TOOLKIT_CONFIG_DIR = dir;
+  delete process.env.WORKFLOW_TOOLKIT_CONFIG;
   return dir;
+};
+
+const cleanupEnv = () => {
+  const value = savedEnv.get("WORKFLOW_TOOLKIT_CONFIG");
+  if (value === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+  else process.env.WORKFLOW_TOOLKIT_CONFIG = value;
+  delete process.env.WORKFLOW_TOOLKIT_CONFIG_DIR;
+  savedEnv.clear();
 };
 
 const RULE_MD = `---
@@ -52,7 +64,7 @@ test("writeRule + readRule round trip", () => {
     if ("error" in read) throw new Error(read.error);
     expect(read.source).toBe("config");
     expect(read.rule.name).toBe("my-rule");
-  } finally { delete process.env.WORKFLOW_TOOLKIT_CONFIG_DIR; rmSync(dir, { recursive: true, force: true }); }
+  } finally { cleanupEnv(); rmSync(dir, { recursive: true, force: true }); }
 });
 
 test("compileRuleCursor emits mdc frontmatter", () => {
@@ -83,7 +95,7 @@ test("compiledOpenCodeSections includes user rules", () => {
     const sections = compiledOpenCodeSections();
     expect(sections).toContain("## alpha");
     expect(sections).not.toContain("## cursor-only");
-  } finally { delete process.env.WORKFLOW_TOOLKIT_CONFIG_DIR; rmSync(dir, { recursive: true, force: true }); }
+  } finally { cleanupEnv(); rmSync(dir, { recursive: true, force: true }); }
 });
 
 test("writeCompiledCursorRules writes mdc files", () => {
@@ -95,7 +107,7 @@ test("writeCompiledCursorRules writes mdc files", () => {
     expect(files).toContain(path.join(target, "beta.mdc"));
     expect(existsSync(path.join(target, "beta.mdc"))).toBe(true);
     rmSync(target, { recursive: true, force: true });
-  } finally { delete process.env.WORKFLOW_TOOLKIT_CONFIG_DIR; rmSync(dir, { recursive: true, force: true }); }
+  } finally { cleanupEnv(); rmSync(dir, { recursive: true, force: true }); }
 });
 
 test("bootstrap appends compiled opencode rule sections", async () => {
@@ -105,7 +117,7 @@ test("bootstrap appends compiled opencode rule sections", async () => {
     const fresh = await import(`../src/bootstrap?rules=${Date.now()}`);
     const bootstrap = fresh.getWorkflowBootstrap();
     expect(bootstrap).toContain("## zeta");
-  } finally { delete process.env.WORKFLOW_TOOLKIT_CONFIG_DIR; rmSync(dir, { recursive: true, force: true }); }
+  } finally { cleanupEnv(); rmSync(dir, { recursive: true, force: true }); }
 });
 
 test("writeRule rejects traversal rule names", () => {
@@ -116,7 +128,7 @@ test("writeRule rejects traversal rule names", () => {
     if (!bad.ok) expect(bad.error).toContain("invalid rule name");
     const ok = writeRule({ name: "good-rule", description: "x", platforms: ["cursor"], body: "# X\n" }, true);
     expect(ok.ok).toBe(true);
-  } finally { delete process.env.WORKFLOW_TOOLKIT_CONFIG_DIR; rmSync(dir, { recursive: true, force: true }); }
+  } finally { cleanupEnv(); rmSync(dir, { recursive: true, force: true }); }
 });
 
 test("parseRule strips quotes and rejects unknown platforms", () => {

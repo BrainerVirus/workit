@@ -7,8 +7,10 @@ import { listRules } from "../src/core/rules";
 
 test("rule_edit writes config; rule_list reports it", async () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "wf-rule-tools-"));
+  const prevConfig = process.env.WORKFLOW_TOOLKIT_CONFIG;
   try {
     process.env.WORKFLOW_TOOLKIT_CONFIG_DIR = dir;
+    delete process.env.WORKFLOW_TOOLKIT_CONFIG;
     const tools = createRuleTools();
     const edit = JSON.parse(await tools.workflow_rule_edit.execute({
       name: "my-rule", description: "My rule",
@@ -28,6 +30,8 @@ test("rule_edit writes config; rule_list reports it", async () => {
     expect(no.ok).toBe(false);
   } finally {
     delete process.env.WORKFLOW_TOOLKIT_CONFIG_DIR;
+    if (prevConfig === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+    else process.env.WORKFLOW_TOOLKIT_CONFIG = prevConfig;
     rmSync(dir, { recursive: true, force: true });
   }
 });
