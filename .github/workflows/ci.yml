@@ -112,8 +112,8 @@ jobs:
       - name: Install deps
         run: bun install --frozen-lockfile
 
-      - name: Test test/shared (no tests — exit 0)
-        run: bun test test/shared
+      - name: Typecheck shared helpers (no standalone tests)
+        run: bun run typecheck
 
       - name: Typecheck (whole repo)
         run: bun run typecheck
