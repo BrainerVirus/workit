@@ -1,6 +1,6 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync, existsSync } from "node:fs";
 import path from "node:path";
-import { parseTasksFromPlan, qualitySpec } from "./docs-validate";
+import { parseTasksFromPlan, qualitySpec, stripFences } from "./docs-validate";
 
 export type FlowStatus = "draft" | "self_reviewed" | "approved";
 export type FlowDocState = { path: string; status: FlowStatus };
@@ -97,10 +97,15 @@ export const transitionSpec = (
       };
     }
     const hard = qualitySpec(text).filter((f) => f.severity === "hard");
-    if (hard.length > 0) {
+    const missing: string[] = [];
+    if (!/^\s*\*+Branch:\*+/im.test(stripFences(text))) missing.push("**Branch:** header missing");
+    if (hard.length > 0 || missing.length > 0) {
       return {
         ok: false,
-        error: "spec self-review failed: " + hard.map((f) => `${f.code} — ${f.message}`).join("; "),
+        error:
+          "spec self-review failed: " +
+          hard.map((f) => `${f.code} — ${f.message}`).concat(missing).join("; ") +
+          " — see templates/spec-template.md for the required structure",
       };
     }
   }
@@ -144,9 +149,10 @@ export const transitionPlan = (
       };
     }
     const missing: string[] = [];
+    const stripped = stripFences(text);
     if (parseTasksFromPlan(text).length === 0) missing.push("no ### Task N: sections outside fences");
-    if (!/^\s*\*+Spec:\*+/im.test(text)) missing.push("**Spec:** header missing");
-    if (!/^\s*\*+Branch:\*+/im.test(text)) missing.push("**Branch:** header missing");
+    if (!/^\s*\*+Spec:\*+/im.test(stripped)) missing.push("**Spec:** header missing");
+    if (!/^\s*\*+Branch:\*+/im.test(stripped)) missing.push("**Branch:** header missing");
     if (missing.length > 0) {
       return { ok: false, error: "plan self-review failed: " + missing.join("; ") };
     }

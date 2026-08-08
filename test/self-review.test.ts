@@ -151,6 +151,62 @@ test("plan missing **Spec:** header is rejected and stays draft", () => {
   }
 });
 
+test("spec without **Branch:** is rejected with the template hint and stays draft", () => {
+  const { root, slug } = fixture();
+  try {
+    const specPath = `docs/${slug}/spec.md`;
+    writeFileSync(
+      path.join(root, specPath),
+      `# ${slug}\n\n## Context\n\n## Goals\n\n## Non-goals\n\n## Architecture\n\n## Acceptance criteria\n\n- CA-01: test\n`,
+    );
+    const result = transitionSpec(root, slug, specPath, true);
+    expect(result.ok).toBe(false);
+    expect(String((result as { error: string }).error)).toContain("**Branch:** header missing");
+    expect(String((result as { error: string }).error)).toContain("see templates/spec-template.md for the required structure");
+    expect(readFlowState(root, slug).spec.status).toBe("draft");
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("spec with **Branch:** only inside a fence is rejected by the Branch check", () => {
+  const { root, slug } = fixture();
+  try {
+    const specPath = `docs/${slug}/spec.md`;
+    writeFileSync(
+      path.join(root, specPath),
+      `# ${slug}\n\n\`\`\`markdown\n**Branch:** \`feature/${slug}\`\n\`\`\`\n\n## Context\n\n## Goals\n\n## Non-goals\n\n## Architecture\n\n## Acceptance criteria\n\n- CA-01: test\n`,
+    );
+    const result = transitionSpec(root, slug, specPath, true);
+    expect(result.ok).toBe(false);
+    expect(String((result as { error: string }).error)).toContain("**Branch:** header missing");
+    expect(readFlowState(root, slug).spec.status).toBe("draft");
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("plan with headers only inside a fence is rejected by the fence-aware header check", () => {
+  const { root, slug } = fixture();
+  try {
+    const specPath = `docs/${slug}/spec.md`;
+    writeFileSync(path.join(root, specPath), COMPLIANT_SPEC(slug));
+    approveSpec(root, slug);
+    const planPath = `docs/${slug}/plan.md`;
+    writeFileSync(
+      path.join(root, planPath),
+      `# ${slug}\n\n\`\`\`markdown\n**Spec:** \`docs/${slug}/spec.md\`\n**Branch:** \`feature/${slug}\`\n\`\`\`\n\n### Task 1: Do the thing\n`,
+    );
+    const result = transitionPlan(root, slug, planPath, true);
+    expect(result.ok).toBe(false);
+    expect(String((result as { error: string }).error)).toContain("**Spec:** header missing");
+    expect(String((result as { error: string }).error)).toContain("**Branch:** header missing");
+    expect(readFlowState(root, slug).plan.status).toBe("draft");
+  } finally {
+    cleanup(root);
+  }
+});
+
 test("compliant plan transitions draft -> self_reviewed -> approved", () => {
   const { root, slug } = fixture();
   try {

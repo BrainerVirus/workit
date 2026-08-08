@@ -184,7 +184,7 @@ const finding = (code: string, message: string, severity: "warning" | "hard"): Q
 
 // Replace fenced code blocks with a single marker line so their content cannot
 // satisfy the checks, but the fence itself (and its language) stays detectable.
-const stripFences = (text: string): string => {
+export const stripFences = (text: string): string => {
   const lines = text.split("\n");
   const out: string[] = [];
   let inFence = false;

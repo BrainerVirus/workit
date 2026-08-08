@@ -82,6 +82,13 @@ dist/
 3. Project setup via wf-init → `.gitignore` gains the entries → sdd stays untracked.
 4. `workflow_docs_validate`/`promote` flag sdd dirs that are not ignored.
 
+## Acceptance criteria
+
+- CA-01: `REMINDER_TEXT` (and the full contract template) includes the clickable-delivery line — `[spec.md](docs/<slug>/spec.md)` + 3-5 bullet summary; the brainstorming/wf-implement skills' user-review sections repeat it.
+- CA-02: `detectBacktickDocRefs` matches backtick-only `` `docs/<path>.md` `` refs; returns null when a markdown link exists in the same message or there are no refs.
+- CA-03: `workflow_docs_validate` reports a hard `sdd_not_ignored` finding when `docs/<slug>/sdd/` exists and is not gitignored; `workflow_docs_promote` refuses unless the sdd dir is ignored or `force: true`.
+- CA-04: wf-init appends the missing `.gitignore` entries (`docs/*/sdd/` + common cruft) without duplicating lines or overwriting existing custom entries; requires `confirmed`.
+
 ## Error handling
 
 - Detector/hook: same try/catch no-op pattern as Spec 7.
