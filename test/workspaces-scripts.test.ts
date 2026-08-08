@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -404,5 +404,65 @@ test("pr-create.sh --build-body: owner/repo parsed from git remote get-url origi
   } finally {
     rmSync(repoDir, { recursive: true, force: true });
     rmSync(bareDir, { recursive: true, force: true });
+  }
+});
+
+test("pr-create.sh create: cfg-driven wiring emits Closes #N into the real gh invocation", () => {
+  if (!scriptTools()) return;
+  // stub gh records its args and returns a fake PR URL; the rest of PATH mirrors the CLI-guard test
+  const stubBin = mkdtempSync(path.join(os.tmpdir(), "wf-bin-"));
+  const repoDir = realpathSync(mkdtempSync(path.join(os.tmpdir(), "wf-gh-repo-")));
+  const logFile = path.join(stubBin, "args.txt");
+  writeFileSync(
+    path.join(stubBin, "gh"),
+    `#!/bin/sh\nprintf '%s\\n' "$*" >> "${logFile}"\necho "https://github.com/o/r/pull/1"\n`,
+    { mode: 0o755 },
+  );
+  const pathDirs = (process.env.PATH ?? "").split(":");
+  const findOnPath = (tool: string): string | null => {
+    for (const dir of pathDirs) {
+      const real = path.join(dir, tool);
+      if (dir && existsSync(real)) return real;
+    }
+    return null;
+  };
+  for (const tool of ["bash", "git", "dirname", "env", "sh"]) {
+    const real = findOnPath(tool);
+    if (real) symlinkSync(real, path.join(stubBin, tool));
+  }
+  const realPy = spawnSync("python3", ["-c", "import sys; print(sys.executable)"], { encoding: "utf8" });
+  if (realPy.status === 0 && realPy.stdout.trim()) symlinkSync(realPy.stdout.trim(), path.join(stubBin, "python3"));
+  const cleanPath = pathDirs.filter((d) => d && !existsSync(path.join(d, "gh")) && !existsSync(path.join(d, "glab")));
+
+  const { home, cleanup } = withConfigDir({
+    "vcs.json": JSON.stringify({ provider: "github", defaultTargetBranch: "main" }),
+    "workspaces.json": JSON.stringify({
+      workspaces: [
+        { name: "work", glob: `${repoDir}/**`, vcs: { provider: "github" }, issues: { provider: "github", link_on_pr: true } },
+      ],
+    }),
+    "github.token": "test-token-123",
+  });
+  try {
+    for (const [cmd, args] of [
+      ["git", ["init", "-q"]],
+      ["git", ["remote", "add", "origin", "git@github.com:o/r.git"]],
+    ] as const) {
+      expect(spawnSync(cmd, args, { cwd: repoDir, encoding: "utf8" }).status).toBe(0);
+    }
+    const env = envWithHome(home, {
+      PATH: `${stubBin}:${cleanPath.join(":")}`,
+      WF_PR_CONFIRMED: "true",
+      WF_PR_TITLE: "Test title",
+      WORKFLOW_GH_ISSUE: "42",
+    });
+    const r = run(["scripts/pr-create.sh"], { cwd: repoDir, env });
+    expect(r.status, `create failed: ${r.stdout} ${r.stderr}`).toBe(0);
+    expect(JSON.parse(r.stdout).ok).toBe(true);
+    expect(readFileSync(logFile, "utf8")).toContain("Closes #42");
+  } finally {
+    cleanup();
+    rmSync(stubBin, { recursive: true, force: true });
+    rmSync(repoDir, { recursive: true, force: true });
   }
 });

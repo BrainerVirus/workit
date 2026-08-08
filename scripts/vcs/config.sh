@@ -97,9 +97,11 @@ default_target = ws_vcs.get("defaultTargetBranch") or cfg.get("defaultTargetBran
 link_issues = ws_yt.get("link_issues")
 youtrack_base_url = ws_yt.get("baseUrl")
 # github issues path (mirrors src/core/workspaces.ts WorkspaceConfig.issues); youtrack keys stay null for github workspaces.
+# Only when BOTH the vcs provider and the issues provider are github — a gitlab workspace with a github issues config
+# would otherwise emit "Closes #N" into a GitLab MR body.
 issues_provider = None
 link_on_pr = None
-if isinstance(ws_issues.get("provider"), str) and ws_issues.get("provider").lower() == "github":
+if provider == "github" and isinstance(ws_issues.get("provider"), str) and ws_issues.get("provider").lower() == "github":
     issues_provider = "github"
     lop = ws_issues.get("link_on_pr")
     link_on_pr = lop if isinstance(lop, bool) else None
