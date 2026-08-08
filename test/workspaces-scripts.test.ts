@@ -122,6 +122,28 @@ test("config.sh resolve: unmatched cwd falls back to global vcs.json; missing/ma
   }
 });
 
+test("config.sh resolve: WORKFLOW_TOOLKIT_CONFIG dir is honored for vcs.json + workspaces.json (TS chain parity)", () => {
+  if (!scriptTools()) return;
+  const base = mkdtempSync(path.join(os.tmpdir(), "wf-ws-dir-"));
+  mkdirSync(path.join(base, "work", "repo"), { recursive: true });
+  const cfgDir = mkdtempSync(path.join(os.tmpdir(), "wf-ws-chain-"));
+  writeFileSync(path.join(cfgDir, "vcs.json"), JSON.stringify(GLOBAL_VCS), "utf8");
+  writeFileSync(path.join(cfgDir, "workspaces.json"), workspacesJson(`${base}/work/**`, "gitlab"), "utf8");
+  const home = mkdtempSync(path.join(os.tmpdir(), "wf-ws-home-"));
+  try {
+    const env = envWithHome(home, { WORKFLOW_TOOLKIT_CONFIG: cfgDir });
+    const r = run(["scripts/vcs/config.sh", "resolve"], { cwd: path.join(base, "work", "repo"), env });
+    expect(r.status, r.stderr).toBe(0);
+    const out = JSON.parse(r.stdout);
+    expect(out.workspace_name).toBe("work");
+    expect(out.provider).toBe("gitlab");
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+    rmSync(cfgDir, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test("config.sh resolve: WORKFLOW_WORKSPACE_ROOT overrides the cwd", () => {
   if (!scriptTools()) return;
   const base = mkdtempSync(path.join(os.tmpdir(), "wf-ws-dir-"));
@@ -287,10 +309,19 @@ test("pr-create.sh --build-body: link_issues false or absent -> body unchanged",
   expect(buildBody({ BODY: "Same body", BRANCH: "feature/IRP-123-fix", YT_BASE_URL: "https://yt.example.com" })).toBe("Same body");
 });
 
-test("pr-create.sh --build-body: explicit YT_ISSUE wins over branch-derived id", () => {
+test("pr-create.sh --build-body: version-like tokens are not linked (POSTGRES-16, HTTP-3), issue refs are", () => {
+  if (!scriptTools()) return;
+  expect(buildBody({ BRANCH: "feature/POSTGRES-16-upgrade", LINK_ISSUES: "true", YT_BASE_URL: "https://yt.example.com" })).toBe("");
+  expect(buildBody({ BRANCH: "release/HTTP-3", LINK_ISSUES: "true", YT_BASE_URL: "https://yt.example.com" })).toBe("");
+  expect(
+    buildBody({ BRANCH: "feature/IRP-123-fix", LINK_ISSUES: "true", YT_BASE_URL: "https://yt.example.com" }),
+  ).toBe("Related to: https://yt.example.com/issue/IRP-123");
+});
+
+test("pr-create.sh --build-body: explicit WORKFLOW_YT_ISSUE wins over branch-derived id", () => {
   if (!scriptTools()) return;
   expect(
-    buildBody({ BRANCH: "feature/IRP-123-fix", LINK_ISSUES: "true", YT_BASE_URL: "https://yt.example.com", YT_ISSUE: "NSAT-9" }),
+    buildBody({ BRANCH: "feature/IRP-123-fix", LINK_ISSUES: "true", YT_BASE_URL: "https://yt.example.com", WORKFLOW_YT_ISSUE: "NSAT-9" }),
   ).toBe("Related to: https://yt.example.com/issue/NSAT-9");
 });
 

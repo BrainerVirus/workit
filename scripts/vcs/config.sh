@@ -4,7 +4,10 @@
 set -euo pipefail
 
 CMD="${1:-load}"
-CONFIG="${WORKFLOW_VCS_CONFIG:-$HOME/.config/workflow-toolkit/vcs.json}"
+# Mirrors src/core/config.ts configDir chain: WORKFLOW_TOOLKIT_CONFIG ->
+# WORKFLOW_TOOLKIT_CONFIG_DIR -> XDG_CONFIG_HOME/$HOME/.config + /workflow-toolkit.
+# WORKFLOW_VCS_CONFIG stays the explicit full-path override.
+CONFIG="${WORKFLOW_VCS_CONFIG:-${WORKFLOW_TOOLKIT_CONFIG:-${WORKFLOW_TOOLKIT_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/workflow-toolkit}}/vcs.json}"
 TOKEN_PLACEHOLDER='YOUR_TOKEN_HERE'
 WORKSPACES="$(dirname "$CONFIG")/workspaces.json"
 CWD="${WORKFLOW_WORKSPACE_ROOT:-$PWD}"
@@ -22,7 +25,8 @@ placeholder = sys.argv[4]
 mode = sys.argv[5]
 
 # mirrors src/core/workspaces.ts globToRegExp: `*` -> [^/]*, `**/` -> (?:[^/]+/)* (leading consumes /),
-# trailing `**` -> .*, everything else regex-escaped. First-wins, never throws.
+# trailing `**` -> (?:/.*)? plus [^/]* from the second star (bare parent matches), everything else
+# regex-escaped. First-wins, never throws.
 def glob_to_regexp(glob: str) -> "re.Pattern[str]":
     out = ""
     i = 0
@@ -36,7 +40,12 @@ def glob_to_regexp(glob: str) -> "re.Pattern[str]":
                     out += "(?:[^/]+/)*"
                     i += 2
                 else:
-                    out += ".*"
+                    if i + 2 >= len(glob):
+                        if out.endswith("/"):
+                            out = out[:-1]
+                        out += "(?:/.*)?"
+                    else:
+                        out += ".*"
                     i += 1
             else:
                 out += "[^/]*"

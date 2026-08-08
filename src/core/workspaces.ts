@@ -27,7 +27,13 @@ const globToRegExp = (glob: string): RegExp => {
           out += "(?:[^/]+/)*";
           i += 2;
         } else {
-          out += ".*";
+          // trailing ** also matches the bare parent: /x/y/** -> /x/y and /x/y/deep
+          if (i + 2 >= glob.length) {
+            if (out.endsWith("/")) out = out.slice(0, -1);
+            out += "(?:/.*)?";
+          } else {
+            out += ".*";
+          }
           i++;
         }
       } else {

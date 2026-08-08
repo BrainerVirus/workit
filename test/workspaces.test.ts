@@ -139,6 +139,20 @@ test("globstar **/ matches zero or more segments mid-pattern and leading", () =>
   });
 });
 
+test("trailing ** matches the bare parent root and deep paths", () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "wf-ws-trailing-"));
+  writeWorkspaces(dir, JSON.stringify({
+    workspaces: [
+      { name: "bare", glob: "/x/y/**" },
+    ],
+  }));
+  withIsolatedConfig(dir, () => {
+    expect(resolveWorkspace("/x/y")?.name).toBe("bare");
+    expect(resolveWorkspace("/x/y/deep/path")?.name).toBe("bare");
+    expect(resolveWorkspace("/x/y/")?.name).toBe("bare");
+  });
+});
+
 test("resolveWorkspace skips non-object entries in the workspaces array", () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "wf-ws-junk-"));
   writeWorkspaces(dir, JSON.stringify({

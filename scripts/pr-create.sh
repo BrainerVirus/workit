@@ -40,9 +40,11 @@ def build_body(body, branch, link_issues, base_url, yt_issue):
     if link_issues:
         issue = yt_issue
         if not issue and branch:
-            m = re.search(r"[A-Z]+-\d+", branch)
+            # Review M-2: anchored prefix + \b boundary, 3+ digits so version-like
+            # tokens (POSTGRES-16, HTTP-3) never link; IRP-123-style ids do.
+            m = re.search(r"(?:^|/|-)([A-Z]{2,}-\d{3,})\b", branch)
             if m:
-                issue = m.group(0)
+                issue = m.group(1)
         if issue and base_url:
             line = f"Related to: {base_url.rstrip('/')}/issue/{issue}"
     if line is None:
@@ -56,7 +58,7 @@ if mode == "build-body":
         os.environ.get("BRANCH", ""),
         os.environ.get("LINK_ISSUES", "").lower() in ("1", "true", "yes"),
         os.environ.get("YT_BASE_URL", ""),
-        os.environ.get("YT_ISSUE", ""),
+        os.environ.get("WORKFLOW_YT_ISSUE", ""),
     )}))
     sys.exit(0)
 
