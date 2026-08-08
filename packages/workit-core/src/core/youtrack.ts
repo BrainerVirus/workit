@@ -126,7 +126,8 @@ export function youTrackWorkDateMs(dateRaw: string): { data: { dateMs: number; t
       return { data: { dateMs: Number(raw), timezone: tz, localDate: `${y}-${m}-${d}` } };
     }
     const [y, m, d] = raw.split("-").map(Number);
-    const dateMs = Math.floor(Date.parse(`${y}-${m}-${d}T00:00:00`) / 86400000) * 86400000;
+    const iso = `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}T00:00:00`;
+    const dateMs = Math.floor(Date.parse(iso) / 86400000) * 86400000;
     return { data: { dateMs, timezone: tz, localDate: `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}` } };
   } catch (err) {
     return { error: err instanceof Error ? err.message : "could not resolve date" };
