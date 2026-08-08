@@ -99,7 +99,7 @@ workit/
 │   │   ├── src/            # core TS (src/core, src/tools, src/state)
 │   │   ├── skills/         # OpenCode-native skills (wk-*)
 │   │   ├── commands/       # OpenCode commands (wk-*)
-│   │   ├── scripts/        # shared shell/python + installers
+│   │   ├── scripts/        # shared shell + installers (all logic in src/, TS via bun)
 │   │   ├── templates/      # execution + superpowers contracts
 │   │   └── vendor/         # vendored superpowers skills
 │   ├── workit-opencode/    # @brainervirus/workit-opencode — OpenCode plugin (src/plugin.ts)
