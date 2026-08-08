@@ -13,14 +13,23 @@ export type WorkspaceConfig = {
 
 export const workspacesPath = (): string => path.join(configDir(), "workspaces.json");
 
+// ponytail: only globstar (`**`) is supported; if more minimatch parity is needed
+// (char classes, braces, `?`), swap this matcher for the minimatch dependency.
 const globToRegExp = (glob: string): RegExp => {
   let out = "";
   for (let i = 0; i < glob.length; i++) {
     const c = glob[i];
     if (c === "*") {
       if (glob[i + 1] === "*") {
-        out += ".*";
-        i++;
+        if (glob[i + 2] === "/") {
+          // **/ matches zero or more segments; a leading **/ also consumes the leading slash
+          if (out === "") out += "/?";
+          out += "(?:[^/]+/)*";
+          i += 2;
+        } else {
+          out += ".*";
+          i++;
+        }
       } else {
         out += "[^/]*";
       }
@@ -44,6 +53,7 @@ export const resolveWorkspace = (cwd: string): WorkspaceConfig | null => {
   } catch {
     return null;
   }
+  if (!parsed || typeof parsed !== "object") return null;
   const list = (parsed as { workspaces?: unknown }).workspaces;
   if (!Array.isArray(list)) return null;
   const cwdPosix = cwd.split(path.sep).join("/");

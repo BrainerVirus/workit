@@ -92,13 +92,60 @@ test("matched workspace carries vcs.provider, vcs.defaultTargetBranch, youtrack.
 
 test("initStatus reports workspaces.resolved and path for the temp config", () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "wf-ws-status-"));
-  writeWorkspaces(dir, JSON.stringify(WORKSPACES, null, 2));
+  writeWorkspaces(dir, JSON.stringify({
+    workspaces: [
+      { name: "work", glob: "/home/*/Documents/projects/work/**" },
+      { name: "catchall", glob: "**" },
+    ],
+  }));
   withIsolatedConfig(dir, () => {
     const status = initStatus();
     expect(status.error).toBeUndefined();
     expect(status.workspaces.path).toBe(path.join(dir, "workspaces.json"));
-    expect(status.workspaces.resolved?.name).toBe("personal");
-    expect(status.workspaces.resolved?.vcs?.provider).toBe("github");
+    expect(status.workspaces.resolved?.name).toBe("catchall");
+  });
+});
+
+test("resolveWorkspace returns null without throwing when workspaces.json is literal null", () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "wf-ws-null-"));
+  writeWorkspaces(dir, "null");
+  withIsolatedConfig(dir, () => {
+    expect(resolveWorkspace("/home/u/Documents/projects/work/x")).toBeNull();
+  });
+});
+
+test("initStatus survives a literal null workspaces.json", () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "wf-ws-status-null-"));
+  writeWorkspaces(dir, "null");
+  withIsolatedConfig(dir, () => {
+    const status = initStatus();
+    expect(status.error).toBeUndefined();
+    expect(status.workspaces.resolved).toBeNull();
+  });
+});
+
+test("globstar **/ matches zero or more segments mid-pattern and leading", () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "wf-ws-globstar-"));
+  writeWorkspaces(dir, JSON.stringify({
+    workspaces: [
+      { name: "mid", glob: "/home/*/work/**/repo" },
+      { name: "lead", glob: "**/repo" },
+    ],
+  }));
+  withIsolatedConfig(dir, () => {
+    expect(resolveWorkspace("/home/u/work/repo")?.name).toBe("mid");
+    expect(resolveWorkspace("/home/u/work/a/b/repo")?.name).toBe("mid");
+    expect(resolveWorkspace("/repo")?.name).toBe("lead");
+  });
+});
+
+test("resolveWorkspace skips non-object entries in the workspaces array", () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "wf-ws-junk-"));
+  writeWorkspaces(dir, JSON.stringify({
+    workspaces: ["x", 42, true, null, { name: "ok", glob: "**" }],
+  }));
+  withIsolatedConfig(dir, () => {
+    expect(resolveWorkspace("/home/u/anything")?.name).toBe("ok");
   });
 });
 
