@@ -19,7 +19,8 @@ export const PRESETS: Record<BranchPreset, { allowed: string[]; protected: strin
 };
 
 export const configDir = (): string =>
-  process.env.WORKFLOW_TOOLKIT_CONFIG_DIR
+  process.env.WORKFLOW_TOOLKIT_CONFIG
+  ?? process.env.WORKFLOW_TOOLKIT_CONFIG_DIR
   ?? path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config"), "workflow-toolkit");
 
 export const LOCALE_RE = /^[a-z]{2,3}(-[A-Z]{2})?$/;

@@ -5,7 +5,7 @@ ACTION="${1:-}"
 CONFIRMED="${2:-false}"
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 PLUGIN_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/../.." && pwd)
-CONFIG_DIR="${WORKFLOW_TOOLKIT_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/workflow-toolkit}"
+CONFIG_DIR="${WORKFLOW_TOOLKIT_CONFIG:-${WORKFLOW_TOOLKIT_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/workflow-toolkit}}"
 TOKEN_PLACEHOLDER='YOUR_TOKEN_HERE'
 
 if [ "$CONFIRMED" != "true" ]; then

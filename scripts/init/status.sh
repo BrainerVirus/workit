@@ -5,7 +5,7 @@ TOKEN_PLACEHOLDER='YOUR_TOKEN_HERE'
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 PLUGIN_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/../.." && pwd)
-CONFIG_DIR="${WORKFLOW_TOOLKIT_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/workflow-toolkit}"
+CONFIG_DIR="${WORKFLOW_TOOLKIT_CONFIG:-${WORKFLOW_TOOLKIT_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/workflow-toolkit}}"
 YOUTRACK_JSON="$CONFIG_DIR/youtrack.json"
 YOUTRACK_TOKEN="$CONFIG_DIR/youtrack.token"
 VCS_JSON="$CONFIG_DIR/vcs.json"
@@ -127,6 +127,7 @@ if youtrack_token_create:
 items.append(youtrack_token_item)
 
 vcs_config = None
+token_file = {}
 vp = Path(vcs_json)
 vcs_abs = str(vp.resolve()) if vp.is_file() else str(vp.expanduser().resolve())
 if vp.is_file():
@@ -134,7 +135,7 @@ if vp.is_file():
         vcfg = json.loads(vp.read_text(encoding="utf-8"))
         provider = (vcfg.get("provider") or "gitlab").lower()
         prov = vcfg.get(provider) or {}
-        token_file = prov.get("tokenFile") or str(Path(config_dir) / f"{provider}.token")
+        token_file = {k: (vcfg.get(k) or {}).get("tokenFile") or str(Path(config_dir) / f"{k}.token") for k in ("gitlab", "github")}
         vcs_config = {
             "config_edit_path": vcs_abs,
             "provider": provider,
@@ -180,6 +181,12 @@ if vp.is_file():
                     "github": token_create_urls.get("github"),
                 }
 
+def resolve_token_path(prov_key):
+    t = Path(token_file.get(prov_key) or str(Path(config_dir) / f"{prov_key}.token")).expanduser()
+    if not t.is_absolute():
+        t = Path(config_dir) / t
+    return str(t.resolve())
+
 def token_item(tid, label, path, provider_key):
     t = Path(path)
     abs_p = str(t.resolve()) if t.is_file() else str(t.expanduser().resolve())
@@ -211,8 +218,8 @@ def token_item(tid, label, path, provider_key):
             item["token_name"] = block["name"]
     return item
 
-items.append(token_item("gitlab_token", "GitLab token (mode 600, not placeholder)", gl_token, "gitlab"))
-items.append(token_item("github_token", "GitHub token (mode 600, not placeholder)", gh_token, "github"))
+items.append(token_item("gitlab_token", "GitLab token (mode 600, not placeholder)", resolve_token_path("gitlab"), "gitlab"))
+items.append(token_item("github_token", "GitHub token (mode 600, not placeholder)", resolve_token_path("github"), "github"))
 
 print(json.dumps({
     "config_dir": config_dir,

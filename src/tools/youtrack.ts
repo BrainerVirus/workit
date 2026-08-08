@@ -18,8 +18,8 @@ const ISSUE_RE = /^[A-Z]+-\d+$/;
 const output = (value: unknown) => JSON.stringify(value, null, 2);
 const message = (error: unknown) => error instanceof Error ? error.message : String(error);
 
-// ponytail: both override names point at the config dir itself (status.sh/apply.sh use
-// WORKFLOW_TOOLKIT_CONFIG, src/core/config.ts uses WORKFLOW_TOOLKIT_CONFIG_DIR) — honor both.
+// Both override names point at the config dir itself, same precedence as
+// src/core/config.ts and scripts/init/status.sh: WORKFLOW_TOOLKIT_CONFIG → WORKFLOW_TOOLKIT_CONFIG_DIR → XDG.
 export const configPath = (env: NodeJS.ProcessEnv = process.env, home = os.homedir()) =>
   path.join(
     env.WORKFLOW_TOOLKIT_CONFIG
@@ -31,8 +31,8 @@ export const configPath = (env: NodeJS.ProcessEnv = process.env, home = os.homed
 export function readCredentials(env: NodeJS.ProcessEnv = process.env, home = os.homedir()) {
   const resolvedConfig = configPath(env, home);
   const config = JSON.parse(readFileSync(resolvedConfig, "utf8")) as { tokenFile?: string };
-  if (!config.tokenFile) throw new Error("tokenFile missing in youtrack.json");
-  const tokenPath = path.resolve(path.dirname(resolvedConfig), config.tokenFile.replace(/^~(?=\/)/, home));
+  const tokenFile = config.tokenFile ?? "youtrack.token";
+  const tokenPath = path.resolve(path.dirname(resolvedConfig), tokenFile.replace(/^~(?=\/)/, home));
   if ((statSync(tokenPath).mode & 0o777) !== 0o600) throw new Error("youtrack.token mode must be 0600");
   const token = readFileSync(tokenPath, "utf8").trim();
   if (!token) throw new Error("youtrack.token is empty");
