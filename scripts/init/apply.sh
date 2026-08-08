@@ -51,7 +51,7 @@ cfg = {
         "name": "workflow-toolkit",
         "description": "OpenCode workflow-toolkit — /wf-issue-update and /wf-meetings",
         "scopes": ["YouTrack"],
-        "profileTab": "account.security",
+        "profileTab": "account-security",
     },
 }
 out.parent.mkdir(parents=True, exist_ok=True)

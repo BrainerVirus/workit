@@ -127,7 +127,7 @@ export function scaffoldYouTrack(dir: string, baseUrl: string, opts: { locale?: 
       name: "workflow-toolkit",
       description: "OpenCode workflow-toolkit — /wf-issue-update and /wf-meetings",
       scopes: ["YouTrack"],
-      profileTab: "account.security",
+      profileTab: "account-security",
     },
   };
   writeFileSync(youtrackJson, JSON.stringify(config, null, 2) + "\n", "utf8");
@@ -136,7 +136,7 @@ export function scaffoldYouTrack(dir: string, baseUrl: string, opts: { locale?: 
   return {
     youtrackJson,
     tokenPath,
-    tokenCreateUrl: `${base}/users/me?tab=account.security`,
+    tokenCreateUrl: `${base}/users/me?tab=account-security`,
   };
 }
 
