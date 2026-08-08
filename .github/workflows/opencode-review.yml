@@ -25,7 +25,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          persist-credentials: false
+          persist-credentials: true # el action hace git fetch del PR — necesita auth
 
       - uses: anomalyco/opencode/github@latest
         env:
@@ -60,7 +60,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 1
-          persist-credentials: false
+          persist-credentials: true # el action hace git fetch del PR — necesita auth
 
       - uses: anomalyco/opencode/github@latest
         env:
@@ -80,7 +80,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          persist-credentials: false
+          persist-credentials: true # el action hace git fetch del PR — necesita auth
 
       - uses: anomalyco/opencode/github@latest
         env:
