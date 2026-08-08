@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { detectProseChoices } from "../packages/workit/src/core/detector";
+import { detectProseChoices } from "../packages/workit-core/src/core/detector";
 
 test("detects alpha choices with interrogative", () => {
   const d = detectProseChoices("A) install agent-browser\nB) configure lazy chrome\nC) both\nWhich one?");
@@ -49,7 +49,7 @@ test("matches one-line choices", () => {
   if (d) expect(d.pattern).toBe("alpha");
 });
 
-import { detectBacktickDocRefs } from "../packages/workit/src/core/detector";
+import { detectBacktickDocRefs } from "../packages/workit-core/src/core/detector";
 
 test("detects backtick-only doc references", () => {
   const refs = detectBacktickDocRefs("Spec is at `docs/upgrade-19/spec.md`. Please review.");

@@ -1,0 +1,31 @@
+{
+  "name": "@brainervirus/workit-cursor",
+  "version": "0.4.0",
+  "private": false,
+  "description": "Workit Cursor plugin: MCP server, hooks, rules, marketplace manifest (thin over @brainervirus/workit-core)",
+  "license": "MIT",
+  "keywords": ["cursor", "mcp", "workflow", "agent"],
+  "bugs": {
+    "url": "https://github.com/BrainerVirus/workflow-toolkit/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/BrainerVirus/workflow-toolkit.git"
+  },
+  "files": [
+    "mcp/",
+    "hooks/",
+    "rules/",
+    "skills/",
+    ".cursor-plugin/",
+    "mcp.json",
+    "marketplace.json"
+  ],
+  "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@brainervirus/workit-core": "workspace:*"
+  }
+}

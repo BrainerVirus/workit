@@ -1,8 +1,8 @@
 import { Box, Text, useInput } from "ink";
 import { ConfirmInput, MultiSelect, Select, TextInput } from "@inkjs/ui";
 import { useState, type Dispatch, type JSX, type SetStateAction } from "react";
-import { configDir, readConfig, writeConfig, type BranchPreset, type ToolkitConfig } from "@brainervirus/workit/src/core/config.ts";
-import type { WorkspaceConfig } from "@brainervirus/workit/src/core/workspaces.ts";
+import { configDir, readConfig, writeConfig, type BranchPreset, type ToolkitConfig } from "@brainervirus/workit-core/src/core/config.ts";
+import type { WorkspaceConfig } from "@brainervirus/workit-core/src/core/workspaces.ts";
 import {
   collectConfigValues,
   DEFAULT_BASE_URL,

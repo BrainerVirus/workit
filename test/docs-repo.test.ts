@@ -6,7 +6,7 @@ import { spawnSync } from "node:child_process";
 import {
   readDocsRepoConfig, writeDocsRepoConfig, docsRepoPath,
   validateDocsRepo, linkDocsRepo,
-} from "../packages/workit/src/core/docs-repo";
+} from "../packages/workit-core/src/core/docs-repo";
 
 process.env.WORKFLOW_DOCS_REPO_CONFIG = path.join(os.tmpdir(), "wf-docsrepo-config-test.json");
 
@@ -66,7 +66,7 @@ test("linkDocsRepo requires confirmed and writes config", () => {
   } finally { rmSync(repo, { recursive: true, force: true }); }
 });
 
-import { promoteSpec } from "../packages/workit/src/core/docs-repo";
+import { promoteSpec } from "../packages/workit-core/src/core/docs-repo";
 
 const goodSpec = (slug: string) => `# Spec: ${slug}
 

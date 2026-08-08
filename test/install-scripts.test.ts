@@ -20,17 +20,17 @@ function makeStub(pluginTs: string) {
   const home = mkdtempSync(path.join(os.tmpdir(), "wk-install-home-"));
   spawnSync("git", ["init", "-q"], { cwd: stub });
   mkdirSync(path.join(stub, "scripts"), { recursive: true });
-  mkdirSync(path.join(stub, "packages/workit/cursor/.cursor-plugin"), { recursive: true });
-  mkdirSync(path.join(stub, "packages/workit/src"), { recursive: true });
+  mkdirSync(path.join(stub, "packages/workit-cursor/.cursor-plugin"), { recursive: true });
+  mkdirSync(path.join(stub, "packages/workit-opencode/src"), { recursive: true });
   cpSync(
-    path.join(repoRoot, "packages/workit/scripts/install-opencode-plugin.sh"),
+    path.join(repoRoot, "packages/workit-core/scripts/install-opencode-plugin.sh"),
     path.join(stub, "scripts/install-opencode-plugin.sh"),
   );
   cpSync(
-    path.join(repoRoot, "packages/workit/scripts/sync-runtime.sh"),
+    path.join(repoRoot, "packages/workit-core/scripts/sync-runtime.sh"),
     path.join(stub, "scripts/sync-runtime.sh"),
   );
-  writeFileSync(path.join(stub, "packages/workit/src/plugin.ts"), pluginTs);
+  writeFileSync(path.join(stub, "packages/workit-opencode/src/plugin.ts"), pluginTs);
   return { stub, home };
 }
 
@@ -52,7 +52,7 @@ test("install-opencode-plugin.sh writes a file:// pin and fails loudly on an emp
     const config = JSON.parse(
       readFileSync(path.join(good.home, ".config/opencode/opencode.json"), "utf8"),
     );
-    expect(config.plugin).toEqual([`file://${good.stub}/packages/workit/src/plugin.ts`]);
+    expect(config.plugin).toEqual([`file://${good.stub}/packages/workit-opencode/src/plugin.ts`]);
 
     const bad = runInstall(empty);
     expect(bad.status).not.toBe(0);

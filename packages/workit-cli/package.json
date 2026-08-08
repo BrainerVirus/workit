@@ -26,7 +26,7 @@
     "access": "public"
   },
   "dependencies": {
-    "@brainervirus/workit": "^0.4.0",
+    "@brainervirus/workit-core": "workspace:*",
     "@inkjs/ui": "2.0.0",
     "ink": "7.1.1",
     "react": "19.2.8"

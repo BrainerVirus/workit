@@ -2,8 +2,8 @@ import { expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { initStatus } from "../packages/workit/src/core/init";
-import { resolveWorkspace, workspacesPath, type WorkspaceConfig } from "../packages/workit/src/core/workspaces";
+import { initStatus } from "../packages/workit-core/src/core/init";
+import { resolveWorkspace, workspacesPath, type WorkspaceConfig } from "../packages/workit-core/src/core/workspaces";
 
 const WORKSPACES = {
   workspaces: [

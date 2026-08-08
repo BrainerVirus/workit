@@ -1,16 +1,21 @@
 import { existsSync, readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Plugin } from "@opencode-ai/plugin";
 
 import { getWorkflowBootstrap, isWorkflowBootstrap } from "./bootstrap";
-import { REMINDER_TEXT, DETECTION_TEXT, DOC_DELIVERY_TEXT, DOC_RENDER_TEXT, SDD_REMINDER_TEXT, shouldInjectSddReminder, CONFIG_GUARD_TEXT, shouldInjectConfigGuard, shouldInjectDocRender, VERIFICATION_TEXT, TDD_TEXT, BRAINSTORM_TEXT, DEBUG_TEXT, REVIEW_RECEPTION_TEXT, shouldInjectVerification, shouldInjectTdd, shouldInjectBrainstorm, shouldInjectDebug, shouldInjectReviewReception, ISSUE_RAIL_TEXT, shouldInjectIssueRail } from "./core/reminder";
-import { detectProseChoices, detectBacktickDocRefs, findActiveSubagentDrivenPlans, detectConfigGapError, detectRawDocDelivery, detectVerificationClaim, detectUntestedImplementation, detectImplementationWithoutDesign, detectFixWithoutRootCause, detectBlindReviewAcceptance, detectInstructionOption } from "./core/detector";
-import { createTools } from "./tools";
-import { adaptPluginHandoffClient } from "./tools/handoff";
-import { WorkflowStateStore } from "./state";
+import { REMINDER_TEXT, DETECTION_TEXT, DOC_DELIVERY_TEXT, DOC_RENDER_TEXT, SDD_REMINDER_TEXT, shouldInjectSddReminder, CONFIG_GUARD_TEXT, shouldInjectConfigGuard, shouldInjectDocRender, VERIFICATION_TEXT, TDD_TEXT, BRAINSTORM_TEXT, DEBUG_TEXT, REVIEW_RECEPTION_TEXT, shouldInjectVerification, shouldInjectTdd, shouldInjectBrainstorm, shouldInjectDebug, shouldInjectReviewReception, ISSUE_RAIL_TEXT, shouldInjectIssueRail } from "@brainervirus/workit-core/src/core/reminder";
+import { detectProseChoices, detectBacktickDocRefs, findActiveSubagentDrivenPlans, detectConfigGapError, detectRawDocDelivery, detectVerificationClaim, detectUntestedImplementation, detectImplementationWithoutDesign, detectFixWithoutRootCause, detectBlindReviewAcceptance, detectInstructionOption } from "@brainervirus/workit-core/src/core/detector";
+import { createTools } from "@brainervirus/workit-core/src/tools";
+import { adaptPluginHandoffClient } from "@brainervirus/workit-core/src/tools/handoff";
+import { WorkflowStateStore } from "@brainervirus/workit-core/src/state";
 
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+// Skills/commands/vendor/templates live in the core package. Resolve its root
+// through node_modules (workspace symlink in the monorepo, sibling in a
+// published install) instead of a relative path off this file.
+const require = createRequire(import.meta.url);
+const root = path.dirname(require.resolve("@brainervirus/workit-core/package.json"));
 const descriptions: Record<string, string> = {
   "wk-init": "Initialize workit configuration",
   "wk-status": "Show workflow and repository status",

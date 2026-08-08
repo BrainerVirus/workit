@@ -2,10 +2,10 @@ import { expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
-const skill = (name: string) => readFileSync(path.join(import.meta.dir, "..", "packages", "workit", "skills", name, "SKILL.md"), "utf8");
+const skill = (name: string) => readFileSync(path.join(import.meta.dir, "..", "packages", "workit-core", "skills", name, "SKILL.md"), "utf8");
 
 test("all native skills exist and contain no Cursor runtime vocabulary", () => {
-  const root = path.resolve(import.meta.dir, "..", "packages", "workit");
+  const root = path.resolve(import.meta.dir, "..", "packages", "workit-core");
   const dirs = readdirSync(path.join(root, "skills")).filter((name) => name.startsWith("wk-"));
   expect(dirs).toHaveLength(12);
   const source = dirs.map((dir) => readFileSync(path.join(root, "skills", dir, "SKILL.md"), "utf8")).join("\n");
@@ -36,7 +36,7 @@ test("issue update consumes the Result envelope and retries only proven missing 
 
 test("implement confirms every branch setup after previewing branch and stash behavior", () => {
   const text = skill("wk-implement");
-  const contract = readFileSync(path.join(import.meta.dir, "..", "packages", "workit", "templates", "execution-contract.md"), "utf8");
+  const contract = readFileSync(path.join(import.meta.dir, "..", "packages", "workit-core", "templates", "execution-contract.md"), "utf8");
   for (const source of [text, contract]) {
     expect(source).toContain("current branch");
     expect(source).toContain("target branch");
@@ -71,7 +71,7 @@ test("handoff always ends the originating turn and never falls back inline", () 
 });
 
 test("wf commands never emit a bare Arguments: label", () => {
-  const dir = path.join(import.meta.dir, "..", "packages", "workit", "commands");
+  const dir = path.join(import.meta.dir, "..", "packages", "workit-core", "commands");
   for (const file of readdirSync(dir)) {
     const text = readFileSync(path.join(dir, file), "utf8");
     expect(text).not.toMatch(/Arguments:\s*\$ARGUMENTS/);
@@ -80,11 +80,11 @@ test("wf commands never emit a bare Arguments: label", () => {
 });
 
 test("post-plan override lists five fixed options and forbids two-option prose", () => {
-  const root = path.resolve(import.meta.dir, "..", "packages", "workit");
+  const packages = path.resolve(import.meta.dir, "..", "packages");
   const surfaces = [
-    readFileSync(path.join(root, "templates", "superpowers-doc-contract.md"), "utf8"),
-    readFileSync(path.join(root, "src", "bootstrap.ts"), "utf8"),
-    readFileSync(path.join(root, "cursor", "rules", "ask-question-only.mdc"), "utf8"),
+    readFileSync(path.join(packages, "workit-core", "templates", "superpowers-doc-contract.md"), "utf8"),
+    readFileSync(path.join(packages, "workit-opencode", "src", "bootstrap.ts"), "utf8"),
+    readFileSync(path.join(packages, "workit-cursor", "rules", "ask-question-only.mdc"), "utf8"),
   ].join("\n");
   for (const label of [
     "Subagent-driven",
@@ -104,7 +104,7 @@ test("post-plan override lists five fixed options and forbids two-option prose",
 
 test("implement review policy caps blockers and defers advisories", () => {
   const text = skill("wk-implement");
-  const contract = readFileSync(path.join(import.meta.dir, "..", "packages", "workit", "templates", "execution-contract.md"), "utf8");
+  const contract = readFileSync(path.join(import.meta.dir, "..", "packages", "workit-core", "templates", "execution-contract.md"), "utf8");
   for (const source of [text, contract]) {
     expect(source).toMatch(/two|2/);
     expect(source).toMatch(/advisory|Advisory/i);
@@ -113,10 +113,10 @@ test("implement review policy caps blockers and defers advisories", () => {
 });
 
 test("PR skills show title and body before create confirmation", () => {
-  const root = path.resolve(import.meta.dir, "..", "packages", "workit");
+  const root = path.resolve(import.meta.dir, "..", "packages");
   for (const rel of [
-    "skills/wk-pr/SKILL.md",
-    "cursor/skills/wk-pr/SKILL.md",
+    "workit-core/skills/wk-pr/SKILL.md",
+    "workit-cursor/skills/wk-pr/SKILL.md",
   ]) {
     const text = readFileSync(path.join(root, rel), "utf8");
     const body = text.split("## Rules")[0] ?? text;
@@ -130,7 +130,7 @@ test("PR skills show title and body before create confirmation", () => {
 });
 
 test("native runtime outputs use OpenCode-neutral vocabulary", () => {
-  const root = path.resolve(import.meta.dir, "..", "packages", "workit");
+  const root = path.resolve(import.meta.dir, "..", "packages", "workit-core");
   const sources = [
     "src/core/sdd.ts", "scripts/_shared/common.sh", "scripts/changelog-context.sh",
     "scripts/init/apply.sh", "scripts/vcs/token-create-urls.sh",
@@ -142,9 +142,9 @@ test("native runtime outputs use OpenCode-neutral vocabulary", () => {
 });
 
 test("quality templates and findings are wired into contracts", () => {
-  const implement = readFileSync(path.resolve(import.meta.dir, "../packages/workit/skills/wk-implement/SKILL.md"), "utf8");
-  const exec = readFileSync(path.resolve(import.meta.dir, "../packages/workit/templates/execution-contract.md"), "utf8");
-  const specContract = readFileSync(path.resolve(import.meta.dir, "../packages/workit/templates/superpowers-doc-contract.md"), "utf8");
+  const implement = readFileSync(path.resolve(import.meta.dir, "../packages/workit-core/skills/wk-implement/SKILL.md"), "utf8");
+  const exec = readFileSync(path.resolve(import.meta.dir, "../packages/workit-core/templates/execution-contract.md"), "utf8");
+  const specContract = readFileSync(path.resolve(import.meta.dir, "../packages/workit-core/templates/superpowers-doc-contract.md"), "utf8");
   expect(implement).toMatch(/spec-template\.md|plan-template\.md/);
   expect(implement).toMatch(/quality/);
   expect(exec).toMatch(/quality/);
@@ -152,13 +152,13 @@ test("quality templates and findings are wired into contracts", () => {
 });
 
 test("cursor session-start includes the contract reminder", () => {
-  const hook = readFileSync(path.resolve(import.meta.dir, "../packages/workit/cursor/hooks/session-start"), "utf8");
+  const hook = readFileSync(path.resolve(import.meta.dir, "../packages/workit-cursor/hooks/session-start"), "utf8");
   expect(hook).toContain("Bounded user choices");
   expect(hook).toContain("never A/B/C or 1/2/3 lists in prose");
 });
 
 test("contract includes the doc delivery section", () => {
-  const contract = readFileSync(path.resolve(import.meta.dir, "../packages/workit/templates/superpowers-doc-contract.md"), "utf8");
+  const contract = readFileSync(path.resolve(import.meta.dir, "../packages/workit-core/templates/superpowers-doc-contract.md"), "utf8");
   expect(contract).toContain("## Doc delivery");
   expect(contract).toMatch(/\[spec\.md\]\(docs\/<slug>\/spec\.md\)/);
 });

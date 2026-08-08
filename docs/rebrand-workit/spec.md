@@ -13,11 +13,12 @@ The npm name `flowkit` is blocked by npm's anti-squatting rule (too similar to t
 - G3: `src/` identifiers/texts: `workflow-toolkit` → `workit`, `wf-` → `wk-` in user-facing strings, tool descriptions, error messages, and internal names where they surface in output; functional internal identifiers (functions/types) stay unless they leak into UX.
 - G4: Cursor plugin: plugin.json, mcp.json, rules, hooks paths and names updated; run-server.sh fallbacks (`~/.local/share/workflow-toolkit` → `~/.local/share/workit`).
 - G5: `docs/` + README + CONTRIBUTING + templates: all `workflow-toolkit`/`wf-` references updated; the wf-* skill references inside specs are updated where they describe the entry points.
-- G5b: Code-review check via **opencode GitHub integration** (verified at https://opencode.ai/docs/github/): `opencode github install` sets up the GitHub App + workflow; the `pull_request` event (opened/synchronize/reopened) runs `anomalyco/opencode/github@latest` on the runner and reviews each PR automatically (default prompt reviews the PR; custom prompt enforces the toolkit's standards). Registered as a required check in branch protection. Cursor Bugbot stays documented as an optional alternative.
+- G5b: Code-review check via **opencode GitHub integration** (verified at https://opencode.ai/docs/github/): the user installed the GitHub App (`github.com/apps/opencode-agent`) on all repos; workflows use `anomalyco/opencode/github@latest` with the **`opencode-go/deepseek-v4-flash`** model (verified on models.dev — the user's plan). `pull_request` events review each PR (custom prompt enforcing workit's own standards — the enforcement rails as review criteria); `issue_comment` + `pull_request_review_comment` allow `/oc`-driven fixes; `issues` triage. Some flows BLOCK merge (required checks), others are advisory — decided flow-by-flow in the plan. Cursor Bugbot stays an optional documented alternative.
 - G6: The user's live config (`~/.config/workflow-toolkit/`) is NOT renamed (config dir stability — optional alias note in README).
-- G7: Monorepo restructure (bun workspaces): `packages/workit` (core: plugin opencode+cursor, skills, commands, core TS) + `packages/workit-cli` (the Ink TUI — published separately as `@brainervirus/workit-cli`, the user's choice of `-cli` suffix); root package.json becomes the workspace root.
+- G7: Monorepo restructure (bun workspaces) with SEPARATE publishes per platform: `packages/workit-core` (shared: skills, commands, vendor/superpowers, templates, core TS — `@brainervirus/workit-core`), `packages/workit-opencode` (the opencode plugin — `@brainervirus/workit-opencode`), `packages/workit-cursor` (the cursor plugin: mcp + hooks + rules + marketplace manifest — `@brainervirus/workit-cursor`), `packages/workit-cli` (the Ink TUI — `@brainervirus/workit-cli`, user's `-cli` choice). Each platform package is thin over the core (the model: ponytail ships one plugin on npm; superpowers is vendored — our platforms share the core but publish separately, enabling the cursor marketplace).
 - G8: GitHub repo renamed `workflow-toolkit` → `workit` (user asked — repo, releases, and docs references all updated; remote URLs in README/package.json updated).
-- G9: Release automation with semantic-release (Conventional Commits): automated version bump, changelog, tags, and ordered publish of both packages; replaces the manual release.yml flow.
+- G9: Release automation with semantic-release (Conventional Commits): automated version bump, changelog, tags, and ordered publish of the packages (core → platform plugins → cli); replaces the manual release.yml flow.
+- G9b: Auto-update story documented: opencode does NOT auto-update npm plugins (ponytail stays at its pinned version until the pin changes); superpowers auto-updates because it's vendored with a sync script. Workit: (a) the existing `sync-runtime.sh` keeps the dev install fresh, (b) consumers pin `latest` (opencode re-resolves on restart) or run the sync script — documented in README.
 - G10: v0.4.0 released under the new names: tag, GitHub Release, `npm publish` of `@brainervirus/workit` + `@brainervirus/workit-cli` (secret configured).
 
 ## Non-goals
@@ -53,8 +54,10 @@ flowchart LR
 
 | Term | Meaning |
 | --- | --- |
-| Package name | `@brainervirus/workit` (scoped, public access) |
+| Package names | `@brainervirus/workit-core`, `@brainervirus/workit-opencode`, `@brainervirus/workit-cursor`, `@brainervirus/workit-cli` (all scoped, public access) |
 | Bin | `workit` (the CLI entry; the `wk` shorthand is for the agent-facing commands/skills) |
+| CI model | `opencode-go/deepseek-v4-flash` (verified on models.dev) |
+| Review app | opencode GitHub App (github.com/apps/opencode-agent — installed by the user) |
 | Entry points | `wk-*` (12 skills + 12 commands), e.g. `wk-init`, `wk-pr`, `wk-implement` |
 | Config dir | `~/.config/workflow-toolkit/` UNCHANGED (stability; README documents the alias) |
 | Env vars | `WORKFLOW_TOOLKIT_CONFIG*` UNCHANGED (documented) |
@@ -67,11 +70,11 @@ flowchart LR
 - CA-03: `wk-*` skills/commands load: plugin registration test asserts the 12 `wk-` names; cursor plugin.json/mcp.json reference the new names.
 - CA-04: `bun run check` green; cursor MCP smoke test still answers tools/list; the user's config dir/env still resolve (no rename touched them).
 - CA-05: README/CONTRIBUTING/templates have zero stale `workflow-toolkit`/`wf-` references (grep gate); install section shows `npm i @brainervirus/workit` + `npx workit init`.
-- CA-06: Monorepo: `bun install` at the root resolves both packages; `packages/workit-cli` has its own package.json (`@brainervirus/workit-cli`, bin `workit`) and the core is `@brainervirus/workit`; root scripts delegate to both.
+- CA-06: Monorepo: `bun install` at the root resolves all four packages; workit-opencode + workit-cursor + workit-cli each have their own package.json (thin over `@brainervirus/workit-core`); root scripts delegate to all.
 - CA-07: GitHub repo renamed to `workit`; `git remote get-url origin` resolves; README badges/URLs updated; no stale `workflow-toolkit` repo-name references in README/CONTRIBUTING (grep gate).
 - CA-08: semantic-release config present (release config with Conventional Commits); dry-run produces the expected next version from the commit history; both packages publish in order.
 - CA-09: Release: tag v0.4.0 (or semantic-release's computed version) with GitHub Release + `npm view @brainervirus/workit` resolves; `@brainervirus/workit-cli` resolves.
-- CA-10: README documents the code-review check — the opencode GitHub integration workflow (`.github/workflows/opencode-review.yml`, pull_request event) with the review prompt; branch protection includes it as a required check; Bugbot listed as an optional alternative.
+- CA-10: README documents the code-review checks — the opencode GitHub workflows (opencode-review.yml pull_request + the /oc comment flows) with `opencode-go/deepseek-v4-flash`; branch protection includes the blocking ones; Bugbot listed as optional.
 
 ## Decisions
 
@@ -80,7 +83,7 @@ flowchart LR
 - D-03: Config dir + env vars unchanged (stability; the rename is the package/UX surface, not the user's installed state).
 - D-04: Release bumps to 0.4.0 as planned (the name change rides the same version; no separate version bump needed).
 - D-05: GitHub repo renamed to `workit` (user choice) — remote URLs, README badges, and docs updated; git history preserved (rename via GitHub settings + remote URL update).
-- D-06: Monorepo via bun workspaces (`packages/workit` + `packages/workit-cli`) — the CLI ships separately with the `-cli` suffix (user choice).
+- D-06: Monorepo with per-platform publishes (user choice): `workit-core` shared, `workit-opencode` + `workit-cursor` thin platform packages (enables the cursor marketplace), `workit-cli` separate with `-cli` suffix.
 - D-07: semantic-release with Conventional Commits for the whole release flow (user choice) — replaces the manual release.yml.
 - D-08: Code review via the opencode GitHub integration (user's catch — https://opencode.ai/docs/github/): native, runs in our runners, uses our model provider, works as a required check; Bugbot (Cursor) remains an optional alternative documented in README.
 

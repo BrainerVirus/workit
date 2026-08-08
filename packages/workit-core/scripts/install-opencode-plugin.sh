@@ -14,11 +14,11 @@ WORKFLOW_TOOLKIT_DEV="$ROOT" "$ROOT/scripts/sync-runtime.sh"
 
 # Prefer monorepo with .git. file:// pins skip opencode's bundled npm installer —
 # git+file:// installs an EMPTY cache dir and fails silently, so the plugin never
-# loads after restart. The pinned entry resolves via packages/workit/package.json main.
-if [ -d "${DEV}/.git" ] && [ -f "${DEV}/packages/workit/src/plugin.ts" ]; then
-  PIN="file://${DEV}/packages/workit/src/plugin.ts"
-elif [ -d "${SHARE}/.git" ] && [ -f "${SHARE}/packages/workit/src/plugin.ts" ]; then
-  PIN="file://${SHARE}/packages/workit/src/plugin.ts"
+# loads after restart. The pinned entry resolves via packages/workit-opencode/package.json main.
+if [ -d "${DEV}/.git" ] && [ -f "${DEV}/packages/workit-opencode/src/plugin.ts" ]; then
+  PIN="file://${DEV}/packages/workit-opencode/src/plugin.ts"
+elif [ -d "${SHARE}/.git" ] && [ -f "${SHARE}/packages/workit-opencode/src/plugin.ts" ]; then
+  PIN="file://${SHARE}/packages/workit-opencode/src/plugin.ts"
 else
   # Last resort: ensure share is a clone, then pin it
   if [ ! -d "${SHARE}/.git" ]; then
@@ -27,7 +27,7 @@ else
     rsync -a --delete --exclude node_modules --exclude cursor/mcp/node_modules "$TMP/" "$SHARE/"
     rm -rf "$TMP"
   fi
-  PIN="file://${SHARE}/packages/workit/src/plugin.ts"
+  PIN="file://${SHARE}/packages/workit-opencode/src/plugin.ts"
 fi
 
 mkdir -p "$(dirname "$CONFIG")"

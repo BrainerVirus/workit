@@ -1,10 +1,10 @@
 {
-  "name": "@brainervirus/workit",
+  "name": "@brainervirus/workit-opencode",
   "version": "0.4.0",
   "private": false,
-  "description": "Workit — workflow rails for agentic coding: specs, plans, YouTrack, CI-gated commits",
+  "description": "Workit OpenCode plugin (thin wrapper over @brainervirus/workit-core)",
   "license": "MIT",
-  "keywords": ["opencode", "cursor", "workflow", "mcp", "youTrack", "agent"],
+  "keywords": ["opencode", "workflow", "mcp", "agent"],
   "bugs": {
     "url": "https://github.com/BrainerVirus/workflow-toolkit/issues"
   },
@@ -13,15 +13,7 @@
     "url": "https://github.com/BrainerVirus/workflow-toolkit.git"
   },
   "files": [
-    "src/",
-    "scripts/",
-    "skills/",
-    "commands/",
-    "cursor/",
-    "vendor/superpowers/skills/",
-    "templates/",
-    "README.md",
-    "LICENSE"
+    "src/"
   ],
   "type": "module",
   "main": "./src/plugin.ts",
@@ -36,8 +28,7 @@
     "access": "public"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.12.0",
-    "@opencode-ai/plugin": "1.17.7",
-    "zod": "^3.24.0"
+    "@brainervirus/workit-core": "workspace:*",
+    "@opencode-ai/plugin": "1.17.7"
   }
 }

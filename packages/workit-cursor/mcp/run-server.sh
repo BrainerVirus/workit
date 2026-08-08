@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Resolve monorepo root for Cursor MCP (install copy vs live monorepo).
+# Resolve the core package root for Cursor MCP (install copy vs live monorepo).
 set -euo pipefail
 
 MCP_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
@@ -13,11 +13,11 @@ if [ -n "${WORKFLOW_TOOLKIT_ROOT:-}" ] && [ -d "${WORKFLOW_TOOLKIT_ROOT}/scripts
   ROOT="$WORKFLOW_TOOLKIT_ROOT"
 elif [ -f "$MARKER" ]; then
   ROOT="$(tr -d '\n' <"$MARKER")"
-elif [ -d "${SHARE}/packages/workit/scripts" ]; then
-  ROOT="$SHARE/packages/workit"
+elif [ -d "${SHARE}/packages/workit-core/scripts" ]; then
+  ROOT="$SHARE/packages/workit-core"
 else
-  # Live monorepo: cursor/mcp → repo root
-  ROOT="$(CDPATH= cd -- "$MCP_DIR/../.." && pwd)"
+  # Live monorepo: workit-cursor/mcp → packages/workit-core (workspace sibling)
+  ROOT="$(CDPATH= cd -- "$MCP_DIR/../../workit-core" && pwd)"
 fi
 
 export WORKFLOW_TOOLKIT_ROOT="$ROOT"
@@ -35,6 +35,7 @@ if [ -z "$BUN_BIN" ]; then
   echo "workit: bun not found (required for MCP server)" >&2
   exit 1
 fi
-# Execute the server from the resolved ROOT (not the plugin copy): server.ts
-# imports ../../src/core/* which only resolve where the full monorepo tree lives.
-exec "$BUN_BIN" "${ROOT}/cursor/mcp/server.ts"
+# Execute the server next to this script: server.ts imports @brainervirus/workit-core,
+# resolved via node_modules (workspace link in the monorepo, npm install in the
+# cursor plugin copy).
+exec "$BUN_BIN" "$MCP_DIR/server.ts"

@@ -2,9 +2,9 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import plugin from "../packages/workit/src/plugin";
-import { REMINDER_TEXT } from "../packages/workit/src/core/reminder";
-import { detectProseChoices } from "../packages/workit/src/core/detector";
+import plugin from "../packages/workit-opencode/src/plugin";
+import { REMINDER_TEXT } from "../packages/workit-core/src/core/reminder";
+import { detectProseChoices } from "../packages/workit-core/src/core/detector";
 
 const userMessage = (text: string) => ({
   info: { role: "user" as const, id: "u", sessionID: "s", time: { created: 0, updated: 0 } },

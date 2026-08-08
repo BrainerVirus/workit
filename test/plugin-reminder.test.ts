@@ -2,8 +2,8 @@ import { expect, test } from "bun:test";
 import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { findActiveSubagentDrivenPlans, detectConfigGapError, detectBacktickDocRefs, detectRawDocDelivery } from "../packages/workit/src/core/detector";
-import { shouldInjectSddReminder, SDD_REMINDER_TEXT, CONFIG_GUARD_TEXT, shouldInjectConfigGuard, DOC_DELIVERY_TEXT, DOC_RENDER_TEXT, shouldInjectDocRender, REMINDER_TEXT } from "../packages/workit/src/core/reminder";
+import { findActiveSubagentDrivenPlans, detectConfigGapError, detectBacktickDocRefs, detectRawDocDelivery } from "../packages/workit-core/src/core/detector";
+import { shouldInjectSddReminder, SDD_REMINDER_TEXT, CONFIG_GUARD_TEXT, shouldInjectConfigGuard, DOC_DELIVERY_TEXT, DOC_RENDER_TEXT, shouldInjectDocRender, REMINDER_TEXT } from "../packages/workit-core/src/core/reminder";
 
 const writeFlow = (root: string, slug: string, flow: unknown) => {
   const dir = path.join(root, "docs", slug, "sdd");

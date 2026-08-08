@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { readFlowState, transitionSpec, transitionPlan } from "../packages/workit/src/core/flow-state";
+import { readFlowState, transitionSpec, transitionPlan } from "../packages/workit-core/src/core/flow-state";
 
 const COMPLIANT_SPEC = (slug: string) =>
   `# ${slug}\n\n**Branch:** \`feature/${slug}\`\n\n## Context\n\n## Goals\n\n## Non-goals\n\n## Architecture\n\n## Acceptance criteria\n\n- CA-01: test\n`;

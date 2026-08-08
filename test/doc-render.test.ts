@@ -4,8 +4,8 @@ import {
   MAX_LINES,
   MAX_MERMAID,
   shouldRenderDoc,
-} from "../packages/workit/src/core/doc-render";
-import { DOC_RENDER_TEXT, shouldInjectDocRender } from "../packages/workit/src/core/reminder";
+} from "../packages/workit-core/src/core/doc-render";
+import { DOC_RENDER_TEXT, shouldInjectDocRender } from "../packages/workit-core/src/core/reminder";
 
 const mermaid = "```mermaid\nflowchart TD\n  a --> b\n```\n";
 

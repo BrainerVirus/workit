@@ -21,7 +21,7 @@ for arg in "$@"; do
   esac
 done
 
-if [ "$FROM_GITHUB" -eq 0 ] && [ ! -d "${LOCAL_ROOT}/packages/workit/cursor/.cursor-plugin" ]; then
+if [ "$FROM_GITHUB" -eq 0 ] && [ ! -d "${LOCAL_ROOT}/packages/workit-cursor/.cursor-plugin" ]; then
   FROM_GITHUB=1
 fi
 
@@ -40,9 +40,9 @@ else
   ROOT="$LOCAL_ROOT"
 fi
 
-chmod +x "$ROOT/packages/workit/scripts/sync-runtime.sh" "$ROOT/packages/workit/scripts/"*.sh
+chmod +x "$ROOT/packages/workit-core/scripts/sync-runtime.sh" "$ROOT/packages/workit-core/scripts/"*.sh
 # Prefer syncing from this ROOT (dev or freshly cloned share)
-WORKFLOW_TOOLKIT_DEV="$ROOT" "$ROOT/packages/workit/scripts/sync-runtime.sh"
+WORKFLOW_TOOLKIT_DEV="$ROOT" "$ROOT/packages/workit-core/scripts/sync-runtime.sh"
 
 # Drop stale CLI skill symlinks (duplicate /wf-* and /wk-* entries)
 if [ -d "$SKILLS_DIR" ]; then
@@ -82,7 +82,7 @@ data.setdefault("mcpServers", {})["workflow-toolkit"] = {
     "command": "bash",
     "args": [
         "-lc",
-        'exec "$HOME/.local/share/workflow-toolkit/packages/workit/scripts/run-cursor-mcp.sh" "$0"',
+        'exec "$HOME/.local/share/workflow-toolkit/packages/workit-core/scripts/run-cursor-mcp.sh" "$0"',
         "${workspaceFolder}",
     ],
 }

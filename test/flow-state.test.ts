@@ -7,7 +7,7 @@ import {
   transitionSpec,
   transitionPlan,
   recordMenuChoice,
-} from "../packages/workit/src/core/flow-state";
+} from "../packages/workit-core/src/core/flow-state";
 
 const COMPLIANT_SPEC = (slug: string) =>
   `# ${slug}\n\n**Branch:** \`feature/${slug}\`\n\n## Context\n\n## Goals\n\n## Non-goals\n\n## Architecture\n\n## Acceptance criteria\n\n- CA-01: test\n`;
@@ -105,7 +105,7 @@ test("menu choice records presented + chosen", () => {
   }
 });
 
-import { assertFlowGates, slugFromPath } from "../packages/workit/src/core/flow-state";
+import { assertFlowGates, slugFromPath } from "../packages/workit-core/src/core/flow-state";
 
 test("slugFromPath strips -design suffix", () => {
   expect(slugFromPath("docs/x/plan.md")).toBe("x");

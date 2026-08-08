@@ -6,7 +6,7 @@ import {
   parseRule, listRules, readRule, writeRule,
   compileRuleCursor, compileRuleOpenCode, compiledOpenCodeSections, writeCompiledCursorRules,
   type CanonicalRule,
-} from "../packages/workit/src/core/rules";
+} from "../packages/workit-core/src/core/rules";
 
 const savedEnv = new Map<string, string | undefined>();
 
@@ -114,7 +114,7 @@ test("bootstrap appends compiled opencode rule sections", async () => {
   const dir = cfgDir();
   try {
     writeRule({ name: "zeta", description: "z", platforms: ["opencode"], body: "# Zeta\n\nDo zeta.\n" }, true);
-    const fresh = await import(`../packages/workit/src/bootstrap?rules=${Date.now()}`);
+    const fresh = await import(`../packages/workit-opencode/src/bootstrap?rules=${Date.now()}`);
     const bootstrap = fresh.getWorkflowBootstrap();
     expect(bootstrap).toContain("## zeta");
   } finally { cleanupEnv(); rmSync(dir, { recursive: true, force: true }); }

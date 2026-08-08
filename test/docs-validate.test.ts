@@ -3,8 +3,8 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
-import { createSddTools } from "../packages/workit/src/tools/sdd";
-import { WorkflowStateStore } from "../packages/workit/src/state";
+import { createSddTools } from "../packages/workit-core/src/tools/sdd";
+import { WorkflowStateStore } from "../packages/workit-core/src/state";
 
 const fixture = () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "wf-docs-validate-"));

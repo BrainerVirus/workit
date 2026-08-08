@@ -16,8 +16,8 @@ import {
   validateTimezone,
   writeWorkspaces,
 } from "../packages/workit-cli/src/logic";
-import { resolveWorkspace } from "../packages/workit/src/core/workspaces";
-import { PRESETS, type ToolkitConfig } from "../packages/workit/src/core/config";
+import { resolveWorkspace } from "../packages/workit-core/src/core/workspaces";
+import { PRESETS, type ToolkitConfig } from "../packages/workit-core/src/core/config";
 
 const current: ToolkitConfig = {
   locale: "en",

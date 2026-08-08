@@ -2,8 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { getWorkflowBootstrap, isWorkflowBootstrap, loadWorkflowBootstrap } from "../packages/workit/src/bootstrap";
-import plugin from "../packages/workit/src/plugin";
+import { getWorkflowBootstrap, isWorkflowBootstrap, loadWorkflowBootstrap } from "../packages/workit-opencode/src/bootstrap";
+import plugin from "../packages/workit-opencode/src/plugin";
 
 describe("session bootstrap", () => {
   test("bootstrap contract includes visual companion override", () => {
@@ -42,7 +42,7 @@ test("loadWorkflowBootstrap returns null for a missing template root", () => {
 });
 
 test("loadWorkflowBootstrap reads the real contract template", () => {
-  const contract = loadWorkflowBootstrap(path.resolve(import.meta.dir, "..", "packages", "workit"));
+  const contract = loadWorkflowBootstrap(path.resolve(import.meta.dir, "..", "packages", "workit-core"));
   expect(contract).toContain("**Spec:**");
 });
 
@@ -56,7 +56,7 @@ test("bootstrap contract declares the configured locale", async () => {
       locale: "es-CL", localeOptions: ["en", "es-CL"], timezone: "UTC",
       branchPolicy: { preset: "gitflow" },
     }, null, 2));
-    const fresh = await import(`../packages/workit/src/bootstrap?locale=${Date.now()}`);
+    const fresh = await import(`../packages/workit-opencode/src/bootstrap?locale=${Date.now()}`);
     const bootstrap = fresh.getWorkflowBootstrap();
     expect(bootstrap).toContain("es-CL");
   } finally {

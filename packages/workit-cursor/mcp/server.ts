@@ -1,29 +1,29 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { runScript } from "../../src/core/scripts";
-import { parseSections, parseKeyValueLines } from "../../src/core/parse-sections";
-import { parseVerifyOutput } from "../../src/core/verify-parse";
-import { gitContext } from "../../src/core/git";
-import { parsePlanTasks, resolveHandoffBranch } from "../../src/core/plan-tasks";
-import { buildHandoffPrompt } from "../../src/tools/handoff";
-import { readFlowState, transitionSpec, transitionPlan, recordMenuChoice, slugFromPath } from "../../src/core/flow-state";
-import { linkDocsRepo, listSpecs, promoteSpec } from "../../src/core/docs-repo";
-import { configDir, readConfig, writeConfig } from "../../src/core/config";
-import { ensureProjectGitignore } from "../../src/core/gitignore";
-import { ensureHygieneFiles } from "../../src/core/hygiene";
-import { listTemplates, writeTemplate } from "../../src/core/templates";
-import { listRules, writeRule } from "../../src/core/rules";
-import { initStatus, initApply, toolkitStatus } from "../../src/core/init";
-import { resolveBranch, branchSetup } from "../../src/core/branch";
-import { docsValidate } from "../../src/core/docs-validate";
-import { docsBranch } from "../../src/core/branch";
+import { runScript } from "@brainervirus/workit-core/src/core/scripts";
+import { parseSections, parseKeyValueLines } from "@brainervirus/workit-core/src/core/parse-sections";
+import { parseVerifyOutput } from "@brainervirus/workit-core/src/core/verify-parse";
+import { gitContext } from "@brainervirus/workit-core/src/core/git";
+import { parsePlanTasks, resolveHandoffBranch } from "@brainervirus/workit-core/src/core/plan-tasks";
+import { buildHandoffPrompt } from "@brainervirus/workit-core/src/tools/handoff";
+import { readFlowState, transitionSpec, transitionPlan, recordMenuChoice, slugFromPath } from "@brainervirus/workit-core/src/core/flow-state";
+import { linkDocsRepo, listSpecs, promoteSpec } from "@brainervirus/workit-core/src/core/docs-repo";
+import { configDir, readConfig, writeConfig } from "@brainervirus/workit-core/src/core/config";
+import { ensureProjectGitignore } from "@brainervirus/workit-core/src/core/gitignore";
+import { ensureHygieneFiles } from "@brainervirus/workit-core/src/core/hygiene";
+import { listTemplates, writeTemplate } from "@brainervirus/workit-core/src/core/templates";
+import { listRules, writeRule } from "@brainervirus/workit-core/src/core/rules";
+import { initStatus, initApply, toolkitStatus } from "@brainervirus/workit-core/src/core/init";
+import { resolveBranch, branchSetup } from "@brainervirus/workit-core/src/core/branch";
+import { docsValidate } from "@brainervirus/workit-core/src/core/docs-validate";
+import { docsBranch } from "@brainervirus/workit-core/src/core/branch";
 import {
   sddContext,
   sddTaskBrief,
   sddReviewPackage,
   sddAppendProgress,
-} from "../../src/core/sdd";
+} from "@brainervirus/workit-core/src/core/sdd";
 import {
   verifyYouTrackToken,
   context as youtrackContext,
@@ -32,13 +32,13 @@ import {
   logTime as youtrackLogTime,
   buildDraft as youtrackBuildDraft,
   postUpdate as youtrackPostUpdate,
-} from "../../src/core/youtrack";
-import { asciiWireframe, flowDiagram } from "../../src/core/present";
-import { withWorkspace } from "../../src/core/repo-tool";
+} from "@brainervirus/workit-core/src/core/youtrack";
+import { asciiWireframe, flowDiagram } from "@brainervirus/workit-core/src/core/present";
+import { withWorkspace } from "@brainervirus/workit-core/src/core/repo-tool";
 import {
   changelogApply,
   changelogUnreleasedStats,
-} from "../../src/core/changelog";
+} from "@brainervirus/workit-core/src/core/changelog";
 
 const workspaceRootSchema = z
   .string()

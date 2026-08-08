@@ -13,7 +13,8 @@
   },
   "include": [
     "test/**/*.ts",
-    "packages/workit/src/**/*.ts",
+    "packages/workit-core/src/**/*.ts",
+    "packages/workit-opencode/src/**/*.ts",
     "packages/workit-cli/src/**/*.tsx"
   ]
 }

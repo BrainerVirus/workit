@@ -3,10 +3,10 @@ import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { createRepoTools } from "../packages/workit/src/tools/repo";
-import { createSddTools } from "../packages/workit/src/tools/sdd";
-import { WorkflowStateStore } from "../packages/workit/src/state";
-import { docsBranch, resolveBranch } from "../packages/workit/src/core/branch";
+import { createRepoTools } from "../packages/workit-core/src/tools/repo";
+import { createSddTools } from "../packages/workit-core/src/tools/sdd";
+import { WorkflowStateStore } from "../packages/workit-core/src/state";
+import { docsBranch, resolveBranch } from "../packages/workit-core/src/core/branch";
 
 const git = (cwd: string, args: string[]) => spawnSync("git", args, { cwd, encoding: "utf8" });
 
@@ -294,7 +294,7 @@ test("docsBranch reports keep and create_from_develop and HEAD errors", () => {
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
-import { writeConfig } from "../packages/workit/src/core/config";
+import { writeConfig } from "../packages/workit-core/src/core/config";
 
 test("branch policy rejects codex/ under gitflow and allows under custom", async () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "wf-branch-policy-"));

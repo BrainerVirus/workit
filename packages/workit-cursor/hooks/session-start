@@ -10,10 +10,11 @@ if [ -n "${WORKFLOW_TOOLKIT_ROOT:-}" ] && [ -d "${WORKFLOW_TOOLKIT_ROOT}/templat
   REPO_ROOT="$WORKFLOW_TOOLKIT_ROOT"
 elif [ -f "$MARKER" ]; then
   REPO_ROOT="$(tr -d '\n' <"$MARKER")"
-elif [ -d "${SHARE}/packages/workit/templates" ]; then
-  REPO_ROOT="$SHARE/packages/workit"
+elif [ -d "${SHARE}/packages/workit-core/templates" ]; then
+  REPO_ROOT="$SHARE/packages/workit-core"
 else
-  REPO_ROOT="$(CDPATH= cd -- "$SCRIPT_DIR/../.." && pwd)"
+  # Live monorepo: workit-cursor/hooks → packages/workit-core (workspace sibling)
+  REPO_ROOT="$(CDPATH= cd -- "$SCRIPT_DIR/../../workit-core" && pwd)"
 fi
 
 # ponytail: best-effort auto-update; never block session start on network
@@ -22,8 +23,8 @@ if [ -x "$SYNC" ]; then
   timeout 20s "$SYNC" >/dev/null 2>&1 || true
   if [ -f "$MARKER" ]; then
     REPO_ROOT="$(tr -d '\n' <"$MARKER")"
-  elif [ -d "${SHARE}/packages/workit/templates" ]; then
-    REPO_ROOT="$SHARE/packages/workit"
+  elif [ -d "${SHARE}/packages/workit-core/templates" ]; then
+    REPO_ROOT="$SHARE/packages/workit-core"
   fi
 fi
 

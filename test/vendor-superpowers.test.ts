@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
-const VENDOR = path.resolve(import.meta.dir, "../packages/workit/vendor/superpowers");
+const VENDOR = path.resolve(import.meta.dir, "../packages/workit-core/vendor/superpowers");
 
 const REQUIRED_SKILLS = [
   "brainstorming", "dispatching-parallel-agents", "executing-plans",

@@ -32,7 +32,7 @@ function runApply(action: string, configDir: string): string {
     env[k] = v;
   }
   env.WORKFLOW_TOOLKIT_CONFIG = configDir;
-  const r = spawnSync("bash", ["packages/workit/scripts/init/apply.sh", action, "true"], { cwd: repoRoot, env, encoding: "utf8" });
+  const r = spawnSync("bash", ["packages/workit-core/scripts/init/apply.sh", action, "true"], { cwd: repoRoot, env, encoding: "utf8" });
   expect(r.status, `${action} failed: ${r.stderr}`).toBe(0);
   return r.stdout;
 }

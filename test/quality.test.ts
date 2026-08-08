@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { qualitySpec } from "../packages/workit/src/core/docs-validate";
+import { qualitySpec } from "../packages/workit-core/src/core/docs-validate";
 
 const GOOD = `# Spec
 

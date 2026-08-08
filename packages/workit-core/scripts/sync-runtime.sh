@@ -17,13 +17,13 @@ if ! flock -n 9; then
 fi
 
 SRC=""
-if [ -f "${DEV}/packages/workit/src/plugin.ts" ] && [ -d "${DEV}/packages/workit/cursor/.cursor-plugin" ]; then
+if [ -f "${DEV}/packages/workit-opencode/src/plugin.ts" ] && [ -d "${DEV}/packages/workit-cursor/.cursor-plugin" ]; then
   SRC="$DEV"
 elif [ -d "${SHARE}/.git" ]; then
   git -C "$SHARE" fetch --quiet origin 2>/dev/null || true
   git -C "$SHARE" pull --ff-only --quiet origin main 2>/dev/null || true
   SRC="$SHARE"
-elif [ ! -d "${SHARE}/packages/workit/src" ]; then
+elif [ ! -d "${SHARE}/packages/workit-core/src" ]; then
   mkdir -p "$(dirname "$SHARE")"
   git clone --depth 1 "git@github.com:${REPO_SLUG}.git" "$SHARE" 2>/dev/null || exit 0
   SRC="$SHARE"
@@ -47,22 +47,22 @@ mkdir -p "${HOME}/.cursor/plugins/local"
 mkdir -p "$PLUGIN_DIR"
 rsync -a --delete \
   --exclude 'mcp/node_modules' \
-  "$SHARE/packages/workit/cursor/" "$PLUGIN_DIR/"
+  "$SHARE/packages/workit-cursor/" "$PLUGIN_DIR/"
 # Vendored skills for Cursor (same folder layout as OpenCode registration)
 mkdir -p "$PLUGIN_DIR/vendor/superpowers"
-if [ -d "$SHARE/packages/workit/vendor/superpowers/skills" ]; then
-  rsync -a --delete "$SHARE/packages/workit/vendor/superpowers/skills" "$PLUGIN_DIR/vendor/superpowers/"
+if [ -d "$SHARE/packages/workit-core/vendor/superpowers/skills" ]; then
+  rsync -a --delete "$SHARE/packages/workit-core/vendor/superpowers/skills" "$PLUGIN_DIR/vendor/superpowers/"
 fi
 # Canonical user rules -> Cursor .mdc (compiled by the shared core)
 CONFIG_RULES_DIR="${HOME}/.config/workflow-toolkit/rules"
 if [ -d "$CONFIG_RULES_DIR" ]; then
   "$HOME/.bun/bin/bun" -e "
-    import('${SHARE}/packages/workit/src/core/rules.ts').then(async ({ writeCompiledCursorRules }) => {
+    import('${SHARE}/packages/workit-core/src/core/rules.ts').then(async ({ writeCompiledCursorRules }) => {
       writeCompiledCursorRules('${PLUGIN_DIR}/rules');
     });
   " >/dev/null 2>&1 || true
 fi
-printf '%s\n' "$SHARE/packages/workit" >"$PLUGIN_DIR/.workflow-toolkit-root"
+printf '%s\n' "$SHARE/packages/workit-core" >"$PLUGIN_DIR/.workflow-toolkit-root"
 chmod +x "$PLUGIN_DIR/hooks/session-start" "$PLUGIN_DIR/mcp/run-server.sh" 2>/dev/null || true
 
 if [ ! -d "$PLUGIN_DIR/mcp/node_modules" ]; then
@@ -70,8 +70,8 @@ if [ ! -d "$PLUGIN_DIR/mcp/node_modules" ]; then
 fi
 
 # Share MCP also needs deps when launched via run-cursor-mcp fallback
-if [ ! -d "$SHARE/packages/workit/cursor/mcp/node_modules" ]; then
-  (cd "$SHARE/packages/workit/cursor/mcp" && npm install --silent) || true
+if [ ! -d "$SHARE/packages/workit-cursor/mcp/node_modules" ]; then
+  (cd "$SHARE/packages/workit-cursor/mcp" && npm install --silent) || true
 fi
 
 # Remove broken TLA live-loader if present (OpenCode ignored it; /wk-* vanished)

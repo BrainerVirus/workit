@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createTemplateTools } from "../packages/workit/src/tools/templates";
+import { createTemplateTools } from "../packages/workit-core/src/tools/templates";
 
 test("template_list reports repo sources by default; template_edit writes config", async () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "wf-tpl-tools-"));

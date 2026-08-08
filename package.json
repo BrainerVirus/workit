@@ -8,9 +8,9 @@
     "packages/*"
   ],
   "type": "module",
-  "main": "./packages/workit/src/plugin.ts",
+  "main": "./packages/workit-opencode/src/plugin.ts",
   "exports": {
-    ".": "./packages/workit/src/plugin.ts"
+    ".": "./packages/workit-opencode/src/plugin.ts"
   },
   "scripts": {
     "test": "bun test",

@@ -4,9 +4,9 @@ Multi-platform Superpowers workflow plugin for **Cursor** and **OpenCode**: veri
 
 | Platform | Path | Version |
 | --- | --- | --- |
-| **OpenCode** | `packages/workit/src/plugin.ts` | 0.4.0 |
-| **Cursor** | `packages/workit/cursor/` (MCP + hooks + rules + skills) | 0.4.0 |
-| **Shared** | `packages/workit/scripts/`, `packages/workit/templates/` | — |
+| **OpenCode** | `packages/workit-opencode/src/plugin.ts` | 0.4.0 |
+| **Cursor** | `packages/workit-cursor/` (MCP + hooks + rules + skills) | 0.4.0 |
+| **Shared core** | `packages/workit-core/` (src, skills, commands, scripts, templates) | 0.4.0 |
 | **CLI** | `packages/workit-cli/` (Ink wizard, bin `workit`) | 0.4.0 |
 
 Config directory (both platforms): `~/.config/workflow-toolkit/` (kept as-is for install stability).
@@ -22,7 +22,9 @@ Config directory (both platforms): `~/.config/workflow-toolkit/` (kept as-is for
 Requires bun (`curl -fsSL https://bun.sh/install | bash`).
 
 ```bash
-npm i @brainervirus/workit          # core plugin (OpenCode/Cursor)
+npm i @brainervirus/workit-core    # shared core (skills, commands, scripts)
+npm i @brainervirus/workit-opencode # OpenCode plugin (thin over the core)
+npm i @brainervirus/workit-cursor   # Cursor plugin (MCP + hooks + rules)
 npm i @brainervirus/workit-cli      # interactive wizard
 npx workit init
 ```
@@ -53,7 +55,7 @@ Local dev variant (absolute path to this repo):
 ```json
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugin": ["file:///path/to/workit/packages/workit/src/plugin.ts"]
+  "plugin": ["file:///path/to/workit/packages/workit-opencode/src/plugin.ts"]
 }
 ```
 
@@ -64,13 +66,13 @@ Local dev variant (absolute path to this repo):
   "mcpServers": {
     "workit": {
       "command": "bun",
-      "args": ["run", "node_modules/@brainervirus/workit/cursor/mcp/server.ts"]
+      "args": ["run", "node_modules/@brainervirus/workit-cursor/mcp/server.ts"]
     }
   }
 }
 ```
 
-Local dev variant: point `WORKFLOW_TOOLKIT_ROOT` at this repo's `packages/workit` (the MCP launcher `scripts/run-cursor-mcp.sh` resolves it), or run the install script from the repo.
+Local dev variant: point `WORKFLOW_TOOLKIT_ROOT` at this repo's `packages/workit-core` (the MCP launcher `packages/workit-core/scripts/run-cursor-mcp.sh` resolves it), or run the install script from the repo.
 
 ## Requirements
 
@@ -94,14 +96,15 @@ export PATH="$HOME/.bun/bin:$PATH"
 ```
 workit/
 ├── packages/
-│   ├── workit/             # @brainervirus/workit — plugin, skills, commands, MCP
-│   │   ├── src/            # OpenCode plugin (TypeScript)
+│   ├── workit-core/        # @brainervirus/workit-core — shared core
+│   │   ├── src/            # core TS (src/core, src/tools, src/state)
 │   │   ├── skills/         # OpenCode-native skills (wk-*)
 │   │   ├── commands/       # OpenCode commands (wk-*)
-│   │   ├── cursor/         # Cursor plugin (MCP, hooks, rules, skills)
 │   │   ├── scripts/        # shared shell/python + installers
 │   │   ├── templates/      # execution + superpowers contracts
 │   │   └── vendor/         # vendored superpowers skills
+│   ├── workit-opencode/    # @brainervirus/workit-opencode — OpenCode plugin (src/plugin.ts)
+│   ├── workit-cursor/      # @brainervirus/workit-cursor — Cursor plugin (MCP, hooks, rules, skills)
 │   └── workit-cli/         # @brainervirus/workit-cli — Ink setup wizard (bin: workit)
 ├── .github/workflows/      # CI + release
 └── test/                   # bun tests (OpenCode plugin)
@@ -116,7 +119,7 @@ bun run check    # bun test + tsc + cursor MCP regressions
 GitHub Actions:
 
 - **CI** — on push/PR to `main`: matrix of 3 OS (ubuntu, macos, windows) running `actions/checkout@v7` + `oven-sh/setup-bun@v2`, then `bun install --frozen-lockfile` + `bun run check`
-- **Release** — on push to `main`: [semantic-release](https://github.com/semantic-release/semantic-release) computes the next version from Conventional Commits, publishes `@brainervirus/workit` then `@brainervirus/workit-cli` to npm (with provenance), and creates the git tag + GitHub Release
+- **Release** — on push to `main`: [semantic-release](https://github.com/semantic-release/semantic-release) computes the next version from Conventional Commits, publishes the four workspaces to npm in dependency order — `workit-core`, `workit-opencode`, `workit-cursor`, `workit-cli` (with provenance), and creates the git tag + GitHub Release
 - **Code review** — on every PR: the [OpenCode GitHub integration](https://opencode.ai/docs/github/) reviews the diff (see [Code review](#code-review))
 
 No manual tags — semantic-release owns the version/tag flow:

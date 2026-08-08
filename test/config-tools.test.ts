@@ -2,8 +2,8 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createRepoTools } from "../packages/workit/src/tools/repo";
-import { readConfig } from "../packages/workit/src/core/config";
+import { createRepoTools } from "../packages/workit-core/src/tools/repo";
+import { readConfig } from "../packages/workit-core/src/core/config";
 
 test("init_apply writes config.json with guided values", async () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "wf-config-tools-"));

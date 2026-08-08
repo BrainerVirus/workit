@@ -11,13 +11,13 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 
-import { changelogApply } from "../packages/workit/src/core/changelog";
-import { postUpdate } from "../packages/workit/src/core/youtrack";
-import { buildHandoffPrompt } from "../packages/workit/src/tools/handoff";
-import { docsValidate } from "../packages/workit/src/core/docs-validate";
+import { changelogApply } from "../packages/workit-core/src/core/changelog";
+import { postUpdate } from "../packages/workit-core/src/core/youtrack";
+import { buildHandoffPrompt } from "../packages/workit-core/src/tools/handoff";
+import { docsValidate } from "../packages/workit-core/src/core/docs-validate";
 
 const REPO_ROOT = path.resolve(import.meta.dir, "..");
-const CURSOR_ROOT = path.join(REPO_ROOT, "packages", "workit", "cursor");
+const CURSOR_ROOT = path.join(REPO_ROOT, "packages", "workit-cursor");
 
 function temporaryDirectory() {
   return mkdtempSync(path.join(os.tmpdir(), "workflow-toolkit-"));
@@ -180,9 +180,9 @@ test("question choices use Cursor AskQuestion without an MCP adapter", () => {
     path.join(CURSOR_ROOT, "mcp"),
     path.join(CURSOR_ROOT, "skills"),
     path.join(CURSOR_ROOT, "rules"),
-    path.join(REPO_ROOT, "packages", "workit", "templates"),
+    path.join(REPO_ROOT, "packages", "workit-core", "templates"),
     path.join(CURSOR_ROOT, "hooks"),
-    path.join(REPO_ROOT, "packages", "workit", "scripts"),
+    path.join(REPO_ROOT, "packages", "workit-core", "scripts"),
     path.join(CURSOR_ROOT, "README.md"),
   ].flatMap((target) => filesUnder(target));
   const offenders = targets
@@ -253,7 +253,7 @@ test("release notes require and expose an explicit range", () => {
     writeFileSync(path.join(root, "file.txt"), "release\n");
     spawnSync("git", ["add", "file.txt"], { cwd: root });
     spawnSync("git", ["commit", "-q", "-m", "release fixture"], { cwd: root });
-    const script = path.join(REPO_ROOT, "packages/workit/scripts/release-notes-context.sh");
+    const script = path.join(REPO_ROOT, "packages/workit-core/scripts/release-notes-context.sh");
 
     const missing = spawnSync("bash", [script], { cwd: root, encoding: "utf8" });
     expect(missing.status).not.toBe(0);
@@ -323,7 +323,7 @@ test("docs validate accepts the new docs/<slug> layout", () => {
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
-import { changelogUnreleasedStats } from "../packages/workit/src/core/changelog";
+import { changelogUnreleasedStats } from "../packages/workit-core/src/core/changelog";
 
 test("changelog accepts array entries with type/text", () => {
   const root = temporaryDirectory();
@@ -375,7 +375,7 @@ test("changelog stats: missing file, no unreleased, and duplicate headings", () 
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
-import { asciiWireframe, flowDiagram } from "../packages/workit/src/core/present";
+import { asciiWireframe, flowDiagram } from "../packages/workit-core/src/core/present";
 
 test("present renders ascii and mermaid via real scripts", () => {
   const ascii = asciiWireframe({ title: "T", rows: [{ type: "header", label: "Title" }] });
@@ -404,7 +404,7 @@ test("no docs/superpowers paths remain in sources", () => {
       if (statSync(full).isDirectory()) { walk(full); continue; }
       if (!/\.(ts|js|sh|md|json)$/.test(entry)) continue;
       if (entry === selfFile) continue;
-      if (full.split(path.sep).join("/").includes("packages/workit/scripts/update-superpowers.sh")) continue; // sed patterns intentionally reference the old layout
+      if (full.split(path.sep).join("/").includes("packages/workit-core/scripts/update-superpowers.sh")) continue; // sed patterns intentionally reference the old layout
       const content = readFileSync(full, "utf8");
       if (content.includes("docs/superpowers")) {
         offenders.push(path.relative(root, full));
@@ -417,18 +417,18 @@ test("no docs/superpowers paths remain in sources", () => {
 
 test("no wf- entry-point references remain in skills, commands, or plugin descriptions", () => {
   const { readdirSync, statSync } = require("node:fs") as typeof import("node:fs");
-  const workitRoot = path.join(path.resolve(import.meta.dir, ".."), "packages", "workit");
+  const coreRoot = path.join(path.resolve(import.meta.dir, ".."), "packages", "workit-core");
   const targets = [
-    path.join(workitRoot, "skills"),
-    path.join(workitRoot, "commands"),
-    path.join(workitRoot, "src", "plugin.ts"),
+    path.join(coreRoot, "skills"),
+    path.join(coreRoot, "commands"),
+    path.join(coreRoot, "..", "workit-opencode", "src", "plugin.ts"),
   ];
   const offenders: string[] = [];
   const scanFile = (full: string) => {
     if (!/\.(md|ts)$/.test(path.basename(full))) return;
     const content = readFileSync(full, "utf8");
     if (/(^|[^a-z])wf-/.test(content)) {
-      offenders.push(path.relative(workitRoot, full));
+      offenders.push(path.relative(coreRoot, full));
     }
   };
   const walk = (dir: string) => {

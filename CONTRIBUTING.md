@@ -13,7 +13,7 @@ Then load the plugin from a local path in your OpenCode config (`~/.config/openc
 ```json
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugin": ["file:///path/to/workit/packages/workit/src/plugin.ts"]
+  "plugin": ["file:///path/to/workit/packages/workit-opencode/src/plugin.ts"]
 }
 ```
 

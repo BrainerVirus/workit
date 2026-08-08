@@ -1,10 +1,10 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { isDeepStrictEqual } from "node:util";
 import path from "node:path";
-import { PRESETS, LOCALE_RE, type BranchPreset, type ToolkitConfig } from "@brainervirus/workit/src/core/config.ts";
-import { workspacesPath, type WorkspaceConfig } from "@brainervirus/workit/src/core/workspaces.ts";
-import { ensureProjectGitignore } from "@brainervirus/workit/src/core/gitignore.ts";
-import { ensureHygieneFiles, hygieneFiles } from "@brainervirus/workit/src/core/hygiene.ts";
+import { PRESETS, LOCALE_RE, type BranchPreset, type ToolkitConfig } from "@brainervirus/workit-core/src/core/config.ts";
+import { workspacesPath, type WorkspaceConfig } from "@brainervirus/workit-core/src/core/workspaces.ts";
+import { ensureProjectGitignore } from "@brainervirus/workit-core/src/core/gitignore.ts";
+import { ensureHygieneFiles, hygieneFiles } from "@brainervirus/workit-core/src/core/hygiene.ts";
 
 export const TOKEN_PLACEHOLDER = "YOUR_TOKEN_HERE";
 

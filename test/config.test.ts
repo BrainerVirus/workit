@@ -5,7 +5,7 @@ import path from "node:path";
 import {
   configDir, readConfig, writeConfig, resolveBranchPolicy, PRESETS,
   type ToolkitConfig,
-} from "../packages/workit/src/core/config";
+} from "../packages/workit-core/src/core/config";
 
 const savedEnv = new Map<string, string | undefined>();
 

@@ -5,7 +5,7 @@
 **Spec:** `docs/rebrand-workit/spec.md`
 **Branch:** `feature/rebrand-workit`
 
-**Goal:** Rebrand to workit (@brainervirus/workit + @brainervirus/workit-cli), monorepo via bun workspaces, wk-* entry points, semantic-release automation, GitHub repo rename.
+**Goal:** Rebrand to workit (core + opencode + cursor + cli packages), monorepo via bun workspaces, wk-* entry points, semantic-release automation, opencode CI review, GitHub repo rename.
 
 ## Global Constraints
 
@@ -17,13 +17,11 @@
 
 ---
 
-### Task 1: Monorepo restructure + package rename
+### Task 1: Monorepo restructure — core + opencode + cursor + cli (already shipped as packages/workit + workit-cli; EXTENDS to 4 packages)
 
-- [ ] **Step 1:** Create `packages/workit/` and `packages/workit-cli/` (bun workspaces): move src/, skills/, commands/, cursor/, templates/, scripts/ into `packages/workit/`; move src/cli/ + the Ink deps into `packages/workit-cli/` (its own package.json: `@brainervirus/workit-cli`, bin `workit`, deps ink/react/@inkjs/ui). Root package.json becomes the workspace root (workspaces: ["packages/*"], scripts delegating to both).
-- [ ] **Step 2:** Rename identities: `@brainervirus/workit` (core, public access, bin removed — the CLI is the cli package) and `@brainervirus/workit-cli` (bin `workit`). Update descriptions/keywords.
-- [ ] **Step 3:** 12 skills + 12 commands `wf-*` → `wk-*` (file names, YAML names, plugin descriptions, cursor registration); grep gate test updated (CA-02 pattern: zero `wf-` entry-point references).
-- [ ] **Step 4:** Update all `workflow-toolkit`/`wf-` references in src/, README, CONTRIBUTING, templates, cursor plugin (G4/G5); run-server.sh fallback `~/.local/share/workflow-toolkit` → documented (config stability: keep the share path OR document the alias — decide with a comment).
-- [ ] **Step 5:** Verify: `bun install` at root resolves both packages; `bun run check` green; `npm pack --dry-run` per package sane.
+- [ ] **Step 1 (DONE, commits 63e396c/6c01844):** created `packages/workit` + `packages/workit-cli`; wk-* renames; references; file:// pin + FATAL verification; 431 tests green.
+- [ ] **Step 2 (NEW — the 4-package split):** restructure `packages/workit` into `packages/workit-core` (skills/, commands/, vendor/, templates/, scripts/ + src/core + src/tools — `@brainervirus/workit-core`), `packages/workit-opencode` (src/plugin.ts + hooks — `@brainervirus/workit-opencode`, thin over the core), `packages/workit-cursor` (cursor/ dir + mcp + hooks + rules + marketplace manifest — `@brainervirus/workit-cursor`), `packages/workit-cli` (unchanged). Update plugin.ts root resolution (skills/commands/vendor now live in the core package), the cursor run-server.sh/server.ts imports, tests' import paths, and the grep gates. publishConfig public on all four.
+- [ ] **Step 3:** Verify: `bun install` resolves all four; `bun run check` green; `npm pack --dry-run` per package sane (core largest, opencode/cursor/cli thin).
 
 **Criteria:** CA-01, CA-02, CA-03, CA-04, CA-05, CA-06.
 
@@ -31,11 +29,12 @@
 | --- | --- |
 | pending | 1: Monorepo restructure + package rename |
 
-### Task 2: GitHub repo rename + semantic-release
+### Task 2: GitHub repo rename + semantic-release + opencode CI review
 
-- [ ] **Step 1:** GitHub repo renamed `workflow-toolkit` → `workit` (via gh api or GitHub settings — the coordinator runs the rename after the branch merges OR the user does it; document the exact steps); update `git remote set-url origin`; update README badges/URLs (CA-07 grep gate).
-- [ ] **Step 2:** Add semantic-release: `release.config.js` (Conventional Commits, branches [main], plugins: commit-analyzer, release-notes-generator, npm (both packages in order: workit then workit-cli), github); replace release.yml's manual flow with the semantic-release workflow (GITHUB_TOKEN + NPM_TOKEN secrets); add a `semantic-release` dry-run verification (CA-08).
-- [ ] **Step 3:** Add the opencode review workflow `.github/workflows/opencode-review.yml` (pull_request event: opened/synchronize/reopened/ready_for_review; `anomalyco/opencode/github@latest` with the review prompt from opencode.ai/docs/github — permissions read-only, `use_github_token: true`); README documents it + registers it as a required check in branch protection (the coordinator runs `gh api` after merge) + Bugbot as optional alternative (CA-10).
+- [ ] **Step 1 (DONE, staged):** semantic-release config (release.config.cjs) + workflow + README/CONTRIBUTING URL updates (commit on the coordinator's confirmation); opencode-review.yml created with the pull_request review flow.
+- [ ] **Step 2 (NEW — model + flows):** update opencode-review.yml + any new opencode workflows (issue_comment /oc flows, issues triage) to use `model: opencode-go/deepseek-v4-flash` (verified on models.dev — the user's plan); prompts follow the docs examples (https://opencode.ai/docs/github/) enforcing workit's own standards (the enforcement rails as review criteria). Decide BLOCKING vs ADVISORY per flow: pull_request review = required check (blocks merge); /oc comment flows = advisory (on-demand). Document the decision per flow in the workflow comments.
+- [ ] **Step 3:** GitHub repo renamed `workflow-toolkit` → `workit` (coordinator runs `gh api repos/BrainerVirus/workflow-toolkit -X PATCH -f name=workit` post-merge, then `git remote set-url origin`); README badges/URLs use the new name (CA-07 grep gate).
+- [ ] **Step 4:** Auto-update documented in README: opencode does NOT auto-update npm plugins (pinned version until the pin changes — ponytail evidence); workit consumers pin `latest` (re-resolved on restart) or use the existing `sync-runtime.sh` for dev (G9b).
 
 **Criteria:** CA-07, CA-08, CA-10.
 

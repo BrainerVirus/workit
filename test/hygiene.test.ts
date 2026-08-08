@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync, readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { hygieneFiles, ensureHygieneFiles } from "../packages/workit/src/core/hygiene";
+import { hygieneFiles, ensureHygieneFiles } from "../packages/workit-core/src/core/hygiene";
 
 test("all files missing on a fresh dir", () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "wf-hygiene-"));

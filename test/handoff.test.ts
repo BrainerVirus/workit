@@ -3,8 +3,8 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync }
 import { spawnSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
-import { adaptPluginHandoffClient, buildHandoffPrompt, createHandoffTools, handoffSession } from "../packages/workit/src/tools/handoff";
-import { WorkflowStateStore } from "../packages/workit/src/state";
+import { adaptPluginHandoffClient, buildHandoffPrompt, createHandoffTools, handoffSession } from "../packages/workit-core/src/tools/handoff";
+import { WorkflowStateStore } from "../packages/workit-core/src/state";
 
 const posix = (p: string) => p.split(path.sep).join("/");
 
