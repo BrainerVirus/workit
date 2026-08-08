@@ -79,6 +79,15 @@ Both platforms: `action: "hygiene"` (plus optional `include_open_source: boolean
 3. `workflow_verify` → CHANGELOG format check.
 4. Open-source repos → LICENSE/CONTRIBUTING flagged/created when opted in.
 
+## Acceptance criteria
+
+- CA-01: `hygieneFiles` returns per-file state (`missing | invalid | ok | skip`) for CHANGELOG.md, README.md, .editorconfig, .gitattributes, plus openSource-only LICENSE/CONTRIBUTING.md.
+- CA-02: A valid Keep a Changelog file reports `ok`; missing → `changelog_missing`; bad format → `changelog_invalid_format` (reusing `changelogUnreleasedStats`).
+- CA-03: `workflow_docs_validate` and `workflow_verify` surface the hygiene findings as warnings — never hard.
+- CA-04: `ensureHygieneFiles` creates missing files from `templates/hygiene/`, never overwrites existing ones, and requires `confirmed`.
+- CA-05: `workflow_toolkit_init_apply` gains the `hygiene` action on both platforms (OpenCode + Cursor).
+- CA-06: Warnings never block validation; only hard findings do.
+
 ## Error handling
 
 - `ensureHygieneFiles`: read templates; on missing template, skip that file (never fail); on write error, return the error.

@@ -132,6 +132,13 @@ Single suite against `src/core` (replacing the current split `bun test` + `npm -
 4. Native question menu (5 options) → `workflow_plan_menu(confirmed, choice)` → `menu.presented = true`.
 5. `wf-implement` (checks gates) or `wf-handoff` (checks gates, seeds continuation with flow.json path).
 
+## Acceptance criteria
+
+- CA-01: `workflow_spec_approve`/`workflow_plan_approve` hard-fail when a step is attempted before its prerequisite is approved (plan before spec approved, backward transitions, missing `confirmed: true`).
+- CA-02: The `self_reviewed → approved` transition is tool-recorded and happens only after the user's explicit approval via a native question.
+- CA-03: `wf-implement` refuses to run unless `plan.status === "approved"` AND `menu.presented === true`; `wf-handoff` refuses unless both docs are approved.
+- CA-04: All logic is consolidated in the TS + zod core; `src/legacy/`, `cursor/mcp/lib/`, and the scripts layer are deleted; `bun run check` green.
+
 ## Error handling
 
 - Any tool call with `confirmed !== true` returns the existing "confirmed: true required" failure.

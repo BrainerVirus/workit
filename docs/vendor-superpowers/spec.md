@@ -117,6 +117,17 @@ No change. `src/bootstrap.ts` already injects the toolkit contract on the first 
 5. Cursor loads the same via the synced plugin copy.
 6. Workflow artifacts live at `docs/<slug>/{spec.md,plan.md,sdd/}`; `flow.json` state under `sdd/`; spec+plan committed, sdd ignored.
 
+## Acceptance criteria
+
+- CA-01: The 14 Superpowers skills are copied into `vendor/superpowers/skills/` (each a SKILL.md with valid `name:`/`description:` frontmatter), and `plugin.js` points at the vendored skills dir.
+- CA-02: `vendor/superpowers/VERSION` and `NOTICE.md` record upstream provenance and the update procedure.
+- CA-03: `scripts/update-superpowers.sh` fetches upstream, copies skills + plugin, writes VERSION, and reports a diff; it never pushes or commits and leaves the tree untouched on failure.
+- CA-04: OpenCode config no longer references `superpowers@git+https://github.com/obra/superpowers.git`; no Cursor-side Superpowers hook dependency remains.
+- CA-05: All existing `wf-*` skills stay untouched — no renames, no content changes.
+- CA-06: Workflow docs live at `docs/<slug>/{spec.md,plan.md,sdd/}`; spec.md/plan.md are committed and `docs/*/sdd/` is gitignored.
+- CA-07: All path-bearing tools (docs-validate, flow-state, sdd, handoff-context, branch, plan-tasks, tools, sync-runtime) resolve the new `docs/<slug>/` layout; no `docs/superpowers/` paths remain in sources (grep check).
+- CA-08: `bun run check` green; `src/plugin.ts` registers both `skills/` and `vendor/superpowers/skills` without duplicates; missing vendor dir does not break loading.
+
 ## Error handling
 
 - Update script: any `git clone`/`checkout`/`cp` failure → non-zero exit, clear stderr, no partial writes (copy into temp staging dir first, then `rsync`/`mv` into vendor only on success).

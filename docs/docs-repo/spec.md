@@ -89,6 +89,15 @@ Index row appended/updated in `<docs-repo>/features/README.md` table:
 3. User runs `workflow_docs_promote { slug }` → gate runs → files copied + README + index updated.
 4. User reviews the docs repo changes and commits them manually.
 
+## Acceptance criteria
+
+- CA-01: `workflow_docs_repo_link` with `confirmed` validates the path (exists, git repo, `features/` present or creatable) and writes `docs-repo.json`; invalid path → error, no write.
+- CA-02: `workflow_docs_list` returns `{ slug, promoted, target }` for every `docs/*/spec.md`, where `promoted` = a matching `features/*/<slug>/` dir exists in the docs repo.
+- CA-03: `workflow_docs_promote` copies `spec.md` (+ `plan.md` if present) into `features/YYYY-MM-<slug>/`, generates the feature `README.md`, and adds/updates the `features/README.md` index row.
+- CA-04: Promote refuses when `docsValidate` fails or `qualitySpec` has hard findings; `force: true` bypasses the gate.
+- CA-05: Promotion writes files only — never commits, never pushes.
+- CA-06: Re-promoting the same slug updates files and the index row without duplication.
+
 ## Error handling
 
 - Missing config or unlinked docs repo: `workflow_docs_list` / `promote` return `{ error: "docs repo not linked — run workflow_docs_repo_link" }`.

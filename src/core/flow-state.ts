@@ -1,5 +1,6 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync, existsSync } from "node:fs";
 import path from "node:path";
+import { parseTasksFromPlan, qualitySpec, stripFences } from "./docs-validate";
 
 export type FlowStatus = "draft" | "self_reviewed" | "approved";
 export type FlowDocState = { path: string; status: FlowStatus };
@@ -84,6 +85,30 @@ export const transitionSpec = (
   if (!existsSync(path.isAbsolute(specPath) ? specPath : path.join(root, specPath))) {
     return { ok: false, error: `spec not found: ${specPath}` };
   }
+  if (state.spec.status === "draft" && confirmed) {
+    const specFile = path.isAbsolute(specPath) ? specPath : path.join(root, specPath);
+    let text: string;
+    try {
+      text = readFileSync(specFile, "utf8");
+    } catch (error) {
+      return {
+        ok: false,
+        error: `spec self-review failed: unreadable spec: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+    const hard = qualitySpec(text).filter((f) => f.severity === "hard");
+    const missing: string[] = [];
+    if (!/^\s*\*+Branch:\*+/im.test(stripFences(text))) missing.push("**Branch:** header missing");
+    if (hard.length > 0 || missing.length > 0) {
+      return {
+        ok: false,
+        error:
+          "spec self-review failed: " +
+          hard.map((f) => `${f.code} — ${f.message}`).concat(missing).join("; ") +
+          " — see templates/spec-template.md for the required structure",
+      };
+    }
+  }
   const step = nextStatus(state.spec.status, confirmed);
   if (!step.ok) return { ok: false, error: step.error };
   writeFlowState(root, {
@@ -111,6 +136,26 @@ export const transitionPlan = (
   }
   if (state.spec.status !== "approved") {
     return { ok: false, error: "spec must be approved before the plan can be approved" };
+  }
+  if (state.plan.status === "draft" && confirmed) {
+    const planFile = path.isAbsolute(planPath) ? planPath : path.join(root, planPath);
+    let text: string;
+    try {
+      text = readFileSync(planFile, "utf8");
+    } catch (error) {
+      return {
+        ok: false,
+        error: `plan self-review failed: unreadable plan: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+    const missing: string[] = [];
+    const stripped = stripFences(text);
+    if (parseTasksFromPlan(text).length === 0) missing.push("no ### Task N: sections outside fences");
+    if (!/^\s*\*+Spec:\*+/im.test(stripped)) missing.push("**Spec:** header missing");
+    if (!/^\s*\*+Branch:\*+/im.test(stripped)) missing.push("**Branch:** header missing");
+    if (missing.length > 0) {
+      return { ok: false, error: "plan self-review failed: " + missing.join("; ") };
+    }
   }
   const step = nextStatus(state.plan.status, confirmed);
   if (!step.ok) return { ok: false, error: step.error };

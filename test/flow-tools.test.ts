@@ -4,10 +4,13 @@ import os from "node:os";
 import path from "node:path";
 import { createFlowTools } from "../src/tools/flow";
 
+const COMPLIANT_SPEC =
+  "# X\n\n**Branch:** `feature/x`\n\n## Context\n\n## Goals\n\n## Non-goals\n\n## Architecture\n\n## Acceptance criteria\n\n- CA-01: test\n";
+
 const fixture = () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "wf-flowtools-"));
   mkdirSync(path.join(root, "docs", "x"), { recursive: true });
-  writeFileSync(path.join(root, "docs/x/spec.md"), "# X\n\n**Branch:** `feature/x`\n");
+  writeFileSync(path.join(root, "docs/x/spec.md"), COMPLIANT_SPEC);
   writeFileSync(path.join(root, "docs/x/plan.md"), "# X\n\n**Spec:** `docs/x/spec.md`\n**Branch:** `feature/x`\n\n### Task 1: One\n\n- [ ] **Step 1:** Work\n");
   const tools = createFlowTools();
   const ctx = { directory: root } as any;

@@ -86,6 +86,15 @@ export const detectProseChoices(text: string): Detection;
 2. Model receives user part with reminder (+ correction when detected).
 3. Model calls `question` tool for bounded choices (reminder enforces); if it still emits prose choices, turn N+1's detection fires again.
 
+## Acceptance criteria
+
+- CA-01: `chat.messages.transform` injects the compact `<workflow-contract-reminder>` block on every user turn (not just the first), and never duplicates it when already present.
+- CA-02: A message with ≥2 same-prefix prose options (A)/B)/C) or 1./2./3.) plus an interrogative triggers the `<workflow-detection>` correction on the next turn; plain lists do not.
+- CA-03: Corrections inject at most once per detection (reset after injection); reminder/detection injection never throws (try/catch no-op).
+- CA-04: Low-false-positive guarantee: ≥2 same-prefix options + interrogative required — single options, non-consecutive prefixes, and plain lists never match.
+- CA-05: The reminder text derives from the canonical rules (Spec 6) + the repo contract; a user rule named `contract-reminder` replaces the default block.
+- CA-06: Detection works in OpenCode; Cursor receives only the session-start reminder text (asymmetry documented).
+
 ## Error handling
 
 - Reminder/detection injection must never throw (wrap in try/catch; on error, fall back to no-op).

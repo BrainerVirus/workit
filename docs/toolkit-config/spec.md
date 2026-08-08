@@ -121,6 +121,14 @@ Tools:
 4. User edits templates/rules via `/wf-template-edit`, `/wf-rule-edit` → files in config updated.
 5. Tools read config for locale, templates, branch policy; deterministic gates unchanged.
 
+## Acceptance criteria
+
+- CA-01: `wf-init` writes `config.json`, `youtrack.json`, `vcs.json` and copies default templates + rules; the migration path preserves existing values; writes require `confirmed`.
+- CA-02: `config.json: { locale }` governs agent/toolkit language (default `en`); YouTrack issue templates declare their own `locale: "es-CL"` so the session language does not flip.
+- CA-03: `workflow_template_edit`/`workflow_template_list` read/write templates in the config dir with fallback to repo defaults.
+- CA-04: Canonical rules compile to Cursor `.mdc` and OpenCode contract sections; user rules override repo defaults by name; `workflow_rule_list`/`workflow_rule_edit` expose them.
+- CA-05: Branch policy presets (`gitflow` default, `github-flow`, `trunk-based`, `custom`) drive the branch tools; `codex/feature/x` is rejected under `gitflow` and allowed under a custom policy listing it.
+
 ## Error handling
 
 - Missing `config.json`: all readers fall back to current defaults (en, gitflow) — toolkit still works for existing setups.

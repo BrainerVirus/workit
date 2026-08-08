@@ -3,7 +3,7 @@ import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync 
 import os from "node:os";
 import path from "node:path";
 import { findActiveSubagentDrivenPlans, detectConfigGapError, detectBacktickDocRefs, detectRawDocDelivery } from "../src/core/detector";
-import { shouldInjectSddReminder, SDD_REMINDER_TEXT, CONFIG_GUARD_TEXT, shouldInjectConfigGuard, DOC_DELIVERY_TEXT, DOC_RENDER_TEXT, shouldInjectDocRender } from "../src/core/reminder";
+import { shouldInjectSddReminder, SDD_REMINDER_TEXT, CONFIG_GUARD_TEXT, shouldInjectConfigGuard, DOC_DELIVERY_TEXT, DOC_RENDER_TEXT, shouldInjectDocRender, REMINDER_TEXT } from "../src/core/reminder";
 
 const writeFlow = (root: string, slug: string, flow: unknown) => {
   const dir = path.join(root, "docs", slug, "sdd");
@@ -97,6 +97,15 @@ test("CA-03: reminder is injected only when the marker is absent (idempotent)", 
   expect(shouldInjectSddReminder(SDD_REMINDER_TEXT)).toBe(false);
   expect(shouldInjectSddReminder(`message with ${SDD_REMINDER_TEXT} marker`)).toBe(false);
   expect(shouldInjectSddReminder("partial <workflow-sdd-reminder> tag alone")).toBe(true);
+});
+
+test("CA-06: contract reminder carries the superpowers self-review ritual line", () => {
+  expect(REMINDER_TEXT).toContain("Self-Review checklist");
+  expect(REMINDER_TEXT).toContain("spec coverage (every spec requirement maps to a task)");
+  expect(REMINDER_TEXT).toContain("placeholder scan");
+  expect(REMINDER_TEXT).toContain("type consistency");
+  expect(REMINDER_TEXT).toContain("workflow_spec_approve");
+  expect(REMINDER_TEXT).toContain("workflow_plan_approve");
 });
 
 test("CA-03: config-gap marker in assistant text → detector true, guard injects", () => {

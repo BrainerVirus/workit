@@ -107,6 +107,14 @@ flowchart TD
 3. Draft iterations: warnings listed, no block. Approval: quality findings must be resolved (or explicitly waived by the user) before plan approval / promote / implement.
 4. Plan written from `templates/plan-template.md`; same quality pass.
 
+## Acceptance criteria
+
+- CA-01: `templates/spec-template.md` keeps the required sections (Context, Goals, Non-goals, Architecture, Acceptance criteria) and mandates ASCII wireframes for UI, mermaid for flows/architecture, and tables where applicable.
+- CA-02: `templates/plan-template.md` provides tasks with explicit criteria and status tables.
+- CA-03: `workflow_docs_validate`'s quality pass returns structured findings (`missing_section`, `missing_acceptance_criteria`, `missing_ascii_for_ui`, `missing_mermaid_for_flow`, `missing_table`) when the corresponding add-ons are absent.
+- CA-04: Quality findings are warnings for drafts and hard failures at promote/implement time.
+- CA-05: A spec generated via the templates includes ASCII + mermaid + tables without being asked (manual smoke).
+
 ## Error handling
 
 - Quality findings never crash; they are structured data surfaced to the agent/user.
