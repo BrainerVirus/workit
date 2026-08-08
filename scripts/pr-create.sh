@@ -25,7 +25,7 @@ cd "$(repo_root)" || exit 1
 CFG=$(bash "$SCRIPT_DIR/vcs/config.sh" load)
 export CFG TITLE BODY DRAFT TARGET
 python3 <<'PY'
-import json, os, subprocess, sys
+import json, os, shutil, subprocess, sys
 
 cfg = json.loads(os.environ["CFG"])
 if not cfg.get("ok"):
@@ -36,6 +36,19 @@ if not cfg.get("tokenReady"):
     sys.exit(1)
 
 provider = cfg["provider"]
+if provider not in ("gitlab", "github"):
+    print(json.dumps({"error": f"unsupported provider: {provider}"}))
+    sys.exit(1)
+cli = "glab" if provider == "gitlab" else "gh"
+install_url = "https://gitlab.com/gitlab-org/cli" if provider == "gitlab" else "https://cli.github.com"
+if shutil.which(cli) is None:
+    print(json.dumps({
+        "ok": False,
+        "cli_missing": True,
+        "error": f"workflow CLI missing: {cli} (required for {provider}). Install: {install_url}",
+        "install_url": install_url,
+    }))
+    sys.exit(1)
 pr = cfg.get("pr") or {}
 token = open(cfg["tokenPath"], encoding="utf-8").read().strip()
 title = os.environ["TITLE"]
@@ -72,9 +85,6 @@ elif provider == "github":
     if draft:
         cmd.append("--draft")
     env = {**os.environ, "GH_TOKEN": token}
-else:
-    print(json.dumps({"error": f"unsupported provider: {provider}"}))
-    sys.exit(1)
 
 r = subprocess.run(cmd, capture_output=True, text=True, env=env)
 if r.returncode != 0:

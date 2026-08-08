@@ -69,6 +69,10 @@ if [ -f Cargo.toml ] || [ -f src-tauri/Cargo.toml ]; then
 fi
 
 print_section "VCS Config"
+RES=$(bash "$SCRIPT_DIR/vcs/config.sh" resolve 2>/dev/null || true)
+if [ -n "$RES" ]; then
+  printf '%s\n' "$RES" | python3 -c 'import json,sys; r=json.load(sys.stdin); print("workspace: "+str(r.get("workspace_name") or "none")); print("provider: "+str(r.get("provider","gitlab")))'
+fi
 if bash "$SCRIPT_DIR/vcs/config.sh" summary 2>/dev/null; then
   :
 else
