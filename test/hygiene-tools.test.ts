@@ -5,7 +5,7 @@ import path from "node:path";
 import { createRepoTools } from "../packages/workit/src/tools/repo";
 
 test("init_apply hygiene action creates missing files", async () => {
-  const dir = mkdtempSync(path.join(os.tmpdir(), "wf-hygiene-tools-"));
+  const dir = mkdtempSync(path.join(os.tmpdir(), "wk-hygiene-tools-"));
   try {
     const tools = createRepoTools();
     const no = JSON.parse(await tools.workflow_toolkit_init_apply.execute({

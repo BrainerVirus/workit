@@ -74,7 +74,7 @@ if [ ! -d "$SHARE/packages/workit/cursor/mcp/node_modules" ]; then
   (cd "$SHARE/packages/workit/cursor/mcp" && npm install --silent) || true
 fi
 
-# Remove broken TLA live-loader if present (OpenCode ignored it; /wf-* vanished)
+# Remove broken TLA live-loader if present (OpenCode ignored it; /wk-* vanished)
 rm -f "${OPENCODE_PLUGINS}/workflow-toolkit.ts"
 
 # Ensure OpenCode has plugin peer dep

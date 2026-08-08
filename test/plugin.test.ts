@@ -28,7 +28,7 @@ const names = [
 ];
 
 describe("plugin registration", () => {
-  test("registers exactly the twelve wf commands and one skill path", async () => {
+  test("registers exactly the twelve wk commands and one skill path", async () => {
     const hooks = await plugin({
       directory: "/repo",
       worktree: "/repo",

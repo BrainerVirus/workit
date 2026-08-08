@@ -6,7 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { scaffoldVcs, scaffoldYouTrack } from "../packages/workit-cli/src/logic";
 
-// ponytail: pins parity between the wizard scaffolds (src/cli/logic.ts) and the bash
+// ponytail: pins parity between the wizard scaffolds (packages/workit-cli/src/logic.ts) and the bash
 // scripts/init/apply.sh writes — both must produce the same youtrack.json / vcs.json.
 // apply.sh honors WORKFLOW_YT_*/WORKFLOW_VCS_* env overrides; the wizard ignores them
 // (documented in logic.ts), so run apply.sh with a clean env.

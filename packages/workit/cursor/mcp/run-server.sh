@@ -13,8 +13,8 @@ if [ -n "${WORKFLOW_TOOLKIT_ROOT:-}" ] && [ -d "${WORKFLOW_TOOLKIT_ROOT}/scripts
   ROOT="$WORKFLOW_TOOLKIT_ROOT"
 elif [ -f "$MARKER" ]; then
   ROOT="$(tr -d '\n' <"$MARKER")"
-elif [ -d "${SHARE}/scripts" ]; then
-  ROOT="$SHARE"
+elif [ -d "${SHARE}/packages/workit/scripts" ]; then
+  ROOT="$SHARE/packages/workit"
 else
   # Live monorepo: cursor/mcp → repo root
   ROOT="$(CDPATH= cd -- "$MCP_DIR/../.." && pwd)"

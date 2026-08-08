@@ -44,9 +44,9 @@ chmod +x "$ROOT/packages/workit/scripts/sync-runtime.sh" "$ROOT/packages/workit/
 # Prefer syncing from this ROOT (dev or freshly cloned share)
 WORKFLOW_TOOLKIT_DEV="$ROOT" "$ROOT/packages/workit/scripts/sync-runtime.sh"
 
-# Drop stale CLI skill symlinks (duplicate /wf-* entries)
+# Drop stale CLI skill symlinks (duplicate /wf-* and /wk-* entries)
 if [ -d "$SKILLS_DIR" ]; then
-  rm -f "$SKILLS_DIR"/wk-*
+  rm -f "$SKILLS_DIR"/wf-* "$SKILLS_DIR"/wk-*
 fi
 
 python3 - <<'PY'
