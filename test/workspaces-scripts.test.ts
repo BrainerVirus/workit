@@ -371,6 +371,9 @@ test("pr-create.sh --build-body: explicit WORKFLOW_GH_ISSUE closes/related (defa
   expect(buildBody({ GH_LINK_ON_PR: "true", WORKFLOW_GH_ISSUE: "42" })).toBe("Closes #42");
   expect(buildBody({ BODY: "Existing body", GH_LINK_ON_PR: "true", WORKFLOW_GH_ISSUE: "#42" })).toBe("Existing body\n\nCloses #42");
   expect(
+    buildBody({ GH_LINK_ON_PR: "true", WORKFLOW_GH_ISSUE: "https://github.com/acme/app/issues/42" }),
+  ).toBe("Closes #42");
+  expect(
     buildBody({ GH_LINK_ON_PR: "true", WORKFLOW_GH_ISSUE: "42", WORKFLOW_GH_ISSUE_RELATION: "related", GH_REPO: "acme/app" }),
   ).toBe("Related to #42 — https://github.com/acme/app/issues/42");
   expect(buildBody({ GH_LINK_ON_PR: "true", WORKFLOW_GH_ISSUE: "42", BODY: "" })).toBe("Closes #42");
@@ -382,6 +385,10 @@ test("pr-create.sh --build-body: branch-derived pure-number id auto-links (featu
   expect(buildBody({ GH_LINK_ON_PR: "true", BRANCH: "42-title" })).toBe("Closes #42");
   expect(buildBody({ GH_LINK_ON_PR: "true", BRANCH: "feature/foo" })).toBe("");
   expect(buildBody({ GH_LINK_ON_PR: "false", BRANCH: "feature/42-title" })).toBe("");
+  // version tokens never link (release/1.2.3, backport/8.0.1, release/2024.1)
+  expect(buildBody({ GH_LINK_ON_PR: "true", BRANCH: "release/1.2.3" })).toBe("");
+  expect(buildBody({ GH_LINK_ON_PR: "true", BRANCH: "backport/8.0.1" })).toBe("");
+  expect(buildBody({ GH_LINK_ON_PR: "true", BRANCH: "release/2024.1" })).toBe("");
 });
 
 test("pr-create.sh --build-body: owner/repo parsed from git remote get-url origin; absent remote -> Related line without URL", () => {

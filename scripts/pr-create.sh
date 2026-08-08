@@ -47,6 +47,12 @@ def parse_gh_repo(remote: str) -> str | None:
     return "/".join(parts[-2:]) if len(parts) >= 2 else None
 
 
+def parse_gh_issue(value: str) -> str:
+    # "42", "#42" or "https://github.com/o/r/issues/42" all normalize to the bare number
+    m = re.search(r"issues/(\d+)", value)
+    return m.group(1) if m else value.strip().lstrip("#")
+
+
 def build_body(body, branch, link_issues, base_url, yt_issue, gh_link_on_pr, gh_issue, gh_relation, gh_repo):
     line = None
     if link_issues:
@@ -60,10 +66,11 @@ def build_body(body, branch, link_issues, base_url, yt_issue, gh_link_on_pr, gh_
         if issue and base_url:
             line = f"Related to: {base_url.rstrip('/')}/issue/{issue}"
     elif gh_link_on_pr:
-        issue = gh_issue.strip().lstrip("#")
+        issue = parse_gh_issue(gh_issue)
         if not issue and branch:
             # pure-number issue id (feature/42-title -> 42); digits must be followed by a dash or
             # end-of-string so version tokens (release/1.2.3, backport/8.0.1, lodash-4.17.21, 2024.1) never link
+            # ponytail: known date-style false positive (feature/2024-01-fix -> Closes #2024); accepted — bare 42-title support is deliberate
             m = re.search(r"(?:^|/|-)(\d+)(?:-|$)", branch)
             if m:
                 issue = m.group(1)
