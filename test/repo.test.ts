@@ -454,13 +454,13 @@ test("mutation paths cannot escape ToolContext.directory", async () => {
   }
 });
 
-test("changelog script path is package-owned", () => {
+test("changelog implementation is package-owned", () => {
   const expectedRoot = path.resolve(import.meta.dir, "..", "packages", "workit-core");
-  const script = path.join(PLUGIN_ROOT, "scripts/changelog/apply-unreleased.py");
+  const port = path.join(PLUGIN_ROOT, "src", "core", "changelog.ts");
   expect(PLUGIN_ROOT).toBe(expectedRoot);
-  expect(script.startsWith(`${PLUGIN_ROOT}${path.sep}`)).toBe(true);
-  expect(script).not.toContain(".cursor/plugins");
-  expect(existsSync(script)).toBe(true);
+  expect(port.startsWith(`${PLUGIN_ROOT}${path.sep}`)).toBe(true);
+  expect(port).not.toContain(".cursor/plugins");
+  expect(existsSync(port)).toBe(true);
 });
 
 test("changelog preserves rich Markdown while consolidating categories", async () => {
