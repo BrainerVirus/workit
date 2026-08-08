@@ -36,7 +36,7 @@ const withConfigDir = (files: Record<string, string>) => {
 const envWithHome = (home: string, extra: Record<string, string> = {}): Record<string, string> => {
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) {
-    if (v === undefined || /^WORKFLOW_(VCS|TOOLKIT_CONFIG)/.test(k)) continue;
+    if (v === undefined || /^WORKFLOW_(VCS|TOOLKIT_CONFIG)/.test(k) || k === "XDG_CONFIG_HOME") continue;
     env[k] = v;
   }
   env.HOME = home;
