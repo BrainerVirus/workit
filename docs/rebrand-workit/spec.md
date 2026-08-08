@@ -19,7 +19,9 @@ The npm name `flowkit` is blocked by npm's anti-squatting rule (too similar to t
 - G8: GitHub repo renamed `workflow-toolkit` → `workit` (user asked — repo, releases, and docs references all updated; remote URLs in README/package.json updated).
 - G9: Release automation with semantic-release (Conventional Commits): automated version bump, changelog, tags, and ordered publish of the packages (core → platform plugins → cli); replaces the manual release.yml flow.
 - G9b: Auto-update story documented: opencode does NOT auto-update npm plugins (ponytail stays at its pinned version until the pin changes); superpowers auto-updates because it's vendored with a sync script. Workit: (a) the existing `sync-runtime.sh` keeps the dev install fresh, (b) consumers pin `latest` (opencode re-resolves on restart) or run the sync script — documented in README.
-- G10: v0.4.0 released under the new names: tag, GitHub Release, `npm publish` of `@brainervirus/workit` + `@brainervirus/workit-cli` (secret configured).
+- G10: v0.4.0 released under the new names: tag, GitHub Release, `npm publish` of the four packages in order (core → opencode → cursor → cli) (secret configured).
+- G11: Python dependency eliminated: all 25 `.sh` scripts with embedded `python3` heredocs AND the changelog `.py` are ported to pure TS executed by bun (`runScript` invokes a TS binary); README removes the Python 3 prerequisite entirely (the "required only for wk-changelog" note is stale — python3 is embedded in 25 scripts: youtrack/config.sh, vcs/config.sh, pr-create.sh, verify-token.sh, token-create-urls.sh, etc.).
+- G12: Tests restructured by package: `test/workit-core/**`, `test/workit-opencode/**`, `test/workit-cursor/**`, `test/workit-cli/**`, `test/shared/**` mirroring the packages/ tree; CI runs a check job PER PACKAGE (clear per-category results), replacing the single flat test/ dir.
 
 ## Non-goals
 
@@ -75,6 +77,8 @@ flowchart LR
 - CA-08: semantic-release config present (release config with Conventional Commits); dry-run produces the expected next version from the commit history; both packages publish in order.
 - CA-09: Release: tag v0.4.0 (or semantic-release's computed version) with GitHub Release + `npm view @brainervirus/workit` resolves; `@brainervirus/workit-cli` resolves.
 - CA-10: README documents the code-review checks — the opencode GitHub workflows (opencode-review.yml pull_request + the /oc comment flows) with `opencode-go/deepseek-v4-flash`; branch protection includes the blocking ones; Bugbot listed as optional.
+- CA-11: Zero `python3` invocations remain in packages/*/scripts and src (grep gate); the changelog apply runs via bun; README's Python prerequisite line is gone; `bun run check` green with the TS ports (changelog round-trip + vcs config + youtrack api tests pass).
+- CA-12: Tests live under `test/<package>/**` mirroring packages/; CI has one check job per package (workit-core, workit-opencode, workit-cursor, workit-cli, shared) — the matrix shows per-package results.
 
 ## Decisions
 
@@ -92,3 +96,5 @@ flowchart LR
 - A `wk doctor`/`wk status` alias command for parity with the old wf-status muscle memory.
 - Config-dir migration tool if a rename is ever desired.
 - Rebrand the GitHub repo name if the user ever wants full consistency.
+- Cursor marketplace submission (the manifest ships in workit-cursor; publishing is manual).
+- True auto-update for consumers (opencode lacks it for npm plugins; `latest` pin or a self-update command).
