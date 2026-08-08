@@ -1,5 +1,6 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync, existsSync } from "node:fs";
 import path from "node:path";
+import { qualitySpec } from "./docs-validate";
 
 export type FlowStatus = "draft" | "self_reviewed" | "approved";
 export type FlowDocState = { path: string; status: FlowStatus };
@@ -83,6 +84,25 @@ export const transitionSpec = (
   }
   if (!existsSync(path.isAbsolute(specPath) ? specPath : path.join(root, specPath))) {
     return { ok: false, error: `spec not found: ${specPath}` };
+  }
+  if (state.spec.status === "draft" && confirmed) {
+    const specFile = path.isAbsolute(specPath) ? specPath : path.join(root, specPath);
+    let text: string;
+    try {
+      text = readFileSync(specFile, "utf8");
+    } catch (error) {
+      return {
+        ok: false,
+        error: `spec self-review failed: unreadable spec: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+    const hard = qualitySpec(text).filter((f) => f.severity === "hard");
+    if (hard.length > 0) {
+      return {
+        ok: false,
+        error: "spec self-review failed: " + hard.map((f) => `${f.code} — ${f.message}`).join("; "),
+      };
+    }
   }
   const step = nextStatus(state.spec.status, confirmed);
   if (!step.ok) return { ok: false, error: step.error };

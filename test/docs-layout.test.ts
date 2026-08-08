@@ -15,7 +15,7 @@ const fixture = () => {
   mkdirSync(path.join(root, "docs", slug), { recursive: true });
   mkdirSync(path.join(root, "docs", slug, "sdd"), { recursive: true });
   writeFileSync(path.join(root, "docs", slug, "spec.md"),
-    `# Spec\n\n**Branch:** \`feature/${slug}\`\n`);
+    `# Spec\n\n**Branch:** \`feature/${slug}\`\n\n## Context\n\n## Goals\n\n## Non-goals\n\n## Architecture\n\n## Acceptance criteria\n\n- CA-01: test\n`);
   writeFileSync(path.join(root, "docs", slug, "plan.md"),
     `# Plan\n\n**Spec:** \`docs/${slug}/spec.md\`\n**Branch:** \`feature/${slug}\`\n\n### Task 1: One\n\n- [ ] **Step 1:** Work\n`);
   return { root, slug };
