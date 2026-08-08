@@ -6,7 +6,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 // Parity tests for scripts/vcs/config.sh resolve/load, pr-create.sh missing-CLI guard,
-// and pr-ready-context.sh VCS Config section. Mirrors src/core/workspaces.ts semantics
+// pr-create.sh --build-body issue linking, and pr-ready-context.sh VCS Config section.
+// Mirrors src/core/workspaces.ts semantics
 // (first-wins globs, missing/malformed workspaces.json -> no workspace, never error).
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -248,4 +249,53 @@ test("pr-ready-context.sh: VCS Config section reports workspace + provider", () 
   } finally {
     cleanup();
   }
+});
+
+// pr-create.sh --build-body: pure body builder — no git state, no CLI guard, no network.
+const buildBody = (extra: Record<string, string>): string => {
+  const env: Record<string, string> = {};
+  for (const [k, v] of Object.entries(process.env)) {
+    if (v === undefined || /^WORKFLOW_/.test(k)) continue;
+    env[k] = v;
+  }
+  const r = run(["scripts/pr-create.sh", "--build-body"], {
+    cwd: repoRoot,
+    env: { ...env, ...extra },
+  });
+  expect(r.status, r.stderr).toBe(0);
+  return (JSON.parse(r.stdout) as { body: string }).body;
+};
+
+test("pr-create.sh --build-body: branch-derived issue id appends Related to line", () => {
+  if (!scriptTools()) return;
+  expect(
+    buildBody({ BRANCH: "feature/IRP-123-fix", LINK_ISSUES: "true", YT_BASE_URL: "https://yt.example.com" }),
+  ).toBe("Related to: https://yt.example.com/issue/IRP-123");
+  expect(
+    buildBody({
+      BODY: "Existing body",
+      BRANCH: "feature/IRP-123-fix",
+      LINK_ISSUES: "true",
+      YT_BASE_URL: "https://yt.example.com",
+    }),
+  ).toBe("Existing body\n\nRelated to: https://yt.example.com/issue/IRP-123");
+});
+
+test("pr-create.sh --build-body: link_issues false or absent -> body unchanged", () => {
+  if (!scriptTools()) return;
+  expect(buildBody({ BODY: "Same body", BRANCH: "feature/IRP-123-fix", LINK_ISSUES: "false", YT_BASE_URL: "https://yt.example.com" })).toBe("Same body");
+  expect(buildBody({ BODY: "Same body", BRANCH: "feature/IRP-123-fix", YT_BASE_URL: "https://yt.example.com" })).toBe("Same body");
+});
+
+test("pr-create.sh --build-body: explicit YT_ISSUE wins over branch-derived id", () => {
+  if (!scriptTools()) return;
+  expect(
+    buildBody({ BRANCH: "feature/IRP-123-fix", LINK_ISSUES: "true", YT_BASE_URL: "https://yt.example.com", YT_ISSUE: "NSAT-9" }),
+  ).toBe("Related to: https://yt.example.com/issue/NSAT-9");
+});
+
+test("pr-create.sh --build-body: no base URL or no derivable id -> no Related to line", () => {
+  if (!scriptTools()) return;
+  expect(buildBody({ BODY: "No link", BRANCH: "feature/IRP-123-fix", LINK_ISSUES: "true" })).toBe("No link");
+  expect(buildBody({ BODY: "No link", BRANCH: "feature/maintenance", LINK_ISSUES: "true", YT_BASE_URL: "https://yt.example.com" })).toBe("No link");
 });
