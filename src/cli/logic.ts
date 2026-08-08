@@ -1,6 +1,7 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { PRESETS, LOCALE_RE, type BranchPreset, type ToolkitConfig } from "../core/config";
+import { workspacesPath, type WorkspaceConfig } from "../core/workspaces";
 import { ensureProjectGitignore } from "../core/gitignore";
 import { ensureHygieneFiles, hygieneFiles } from "../core/hygiene";
 
@@ -198,4 +199,50 @@ export function scaffoldVcs(dir: string, provider: VcsProvider): VcsScaffold {
     tokenCreateUrl: provider === "gitlab" ? gitlabUrl : githubUrl,
     provider,
   };
+}
+
+export function loadWorkspaces(): WorkspaceConfig[] {
+  let raw: string;
+  try {
+    raw = readFileSync(workspacesPath(), "utf8");
+  } catch {
+    return [];
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return [];
+  }
+  if (!parsed || typeof parsed !== "object") return [];
+  const list = (parsed as { workspaces?: unknown }).workspaces;
+  return Array.isArray(list) ? (list as WorkspaceConfig[]) : [];
+}
+
+export type WriteWorkspacesResult = { ok: boolean; error?: string; path: string };
+
+const VALID_PROVIDERS: VcsProvider[] = ["gitlab", "github"];
+
+export function writeWorkspaces(entries: WorkspaceConfig[]): WriteWorkspacesResult {
+  const file = workspacesPath();
+  for (const [i, entry] of entries.entries()) {
+    if (!entry || typeof entry !== "object") {
+      return { ok: false, error: `workspace #${i + 1} is null`, path: file };
+    }
+    if (typeof entry.name !== "string" || !entry.name.trim()) {
+      return { ok: false, error: `workspace #${i + 1} missing a name`, path: file };
+    }
+    if (typeof entry.glob !== "string" || !entry.glob.trim()) {
+      return { ok: false, error: `workspace "${entry.name}" missing a glob`, path: file };
+    }
+    const provider = entry.vcs?.provider;
+    if (provider && !VALID_PROVIDERS.includes(provider)) {
+      return { ok: false, error: `workspace "${entry.name}" has unknown provider "${provider}"`, path: file };
+    }
+  }
+  mkdirSync(path.dirname(file), { recursive: true });
+  const tmp = `${file}.tmp`;
+  writeFileSync(tmp, JSON.stringify({ workspaces: entries }, null, 2) + "\n", "utf8");
+  renameSync(tmp, file);
+  return { ok: true, path: file };
 }
