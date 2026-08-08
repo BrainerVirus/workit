@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -60,7 +60,7 @@ const workspacesJson = (glob: string, provider: string, extra?: Record<string, u
 
 test("config.sh resolve: workspace match wins over global vcs.json (work -> gitlab, personal -> github)", () => {
   if (!scriptTools()) return;
-  const base = mkdtempSync(path.join(os.tmpdir(), "wf-ws-dir-"));
+  const base = realpathSync(mkdtempSync(path.join(os.tmpdir(), "wf-ws-dir-")));
   mkdirSync(path.join(base, "work", "sixbell", "repo"), { recursive: true });
   mkdirSync(path.join(base, "personal", "some-app"), { recursive: true });
   const { home, cleanup } = withConfigDir({
@@ -124,7 +124,7 @@ test("config.sh resolve: unmatched cwd falls back to global vcs.json; missing/ma
 
 test("config.sh resolve: WORKFLOW_TOOLKIT_CONFIG dir is honored for vcs.json + workspaces.json (TS chain parity)", () => {
   if (!scriptTools()) return;
-  const base = mkdtempSync(path.join(os.tmpdir(), "wf-ws-dir-"));
+  const base = realpathSync(mkdtempSync(path.join(os.tmpdir(), "wf-ws-dir-")));
   mkdirSync(path.join(base, "work", "repo"), { recursive: true });
   const cfgDir = mkdtempSync(path.join(os.tmpdir(), "wf-ws-chain-"));
   writeFileSync(path.join(cfgDir, "vcs.json"), JSON.stringify(GLOBAL_VCS), "utf8");
@@ -146,7 +146,7 @@ test("config.sh resolve: WORKFLOW_TOOLKIT_CONFIG dir is honored for vcs.json + w
 
 test("config.sh resolve: WORKFLOW_WORKSPACE_ROOT overrides the cwd", () => {
   if (!scriptTools()) return;
-  const base = mkdtempSync(path.join(os.tmpdir(), "wf-ws-dir-"));
+  const base = realpathSync(mkdtempSync(path.join(os.tmpdir(), "wf-ws-dir-")));
   mkdirSync(path.join(base, "work", "repo"), { recursive: true });
   const { home, cleanup } = withConfigDir({
     "vcs.json": JSON.stringify(GLOBAL_VCS),
@@ -166,7 +166,7 @@ test("config.sh resolve: WORKFLOW_WORKSPACE_ROOT overrides the cwd", () => {
 
 test("config.sh load: merges the resolved workspace over global vcs.json", () => {
   if (!scriptTools()) return;
-  const base = mkdtempSync(path.join(os.tmpdir(), "wf-ws-dir-"));
+  const base = realpathSync(mkdtempSync(path.join(os.tmpdir(), "wf-ws-dir-")));
   mkdirSync(path.join(base, "work", "repo"), { recursive: true });
   const { home, cleanup } = withConfigDir({
     "vcs.json": JSON.stringify(GLOBAL_VCS),
