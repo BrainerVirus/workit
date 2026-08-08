@@ -274,7 +274,7 @@ test("init scaffolding and status share the neutral XDG config directory", () =>
   const directory = path.join(xdg, "workflow-toolkit");
   const config = JSON.parse(readFileSync(path.join(directory, "youtrack.json"), "utf8"));
   expect(config.tokenFile).toBe(path.join(directory, "youtrack.token"));
-  expect(config.tokenDefaults.description).toContain("OpenCode workflow-toolkit");
+  expect(config.tokenDefaults.description).toContain("OpenCode flowkit");
   expect(config.tokenDefaults.description).not.toContain("Cursor");
 
   const status = spawnSync("bash", ["scripts/init/status.sh"], {
@@ -299,7 +299,7 @@ test("token helper runtime output uses OpenCode-neutral descriptions", () => {
     env: { ...process.env, WORKFLOW_YOUTRACK_CONFIG: config },
   });
   const output = JSON.parse(result.stdout);
-  expect(output.tokenDescription).toContain("OpenCode workflow-toolkit");
+  expect(output.tokenDescription).toContain("OpenCode flowkit");
   expect(JSON.stringify(output)).not.toContain("Cursor");
   rmSync(root, { recursive: true, force: true });
 });

@@ -49,7 +49,7 @@ cfg = {
     "attachmentsHeaderMixed": "## Adjuntos",
     "tokenDefaults": {
         "name": "workflow-toolkit",
-        "description": "OpenCode workflow-toolkit — /wf-issue-update and /wf-meetings",
+        "description": "OpenCode flowkit — /wf-issue-update and /wf-meetings",
         "scopes": ["YouTrack"],
         "profileTab": "account-security",
     },
@@ -102,7 +102,7 @@ cfg = {
     },
     "tokenDefaults": {
         "name": "workflow-toolkit",
-        "description": "OpenCode workflow-toolkit — /wf-pr and glab/gh",
+        "description": "OpenCode flowkit — /wf-pr and glab/gh",
         "gitlabScopes": ["api"],
         "githubPermissions": {
             "pull_requests": "write",

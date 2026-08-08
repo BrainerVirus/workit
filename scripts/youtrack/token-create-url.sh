@@ -4,7 +4,7 @@
 set -euo pipefail
 
 CONFIG="${WORKFLOW_YOUTRACK_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/workflow-toolkit/youtrack.json}"
-TOKEN_NAME="${WORKFLOW_YT_TOKEN_NAME:-workflow-toolkit}"
+TOKEN_NAME="${WORKFLOW_YT_TOKEN_NAME:-flowkit}"
 
 python3 - "$CONFIG" "$TOKEN_NAME" <<'PY'
 import json, sys
@@ -13,7 +13,7 @@ from urllib.parse import quote, urlencode
 
 cfg_path = Path(sys.argv[1]).expanduser()
 token_name = sys.argv[2]
-default_desc = "OpenCode workflow-toolkit — /wf-issue-update and /wf-meetings"
+default_desc = "OpenCode flowkit — /wf-issue-update and /wf-meetings"
 
 def load_cfg():
     if not cfg_path.is_file():

@@ -125,7 +125,7 @@ export function scaffoldYouTrack(dir: string, baseUrl: string, opts: { locale?: 
     attachmentsHeaderMixed: "## Adjuntos",
     tokenDefaults: {
       name: "workflow-toolkit",
-      description: "OpenCode workflow-toolkit — /wf-issue-update and /wf-meetings",
+      description: "OpenCode flowkit — /wf-issue-update and /wf-meetings",
       scopes: ["YouTrack"],
       profileTab: "account-security",
     },
@@ -152,7 +152,7 @@ export type VcsScaffold = {
 
 const TOKEN_DEFAULTS = {
   name: "workflow-toolkit",
-  description: "OpenCode workflow-toolkit — /wf-pr and glab/gh",
+  description: "OpenCode flowkit — /wf-pr and glab/gh",
   gitlabScopes: ["api"],
   githubPermissions: { pull_requests: "write", contents: "write", metadata: "read" },
   githubClassicScopes: ["repo"],
