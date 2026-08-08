@@ -25,24 +25,32 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
+          fetch-depth: 20
           persist-credentials: true # el action hace git fetch del PR — necesita auth
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install deps (cached by bun)
+        run: bun install --frozen-lockfile
 
       - uses: anomalyco/opencode/github@latest
         env:
-          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }} # required: add OPENCODE_API_KEY in repo secrets (opencode-go provider)
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           model: opencode-go/deepseek-v4-flash
           use_github_token: true
           prompt: |
-            Review this pull request:
-            - Check for code quality issues
-            - Look for potential bugs
-            - Enforce this repo's own standards: tracked work keeps the spec/plan
-              contract (docs/<slug>/spec.md declares the branch, plan.md links it,
-              docs/<slug>/sdd/ is gitignored working state), commits follow
-              Conventional Commits, and the CONTRIBUTING.md review flow holds.
-            - Suggest improvements
+            Review this pull request's diff (read the changed files; run bun run check
+            if needed to verify claims). Report:
+            - Correctness bugs (logic, races, security)
+            - Stale references or broken resolution introduced by renames/moves
+            - Deviations from the repo contract (spec/plan in docs/<slug>/, Conventional
+              Commits, no python3 in scripts, tests grouped by package under test/)
+            - Missing or weak tests for new behavior
+            Keep it focused: findings only, no praise. If clean, say so in one line.
 
   # ADVISORY (on-demand, never blocks merge): /oc or /opencode mention in a comment
   # (issue, PR thread, or a specific line in the Files tab) drives fix/explain/update.
