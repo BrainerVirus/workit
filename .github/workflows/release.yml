@@ -33,3 +33,11 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPMJS }}
+
+      - name: Verify workspace:* rewritten before publish
+        run: |
+          set -euo pipefail
+          if grep -q 'workspace:\*' packages/workit-opencode/package.json packages/workit-cursor/package.json packages/workit-cli/package.json; then
+            echo "workspace:* leaked — platform packages published without @brainervirus/workit-core" >&2
+            exit 1
+          fi
