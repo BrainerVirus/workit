@@ -48,8 +48,10 @@ test("loadWorkflowBootstrap reads the real contract template", () => {
 
 test("bootstrap contract declares the configured locale", async () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "wf-bootstrap-locale-"));
+  const prevConfig = process.env.WORKFLOW_TOOLKIT_CONFIG;
   try {
     process.env.WORKFLOW_TOOLKIT_CONFIG_DIR = dir;
+    delete process.env.WORKFLOW_TOOLKIT_CONFIG;
     writeFileSync(path.join(dir, "config.json"), JSON.stringify({
       locale: "es-CL", localeOptions: ["en", "es-CL"], timezone: "UTC",
       branchPolicy: { preset: "gitflow" },
@@ -59,6 +61,8 @@ test("bootstrap contract declares the configured locale", async () => {
     expect(bootstrap).toContain("es-CL");
   } finally {
     delete process.env.WORKFLOW_TOOLKIT_CONFIG_DIR;
+    if (prevConfig === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+    else process.env.WORKFLOW_TOOLKIT_CONFIG = prevConfig;
     rmSync(dir, { recursive: true, force: true });
   }
 });

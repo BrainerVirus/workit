@@ -7,13 +7,26 @@ import {
   type ToolkitConfig,
 } from "../src/core/config";
 
+const savedEnv = new Map<string, string | undefined>();
+
 const cfgDir = () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "wf-config-"));
+  for (const key of ["WORKFLOW_TOOLKIT_CONFIG", "WORKFLOW_TOOLKIT_CONFIG_DIR", "XDG_CONFIG_HOME"]) {
+    savedEnv.set(key, process.env[key]);
+  }
   process.env.WORKFLOW_TOOLKIT_CONFIG_DIR = dir;
+  delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+  delete process.env.XDG_CONFIG_HOME;
   return dir;
 };
 
-const cleanupEnv = () => { delete process.env.WORKFLOW_TOOLKIT_CONFIG_DIR; };
+const cleanupEnv = () => {
+  for (const [key, value] of savedEnv) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+  savedEnv.clear();
+};
 
 test("readConfig returns defaults when config.json missing", () => {
   const dir = cfgDir();
