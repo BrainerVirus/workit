@@ -24,7 +24,7 @@ script_dir = sys.argv[2]
 cmd = sys.argv[3]
 args = sys.argv[4:]
 token_path = Path(os.path.expanduser(cfg["tokenFile"]))
-if token_path.stat().st_mode & 0o777 != 0o600:
+if os.name != "nt" and token_path.stat().st_mode & 0o777 != 0o600:
     print(json.dumps({"ok": False, "error": "youtrack.token mode must be 0600"}))
     sys.exit(1)
 token = token_path.read_text(encoding="utf-8").strip()

@@ -33,7 +33,7 @@ export function readCredentials(env: NodeJS.ProcessEnv = process.env, home = os.
   const config = JSON.parse(readFileSync(resolvedConfig, "utf8")) as { tokenFile?: string };
   const tokenFile = config.tokenFile ?? "youtrack.token";
   const tokenPath = path.resolve(path.dirname(resolvedConfig), tokenFile.replace(/^~(?=\/)/, home));
-  if ((statSync(tokenPath).mode & 0o777) !== 0o600) throw new Error("youtrack.token mode must be 0600");
+  if (process.platform !== "win32" && (statSync(tokenPath).mode & 0o777) !== 0o600) throw new Error("youtrack.token mode must be 0600");
   const token = readFileSync(tokenPath, "utf8").trim();
   if (!token) throw new Error("youtrack.token is empty");
   return { configPath: resolvedConfig, token };

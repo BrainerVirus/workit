@@ -83,7 +83,7 @@ t = Path((youtrack_config or {}).get("tokenFile") or yt_token)
 token_abs = str(t.resolve()) if t.is_file() else str(t.expanduser().resolve())
 token_text = t.read_text(encoding="utf-8").strip() if t.is_file() else ""
 is_placeholder = token_text == placeholder or token_text.startswith(placeholder)
-mode_ok = t.is_file() and oct(t.stat().st_mode)[-3:] == "600"
+mode_ok = t.is_file() and (os.name == "nt" or oct(t.stat().st_mode)[-3:] == "600")
 token_ok = mode_ok and bool(token_text) and not is_placeholder
 
 youtrack_token_create = None
@@ -192,7 +192,7 @@ def token_item(tid, label, path, provider_key):
     abs_p = str(t.resolve()) if t.is_file() else str(t.expanduser().resolve())
     text = t.read_text(encoding="utf-8").strip() if t.is_file() else ""
     ph = text == placeholder or text.startswith(placeholder)
-    mode_ok = t.is_file() and oct(t.stat().st_mode)[-3:] == "600"
+    mode_ok = t.is_file() and (os.name == "nt" or oct(t.stat().st_mode)[-3:] == "600")
     ok = mode_ok and bool(text) and not ph
     item = {
         "id": tid,
