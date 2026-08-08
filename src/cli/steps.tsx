@@ -25,6 +25,7 @@ import {
 export type WizardResults = {
   platforms: string[];
   config: ToolkitConfig;
+  workspaces: WorkspaceConfig[];
   youtrack: YouTrackScaffold | null;
   vcs: VcsScaffold | null;
   project: ProjectSetupResult | null;
@@ -65,6 +66,7 @@ export function Wizard({ onExit }: { onExit: () => void }): JSX.Element {
   const [results, setResults] = useState<WizardResults>(() => ({
     platforms: [],
     config: readConfig(),
+    workspaces: [],
     youtrack: null,
     vcs: null,
     project: null,
@@ -301,44 +303,49 @@ function VcsStep({ results, setResults, onDone }: StepProps): JSX.Element {
   );
 }
 
+type WsLinking = "youtrack" | "github" | "none";
+
 type WsDraft = {
   name: string;
   glob: string;
   provider: VcsProvider;
   branch: string;
-  linking: "youtrack" | "github" | "none";
+  linking: WsLinking;
 };
 
 type WsMode = "list" | "name" | "glob" | "provider" | "branch" | "linking" | "remove";
 
-const WS_ACTIONS = [
-  { label: "Add workspace", value: "add" },
-  { label: "Remove workspace", value: "remove" },
-  { label: "Done", value: "done" },
-];
-
-const WS_LINKING = [
-  { label: "YouTrack", value: "youtrack" },
-  { label: "GitHub issues", value: "github" },
-  { label: "None", value: "none" },
-];
+// provider-gated linking: gitlab offers youtrack/none, github offers github-issues/none —
+// config.sh gates issues on provider github, and an ungated youtrack link would leak
+// "Related to: <youtrack>/issue/<id>" into GitHub PR bodies (writeWorkspaces enforces this too)
+const WS_LINKING: Record<VcsProvider, { label: string; value: WsLinking }[]> = {
+  gitlab: [
+    { label: "YouTrack", value: "youtrack" },
+    { label: "None", value: "none" },
+  ],
+  github: [
+    { label: "GitHub issues", value: "github" },
+    { label: "None", value: "none" },
+  ],
+};
 
 // ponytail: Select has no onSubmit — onChange fires on Enter once the value differs from
 // defaultValue, so action/provider/linking selects pass no defaultValue (undefined -> first
 // Enter is a change). TextInput onSubmit fires on Enter even for empty input (validation).
 // Each input gets a distinct key: mode swaps render the same element type at the same tree
 // position, so without keys React reuses the instance and the previous input's text leaks in.
-function WorkspacesStep({ onDone }: StepProps): JSX.Element {
+function WorkspacesStep({ setResults, onDone }: StepProps): JSX.Element {
   const [loaded] = useState<WorkspaceConfig[]>(() => loadWorkspaces());
   const [entries, setEntries] = useState<WorkspaceConfig[]>(loaded);
   const [mode, setMode] = useState<WsMode>("list");
-  const [draft, setDraft] = useState<WsDraft>({ name: "", glob: "", provider: "gitlab", branch: "main", linking: "none" });
+  const [draft, setDraft] = useState<WsDraft>({ name: "", glob: "", provider: "gitlab", branch: "develop", linking: "none" });
   const [fieldError, setFieldError] = useState<string | null>(null);
   const [writeError, setWriteError] = useState<string | null>(null);
 
-  const resetDraft = () => setDraft({ name: "", glob: "", provider: "gitlab", branch: "main", linking: "none" });
+  const resetDraft = () => setDraft({ name: "", glob: "", provider: "gitlab", branch: "develop", linking: "none" });
 
   const finish = () => {
+    setResults((r) => ({ ...r, workspaces: entries }));
     if (!shouldWriteWorkspaces(loaded, entries)) {
       onDone();
       return;
@@ -352,20 +359,28 @@ function WorkspacesStep({ onDone }: StepProps): JSX.Element {
     }
   };
 
+  // ponytail: @inkjs/ui v2 Select options have no per-option isDisabled (whole Select only,
+  // which would also block Done) — the empty-list guard stays in the onChange instead
+  const actions = [
+    { label: "Add workspace", value: "add" },
+    { label: "Remove workspace", value: "remove" },
+    { label: "Done", value: "done" },
+  ];
+
   if (mode === "list") {
     return (
       <Box flexDirection="column" gap={1}>
         <Text bold>Step 5 — Workspaces</Text>
         {entries.length === 0 && <Text dimColor>No workspaces configured yet.</Text>}
         {entries.map((e) => (
-          <Text key={e.name}>
+          <Text key={`${e.name}|${e.glob}|${e.vcs?.provider ?? ""}`}>
             • {e.name} — {e.vcs?.provider ?? "?"} — {e.glob}
           </Text>
         ))}
         <Text dimColor>Select an action:</Text>
         <Select
           key="actions"
-          options={WS_ACTIONS}
+          options={actions}
           onChange={(v) => {
             if (v === "add") {
               setFieldError(null);
@@ -394,12 +409,17 @@ function WorkspacesStep({ onDone }: StepProps): JSX.Element {
         <TextInput
           key="name"
           onSubmit={(v) => {
-            if (!v.trim()) {
+            const name = v.trim();
+            if (!name) {
               setFieldError("name is required");
               return;
             }
+            if (entries.some((e) => e.name === name)) {
+              setFieldError(`"${name}" already exists — pick a unique name`);
+              return;
+            }
             setFieldError(null);
-            setDraft({ ...draft, name: v.trim() });
+            setDraft({ ...draft, name });
             setMode("glob");
           }}
         />
@@ -439,7 +459,8 @@ function WorkspacesStep({ onDone }: StepProps): JSX.Element {
           key="provider"
           options={VCS_PROVIDERS}
           onChange={(v) => {
-            setDraft({ ...draft, provider: v as VcsProvider });
+            const p = v as VcsProvider;
+            setDraft({ ...draft, provider: p, branch: p === "gitlab" ? "develop" : "main" });
             setMode("branch");
           }}
         />
@@ -471,9 +492,9 @@ function WorkspacesStep({ onDone }: StepProps): JSX.Element {
         <Text dimColor>Issue linking:</Text>
         <Select
           key="linking"
-          options={WS_LINKING}
+          options={WS_LINKING[draft.provider]}
           onChange={(v) => {
-            const linking = v as WsDraft["linking"];
+            const linking = v as WsLinking;
             const vcs = { provider: draft.provider, ...(draft.branch ? { defaultTargetBranch: draft.branch } : {}) };
             setEntries([
               ...entries,
@@ -556,6 +577,16 @@ function SummaryStep({ results, onExit }: StepProps): JSX.Element {
           </Text>
           <Text>  token placeholder: {results.vcs.activeTokenPath}</Text>
           <Text>  create token: {results.vcs.tokenCreateUrl}</Text>
+        </Box>
+      )}
+      {results.workspaces.length > 0 && (
+        <Box flexDirection="column" gap={0}>
+          <Text>Workspaces:</Text>
+          {results.workspaces.map((w) => (
+            <Text key={`${w.name}|${w.glob}|${w.vcs?.provider ?? ""}`}>
+              {"  "}{w.name} — {w.vcs?.provider ?? "?"}
+            </Text>
+          ))}
         </Box>
       )}
       {results.project && results.project.created.length > 0 && (

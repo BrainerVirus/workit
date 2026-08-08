@@ -244,10 +244,20 @@ export function writeWorkspaces(entries: WorkspaceConfig[]): WriteWorkspacesResu
     if (provider && !VALID_PROVIDERS.includes(provider)) {
       return { ok: false, error: `workspace "${entry.name}" has unknown provider "${provider}"`, path: file };
     }
+    if (entry.youtrack && provider !== "gitlab") {
+      return { ok: false, error: `workspace "${entry.name}" links YouTrack issues but provider is "${provider ?? "unset"}" — youtrack linking requires the gitlab provider`, path: file };
+    }
+    if (entry.issues && provider !== "github") {
+      return { ok: false, error: `workspace "${entry.name}" links GitHub issues but provider is "${provider ?? "unset"}" — github issues require the github provider`, path: file };
+    }
   }
   mkdirSync(path.dirname(file), { recursive: true });
-  const tmp = `${file}.tmp`;
-  writeFileSync(tmp, JSON.stringify({ workspaces: entries }, null, 2) + "\n", "utf8");
-  renameSync(tmp, file);
+  const tmp = `${file}.${process.pid}.tmp`;
+  try {
+    writeFileSync(tmp, JSON.stringify({ workspaces: entries }, null, 2) + "\n", "utf8");
+    renameSync(tmp, file);
+  } catch (err) {
+    return { ok: false, error: `failed to write ${file}: ${(err as Error).message}`, path: file };
+  }
   return { ok: true, path: file };
 }

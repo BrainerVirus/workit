@@ -247,6 +247,36 @@ test("skip = no writeWorkspaces call → file untouched", () => {
   });
 });
 
+test("writeWorkspaces rejects provider/linking cross-combos", () => {
+  withConfigDir((dir) => {
+    const youtrackOnGithub = writeWorkspaces([{ name: "work", glob: "/w/**", vcs: { provider: "github" }, youtrack: { link_issues: true } }]);
+    expect(youtrackOnGithub.ok).toBe(false);
+    expect(youtrackOnGithub.error).toContain("youtrack");
+    expect(youtrackOnGithub.error).toContain("github");
+
+    const issuesOnGitlab = writeWorkspaces([{ name: "personal", glob: "/p/**", vcs: { provider: "gitlab" }, issues: { provider: "github", link_on_pr: true } }]);
+    expect(issuesOnGitlab.ok).toBe(false);
+    expect(issuesOnGitlab.error).toContain("issues");
+    expect(issuesOnGitlab.error).toContain("gitlab");
+
+    const youtrackNoVcs = writeWorkspaces([{ name: "x", glob: "/x/**", youtrack: { link_issues: true } }]);
+    expect(youtrackNoVcs.ok).toBe(false);
+
+    expect(existsSync(wsFile(dir))).toBe(false);
+    expect(loadWorkspaces()).toEqual([]);
+  });
+});
+
+test("writeWorkspaces accepts matching provider/linking combos", () => {
+  withConfigDir((dir) => {
+    const gitlabYt = writeWorkspaces([{ name: "work", glob: "/w/**", vcs: { provider: "gitlab", defaultTargetBranch: "develop" }, youtrack: { link_issues: true } }]);
+    expect(gitlabYt.ok).toBe(true);
+
+    const githubIssues = writeWorkspaces([{ name: "personal", glob: "/p/**", vcs: { provider: "github", defaultTargetBranch: "main" }, issues: { provider: "github", link_on_pr: true } }]);
+    expect(githubIssues.ok).toBe(true);
+  });
+});
+
 test("writeWorkspaces validates entries: no name / no glob / bad provider / null → error, file not written", () => {
   withConfigDir((dir) => {
     const missingName = writeWorkspaces([{ glob: "/x/**" } as { name: string; glob: string }]);
