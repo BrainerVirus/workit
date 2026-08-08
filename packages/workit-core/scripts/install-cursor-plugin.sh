@@ -2,7 +2,7 @@
 # Install / refresh Cursor plugin (+ OpenCode live loader via sync-runtime).
 set -euo pipefail
 
-REPO_SLUG="${WORKFLOW_TOOLKIT_REPO:-BrainerVirus/workflow-toolkit}"
+REPO_SLUG="${WORKFLOW_TOOLKIT_REPO:-BrainerVirus/workit}"
 SHARE="${HOME}/.local/share/workflow-toolkit"
 SKILLS_DIR="${HOME}/.cursor/skills"
 

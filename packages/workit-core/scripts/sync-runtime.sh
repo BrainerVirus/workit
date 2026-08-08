@@ -8,7 +8,7 @@ PLUGIN_DIR="${HOME}/.cursor/plugins/local/workflow-toolkit"
 OPENCODE_PLUGINS="${HOME}/.config/opencode/plugins"
 DEV_DEFAULT="${HOME}/Documents/projects/personal/workflow-toolkit"
 DEV="${WORKFLOW_TOOLKIT_DEV:-$DEV_DEFAULT}"
-REPO_SLUG="${WORKFLOW_TOOLKIT_REPO:-BrainerVirus/workflow-toolkit}"
+REPO_SLUG="${WORKFLOW_TOOLKIT_REPO:-BrainerVirus/workit}"
 LOCK="${XDG_RUNTIME_DIR:-/tmp}/workflow-toolkit-sync.lock"
 
 exec 9>"$LOCK"

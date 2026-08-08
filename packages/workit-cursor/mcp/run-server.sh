@@ -37,5 +37,7 @@ if [ -z "$BUN_BIN" ]; then
 fi
 # Execute the server next to this script: server.ts imports @brainervirus/workit-core,
 # resolved via node_modules (workspace link in the monorepo, npm install in the
-# cursor plugin copy).
+# cursor plugin copy). Make the resolved bun visible to child scripts that exec
+# bare `bun` (the port wrappers) when it lives outside PATH (e.g. ~/.bun/bin).
+export PATH="$(dirname "$BUN_BIN"):$PATH"
 exec "$BUN_BIN" "$MCP_DIR/server.ts"

@@ -23,7 +23,7 @@ else
   # Last resort: ensure share is a clone, then pin it
   if [ ! -d "${SHARE}/.git" ]; then
     TMP=$(mktemp -d)
-    git clone --depth 1 "git@github.com:${WORKFLOW_TOOLKIT_REPO:-BrainerVirus/workflow-toolkit}.git" "$TMP"
+    git clone --depth 1 "git@github.com:${WORKFLOW_TOOLKIT_REPO:-BrainerVirus/workit}.git" "$TMP"
     rsync -a --delete --exclude node_modules --exclude cursor/mcp/node_modules "$TMP/" "$SHARE/"
     rm -rf "$TMP"
   fi
