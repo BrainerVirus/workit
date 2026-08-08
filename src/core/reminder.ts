@@ -18,5 +18,12 @@ export const SDD_REMINDER_TEXT = `<workflow-sdd-reminder>
 An approved plan is subagent-driven — execute it via \`wf-implement\` / \`task\` delegation. Never implement the approved plan inline in the main session.
 </workflow-sdd-reminder>`;
 
+export const CONFIG_GUARD_TEXT = `<workflow-config-guard>
+A tool failed with a config-gap error (\`workflow config missing\`). Never configure without asking — ask with the native \`question\` tool, exactly three options: (1) configure only what's missing (guided, via the /wf-init skill flow for those actions), (2) run the full wizard (\`npx flowkit init\`), (3) skip — report the final error naming the missing items and how to configure them.
+</workflow-config-guard>`;
+
 export const shouldInjectSddReminder = (currentText: string): boolean =>
   !currentText.includes(SDD_REMINDER_TEXT);
+
+export const shouldInjectConfigGuard = (currentText: string): boolean =>
+  !currentText.includes(CONFIG_GUARD_TEXT);

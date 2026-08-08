@@ -4,8 +4,8 @@ import { fileURLToPath } from "node:url";
 import type { Plugin } from "@opencode-ai/plugin";
 
 import { getWorkflowBootstrap, isWorkflowBootstrap } from "./bootstrap";
-import { REMINDER_TEXT, DETECTION_TEXT, DOC_DELIVERY_TEXT, SDD_REMINDER_TEXT, shouldInjectSddReminder } from "./core/reminder";
-import { detectProseChoices, detectBacktickDocRefs, findActiveSubagentDrivenPlans } from "./core/detector";
+import { REMINDER_TEXT, DETECTION_TEXT, DOC_DELIVERY_TEXT, SDD_REMINDER_TEXT, shouldInjectSddReminder, CONFIG_GUARD_TEXT, shouldInjectConfigGuard } from "./core/reminder";
+import { detectProseChoices, detectBacktickDocRefs, findActiveSubagentDrivenPlans, detectConfigGapError } from "./core/detector";
 import { createTools } from "./tools";
 import { adaptPluginHandoffClient } from "./tools/handoff";
 import { WorkflowStateStore } from "./state";
@@ -142,11 +142,13 @@ const plugin: Plugin = async ({ client }) => {
         // Post-hoc detection: last assistant message (before current user turn) used prose choices?
         const beforeCurrent = output.messages.slice(0, output.messages.indexOf(currentUser));
         const lastAssistant = [...beforeCurrent].reverse().find((m) => m.info.role === "assistant");
+        const assistantText = lastAssistant
+          ? lastAssistant.parts
+              .filter((p) => p.type === "text")
+              .map((p) => (p as { text?: string }).text ?? "")
+              .join("\n")
+          : "";
         if (lastAssistant) {
-          const assistantText = lastAssistant.parts
-            .filter((p) => p.type === "text")
-            .map((p) => (p as { text?: string }).text ?? "")
-            .join("\n");
           const usedQuestionTool = lastAssistant.parts.some(
             (p) => (p as { tool?: string }).tool === "question",
           );
@@ -164,6 +166,11 @@ const plugin: Plugin = async ({ client }) => {
         const activePlans = findActiveSubagentDrivenPlans(process.cwd());
         if (activePlans.length > 0 && shouldInjectSddReminder(currentText)) {
           currentUser.parts.unshift(makePart(SDD_REMINDER_TEXT, "sdd"));
+        }
+
+        // Every turn: config-gap rail — structured config errors get a three-option question (idempotent)
+        if (detectConfigGapError(assistantText) && shouldInjectConfigGuard(currentText)) {
+          currentUser.parts.unshift(makePart(CONFIG_GUARD_TEXT, "cg"));
         }
       } catch {
         // never break the session from a hook
