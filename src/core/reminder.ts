@@ -18,9 +18,18 @@ export const SDD_REMINDER_TEXT = `<workflow-sdd-reminder>
 An approved plan is subagent-driven — execute it via \`wf-implement\` / \`task\` delegation. Never implement the approved plan inline in the main session.
 </workflow-sdd-reminder>`;
 
+export const DOC_RENDER_TEXT = `<workflow-doc-render>
+When delivering a spec or plan, by default render the full markdown content of the doc in chat (headings, tables, mermaid fences preserved) — NOT a backtick-wrapped raw block.
+If the doc exceeds the render threshold (more than 150 lines, over 8KB, or more than 3 mermaid diagrams), deliver only the clickable link \`[spec.md](docs/<slug>/spec.md)\` + a 3-5 bullet summary.
+On an explicit raw request ("raw", "para copiar", "sin render"), show the full fenced block instead.
+</workflow-doc-render>`;
+
 export const CONFIG_GUARD_TEXT = `<workflow-config-guard>
 A tool failed with a config-gap error (\`workflow config missing\`). Never configure without asking — ask with the native \`question\` tool, exactly three options: (1) configure only what's missing (guided, via the /wf-init skill flow for those actions), (2) run the full wizard (\`npx flowkit init\`), (3) skip — report the final error naming the missing items and how to configure them.
 </workflow-config-guard>`;
+
+export const shouldInjectDocRender = (currentText: string): boolean =>
+  !currentText.includes(DOC_RENDER_TEXT);
 
 export const shouldInjectSddReminder = (currentText: string): boolean =>
   !currentText.includes(SDD_REMINDER_TEXT);

@@ -2,8 +2,8 @@ import { expect, test } from "bun:test";
 import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { findActiveSubagentDrivenPlans, detectConfigGapError } from "../src/core/detector";
-import { shouldInjectSddReminder, SDD_REMINDER_TEXT, CONFIG_GUARD_TEXT, shouldInjectConfigGuard } from "../src/core/reminder";
+import { findActiveSubagentDrivenPlans, detectConfigGapError, detectBacktickDocRefs, detectRawDocDelivery } from "../src/core/detector";
+import { shouldInjectSddReminder, SDD_REMINDER_TEXT, CONFIG_GUARD_TEXT, shouldInjectConfigGuard, DOC_DELIVERY_TEXT, DOC_RENDER_TEXT, shouldInjectDocRender } from "../src/core/reminder";
 
 const writeFlow = (root: string, slug: string, flow: unknown) => {
   const dir = path.join(root, "docs", slug, "sdd");
@@ -127,6 +127,52 @@ test("CA-04: CONFIG_GUARD_TEXT asks a native question with exactly three options
   expect(CONFIG_GUARD_TEXT).toContain("configure only what's missing");
   expect(CONFIG_GUARD_TEXT).toContain("npx flowkit init");
   expect(CONFIG_GUARD_TEXT).toContain("skip");
+});
+
+test("CA-03: raw fenced # Spec: block → detector true, render helper true", () => {
+  const assistant =
+    "Here is the spec:\n```\n# Spec: docs/foo/spec.md\n**Branch:** feature/foo\n```";
+  expect(detectRawDocDelivery(assistant)).toBe(true);
+  expect(shouldInjectDocRender("plain user message")).toBe(true);
+});
+
+test("CA-03: text without fences → detector false", () => {
+  expect(detectRawDocDelivery("no fences here # Spec")).toBe(false);
+  expect(detectRawDocDelivery("``` alone without markers")).toBe(false);
+  expect(detectRawDocDelivery("plain message")).toBe(false);
+});
+
+test("I-1: rendered doc with labeled mermaid fence is NOT raw delivery", () => {
+  const assistant =
+    "Here's the spec:\n```mermaid\nflowchart TD\n  a --> b\n```\n# Spec: docs/foo/spec.md\n**Branch:** feature/foo";
+  expect(detectRawDocDelivery(assistant)).toBe(false);
+});
+
+test("I-1: plain unlabeled fence carrying # Spec: IS raw delivery", () => {
+  const assistant =
+    "Here is the spec:\n```\n# Spec: docs/foo/spec.md\n**Branch:** feature/foo\n```";
+  expect(detectRawDocDelivery(assistant)).toBe(true);
+});
+
+test("CA-03: idempotent — text already containing DOC_RENDER_TEXT → helper false", () => {
+  expect(shouldInjectDocRender(DOC_RENDER_TEXT)).toBe(false);
+  expect(shouldInjectDocRender(`message with ${DOC_RENDER_TEXT} marker`)).toBe(false);
+  expect(shouldInjectDocRender("partial <workflow-doc-render> tag alone")).toBe(true);
+});
+
+test("CA-05: fail-closed — raw-delivery detector never throws on empty/weird input", () => {
+  expect(detectRawDocDelivery("")).toBe(false);
+  expect(detectRawDocDelivery("```\n```")).toBe(false);
+  expect(detectRawDocDelivery("\u0000\u0001\u0002")).toBe(false);
+});
+
+test("CA-03: composition — backtick doc ref and raw fenced spec can both fire", () => {
+  const assistant =
+    "See `docs/foo/spec.md`\n```\n# Spec: docs/foo/spec.md\n**Branch:** feature/foo\n```";
+  expect(detectBacktickDocRefs(assistant)).not.toBeNull();
+  expect(detectRawDocDelivery(assistant)).toBe(true);
+  expect(`${DOC_DELIVERY_TEXT}\n${DOC_RENDER_TEXT}`).toContain("workflow-doc-delivery");
+  expect(`${DOC_DELIVERY_TEXT}\n${DOC_RENDER_TEXT}`).toContain("workflow-doc-render");
 });
 
 test("I-1: fully complete progress.md ledger turns the rail off", () => {
