@@ -38,6 +38,12 @@ test("CA-02: verification detector does NOT fire on a clean message", () => {
   expect(detectVerificationClaim("Still investigating the failure.")).toBe(false);
 });
 
+test("CA-02: verification evidence requires word boundaries (review I-1)", () => {
+  expect(detectVerificationClaim("All done — tests pass.")).toBe(false);
+  expect(detectVerificationClaim("fixed, passing")).toBe(true);
+  expect(detectVerificationClaim("bun run check passes: 402 pass")).toBe(false);
+});
+
 test("CA-02: TDD detector fires on implementation without failing-test evidence", () => {
   expect(detectUntestedImplementation("Implemented the parser and committed.")).toBe(true);
   expect(detectUntestedImplementation("Refactored the module and edited the tests.")).toBe(true);
@@ -60,6 +66,12 @@ test("CA-02: brainstorm detector does NOT fire with design wording or clean text
   expect(detectImplementationWithoutDesign("Waiting for your feedback before proceeding.")).toBe(false);
 });
 
+test("CA-02: brainstorm build signal narrowed + instruction silencer (review I-2)", () => {
+  expect(detectImplementationWithoutDesign("Ran bun run build and it compiled")).toBe(false);
+  expect(detectImplementationWithoutDesign("I'll implement the feature as you requested")).toBe(false);
+  expect(detectImplementationWithoutDesign("I'll implement the feature")).toBe(true);
+});
+
 test("CA-02: debugging detector fires on fix without root-cause evidence", () => {
   expect(detectFixWithoutRootCause("Fixed the crash by adding a null check.")).toBe(true);
   expect(detectFixWithoutRootCause("Patched the timeout and solved the issue.")).toBe(true);
@@ -80,6 +92,12 @@ test("CA-02: receiving detector does NOT fire with verification wording or clean
   expect(detectBlindReviewAcceptance("Good point — I verified it against the codebase and it checks out.")).toBe(false);
   expect(detectBlindReviewAcceptance("Agreed, confirmed by the tests I ran.")).toBe(false);
   expect(detectBlindReviewAcceptance("I need to check this against the code first.")).toBe(false);
+});
+
+test("CA-02: receiving detector future-tense evidence + politeness removed (review I-3)", () => {
+  expect(detectBlindReviewAcceptance("Good point, I'll verify this first")).toBe(false);
+  expect(detectBlindReviewAcceptance("Thanks for the feedback, I'll take a look")).toBe(false);
+  expect(detectBlindReviewAcceptance("Good point, I'll implement it")).toBe(true);
 });
 
 test("CA-02: multiple rails can fire on one turn (composed, no clobber)", () => {

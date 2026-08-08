@@ -14,7 +14,7 @@ export const detectConfigGapError = (text: string): boolean =>
 
 const COMPLETION_CLAIMS = /\b(?:done|fixed|passing|green|complete|all set)\b/i;
 const VERIFICATION_EVIDENCE =
-  /bun run check|workflow_verify|bun test|checks? pass(?:es|ing)?/i;
+  /\bbun run check\b|\bworkflow_verify\b|\bbun test\b|\bchecks?\s+pass(?:es|ing)?\b|\btests?\s+pass(?:es|ing)?\b/i;
 
 // Claims completion without verification-command evidence in the same text.
 export const detectVerificationClaim = (text: string): boolean =>
@@ -30,8 +30,9 @@ export const detectUntestedImplementation = (text: string): boolean =>
   IMPLEMENTATION_SIGNALS.test(text) && !FAILING_TEST_WORDS.test(text);
 
 const IMPLEMENTATION_ACTION =
-  /\b(?:implement|build|add the feature|write the code|create the component)\b/i;
-const DESIGN_WORDS = /\b(?:design|spec|brainstorm|approved|plan)\b/i;
+  /\b(?:implement|add the feature|write the code|create the component|build (?:the )?(?:feature|component|module|command|screen|service))\b/i;
+const DESIGN_WORDS =
+  /\b(?:design|spec|brainstorm|approved|plan|requested|instruction|as you asked|as you said)\b/i;
 
 // Implementation action without a presented/approved design.
 export const detectImplementationWithoutDesign = (text: string): boolean =>
@@ -45,9 +46,9 @@ const ROOT_CAUSE_WORDS =
 export const detectFixWithoutRootCause = (text: string): boolean =>
   FIX_SIGNALS.test(text) && !ROOT_CAUSE_WORDS.test(text);
 
-const ACCEPTANCE_SIGNALS =
-  /\b(?:agreed|makes sense|good point|will implement|thanks for the feedback)\b/i;
-const REVIEW_VERIFICATION_WORDS = /\b(?:verified|checked|reproduced|tested|confirmed)\b/i;
+const ACCEPTANCE_SIGNALS = /\b(?:agreed|makes sense|good point|will implement)\b/i;
+const REVIEW_VERIFICATION_WORDS =
+  /\b(?:verif(?:y|ied)|check(?:ed|ing)?|reproduced|tested|confirmed)\b/i;
 
 // Review acceptance without verification wording.
 export const detectBlindReviewAcceptance = (text: string): boolean =>
