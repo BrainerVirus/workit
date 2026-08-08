@@ -16,9 +16,18 @@ The agent delivers specs and plans as raw markdown blocks in chat. In a TUI that
 
 ## Non-goals
 
-- No client-side rendering changes (OpenCode/Cursor native rendering is out of toolkit control — mermaid preview in Cursor still needs its official extension).
+- No client-side rendering changes (OpenCode/Cursor native rendering is out of toolkit control).
 - No changes to the docs themselves (spec/plan content untouched).
 - No interactive pager; the decision is purely by content size.
+
+## Platform rendering research (verified against official sources)
+
+| Platform | Markdown | Tables | Mermaid | Links |
+| --- | --- | --- | --- | --- |
+| OpenCode TUI 1.18.x | Yes (marked) | Yes (grid) | No — only syntax highlighting; `mermaid-*.js` is a TextMate grammar, not a renderer | No — inline markdown links are styled text (`markdown-link` theme color); the clickable `Link` component (`open()` on mouse-up) is only used for explicit UI links |
+| Cursor CLI (cursor-agent) | Yes | Yes | Yes — `code-block` with `language === "mermaid"` renders via `beautiful-mermaid` `renderMermaidASCII` (ASCII diagram) in the interactive TUI | Yes (hyperlinks) |
+
+Implication (D-05): the toolkit always emits the standard ` ```mermaid ` fence (the one Cursor renders; GitHub/editors render too). OpenCode TUI shows it as code text — a renderer limitation, not a toolkit defect. Raw delivery stays available on request.
 
 ## Architecture
 
@@ -62,6 +71,7 @@ flowchart TD
 - D-02: Raw is an explicit user request escape hatch (default stays rendered).
 - D-03: The link always accompanies (existing DOC_DELIVERY_TEXT preserved).
 - D-04: Reminder-based enforcement (same rail pattern as DOC_DELIVERY_TEXT), not a hard gate.
+- D-05: Standard ` ```mermaid ` fences always — verified compatible with Cursor CLI's ASCII renderer and GitHub preview; OpenCode TUI limitation is documented, not worked around.
 
 ## Future work
 
