@@ -8,6 +8,13 @@ export type Detection = { choices: string[]; pattern: "alpha" | "numeric" } | nu
 export const detectConfigGapError = (text: string): boolean =>
   text.includes(CONFIG_GAP_MARKER);
 
+// Raw delivery: a fenced block carrying doc markers — the agent pasted the doc
+// instead of rendering it. Reminders use angle-bracket blocks, never fences, so no false positives.
+export const detectRawDocDelivery = (text: string): boolean =>
+  text.includes("```") &&
+  (text.includes("# Spec") || text.includes("# Plan") ||
+    text.includes("**Spec:**") || text.includes("**Branch:**"));
+
 // Interrogative gate: a literal question mark OR explicit interrogative phrases.
 // Plain "I want to confirm..." or "the script which runs" must NOT match.
 const INTERROGATIVE = /[?¿]|which\s+one|choose\s+(?:one|between|among)|do\s+you\s+(?:want|prefer)|want\s+me\s+to/i;
