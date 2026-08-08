@@ -31,7 +31,7 @@
 | pending | 2: GitHub repo rename + semantic-release + opencode CI review |
 | pending | 3: Python → TS (port all 25 scripts + changelog) |
 | pending | 4: Test restructure by package + CI jobs |
-| pending | 5: Release v0.4.0 + Bugbot activation note |
+| pending | 5: Release 0.5.0 + Bugbot activation note |
 
 ### Task 2: GitHub repo rename + semantic-release + opencode CI review
 
@@ -48,7 +48,7 @@
 | pending | 2: GitHub repo rename + semantic-release + opencode CI review |
 | pending | 3: Python → TS (port all 25 scripts + changelog) |
 | pending | 4: Test restructure by package + CI jobs |
-| pending | 5: Release v0.4.0 + Bugbot activation note |
+| pending | 5: Release 0.5.0 + Bugbot activation note |
 
 ### Task 3: Python → TS (port all 25 scripts + changelog)
 
@@ -78,11 +78,11 @@
 | pending | 2: GitHub repo rename + semantic-release + opencode CI review |
 | pending | 3: Python → TS (port all 25 scripts + changelog) |
 | pending | 4: Test restructure by package + CI jobs |
-| pending | 5: Release v0.4.0 + Bugbot activation note |
+| pending | 5: Release 0.5.0 + Bugbot activation note |
 
-### Task 5: Release v0.4.0 + Bugbot activation note
+### Task 5: Release 0.5.0 + Bugbot activation note
 
-- [ ] **Step 1:** First release under the new names: semantic-release (or manual tag if the automation isn't ready) publishes `@brainervirus/workit` + `@brainervirus/workit-cli`; `npm view` both resolve (CA-09).
+- [ ] **Step 1:** First release under the new names: semantic-release (or manual tag if the automation isn't ready) publishes `@brainervirus/workit-core` + `@brainervirus/workit-opencode` + `@brainervirus/workit-cursor` + `@brainervirus/workit-cli` (core dep rewritten from `workspace:*` to the released version before publish); `npm view` all resolve (CA-09).
 - [ ] **Step 2:** Final gate — subagent review of the whole branch diff (monorepo wiring, rename completeness, semantic-release config, grep gates green).
 - [ ] **Step 3:** Apply review fixes if any; `bun run check`; push; PR; CI (3 OS); merge; then the coordinator performs the GitHub repo rename + remote URL fix.
 
@@ -94,5 +94,5 @@
 | pending | 2: GitHub repo rename + semantic-release + opencode CI review |
 | pending | 3: Python → TS (port all 25 scripts + changelog) |
 | pending | 4: Test restructure by package + CI jobs |
-| pending | 5: Release v0.4.0 + Bugbot activation note |
+| pending | 5: Release 0.5.0 + Bugbot activation note |
 

@@ -11,7 +11,7 @@ Multi-platform Superpowers workflow plugin for **Cursor** and **OpenCode**: veri
 
 Config directory (both platforms): `~/.config/workflow-toolkit/` (kept as-is for install stability).
 
-[![npm version](https://img.shields.io/npm/v/@brainervirus/workit)](https://www.npmjs.com/package/@brainervirus/workit)
+[![npm version](https://img.shields.io/npm/v/@brainervirus/workit-opencode)](https://www.npmjs.com/package/@brainervirus/workit-opencode)
 [![CI](https://img.shields.io/github/actions/workflow/status/BrainerVirus/workit/ci.yml?branch=main&label=CI)](https://github.com/BrainerVirus/workit/actions)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
@@ -46,7 +46,7 @@ Manual setup for those who skipped the wizard (`npx workit init`):
 ```json
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugin": ["@brainervirus/workit"]
+  "plugin": ["@brainervirus/workit-opencode"]
 }
 ```
 
@@ -129,12 +129,17 @@ git push origin main
 
 ## Code review
 
-Every pull request is automatically reviewed by [OpenCode](https://opencode.ai/docs/github/) via `.github/workflows/opencode-review.yml` — it checks code quality, potential bugs, and this repo's own standards (the spec/plan contract, Conventional Commits, the CONTRIBUTING.md review flow). The check must be green to merge (registered as a required check in branch protection).
+Every pull request is automatically reviewed by [OpenCode](https://opencode.ai/docs/github/) via `.github/workflows/opencode-review.yml` — it checks code quality, potential bugs, and this repo's own standards (the spec/plan contract, Conventional Commits, the CONTRIBUTING.md review flow). Model: `opencode-go/deepseek-v4-flash`.
+
+Checks fall into two categories:
+
+- **BLOCKING — the `pull_request` review** (`review` job): runs on every PR (opened/synchronized/reopened/ready_for_review) and is registered as a required check in branch protection — the PR cannot merge while it's red.
+- **ADVISORY — on-demand and triage flows** (never block merge): mention `/oc` or `/opencode` in a comment — issue, PR thread, or a specific line in the Files tab — to have OpenCode fix, explain, or update the PR (`oc` job); new issues are triaged with guidance and doc links (`triage` job).
 
 To activate the review on a fork or fresh clone:
 
 1. Install the [OpenCode GitHub app](https://github.com/apps/opencode-agent) on the repository.
-2. Add the `ANTHROPIC_API_KEY` secret under Settings → Secrets and variables → Actions.
+2. Add the `OPENCODE_API_KEY` secret under Settings → Secrets and variables → Actions.
 3. PRs trigger the review on opened/synchronized/reopened events automatically.
 
 [Cursor Bugbot](https://cursor.com/dashboard/bugbot) is an optional alternative to the OpenCode review.
