@@ -26,6 +26,10 @@ On an explicit raw request ("raw", "para copiar", "sin render"), show the full f
 Platform note: always use the standard \`\`\`mermaid fence — Cursor CLI renders it as an ASCII diagram, editors/GitHub render it natively; OpenCode TUI shows it as code text (renderer limitation, not a defect). Inline markdown links are not clickable in the OpenCode TUI.
 </workflow-doc-render>`;
 
+export const ISSUE_RAIL_TEXT = `<workflow-issue-rail>
+A clickable \`question\` option whose label is an instruction (e.g. "Type the issue URL/ID") returns the label literal when clicked, not free text — ask for free text in plain prose with the custom answer field enabled instead.
+</workflow-issue-rail>`;
+
 export const CONFIG_GUARD_TEXT = `<workflow-config-guard>
 A tool failed with a config-gap error (\`workflow config missing\`). Never configure without asking — ask with the native \`question\` tool, exactly three options: (1) configure only what's missing (guided, via the /wf-init skill flow for those actions), (2) run the full wizard (\`npx flowkit init\`), (3) skip — report the final error naming the missing items and how to configure them.
 </workflow-config-guard>`;
@@ -73,3 +77,6 @@ export const shouldInjectSddReminder = (currentText: string): boolean =>
 
 export const shouldInjectConfigGuard = (currentText: string): boolean =>
   !currentText.includes(CONFIG_GUARD_TEXT);
+
+export const shouldInjectIssueRail = (currentText: string): boolean =>
+  !currentText.includes(ISSUE_RAIL_TEXT);

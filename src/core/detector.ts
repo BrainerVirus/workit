@@ -54,6 +54,32 @@ const REVIEW_VERIFICATION_WORDS =
 export const detectBlindReviewAcceptance = (text: string): boolean =>
   ACCEPTANCE_SIGNALS.test(text) && !REVIEW_VERIFICATION_WORDS.test(text);
 
+// Instruction-option detector: a clickable `question` option whose label is an
+// instruction to type free text. Clicking such an option returns the label
+// literal, not the typed value. Conservative: instruction verb + free-text noun.
+export const INSTRUCTION_OPTION_RE =
+  /^(type|provide|paste|enter|write|give me)\b.*\b(url|id|issue|text|notes|number)\b/i;
+
+// Accepts the question tool-call input: an array of questions OR { questions: [...] }.
+export const detectInstructionOption = (questions: unknown): boolean => {
+  const list = Array.isArray(questions)
+    ? questions
+    : (questions as { questions?: unknown } | null)?.questions;
+  if (!Array.isArray(list)) return false;
+  for (const q of list) {
+    if (!q || typeof q !== "object") continue;
+    const options = (q as { options?: unknown }).options;
+    if (!Array.isArray(options)) continue;
+    for (const opt of options) {
+      if (!opt || typeof opt !== "object") continue;
+      const label = (opt as { label?: unknown }).label;
+      if (typeof label !== "string" || !label) continue;
+      if (INSTRUCTION_OPTION_RE.test(label)) return true;
+    }
+  }
+  return false;
+};
+
 // Raw delivery: an UNLABELED fenced block carrying doc markers — the agent pasted
 // the doc instead of rendering it. Rendered docs keep labeled fences (```mermaid)
 // and never match; reminders use angle-bracket blocks, so no false positives.
