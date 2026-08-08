@@ -9,6 +9,7 @@ import {
   runProjectSetup,
   scaffoldVcs,
   scaffoldYouTrack,
+  shouldWriteWorkspaces,
   TOKEN_PLACEHOLDER,
   validateBaseUrl,
   validateLocale,
@@ -188,6 +189,16 @@ test("loadWorkspaces: valid file → parsed entries", () => {
     writeFileSync(wsFile(dir), JSON.stringify({ workspaces: [entry("work", "/home/**/work/**")] }), "utf8");
     expect(loadWorkspaces()).toEqual([entry("work", "/home/**/work/**")]);
   });
+});
+
+test("shouldWriteWorkspaces: same list → false, different → true", () => {
+  const list = [entry("work", "/home/**/work/**")];
+  expect(shouldWriteWorkspaces(list, [...list])).toBe(false);
+  expect(shouldWriteWorkspaces([], [])).toBe(false);
+  expect(shouldWriteWorkspaces([], list)).toBe(true);
+  expect(shouldWriteWorkspaces(list, [entry("personal", "/home/**/personal/**")])).toBe(true);
+  expect(shouldWriteWorkspaces(list, [entry("work", "/home/**/other/**")])).toBe(true);
+  expect(shouldWriteWorkspaces(list, [{ ...list[0], vcs: { provider: "github" as const, defaultTargetBranch: "main" } }])).toBe(true);
 });
 
 test("writeWorkspaces replaces the whole list", () => {

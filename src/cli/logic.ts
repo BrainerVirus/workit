@@ -1,4 +1,5 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { isDeepStrictEqual } from "node:util";
 import path from "node:path";
 import { PRESETS, LOCALE_RE, type BranchPreset, type ToolkitConfig } from "../core/config";
 import { workspacesPath, type WorkspaceConfig } from "../core/workspaces";
@@ -199,6 +200,10 @@ export function scaffoldVcs(dir: string, provider: VcsProvider): VcsScaffold {
     tokenCreateUrl: provider === "gitlab" ? gitlabUrl : githubUrl,
     provider,
   };
+}
+
+export function shouldWriteWorkspaces(loaded: WorkspaceConfig[], current: WorkspaceConfig[]): boolean {
+  return !isDeepStrictEqual(loaded, current);
 }
 
 export function loadWorkspaces(): WorkspaceConfig[] {
