@@ -444,3 +444,25 @@ test("no wf- entry-point references remain in skills, commands, or plugin descri
   }
   expect(offenders).toEqual([]);
 });
+
+test("no python3 invocations remain in packages/*/scripts or src (CA-11)", () => {
+  const { statSync: stat } = require("node:fs") as typeof import("node:fs");
+  const packagesDir = path.join(REPO_ROOT, "packages");
+  const offenders: string[] = [];
+  const scanFile = (full: string) => {
+    if (!/\.(ts|sh|py|js|json)$/.test(path.basename(full))) return;
+    const content = readFileSync(full, "utf8");
+    if (content.includes("python3")) offenders.push(path.relative(REPO_ROOT, full));
+  };
+  const walk = (dir: string) => {
+    for (const entry of readdirSync(dir)) {
+      if (entry === "node_modules" || entry === ".git") continue;
+      const full = path.join(dir, entry);
+      if (stat(full).isDirectory()) walk(full);
+      else scanFile(full);
+    }
+  };
+  walk(path.join(packagesDir, "workit-core", "scripts"));
+  walk(path.join(packagesDir, "workit-core", "src"));
+  expect(offenders).toEqual([]);
+});

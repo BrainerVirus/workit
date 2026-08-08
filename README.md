@@ -89,7 +89,6 @@ export PATH="$HOME/.bun/bin:$PATH"
 ```
 
 - **Git** — branch resolution, SDD review diffs, and verify gates.
-- (Optional) **Python 3** — required only for `wk-changelog` (runs `scripts/changelog/apply-unreleased.py`). Everything else is pure TS via bun.
 
 ## Repo layout
 
