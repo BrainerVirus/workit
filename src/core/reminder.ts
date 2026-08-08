@@ -22,6 +22,7 @@ export const DOC_RENDER_TEXT = `<workflow-doc-render>
 When delivering a spec or plan, by default render the full markdown content of the doc in chat (headings, tables, mermaid fences preserved) — NOT a backtick-wrapped raw block.
 If the doc exceeds the render threshold (more than 150 lines, over 8KB, or more than 3 mermaid diagrams), deliver only the clickable link \`[spec.md](docs/<slug>/spec.md)\` + a 3-5 bullet summary.
 On an explicit raw request ("raw", "para copiar", "sin render"), show the full fenced block instead.
+Platform note: always use the standard \`\`\`mermaid fence — Cursor CLI renders it as an ASCII diagram, editors/GitHub render it natively; OpenCode TUI shows it as code text (renderer limitation, not a defect). Inline markdown links are not clickable in the OpenCode TUI.
 </workflow-doc-render>`;
 
 export const CONFIG_GUARD_TEXT = `<workflow-config-guard>
