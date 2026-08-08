@@ -8,10 +8,12 @@ export type Detection = { choices: string[]; pattern: "alpha" | "numeric" } | nu
 export const detectConfigGapError = (text: string): boolean =>
   text.includes(CONFIG_GAP_MARKER);
 
-// Raw delivery: a fenced block carrying doc markers — the agent pasted the doc
-// instead of rendering it. Reminders use angle-bracket blocks, never fences, so no false positives.
+// Raw delivery: an UNLABELED fenced block carrying doc markers — the agent pasted
+// the doc instead of rendering it. Rendered docs keep labeled fences (```mermaid)
+// and never match; reminders use angle-bracket blocks, so no false positives.
+// Labeled blocks are stripped first so their plain closing fence (```) can't match.
 export const detectRawDocDelivery = (text: string): boolean =>
-  text.includes("```") &&
+  /^```\s*$/m.test(text.replace(/```\S[^\n]*\r?\n[\s\S]*?```/g, "")) &&
   (text.includes("# Spec") || text.includes("# Plan") ||
     text.includes("**Spec:**") || text.includes("**Branch:**"));
 

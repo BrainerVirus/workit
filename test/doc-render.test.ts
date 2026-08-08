@@ -44,6 +44,11 @@ test("CA-01: exactly MAX_LINES lines is still within bounds", () => {
   expect(shouldRenderDoc(doc)).toBe(true);
 });
 
+test("CA-01: CRLF endings and trailing newline do not inflate the line count", () => {
+  const doc = Array.from({ length: MAX_LINES }, (_, i) => `line ${i}`).join("\r\n") + "\r\n";
+  expect(shouldRenderDoc(doc)).toBe(true);
+});
+
 test("CA-01: exactly MAX_BYTES is still within bounds", () => {
   const doc = "x".repeat(MAX_BYTES);
   expect(shouldRenderDoc(doc)).toBe(true);
@@ -56,9 +61,9 @@ test("CA-02: DOC_RENDER_TEXT instructs render-by-default", () => {
 });
 
 test("CA-02: DOC_RENDER_TEXT instructs link + summary above threshold", () => {
-  expect(DOC_RENDER_TEXT).toContain("150");
-  expect(DOC_RENDER_TEXT).toContain("8KB");
-  expect(DOC_RENDER_TEXT).toContain("3+ mermaid");
+  expect(DOC_RENDER_TEXT).toContain("more than 150 lines");
+  expect(DOC_RENDER_TEXT).toContain("over 8KB");
+  expect(DOC_RENDER_TEXT).toContain("more than 3 mermaid");
   expect(DOC_RENDER_TEXT).toContain("[spec.md](docs/<slug>/spec.md)");
   expect(DOC_RENDER_TEXT).toContain("3-5 bullet summary");
 });

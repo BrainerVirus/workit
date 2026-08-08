@@ -142,6 +142,18 @@ test("CA-03: text without fences → detector false", () => {
   expect(detectRawDocDelivery("plain message")).toBe(false);
 });
 
+test("I-1: rendered doc with labeled mermaid fence is NOT raw delivery", () => {
+  const assistant =
+    "Here's the spec:\n```mermaid\nflowchart TD\n  a --> b\n```\n# Spec: docs/foo/spec.md\n**Branch:** feature/foo";
+  expect(detectRawDocDelivery(assistant)).toBe(false);
+});
+
+test("I-1: plain unlabeled fence carrying # Spec: IS raw delivery", () => {
+  const assistant =
+    "Here is the spec:\n```\n# Spec: docs/foo/spec.md\n**Branch:** feature/foo\n```";
+  expect(detectRawDocDelivery(assistant)).toBe(true);
+});
+
 test("CA-03: idempotent — text already containing DOC_RENDER_TEXT → helper false", () => {
   expect(shouldInjectDocRender(DOC_RENDER_TEXT)).toBe(false);
   expect(shouldInjectDocRender(`message with ${DOC_RENDER_TEXT} marker`)).toBe(false);

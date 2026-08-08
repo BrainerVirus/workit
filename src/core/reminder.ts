@@ -20,7 +20,7 @@ An approved plan is subagent-driven — execute it via \`wf-implement\` / \`task
 
 export const DOC_RENDER_TEXT = `<workflow-doc-render>
 When delivering a spec or plan, by default render the full markdown content of the doc in chat (headings, tables, mermaid fences preserved) — NOT a backtick-wrapped raw block.
-If the doc exceeds the render threshold (150+ lines, or 8KB+, or 3+ mermaid diagrams), deliver only the clickable link \`[spec.md](docs/<slug>/spec.md)\` + a 3-5 bullet summary.
+If the doc exceeds the render threshold (more than 150 lines, over 8KB, or more than 3 mermaid diagrams), deliver only the clickable link \`[spec.md](docs/<slug>/spec.md)\` + a 3-5 bullet summary.
 On an explicit raw request ("raw", "para copiar", "sin render"), show the full fenced block instead.
 </workflow-doc-render>`;
 
