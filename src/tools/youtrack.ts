@@ -18,8 +18,15 @@ const ISSUE_RE = /^[A-Z]+-\d+$/;
 const output = (value: unknown) => JSON.stringify(value, null, 2);
 const message = (error: unknown) => error instanceof Error ? error.message : String(error);
 
+// ponytail: both override names point at the config dir itself (status.sh/apply.sh use
+// WORKFLOW_TOOLKIT_CONFIG, src/core/config.ts uses WORKFLOW_TOOLKIT_CONFIG_DIR) — honor both.
 export const configPath = (env: NodeJS.ProcessEnv = process.env, home = os.homedir()) =>
-  path.join(env.XDG_CONFIG_HOME || path.join(home, ".config"), "workflow-toolkit", "youtrack.json");
+  path.join(
+    env.WORKFLOW_TOOLKIT_CONFIG
+    ?? env.WORKFLOW_TOOLKIT_CONFIG_DIR
+    ?? path.join(env.XDG_CONFIG_HOME || path.join(home, ".config"), "workflow-toolkit"),
+    "youtrack.json",
+  );
 
 export function readCredentials(env: NodeJS.ProcessEnv = process.env, home = os.homedir()) {
   const resolvedConfig = configPath(env, home);

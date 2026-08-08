@@ -39,6 +39,8 @@ if p.is_file():
                     "workItemText": item.get("workItemText", "Reuniones"),
                     "url": item.get("url") or (f"{base}/issue/{iss}" if base and iss else None),
                 })
+        expanded_token = Path(token_file).expanduser()
+        resolved_token_file = str(expanded_token.resolve() if expanded_token.is_absolute() else (Path(config_dir) / expanded_token).resolve()) if token_file else None
         youtrack_config = {
             "config_edit_path": json_abs,
             "baseUrl": base,
@@ -48,7 +50,7 @@ if p.is_file():
             "defaultMention": cfg.get("defaultMention"),
             "timezone": cfg.get("timezone"),
             "locale": cfg.get("locale"),
-            "tokenFile": str(Path(token_file).expanduser().resolve()) if token_file else None,
+            "tokenFile": resolved_token_file,
             "tokenDefaults": cfg.get("tokenDefaults"),
             "timeLogging": {
                 "meetings": {
@@ -77,7 +79,7 @@ items.append({
     "fix": "workflow_toolkit_init_apply action=youtrack_scaffold",
 })
 
-t = Path(yt_token)
+t = Path((youtrack_config or {}).get("tokenFile") or yt_token)
 token_abs = str(t.resolve()) if t.is_file() else str(t.expanduser().resolve())
 token_text = t.read_text(encoding="utf-8").strip() if t.is_file() else ""
 is_placeholder = token_text == placeholder or token_text.startswith(placeholder)
