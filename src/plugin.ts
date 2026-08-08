@@ -4,8 +4,8 @@ import { fileURLToPath } from "node:url";
 import type { Plugin } from "@opencode-ai/plugin";
 
 import { getWorkflowBootstrap, isWorkflowBootstrap } from "./bootstrap";
-import { REMINDER_TEXT, DETECTION_TEXT, DOC_DELIVERY_TEXT, DOC_RENDER_TEXT, SDD_REMINDER_TEXT, shouldInjectSddReminder, CONFIG_GUARD_TEXT, shouldInjectConfigGuard, shouldInjectDocRender } from "./core/reminder";
-import { detectProseChoices, detectBacktickDocRefs, findActiveSubagentDrivenPlans, detectConfigGapError, detectRawDocDelivery } from "./core/detector";
+import { REMINDER_TEXT, DETECTION_TEXT, DOC_DELIVERY_TEXT, DOC_RENDER_TEXT, SDD_REMINDER_TEXT, shouldInjectSddReminder, CONFIG_GUARD_TEXT, shouldInjectConfigGuard, shouldInjectDocRender, VERIFICATION_TEXT, TDD_TEXT, BRAINSTORM_TEXT, DEBUG_TEXT, REVIEW_RECEPTION_TEXT, shouldInjectVerification, shouldInjectTdd, shouldInjectBrainstorm, shouldInjectDebug, shouldInjectReviewReception } from "./core/reminder";
+import { detectProseChoices, detectBacktickDocRefs, findActiveSubagentDrivenPlans, detectConfigGapError, detectRawDocDelivery, detectVerificationClaim, detectUntestedImplementation, detectImplementationWithoutDesign, detectFixWithoutRootCause, detectBlindReviewAcceptance } from "./core/detector";
 import { createTools } from "./tools";
 import { adaptPluginHandoffClient } from "./tools/handoff";
 import { WorkflowStateStore } from "./state";
@@ -174,6 +174,27 @@ const plugin: Plugin = async ({ client }) => {
         // Every turn: config-gap rail — structured config errors get a three-option question (idempotent)
         if (detectConfigGapError(assistantText) && shouldInjectConfigGuard(currentText)) {
           currentUser.parts.unshift(makePart(CONFIG_GUARD_TEXT, "cg"));
+        }
+
+        // Every turn: verification rail — completion claims without fresh check evidence (idempotent)
+        if (detectVerificationClaim(assistantText) && shouldInjectVerification(currentText)) {
+          currentUser.parts.unshift(makePart(VERIFICATION_TEXT, "vf"));
+        }
+        // Every turn: TDD rail — implementation without failing-test-first evidence (idempotent)
+        if (detectUntestedImplementation(assistantText) && shouldInjectTdd(currentText)) {
+          currentUser.parts.unshift(makePart(TDD_TEXT, "tdd"));
+        }
+        // Every turn: brainstorm rail — implementation without a presented design (idempotent)
+        if (detectImplementationWithoutDesign(assistantText) && shouldInjectBrainstorm(currentText)) {
+          currentUser.parts.unshift(makePart(BRAINSTORM_TEXT, "br"));
+        }
+        // Every turn: debugging rail — fixes without root-cause evidence (idempotent)
+        if (detectFixWithoutRootCause(assistantText) && shouldInjectDebug(currentText)) {
+          currentUser.parts.unshift(makePart(DEBUG_TEXT, "db"));
+        }
+        // Every turn: review-reception rail — feedback accepted without verification (idempotent)
+        if (detectBlindReviewAcceptance(assistantText) && shouldInjectReviewReception(currentText)) {
+          currentUser.parts.unshift(makePart(REVIEW_RECEPTION_TEXT, "rc"));
         }
       } catch {
         // never break the session from a hook

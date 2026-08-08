@@ -1,4 +1,6 @@
 import { expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import {
   detectBlindReviewAcceptance,
   detectFixWithoutRootCause,
@@ -128,4 +130,52 @@ test("CA-03: shouldInject helpers are marker-based idempotent", () => {
   expect(shouldInjectDebug("plain message")).toBe(true);
   expect(shouldInjectReviewReception(REVIEW_RECEPTION_TEXT)).toBe(false);
   expect(shouldInjectReviewReception("plain message")).toBe(true);
+});
+
+test("CA-03: each rail fires on its signal (detector true and shouldInject true)", () => {
+  expect(detectVerificationClaim("All done, the bug is fixed.")).toBe(true);
+  expect(shouldInjectVerification("next user turn")).toBe(true);
+  expect(detectUntestedImplementation("Implemented the parser and committed.")).toBe(true);
+  expect(shouldInjectTdd("next user turn")).toBe(true);
+  expect(detectImplementationWithoutDesign("I'll implement the feature now.")).toBe(true);
+  expect(shouldInjectBrainstorm("next user turn")).toBe(true);
+  expect(detectFixWithoutRootCause("Fixed the crash by adding a null check.")).toBe(true);
+  expect(shouldInjectDebug("next user turn")).toBe(true);
+  expect(detectBlindReviewAcceptance("Good point, agreed — thanks for the feedback.")).toBe(true);
+  expect(shouldInjectReviewReception("next user turn")).toBe(true);
+});
+
+test("CA-04: three rails compose on one assistant text, markers distinct", () => {
+  const assistant = "All done. Implemented the feature. Good point, I'll fix it.";
+  expect(detectVerificationClaim(assistant)).toBe(true);
+  expect(detectUntestedImplementation(assistant)).toBe(true);
+  expect(detectBlindReviewAcceptance(assistant)).toBe(true);
+  expect(shouldInjectVerification("next user turn")).toBe(true);
+  expect(shouldInjectTdd("next user turn")).toBe(true);
+  expect(shouldInjectReviewReception("next user turn")).toBe(true);
+  const composed = `${VERIFICATION_TEXT}\n${TDD_TEXT}\n${REVIEW_RECEPTION_TEXT}`;
+  expect(composed).toContain("workflow-verification-rail");
+  expect(composed).toContain("workflow-tdd-rail");
+  expect(composed).toContain("workflow-review-reception-rail");
+});
+
+test("CA-04: all five rails use distinct part tags in plugin.ts", () => {
+  const src = readFileSync(path.join(import.meta.dir, "..", "src", "plugin.ts"), "utf8");
+  const tags = [...src.matchAll(/makePart\([^,\n]+,\s*"([a-z]+)"\)/g)].map((m) => m[1]);
+  expect(tags).toContain("vf");
+  expect(tags).toContain("tdd");
+  expect(tags).toContain("br");
+  expect(tags).toContain("db");
+  expect(tags).toContain("rc");
+  expect(new Set(tags).size).toBe(tags.length);
+});
+
+test("CA-03: fail-closed — all five detectors no-op on empty/weird input", () => {
+  expect(detectVerificationClaim("")).toBe(false);
+  expect(detectUntestedImplementation("")).toBe(false);
+  expect(detectImplementationWithoutDesign("")).toBe(false);
+  expect(detectFixWithoutRootCause("")).toBe(false);
+  expect(detectBlindReviewAcceptance("")).toBe(false);
+  expect(detectVerificationClaim("\u0000\u0001\u0002")).toBe(false);
+  expect(detectFixWithoutRootCause("\u0000\u0001\u0002")).toBe(false);
 });
