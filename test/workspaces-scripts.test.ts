@@ -164,6 +164,22 @@ test("config.sh resolve: WORKFLOW_WORKSPACE_ROOT overrides the cwd", () => {
   }
 });
 
+test("config.sh resolve: catchall ** matches a drive-letter WORKFLOW_WORKSPACE_ROOT (TS parity)", () => {
+  if (!scriptTools()) return;
+  const { home, cleanup } = withConfigDir({
+    "vcs.json": JSON.stringify(GLOBAL_VCS),
+    "workspaces.json": workspacesJson("**", "gitlab"),
+  });
+  try {
+    const env = envWithHome(home, { WORKFLOW_WORKSPACE_ROOT: "D:/a/workflow-toolkit/workflow-toolkit" });
+    const r = run(["scripts/vcs/config.sh", "resolve"], { cwd: repoRoot, env });
+    expect(r.status, r.stderr).toBe(0);
+    expect(JSON.parse(r.stdout).workspace_name).toBe("work");
+  } finally {
+    cleanup();
+  }
+});
+
 test("config.sh load: merges the resolved workspace over global vcs.json", () => {
   if (!scriptTools()) return;
   const base = realpathSync(mkdtempSync(path.join(os.tmpdir(), "wf-ws-dir-")));

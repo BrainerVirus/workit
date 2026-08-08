@@ -27,10 +27,17 @@ const globToRegExp = (glob: string): RegExp => {
           out += "(?:[^/]+/)*";
           i += 2;
         } else {
-          // trailing ** also matches the bare parent: /x/y/** -> /x/y and /x/y/deep
+          // trailing ** also matches the bare parent: /x/y/** -> /x/y and /x/y/deep.
+          // (?:/.*)? only when the prefix ends with / (POSIX absolute); otherwise
+          // the trailing ** must match any remainder, e.g. a bare ** against a
+          // drive-letter cwd like D:/a/x.
           if (i + 2 >= glob.length) {
-            if (out.endsWith("/")) out = out.slice(0, -1);
-            out += "(?:/.*)?";
+            if (out.endsWith("/")) {
+              out = out.slice(0, -1);
+              out += "(?:/.*)?";
+            } else {
+              out += ".*";
+            }
           } else {
             out += ".*";
           }

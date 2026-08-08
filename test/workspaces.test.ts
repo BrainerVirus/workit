@@ -153,6 +153,21 @@ test("trailing ** matches the bare parent root and deep paths", () => {
   });
 });
 
+test("catchall ** matches drive-letter and posix paths (Windows CI regression)", () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "wf-ws-catchall-"));
+  writeWorkspaces(dir, JSON.stringify({
+    workspaces: [
+      { name: "catchall", glob: "**" },
+    ],
+  }));
+  withIsolatedConfig(dir, () => {
+    expect(resolveWorkspace("D:/a/workflow-toolkit/workflow-toolkit")?.name).toBe("catchall");
+    expect(resolveWorkspace("D:\\a\\workflow-toolkit\\workflow-toolkit")?.name).toBe("catchall");
+    expect(resolveWorkspace("/home/u/anything")?.name).toBe("catchall");
+    expect(resolveWorkspace("/home/u/anything/deep/nested")?.name).toBe("catchall");
+  });
+});
+
 test("resolveWorkspace skips non-object entries in the workspaces array", () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "wf-ws-junk-"));
   writeWorkspaces(dir, JSON.stringify({

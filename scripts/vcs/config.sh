@@ -25,8 +25,8 @@ placeholder = sys.argv[4]
 mode = sys.argv[5]
 
 # mirrors src/core/workspaces.ts globToRegExp: `*` -> [^/]*, `**/` -> (?:[^/]+/)* (leading consumes /),
-# trailing `**` -> (?:/.*)? plus [^/]* from the second star (bare parent matches), everything else
-# regex-escaped. First-wins, never throws.
+# trailing `**` -> (?:/.*)? when the prefix ends with / (bare parent matches), else `.*` so a bare
+# `**` catchall matches drive-letter cwds (D:/a/x); everything else regex-escaped. First-wins, never throws.
 def glob_to_regexp(glob: str) -> "re.Pattern[str]":
     out = ""
     i = 0
@@ -43,7 +43,9 @@ def glob_to_regexp(glob: str) -> "re.Pattern[str]":
                     if i + 2 >= len(glob):
                         if out.endswith("/"):
                             out = out[:-1]
-                        out += "(?:/.*)?"
+                            out += "(?:/.*)?"
+                        else:
+                            out += ".*"
                     else:
                         out += ".*"
                     i += 1
