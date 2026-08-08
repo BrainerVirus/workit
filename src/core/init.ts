@@ -2,12 +2,16 @@ import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { PLUGIN_ROOT } from "./scripts";
 import { runScript, runScriptJson } from "./scripts";
+import { resolveWorkspace, workspacesPath } from "./workspaces";
 
 
 export function initStatus(): Record<string, any> {
   const result = runScriptJson("init/status.sh", [], PLUGIN_ROOT);
   if (result.error) return { error: result.error };
-  return result.data;
+  return {
+    ...result.data,
+    workspaces: { resolved: resolveWorkspace(process.cwd()), path: workspacesPath() },
+  };
 }
 
 export function toolkitStatus(): Record<string, any> {
