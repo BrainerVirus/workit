@@ -68,7 +68,7 @@ test("config.sh resolve: workspace match wins over global vcs.json (work -> gitl
     "workspaces.json": JSON.stringify({
       workspaces: [
         { name: "work", glob: `${base}/work/**`, vcs: { provider: "gitlab" }, youtrack: { link_issues: true } },
-        { name: "personal", glob: `${base}/personal/**`, vcs: { provider: "github" } },
+        { name: "personal", glob: `${base}/personal/**`, vcs: { provider: "github" }, issues: { provider: "github", link_on_pr: true } },
       ],
     }),
   });
@@ -84,6 +84,8 @@ test("config.sh resolve: workspace match wins over global vcs.json (work -> gitl
     expect(w.defaultTargetBranch).toBe("main"); // workspace has none -> global fallback
     expect(w.link_issues).toBe(true);
     expect(w.youtrack_base_url).toBeNull();
+    expect(w.issues_provider).toBeNull(); // youtrack workspace: no github issues keys
+    expect(w.link_on_pr).toBeNull();
 
     const personal = run(["scripts/vcs/config.sh", "resolve"], { cwd: path.join(base, "personal", "some-app"), env });
     expect(personal.status).toBe(0);
@@ -91,6 +93,9 @@ test("config.sh resolve: workspace match wins over global vcs.json (work -> gitl
     expect(p.workspace_name).toBe("personal");
     expect(p.provider).toBe("github");
     expect(p.link_issues).toBeNull();
+    expect(p.youtrack_base_url).toBeNull();
+    expect(p.issues_provider).toBe("github");
+    expect(p.link_on_pr).toBe(true);
   } finally {
     cleanup();
     rmSync(base, { recursive: true, force: true });
@@ -184,11 +189,13 @@ test("config.sh load: merges the resolved workspace over global vcs.json", () =>
   if (!scriptTools()) return;
   const base = realpathSync(mkdtempSync(path.join(os.tmpdir(), "wf-ws-dir-")));
   mkdirSync(path.join(base, "work", "repo"), { recursive: true });
+  mkdirSync(path.join(base, "personal", "app"), { recursive: true });
   const { home, cleanup } = withConfigDir({
     "vcs.json": JSON.stringify(GLOBAL_VCS),
     "workspaces.json": JSON.stringify({
       workspaces: [
         { name: "work", glob: `${base}/work/**`, vcs: { provider: "gitlab" }, youtrack: { link_issues: true } },
+        { name: "personal", glob: `${base}/personal/**`, vcs: { provider: "github" }, issues: { provider: "github", link_on_pr: true } },
       ],
     }),
   });
@@ -202,8 +209,20 @@ test("config.sh load: merges the resolved workspace over global vcs.json", () =>
     expect(m.provider).toBe("gitlab"); // workspace wins over global github
     expect(m.workspace_name).toBe("work");
     expect(m.link_issues).toBe(true);
+    expect(m.issues_provider).toBeNull();
+    expect(m.link_on_pr).toBeNull();
     expect(m.defaultTargetBranch).toBe("main"); // workspace has none -> global
     expect(m.tokenReady).toBe(false);
+
+    const gh = run(["scripts/vcs/config.sh", "load"], { cwd: path.join(base, "personal", "app"), env });
+    expect(gh.status, gh.stderr).toBe(0);
+    const g = JSON.parse(gh.stdout);
+    expect(g.provider).toBe("github");
+    expect(g.workspace_name).toBe("personal");
+    expect(g.issues_provider).toBe("github");
+    expect(g.link_on_pr).toBe(true);
+    expect(g.link_issues).toBeNull();
+    expect(g.youtrack_base_url).toBeNull();
 
     mkdirSync(path.join(home, "elsewhere"), { recursive: true });
     const noMatch = run(["scripts/vcs/config.sh", "load"], { cwd: path.join(home, "elsewhere"), env });
@@ -289,15 +308,15 @@ test("pr-ready-context.sh: VCS Config section reports workspace + provider", () 
   }
 });
 
-// pr-create.sh --build-body: pure body builder — no git state, no CLI guard, no network.
-const buildBody = (extra: Record<string, string>): string => {
+// pr-create.sh --build-body: pure body builder — no CLI guard, no network (git remote parsed only when GH_REPO is unset).
+const buildBody = (extra: Record<string, string>, cwd?: string): string => {
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) {
     if (v === undefined || /^WORKFLOW_/.test(k)) continue;
     env[k] = v;
   }
   const r = run(["scripts/pr-create.sh", "--build-body"], {
-    cwd: repoRoot,
+    cwd: cwd ?? repoRoot,
     env: { ...env, ...extra },
   });
   expect(r.status, r.stderr).toBe(0);
@@ -345,4 +364,45 @@ test("pr-create.sh --build-body: no base URL or no derivable id -> no Related to
   if (!scriptTools()) return;
   expect(buildBody({ BODY: "No link", BRANCH: "feature/IRP-123-fix", LINK_ISSUES: "true" })).toBe("No link");
   expect(buildBody({ BODY: "No link", BRANCH: "feature/maintenance", LINK_ISSUES: "true", YT_BASE_URL: "https://yt.example.com" })).toBe("No link");
+});
+
+test("pr-create.sh --build-body: explicit WORKFLOW_GH_ISSUE closes/related (default closes, # prefix stripped)", () => {
+  if (!scriptTools()) return;
+  expect(buildBody({ GH_LINK_ON_PR: "true", WORKFLOW_GH_ISSUE: "42" })).toBe("Closes #42");
+  expect(buildBody({ BODY: "Existing body", GH_LINK_ON_PR: "true", WORKFLOW_GH_ISSUE: "#42" })).toBe("Existing body\n\nCloses #42");
+  expect(
+    buildBody({ GH_LINK_ON_PR: "true", WORKFLOW_GH_ISSUE: "42", WORKFLOW_GH_ISSUE_RELATION: "related", GH_REPO: "acme/app" }),
+  ).toBe("Related to #42 — https://github.com/acme/app/issues/42");
+  expect(buildBody({ GH_LINK_ON_PR: "true", WORKFLOW_GH_ISSUE: "42", BODY: "" })).toBe("Closes #42");
+});
+
+test("pr-create.sh --build-body: branch-derived pure-number id auto-links (feature/42-title -> Closes #42)", () => {
+  if (!scriptTools()) return;
+  expect(buildBody({ GH_LINK_ON_PR: "true", BRANCH: "feature/42-title" })).toBe("Closes #42");
+  expect(buildBody({ GH_LINK_ON_PR: "true", BRANCH: "42-title" })).toBe("Closes #42");
+  expect(buildBody({ GH_LINK_ON_PR: "true", BRANCH: "feature/foo" })).toBe("");
+  expect(buildBody({ GH_LINK_ON_PR: "false", BRANCH: "feature/42-title" })).toBe("");
+});
+
+test("pr-create.sh --build-body: owner/repo parsed from git remote get-url origin; absent remote -> Related line without URL", () => {
+  if (!scriptTools()) return;
+  const repoDir = realpathSync(mkdtempSync(path.join(os.tmpdir(), "wf-gh-repo-")));
+  const bareDir = realpathSync(mkdtempSync(path.join(os.tmpdir(), "wf-gh-bare-")));
+  try {
+    for (const [cmd, args] of [
+      ["git", ["init", "-q"]],
+      ["git", ["remote", "add", "origin", "git@github.com:acme/app.git"]],
+    ] as const) {
+      expect(spawnSync(cmd, args, { cwd: repoDir, encoding: "utf8" }).status).toBe(0);
+    }
+    expect(
+      buildBody({ GH_LINK_ON_PR: "true", WORKFLOW_GH_ISSUE: "42", WORKFLOW_GH_ISSUE_RELATION: "related" }, repoDir),
+    ).toBe("Related to #42 — https://github.com/acme/app/issues/42");
+    expect(
+      buildBody({ GH_LINK_ON_PR: "true", WORKFLOW_GH_ISSUE: "42", WORKFLOW_GH_ISSUE_RELATION: "related" }, bareDir),
+    ).toBe("Related to #42");
+  } finally {
+    rmSync(repoDir, { recursive: true, force: true });
+    rmSync(bareDir, { recursive: true, force: true });
+  }
 });

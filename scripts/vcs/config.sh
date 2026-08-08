@@ -81,6 +81,7 @@ def resolve_workspace() -> dict | None:
 ws = resolve_workspace()
 ws_vcs = ws.get("vcs") if isinstance(ws, dict) and isinstance(ws.get("vcs"), dict) else {}
 ws_yt = ws.get("youtrack") if isinstance(ws, dict) and isinstance(ws.get("youtrack"), dict) else {}
+ws_issues = ws.get("issues") if isinstance(ws, dict) and isinstance(ws.get("issues"), dict) else {}
 
 cfg: dict = {}
 cfg_ok = False
@@ -95,6 +96,13 @@ provider = ((ws_vcs.get("provider") or cfg.get("provider")) or "gitlab").lower()
 default_target = ws_vcs.get("defaultTargetBranch") or cfg.get("defaultTargetBranch", "develop")
 link_issues = ws_yt.get("link_issues")
 youtrack_base_url = ws_yt.get("baseUrl")
+# github issues path (mirrors src/core/workspaces.ts WorkspaceConfig.issues); youtrack keys stay null for github workspaces.
+issues_provider = None
+link_on_pr = None
+if isinstance(ws_issues.get("provider"), str) and ws_issues.get("provider").lower() == "github":
+    issues_provider = "github"
+    lop = ws_issues.get("link_on_pr")
+    link_on_pr = lop if isinstance(lop, bool) else None
 
 if mode == "resolve":
     print(json.dumps({
@@ -104,6 +112,8 @@ if mode == "resolve":
         "defaultTargetBranch": default_target,
         "link_issues": link_issues if isinstance(link_issues, bool) else None,
         "youtrack_base_url": youtrack_base_url if isinstance(youtrack_base_url, str) else None,
+        "issues_provider": issues_provider,
+        "link_on_pr": link_on_pr,
     }))
     sys.exit(0)
 
@@ -133,6 +143,8 @@ out = {
     "workspace_name": ws.get("name") if isinstance(ws, dict) else None,
     "link_issues": link_issues if isinstance(link_issues, bool) else None,
     "youtrack_base_url": youtrack_base_url if isinstance(youtrack_base_url, str) else None,
+    "issues_provider": issues_provider,
+    "link_on_pr": link_on_pr,
 }
 if provider == "gitlab":
     out["gitlab"] = {

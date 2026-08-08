@@ -8,7 +8,7 @@ import { resolveWorkspace, workspacesPath, type WorkspaceConfig } from "../src/c
 const WORKSPACES = {
   workspaces: [
     { name: "work", glob: "/home/*/Documents/projects/work/**", vcs: { provider: "gitlab", defaultTargetBranch: "develop" }, youtrack: { link_issues: true } },
-    { name: "personal", glob: "/home/*/Documents/projects/personal/**", vcs: { provider: "github" } },
+    { name: "personal", glob: "/home/*/Documents/projects/personal/**", vcs: { provider: "github" }, issues: { provider: "github", link_on_pr: true } },
   ],
 } satisfies { workspaces: WorkspaceConfig[] };
 
@@ -87,6 +87,8 @@ test("matched workspace carries vcs.provider, vcs.defaultTargetBranch, youtrack.
     const personal = resolveWorkspace("/home/u/Documents/projects/personal/app");
     expect(personal?.vcs?.provider).toBe("github");
     expect(personal?.vcs?.defaultTargetBranch).toBeUndefined();
+    expect(personal?.issues?.provider).toBe("github");
+    expect(personal?.issues?.link_on_pr).toBe(true);
   });
 });
 

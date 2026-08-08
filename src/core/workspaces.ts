@@ -9,6 +9,7 @@ export type WorkspaceConfig = {
   glob: string;
   vcs?: { provider: VcsProvider; defaultTargetBranch?: string };
   youtrack?: { baseUrl?: string; link_issues?: boolean };
+  issues?: { provider?: "github"; link_on_pr?: boolean };
 };
 
 export const workspacesPath = (): string => path.join(configDir(), "workspaces.json");
