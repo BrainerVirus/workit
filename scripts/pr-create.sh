@@ -35,7 +35,25 @@ python3 <<'PY'
 import json, os, re, shutil, subprocess, sys
 from pathlib import Path
 
-def build_body(body, branch, link_issues, base_url, yt_issue):
+def parse_gh_repo(remote: str) -> str | None:
+    remote = (remote or "").strip().rstrip("/")
+    if not remote:
+        return None
+    if remote.endswith(".git"):
+        remote = remote[:-4]
+    if ":" in remote:
+        remote = remote.split(":", 1)[-1]  # drop git@host part (scp-style URL)
+    parts = [p for p in remote.split("/") if p]
+    return "/".join(parts[-2:]) if len(parts) >= 2 else None
+
+
+def parse_gh_issue(value: str) -> str:
+    # "42", "#42" or "https://github.com/o/r/issues/42" all normalize to the bare number
+    m = re.search(r"issues/(\d+)", value)
+    return m.group(1) if m else value.strip().lstrip("#")
+
+
+def build_body(body, branch, link_issues, base_url, yt_issue, gh_link_on_pr, gh_issue, gh_relation, gh_repo):
     line = None
     if link_issues:
         issue = yt_issue
@@ -47,18 +65,43 @@ def build_body(body, branch, link_issues, base_url, yt_issue):
                 issue = m.group(1)
         if issue and base_url:
             line = f"Related to: {base_url.rstrip('/')}/issue/{issue}"
+    elif gh_link_on_pr:
+        issue = parse_gh_issue(gh_issue)
+        if not issue and branch:
+            # pure-number issue id (feature/42-title -> 42); digits must be followed by a dash or
+            # end-of-string so version tokens (release/1.2.3, backport/8.0.1, lodash-4.17.21, 2024.1) never link
+            # ponytail: known date-style false positive (feature/2024-01-fix -> Closes #2024); accepted — bare 42-title support is deliberate
+            m = re.search(r"(?:^|/|-)(\d+)(?:-|$)", branch)
+            if m:
+                issue = m.group(1)
+        if issue:
+            if gh_relation == "related":
+                line = f"Related to #{issue}"
+                if gh_repo:
+                    line += f" — https://github.com/{gh_repo}/issues/{issue}"
+            else:
+                line = f"Closes #{issue}"
     if line is None:
         return body
     return f"{body}\n\n{line}" if body else line
 
 mode = os.environ.get("MODE", "create")
 if mode == "build-body":
+    gh_link_on_pr = os.environ.get("GH_LINK_ON_PR", "").lower() in ("1", "true", "yes")
+    gh_repo = os.environ.get("GH_REPO", "")
+    if not gh_repo and gh_link_on_pr:
+        rr = subprocess.run(["git", "remote", "get-url", "origin"], capture_output=True, text=True, check=False)
+        gh_repo = parse_gh_repo(rr.stdout) if rr.returncode == 0 else None
     print(json.dumps({"body": build_body(
         os.environ.get("BODY", ""),
         os.environ.get("BRANCH", ""),
         os.environ.get("LINK_ISSUES", "").lower() in ("1", "true", "yes"),
         os.environ.get("YT_BASE_URL", ""),
         os.environ.get("WORKFLOW_YT_ISSUE", ""),
+        gh_link_on_pr,
+        os.environ.get("WORKFLOW_GH_ISSUE", ""),
+        os.environ.get("WORKFLOW_GH_ISSUE_RELATION", "closes"),
+        gh_repo,
     )}))
     sys.exit(0)
 
@@ -102,7 +145,15 @@ if not base_url:
             base_url = yt.get("baseUrl")
     except Exception:
         pass
-body = build_body(body, branch, cfg.get("link_issues") is True, base_url, os.environ.get("WORKFLOW_YT_ISSUE", ""))
+gh_link_on_pr = cfg.get("issues_provider") == "github" and cfg.get("link_on_pr") is True
+gh_repo = None
+if gh_link_on_pr:
+    rr = subprocess.run(["git", "remote", "get-url", "origin"], capture_output=True, text=True, check=False)
+    gh_repo = parse_gh_repo(rr.stdout) if rr.returncode == 0 else None
+body = build_body(
+    body, branch, cfg.get("link_issues") is True, base_url, os.environ.get("WORKFLOW_YT_ISSUE", ""),
+    gh_link_on_pr, os.environ.get("WORKFLOW_GH_ISSUE", ""), os.environ.get("WORKFLOW_GH_ISSUE_RELATION", "closes"), gh_repo,
+)
 squash = pr.get("squashOnMerge", True)
 remove_branch = pr.get("removeSourceBranch", True)
 push = pr.get("pushBranch", True)
