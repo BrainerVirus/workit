@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { tool, type ToolContext } from "@opencode-ai/plugin";
 import { fail, ok, resolveInside, type Result } from "../core";
+import { configGuardError, describeConfigGaps } from "../core/config-guard";
 import {
   buildDraft as legacyBuildDraft,
   context as legacyContext,
@@ -204,6 +205,10 @@ const invoke = async (operation: () => MaybePromise<LegacyValue>, token = "") =>
 };
 
 const credentials = () => readCredentials();
+const configGap = () => {
+  const { missing } = describeConfigGaps(["youtrack_json", "youtrack_token"]);
+  return missing.length > 0 ? output(fail(configGuardError(missing))) : null;
+};
 const requireConfirmed = (confirmed: boolean) => confirmed === true
   ? null
   : output(fail("confirmed: true required"));
@@ -228,7 +233,11 @@ export function createYouTrackTools(operations: YouTrackOperations = defaultOper
       args: {},
       execute: async () => {
         let token = "";
-        try { token = credentials().token; } catch (error) { return output(fail(message(error))); }
+        try { token = credentials().token; } catch (error) {
+          const gap = configGap();
+          if (gap) return gap;
+          return output(fail(message(error)));
+        }
         return invoke(() => operations.verifyToken(), token);
       },
     }),
@@ -258,7 +267,11 @@ export function createYouTrackTools(operations: YouTrackOperations = defaultOper
           return output(fail(detail.includes("repository-relative") ? detail : `path must be repository-relative: ${detail}`));
         }
         let token = "";
-        try { token = credentials().token; } catch (error) { return output(fail(message(error))); }
+        try { token = credentials().token; } catch (error) {
+          const gap = configGap();
+          if (gap) return gap;
+          return output(fail(message(error)));
+        }
         return invoke(async () => normalizeContext(
           await operations.context({ ...input, workspace_root: context.directory }), input.mode,
         ), token);
@@ -300,7 +313,11 @@ export function createYouTrackTools(operations: YouTrackOperations = defaultOper
         const invalid = rejectedTimeInput(input.issueId, input.minutes);
         if (invalid) return invalid;
         let token = "";
-        try { token = credentials().token; } catch (error) { return output(fail(message(error))); }
+        try { token = credentials().token; } catch (error) {
+          const gap = configGap();
+          if (gap) return gap;
+          return output(fail(message(error)));
+        }
         const result = await withWriteFlag(() =>
           logTimeUpdate({ ...input, workspace_root: context.directory }, operations));
         return output(result.ok ? result : { ...result, error: redact(result.error, token) });
@@ -318,7 +335,11 @@ export function createYouTrackTools(operations: YouTrackOperations = defaultOper
         const rejected = requireConfirmed(input.confirmed);
         if (rejected) return rejected;
         let token = "";
-        try { token = credentials().token; } catch (error) { return output(fail(message(error))); }
+        try { token = credentials().token; } catch (error) {
+          const gap = configGap();
+          if (gap) return gap;
+          return output(fail(message(error)));
+        }
         const result = await withWriteFlag(() =>
           postUpdate({ ...input, workspace_root: context.directory }, operations));
         return output(result.ok ? result : { ...result, error: redact(result.error, token) });
