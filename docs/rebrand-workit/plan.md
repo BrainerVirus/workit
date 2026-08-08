@@ -27,7 +27,11 @@
 
 | Status | Task |
 | --- | --- |
-| pending | 1: Monorepo restructure + package rename |
+| pending | 1: Monorepo restructure — core + opencode + cursor + cli |
+| pending | 2: GitHub repo rename + semantic-release + opencode CI review |
+| pending | 3: Python → TS (port all 25 scripts + changelog) |
+| pending | 4: Test restructure by package + CI jobs |
+| pending | 5: Release v0.4.0 + Bugbot activation note |
 
 ### Task 2: GitHub repo rename + semantic-release + opencode CI review
 
@@ -40,10 +44,43 @@
 
 | Status | Task |
 | --- | --- |
-| pending | 1: Monorepo restructure + package rename |
-| pending | 2: GitHub repo rename + semantic-release |
+| pending | 1: Monorepo restructure — core + opencode + cursor + cli |
+| pending | 2: GitHub repo rename + semantic-release + opencode CI review |
+| pending | 3: Python → TS (port all 25 scripts + changelog) |
+| pending | 4: Test restructure by package + CI jobs |
+| pending | 5: Release v0.4.0 + Bugbot activation note |
 
-### Task 3: Release v0.4.0 + Bugbot activation note
+### Task 3: Python → TS (port all 25 scripts + changelog)
+
+- [x] **Step 1:** Inventory: list every `python3` invocation in packages/*/scripts (25 .sh files with embedded python heredocs + scripts/changelog/apply-unreleased.py). Map each to its TS port: the scripts that already have TS equivalents in src/core (youtrack config/greeting/parse-duration/api, vcs config/verify-token/token-create-urls, pr-create, changelog) — port the REMAINING logic to pure TS modules executed via bun (a `bun <file>.ts` invocation from runScript, or inline TS functions replacing runScript calls entirely where the TS core already covers it).
+- [x] **Step 2:** Port `apply-unreleased.py` (changelog) to TS first (it's the one the README calls out): `packages/workit-core/src/core/changelog.ts` already exists as the TS wrapper — move the python's logic (entry normalization, section consolidation, SKELETON, write with newline="") into TS; delete the .py; changelogApply calls pure TS.
+- [x] **Step 3:** Port the script chains: youtrack/ (config.sh, greeting.sh, parse-duration.sh, api.sh, verify-token.sh, token-create-url.sh, work-date-ms.sh), vcs/ (config.sh, verify-token.sh, token-create-urls.sh, merged-style.sh), init/ (apply.sh, status.sh, toolkit-status.sh), pr-create.sh, pr-ready-context.sh, present/ (ascii-wireframe.sh, flow-diagram.sh), verify-project.sh, docs-refresh-context.sh, lib/ scripts — each becomes either a TS module invoked directly (replacing runScript) or a tiny `bun`-executable TS file keeping the same CLI contract (args in, JSON out) so the runScript call sites stay stable.
+- [x] **Step 4:** Grep gate: zero `python3` in packages/*/scripts + src (test in mcp-regressions or a new gate test); README removes the Python prerequisite; `bun run check` green with the ports (changelog round-trip, vcs config, youtrack api tests pass).
+
+**Criteria:** CA-11.
+
+| Status | Task |
+| --- | --- |
+| complete | 3: Python → TS (commits 57f23f3..7d1053f) |
+
+
+### Task 4: Test restructure by package + CI jobs
+
+- [ ] **Step 1:** Move the 45 flat test/*.test.ts into `test/workit-core/**`, `test/workit-opencode/**`, `test/workit-cursor/**`, `test/workit-cli/**`, `test/shared/**` mirroring packages/ (update the ../packages/* import paths accordingly — most go one level deeper); keep helper files (fixtures, withConfigDir, env isolation) in `test/shared/helpers/`.
+- [ ] **Step 2:** CI: replace the single check job with a matrix or per-package jobs — one check job per package (workit-core, workit-opencode, workit-cursor, workit-cli, shared) so the matrix shows per-category results; each runs the relevant test subset + tsc.
+- [ ] **Step 3:** Verify: `bun run check` green (all subsets pass); `bun test test/workit-core` runs only the core subset.
+
+**Criteria:** CA-12.
+
+| Status | Task |
+| --- | --- |
+| pending | 1: Monorepo restructure — core + opencode + cursor + cli |
+| pending | 2: GitHub repo rename + semantic-release + opencode CI review |
+| pending | 3: Python → TS (port all 25 scripts + changelog) |
+| pending | 4: Test restructure by package + CI jobs |
+| pending | 5: Release v0.4.0 + Bugbot activation note |
+
+### Task 5: Release v0.4.0 + Bugbot activation note
 
 - [ ] **Step 1:** First release under the new names: semantic-release (or manual tag if the automation isn't ready) publishes `@brainervirus/workit` + `@brainervirus/workit-cli`; `npm view` both resolve (CA-09).
 - [ ] **Step 2:** Final gate — subagent review of the whole branch diff (monorepo wiring, rename completeness, semantic-release config, grep gates green).
@@ -53,6 +90,9 @@
 
 | Status | Task |
 | --- | --- |
-| pending | 1: Monorepo restructure + package rename |
-| pending | 2: GitHub repo rename + semantic-release |
-| pending | 3: Release v0.4.0 + Bugbot activation note |
+| pending | 1: Monorepo restructure — core + opencode + cursor + cli |
+| pending | 2: GitHub repo rename + semantic-release + opencode CI review |
+| pending | 3: Python → TS (port all 25 scripts + changelog) |
+| pending | 4: Test restructure by package + CI jobs |
+| pending | 5: Release v0.4.0 + Bugbot activation note |
+
