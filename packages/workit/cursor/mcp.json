@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "workit": {
+      "command": "bash",
+      "args": [
+        "-lc",
+        "exec \"$HOME/.local/share/workflow-toolkit/packages/workit/scripts/run-cursor-mcp.sh\" \"$0\"",
+        "${workspaceFolder}"
+      ]
+    }
+  }
+}

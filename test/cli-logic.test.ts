@@ -15,9 +15,9 @@ import {
   validateLocale,
   validateTimezone,
   writeWorkspaces,
-} from "../src/cli/logic";
-import { resolveWorkspace } from "../src/core/workspaces";
-import { PRESETS, type ToolkitConfig } from "../src/core/config";
+} from "../packages/workit-cli/src/logic";
+import { resolveWorkspace } from "../packages/workit/src/core/workspaces";
+import { PRESETS, type ToolkitConfig } from "../packages/workit/src/core/config";
 
 const current: ToolkitConfig = {
   locale: "en",

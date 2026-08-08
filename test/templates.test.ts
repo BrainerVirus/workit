@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { readTemplate, writeTemplate, listTemplates } from "../src/core/templates";
+import { readTemplate, writeTemplate, listTemplates } from "../packages/workit/src/core/templates";
 
 const savedEnv = new Map<string, string | undefined>();
 

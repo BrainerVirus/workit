@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { scaffoldVcs, scaffoldYouTrack } from "../src/cli/logic";
+import { scaffoldVcs, scaffoldYouTrack } from "../packages/workit-cli/src/logic";
 
 // ponytail: pins parity between the wizard scaffolds (src/cli/logic.ts) and the bash
 // scripts/init/apply.sh writes — both must produce the same youtrack.json / vcs.json.
@@ -32,7 +32,7 @@ function runApply(action: string, configDir: string): string {
     env[k] = v;
   }
   env.WORKFLOW_TOOLKIT_CONFIG = configDir;
-  const r = spawnSync("bash", ["scripts/init/apply.sh", action, "true"], { cwd: repoRoot, env, encoding: "utf8" });
+  const r = spawnSync("bash", ["packages/workit/scripts/init/apply.sh", action, "true"], { cwd: repoRoot, env, encoding: "utf8" });
   expect(r.status, `${action} failed: ${r.stderr}`).toBe(0);
   return r.stdout;
 }

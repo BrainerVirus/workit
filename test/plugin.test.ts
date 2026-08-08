@@ -9,22 +9,22 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import plugin from "../src/plugin";
-import { WorkflowStateStore } from "../src/state";
+import plugin from "../packages/workit/src/plugin";
+import { WorkflowStateStore } from "../packages/workit/src/state";
 
 const names = [
-  "wf-init",
-  "wf-status",
-  "wf-verify",
-  "wf-commit",
-  "wf-pr",
-  "wf-changelog",
-  "wf-release-notes",
-  "wf-docs-refresh",
-  "wf-handoff",
-  "wf-implement",
-  "wf-meetings",
-  "wf-issue-update",
+  "wk-init",
+  "wk-status",
+  "wk-verify",
+  "wk-commit",
+  "wk-pr",
+  "wk-changelog",
+  "wk-release-notes",
+  "wk-docs-refresh",
+  "wk-handoff",
+  "wk-implement",
+  "wk-meetings",
+  "wk-issue-update",
 ];
 
 describe("plugin registration", () => {
@@ -39,7 +39,7 @@ describe("plugin registration", () => {
     expect(Object.keys(config.command).sort()).toEqual([...names].sort());
     expect(config.skills.paths).toHaveLength(2);
     const normalize = (p: string) => p.split(path.sep).join("/");
-    expect(normalize(config.skills.paths[0])).toEndWith("workflow-toolkit/skills");
+    expect(normalize(config.skills.paths[0])).toEndWith("workit/skills");
     expect(normalize(config.skills.paths[1])).toEndWith("vendor/superpowers/skills");
   });
 
@@ -49,7 +49,7 @@ describe("plugin registration", () => {
       worktree: "/repo",
       serverUrl: new URL("http://localhost"),
     } as never);
-    const skillPath = path.resolve(import.meta.dir, "../skills");
+    const skillPath = path.resolve(import.meta.dir, "../packages/workit/skills");
     const config: Record<string, any> = { skills: { paths: [skillPath] } };
 
     await hooks.config?.(config);
@@ -58,7 +58,7 @@ describe("plugin registration", () => {
     expect(Object.keys(config.command).sort()).toEqual([...names].sort());
     expect(config.skills.paths).toEqual([
       skillPath,
-      path.resolve(import.meta.dir, "../vendor/superpowers/skills"),
+      path.resolve(import.meta.dir, "../packages/workit/vendor/superpowers/skills"),
     ]);
   });
   test("registers native bash deny rules for worktree creation", async () => {
@@ -345,7 +345,7 @@ describe("plugin registration", () => {
         expect(results.workflow_youtrack_verify_token).toEqual({
           ok: false,
           data: null,
-          error: "workflow config missing: youtrack_json, youtrack_token. Run `npx flowkit init` or `/wf-init` to configure.",
+          error: "workflow config missing: youtrack_json, youtrack_token. Run `npx workit init` or `/wk-init` to configure.",
         });
         expect(existsSync(curlSentinel)).toBe(false);
         expect(

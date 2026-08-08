@@ -75,7 +75,7 @@ test("config.sh resolve: workspace match wins over global vcs.json (work -> gitl
   try {
     const env = envWithHome(home);
 
-    const work = run(["scripts/vcs/config.sh", "resolve"], { cwd: path.join(base, "work", "sixbell", "repo"), env });
+    const work = run(["packages/workit/scripts/vcs/config.sh", "resolve"], { cwd: path.join(base, "work", "sixbell", "repo"), env });
     expect(work.status).toBe(0);
     const w = JSON.parse(work.stdout);
     expect(w.ok).toBe(true);
@@ -87,7 +87,7 @@ test("config.sh resolve: workspace match wins over global vcs.json (work -> gitl
     expect(w.issues_provider).toBeNull(); // youtrack workspace: no github issues keys
     expect(w.link_on_pr).toBeNull();
 
-    const personal = run(["scripts/vcs/config.sh", "resolve"], { cwd: path.join(base, "personal", "some-app"), env });
+    const personal = run(["packages/workit/scripts/vcs/config.sh", "resolve"], { cwd: path.join(base, "personal", "some-app"), env });
     expect(personal.status).toBe(0);
     const p = JSON.parse(personal.stdout);
     expect(p.workspace_name).toBe("personal");
@@ -110,7 +110,7 @@ test("config.sh resolve: unmatched cwd falls back to global vcs.json; missing/ma
     const unmatched = path.join(home, "elsewhere");
     mkdirSync(unmatched, { recursive: true });
 
-    const noMatch = run(["scripts/vcs/config.sh", "resolve"], { cwd: unmatched, env });
+    const noMatch = run(["packages/workit/scripts/vcs/config.sh", "resolve"], { cwd: unmatched, env });
     expect(noMatch.status).toBe(0);
     const r = JSON.parse(noMatch.stdout);
     expect(r.workspace_name).toBeNull();
@@ -119,7 +119,7 @@ test("config.sh resolve: unmatched cwd falls back to global vcs.json; missing/ma
     expect(r.link_issues).toBeNull();
 
     writeFileSync(path.join(home, ".config", "workflow-toolkit", "workspaces.json"), "{ nope !!");
-    const malformed = run(["scripts/vcs/config.sh", "resolve"], { cwd: unmatched, env });
+    const malformed = run(["packages/workit/scripts/vcs/config.sh", "resolve"], { cwd: unmatched, env });
     expect(malformed.status).toBe(0);
     expect(JSON.parse(malformed.stdout).workspace_name).toBeNull();
   } finally {
@@ -137,7 +137,7 @@ test("config.sh resolve: WORKFLOW_TOOLKIT_CONFIG dir is honored for vcs.json + w
   const home = mkdtempSync(path.join(os.tmpdir(), "wf-ws-home-"));
   try {
     const env = envWithHome(home, { WORKFLOW_TOOLKIT_CONFIG: cfgDir });
-    const r = run(["scripts/vcs/config.sh", "resolve"], { cwd: path.join(base, "work", "repo"), env });
+    const r = run(["packages/workit/scripts/vcs/config.sh", "resolve"], { cwd: path.join(base, "work", "repo"), env });
     expect(r.status, r.stderr).toBe(0);
     const out = JSON.parse(r.stdout);
     expect(out.workspace_name).toBe("work");
@@ -160,7 +160,7 @@ test("config.sh resolve: WORKFLOW_WORKSPACE_ROOT overrides the cwd", () => {
   try {
     const env = envWithHome(home, { WORKFLOW_WORKSPACE_ROOT: path.join(base, "work", "repo") });
     mkdirSync(path.join(home, "elsewhere"), { recursive: true });
-    const r = run(["scripts/vcs/config.sh", "resolve"], { cwd: path.join(home, "elsewhere"), env });
+    const r = run(["packages/workit/scripts/vcs/config.sh", "resolve"], { cwd: path.join(home, "elsewhere"), env });
     expect(r.status).toBe(0);
     expect(JSON.parse(r.stdout).workspace_name).toBe("work");
   } finally {
@@ -177,7 +177,7 @@ test("config.sh resolve: catchall ** matches a drive-letter WORKFLOW_WORKSPACE_R
   });
   try {
     const env = envWithHome(home, { WORKFLOW_WORKSPACE_ROOT: "D:/a/workflow-toolkit/workflow-toolkit" });
-    const r = run(["scripts/vcs/config.sh", "resolve"], { cwd: repoRoot, env });
+    const r = run(["packages/workit/scripts/vcs/config.sh", "resolve"], { cwd: repoRoot, env });
     expect(r.status, r.stderr).toBe(0);
     expect(JSON.parse(r.stdout).workspace_name).toBe("work");
   } finally {
@@ -202,7 +202,7 @@ test("config.sh load: merges the resolved workspace over global vcs.json", () =>
   try {
     const env = envWithHome(home);
 
-    const matched = run(["scripts/vcs/config.sh", "load"], { cwd: path.join(base, "work", "repo"), env });
+    const matched = run(["packages/workit/scripts/vcs/config.sh", "load"], { cwd: path.join(base, "work", "repo"), env });
     expect(matched.status, matched.stderr).toBe(0);
     const m = JSON.parse(matched.stdout);
     expect(m.ok).toBe(true);
@@ -214,7 +214,7 @@ test("config.sh load: merges the resolved workspace over global vcs.json", () =>
     expect(m.defaultTargetBranch).toBe("main"); // workspace has none -> global
     expect(m.tokenReady).toBe(false);
 
-    const gh = run(["scripts/vcs/config.sh", "load"], { cwd: path.join(base, "personal", "app"), env });
+    const gh = run(["packages/workit/scripts/vcs/config.sh", "load"], { cwd: path.join(base, "personal", "app"), env });
     expect(gh.status, gh.stderr).toBe(0);
     const g = JSON.parse(gh.stdout);
     expect(g.provider).toBe("github");
@@ -225,7 +225,7 @@ test("config.sh load: merges the resolved workspace over global vcs.json", () =>
     expect(g.youtrack_base_url).toBeNull();
 
     mkdirSync(path.join(home, "elsewhere"), { recursive: true });
-    const noMatch = run(["scripts/vcs/config.sh", "load"], { cwd: path.join(home, "elsewhere"), env });
+    const noMatch = run(["packages/workit/scripts/vcs/config.sh", "load"], { cwd: path.join(home, "elsewhere"), env });
     expect(noMatch.status, noMatch.stderr).toBe(0);
     const n = JSON.parse(noMatch.stdout);
     expect(n.provider).toBe("github");
@@ -274,7 +274,7 @@ test("pr-create.sh: missing gh/glab on PATH -> structured error with official in
         WF_PR_CONFIRMED: "true",
         WF_PR_TITLE: "Test title",
       });
-      const r = run(["scripts/pr-create.sh"], { cwd: repoRoot, env });
+      const r = run(["packages/workit/scripts/pr-create.sh"], { cwd: repoRoot, env });
       expect(r.status, `expected exit 1 for missing ${cli}: ${r.stdout} ${r.stderr}`).toBe(1);
       const err = JSON.parse(r.stdout);
       expect(err.ok).toBe(false);
@@ -298,7 +298,7 @@ test("pr-ready-context.sh: VCS Config section reports workspace + provider", () 
   });
   try {
     const env = envWithHome(home); // no token file -> merged-style exits without network
-    const r = run(["scripts/pr-ready-context.sh", "HEAD~1..HEAD"], { cwd: repoRoot, env });
+    const r = run(["packages/workit/scripts/pr-ready-context.sh", "HEAD~1..HEAD"], { cwd: repoRoot, env });
     expect(r.status, r.stderr).toBe(0);
     expect(r.stdout).toContain("workspace: work");
     expect(r.stdout).toContain("provider: gitlab");
@@ -315,7 +315,7 @@ const buildBody = (extra: Record<string, string>, cwd?: string): string => {
     if (v === undefined || /^WORKFLOW_/.test(k)) continue;
     env[k] = v;
   }
-  const r = run(["scripts/pr-create.sh", "--build-body"], {
+  const r = run(["packages/workit/scripts/pr-create.sh", "--build-body"], {
     cwd: cwd ?? repoRoot,
     env: { ...env, ...extra },
   });
@@ -463,7 +463,7 @@ test("pr-create.sh create: cfg-driven wiring emits Closes #N into the real gh in
       WF_PR_TITLE: "Test title",
       WORKFLOW_GH_ISSUE: "42",
     });
-    const r = run(["scripts/pr-create.sh"], { cwd: repoDir, env });
+    const r = run(["packages/workit/scripts/pr-create.sh"], { cwd: repoDir, env });
     expect(r.status, `create failed: ${r.stdout} ${r.stderr}`).toBe(0);
     expect(JSON.parse(r.stdout).ok).toBe(true);
     expect(readFileSync(logFile, "utf8")).toContain("Closes #42");

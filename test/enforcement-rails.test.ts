@@ -7,7 +7,7 @@ import {
   detectImplementationWithoutDesign,
   detectUntestedImplementation,
   detectVerificationClaim,
-} from "../src/core/detector";
+} from "../packages/workit/src/core/detector";
 import {
   BRAINSTORM_TEXT,
   DEBUG_TEXT,
@@ -19,7 +19,7 @@ import {
   shouldInjectReviewReception,
   shouldInjectTdd,
   shouldInjectVerification,
-} from "../src/core/reminder";
+} from "../packages/workit/src/core/reminder";
 
 test("CA-02: verification detector fires on completion claim without check output", () => {
   expect(detectVerificationClaim("All done. The bug is fixed.")).toBe(true);
@@ -178,7 +178,7 @@ test("CA-04: three rails compose on one assistant text, markers distinct", () =>
 });
 
 test("CA-04: all five rails use distinct part tags in plugin.ts", () => {
-  const src = readFileSync(path.join(import.meta.dir, "..", "src", "plugin.ts"), "utf8");
+  const src = readFileSync(path.join(import.meta.dir, "..", "packages", "workit", "src", "plugin.ts"), "utf8");
   const tags = [...src.matchAll(/makePart\([^,\n]+,\s*"([a-z]+)"\)/g)].map((m) => m[1]);
   expect(tags).toContain("vf");
   expect(tags).toContain("tdd");

@@ -2,10 +2,10 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createSddTools } from "../src/tools/sdd";
-import { WorkflowStateStore } from "../src/state";
-import { createFlowTools } from "../src/tools/flow";
-import { buildHandoffPrompt } from "../src/tools/handoff";
+import { createSddTools } from "../packages/workit/src/tools/sdd";
+import { WorkflowStateStore } from "../packages/workit/src/state";
+import { createFlowTools } from "../packages/workit/src/tools/flow";
+import { buildHandoffPrompt } from "../packages/workit/src/tools/handoff";
 
 const posix = (p: string) => p.split(path.sep).join("/");
 

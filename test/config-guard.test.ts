@@ -2,8 +2,8 @@ import { expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { ALL_ITEM_IDS, configGuardError, CONFIG_GAP_MARKER, describeConfigGaps } from "../src/core/config-guard";
-import { createYouTrackTools, readCredentials } from "../src/tools/youtrack";
+import { ALL_ITEM_IDS, configGuardError, CONFIG_GAP_MARKER, describeConfigGaps } from "../packages/workit/src/core/config-guard";
+import { createYouTrackTools, readCredentials } from "../packages/workit/src/tools/youtrack";
 
 const withIsolatedConfig = async (dir: string, fn: () => Promise<void> | void) => {
   const previous = {
@@ -57,7 +57,7 @@ test("configGuardError contains marker, missing ids, and fix path", () => {
   const error = configGuardError(["youtrack_json", "youtrack_token"]);
   expect(error).toContain(CONFIG_GAP_MARKER);
   expect(error).toContain("youtrack_json, youtrack_token");
-  expect(error).toContain("npx flowkit init");
+  expect(error).toContain("npx workit init");
 });
 
 test("youtrack tools return structured config-gap error instead of raw ENOENT", async () => {

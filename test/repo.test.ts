@@ -3,8 +3,8 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, 
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { createRepoTools, normalizeLegacyResult } from "../src/tools/repo";
-import { PLUGIN_ROOT } from "../src/core/scripts";
+import { createRepoTools, normalizeLegacyResult } from "../packages/workit/src/tools/repo";
+import { PLUGIN_ROOT } from "../packages/workit/src/core/scripts";
 
 // Isolate from the developer's global config: tests assume gitflow semantics
 // (PRESETS.gitflow in src/core/config.ts), like CI with no global config.
@@ -455,7 +455,7 @@ test("mutation paths cannot escape ToolContext.directory", async () => {
 });
 
 test("changelog script path is package-owned", () => {
-  const expectedRoot = path.resolve(import.meta.dir, "..");
+  const expectedRoot = path.resolve(import.meta.dir, "..", "packages", "workit");
   const script = path.join(PLUGIN_ROOT, "scripts/changelog/apply-unreleased.py");
   expect(PLUGIN_ROOT).toBe(expectedRoot);
   expect(script.startsWith(`${PLUGIN_ROOT}${path.sep}`)).toBe(true);

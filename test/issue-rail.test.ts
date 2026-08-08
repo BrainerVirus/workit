@@ -2,9 +2,9 @@ import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import plugin from "../src/plugin";
-import { detectInstructionOption } from "../src/core/detector";
-import { ISSUE_RAIL_TEXT, shouldInjectIssueRail } from "../src/core/reminder";
+import plugin from "../packages/workit/src/plugin";
+import { detectInstructionOption } from "../packages/workit/src/core/detector";
+import { ISSUE_RAIL_TEXT, shouldInjectIssueRail } from "../packages/workit/src/core/reminder";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -141,7 +141,7 @@ test("CA-02: no injection without an instruction-labeled option, or when the mar
 });
 
 test("CA-02: 'ir' tag is present and unique across makePart tags in plugin.ts", () => {
-  const src = readFileSync(path.join(root, "src", "plugin.ts"), "utf8");
+  const src = readFileSync(path.join(root, "packages", "workit", "src", "plugin.ts"), "utf8");
   const tags = [...src.matchAll(/makePart\([^,]+(?:,\s*"([^"]+)")?\)/g)]
     .map((m) => m[1] ?? "r");
   expect(tags).toContain("ir");

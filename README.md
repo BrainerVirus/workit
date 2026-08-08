@@ -1,16 +1,17 @@
-# Workflow Toolkit
+# Workit
 
 Multi-platform Superpowers workflow plugin for **Cursor** and **OpenCode**: verify, PR, changelog, commits, SDD implementation, session handoff, YouTrack, and deterministic UI presentation.
 
 | Platform | Path | Version |
 | --- | --- | --- |
-| **OpenCode** | repo root (`package.json`, `src/plugin.ts`) | 0.4.0 |
-| **Cursor** | `cursor/` (MCP + hooks + rules + skills) | 0.4.0 |
-| **Shared** | `scripts/`, `templates/` | — |
+| **OpenCode** | `packages/workit/src/plugin.ts` | 0.4.0 |
+| **Cursor** | `packages/workit/cursor/` (MCP + hooks + rules + skills) | 0.4.0 |
+| **Shared** | `packages/workit/scripts/`, `packages/workit/templates/` | — |
+| **CLI** | `packages/workit-cli/` (Ink wizard, bin `workit`) | 0.4.0 |
 
-Config directory (both platforms): `~/.config/workflow-toolkit/`
+Config directory (both platforms): `~/.config/workflow-toolkit/` (kept as-is for install stability).
 
-[![npm version](https://img.shields.io/npm/v/flowkit)](https://www.npmjs.com/package/flowkit)
+[![npm version](https://img.shields.io/npm/v/@brainervirus/workit)](https://www.npmjs.com/package/@brainervirus/workit)
 [![CI](https://img.shields.io/github/actions/workflow/status/BrainerVirus/workflow-toolkit/ci.yml?branch=main&label=CI)](https://github.com/BrainerVirus/workflow-toolkit/actions)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
@@ -21,8 +22,8 @@ Config directory (both platforms): `~/.config/workflow-toolkit/`
 Requires bun (`curl -fsSL https://bun.sh/install | bash`).
 
 ```bash
-npm i flowkit
-npx flowkit init
+npm i @brainervirus/workit-cli
+npx workit init
 ```
 
 **Local development** — use the repo path instead; no package cache, disk is the source of truth:
@@ -35,14 +36,14 @@ bun i
 
 ## Usage
 
-Manual setup for those who skipped the wizard (`npx flowkit init`):
+Manual setup for those who skipped the wizard (`npx workit init`):
 
 **OpenCode** — reference the plugin entry in `opencode.json` / `opencode.jsonc` (`~/.config/opencode/opencode.json`):
 
 ```json
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugin": ["flowkit"]
+  "plugin": ["@brainervirus/workit"]
 }
 ```
 
@@ -51,7 +52,7 @@ Local dev variant (absolute path to this repo):
 ```json
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugin": ["file:///path/to/workflow-toolkit/src/plugin.ts"]
+  "plugin": ["file:///path/to/workflow-toolkit/packages/workit/src/plugin.ts"]
 }
 ```
 
@@ -60,15 +61,15 @@ Local dev variant (absolute path to this repo):
 ```json
 {
   "mcpServers": {
-    "flowkit": {
+    "workit": {
       "command": "bun",
-      "args": ["run", "node_modules/flowkit/cursor/mcp/server.ts"]
+      "args": ["run", "node_modules/@brainervirus/workit/cursor/mcp/server.ts"]
     }
   }
 }
 ```
 
-Local dev variant: point `WORKFLOW_TOOLKIT_ROOT` at this repo (the MCP launcher `scripts/run-cursor-mcp.sh` resolves it), or run the install script from the repo.
+Local dev variant: point `WORKFLOW_TOOLKIT_ROOT` at this repo's `packages/workit` (the MCP launcher `scripts/run-cursor-mcp.sh` resolves it), or run the install script from the repo.
 
 ## Requirements
 
@@ -91,13 +92,18 @@ export PATH="$HOME/.bun/bin:$PATH"
 
 ```
 workflow-toolkit/
-├── src/                 # OpenCode plugin (TypeScript)
-├── scripts/             # shared shell/python + installers
-├── templates/           # execution + superpowers contracts
-├── skills/              # OpenCode-native skills
-├── cursor/              # Cursor plugin (MCP, hooks, rules, skills)
-├── .github/workflows/   # CI + release
-└── test/                # bun tests (OpenCode plugin)
+├── packages/
+│   ├── workit/             # @brainervirus/workit — plugin, skills, commands, MCP
+│   │   ├── src/            # OpenCode plugin (TypeScript)
+│   │   ├── skills/         # OpenCode-native skills (wk-*)
+│   │   ├── commands/       # OpenCode commands (wk-*)
+│   │   ├── cursor/         # Cursor plugin (MCP, hooks, rules, skills)
+│   │   ├── scripts/        # shared shell/python + installers
+│   │   ├── templates/      # execution + superpowers contracts
+│   │   └── vendor/         # vendored superpowers skills
+│   └── workit-cli/         # @brainervirus/workit-cli — Ink setup wizard (bin: workit)
+├── .github/workflows/      # CI + release
+└── test/                   # bun tests (OpenCode plugin)
 ```
 
 ## CI / local checks
@@ -150,4 +156,3 @@ Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 - **Superpowers** — the vendored `vendor/superpowers/skills/` (brainstorming, writing-plans, executing-plans, TDD, …) is by [Adam Wiggins](https://github.com/obra), vendored with attribution.
 - **Ponytail mode** — the lazy-engineer skill (ponytail, ponytail-review, ponytail-audit, …) by [Dietrich Gebert](https://github.com/dietrichgebert), active in this project's OpenCode config and installed as a shared skill.
-

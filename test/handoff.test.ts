@@ -3,8 +3,8 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync }
 import { spawnSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
-import { adaptPluginHandoffClient, buildHandoffPrompt, createHandoffTools, handoffSession } from "../src/tools/handoff";
-import { WorkflowStateStore } from "../src/state";
+import { adaptPluginHandoffClient, buildHandoffPrompt, createHandoffTools, handoffSession } from "../packages/workit/src/tools/handoff";
+import { WorkflowStateStore } from "../packages/workit/src/state";
 
 const posix = (p: string) => p.split(path.sep).join("/");
 
@@ -156,7 +156,7 @@ test("missing created session ID reports the create stage", async () => {
 });
 
 test("native handoff resolves package context, records paths, and seeds from ToolContext", async () => {
-  const root = mkdtempSync(path.join(os.tmpdir(), "wf-handoff-native-"));
+  const root = mkdtempSync(path.join(os.tmpdir(), "wk-handoff-native-"));
   spawnSync("git", ["init", "-q"], { cwd: root });
   spawnSync("git", ["config", "user.email", "t@t"], { cwd: root });
   spawnSync("git", ["config", "user.name", "T"], { cwd: root });
@@ -221,7 +221,7 @@ test("native handoff resolves package context, records paths, and seeds from Too
 });
 
 test("native handoff ignores a hallucinated stay argument when the message has no --stay flag", async () => {
-  const root = mkdtempSync(path.join(os.tmpdir(), "wf-handoff-stay-"));
+  const root = mkdtempSync(path.join(os.tmpdir(), "wk-handoff-stay-"));
   mkdirSync(path.join(root, "docs", "x"), { recursive: true });
   mkdirSync(path.join(root, "docs", "x", "sdd"), { recursive: true });
   writeFileSync(path.join(root, "docs/x/spec.md"), "# X\n\n**Branch:** `feature/x`\n");
@@ -254,7 +254,7 @@ test("native handoff ignores a hallucinated stay argument when the message has n
     client,
     new WorkflowStateStore(),
   ).workflow_handoff_session.execute(
-    { message: "Load the wf-handoff skill and follow it.", stay: true } as never,
+    { message: "Load the wk-handoff skill and follow it.", stay: true } as never,
     { directory: root, worktree: root, sessionID: "parent" } as never,
   );
 
@@ -268,7 +268,7 @@ test("native handoff ignores a hallucinated stay argument when the message has n
 });
 
 test("native handoff resolves relative paths from the session directory", async () => {
-  const root = mkdtempSync(path.join(os.tmpdir(), "wf-handoff-dir-"));
+  const root = mkdtempSync(path.join(os.tmpdir(), "wk-handoff-dir-"));
   try {
     mkdirSync(path.join(root, "docs", "x"), { recursive: true });
     mkdirSync(path.join(root, "docs", "x", "sdd"), { recursive: true });
@@ -355,7 +355,7 @@ test("plugin client adapter publishes the native session selection event", async
 });
 
 test("handoff context is read-only when the SDD workspace is absent", async () => {
-  const root = mkdtempSync(path.join(os.tmpdir(), "wf-handoff-readonly-"));
+  const root = mkdtempSync(path.join(os.tmpdir(), "wk-handoff-readonly-"));
   try {
     mkdirSync(path.join(root, "docs", "x"), { recursive: true });
     writeFileSync(path.join(root, "docs/x/spec.md"), "# X\n**Branch:** `feature/x`\n");
@@ -374,7 +374,7 @@ test("handoff context is read-only when the SDD workspace is absent", async () =
 });
 
 test("handoff resolves a matching local spec and plan when slash arguments are empty", () => {
-  const root = mkdtempSync(path.join(os.tmpdir(), "wf-handoff-matching-pair-"));
+  const root = mkdtempSync(path.join(os.tmpdir(), "wk-handoff-matching-pair-"));
   try {
     mkdirSync(path.join(root, "docs", "2026-07-14-mfe-tasks-base"), { recursive: true });
     writeFileSync(
@@ -386,7 +386,7 @@ test("handoff resolves a matching local spec and plan when slash arguments are e
       "# MFE Tasks Base Plan\n\n**Spec:** `docs/2026-07-14-mfe-tasks-base/spec.md`\n**Branch:** `feature/mfe-tasks-base`\n\n**Goal:** Build the MFE.\n\n### Task 1: Setup\n\n- [ ] **Step 1:** Work\n",
     );
 
-    const result = buildHandoffPrompt(root, "Load the wf-handoff skill and follow it.");
+    const result = buildHandoffPrompt(root, "Load the wk-handoff skill and follow it.");
     expect("error" in result).toBe(false);
     if (!("error" in result)) {
       expect(posix(result.spec)).toBe("docs/2026-07-14-mfe-tasks-base/spec.md");
@@ -396,7 +396,7 @@ test("handoff resolves a matching local spec and plan when slash arguments are e
 });
 
 test("handoff matching-pair ties resolve deterministically", () => {
-  const root = mkdtempSync(path.join(os.tmpdir(), "wf-handoff-pair-tie-"));
+  const root = mkdtempSync(path.join(os.tmpdir(), "wk-handoff-pair-tie-"));
   try {
     const specs = path.join(root, "docs");
     mkdirSync(specs, { recursive: true });
@@ -421,7 +421,7 @@ test("handoff matching-pair ties resolve deterministically", () => {
     const sameTime = new Date("2026-07-14T12:00:00Z");
     for (const file of files) utimesSync(file, sameTime, sameTime);
 
-    const result = buildHandoffPrompt(root, "Load the wf-handoff skill and follow it.");
+    const result = buildHandoffPrompt(root, "Load the wk-handoff skill and follow it.");
     expect("error" in result).toBe(false);
     if (!("error" in result)) {
       expect(posix(result.spec)).toBe("docs/2026-07-14-alpha/spec.md");
@@ -431,7 +431,7 @@ test("handoff matching-pair ties resolve deterministically", () => {
 });
 
 test("handoff collect fails before prompt when docs validation fails", () => {
-  const root = mkdtempSync(path.join(os.tmpdir(), "wf-handoff-validate-fail-"));
+  const root = mkdtempSync(path.join(os.tmpdir(), "wk-handoff-validate-fail-"));
   try {
     mkdirSync(path.join(root, "docs", "bad"), { recursive: true });
     const spec = "docs/bad/spec.md";
@@ -448,7 +448,7 @@ test("handoff collect fails before prompt when docs validation fails", () => {
 });
 
 test("handoff hard-fails when flow gates are not approved", async () => {
-  const root = mkdtempSync(path.join(os.tmpdir(), "wf-handoff-gate-"));
+  const root = mkdtempSync(path.join(os.tmpdir(), "wk-handoff-gate-"));
   try {
     mkdirSync(path.join(root, "docs", "x"), { recursive: true });
     writeFileSync(path.join(root, "docs/x/spec.md"), "# X\n\n**Branch:** `feature/x`\n");
@@ -472,7 +472,7 @@ test("handoff hard-fails when flow gates are not approved", async () => {
 });
 
 test("handoff proceeds when flow gates are approved", async () => {
-  const root = mkdtempSync(path.join(os.tmpdir(), "wf-handoff-gate-ok-"));
+  const root = mkdtempSync(path.join(os.tmpdir(), "wk-handoff-gate-ok-"));
   try {
     mkdirSync(path.join(root, "docs", "x"), { recursive: true });
     mkdirSync(path.join(root, "docs", "x", "sdd"), { recursive: true });
@@ -513,7 +513,7 @@ test("handoff proceeds when flow gates are approved", async () => {
 
 
 test("handoff rejects multiple specs or plans in the message", () => {
-  const root = mkdtempSync(path.join(os.tmpdir(), "wf-handoff-multi-"));
+  const root = mkdtempSync(path.join(os.tmpdir(), "wk-handoff-multi-"));
   try {
     const result = buildHandoffPrompt(
       root,
@@ -525,7 +525,7 @@ test("handoff rejects multiple specs or plans in the message", () => {
 });
 
 test("handoff reports missing feature docs", () => {
-  const root = mkdtempSync(path.join(os.tmpdir(), "wf-handoff-empty-"));
+  const root = mkdtempSync(path.join(os.tmpdir(), "wk-handoff-empty-"));
   try {
     const noDocs = buildHandoffPrompt(root, "no paths here");
     expect("error" in noDocs).toBe(true);

@@ -2,8 +2,8 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createSddTools } from "../src/tools/sdd";
-import { WorkflowStateStore } from "../src/state";
+import { createSddTools } from "../packages/workit/src/tools/sdd";
+import { WorkflowStateStore } from "../packages/workit/src/state";
 
 test("workflow_docs_validate includes quality findings", async () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "wf-quality-"));

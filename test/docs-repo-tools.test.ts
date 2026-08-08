@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { createDocsRepoTools } from "../src/tools/docs-repo";
+import { createDocsRepoTools } from "../packages/workit/src/tools/docs-repo";
 
 const git = (cwd: string, args: string[]) => spawnSync("git", args, { cwd, encoding: "utf8" });
 const makeRepo = () => {
@@ -32,7 +32,7 @@ test("docs_list reports specs; promote copies files", async () => {
   const work = makeRepo();
   try {
     process.env.WORKFLOW_DOCS_REPO_CONFIG = path.join(os.tmpdir(), "wf-docsrepo-tool-config2.json");
-    const { writeDocsRepoConfig } = await import("../src/core/docs-repo");
+    const { writeDocsRepoConfig } = await import("../packages/workit/src/core/docs-repo");
     writeDocsRepoConfig(repo);
     mkdirSync(path.join(work, "docs", "zeta"), { recursive: true });
     writeFileSync(path.join(work, "docs/zeta/spec.md"),

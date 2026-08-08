@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { WorkflowStateStore } from "../src/state";
+import { WorkflowStateStore } from "../packages/workit/src/state";
 
 test("set stores only the workflow paths", () => {
   const state = new WorkflowStateStore();

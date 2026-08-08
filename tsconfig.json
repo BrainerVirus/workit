@@ -6,9 +6,14 @@
     "strict": true,
     "noEmit": true,
     "allowJs": true,
+    "allowImportingTsExtensions": true,
     "skipLibCheck": true,
     "types": ["node", "bun"],
     "jsx": "react-jsx"
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx", "test/**/*.ts"]
+  "include": [
+    "test/**/*.ts",
+    "packages/workit/src/**/*.ts",
+    "packages/workit-cli/src/**/*.tsx"
+  ]
 }

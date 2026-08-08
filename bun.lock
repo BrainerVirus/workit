@@ -4,14 +4,6 @@
   "workspaces": {
     "": {
       "name": "workflow-toolkit-opencode",
-      "dependencies": {
-        "@inkjs/ui": "2.0.0",
-        "@modelcontextprotocol/sdk": "^1.12.0",
-        "@opencode-ai/plugin": "1.17.7",
-        "ink": "7.1.1",
-        "react": "19.2.8",
-        "zod": "^3.24.0",
-      },
       "devDependencies": {
         "@types/bun": "1.3.14",
         "@types/node": "22.13.9",
@@ -19,9 +11,35 @@
         "typescript": "5.8.2",
       },
     },
+    "packages/workit": {
+      "name": "@brainervirus/workit",
+      "version": "0.4.0",
+      "dependencies": {
+        "@modelcontextprotocol/sdk": "^1.12.0",
+        "@opencode-ai/plugin": "1.17.7",
+        "zod": "^3.24.0",
+      },
+    },
+    "packages/workit-cli": {
+      "name": "@brainervirus/workit-cli",
+      "version": "0.4.0",
+      "bin": {
+        "workit": "./src/index.tsx",
+      },
+      "dependencies": {
+        "@brainervirus/workit": "workspace:*",
+        "@inkjs/ui": "2.0.0",
+        "ink": "7.1.1",
+        "react": "19.2.8",
+      },
+    },
   },
   "packages": {
     "@alcalzone/ansi-tokenize": ["@alcalzone/ansi-tokenize@0.3.0", "", { "dependencies": { "ansi-styles": "^6.2.1", "is-fullwidth-code-point": "^5.0.0" } }, "sha512-p+CMKJ93HFmLkjXKlXiVGlMQEuRb6H0MokBSwUsX+S6BRX8eV5naFZpQJFfJHjRZY0Hmnqy1/r6UWl3x+19zYA=="],
+
+    "@brainervirus/workit": ["@brainervirus/workit@workspace:packages/workit"],
+
+    "@brainervirus/workit-cli": ["@brainervirus/workit-cli@workspace:packages/workit-cli"],
 
     "@hono/node-server": ["@hono/node-server@2.1.0", "", { "peerDependencies": { "hono": "^4" } }, "sha512-XovyyCCnBzW+zKu+z/zq8hwNs4KOR5rEMAOxo2f40Q5xoOI37IMm6MIg2COOUtUApo0i6850MTBKH2u4QLGIqg=="],
 

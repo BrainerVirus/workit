@@ -2,8 +2,8 @@ import { expect, test } from "bun:test";
 import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { findActiveSubagentDrivenPlans, detectConfigGapError, detectBacktickDocRefs, detectRawDocDelivery } from "../src/core/detector";
-import { shouldInjectSddReminder, SDD_REMINDER_TEXT, CONFIG_GUARD_TEXT, shouldInjectConfigGuard, DOC_DELIVERY_TEXT, DOC_RENDER_TEXT, shouldInjectDocRender, REMINDER_TEXT } from "../src/core/reminder";
+import { findActiveSubagentDrivenPlans, detectConfigGapError, detectBacktickDocRefs, detectRawDocDelivery } from "../packages/workit/src/core/detector";
+import { shouldInjectSddReminder, SDD_REMINDER_TEXT, CONFIG_GUARD_TEXT, shouldInjectConfigGuard, DOC_DELIVERY_TEXT, DOC_RENDER_TEXT, shouldInjectDocRender, REMINDER_TEXT } from "../packages/workit/src/core/reminder";
 
 const writeFlow = (root: string, slug: string, flow: unknown) => {
   const dir = path.join(root, "docs", slug, "sdd");
@@ -110,7 +110,7 @@ test("CA-06: contract reminder carries the superpowers self-review ritual line",
 
 test("CA-03: config-gap marker in assistant text → detector true, guard injects", () => {
   const assistant =
-    "Error: workflow config missing: youtrack_json. Run `npx flowkit init` or `/wf-init` to configure.";
+    "Error: workflow config missing: youtrack_json. Run `npx workit init` or `/wk-init` to configure.";
   expect(detectConfigGapError(assistant)).toBe(true);
   expect(shouldInjectConfigGuard("plain user message")).toBe(true);
 });
@@ -134,7 +134,7 @@ test("CA-05: fail-closed — detector never throws on empty/plain input", () => 
 test("CA-04: CONFIG_GUARD_TEXT asks a native question with exactly three options", () => {
   expect(CONFIG_GUARD_TEXT).toContain("question");
   expect(CONFIG_GUARD_TEXT).toContain("configure only what's missing");
-  expect(CONFIG_GUARD_TEXT).toContain("npx flowkit init");
+  expect(CONFIG_GUARD_TEXT).toContain("npx workit init");
   expect(CONFIG_GUARD_TEXT).toContain("skip");
 });
 

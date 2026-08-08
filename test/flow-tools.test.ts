@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createFlowTools } from "../src/tools/flow";
+import { createFlowTools } from "../packages/workit/src/tools/flow";
 
 const COMPLIANT_SPEC =
   "# X\n\n**Branch:** `feature/x`\n\n## Context\n\n## Goals\n\n## Non-goals\n\n## Architecture\n\n## Acceptance criteria\n\n- CA-01: test\n";

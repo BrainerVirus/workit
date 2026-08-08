@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { qualitySpec } from "../src/core/docs-validate";
+import { qualitySpec } from "../packages/workit/src/core/docs-validate";
 
 const GOOD = `# Spec
 
@@ -119,7 +119,7 @@ test("prose mentioning workflow/format/scope does not false-positive", () => {
 
 ## Context
 
-Extends the workflow-toolkit and its code formatting rules; out of scope items are listed below.
+Extends the workit and its code formatting rules; out of scope items are listed below.
 
 ## Goals
 

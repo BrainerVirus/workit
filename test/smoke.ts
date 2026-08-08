@@ -3,10 +3,10 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import plugin from "../src/plugin";
-import { createRepoTools } from "../src/tools/repo";
-import { createSddTools } from "../src/tools/sdd";
-import { WorkflowStateStore } from "../src/state";
+import plugin from "../packages/workit/src/plugin";
+import { createRepoTools } from "../packages/workit/src/tools/repo";
+import { createSddTools } from "../packages/workit/src/tools/sdd";
+import { WorkflowStateStore } from "../packages/workit/src/state";
 
 const repository = (branch: string) => {
   const root = mkdtempSync(path.join(os.tmpdir(), "wf-smoke-"));
@@ -144,8 +144,8 @@ test("plugin registers without a Cursor runtime path", async () => {
     await hooks.config?.(config);
     expect(Object.keys(config.command)).toHaveLength(12);
     expect(config.skills.paths).toEqual([
-      path.resolve(import.meta.dir, "../skills"),
-      path.resolve(import.meta.dir, "../vendor/superpowers/skills"),
+      path.resolve(import.meta.dir, "../packages/workit/skills"),
+      path.resolve(import.meta.dir, "../packages/workit/vendor/superpowers/skills"),
     ]);
     expect(Object.keys(hooks.tool ?? {})).toHaveLength(42);
   } finally {

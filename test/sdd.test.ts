@@ -3,8 +3,8 @@ import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { createSddTools } from "../src/tools/sdd";
-import { WorkflowStateStore } from "../src/state";
+import { createSddTools } from "../packages/workit/src/tools/sdd";
+import { WorkflowStateStore } from "../packages/workit/src/state";
 
 // Isolate from the developer's global config: tests assume gitflow semantics
 // (PRESETS.gitflow in src/core/config.ts), like CI with no global config.

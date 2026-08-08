@@ -11,7 +11,7 @@ import {
   postUpdate,
   verifyYouTrackToken,
   type YouTrackScripts,
-} from "../src/core/youtrack";
+} from "../packages/workit/src/core/youtrack";
 
 const cfg = (overrides: Record<string, unknown> = {}) => ({
   baseUrl: "https://yt.example.test",
@@ -255,7 +255,7 @@ test("real api.sh rejects writes without WORKFLOW_YT_WRITE", () => {
   // The guard must fail closed BEFORE any HTTP call. We point the config at a
   // nonexistent file so even an "allowed" write can never reach the real API.
   const { spawnSync } = require("node:child_process") as typeof import("node:child_process");
-  const script = path.join(path.resolve(import.meta.dir, ".."), "scripts/youtrack/api.sh");
+  const script = path.join(path.resolve(import.meta.dir, ".."), "packages/workit/scripts/youtrack/api.sh");
   const env = (write: string) => ({
     WORKFLOW_YT_WRITE: write,
     WORKFLOW_YOUTRACK_CONFIG: "/nonexistent/youtrack.json",

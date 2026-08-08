@@ -1,0 +1,34 @@
+{
+  "name": "@brainervirus/workit-cli",
+  "version": "0.4.0",
+  "private": false,
+  "description": "Workit interactive setup wizard (Ink TUI)",
+  "license": "MIT",
+  "keywords": ["opencode", "cursor", "workflow", "cli", "setup"],
+  "bugs": {
+    "url": "https://github.com/BrainerVirus/workflow-toolkit/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/BrainerVirus/workflow-toolkit.git"
+  },
+  "files": [
+    "src/"
+  ],
+  "type": "module",
+  "bin": {
+    "workit": "./src/index.tsx"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@brainervirus/workit": "^0.4.0",
+    "@inkjs/ui": "2.0.0",
+    "ink": "7.1.1",
+    "react": "19.2.8"
+  }
+}

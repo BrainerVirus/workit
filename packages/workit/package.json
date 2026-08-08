@@ -1,0 +1,43 @@
+{
+  "name": "@brainervirus/workit",
+  "version": "0.4.0",
+  "private": false,
+  "description": "Workit — workflow rails for agentic coding: specs, plans, YouTrack, CI-gated commits",
+  "license": "MIT",
+  "keywords": ["opencode", "cursor", "workflow", "mcp", "youTrack", "agent"],
+  "bugs": {
+    "url": "https://github.com/BrainerVirus/workflow-toolkit/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/BrainerVirus/workflow-toolkit.git"
+  },
+  "files": [
+    "src/",
+    "scripts/",
+    "skills/",
+    "commands/",
+    "cursor/",
+    "vendor/superpowers/skills/",
+    "templates/",
+    "README.md",
+    "LICENSE"
+  ],
+  "type": "module",
+  "main": "./src/plugin.ts",
+  "exports": {
+    ".": "./src/plugin.ts",
+    "./src/*": "./src/*"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "@opencode-ai/plugin": "1.17.7",
+    "zod": "^3.24.0"
+  }
+}

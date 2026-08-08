@@ -2,8 +2,8 @@ import { expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { fail, ok, resolveInside, run } from "../src/core";
-import { WorkflowStateStore } from "../src/state";
+import { fail, ok, resolveInside, run } from "../packages/workit/src/core";
+import { WorkflowStateStore } from "../packages/workit/src/state";
 
 test("result envelope is stable", () => {
   expect(ok({ value: 1 })).toEqual({ ok: true, data: { value: 1 }, error: null });
@@ -70,8 +70,8 @@ test("session state is unchanged by later caller mutation", () => {
 });
 
 test("copied runtime cannot redirect assets or workspace through Cursor environment", () => {
-  const pluginRootSource = readFileSync(path.resolve(import.meta.dir, "../src/core/scripts.ts"), "utf8");
-  const workspaceSource = readFileSync(path.resolve(import.meta.dir, "../src/core/scripts.ts"), "utf8");
+  const pluginRootSource = readFileSync(path.resolve(import.meta.dir, "../packages/workit/src/core/scripts.ts"), "utf8");
+  const workspaceSource = readFileSync(path.resolve(import.meta.dir, "../packages/workit/src/core/scripts.ts"), "utf8");
   expect(pluginRootSource).not.toContain("WORKFLOW_TOOLKIT_ROOT");
   expect(workspaceSource).not.toContain("WORKFLOW_WORKSPACE_ROOT");
 });
