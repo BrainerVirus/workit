@@ -4,7 +4,7 @@
 set -euo pipefail
 
 CONFIG="${WORKFLOW_YOUTRACK_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/workflow-toolkit/youtrack.json}"
-TOKEN_NAME="${WORKFLOW_YT_TOKEN_NAME:-workflow-toolkit}"
+TOKEN_NAME="${WORKFLOW_YT_TOKEN_NAME:-flowkit}"
 
 python3 - "$CONFIG" "$TOKEN_NAME" <<'PY'
 import json, sys
@@ -13,7 +13,7 @@ from urllib.parse import quote, urlencode
 
 cfg_path = Path(sys.argv[1]).expanduser()
 token_name = sys.argv[2]
-default_desc = "OpenCode workflow-toolkit — /wf-issue-update and /wf-meetings"
+default_desc = "OpenCode flowkit — /wf-issue-update and /wf-meetings"
 
 def load_cfg():
     if not cfg_path.is_file():
@@ -27,7 +27,7 @@ desc = defaults.get("description") or default_desc
 scopes = defaults.get("scopes") or ["YouTrack"]
 base = (cfg.get("baseUrl") or "https://enghouseamg.youtrack.cloud").rstrip("/")
 token_file = cfg.get("tokenFile") or str(cfg_path.parent / "youtrack.token")
-tab = defaults.get("profileTab") or "account.security"
+tab = defaults.get("profileTab") or "account-security"
 
 create_url = f"{base}/users/me?{urlencode({'tab': tab}, quote_via=quote)}"
 docs_url = "https://www.jetbrains.com/help/youtrack/cloud/manage-permanent-token.html"

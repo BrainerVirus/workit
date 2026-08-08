@@ -113,7 +113,7 @@ test("scaffoldYouTrack writes youtrack.json + placeholder token + token URL", ()
   const dir = mkdtempSync(path.join(os.tmpdir(), "wf-cli-logic-"));
   try {
     const s = scaffoldYouTrack(dir, "https://youtrack.example.com", { locale: "es-CL", timezone: "America/Santiago" });
-    expect(s.tokenCreateUrl).toBe("https://youtrack.example.com/users/me?tab=account.security");
+    expect(s.tokenCreateUrl).toBe("https://youtrack.example.com/users/me?tab=account-security");
     const cfg = JSON.parse(readFileSync(s.youtrackJson, "utf8"));
     expect(cfg.baseUrl).toBe("https://youtrack.example.com");
     expect(cfg.locale).toBe("es-CL");
