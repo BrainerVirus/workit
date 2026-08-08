@@ -1,11 +1,286 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
-import { runScript, runScriptJson } from "./scripts";
+import { spawnSync } from "node:child_process";
 import { readTemplate } from "./templates";
-import { PLUGIN_ROOT } from "./scripts";
 import { resolveWorkspaceRoot } from "./scripts";
 
 const ISSUE_RE = /^[A-Z]+-\d+$/;
+const TOKEN_PLACEHOLDER = "YOUR_TOKEN_HERE";
+
+// Port of scripts/youtrack/config.sh chain: WORKFLOW_YOUTRACK_CONFIG ->
+// XDG_CONFIG_HOME / HOME .config + workflow-toolkit/youtrack.json.
+export const youTrackConfigPath = (): string =>
+  process.env.WORKFLOW_YOUTRACK_CONFIG ??
+  path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config"), "workflow-toolkit", "youtrack.json");
+
+const youTrackTokenModeOk = (p: string): boolean => {
+  if (process.platform === "win32") return true;
+  const mode = fs.statSync(p).mode & 0o777;
+  return mode === 0o600;
+};
+
+function readYouTrackConfig(required: boolean): { config: Record<string, any>; path: string } | { error: string } {
+  const cfgPath = youTrackConfigPath();
+  if (!fs.existsSync(cfgPath)) {
+    return required ? { error: "ERROR: missing youtrack.json" } : { config: {}, path: cfgPath };
+  }
+  try {
+    const config = JSON.parse(fs.readFileSync(cfgPath, "utf8")) as Record<string, any>;
+    return { config, path: cfgPath };
+  } catch {
+    return { error: "invalid youtrack.json" };
+  }
+}
+
+/** Load + redact youtrack.json; validates the token file like youtrack/config.sh load. */
+export function youTrackConfigLoad(): { data: Record<string, any> } | { error: string } {
+  const loaded = readYouTrackConfig(true);
+  if ("error" in loaded) return loaded;
+  const cfgPath = loaded.path;
+  const tokenFile = String(loaded.config.tokenFile ?? "");
+  const tokenPath = tokenFile
+    ? (path.isAbsolute(tokenFile) ? path.resolve(tokenFile) : path.resolve(process.cwd(), tokenFile))
+    : "";
+  if (!tokenPath || !fs.existsSync(tokenPath)) {
+    return { error: "missing youtrack.token" };
+  }
+  if (!youTrackTokenModeOk(tokenPath)) {
+    return { error: "youtrack.token mode must be 0600" };
+  }
+  const token = fs.readFileSync(tokenPath, "utf8").trim();
+  if (!token || token === TOKEN_PLACEHOLDER || token.startsWith(TOKEN_PLACEHOLDER)) {
+    return { error: "token file still placeholder — edit locally, then /wk-status" };
+  }
+  const redacted: Record<string, any> = { ...loaded.config };
+  delete redacted.tokenFile;
+  redacted.tokenPresent = true;
+  redacted.configPath = path.resolve(cfgPath);
+  redacted.tokenPath = path.resolve(tokenPath);
+  return { data: redacted };
+}
+
+function tzParts(date: Date, tz: string): { y: string; m: string; d: string; hour: string; minute: string } {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+  }).formatToParts(date);
+  const map = Object.fromEntries(parts.map((p) => [p.type, p.value]));
+  return { y: map.year, m: map.month, d: map.day, hour: map.hour, minute: map.minute };
+}
+
+/** Port of scripts/youtrack/greeting.sh. */
+export function youTrackGreeting(configOverride?: string): { stdout: string; exitCode: number; stderr: string } {
+  const cfgPath = configOverride ?? youTrackConfigPath();
+  try {
+    const config = JSON.parse(fs.readFileSync(cfgPath, "utf8")) as Record<string, any>;
+    const tz = String(config.timezone ?? "America/Santiago");
+    const now = new Date();
+    const { y, m, d, hour, minute } = tzParts(now, tz);
+    const cutoff = String(config.greetingCutoff ?? "12:00").split(":");
+    const cutoffHour = Number(cutoff[0]);
+    const cutoffMinute = Number(cutoff[1] ?? 0);
+    const greetings = (config.greetings ?? {}) as Record<string, string>;
+    const isMorning = Number(hour) < cutoffHour || (Number(hour) === cutoffHour && Number(minute) < cutoffMinute);
+    const greeting = isMorning
+      ? greetings.morning ?? "buenos días"
+      : greetings.afternoon ?? "buenas tardes";
+    const mention = String(config.defaultMention ?? "Alejandra.Flores");
+    void y; void m; void d;
+    return { stdout: `@${mention} Hola, ${greeting}.\n`, exitCode: 0, stderr: "" };
+  } catch (err) {
+    return { stdout: "", exitCode: 1, stderr: err instanceof Error ? err.message : "greeting failed" };
+  }
+}
+
+/** Port of scripts/youtrack/parse-duration.sh. */
+export function youTrackParseDuration(text: string): { data: { minutes: number; text: string } } | { error: string } {
+  const lower = String(text).toLowerCase().trim();
+  let total = 0;
+  for (const match of lower.matchAll(/(\d+)\s*h/g)) total += Number(match[1]) * 60;
+  for (const match of lower.matchAll(/(\d+)\s*m/g)) total += Number(match[1]);
+  if (total === 0 && /^\d+$/.test(lower)) total = Number(lower);
+  if (total <= 0) return { error: "could not parse duration" };
+  return { data: { minutes: total, text: String(text).trim() } };
+}
+
+/** Port of scripts/youtrack/work-date-ms.sh — resolve work-item date as epoch ms. */
+export function youTrackWorkDateMs(dateRaw: string): { data: { dateMs: number; timezone: string; localDate: string } } | { error: string } {
+  const cfgPath = youTrackConfigPath();
+  let tz = "America/Santiago";
+  try {
+    const config = JSON.parse(fs.readFileSync(cfgPath, "utf8")) as Record<string, any>;
+    tz = String(config.timezone ?? "America/Santiago");
+  } catch { /* defaults */ }
+  const raw = dateRaw || "auto";
+  try {
+    if (raw === "auto" || !raw) {
+      const now = new Date();
+      const { y, m, d } = tzParts(now, tz);
+      const dateMs = Math.floor(Date.parse(`${y}-${m}-${d}T00:00:00`) / 86400000) * 86400000;
+      return { data: { dateMs, timezone: tz, localDate: `${y}-${m}-${d}` } };
+    }
+    if (/^\d+$/.test(raw)) {
+      const dt = new Date(Number(raw));
+      const { y, m, d } = tzParts(dt, tz);
+      return { data: { dateMs: Number(raw), timezone: tz, localDate: `${y}-${m}-${d}` } };
+    }
+    const [y, m, d] = raw.split("-").map(Number);
+    const dateMs = Math.floor(Date.parse(`${y}-${m}-${d}T00:00:00`) / 86400000) * 86400000;
+    return { data: { dateMs, timezone: tz, localDate: `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}` } };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : "could not resolve date" };
+  }
+}
+
+const youTrackToken = (): { token: string; base: string } | { error: string } => {
+  const loaded = readYouTrackConfig(true);
+  if ("error" in loaded) return loaded;
+  const tokenFile = String(loaded.config.tokenFile ?? "");
+  const tokenPath = tokenFile
+    ? (path.isAbsolute(tokenFile) ? path.resolve(tokenFile) : path.resolve(process.cwd(), tokenFile))
+    : "";
+  if (!tokenPath || !fs.existsSync(tokenPath)) return { error: "missing youtrack.token" };
+  if (!youTrackTokenModeOk(tokenPath)) return { error: "youtrack.token mode must be 0600" };
+  const token = fs.readFileSync(tokenPath, "utf8").trim();
+  if (!token) return { error: "empty token file" };
+  if (token === TOKEN_PLACEHOLDER || token.startsWith(TOKEN_PLACEHOLDER)) {
+    return { error: "token file still has placeholder YOUR_TOKEN_HERE — edit the file locally, then run /wk-status" };
+  }
+  const base = String(loaded.config.baseUrl ?? "").replace(/\/+$/, "");
+  if (!base) return { error: "baseUrl missing in config" };
+  return { token, base };
+};
+
+function youTrackCurl(args: string[]): { status: number; stdout: string; stderr: string } {
+  const result = spawnSync("curl", ["-fsS", ...args], { encoding: "utf8" });
+  return { status: result.status ?? 1, stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
+}
+
+/** Port of scripts/youtrack/api.sh — log-time / post-comment with the WORKFLOW_YT_WRITE guard. */
+export function youTrackApi(args: string[], writeFlag = process.env.WORKFLOW_YT_WRITE ?? ""): { data: Record<string, any> } | { error: string } {
+  const cmd = args[0];
+  if (cmd === "log-time" || cmd === "post-comment") {
+    if (writeFlag !== "1") {
+      return { error: "YouTrack write operations require WORKFLOW_YT_WRITE=1 (refusing to mutate production)" };
+    }
+  }
+  const creds = youTrackToken();
+  if ("error" in creds) return creds;
+  const { token, base } = creds;
+  const auth = ["-H", `Authorization: Bearer ${token}`, "-H", "Accept: application/json"];
+
+  if (cmd === "log-time") {
+    const [issue, minutesRaw, text, dateArg] = args.slice(1);
+    const minutes = Number(minutesRaw);
+    const dateMs = youTrackWorkDateMs(dateArg ?? "auto");
+    if ("error" in dateMs) return dateMs;
+    const body = JSON.stringify({ duration: { minutes }, text, date: dateMs.data.dateMs });
+    const out = youTrackCurl([
+      ...auth, "-H", "Content-Type: application/json", "-d", body,
+      `${base}/api/issues/${issue}/timeTracking/workItems?fields=id,idReadable`,
+    ]);
+    if (out.status !== 0) return { error: "YouTrack HTTP request failed" };
+    try {
+      const created = JSON.parse(out.stdout) as Record<string, any>;
+      return { data: { ok: true, issueId: issue, workItemId: created.id, dateMs: dateMs.data.dateMs, minutes } };
+    } catch {
+      return { error: "invalid JSON from YouTrack API" };
+    }
+  }
+  if (cmd === "post-comment") {
+    const [issue, text] = args.slice(1);
+    const body = JSON.stringify({ text });
+    const out = youTrackCurl([
+      ...auth, "-H", "Content-Type: application/json", "-d", body,
+      `${base}/api/issues/${issue}/comments`,
+    ]);
+    if (out.status !== 0) return { error: "YouTrack HTTP request failed" };
+    return { data: { ok: true, issueId: issue } };
+  }
+  return { error: "unknown subcommand" };
+}
+
+/** Port of scripts/youtrack/verify-token.sh — read-only GET /api/users/me. */
+export function youTrackVerifyToken(): { data: Record<string, any> } | { error: string; http_status?: number; path?: string } {
+  const cfgPath = youTrackConfigPath();
+  if (!fs.existsSync(cfgPath)) return { error: "missing youtrack.json" };
+  const creds = youTrackToken();
+  if ("error" in creds) return { error: creds.error };
+  const { token, base } = creds;
+
+  const me = youTrackCurl(["-H", `Authorization: Bearer ${token}`, "-H", "Accept: application/json",
+    `${base}/api/users/me?fields=id,login,name,email`]);
+  if (me.status !== 0) {
+    const body = me.stderr.trim() || me.stdout.trim();
+    const err = me.status === 22 ? "authentication failed (401/403)" : `HTTP error: ${body.slice(0, 200)}`;
+    return { error: err, http_status: me.status };
+  }
+  let user: Record<string, any>;
+  try {
+    user = JSON.parse(me.stdout) as Record<string, any>;
+  } catch {
+    return { error: "invalid JSON from YouTrack /api/users/me" };
+  }
+  const result: Record<string, any> = {
+    ok: true, method: "GET /api/users/me", baseUrl: base,
+    login: user.login, name: user.name, email: user.email, id: user.id,
+  };
+  const meeting = readYouTrackConfig(false);
+  const meetingIssue = "config" in meeting ? meeting.config.meetingIssue : undefined;
+  if (meetingIssue) {
+    const issue = youTrackCurl(["-H", `Authorization: Bearer ${token}`, "-H", "Accept: application/json",
+      `${base}/api/issues/${meetingIssue}?fields=id,idReadable,summary`]);
+    if (issue.status === 0) {
+      try {
+        const parsed = JSON.parse(issue.stdout) as Record<string, any>;
+        result.meetingIssue = meetingIssue;
+        result.meetingIssueReadable = true;
+        result.meetingIssueSummary = parsed.summary;
+      } catch { /* unreadable */ }
+    } else {
+      result.meetingIssue = meetingIssue;
+      result.meetingIssueReadable = false;
+      result.warning = `token valid but cannot read issue ${meetingIssue}`;
+    }
+  }
+  return { data: result };
+}
+
+/** Port of scripts/youtrack/token-create-url.sh — deep link to Account Security. */
+export function youTrackTokenCreateUrl(): { data: Record<string, any> } {
+  const tokenName = process.env.WORKFLOW_YT_TOKEN_NAME ?? "workit";
+  const loaded = readYouTrackConfig(false);
+  const config = loaded && "config" in loaded ? loaded.config : {};
+  const cfgPath = loaded && "config" in loaded ? loaded.path : youTrackConfigPath();
+  const defaults = (config.tokenDefaults ?? {}) as Record<string, any>;
+  const name = String(defaults.name ?? tokenName);
+  const desc = String(defaults.description ?? "OpenCode workit — /wk-issue-update and /wk-meetings");
+  const scopes = Array.isArray(defaults.scopes) ? defaults.scopes : ["YouTrack"];
+  const base = String(config.baseUrl ?? "https://enghouseamg.youtrack.cloud").replace(/\/+$/, "");
+  const tokenFile = String(config.tokenFile ?? path.join(path.dirname(cfgPath), "youtrack.token"));
+  const tab = String(defaults.profileTab ?? "account-security");
+  const createUrl = `${base}/users/me?${new URLSearchParams({ tab })}`;
+  const docsUrl = "https://www.jetbrains.com/help/youtrack/cloud/manage-permanent-token.html";
+  return {
+    data: {
+      tokenName: name,
+      tokenDescription: desc,
+      scopes,
+      tokenFile: path.resolve(tokenFile),
+      createUrl,
+      docsUrl,
+      prefillSupported: false,
+      steps: [
+        "Profile → Account Security → **New token** (or open createUrl)",
+        `Name: **${name}**`,
+        `Scope: **${scopes.join(", ")}** only — remove other services`,
+        "**Create token** → copy immediately (shown once)",
+        "Paste into token file → save → `/wk-status`",
+      ],
+    },
+  };
+}
 
 /** Parse bare id (NSR-40) or YouTrack URL into issue id. */
 export function parseIssueRef(input: unknown): { issueId: string; source: string } | { error: string } {
@@ -37,14 +312,10 @@ export type YouTrackScripts = {
 };
 
 const defaultScripts: YouTrackScripts = {
-  config: () => runScriptJson("youtrack/config.sh", ["load"], PLUGIN_ROOT),
-  greeting: () => runScript("youtrack/greeting.sh", [], PLUGIN_ROOT),
-  parseDuration: (text) => runScriptJson("youtrack/parse-duration.sh", [text], PLUGIN_ROOT),
-  api: (args) =>
-    runScriptJson("youtrack/api.sh", args, PLUGIN_ROOT, {
-      // Write ops require explicit opt-in; set by the confirmed flows only.
-      WORKFLOW_YT_WRITE: process.env.WORKFLOW_YT_WRITE ?? "",
-    }),
+  config: () => youTrackConfigLoad(),
+  greeting: () => youTrackGreeting(),
+  parseDuration: (text) => youTrackParseDuration(text),
+  api: (args) => youTrackApi(args, process.env.WORKFLOW_YT_WRITE ?? ""),
 };
 
 export function verifyYouTrackToken(scripts: YouTrackScripts = defaultScripts): Record<string, any> {
@@ -186,9 +457,7 @@ export function postUpdate({ confirmed, issueId, markdown, minutes, workspace_ro
   if (!markdown?.trim()) return { error: "markdown required" };
 
   const postComment = operations.postComment ?? ((id: string, text: string, root: string) =>
-    runScriptJson("youtrack/api.sh", ["post-comment", id, text], root ?? PLUGIN_ROOT, {
-      WORKFLOW_YT_WRITE: process.env.WORKFLOW_YT_WRITE ?? "",
-    }));
+    youTrackApi(["post-comment", id, text], process.env.WORKFLOW_YT_WRITE ?? ""));
   const logTimeOperation = operations.logTime ?? logTime;
   const comment = postComment(issueId, markdown, workspace_root);
   if (comment.error) return { error: comment.error };
