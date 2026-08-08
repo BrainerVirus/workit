@@ -1,6 +1,6 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync, existsSync } from "node:fs";
 import path from "node:path";
-import { qualitySpec } from "./docs-validate";
+import { parseTasksFromPlan, qualitySpec } from "./docs-validate";
 
 export type FlowStatus = "draft" | "self_reviewed" | "approved";
 export type FlowDocState = { path: string; status: FlowStatus };
@@ -131,6 +131,25 @@ export const transitionPlan = (
   }
   if (state.spec.status !== "approved") {
     return { ok: false, error: "spec must be approved before the plan can be approved" };
+  }
+  if (state.plan.status === "draft" && confirmed) {
+    const planFile = path.isAbsolute(planPath) ? planPath : path.join(root, planPath);
+    let text: string;
+    try {
+      text = readFileSync(planFile, "utf8");
+    } catch (error) {
+      return {
+        ok: false,
+        error: `plan self-review failed: unreadable plan: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+    const missing: string[] = [];
+    if (parseTasksFromPlan(text).length === 0) missing.push("no ### Task N: sections outside fences");
+    if (!/^\s*\*+Spec:\*+/im.test(text)) missing.push("**Spec:** header missing");
+    if (!/^\s*\*+Branch:\*+/im.test(text)) missing.push("**Branch:** header missing");
+    if (missing.length > 0) {
+      return { ok: false, error: "plan self-review failed: " + missing.join("; ") };
+    }
   }
   const step = nextStatus(state.plan.status, confirmed);
   if (!step.ok) return { ok: false, error: step.error };

@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { readFlowState, transitionSpec } from "../src/core/flow-state";
+import { readFlowState, transitionSpec, transitionPlan } from "../src/core/flow-state";
 
 const COMPLIANT_SPEC = (slug: string) =>
   `# ${slug}\n\n**Branch:** \`feature/${slug}\`\n\n## Context\n\n## Goals\n\n## Non-goals\n\n## Architecture\n\n## Acceptance criteria\n\n- CA-01: test\n`;
@@ -12,6 +12,20 @@ const WARNING_SPEC = (slug: string) =>
 
 const NO_CA_SPEC = (slug: string) =>
   `# ${slug}\n\n**Branch:** \`feature/${slug}\`\n\n## Context\n\n## Goals\n\n## Non-goals\n\n## Architecture\n\n## Acceptance criteria\n\n- Accept: nothing numbered\n`;
+
+const COMPLIANT_PLAN = (slug: string) =>
+  `# ${slug}\n\n**Spec:** \`docs/${slug}/spec.md\`\n**Branch:** \`feature/${slug}\`\n\n## Context\n\n### Task 1: Do the thing\n\n- [ ] **Step 1:** do it\n`;
+
+const WARNING_PLAN = (slug: string) =>
+  `# ${slug}\n\n**Spec:** \`docs/${slug}/spec.md\`\n**Branch:** \`feature/${slug}\`\n\n### Task 1: Do the thing\n\nPlain prose, no checkbox steps, no Goal line — parses and has required headers.\n`;
+
+const approveSpec = (root: string, slug: string) => {
+  const specPath = `docs/${slug}/spec.md`;
+  const first = transitionSpec(root, slug, specPath, true);
+  expect(first.ok).toBe(true);
+  const second = transitionSpec(root, slug, specPath, true);
+  expect(second.ok).toBe(true);
+};
 
 const fixture = () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "wf-self-review-"));
@@ -91,6 +105,82 @@ test("second transition is not gated by spec quality", () => {
     const second = transitionSpec(root, slug, specPath, true);
     expect(second.ok).toBe(true);
     expect(readFlowState(root, slug).spec.status).toBe("approved");
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("plan without ### Task N: headings is rejected and stays draft", () => {
+  const { root, slug } = fixture();
+  try {
+    const specPath = `docs/${slug}/spec.md`;
+    writeFileSync(path.join(root, specPath), COMPLIANT_SPEC(slug));
+    approveSpec(root, slug);
+    const planPath = `docs/${slug}/plan.md`;
+    writeFileSync(
+      path.join(root, planPath),
+      `# ${slug}\n\n**Spec:** \`docs/${slug}/spec.md\`\n**Branch:** \`feature/${slug}\`\n\n## Context\n\nNo tasks here.\n`,
+    );
+    const result = transitionPlan(root, slug, planPath, true);
+    expect(result.ok).toBe(false);
+    expect(String((result as { error: string }).error)).toContain("plan self-review failed");
+    expect(String((result as { error: string }).error)).toContain("### Task N:");
+    expect(readFlowState(root, slug).plan.status).toBe("draft");
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("plan missing **Spec:** header is rejected and stays draft", () => {
+  const { root, slug } = fixture();
+  try {
+    const specPath = `docs/${slug}/spec.md`;
+    writeFileSync(path.join(root, specPath), COMPLIANT_SPEC(slug));
+    approveSpec(root, slug);
+    const planPath = `docs/${slug}/plan.md`;
+    writeFileSync(
+      path.join(root, planPath),
+      `# ${slug}\n\n**Branch:** \`feature/${slug}\`\n\n### Task 1: Do the thing\n`,
+    );
+    const result = transitionPlan(root, slug, planPath, true);
+    expect(result.ok).toBe(false);
+    expect(String((result as { error: string }).error)).toContain("**Spec:** header missing");
+    expect(readFlowState(root, slug).plan.status).toBe("draft");
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("compliant plan transitions draft -> self_reviewed -> approved", () => {
+  const { root, slug } = fixture();
+  try {
+    const specPath = `docs/${slug}/spec.md`;
+    writeFileSync(path.join(root, specPath), COMPLIANT_SPEC(slug));
+    approveSpec(root, slug);
+    const planPath = `docs/${slug}/plan.md`;
+    writeFileSync(path.join(root, planPath), COMPLIANT_PLAN(slug));
+    const first = transitionPlan(root, slug, planPath, true);
+    expect(first.ok).toBe(true);
+    expect(readFlowState(root, slug).plan.status).toBe("self_reviewed");
+    const second = transitionPlan(root, slug, planPath, true);
+    expect(second.ok).toBe(true);
+    expect(readFlowState(root, slug).plan.status).toBe("approved");
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("plan with only warning-ish issues passes the gate", () => {
+  const { root, slug } = fixture();
+  try {
+    const specPath = `docs/${slug}/spec.md`;
+    writeFileSync(path.join(root, specPath), COMPLIANT_SPEC(slug));
+    approveSpec(root, slug);
+    const planPath = `docs/${slug}/plan.md`;
+    writeFileSync(path.join(root, planPath), WARNING_PLAN(slug));
+    const result = transitionPlan(root, slug, planPath, true);
+    expect(result.ok).toBe(true);
+    expect(readFlowState(root, slug).plan.status).toBe("self_reviewed");
   } finally {
     cleanup(root);
   }

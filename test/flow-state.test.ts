@@ -12,12 +12,15 @@ import {
 const COMPLIANT_SPEC = (slug: string) =>
   `# ${slug}\n\n**Branch:** \`feature/${slug}\`\n\n## Context\n\n## Goals\n\n## Non-goals\n\n## Architecture\n\n## Acceptance criteria\n\n- CA-01: test\n`;
 
+const COMPLIANT_PLAN = (slug: string) =>
+  `# ${slug}\n\n**Spec:** \`docs/${slug}/spec.md\`\n**Branch:** \`feature/${slug}\`\n\n## Context\n\n### Task 1: Do the thing\n\n- [ ] **Step 1:** do it\n`;
+
 const fixture = () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "wf-flow-"));
   const slug = "my-feature";
   mkdirSync(path.join(root, "docs", slug), { recursive: true });
   writeFileSync(path.join(root, "docs", slug, "spec.md"), COMPLIANT_SPEC(slug));
-  writeFileSync(path.join(root, "docs", slug, "plan.md"), `# ${slug}\n\n**Branch:** \`feature/${slug}\`\n`);
+  writeFileSync(path.join(root, "docs", slug, "plan.md"), COMPLIANT_PLAN(slug));
   return { root, slug };
 };
 
@@ -125,7 +128,7 @@ test("assertFlowGates requires menu when requested", () => {
     const spec = `docs/${slug}/spec.md`;
     const plan = `docs/${slug}/plan.md`;
     writeFileSync(path.join(root, spec), COMPLIANT_SPEC(slug));
-    writeFileSync(path.join(root, plan), `# ${slug}\n\n**Branch:** \`feature/${slug}\`\n`);
+    writeFileSync(path.join(root, plan), COMPLIANT_PLAN(slug));
     transitionSpec(root, slug, spec, true);
     transitionSpec(root, slug, spec, true);
     transitionPlan(root, slug, plan, true);
@@ -170,7 +173,7 @@ test("already approved spec rejects further transitions", () => {
     const spec = `docs/${slug}/spec.md`;
     const plan = `docs/${slug}/plan.md`;
     writeFileSync(path.join(root, spec), COMPLIANT_SPEC(slug));
-    writeFileSync(path.join(root, plan), `# ${slug}\n\n**Branch:** \`feature/${slug}\`\n`);
+    writeFileSync(path.join(root, plan), COMPLIANT_PLAN(slug));
     transitionSpec(root, slug, spec, true);
     transitionSpec(root, slug, spec, true);
     const third = transitionSpec(root, slug, spec, true);

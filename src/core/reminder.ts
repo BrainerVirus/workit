@@ -2,6 +2,7 @@ export const REMINDER_TEXT = `<workflow-contract-reminder>
 - Bounded user choices → call the native \`question\` tool (never A/B/C or 1/2/3 lists in prose).
 - After a plan is approved → native \`question\` menu with exactly: Subagent-driven, Inline, Handoff (new session only), Review spec first, Review plan first.
 - Tools with \`confirmed\` → call them; never fabricate their result.
+- Before the first \`workflow_spec_approve\`/\`workflow_plan_approve\` (self-review) run the superpowers writing-plans Self-Review checklist: spec coverage (every spec requirement maps to a task), placeholder scan, type consistency; fix findings inline.
 - Delivering docs → clickable markdown link \`[spec.md](docs/<slug>/spec.md)\` + 3-5 bullet summary.
 </workflow-contract-reminder>`;
 
