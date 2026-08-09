@@ -6,7 +6,8 @@ on:
 
 permissions:
   contents: write
-  id-token: write
+  # ponytail: no id-token — OIDC trusted publishing needs a per-package trusted
+  # publisher configured in npm; until then NPM_TOKEN is the auth path.
 
 jobs:
   release:
