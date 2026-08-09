@@ -34,6 +34,11 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPMJS }}
+          # setup-node writes //registry.npmjs.org/:_authToken=\${NODE_AUTH_TOKEN}
+          # into the temp .npmrc — without this var the token is an empty
+          # placeholder that wins over NPM_TOKEN. NPM_TOKEN alone is not read
+          # by npm when a userconfig exists.
+          NODE_AUTH_TOKEN: ${{ secrets.NPMJS }}
 
       - name: Verify workspace:* rewritten before publish
         run: |
