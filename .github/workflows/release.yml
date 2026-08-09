@@ -5,7 +5,9 @@ on:
     branches: [main]
 
 permissions:
-  contents: write
+  contents: write # GitHub Release
+  issues: write # semantic-release success comments
+  pull-requests: write # semantic-release success comments
   # ponytail: no id-token — OIDC trusted publishing needs a per-package trusted
   # publisher configured in npm; until then NPM_TOKEN is the auth path.
 
