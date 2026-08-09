@@ -1,57 +1,32 @@
 {
-  "name": "flowkit",
+  "name": "workflow-toolkit",
   "version": "0.4.0",
-  "private": false,
-  "description": "Workflow rails for agentic coding: specs, plans, YouTrack, CI-gated commits",
+  "private": true,
+  "description": "Monorepo for workit — workflow rails for agentic coding",
   "license": "MIT",
-  "keywords": ["opencode", "cursor", "workflow", "mcp", "youTrack", "agent"],
-  "bugs": {
-    "url": "https://github.com/BrainerVirus/workflow-toolkit/issues"
-  },
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/BrainerVirus/workflow-toolkit.git"
-  },
-  "files": [
-    "src/",
-    "scripts/",
-    "skills/",
-    "commands/",
-    "cursor/",
-    "vendor/superpowers/skills/",
-    "templates/",
-    "README.md",
-    "LICENSE"
+  "workspaces": [
+    "packages/*"
   ],
   "type": "module",
-  "main": "./src/plugin.ts",
-  "bin": {
-    "flowkit": "./src/cli/index.tsx"
-  },
+  "main": "./packages/workit-opencode/src/plugin.ts",
   "exports": {
-    ".": "./src/plugin.ts"
+    ".": "./packages/workit-opencode/src/plugin.ts"
   },
   "scripts": {
     "test": "bun test",
     "typecheck": "tsc --noEmit",
-    "check": "bun test && tsc --noEmit",
-    "prepublishOnly": "bun run check"
-  },
-  "publishConfig": {
-    "access": "public"
-  },
-  "dependencies": {
-    "@inkjs/ui": "2.0.0",
-    "@modelcontextprotocol/sdk": "^1.12.0",
-    "@opencode-ai/plugin": "1.17.7",
-    "ink": "7.1.1",
-    "react": "19.2.8",
-    "zod": "^3.24.0"
+    "check": "bun test && tsc --noEmit"
   },
   "devDependencies": {
+    "@semantic-release/commit-analyzer": "13.0.1",
+    "@semantic-release/exec": "7.1.0",
+    "@semantic-release/github": "12.0.9",
+    "@semantic-release/npm": "13.1.5",
+    "@semantic-release/release-notes-generator": "14.1.1",
     "@types/bun": "1.3.14",
     "@types/node": "22.13.9",
     "@types/react": "19.2.18",
+    "semantic-release": "25.0.9",
     "typescript": "5.8.2"
   }
 }

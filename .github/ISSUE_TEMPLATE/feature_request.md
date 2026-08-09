@@ -1,6 +1,6 @@
 ---
 name: Feature request
-about: Suggest an improvement for the flowkit workflow toolkit
+about: Suggest an improvement for the workit workflow toolkit
 title: "[feature] "
 labels: enhancement
 assignees: ""
@@ -10,7 +10,7 @@ assignees: ""
 What workflow friction or missing capability does this address?
 
 **Proposed behavior**
-What should flowkit do, and how would it fit the existing tool/skill surface?
+What should workit do, and how would it fit the existing tool/skill surface?
 
 **Platform**
 - [ ] OpenCode

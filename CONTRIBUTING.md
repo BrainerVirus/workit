@@ -1,6 +1,6 @@
-# Contributing to flowkit
+# Contributing to workit
 
-Thanks for contributing. `flowkit` is the public npm name of the `workflow-toolkit` repo: workflow rails for agentic coding (specs, plans, YouTrack, CI-gated commits).
+Thanks for contributing. `@brainervirus/workit` is the public npm name of the `workit` repo: workflow rails for agentic coding (specs, plans, YouTrack, CI-gated commits).
 
 ## Install from source
 
@@ -13,7 +13,7 @@ Then load the plugin from a local path in your OpenCode config (`~/.config/openc
 ```json
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugin": ["file:///path/to/workflow-toolkit/src/plugin.ts"]
+  "plugin": ["file:///path/to/workit/packages/workit-opencode/src/plugin.ts"]
 }
 ```
 
@@ -35,4 +35,5 @@ Always run it before committing; CI runs the same command on push/PR.
 
 1. Open a PR to `main` with a concise conventional-commit description (`feat(...)`, `fix(...)`, `chore(...)`).
 2. CI runs `bun run check` on the PR — it must be green.
-3. A `v*` tag on `main` triggers the release workflow (`npm publish` for `flowkit`).
+3. The OpenCode review check runs on the PR — it must be green (see the README [Code review](https://github.com/BrainerVirus/workit#code-review) section).
+4. Pushes to `main` trigger semantic-release: it versions from Conventional Commits and publishes `@brainervirus/workit` + `@brainervirus/workit-cli`.

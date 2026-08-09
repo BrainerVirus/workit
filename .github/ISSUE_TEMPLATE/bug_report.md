@@ -1,6 +1,6 @@
 ---
 name: Bug report
-about: Report a problem with the flowkit workflow toolkit
+about: Report a problem with the workit workflow toolkit
 title: "[bug] "
 labels: bug
 assignees: ""
@@ -10,10 +10,10 @@ assignees: ""
 - [ ] OpenCode
 - [ ] Cursor
 - OS / version:
-- flowkit version (from `package.json` or `npm ls flowkit`):
+- workit version (from `package.json` or `npm ls workit`):
 
 **Tool**
-Which workflow tool or skill failed? (e.g. `wf-commit`, `wf-pr`, `workflow_verify`, `wf-handoff`, the `workflow-toolkit` MCP server)
+Which workflow tool or skill failed? (e.g. `wk-commit`, `wk-pr`, `workflow_verify`, `wk-handoff`, the `workflow-toolkit` MCP server)
 
 **Expected behavior**
 What did you expect to happen?

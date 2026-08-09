@@ -14,7 +14,12 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  check:
+  # One check job per package (mirrors test/<package>/), so the checks matrix
+  # shows per-category results. workit-core gets the full 3-OS matrix because
+  # it owns the bash script/portability tests (workspaces-scripts, install-scripts,
+  # hygiene-verify, repo, youtrack); the thin packages run on ubuntu only.
+  core:
+    name: check (workit-core)
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -26,8 +31,89 @@ jobs:
         with:
           bun-version: latest
 
-      - name: Install OpenCode plugin deps
+      - name: Install deps
         run: bun install --frozen-lockfile
 
-      - name: Run checks
-        run: bun run check
+      - name: Test workit-core
+        run: bun test test/workit-core
+
+      - name: Typecheck (whole repo)
+        run: bun run typecheck
+
+  opencode:
+    name: check (workit-opencode)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install deps
+        run: bun install --frozen-lockfile
+
+      - name: Test workit-opencode
+        run: bun test test/workit-opencode
+
+      - name: Typecheck (whole repo)
+        run: bun run typecheck
+
+  cursor:
+    name: check (workit-cursor)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install deps
+        run: bun install --frozen-lockfile
+
+      - name: Test workit-cursor
+        run: bun test test/workit-cursor
+
+      - name: Typecheck (whole repo)
+        run: bun run typecheck
+
+  cli:
+    name: check (workit-cli)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install deps
+        run: bun install --frozen-lockfile
+
+      - name: Test workit-cli
+        run: bun test test/workit-cli
+
+      - name: Typecheck (whole repo)
+        run: bun run typecheck
+
+  shared:
+    # test/shared/helpers has no standalone tests (helpers are exercised via the
+    # importing packages' jobs); the job guards that the helpers still compile.
+    name: check (shared)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install deps
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck shared helpers (no standalone tests)
+        run: bun run typecheck
+
+      - name: Typecheck (whole repo)
+        run: bun run typecheck
