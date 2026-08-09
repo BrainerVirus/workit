@@ -3,6 +3,19 @@
 set -euo pipefail
 
 MCP_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+# Dev mode: the installed copies (plugin/share) ship without the core package
+# (their mcp/ has no package.json, so npm install never installs it). When the
+# live monorepo is present, exec its server so @brainervirus/workit-core
+# resolves through the workspace symlink at the repo root node_modules.
+# Same DEV_DEFAULT convention as sync-runtime.sh.
+DEV_DEFAULT="${HOME}/Documents/projects/personal/workflow-toolkit"
+DEV="${WORKFLOW_TOOLKIT_DEV:-$DEV_DEFAULT}"
+if [ -x "$DEV/packages/workit-cursor/mcp/run-server.sh" ] \
+  && [ -e "$DEV/node_modules/@brainervirus/workit-core" ] \
+  && [ "$MCP_DIR" != "$DEV/packages/workit-cursor/mcp" ]; then
+  exec "$DEV/packages/workit-cursor/mcp/run-server.sh" "$@"
+fi
+
 PLUGIN_DIR="$(CDPATH= cd -- "$MCP_DIR/.." && pwd)"
 MARKER="${PLUGIN_DIR}/.workflow-toolkit-root"
 # ponytail: config-stability alias — the installed share keeps the legacy
