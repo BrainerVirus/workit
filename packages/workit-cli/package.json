@@ -6,21 +6,23 @@
   "license": "MIT",
   "keywords": ["opencode", "cursor", "workflow", "cli", "setup"],
   "bugs": {
-    "url": "https://github.com/BrainerVirus/workflow-toolkit/issues"
+    "url": "https://github.com/BrainerVirus/workit/issues"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/BrainerVirus/workflow-toolkit.git"
+    "url": "https://github.com/BrainerVirus/workit.git"
   },
   "files": [
-    "src/"
+    "dist/"
   ],
   "type": "module",
   "bin": {
-    "workit": "./src/index.tsx"
+    "workit": "./dist/index.js"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "build": "bun build ./src/index.tsx --outdir dist --target node --format esm --banner \"#!/usr/bin/env node\" --external ink --external @inkjs/ui --external react",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "bun run build && bun run typecheck"
   },
   "publishConfig": {
     "access": "public"
