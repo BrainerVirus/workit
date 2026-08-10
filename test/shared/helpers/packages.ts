@@ -182,16 +182,31 @@ export function copyHoistedDeps(nodeModulesDir: string, roots: string[]): void {
   }
 }
 
+// Script-specific path overrides the packed scripts read from the environment
+// (install-opencode-plugin.sh: CONFIG_PATH/PIN_PATH; sync-runtime.sh: PKG_PATH;
+// install-cursor-plugin.sh: CURSOR_MCP/CURSOR_SETTINGS). Forwarded from a dev
+// shell they re-point a script at the repository, defeating isolation.
+const STRIPPED_ENV_VARS = new Set([
+  "CONFIG_PATH",
+  "PIN_PATH",
+  "PKG_PATH",
+  "CURSOR_MCP",
+  "CURSOR_SETTINGS",
+]);
+
 // Env for isolated runs: HOME points at a temp dir and every WORKFLOW_* /
-// XDG_* override is stripped so scripts fall back to their HOME defaults and
-// can never be pointed back at the repository.
+// XDG_* override plus the script-specific path overrides above is stripped so
+// scripts fall back to their HOME defaults and can never be pointed back at
+// the repository.
 export function isolatedEnv(
   home: string,
   extra: Record<string, string> = {},
 ): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) {
-    if (v === undefined || k.startsWith("WORKFLOW_") || k.startsWith("XDG_")) continue;
+    if (v === undefined) continue;
+    if (k.startsWith("WORKFLOW_") || k.startsWith("XDG_")) continue;
+    if (STRIPPED_ENV_VARS.has(k)) continue;
     env[k] = v;
   }
   env.HOME = home;

@@ -39,6 +39,33 @@ const tmp = (prefix: string) => mkdtempSync(path.join(os.tmpdir(), prefix));
 const hasEntry = (tarball: string, prefix: string) =>
   listTarball(tarball).some((entry) => entry === prefix || entry.startsWith(prefix));
 
+test("isolatedEnv strips script-specific path overrides that could re-point at the repo", () => {
+  const home = tmp("wk-env-home-");
+  const names = [
+    "CONFIG_PATH",
+    "PIN_PATH",
+    "PKG_PATH",
+    "CURSOR_MCP",
+    "CURSOR_SETTINGS",
+    "WORKFLOW_TOOLKIT_DEV",
+    "XDG_CONFIG_HOME",
+  ];
+  const saved = new Map(names.map((n) => [n, process.env[n]]));
+  for (const name of names) process.env[name] = `/repo/${name}`;
+  try {
+    const env = isolatedEnv(home, { BUN: "/usr/bin/bun" });
+    for (const name of names) expect(env[name], name).toBeUndefined();
+    expect(env.BUN).toBe("/usr/bin/bun");
+    expect(env.HOME).toBe(home);
+  } finally {
+    for (const [n, v] of saved) {
+      if (v === undefined) delete process.env[n];
+      else process.env[n] = v;
+    }
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test("packs all workspace packages into local tarballs without publishing", () => {
   const packs = packWorkspacePackages();
   expect(packs.map((p) => p.packageName)).toEqual([CORE, OPENCODE, CURSOR, CLI]);
@@ -120,8 +147,12 @@ type McpClient = {
   request: (method: string, params: unknown) => Promise<{ result?: unknown; error?: unknown }>;
 };
 
-function startMcpServer(cursorDir: string, env: Record<string, string>): McpClient {
-  const child = spawn("bash", ["mcp/run-server.sh", tmp("wk-mcp-ws-")], {
+function startMcpServer(
+  cursorDir: string,
+  env: Record<string, string>,
+): McpClient & { workspace: string } {
+  const workspace = tmp("wk-mcp-ws-");
+  const child = spawn("bash", ["mcp/run-server.sh", workspace], {
     cwd: cursorDir,
     env,
     stdio: ["pipe", "pipe", "pipe"],
@@ -156,11 +187,17 @@ function startMcpServer(cursorDir: string, env: Record<string, string>): McpClie
     const id = ++nextId.id;
     child.stdin?.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`);
     return new Promise<{ result?: unknown; error?: unknown }>((resolve, reject) => {
-      pending.set(id, resolve);
-      setTimeout(() => reject(new Error(`timeout waiting for ${method}`)), 15000);
+      const timer = setTimeout(() => {
+        pending.delete(id);
+        reject(new Error(`timeout waiting for ${method}`));
+      }, 15000);
+      pending.set(id, (msg) => {
+        clearTimeout(timer);
+        resolve(msg);
+      });
     });
   };
-  return { child, request };
+  return { child, request, workspace };
 }
 
 test("Cursor MCP launcher starts the server from the extracted package, repo-free (CA-05)", async () => {
@@ -191,7 +228,7 @@ test("Cursor MCP launcher starts the server from the extracted package, repo-fre
     // Runtime: with a temp HOME and every WORKFLOW_* var stripped, the launcher
     // must resolve the installed core copy (not the repo) and serve MCP.
     const env = isolatedEnv(home, { BUN: process.execPath });
-    const { child, request } = startMcpServer(cursorDir, env);
+    const { child, request, workspace } = startMcpServer(cursorDir, env);
     try {
       const init = await request("initialize", {
         protocolVersion: "2024-11-05",
@@ -210,6 +247,7 @@ test("Cursor MCP launcher starts the server from the extracted package, repo-fre
       expect(names).toContain("workflow_toolkit_init_apply");
     } finally {
       child.kill();
+      rmSync(workspace, { recursive: true, force: true });
     }
   } finally {
     rmSync(install, { recursive: true, force: true });
