@@ -14,7 +14,7 @@ import {
   parsePlanTasks,
   resolveHandoffBranch,
 } from "@brainervirus/workit-core/src/core/plan-tasks";
-import { buildHandoffPrompt } from "@brainervirus/workit-core/src/tools/handoff";
+import { buildHandoffPrompt } from "@brainervirus/workit-core/src/core/handoff-tools";
 import {
   readFlowState,
   transitionSpec,

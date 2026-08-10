@@ -1,6 +1,10 @@
 import { tool } from "@opencode-ai/plugin";
-import { fail, ok } from "../core";
-import { listTemplates, writeTemplate, type TemplateName } from "../core/templates";
+import { fail, ok } from "@brainervirus/workit-core/src/core";
+import {
+  listTemplates,
+  writeTemplate,
+  type TemplateName,
+} from "@brainervirus/workit-core/src/core/templates";
 
 const output = (value: unknown) => JSON.stringify(value, null, 2);
 

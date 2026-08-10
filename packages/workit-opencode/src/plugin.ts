@@ -40,8 +40,8 @@ import {
   detectBlindReviewAcceptance,
   detectInstructionOption,
 } from "@brainervirus/workit-core/src/core/detector";
-import { createTools } from "@brainervirus/workit-core/src/tools";
-import { adaptPluginHandoffClient } from "@brainervirus/workit-core/src/tools/handoff";
+import { createTools } from "./tools";
+import { adaptPluginHandoffClient } from "./tools/handoff";
 import { WorkflowStateStore } from "@brainervirus/workit-core/src/state";
 
 // Skills/commands/vendor/templates live in the core package. Resolve its root

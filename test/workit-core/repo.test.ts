@@ -11,7 +11,8 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { createRepoTools, normalizeLegacyResult } from "../../packages/workit-core/src/tools/repo";
+import { createRepoTools } from "../../packages/workit-opencode/src/tools/repo";
+import { normalizeLegacyResult } from "../../packages/workit-core/src/core/repo-tools";
 import { PLUGIN_ROOT } from "../../packages/workit-core/src/core/scripts";
 
 // Isolate from the developer's global config: tests assume gitflow semantics

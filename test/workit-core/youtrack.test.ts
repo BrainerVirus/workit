@@ -66,12 +66,12 @@ const withYouTrackConfig = async (fn: () => Promise<void> | void) => {
 };
 import {
   configPath,
-  createYouTrackTools,
   normalizeContext,
   postUpdate,
   readCredentials,
   redact,
-} from "../../packages/workit-core/src/tools/youtrack";
+} from "../../packages/workit-core/src/core/youtrack-tools";
+import { createYouTrackTools } from "../../packages/workit-opencode/src/tools/youtrack";
 
 test("comment success plus ambiguous time failure does not recommend retry", async () => {
   const result = await postUpdate(

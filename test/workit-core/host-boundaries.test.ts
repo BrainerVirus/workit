@@ -1,0 +1,103 @@
+import { expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+import { resolveWorkspaceRoot } from "../../packages/workit-core/src/core/scripts";
+import { readFlowState, slugFromPath } from "../../packages/workit-core/src/core/flow-state";
+
+const REPO_ROOT = path.resolve(import.meta.dir, "..", "..");
+const CORE_SRC = path.join(REPO_ROOT, "packages", "workit-core", "src");
+const CURSOR_SERVER = path.join(REPO_ROOT, "packages", "workit-cursor", "mcp", "server.ts");
+
+const FORBIDDEN = ["@opencode-ai", "@modelcontextprotocol", "ink", "react"];
+
+function tsFilesUnder(dir: string): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const full = path.join(dir, entry.name);
+    return entry.isDirectory() ? tsFilesUnder(full) : full.endsWith(".ts") ? [full] : [];
+  });
+}
+
+function specifiers(source: string): string[] {
+  return [...source.matchAll(/(?:from\s*|import\s*\()["']([^"']+)["']/g)].map((match) => match[1]);
+}
+
+test("workit-core imports no host SDK, MCP SDK, Ink, or React", () => {
+  const offenders: string[] = [];
+  for (const file of tsFilesUnder(CORE_SRC)) {
+    const source = readFileSync(file, "utf8");
+    for (const spec of specifiers(source)) {
+      if (FORBIDDEN.some((prefix) => spec === prefix || spec.startsWith(prefix))) {
+        offenders.push(`${path.relative(REPO_ROOT, file)} -> ${spec}`);
+      }
+    }
+  }
+  expect(offenders).toEqual([]);
+});
+
+test("root tsconfig typechecks every maintained TS surface", () => {
+  const tsconfig = JSON.parse(readFileSync(path.join(REPO_ROOT, "tsconfig.json"), "utf8"));
+  expect(tsconfig.compilerOptions.strict).toBe(true);
+  for (const entry of [
+    "test/**/*.ts",
+    "packages/workit-core/src/**/*.ts",
+    "packages/workit-opencode/src/**/*.ts",
+    "packages/workit-cli/src/**/*.tsx",
+    "packages/workit-cursor/mcp/**/*.ts",
+  ]) {
+    expect(tsconfig.include).toContain(entry);
+  }
+});
+
+test("cursor normalizes workspace root once through resolveWorkspaceRoot", () => {
+  const server = readFileSync(CURSOR_SERVER, "utf8");
+  expect(server.match(/const workspaceRootSchema\s*=/g)).toHaveLength(1);
+  expect(resolveWorkspaceRoot(undefined)).toBe(process.cwd());
+  expect(resolveWorkspaceRoot("/workspace")).toBe("/workspace");
+});
+
+test("opencode and cursor flow registrations share the same pure core functions", async () => {
+  const server = readFileSync(CURSOR_SERVER, "utf8");
+  expect(server).toMatch(/slugFromPath\(plan_path \?\? spec_path \?\? ""\)/);
+  expect(server).toMatch(/readFlowState\(root, slug\)/);
+
+  const { createFlowTools } = await import("../../packages/workit-opencode/src/tools/flow");
+  const root = mkdtempSync(path.join(os.tmpdir(), "wf-boundary-"));
+  try {
+    mkdirSync(path.join(root, "docs", "x", "sdd"), { recursive: true });
+    writeFileSync(path.join(root, "docs/x/spec.md"), "# X\n\n**Branch:** `feature/x`\n");
+    writeFileSync(
+      path.join(root, "docs/x/plan.md"),
+      "# X\n\n**Spec:** `docs/x/spec.md`\n**Branch:** `feature/x`\n\n### Task 1: One\n\n- [ ] **Step 1:** Work\n",
+    );
+    writeFileSync(
+      path.join(root, "docs/x/sdd/flow.json"),
+      JSON.stringify({
+        slug: "x",
+        spec: { path: "docs/x/spec.md", status: "approved" },
+        plan: { path: "docs/x/plan.md", status: "approved" },
+        menu: { presented: true, chosen: "handoff" },
+        updated_at: 1,
+      }),
+    );
+
+    const raw = await createFlowTools().workflow_flow_status.execute(
+      { plan_path: "docs/x/plan.md" },
+      { directory: root } as never,
+    );
+    const result = JSON.parse(raw as string);
+    expect(result.ok).toBe(true);
+    const slug = slugFromPath("docs/x/plan.md");
+    const state = readFlowState(root, slug);
+    expect(result.data).toEqual({
+      slug,
+      spec: state.spec,
+      plan: state.plan,
+      menu: state.menu,
+      flow_path: `docs/${slug}/sdd/flow.json`,
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

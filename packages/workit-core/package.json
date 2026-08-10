@@ -32,7 +32,6 @@
   "type": "module",
   "main": "./src/core.ts",
   "exports": {
-    "./src/tools": "./src/tools/index.ts",
     "./src/*.ts": "./src/*.ts",
     "./src/*": "./src/*.ts",
     "./package.json": "./package.json"
@@ -42,9 +41,5 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit"
-  },
-  "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.12.0",
-    "zod": "^3.24.0"
   }
 }

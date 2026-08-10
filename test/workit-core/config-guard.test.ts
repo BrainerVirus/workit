@@ -8,10 +8,8 @@ import {
   CONFIG_GAP_MARKER,
   describeConfigGaps,
 } from "../../packages/workit-core/src/core/config-guard";
-import {
-  createYouTrackTools,
-  readCredentials,
-} from "../../packages/workit-core/src/tools/youtrack";
+import { createYouTrackTools } from "../../packages/workit-opencode/src/tools/youtrack";
+import { readCredentials } from "../../packages/workit-core/src/core/youtrack-tools";
 import { withIsolatedXDG } from "../shared/helpers/env";
 
 test("empty config dir reports all item ids missing without throwing", async () => {

@@ -1,6 +1,6 @@
 import { tool } from "@opencode-ai/plugin";
-import { fail, ok } from "../core";
-import { linkDocsRepo, listSpecs, promoteSpec } from "../core/docs-repo";
+import { fail, ok } from "@brainervirus/workit-core/src/core";
+import { linkDocsRepo, listSpecs, promoteSpec } from "@brainervirus/workit-core/src/core/docs-repo";
 
 const output = (value: unknown) => JSON.stringify(value, null, 2);
 

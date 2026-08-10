@@ -6,7 +6,7 @@ import { spawnSync } from "node:child_process";
 
 import { changelogApply } from "../../packages/workit-core/src/core/changelog";
 import { postUpdate } from "../../packages/workit-core/src/core/youtrack";
-import { buildHandoffPrompt } from "../../packages/workit-core/src/tools/handoff";
+import { buildHandoffPrompt } from "../../packages/workit-core/src/core/handoff-tools";
 import { docsValidate } from "../../packages/workit-core/src/core/docs-validate";
 
 const REPO_ROOT = path.resolve(import.meta.dir, "..", "..");

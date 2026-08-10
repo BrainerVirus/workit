@@ -1,6 +1,6 @@
 import { tool } from "@opencode-ai/plugin";
-import { fail, ok } from "../core";
-import { listRules, writeRule, type CanonicalRule } from "../core/rules";
+import { fail, ok } from "@brainervirus/workit-core/src/core";
+import { listRules, writeRule, type CanonicalRule } from "@brainervirus/workit-core/src/core/rules";
 
 const output = (value: unknown) => JSON.stringify(value, null, 2);
 

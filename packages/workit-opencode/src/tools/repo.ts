@@ -1,31 +1,33 @@
 import path from "node:path";
 import { realpathSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { tool, type ToolContext } from "@opencode-ai/plugin";
-import { fail, gitRevisionParts, ok, resolveInside, run } from "../core";
-import { changelogApply } from "../core/changelog";
-import { gitContext } from "../core/git";
-import { parseKeyValueLines, parseSections } from "../core/parse-sections";
-import { parseVerifyOutput } from "../core/verify-parse";
-import { branchSetup } from "../core/branch";
+import { fail, gitRevisionParts, ok, resolveInside, run } from "@brainervirus/workit-core/src/core";
+import { changelogApply } from "@brainervirus/workit-core/src/core/changelog";
+import { gitContext } from "@brainervirus/workit-core/src/core/git";
+import {
+  parseKeyValueLines,
+  parseSections,
+} from "@brainervirus/workit-core/src/core/parse-sections";
+import { parseVerifyOutput } from "@brainervirus/workit-core/src/core/verify-parse";
+import { branchSetup } from "@brainervirus/workit-core/src/core/branch";
 import {
   configDir,
   readConfig,
   writeConfig,
+  resolveBranchPolicy,
   type BranchPreset,
   type ToolkitConfig,
-} from "../core/config";
-import { ensureProjectGitignore } from "../core/gitignore";
-import { ensureHygieneFiles } from "../core/hygiene";
+} from "@brainervirus/workit-core/src/core/config";
+import { ensureProjectGitignore } from "@brainervirus/workit-core/src/core/gitignore";
+import { ensureHygieneFiles } from "@brainervirus/workit-core/src/core/hygiene";
+import { PLUGIN_ROOT } from "@brainervirus/workit-core/src/core/scripts";
+import {
+  normalizeLegacyResult,
+  type RepoRuntime,
+} from "@brainervirus/workit-core/src/core/repo-tools";
 
-const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-const scripts = path.join(packageRoot, "scripts");
+const scripts = path.join(PLUGIN_ROOT, "scripts");
 type RunResult = ReturnType<typeof run>;
-
-export type RepoRuntime = {
-  runScript(root: string, script: string, args: string[], env?: Record<string, string>): RunResult;
-  git(root: string, args: string[]): RunResult;
-};
 
 const defaultRuntime: RepoRuntime = {
   runScript: (root, script, args, env) =>
@@ -37,7 +39,6 @@ const output = (value: unknown) => JSON.stringify(value, null, 2);
 const diagnostics = ({ stdout, stderr, exitCode }: RunResult) => ({ stdout, stderr, exitCode });
 const requireConfirmed = (confirmed: boolean) =>
   confirmed === true ? null : output(fail("confirmed: true required"));
-import { resolveBranchPolicy } from "../core/config";
 const branchPolicy = () => resolveBranchPolicy(readConfig());
 
 function scriptResult<T extends object>(result: RunResult, parse: (stdout: string) => T) {
@@ -91,12 +92,6 @@ const optionalJson = (value: string | undefined) => {
   }
 };
 const sections = (stdout: string) => parseSections(stdout) as Record<string, string>;
-export const normalizeLegacyResult = (value: Record<string, unknown>) => {
-  if (value.error) return fail(String(value.error));
-  if (value.ok === false) return fail("legacy operation reported failure");
-  const { ok: _legacyOk, ...data } = value;
-  return ok(data);
-};
 
 const parsePr = (stdout: string) => {
   const part = sections(stdout);

@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { createDocsRepoTools } from "../../packages/workit-core/src/tools/docs-repo";
+import { createDocsRepoTools } from "../../packages/workit-opencode/src/tools/docs-repo";
 
 const git = (cwd: string, args: string[]) => spawnSync("git", args, { cwd, encoding: "utf8" });
 const makeRepo = () => {

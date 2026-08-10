@@ -1,10 +1,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { tool, type PluginInput } from "@opencode-ai/plugin";
 import { fail, ok, type Result } from "../core";
-import { assertFlowGates } from "../core/flow-state";
-import { resolveWorkflowPaths, buildHandoffContract } from "../core/handoff-context";
-import { WorkflowStateStore } from "../state";
+import { resolveWorkflowPaths, buildHandoffContract } from "./handoff-context";
 
 type ApiResponse<T> = { data?: T; error?: unknown };
 type ApiResult<T> = Promise<ApiResponse<T>>;
@@ -31,20 +28,6 @@ export type HandoffClient = {
   };
 };
 
-export const adaptPluginHandoffClient = (client: PluginInput["client"]): HandoffClient => ({
-  session: {
-    create: (input) => client.session.create(input),
-    promptAsync: (input) => client.session.promptAsync(input),
-  },
-  tui: {
-    selectSession: ({ body, query }) =>
-      client.tui.publish({
-        body: { type: "tui.session.select", properties: { sessionID: body.sessionID } } as never,
-        query,
-      }),
-  },
-});
-
 export type HandoffRequest = {
   directory: string;
   title: string;
@@ -59,13 +42,13 @@ type HandoffData = {
   stage?: "create" | "seed" | "select";
 };
 
-const message = (error: unknown) =>
+export const message = (error: unknown) =>
   error instanceof Error
     ? error.message
     : typeof error === "object" && error !== null && "message" in error
       ? String(error.message)
       : String(error);
-const apiError = (response: ApiResponse<unknown> | void) => response?.error;
+export const apiError = (response: ApiResponse<unknown> | void) => response?.error;
 
 export async function handoffSession(
   client: HandoffClient,
@@ -110,8 +93,6 @@ export async function handoffSession(
   }
 }
 
-const output = (value: unknown) => JSON.stringify(value, null, 2);
-
 export type HandoffContextResult =
   | { prompt: string; spec: string; plan: string; sdd: string }
   | { error: string };
@@ -133,33 +114,3 @@ export const buildHandoffPrompt = (root: string, message: string): HandoffContex
   const sdd = `docs/${path.basename(path.dirname(resolved.plan))}/sdd`;
   return { prompt: contract.prompt, spec: resolved.spec, plan: resolved.plan, sdd };
 };
-
-export function createHandoffTools(client: HandoffClient, state: WorkflowStateStore) {
-  return {
-    workflow_handoff_session: tool({
-      description:
-        "Create, seed, and select a continuation session; --stay in the message skips selection",
-      args: { message: tool.schema.string() },
-      execute: async ({ message: userMessage }, context) => {
-        const built = buildHandoffPrompt(context.directory, userMessage);
-        if ("error" in built) return output(fail(built.error));
-        const active = built;
-        try {
-          const gate = assertFlowGates(context.directory, active.plan);
-          if (!gate.ok) return output(fail(gate.error));
-          state.set(context.sessionID, { spec: active.spec, plan: active.plan, sdd: active.sdd });
-          return output(
-            await handoffSession(client, {
-              directory: context.directory,
-              title: `Continue ${path.basename(path.dirname(active.plan))}`,
-              prompt: active.prompt,
-              stay: /(?:^|\s)--stay(?:\s|$)/.test(userMessage),
-            }),
-          );
-        } catch (error) {
-          return output(fail(message(error)));
-        }
-      },
-    }),
-  };
-}

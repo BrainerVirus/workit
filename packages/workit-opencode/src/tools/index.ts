@@ -1,5 +1,5 @@
 import { createRepoTools } from "./repo";
-import { WorkflowStateStore } from "../state";
+import { WorkflowStateStore } from "@brainervirus/workit-core/src/state";
 import { createSddTools } from "./sdd";
 import { createHandoffTools, type HandoffClient } from "./handoff";
 import { createYouTrackTools } from "./youtrack";

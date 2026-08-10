@@ -14,7 +14,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { configDir } from "../../packages/workit-core/src/core/config";
 import { vcsTokenCreateUrls } from "../../packages/workit-core/src/core/vcs-config";
-import { configPath } from "../../packages/workit-core/src/tools/youtrack";
+import { configPath } from "../../packages/workit-core/src/core/youtrack-tools";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 

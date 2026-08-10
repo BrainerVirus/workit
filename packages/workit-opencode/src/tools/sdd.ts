@@ -1,12 +1,20 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { tool, type ToolContext } from "@opencode-ai/plugin";
-import { fail, ok, resolveGitRevision, resolveInside } from "../core";
-import { resolveBranch, docsBranch } from "../core/branch";
-import { docsValidate } from "../core/docs-validate";
-import { parsePlanTasks, resolveHandoffBranch } from "../core/plan-tasks";
-import { sddAppendProgress, sddContext, sddReviewPackage, sddTaskBrief } from "../core/sdd";
-import { WorkflowStateStore } from "../state";
+import { fail, ok, resolveGitRevision, resolveInside } from "@brainervirus/workit-core/src/core";
+import { resolveBranch, docsBranch } from "@brainervirus/workit-core/src/core/branch";
+import { docsValidate } from "@brainervirus/workit-core/src/core/docs-validate";
+import {
+  parsePlanTasks,
+  resolveHandoffBranch,
+} from "@brainervirus/workit-core/src/core/plan-tasks";
+import {
+  sddAppendProgress,
+  sddContext,
+  sddReviewPackage,
+  sddTaskBrief,
+} from "@brainervirus/workit-core/src/core/sdd";
+import { WorkflowStateStore } from "@brainervirus/workit-core/src/state";
 
 const output = (value: unknown) => JSON.stringify(value, null, 2);
 const requireConfirmed = (confirmed: boolean) =>

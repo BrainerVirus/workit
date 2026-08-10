@@ -1,12 +1,12 @@
 import { tool } from "@opencode-ai/plugin";
-import { fail, ok } from "../core";
+import { fail, ok } from "@brainervirus/workit-core/src/core";
 import {
   readFlowState,
   transitionSpec,
   transitionPlan,
   recordMenuChoice,
   slugFromPath,
-} from "../core/flow-state";
+} from "@brainervirus/workit-core/src/core/flow-state";
 import path from "node:path";
 
 const output = (value: unknown) => JSON.stringify(value, null, 2);

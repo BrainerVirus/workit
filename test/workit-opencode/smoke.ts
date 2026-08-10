@@ -4,8 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import plugin from "../../packages/workit-opencode/src/plugin";
-import { createRepoTools } from "../../packages/workit-core/src/tools/repo";
-import { createSddTools } from "../../packages/workit-core/src/tools/sdd";
+import { createRepoTools } from "../../packages/workit-opencode/src/tools/repo";
+import { createSddTools } from "../../packages/workit-opencode/src/tools/sdd";
 import { WorkflowStateStore } from "../../packages/workit-core/src/state";
 
 const repository = (branch: string) => {

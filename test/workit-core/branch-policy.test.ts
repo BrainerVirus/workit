@@ -3,8 +3,8 @@ import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { createRepoTools } from "../../packages/workit-core/src/tools/repo";
-import { createSddTools } from "../../packages/workit-core/src/tools/sdd";
+import { createRepoTools } from "../../packages/workit-opencode/src/tools/repo";
+import { createSddTools } from "../../packages/workit-opencode/src/tools/sdd";
 import { WorkflowStateStore } from "../../packages/workit-core/src/state";
 import { docsBranch, resolveBranch } from "../../packages/workit-core/src/core/branch";
 

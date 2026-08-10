@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, rmSync, existsSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createRepoTools } from "../../packages/workit-core/src/tools/repo";
+import { createRepoTools } from "../../packages/workit-opencode/src/tools/repo";
 
 test("init_apply hygiene action creates missing files", async () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "wk-hygiene-tools-"));
