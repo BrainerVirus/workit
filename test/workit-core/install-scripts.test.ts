@@ -1,6 +1,14 @@
 import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  cpSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -113,7 +121,9 @@ test("install-opencode-plugin.sh uses the monorepo root and prioritizes one dev 
       },
     );
     expect(installed.status, installed.stderr).toBe(0);
-    expect(readFileSync(path.join(fixture.home, "sync-dev"), "utf8")).toBe(fixture.stub);
+    expect(readFileSync(path.join(fixture.home, "sync-dev"), "utf8")).toBe(
+      realpathSync(fixture.stub),
+    );
     const config = JSON.parse(
       readFileSync(path.join(fixture.home, ".config/opencode/opencode.json"), "utf8"),
     );
@@ -154,7 +164,7 @@ test("install-opencode-plugin.sh defaults to the checkout containing the script"
       readFileSync(path.join(fixture.home, ".config/opencode/opencode.json"), "utf8"),
     );
     expect(config.plugin).toEqual([
-      `file://${fixture.stub}/packages/workit-opencode/src/plugin.ts`,
+      `file://${realpathSync(fixture.stub)}/packages/workit-opencode/src/plugin.ts`,
     ]);
   } finally {
     rmSync(fixture.stub, { recursive: true, force: true });
