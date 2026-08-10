@@ -15,6 +15,7 @@
     "test/**/*.ts",
     "packages/workit-core/src/**/*.ts",
     "packages/workit-opencode/src/**/*.ts",
-    "packages/workit-cli/src/**/*.tsx"
+    "packages/workit-cli/src/**/*.tsx",
+    "packages/workit-cursor/mcp/**/*.ts"
   ]
 }

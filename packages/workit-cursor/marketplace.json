@@ -4,7 +4,7 @@
   "description": "Workflow rails for agentic coding: specs, plans, YouTrack, CI-gated commits",
   "publisher": "cristhofer-pincetti",
   "version": "0.4.0",
-  "homepage": "https://github.com/BrainerVirus/workflow-toolkit",
-  "repository": "https://github.com/BrainerVirus/workflow-toolkit.git",
+  "homepage": "https://github.com/BrainerVirus/workit",
+  "repository": "https://github.com/BrainerVirus/workit.git",
   "license": "MIT"
 }

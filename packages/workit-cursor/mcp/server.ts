@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { runScript } from "@brainervirus/workit-core/src/core/scripts";
 import {
@@ -56,6 +57,7 @@ import {
 const workspaceRootSchema = z
   .string()
   .optional()
+  .default(() => process.cwd())
   .describe("Git repository root. Defaults to the Cursor workspace folder (${workspaceFolder}).");
 
 const server = new McpServer({
@@ -66,7 +68,7 @@ const server = new McpServer({
   version: JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version,
 });
 
-function jsonResult(data) {
+function jsonResult(data: Record<string, unknown>): CallToolResult {
   return {
     content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
     structuredContent: data,
@@ -411,7 +413,7 @@ server.registerTool(
   },
   async ({ spec_path, plan_path, workspace_root }) => {
     const data = resolveBranch({ spec_path, plan_path, workspace_root });
-    if (data.error) return jsonResult({ error: data.error });
+    if ("error" in data) return jsonResult({ error: data.error });
     return jsonResult(withWorkspace(workspace_root, data));
   },
 );
@@ -478,7 +480,6 @@ server.registerTool(
       section_text,
       workspace_root,
     });
-    if (data.error) return jsonResult({ error: data.error });
     return jsonResult(withWorkspace(workspace_root, data));
   },
 );
@@ -554,7 +555,7 @@ server.registerTool(
   },
   async ({ spec_path, plan_path, workspace_root }) => {
     const data = docsValidate({ spec_path, plan_path, workspace_root });
-    if (data.error) {
+    if (data.ok === false) {
       return jsonResult(
         withWorkspace(workspace_root, { error: data.error, errors: data.errors ?? [] }),
       );
@@ -576,12 +577,12 @@ server.registerTool(
   },
   async ({ plan_path, spec_path, workspace_root }) => {
     const data = parsePlanTasks(plan_path, workspace_root);
-    if (data.error) {
+    if ("error" in data) {
       return jsonResult(withWorkspace(workspace_root, { error: data.error }));
     }
     if (spec_path) {
       const branchData = resolveHandoffBranch(spec_path, plan_path, workspace_root);
-      if (branchData.error) {
+      if ("error" in branchData) {
         return jsonResult(
           withWorkspace(workspace_root, {
             ...data,
@@ -606,7 +607,7 @@ server.registerTool(
     },
   },
   async ({ message, workspace_root }) => {
-    const root = workspace_root ?? process.cwd();
+    const root = workspace_root;
     const built = buildHandoffPrompt(root, message ?? "");
     if ("error" in built) {
       return jsonResult(withWorkspace(workspace_root, { error: built.error }));
@@ -615,7 +616,7 @@ server.registerTool(
 
     if (planPath) {
       const tasksData = parsePlanTasks(planPath, root);
-      if (tasksData.error) {
+      if ("error" in tasksData) {
         return jsonResult(
           withWorkspace(workspace_root, {
             prompt,
@@ -631,7 +632,7 @@ server.registerTool(
       };
       if (specPath) {
         const branchData = resolveHandoffBranch(specPath, planPath, root);
-        if (!branchData.error) {
+        if (!("error" in branchData)) {
           payload.branch = branchData.branch;
         }
       }
@@ -711,6 +712,7 @@ server.registerTool(
       branch_policy_allowed: z.array(z.string()).optional(),
       branch_policy_protected: z.array(z.string()).optional(),
       include_open_source: z.boolean().optional(),
+      workspace_root: workspaceRootSchema,
     },
   },
   async ({
@@ -728,9 +730,10 @@ server.registerTool(
     branch_policy_allowed,
     branch_policy_protected,
     include_open_source,
+    workspace_root,
   }) => {
     if (action === "hygiene") {
-      const result = ensureHygieneFiles(workspace_root ?? process.cwd(), {
+      const result = ensureHygieneFiles(workspace_root, {
         confirmed,
         includeOpenSource: include_open_source,
       });
@@ -738,7 +741,7 @@ server.registerTool(
       return jsonResult(result);
     }
     if (action === "gitignore") {
-      const result = ensureProjectGitignore(workspace_root ?? process.cwd(), confirmed);
+      const result = ensureProjectGitignore(workspace_root, confirmed);
       if (!result.ok) return jsonResult({ error: result.error });
       return jsonResult(result);
     }
@@ -762,7 +765,7 @@ server.registerTool(
       writeConfig(next);
       return jsonResult({ action: "config", path: `${configDir()}/config.json`, ...next });
     }
-    const env = {};
+    const env: Record<string, string> = {};
     if (base_url) env.WORKFLOW_YT_BASE_URL = base_url;
     if (default_mention) env.WORKFLOW_YT_MENTION = default_mention;
     if (meeting_issue) env.WORKFLOW_YT_MEETING_ISSUE = meeting_issue;
@@ -801,7 +804,7 @@ server.registerTool(
   },
   async ({ issue_ref }) => {
     const data = youtrackParseIssueRef(issue_ref);
-    if (data.error) return jsonResult({ error: data.error });
+    if ("error" in data) return jsonResult({ error: data.error });
     return jsonResult(data);
   },
 );
@@ -984,7 +987,7 @@ server.registerTool(
     },
   },
   async ({ plan_path, spec_path, workspace_root }) => {
-    const root = workspace_root ?? process.cwd();
+    const root = workspace_root;
     const slug = slugFromPath(plan_path ?? spec_path ?? "");
     if (!slug) return jsonResult({ error: "plan_path or spec_path required" });
     const state = readFlowState(root, slug);
@@ -1010,7 +1013,7 @@ server.registerTool(
     },
   },
   async ({ confirmed, spec_path, workspace_root }) => {
-    const root = workspace_root ?? process.cwd();
+    const root = workspace_root;
     const slug = slugFromPath(spec_path);
     const result = transitionSpec(root, slug, spec_path, confirmed);
     if (result.ok === false) return jsonResult({ error: result.error });
@@ -1030,7 +1033,7 @@ server.registerTool(
     },
   },
   async ({ confirmed, plan_path, workspace_root }) => {
-    const root = workspace_root ?? process.cwd();
+    const root = workspace_root;
     const slug = slugFromPath(plan_path);
     const result = transitionPlan(root, slug, plan_path, confirmed);
     if (result.ok === false) return jsonResult({ error: result.error });
@@ -1050,7 +1053,7 @@ server.registerTool(
     },
   },
   async ({ confirmed, plan_path, choice, workspace_root }) => {
-    const root = workspace_root ?? process.cwd();
+    const root = workspace_root;
     const slug = slugFromPath(plan_path);
     const result = recordMenuChoice(root, slug, plan_path, choice, confirmed);
     if (result.ok === false) return jsonResult({ error: result.error });
@@ -1080,7 +1083,7 @@ server.registerTool(
     description: "List local specs with docs-repo promotion status",
     inputSchema: { workspace_root: workspaceRootSchema },
   },
-  async ({ workspace_root }) => jsonResult(listSpecs(workspace_root ?? process.cwd())),
+  async ({ workspace_root }) => jsonResult(listSpecs(workspace_root)),
 );
 
 server.registerTool(
@@ -1095,7 +1098,7 @@ server.registerTool(
     },
   },
   async ({ slug, confirmed, force, workspace_root }) => {
-    const result = promoteSpec(workspace_root ?? process.cwd(), slug, { confirmed, force });
+    const result = promoteSpec(workspace_root, slug, { confirmed, force });
     if (!result.ok) return jsonResult({ error: result.error, findings: result.findings ?? [] });
     return jsonResult({
       target_dir: result.target_dir,

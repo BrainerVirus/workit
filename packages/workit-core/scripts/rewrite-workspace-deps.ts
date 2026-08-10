@@ -11,10 +11,14 @@ import { resolve } from "node:path";
 
 const root = process.argv[2] ? resolve(process.argv[2]) : resolve(import.meta.dir, "..", "..", "..");
 const core = JSON.parse(readFileSync(resolve(root, "packages/workit-core/package.json"), "utf8"));
+if (!core.version || typeof core.version !== "string") {
+  throw new Error(`workit-core version missing in ${resolve(root, "packages/workit-core/package.json")}`);
+}
 for (const pkg of ["workit-opencode", "workit-cursor", "workit-cli"]) {
   const file = resolve(root, `packages/${pkg}/package.json`);
   const data = JSON.parse(readFileSync(file, "utf8"));
-  if (data.dependencies?.["@brainervirus/workit-core"] !== "workspace:*") continue;
+  const dep = data.dependencies?.["@brainervirus/workit-core"];
+  if (dep === undefined) continue;
   data.dependencies["@brainervirus/workit-core"] = `^${core.version}`;
   writeFileSync(file, `${JSON.stringify(data, null, 2)}\n`);
 }

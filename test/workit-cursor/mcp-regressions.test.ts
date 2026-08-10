@@ -287,6 +287,34 @@ test("plugin and MCP versions are synchronized", () => {
   expect(manifest.version).toBe(opencode.version);
 });
 
+test("cursor MCP manifests stay package-relative (mcp.json, marketplace.json, hooks-cursor.json)", () => {
+  const mcpJson = JSON.parse(readFileSync(path.join(CURSOR_ROOT, "mcp.json"), "utf8"));
+  const marketplace = JSON.parse(readFileSync(path.join(CURSOR_ROOT, "marketplace.json"), "utf8"));
+  const hooks = JSON.parse(readFileSync(path.join(CURSOR_ROOT, "hooks/hooks-cursor.json"), "utf8"));
+  const launcher = readFileSync(path.join(CURSOR_ROOT, "mcp/run-server.sh"), "utf8");
+
+  const server = mcpJson.mcpServers.workit;
+  const joined = [server.command, ...(server.args ?? [])]
+    .join(" ")
+    .replace("${workspaceFolder}", "");
+  expect(joined).not.toMatch(/\$HOME/);
+  expect(joined).not.toContain(".local/share");
+  expect(joined).not.toContain("Documents/projects");
+  expect(joined).toMatch(/run-server\.sh/);
+
+  expect(marketplace.homepage).toBe("https://github.com/BrainerVirus/workit");
+  expect(marketplace.repository).toBe("https://github.com/BrainerVirus/workit.git");
+  expect(hooks.hooks.sessionStart).toEqual([{ command: "./hooks/session-start" }]);
+  expect(launcher).not.toMatch(/Documents\/projects/);
+  expect(launcher).not.toMatch(/\$HOME\/\.local\/share\/workflow-toolkit/);
+});
+
+test("root tsconfig includes Cursor MCP source in strict typechecking", () => {
+  const tsconfig = JSON.parse(readFileSync(path.join(REPO_ROOT, "tsconfig.json"), "utf8"));
+  expect(tsconfig.include).toContain("packages/workit-cursor/mcp/**/*.ts");
+  expect(tsconfig.compilerOptions.strict).toBe(true);
+});
+
 test("cursor MCP server registers the full required tool surface", () => {
   const server = readFileSync(path.join(CURSOR_ROOT, "mcp/server.ts"), "utf8");
   const required = [

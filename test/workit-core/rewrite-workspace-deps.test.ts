@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { cpSync, mkdtempSync, readFileSync } from "node:fs";
+import { cpSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -51,6 +51,48 @@ test("rewrite-workspace-deps.ts: workspace:* → ^<core version> in all 3 platfo
   );
   expect(marketplace.homepage).toBe("https://github.com/BrainerVirus/workit");
   expect(marketplace.repository).toBe("https://github.com/BrainerVirus/workit.git");
+});
+
+test("rewrite-workspace-deps.ts: every prepared adapter dependency equals the prepared core version even when pinned", () => {
+  const sandbox = mkdtempSync(path.join(os.tmpdir(), "wf-rewrite-pinned-"));
+  try {
+    const coreData = JSON.parse(
+      readFileSync(path.join(repoRoot, "packages/workit-core/package.json"), "utf8"),
+    );
+    coreData.version = "0.4.0";
+    for (const pkg of ["workit-core", "workit-opencode", "workit-cursor", "workit-cli"]) {
+      const file = path.join(sandbox, `packages/${pkg}/package.json`);
+      const data = JSON.parse(
+        readFileSync(path.join(repoRoot, `packages/${pkg}/package.json`), "utf8"),
+      );
+      if (pkg === "workit-core") {
+        data.version = coreData.version;
+      } else {
+        data.dependencies["@brainervirus/workit-core"] = "^0.3.0";
+      }
+      mkdirSync(path.dirname(file), { recursive: true });
+      writeFileSync(file, `${JSON.stringify(data, null, 2)}\n`);
+    }
+    for (const f of [".cursor-plugin/plugin.json", "marketplace.json"]) {
+      const src = path.join(repoRoot, `packages/workit-cursor/${f}`);
+      const dst = path.join(sandbox, `packages/workit-cursor/${f}`);
+      mkdirSync(path.dirname(dst), { recursive: true });
+      const data = JSON.parse(readFileSync(src, "utf8"));
+      data.version = "0.4.0";
+      writeFileSync(dst, `${JSON.stringify(data, null, 2)}\n`);
+    }
+    const script = path.join(repoRoot, "packages/workit-core/scripts/rewrite-workspace-deps.ts");
+    const run = spawnSync("bun", [script, sandbox], { encoding: "utf8" });
+    expect(run.status, run.stderr).toBe(0);
+    for (const pkg of ["workit-opencode", "workit-cursor", "workit-cli"]) {
+      const data = JSON.parse(
+        readFileSync(path.join(sandbox, `packages/${pkg}/package.json`), "utf8"),
+      );
+      expect(data.dependencies["@brainervirus/workit-core"]).toBe(`^${coreData.version}`);
+    }
+  } finally {
+    rmSync(sandbox, { recursive: true, force: true });
+  }
 });
 
 test("rewrite-workspace-deps.ts: repo package.jsons keep workspace:* for dev (script runs on sandbox only)", () => {
