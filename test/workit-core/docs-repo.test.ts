@@ -4,8 +4,11 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import {
-  readDocsRepoConfig, writeDocsRepoConfig, docsRepoPath,
-  validateDocsRepo, linkDocsRepo,
+  readDocsRepoConfig,
+  writeDocsRepoConfig,
+  docsRepoPath,
+  validateDocsRepo,
+  linkDocsRepo,
 } from "../../packages/workit-core/src/core/docs-repo";
 
 process.env.WORKFLOW_DOCS_REPO_CONFIG = path.join(os.tmpdir(), "wf-docsrepo-config-test.json");
@@ -37,7 +40,9 @@ test("writeDocsRepoConfig + readDocsRepoConfig round trip", () => {
     writeDocsRepoConfig(dir);
     expect(readDocsRepoConfig()).toEqual({ path: dir });
     expect(docsRepoPath()).toBe(dir);
-  } finally { rmSync(dir, { recursive: true, force: true }); }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("validateDocsRepo rejects non-git paths and creates features/", () => {
@@ -45,14 +50,18 @@ test("validateDocsRepo rejects non-git paths and creates features/", () => {
   try {
     const bad = validateDocsRepo(plain);
     expect(bad.ok).toBe(false);
-  } finally { rmSync(plain, { recursive: true, force: true }); }
+  } finally {
+    rmSync(plain, { recursive: true, force: true });
+  }
 
   const repo = makeRepo();
   try {
     const ok = validateDocsRepo(repo);
     expect(ok.ok).toBe(true);
     expect(existsSync(path.join(repo, "features"))).toBe(true);
-  } finally { rmSync(repo, { recursive: true, force: true }); }
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
 });
 
 test("linkDocsRepo requires confirmed and writes config", () => {
@@ -63,7 +72,9 @@ test("linkDocsRepo requires confirmed and writes config", () => {
     const linked = linkDocsRepo(repo, true);
     expect(linked.ok).toBe(true);
     expect(docsRepoPath()).toBe(repo);
-  } finally { rmSync(repo, { recursive: true, force: true }); }
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
 });
 
 import { promoteSpec } from "../../packages/workit-core/src/core/docs-repo";
@@ -119,7 +130,10 @@ test("promoteSpec copies spec+plan, writes README, updates index", () => {
       const index = readFileSync(path.join(repo, "features", "README.md"), "utf8");
       expect(index).toContain("alpha");
     }
-  } finally { rmSync(repo, { recursive: true, force: true }); rmSync(work, { recursive: true, force: true }); }
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+    rmSync(work, { recursive: true, force: true });
+  }
 });
 
 test("promoteSpec refuses on hard quality findings unless force", () => {
@@ -136,7 +150,10 @@ test("promoteSpec refuses on hard quality findings unless force", () => {
 
     const forced = promoteSpec(work, "bad", { confirmed: true, force: true });
     expect(forced.ok).toBe(true);
-  } finally { rmSync(repo, { recursive: true, force: true }); rmSync(work, { recursive: true, force: true }); }
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+    rmSync(work, { recursive: true, force: true });
+  }
 });
 
 test("promoteSpec is idempotent on re-promote", () => {
@@ -153,13 +170,19 @@ test("promoteSpec is idempotent on re-promote", () => {
       const index = readFileSync(path.join(repo, "features", "README.md"), "utf8");
       expect((index.match(/^\| \[gamma\]/gm) ?? []).length).toBe(1);
     }
-  } finally { rmSync(repo, { recursive: true, force: true }); rmSync(work, { recursive: true, force: true }); }
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+    rmSync(work, { recursive: true, force: true });
+  }
 });
 
 test("promoteSpec errors when docs repo not linked", () => {
   const work = makeRepo();
   const previous = process.env.WORKFLOW_DOCS_REPO_CONFIG;
-  process.env.WORKFLOW_DOCS_REPO_CONFIG = path.join(os.tmpdir(), `wf-docsrepo-unlinked-${Date.now()}.json`);
+  process.env.WORKFLOW_DOCS_REPO_CONFIG = path.join(
+    os.tmpdir(),
+    `wf-docsrepo-unlinked-${Date.now()}.json`,
+  );
   try {
     const result = promoteSpec(work, "alpha", { confirmed: true });
     expect(result.ok).toBe(false);
@@ -183,7 +206,10 @@ test("promoteSpec rejects traversal and regex-special slugs", () => {
     const regexSpecial = promoteSpec(work, "c++", { confirmed: true });
     expect(regexSpecial.ok).toBe(false);
     if (!regexSpecial.ok) expect(regexSpecial.error).toContain("invalid slug");
-  } finally { rmSync(repo, { recursive: true, force: true }); rmSync(work, { recursive: true, force: true }); }
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+    rmSync(work, { recursive: true, force: true });
+  }
 });
 
 test("promoteSpec with a dotted slug works and stays in features/", () => {
@@ -198,5 +224,8 @@ test("promoteSpec with a dotted slug works and stays in features/", () => {
     if (result.ok) {
       expect(result.target_dir).toContain(path.join(repo, "features"));
     }
-  } finally { rmSync(repo, { recursive: true, force: true }); rmSync(work, { recursive: true, force: true }); }
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+    rmSync(work, { recursive: true, force: true });
+  }
 });

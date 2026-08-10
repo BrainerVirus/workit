@@ -24,16 +24,20 @@ export function createPresentTools() {
       args: {
         title: tool.schema.string().optional(),
         direction: tool.schema.enum(["TD", "LR", "BT", "RL"]).optional(),
-        nodes: tool.schema.array(tool.schema.object({
-          id: tool.schema.string(),
-          label: tool.schema.string(),
-          shape: tool.schema.string().optional(),
-        })),
-        edges: tool.schema.array(tool.schema.object({
-          from: tool.schema.string(),
-          to: tool.schema.string(),
-          label: tool.schema.string().optional(),
-        })),
+        nodes: tool.schema.array(
+          tool.schema.object({
+            id: tool.schema.string(),
+            label: tool.schema.string(),
+            shape: tool.schema.string().optional(),
+          }),
+        ),
+        edges: tool.schema.array(
+          tool.schema.object({
+            from: tool.schema.string(),
+            to: tool.schema.string(),
+            label: tool.schema.string().optional(),
+          }),
+        ),
       },
       execute: async (spec) => {
         const result = flowDiagram(spec);

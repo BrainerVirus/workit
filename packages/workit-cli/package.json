@@ -3,35 +3,35 @@
   "version": "0.4.0",
   "private": false,
   "description": "Workit interactive setup wizard (Ink TUI)",
-  "license": "MIT",
   "keywords": [
-    "opencode",
-    "cursor",
-    "workflow",
     "cli",
-    "setup"
+    "cursor",
+    "opencode",
+    "setup",
+    "workflow"
   ],
   "bugs": {
     "url": "https://github.com/BrainerVirus/workit/issues"
   },
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/BrainerVirus/workit.git"
+  },
+  "bin": {
+    "workit": "./dist/index.js"
   },
   "files": [
     "dist/"
   ],
   "type": "module",
-  "bin": {
-    "workit": "./dist/index.js"
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "build": "bun build ./src/index.tsx --outdir dist --target node --format esm --banner \"#!/usr/bin/env node\" --external react-devtools-core --splitting",
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "bun run build && bun run typecheck"
-  },
-  "publishConfig": {
-    "access": "public"
   },
   "dependencies": {
     "@brainervirus/workit-core": "workspace:*",

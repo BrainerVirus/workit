@@ -3,16 +3,16 @@
   "version": "0.4.0",
   "private": false,
   "description": "Workit OpenCode plugin (thin wrapper over @brainervirus/workit-core)",
-  "license": "MIT",
   "keywords": [
-    "opencode",
-    "workflow",
+    "agent",
     "mcp",
-    "agent"
+    "opencode",
+    "workflow"
   ],
   "bugs": {
     "url": "https://github.com/BrainerVirus/workit/issues"
   },
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/BrainerVirus/workit.git"
@@ -26,11 +26,11 @@
     ".": "./src/plugin.ts",
     "./src/*": "./src/*"
   },
-  "scripts": {
-    "typecheck": "tsc --noEmit"
-  },
   "publishConfig": {
     "access": "public"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@brainervirus/workit-core": "workspace:*",

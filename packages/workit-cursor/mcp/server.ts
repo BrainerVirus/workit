@@ -3,12 +3,24 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { runScript } from "@brainervirus/workit-core/src/core/scripts";
-import { parseSections, parseKeyValueLines } from "@brainervirus/workit-core/src/core/parse-sections";
+import {
+  parseSections,
+  parseKeyValueLines,
+} from "@brainervirus/workit-core/src/core/parse-sections";
 import { parseVerifyOutput } from "@brainervirus/workit-core/src/core/verify-parse";
 import { gitContext } from "@brainervirus/workit-core/src/core/git";
-import { parsePlanTasks, resolveHandoffBranch } from "@brainervirus/workit-core/src/core/plan-tasks";
+import {
+  parsePlanTasks,
+  resolveHandoffBranch,
+} from "@brainervirus/workit-core/src/core/plan-tasks";
 import { buildHandoffPrompt } from "@brainervirus/workit-core/src/tools/handoff";
-import { readFlowState, transitionSpec, transitionPlan, recordMenuChoice, slugFromPath } from "@brainervirus/workit-core/src/core/flow-state";
+import {
+  readFlowState,
+  transitionSpec,
+  transitionPlan,
+  recordMenuChoice,
+  slugFromPath,
+} from "@brainervirus/workit-core/src/core/flow-state";
 import { linkDocsRepo, listSpecs, promoteSpec } from "@brainervirus/workit-core/src/core/docs-repo";
 import { configDir, readConfig, writeConfig } from "@brainervirus/workit-core/src/core/config";
 import { ensureProjectGitignore } from "@brainervirus/workit-core/src/core/gitignore";
@@ -44,29 +56,15 @@ import {
 const workspaceRootSchema = z
   .string()
   .optional()
-  .describe(
-    "Git repository root. Defaults to the Cursor workspace folder (${workspaceFolder}).",
-  );
+  .describe("Git repository root. Defaults to the Cursor workspace folder (${workspaceFolder}).");
 
 const server = new McpServer({
   name: "workit",
   // Runtime read, not hardcoded: semantic-release bumps versions only in CI
   // (no commit-back), so any literal here would drift from the published tag.
   // package.json ships in the tarball regardless of the files whitelist.
-  version: JSON.parse(
-    readFileSync(new URL("../package.json", import.meta.url), "utf8"),
-  ).version,
+  version: JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version,
 });
-
-function extractPlanPath(prompt) {
-  const match = prompt.match(/\*\*Plan:\*\* (.+)/);
-  return match?.[1]?.trim() ?? null;
-}
-
-function extractSpecPath(prompt) {
-  const match = prompt.match(/\*\*Spec:\*\* (.+)/);
-  return match?.[1]?.trim() ?? null;
-}
 
 function jsonResult(data) {
   return {
@@ -87,11 +85,7 @@ server.registerTool(
   },
   async ({ dry_run, workspace_root }) => {
     const args = dry_run ? ["--dry-run"] : [];
-    const { stdout, stderr, exitCode, cwd } = runScript(
-      "verify-project.sh",
-      args,
-      workspace_root,
-    );
+    const { stdout, stderr, exitCode, cwd } = runScript("verify-project.sh", args, workspace_root);
     const parsed = parseVerifyOutput(stdout);
     return jsonResult(
       withWorkspace(workspace_root, {
@@ -125,9 +119,7 @@ server.registerTool(
     if (exitCode !== 0) {
       const errLines = (stderr + "\n" + stdout).split("\n");
       const error =
-        errLines.find((l) => l.startsWith("ERROR:")) ??
-        stderr.trim() ??
-        "pr-ready-context failed";
+        errLines.find((l) => l.startsWith("ERROR:")) ?? stderr.trim() ?? "pr-ready-context failed";
       return jsonResult(
         withWorkspace(workspace_root, {
           error,
@@ -203,27 +195,15 @@ server.registerTool(
       workspace_root: workspaceRootSchema,
     },
   },
-  async ({
-    confirmed,
-    title,
-    body,
-    draft,
-    target_branch,
-    workspace_root,
-  }) => {
+  async ({ confirmed, title, body, draft, target_branch, workspace_root }) => {
     if (!confirmed) return jsonResult({ error: "confirmed: true required" });
-    const { stdout, stderr, exitCode, cwd } = runScript(
-      "pr-create.sh",
-      [],
-      workspace_root,
-      {
-        WF_PR_TITLE: title,
-        WF_PR_BODY: body ?? "",
-        WF_PR_CONFIRMED: "true",
-        WF_PR_DRAFT: draft ? "true" : "false",
-        WF_PR_TARGET: target_branch ?? "",
-      },
-    );
+    const { stdout, stderr, exitCode, cwd } = runScript("pr-create.sh", [], workspace_root, {
+      WF_PR_TITLE: title,
+      WF_PR_BODY: body ?? "",
+      WF_PR_CONFIRMED: "true",
+      WF_PR_DRAFT: draft ? "true" : "false",
+      WF_PR_TARGET: target_branch ?? "",
+    });
     try {
       const data = JSON.parse(stdout.trim());
       if (data.error) {
@@ -350,10 +330,7 @@ server.registerTool(
       workspace_root,
     );
     const sections = parseSections(stdout);
-    const repo = parseKeyValueLines(sections.Repository ?? "", [
-      "requested",
-      "range",
-    ]);
+    const repo = parseKeyValueLines(sections.Repository ?? "", ["requested", "range"]);
     return jsonResult(
       withWorkspace(workspace_root, {
         requested: repo.requested,
@@ -550,7 +527,7 @@ server.registerTool(
   "workflow_docs_branch",
   {
     description:
-      "Resolve branch for spec/plan authors: keep current feature|bugfix or create from develop.",
+      "Resolve branch for spec/plan authors: keep current feature|bugfix or create from the configured base.",
     inputSchema: {
       plan_path: z.string().optional(),
       kind: z.enum(["feature", "bugfix"]).optional(),
@@ -578,7 +555,9 @@ server.registerTool(
   async ({ spec_path, plan_path, workspace_root }) => {
     const data = docsValidate({ spec_path, plan_path, workspace_root });
     if (data.error) {
-      return jsonResult(withWorkspace(workspace_root, { error: data.error, errors: data.errors ?? [] }));
+      return jsonResult(
+        withWorkspace(workspace_root, { error: data.error, errors: data.errors ?? [] }),
+      );
     }
     return jsonResult(withWorkspace(workspace_root, data));
   },
@@ -601,11 +580,7 @@ server.registerTool(
       return jsonResult(withWorkspace(workspace_root, { error: data.error }));
     }
     if (spec_path) {
-      const branchData = resolveHandoffBranch(
-        spec_path,
-        plan_path,
-        workspace_root,
-      );
+      const branchData = resolveHandoffBranch(spec_path, plan_path, workspace_root);
       if (branchData.error) {
         return jsonResult(
           withWorkspace(workspace_root, {
@@ -614,9 +589,7 @@ server.registerTool(
           }),
         );
       }
-      return jsonResult(
-        withWorkspace(workspace_root, { ...data, branch: branchData.branch }),
-      );
+      return jsonResult(withWorkspace(workspace_root, { ...data, branch: branchData.branch }));
     }
     return jsonResult(withWorkspace(workspace_root, data));
   },
@@ -657,11 +630,7 @@ server.registerTool(
         workspace_root: root,
       };
       if (specPath) {
-        const branchData = resolveHandoffBranch(
-          specPath,
-          planPath,
-          root,
-        );
+        const branchData = resolveHandoffBranch(specPath, planPath, root);
         if (!branchData.error) {
           payload.branch = branchData.branch;
         }
@@ -689,8 +658,7 @@ server.registerTool(
 server.registerTool(
   "workflow_toolkit_init_status",
   {
-    description:
-      "Check workit setup (MCP deps, YouTrack config, token)",
+    description: "Check workit setup (MCP deps, YouTrack config, token)",
     inputSchema: {},
   },
   async () => {
@@ -762,7 +730,10 @@ server.registerTool(
     include_open_source,
   }) => {
     if (action === "hygiene") {
-      const result = ensureHygieneFiles(workspace_root ?? process.cwd(), { confirmed, includeOpenSource: include_open_source });
+      const result = ensureHygieneFiles(workspace_root ?? process.cwd(), {
+        confirmed,
+        includeOpenSource: include_open_source,
+      });
       if (!result.ok) return jsonResult({ error: result.error });
       return jsonResult(result);
     }
@@ -773,7 +744,9 @@ server.registerTool(
     }
     if (action === "config") {
       if (locale !== undefined && !/^[a-z]{2,3}(-[A-Z]{2})?$/.test(locale)) {
-        return jsonResult({ error: `invalid locale: ${JSON.stringify(locale)} — expected BCP-47 like en or es-CL` });
+        return jsonResult({
+          error: `invalid locale: ${JSON.stringify(locale)} — expected BCP-47 like en or es-CL`,
+        });
       }
       const current = readConfig();
       const next = {
@@ -804,16 +777,14 @@ server.registerTool(
 server.registerTool(
   "workflow_youtrack_verify_token",
   {
-    description:
-      "Read-only YouTrack token test (GET /api/users/me). No work items created.",
+    description: "Read-only YouTrack token test (GET /api/users/me). No work items created.",
     inputSchema: {},
   },
   async () => {
     const result = verifyYouTrackToken();
     if (result.error) return jsonResult({ error: result.error });
     const data = result.data;
-    if (!data.ok)
-      return jsonResult({ error: data.error ?? "token invalid", ...data });
+    if (!data.ok) return jsonResult({ error: data.error ?? "token invalid", ...data });
     return jsonResult(data);
   },
 );
@@ -821,8 +792,7 @@ server.registerTool(
 server.registerTool(
   "workflow_youtrack_parse_issue",
   {
-    description:
-      "Parse YouTrack issue URL or bare id (e.g. NSR-40) into issueId",
+    description: "Parse YouTrack issue URL or bare id (e.g. NSR-40) into issueId",
     inputSchema: {
       issue_ref: z
         .string()
@@ -839,8 +809,7 @@ server.registerTool(
 server.registerTool(
   "workflow_youtrack_context",
   {
-    description:
-      "YouTrack config, greeting, issue resolution (from issue_url/id or meetings)",
+    description: "YouTrack config, greeting, issue resolution (from issue_url/id or meetings)",
     inputSchema: {
       mode: z.enum(["meetings", "task"]).optional(),
       issue_id: z.string().optional(),
@@ -851,15 +820,7 @@ server.registerTool(
       workspace_root: workspaceRootSchema,
     },
   },
-  async ({
-    mode,
-    issue_id,
-    issue_url,
-    issue_ref,
-    spec_path,
-    plan_path,
-    workspace_root,
-  }) => {
+  async ({ mode, issue_id, issue_url, issue_ref, spec_path, plan_path, workspace_root }) => {
     const data = youtrackContext({
       mode,
       issue_id,
@@ -903,7 +864,10 @@ server.registerTool(
       issueId: z.string(),
       minutes: z.number(),
       text: z.string().optional(),
-      dateMs: z.number().optional().describe("Epoch ms for work item date; omit for today in config timezone"),
+      dateMs: z
+        .number()
+        .optional()
+        .describe("Epoch ms for work item date; omit for today in config timezone"),
       workspace_root: workspaceRootSchema,
     },
   },
@@ -1037,7 +1001,8 @@ server.registerTool(
 server.registerTool(
   "workflow_spec_approve",
   {
-    description: "Advance spec status: first call self_reviewed, second call approved (after user approval)",
+    description:
+      "Advance spec status: first call self_reviewed, second call approved (after user approval)",
     inputSchema: {
       confirmed: z.boolean(),
       spec_path: z.string(),
@@ -1056,7 +1021,8 @@ server.registerTool(
 server.registerTool(
   "workflow_plan_approve",
   {
-    description: "Advance plan status: first call self_reviewed, second call approved. Requires approved spec.",
+    description:
+      "Advance plan status: first call self_reviewed, second call approved. Requires approved spec.",
     inputSchema: {
       confirmed: z.boolean(),
       plan_path: z.string(),
@@ -1131,7 +1097,11 @@ server.registerTool(
   async ({ slug, confirmed, force, workspace_root }) => {
     const result = promoteSpec(workspace_root ?? process.cwd(), slug, { confirmed, force });
     if (!result.ok) return jsonResult({ error: result.error, findings: result.findings ?? [] });
-    return jsonResult({ target_dir: result.target_dir, files: result.files, index_updated: result.index_updated });
+    return jsonResult({
+      target_dir: result.target_dir,
+      files: result.files,
+      index_updated: result.index_updated,
+    });
   },
 );
 

@@ -12,14 +12,17 @@ test("init_apply writes config.json with guided values", async () => {
     process.env.WORKFLOW_TOOLKIT_CONFIG_DIR = dir;
     delete process.env.WORKFLOW_TOOLKIT_CONFIG;
     const tools = createRepoTools();
-    const raw = await tools.workflow_toolkit_init_apply.execute({
-      confirmed: true,
-      action: "config",
-      locale: "es-CL",
-      branch_policy_preset: "custom",
-      branch_policy_allowed: ["feature/*", "codex/*"],
-      branch_policy_protected: ["main"],
-    }, { directory: dir, worktree: dir } as never);
+    const raw = await tools.workflow_toolkit_init_apply.execute(
+      {
+        confirmed: true,
+        action: "config",
+        locale: "es-CL",
+        branch_policy_preset: "custom",
+        branch_policy_allowed: ["feature/*", "codex/*"],
+        branch_policy_protected: ["main"],
+      },
+      { directory: dir, worktree: dir } as never,
+    );
     const out = JSON.parse(raw as string);
     expect(out.ok).toBe(true);
     const cfg = readConfig();

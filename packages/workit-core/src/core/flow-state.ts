@@ -104,7 +104,10 @@ export const transitionSpec = (
         ok: false,
         error:
           "spec self-review failed: " +
-          hard.map((f) => `${f.code} — ${f.message}`).concat(missing).join("; ") +
+          hard
+            .map((f) => `${f.code} — ${f.message}`)
+            .concat(missing)
+            .join("; ") +
           " — see templates/spec-template.md for the required structure",
       };
     }
@@ -150,7 +153,8 @@ export const transitionPlan = (
     }
     const missing: string[] = [];
     const stripped = stripFences(text);
-    if (parseTasksFromPlan(text).length === 0) missing.push("no ### Task N: sections outside fences");
+    if (parseTasksFromPlan(text).length === 0)
+      missing.push("no ### Task N: sections outside fences");
     if (!/^\s*\*+Spec:\*+/im.test(stripped)) missing.push("**Spec:** header missing");
     if (!/^\s*\*+Branch:\*+/im.test(stripped)) missing.push("**Branch:** header missing");
     if (missing.length > 0) {

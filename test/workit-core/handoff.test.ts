@@ -3,7 +3,12 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync }
 import { spawnSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
-import { adaptPluginHandoffClient, buildHandoffPrompt, createHandoffTools, handoffSession } from "../../packages/workit-core/src/tools/handoff";
+import {
+  adaptPluginHandoffClient,
+  buildHandoffPrompt,
+  createHandoffTools,
+  handoffSession,
+} from "../../packages/workit-core/src/tools/handoff";
 import { WorkflowStateStore } from "../../packages/workit-core/src/state";
 
 const posix = (p: string) => p.split(path.sep).join("/");
@@ -52,10 +57,18 @@ test("handoff creates a top-level session, seeds it, then selects it", async () 
 test("selection failure preserves the seeded session ID", async () => {
   const client = {
     session: {
-      async create() { return { data: { id: "child-2" } }; },
-      async promptAsync() { return { data: undefined }; },
+      async create() {
+        return { data: { id: "child-2" } };
+      },
+      async promptAsync() {
+        return { data: undefined };
+      },
     },
-    tui: { async selectSession() { throw new Error("no TUI"); } },
+    tui: {
+      async selectSession() {
+        throw new Error("no TUI");
+      },
+    },
   };
 
   const result = await handoffSession(client, { ...request, stay: false });
@@ -70,10 +83,18 @@ test("selection failure preserves the seeded session ID", async () => {
 test("false selection response preserves the seeded session ID", async () => {
   const client = {
     session: {
-      async create() { return { data: { id: "child-false" } }; },
-      async promptAsync() { return { data: undefined }; },
+      async create() {
+        return { data: { id: "child-false" } };
+      },
+      async promptAsync() {
+        return { data: undefined };
+      },
     },
-    tui: { async selectSession() { return { data: false }; } },
+    tui: {
+      async selectSession() {
+        return { data: false };
+      },
+    },
   };
 
   expect(await handoffSession(client, request)).toEqual({
@@ -87,10 +108,18 @@ test("stay seeds without selecting", async () => {
   let selected = false;
   const client = {
     session: {
-      async create() { return { data: { id: "child-3" } }; },
-      async promptAsync() { return { data: undefined }; },
+      async create() {
+        return { data: { id: "child-3" } };
+      },
+      async promptAsync() {
+        return { data: undefined };
+      },
     },
-    tui: { async selectSession() { selected = true; } },
+    tui: {
+      async selectSession() {
+        selected = true;
+      },
+    },
   };
 
   const result = await handoffSession(client, { ...request, stay: true });
@@ -107,10 +136,18 @@ test("seed failure preserves the created session ID and skips selection", async 
   let selected = false;
   const client = {
     session: {
-      async create() { return { data: { id: "child-4" } }; },
-      async promptAsync() { throw new Error("seed rejected"); },
+      async create() {
+        return { data: { id: "child-4" } };
+      },
+      async promptAsync() {
+        throw new Error("seed rejected");
+      },
     },
-    tui: { async selectSession() { selected = true; } },
+    tui: {
+      async selectSession() {
+        selected = true;
+      },
+    },
   };
 
   const result = await handoffSession(client, request);
@@ -126,10 +163,18 @@ test("seed failure preserves the created session ID and skips selection", async 
 test("SDK error results are treated as stage failures", async () => {
   const client = {
     session: {
-      async create() { return { data: { id: "child-error" } }; },
-      async promptAsync() { return { error: { message: "seed rejected" } }; },
+      async create() {
+        return { data: { id: "child-error" } };
+      },
+      async promptAsync() {
+        return { error: { message: "seed rejected" } };
+      },
     },
-    tui: { async selectSession() { return { data: undefined }; } },
+    tui: {
+      async selectSession() {
+        return { data: undefined };
+      },
+    },
   };
 
   expect(await handoffSession(client, request)).toEqual({
@@ -142,10 +187,18 @@ test("SDK error results are treated as stage failures", async () => {
 test("missing created session ID reports the create stage", async () => {
   const client = {
     session: {
-      async create() { return { data: undefined }; },
-      async promptAsync() { return { data: undefined }; },
+      async create() {
+        return { data: undefined };
+      },
+      async promptAsync() {
+        return { data: undefined };
+      },
     },
-    tui: { async selectSession() { return { data: true }; } },
+    tui: {
+      async selectSession() {
+        return { data: true };
+      },
+    },
   };
 
   expect(await handoffSession(client, request)).toEqual({
@@ -170,13 +223,16 @@ test("native handoff resolves package context, records paths, and seeds from Too
     path.join(root, "docs/x/plan.md"),
     "# X\n\n**Spec:** `docs/x/spec.md`\n**Branch:** `feature/x`\n\n### Task 1: One\n\n- [ ] **Step 1:** Work\n",
   );
-  writeFileSync(path.join(root, "docs/x/sdd/flow.json"), JSON.stringify({
-    slug: "x",
-    spec: { path: "docs/x/spec.md", status: "approved" },
-    plan: { path: "docs/x/plan.md", status: "approved" },
-    menu: { presented: true, chosen: "handoff" },
-    updated_at: Date.now(),
-  }));
+  writeFileSync(
+    path.join(root, "docs/x/sdd/flow.json"),
+    JSON.stringify({
+      slug: "x",
+      spec: { path: "docs/x/spec.md", status: "approved" },
+      plan: { path: "docs/x/plan.md", status: "approved" },
+      menu: { presented: true, chosen: "handoff" },
+      updated_at: Date.now(),
+    }),
+  );
   const calls: string[] = [];
   const client = {
     session: {
@@ -189,7 +245,11 @@ test("native handoff resolves package context, records paths, and seeds from Too
         return { data: undefined };
       },
     },
-    tui: { async selectSession() { throw new Error("stay should skip selection"); } },
+    tui: {
+      async selectSession() {
+        throw new Error("stay should skip selection");
+      },
+    },
   };
   const state = new WorkflowStateStore();
 
@@ -229,18 +289,25 @@ test("native handoff ignores a hallucinated stay argument when the message has n
     path.join(root, "docs/x/plan.md"),
     "# X\n\n**Spec:** `docs/x/spec.md`\n**Branch:** `feature/x`\n\n### Task 1: One\n\n- [ ] **Step 1:** Work\n",
   );
-  writeFileSync(path.join(root, "docs/x/sdd/flow.json"), JSON.stringify({
-    slug: "x",
-    spec: { path: "docs/x/spec.md", status: "approved" },
-    plan: { path: "docs/x/plan.md", status: "approved" },
-    menu: { presented: true, chosen: "handoff" },
-    updated_at: Date.now(),
-  }));
+  writeFileSync(
+    path.join(root, "docs/x/sdd/flow.json"),
+    JSON.stringify({
+      slug: "x",
+      spec: { path: "docs/x/spec.md", status: "approved" },
+      plan: { path: "docs/x/plan.md", status: "approved" },
+      menu: { presented: true, chosen: "handoff" },
+      updated_at: Date.now(),
+    }),
+  );
   const calls: string[] = [];
   const client = {
     session: {
-      async create() { return { data: { id: "child-select" } }; },
-      async promptAsync() { return { data: undefined }; },
+      async create() {
+        return { data: { id: "child-select" } };
+      },
+      async promptAsync() {
+        return { data: undefined };
+      },
     },
     tui: {
       async selectSession(input: { body: { sessionID: string } }) {
@@ -277,13 +344,16 @@ test("native handoff resolves relative paths from the session directory", async 
       path.join(root, "docs/x/plan.md"),
       "# X\n\n**Spec:** `docs/x/spec.md`\n**Branch:** `feature/x`\n\n### Task 1: One\n\n- [ ] **Step 1:** Work\n",
     );
-    writeFileSync(path.join(root, "docs/x/sdd/flow.json"), JSON.stringify({
-      slug: "x",
-      spec: { path: "docs/x/spec.md", status: "approved" },
-      plan: { path: "docs/x/plan.md", status: "approved" },
-      menu: { presented: true, chosen: "inline" },
-      updated_at: Date.now(),
-    }));
+    writeFileSync(
+      path.join(root, "docs/x/sdd/flow.json"),
+      JSON.stringify({
+        slug: "x",
+        spec: { path: "docs/x/spec.md", status: "approved" },
+        plan: { path: "docs/x/plan.md", status: "approved" },
+        menu: { presented: true, chosen: "inline" },
+        updated_at: Date.now(),
+      }),
+    );
     let createdDirectory = "";
     const client = {
       session: {
@@ -291,15 +361,25 @@ test("native handoff resolves relative paths from the session directory", async 
           createdDirectory = input.query.directory;
           return { data: { id: "child-directory" } };
         },
-        async promptAsync() { return { data: undefined }; },
+        async promptAsync() {
+          return { data: undefined };
+        },
       },
-      tui: { async selectSession() { return { data: true }; } },
+      tui: {
+        async selectSession() {
+          return { data: true };
+        },
+      },
     };
 
-    await createHandoffTools(client as never, new WorkflowStateStore()).workflow_handoff_session.execute(
-      { message: "continue" },
-      { directory: root, worktree: root, sessionID: "parent" } as never,
-    );
+    await createHandoffTools(
+      client as never,
+      new WorkflowStateStore(),
+    ).workflow_handoff_session.execute({ message: "continue" }, {
+      directory: root,
+      worktree: root,
+      sessionID: "parent",
+    } as never);
 
     expect(createdDirectory).toBe(root);
   } finally {
@@ -328,29 +408,42 @@ test("plugin client adapter publishes the native session selection event", async
     },
   } as never);
 
-  expect(await client.session.create({
-    body: { title: "Continue x" },
-    query: { directory: "/repo" },
-  })).toEqual({ data: { id: "child-live" } });
-  expect(await client.session.promptAsync({
-    path: { id: "child-live" },
-    query: { directory: "/repo" },
-    body: { parts: [{ type: "text", text: "Continue" }] },
-  })).toEqual({ data: undefined });
-  expect(await client.tui.selectSession({
-    body: { sessionID: "child-live" },
-    query: { directory: "/repo" },
-  })).toEqual({ data: true });
+  expect(
+    await client.session.create({
+      body: { title: "Continue x" },
+      query: { directory: "/repo" },
+    }),
+  ).toEqual({ data: { id: "child-live" } });
+  expect(
+    await client.session.promptAsync({
+      path: { id: "child-live" },
+      query: { directory: "/repo" },
+      body: { parts: [{ type: "text", text: "Continue" }] },
+    }),
+  ).toEqual({ data: undefined });
+  expect(
+    await client.tui.selectSession({
+      body: { sessionID: "child-live" },
+      query: { directory: "/repo" },
+    }),
+  ).toEqual({ data: true });
   expect(calls).toEqual([
     ["create", { body: { title: "Continue x" }, query: { directory: "/repo" } }],
-    ["promptAsync", {
-      path: { id: "child-live" }, query: { directory: "/repo" },
-      body: { parts: [{ type: "text", text: "Continue" }] },
-    }],
-    ["publish", {
-      body: { type: "tui.session.select", properties: { sessionID: "child-live" } },
-      query: { directory: "/repo" },
-    }],
+    [
+      "promptAsync",
+      {
+        path: { id: "child-live" },
+        query: { directory: "/repo" },
+        body: { parts: [{ type: "text", text: "Continue" }] },
+      },
+    ],
+    [
+      "publish",
+      {
+        body: { type: "tui.session.select", properties: { sessionID: "child-live" } },
+        query: { directory: "/repo" },
+      },
+    ],
   ]);
 });
 
@@ -370,7 +463,9 @@ test("handoff context is read-only when the SDD workspace is absent", async () =
       expect(result.prompt).toContain("**Plan:** docs/x/plan.md");
     }
     expect(existsSync(path.join(root, "docs/x/sdd"))).toBe(false);
-  } finally { rmSync(root, { recursive: true, force: true }); }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("handoff resolves a matching local spec and plan when slash arguments are empty", () => {
@@ -392,7 +487,9 @@ test("handoff resolves a matching local spec and plan when slash arguments are e
       expect(posix(result.spec)).toBe("docs/2026-07-14-mfe-tasks-base/spec.md");
       expect(posix(result.plan)).toBe("docs/2026-07-14-mfe-tasks-base/plan.md");
     }
-  } finally { rmSync(root, { recursive: true, force: true }); }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("handoff matching-pair ties resolve deterministically", () => {
@@ -427,7 +524,9 @@ test("handoff matching-pair ties resolve deterministically", () => {
       expect(posix(result.spec)).toBe("docs/2026-07-14-alpha/spec.md");
       expect(posix(result.plan)).toBe("docs/2026-07-14-alpha/plan.md");
     }
-  } finally { rmSync(root, { recursive: true, force: true }); }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("handoff collect fails before prompt when docs validation fails", () => {
@@ -444,7 +543,9 @@ test("handoff collect fails before prompt when docs validation fails", () => {
     const result = buildHandoffPrompt(root, `${spec} ${plan}`);
     expect("error" in result).toBe(true);
     if ("error" in result) expect(result.error).toMatch(/docs validation failed/i);
-  } finally { rmSync(root, { recursive: true, force: true }); }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("handoff hard-fails when flow gates are not approved", async () => {
@@ -459,10 +560,10 @@ test("handoff hard-fails when flow gates are not approved", async () => {
     const raw = await createHandoffTools(
       {} as never,
       new WorkflowStateStore(),
-    ).workflow_handoff_session.execute(
-      { message: "continue" },
-      { directory: root, sessionID: "parent" } as never,
-    );
+    ).workflow_handoff_session.execute({ message: "continue" }, {
+      directory: root,
+      sessionID: "parent",
+    } as never);
     const out = JSON.parse(raw as string);
     expect(out.ok).toBe(false);
     expect(out.error).toContain("spec not approved");
@@ -481,28 +582,42 @@ test("handoff proceeds when flow gates are approved", async () => {
       path.join(root, "docs/x/plan.md"),
       "# X\n\n**Spec:** `docs/x/spec.md`\n**Branch:** `feature/x`\n\n### Task 1: One\n\n- [ ] **Step 1:** Work\n",
     );
-    writeFileSync(path.join(root, "docs/x/sdd/flow.json"), JSON.stringify({
-      slug: "x",
-      spec: { path: "docs/x/spec.md", status: "approved" },
-      plan: { path: "docs/x/plan.md", status: "approved" },
-      menu: { presented: true, chosen: "handoff" },
-      updated_at: Date.now(),
-    }));
+    writeFileSync(
+      path.join(root, "docs/x/sdd/flow.json"),
+      JSON.stringify({
+        slug: "x",
+        spec: { path: "docs/x/spec.md", status: "approved" },
+        plan: { path: "docs/x/plan.md", status: "approved" },
+        menu: { presented: true, chosen: "handoff" },
+        updated_at: Date.now(),
+      }),
+    );
     const calls: string[] = [];
     const client = {
       session: {
-        async create() { calls.push("create"); return { data: { id: "child-gate" } }; },
-        async promptAsync() { calls.push("seed"); return { data: undefined }; },
+        async create() {
+          calls.push("create");
+          return { data: { id: "child-gate" } };
+        },
+        async promptAsync() {
+          calls.push("seed");
+          return { data: undefined };
+        },
       },
-      tui: { async selectSession() { calls.push("select"); return { data: true }; } },
+      tui: {
+        async selectSession() {
+          calls.push("select");
+          return { data: true };
+        },
+      },
     };
     const raw = await createHandoffTools(
       client as never,
       new WorkflowStateStore(),
-    ).workflow_handoff_session.execute(
-      { message: "continue" },
-      { directory: root, sessionID: "parent" } as never,
-    );
+    ).workflow_handoff_session.execute({ message: "continue" }, {
+      directory: root,
+      sessionID: "parent",
+    } as never);
     expect(JSON.parse(raw as string)).toMatchObject({ ok: true });
     expect(calls).toEqual(["create", "seed", "select"]);
   } finally {
@@ -510,18 +625,15 @@ test("handoff proceeds when flow gates are approved", async () => {
   }
 });
 
-
-
 test("handoff rejects multiple specs or plans in the message", () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "wk-handoff-multi-"));
   try {
-    const result = buildHandoffPrompt(
-      root,
-      "docs/a/plan.md docs/b/plan.md",
-    );
+    const result = buildHandoffPrompt(root, "docs/a/plan.md docs/b/plan.md");
     expect("error" in result).toBe(true);
     if ("error" in result) expect(result.error).toContain("multiple features in message");
-  } finally { rmSync(root, { recursive: true, force: true }); }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("handoff reports missing feature docs", () => {
@@ -529,12 +641,9 @@ test("handoff reports missing feature docs", () => {
   try {
     const noDocs = buildHandoffPrompt(root, "no paths here");
     expect("error" in noDocs).toBe(true);
-    if ("error" in noDocs) expect(noDocs.error).toContain("no docs/<slug>/ features found under docs/");
-  } finally { rmSync(root, { recursive: true, force: true }); }
+    if ("error" in noDocs)
+      expect(noDocs.error).toContain("no docs/<slug>/ features found under docs/");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
-
-
-
-
-
-

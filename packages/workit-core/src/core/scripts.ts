@@ -18,7 +18,7 @@ export function runScript(
   const result = spawnSync("bash", [scriptPath, ...args], {
     cwd,
     encoding: "utf8",
-    env: { ...process.env, ...(extraEnv ?? {}) },
+    env: { ...process.env, ...extraEnv },
   });
   return {
     stdout: result.stdout ?? "",
@@ -29,7 +29,12 @@ export function runScript(
   };
 }
 
-export function runScriptJson(scriptName: string, args: string[], workspaceRoot: string, extraEnv?: Record<string, string>) {
+export function runScriptJson(
+  scriptName: string,
+  args: string[],
+  workspaceRoot: string,
+  extraEnv?: Record<string, string>,
+) {
   const { stdout, stderr, exitCode } = runScript(scriptName, args, workspaceRoot, extraEnv);
   if (exitCode !== 0) {
     return { error: (stderr || stdout || "script failed").trim(), exitCode };

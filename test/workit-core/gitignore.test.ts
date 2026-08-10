@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync, readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { ensureProjectGitignore, GITIGNORE_ENTRIES } from "../../packages/workit-core/src/core/gitignore";
+import { ensureProjectGitignore } from "../../packages/workit-core/src/core/gitignore";
 
 test("creates .gitignore with common entries when missing", () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "wf-gitignore-"));
@@ -15,7 +15,9 @@ test("creates .gitignore with common entries when missing", () => {
       const content = readFileSync(path.join(dir, ".gitignore"), "utf8");
       expect(content).toContain("docs/*/sdd/");
     }
-  } finally { rmSync(dir, { recursive: true, force: true }); }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("appends only missing entries, preserves existing", () => {
@@ -31,7 +33,9 @@ test("appends only missing entries, preserves existing", () => {
       expect(content).toContain("# custom");
       expect(content).toContain("my-secret.txt");
     }
-  } finally { rmSync(dir, { recursive: true, force: true }); }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("requires confirmed", () => {
@@ -39,7 +43,9 @@ test("requires confirmed", () => {
   try {
     const no = ensureProjectGitignore(dir, false);
     expect(no.ok).toBe(false);
-  } finally { rmSync(dir, { recursive: true, force: true }); }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("existing file without trailing newline appends cleanly", () => {
@@ -55,7 +61,9 @@ test("existing file without trailing newline appends cleanly", () => {
       expect(content).toContain("node_modules/");
       expect(content).toContain("docs/*/sdd/");
     }
-  } finally { rmSync(dir, { recursive: true, force: true }); }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("idempotent re-run adds nothing", () => {
@@ -65,5 +73,7 @@ test("idempotent re-run adds nothing", () => {
     const again = ensureProjectGitignore(dir, true);
     expect(again.ok).toBe(true);
     if (again.ok) expect(again.added).toHaveLength(0);
-  } finally { rmSync(dir, { recursive: true, force: true }); }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

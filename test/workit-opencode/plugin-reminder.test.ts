@@ -2,8 +2,22 @@ import { expect, test } from "bun:test";
 import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { findActiveSubagentDrivenPlans, detectConfigGapError, detectBacktickDocRefs, detectRawDocDelivery } from "../../packages/workit-core/src/core/detector";
-import { shouldInjectSddReminder, SDD_REMINDER_TEXT, CONFIG_GUARD_TEXT, shouldInjectConfigGuard, DOC_DELIVERY_TEXT, DOC_RENDER_TEXT, shouldInjectDocRender, REMINDER_TEXT } from "../../packages/workit-core/src/core/reminder";
+import {
+  findActiveSubagentDrivenPlans,
+  detectConfigGapError,
+  detectBacktickDocRefs,
+  detectRawDocDelivery,
+} from "../../packages/workit-core/src/core/detector";
+import {
+  shouldInjectSddReminder,
+  SDD_REMINDER_TEXT,
+  CONFIG_GUARD_TEXT,
+  shouldInjectConfigGuard,
+  DOC_DELIVERY_TEXT,
+  DOC_RENDER_TEXT,
+  shouldInjectDocRender,
+  REMINDER_TEXT,
+} from "../../packages/workit-core/src/core/reminder";
 
 const writeFlow = (root: string, slug: string, flow: unknown) => {
   const dir = path.join(root, "docs", slug, "sdd");
@@ -227,8 +241,14 @@ test("I-2a: last task present but not complete keeps the rail on", () => {
       plan: { status: "approved" },
     });
     const dir = path.join(root, "docs", "p", "sdd");
-    writeFileSync(path.join(root, "docs", "p", "plan.md"), "### Task 1: A\n### Task 2: B\n### Task 3: C\n");
-    writeFileSync(path.join(dir, "progress.md"), "Task 1: complete\nTask 2: complete\nTask 3: in_progress\n");
+    writeFileSync(
+      path.join(root, "docs", "p", "plan.md"),
+      "### Task 1: A\n### Task 2: B\n### Task 3: C\n",
+    );
+    writeFileSync(
+      path.join(dir, "progress.md"),
+      "Task 1: complete\nTask 2: complete\nTask 3: in_progress\n",
+    );
     expect(findActiveSubagentDrivenPlans(root)).toEqual(["p"]);
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -243,7 +263,10 @@ test("I-2b: last task missing from the ledger keeps the rail on", () => {
       plan: { status: "approved" },
     });
     const dir = path.join(root, "docs", "p", "sdd");
-    writeFileSync(path.join(root, "docs", "p", "plan.md"), "### Task 1: A\n### Task 2: B\n### Task 3: C\n");
+    writeFileSync(
+      path.join(root, "docs", "p", "plan.md"),
+      "### Task 1: A\n### Task 2: B\n### Task 3: C\n",
+    );
     writeFileSync(path.join(dir, "progress.md"), "Task 1: complete\nTask 2: complete\n");
     expect(findActiveSubagentDrivenPlans(root)).toEqual(["p"]);
   } finally {
@@ -259,8 +282,14 @@ test("I-2c: ledger covering all plan tasks turns the rail off", () => {
       plan: { status: "approved" },
     });
     const dir = path.join(root, "docs", "p", "sdd");
-    writeFileSync(path.join(root, "docs", "p", "plan.md"), "### Task 1: A\n### Task 2: B\n### Task 3: C\n");
-    writeFileSync(path.join(dir, "progress.md"), "Task 1: complete\nTask 2: complete\nTask 3: complete\n");
+    writeFileSync(
+      path.join(root, "docs", "p", "plan.md"),
+      "### Task 1: A\n### Task 2: B\n### Task 3: C\n",
+    );
+    writeFileSync(
+      path.join(dir, "progress.md"),
+      "Task 1: complete\nTask 2: complete\nTask 3: complete\n",
+    );
     expect(findActiveSubagentDrivenPlans(root)).toEqual([]);
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -277,7 +306,10 @@ test("I-2d: unreadable plan.md keeps the rail on", () => {
     const dir = path.join(root, "docs", "p", "sdd");
     const plan = path.join(root, "docs", "p", "plan.md");
     writeFileSync(plan, "### Task 1: A\n### Task 2: B\n### Task 3: C\n");
-    writeFileSync(path.join(dir, "progress.md"), "Task 1: complete\nTask 2: complete\nTask 3: complete\n");
+    writeFileSync(
+      path.join(dir, "progress.md"),
+      "Task 1: complete\nTask 2: complete\nTask 3: complete\n",
+    );
     chmodSync(plan, 0o000);
     let stillReadable = true;
     try {

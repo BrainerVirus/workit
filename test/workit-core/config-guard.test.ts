@@ -2,8 +2,16 @@ import { expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { ALL_ITEM_IDS, configGuardError, CONFIG_GAP_MARKER, describeConfigGaps } from "../../packages/workit-core/src/core/config-guard";
-import { createYouTrackTools, readCredentials } from "../../packages/workit-core/src/tools/youtrack";
+import {
+  ALL_ITEM_IDS,
+  configGuardError,
+  CONFIG_GAP_MARKER,
+  describeConfigGaps,
+} from "../../packages/workit-core/src/core/config-guard";
+import {
+  createYouTrackTools,
+  readCredentials,
+} from "../../packages/workit-core/src/tools/youtrack";
 import { withIsolatedXDG } from "../shared/helpers/env";
 
 test("empty config dir reports all item ids missing without throwing", async () => {
@@ -47,7 +55,8 @@ test("youtrack tools return structured config-gap error instead of raw ENOENT", 
   const ctx = { directory: "/repo", worktree: "/repo" } as never;
   await withIsolatedXDG(dir, async () => {
     const raw = await tools.workflow_youtrack_log_time.execute(
-      { confirmed: true, issueId: "NSR-1", minutes: 30 }, ctx,
+      { confirmed: true, issueId: "NSR-1", minutes: 30 },
+      ctx,
     );
     const result = JSON.parse(raw as string);
     expect(result.ok).toBe(false);
@@ -60,7 +69,11 @@ test("youtrack tools honor WORKFLOW_TOOLKIT_CONFIG pointing at the config dir", 
   const dir = mkdtempSync(path.join(os.tmpdir(), "wf-guard-override-"));
   writeFileSync(
     path.join(dir, "youtrack.json"),
-    JSON.stringify({ baseUrl: "https://yt.example.test", tokenFile: path.join(dir, "youtrack.token") }, null, 2),
+    JSON.stringify(
+      { baseUrl: "https://yt.example.test", tokenFile: path.join(dir, "youtrack.token") },
+      null,
+      2,
+    ),
     "utf8",
   );
   writeFileSync(path.join(dir, "youtrack.token"), "override-token\n", { mode: 0o600 });
@@ -82,7 +95,11 @@ test("youtrack tools honor WORKFLOW_TOOLKIT_CONFIG_DIR-only pointing at the conf
   const dir = mkdtempSync(path.join(os.tmpdir(), "wf-guard-override-dir-"));
   writeFileSync(
     path.join(dir, "youtrack.json"),
-    JSON.stringify({ baseUrl: "https://yt.example.test", tokenFile: path.join(dir, "youtrack.token") }, null, 2),
+    JSON.stringify(
+      { baseUrl: "https://yt.example.test", tokenFile: path.join(dir, "youtrack.token") },
+      null,
+      2,
+    ),
     "utf8",
   );
   writeFileSync(path.join(dir, "youtrack.token"), "dir-override-token\n", { mode: 0o600 });

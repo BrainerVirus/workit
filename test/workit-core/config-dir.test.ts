@@ -1,6 +1,14 @@
 import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -13,7 +21,12 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."
 const savedEnv = new Map<string, string | undefined>();
 
 const isolate = (env: Record<string, string>, fn: () => void) => {
-  for (const key of ["WORKFLOW_TOOLKIT_CONFIG", "WORKFLOW_TOOLKIT_CONFIG_DIR", "XDG_CONFIG_HOME", "HOME"]) {
+  for (const key of [
+    "WORKFLOW_TOOLKIT_CONFIG",
+    "WORKFLOW_TOOLKIT_CONFIG_DIR",
+    "XDG_CONFIG_HOME",
+    "HOME",
+  ]) {
     savedEnv.set(key, process.env[key]);
   }
   for (const key of ["WORKFLOW_TOOLKIT_CONFIG", "WORKFLOW_TOOLKIT_CONFIG_DIR", "XDG_CONFIG_HOME"]) {
@@ -43,7 +56,9 @@ test("CA-01: default configDir ends with .config/workit when no env overrides", 
       expect(dir).toBe(path.join(config, "workit"));
       expect(path.basename(dir)).toBe("workit");
     });
-  } finally { rmSync(home, { recursive: true, force: true }); }
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
 });
 
 test("CA-02: legacy config copied once, second call never re-copies", () => {
@@ -57,7 +72,9 @@ test("CA-02: legacy config copied once, second call never re-copies", () => {
     const dir = configDir();
     expect(dir).toBe(path.join(xdg, "workit"));
     expect(readFileSync(path.join(dir, "config.json"), "utf8")).toBe('{"locale":"es-CL"}');
-    expect(readFileSync(path.join(dir, "youtrack.json"), "utf8")).toBe('{"baseUrl":"https://yt.example.test"}');
+    expect(readFileSync(path.join(dir, "youtrack.json"), "utf8")).toBe(
+      '{"baseUrl":"https://yt.example.test"}',
+    );
     expect(readFileSync(path.join(dir, "gitlab.token"), "utf8")).toBe("tok-123\n");
 
     writeFileSync(path.join(dir, "config.json"), "MODIFIED");
@@ -127,14 +144,18 @@ test("CA-07: copy failure is non-fatal and retried (cache set only post-loop)", 
   writeFileSync(blocked, "tok-456\n");
   // EACCES only fires for non-root on unix; elsewhere the failure can't be
   // simulated, so the ordering asserts below still run (fallback per review).
-  const canSimulate = process.platform !== "win32" && (typeof process.getuid !== "function" || process.getuid() !== 0);
+  const canSimulate =
+    process.platform !== "win32" &&
+    (typeof process.getuid !== "function" || process.getuid() !== 0);
   if (canSimulate) chmodSync(blocked, 0o000);
   try {
     isolate({ XDG_CONFIG_HOME: xdg }, () => {
       const dir = configDir();
       expect(dir).toBe(path.join(xdg, "workit"));
       expect(readFileSync(path.join(dir, "config.json"), "utf8")).toBe('{"locale":"es-CL"}');
-      expect(readFileSync(path.join(dir, "youtrack.json"), "utf8")).toBe('{"baseUrl":"https://yt.example.test"}');
+      expect(readFileSync(path.join(dir, "youtrack.json"), "utf8")).toBe(
+        '{"baseUrl":"https://yt.example.test"}',
+      );
       if (canSimulate) {
         expect(existsSync(path.join(dir, "blocked.token"))).toBe(false); // mid-loop failure
         chmodSync(blocked, 0o644);
@@ -143,7 +164,9 @@ test("CA-07: copy failure is non-fatal and retried (cache set only post-loop)", 
       }
       expect(configDir()).toBe(dir); // now cached, post-loop
     });
-  } finally { rmSync(xdg, { recursive: true, force: true }); }
+  } finally {
+    rmSync(xdg, { recursive: true, force: true });
+  }
 });
 
 test("CA-06: bash resolve_config_dir matches TS after migration; config.sh load reads the migrated workit dir", () => {
@@ -151,10 +174,14 @@ test("CA-06: bash resolve_config_dir matches TS after migration; config.sh load 
   const xdg = mkdtempSync(path.join(os.tmpdir(), "wk-ca06-"));
   const legacy = path.join(xdg, "workflow-toolkit");
   mkdirSync(legacy, { recursive: true });
-  writeFileSync(path.join(legacy, "vcs.json"), JSON.stringify({ provider: "github", defaultTargetBranch: "main" }));
+  writeFileSync(
+    path.join(legacy, "vcs.json"),
+    JSON.stringify({ provider: "github", defaultTargetBranch: "main" }),
+  );
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) {
-    if (v === undefined || /^WORKFLOW_(VCS|TOOLKIT_CONFIG)/.test(k) || k === "XDG_CONFIG_HOME") continue;
+    if (v === undefined || /^WORKFLOW_(VCS|TOOLKIT_CONFIG)/.test(k) || k === "XDG_CONFIG_HOME")
+      continue;
     env[k] = v;
   }
   env.XDG_CONFIG_HOME = xdg;
@@ -165,12 +192,20 @@ test("CA-06: bash resolve_config_dir matches TS after migration; config.sh load 
       expect(readFileSync(path.join(dir, "vcs.json"), "utf8")).toContain("github");
 
       writeFileSync(path.join(dir, "vcs.json"), JSON.stringify({ provider: "gitlab" }), "utf8");
-      const resolve = spawnSync("bash", ["-c", ". packages/workit-core/scripts/lib/config-dir.sh; resolve_config_dir"], { cwd: repoRoot, env, encoding: "utf8" });
+      const resolve = spawnSync(
+        "bash",
+        ["-c", ". packages/workit-core/scripts/lib/config-dir.sh; resolve_config_dir"],
+        { cwd: repoRoot, env, encoding: "utf8" },
+      );
       expect(resolve.status, resolve.stderr).toBe(0);
       expect(resolve.stdout.trim()).toBe(dir); // workit already exists -> no re-migration
       expect(readFileSync(path.join(dir, "vcs.json"), "utf8")).toContain("gitlab"); // legacy untouched as source
 
-      const load = spawnSync("bash", [path.join(repoRoot, "packages/workit-core/scripts/vcs/config.sh"), "load"], { cwd: repoRoot, env, encoding: "utf8" });
+      const load = spawnSync(
+        "bash",
+        [path.join(repoRoot, "packages/workit-core/scripts/vcs/config.sh"), "load"],
+        { cwd: repoRoot, env, encoding: "utf8" },
+      );
       expect(load.status, load.stderr).toBe(0);
       expect(JSON.parse(load.stdout).provider).toBe("gitlab");
       expect(JSON.parse(load.stdout).tokenReady).toBe(false);

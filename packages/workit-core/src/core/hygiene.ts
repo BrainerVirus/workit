@@ -3,7 +3,13 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { changelogUnreleasedStats } from "./changelog";
 
-export type HygieneFile = "CHANGELOG.md" | "README.md" | ".editorconfig" | ".gitattributes" | "LICENSE" | "CONTRIBUTING.md";
+export type HygieneFile =
+  | "CHANGELOG.md"
+  | "README.md"
+  | ".editorconfig"
+  | ".gitattributes"
+  | "LICENSE"
+  | "CONTRIBUTING.md";
 type State = "missing" | "invalid" | "ok" | "skip";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -11,7 +17,11 @@ const templatesDir = () => path.join(repoRoot, "templates", "hygiene");
 
 const packageJson = (root: string): Record<string, unknown> | null => {
   if (!existsSync(path.join(root, "package.json"))) return null;
-  try { return JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")); } catch { return null; }
+  try {
+    return JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"));
+  } catch {
+    return null;
+  }
 };
 
 const isOpenSource = (root: string): boolean => {
@@ -34,15 +44,27 @@ const licenseHolder = (root: string): string => {
   return "";
 };
 
-export const hygieneFiles = (root: string): { state: Record<HygieneFile, State>; openSource: boolean } => {
+export const hygieneFiles = (
+  root: string,
+): { state: Record<HygieneFile, State>; openSource: boolean } => {
   const openSource = isOpenSource(root);
   const state = {} as Record<HygieneFile, State>;
-  for (const file of ["CHANGELOG.md", "README.md", ".editorconfig", ".gitattributes", "LICENSE", "CONTRIBUTING.md"] as HygieneFile[]) {
+  for (const file of [
+    "CHANGELOG.md",
+    "README.md",
+    ".editorconfig",
+    ".gitattributes",
+    "LICENSE",
+    "CONTRIBUTING.md",
+  ] as HygieneFile[]) {
     if (file === "LICENSE" || file === "CONTRIBUTING.md") {
       state[file] = openSource ? (existsSync(path.join(root, file)) ? "ok" : "missing") : "skip";
       continue;
     }
-    if (!existsSync(path.join(root, file))) { state[file] = "missing"; continue; }
+    if (!existsSync(path.join(root, file))) {
+      state[file] = "missing";
+      continue;
+    }
     if (file === "CHANGELOG.md") {
       const stats = changelogUnreleasedStats(root);
       state[file] = stats.exists && stats.has_unreleased ? "ok" : "invalid";

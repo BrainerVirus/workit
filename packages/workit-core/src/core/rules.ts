@@ -1,6 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { configDir } from "./config";
 
 export type RulePlatform = "cursor" | "opencode";
@@ -11,13 +10,12 @@ export type CanonicalRule = {
   body: string;
 };
 
-const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-
 export const rulesDir = () => path.join(configDir(), "rules");
 
 export const parseRule = (markdown: string): CanonicalRule | { error: string } => {
   const fm = markdown.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
-  if (!fm) return { error: "rule must start with frontmatter (--- name/description/platforms ---)" };
+  if (!fm)
+    return { error: "rule must start with frontmatter (--- name/description/platforms ---)" };
   const meta: Record<string, string> = {};
   const unquote = (v: string) => v.replace(/^["']|["']$/g, "").trim();
   for (const line of fm[1].split("\n")) {
@@ -27,9 +25,13 @@ export const parseRule = (markdown: string): CanonicalRule | { error: string } =
   const name = meta.name ?? "";
   const description = meta.description ?? "";
   const rawPlatforms = (meta.platforms ?? "")
-    .replace(/^\[|\]$/g, "").split(",").map((p) => p.trim().replace(/['"]/g, ""))
+    .replace(/^\[|\]$/g, "")
+    .split(",")
+    .map((p) => p.trim().replace(/['"]/g, ""))
     .filter(Boolean);
-  const platforms = rawPlatforms.filter((p): p is RulePlatform => p === "cursor" || p === "opencode");
+  const platforms = rawPlatforms.filter(
+    (p): p is RulePlatform => p === "cursor" || p === "opencode",
+  );
   if (!name || !description || platforms.length === 0) {
     return { error: "rule frontmatter requires name, description, and platforms" };
   }
@@ -73,7 +75,8 @@ export const writeRule = (
   confirmed: boolean,
 ): { ok: true; path: string } | { ok: false; error: string } => {
   if (!confirmed) return { ok: false, error: "confirmed: true required" };
-  if (!RULE_NAME_RE.test(rule.name)) return { ok: false, error: `invalid rule name: ${JSON.stringify(rule.name)}` };
+  if (!RULE_NAME_RE.test(rule.name))
+    return { ok: false, error: `invalid rule name: ${JSON.stringify(rule.name)}` };
   const dir = path.join(rulesDir(), rule.name);
   mkdirSync(dir, { recursive: true });
   const file = path.join(dir, "rule.md");

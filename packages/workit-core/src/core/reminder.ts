@@ -57,8 +57,7 @@ Skill: receiving-code-review. Verify before implementing — evaluate review fee
 export const shouldInjectVerification = (currentText: string): boolean =>
   !currentText.includes(VERIFICATION_TEXT);
 
-export const shouldInjectTdd = (currentText: string): boolean =>
-  !currentText.includes(TDD_TEXT);
+export const shouldInjectTdd = (currentText: string): boolean => !currentText.includes(TDD_TEXT);
 
 export const shouldInjectBrainstorm = (currentText: string): boolean =>
   !currentText.includes(BRAINSTORM_TEXT);

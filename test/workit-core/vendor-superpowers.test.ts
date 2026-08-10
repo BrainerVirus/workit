@@ -5,16 +5,26 @@ import path from "node:path";
 const VENDOR = path.resolve(import.meta.dir, "../../packages/workit-core/vendor/superpowers");
 
 const REQUIRED_SKILLS = [
-  "brainstorming", "dispatching-parallel-agents", "executing-plans",
-  "finishing-a-development-branch", "receiving-code-review", "requesting-code-review",
-  "subagent-driven-development", "systematic-debugging", "test-driven-development",
-  "using-git-worktrees", "using-superpowers", "verification-before-completion",
-  "writing-plans", "writing-skills",
+  "brainstorming",
+  "dispatching-parallel-agents",
+  "executing-plans",
+  "finishing-a-development-branch",
+  "receiving-code-review",
+  "requesting-code-review",
+  "subagent-driven-development",
+  "systematic-debugging",
+  "test-driven-development",
+  "using-git-worktrees",
+  "using-superpowers",
+  "verification-before-completion",
+  "writing-plans",
+  "writing-skills",
 ];
 
 test("vendored skills dir contains all 14 upstream skills", () => {
   const dirs = readdirSync(path.join(VENDOR, "skills")).filter((d) =>
-    existsSync(path.join(VENDOR, "skills", d, "SKILL.md")));
+    existsSync(path.join(VENDOR, "skills", d, "SKILL.md")),
+  );
   for (const skill of REQUIRED_SKILLS) {
     expect(dirs).toContain(skill);
   }

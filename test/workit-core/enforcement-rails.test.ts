@@ -27,7 +27,9 @@ test("CA-02: verification detector fires on completion claim without check outpu
 });
 
 test("CA-02: verification detector does NOT fire when a check command is present", () => {
-  expect(detectVerificationClaim("All fixed — bun run check passes: 380 pass / 0 fail")).toBe(false);
+  expect(detectVerificationClaim("All fixed — bun run check passes: 380 pass / 0 fail")).toBe(
+    false,
+  );
   expect(detectVerificationClaim("Done after workflow_verify confirmed the build.")).toBe(false);
   expect(detectVerificationClaim("Complete — bun test shows all green.")).toBe(false);
 });
@@ -50,8 +52,12 @@ test("CA-02: TDD detector fires on implementation without failing-test evidence"
 });
 
 test("CA-02: TDD detector does NOT fire with failing-test wording or clean text", () => {
-  expect(detectUntestedImplementation("I wrote a failing test first, then implemented the feature.")).toBe(false);
-  expect(detectUntestedImplementation("Red-green: watched it fail, then committed the fix.")).toBe(false);
+  expect(
+    detectUntestedImplementation("I wrote a failing test first, then implemented the feature."),
+  ).toBe(false);
+  expect(detectUntestedImplementation("Red-green: watched it fail, then committed the fix.")).toBe(
+    false,
+  );
   expect(detectUntestedImplementation("Nothing to report on this turn.")).toBe(false);
 });
 
@@ -61,14 +67,20 @@ test("CA-02: brainstorm detector fires on implementation without presented desig
 });
 
 test("CA-02: brainstorm detector does NOT fire with design wording or clean text", () => {
-  expect(detectImplementationWithoutDesign("The design is approved — I'll implement it.")).toBe(false);
+  expect(detectImplementationWithoutDesign("The design is approved — I'll implement it.")).toBe(
+    false,
+  );
   expect(detectImplementationWithoutDesign("Per the spec and plan, I'll build it.")).toBe(false);
-  expect(detectImplementationWithoutDesign("Waiting for your feedback before proceeding.")).toBe(false);
+  expect(detectImplementationWithoutDesign("Waiting for your feedback before proceeding.")).toBe(
+    false,
+  );
 });
 
 test("CA-02: brainstorm build signal narrowed + instruction silencer (review I-2)", () => {
   expect(detectImplementationWithoutDesign("Ran bun run build and it compiled")).toBe(false);
-  expect(detectImplementationWithoutDesign("I'll implement the feature as you requested")).toBe(false);
+  expect(detectImplementationWithoutDesign("I'll implement the feature as you requested")).toBe(
+    false,
+  );
   expect(detectImplementationWithoutDesign("I'll implement the feature")).toBe(true);
 });
 
@@ -79,17 +91,25 @@ test("CA-02: debugging detector fires on fix without root-cause evidence", () =>
 
 test("CA-02: debugging detector does NOT fire with root-cause wording or clean text", () => {
   expect(detectFixWithoutRootCause("Root cause: null deref in the parser. Fixed.")).toBe(false);
-  expect(detectFixWithoutRootCause("Investigation showed the leak, then I patched it.")).toBe(false);
+  expect(detectFixWithoutRootCause("Investigation showed the leak, then I patched it.")).toBe(
+    false,
+  );
   expect(detectFixWithoutRootCause("No fixes proposed yet.")).toBe(false);
 });
 
 test("CA-02: receiving detector fires on acceptance without verification", () => {
-  expect(detectBlindReviewAcceptance("Good point, agreed — thanks for the feedback, I'll implement.")).toBe(true);
+  expect(
+    detectBlindReviewAcceptance("Good point, agreed — thanks for the feedback, I'll implement."),
+  ).toBe(true);
   expect(detectBlindReviewAcceptance("That makes sense, will implement right away.")).toBe(true);
 });
 
 test("CA-02: receiving detector does NOT fire with verification wording or clean text", () => {
-  expect(detectBlindReviewAcceptance("Good point — I verified it against the codebase and it checks out.")).toBe(false);
+  expect(
+    detectBlindReviewAcceptance(
+      "Good point — I verified it against the codebase and it checks out.",
+    ),
+  ).toBe(false);
   expect(detectBlindReviewAcceptance("Agreed, confirmed by the tests I ran.")).toBe(false);
   expect(detectBlindReviewAcceptance("I need to check this against the code first.")).toBe(false);
 });
@@ -178,7 +198,10 @@ test("CA-04: three rails compose on one assistant text, markers distinct", () =>
 });
 
 test("CA-04: all five rails use distinct part tags in plugin.ts", () => {
-  const src = readFileSync(path.join(import.meta.dir, "..", "..", "packages", "workit-opencode", "src", "plugin.ts"), "utf8");
+  const src = readFileSync(
+    path.join(import.meta.dir, "..", "..", "packages", "workit-opencode", "src", "plugin.ts"),
+    "utf8",
+  );
   const tags = [...src.matchAll(/makePart\([^,\n]+,\s*"([a-z]+)"\)/g)].map((m) => m[1]);
   expect(tags).toContain("vf");
   expect(tags).toContain("tdd");

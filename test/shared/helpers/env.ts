@@ -16,10 +16,14 @@ export const withConfigDir = (files: Record<string, string>) => {
 
 // Spawn env with HOME overridden and config env vars stripped (so scripts fall
 // back to their HOME defaults).
-export const envWithHome = (home: string, extra: Record<string, string> = {}): Record<string, string> => {
+export const envWithHome = (
+  home: string,
+  extra: Record<string, string> = {},
+): Record<string, string> => {
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) {
-    if (v === undefined || /^WORKFLOW_(VCS|TOOLKIT_CONFIG)/.test(k) || k === "XDG_CONFIG_HOME") continue;
+    if (v === undefined || /^WORKFLOW_(VCS|TOOLKIT_CONFIG)/.test(k) || k === "XDG_CONFIG_HOME")
+      continue;
     env[k] = v;
   }
   env.HOME = home;

@@ -1,7 +1,13 @@
 import { Box, Text, useInput } from "ink";
 import { ConfirmInput, MultiSelect, Select, TextInput } from "@inkjs/ui";
 import { useState, type Dispatch, type JSX, type SetStateAction } from "react";
-import { configDir, readConfig, writeConfig, type BranchPreset, type ToolkitConfig } from "@brainervirus/workit-core/src/core/config.ts";
+import {
+  configDir,
+  readConfig,
+  writeConfig,
+  type BranchPreset,
+  type ToolkitConfig,
+} from "@brainervirus/workit-core/src/core/config.ts";
 import type { WorkspaceConfig } from "@brainervirus/workit-core/src/core/workspaces.ts";
 import {
   collectConfigValues,
@@ -78,7 +84,13 @@ export function Wizard({ onExit }: { onExit: () => void }): JSX.Element {
 
   const advance = () => setStep((s) => Math.min(s + 1, 6));
   const props: StepProps = { results, setResults, onDone: advance, onExit };
-  const Step = (step === 6 ? SummaryStep : [PlatformStep, ConfigStep, YouTrackStep, VcsStep, WorkspacesStep, ProjectStep, SummaryStep][step]) as StepComponent;
+  const Step = (
+    step === 6
+      ? SummaryStep
+      : [PlatformStep, ConfigStep, YouTrackStep, VcsStep, WorkspacesStep, ProjectStep, SummaryStep][
+          step
+        ]
+  ) as StepComponent;
 
   return (
     <Box flexDirection="column" gap={1}>
@@ -178,7 +190,11 @@ function ConfigStep({ results, setResults, onDone }: StepProps): JSX.Element {
       />
       {tzError && <Text color="red">{tzError}</Text>}
       <Text dimColor>Branch policy preset:</Text>
-      <Select options={BRANCH_PRESETS} defaultValue={preset} onChange={(v) => setPreset(v as BranchPreset)} />
+      <Select
+        options={BRANCH_PRESETS}
+        defaultValue={preset}
+        onChange={(v) => setPreset(v as BranchPreset)}
+      />
       {preset === "custom" && (
         <>
           <Text dimColor>Allowed branch patterns (comma-separated):</Text>
@@ -284,7 +300,9 @@ function VcsStep({ results, setResults, onDone }: StepProps): JSX.Element {
       {scaffold ? (
         <>
           <Box flexDirection="column" gap={0}>
-            <Text color="green">Scaffolded {scaffold.vcsJson} (provider: {scaffold.provider})</Text>
+            <Text color="green">
+              Scaffolded {scaffold.vcsJson} (provider: {scaffold.provider})
+            </Text>
             <Text>Token placeholder: {scaffold.activeTokenPath}</Text>
             <Text>Create token: {scaffold.tokenCreateUrl}</Text>
           </Box>
@@ -338,11 +356,18 @@ function WorkspacesStep({ setResults, onDone }: StepProps): JSX.Element {
   const [loaded] = useState<WorkspaceConfig[]>(() => loadWorkspaces());
   const [entries, setEntries] = useState<WorkspaceConfig[]>(loaded);
   const [mode, setMode] = useState<WsMode>("list");
-  const [draft, setDraft] = useState<WsDraft>({ name: "", glob: "", provider: "gitlab", branch: "develop", linking: "none" });
+  const [draft, setDraft] = useState<WsDraft>({
+    name: "",
+    glob: "",
+    provider: "gitlab",
+    branch: "develop",
+    linking: "none",
+  });
   const [fieldError, setFieldError] = useState<string | null>(null);
   const [writeError, setWriteError] = useState<string | null>(null);
 
-  const resetDraft = () => setDraft({ name: "", glob: "", provider: "gitlab", branch: "develop", linking: "none" });
+  const resetDraft = () =>
+    setDraft({ name: "", glob: "", provider: "gitlab", branch: "develop", linking: "none" });
 
   const finish = () => {
     setResults((r) => ({ ...r, workspaces: entries }));
@@ -495,7 +520,10 @@ function WorkspacesStep({ setResults, onDone }: StepProps): JSX.Element {
           options={WS_LINKING[draft.provider]}
           onChange={(v) => {
             const linking = v as WsLinking;
-            const vcs = { provider: draft.provider, ...(draft.branch ? { defaultTargetBranch: draft.branch } : {}) };
+            const vcs = {
+              provider: draft.provider,
+              ...(draft.branch ? { defaultTargetBranch: draft.branch } : {}),
+            };
             setEntries([
               ...entries,
               {
@@ -503,7 +531,9 @@ function WorkspacesStep({ setResults, onDone }: StepProps): JSX.Element {
                 glob: draft.glob,
                 vcs,
                 ...(linking === "youtrack" ? { youtrack: { link_issues: true } } : {}),
-                ...(linking === "github" ? { issues: { provider: "github", link_on_pr: true } } : {}),
+                ...(linking === "github"
+                  ? { issues: { provider: "github", link_on_pr: true } }
+                  : {}),
               },
             ]);
             resetDraft();
@@ -521,7 +551,10 @@ function WorkspacesStep({ setResults, onDone }: StepProps): JSX.Element {
       <Text dimColor>Select a workspace to remove:</Text>
       <Select
         key="remove"
-        options={entries.map((e) => ({ label: `${e.name} — ${e.vcs?.provider ?? "?"}`, value: e.name }))}
+        options={entries.map((e) => ({
+          label: `${e.name} — ${e.vcs?.provider ?? "?"}`,
+          value: e.name,
+        }))}
         onChange={(v) => {
           setEntries(entries.filter((e) => e.name !== v));
           setWriteError(null);
@@ -542,8 +575,15 @@ function ProjectStep({ setResults, onDone }: StepProps): JSX.Element {
   return (
     <Box flexDirection="column" gap={1}>
       <Text bold>Step 6 — Project setup</Text>
-      <Text dimColor>Will apply gitignore + hygiene in {process.cwd()} (existing files are never overwritten):</Text>
-      <ConfirmInput defaultChoice="confirm" submitOnEnter={false} onConfirm={apply} onCancel={() => {}} />
+      <Text dimColor>
+        Will apply gitignore + hygiene in {process.cwd()} (existing files are never overwritten):
+      </Text>
+      <ConfirmInput
+        defaultChoice="confirm"
+        submitOnEnter={false}
+        onConfirm={apply}
+        onCancel={() => {}}
+      />
       <Text dimColor>{continueLabel()}</Text>
     </Box>
   );
@@ -566,8 +606,12 @@ function SummaryStep({ results, onExit }: StepProps): JSX.Element {
           <Text>
             YouTrack: <Text color="green">{results.youtrack.youtrackJson}</Text>
           </Text>
-          <Text>  token placeholder: {results.youtrack.tokenPath}</Text>
-          <Text>  create token: {results.youtrack.tokenCreateUrl}</Text>
+          <Text>
+            {"  "}token placeholder: {results.youtrack.tokenPath}
+          </Text>
+          <Text>
+            {"  "}create token: {results.youtrack.tokenCreateUrl}
+          </Text>
         </Box>
       )}
       {results.vcs && (
@@ -575,8 +619,12 @@ function SummaryStep({ results, onExit }: StepProps): JSX.Element {
           <Text>
             VCS: <Text color="green">{results.vcs.vcsJson}</Text> (provider: {results.vcs.provider})
           </Text>
-          <Text>  token placeholder: {results.vcs.activeTokenPath}</Text>
-          <Text>  create token: {results.vcs.tokenCreateUrl}</Text>
+          <Text>
+            {"  "}token placeholder: {results.vcs.activeTokenPath}
+          </Text>
+          <Text>
+            {"  "}create token: {results.vcs.tokenCreateUrl}
+          </Text>
         </Box>
       )}
       {results.workspaces.length > 0 && (
@@ -584,7 +632,8 @@ function SummaryStep({ results, onExit }: StepProps): JSX.Element {
           <Text>Workspaces:</Text>
           {results.workspaces.map((w) => (
             <Text key={`${w.name}|${w.glob}|${w.vcs?.provider ?? ""}`}>
-              {"  "}{w.name} — {w.vcs?.provider ?? "?"}
+              {"  "}
+              {w.name} — {w.vcs?.provider ?? "?"}
             </Text>
           ))}
         </Box>
@@ -593,12 +642,21 @@ function SummaryStep({ results, onExit }: StepProps): JSX.Element {
         <Box flexDirection="column" gap={0}>
           <Text>Project files:</Text>
           {results.project.created.map((file) => (
-            <Text key={file}>  + {file}</Text>
+            <Text key={file}>
+              {"  "}+ {file}
+            </Text>
           ))}
         </Box>
       )}
-      <Text dimColor>Paste the token(s) into the placeholder files, then run /wf-status to verify.</Text>
-      <ConfirmInput defaultChoice="confirm" submitOnEnter={false} onConfirm={onExit} onCancel={() => {}} />
+      <Text dimColor>
+        Paste the token(s) into the placeholder files, then run /wf-status to verify.
+      </Text>
+      <ConfirmInput
+        defaultChoice="confirm"
+        submitOnEnter={false}
+        onConfirm={onExit}
+        onCancel={() => {}}
+      />
       <Text dimColor>{continueLabel()}</Text>
     </Box>
   );

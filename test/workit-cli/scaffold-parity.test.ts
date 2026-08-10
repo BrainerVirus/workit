@@ -17,7 +17,10 @@ const BASE_URL = "https://enghouseamg.youtrack.cloud";
 function bashAvailable(): boolean {
   // win32 CI has no bash — skip the parity check there
   if (process.platform === "win32") return false;
-  for (const [cmd, args] of [["bash", ["--version"]], ["python3", ["--version"]]] as const) {
+  for (const [cmd, args] of [
+    ["bash", ["--version"]],
+    ["python3", ["--version"]],
+  ] as const) {
     const r = spawnSync(cmd, args, { encoding: "utf8" });
     if (r.status !== 0) return false;
   }
@@ -32,7 +35,11 @@ function runApply(action: string, configDir: string): string {
     env[k] = v;
   }
   env.WORKFLOW_TOOLKIT_CONFIG = configDir;
-  const r = spawnSync("bash", ["packages/workit-core/scripts/init/apply.sh", action, "true"], { cwd: repoRoot, env, encoding: "utf8" });
+  const r = spawnSync("bash", ["packages/workit-core/scripts/init/apply.sh", action, "true"], {
+    cwd: repoRoot,
+    env,
+    encoding: "utf8",
+  });
   expect(r.status, `${action} failed: ${r.stderr}`).toBe(0);
   return r.stdout;
 }
@@ -43,7 +50,10 @@ test("wizard scaffolds match scripts/init/apply.sh output (youtrack + vcs)", () 
   const tsDir = mkdtempSync(path.join(os.tmpdir(), "wf-parity-ts-"));
   const shDir = mkdtempSync(path.join(os.tmpdir(), "wf-parity-sh-"));
   try {
-    const tsYt = scaffoldYouTrack(tsDir, BASE_URL, { locale: "es-CL", timezone: "America/Santiago" });
+    const tsYt = scaffoldYouTrack(tsDir, BASE_URL, {
+      locale: "es-CL",
+      timezone: "America/Santiago",
+    });
     const tsVcs = scaffoldVcs(tsDir, "gitlab");
 
     runApply("youtrack_scaffold", shDir);
@@ -52,15 +62,29 @@ test("wizard scaffolds match scripts/init/apply.sh output (youtrack + vcs)", () 
     const shYt = JSON.parse(readFileSync(path.join(shDir, "youtrack.json"), "utf8"));
     const shVcs = JSON.parse(readFileSync(path.join(shDir, "vcs.json"), "utf8"));
 
-// deep-equal on parsed JSON, with the temp-dir prefix normalized: tokenFile/token paths embed the
-// config dir, and the two scaffolds run into different temp dirs by construction
-const normalizePaths = (cfg: unknown, dir: string): unknown =>
-  JSON.parse(JSON.stringify(cfg, (k, v) => (typeof v === "string" ? v.replace(dir, "<config-dir>") : v)));
+    // deep-equal on parsed JSON, with the temp-dir prefix normalized: tokenFile/token paths embed the
+    // config dir, and the two scaffolds run into different temp dirs by construction
+    const normalizePaths = (cfg: unknown, dir: string): unknown =>
+      JSON.parse(
+        JSON.stringify(cfg, (k, v) => (typeof v === "string" ? v.replace(dir, "<config-dir>") : v)),
+      );
 
-expect(normalizePaths(JSON.parse(readFileSync(tsYt.youtrackJson, "utf8")), tsDir)).toEqual(normalizePaths(shYt, shDir));
-expect(normalizePaths(JSON.parse(readFileSync(tsVcs.vcsJson, "utf8")), tsDir)).toEqual(normalizePaths(shVcs, shDir));
+    expect(normalizePaths(JSON.parse(readFileSync(tsYt.youtrackJson, "utf8")), tsDir)).toEqual(
+      normalizePaths(shYt, shDir),
+    );
+    expect(normalizePaths(JSON.parse(readFileSync(tsVcs.vcsJson, "utf8")), tsDir)).toEqual(
+      normalizePaths(shVcs, shDir),
+    );
   } finally {
     rmSync(tsDir, { recursive: true, force: true });
     rmSync(shDir, { recursive: true, force: true });
   }
+});
+
+test("wizard summary keeps nested output indented", () => {
+  const source = readFileSync(path.join(repoRoot, "packages/workit-cli/src/steps.tsx"), "utf8");
+
+  expect(source.match(/\{"  "\}token placeholder/g)).toHaveLength(2);
+  expect(source.match(/\{"  "\}create token/g)).toHaveLength(2);
+  expect(source).toContain('{"  "}+ {file}');
 });

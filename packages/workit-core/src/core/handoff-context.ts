@@ -25,7 +25,8 @@ const resolveFromMessagePaths = (root: string, message: string): Resolved => {
   const paths = extractMessagePaths(message);
   if (paths.length === 0) return { error: "no paths" };
   const slugs = [...new Set(paths.map((p) => p.split("/")[1]))];
-  if (slugs.length !== 1) return { error: "multiple features in message — use exactly one docs/<slug>/ pair" };
+  if (slugs.length !== 1)
+    return { error: "multiple features in message — use exactly one docs/<slug>/ pair" };
   const slug = slugs[0];
   const plan = `docs/${slug}/plan.md`;
   const spec = `docs/${slug}/spec.md`;
@@ -49,8 +50,15 @@ const resolveActivePair = (root: string): Resolved => {
     const plan = path.join("docs", slug, "plan.md");
     const spec = path.join("docs", slug, "spec.md");
     if (!existsSync(path.join(root, plan)) || !existsSync(path.join(root, spec))) continue;
-    const score = Math.max(statSync(path.join(root, spec)).mtimeMs, statSync(path.join(root, plan)).mtimeMs);
-    if (best === null || score > best.score || (score === best.score && slug < best.spec.split("/")[1])) {
+    const score = Math.max(
+      statSync(path.join(root, spec)).mtimeMs,
+      statSync(path.join(root, plan)).mtimeMs,
+    );
+    if (
+      best === null ||
+      score > best.score ||
+      (score === best.score && slug < best.spec.split("/")[1])
+    ) {
       best = { score, spec, plan, source: "active_pair" };
     }
   }
@@ -69,7 +77,10 @@ export const resolveWorkflowPaths = (root: string, message: string): Resolved =>
   if (!existsSync(docsDir) || listMd(docsDir).length === 0) {
     return { error: "no docs/<slug>/ features found under docs/" };
   }
-  return { error: "could not resolve spec and plan — mention docs/<slug>/plan.md or create docs/<slug>/{spec.md,plan.md}" };
+  return {
+    error:
+      "could not resolve spec and plan — mention docs/<slug>/plan.md or create docs/<slug>/{spec.md,plan.md}",
+  };
 };
 
 export const buildHandoffContract = ({
@@ -85,7 +96,9 @@ export const buildHandoffContract = ({
 }): { prompt: string } | { error: string } => {
   const validated = docsValidate({ spec_path: spec, plan_path: plan, workspace_root: root });
   if (validated.ok === false) {
-    return { error: `docs validation failed\n${JSON.stringify({ ok: false, errors: validated.errors })}` };
+    return {
+      error: `docs validation failed\n${JSON.stringify({ ok: false, errors: validated.errors })}`,
+    };
   }
   const branchResolved = resolveBranch({ spec_path: spec, plan_path: plan, workspace_root: root });
   if ("error" in branchResolved) return { error: branchResolved.error as string };

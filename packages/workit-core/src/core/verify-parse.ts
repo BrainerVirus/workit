@@ -3,7 +3,7 @@ export function parseVerifyOutput(stdout: string): Record<string, any> {
   const commands = [];
   const parts = stdout.split(/\n## /);
   for (const part of parts.slice(1)) {
-    const nl = part.indexOf('\n');
+    const nl = part.indexOf("\n");
     const label = part.slice(0, nl).trim();
     const body = part.slice(nl + 1);
     const cmdMatch = body.match(/^command: (.+)$/m);
@@ -18,7 +18,9 @@ export function parseVerifyOutput(stdout: string): Record<string, any> {
     }
   }
 
-  const summaryMatch = stdout.match(/# Summary[\s\S]*?passed: (\d+)[\s\S]*?failed: (\d+)[\s\S]*?skipped: (\d+)/);
+  const summaryMatch = stdout.match(
+    /# Summary[\s\S]*?passed: (\d+)[\s\S]*?failed: (\d+)[\s\S]*?skipped: (\d+)/,
+  );
   const passed = summaryMatch ? Number(summaryMatch[1]) : 0;
   const failed = summaryMatch ? Number(summaryMatch[2]) : 0;
   const skipped = summaryMatch ? Number(summaryMatch[3]) : 0;

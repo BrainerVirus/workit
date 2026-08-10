@@ -14,10 +14,14 @@ const fixture = () => {
   const slug = "add-some-awesome-feat";
   mkdirSync(path.join(root, "docs", slug), { recursive: true });
   mkdirSync(path.join(root, "docs", slug, "sdd"), { recursive: true });
-  writeFileSync(path.join(root, "docs", slug, "spec.md"),
-    `# Spec\n\n**Branch:** \`feature/${slug}\`\n\n## Context\n\n## Goals\n\n## Non-goals\n\n## Architecture\n\n## Acceptance criteria\n\n- CA-01: test\n`);
-  writeFileSync(path.join(root, "docs", slug, "plan.md"),
-    `# Plan\n\n**Spec:** \`docs/${slug}/spec.md\`\n**Branch:** \`feature/${slug}\`\n\n### Task 1: One\n\n- [ ] **Step 1:** Work\n`);
+  writeFileSync(
+    path.join(root, "docs", slug, "spec.md"),
+    `# Spec\n\n**Branch:** \`feature/${slug}\`\n\n## Context\n\n## Goals\n\n## Non-goals\n\n## Architecture\n\n## Acceptance criteria\n\n- CA-01: test\n`,
+  );
+  writeFileSync(
+    path.join(root, "docs", slug, "plan.md"),
+    `# Plan\n\n**Spec:** \`docs/${slug}/spec.md\`\n**Branch:** \`feature/${slug}\`\n\n### Task 1: One\n\n- [ ] **Step 1:** Work\n`,
+  );
   return { root, slug };
 };
 
@@ -30,12 +34,16 @@ test("flow state lives at docs/<slug>/sdd/flow.json", async () => {
     const ctx = { directory: root } as any;
     const spec = `docs/${slug}/spec.md`;
     const raw = await tools.workflow_spec_approve.execute(
-      { confirmed: true, spec_path: spec }, ctx);
+      { confirmed: true, spec_path: spec },
+      ctx,
+    );
     const out = JSON.parse(raw as string);
     expect(out.ok).toBe(true);
     expect(existsSync(path.join(root, "docs", slug, "sdd", "flow.json"))).toBe(true);
     expect(existsSync(path.join(root, "docs", slug, "flow.json"))).toBe(false);
-  } finally { cleanup(root); }
+  } finally {
+    cleanup(root);
+  }
 });
 
 test("sdd context resolves docs/<slug>/sdd", async () => {
@@ -48,7 +56,9 @@ test("sdd context resolves docs/<slug>/sdd", async () => {
     const out = JSON.parse(raw as string);
     expect(out.ok).toBe(true);
     expect(posix(out.data.sdd_dir)).toBe(`docs/${slug}/sdd`);
-  } finally { cleanup(root); }
+  } finally {
+    cleanup(root);
+  }
 });
 
 test("handoff resolves docs/<slug>/plan.md and spec.md", () => {
@@ -61,7 +71,9 @@ test("handoff resolves docs/<slug>/plan.md and spec.md", () => {
       expect(posix(result.spec)).toBe(`docs/${slug}/spec.md`);
       expect(posix(result.sdd)).toBe(`docs/${slug}/sdd`);
     }
-  } finally { cleanup(root); }
+  } finally {
+    cleanup(root);
+  }
 });
 
 test("docs validate passes on the new layout", async () => {
@@ -72,5 +84,7 @@ test("docs validate passes on the new layout", async () => {
       { directory: root, worktree: root, sessionID: "s" } as never,
     );
     expect(JSON.parse(raw as string).ok).toBe(true);
-  } finally { cleanup(root); }
+  } finally {
+    cleanup(root);
+  }
 });

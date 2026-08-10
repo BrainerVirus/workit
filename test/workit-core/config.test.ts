@@ -3,7 +3,10 @@ import { mkdtempSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
-  configDir, readConfig, writeConfig, resolveBranchPolicy, PRESETS,
+  readConfig,
+  writeConfig,
+  resolveBranchPolicy,
+  PRESETS,
   type ToolkitConfig,
 } from "../../packages/workit-core/src/core/config";
 
@@ -34,7 +37,10 @@ test("readConfig returns defaults when config.json missing", () => {
     const cfg = readConfig();
     expect(cfg.locale).toBe("en");
     expect(cfg.branchPolicy.preset).toBe("gitflow");
-  } finally { cleanupEnv(); rmSync(dir, { recursive: true, force: true }); }
+  } finally {
+    cleanupEnv();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("writeConfig + readConfig round trip", () => {
@@ -49,7 +55,10 @@ test("writeConfig + readConfig round trip", () => {
     writeConfig(cfg);
     expect(readConfig()).toEqual(cfg);
     expect(existsSync(path.join(dir, "config.json"))).toBe(true);
-  } finally { cleanupEnv(); rmSync(dir, { recursive: true, force: true }); }
+  } finally {
+    cleanupEnv();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("invalid locale falls back to en", () => {
@@ -57,7 +66,10 @@ test("invalid locale falls back to en", () => {
   try {
     writeFileSync(path.join(dir, "config.json"), JSON.stringify({ locale: "not-valid!" }), "utf8");
     expect(readConfig().locale).toBe("en");
-  } finally { cleanupEnv(); rmSync(dir, { recursive: true, force: true }); }
+  } finally {
+    cleanupEnv();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("presets define allowed/protected lists", () => {
@@ -76,11 +88,16 @@ test("resolveBranchPolicy honors preset and custom overrides", () => {
     expect(gitflow.protected.has("main")).toBe(true);
 
     writeConfig({
-      locale: "en", localeOptions: ["en"], timezone: "UTC",
+      locale: "en",
+      localeOptions: ["en"],
+      timezone: "UTC",
       branchPolicy: { preset: "custom", allowed: ["codex/*"], protected: ["main"] },
     });
     const custom = resolveBranchPolicy(readConfig());
     expect(custom.allowed.some((r) => r.test("codex/feature/x"))).toBe(true);
     expect(custom.allowed.some((r) => r.test("feature/x"))).toBe(false);
-  } finally { cleanupEnv(); rmSync(dir, { recursive: true, force: true }); }
+  } finally {
+    cleanupEnv();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

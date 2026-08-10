@@ -37,10 +37,11 @@ export const adaptPluginHandoffClient = (client: PluginInput["client"]): Handoff
     promptAsync: (input) => client.session.promptAsync(input),
   },
   tui: {
-    selectSession: ({ body, query }) => client.tui.publish({
-      body: { type: "tui.session.select", properties: { sessionID: body.sessionID } } as never,
-      query,
-    }),
+    selectSession: ({ body, query }) =>
+      client.tui.publish({
+        body: { type: "tui.session.select", properties: { sessionID: body.sessionID } } as never,
+        query,
+      }),
   },
 });
 
@@ -58,11 +59,12 @@ type HandoffData = {
   stage?: "create" | "seed" | "select";
 };
 
-const message = (error: unknown) => error instanceof Error
-  ? error.message
-  : typeof error === "object" && error !== null && "message" in error
-    ? String(error.message)
-    : String(error);
+const message = (error: unknown) =>
+  error instanceof Error
+    ? error.message
+    : typeof error === "object" && error !== null && "message" in error
+      ? String(error.message)
+      : String(error);
 const apiError = (response: ApiResponse<unknown> | void) => response?.error;
 
 export async function handoffSession(
@@ -121,21 +123,22 @@ export const buildHandoffPrompt = (root: string, message: string): HandoffContex
     path.dirname(fileURLToPath(import.meta.url)),
     "../../templates/execution-contract.md",
   );
-  const contract = buildHandoffContract({ root, spec: resolved.spec, plan: resolved.plan, templatePath });
+  const contract = buildHandoffContract({
+    root,
+    spec: resolved.spec,
+    plan: resolved.plan,
+    templatePath,
+  });
   if ("error" in contract) return { error: contract.error };
   const sdd = `docs/${path.basename(path.dirname(resolved.plan))}/sdd`;
   return { prompt: contract.prompt, spec: resolved.spec, plan: resolved.plan, sdd };
 };
 
-
-
-export function createHandoffTools(
-  client: HandoffClient,
-  state: WorkflowStateStore,
-) {
+export function createHandoffTools(client: HandoffClient, state: WorkflowStateStore) {
   return {
     workflow_handoff_session: tool({
-      description: "Create, seed, and select a continuation session; --stay in the message skips selection",
+      description:
+        "Create, seed, and select a continuation session; --stay in the message skips selection",
       args: { message: tool.schema.string() },
       execute: async ({ message: userMessage }, context) => {
         const built = buildHandoffPrompt(context.directory, userMessage);
@@ -145,12 +148,14 @@ export function createHandoffTools(
           const gate = assertFlowGates(context.directory, active.plan);
           if (!gate.ok) return output(fail(gate.error));
           state.set(context.sessionID, { spec: active.spec, plan: active.plan, sdd: active.sdd });
-          return output(await handoffSession(client, {
-            directory: context.directory,
-            title: `Continue ${path.basename(path.dirname(active.plan))}`,
-            prompt: active.prompt,
-            stay: /(?:^|\s)--stay(?:\s|$)/.test(userMessage),
-          }));
+          return output(
+            await handoffSession(client, {
+              directory: context.directory,
+              title: `Continue ${path.basename(path.dirname(active.plan))}`,
+              prompt: active.prompt,
+              stay: /(?:^|\s)--stay(?:\s|$)/.test(userMessage),
+            }),
+          );
         } catch (error) {
           return output(fail(message(error)));
         }

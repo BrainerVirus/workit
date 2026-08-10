@@ -61,7 +61,8 @@ function buildBody(
   return body ? `${body}\n\n${line}` : line;
 }
 
-const truthy = (v: string | undefined): boolean => ["1", "true", "yes"].includes(String(v ?? "").toLowerCase());
+const truthy = (v: string | undefined): boolean =>
+  ["1", "true", "yes"].includes(String(v ?? "").toLowerCase());
 
 // Port of python's shutil.which — scan PATH in-process (no `which` binary needed).
 function whichOnPath(tool: string): string | null {
@@ -71,7 +72,9 @@ function whichOnPath(tool: string): string | null {
     try {
       fs.accessSync(candidate, fs.constants.X_OK);
       return candidate;
-    } catch { /* keep scanning */ }
+    } catch {
+      /* keep scanning */
+    }
   }
   return null;
 }
@@ -107,12 +110,15 @@ export function prCreate(env: NodeJS.ProcessEnv, cwd: string): Record<string, an
   const root = process.env.WORKFLOW_WORKSPACE_ROOT ?? repoRoot(cwd);
   const cfg = vcsConfig("load", root);
   if (!cfg.ok) return { error: cfg.error ?? "vcs config missing" };
-  if (!cfg.tokenReady) return { error: "VCS token not ready — run /wk-init and edit token file locally" };
+  if (!cfg.tokenReady)
+    return { error: "VCS token not ready — run /wk-init and edit token file locally" };
 
   const provider = cfg.provider as string;
-  if (provider !== "gitlab" && provider !== "github") return { error: `unsupported provider: ${provider}` };
+  if (provider !== "gitlab" && provider !== "github")
+    return { error: `unsupported provider: ${provider}` };
   const cli = provider === "gitlab" ? "glab" : "gh";
-  const installUrl = provider === "gitlab" ? "https://gitlab.com/gitlab-org/cli" : "https://cli.github.com";
+  const installUrl =
+    provider === "gitlab" ? "https://gitlab.com/gitlab-org/cli" : "https://cli.github.com";
   if (whichOnPath(cli) === null) {
     return {
       ok: false,
@@ -129,16 +135,23 @@ export function prCreate(env: NodeJS.ProcessEnv, cwd: string): Record<string, an
   const draft = String(env.WF_PR_DRAFT ?? "false").toLowerCase() === "true";
   const target = env.WF_PR_TARGET || String(cfg.defaultTargetBranch ?? "develop");
 
-  const br = spawnSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: root, encoding: "utf8" });
+  const br = spawnSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
+    cwd: root,
+    encoding: "utf8",
+  });
   const branch = br.status === 0 ? (br.stdout ?? "").trim() : "";
 
   let baseUrl = cfg.youtrack_base_url as string | undefined;
   if (!baseUrl) {
-    const ytCfg = process.env.WORKFLOW_YOUTRACK_CONFIG ?? path.join(path.dirname(String(cfg.configPath)), "youtrack.json");
+    const ytCfg =
+      process.env.WORKFLOW_YOUTRACK_CONFIG ??
+      path.join(path.dirname(String(cfg.configPath)), "youtrack.json");
     try {
       const yt = JSON.parse(fs.readFileSync(ytCfg, "utf8")) as Record<string, any>;
       if (yt && typeof yt === "object") baseUrl = yt.baseUrl;
-    } catch { /* optional */ }
+    } catch {
+      /* optional */
+    }
   }
   const ghLinkOnPr = cfg.issues_provider === "github" && cfg.link_on_pr === true;
   let ghRepo: string | null = null;
@@ -147,8 +160,15 @@ export function prCreate(env: NodeJS.ProcessEnv, cwd: string): Record<string, an
     if (rr.status === 0) ghRepo = parseGhRepo(rr.stdout ?? "");
   }
   const finalBody = buildBody(
-    body, branch, cfg.link_issues === true, baseUrl ?? "", env.WORKFLOW_YT_ISSUE ?? "",
-    ghLinkOnPr, env.WORKFLOW_GH_ISSUE ?? "", env.WORKFLOW_GH_ISSUE_RELATION ?? "closes", ghRepo,
+    body,
+    branch,
+    cfg.link_issues === true,
+    baseUrl ?? "",
+    env.WORKFLOW_YT_ISSUE ?? "",
+    ghLinkOnPr,
+    env.WORKFLOW_GH_ISSUE ?? "",
+    env.WORKFLOW_GH_ISSUE_RELATION ?? "closes",
+    ghRepo,
   );
 
   const squash = pr.squashOnMerge !== false;
@@ -178,9 +198,15 @@ export function prCreate(env: NodeJS.ProcessEnv, cwd: string): Record<string, an
   if (result.status !== 0) {
     const err = (result.stderr ?? result.stdout ?? "").trim();
     let hint: Record<string, any> | null = null;
-    if (provider === "gitlab" && (err.includes("409") || err.toLowerCase().includes("already exists"))) {
-      const list = spawnSync("glab", ["mr", "list", `--source-branch=${branch}`, "--output=json"],
-        { cwd: root, encoding: "utf8", env: cmdEnv });
+    if (
+      provider === "gitlab" &&
+      (err.includes("409") || err.toLowerCase().includes("already exists"))
+    ) {
+      const list = spawnSync("glab", ["mr", "list", `--source-branch=${branch}`, "--output=json"], {
+        cwd: root,
+        encoding: "utf8",
+        env: cmdEnv,
+      });
       if (list.status === 0 && (list.stdout ?? "").trim()) {
         try {
           const mrs = JSON.parse(list.stdout ?? "") as Array<Record<string, any>>;
@@ -191,10 +217,16 @@ export function prCreate(env: NodeJS.ProcessEnv, cwd: string): Record<string, an
               next_step: "Use glab mr update or close the open MR before creating again",
             };
           }
-        } catch { /* no hint */ }
+        } catch {
+          /* no hint */
+        }
       }
     }
-    const payload: Record<string, any> = { error: "create failed", provider, stderr: err.slice(0, 800) };
+    const payload: Record<string, any> = {
+      error: "create failed",
+      provider,
+      stderr: err.slice(0, 800),
+    };
     if (hint) payload.hint = hint;
     return payload;
   }
