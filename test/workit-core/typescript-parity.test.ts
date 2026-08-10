@@ -663,6 +663,85 @@ test.skipIf(!bashAvailable() || !flockAvailable())(
   },
 );
 
+test.skipIf(!bashAvailable() || !flockAvailable())(
+  "sync lock dies with its owner (no orphan holder after the holder is SIGKILLed)",
+  async () => {
+    const lockDir = mkdtempSync(path.join(os.tmpdir(), "wf-parity-lockdie-"));
+    const home = mkdtempSync(path.join(os.tmpdir(), "wf-parity-lockdie-home-"));
+    const dev = mkdtempSync(path.join(os.tmpdir(), "wf-parity-lockdie-dev-"));
+    const fakeNpmDir = mkdtempSync(path.join(os.tmpdir(), "wf-parity-lockdie-npm-"));
+    const started = path.join(fakeNpmDir, "started");
+    const lock = path.join(lockDir, "workflow-toolkit-sync.lock");
+    const syncRuntimeSrc = path.resolve(
+      import.meta.dir,
+      "..",
+      "..",
+      "packages",
+      "workit-core",
+      "src",
+      "core",
+      "sync-runtime.ts",
+    );
+    const childCode = `
+      import { syncRuntime } from ${JSON.stringify(syncRuntimeSrc)};
+      const r = await syncRuntime({});
+      console.log(JSON.stringify(r));
+      process.exit(r.ok ? 0 : 1);
+    `;
+    const env: Record<string, string> = {
+      HOME: home,
+      XDG_RUNTIME_DIR: lockDir,
+      WORKFLOW_TOOLKIT_DEV: dev,
+      FAKE_NPM_STARTED: started,
+      PATH: `${fakeNpmDir}${path.delimiter}${process.env.PATH ?? ""}`,
+    };
+    const child = spawn(process.execPath, ["-e", childCode], {
+      env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const heldFree = (): boolean =>
+      spawnSync("bash", ["-c", 'exec 9>"$1"; flock -n 9 || exit 1', "probe", lock]).status === 0;
+    try {
+      mkdirSync(path.join(dev, "packages/workit-opencode/src"), { recursive: true });
+      mkdirSync(path.join(dev, "packages/workit-cursor/.cursor-plugin"), { recursive: true });
+      mkdirSync(path.join(dev, "packages/workit-cursor/mcp"), { recursive: true });
+      writeFileSync(
+        path.join(dev, "packages/workit-opencode/src/plugin.ts"),
+        "export default {};\n",
+      );
+      writeFileSync(
+        path.join(fakeNpmDir, "npm"),
+        `#!/usr/bin/env bash\ntouch "$FAKE_NPM_STARTED"\nsleep 60\n`,
+        { mode: 0o755 },
+      );
+      for (let i = 0; i < 200 && !existsSync(started); i++) await Bun.sleep(25);
+      expect(existsSync(started)).toBe(true); // sync is mid-flight, so the lock is held
+      expect(heldFree()).toBe(false); // a second sync must not acquire yet
+
+      child.kill("SIGKILL");
+      let free = false;
+      for (let i = 0; i < 200; i++) {
+        if (heldFree()) {
+          free = true;
+          break;
+        }
+        await Bun.sleep(25);
+      }
+      expect(free).toBe(true); // the lock died with its owner
+    } finally {
+      child.kill("SIGKILL");
+      // Don't await the child's exit event: bun occasionally never fires it
+      // for a SIGKILLed child. A short pause lets the child die before the
+      // fixture dirs it may still be writing to are removed.
+      await Bun.sleep(200);
+      rmSync(lockDir, { recursive: true, force: true });
+      rmSync(home, { recursive: true, force: true });
+      rmSync(dev, { recursive: true, force: true });
+      rmSync(fakeNpmDir, { recursive: true, force: true });
+    }
+  },
+);
+
 function findOnPath(tool: string): string | null {
   for (const dir of (process.env.PATH ?? "").split(path.delimiter)) {
     const candidate = path.join(dir, tool);

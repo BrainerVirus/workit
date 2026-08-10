@@ -33,27 +33,31 @@ const run = (cmd: string, args: string[], opts: { cwd?: string; env: NodeJS.Proc
   };
 };
 
-/** Acquire a non-blocking flock for the duration of the sync (mirrors `exec 9>"$LOCK"; flock -n 9`). */
+/**
+ * Acquire a non-blocking flock for the duration of the sync (mirrors
+ * `exec 9>"$LOCK"; flock -n 9`). The `sh` child opens fd 9, takes the flock,
+ * then blocks reading its stdin. When this parent exits — normally, or
+ * hard-killed (SIGKILL/SIGINT/crash) — the kernel closes the stdin pipe write
+ * end, the child's read hits EOF, and the child exits, releasing the flock.
+ * The lock thus dies with its owner (no orphan holder), matching
+ * sync-runtime.sh where the flock dies with the shell process itself. No
+ * probe-then-hold TOCTOU window and no duration cap: the child holds the lock
+ * for exactly the parent's lifetime. The child signals acquisition by writing
+ * "ok" to stdout; any other exit means the flock was already held.
+ */
 async function acquireLock(
   lock: string,
   env: NodeJS.ProcessEnv,
 ): Promise<{ proc: ChildProcess } | { error: string }> {
-  // A single `sh` child opens fd 9 and takes the flock on it, then stays alive
-  // until killed, so the lock is held atomically for the whole sync: no
-  // probe-then-hold TOCTOU window and no duration cap. The child signals it
-  // holds the lock by creating a ready marker; any other exit means it was held.
-  const ready = `${lock}.ready`;
-  rmSync(ready, { force: true });
   const proc = spawn(
     "sh",
     [
       "-c",
-      `exec 9>"$1"; flock -n 9 || exit 7; : >"$2"; while :; do sleep 3600; done`,
+      `exec 9>"$1"; flock -n 9 || exit 7; printf 'ok\\n'; while IFS= read -r _; do :; done`,
       "workit-lock",
       lock,
-      ready,
     ],
-    { stdio: "ignore", env, detached: true },
+    { stdio: ["pipe", "pipe", "ignore"], env },
   );
   const acquired = await new Promise<boolean>((resolve) => {
     let settled = false;
@@ -63,17 +67,9 @@ async function acquireLock(
         resolve(ok);
       }
     };
+    proc.stdout?.once("data", () => finish(true));
     proc.once("exit", () => finish(false));
     proc.once("error", () => finish(false));
-    const poll = () => {
-      if (settled) return;
-      if (existsSync(ready)) {
-        finish(true);
-        return;
-      }
-      setTimeout(poll, 20);
-    };
-    poll();
   });
   if (!acquired) {
     killLockProcess(proc);
@@ -82,12 +78,12 @@ async function acquireLock(
   return { proc };
 }
 
-/** Kill the lock-holder process group so the sleep child releases the flock'd fd. */
+/** Kill the lock-holder child so the flock is released immediately. */
 function killLockProcess(proc: ChildProcess): void {
   try {
-    if (proc.pid) process.kill(-proc.pid, "SIGTERM");
-  } catch {
     proc.kill();
+  } catch {
+    /* already exited */
   }
 }
 
@@ -291,7 +287,6 @@ export async function syncRuntime(options: SyncRuntimeOptions = {}): Promise<Syn
     return { ok: true };
   } finally {
     killLockProcess(lockProc);
-    rmSync(`${lock}.ready`, { force: true });
   }
 }
 
