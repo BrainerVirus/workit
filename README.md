@@ -17,17 +17,14 @@ Config directory (both platforms): `~/.config/workflow-toolkit/` (kept as-is for
 
 ## Install
 
-**Quick start (wizard)** — the interactive wizard picks OpenCode and/or Cursor and configures tokens and project files:
-
-Requires bun (`curl -fsSL https://bun.sh/install | bash`).
+**Quick start (wizard)** — the interactive wizard picks OpenCode and/or Cursor and configures tokens, workspaces, and project files:
 
 ```bash
-npm i @brainervirus/workit-core    # shared core (skills, commands, scripts)
-npm i @brainervirus/workit-opencode # OpenCode plugin (thin over the core)
-npm i @brainervirus/workit-cursor   # Cursor plugin (MCP + hooks + rules)
-npm i @brainervirus/workit-cli      # interactive wizard
-npx workit init
+npx @brainervirus/workit-cli init
 ```
+
+The wizard installs the platform packages it configures (OpenCode plugin / Cursor MCP) — no manual `npm i` needed. Requires [bun](https://bun.sh) for the OpenCode plugin runtime.
+
 
 **Local development** — use the repo path instead; no package cache, disk is the source of truth:
 
@@ -39,7 +36,7 @@ bun i
 
 ## Usage
 
-Manual setup for those who skipped the wizard (`npx workit init`):
+Manual setup for those who skipped the wizard (`npx @brainervirus/workit-cli init`):
 
 **OpenCode** — reference the plugin entry in `opencode.json` / `opencode.jsonc` (`~/.config/opencode/opencode.json`):
 

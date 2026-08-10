@@ -26,7 +26,7 @@ npm i @brainervirus/workit-core    # shared core (skills, commands, scripts)
 npm i @brainervirus/workit-opencode # OpenCode plugin (thin over the core)
 npm i @brainervirus/workit-cursor   # Cursor plugin (MCP + hooks + rules)
 npm i @brainervirus/workit-cli      # interactive wizard
-npx workit init
+npx @brainervirus/workit-cli init
 ```
 
 **Local development** — use the repo path instead; no package cache, disk is the source of truth:
@@ -39,7 +39,7 @@ bun i
 
 ## Usage
 
-Manual setup for those who skipped the wizard (`npx workit init`):
+Manual setup for those who skipped the wizard (`npx @brainervirus/workit-cli init`):
 
 **OpenCode** — reference the plugin entry in `opencode.json` / `opencode.jsonc` (`~/.config/opencode/opencode.json`):
 
