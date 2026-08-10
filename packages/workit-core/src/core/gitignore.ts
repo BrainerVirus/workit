@@ -25,7 +25,12 @@ export const ensureProjectGitignore = (
   if (!confirmed) return { ok: false, error: "confirmed: true required" };
   const file = path.join(workspaceRoot, ".gitignore");
   const existing = existsSync(file) ? readFileSync(file, "utf8") : "";
-  const existingLines = new Set(existing.split("\n").map((l) => l.trim()).filter(Boolean));
+  const existingLines = new Set(
+    existing
+      .split("\n")
+      .map((l) => l.trim())
+      .filter(Boolean),
+  );
   const added: string[] = [];
   const append: string[] = [];
   for (const entry of GITIGNORE_ENTRIES) {
@@ -35,7 +40,11 @@ export const ensureProjectGitignore = (
   }
   if (append.length) {
     const separator = existing && !existing.endsWith("\n") ? "\n" : "";
-    writeFileSync(file, existing + separator + (existing ? "\n" : "") + append.join("\n") + "\n", "utf8");
+    writeFileSync(
+      file,
+      existing + separator + (existing ? "\n" : "") + append.join("\n") + "\n",
+      "utf8",
+    );
   } else if (!existsSync(file)) {
     writeFileSync(file, "", "utf8");
   }

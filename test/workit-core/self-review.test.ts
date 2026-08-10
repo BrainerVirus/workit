@@ -2,7 +2,11 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { readFlowState, transitionSpec, transitionPlan } from "../../packages/workit-core/src/core/flow-state";
+import {
+  readFlowState,
+  transitionSpec,
+  transitionPlan,
+} from "../../packages/workit-core/src/core/flow-state";
 
 const COMPLIANT_SPEC = (slug: string) =>
   `# ${slug}\n\n**Branch:** \`feature/${slug}\`\n\n## Context\n\n## Goals\n\n## Non-goals\n\n## Architecture\n\n## Acceptance criteria\n\n- CA-01: test\n`;
@@ -162,7 +166,9 @@ test("spec without **Branch:** is rejected with the template hint and stays draf
     const result = transitionSpec(root, slug, specPath, true);
     expect(result.ok).toBe(false);
     expect(String((result as { error: string }).error)).toContain("**Branch:** header missing");
-    expect(String((result as { error: string }).error)).toContain("see templates/spec-template.md for the required structure");
+    expect(String((result as { error: string }).error)).toContain(
+      "see templates/spec-template.md for the required structure",
+    );
     expect(readFlowState(root, slug).spec.status).toBe("draft");
   } finally {
     cleanup(root);

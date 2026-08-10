@@ -9,7 +9,11 @@ import { youTrackTokenCreateUrl, youTrackVerifyToken } from "./youtrack";
 const TOKEN_PLACEHOLDER = "YOUR_TOKEN_HERE";
 
 const readJson = (p: string): Record<string, any> | null => {
-  try { return JSON.parse(fs.readFileSync(p, "utf8")) as Record<string, any>; } catch { return null; }
+  try {
+    return JSON.parse(fs.readFileSync(p, "utf8")) as Record<string, any>;
+  } catch {
+    return null;
+  }
 };
 
 const isPlaceholder = (text: string): boolean =>
@@ -19,7 +23,11 @@ const modeOk = (p: string): boolean =>
   process.platform === "win32" || (fs.statSync(p).mode & 0o777) === 0o600;
 
 const resolvePath = (p: string): string => {
-  try { return fs.realpathSync(p); } catch { return path.resolve(p); }
+  try {
+    return fs.realpathSync(p);
+  } catch {
+    return path.resolve(p);
+  }
 };
 
 /** Port of scripts/init/status.sh — filesystem init state. */
@@ -50,11 +58,14 @@ export function initStatusData(configDirPath = configDir()): Record<string, any>
       }
     }
     const expanded = tokenFile ? path.resolve(tokenFile) : null;
-    const resolvedTokenFile = expanded && fs.existsSync(expanded)
-      ? resolvePath(expanded)
-      : expanded
-        ? (path.isAbsolute(expanded) ? expanded : path.resolve(configDirPath, expanded))
-        : null;
+    const resolvedTokenFile =
+      expanded && fs.existsSync(expanded)
+        ? resolvePath(expanded)
+        : expanded
+          ? path.isAbsolute(expanded)
+            ? expanded
+            : path.resolve(configDirPath, expanded)
+          : null;
     youtrackConfig = {
       config_edit_path: resolvePath(ytJson),
       baseUrl: base,
@@ -67,8 +78,18 @@ export function initStatusData(configDirPath = configDir()): Record<string, any>
       tokenFile: resolvedTokenFile,
       tokenDefaults: ytParsed.tokenDefaults,
       timeLogging: {
-        meetings: { options: meetingIssues, skill: "/wk-meetings", logsTime: true, postsComment: false },
-        taskWork: { issueSource: "active spec/plan **YouTrack:** field or --issue", skill: "/wk-issue-update", logsTime: true, postsComment: true },
+        meetings: {
+          options: meetingIssues,
+          skill: "/wk-meetings",
+          logsTime: true,
+          postsComment: false,
+        },
+        taskWork: {
+          issueSource: "active spec/plan **YouTrack:** field or --issue",
+          skill: "/wk-issue-update",
+          logsTime: true,
+          postsComment: true,
+        },
       },
     };
     youtrackTokenCreate = youTrackTokenCreateUrl().data;
@@ -91,20 +112,28 @@ export function initStatusData(configDirPath = configDir()): Record<string, any>
   const ytTokenPath = youtrackConfig?.tokenFile ?? path.join(configDirPath, "youtrack.token");
   const tokenText = fs.existsSync(ytTokenPath) ? fs.readFileSync(ytTokenPath, "utf8").trim() : "";
   const placeholder = fs.existsSync(ytTokenPath) && isPlaceholder(tokenText);
-  const tokenOk = fs.existsSync(ytTokenPath) && modeOk(ytTokenPath) && Boolean(tokenText) && !isPlaceholder(tokenText);
+  const tokenOk =
+    fs.existsSync(ytTokenPath) &&
+    modeOk(ytTokenPath) &&
+    Boolean(tokenText) &&
+    !isPlaceholder(tokenText);
 
   const youtrackTokenItem: Record<string, any> = {
     id: "youtrack_token",
     label: "YouTrack API token (mode 600, not placeholder)",
     ok: tokenOk,
     path: fs.existsSync(ytTokenPath) ? resolvePath(ytTokenPath) : path.resolve(ytTokenPath),
-    token_edit_path: fs.existsSync(ytTokenPath) ? resolvePath(ytTokenPath) : path.resolve(ytTokenPath),
+    token_edit_path: fs.existsSync(ytTokenPath)
+      ? resolvePath(ytTokenPath)
+      : path.resolve(ytTokenPath),
     placeholder,
     fix: `Open ${resolvePath(ytTokenPath)} — replace ${TOKEN_PLACEHOLDER} with your permanent token, save, then /wk-status`,
   };
   if (youtrackTokenCreate) {
-    if (youtrackTokenCreate.createUrl) youtrackTokenItem.token_create_url = youtrackTokenCreate.createUrl;
-    if (youtrackTokenCreate.docsUrl) youtrackTokenItem.token_create_docs_url = youtrackTokenCreate.docsUrl;
+    if (youtrackTokenCreate.createUrl)
+      youtrackTokenItem.token_create_url = youtrackTokenCreate.createUrl;
+    if (youtrackTokenCreate.docsUrl)
+      youtrackTokenItem.token_create_docs_url = youtrackTokenCreate.docsUrl;
     if (youtrackTokenCreate.scopes) youtrackTokenItem.token_scopes = youtrackTokenCreate.scopes;
     if (youtrackTokenCreate.tokenName) youtrackTokenItem.token_name = youtrackTokenCreate.tokenName;
     if (youtrackTokenCreate.steps) youtrackTokenItem.token_create_steps = youtrackTokenCreate.steps;
@@ -181,8 +210,22 @@ export function initStatusData(configDirPath = configDir()): Record<string, any>
   for (const k of ["gitlab", "github"]) {
     vcsTokenFiles[k] = String(vcsParsed?.[k]?.tokenFile ?? path.join(configDirPath, `${k}.token`));
   }
-  items.push(tokenItem("gitlab_token", "GitLab token (mode 600, not placeholder)", vcsTokenFiles.gitlab, "gitlab"));
-  items.push(tokenItem("github_token", "GitHub token (mode 600, not placeholder)", vcsTokenFiles.github, "github"));
+  items.push(
+    tokenItem(
+      "gitlab_token",
+      "GitLab token (mode 600, not placeholder)",
+      vcsTokenFiles.gitlab,
+      "gitlab",
+    ),
+  );
+  items.push(
+    tokenItem(
+      "github_token",
+      "GitHub token (mode 600, not placeholder)",
+      vcsTokenFiles.github,
+      "github",
+    ),
+  );
 
   return {
     config_dir: configDirPath,
@@ -218,7 +261,8 @@ export function toolkitStatusData(configDirPath = configDir()): Record<string, a
   status.youtrack_verify = verify;
   status.youtrack_ok = placeholder ? false : Boolean((verify as Record<string, any>).ok);
   status.vcs_verify = vcsVerify;
-  status.vcs_ok = vcsJsonOk && !vcsPlaceholder ? Boolean((vcsVerify as Record<string, any>).ok) : false;
+  status.vcs_ok =
+    vcsJsonOk && !vcsPlaceholder ? Boolean((vcsVerify as Record<string, any>).ok) : false;
 
   const fsReady = status.items.every((i: Record<string, any>) => i.required === false || i.ok);
   status.ready = fsReady && Boolean(status.youtrack_ok) && (!vcsJsonOk || Boolean(status.vcs_ok));
@@ -302,7 +346,10 @@ const vcsJsonContent = (dir: string): Record<string, any> => ({
 });
 
 /** Port of scripts/init/apply.sh — confirmed scaffold actions. */
-export function initApplyData(action: string, env: NodeJS.ProcessEnv = process.env): Record<string, any> {
+export function initApplyData(
+  action: string,
+  env: NodeJS.ProcessEnv = process.env,
+): Record<string, any> {
   const dir = String(env.WORKFLOW_TOOLKIT_CONFIG ?? configDir());
   fs.mkdirSync(dir, { recursive: true });
 
@@ -360,7 +407,12 @@ export function initApplyData(action: string, env: NodeJS.ProcessEnv = process.e
             locale: cfg.locale,
             tokenCreate,
             timeLogging: {
-              meetings: { issue: meeting, skill: "/wk-meetings", logsTime: true, postsComment: false },
+              meetings: {
+                issue: meeting,
+                skill: "/wk-meetings",
+                logsTime: true,
+                postsComment: false,
+              },
               taskWork: {
                 issueSource: "active spec/plan **YouTrack:** field or --issue",
                 skill: "/wk-issue-update",
@@ -421,21 +473,34 @@ export function initApplyData(action: string, env: NodeJS.ProcessEnv = process.e
       }
     }
     default: {
-      return { error: `unknown action ${action} (youtrack_scaffold|youtrack_json|youtrack_token_placeholder|vcs_scaffold)` };
+      return {
+        error: `unknown action ${action} (youtrack_scaffold|youtrack_json|youtrack_token_placeholder|vcs_scaffold)`,
+      };
     }
   }
 }
 
 export function initStatus(): Record<string, any> {
   const data = initStatusData();
-  return { ...data, workspaces: { resolved: resolveWorkspace(process.cwd()), path: workspacesPath() } };
+  return {
+    ...data,
+    workspaces: { resolved: resolveWorkspace(process.cwd()), path: workspacesPath() },
+  };
 }
 
 export function toolkitStatus(): Record<string, any> {
   return toolkitStatusData();
 }
 
-export function initApply({ action, confirmed, env }: { action: string; confirmed: boolean; env?: Record<string, string> }): Record<string, any> {
+export function initApply({
+  action,
+  confirmed,
+  env,
+}: {
+  action: string;
+  confirmed: boolean;
+  env?: Record<string, string>;
+}): Record<string, any> {
   if (!confirmed) return { error: "confirmed: true required" };
   return { data: initApplyData(action, env ? { ...process.env, ...env } : process.env) };
 }

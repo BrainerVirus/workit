@@ -5,8 +5,7 @@ import { parseTasksFromPlan } from "./docs-validate";
 
 export type Detection = { choices: string[]; pattern: "alpha" | "numeric" } | null;
 
-export const detectConfigGapError = (text: string): boolean =>
-  text.includes(CONFIG_GAP_MARKER);
+export const detectConfigGapError = (text: string): boolean => text.includes(CONFIG_GAP_MARKER);
 
 // Enforcement-rail detectors: case-insensitive word-boundary heuristics.
 // Conservative bias (D-03): require 1+ signal word AND 0 evidence words;
@@ -86,20 +85,27 @@ export const detectInstructionOption = (questions: unknown): boolean => {
 // Labeled blocks are stripped first so their plain closing fence (```) can't match.
 export const detectRawDocDelivery = (text: string): boolean =>
   /^```\s*$/m.test(text.replace(/```\S[^\n]*\r?\n[\s\S]*?```/g, "")) &&
-  (text.includes("# Spec") || text.includes("# Plan") ||
-    text.includes("**Spec:**") || text.includes("**Branch:**"));
+  (text.includes("# Spec") ||
+    text.includes("# Plan") ||
+    text.includes("**Spec:**") ||
+    text.includes("**Branch:**"));
 
 // Interrogative gate: a literal question mark OR explicit interrogative phrases.
 // Plain "I want to confirm..." or "the script which runs" must NOT match.
-const INTERROGATIVE = /[?¿]|which\s+one|choose\s+(?:one|between|among)|do\s+you\s+(?:want|prefer)|want\s+me\s+to/i;
+const INTERROGATIVE =
+  /[?¿]|which\s+one|choose\s+(?:one|between|among)|do\s+you\s+(?:want|prefer)|want\s+me\s+to/i;
 
 export const detectProseChoices = (text: string): Detection => {
   if (!INTERROGATIVE.test(text)) return null;
 
-  const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
+  const lines = text
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
 
-  const alphaAll = [...text.matchAll(/([a-dA-D])[.)]\s+([^\n]*?)(?=\s+[a-dA-D][.)]\s|$)/g)]
-    .map((m) => ({ letter: m[1].toLowerCase(), choice: m[2].trim() }));
+  const alphaAll = [...text.matchAll(/([a-dA-D])[.)]\s+([^\n]*?)(?=\s+[a-dA-D][.)]\s|$)/g)].map(
+    (m) => ({ letter: m[1].toLowerCase(), choice: m[2].trim() }),
+  );
   const alphaLines = lines
     .map((l) => /^([a-dA-D])[.)]\s+(.+)$/.exec(l))
     .filter((m): m is RegExpExecArray => Boolean(m))
@@ -114,8 +120,10 @@ export const detectProseChoices = (text: string): Detection => {
     }
   }
 
-  const numericAll = [...text.matchAll(/(\d+)[.)]\s+([^\n]*?)(?=\s+\d+[.)]\s|$)/g)]
-    .map((m) => ({ num: Number(m[1]), choice: m[2].trim() }));
+  const numericAll = [...text.matchAll(/(\d+)[.)]\s+([^\n]*?)(?=\s+\d+[.)]\s|$)/g)].map((m) => ({
+    num: Number(m[1]),
+    choice: m[2].trim(),
+  }));
   const numericLines = lines
     .map((l) => /^(\d+)[.)]\s+(.+)$/.exec(l))
     .filter((m): m is RegExpExecArray => Boolean(m))
@@ -137,7 +145,10 @@ const stripFences = (text: string): string => {
   const out: string[] = [];
   let inFence = false;
   for (const line of lines) {
-    if (line.startsWith("```")) { inFence = !inFence; continue; }
+    if (line.startsWith("```")) {
+      inFence = !inFence;
+      continue;
+    }
     if (!inFence) out.push(line);
   }
   return out.join("\n");

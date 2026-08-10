@@ -56,9 +56,18 @@ test("session state emits compact path-only context", () => {
 
 test("session state retains only workflow paths", () => {
   const state = new WorkflowStateStore();
-  const input = { spec: "docs/spec.md", plan: "docs/plan.md", sdd: "docs/sdd/x", extra: "discarded" };
+  const input = {
+    spec: "docs/spec.md",
+    plan: "docs/plan.md",
+    sdd: "docs/sdd/x",
+    extra: "discarded",
+  };
   state.set("s1", input);
-  expect(state.get("s1")).toEqual({ spec: "docs/spec.md", plan: "docs/plan.md", sdd: "docs/sdd/x" });
+  expect(state.get("s1")).toEqual({
+    spec: "docs/spec.md",
+    plan: "docs/plan.md",
+    sdd: "docs/sdd/x",
+  });
 });
 
 test("session state is unchanged by later caller mutation", () => {
@@ -70,8 +79,14 @@ test("session state is unchanged by later caller mutation", () => {
 });
 
 test("copied runtime cannot redirect assets or workspace through Cursor environment", () => {
-  const pluginRootSource = readFileSync(path.resolve(import.meta.dir, "../../packages/workit-core/src/core/scripts.ts"), "utf8");
-  const workspaceSource = readFileSync(path.resolve(import.meta.dir, "../../packages/workit-core/src/core/scripts.ts"), "utf8");
+  const pluginRootSource = readFileSync(
+    path.resolve(import.meta.dir, "../../packages/workit-core/src/core/scripts.ts"),
+    "utf8",
+  );
+  const workspaceSource = readFileSync(
+    path.resolve(import.meta.dir, "../../packages/workit-core/src/core/scripts.ts"),
+    "utf8",
+  );
   expect(pluginRootSource).not.toContain("WORKFLOW_TOOLKIT_ROOT");
   expect(workspaceSource).not.toContain("WORKFLOW_WORKSPACE_ROOT");
 });

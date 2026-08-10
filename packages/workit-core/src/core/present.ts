@@ -30,7 +30,12 @@ export function renderAsciiWireframe(spec: unknown): string {
     }
     if (kind === "button") {
       const label = "[ " + String(row?.label ?? "Button") + " ]";
-      lines.push(boxLine(label.padStart(Math.max(0, (width - 4 + label.length) / 2)).padEnd(width - 4), width));
+      lines.push(
+        boxLine(
+          label.padStart(Math.max(0, (width - 4 + label.length) / 2)).padEnd(width - 4),
+          width,
+        ),
+      );
       continue;
     }
     if (kind === "field") {
@@ -42,7 +47,11 @@ export function renderAsciiWireframe(spec: unknown): string {
     if (kind === "columns") {
       const cols = Array.isArray(row?.columns) ? row.columns : [];
       const colW = Math.floor((width - 4 - cols.length + 1) / Math.max(cols.length, 1));
-      const parts = cols.map((c: any) => String(c?.label ?? "").slice(0, Math.max(0, colW - 1)).padEnd(Math.max(0, colW)));
+      const parts = cols.map((c: any) =>
+        String(c?.label ?? "")
+          .slice(0, Math.max(0, colW - 1))
+          .padEnd(Math.max(0, colW)),
+      );
       lines.push(boxLine(parts.join(" | ").trim(), width));
       continue;
     }

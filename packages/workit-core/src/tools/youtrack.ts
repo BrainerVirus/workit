@@ -17,7 +17,7 @@ import {
 
 const ISSUE_RE = /^[A-Z]+-\d+$/;
 const output = (value: unknown) => JSON.stringify(value, null, 2);
-const message = (error: unknown) => error instanceof Error ? error.message : String(error);
+const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 // Both override names point at the config dir itself, same precedence as
 // src/core/config.ts and scripts/init/status.sh: WORKFLOW_TOOLKIT_CONFIG → WORKFLOW_TOOLKIT_CONFIG_DIR → XDG.
@@ -26,9 +26,9 @@ export const configPath = (env: NodeJS.ProcessEnv = process.env, home = os.homed
   path.join(
     env === process.env
       ? configDir()
-      : env.WORKFLOW_TOOLKIT_CONFIG
-        ?? env.WORKFLOW_TOOLKIT_CONFIG_DIR
-        ?? path.join(env.XDG_CONFIG_HOME || path.join(home, ".config"), "workit"),
+      : (env.WORKFLOW_TOOLKIT_CONFIG ??
+          env.WORKFLOW_TOOLKIT_CONFIG_DIR ??
+          path.join(env.XDG_CONFIG_HOME || path.join(home, ".config"), "workit")),
     "youtrack.json",
   );
 
@@ -37,7 +37,8 @@ export function readCredentials(env: NodeJS.ProcessEnv = process.env, home = os.
   const config = JSON.parse(readFileSync(resolvedConfig, "utf8")) as { tokenFile?: string };
   const tokenFile = config.tokenFile ?? "youtrack.token";
   const tokenPath = path.resolve(path.dirname(resolvedConfig), tokenFile.replace(/^~(?=\/)/, home));
-  if (process.platform !== "win32" && (statSync(tokenPath).mode & 0o777) !== 0o600) throw new Error("youtrack.token mode must be 0600");
+  if (process.platform !== "win32" && (statSync(tokenPath).mode & 0o777) !== 0o600)
+    throw new Error("youtrack.token mode must be 0600");
   const token = readFileSync(tokenPath, "utf8").trim();
   if (!token) throw new Error("youtrack.token is empty");
   return { configPath: resolvedConfig, token };
@@ -69,9 +70,13 @@ const defaultOperations: YouTrackOperations = {
   verifyToken: () => unwrap(verifyYouTrackToken()),
   context: (input) => legacyContext(input as never),
   parseDuration: (text, workspaceRoot) => legacyParseDuration(text, workspaceRoot),
-  postComment: (issueId, markdown, workspaceRoot) => legacyPostUpdate({
-    confirmed: true, issueId, markdown, workspace_root: workspaceRoot,
-  } as never),
+  postComment: (issueId, markdown, workspaceRoot) =>
+    legacyPostUpdate({
+      confirmed: true,
+      issueId,
+      markdown,
+      workspace_root: workspaceRoot,
+    } as never),
   logTime: (input) => legacyLogTime(input as never),
 };
 
@@ -116,15 +121,26 @@ export async function postUpdate(
   if (input.minutes != null && input.minutes <= 0) return fail("minutes must be positive");
 
   try {
-    const comment = await operations.postComment(input.issueId, input.markdown, input.workspace_root);
-    if (notApplied(comment)) return fail(comment.error, {
-      issueId: input.issueId, postedComment: false, loggedMinutes: 0,
-      outcome: "not_applied", retry: "workflow_youtrack_post",
-    });
+    const comment = await operations.postComment(
+      input.issueId,
+      input.markdown,
+      input.workspace_root,
+    );
+    if (notApplied(comment))
+      return fail(comment.error, {
+        issueId: input.issueId,
+        postedComment: false,
+        loggedMinutes: 0,
+        outcome: "not_applied",
+        retry: "workflow_youtrack_post",
+      });
     unwrap(comment);
   } catch (error) {
     return fail(message(error), {
-      issueId: input.issueId, postedComment: false, loggedMinutes: 0, outcome: "unknown",
+      issueId: input.issueId,
+      postedComment: false,
+      loggedMinutes: 0,
+      outcome: "unknown",
       instructions: "Check YouTrack comments manually; do not retry while the outcome is unknown.",
     });
   }
@@ -137,15 +153,23 @@ export async function postUpdate(
         text: "workit update",
         workspace_root: input.workspace_root,
       });
-      if (notApplied(time)) return fail(time.error, {
-        issueId: input.issueId, postedComment: true, loggedMinutes: 0,
-        outcome: "not_applied", retry: "workflow_youtrack_log_time",
-      });
+      if (notApplied(time))
+        return fail(time.error, {
+          issueId: input.issueId,
+          postedComment: true,
+          loggedMinutes: 0,
+          outcome: "not_applied",
+          retry: "workflow_youtrack_log_time",
+        });
       unwrap(time);
     } catch (error) {
       return fail(message(error), {
-        issueId: input.issueId, postedComment: true, loggedMinutes: 0, outcome: "unknown",
-        instructions: "Check YouTrack time entries manually; do not retry while the outcome is unknown.",
+        issueId: input.issueId,
+        postedComment: true,
+        loggedMinutes: 0,
+        outcome: "unknown",
+        instructions:
+          "Check YouTrack time entries manually; do not retry while the outcome is unknown.",
       });
     }
   }
@@ -163,15 +187,21 @@ export async function logTimeUpdate(
 ): Promise<Result<Record<string, unknown>>> {
   try {
     const value = await operation.logTime(input);
-    if (notApplied(value)) return fail(value.error, {
-      issueId: input.issueId, loggedMinutes: 0, outcome: "not_applied",
-      retry: "workflow_youtrack_log_time",
-    });
+    if (notApplied(value))
+      return fail(value.error, {
+        issueId: input.issueId,
+        loggedMinutes: 0,
+        outcome: "not_applied",
+        retry: "workflow_youtrack_log_time",
+      });
     return ok(unwrap(value));
   } catch (error) {
     return fail(message(error), {
-      issueId: input.issueId, loggedMinutes: 0, outcome: "unknown",
-      instructions: "Check YouTrack time entries manually; do not retry while the outcome is unknown.",
+      issueId: input.issueId,
+      loggedMinutes: 0,
+      outcome: "unknown",
+      instructions:
+        "Check YouTrack time entries manually; do not retry while the outcome is unknown.",
     });
   }
 }
@@ -182,10 +212,13 @@ export function normalizeContext(value: LegacyValue, mode?: string): LegacyValue
   const issue = String(config?.meetingIssue || "IRPT-12");
   const { meetingIssues: _meetingIssues, ...singleMeetingConfig } = config ?? {};
   const options = Array.isArray(value.meetingOptions)
-    ? value.meetingOptions as Array<Record<string, unknown>>
+    ? (value.meetingOptions as Array<Record<string, unknown>>)
     : [];
   const selected = options.find((option) => option.issue === issue) ?? {
-    key: "general", issue, label: issue, workItemText: "Reuniones",
+    key: "general",
+    issue,
+    label: issue,
+    workItemText: "Reuniones",
   };
   return {
     ...value,
@@ -220,9 +253,8 @@ const configGap = () => {
   const { missing } = describeConfigGaps(["youtrack_json", "youtrack_token"]);
   return missing.length > 0 ? output(fail(configGuardError(missing))) : null;
 };
-const requireConfirmed = (confirmed: boolean) => confirmed === true
-  ? null
-  : output(fail("confirmed: true required"));
+const requireConfirmed = (confirmed: boolean) =>
+  confirmed === true ? null : output(fail("confirmed: true required"));
 
 const rejectedTimeInput = (issueId: string, minutes: number) => {
   const error = !ISSUE_RE.test(issueId)
@@ -230,11 +262,17 @@ const rejectedTimeInput = (issueId: string, minutes: number) => {
     : !Number.isFinite(minutes) || minutes <= 0
       ? "minutes must be positive"
       : null;
-  return error ? output(fail(error, {
-    issueId, loggedMinutes: 0, outcome: "not_applied",
-    retry: "workflow_youtrack_log_time",
-    instructions: "Correct the invalid input, then retry workflow_youtrack_log_time once.",
-  })) : null;
+  return error
+    ? output(
+        fail(error, {
+          issueId,
+          loggedMinutes: 0,
+          outcome: "not_applied",
+          retry: "workflow_youtrack_log_time",
+          instructions: "Correct the invalid input, then retry workflow_youtrack_log_time once.",
+        }),
+      )
+    : null;
 };
 
 export function createYouTrackTools(operations: YouTrackOperations = defaultOperations) {
@@ -244,7 +282,9 @@ export function createYouTrackTools(operations: YouTrackOperations = defaultOper
       args: {},
       execute: async () => {
         let token = "";
-        try { token = credentials().token; } catch (error) {
+        try {
+          token = credentials().token;
+        } catch (error) {
           const gap = configGap();
           if (gap) return gap;
           return output(fail(message(error)));
@@ -258,7 +298,8 @@ export function createYouTrackTools(operations: YouTrackOperations = defaultOper
       execute: async ({ issue_ref }) => invoke(() => parseIssueRef(issue_ref)),
     }),
     workflow_youtrack_context: tool({
-      description: "Load YouTrack context for the configured meeting issue or an existing task issue",
+      description:
+        "Load YouTrack context for the configured meeting issue or an existing task issue",
       args: {
         mode: tool.schema.enum(["meetings", "task"]).optional(),
         issue_id: tool.schema.string().optional(),
@@ -275,23 +316,37 @@ export function createYouTrackTools(operations: YouTrackOperations = defaultOper
           }
         } catch (error) {
           const detail = message(error);
-          return output(fail(detail.includes("repository-relative") ? detail : `path must be repository-relative: ${detail}`));
+          return output(
+            fail(
+              detail.includes("repository-relative")
+                ? detail
+                : `path must be repository-relative: ${detail}`,
+            ),
+          );
         }
         let token = "";
-        try { token = credentials().token; } catch (error) {
+        try {
+          token = credentials().token;
+        } catch (error) {
           const gap = configGap();
           if (gap) return gap;
           return output(fail(message(error)));
         }
-        return invoke(async () => normalizeContext(
-          await operations.context({ ...input, workspace_root: context.directory }), input.mode,
-        ), token);
+        return invoke(
+          async () =>
+            normalizeContext(
+              await operations.context({ ...input, workspace_root: context.directory }),
+              input.mode,
+            ),
+          token,
+        );
       },
     }),
     workflow_youtrack_parse_duration: tool({
       description: "Parse duration text into integer minutes",
       args: { text: tool.schema.string() },
-      execute: async ({ text }, context) => invoke(() => operations.parseDuration(text, context.directory)),
+      execute: async ({ text }, context) =>
+        invoke(() => operations.parseDuration(text, context.directory)),
     }),
     workflow_youtrack_draft: tool({
       description: "Build an es-CL update comment without posting it",
@@ -302,10 +357,12 @@ export function createYouTrackTools(operations: YouTrackOperations = defaultOper
         projectName: tool.schema.string().optional(),
         includeProjectOpener: tool.schema.boolean().optional(),
         includeFacts: tool.schema.boolean().optional(),
-        facts: tool.schema.object({
-          progress_excerpt: tool.schema.array(tool.schema.string()).optional(),
-          git_commits: tool.schema.array(tool.schema.string()).optional(),
-        }).optional(),
+        facts: tool.schema
+          .object({
+            progress_excerpt: tool.schema.array(tool.schema.string()).optional(),
+            git_commits: tool.schema.array(tool.schema.string()).optional(),
+          })
+          .optional(),
       },
       execute: async (input) => invoke(() => legacyBuildDraft(input as never)),
     }),
@@ -324,13 +381,16 @@ export function createYouTrackTools(operations: YouTrackOperations = defaultOper
         const invalid = rejectedTimeInput(input.issueId, input.minutes);
         if (invalid) return invalid;
         let token = "";
-        try { token = credentials().token; } catch (error) {
+        try {
+          token = credentials().token;
+        } catch (error) {
           const gap = configGap();
           if (gap) return gap;
           return output(fail(message(error)));
         }
         const result = await withWriteFlag(() =>
-          logTimeUpdate({ ...input, workspace_root: context.directory }, operations));
+          logTimeUpdate({ ...input, workspace_root: context.directory }, operations),
+        );
         return output(result.ok ? result : { ...result, error: redact(result.error, token) });
       },
     }),
@@ -346,13 +406,16 @@ export function createYouTrackTools(operations: YouTrackOperations = defaultOper
         const rejected = requireConfirmed(input.confirmed);
         if (rejected) return rejected;
         let token = "";
-        try { token = credentials().token; } catch (error) {
+        try {
+          token = credentials().token;
+        } catch (error) {
           const gap = configGap();
           if (gap) return gap;
           return output(fail(message(error)));
         }
         const result = await withWriteFlag(() =>
-          postUpdate({ ...input, workspace_root: context.directory }, operations));
+          postUpdate({ ...input, workspace_root: context.directory }, operations),
+        );
         return output(result.ok ? result : { ...result, error: redact(result.error, token) });
       },
     }),

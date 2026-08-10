@@ -1,7 +1,5 @@
 // CLI port of scripts/youtrack/config.sh — JSON out, argv/env in.
-import {
-  youTrackConfigLoad,
-} from "../youtrack";
+import { youTrackConfigLoad } from "../youtrack";
 
 const args = process.argv.slice(2);
 const cmd = args[0] ?? "load";

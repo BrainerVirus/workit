@@ -57,10 +57,7 @@ function makeNestedStub() {
     '#!/usr/bin/env bash\nprintf "%s" "$WORKFLOW_TOOLKIT_DEV" > "$HOME/sync-dev"\n',
     { mode: 0o755 },
   );
-  writeFileSync(
-    path.join(stub, "packages/workit-opencode/src/plugin.ts"),
-    "export default {};\n",
-  );
+  writeFileSync(path.join(stub, "packages/workit-opencode/src/plugin.ts"), "export default {};\n");
   mkdirSync(path.join(home, ".config/opencode"), { recursive: true });
   writeFileSync(
     path.join(home, ".config/opencode/opencode.json"),
@@ -137,13 +134,20 @@ test("install-opencode-plugin.sh defaults to the checkout containing the script"
   try {
     mkdirSync(path.join(share, ".git"), { recursive: true });
     mkdirSync(path.join(share, "packages/workit-opencode/src"), { recursive: true });
-    writeFileSync(path.join(share, "packages/workit-opencode/src/plugin.ts"), "export default {};\n");
+    writeFileSync(
+      path.join(share, "packages/workit-opencode/src/plugin.ts"),
+      "export default {};\n",
+    );
     const { WORKFLOW_TOOLKIT_DEV: _ignored, ...env } = process.env;
-    const installed = spawnSync("bash", ["packages/workit-core/scripts/install-opencode-plugin.sh"], {
-      cwd: fixture.stub,
-      env: { ...env, HOME: fixture.home },
-      encoding: "utf8",
-    });
+    const installed = spawnSync(
+      "bash",
+      ["packages/workit-core/scripts/install-opencode-plugin.sh"],
+      {
+        cwd: fixture.stub,
+        env: { ...env, HOME: fixture.home },
+        encoding: "utf8",
+      },
+    );
 
     expect(installed.status, installed.stderr).toBe(0);
     const config = JSON.parse(

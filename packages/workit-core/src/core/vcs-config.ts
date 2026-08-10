@@ -14,7 +14,8 @@ export const vcsConfigPath = (): string =>
 
 const workspacesPath = (): string => path.join(configDir(), "workspaces.json");
 
-const vcsCwd = (cwd?: string): string => process.env.WORKFLOW_WORKSPACE_ROOT ?? cwd ?? process.cwd();
+const vcsCwd = (cwd?: string): string =>
+  process.env.WORKFLOW_WORKSPACE_ROOT ?? cwd ?? process.cwd();
 
 function readVcsJson(): { config: Record<string, any>; path: string; ok: boolean } {
   const cfgPath = vcsConfigPath();
@@ -27,7 +28,9 @@ function readVcsJson(): { config: Record<string, any>; path: string; ok: boolean
         config = parsed as Record<string, any>;
         ok = true;
       }
-    } catch { /* missing or invalid */ }
+    } catch {
+      /* missing or invalid */
+    }
   }
   return { config, path: cfgPath, ok };
 }
@@ -47,7 +50,11 @@ export function vcsConfig(mode: "load" | "summary" | "resolve", cwd?: string): R
   // github issues path only when BOTH providers are github (mirrors WorkspaceConfig.issues).
   let issuesProvider: string | null = null;
   let linkOnPr: boolean | null = null;
-  if (provider === "github" && typeof wsIssues.provider === "string" && wsIssues.provider.toLowerCase() === "github") {
+  if (
+    provider === "github" &&
+    typeof wsIssues.provider === "string" &&
+    wsIssues.provider.toLowerCase() === "github"
+  ) {
     issuesProvider = "github";
     linkOnPr = typeof wsIssues.link_on_pr === "boolean" ? wsIssues.link_on_pr : null;
   }
@@ -73,7 +80,8 @@ export function vcsConfig(mode: "load" | "summary" | "resolve", cwd?: string): R
   let tokenOk = false;
   if (fs.existsSync(tokenPath)) {
     const token = fs.readFileSync(tokenPath, "utf8").trim();
-    const placeholder = !token || token === TOKEN_PLACEHOLDER || token.startsWith(TOKEN_PLACEHOLDER);
+    const placeholder =
+      !token || token === TOKEN_PLACEHOLDER || token.startsWith(TOKEN_PLACEHOLDER);
     tokenOk = !placeholder;
   }
 
@@ -93,7 +101,10 @@ export function vcsConfig(mode: "load" | "summary" | "resolve", cwd?: string): R
     link_on_pr: linkOnPr,
   };
   if (provider === "gitlab") {
-    out.gitlab = { host: prov.host ?? "gitlab.com", apiUrl: prov.apiUrl ?? "https://gitlab.com/api/v4" };
+    out.gitlab = {
+      host: prov.host ?? "gitlab.com",
+      apiUrl: prov.apiUrl ?? "https://gitlab.com/api/v4",
+    };
   } else if (provider === "github") {
     out.github = { host: prov.host ?? "github.com" };
   }
@@ -118,10 +129,20 @@ export function vcsVerifyToken(): Record<string, any> {
 
   if (provider === "gitlab") {
     const host = (cfg.gitlab as Record<string, any>)?.host ?? "gitlab.com";
-    const api = ((cfg.gitlab as Record<string, any>)?.apiUrl ?? `https://${host}/api/v4`).replace(/\/+$/, "");
-    const result = spawnSync("curl", ["-fsS", "-H", `PRIVATE-TOKEN: ${token}`, `${api}/user`], { encoding: "utf8" });
+    const api = ((cfg.gitlab as Record<string, any>)?.apiUrl ?? `https://${host}/api/v4`).replace(
+      /\/+$/,
+      "",
+    );
+    const result = spawnSync("curl", ["-fsS", "-H", `PRIVATE-TOKEN: ${token}`, `${api}/user`], {
+      encoding: "utf8",
+    });
     if (result.status !== 0) {
-      return { ok: false, provider, error: "GitLab API rejected token", detail: (result.stderr ?? result.stdout ?? "").slice(0, 200) };
+      return {
+        ok: false,
+        provider,
+        error: "GitLab API rejected token",
+        detail: (result.stderr ?? result.stdout ?? "").slice(0, 200),
+      };
     }
     try {
       const user = JSON.parse(result.stdout ?? "") as Record<string, any>;
@@ -131,9 +152,17 @@ export function vcsVerifyToken(): Record<string, any> {
     }
   }
   if (provider === "github") {
-    const result = spawnSync("gh", ["api", "user"], { encoding: "utf8", env: { ...process.env, GH_TOKEN: token } });
+    const result = spawnSync("gh", ["api", "user"], {
+      encoding: "utf8",
+      env: { ...process.env, GH_TOKEN: token },
+    });
     if (result.status !== 0) {
-      return { ok: false, provider, error: "GitHub API rejected token", detail: (result.stderr ?? result.stdout ?? "").slice(0, 200) };
+      return {
+        ok: false,
+        provider,
+        error: "GitHub API rejected token",
+        detail: (result.stderr ?? result.stdout ?? "").slice(0, 200),
+      };
     }
     try {
       const user = JSON.parse(result.stdout ?? "") as Record<string, any>;
@@ -156,32 +185,44 @@ export function vcsTokenCreateUrls(): Record<string, any> {
   const gitlab = (cfg.gitlab ?? {}) as Record<string, any>;
   const host = String(gitlab.host ?? "gitlab.com");
   const gitlabScopes = Array.isArray(defaults.gitlabScopes) ? defaults.gitlabScopes : ["api"];
-  const gitlabParams = new URLSearchParams({ name, description: desc, scopes: gitlabScopes.join(",") });
+  const gitlabParams = new URLSearchParams({
+    name,
+    description: desc,
+    scopes: gitlabScopes.join(","),
+  });
   const gitlabUrl = `https://${host}/-/user_settings/personal_access_tokens?${gitlabParams}`;
 
-  const githubPerms = defaults.githubPermissions ?? { pull_requests: "write", contents: "write", metadata: "read" };
+  const githubPerms = defaults.githubPermissions ?? {
+    pull_requests: "write",
+    contents: "write",
+    metadata: "read",
+  };
   const ghParams = new URLSearchParams({ name, description: desc, ...githubPerms });
   const githubFineUrl = `https://github.com/settings/personal-access-tokens/new?${ghParams}`;
 
-  const classicScopes = Array.isArray(defaults.githubClassicScopes) ? defaults.githubClassicScopes : ["repo"];
+  const classicScopes = Array.isArray(defaults.githubClassicScopes)
+    ? defaults.githubClassicScopes
+    : ["repo"];
   const githubClassicUrl = `https://github.com/settings/tokens/new?${new URLSearchParams({ description: name, scopes: classicScopes.join(",") })}`;
 
   const provider = String(cfg.provider ?? "gitlab").toLowerCase();
-  const active = {
-    gitlab: {
-      tokenFile: gitlab.tokenFile ?? path.join(configDir(), "gitlab.token"),
-      createUrl: gitlabUrl,
-      scopes: gitlabScopes,
-      name,
-    },
-    github: {
-      tokenFile: (cfg.github as Record<string, any>)?.tokenFile ?? path.join(configDir(), "github.token"),
-      createUrl: githubFineUrl,
-      createUrlClassic: githubClassicUrl,
-      permissions: githubPerms,
-      name,
-    },
-  }[provider] ?? {};
+  const active =
+    {
+      gitlab: {
+        tokenFile: gitlab.tokenFile ?? path.join(configDir(), "gitlab.token"),
+        createUrl: gitlabUrl,
+        scopes: gitlabScopes,
+        name,
+      },
+      github: {
+        tokenFile:
+          (cfg.github as Record<string, any>)?.tokenFile ?? path.join(configDir(), "github.token"),
+        createUrl: githubFineUrl,
+        createUrlClassic: githubClassicUrl,
+        permissions: githubPerms,
+        name,
+      },
+    }[provider] ?? {};
 
   return {
     tokenName: name,
@@ -189,7 +230,12 @@ export function vcsTokenCreateUrls(): Record<string, any> {
     activeProvider: provider,
     active,
     gitlab: { host, createUrl: gitlabUrl, scopes: gitlabScopes, tokenFile: gitlab.tokenFile },
-    github: { createUrl: githubFineUrl, createUrlClassic: githubClassicUrl, permissions: githubPerms, tokenFile: (cfg.github as Record<string, any>)?.tokenFile },
+    github: {
+      createUrl: githubFineUrl,
+      createUrlClassic: githubClassicUrl,
+      permissions: githubPerms,
+      tokenFile: (cfg.github as Record<string, any>)?.tokenFile,
+    },
   };
 }
 
@@ -203,7 +249,10 @@ export function mergedPrStyle(limit = 6): Record<string, any> {
 
   const descInfo = (desc: string, caseInsensitiveNotes = false): Record<string, any> => ({
     hasNotesSection: caseInsensitiveNotes ? /##\s*notes/i.test(desc) : /##\s*Notes/.test(desc),
-    sections: desc.split("\n").filter((l) => l.startsWith("## ")).map((l) => l.trim()),
+    sections: desc
+      .split("\n")
+      .filter((l) => l.startsWith("## "))
+      .map((l) => l.trim()),
     descriptionPreview: desc.slice(0, 600),
   });
 
@@ -216,18 +265,28 @@ export function mergedPrStyle(limit = 6): Record<string, any> {
     const project = m[1];
     const env = { ...process.env, GITLAB_TOKEN: token };
     const run = (args: string[]) => spawnSync("glab", ["api", ...args], { encoding: "utf8", env });
-    let r = run([`projects/${project.replaceAll("/", "%2F")}/merge_requests?state=merged&per_page=${limit}&order_by=updated_at&sort=desc`]);
+    let r = run([
+      `projects/${project.replaceAll("/", "%2F")}/merge_requests?state=merged&per_page=${limit}&order_by=updated_at&sort=desc`,
+    ]);
     if (r.status !== 0) {
       r = run([`merge_requests?state=merged&per_page=${limit}&order_by=updated_at&sort=desc`]);
     }
     if (r.status !== 0) return { ok: false, error: "could not list merge requests" };
     for (const mr of JSON.parse(r.stdout ?? "[]") as Array<Record<string, any>>) {
       const desc = String(mr.description ?? "").trim();
-      examples.push({ title: mr.title, url: mr.web_url, squash: mr.squash, ...descInfo(desc, true) });
+      examples.push({
+        title: mr.title,
+        url: mr.web_url,
+        squash: mr.squash,
+        ...descInfo(desc, true),
+      });
     }
   } else if (provider === "github") {
-    const r = spawnSync("gh", ["pr", "list", "--state", "merged", "--limit", String(limit), "--json", "title,url,body"],
-      { encoding: "utf8", env: { ...process.env, GH_TOKEN: token } });
+    const r = spawnSync(
+      "gh",
+      ["pr", "list", "--state", "merged", "--limit", String(limit), "--json", "title,url,body"],
+      { encoding: "utf8", env: { ...process.env, GH_TOKEN: token } },
+    );
     if (r.status !== 0) return { ok: false, error: "could not list pull requests" };
     for (const pr of JSON.parse(r.stdout ?? "[]") as Array<Record<string, any>>) {
       const desc = String(pr.body ?? "").trim();

@@ -2,7 +2,11 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { getWorkflowBootstrap, isWorkflowBootstrap, loadWorkflowBootstrap } from "../../packages/workit-opencode/src/bootstrap";
+import {
+  getWorkflowBootstrap,
+  isWorkflowBootstrap,
+  loadWorkflowBootstrap,
+} from "../../packages/workit-opencode/src/bootstrap";
 import plugin from "../../packages/workit-opencode/src/plugin";
 
 describe("session bootstrap", () => {
@@ -20,10 +24,26 @@ describe("session bootstrap", () => {
       serverUrl: new URL("http://localhost"),
     } as never);
     const output = {
-      messages: [{
-        info: { role: "user" as const, id: "m1", sessionID: "s1", time: { created: 0, updated: 0 } },
-        parts: [{ type: "text" as const, text: "hello", id: "p1", messageID: "m1", sessionID: "s1", time: { created: 0, updated: 0 } }],
-      }],
+      messages: [
+        {
+          info: {
+            role: "user" as const,
+            id: "m1",
+            sessionID: "s1",
+            time: { created: 0, updated: 0 },
+          },
+          parts: [
+            {
+              type: "text" as const,
+              text: "hello",
+              id: "p1",
+              messageID: "m1",
+              sessionID: "s1",
+              time: { created: 0, updated: 0 },
+            },
+          ],
+        },
+      ],
     };
     await hooks["experimental.chat.messages.transform"]?.({} as never, output as never);
     const texts = output.messages[0].parts.map((p: any) => p.text ?? "");
@@ -36,13 +56,14 @@ describe("session bootstrap", () => {
   });
 });
 
-
 test("loadWorkflowBootstrap returns null for a missing template root", () => {
   expect(loadWorkflowBootstrap("/nonexistent-toolkit-root")).toBeNull();
 });
 
 test("loadWorkflowBootstrap reads the real contract template", () => {
-  const contract = loadWorkflowBootstrap(path.resolve(import.meta.dir, "..", "..", "packages", "workit-core"));
+  const contract = loadWorkflowBootstrap(
+    path.resolve(import.meta.dir, "..", "..", "packages", "workit-core"),
+  );
   expect(contract).toContain("**Spec:**");
 });
 
@@ -52,10 +73,19 @@ test("bootstrap contract declares the configured locale", async () => {
   try {
     process.env.WORKFLOW_TOOLKIT_CONFIG_DIR = dir;
     delete process.env.WORKFLOW_TOOLKIT_CONFIG;
-    writeFileSync(path.join(dir, "config.json"), JSON.stringify({
-      locale: "es-CL", localeOptions: ["en", "es-CL"], timezone: "UTC",
-      branchPolicy: { preset: "gitflow" },
-    }, null, 2));
+    writeFileSync(
+      path.join(dir, "config.json"),
+      JSON.stringify(
+        {
+          locale: "es-CL",
+          localeOptions: ["en", "es-CL"],
+          timezone: "UTC",
+          branchPolicy: { preset: "gitflow" },
+        },
+        null,
+        2,
+      ),
+    );
     const fresh = await import(`../../packages/workit-opencode/src/bootstrap?locale=${Date.now()}`);
     const bootstrap = fresh.getWorkflowBootstrap();
     expect(bootstrap).toContain("es-CL");

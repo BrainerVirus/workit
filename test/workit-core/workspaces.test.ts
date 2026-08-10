@@ -3,13 +3,27 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { initStatus } from "../../packages/workit-core/src/core/init";
-import { resolveWorkspace, workspacesPath, type WorkspaceConfig } from "../../packages/workit-core/src/core/workspaces";
+import {
+  resolveWorkspace,
+  workspacesPath,
+  type WorkspaceConfig,
+} from "../../packages/workit-core/src/core/workspaces";
 import { withIsolatedConfig } from "../shared/helpers/env";
 
 const WORKSPACES = {
   workspaces: [
-    { name: "work", glob: "/home/*/Documents/projects/work/**", vcs: { provider: "gitlab", defaultTargetBranch: "develop" }, youtrack: { link_issues: true } },
-    { name: "personal", glob: "/home/*/Documents/projects/personal/**", vcs: { provider: "github" }, issues: { provider: "github", link_on_pr: true } },
+    {
+      name: "work",
+      glob: "/home/*/Documents/projects/work/**",
+      vcs: { provider: "gitlab", defaultTargetBranch: "develop" },
+      youtrack: { link_issues: true },
+    },
+    {
+      name: "personal",
+      glob: "/home/*/Documents/projects/personal/**",
+      vcs: { provider: "github" },
+      issues: { provider: "github", link_on_pr: true },
+    },
   ],
 } satisfies { workspaces: WorkspaceConfig[] };
 
@@ -24,18 +38,23 @@ test("resolveWorkspace matches work and personal globs, deep paths included", ()
   withIsolatedConfig(dir, () => {
     expect(resolveWorkspace("/home/u/Documents/projects/work/sixbell/repo")?.name).toBe("work");
     expect(resolveWorkspace("/home/u/Documents/projects/personal/some-app")?.name).toBe("personal");
-    expect(resolveWorkspace("/home/u/Documents/projects/work/sixbell/repo/deep/nested/path")?.name).toBe("work");
+    expect(
+      resolveWorkspace("/home/u/Documents/projects/work/sixbell/repo/deep/nested/path")?.name,
+    ).toBe("work");
   });
 });
 
 test("resolveWorkspace returns the first declared match (first-wins)", () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "wf-ws-first-"));
-  writeWorkspaces(dir, JSON.stringify({
-    workspaces: [
-      { name: "first", glob: "/home/*/Documents/**" },
-      { name: "second", glob: "/home/*/Documents/projects/**" },
-    ],
-  }));
+  writeWorkspaces(
+    dir,
+    JSON.stringify({
+      workspaces: [
+        { name: "first", glob: "/home/*/Documents/**" },
+        { name: "second", glob: "/home/*/Documents/projects/**" },
+      ],
+    }),
+  );
   withIsolatedConfig(dir, () => {
     expect(resolveWorkspace("/home/u/Documents/projects/work/x")?.name).toBe("first");
   });
@@ -83,12 +102,15 @@ test("matched workspace carries vcs.provider, vcs.defaultTargetBranch, youtrack.
 
 test("initStatus reports workspaces.resolved and path for the temp config", () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "wf-ws-status-"));
-  writeWorkspaces(dir, JSON.stringify({
-    workspaces: [
-      { name: "work", glob: "/home/*/Documents/projects/work/**" },
-      { name: "catchall", glob: "**" },
-    ],
-  }));
+  writeWorkspaces(
+    dir,
+    JSON.stringify({
+      workspaces: [
+        { name: "work", glob: "/home/*/Documents/projects/work/**" },
+        { name: "catchall", glob: "**" },
+      ],
+    }),
+  );
   withIsolatedConfig(dir, () => {
     const status = initStatus();
     expect(status.error).toBeUndefined();
@@ -117,12 +139,15 @@ test("initStatus survives a literal null workspaces.json", () => {
 
 test("globstar **/ matches zero or more segments mid-pattern and leading", () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "wf-ws-globstar-"));
-  writeWorkspaces(dir, JSON.stringify({
-    workspaces: [
-      { name: "mid", glob: "/home/*/work/**/repo" },
-      { name: "lead", glob: "**/repo" },
-    ],
-  }));
+  writeWorkspaces(
+    dir,
+    JSON.stringify({
+      workspaces: [
+        { name: "mid", glob: "/home/*/work/**/repo" },
+        { name: "lead", glob: "**/repo" },
+      ],
+    }),
+  );
   withIsolatedConfig(dir, () => {
     expect(resolveWorkspace("/home/u/work/repo")?.name).toBe("mid");
     expect(resolveWorkspace("/home/u/work/a/b/repo")?.name).toBe("mid");
@@ -132,11 +157,12 @@ test("globstar **/ matches zero or more segments mid-pattern and leading", () =>
 
 test("trailing ** matches the bare parent root and deep paths", () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "wf-ws-trailing-"));
-  writeWorkspaces(dir, JSON.stringify({
-    workspaces: [
-      { name: "bare", glob: "/x/y/**" },
-    ],
-  }));
+  writeWorkspaces(
+    dir,
+    JSON.stringify({
+      workspaces: [{ name: "bare", glob: "/x/y/**" }],
+    }),
+  );
   withIsolatedConfig(dir, () => {
     expect(resolveWorkspace("/x/y")?.name).toBe("bare");
     expect(resolveWorkspace("/x/y/deep/path")?.name).toBe("bare");
@@ -146,11 +172,12 @@ test("trailing ** matches the bare parent root and deep paths", () => {
 
 test("catchall ** matches drive-letter and posix paths (Windows CI regression)", () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "wf-ws-catchall-"));
-  writeWorkspaces(dir, JSON.stringify({
-    workspaces: [
-      { name: "catchall", glob: "**" },
-    ],
-  }));
+  writeWorkspaces(
+    dir,
+    JSON.stringify({
+      workspaces: [{ name: "catchall", glob: "**" }],
+    }),
+  );
   withIsolatedConfig(dir, () => {
     expect(resolveWorkspace("D:/a/workflow-toolkit/workflow-toolkit")?.name).toBe("catchall");
     expect(resolveWorkspace("D:\\a\\workflow-toolkit\\workflow-toolkit")?.name).toBe("catchall");
@@ -161,9 +188,12 @@ test("catchall ** matches drive-letter and posix paths (Windows CI regression)",
 
 test("resolveWorkspace skips non-object entries in the workspaces array", () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "wf-ws-junk-"));
-  writeWorkspaces(dir, JSON.stringify({
-    workspaces: ["x", 42, true, null, { name: "ok", glob: "**" }],
-  }));
+  writeWorkspaces(
+    dir,
+    JSON.stringify({
+      workspaces: ["x", 42, true, null, { name: "ok", glob: "**" }],
+    }),
+  );
   withIsolatedConfig(dir, () => {
     expect(resolveWorkspace("/home/u/anything")?.name).toBe("ok");
   });

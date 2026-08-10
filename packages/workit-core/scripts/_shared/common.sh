@@ -53,7 +53,6 @@ is_pr_branch() {
   esac
 }
 
-# ponytail: develop-only base — main is release-only in this workflow; never compare PRs to main
 resolve_pr_branch_context() {
   branch=$(current_branch)
 
@@ -74,7 +73,23 @@ resolve_pr_branch_context() {
   best_ref=""
   best_mb=""
 
-  for ref in origin/develop develop; do
+  resolved=$(bash "$SCRIPT_DIR/vcs/config.sh" resolve 2>/dev/null) || {
+    printf 'ERROR: cannot resolve the configured PR target branch\n' >&2
+    return 1
+  }
+  base=$(printf '%s\n' "$resolved" | bun -e '
+    const value = JSON.parse(await Bun.stdin.text()).defaultTargetBranch;
+    if (typeof value === "string" && value) process.stdout.write(value);
+  ') || {
+    printf 'ERROR: invalid VCS target-branch configuration\n' >&2
+    return 1
+  }
+  if [ "$base" = "" ] || ! git check-ref-format --branch "$base" >/dev/null 2>&1; then
+    printf 'ERROR: invalid configured PR target branch %s\n' "$base" >&2
+    return 1
+  fi
+
+  for ref in "origin/$base" "$base"; do
     git rev-parse --verify "$ref" >/dev/null 2>&1 || continue
     mb=$(git merge-base "$ref" HEAD 2>/dev/null) || continue
     best_ref=$ref
@@ -83,7 +98,7 @@ resolve_pr_branch_context() {
   done
 
   if [ "$best_ref" = "" ] || [ "$best_mb" = "" ]; then
-    printf 'ERROR: develop branch not found — PRs target develop (not main). Fetch/checkout develop or pass an explicit git range\n' >&2
+    printf 'ERROR: configured PR target branch %s not found — fetch/checkout it or pass an explicit git range\n' "$base" >&2
     return 1
   fi
 

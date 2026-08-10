@@ -7,7 +7,11 @@ export type Result<T> =
   | { ok: false; data: T | null; error: string };
 
 export const ok = <T>(data: T): Result<T> => ({ ok: true, data, error: null });
-export const fail = <T = never>(error: string, data: T | null = null): Result<T> => ({ ok: false, data, error });
+export const fail = <T = never>(error: string, data: T | null = null): Result<T> => ({
+  ok: false,
+  data,
+  error,
+});
 
 const revision = /^[A-Za-z0-9@][A-Za-z0-9@._/~^{}-]*$/;
 
@@ -25,7 +29,13 @@ export function gitRevisionParts(value: string): string[] {
 
 export function resolveGitRevision(root: string, value: string): void {
   for (const part of gitRevisionParts(value)) {
-    const result = run(root, "git", ["rev-parse", "--verify", "--quiet", "--end-of-options", `${part}^{commit}`]);
+    const result = run(root, "git", [
+      "rev-parse",
+      "--verify",
+      "--quiet",
+      "--end-of-options",
+      `${part}^{commit}`,
+    ]);
     if (result.exitCode !== 0) throw new Error(`invalid Git revision or range: ${value}`);
   }
 }
@@ -46,7 +56,12 @@ export function resolveInside(root: string, candidate: string): string {
   return target;
 }
 
-export function run(root: string, executable: string, args: string[], env: Record<string, string> = {}) {
+export function run(
+  root: string,
+  executable: string,
+  args: string[],
+  env: Record<string, string> = {},
+) {
   const cwd = realpathSync(root);
   const result = spawnSync(executable, args, {
     cwd,

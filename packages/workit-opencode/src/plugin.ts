@@ -1,12 +1,45 @@
 import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import type { Plugin } from "@opencode-ai/plugin";
 
-import { getWorkflowBootstrap, isWorkflowBootstrap } from "./bootstrap";
-import { REMINDER_TEXT, DETECTION_TEXT, DOC_DELIVERY_TEXT, DOC_RENDER_TEXT, SDD_REMINDER_TEXT, shouldInjectSddReminder, CONFIG_GUARD_TEXT, shouldInjectConfigGuard, shouldInjectDocRender, VERIFICATION_TEXT, TDD_TEXT, BRAINSTORM_TEXT, DEBUG_TEXT, REVIEW_RECEPTION_TEXT, shouldInjectVerification, shouldInjectTdd, shouldInjectBrainstorm, shouldInjectDebug, shouldInjectReviewReception, ISSUE_RAIL_TEXT, shouldInjectIssueRail } from "@brainervirus/workit-core/src/core/reminder";
-import { detectProseChoices, detectBacktickDocRefs, findActiveSubagentDrivenPlans, detectConfigGapError, detectRawDocDelivery, detectVerificationClaim, detectUntestedImplementation, detectImplementationWithoutDesign, detectFixWithoutRootCause, detectBlindReviewAcceptance, detectInstructionOption } from "@brainervirus/workit-core/src/core/detector";
+import { getWorkflowBootstrap } from "./bootstrap";
+import {
+  REMINDER_TEXT,
+  DETECTION_TEXT,
+  DOC_DELIVERY_TEXT,
+  DOC_RENDER_TEXT,
+  SDD_REMINDER_TEXT,
+  shouldInjectSddReminder,
+  CONFIG_GUARD_TEXT,
+  shouldInjectConfigGuard,
+  shouldInjectDocRender,
+  VERIFICATION_TEXT,
+  TDD_TEXT,
+  BRAINSTORM_TEXT,
+  DEBUG_TEXT,
+  REVIEW_RECEPTION_TEXT,
+  shouldInjectVerification,
+  shouldInjectTdd,
+  shouldInjectBrainstorm,
+  shouldInjectDebug,
+  shouldInjectReviewReception,
+  ISSUE_RAIL_TEXT,
+  shouldInjectIssueRail,
+} from "@brainervirus/workit-core/src/core/reminder";
+import {
+  detectProseChoices,
+  detectBacktickDocRefs,
+  findActiveSubagentDrivenPlans,
+  detectConfigGapError,
+  detectRawDocDelivery,
+  detectVerificationClaim,
+  detectUntestedImplementation,
+  detectImplementationWithoutDesign,
+  detectFixWithoutRootCause,
+  detectBlindReviewAcceptance,
+  detectInstructionOption,
+} from "@brainervirus/workit-core/src/core/detector";
 import { createTools } from "@brainervirus/workit-core/src/tools";
 import { adaptPluginHandoffClient } from "@brainervirus/workit-core/src/tools/handoff";
 import { WorkflowStateStore } from "@brainervirus/workit-core/src/state";
@@ -41,16 +74,14 @@ const worktreeDenials = {
   "*git *worktree*": "deny",
 } as const;
 
-const withWorktreeDenials = (
-  configuredPermission: unknown,
-): MutablePermission => {
+const withWorktreeDenials = (configuredPermission: unknown): MutablePermission => {
   const permission: MutablePermission =
     typeof configuredPermission === "string"
       ? { "*": configuredPermission as PermissionDecision }
       : { ...((configuredPermission ?? {}) as MutablePermission) };
   const bash = permission.bash;
   const bashRules: Record<string, PermissionDecision> =
-    typeof bash === "string" ? { "*": bash } : { ...(bash ?? {}) };
+    typeof bash === "string" ? { "*": bash } : { ...bash };
   for (const pattern of Object.keys(worktreeDenials)) delete bashRules[pattern];
   permission.bash = { ...bashRules, ...worktreeDenials };
   return permission;
@@ -68,10 +99,7 @@ const plugin: Plugin = async ({ client }) => {
       for (const [name, description] of Object.entries(descriptions)) {
         config.command[name] = {
           description,
-          template: readFileSync(
-            path.join(root, "commands", `${name}.md`),
-            "utf8",
-          ).trim(),
+          template: readFileSync(path.join(root, "commands", `${name}.md`), "utf8").trim(),
         };
       }
       mutable.skills ??= {};
@@ -84,14 +112,10 @@ const plugin: Plugin = async ({ client }) => {
         }
       }
       // Current OpenCode accepts top-level shorthand before the installed SDK types do.
-      config.permission = withWorktreeDenials(
-        config.permission,
-      ) as typeof config.permission;
+      config.permission = withWorktreeDenials(config.permission) as typeof config.permission;
       for (const agent of Object.values(config.agent ?? {})) {
         if (!agent) continue;
-        agent.permission = withWorktreeDenials(
-          agent.permission,
-        ) as typeof agent.permission;
+        agent.permission = withWorktreeDenials(agent.permission) as typeof agent.permission;
       }
     },
     "experimental.session.compacting": async ({ sessionID }, output) => {
@@ -110,7 +134,8 @@ const plugin: Plugin = async ({ client }) => {
 
         // First turn only: full bootstrap anchored to the session's first user message
         if (firstUser?.parts.length) {
-          const firstAnchor = firstUser.parts.find((part) => part.type === "text") ?? firstUser.parts[0];
+          const firstAnchor =
+            firstUser.parts.find((part) => part.type === "text") ?? firstUser.parts[0];
           const firstText = firstUser.parts
             .filter((part) => part.type === "text")
             .map((part) => (part as { text?: string }).text ?? "")
@@ -128,7 +153,8 @@ const plugin: Plugin = async ({ client }) => {
         }
 
         // Every turn: compact reminder anchored to the CURRENT user message (idempotent)
-        const anchor = currentUser.parts.find((part) => part.type === "text") ?? currentUser.parts[0];
+        const anchor =
+          currentUser.parts.find((part) => part.type === "text") ?? currentUser.parts[0];
         const makePart = (text: string, tag = "r") => ({
           id: `${anchor.id}-${tag}${Date.now()}`,
           sessionID: anchor.sessionID,
@@ -157,7 +183,11 @@ const plugin: Plugin = async ({ client }) => {
           const usedQuestionTool = lastAssistant.parts.some(
             (p) => (p as { tool?: string }).tool === "question",
           );
-          if (detectProseChoices(assistantText) && !usedQuestionTool && !currentText.includes("workflow-detection")) {
+          if (
+            detectProseChoices(assistantText) &&
+            !usedQuestionTool &&
+            !currentText.includes("workflow-detection")
+          ) {
             currentUser.parts.unshift(makePart(DETECTION_TEXT, "d"));
           }
           const docRefs = detectBacktickDocRefs(assistantText);
@@ -190,7 +220,10 @@ const plugin: Plugin = async ({ client }) => {
           currentUser.parts.unshift(makePart(TDD_TEXT, "tdd"));
         }
         // Every turn: brainstorm rail — implementation without a presented design (idempotent)
-        if (detectImplementationWithoutDesign(assistantText) && shouldInjectBrainstorm(currentText)) {
+        if (
+          detectImplementationWithoutDesign(assistantText) &&
+          shouldInjectBrainstorm(currentText)
+        ) {
           currentUser.parts.unshift(makePart(BRAINSTORM_TEXT, "br"));
         }
         // Every turn: debugging rail — fixes without root-cause evidence (idempotent)
@@ -198,7 +231,10 @@ const plugin: Plugin = async ({ client }) => {
           currentUser.parts.unshift(makePart(DEBUG_TEXT, "db"));
         }
         // Every turn: review-reception rail — feedback accepted without verification (idempotent)
-        if (detectBlindReviewAcceptance(assistantText) && shouldInjectReviewReception(currentText)) {
+        if (
+          detectBlindReviewAcceptance(assistantText) &&
+          shouldInjectReviewReception(currentText)
+        ) {
           currentUser.parts.unshift(makePart(REVIEW_RECEPTION_TEXT, "rc"));
         }
 

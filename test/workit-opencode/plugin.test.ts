@@ -1,11 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import {
-  existsSync,
-  mkdtempSync,
-  mkdirSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -140,10 +134,7 @@ describe("plugin registration", () => {
 
     await hooks.config?.(config);
 
-    expect(Object.entries(config.permission.bash).at(-1)).toEqual([
-      "*git *worktree*",
-      "deny",
-    ]);
+    expect(Object.entries(config.permission.bash).at(-1)).toEqual(["*git *worktree*", "deny"]);
     expect(Object.entries(config.agent.build.permission.bash).at(-1)).toEqual([
       "*git *worktree*",
       "deny",
@@ -164,9 +155,7 @@ describe("plugin registration", () => {
         "PATH",
         "WF_CURL_SENTINEL",
       ] as const;
-      const previousEnv = Object.fromEntries(
-        envKeys.map((key) => [key, process.env[key]]),
-      );
+      const previousEnv = Object.fromEntries(envKeys.map((key) => [key, process.env[key]]));
       try {
         spawnSync("git", ["init", "-q", "-b", "feature/fixture"], {
           cwd: root,
@@ -263,7 +252,13 @@ describe("plugin registration", () => {
           workflow_template_list: {},
           workflow_template_edit: { name: "issue-update", content: "x", confirmed: false },
           workflow_rule_list: {},
-          workflow_rule_edit: { name: "x", description: "x", platforms: ["cursor"], body: "# X\\n", confirmed: false },
+          workflow_rule_edit: {
+            name: "x",
+            description: "x",
+            platforms: ["cursor"],
+            body: "# X\\n",
+            confirmed: false,
+          },
           workflow_spec_approve: {
             confirmed: false,
             spec_path: "missing-spec.md",
@@ -322,9 +317,7 @@ describe("plugin registration", () => {
         };
 
         const results: Record<string, Record<string, unknown>> = {};
-        expect(Object.keys(hooks.tool ?? {}).sort()).toEqual(
-          Object.keys(fixtures).sort(),
-        );
+        expect(Object.keys(hooks.tool ?? {}).sort()).toEqual(Object.keys(fixtures).sort());
         for (const [name, definition] of Object.entries(hooks.tool ?? {})) {
           const raw = await definition.execute(
             fixtures[name] as never,
@@ -336,21 +329,16 @@ describe("plugin registration", () => {
           );
           const result = JSON.parse(raw as string);
           results[name] = result;
-          expect(Object.keys(result).sort(), name).toEqual([
-            "data",
-            "error",
-            "ok",
-          ]);
+          expect(Object.keys(result).sort(), name).toEqual(["data", "error", "ok"]);
         }
         expect(results.workflow_youtrack_verify_token).toEqual({
           ok: false,
           data: null,
-          error: "workflow config missing: youtrack_json, youtrack_token. Run `npx workit init` or `/wk-init` to configure.",
+          error:
+            "workflow config missing: youtrack_json, youtrack_token. Run `npx workit init` or `/wk-init` to configure.",
         });
         expect(existsSync(curlSentinel)).toBe(false);
-        expect(
-          existsSync(path.join(root, ".cursor/plugins/local/workflow-toolkit")),
-        ).toBe(false);
+        expect(existsSync(path.join(root, ".cursor/plugins/local/workflow-toolkit"))).toBe(false);
       } finally {
         for (const key of envKeys) {
           const value = previousEnv[key];
@@ -369,22 +357,22 @@ describe("plugin registration", () => {
     try {
       mkdirSync(path.join(root, "docs", "x"), { recursive: true });
       mkdirSync(path.join(root, "docs", "x"), { recursive: true });
-      writeFileSync(
-        path.join(root, "docs/x/spec.md"),
-        "# X\n\n**Branch:** `feature/x`\n",
-      );
+      writeFileSync(path.join(root, "docs/x/spec.md"), "# X\n\n**Branch:** `feature/x`\n");
       writeFileSync(
         path.join(root, "docs/x/plan.md"),
         "# X\n\n**Spec:** `docs/x/spec.md`\n**Branch:** `feature/x`\n\n### Task 1: One\n\n- [ ] **Step 1:** Work\n",
       );
       mkdirSync(path.join(root, "docs", "x", "sdd"), { recursive: true });
-      writeFileSync(path.join(root, "docs/x/sdd/flow.json"), JSON.stringify({
-        slug: "x",
-        spec: { path: "docs/x/spec.md", status: "approved" },
-        plan: { path: "docs/x/plan.md", status: "approved" },
-        menu: { presented: true, chosen: "handoff" },
-        updated_at: Date.now(),
-      }));
+      writeFileSync(
+        path.join(root, "docs/x/sdd/flow.json"),
+        JSON.stringify({
+          slug: "x",
+          spec: { path: "docs/x/spec.md", status: "approved" },
+          plan: { path: "docs/x/plan.md", status: "approved" },
+          menu: { presented: true, chosen: "handoff" },
+          updated_at: Date.now(),
+        }),
+      );
       const client = {
         session: {
           async create() {
@@ -411,8 +399,7 @@ describe("plugin registration", () => {
       } as never);
       const raw = await hooks.tool?.workflow_handoff_session.execute(
         {
-          message:
-            "docs/x/spec.md docs/x/plan.md --stay",
+          message: "docs/x/spec.md docs/x/plan.md --stay",
         },
         { directory: root, worktree: root, sessionID: "parent" } as never,
       );
@@ -432,10 +419,7 @@ describe("plugin registration", () => {
     const root = mkdtempSync(path.join(os.tmpdir(), "wf-plugin-"));
     mkdirSync(path.join(root, "docs", "x"), { recursive: true });
     mkdirSync(path.join(root, "docs", "x"), { recursive: true });
-    writeFileSync(
-      path.join(root, "docs/x/spec.md"),
-      "# X\n",
-    );
+    writeFileSync(path.join(root, "docs/x/spec.md"), "# X\n");
     writeFileSync(
       path.join(root, "docs/x/plan.md"),
       "# X\n**Spec:** `docs/x/spec.md`\n### Task 1: One\n",
@@ -445,16 +429,14 @@ describe("plugin registration", () => {
       worktree: root,
       serverUrl: new URL("http://localhost"),
     } as never);
-    await hooks.tool?.workflow_plan_tasks.execute(
-      { plan_path: "docs/x/plan.md" },
-      { directory: root, worktree: root, sessionID: "s1" } as never,
-    );
+    await hooks.tool?.workflow_plan_tasks.execute({ plan_path: "docs/x/plan.md" }, {
+      directory: root,
+      worktree: root,
+      sessionID: "s1",
+    } as never);
     const output = { context: [] as string[] };
 
-    await hooks["experimental.session.compacting"]?.(
-      { sessionID: "s1" },
-      output,
-    );
+    await hooks["experimental.session.compacting"]?.({ sessionID: "s1" }, output);
 
     expect(output.context).toEqual([
       "Active workflow:\nSpec: docs/x/spec.md\nPlan: docs/x/plan.md\nSDD: docs/x/sdd",
@@ -472,7 +454,8 @@ test("compaction context includes active workflow paths only", () => {
 
 test("config registers vendored superpowers skills alongside toolkit skills", async () => {
   const hooks = await plugin({
-    directory: "/repo", worktree: "/repo",
+    directory: "/repo",
+    worktree: "/repo",
     serverUrl: new URL("http://localhost"),
   } as never);
   const config: Record<string, any> = {};

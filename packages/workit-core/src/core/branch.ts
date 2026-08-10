@@ -8,19 +8,31 @@ import { vcsConfig } from "./vcs-config";
 const policy = () => resolveBranchPolicy(readConfig());
 const allowedBranch = (name: string) => policy().allowed.some((r) => r.test(name));
 const isProtected = (name: string) => policy().protected.has(name.toLowerCase());
-const baseBranch = (cwd: string) => String(vcsConfig("resolve", cwd).defaultTargetBranch ?? "develop");
+const baseBranch = (cwd: string) =>
+  String(vcsConfig("resolve", cwd).defaultTargetBranch ?? "develop");
 const DECLARE_RE = /^\s*\*+Branch:\*+\s*`?([^`\s|]+)`?\s*$/gim;
 const USE_CURRENT_RE = /^\s*\*+Branch:\*+\s*use-current\s*$/im;
 const readSafe = (p: string): string | null => {
-  try { return readFileSync(p, "utf8"); } catch { return null; }
+  try {
+    return readFileSync(p, "utf8");
+  } catch {
+    return null;
+  }
 };
 
 const normalizeBranch = (name: string): string | null => {
   const n = name.trim().replace(/`/g, "").replace(/\.+$/, "");
   if (isProtected(n)) return null;
   if (!allowedBranch(n)) return null;
-  const parts = n.toLowerCase().split("/").map((p) =>
-    p.replace(/[^\w.-]+/g, "-").replace(/^-+|-+$/g, "").replace(/-{2,}/g, "-"));
+  const parts = n
+    .toLowerCase()
+    .split("/")
+    .map((p) =>
+      p
+        .replace(/[^\w.-]+/g, "-")
+        .replace(/^-+|-+$/g, "")
+        .replace(/-{2,}/g, "-"),
+    );
   if (parts.some((p) => !p)) return null;
   return parts.join("/");
 };
@@ -31,14 +43,21 @@ const deriveSlug = (planPath: string): string => {
   return dirName === "." || dirName === "/" || dirName === "" ? "" : dirName;
 };
 
-const deriveKind = (planPath: string, fallback: "feature" | "bugfix" = "feature"): "feature" | "bugfix" => {
+const deriveKind = (
+  planPath: string,
+  fallback: "feature" | "bugfix" = "feature",
+): "feature" | "bugfix" => {
   const slug = deriveSlug(planPath);
   const text = readSafe(planPath) ?? "";
   let kind = fallback;
   if (/\bbugfix\b/i.test(slug) || /^fix-/i.test(slug)) {
     kind = "bugfix";
   } else {
-    const goal = text.split("\n").find((line) => line.startsWith("**Goal:**"))?.toLowerCase() ?? "";
+    const goal =
+      text
+        .split("\n")
+        .find((line) => line.startsWith("**Goal:**"))
+        ?.toLowerCase() ?? "";
     if (/\b(bugfix|bug fix)\b/.test(goal) && !/\b(feat|feature|upgrade|add)\b/.test(goal)) {
       kind = "bugfix";
     }
@@ -51,7 +70,11 @@ export const resolveBranch = ({
   spec_path,
   plan_path,
   workspace_root,
-}: { spec_path: string; plan_path: string; workspace_root: string }) => {
+}: {
+  spec_path: string;
+  plan_path: string;
+  workspace_root: string;
+}) => {
   const cwd = path.resolve(workspace_root);
   const abs = (p: string) => (path.isAbsolute(p) ? p : path.join(cwd, p));
   const spec = abs(spec_path);
@@ -78,7 +101,8 @@ export const resolveBranch = ({
     }
   }
 
-  if (current && allowedBranch(current) && !isProtected(current)) return finish(current, "keep-current");
+  if (current && allowedBranch(current) && !isProtected(current))
+    return finish(current, "keep-current");
 
   let declaredButInvalid: string | null = null;
   for (const file of [spec, plan]) {
@@ -91,7 +115,9 @@ export const resolveBranch = ({
     }
   }
   if (declaredButInvalid) {
-    return { error: `declared branch ${JSON.stringify(declaredButInvalid)} is not allowed by the branch policy` };
+    return {
+      error: `declared branch ${JSON.stringify(declaredButInvalid)} is not allowed by the branch policy`,
+    };
   }
 
   const slug = deriveSlug(plan);
@@ -105,7 +131,11 @@ export const docsBranch = ({
   plan_path,
   kind,
   workspace_root,
-}: { plan_path?: string; kind?: string; workspace_root: string }) => {
+}: {
+  plan_path?: string;
+  kind?: string;
+  workspace_root: string;
+}) => {
   const cwd = path.resolve(workspace_root);
   const git = gitContext(cwd);
   const current = git.branch;
@@ -119,7 +149,9 @@ export const docsBranch = ({
       slug = deriveSlug(plan);
     }
     if (!slug) {
-      return { error: "plan_path required to derive branch slug when not on feature/* or bugfix/*" };
+      return {
+        error: "plan_path required to derive branch slug when not on feature/* or bugfix/*",
+      };
     }
     const branchKind = kindArg === "bugfix" ? "bugfix" : "feature";
     return {
@@ -131,7 +163,13 @@ export const docsBranch = ({
     };
   }
   if (current && allowedBranch(current) && !isProtected(current)) {
-    return { branch: current, action: "keep", current_branch: current, base, dirty: Boolean(git.status_short.trim()) };
+    return {
+      branch: current,
+      action: "keep",
+      current_branch: current,
+      base,
+      dirty: Boolean(git.status_short.trim()),
+    };
   }
   return { error: `cannot resolve docs branch from HEAD ${JSON.stringify(current)}` };
 };
@@ -139,8 +177,10 @@ export const docsBranch = ({
 // Port of scripts/lib/ensure-develop-base.sh
 export const ensureBaseBranch = (cwd: string, base: string): { ok: boolean; error?: string } => {
   const git = gitContext(cwd);
-  if (!git.branch || git.branch === "unknown") return { ok: false, error: "not in a git repository" };
-  const run = (args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] });
+  if (!git.branch || git.branch === "unknown")
+    return { ok: false, error: "not in a git repository" };
+  const run = (args: string[]) =>
+    execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] });
   try {
     try {
       run(["fetch", "origin", base, "--prune"]);
@@ -148,19 +188,44 @@ export const ensureBaseBranch = (cwd: string, base: string): { ok: boolean; erro
       run(["fetch", "origin", "--prune"]);
     }
     let hasOriginBase = true;
-    try { execFileSync("git", ["show-ref", "--verify", "--quiet", `refs/remotes/origin/${base}`], { cwd, stdio: "pipe" }); } catch { hasOriginBase = false; }
-    if (!hasOriginBase) return { ok: false, error: `origin/${base} missing — push ${base} before creating feature/* or bugfix/* branches` };
+    try {
+      execFileSync("git", ["show-ref", "--verify", "--quiet", `refs/remotes/origin/${base}`], {
+        cwd,
+        stdio: "pipe",
+      });
+    } catch {
+      hasOriginBase = false;
+    }
+    if (!hasOriginBase)
+      return {
+        ok: false,
+        error: `origin/${base} missing — push ${base} before creating feature/* or bugfix/* branches`,
+      };
     let hasLocalBase = true;
-    try { execFileSync("git", ["show-ref", "--verify", "--quiet", `refs/heads/${base}`], { cwd, stdio: "pipe" }); } catch { hasLocalBase = false; }
+    try {
+      execFileSync("git", ["show-ref", "--verify", "--quiet", `refs/heads/${base}`], {
+        cwd,
+        stdio: "pipe",
+      });
+    } catch {
+      hasLocalBase = false;
+    }
     if (hasLocalBase) {
       run(["checkout", base]);
-      try { run(["merge", "--ff-only", `origin/${base}`]); } catch { /* non-fast-forward: keep local */ }
+      try {
+        run(["merge", "--ff-only", `origin/${base}`]);
+      } catch {
+        /* non-fast-forward: keep local */
+      }
     } else {
       run(["checkout", "-b", base, "--track", `origin/${base}`]);
     }
     return { ok: true };
   } catch (error) {
-    return { ok: false, error: error instanceof Error ? error.message : "ensure-base-branch failed" };
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : "ensure-base-branch failed",
+    };
   }
 };
 
@@ -171,17 +236,29 @@ export const branchSetup = ({
   target_branch,
   stash,
   workspace_root,
-}: { action?: string; sdd_dir?: string; target_branch?: string; stash?: string; workspace_root: string }) => {
+}: {
+  action?: string;
+  sdd_dir?: string;
+  target_branch?: string;
+  stash?: string;
+  workspace_root: string;
+}) => {
   const cwd = path.resolve(workspace_root);
   const exec = (args: string[]): string =>
     execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] });
   const current = gitContext(cwd).branch;
   if (!current || current === "unknown") return { error: "not in a git repository" };
   const sdd = sdd_dir ?? "docs";
-  const manifestPath = path.isAbsolute(sdd) ? path.join(sdd, "manifest.json") : path.join(cwd, sdd, "manifest.json");
+  const manifestPath = path.isAbsolute(sdd)
+    ? path.join(sdd, "manifest.json")
+    : path.join(cwd, sdd, "manifest.json");
   mkdirSync(path.dirname(manifestPath), { recursive: true, mode: 0o755 });
   const readManifest = (): Record<string, unknown> => {
-    try { return JSON.parse(readFileSync(manifestPath, "utf8")); } catch { return {}; }
+    try {
+      return JSON.parse(readFileSync(manifestPath, "utf8"));
+    } catch {
+      return {};
+    }
   };
   const writeManifest = (data: Record<string, unknown>) =>
     writeFileSync(manifestPath, JSON.stringify(data, null, 2) + "\n", "utf8");
@@ -190,7 +267,9 @@ export const branchSetup = ({
     const manifest = readManifest();
     const ref = manifest.stash_ref;
     if (!ref) return { error: "no stash_ref in manifest" };
-    try { exec(["stash", "pop", String(ref)]); } catch (error) {
+    try {
+      exec(["stash", "pop", String(ref)]);
+    } catch (error) {
       return { error: error instanceof Error ? error.message : "stash pop failed" };
     }
     delete manifest.stash_ref;
@@ -202,14 +281,18 @@ export const branchSetup = ({
   const target = target_branch ?? "";
   if (!target) return { error: "target branch required" };
   if (isProtected(target)) return { error: `protected branch ${target}` };
-  if (!allowedBranch(target)) return { error: `target branch ${target} is not allowed by the branch policy` };
+  if (!allowedBranch(target))
+    return { error: `target branch ${target} is not allowed by the branch policy` };
 
   let stash_ref: string | undefined;
   if (current !== target) {
     const dirty = Boolean(gitContext(cwd).status_short.trim());
     if (dirty) {
       if (stash !== "yes") {
-        return { error: "dirty working tree — ask with native question, then call workflow_branch_setup with stash=yes" };
+        return {
+          error:
+            "dirty working tree — ask with native question, then call workflow_branch_setup with stash=yes",
+        };
       }
       try {
         exec(["stash", "push", "-u", "-m", `workit: pre-checkout ${target}`, "--", ":!docs/*/sdd"]);
@@ -223,14 +306,18 @@ export const branchSetup = ({
     } catch (error) {
       const message = error instanceof Error ? error.message : "checkout failed";
       if (/worktree/i.test(message)) {
-        return { error: `branch ${target} is locked by an existing git worktree — remove it first (we do not use worktrees)` };
+        return {
+          error: `branch ${target} is locked by an existing git worktree — remove it first (we do not use worktrees)`,
+        };
       }
       try {
         const baseResult = ensureBaseBranch(cwd, baseBranch(cwd));
         if (!baseResult.ok) return { error: baseResult.error };
         exec(["checkout", "-b", target]);
       } catch (createError) {
-        return { error: createError instanceof Error ? createError.message : "branch create failed" };
+        return {
+          error: createError instanceof Error ? createError.message : "branch create failed",
+        };
       }
     }
   }
@@ -243,5 +330,12 @@ export const branchSetup = ({
     manifest.stash_created_at = new Date().toISOString();
   }
   writeManifest(manifest);
-  return { action: "setup", ok: true, branch: target, previous_branch: current, stash_ref: stash_ref ?? null, manifest: manifestPath };
+  return {
+    action: "setup",
+    ok: true,
+    branch: target,
+    previous_branch: current,
+    stash_ref: stash_ref ?? null,
+    manifest: manifestPath,
+  };
 };

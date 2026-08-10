@@ -61,12 +61,16 @@ test("UI mention without ascii fence is a warning", () => {
   const noFence = GOOD.replace("```text\n┌────┐\n│ UI │\n└────┘\n```", "");
   const withUiText = noFence.replace("Needs a thing.", "Needs a thing with a UI screen.");
   const findings = qualitySpec(withUiText);
-  expect(findings.some((f) => f.code === "missing_ascii_for_ui" && f.severity === "warning")).toBe(true);
+  expect(findings.some((f) => f.code === "missing_ascii_for_ui" && f.severity === "warning")).toBe(
+    true,
+  );
 });
 
 test("flow mention without mermaid is a warning", () => {
   const findings = qualitySpec(GOOD.replace("```mermaid\nflowchart TD\n  A --> B\n```", ""));
-  expect(findings.some((f) => f.code === "missing_mermaid_for_flow" && f.severity === "warning")).toBe(true);
+  expect(
+    findings.some((f) => f.code === "missing_mermaid_for_flow" && f.severity === "warning"),
+  ).toBe(true);
 });
 
 test("glossary section without table is a warning", () => {

@@ -23,5 +23,7 @@ test("workflow_docs_validate includes quality findings", async () => {
     expect(Array.isArray(out.data.quality)).toBe(true);
     expect(out.data.quality.length).toBeGreaterThan(0);
     expect(out.data.quality[0]).toHaveProperty("severity");
-  } finally { rmSync(root, { recursive: true, force: true }); }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

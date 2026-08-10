@@ -1,8 +1,16 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { isDeepStrictEqual } from "node:util";
 import path from "node:path";
-import { PRESETS, LOCALE_RE, type BranchPreset, type ToolkitConfig } from "@brainervirus/workit-core/src/core/config.ts";
-import { workspacesPath, type WorkspaceConfig } from "@brainervirus/workit-core/src/core/workspaces.ts";
+import {
+  PRESETS,
+  LOCALE_RE,
+  type BranchPreset,
+  type ToolkitConfig,
+} from "@brainervirus/workit-core/src/core/config.ts";
+import {
+  workspacesPath,
+  type WorkspaceConfig,
+} from "@brainervirus/workit-core/src/core/workspaces.ts";
 import { ensureProjectGitignore } from "@brainervirus/workit-core/src/core/gitignore.ts";
 import { ensureHygieneFiles, hygieneFiles } from "@brainervirus/workit-core/src/core/hygiene.ts";
 
@@ -39,7 +47,10 @@ export function validateBaseUrl(url: string): string | null {
 }
 
 export function parseList(raw: string): string[] {
-  return raw.split(",").map((s) => s.trim()).filter(Boolean);
+  return raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
 }
 
 export type ConfigInput = {
@@ -59,8 +70,14 @@ export function collectConfigValues(input: ConfigInput, current: ToolkitConfig):
     timezone: input.timezone ?? current.timezone,
     branchPolicy: {
       preset,
-      allowed: preset === "custom" ? (input.allowed ?? current.branchPolicy.allowed) : [...presetDefs.allowed],
-      protected: preset === "custom" ? (input.protectedNames ?? current.branchPolicy.protected) : [...presetDefs.protected],
+      allowed:
+        preset === "custom"
+          ? (input.allowed ?? current.branchPolicy.allowed)
+          : [...presetDefs.allowed],
+      protected:
+        preset === "custom"
+          ? (input.protectedNames ?? current.branchPolicy.protected)
+          : [...presetDefs.protected],
     },
   };
 }
@@ -72,7 +89,10 @@ export type ProjectSetupResult = {
   created: string[];
 };
 
-export function runProjectSetup(root: string, opts: { includeOpenSource?: boolean } = {}): ProjectSetupResult {
+export function runProjectSetup(
+  root: string,
+  opts: { includeOpenSource?: boolean } = {},
+): ProjectSetupResult {
   const openSource = opts.includeOpenSource ?? hygieneFiles(root).openSource;
   const gitignore = ensureProjectGitignore(root, true);
   const hygiene = ensureHygieneFiles(root, { confirmed: true, includeOpenSource: openSource });
@@ -95,7 +115,11 @@ export type YouTrackScaffold = {
 // scripts/youtrack/token-create-url.sh in TS — initApply shells out to bash (CA-01 forbids bash)
 // ponytail: mirrors apply.sh; WORKFLOW_YT_*/WORKFLOW_VCS_* env overrides intentionally ignored
 // (wizard takes values from prompts instead of env; parity pinned by test/scaffold-parity.test.ts)
-export function scaffoldYouTrack(dir: string, baseUrl: string, opts: { locale?: string; timezone?: string } = {}): YouTrackScaffold {
+export function scaffoldYouTrack(
+  dir: string,
+  baseUrl: string,
+  opts: { locale?: string; timezone?: string } = {},
+): YouTrackScaffold {
   mkdirSync(dir, { recursive: true });
   const youtrackJson = path.join(dir, "youtrack.json");
   const tokenPath = path.join(dir, "youtrack.token");
@@ -180,11 +204,13 @@ export function scaffoldVcs(dir: string, provider: VcsProvider): VcsScaffold {
     writeFileSync(p, TOKEN_PLACEHOLDER + "\n", { encoding: "utf8", mode: 0o600 });
   }
 
-  const gitlabUrl = `https://gitlab.com/-/user_settings/personal_access_tokens?${new URLSearchParams({
-    name: TOKEN_DEFAULTS.name,
-    description: TOKEN_DEFAULTS.description,
-    scopes: "api",
-  })}`;
+  const gitlabUrl = `https://gitlab.com/-/user_settings/personal_access_tokens?${new URLSearchParams(
+    {
+      name: TOKEN_DEFAULTS.name,
+      description: TOKEN_DEFAULTS.description,
+      scopes: "api",
+    },
+  )}`;
   const githubUrl = `https://github.com/settings/personal-access-tokens/new?${new URLSearchParams({
     name: TOKEN_DEFAULTS.name,
     description: TOKEN_DEFAULTS.description,
@@ -202,7 +228,10 @@ export function scaffoldVcs(dir: string, provider: VcsProvider): VcsScaffold {
   };
 }
 
-export function shouldWriteWorkspaces(loaded: WorkspaceConfig[], current: WorkspaceConfig[]): boolean {
+export function shouldWriteWorkspaces(
+  loaded: WorkspaceConfig[],
+  current: WorkspaceConfig[],
+): boolean {
   return !isDeepStrictEqual(loaded, current);
 }
 
@@ -242,13 +271,25 @@ export function writeWorkspaces(entries: WorkspaceConfig[]): WriteWorkspacesResu
     }
     const provider = entry.vcs?.provider;
     if (provider && !VALID_PROVIDERS.includes(provider)) {
-      return { ok: false, error: `workspace "${entry.name}" has unknown provider "${provider}"`, path: file };
+      return {
+        ok: false,
+        error: `workspace "${entry.name}" has unknown provider "${provider}"`,
+        path: file,
+      };
     }
     if (entry.youtrack && provider !== "gitlab") {
-      return { ok: false, error: `workspace "${entry.name}" links YouTrack issues but provider is "${provider ?? "unset"}" — youtrack linking requires the gitlab provider`, path: file };
+      return {
+        ok: false,
+        error: `workspace "${entry.name}" links YouTrack issues but provider is "${provider ?? "unset"}" — youtrack linking requires the gitlab provider`,
+        path: file,
+      };
     }
     if (entry.issues && provider !== "github") {
-      return { ok: false, error: `workspace "${entry.name}" links GitHub issues but provider is "${provider ?? "unset"}" — github issues require the github provider`, path: file };
+      return {
+        ok: false,
+        error: `workspace "${entry.name}" links GitHub issues but provider is "${provider ?? "unset"}" — github issues require the github provider`,
+        path: file,
+      };
     }
   }
   mkdirSync(path.dirname(file), { recursive: true });

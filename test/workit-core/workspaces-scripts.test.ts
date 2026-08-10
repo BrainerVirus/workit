@@ -1,6 +1,15 @@
 import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -17,7 +26,10 @@ const GLOBAL_VCS = { provider: "github", defaultTargetBranch: "main" };
 
 const scriptTools = (): boolean => {
   if (process.platform === "win32") return false; // win32 CI has no bash
-  for (const [cmd, args] of [["bash", ["--version"]], ["python3", ["--version"]]] as const) {
+  for (const [cmd, args] of [
+    ["bash", ["--version"]],
+    ["python3", ["--version"]],
+  ] as const) {
     if (spawnSync(cmd, args, { encoding: "utf8" }).status !== 0) return false;
   }
   return true;
@@ -25,15 +37,23 @@ const scriptTools = (): boolean => {
 
 // temp HOME so config.sh defaults ($HOME/.config/workflow-toolkit/*) stay isolated
 const run = (args: string[], opts: { cwd?: string; env: Record<string, string> }) =>
-  spawnSync("bash", [path.join(repoRoot, args[0]), ...args.slice(1)], { cwd: opts.cwd ?? repoRoot, env: opts.env, encoding: "utf8" });
+  spawnSync("bash", [path.join(repoRoot, args[0]), ...args.slice(1)], {
+    cwd: opts.cwd ?? repoRoot,
+    env: opts.env,
+    encoding: "utf8",
+  });
 
-const workspacesJson = (glob: string, provider: string, extra?: Record<string, unknown>): string =>
+const workspacesJson = (
+  glob: string,
+  provider: string,
+  extra?: { vcs?: Record<string, unknown>; youtrack?: Record<string, unknown> },
+): string =>
   JSON.stringify({
     workspaces: [
       {
         name: "work",
         glob,
-        vcs: { provider, ...(extra?.vcs ?? {}) },
+        vcs: { provider, ...extra?.vcs },
         youtrack: extra?.youtrack ?? {},
       },
     ],
@@ -48,15 +68,28 @@ test("config.sh resolve: workspace match wins over global vcs.json (work -> gitl
     "vcs.json": JSON.stringify(GLOBAL_VCS),
     "workspaces.json": JSON.stringify({
       workspaces: [
-        { name: "work", glob: `${base}/work/**`, vcs: { provider: "gitlab" }, youtrack: { link_issues: true } },
-        { name: "personal", glob: `${base}/personal/**`, vcs: { provider: "github" }, issues: { provider: "github", link_on_pr: true } },
+        {
+          name: "work",
+          glob: `${base}/work/**`,
+          vcs: { provider: "gitlab" },
+          youtrack: { link_issues: true },
+        },
+        {
+          name: "personal",
+          glob: `${base}/personal/**`,
+          vcs: { provider: "github" },
+          issues: { provider: "github", link_on_pr: true },
+        },
       ],
     }),
   });
   try {
     const env = envWithHome(home);
 
-    const work = run(["packages/workit-core/scripts/vcs/config.sh", "resolve"], { cwd: path.join(base, "work", "sixbell", "repo"), env });
+    const work = run(["packages/workit-core/scripts/vcs/config.sh", "resolve"], {
+      cwd: path.join(base, "work", "sixbell", "repo"),
+      env,
+    });
     expect(work.status).toBe(0);
     const w = JSON.parse(work.stdout);
     expect(w.ok).toBe(true);
@@ -68,7 +101,10 @@ test("config.sh resolve: workspace match wins over global vcs.json (work -> gitl
     expect(w.issues_provider).toBeNull(); // youtrack workspace: no github issues keys
     expect(w.link_on_pr).toBeNull();
 
-    const personal = run(["packages/workit-core/scripts/vcs/config.sh", "resolve"], { cwd: path.join(base, "personal", "some-app"), env });
+    const personal = run(["packages/workit-core/scripts/vcs/config.sh", "resolve"], {
+      cwd: path.join(base, "personal", "some-app"),
+      env,
+    });
     expect(personal.status).toBe(0);
     const p = JSON.parse(personal.stdout);
     expect(p.workspace_name).toBe("personal");
@@ -91,7 +127,10 @@ test("config.sh resolve: unmatched cwd falls back to global vcs.json; missing/ma
     const unmatched = path.join(home, "elsewhere");
     mkdirSync(unmatched, { recursive: true });
 
-    const noMatch = run(["packages/workit-core/scripts/vcs/config.sh", "resolve"], { cwd: unmatched, env });
+    const noMatch = run(["packages/workit-core/scripts/vcs/config.sh", "resolve"], {
+      cwd: unmatched,
+      env,
+    });
     expect(noMatch.status).toBe(0);
     const r = JSON.parse(noMatch.stdout);
     expect(r.workspace_name).toBeNull();
@@ -100,7 +139,10 @@ test("config.sh resolve: unmatched cwd falls back to global vcs.json; missing/ma
     expect(r.link_issues).toBeNull();
 
     writeFileSync(path.join(home, ".config", "workflow-toolkit", "workspaces.json"), "{ nope !!");
-    const malformed = run(["packages/workit-core/scripts/vcs/config.sh", "resolve"], { cwd: unmatched, env });
+    const malformed = run(["packages/workit-core/scripts/vcs/config.sh", "resolve"], {
+      cwd: unmatched,
+      env,
+    });
     expect(malformed.status).toBe(0);
     expect(JSON.parse(malformed.stdout).workspace_name).toBeNull();
   } finally {
@@ -114,11 +156,18 @@ test("config.sh resolve: WORKFLOW_TOOLKIT_CONFIG dir is honored for vcs.json + w
   mkdirSync(path.join(base, "work", "repo"), { recursive: true });
   const cfgDir = mkdtempSync(path.join(os.tmpdir(), "wf-ws-chain-"));
   writeFileSync(path.join(cfgDir, "vcs.json"), JSON.stringify(GLOBAL_VCS), "utf8");
-  writeFileSync(path.join(cfgDir, "workspaces.json"), workspacesJson(`${base}/work/**`, "gitlab"), "utf8");
+  writeFileSync(
+    path.join(cfgDir, "workspaces.json"),
+    workspacesJson(`${base}/work/**`, "gitlab"),
+    "utf8",
+  );
   const home = mkdtempSync(path.join(os.tmpdir(), "wf-ws-home-"));
   try {
     const env = envWithHome(home, { WORKFLOW_TOOLKIT_CONFIG: cfgDir });
-    const r = run(["packages/workit-core/scripts/vcs/config.sh", "resolve"], { cwd: path.join(base, "work", "repo"), env });
+    const r = run(["packages/workit-core/scripts/vcs/config.sh", "resolve"], {
+      cwd: path.join(base, "work", "repo"),
+      env,
+    });
     expect(r.status, r.stderr).toBe(0);
     const out = JSON.parse(r.stdout);
     expect(out.workspace_name).toBe("work");
@@ -141,7 +190,10 @@ test("config.sh resolve: WORKFLOW_WORKSPACE_ROOT overrides the cwd", () => {
   try {
     const env = envWithHome(home, { WORKFLOW_WORKSPACE_ROOT: path.join(base, "work", "repo") });
     mkdirSync(path.join(home, "elsewhere"), { recursive: true });
-    const r = run(["packages/workit-core/scripts/vcs/config.sh", "resolve"], { cwd: path.join(home, "elsewhere"), env });
+    const r = run(["packages/workit-core/scripts/vcs/config.sh", "resolve"], {
+      cwd: path.join(home, "elsewhere"),
+      env,
+    });
     expect(r.status).toBe(0);
     expect(JSON.parse(r.stdout).workspace_name).toBe("work");
   } finally {
@@ -157,8 +209,13 @@ test("config.sh resolve: catchall ** matches a drive-letter WORKFLOW_WORKSPACE_R
     "workspaces.json": workspacesJson("**", "gitlab"),
   });
   try {
-    const env = envWithHome(home, { WORKFLOW_WORKSPACE_ROOT: "D:/a/workflow-toolkit/workflow-toolkit" });
-    const r = run(["packages/workit-core/scripts/vcs/config.sh", "resolve"], { cwd: repoRoot, env });
+    const env = envWithHome(home, {
+      WORKFLOW_WORKSPACE_ROOT: "D:/a/workflow-toolkit/workflow-toolkit",
+    });
+    const r = run(["packages/workit-core/scripts/vcs/config.sh", "resolve"], {
+      cwd: repoRoot,
+      env,
+    });
     expect(r.status, r.stderr).toBe(0);
     expect(JSON.parse(r.stdout).workspace_name).toBe("work");
   } finally {
@@ -175,15 +232,28 @@ test("config.sh load: merges the resolved workspace over global vcs.json", () =>
     "vcs.json": JSON.stringify(GLOBAL_VCS),
     "workspaces.json": JSON.stringify({
       workspaces: [
-        { name: "work", glob: `${base}/work/**`, vcs: { provider: "gitlab" }, youtrack: { link_issues: true } },
-        { name: "personal", glob: `${base}/personal/**`, vcs: { provider: "github" }, issues: { provider: "github", link_on_pr: true } },
+        {
+          name: "work",
+          glob: `${base}/work/**`,
+          vcs: { provider: "gitlab" },
+          youtrack: { link_issues: true },
+        },
+        {
+          name: "personal",
+          glob: `${base}/personal/**`,
+          vcs: { provider: "github" },
+          issues: { provider: "github", link_on_pr: true },
+        },
       ],
     }),
   });
   try {
     const env = envWithHome(home);
 
-    const matched = run(["packages/workit-core/scripts/vcs/config.sh", "load"], { cwd: path.join(base, "work", "repo"), env });
+    const matched = run(["packages/workit-core/scripts/vcs/config.sh", "load"], {
+      cwd: path.join(base, "work", "repo"),
+      env,
+    });
     expect(matched.status, matched.stderr).toBe(0);
     const m = JSON.parse(matched.stdout);
     expect(m.ok).toBe(true);
@@ -195,7 +265,10 @@ test("config.sh load: merges the resolved workspace over global vcs.json", () =>
     expect(m.defaultTargetBranch).toBe("main"); // workspace has none -> global
     expect(m.tokenReady).toBe(false);
 
-    const gh = run(["packages/workit-core/scripts/vcs/config.sh", "load"], { cwd: path.join(base, "personal", "app"), env });
+    const gh = run(["packages/workit-core/scripts/vcs/config.sh", "load"], {
+      cwd: path.join(base, "personal", "app"),
+      env,
+    });
     expect(gh.status, gh.stderr).toBe(0);
     const g = JSON.parse(gh.stdout);
     expect(g.provider).toBe("github");
@@ -206,7 +279,10 @@ test("config.sh load: merges the resolved workspace over global vcs.json", () =>
     expect(g.youtrack_base_url).toBeNull();
 
     mkdirSync(path.join(home, "elsewhere"), { recursive: true });
-    const noMatch = run(["packages/workit-core/scripts/vcs/config.sh", "load"], { cwd: path.join(home, "elsewhere"), env });
+    const noMatch = run(["packages/workit-core/scripts/vcs/config.sh", "load"], {
+      cwd: path.join(home, "elsewhere"),
+      env,
+    });
     expect(noMatch.status, noMatch.stderr).toBe(0);
     const n = JSON.parse(noMatch.stdout);
     expect(n.provider).toBe("github");
@@ -235,9 +311,14 @@ test("pr-create.sh: missing gh/glab on PATH -> structured error with official in
     if (real) symlinkSync(real, path.join(stubBin, tool));
   }
   // pyenv shims must not be symlinked (SHIM_PATH breaks) — resolve the real interpreter
-  const realPy = spawnSync("python3", ["-c", "import sys; print(sys.executable)"], { encoding: "utf8" });
-  if (realPy.status === 0 && realPy.stdout.trim()) symlinkSync(realPy.stdout.trim(), path.join(stubBin, "python3"));
-  const cleanPath = pathDirs.filter((d) => d && !existsSync(path.join(d, "gh")) && !existsSync(path.join(d, "glab")));
+  const realPy = spawnSync("python3", ["-c", "import sys; print(sys.executable)"], {
+    encoding: "utf8",
+  });
+  if (realPy.status === 0 && realPy.stdout.trim())
+    symlinkSync(realPy.stdout.trim(), path.join(stubBin, "python3"));
+  const cleanPath = pathDirs.filter(
+    (d) => d && !existsSync(path.join(d, "gh")) && !existsSync(path.join(d, "glab")),
+  );
 
   for (const [provider, cli, url] of [
     ["github", "gh", "https://cli.github.com"],
@@ -279,7 +360,10 @@ test("pr-ready-context.sh: VCS Config section reports workspace + provider", () 
   });
   try {
     const env = envWithHome(home); // no token file -> merged-style exits without network
-    const r = run(["packages/workit-core/scripts/pr-ready-context.sh", "HEAD~1..HEAD"], { cwd: repoRoot, env });
+    const r = run(["packages/workit-core/scripts/pr-ready-context.sh", "HEAD~1..HEAD"], {
+      cwd: repoRoot,
+      env,
+    });
     expect(r.status, r.stderr).toBe(0);
     expect(r.stdout).toContain("workspace: work");
     expect(r.stdout).toContain("provider: gitlab");
@@ -289,11 +373,52 @@ test("pr-ready-context.sh: VCS Config section reports workspace + provider", () 
   }
 });
 
+test("pr-ready-context.sh uses the workspace target branch", () => {
+  if (!scriptTools()) return;
+  const repo = realpathSync(mkdtempSync(path.join(os.tmpdir(), "wf-pr-base-")));
+  const git = (args: string[]) => spawnSync("git", args, { cwd: repo, encoding: "utf8" });
+  git(["init", "-q", "-b", "main"]);
+  git(["config", "user.name", "Workflow Test"]);
+  git(["config", "user.email", "workflow@example.test"]);
+  writeFileSync(path.join(repo, "README.md"), "base\n");
+  git(["add", "README.md"]);
+  git(["commit", "-q", "-m", "base"]);
+  git(["branch", "develop"]);
+  writeFileSync(path.join(repo, "main.txt"), "main\n");
+  git(["add", "main.txt"]);
+  git(["commit", "-q", "-m", "main base"]);
+  git(["checkout", "-q", "-b", "feature/workspace-base"]);
+  writeFileSync(path.join(repo, "feature.txt"), "feature\n");
+  git(["add", "feature.txt"]);
+  git(["commit", "-q", "-m", "feature change"]);
+
+  const { home, cleanup } = withConfigDir({
+    "vcs.json": JSON.stringify({ provider: "gitlab", defaultTargetBranch: "develop" }),
+    "workspaces.json": workspacesJson(`${repo}/**`, "github", {
+      vcs: { defaultTargetBranch: "main" },
+    }),
+  });
+  try {
+    const result = run(["packages/workit-core/scripts/pr-ready-context.sh"], {
+      cwd: repo,
+      env: envWithHome(home),
+    });
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain("base_ref: main");
+    expect(result.stdout).toContain("range: main..HEAD");
+    expect(result.stdout).toContain("feature change");
+    expect(result.stdout).not.toContain("main base");
+  } finally {
+    cleanup();
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
 // pr-create.sh --build-body: pure body builder — no CLI guard, no network (git remote parsed only when GH_REPO is unset).
 const buildBody = (extra: Record<string, string>, cwd?: string): string => {
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) {
-    if (v === undefined || /^WORKFLOW_/.test(k)) continue;
+    if (v === undefined || k.startsWith("WORKFLOW_")) continue;
     env[k] = v;
   }
   const r = run(["packages/workit-core/scripts/pr-create.sh", "--build-body"], {
@@ -307,7 +432,11 @@ const buildBody = (extra: Record<string, string>, cwd?: string): string => {
 test("pr-create.sh --build-body: branch-derived issue id appends Related to line", () => {
   if (!scriptTools()) return;
   expect(
-    buildBody({ BRANCH: "feature/IRP-123-fix", LINK_ISSUES: "true", YT_BASE_URL: "https://yt.example.com" }),
+    buildBody({
+      BRANCH: "feature/IRP-123-fix",
+      LINK_ISSUES: "true",
+      YT_BASE_URL: "https://yt.example.com",
+    }),
   ).toBe("Related to: https://yt.example.com/issue/IRP-123");
   expect(
     buildBody({
@@ -321,43 +450,98 @@ test("pr-create.sh --build-body: branch-derived issue id appends Related to line
 
 test("pr-create.sh --build-body: link_issues false or absent -> body unchanged", () => {
   if (!scriptTools()) return;
-  expect(buildBody({ BODY: "Same body", BRANCH: "feature/IRP-123-fix", LINK_ISSUES: "false", YT_BASE_URL: "https://yt.example.com" })).toBe("Same body");
-  expect(buildBody({ BODY: "Same body", BRANCH: "feature/IRP-123-fix", YT_BASE_URL: "https://yt.example.com" })).toBe("Same body");
+  expect(
+    buildBody({
+      BODY: "Same body",
+      BRANCH: "feature/IRP-123-fix",
+      LINK_ISSUES: "false",
+      YT_BASE_URL: "https://yt.example.com",
+    }),
+  ).toBe("Same body");
+  expect(
+    buildBody({
+      BODY: "Same body",
+      BRANCH: "feature/IRP-123-fix",
+      YT_BASE_URL: "https://yt.example.com",
+    }),
+  ).toBe("Same body");
 });
 
 test("pr-create.sh --build-body: version-like tokens are not linked (POSTGRES-16, HTTP-3), issue refs are", () => {
   if (!scriptTools()) return;
-  expect(buildBody({ BRANCH: "feature/POSTGRES-16-upgrade", LINK_ISSUES: "true", YT_BASE_URL: "https://yt.example.com" })).toBe("");
-  expect(buildBody({ BRANCH: "release/HTTP-3", LINK_ISSUES: "true", YT_BASE_URL: "https://yt.example.com" })).toBe("");
   expect(
-    buildBody({ BRANCH: "feature/IRP-123-fix", LINK_ISSUES: "true", YT_BASE_URL: "https://yt.example.com" }),
+    buildBody({
+      BRANCH: "feature/POSTGRES-16-upgrade",
+      LINK_ISSUES: "true",
+      YT_BASE_URL: "https://yt.example.com",
+    }),
+  ).toBe("");
+  expect(
+    buildBody({
+      BRANCH: "release/HTTP-3",
+      LINK_ISSUES: "true",
+      YT_BASE_URL: "https://yt.example.com",
+    }),
+  ).toBe("");
+  expect(
+    buildBody({
+      BRANCH: "feature/IRP-123-fix",
+      LINK_ISSUES: "true",
+      YT_BASE_URL: "https://yt.example.com",
+    }),
   ).toBe("Related to: https://yt.example.com/issue/IRP-123");
 });
 
 test("pr-create.sh --build-body: explicit WORKFLOW_YT_ISSUE wins over branch-derived id", () => {
   if (!scriptTools()) return;
   expect(
-    buildBody({ BRANCH: "feature/IRP-123-fix", LINK_ISSUES: "true", YT_BASE_URL: "https://yt.example.com", WORKFLOW_YT_ISSUE: "NSAT-9" }),
+    buildBody({
+      BRANCH: "feature/IRP-123-fix",
+      LINK_ISSUES: "true",
+      YT_BASE_URL: "https://yt.example.com",
+      WORKFLOW_YT_ISSUE: "NSAT-9",
+    }),
   ).toBe("Related to: https://yt.example.com/issue/NSAT-9");
 });
 
 test("pr-create.sh --build-body: no base URL or no derivable id -> no Related to line", () => {
   if (!scriptTools()) return;
-  expect(buildBody({ BODY: "No link", BRANCH: "feature/IRP-123-fix", LINK_ISSUES: "true" })).toBe("No link");
-  expect(buildBody({ BODY: "No link", BRANCH: "feature/maintenance", LINK_ISSUES: "true", YT_BASE_URL: "https://yt.example.com" })).toBe("No link");
+  expect(buildBody({ BODY: "No link", BRANCH: "feature/IRP-123-fix", LINK_ISSUES: "true" })).toBe(
+    "No link",
+  );
+  expect(
+    buildBody({
+      BODY: "No link",
+      BRANCH: "feature/maintenance",
+      LINK_ISSUES: "true",
+      YT_BASE_URL: "https://yt.example.com",
+    }),
+  ).toBe("No link");
 });
 
 test("pr-create.sh --build-body: explicit WORKFLOW_GH_ISSUE closes/related (default closes, # prefix stripped)", () => {
   if (!scriptTools()) return;
   expect(buildBody({ GH_LINK_ON_PR: "true", WORKFLOW_GH_ISSUE: "42" })).toBe("Closes #42");
-  expect(buildBody({ BODY: "Existing body", GH_LINK_ON_PR: "true", WORKFLOW_GH_ISSUE: "#42" })).toBe("Existing body\n\nCloses #42");
   expect(
-    buildBody({ GH_LINK_ON_PR: "true", WORKFLOW_GH_ISSUE: "https://github.com/acme/app/issues/42" }),
+    buildBody({ BODY: "Existing body", GH_LINK_ON_PR: "true", WORKFLOW_GH_ISSUE: "#42" }),
+  ).toBe("Existing body\n\nCloses #42");
+  expect(
+    buildBody({
+      GH_LINK_ON_PR: "true",
+      WORKFLOW_GH_ISSUE: "https://github.com/acme/app/issues/42",
+    }),
   ).toBe("Closes #42");
   expect(
-    buildBody({ GH_LINK_ON_PR: "true", WORKFLOW_GH_ISSUE: "42", WORKFLOW_GH_ISSUE_RELATION: "related", GH_REPO: "acme/app" }),
+    buildBody({
+      GH_LINK_ON_PR: "true",
+      WORKFLOW_GH_ISSUE: "42",
+      WORKFLOW_GH_ISSUE_RELATION: "related",
+      GH_REPO: "acme/app",
+    }),
   ).toBe("Related to #42 — https://github.com/acme/app/issues/42");
-  expect(buildBody({ GH_LINK_ON_PR: "true", WORKFLOW_GH_ISSUE: "42", BODY: "" })).toBe("Closes #42");
+  expect(buildBody({ GH_LINK_ON_PR: "true", WORKFLOW_GH_ISSUE: "42", BODY: "" })).toBe(
+    "Closes #42",
+  );
 });
 
 test("pr-create.sh --build-body: branch-derived pure-number id auto-links (feature/42-title -> Closes #42)", () => {
@@ -384,10 +568,16 @@ test("pr-create.sh --build-body: owner/repo parsed from git remote get-url origi
       expect(spawnSync(cmd, args, { cwd: repoDir, encoding: "utf8" }).status).toBe(0);
     }
     expect(
-      buildBody({ GH_LINK_ON_PR: "true", WORKFLOW_GH_ISSUE: "42", WORKFLOW_GH_ISSUE_RELATION: "related" }, repoDir),
+      buildBody(
+        { GH_LINK_ON_PR: "true", WORKFLOW_GH_ISSUE: "42", WORKFLOW_GH_ISSUE_RELATION: "related" },
+        repoDir,
+      ),
     ).toBe("Related to #42 — https://github.com/acme/app/issues/42");
     expect(
-      buildBody({ GH_LINK_ON_PR: "true", WORKFLOW_GH_ISSUE: "42", WORKFLOW_GH_ISSUE_RELATION: "related" }, bareDir),
+      buildBody(
+        { GH_LINK_ON_PR: "true", WORKFLOW_GH_ISSUE: "42", WORKFLOW_GH_ISSUE_RELATION: "related" },
+        bareDir,
+      ),
     ).toBe("Related to #42");
   } finally {
     rmSync(repoDir, { recursive: true, force: true });
@@ -418,15 +608,25 @@ test("pr-create.sh create: cfg-driven wiring emits Closes #N into the real gh in
     const real = findOnPath(tool);
     if (real) symlinkSync(real, path.join(stubBin, tool));
   }
-  const realPy = spawnSync("python3", ["-c", "import sys; print(sys.executable)"], { encoding: "utf8" });
-  if (realPy.status === 0 && realPy.stdout.trim()) symlinkSync(realPy.stdout.trim(), path.join(stubBin, "python3"));
-  const cleanPath = pathDirs.filter((d) => d && !existsSync(path.join(d, "gh")) && !existsSync(path.join(d, "glab")));
+  const realPy = spawnSync("python3", ["-c", "import sys; print(sys.executable)"], {
+    encoding: "utf8",
+  });
+  if (realPy.status === 0 && realPy.stdout.trim())
+    symlinkSync(realPy.stdout.trim(), path.join(stubBin, "python3"));
+  const cleanPath = pathDirs.filter(
+    (d) => d && !existsSync(path.join(d, "gh")) && !existsSync(path.join(d, "glab")),
+  );
 
   const { home, cleanup } = withConfigDir({
     "vcs.json": JSON.stringify({ provider: "github", defaultTargetBranch: "main" }),
     "workspaces.json": JSON.stringify({
       workspaces: [
-        { name: "work", glob: `${repoDir}/**`, vcs: { provider: "github" }, issues: { provider: "github", link_on_pr: true } },
+        {
+          name: "work",
+          glob: `${repoDir}/**`,
+          vcs: { provider: "github" },
+          issues: { provider: "github", link_on_pr: true },
+        },
       ],
     }),
     "github.token": "test-token-123",

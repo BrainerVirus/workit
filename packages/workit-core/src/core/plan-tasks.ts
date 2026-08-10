@@ -4,13 +4,19 @@ import { parseTasksFromPlan } from "./docs-validate";
 import { resolveBranch } from "./branch";
 
 const readSafe = (p: string): string | null => {
-  try { return readFileSync(p, "utf8"); } catch { return null; }
+  try {
+    return readFileSync(p, "utf8");
+  } catch {
+    return null;
+  }
 };
 
 export function parsePlanTasks(
   planPath: string,
   workspaceRoot: string,
-): { task_count: number; tasks: { id: number; title: string; section_text: string }[] } | { error: string } {
+):
+  | { task_count: number; tasks: { id: number; title: string; section_text: string }[] }
+  | { error: string } {
   const cwd = path.resolve(workspaceRoot);
   const resolved = path.isAbsolute(planPath) ? planPath : path.join(cwd, planPath);
   const text = readSafe(resolved);
@@ -27,7 +33,11 @@ export function resolveHandoffBranch(
   planPath: string,
   workspaceRoot: string,
 ): { branch: string } | { error: string } {
-  const resolved = resolveBranch({ spec_path: specPath, plan_path: planPath, workspace_root: workspaceRoot });
+  const resolved = resolveBranch({
+    spec_path: specPath,
+    plan_path: planPath,
+    workspace_root: workspaceRoot,
+  });
   if ("error" in resolved) return { error: resolved.error as string };
   return { branch: resolved.branch };
 }

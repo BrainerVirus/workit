@@ -1,4 +1,12 @@
-import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -12,16 +20,19 @@ export type ToolkitConfig = {
 };
 
 export const PRESETS: Record<BranchPreset, { allowed: string[]; protected: string[] }> = {
-  gitflow: { allowed: ["feature/*", "bugfix/*", "hotfix/*", "release/*"], protected: ["main", "develop", "master", "prod", "production"] },
+  gitflow: {
+    allowed: ["feature/*", "bugfix/*", "hotfix/*", "release/*"],
+    protected: ["main", "develop", "master", "prod", "production"],
+  },
   "github-flow": { allowed: ["*"], protected: ["main"] },
   "trunk-based": { allowed: ["*"], protected: ["main"] },
   custom: { allowed: [], protected: [] },
 };
 
 export const resolveConfigDir = (): string =>
-  process.env.WORKFLOW_TOOLKIT_CONFIG
-  ?? process.env.WORKFLOW_TOOLKIT_CONFIG_DIR
-  ?? path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config"), "workit");
+  process.env.WORKFLOW_TOOLKIT_CONFIG ??
+  process.env.WORKFLOW_TOOLKIT_CONFIG_DIR ??
+  path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config"), "workit");
 
 // One-time lazy migration from the legacy ~/.config/workflow-toolkit dir.
 // migratedDir remembers the resolved dir already checked: configDir() is on
@@ -41,7 +52,10 @@ export const ensureConfigDir = (dir: string = resolveConfigDir()): string => {
     migratedDir = dir;
     return dir;
   }
-  const legacy = path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config"), "workflow-toolkit");
+  const legacy = path.join(
+    process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config"),
+    "workflow-toolkit",
+  );
   if (!existsSync(legacy)) {
     migratedDir = dir;
     return dir;
@@ -76,11 +90,19 @@ const DEFAULTS: ToolkitConfig = {
   locale: "en",
   localeOptions: ["en", "es-CL", "es-MX", "es-AR", "pt-BR"],
   timezone: "America/Santiago",
-  branchPolicy: { preset: "gitflow", allowed: [...PRESETS.gitflow.allowed], protected: [...PRESETS.gitflow.protected] },
+  branchPolicy: {
+    preset: "gitflow",
+    allowed: [...PRESETS.gitflow.allowed],
+    protected: [...PRESETS.gitflow.protected],
+  },
 };
 
 const readSafe = (p: string): string | null => {
-  try { return readFileSync(p, "utf8"); } catch { return null; }
+  try {
+    return readFileSync(p, "utf8");
+  } catch {
+    return null;
+  }
 };
 
 export const readConfig = (): ToolkitConfig => {
@@ -88,18 +110,26 @@ export const readConfig = (): ToolkitConfig => {
   if (!raw) return DEFAULTS;
   try {
     const parsed = JSON.parse(raw) as Partial<ToolkitConfig>;
-    const locale = LOCALE_RE.test(String(parsed.locale ?? "")) ? parsed.locale as string : DEFAULTS.locale;
+    const locale = LOCALE_RE.test(String(parsed.locale ?? ""))
+      ? (parsed.locale as string)
+      : DEFAULTS.locale;
     const preset = (parsed.branchPolicy?.preset ?? "gitflow") as BranchPreset;
     const presetOk = Object.hasOwn(PRESETS, preset) ? preset : "gitflow";
     const presetDefs = PRESETS[presetOk];
     return {
       locale,
-      localeOptions: Array.isArray(parsed.localeOptions) ? parsed.localeOptions : DEFAULTS.localeOptions,
+      localeOptions: Array.isArray(parsed.localeOptions)
+        ? parsed.localeOptions
+        : DEFAULTS.localeOptions,
       timezone: parsed.timezone ?? DEFAULTS.timezone,
       branchPolicy: {
         preset: presetOk,
-        allowed: Array.isArray(parsed.branchPolicy?.allowed) ? parsed.branchPolicy.allowed : presetDefs.allowed,
-        protected: Array.isArray(parsed.branchPolicy?.protected) ? parsed.branchPolicy.protected : presetDefs.protected,
+        allowed: Array.isArray(parsed.branchPolicy?.allowed)
+          ? parsed.branchPolicy.allowed
+          : presetDefs.allowed,
+        protected: Array.isArray(parsed.branchPolicy?.protected)
+          ? parsed.branchPolicy.protected
+          : presetDefs.protected,
       },
     };
   } catch {
@@ -113,8 +143,11 @@ export const writeConfig = (config: ToolkitConfig): void => {
   writeFileSync(path.join(dir, "config.json"), JSON.stringify(config, null, 2) + "\n", "utf8");
 };
 
-export const resolveBranchPolicy = (config: ToolkitConfig): { allowed: RegExp[]; protected: Set<string> } => {
-  const allowed = config.branchPolicy.allowed.map((p) =>
-    new RegExp(`^${p.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*")}$`, "i"));
+export const resolveBranchPolicy = (
+  config: ToolkitConfig,
+): { allowed: RegExp[]; protected: Set<string> } => {
+  const allowed = config.branchPolicy.allowed.map(
+    (p) => new RegExp(`^${p.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*")}$`, "i"),
+  );
   return { allowed, protected: new Set(config.branchPolicy.protected.map((p) => p.toLowerCase())) };
 };

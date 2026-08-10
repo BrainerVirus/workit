@@ -4,7 +4,11 @@ import { WorkflowStateStore } from "../../packages/workit-core/src/state";
 test("set stores only the workflow paths", () => {
   const state = new WorkflowStateStore();
   state.set("s1", { spec: "docs/spec.md", plan: "docs/plan.md", sdd: "docs/sdd/x" });
-  expect(state.get("s1")).toEqual({ spec: "docs/spec.md", plan: "docs/plan.md", sdd: "docs/sdd/x" });
+  expect(state.get("s1")).toEqual({
+    spec: "docs/spec.md",
+    plan: "docs/plan.md",
+    sdd: "docs/sdd/x",
+  });
 });
 
 test("get returns undefined for unknown sessions", () => {

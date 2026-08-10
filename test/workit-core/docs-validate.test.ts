@@ -81,7 +81,10 @@ test("sdd_not_ignored when sdd dir exists and is not gitignored", async () => {
     mkdirSync(path.join(root, "docs", "x"), { recursive: true });
     mkdirSync(path.join(root, "docs", "x", "sdd"), { recursive: true });
     writeFileSync(path.join(root, "docs/x/spec.md"), "# Spec\n\n**Branch:** `feature/x`\n");
-    writeFileSync(path.join(root, "docs/x/plan.md"), "# Plan\n\n**Spec:** `docs/x/spec.md`\n**Branch:** `feature/x`\n\n### Task 1: One\n\n- [ ] **Step 1:** Work\n");
+    writeFileSync(
+      path.join(root, "docs/x/plan.md"),
+      "# Plan\n\n**Spec:** `docs/x/spec.md`\n**Branch:** `feature/x`\n\n### Task 1: One\n\n- [ ] **Step 1:** Work\n",
+    );
     writeFileSync(path.join(root, "docs/x/sdd/progress.md"), "Task 1: complete\n");
 
     const raw = await createSddTools(new WorkflowStateStore()).workflow_docs_validate.execute(
@@ -91,7 +94,9 @@ test("sdd_not_ignored when sdd dir exists and is not gitignored", async () => {
     const out = JSON.parse(raw as string);
     expect(out.ok).toBe(true);
     expect(out.data.quality.some((f: any) => f.code === "sdd_not_ignored")).toBe(true);
-  } finally { rmSync(root, { recursive: true, force: true }); }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("no sdd_not_ignored when sdd is gitignored", async () => {
@@ -105,7 +110,10 @@ test("no sdd_not_ignored when sdd is gitignored", async () => {
     mkdirSync(path.join(root, "docs", "x"), { recursive: true });
     mkdirSync(path.join(root, "docs", "x", "sdd"), { recursive: true });
     writeFileSync(path.join(root, "docs/x/spec.md"), "# Spec\n\n**Branch:** `feature/x`\n");
-    writeFileSync(path.join(root, "docs/x/plan.md"), "# Plan\n\n**Spec:** `docs/x/spec.md`\n**Branch:** `feature/x`\n\n### Task 1: One\n\n- [ ] **Step 1:** Work\n");
+    writeFileSync(
+      path.join(root, "docs/x/plan.md"),
+      "# Plan\n\n**Spec:** `docs/x/spec.md`\n**Branch:** `feature/x`\n\n### Task 1: One\n\n- [ ] **Step 1:** Work\n",
+    );
     writeFileSync(path.join(root, "docs/x/sdd/progress.md"), "Task 1: complete\n");
 
     const raw = await createSddTools(new WorkflowStateStore()).workflow_docs_validate.execute(
@@ -114,7 +122,9 @@ test("no sdd_not_ignored when sdd is gitignored", async () => {
     );
     const out = JSON.parse(raw as string);
     expect(out.data.quality.some((f: any) => f.code === "sdd_not_ignored")).toBe(false);
-  } finally { rmSync(root, { recursive: true, force: true }); }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("docsValidate reports hygiene warnings", async () => {
@@ -126,7 +136,10 @@ test("docsValidate reports hygiene warnings", async () => {
     run(["config", "user.name", "T"]);
     mkdirSync(path.join(root, "docs", "x"), { recursive: true });
     writeFileSync(path.join(root, "docs/x/spec.md"), "# Spec\n\n**Branch:** `feature/x`\n");
-    writeFileSync(path.join(root, "docs/x/plan.md"), "# Plan\n\n**Spec:** `docs/x/spec.md`\n**Branch:** `feature/x`\n\n### Task 1: One\n\n- [ ] **Step 1:** Work\n");
+    writeFileSync(
+      path.join(root, "docs/x/plan.md"),
+      "# Plan\n\n**Spec:** `docs/x/spec.md`\n**Branch:** `feature/x`\n\n### Task 1: One\n\n- [ ] **Step 1:** Work\n",
+    );
 
     const raw = await createSddTools(new WorkflowStateStore()).workflow_docs_validate.execute(
       { spec_path: "docs/x/spec.md", plan_path: "docs/x/plan.md" },
@@ -138,5 +151,7 @@ test("docsValidate reports hygiene warnings", async () => {
     expect(codes).toContain("readme_missing");
     expect(codes).toContain("editorconfig_missing");
     expect(codes).toContain("gitattributes_missing");
-  } finally { rmSync(root, { recursive: true, force: true }); }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

@@ -3,18 +3,18 @@
   "version": "0.4.0",
   "private": false,
   "description": "Workit — workflow rails for agentic coding: specs, plans, YouTrack, CI-gated commits (shared core)",
-  "license": "MIT",
   "keywords": [
-    "opencode",
+    "agent",
     "cursor",
-    "workflow",
     "mcp",
-    "youTrack",
-    "agent"
+    "opencode",
+    "workflow",
+    "youTrack"
   ],
   "bugs": {
     "url": "https://github.com/BrainerVirus/workit/issues"
   },
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/BrainerVirus/workit.git"
@@ -37,11 +37,11 @@
     "./src/*": "./src/*.ts",
     "./package.json": "./package.json"
   },
-  "scripts": {
-    "typecheck": "tsc --noEmit"
-  },
   "publishConfig": {
     "access": "public"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.0",

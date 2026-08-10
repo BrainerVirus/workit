@@ -1,10 +1,15 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync } from "node:fs";
+import { mkdtempSync, rmSync, existsSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
-  parseRule, listRules, readRule, writeRule,
-  compileRuleCursor, compileRuleOpenCode, compiledOpenCodeSections, writeCompiledCursorRules,
+  parseRule,
+  readRule,
+  writeRule,
+  compileRuleCursor,
+  compileRuleOpenCode,
+  compiledOpenCodeSections,
+  writeCompiledCursorRules,
   type CanonicalRule,
 } from "../../packages/workit-core/src/core/rules";
 
@@ -55,8 +60,10 @@ test("writeRule + readRule round trip", () => {
   const dir = cfgDir();
   try {
     const rule: CanonicalRule = {
-      name: "my-rule", description: "My custom rule",
-      platforms: ["cursor", "opencode"], body: "# My rule\n\nDo the thing.\n",
+      name: "my-rule",
+      description: "My custom rule",
+      platforms: ["cursor", "opencode"],
+      body: "# My rule\n\nDo the thing.\n",
     };
     const written = writeRule(rule, true);
     expect(written.ok).toBe(true);
@@ -64,13 +71,18 @@ test("writeRule + readRule round trip", () => {
     if ("error" in read) throw new Error(read.error);
     expect(read.source).toBe("config");
     expect(read.rule.name).toBe("my-rule");
-  } finally { cleanupEnv(); rmSync(dir, { recursive: true, force: true }); }
+  } finally {
+    cleanupEnv();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("compileRuleCursor emits mdc frontmatter", () => {
   const rule: CanonicalRule = {
-    name: "no-worktrees", description: "NEVER use worktrees",
-    platforms: ["cursor"], body: "# No worktrees\n\nNever.\n",
+    name: "no-worktrees",
+    description: "NEVER use worktrees",
+    platforms: ["cursor"],
+    body: "# No worktrees\n\nNever.\n",
   };
   const mdc = compileRuleCursor(rule);
   expect(mdc).toContain("description: NEVER use worktrees");
@@ -80,7 +92,10 @@ test("compileRuleCursor emits mdc frontmatter", () => {
 
 test("compileRuleOpenCode emits a contract section", () => {
   const rule: CanonicalRule = {
-    name: "my-rule", description: "d", platforms: ["opencode"], body: "# My rule\n\nDo it.\n",
+    name: "my-rule",
+    description: "d",
+    platforms: ["opencode"],
+    body: "# My rule\n\nDo it.\n",
   };
   const section = compileRuleOpenCode(rule);
   expect(section).toContain("## my-rule");
@@ -90,12 +105,21 @@ test("compileRuleOpenCode emits a contract section", () => {
 test("compiledOpenCodeSections includes user rules", () => {
   const dir = cfgDir();
   try {
-    writeRule({ name: "alpha", description: "a", platforms: ["opencode"], body: "# Alpha\n\nDo alpha.\n" }, true);
-    writeRule({ name: "cursor-only", description: "c", platforms: ["cursor"], body: "# C\n" }, true);
+    writeRule(
+      { name: "alpha", description: "a", platforms: ["opencode"], body: "# Alpha\n\nDo alpha.\n" },
+      true,
+    );
+    writeRule(
+      { name: "cursor-only", description: "c", platforms: ["cursor"], body: "# C\n" },
+      true,
+    );
     const sections = compiledOpenCodeSections();
     expect(sections).toContain("## alpha");
     expect(sections).not.toContain("## cursor-only");
-  } finally { cleanupEnv(); rmSync(dir, { recursive: true, force: true }); }
+  } finally {
+    cleanupEnv();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("writeCompiledCursorRules writes mdc files", () => {
@@ -107,28 +131,46 @@ test("writeCompiledCursorRules writes mdc files", () => {
     expect(files).toContain(path.join(target, "beta.mdc"));
     expect(existsSync(path.join(target, "beta.mdc"))).toBe(true);
     rmSync(target, { recursive: true, force: true });
-  } finally { cleanupEnv(); rmSync(dir, { recursive: true, force: true }); }
+  } finally {
+    cleanupEnv();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("bootstrap appends compiled opencode rule sections", async () => {
   const dir = cfgDir();
   try {
-    writeRule({ name: "zeta", description: "z", platforms: ["opencode"], body: "# Zeta\n\nDo zeta.\n" }, true);
+    writeRule(
+      { name: "zeta", description: "z", platforms: ["opencode"], body: "# Zeta\n\nDo zeta.\n" },
+      true,
+    );
     const fresh = await import(`../../packages/workit-opencode/src/bootstrap?rules=${Date.now()}`);
     const bootstrap = fresh.getWorkflowBootstrap();
     expect(bootstrap).toContain("## zeta");
-  } finally { cleanupEnv(); rmSync(dir, { recursive: true, force: true }); }
+  } finally {
+    cleanupEnv();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("writeRule rejects traversal rule names", () => {
   const dir = cfgDir();
   try {
-    const bad = writeRule({ name: "../evil", description: "x", platforms: ["cursor"], body: "# X\n" }, true);
+    const bad = writeRule(
+      { name: "../evil", description: "x", platforms: ["cursor"], body: "# X\n" },
+      true,
+    );
     expect(bad.ok).toBe(false);
     if (!bad.ok) expect(bad.error).toContain("invalid rule name");
-    const ok = writeRule({ name: "good-rule", description: "x", platforms: ["cursor"], body: "# X\n" }, true);
+    const ok = writeRule(
+      { name: "good-rule", description: "x", platforms: ["cursor"], body: "# X\n" },
+      true,
+    );
     expect(ok.ok).toBe(true);
-  } finally { cleanupEnv(); rmSync(dir, { recursive: true, force: true }); }
+  } finally {
+    cleanupEnv();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("parseRule strips quotes and rejects unknown platforms", () => {

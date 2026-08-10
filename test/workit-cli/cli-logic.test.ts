@@ -24,7 +24,11 @@ const current: ToolkitConfig = {
   locale: "en",
   localeOptions: ["en", "es-CL"],
   timezone: "America/Santiago",
-  branchPolicy: { preset: "gitflow", allowed: [...PRESETS.gitflow.allowed], protected: [...PRESETS.gitflow.protected] },
+  branchPolicy: {
+    preset: "gitflow",
+    allowed: [...PRESETS.gitflow.allowed],
+    protected: [...PRESETS.gitflow.protected],
+  },
 };
 
 test("validateLocale accepts BCP-47, rejects bad formats", () => {
@@ -51,7 +55,11 @@ test("validateBaseUrl requires https", () => {
 });
 
 test("parseList splits on commas and trims", () => {
-  expect(parseList("feature/*, bugfix/* , hotfix/*")).toEqual(["feature/*", "bugfix/*", "hotfix/*"]);
+  expect(parseList("feature/*, bugfix/* , hotfix/*")).toEqual([
+    "feature/*",
+    "bugfix/*",
+    "hotfix/*",
+  ]);
   expect(parseList("")).toEqual([]);
   expect(parseList("  main  ")).toEqual(["main"]);
 });
@@ -66,10 +74,21 @@ test("collectConfigValues merges with current config", () => {
 
 test("collectConfigValues applies preset defaults, keeps current for custom", () => {
   const githubFlow = collectConfigValues({ preset: "github-flow" }, current);
-  expect(githubFlow.branchPolicy).toEqual({ preset: "github-flow", allowed: ["*"], protected: ["main"] });
+  expect(githubFlow.branchPolicy).toEqual({
+    preset: "github-flow",
+    allowed: ["*"],
+    protected: ["main"],
+  });
 
-  const custom = collectConfigValues({ preset: "custom", allowed: ["feature/*"], protectedNames: ["main"] }, current);
-  expect(custom.branchPolicy).toEqual({ preset: "custom", allowed: ["feature/*"], protected: ["main"] });
+  const custom = collectConfigValues(
+    { preset: "custom", allowed: ["feature/*"], protectedNames: ["main"] },
+    current,
+  );
+  expect(custom.branchPolicy).toEqual({
+    preset: "custom",
+    allowed: ["feature/*"],
+    protected: ["main"],
+  });
 
   const customKeepsCurrent = collectConfigValues({ preset: "custom" }, current);
   expect(customKeepsCurrent.branchPolicy.allowed).toEqual(current.branchPolicy.allowed);
@@ -117,7 +136,10 @@ test("runProjectSetup without includeOpenSource skips LICENSE/CONTRIBUTING", () 
 test("scaffoldYouTrack writes youtrack.json + placeholder token + token URL", () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "wf-cli-logic-"));
   try {
-    const s = scaffoldYouTrack(dir, "https://youtrack.example.com", { locale: "es-CL", timezone: "America/Santiago" });
+    const s = scaffoldYouTrack(dir, "https://youtrack.example.com", {
+      locale: "es-CL",
+      timezone: "America/Santiago",
+    });
     expect(s.tokenCreateUrl).toBe("https://youtrack.example.com/users/me?tab=account-security");
     const cfg = JSON.parse(readFileSync(s.youtrackJson, "utf8"));
     expect(cfg.baseUrl).toBe("https://youtrack.example.com");
@@ -149,7 +171,11 @@ test("scaffoldVcs writes vcs.json for provider + active placeholder token", () =
 
 const wsFile = (dir: string) => path.join(dir, "workspaces.json");
 
-const entry = (name: string, glob: string) => ({ name, glob, vcs: { provider: "gitlab" as const, defaultTargetBranch: "main" } });
+const entry = (name: string, glob: string) => ({
+  name,
+  glob,
+  vcs: { provider: "gitlab" as const, defaultTargetBranch: "main" },
+});
 
 test("loadWorkspaces: missing file → []", () => {
   withConfigDir(() => {
@@ -175,7 +201,11 @@ test("loadWorkspaces: non-object or missing array → []", () => {
 
 test("loadWorkspaces: valid file → parsed entries", () => {
   withConfigDir((dir) => {
-    writeFileSync(wsFile(dir), JSON.stringify({ workspaces: [entry("work", "/home/**/work/**")] }), "utf8");
+    writeFileSync(
+      wsFile(dir),
+      JSON.stringify({ workspaces: [entry("work", "/home/**/work/**")] }),
+      "utf8",
+    );
     expect(loadWorkspaces()).toEqual([entry("work", "/home/**/work/**")]);
   });
 });
@@ -187,7 +217,11 @@ test("shouldWriteWorkspaces: same list → false, different → true", () => {
   expect(shouldWriteWorkspaces([], list)).toBe(true);
   expect(shouldWriteWorkspaces(list, [entry("personal", "/home/**/personal/**")])).toBe(true);
   expect(shouldWriteWorkspaces(list, [entry("work", "/home/**/other/**")])).toBe(true);
-  expect(shouldWriteWorkspaces(list, [{ ...list[0], vcs: { provider: "github" as const, defaultTargetBranch: "main" } }])).toBe(true);
+  expect(
+    shouldWriteWorkspaces(list, [
+      { ...list[0], vcs: { provider: "github" as const, defaultTargetBranch: "main" } },
+    ]),
+  ).toBe(true);
 });
 
 test("writeWorkspaces replaces the whole list", () => {
@@ -203,7 +237,7 @@ test("writeWorkspaces replaces the whole list", () => {
 });
 
 test("writeWorkspaces removes entries when written with fewer", () => {
-  withConfigDir((dir) => {
+  withConfigDir((_dir) => {
     writeWorkspaces([entry("work", "/home/**/work/**"), entry("personal", "/home/**/personal/**")]);
     writeWorkspaces([entry("work", "/home/**/work/**")]);
     expect(loadWorkspaces()).toEqual([entry("work", "/home/**/work/**")]);
@@ -222,14 +256,17 @@ test("writeWorkspaces succeeds over a malformed existing file (treated as empty)
 test("written file resolves via resolveWorkspace (parity CA-02)", () => {
   withConfigDir((dir) => {
     const projectDir = path.join(dir, "projects", "work", "repo");
-    writeWorkspaces([entry("work", `${path.join(dir, "projects", "work", "**").split(path.sep).join("/")}`)]);
+    writeWorkspaces([
+      entry("work", `${path.join(dir, "projects", "work", "**").split(path.sep).join("/")}`),
+    ]);
     expect(resolveWorkspace(projectDir)?.name).toBe("work");
   });
 });
 
 test("skip = no writeWorkspaces call → file untouched", () => {
   withConfigDir((dir) => {
-    const original = JSON.stringify({ workspaces: [entry("work", "/home/**/work/**")] }, null, 2) + "\n";
+    const original =
+      JSON.stringify({ workspaces: [entry("work", "/home/**/work/**")] }, null, 2) + "\n";
     writeFileSync(wsFile(dir), original, "utf8");
     expect(loadWorkspaces()).toEqual([entry("work", "/home/**/work/**")]);
     expect(readFileSync(wsFile(dir), "utf8")).toBe(original);
@@ -238,17 +275,28 @@ test("skip = no writeWorkspaces call → file untouched", () => {
 
 test("writeWorkspaces rejects provider/linking cross-combos", () => {
   withConfigDir((dir) => {
-    const youtrackOnGithub = writeWorkspaces([{ name: "work", glob: "/w/**", vcs: { provider: "github" }, youtrack: { link_issues: true } }]);
+    const youtrackOnGithub = writeWorkspaces([
+      { name: "work", glob: "/w/**", vcs: { provider: "github" }, youtrack: { link_issues: true } },
+    ]);
     expect(youtrackOnGithub.ok).toBe(false);
     expect(youtrackOnGithub.error).toContain("youtrack");
     expect(youtrackOnGithub.error).toContain("github");
 
-    const issuesOnGitlab = writeWorkspaces([{ name: "personal", glob: "/p/**", vcs: { provider: "gitlab" }, issues: { provider: "github", link_on_pr: true } }]);
+    const issuesOnGitlab = writeWorkspaces([
+      {
+        name: "personal",
+        glob: "/p/**",
+        vcs: { provider: "gitlab" },
+        issues: { provider: "github", link_on_pr: true },
+      },
+    ]);
     expect(issuesOnGitlab.ok).toBe(false);
     expect(issuesOnGitlab.error).toContain("issues");
     expect(issuesOnGitlab.error).toContain("gitlab");
 
-    const youtrackNoVcs = writeWorkspaces([{ name: "x", glob: "/x/**", youtrack: { link_issues: true } }]);
+    const youtrackNoVcs = writeWorkspaces([
+      { name: "x", glob: "/x/**", youtrack: { link_issues: true } },
+    ]);
     expect(youtrackNoVcs.ok).toBe(false);
 
     expect(existsSync(wsFile(dir))).toBe(false);
@@ -257,11 +305,25 @@ test("writeWorkspaces rejects provider/linking cross-combos", () => {
 });
 
 test("writeWorkspaces accepts matching provider/linking combos", () => {
-  withConfigDir((dir) => {
-    const gitlabYt = writeWorkspaces([{ name: "work", glob: "/w/**", vcs: { provider: "gitlab", defaultTargetBranch: "develop" }, youtrack: { link_issues: true } }]);
+  withConfigDir((_dir) => {
+    const gitlabYt = writeWorkspaces([
+      {
+        name: "work",
+        glob: "/w/**",
+        vcs: { provider: "gitlab", defaultTargetBranch: "develop" },
+        youtrack: { link_issues: true },
+      },
+    ]);
     expect(gitlabYt.ok).toBe(true);
 
-    const githubIssues = writeWorkspaces([{ name: "personal", glob: "/p/**", vcs: { provider: "github", defaultTargetBranch: "main" }, issues: { provider: "github", link_on_pr: true } }]);
+    const githubIssues = writeWorkspaces([
+      {
+        name: "personal",
+        glob: "/p/**",
+        vcs: { provider: "github", defaultTargetBranch: "main" },
+        issues: { provider: "github", link_on_pr: true },
+      },
+    ]);
     expect(githubIssues.ok).toBe(true);
   });
 });
@@ -276,7 +338,9 @@ test("writeWorkspaces validates entries: no name / no glob / bad provider / null
     expect(missingGlob.ok).toBe(false);
     expect(missingGlob.error).toContain("glob");
 
-    const badProvider = writeWorkspaces([{ name: "x", glob: "/x/**", vcs: { provider: "bitbucket" as never } }]);
+    const badProvider = writeWorkspaces([
+      { name: "x", glob: "/x/**", vcs: { provider: "bitbucket" as never } },
+    ]);
     expect(badProvider.ok).toBe(false);
     expect(badProvider.error).toContain("bitbucket");
 

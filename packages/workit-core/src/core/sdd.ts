@@ -57,7 +57,10 @@ export function sddContext({
   let completed_task_ids: number[] = [];
   const absProgress = path.join(cwd, progress_path);
   if (existsSync(absProgress)) {
-    progress_lines = readFileSync(absProgress, "utf8").split("\n").map((ln) => ln.trim()).filter(Boolean);
+    progress_lines = readFileSync(absProgress, "utf8")
+      .split("\n")
+      .map((ln) => ln.trim())
+      .filter(Boolean);
     const pat = /^Task\s+(\d+):\s+complete\b/i;
     completed_task_ids = progress_lines
       .map((ln) => pat.exec(ln)?.[1])
@@ -68,7 +71,11 @@ export function sddContext({
   let manifest: Record<string, unknown> = {};
   const absManifest = path.join(cwd, manifest_path);
   if (existsSync(absManifest)) {
-    try { manifest = JSON.parse(readFileSync(absManifest, "utf8")); } catch { manifest = {}; }
+    try {
+      manifest = JSON.parse(readFileSync(absManifest, "utf8"));
+    } catch {
+      manifest = {};
+    }
   }
 
   const legacy_path = path.join(cwd, ".superpowers/sdd");
@@ -83,7 +90,8 @@ export function sddContext({
     const spec_path = specMatch?.[1] ?? specMatch?.[2] ?? "";
     if (spec_path) {
       const validated = docsValidate({ spec_path, plan_path, workspace_root: cwd });
-      if (validated.ok === false) return { ok: false, errors: validated.errors, error: validated.error };
+      if (validated.ok === false)
+        return { ok: false, errors: validated.errors, error: validated.error };
     }
     const tasks = parseTasksFromPlan(planText);
     if (tasks.length > 0) {

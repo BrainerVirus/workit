@@ -4,8 +4,7 @@ import path from "node:path";
 import { configDir } from "./config";
 
 const configPath = () =>
-  process.env.WORKFLOW_DOCS_REPO_CONFIG
-  ?? path.join(configDir(), "docs-repo.json");
+  process.env.WORKFLOW_DOCS_REPO_CONFIG ?? path.join(configDir(), "docs-repo.json");
 
 export const readDocsRepoConfig = (): { path: string } | null => {
   try {
@@ -25,7 +24,8 @@ export const writeDocsRepoConfig = (docsPath: string): void => {
 export const docsRepoPath = (): string | null => readDocsRepoConfig()?.path ?? null;
 
 export const validateDocsRepo = (docsPath: string): { ok: true } | { ok: false; error: string } => {
-  if (!existsSync(docsPath)) return { ok: false, error: `docs repo path does not exist: ${docsPath}` };
+  if (!existsSync(docsPath))
+    return { ok: false, error: `docs repo path does not exist: ${docsPath}` };
   try {
     execFileSync("git", ["-C", docsPath, "rev-parse", "--is-inside-work-tree"], { stdio: "pipe" });
   } catch {
@@ -49,7 +49,10 @@ export const linkDocsRepo = (
 
 export const listSpecs = (
   workspaceRoot: string,
-): { docs_repo: string | null; specs: { slug: string; spec: string; promoted: boolean; target: string | null }[] } => {
+): {
+  docs_repo: string | null;
+  specs: { slug: string; spec: string; promoted: boolean; target: string | null }[];
+} => {
   const repoPath = docsRepoPath();
   const specs: { slug: string; spec: string; promoted: boolean; target: string | null }[] = [];
   const docsDir = path.join(workspaceRoot, "docs");
@@ -63,7 +66,9 @@ export const listSpecs = (
       if (repoPath) {
         const featuresDir = path.join(repoPath, "features");
         if (existsSync(featuresDir)) {
-          const match = readdirSync(featuresDir).find((d) => new RegExp(`^20\\d{2}-\\d{2}-${slug}$`).test(d));
+          const match = readdirSync(featuresDir).find((d) =>
+            new RegExp(`^20\\d{2}-\\d{2}-${slug}$`).test(d),
+          );
           if (match) {
             promoted = true;
             target = path.join(repoPath, "features", match);
@@ -84,13 +89,20 @@ const monthPrefix = () => {
 };
 
 const readSafe = (p: string): string | null => {
-  try { return readFileSync(p, "utf8"); } catch { return null; }
+  try {
+    return readFileSync(p, "utf8");
+  } catch {
+    return null;
+  }
 };
 
 const specSummary = (specText: string): string => {
-  const contextMatch = specText.match(/## Context\n\n([\s\S]*?)(?=\n## |\Z)/);
+  const contextMatch = specText.match(/## Context\n\n([\s\S]*?)(?=\n## |Z)/);
   if (!contextMatch) return "";
-  const first = contextMatch[1].trim().split("\n").find((l) => l.trim() && !l.startsWith("<!--"));
+  const first = contextMatch[1]
+    .trim()
+    .split("\n")
+    .find((l) => l.trim() && !l.startsWith("<!--"));
   return (first ?? "").trim();
 };
 
@@ -105,7 +117,8 @@ export const promoteSpec = (
   workspaceRoot: string,
   slug: string,
   opts: { confirmed: boolean; force?: boolean },
-): { ok: true; target_dir: string; files: string[]; index_updated: boolean }
+):
+  | { ok: true; target_dir: string; files: string[]; index_updated: boolean }
   | { ok: false; error: string; findings?: unknown[] } => {
   if (!opts.confirmed) return { ok: false, error: "confirmed: true required" };
   if (!SLUG_RE.test(slug)) return { ok: false, error: `invalid slug: ${JSON.stringify(slug)}` };
@@ -121,14 +134,22 @@ export const promoteSpec = (
 
   const planText = readSafe(path.join(workspaceRoot, planRel));
   if (planText !== null) {
-    const validated = docsValidate({ spec_path: specRel, plan_path: planRel, workspace_root: workspaceRoot });
+    const validated = docsValidate({
+      spec_path: specRel,
+      plan_path: planRel,
+      workspace_root: workspaceRoot,
+    });
     if (validated.ok === false) return { ok: false, error: validated.error };
   }
 
   const findings = qualitySpec(specText);
   const hardFindings = findings.filter((f) => f.severity === "hard");
   if (hardFindings.length > 0 && !opts.force) {
-    return { ok: false, error: "spec has hard quality findings; pass force: true to override", findings };
+    return {
+      ok: false,
+      error: "spec has hard quality findings; pass force: true to override",
+      findings,
+    };
   }
 
   // SDD working state must be gitignored before promotion
@@ -136,9 +157,21 @@ export const promoteSpec = (
     const sddDir = path.join(workspaceRoot, "docs", slug, "sdd");
     if (existsSync(sddDir)) {
       try {
-        execFileSync("git", ["-C", workspaceRoot, "check-ignore", path.posix.join("docs", slug, "sdd", "progress.md")], { stdio: "pipe" });
+        execFileSync(
+          "git",
+          [
+            "-C",
+            workspaceRoot,
+            "check-ignore",
+            path.posix.join("docs", slug, "sdd", "progress.md"),
+          ],
+          { stdio: "pipe" },
+        );
       } catch {
-        return { ok: false, error: `docs/${slug}/sdd/ is not gitignored — add 'docs/*/sdd/' to .gitignore or pass force: true` };
+        return {
+          ok: false,
+          error: `docs/${slug}/sdd/ is not gitignored — add 'docs/*/sdd/' to .gitignore or pass force: true`,
+        };
       }
     }
   }
@@ -179,7 +212,9 @@ ${planText !== null ? "| [plan.md](./plan.md) | Plan de implementación |\n" : "
   files.push("README.md");
 
   const indexPath = path.join(repoPath, "features", "README.md");
-  const indexText = readSafe(indexPath) ?? `# Features\n\nEspecificaciones y planes por feature.\n\n## Features documentadas\n\n| Feature | Repos afectados | Estado |\n| --- | --- | --- |\n`;
+  const indexText =
+    readSafe(indexPath) ??
+    `# Features\n\nEspecificaciones y planes por feature.\n\n## Features documentadas\n\n| Feature | Repos afectados | Estado |\n| --- | --- | --- |\n`;
   const row = `| [${slug}](./${prefix}-${slug}/) | ${specRepos(specText)} | Spec en revisión |`;
   const rowRe = new RegExp(`^\\| \\[${slug}\\]\\([^)]*\\) \\|.*$`, "m");
   let newIndex: string;

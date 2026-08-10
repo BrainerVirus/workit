@@ -29,8 +29,14 @@ const scripts = (overrides: Partial<YouTrackScripts> = {}): YouTrackScripts => (
 
 test("parseIssueRef handles id, url, embedded, and errors", () => {
   expect(parseIssueRef("NSR-40")).toEqual({ issueId: "NSR-40", source: "id" });
-  expect(parseIssueRef("https://yt.example.test/issue/NSR-40")).toEqual({ issueId: "NSR-40", source: "url" });
-  expect(parseIssueRef("https://yt.example.test/issues/ABC-12?x=1")).toEqual({ issueId: "ABC-12", source: "url" });
+  expect(parseIssueRef("https://yt.example.test/issue/NSR-40")).toEqual({
+    issueId: "NSR-40",
+    source: "url",
+  });
+  expect(parseIssueRef("https://yt.example.test/issues/ABC-12?x=1")).toEqual({
+    issueId: "ABC-12",
+    source: "url",
+  });
   expect(parseIssueRef("see NSR-40 for context")).toEqual({ issueId: "NSR-40", source: "url" });
   const empty = parseIssueRef("");
   expect("error" in empty ? empty.error : "").toContain("empty");
@@ -41,7 +47,9 @@ test("parseIssueRef handles id, url, embedded, and errors", () => {
 });
 
 test("verifyYouTrackToken delegates to config script", () => {
-  expect(verifyYouTrackToken(scripts({ config: () => ({ error: "no token" }) }))).toEqual({ error: "no token" });
+  expect(verifyYouTrackToken(scripts({ config: () => ({ error: "no token" }) }))).toEqual({
+    error: "no token",
+  });
   expect(verifyYouTrackToken(scripts())).toEqual({ data: cfg() });
 });
 
@@ -73,10 +81,7 @@ test("context falls back to meeting issue and spec/plan YouTrack ref", () => {
   try {
     mkdirSync(path.join(root, "docs", "s"), { recursive: true });
     writeFileSync(path.join(root, "docs/s/spec.md"), "# S\n\n**YouTrack:** `ABC-7`\n");
-    const fromSpec = context(
-      { spec_path: "docs/s/spec.md", workspace_root: root },
-      scripts(),
-    );
+    const fromSpec = context({ spec_path: "docs/s/spec.md", workspace_root: root }, scripts());
     expect(fromSpec.issueId).toBe("ABC-7");
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -84,14 +89,25 @@ test("context falls back to meeting issue and spec/plan YouTrack ref", () => {
 });
 
 test("context errors: config failure, greeting failure, missing issue", () => {
-  expect(context({ workspace_root: os.tmpdir() }, scripts({ config: () => ({ error: "cfg down" }) })).error)
-    .toBe("cfg down");
-  expect(context({ workspace_root: os.tmpdir() }, scripts({ greeting: () => ({ stdout: "", exitCode: 1, stderr: "no greet" }) })).error)
-    .toContain("no greet");
-  expect(context({ workspace_root: os.tmpdir() }, scripts({ config: () => ({ data: cfg({ meetingIssue: undefined }) }) })).error)
-    .toContain("invalid or missing issue id");
-  expect(context({ issue_ref: "bad ref", workspace_root: os.tmpdir() }, scripts()).error)
-    .toContain("could not parse issue id");
+  expect(
+    context({ workspace_root: os.tmpdir() }, scripts({ config: () => ({ error: "cfg down" }) }))
+      .error,
+  ).toBe("cfg down");
+  expect(
+    context(
+      { workspace_root: os.tmpdir() },
+      scripts({ greeting: () => ({ stdout: "", exitCode: 1, stderr: "no greet" }) }),
+    ).error,
+  ).toContain("no greet");
+  expect(
+    context(
+      { workspace_root: os.tmpdir() },
+      scripts({ config: () => ({ data: cfg({ meetingIssue: undefined }) }) }),
+    ).error,
+  ).toContain("invalid or missing issue id");
+  expect(context({ issue_ref: "bad ref", workspace_root: os.tmpdir() }, scripts()).error).toContain(
+    "could not parse issue id",
+  );
 });
 
 test("context uses meetingIssues map with custom labels and urls", () => {
@@ -121,9 +137,15 @@ test("parseDuration delegates and maps errors", () => {
 });
 
 test("logTime validates, formats date arg, and delegates", () => {
-  expect(logTime({ issueId: "bad", minutes: 30, workspace_root: os.tmpdir() }, scripts()).error).toContain("invalid issueId");
-  expect(logTime({ issueId: "NSR-1", minutes: 0, workspace_root: os.tmpdir() }, scripts()).error).toContain("positive");
-  expect(logTime({ issueId: "NSR-1", minutes: -5, workspace_root: os.tmpdir() }, scripts()).error).toContain("positive");
+  expect(
+    logTime({ issueId: "bad", minutes: 30, workspace_root: os.tmpdir() }, scripts()).error,
+  ).toContain("invalid issueId");
+  expect(
+    logTime({ issueId: "NSR-1", minutes: 0, workspace_root: os.tmpdir() }, scripts()).error,
+  ).toContain("positive");
+  expect(
+    logTime({ issueId: "NSR-1", minutes: -5, workspace_root: os.tmpdir() }, scripts()).error,
+  ).toContain("positive");
   const withDateMs = logTime(
     { issueId: "NSR-1", minutes: 30, dateMs: 123456, workspace_root: os.tmpdir() },
     scripts({ api: (args) => ({ data: { captured: args } }) }),
@@ -140,8 +162,12 @@ test("logTime validates, formats date arg, and delegates", () => {
     scripts({ api: (args) => ({ data: { captured: args } }) }),
   );
   expect(auto.captured).toContain("auto");
-  expect(logTime({ issueId: "NSR-1", minutes: 30, workspace_root: os.tmpdir() }, scripts({ api: () => ({ error: "api down" }) })).error)
-    .toBe("api down");
+  expect(
+    logTime(
+      { issueId: "NSR-1", minutes: 30, workspace_root: os.tmpdir() },
+      scripts({ api: () => ({ error: "api down" }) }),
+    ).error,
+  ).toBe("api down");
 });
 
 test("buildDraft composes header, greeting, project, notes, and facts", () => {
@@ -167,9 +193,15 @@ test("buildDraft composes header, greeting, project, notes, and facts", () => {
 });
 
 test("postUpdate validates confirmed, issueId, and markdown", () => {
-  expect(postUpdate({ confirmed: false, issueId: "NSR-1", markdown: "x" }).error).toContain("confirmed");
-  expect(postUpdate({ confirmed: true, issueId: "bad", markdown: "x" }).error).toContain("invalid issueId");
-  expect(postUpdate({ confirmed: true, issueId: "NSR-1", markdown: "  " }).error).toContain("markdown required");
+  expect(postUpdate({ confirmed: false, issueId: "NSR-1", markdown: "x" }).error).toContain(
+    "confirmed",
+  );
+  expect(postUpdate({ confirmed: true, issueId: "bad", markdown: "x" }).error).toContain(
+    "invalid issueId",
+  );
+  expect(postUpdate({ confirmed: true, issueId: "NSR-1", markdown: "  " }).error).toContain(
+    "markdown required",
+  );
 });
 
 test("postUpdate surfaces comment errors and success with minutes", () => {
@@ -186,7 +218,12 @@ test("postUpdate surfaces comment errors and success with minutes", () => {
       logTime: () => ({ data: { ok: true } }),
     },
   );
-  expect(withMinutes).toEqual({ ok: true, issueId: "NSR-1", postedComment: true, loggedMinutes: 45 });
+  expect(withMinutes).toEqual({
+    ok: true,
+    issueId: "NSR-1",
+    postedComment: true,
+    loggedMinutes: 45,
+  });
 
   const noMinutes = postUpdate(
     { confirmed: true, issueId: "NSR-1", markdown: "x", workspace_root: os.tmpdir() },
@@ -200,10 +237,7 @@ test("resolveYouTrackFromPaths returns null when no file has a YouTrack ref", ()
   try {
     mkdirSync(path.join(root, "docs", "s"), { recursive: true });
     writeFileSync(path.join(root, "docs/s/spec.md"), "# S\n\n**Branch:** `feature/s`\n");
-    const result = context(
-      { spec_path: "docs/s/spec.md", workspace_root: root },
-      scripts(),
-    );
+    const result = context({ spec_path: "docs/s/spec.md", workspace_root: root }, scripts());
     expect(result.error).toContain("invalid or missing issue id");
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -220,14 +254,19 @@ test("default scripts delegate only to read-only youtrack helpers", () => {
   expect(duration).toBeDefined();
 });
 
-
 test("write guard: logTime refuses to mutate without WORKFLOW_YT_WRITE", () => {
   const previous = process.env.WORKFLOW_YT_WRITE;
   delete process.env.WORKFLOW_YT_WRITE;
   try {
-    const result = logTime({ issueId: "NSR-40", minutes: 15, workspace_root: os.tmpdir() }, scripts({
-      api: () => ({ error: "ERROR: YouTrack write operations require WORKFLOW_YT_WRITE=1 (refusing to mutate production)" }),
-    }));
+    const result = logTime(
+      { issueId: "NSR-40", minutes: 15, workspace_root: os.tmpdir() },
+      scripts({
+        api: () => ({
+          error:
+            "ERROR: YouTrack write operations require WORKFLOW_YT_WRITE=1 (refusing to mutate production)",
+        }),
+      }),
+    );
     expect(result.error).toContain("WORKFLOW_YT_WRITE");
   } finally {
     if (previous === undefined) delete process.env.WORKFLOW_YT_WRITE;
@@ -255,7 +294,10 @@ test("real api.sh rejects writes without WORKFLOW_YT_WRITE", () => {
   // The guard must fail closed BEFORE any HTTP call. We point the config at a
   // nonexistent file so even an "allowed" write can never reach the real API.
   const { spawnSync } = require("node:child_process") as typeof import("node:child_process");
-  const script = path.join(path.resolve(import.meta.dir, "..", ".."), "packages/workit-core/scripts/youtrack/api.sh");
+  const script = path.join(
+    path.resolve(import.meta.dir, "..", ".."),
+    "packages/workit-core/scripts/youtrack/api.sh",
+  );
   const env = (write: string) => ({
     WORKFLOW_YT_WRITE: write,
     WORKFLOW_YOUTRACK_CONFIG: "/nonexistent/youtrack.json",
@@ -290,11 +332,20 @@ test("no test may reach the real YouTrack API (write-guard structural scan)", ()
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
       // Skip definitions, mocks, and non-write usages.
-      if (line.includes("operations") || line.includes("scripts(") || line.includes("=>")
-        || line.includes("expect(") || line.includes("await import")
-        || line.includes("mock") || line.includes("//") || line.includes("test(")
-        || line.includes("logTimeUpdate") || line.includes("logTimeConfirmed")
-        || /\b(?:const|let|var)\s+\w+\s*=\s*(?:async\s*)?\([^)]*\)\s*=>/.test(line)) continue;
+      if (
+        line.includes("operations") ||
+        line.includes("scripts(") ||
+        line.includes("=>") ||
+        line.includes("expect(") ||
+        line.includes("await import") ||
+        line.includes("mock") ||
+        line.includes("//") ||
+        line.includes("test(") ||
+        line.includes("logTimeUpdate") ||
+        line.includes("logTimeConfirmed") ||
+        /\b(?:const|let|var)\s+\w+\s*=\s*(?:async\s*)?\([^)]*\)\s*=>/.test(line)
+      )
+        continue;
       // A bare call to logTime/postUpdate with valid write data and no second
       // argument (injection) would reach the real default API layer.
       const bareCall = /\b(?:logTime|postUpdate)\(\s*\{[^}]*\}\s*\)/.test(line);

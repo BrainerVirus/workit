@@ -2,14 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { resolveWorkspaceRoot } from "./scripts";
 
-const CATEGORIES = [
-  "Added",
-  "Changed",
-  "Deprecated",
-  "Removed",
-  "Fixed",
-  "Security",
-];
+const CATEGORIES = ["Added", "Changed", "Deprecated", "Removed", "Fixed", "Security"];
 
 // Port of scripts/changelog/apply-unreleased.py — merge Keep a Changelog
 // entries into ## [Unreleased] without duplicating ### headings.
@@ -73,10 +66,21 @@ function splitUnreleased(text: string): [string, string, string] {
 function canonicalCategory(heading: string): string | null {
   const match = CAT_RE.exec(heading.replace(/\r?\n$/, ""));
   if (!match) return null;
-  return CATEGORIES.find((c) => c.toLowerCase() === match[0].replace(/^###\s+/, "").trim().toLowerCase()) ?? null;
+  return (
+    CATEGORIES.find(
+      (c) =>
+        c.toLowerCase() ===
+        match[0]
+          .replace(/^###\s+/, "")
+          .trim()
+          .toLowerCase(),
+    ) ?? null
+  );
 }
 
-function splitSections(body: string): [string[], Array<{ heading: string; category: string | null; body: string[] }>] {
+function splitSections(
+  body: string,
+): [string[], Array<{ heading: string; category: string | null; body: string[] }>] {
   const preamble: string[] = [];
   const sections: Array<{ heading: string; category: string | null; body: string[] }> = [];
   let current: { heading: string; category: string | null; body: string[] } | null = null;
@@ -207,7 +211,8 @@ function applyChangelog(
         break;
       }
     }
-    text = lines.slice(0, insertAt).join("") + "## [Unreleased]\n\n" + lines.slice(insertAt).join("");
+    text =
+      lines.slice(0, insertAt).join("") + "## [Unreleased]\n\n" + lines.slice(insertAt).join("");
   }
 
   const [before, body, after] = splitUnreleased(text);
@@ -290,9 +295,7 @@ export function changelogApply({
 
 export function changelogUnreleasedStats(workspace_root: string, changelogPath = "CHANGELOG.md") {
   const cwd = resolveWorkspaceRoot(workspace_root);
-  const abs = path.isAbsolute(changelogPath)
-    ? changelogPath
-    : path.join(cwd, changelogPath);
+  const abs = path.isAbsolute(changelogPath) ? changelogPath : path.join(cwd, changelogPath);
   if (!fs.existsSync(abs)) return { exists: false };
   const text = fs.readFileSync(abs, "utf8");
   const m = text.match(/##\s+\[Unreleased\]([\s\S]*?)(?=\n##\s+\[|$)/i);

@@ -1,12 +1,5 @@
 import { expect, test } from "bun:test";
-import {
-  mkdirSync,
-  mkdtempSync,
-  readdirSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -25,7 +18,11 @@ function temporaryDirectory() {
 
 function filesUnder(target: string): string[] {
   const readFileSafe = (p: string): string | null => {
-    try { return readFileSync(p, "utf8"); } catch { return null; }
+    try {
+      return readFileSync(p, "utf8");
+    } catch {
+      return null;
+    }
   };
   if (!path.extname(target) && !readFileSafe(target)) {
     return readdirSync(target, { withFileTypes: true }).flatMap((entry) => {
@@ -37,7 +34,11 @@ function filesUnder(target: string): string[] {
 }
 
 const readFileSafe = (p: string): string | null => {
-  try { return readFileSync(p, "utf8"); } catch { return null; }
+  try {
+    return readFileSync(p, "utf8");
+  } catch {
+    return null;
+  }
 };
 
 test("changelog rejects missing entries without throwing", () => {
@@ -55,14 +56,18 @@ test("changelog rejects a path outside workspace_root", () => {
       workspace_root: root,
     });
     expect(result.error).toMatch(/inside workspace_root/);
-  } finally { rmSync(root, { recursive: true, force: true }); }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("changelog preserves rich Markdown while consolidating categories", () => {
   const root = temporaryDirectory();
   try {
     const changelog = path.join(root, "CHANGELOG.md");
-    writeFileSync(changelog, `# Changelog
+    writeFileSync(
+      changelog,
+      `# Changelog
 
 ## [Unreleased]
 
@@ -89,7 +94,8 @@ Keep this custom section.
 ### Added
 
 - Historical feature
-`);
+`,
+    );
 
     const result = changelogApply({
       entries: { Added: ["New feature", "Existing feature"] },
@@ -114,7 +120,9 @@ Keep this custom section.
     ]) {
       expect(output).toContain(preserved);
     }
-  } finally { rmSync(root, { recursive: true, force: true }); }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("handoff includes every parsed task row", () => {
@@ -143,16 +151,15 @@ test("handoff includes every parsed task row", () => {
     );
     spawnSync("git", ["init", "-q"], { cwd: root });
 
-    const result = buildHandoffPrompt(
-      root,
-      "docs/repair/plan.md",
-    );
+    const result = buildHandoffPrompt(root, "docs/repair/plan.md");
     expect("error" in result).toBe(false);
     if (!("error" in result)) {
       expect(result.prompt).toContain("- Task 1: First repair");
       expect(result.prompt).toContain("- Task 2: Second repair");
     }
-  } finally { rmSync(root, { recursive: true, force: true }); }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("docs validate rejects task number gaps", () => {
@@ -172,7 +179,9 @@ test("docs validate rejects task number gaps", () => {
     if (result.ok === false) {
       expect(result.error).toMatch(/task/i);
     }
-  } finally { rmSync(root, { recursive: true, force: true }); }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("question choices use Cursor AskQuestion without an MCP adapter", () => {
@@ -189,16 +198,15 @@ test("question choices use Cursor AskQuestion without an MCP adapter", () => {
     .filter((file) => !file.includes(`${path.sep}mcp${path.sep}test${path.sep}`))
     .filter((file) => {
       const source = readFileSafe(file);
-      return source?.includes("workflow_prepare_question") || source?.includes("prepare-question.sh");
+      return (
+        source?.includes("workflow_prepare_question") || source?.includes("prepare-question.sh")
+      );
     })
     .map((file) => path.relative(REPO_ROOT, file));
 
   expect(offenders).toEqual([]);
   const pr = readFileSync(path.join(CURSOR_ROOT, "skills/wk-pr/SKILL.md"), "utf8");
-  const issue = readFileSync(
-    path.join(CURSOR_ROOT, "skills/wk-issue-update/SKILL.md"),
-    "utf8",
-  );
+  const issue = readFileSync(path.join(CURSOR_ROOT, "skills/wk-issue-update/SKILL.md"), "utf8");
   expect(pr).toMatch(/AskQuestion/);
   expect(pr).toMatch(/MR\/PR/);
   expect(issue).toMatch(/AskQuestion/);
@@ -266,16 +274,16 @@ test("release notes require and expose an explicit range", () => {
     expect(explicit.status).toBe(0);
     expect(explicit.stdout).toMatch(/^requested: HEAD$/m);
     expect(explicit.stdout).toMatch(/^range: .+$/m);
-  } finally { rmSync(root, { recursive: true, force: true }); }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("plugin and MCP versions are synchronized", () => {
   const manifest = JSON.parse(
     readFileSync(path.join(CURSOR_ROOT, ".cursor-plugin/plugin.json"), "utf8"),
   );
-  const opencode = JSON.parse(
-    readFileSync(path.join(REPO_ROOT, "package.json"), "utf8"),
-  );
+  const opencode = JSON.parse(readFileSync(path.join(REPO_ROOT, "package.json"), "utf8"));
   expect(manifest.version).toBe(opencode.version);
 });
 
@@ -320,7 +328,9 @@ test("docs validate accepts the new docs/<slug> layout", () => {
     );
     const result = docsValidate({ spec_path: spec, plan_path: plan, workspace_root: root });
     expect(result.ok).toBe(true);
-  } finally { rmSync(root, { recursive: true, force: true }); }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 import { changelogUnreleasedStats } from "../../packages/workit-core/src/core/changelog";
@@ -328,7 +338,10 @@ import { changelogUnreleasedStats } from "../../packages/workit-core/src/core/ch
 test("changelog accepts array entries with type/text", () => {
   const root = temporaryDirectory();
   try {
-    writeFileSync(path.join(root, "CHANGELOG.md"), "# Changelog\n\n## [Unreleased]\n\n### Fixed\n\n- Old\n");
+    writeFileSync(
+      path.join(root, "CHANGELOG.md"),
+      "# Changelog\n\n## [Unreleased]\n\n### Fixed\n\n- Old\n",
+    );
     const result = changelogApply({
       entries: [
         { type: "fixed", text: "Array fix" },
@@ -337,42 +350,58 @@ test("changelog accepts array entries with type/text", () => {
       workspace_root: root,
     });
     expect(result.error).toBeUndefined();
-  } finally { rmSync(root, { recursive: true, force: true }); }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("changelog rejects entries missing category or text", () => {
-  expect(changelogApply({ entries: [{ category: "Fixed" }], workspace_root: os.tmpdir() }).error)
-    .toMatch(/category \+ text/);
-  expect(changelogApply({ entries: [{ text: "x" }], workspace_root: os.tmpdir() }).error)
-    .toMatch(/category \+ text/);
+  expect(
+    changelogApply({ entries: [{ category: "Fixed" }], workspace_root: os.tmpdir() }).error,
+  ).toMatch(/category \+ text/);
+  expect(changelogApply({ entries: [{ text: "x" }], workspace_root: os.tmpdir() }).error).toMatch(
+    /category \+ text/,
+  );
 });
 
 test("changelog rejects invalid categories", () => {
-  expect(changelogApply({ entries: [{ category: "Nope", text: "x" }], workspace_root: os.tmpdir() }).error)
-    .toMatch(/invalid category/);
-  expect(changelogApply({ entries: { Nope: ["x"] }, workspace_root: os.tmpdir() }).error)
-    .toMatch(/invalid category/);
+  expect(
+    changelogApply({ entries: [{ category: "Nope", text: "x" }], workspace_root: os.tmpdir() })
+      .error,
+  ).toMatch(/invalid category/);
+  expect(changelogApply({ entries: { Nope: ["x"] }, workspace_root: os.tmpdir() }).error).toMatch(
+    /invalid category/,
+  );
 });
 
 test("changelog rejects non-object non-array entries", () => {
-  expect(changelogApply({ entries: "nonsense", workspace_root: os.tmpdir() }).error)
-    .toMatch(/object or array/);
+  expect(changelogApply({ entries: "nonsense", workspace_root: os.tmpdir() }).error).toMatch(
+    /object or array/,
+  );
 });
 
 test("changelog stats: missing file, no unreleased, and duplicate headings", () => {
   const root = temporaryDirectory();
   try {
     expect(changelogUnreleasedStats(root)).toEqual({ exists: false });
-    writeFileSync(path.join(root, "CHANGELOG.md"), "# Changelog\n\n## [1.0.0] - 2026-01-01\n\n### Added\n- x\n");
+    writeFileSync(
+      path.join(root, "CHANGELOG.md"),
+      "# Changelog\n\n## [1.0.0] - 2026-01-01\n\n### Added\n- x\n",
+    );
     expect(changelogUnreleasedStats(root)).toEqual({ exists: true, has_unreleased: false });
-    writeFileSync(path.join(root, "CHANGELOG.md"), "# Changelog\n\n## [Unreleased]\n\n### Added\n- a\n\n### Added\n- b\n");
+    writeFileSync(
+      path.join(root, "CHANGELOG.md"),
+      "# Changelog\n\n## [Unreleased]\n\n### Added\n- a\n\n### Added\n- b\n",
+    );
     const stats = changelogUnreleasedStats(root);
     expect(stats.exists).toBe(true);
     expect(stats.has_unreleased).toBe(true);
     expect(stats.category_headings).toEqual(["Added", "Added"]);
     expect(stats.duplicate_category_headings).toEqual(["Added"]);
     expect(stats.needs_normalize).toBe(true);
-  } finally { rmSync(root, { recursive: true, force: true }); }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 import { asciiWireframe, flowDiagram } from "../../packages/workit-core/src/core/present";
@@ -401,17 +430,26 @@ test("no docs/superpowers paths remain in sources", () => {
     for (const entry of readdirSync(dir)) {
       if (skipDirs.has(entry)) continue;
       const full = path.join(dir, entry);
-      if (statSync(full).isDirectory()) { walk(full); continue; }
+      if (statSync(full).isDirectory()) {
+        walk(full);
+        continue;
+      }
       if (!/\.(ts|js|sh|md|json)$/.test(entry)) continue;
       if (entry === selfFile) continue;
-      if (full.split(path.sep).join("/").includes("packages/workit-core/scripts/update-superpowers.sh")) continue; // sed patterns intentionally reference the old layout
+      if (
+        full
+          .split(path.sep)
+          .join("/")
+          .includes("packages/workit-core/scripts/update-superpowers.sh")
+      )
+        continue; // sed patterns intentionally reference the old layout
       const content = readFileSync(full, "utf8");
       if (content.includes("docs/superpowers")) {
         offenders.push(path.relative(root, full));
       }
     }
   };
-      walk(root);
+  walk(root);
   expect(offenders).toEqual([]);
 });
 
@@ -434,7 +472,10 @@ test("no wf- entry-point references remain in skills, commands, or plugin descri
   const walk = (dir: string) => {
     for (const entry of readdirSync(dir)) {
       const full = path.join(dir, entry);
-      if (statSync(full).isDirectory()) { walk(full); continue; }
+      if (statSync(full).isDirectory()) {
+        walk(full);
+        continue;
+      }
       scanFile(full);
     }
   };

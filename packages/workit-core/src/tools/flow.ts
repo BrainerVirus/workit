@@ -11,8 +11,7 @@ import path from "node:path";
 
 const output = (value: unknown) => JSON.stringify(value, null, 2);
 
-const flowPathFor = (slug: string) =>
-  path.posix.join("docs", slug, "sdd", "flow.json");
+const flowPathFor = (slug: string) => path.posix.join("docs", slug, "sdd", "flow.json");
 
 export function createFlowTools() {
   return {
@@ -27,20 +26,23 @@ export function createFlowTools() {
           const slug = slugFromPath(plan_path ?? spec_path ?? "");
           if (!slug) return output(fail("plan_path or spec_path required"));
           const state = readFlowState(context.directory, slug);
-          return output(ok({
-            slug,
-            spec: state.spec,
-            plan: state.plan,
-            menu: state.menu,
-            flow_path: flowPathFor(slug),
-          }));
+          return output(
+            ok({
+              slug,
+              spec: state.spec,
+              plan: state.plan,
+              menu: state.menu,
+              flow_path: flowPathFor(slug),
+            }),
+          );
         } catch (error) {
           return output(fail(error instanceof Error ? error.message : "flow status failed"));
         }
       },
     }),
     workflow_spec_approve: tool({
-      description: "Advance spec status: first call self_reviewed, second call approved (after user approval)",
+      description:
+        "Advance spec status: first call self_reviewed, second call approved (after user approval)",
       args: {
         confirmed: tool.schema.boolean(),
         spec_path: tool.schema.string(),
@@ -56,7 +58,8 @@ export function createFlowTools() {
       },
     }),
     workflow_plan_approve: tool({
-      description: "Advance plan status: first call self_reviewed, second call approved. Requires approved spec.",
+      description:
+        "Advance plan status: first call self_reviewed, second call approved. Requires approved spec.",
       args: {
         confirmed: tool.schema.boolean(),
         plan_path: tool.schema.string(),
@@ -76,12 +79,20 @@ export function createFlowTools() {
       args: {
         confirmed: tool.schema.boolean(),
         plan_path: tool.schema.string(),
-        choice: tool.schema.enum(["subagent-driven", "inline", "handoff", "review-spec", "review-plan"]),
+        choice: tool.schema.enum([
+          "subagent-driven",
+          "inline",
+          "handoff",
+          "review-spec",
+          "review-plan",
+        ]),
       },
       execute: async ({ confirmed, plan_path, choice }, context) => {
         const slug = slugFromPath(plan_path);
         const result = recordMenuChoice(context.directory, slug, plan_path, choice, confirmed);
-        return output(result.ok ? ok({ menu: { presented: true, chosen: choice } }) : fail(result.error));
+        return output(
+          result.ok ? ok({ menu: { presented: true, chosen: choice } }) : fail(result.error),
+        );
       },
     }),
   };
