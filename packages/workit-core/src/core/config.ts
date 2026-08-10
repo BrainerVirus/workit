@@ -27,22 +27,44 @@ export const resolveConfigDir = (): string =>
 // migratedDir remembers the resolved dir already checked: configDir() is on
 // hot paths, so subsequent calls are one string compare. Re-checking per
 // unique dir also keeps tests with swapped env working.
+// ponytail: cache keyed by dir value — an env override explicitly set to the
+// default path caches before migration could trigger; only matters if that
+// env is cleared mid-process (next unique dir value re-checks).
 let migratedDir: string | null = null;
+// A mid-loop copy failure leaves the new dir half-populated; keep retrying
+// until a full pass succeeds instead of silently skipping the failed entry.
+let migrationFailed = false;
 
 export const ensureConfigDir = (dir: string = resolveConfigDir()): string => {
   if (migratedDir === dir) return dir;
-  migratedDir = dir;
-  if (process.env.WORKFLOW_TOOLKIT_CONFIG || process.env.WORKFLOW_TOOLKIT_CONFIG_DIR) return dir;
+  if (process.env.WORKFLOW_TOOLKIT_CONFIG || process.env.WORKFLOW_TOOLKIT_CONFIG_DIR) {
+    migratedDir = dir;
+    return dir;
+  }
   const legacy = path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config"), "workflow-toolkit");
-  if (existsSync(dir) || !existsSync(legacy)) return dir;
+  if (!existsSync(legacy)) {
+    migratedDir = dir;
+    return dir;
+  }
+  if (!migrationFailed && existsSync(dir)) {
+    migratedDir = dir;
+    return dir;
+  }
+  migrationFailed = false;
   mkdirSync(dir, { recursive: true });
   for (const entry of readdirSync(legacy, { withFileTypes: true })) {
     const src = path.join(legacy, entry.name);
     const dest = path.join(dir, entry.name);
     if (existsSync(dest)) continue;
-    if (entry.isDirectory()) cpSync(src, dest, { recursive: true });
-    else if (entry.isFile()) copyFileSync(src, dest);
+    try {
+      if (entry.isDirectory()) cpSync(src, dest, { recursive: true });
+      else if (entry.isFile()) copyFileSync(src, dest);
+    } catch (err) {
+      migrationFailed = true;
+      console.warn(`[workit] config migration: failed to copy ${src}: ${(err as Error).message}`);
+    }
   }
+  if (!migrationFailed) migratedDir = dir;
   return dir;
 };
 

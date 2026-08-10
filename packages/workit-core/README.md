@@ -9,7 +9,7 @@ Multi-platform Superpowers workflow plugin for **Cursor** and **OpenCode**: veri
 | **Shared core** | `packages/workit-core/` (src, skills, commands, scripts, templates) | ![npm](https://img.shields.io/npm/v/@brainervirus/workit-core) |
 | **CLI** | `packages/workit-cli/` (Ink wizard, bin `workit`) | ![npm](https://img.shields.io/npm/v/@brainervirus/workit-cli) |
 
-Config directory (both platforms): `~/.config/workflow-toolkit/` (kept as-is for install stability).
+Config directory (both platforms): `~/.config/workit/` — legacy `~/.config/workflow-toolkit/` is auto-migrated on first run and kept as a fallback.
 
 [![npm version](https://img.shields.io/npm/v/@brainervirus/workit-opencode)](https://www.npmjs.com/package/@brainervirus/workit-opencode)
 [![CI](https://img.shields.io/github/actions/workflow/status/BrainerVirus/workit/ci.yml?branch=main&label=CI)](https://github.com/BrainerVirus/workit/actions)

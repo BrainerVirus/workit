@@ -5,11 +5,11 @@ description: Draft or create PR/MR via workflow_pr_context + glab/gh. Squash on 
 
 # PR — Draft or Create
 
-Draft a merge request / pull request body, or create it on GitLab (`glab`) / GitHub (`gh`) using `~/.config/workflow-toolkit/vcs.json`.
+Draft a merge request / pull request body, or create it on GitLab (`glab`) / GitHub (`gh`) using `~/.config/workit/vcs.json`.
 
 **Setup:** `/wk-init` → pick provider → VCS scaffold → edit active token file.
 
-**Active provider:** read `vcs_config.provider` from `workflow_pr_context` (or `provider` in `~/.config/workflow-toolkit/vcs.json`). That decides `glab` vs `gh`.
+**Active provider:** read `vcs_config.provider` from `workflow_pr_context` (or `provider` in `~/.config/workit/vcs.json`). That decides `glab` vs `gh`.
 
 ## Step 1 — Gather facts (required)
 

@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -115,6 +115,35 @@ test("CA-05: derived paths resolve under the migrated workit dir", () => {
     expect(urls.gitlab.tokenFile).toBeUndefined();
   });
   rmSync(xdg, { recursive: true, force: true });
+});
+
+test("CA-07: copy failure is non-fatal and retried (cache set only post-loop)", () => {
+  const xdg = mkdtempSync(path.join(os.tmpdir(), "wk-ca07-"));
+  const legacy = path.join(xdg, "workflow-toolkit");
+  mkdirSync(legacy, { recursive: true });
+  writeFileSync(path.join(legacy, "config.json"), '{"locale":"es-CL"}');
+  writeFileSync(path.join(legacy, "youtrack.json"), '{"baseUrl":"https://yt.example.test"}');
+  const blocked = path.join(legacy, "blocked.token");
+  writeFileSync(blocked, "tok-456\n");
+  // EACCES only fires for non-root on unix; elsewhere the failure can't be
+  // simulated, so the ordering asserts below still run (fallback per review).
+  const canSimulate = process.platform !== "win32" && (typeof process.getuid !== "function" || process.getuid() !== 0);
+  if (canSimulate) chmodSync(blocked, 0o000);
+  try {
+    isolate({ XDG_CONFIG_HOME: xdg }, () => {
+      const dir = configDir();
+      expect(dir).toBe(path.join(xdg, "workit"));
+      expect(readFileSync(path.join(dir, "config.json"), "utf8")).toBe('{"locale":"es-CL"}');
+      expect(readFileSync(path.join(dir, "youtrack.json"), "utf8")).toBe('{"baseUrl":"https://yt.example.test"}');
+      if (canSimulate) {
+        expect(existsSync(path.join(dir, "blocked.token"))).toBe(false); // mid-loop failure
+        chmodSync(blocked, 0o644);
+        expect(configDir()).toBe(dir); // cache not set pre-loop -> migration retries
+        expect(readFileSync(path.join(dir, "blocked.token"), "utf8")).toBe("tok-456\n");
+      }
+      expect(configDir()).toBe(dir); // now cached, post-loop
+    });
+  } finally { rmSync(xdg, { recursive: true, force: true }); }
 });
 
 test("CA-06: bash resolve_config_dir matches TS after migration; config.sh load reads the migrated workit dir", () => {

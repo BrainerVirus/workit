@@ -18,7 +18,9 @@ resolve_config_dir() {
   local LEGACY="$base/workflow-toolkit"
   if [ ! -d "$NEW" ] && [ -d "$LEGACY" ]; then
     mkdir -p "$NEW"
-    cp -r "$LEGACY/." "$NEW/" 2>/dev/null || true
+    if ! cp -r "$LEGACY/." "$NEW/"; then
+      printf 'workit: warning: partial config migration from %s (kept in place; retry on next run)\n' "$LEGACY" >&2
+    fi
   fi
   printf '%s\n' "$NEW"
 }
