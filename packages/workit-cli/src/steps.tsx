@@ -83,7 +83,7 @@ export function Wizard({ onExit }: { onExit: () => void }): JSX.Element {
   return (
     <Box flexDirection="column" gap={1}>
       <Text bold color="cyan">
-        flowkit — workflow rails for agentic coding
+        workit — workflow rails for agentic coding
       </Text>
       <Step {...props} />
     </Box>
