@@ -23,7 +23,10 @@ else
   # Last resort: ensure share is a clone, then pin it
   if [ ! -d "${SHARE}/.git" ]; then
     TMP=$(mktemp -d)
-    git clone --depth 1 "git@github.com:${WORKFLOW_TOOLKIT_REPO:-BrainerVirus/workit}.git" "$TMP"
+    if ! git clone --depth 1 "https://github.com/${WORKFLOW_TOOLKIT_REPO:-BrainerVirus/workit}.git" "$TMP"; then
+      echo "FATAL: could not clone https://github.com/${WORKFLOW_TOOLKIT_REPO:-BrainerVirus/workit}.git" >&2
+      exit 1
+    fi
     rsync -a --delete --exclude node_modules --exclude cursor/mcp/node_modules "$TMP/" "$SHARE/"
     rm -rf "$TMP"
   fi

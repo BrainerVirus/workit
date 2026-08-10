@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { isDeepStrictEqual } from "node:util";
 import path from "node:path";
 import {
@@ -105,11 +105,66 @@ export function runProjectSetup(
 
 export const DEFAULT_BASE_URL = "https://enghouseamg.youtrack.cloud";
 
-export type YouTrackScaffold = {
+// Shared scaffold outcome envelope (WZ-05/WZ-06): credentials are preserved
+// byte-for-byte unless absent, and malformed config files block every write.
+export type ScaffoldStatus = "missing" | "preserved" | "malformed";
+
+export type ScaffoldOutcome = {
+  ok: boolean;
+  status: ScaffoldStatus;
+  /** Blocking diagnostic, set when status === "malformed". */
+  error?: string;
+  /** Malformed file that blocked the scaffold, set when status === "malformed". */
+  file?: string;
+  /** Files written by this scaffold (config + placeholders created). */
+  created: string[];
+  /** Credential files left byte-for-byte untouched. */
+  preserved: string[];
+};
+
+export type YouTrackScaffold = ScaffoldOutcome & {
   youtrackJson: string;
   tokenPath: string;
   tokenCreateUrl: string;
 };
+
+type LoadedConfig = { ok: true; value: unknown } | { ok: false } | null;
+
+function loadConfig(p: string): LoadedConfig {
+  if (!existsSync(p)) return null;
+  try {
+    return { ok: true, value: JSON.parse(readFileSync(p, "utf8")) };
+  } catch {
+    return { ok: false };
+  }
+}
+
+function malformedBlock(
+  file: string,
+  message: string,
+): {
+  ok: false;
+  status: "malformed";
+  error: string;
+  file: string;
+  created: never[];
+  preserved: never[];
+} {
+  return { ok: false, status: "malformed", error: message, file, created: [], preserved: [] };
+}
+
+function ensureToken(path: string, outcome: { created: string[]; preserved: string[] }): void {
+  if (existsSync(path)) {
+    outcome.preserved.push(path);
+    return;
+  }
+  writeFileSync(path, TOKEN_PLACEHOLDER + "\n", { encoding: "utf8", mode: 0o600 });
+  outcome.created.push(path);
+}
+
+function finalStatus(outcome: ScaffoldOutcome): ScaffoldStatus {
+  return outcome.preserved.length > 0 ? "preserved" : "missing";
+}
 
 // ponytail: mirrors scripts/init/apply.sh write_youtrack_json + write_token_placeholder +
 // scripts/youtrack/token-create-url.sh in TS — initApply shells out to bash (CA-01 forbids bash)
@@ -123,6 +178,20 @@ export function scaffoldYouTrack(
   mkdirSync(dir, { recursive: true });
   const youtrackJson = path.join(dir, "youtrack.json");
   const tokenPath = path.join(dir, "youtrack.token");
+  const base = baseUrl.replace(/\/+$/, "");
+  const tokenCreateUrl = `${base}/users/me?tab=account-security`;
+  const loaded = loadConfig(youtrackJson);
+  if (loaded && (!loaded.ok || typeof loaded.value !== "object" || loaded.value === null)) {
+    return {
+      ...malformedBlock(
+        youtrackJson,
+        `youtrack.json is malformed — refusing to overwrite it: ${youtrackJson}`,
+      ),
+      youtrackJson,
+      tokenPath,
+      tokenCreateUrl,
+    };
+  }
   const config = {
     baseUrl,
     tokenFile: tokenPath,
@@ -157,18 +226,21 @@ export function scaffoldYouTrack(
     },
   };
   writeFileSync(youtrackJson, JSON.stringify(config, null, 2) + "\n", "utf8");
-  writeFileSync(tokenPath, TOKEN_PLACEHOLDER + "\n", { encoding: "utf8", mode: 0o600 });
-  const base = baseUrl.replace(/\/+$/, "");
+  const outcome: ScaffoldOutcome = { ok: true, status: "missing", created: [], preserved: [] };
+  outcome.created.push(youtrackJson);
+  ensureToken(tokenPath, outcome);
   return {
+    ...outcome,
+    status: finalStatus(outcome),
     youtrackJson,
     tokenPath,
-    tokenCreateUrl: `${base}/users/me?tab=account-security`,
+    tokenCreateUrl,
   };
 }
 
 export type VcsProvider = "gitlab" | "github";
 
-export type VcsScaffold = {
+export type VcsScaffold = ScaffoldOutcome & {
   vcsJson: string;
   tokenPaths: string[];
   activeTokenPath: string;
@@ -191,18 +263,6 @@ export function scaffoldVcs(dir: string, provider: VcsProvider): VcsScaffold {
   const vcsJson = path.join(dir, "vcs.json");
   const gitlabToken = path.join(dir, "gitlab.token");
   const githubToken = path.join(dir, "github.token");
-  const config = {
-    provider,
-    defaultTargetBranch: "develop",
-    gitlab: { host: "gitlab.com", apiUrl: "https://gitlab.com/api/v4", tokenFile: gitlabToken },
-    github: { host: "github.com", tokenFile: githubToken },
-    pr: { squashOnMerge: true, removeSourceBranch: true, pushBranch: true, confirmSkip: true },
-    tokenDefaults: TOKEN_DEFAULTS,
-  };
-  writeFileSync(vcsJson, JSON.stringify(config, null, 2) + "\n", "utf8");
-  for (const p of [gitlabToken, githubToken]) {
-    writeFileSync(p, TOKEN_PLACEHOLDER + "\n", { encoding: "utf8", mode: 0o600 });
-  }
 
   const gitlabUrl = `https://gitlab.com/-/user_settings/personal_access_tokens?${new URLSearchParams(
     {
@@ -218,12 +278,42 @@ export function scaffoldVcs(dir: string, provider: VcsProvider): VcsScaffold {
     contents: "write",
     metadata: "read",
   })}`;
+  const tokenCreateUrl = provider === "gitlab" ? gitlabUrl : githubUrl;
+  const activeTokenPath = provider === "gitlab" ? gitlabToken : githubToken;
+
+  const loaded = loadConfig(vcsJson);
+  if (loaded && (!loaded.ok || typeof loaded.value !== "object" || loaded.value === null)) {
+    return {
+      ...malformedBlock(vcsJson, `vcs.json is malformed — refusing to overwrite it: ${vcsJson}`),
+      vcsJson,
+      tokenPaths: [gitlabToken, githubToken],
+      activeTokenPath,
+      tokenCreateUrl,
+      provider,
+    };
+  }
+  const config = {
+    provider,
+    defaultTargetBranch: "develop",
+    gitlab: { host: "gitlab.com", apiUrl: "https://gitlab.com/api/v4", tokenFile: gitlabToken },
+    github: { host: "github.com", tokenFile: githubToken },
+    pr: { squashOnMerge: true, removeSourceBranch: true, pushBranch: true, confirmSkip: true },
+    tokenDefaults: TOKEN_DEFAULTS,
+  };
+  writeFileSync(vcsJson, JSON.stringify(config, null, 2) + "\n", "utf8");
+  const outcome: ScaffoldOutcome = { ok: true, status: "missing", created: [], preserved: [] };
+  outcome.created.push(vcsJson);
+  for (const p of [gitlabToken, githubToken]) {
+    ensureToken(p, outcome);
+  }
 
   return {
+    ...outcome,
+    status: finalStatus(outcome),
     vcsJson,
     tokenPaths: [gitlabToken, githubToken],
-    activeTokenPath: provider === "gitlab" ? gitlabToken : githubToken,
-    tokenCreateUrl: provider === "gitlab" ? gitlabUrl : githubUrl,
+    activeTokenPath,
+    tokenCreateUrl,
     provider,
   };
 }

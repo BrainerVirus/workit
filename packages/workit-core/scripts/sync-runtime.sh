@@ -14,9 +14,16 @@ DEV="${WORKFLOW_TOOLKIT_DEV:-$DEV_DEFAULT}"
 REPO_SLUG="${WORKFLOW_TOOLKIT_REPO:-BrainerVirus/workit}"
 LOCK="${XDG_RUNTIME_DIR:-/tmp}/workflow-toolkit-sync.lock"
 
+# RR-05: missing required tools, an unacquirable lock, a failed clone, or a failed
+# dependency install must never look like a successful sync.
+if ! command -v flock >/dev/null 2>&1; then
+  echo "FATAL: sync-runtime requires flock (util-linux) — not found in PATH" >&2
+  exit 1
+fi
 exec 9>"$LOCK"
 if ! flock -n 9; then
-  exit 0
+  echo "sync-runtime: another process holds $LOCK — state unverified, failing" >&2
+  exit 1
 fi
 
 SRC=""
@@ -28,7 +35,10 @@ elif [ -d "${SHARE}/.git" ]; then
   SRC="$SHARE"
 elif [ ! -d "${SHARE}/packages/workit-core/src" ]; then
   mkdir -p "$(dirname "$SHARE")"
-  git clone --depth 1 "git@github.com:${REPO_SLUG}.git" "$SHARE" 2>/dev/null || exit 0
+  if ! git clone --depth 1 "https://github.com/${REPO_SLUG}.git" "$SHARE"; then
+    echo "FATAL: could not clone https://github.com/${REPO_SLUG}.git into $SHARE" >&2
+    exit 1
+  fi
   SRC="$SHARE"
 else
   SRC="$SHARE"
@@ -69,12 +79,18 @@ printf '%s\n' "$SHARE/packages/workit-core" >"$PLUGIN_DIR/.workflow-toolkit-root
 chmod +x "$PLUGIN_DIR/hooks/session-start" "$PLUGIN_DIR/mcp/run-server.sh" 2>/dev/null || true
 
 if [ ! -d "$PLUGIN_DIR/mcp/node_modules" ]; then
-  (cd "$PLUGIN_DIR/mcp" && npm install --silent) || true
+  if ! (cd "$PLUGIN_DIR/mcp" && npm install --silent); then
+    echo "FATAL: MCP dependency install failed in $PLUGIN_DIR/mcp" >&2
+    exit 1
+  fi
 fi
 
 # Share MCP also needs deps when launched via run-cursor-mcp fallback
 if [ ! -d "$SHARE/packages/workit-cursor/mcp/node_modules" ]; then
-  (cd "$SHARE/packages/workit-cursor/mcp" && npm install --silent) || true
+  if ! (cd "$SHARE/packages/workit-cursor/mcp" && npm install --silent); then
+    echo "FATAL: MCP dependency install failed in $SHARE/packages/workit-cursor/mcp" >&2
+    exit 1
+  fi
 fi
 
 # Remove broken TLA live-loader if present (OpenCode ignored it; /wk-* vanished)

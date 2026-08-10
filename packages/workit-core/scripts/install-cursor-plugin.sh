@@ -33,7 +33,7 @@ if [ "$FROM_GITHUB" -eq 1 ]; then
     git -C "$SHARE" pull --ff-only origin main
   else
     rm -rf "$SHARE"
-    git clone --depth 1 "git@github.com:${REPO_SLUG}.git" "$SHARE"
+    git clone --depth 1 "https://github.com/${REPO_SLUG}.git" "$SHARE"
   fi
   ROOT="$SHARE"
 else

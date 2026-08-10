@@ -245,22 +245,29 @@ function YouTrackStep({ results, setResults, onDone }: StepProps): JSX.Element {
       />
       {urlError && <Text color="red">{urlError}</Text>}
       {scaffold ? (
-        <>
+        scaffold.ok ? (
+          <>
+            <Box flexDirection="column" gap={0}>
+              <Text color="green">Scaffolded {scaffold.youtrackJson}</Text>
+              <Text>Token placeholder: {scaffold.tokenPath}</Text>
+              <Text>Create token: {scaffold.tokenCreateUrl}</Text>
+            </Box>
+            {/* ponytail: @inkjs/ui has no focus system — render the ConfirmInput only once the scaffold
+                exists and disable the TextInput, so y reaches only the confirm (hint stays truthful) */}
+            <ConfirmInput
+              defaultChoice="confirm"
+              submitOnEnter={false}
+              onConfirm={onDone}
+              onCancel={() => {}}
+            />
+            <Text dimColor>{continueLabel()}</Text>
+          </>
+        ) : (
           <Box flexDirection="column" gap={0}>
-            <Text color="green">Scaffolded {scaffold.youtrackJson}</Text>
-            <Text>Token placeholder: {scaffold.tokenPath}</Text>
-            <Text>Create token: {scaffold.tokenCreateUrl}</Text>
+            <Text color="red">Blocked: {scaffold.error}</Text>
+            <Text color="red">Fix {scaffold.file} then re-enter the URL.</Text>
           </Box>
-          {/* ponytail: @inkjs/ui has no focus system — render the ConfirmInput only once the scaffold
-              exists and disable the TextInput, so y reaches only the confirm (hint stays truthful) */}
-          <ConfirmInput
-            defaultChoice="confirm"
-            submitOnEnter={false}
-            onConfirm={onDone}
-            onCancel={() => {}}
-          />
-          <Text dimColor>{continueLabel()}</Text>
-        </>
+        )
       ) : (
         <Text dimColor>Enter to submit the URL — then y to continue</Text>
       )}
@@ -298,22 +305,29 @@ function VcsStep({ results, setResults, onDone }: StepProps): JSX.Element {
         }}
       />
       {scaffold ? (
-        <>
+        scaffold.ok ? (
+          <>
+            <Box flexDirection="column" gap={0}>
+              <Text color="green">
+                Scaffolded {scaffold.vcsJson} (provider: {scaffold.provider})
+              </Text>
+              <Text>Token placeholder: {scaffold.activeTokenPath}</Text>
+              <Text>Create token: {scaffold.tokenCreateUrl}</Text>
+            </Box>
+            <ConfirmInput
+              defaultChoice="confirm"
+              submitOnEnter={false}
+              onConfirm={onDone}
+              onCancel={() => {}}
+            />
+            <Text dimColor>{continueLabel()}</Text>
+          </>
+        ) : (
           <Box flexDirection="column" gap={0}>
-            <Text color="green">
-              Scaffolded {scaffold.vcsJson} (provider: {scaffold.provider})
-            </Text>
-            <Text>Token placeholder: {scaffold.activeTokenPath}</Text>
-            <Text>Create token: {scaffold.tokenCreateUrl}</Text>
+            <Text color="red">Blocked: {scaffold.error}</Text>
+            <Text color="red">Fix {scaffold.file} then re-confirm the provider.</Text>
           </Box>
-          <ConfirmInput
-            defaultChoice="confirm"
-            submitOnEnter={false}
-            onConfirm={onDone}
-            onCancel={() => {}}
-          />
-          <Text dimColor>{continueLabel()}</Text>
-        </>
+        )
       ) : (
         <Text dimColor>Enter to confirm the provider — then y to continue</Text>
       )}
@@ -590,18 +604,44 @@ function ProjectStep({ setResults, onDone }: StepProps): JSX.Element {
 }
 
 function SummaryStep({ results, onExit }: StepProps): JSX.Element {
+  const complete = (results.youtrack?.ok ?? true) && (results.vcs?.ok ?? true);
+  const blocked = [
+    ...(results.youtrack && !results.youtrack.ok
+      ? [
+          {
+            platform: "YouTrack",
+            file: results.youtrack.file ?? results.youtrack.youtrackJson,
+            error: results.youtrack.error ?? "scaffold failed",
+          },
+        ]
+      : []),
+    ...(results.vcs && !results.vcs.ok
+      ? [
+          {
+            platform: "VCS",
+            file: results.vcs.file ?? results.vcs.vcsJson,
+            error: results.vcs.error ?? "scaffold failed",
+          },
+        ]
+      : []),
+  ];
   return (
     <Box flexDirection="column" gap={1}>
-      <Text bold color="cyan">
-        Setup complete
+      <Text bold color={complete ? "cyan" : "red"}>
+        {complete ? "Setup complete" : "Setup incomplete"}
       </Text>
+      {blocked.map((b) => (
+        <Text key={b.platform} color="red">
+          {b.platform} blocked: {b.file} — {b.error}
+        </Text>
+      ))}
       <Text>
         Platforms: <Text color="green">{results.platforms.join(", ")}</Text>
       </Text>
       <Text>
         Global config: <Text color="green">{configDir()}/config.json</Text>
       </Text>
-      {results.youtrack && (
+      {results.youtrack && results.youtrack.ok && (
         <Box flexDirection="column" gap={0}>
           <Text>
             YouTrack: <Text color="green">{results.youtrack.youtrackJson}</Text>
@@ -614,7 +654,7 @@ function SummaryStep({ results, onExit }: StepProps): JSX.Element {
           </Text>
         </Box>
       )}
-      {results.vcs && (
+      {results.vcs && results.vcs.ok && (
         <Box flexDirection="column" gap={0}>
           <Text>
             VCS: <Text color="green">{results.vcs.vcsJson}</Text> (provider: {results.vcs.provider})
@@ -648,9 +688,11 @@ function SummaryStep({ results, onExit }: StepProps): JSX.Element {
           ))}
         </Box>
       )}
-      <Text dimColor>
-        Paste the token(s) into the placeholder files, then run /wf-status to verify.
-      </Text>
+      {complete && (
+        <Text dimColor>
+          Paste the token(s) into the placeholder files, then run /wf-status to verify.
+        </Text>
+      )}
       <ConfirmInput
         defaultChoice="confirm"
         submitOnEnter={false}
