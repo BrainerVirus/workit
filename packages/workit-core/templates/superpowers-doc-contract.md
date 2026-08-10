@@ -27,7 +27,7 @@ Plans require:
 
 `bugfix/<slug>` is also valid. Never use `main`, `develop`, `master`, or `prod`. Use plain backtick paths. Top-level headings are exactly `### Task N: Title`; steps use `- [ ] **Step N:** ...`; task headings never appear inside fences.
 
-Before writing **Branch:** into a new spec or plan, call `workflow_docs_branch` and write the returned `branch` verbatim. When `action` is `keep`, use the current feature/bugfix branch. When `action` is `create_from_develop`, create the branch only through `workflow_branch_setup` (never branch from `main`/`master`).
+Before writing **Branch:** into a new spec or plan, call `workflow_docs_branch` and write the returned `branch` verbatim. When `action` is `keep`, use the current feature/bugfix branch. When `action` is `create_from_develop` or `create_from_base`, create the branch only through `workflow_branch_setup`; it uses the configured workspace/global target branch.
 
 ## Execution and handoff
 

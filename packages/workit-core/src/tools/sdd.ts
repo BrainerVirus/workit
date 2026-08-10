@@ -57,7 +57,7 @@ export function createSddTools(state: WorkflowStateStore) {
 
   return {
     workflow_docs_branch: tool({
-      description: "Resolve branch for spec/plan authors: keep current feature|bugfix or create from develop",
+      description: "Resolve branch for spec/plan authors: keep current feature|bugfix or create from the configured base",
       args: {
         plan_path: tool.schema.string().optional(),
         kind: tool.schema.enum(["feature", "bugfix"]).optional(),

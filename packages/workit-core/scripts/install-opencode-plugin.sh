@@ -3,14 +3,14 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
-ROOT="$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)"
+ROOT="$(CDPATH= cd -- "$SCRIPT_DIR/../../.." && pwd)"
+CORE_SCRIPTS="$ROOT/packages/workit-core/scripts"
 SHARE="${HOME}/.local/share/workflow-toolkit"
-DEV_DEFAULT="${HOME}/Documents/projects/personal/workflow-toolkit"
-DEV="${WORKFLOW_TOOLKIT_DEV:-$DEV_DEFAULT}"
+DEV="${WORKFLOW_TOOLKIT_DEV:-$ROOT}"
 CONFIG="${HOME}/.config/opencode/opencode.json"
 
-chmod +x "$ROOT/scripts/sync-runtime.sh"
-WORKFLOW_TOOLKIT_DEV="$ROOT" "$ROOT/scripts/sync-runtime.sh"
+chmod +x "$CORE_SCRIPTS/sync-runtime.sh"
+WORKFLOW_TOOLKIT_DEV="$ROOT" "$CORE_SCRIPTS/sync-runtime.sh"
 
 # Prefer monorepo with .git. file:// pins skip opencode's bundled npm installer —
 # git+file:// installs an EMPTY cache dir and fails silently, so the plugin never
@@ -40,9 +40,14 @@ const pin = process.env.PIN_PATH!;
 const data = JSON.parse(fs.readFileSync(path, "utf8"));
 let plugins = data.plugin || [];
 if (typeof plugins === "string") plugins = [plugins];
-// Drop stale workflow-toolkit pins — the new file:// pin is written fresh.
-data.plugin = plugins.filter((p) => !String(p).includes("workflow-toolkit"));
-data.plugin.push(pin);
+// Load the dev pin first and remove every stale/current Workit identity.
+const isWorkit = (p) => {
+  const value = String(p);
+  return value.includes("workflow-toolkit") ||
+    value.includes("@brainervirus/workit-opencode") ||
+    value.includes("/packages/workit-opencode/");
+};
+data.plugin = [pin, ...plugins.filter((p) => !isWorkit(p))];
 // Drop share skills.paths — native ~/.config/opencode/skills links avoid triple-load dups
 const skills = data.skills;
 if (skills && typeof skills === "object") {

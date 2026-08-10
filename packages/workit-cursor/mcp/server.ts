@@ -550,7 +550,7 @@ server.registerTool(
   "workflow_docs_branch",
   {
     description:
-      "Resolve branch for spec/plan authors: keep current feature|bugfix or create from develop.",
+      "Resolve branch for spec/plan authors: keep current feature|bugfix or create from the configured base.",
     inputSchema: {
       plan_path: z.string().optional(),
       kind: z.enum(["feature", "bugfix"]).optional(),

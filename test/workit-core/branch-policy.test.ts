@@ -110,6 +110,75 @@ test("branch setup creates feature branch from develop when starting on main", a
   }
 });
 
+test("workspace target branch drives docs branch and branch setup", async () => {
+  const { root, remote } = repoWithDevelop();
+  const workspaces = path.join(isolatedConfig, "workit", "workspaces.json");
+  try {
+    writeFileSync(path.join(root, "main.txt"), "main only\n");
+    git(root, ["add", "main.txt"]);
+    git(root, ["commit", "-q", "-m", "main only"]);
+    git(root, ["push", "-q", "-u", "origin", "main"]);
+    mkdirSync(path.dirname(workspaces), { recursive: true });
+    writeFileSync(workspaces, JSON.stringify({ workspaces: [{
+      name: "github",
+      glob: `${root}/**`,
+      vcs: { provider: "github", defaultTargetBranch: "main" },
+    }] }));
+    mkdirSync(path.join(root, "docs", "github-flow"), { recursive: true });
+    writeFileSync(path.join(root, "docs/github-flow/plan.md"), "# Plan\n");
+    git(root, ["add", "docs/github-flow/plan.md"]);
+    git(root, ["commit", "-q", "-m", "plan"]);
+
+    const resolved = docsBranch({ plan_path: "docs/github-flow/plan.md", workspace_root: root });
+    expect(resolved.action).toBe("create_from_base");
+    expect(resolved.base).toBe("main");
+
+    const raw = await createRepoTools().workflow_branch_setup.execute({
+      confirmed: true,
+      target_branch: "feature/github-flow",
+      stash: "no",
+    }, { directory: root, worktree: root } as never);
+    expect(JSON.parse(raw as string).ok).toBe(true);
+    expect(git(root, ["rev-parse", "feature/github-flow"]).stdout.trim())
+      .toBe(git(root, ["rev-parse", "main"]).stdout.trim());
+  } finally {
+    rmSync(workspaces, { force: true });
+    rmSync(root, { recursive: true, force: true });
+    rmSync(remote, { recursive: true, force: true });
+  }
+});
+
+test("docs branch recognizes a custom configured base", () => {
+  const { root, remote } = repoWithDevelop();
+  const workspaces = path.join(isolatedConfig, "workit", "workspaces.json");
+  const config = path.join(isolatedConfig, "workit", "config.json");
+  try {
+    git(root, ["checkout", "-q", "-b", "trunk"]);
+    git(root, ["push", "-q", "-u", "origin", "trunk"]);
+    mkdirSync(path.dirname(workspaces), { recursive: true });
+    writeFileSync(workspaces, JSON.stringify({ workspaces: [{
+      name: "custom",
+      glob: `${root}/**`,
+      vcs: { provider: "github", defaultTargetBranch: "trunk" },
+    }] }));
+    writeFileSync(config, JSON.stringify({
+      branchPolicy: { preset: "custom", allowed: ["trunk", "feature/*"], protected: ["main"] },
+    }));
+    mkdirSync(path.join(root, "docs", "custom-base"), { recursive: true });
+    writeFileSync(path.join(root, "docs/custom-base/plan.md"), "# Plan\n");
+
+    const resolved = docsBranch({ plan_path: "docs/custom-base/plan.md", workspace_root: root });
+    expect(resolved.action).toBe("create_from_base");
+    expect(resolved.base).toBe("trunk");
+    expect(resolved.branch).toBe("feature/custom-base");
+  } finally {
+    rmSync(workspaces, { force: true });
+    rmSync(config, { force: true });
+    rmSync(root, { recursive: true, force: true });
+    rmSync(remote, { recursive: true, force: true });
+  }
+});
+
 test("branch setup errors when origin develop is missing", async () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "wf-branch-no-develop-"));
   try {

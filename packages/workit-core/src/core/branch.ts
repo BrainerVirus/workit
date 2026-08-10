@@ -3,10 +3,12 @@ import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { gitContext } from "./git";
 import { readConfig, resolveBranchPolicy } from "./config";
+import { vcsConfig } from "./vcs-config";
 
 const policy = () => resolveBranchPolicy(readConfig());
 const allowedBranch = (name: string) => policy().allowed.some((r) => r.test(name));
 const isProtected = (name: string) => policy().protected.has(name.toLowerCase());
+const baseBranch = (cwd: string) => String(vcsConfig("resolve", cwd).defaultTargetBranch ?? "develop");
 const DECLARE_RE = /^\s*\*+Branch:\*+\s*`?([^`\s|]+)`?\s*$/gim;
 const USE_CURRENT_RE = /^\s*\*+Branch:\*+\s*use-current\s*$/im;
 const readSafe = (p: string): string | null => {
@@ -108,11 +110,9 @@ export const docsBranch = ({
   const git = gitContext(cwd);
   const current = git.branch;
   const kindArg = (kind ?? "feature").toLowerCase();
+  const base = baseBranch(cwd);
 
-  if (current && allowedBranch(current) && !isProtected(current)) {
-    return { branch: current, action: "keep", current_branch: current, base: "develop", dirty: Boolean(git.status_short.trim()) };
-  }
-  if (current === "main" || current === "master" || current === "develop") {
+  if (current === base || current === "main" || current === "master" || current === "develop") {
     let slug = "";
     if (plan_path) {
       const plan = path.isAbsolute(plan_path) ? plan_path : path.join(cwd, plan_path);
@@ -122,36 +122,45 @@ export const docsBranch = ({
       return { error: "plan_path required to derive branch slug when not on feature/* or bugfix/*" };
     }
     const branchKind = kindArg === "bugfix" ? "bugfix" : "feature";
-    return { branch: `${branchKind}/${slug}`, action: "create_from_develop", current_branch: current, base: "develop", dirty: Boolean(git.status_short.trim()) };
+    return {
+      branch: `${branchKind}/${slug}`,
+      action: base === "develop" ? "create_from_develop" : "create_from_base",
+      current_branch: current,
+      base,
+      dirty: Boolean(git.status_short.trim()),
+    };
+  }
+  if (current && allowedBranch(current) && !isProtected(current)) {
+    return { branch: current, action: "keep", current_branch: current, base, dirty: Boolean(git.status_short.trim()) };
   }
   return { error: `cannot resolve docs branch from HEAD ${JSON.stringify(current)}` };
 };
 
 // Port of scripts/lib/ensure-develop-base.sh
-export const ensureDevelopBase = (cwd: string): { ok: boolean; error?: string } => {
+export const ensureBaseBranch = (cwd: string, base: string): { ok: boolean; error?: string } => {
   const git = gitContext(cwd);
   if (!git.branch || git.branch === "unknown") return { ok: false, error: "not in a git repository" };
   const run = (args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] });
   try {
     try {
-      run(["fetch", "origin", "develop", "--prune"]);
+      run(["fetch", "origin", base, "--prune"]);
     } catch {
       run(["fetch", "origin", "--prune"]);
     }
-    let hasOriginDevelop = true;
-    try { execFileSync("git", ["show-ref", "--verify", "--quiet", "refs/remotes/origin/develop"], { cwd, stdio: "pipe" }); } catch { hasOriginDevelop = false; }
-    if (!hasOriginDevelop) return { ok: false, error: "origin/develop missing — push develop before creating feature/* or bugfix/* branches" };
-    let hasLocalDevelop = true;
-    try { execFileSync("git", ["show-ref", "--verify", "--quiet", "refs/heads/develop"], { cwd, stdio: "pipe" }); } catch { hasLocalDevelop = false; }
-    if (hasLocalDevelop) {
-      run(["checkout", "develop"]);
-      try { run(["merge", "--ff-only", "origin/develop"]); } catch { /* non-fast-forward: keep local */ }
+    let hasOriginBase = true;
+    try { execFileSync("git", ["show-ref", "--verify", "--quiet", `refs/remotes/origin/${base}`], { cwd, stdio: "pipe" }); } catch { hasOriginBase = false; }
+    if (!hasOriginBase) return { ok: false, error: `origin/${base} missing — push ${base} before creating feature/* or bugfix/* branches` };
+    let hasLocalBase = true;
+    try { execFileSync("git", ["show-ref", "--verify", "--quiet", `refs/heads/${base}`], { cwd, stdio: "pipe" }); } catch { hasLocalBase = false; }
+    if (hasLocalBase) {
+      run(["checkout", base]);
+      try { run(["merge", "--ff-only", `origin/${base}`]); } catch { /* non-fast-forward: keep local */ }
     } else {
-      run(["checkout", "-b", "develop", "--track", "origin/develop"]);
+      run(["checkout", "-b", base, "--track", `origin/${base}`]);
     }
     return { ok: true };
   } catch (error) {
-    return { ok: false, error: error instanceof Error ? error.message : "ensure-develop-base failed" };
+    return { ok: false, error: error instanceof Error ? error.message : "ensure-base-branch failed" };
   }
 };
 
@@ -217,16 +226,8 @@ export const branchSetup = ({
         return { error: `branch ${target} is locked by an existing git worktree — remove it first (we do not use worktrees)` };
       }
       try {
-        // Branch does not exist yet: base it on develop (never main/master).
-        const current = gitContext(cwd).branch;
-        if (current === "main" || current === "master") {
-          const baseResult = ensureDevelopBase(cwd);
-          if (!baseResult.ok) return { error: baseResult.error };
-        } else {
-          // Already on develop or another feature branch: still require origin/develop to exist.
-          const baseResult = ensureDevelopBase(cwd);
-          if (!baseResult.ok) return { error: baseResult.error };
-        }
+        const baseResult = ensureBaseBranch(cwd, baseBranch(cwd));
+        if (!baseResult.ok) return { error: baseResult.error };
         exec(["checkout", "-b", target]);
       } catch (createError) {
         return { error: createError instanceof Error ? createError.message : "branch create failed" };
