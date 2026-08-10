@@ -16,11 +16,19 @@ async function runInit() {
     console.log("workit init requires an interactive terminal (TTY).");
     process.exit(0);
   }
+  let complete = false;
   let done: () => void = () => {};
-  const { waitUntilExit, unmount } = render(<Wizard onExit={() => done()} />);
+  const { waitUntilExit, unmount } = render(
+    <Wizard
+      onExit={(ok) => {
+        complete = ok;
+        done();
+      }}
+    />,
+  );
   done = unmount;
   await waitUntilExit();
-  process.exit(0);
+  process.exit(complete ? 0 : 1);
 }
 
 if (import.meta.main) {

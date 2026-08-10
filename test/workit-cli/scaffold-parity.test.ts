@@ -89,8 +89,18 @@ test("wizard summary keeps nested output indented", () => {
   expect(source).toContain('{"  "}+ {file}');
 });
 
-test("wizard summary suppresses success until configuration completed (WZ-10)", () => {
-  const source = readFileSync(path.join(repoRoot, "packages/workit-cli/src/steps.tsx"), "utf8");
-  expect(source).toContain("Setup incomplete");
-  expect(source).toContain("Blocked");
+test("wizard summary suppresses success and index exits nonzero until configuration completed (WZ-10)", () => {
+  const stepsSource = readFileSync(
+    path.join(repoRoot, "packages/workit-cli/src/steps.tsx"),
+    "utf8",
+  );
+  expect(stepsSource).toMatch(/complete \? "Setup complete" : "Setup incomplete"/);
+  expect(stepsSource).toMatch(/\{complete &&[\s\S]*Paste the token/);
+  expect(stepsSource).toContain("Blocked");
+
+  const indexSource = readFileSync(
+    path.join(repoRoot, "packages/workit-cli/src/index.tsx"),
+    "utf8",
+  );
+  expect(indexSource).toMatch(/process\.exit\(complete \? 0 : 1\)/);
 });

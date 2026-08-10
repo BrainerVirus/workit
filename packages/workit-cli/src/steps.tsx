@@ -12,6 +12,7 @@ import type { WorkspaceConfig } from "@brainervirus/workit-core/src/core/workspa
 import {
   collectConfigValues,
   DEFAULT_BASE_URL,
+  isSetupComplete,
   loadWorkspaces,
   parseList,
   runProjectSetup,
@@ -41,7 +42,7 @@ type StepProps = {
   results: WizardResults;
   setResults: Dispatch<SetStateAction<WizardResults>>;
   onDone: () => void;
-  onExit: () => void;
+  onExit: (complete: boolean) => void;
 };
 
 type StepComponent = (props: StepProps) => JSX.Element;
@@ -67,7 +68,7 @@ function continueLabel(): string {
   return " y to continue · n to stay · Esc to exit";
 }
 
-export function Wizard({ onExit }: { onExit: () => void }): JSX.Element {
+export function Wizard({ onExit }: { onExit: (complete: boolean) => void }): JSX.Element {
   const [step, setStep] = useState(0);
   const [results, setResults] = useState<WizardResults>(() => ({
     platforms: [],
@@ -79,7 +80,7 @@ export function Wizard({ onExit }: { onExit: () => void }): JSX.Element {
   }));
 
   useInput((input, key) => {
-    if (key.escape || (key.ctrl && input.toLowerCase() === "c")) onExit();
+    if (key.escape || (key.ctrl && input.toLowerCase() === "c")) onExit(false);
   });
 
   const advance = () => setStep((s) => Math.min(s + 1, 6));
@@ -226,7 +227,7 @@ function YouTrackStep({ results, setResults, onDone }: StepProps): JSX.Element {
       <Text dimColor>Base URL (https):</Text>
       <TextInput
         defaultValue={baseUrl}
-        isDisabled={scaffold !== null}
+        isDisabled={scaffold !== null && scaffold.ok}
         onSubmit={(v) => {
           const err = validateBaseUrl(v);
           if (err) {
@@ -604,7 +605,7 @@ function ProjectStep({ setResults, onDone }: StepProps): JSX.Element {
 }
 
 function SummaryStep({ results, onExit }: StepProps): JSX.Element {
-  const complete = (results.youtrack?.ok ?? true) && (results.vcs?.ok ?? true);
+  const complete = isSetupComplete(results);
   const blocked = [
     ...(results.youtrack && !results.youtrack.ok
       ? [
@@ -696,7 +697,7 @@ function SummaryStep({ results, onExit }: StepProps): JSX.Element {
       <ConfirmInput
         defaultChoice="confirm"
         submitOnEnter={false}
-        onConfirm={onExit}
+        onConfirm={() => onExit(complete)}
         onCancel={() => {}}
       />
       <Text dimColor>{continueLabel()}</Text>

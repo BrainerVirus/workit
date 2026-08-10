@@ -154,16 +154,32 @@ function malformedBlock(
 }
 
 function ensureToken(path: string, outcome: { created: string[]; preserved: string[] }): void {
-  if (existsSync(path)) {
-    outcome.preserved.push(path);
-    return;
+  try {
+    writeFileSync(path, TOKEN_PLACEHOLDER + "\n", { encoding: "utf8", flag: "wx", mode: 0o600 });
+    outcome.created.push(path);
+  } catch (err) {
+    // wx (exclusive create) closes the TOCTOU window: a token created between any
+    // existence check and write now races the write itself, and EEXIST means the
+    // other writer won — preserve their bytes instead of clobbering them.
+    if ((err as NodeJS.ErrnoException).code === "EEXIST") {
+      outcome.preserved.push(path);
+      return;
+    }
+    throw err;
   }
-  writeFileSync(path, TOKEN_PLACEHOLDER + "\n", { encoding: "utf8", mode: 0o600 });
-  outcome.created.push(path);
 }
 
 function finalStatus(outcome: ScaffoldOutcome): ScaffoldStatus {
   return outcome.preserved.length > 0 ? "preserved" : "missing";
+}
+
+// WZ-10: a host is only "complete" when it was scaffolded successfully — an
+// unconfigured (null) or blocked (ok: false) host keeps setup incomplete.
+export function isSetupComplete(results: {
+  youtrack?: { ok: boolean } | null;
+  vcs?: { ok: boolean } | null;
+}): boolean {
+  return (results.youtrack?.ok ?? false) && (results.vcs?.ok ?? false);
 }
 
 // ponytail: mirrors scripts/init/apply.sh write_youtrack_json + write_token_placeholder +
@@ -181,7 +197,13 @@ export function scaffoldYouTrack(
   const base = baseUrl.replace(/\/+$/, "");
   const tokenCreateUrl = `${base}/users/me?tab=account-security`;
   const loaded = loadConfig(youtrackJson);
-  if (loaded && (!loaded.ok || typeof loaded.value !== "object" || loaded.value === null)) {
+  if (
+    loaded &&
+    (!loaded.ok ||
+      typeof loaded.value !== "object" ||
+      loaded.value === null ||
+      Array.isArray(loaded.value))
+  ) {
     return {
       ...malformedBlock(
         youtrackJson,
@@ -282,7 +304,13 @@ export function scaffoldVcs(dir: string, provider: VcsProvider): VcsScaffold {
   const activeTokenPath = provider === "gitlab" ? gitlabToken : githubToken;
 
   const loaded = loadConfig(vcsJson);
-  if (loaded && (!loaded.ok || typeof loaded.value !== "object" || loaded.value === null)) {
+  if (
+    loaded &&
+    (!loaded.ok ||
+      typeof loaded.value !== "object" ||
+      loaded.value === null ||
+      Array.isArray(loaded.value))
+  ) {
     return {
       ...malformedBlock(vcsJson, `vcs.json is malformed — refusing to overwrite it: ${vcsJson}`),
       vcsJson,

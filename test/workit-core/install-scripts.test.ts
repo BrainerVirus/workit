@@ -266,6 +266,26 @@ test("sync-runtime exits nonzero when the sync lock is already held (RR-05)", as
   }
 });
 
+test("sync-runtime fails loudly when updating an existing share clone cannot fetch (RR-05)", () => {
+  if (!bashAvailable() || !flockAvailable()) return;
+  const home = mkdtempSync(path.join(os.tmpdir(), "wk-sync-home-"));
+  const runtimeDir = mkdtempSync(path.join(os.tmpdir(), "wk-sync-xdg-"));
+  const share = path.join(home, ".local/share/workflow-toolkit");
+  try {
+    mkdirSync(path.join(share, ".git"), { recursive: true });
+    spawnSync("git", ["init", "-q"], { cwd: share });
+    spawnSync("git", ["remote", "add", "origin", "https://127.0.0.1:1/workflow-toolkit.git"], {
+      cwd: share,
+    });
+    const r = runSyncScript(syncEnv(home, runtimeDir));
+    expect(r.status, r.stderr).not.toBe(0);
+    expect(r.stderr).toContain("FATAL");
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(runtimeDir, { recursive: true, force: true });
+  }
+});
+
 test("sync-runtime does not report success when a dependency install fails (RR-05)", () => {
   if (!bashAvailable() || !flockAvailable()) return;
   const home = mkdtempSync(path.join(os.tmpdir(), "wk-sync-home-"));

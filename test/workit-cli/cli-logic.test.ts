@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import {
   collectConfigValues,
+  isSetupComplete,
   loadWorkspaces,
   parseList,
   runProjectSetup,
@@ -217,9 +218,18 @@ test("scaffoldYouTrack blocks on malformed youtrack.json without overwriting (WZ
     expect(s.error).toContain("youtrack.json");
     expect(s.file).toBe(jsonPath);
     expect(readFileSync(jsonPath, "utf8")).toBe("{ not json");
+    expect(existsSync(path.join(dir, "youtrack.token"))).toBe(false);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("isSetupComplete: unconfigured or blocked hosts never count as complete (WZ-10)", () => {
+  expect(isSetupComplete({ youtrack: null, vcs: null })).toBe(false);
+  expect(isSetupComplete({ youtrack: { ok: false }, vcs: { ok: true } })).toBe(false);
+  expect(isSetupComplete({ youtrack: { ok: true }, vcs: null })).toBe(false);
+  expect(isSetupComplete({ youtrack: { ok: true }, vcs: { ok: false } })).toBe(false);
+  expect(isSetupComplete({ youtrack: { ok: true }, vcs: { ok: true } })).toBe(true);
 });
 
 test("scaffoldVcs blocks on malformed vcs.json without overwriting (WZ-06)", () => {

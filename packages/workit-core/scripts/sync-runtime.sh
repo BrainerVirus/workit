@@ -30,8 +30,16 @@ SRC=""
 if [ -f "${DEV}/packages/workit-opencode/src/plugin.ts" ] && [ -d "${DEV}/packages/workit-cursor/.cursor-plugin" ]; then
   SRC="$DEV"
 elif [ -d "${SHARE}/.git" ]; then
-  git -C "$SHARE" fetch --quiet origin 2>/dev/null || true
-  git -C "$SHARE" pull --ff-only --quiet origin main 2>/dev/null || true
+  # RR-05: a failed update of an existing share clone must not look like a
+  # successful sync — propagate fetch/pull failures to a FATAL nonzero exit.
+  if ! git -C "$SHARE" fetch --quiet origin; then
+    echo "FATAL: could not fetch updates for $SHARE" >&2
+    exit 1
+  fi
+  if ! git -C "$SHARE" pull --ff-only --quiet origin main; then
+    echo "FATAL: could not update $SHARE from origin/main" >&2
+    exit 1
+  fi
   SRC="$SHARE"
 elif [ ! -d "${SHARE}/packages/workit-core/src" ]; then
   mkdir -p "$(dirname "$SHARE")"
