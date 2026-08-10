@@ -20,7 +20,7 @@
     "workit": "./dist/index.js"
   },
   "scripts": {
-    "build": "bun build ./src/index.tsx --outdir dist --target node --format esm --banner \"#!/usr/bin/env node\" --external ink --external @inkjs/ui --external react",
+    "build": "bun build ./src/index.tsx --outdir dist --target node --format esm --banner \"#!/usr/bin/env node\" --external react-devtools-core --splitting",
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "bun run build && bun run typecheck"
   },
