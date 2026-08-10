@@ -3,6 +3,9 @@
 # Prefer local monorepo (dev) when present; otherwise git-pull the share clone.
 set -euo pipefail
 
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+. "$SCRIPT_DIR/lib/config-dir.sh"
+
 SHARE="${HOME}/.local/share/workflow-toolkit"
 PLUGIN_DIR="${HOME}/.cursor/plugins/local/workflow-toolkit"
 OPENCODE_PLUGINS="${HOME}/.config/opencode/plugins"
@@ -54,7 +57,7 @@ if [ -d "$SHARE/packages/workit-core/vendor/superpowers/skills" ]; then
   rsync -a --delete "$SHARE/packages/workit-core/vendor/superpowers/skills" "$PLUGIN_DIR/vendor/superpowers/"
 fi
 # Canonical user rules -> Cursor .mdc (compiled by the shared core)
-CONFIG_RULES_DIR="${HOME}/.config/workflow-toolkit/rules"
+CONFIG_RULES_DIR="$(resolve_config_dir)/rules"
 if [ -d "$CONFIG_RULES_DIR" ]; then
   "$HOME/.bun/bin/bun" -e "
     import('${SHARE}/packages/workit-core/src/core/rules.ts').then(async ({ writeCompiledCursorRules }) => {

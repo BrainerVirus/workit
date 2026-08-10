@@ -1,10 +1,14 @@
 import { expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { configDir } from "../../packages/workit-core/src/core/config";
 import { vcsTokenCreateUrls } from "../../packages/workit-core/src/core/vcs-config";
 import { configPath } from "../../packages/workit-core/src/tools/youtrack";
+
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 const savedEnv = new Map<string, string | undefined>();
 
@@ -111,4 +115,38 @@ test("CA-05: derived paths resolve under the migrated workit dir", () => {
     expect(urls.gitlab.tokenFile).toBeUndefined();
   });
   rmSync(xdg, { recursive: true, force: true });
+});
+
+test("CA-06: bash resolve_config_dir matches TS after migration; config.sh load reads the migrated workit dir", () => {
+  if (process.platform === "win32") return; // no bash
+  const xdg = mkdtempSync(path.join(os.tmpdir(), "wk-ca06-"));
+  const legacy = path.join(xdg, "workflow-toolkit");
+  mkdirSync(legacy, { recursive: true });
+  writeFileSync(path.join(legacy, "vcs.json"), JSON.stringify({ provider: "github", defaultTargetBranch: "main" }));
+  const env: Record<string, string> = {};
+  for (const [k, v] of Object.entries(process.env)) {
+    if (v === undefined || /^WORKFLOW_(VCS|TOOLKIT_CONFIG)/.test(k) || k === "XDG_CONFIG_HOME") continue;
+    env[k] = v;
+  }
+  env.XDG_CONFIG_HOME = xdg;
+  try {
+    isolate({ XDG_CONFIG_HOME: xdg }, () => {
+      const dir = configDir();
+      expect(dir).toBe(path.join(xdg, "workit"));
+      expect(readFileSync(path.join(dir, "vcs.json"), "utf8")).toContain("github");
+
+      writeFileSync(path.join(dir, "vcs.json"), JSON.stringify({ provider: "gitlab" }), "utf8");
+      const resolve = spawnSync("bash", ["-c", ". packages/workit-core/scripts/lib/config-dir.sh; resolve_config_dir"], { cwd: repoRoot, env, encoding: "utf8" });
+      expect(resolve.status, resolve.stderr).toBe(0);
+      expect(resolve.stdout.trim()).toBe(dir); // workit already exists -> no re-migration
+      expect(readFileSync(path.join(dir, "vcs.json"), "utf8")).toContain("gitlab"); // legacy untouched as source
+
+      const load = spawnSync("bash", [path.join(repoRoot, "packages/workit-core/scripts/vcs/config.sh"), "load"], { cwd: repoRoot, env, encoding: "utf8" });
+      expect(load.status, load.stderr).toBe(0);
+      expect(JSON.parse(load.stdout).provider).toBe("gitlab");
+      expect(JSON.parse(load.stdout).tokenReady).toBe(false);
+    });
+  } finally {
+    rmSync(xdg, { recursive: true, force: true });
+  }
 });
