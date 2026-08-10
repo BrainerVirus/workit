@@ -23,7 +23,11 @@ Config directory (both platforms): `~/.config/workflow-toolkit/` (kept as-is for
 npx @brainervirus/workit-cli init
 ```
 
-The wizard installs the platform packages it configures (OpenCode plugin / Cursor MCP) — no manual `npm i` needed. Requires [bun](https://bun.sh) for the OpenCode plugin runtime.
+The wizard installs the platform packages it configures (OpenCode plugin / Cursor MCP) — no manual `npm i` needed.
+
+Requirements:
+- **Node.js ≥ 20** (LTS) — the CLI is a node bundle; Node 16 and below fail (`ERR_MODULE_NOT_FOUND`/ESM syntax).
+- [bun](https://bun.sh) — only for the OpenCode plugin runtime (the OpenCode side executes `.ts` directly); the wizard and CLI itself run on node.
 
 
 **Local development** — use the repo path instead; no package cache, disk is the source of truth:
@@ -126,12 +130,11 @@ git push origin main
 
 ## Code review
 
-Every pull request is automatically reviewed by [OpenCode](https://opencode.ai/docs/github/) via `.github/workflows/opencode-review.yml` — it checks code quality, potential bugs, and this repo's own standards (the spec/plan contract, Conventional Commits, the CONTRIBUTING.md review flow). Model: `opencode-go/deepseek-v4-flash`.
+Automated OpenCode PR review was evaluated and **removed** (too slow for this repo's diff sizes — the review agent explored the whole repo instead of just the diff). The quality gate is the per-package CI checks (required in branch protection) plus the two-stage subagent review inside `wk-implement`.
 
-Checks fall into two categories:
-
-- **BLOCKING — the `pull_request` review** (`review` job): runs on every PR (opened/synchronized/reopened/ready_for_review) and is registered as a required check in branch protection — the PR cannot merge while it's red.
-- **ADVISORY — on-demand and triage flows** (never block merge): mention `/oc` or `/opencode` in a comment — issue, PR thread, or a specific line in the Files tab — to have OpenCode fix, explain, or update the PR (`oc` job); new issues are triaged with guidance and doc links (`triage` job).
+Optional fast reviewers if you want machine review on PRs:
+- [CodeRabbit](https://www.coderabbit.ai/) — instant AI review on every PR
+- [Cursor Bugbot](https://cursor.com/dashboard/bugbot) — Cursor's PR review (appears as a required check)
 
 To activate the review on a fork or fresh clone:
 

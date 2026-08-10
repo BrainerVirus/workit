@@ -4,7 +4,13 @@
   "private": false,
   "description": "Workit interactive setup wizard (Ink TUI)",
   "license": "MIT",
-  "keywords": ["opencode", "cursor", "workflow", "cli", "setup"],
+  "keywords": [
+    "opencode",
+    "cursor",
+    "workflow",
+    "cli",
+    "setup"
+  ],
   "bugs": {
     "url": "https://github.com/BrainerVirus/workit/issues"
   },
@@ -32,5 +38,8 @@
     "@inkjs/ui": "2.0.0",
     "ink": "7.1.1",
     "react": "19.2.8"
+  },
+  "engines": {
+    "node": ">=20"
   }
 }
