@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
@@ -49,7 +50,12 @@ const workspaceRootSchema = z
 
 const server = new McpServer({
   name: "workit",
-  version: "0.4.0",
+  // Runtime read, not hardcoded: semantic-release bumps versions only in CI
+  // (no commit-back), so any literal here would drift from the published tag.
+  // package.json ships in the tarball regardless of the files whitelist.
+  version: JSON.parse(
+    readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+  ).version,
 });
 
 function extractPlanPath(prompt) {
