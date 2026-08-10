@@ -245,7 +245,7 @@ test("tokens are removed from errors", () => {
 
 test("credentials use neutral XDG config and require token mode 0600", () => {
   const xdg = mkdtempSync(path.join(os.tmpdir(), "wf-youtrack-"));
-  const directory = path.join(xdg, "workflow-toolkit");
+  const directory = path.join(xdg, "workit");
   mkdirSync(directory);
   const tokenPath = path.join(directory, "youtrack.token");
   writeFileSync(tokenPath, "dummy-token\n", { mode: 0o644 });
@@ -293,7 +293,7 @@ test("init scaffolding and status share the neutral XDG config directory", () =>
     cwd: path.resolve(import.meta.dir, "..", ".."), encoding: "utf8", env,
   });
   expect(apply.status).toBe(0);
-  const directory = path.join(xdg, "workflow-toolkit");
+  const directory = path.join(xdg, "workit");
   const config = JSON.parse(readFileSync(path.join(directory, "youtrack.json"), "utf8"));
   expect(config.tokenFile).toBe(path.join(directory, "youtrack.token"));
   expect(config.tokenDefaults.description).toContain("OpenCode workit");

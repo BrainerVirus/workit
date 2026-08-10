@@ -1,11 +1,11 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync } from "node:fs";
 import { execFileSync } from "node:child_process";
-import os from "node:os";
 import path from "node:path";
+import { configDir } from "./config";
 
 const configPath = () =>
   process.env.WORKFLOW_DOCS_REPO_CONFIG
-  ?? path.join(os.homedir(), ".config", "workflow-toolkit", "docs-repo.json");
+  ?? path.join(configDir(), "docs-repo.json");
 
 export const readDocsRepoConfig = (): { path: string } | null => {
   try {

@@ -4,6 +4,7 @@ import path from "node:path";
 import { tool, type ToolContext } from "@opencode-ai/plugin";
 import { fail, ok, resolveInside, type Result } from "../core";
 import { configGuardError, describeConfigGaps } from "../core/config-guard";
+import { configDir } from "../core/config";
 import {
   buildDraft as legacyBuildDraft,
   context as legacyContext,
@@ -20,11 +21,14 @@ const message = (error: unknown) => error instanceof Error ? error.message : Str
 
 // Both override names point at the config dir itself, same precedence as
 // src/core/config.ts and scripts/init/status.sh: WORKFLOW_TOOLKIT_CONFIG → WORKFLOW_TOOLKIT_CONFIG_DIR → XDG.
+// Default env (no args) routes through configDir() so the legacy migration runs.
 export const configPath = (env: NodeJS.ProcessEnv = process.env, home = os.homedir()) =>
   path.join(
-    env.WORKFLOW_TOOLKIT_CONFIG
-    ?? env.WORKFLOW_TOOLKIT_CONFIG_DIR
-    ?? path.join(env.XDG_CONFIG_HOME || path.join(home, ".config"), "workflow-toolkit"),
+    env === process.env
+      ? configDir()
+      : env.WORKFLOW_TOOLKIT_CONFIG
+        ?? env.WORKFLOW_TOOLKIT_CONFIG_DIR
+        ?? path.join(env.XDG_CONFIG_HOME || path.join(home, ".config"), "workit"),
     "youtrack.json",
   );
 

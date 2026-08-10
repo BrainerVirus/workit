@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -18,10 +18,35 @@ export const PRESETS: Record<BranchPreset, { allowed: string[]; protected: strin
   custom: { allowed: [], protected: [] },
 };
 
-export const configDir = (): string =>
+export const resolveConfigDir = (): string =>
   process.env.WORKFLOW_TOOLKIT_CONFIG
   ?? process.env.WORKFLOW_TOOLKIT_CONFIG_DIR
-  ?? path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config"), "workflow-toolkit");
+  ?? path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config"), "workit");
+
+// One-time lazy migration from the legacy ~/.config/workflow-toolkit dir.
+// migratedDir remembers the resolved dir already checked: configDir() is on
+// hot paths, so subsequent calls are one string compare. Re-checking per
+// unique dir also keeps tests with swapped env working.
+let migratedDir: string | null = null;
+
+export const ensureConfigDir = (dir: string = resolveConfigDir()): string => {
+  if (migratedDir === dir) return dir;
+  migratedDir = dir;
+  if (process.env.WORKFLOW_TOOLKIT_CONFIG || process.env.WORKFLOW_TOOLKIT_CONFIG_DIR) return dir;
+  const legacy = path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config"), "workflow-toolkit");
+  if (existsSync(dir) || !existsSync(legacy)) return dir;
+  mkdirSync(dir, { recursive: true });
+  for (const entry of readdirSync(legacy, { withFileTypes: true })) {
+    const src = path.join(legacy, entry.name);
+    const dest = path.join(dir, entry.name);
+    if (existsSync(dest)) continue;
+    if (entry.isDirectory()) cpSync(src, dest, { recursive: true });
+    else if (entry.isFile()) copyFileSync(src, dest);
+  }
+  return dir;
+};
+
+export const configDir = (): string => ensureConfigDir();
 
 export const LOCALE_RE = /^[a-z]{2,3}(-[A-Z]{2})?$/;
 
