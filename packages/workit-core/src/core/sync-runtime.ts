@@ -33,22 +33,62 @@ const run = (cmd: string, args: string[], opts: { cwd?: string; env: NodeJS.Proc
   };
 };
 
-/** Acquire a non-blocking flock for the duration of the sync (mirrors `flock -n 9`). */
+/** Acquire a non-blocking flock for the duration of the sync (mirrors `exec 9>"$LOCK"; flock -n 9`). */
 async function acquireLock(
   lock: string,
   env: NodeJS.ProcessEnv,
 ): Promise<{ proc: ChildProcess } | { error: string }> {
-  // Probe first: `flock -n <lock> true` fails immediately when another process holds it.
-  const probe = run("flock", ["-n", lock, "true"], { env });
-  if (probe.exitCode !== 0) {
+  // A single `sh` child opens fd 9 and takes the flock on it, then stays alive
+  // until killed, so the lock is held atomically for the whole sync: no
+  // probe-then-hold TOCTOU window and no duration cap. The child signals it
+  // holds the lock by creating a ready marker; any other exit means it was held.
+  const ready = `${lock}.ready`;
+  rmSync(ready, { force: true });
+  const proc = spawn(
+    "sh",
+    [
+      "-c",
+      `exec 9>"$1"; flock -n 9 || exit 7; : >"$2"; while :; do sleep 3600; done`,
+      "workit-lock",
+      lock,
+      ready,
+    ],
+    { stdio: "ignore", env, detached: true },
+  );
+  const acquired = await new Promise<boolean>((resolve) => {
+    let settled = false;
+    const finish = (ok: boolean) => {
+      if (!settled) {
+        settled = true;
+        resolve(ok);
+      }
+    };
+    proc.once("exit", () => finish(false));
+    proc.once("error", () => finish(false));
+    const poll = () => {
+      if (settled) return;
+      if (existsSync(ready)) {
+        finish(true);
+        return;
+      }
+      setTimeout(poll, 20);
+    };
+    poll();
+  });
+  if (!acquired) {
+    killLockProcess(proc);
     return { error: `sync-runtime: another process holds ${lock} — state unverified, failing` };
   }
-  const proc = spawn("flock", ["-n", lock, "sleep", "60"], { stdio: "ignore", env });
-  await new Promise<void>((resolve) => {
-    proc.once("spawn", () => resolve());
-    proc.once("error", () => resolve());
-  });
   return { proc };
+}
+
+/** Kill the lock-holder process group so the sleep child releases the flock'd fd. */
+function killLockProcess(proc: ChildProcess): void {
+  try {
+    if (proc.pid) process.kill(-proc.pid, "SIGTERM");
+  } catch {
+    proc.kill();
+  }
 }
 
 export async function syncRuntime(options: SyncRuntimeOptions = {}): Promise<SyncRuntimeResult> {
@@ -162,9 +202,14 @@ export async function syncRuntime(options: SyncRuntimeOptions = {}): Promise<Syn
     const skillsSrc = path.join(share, "packages/workit-core/vendor/superpowers/skills");
     if (existsSync(skillsSrc)) {
       mkdirSync(path.join(pluginDir, "vendor/superpowers"), { recursive: true });
-      run("rsync", ["-a", "--delete", skillsSrc, path.join(pluginDir, "vendor/superpowers/")], {
-        env,
-      });
+      const r = run(
+        "rsync",
+        ["-a", "--delete", skillsSrc, path.join(pluginDir, "vendor/superpowers/")],
+        { env },
+      );
+      if (r.exitCode !== 0) {
+        return { ok: false, error: `FATAL: skills rsync failed: ${r.stderr}` };
+      }
     }
 
     // Canonical user rules -> Cursor .mdc (compiled by the shared core).
@@ -245,7 +290,8 @@ export async function syncRuntime(options: SyncRuntimeOptions = {}): Promise<Syn
 
     return { ok: true };
   } finally {
-    lockProc.kill();
+    killLockProcess(lockProc);
+    rmSync(`${lock}.ready`, { force: true });
   }
 }
 

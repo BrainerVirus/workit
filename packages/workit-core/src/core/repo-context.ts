@@ -207,7 +207,7 @@ export const documentationFiles = (cwd: string): string[] => {
 const readTrimmed = (file: string, maxLines: number): string => {
   if (!existsSync(file)) return "";
   const lines = readFileSync(file, "utf8").split("\n");
-  return lines.slice(0, maxLines).join("\n").trimEnd();
+  return lines.slice(0, maxLines).join("\n");
 };
 
 /** Port of pr-ready-context.sh — PR-ready repository context. */

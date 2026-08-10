@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
+import { repoRoot } from "./repo-context";
 
 // Port of scripts/verify-project.sh — discover + run project verification checks
 // (npm/pnpm/yarn, cargo, pytest/ruff, CHANGELOG format). Output is parsed by
@@ -56,7 +57,9 @@ const packageRunner = (cwd: string): string => {
 };
 
 export function runVerifyProject(root: string, dryRun = false): VerifyResult {
-  const cwd = realpathSync(root);
+  // Shell parity: verify-project.sh did `root=$(git rev-parse --show-toplevel || pwd); cd "$root"`,
+  // so a run from a repo subdirectory still checks the repo root.
+  const cwd = repoRoot(root);
   let passed = 0;
   let failed = 0;
   let skipped = 0;
@@ -148,7 +151,7 @@ export function runVerifyProject(root: string, dryRun = false): VerifyResult {
     lines.push("status: skipped (dry run)\n");
     skipped += 1;
   } else if (existsSync(changelogPath)) {
-    if (/##\s*\[Unreleased\]/i.test(readFileSync(changelogPath, "utf8"))) {
+    if (/## \[Unreleased\]/i.test(readFileSync(changelogPath, "utf8"))) {
       lines.push("status: pass\n");
       passed += 1;
     } else {

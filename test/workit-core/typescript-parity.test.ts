@@ -363,6 +363,55 @@ test("verify-project picks the package runner and runs package.json scripts", ()
   }
 });
 
+test("verify-project from a git subdirectory checks the repo root (shell cd parity)", () => {
+  const { repo } = buildFixtureRepo();
+  try {
+    writeFileSync(path.join(repo, "package.json"), '{"name":"fixture","scripts":{"lint":"true"}}');
+    const subdir = path.join(repo, "src");
+    mkdirSync(subdir, { recursive: true });
+    // The shell did `root=$(git rev-parse --show-toplevel || pwd); cd "$root"`, so
+    // verify run from a subdir must inspect the repo root's manifests.
+    const result = runVerifyProject(subdir);
+    expect(result.cwd).toBe(path.resolve(repo));
+    const parsed = parseVerifyOutput(result.stdout);
+    expect(parsed.passed).toBe(2); // lint + changelog, both from the repo root
+    const lint = parsed.commands.find((c: any) => c.label === "lint");
+    expect(lint).toEqual({ label: "lint", command: "npm run lint", status: "pass" });
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("maintained verify path runs against a fixture repo whose path contains a space", () => {
+  const parent = mkdtempSync(path.join(os.tmpdir(), "wf parity "));
+  const repo = path.join(parent, "repo with space");
+  try {
+    mkdirSync(repo, { recursive: true });
+    const git = (args: string[]) => spawnSync("git", args, { cwd: repo, encoding: "utf8" });
+    git(["init", "-q", "-b", "main"]);
+    git(["config", "user.name", "Workflow Test"]);
+    git(["config", "user.email", "workflow@example.test"]);
+    writeFileSync(path.join(repo, "package.json"), '{"name":"fixture","scripts":{"lint":"true"}}');
+    writeFileSync(
+      path.join(repo, "CHANGELOG.md"),
+      "# Changelog\n\n## [Unreleased]\n\n### Added\n\n- base\n",
+    );
+    git(["add", "-A"]);
+    git(["commit", "-q", "-m", "base"]);
+    const subdir = path.join(repo, "src");
+    mkdirSync(subdir, { recursive: true });
+    // A space in the toplevel path must survive repo_root normalization and the
+    // subdir must still resolve to the root, exactly like the quoted shell.
+    const result = runVerifyProject(subdir);
+    expect(result.exitCode).toBe(0);
+    expect(result.cwd).toBe(path.resolve(repo));
+    const parsed = parseVerifyOutput(result.stdout);
+    expect(parsed.passed).toBe(2);
+  } finally {
+    rmSync(parent, { recursive: true, force: true });
+  }
+});
+
 test("git context exposes the same branch and status fields the shell produced", () => {
   const { repo } = buildFixtureRepo();
   try {
@@ -537,6 +586,76 @@ test.skipIf(!bashAvailable() || !flockAvailable())(
         rmSync(devLockDir2, { recursive: true, force: true });
         rmSync(npmBin, { recursive: true, force: true });
         rmSync(dev, { recursive: true, force: true });
+      }
+
+      // failed skills rsync in dev mode -> not success in either (the shell
+      // aborted under set -euo pipefail; the port must not swallow it).
+      const skillsHome = mkdtempSync(path.join(os.tmpdir(), "wf-parity-vend-home-"));
+      const skillsLockDir = mkdtempSync(path.join(os.tmpdir(), "wf-parity-vend-lock-"));
+      const skillsBashHome = mkdtempSync(path.join(os.tmpdir(), "wf-parity-vend-home2-"));
+      const skillsBashLock = mkdtempSync(path.join(os.tmpdir(), "wf-parity-vend-lock2-"));
+      const fakeRsyncDir = mkdtempSync(path.join(os.tmpdir(), "wf-parity-fakersync-"));
+      const skillsDev = mkdtempSync(path.join(os.tmpdir(), "wf-parity-vend-dev-"));
+      const realRsync = findOnPath("rsync");
+      spawnSync("git", ["init", "-q"], { cwd: skillsDev });
+      mkdirSync(path.join(skillsDev, "packages/workit-opencode/src"), { recursive: true });
+      mkdirSync(path.join(skillsDev, "packages/workit-cursor/.cursor-plugin"), { recursive: true });
+      mkdirSync(path.join(skillsDev, "packages/workit-cursor/mcp"), { recursive: true });
+      mkdirSync(path.join(skillsDev, "packages/workit-core/vendor/superpowers/skills"), {
+        recursive: true,
+      });
+      writeFileSync(
+        path.join(skillsDev, "packages/workit-opencode/src/plugin.ts"),
+        "export default {};\n",
+      );
+      writeFileSync(
+        path.join(skillsDev, "packages/workit-core/vendor/superpowers/skills/README.md"),
+        "skills\n",
+      );
+      writeFileSync(
+        path.join(fakeRsyncDir, "rsync"),
+        [
+          "#!/usr/bin/env bash",
+          'if [[ "$*" == *vendor/superpowers* ]]; then',
+          '  echo "FATAL: skills rsync failed" >&2',
+          "  exit 1",
+          "fi",
+          'exec "$REAL_RSYNC" "$@"',
+          "",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      try {
+        const tsSkills = await syncRuntime({
+          env: mkEnv({
+            HOME: skillsHome,
+            XDG_RUNTIME_DIR: skillsLockDir,
+            WORKFLOW_TOOLKIT_DEV: skillsDev,
+            PATH: `${fakeRsyncDir}${path.delimiter}${process.env.PATH ?? ""}`,
+            REAL_RSYNC: realRsync ?? "rsync",
+          }),
+        });
+        expect(tsSkills.ok).toBe(false);
+        expect("error" in tsSkills && tsSkills.error).toContain("skills rsync failed");
+
+        const bashSkills = runScript(
+          mkEnv({
+            HOME: skillsBashHome,
+            XDG_RUNTIME_DIR: skillsBashLock,
+            WORKFLOW_TOOLKIT_DEV: skillsDev,
+            PATH: `${fakeRsyncDir}${path.delimiter}${process.env.PATH ?? ""}`,
+            REAL_RSYNC: realRsync ?? "rsync",
+          }),
+        );
+        expect(bashSkills.status).not.toBe(0);
+        expect(bashSkills.stderr).toContain("skills rsync failed");
+      } finally {
+        rmSync(skillsHome, { recursive: true, force: true });
+        rmSync(skillsLockDir, { recursive: true, force: true });
+        rmSync(skillsBashHome, { recursive: true, force: true });
+        rmSync(skillsBashLock, { recursive: true, force: true });
+        rmSync(fakeRsyncDir, { recursive: true, force: true });
+        rmSync(skillsDev, { recursive: true, force: true });
       }
     } finally {
       rmSync(binDir, { recursive: true, force: true });
