@@ -120,3 +120,23 @@ jobs:
 
       - name: Typecheck (whole repo)
         run: bun run typecheck
+
+  candidate:
+    # Phase 0 release-candidate gate (RR-11 / CA-30): pack every workspace
+    # package WITHOUT publishing and verify the corrective candidate installs
+    # and starts in isolation. bun pm pack only writes a local tarball — no
+    # registry, no tags, no marketplace operations.
+    name: check (phase-0 candidate)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install deps
+        run: bun install --frozen-lockfile
+
+      - name: Pack and gate the corrective candidate
+        run: bun test test/artifacts/phase-0-candidate.test.ts
