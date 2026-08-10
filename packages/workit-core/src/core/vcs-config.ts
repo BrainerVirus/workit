@@ -1,5 +1,4 @@
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { configDir } from "./config";
@@ -69,7 +68,7 @@ export function vcsConfig(mode: "load" | "summary" | "resolve", cwd?: string): R
   if (!cfgOk) return { ok: false, error: "missing or invalid vcs.json" };
 
   const prov = (cfg[provider] ?? {}) as Record<string, any>;
-  const tokenFile = String(prov.tokenFile ?? path.join(os.homedir(), ".config", "workflow-toolkit", `${provider}.token`));
+  const tokenFile = String(prov.tokenFile ?? path.join(configDir(), `${provider}.token`));
   const tokenPath = path.resolve(tokenFile);
   let tokenOk = false;
   if (fs.existsSync(tokenPath)) {
@@ -170,13 +169,13 @@ export function vcsTokenCreateUrls(): Record<string, any> {
   const provider = String(cfg.provider ?? "gitlab").toLowerCase();
   const active = {
     gitlab: {
-      tokenFile: gitlab.tokenFile ?? path.join(os.homedir(), ".config", "workflow-toolkit", "gitlab.token"),
+      tokenFile: gitlab.tokenFile ?? path.join(configDir(), "gitlab.token"),
       createUrl: gitlabUrl,
       scopes: gitlabScopes,
       name,
     },
     github: {
-      tokenFile: (cfg.github as Record<string, any>)?.tokenFile ?? path.join(os.homedir(), ".config", "workflow-toolkit", "github.token"),
+      tokenFile: (cfg.github as Record<string, any>)?.tokenFile ?? path.join(configDir(), "github.token"),
       createUrl: githubFineUrl,
       createUrlClassic: githubClassicUrl,
       permissions: githubPerms,

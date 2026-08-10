@@ -20,6 +20,7 @@ function makeStub(pluginTs: string) {
   const home = mkdtempSync(path.join(os.tmpdir(), "wk-install-home-"));
   spawnSync("git", ["init", "-q"], { cwd: stub });
   mkdirSync(path.join(stub, "scripts"), { recursive: true });
+  mkdirSync(path.join(stub, "scripts/lib"), { recursive: true });
   mkdirSync(path.join(stub, "packages/workit-cursor/.cursor-plugin"), { recursive: true });
   mkdirSync(path.join(stub, "packages/workit-opencode/src"), { recursive: true });
   cpSync(
@@ -29,6 +30,10 @@ function makeStub(pluginTs: string) {
   cpSync(
     path.join(repoRoot, "packages/workit-core/scripts/sync-runtime.sh"),
     path.join(stub, "scripts/sync-runtime.sh"),
+  );
+  cpSync(
+    path.join(repoRoot, "packages/workit-core/scripts/lib/config-dir.sh"),
+    path.join(stub, "scripts/lib/config-dir.sh"),
   );
   writeFileSync(path.join(stub, "packages/workit-opencode/src/plugin.ts"), pluginTs);
   return { stub, home };

@@ -1,18 +1,18 @@
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { readTemplate } from "./templates";
 import { resolveWorkspaceRoot } from "./scripts";
+import { configDir } from "./config";
 
 const ISSUE_RE = /^[A-Z]+-\d+$/;
 const TOKEN_PLACEHOLDER = "YOUR_TOKEN_HERE";
 
 // Port of scripts/youtrack/config.sh chain: WORKFLOW_YOUTRACK_CONFIG ->
-// XDG_CONFIG_HOME / HOME .config + workflow-toolkit/youtrack.json.
+// configDir() (XDG_CONFIG_HOME / HOME .config + workit).
 export const youTrackConfigPath = (): string =>
   process.env.WORKFLOW_YOUTRACK_CONFIG ??
-  path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config"), "workflow-toolkit", "youtrack.json");
+  path.join(configDir(), "youtrack.json");
 
 const youTrackTokenModeOk = (p: string): boolean => {
   if (process.platform === "win32") return true;
