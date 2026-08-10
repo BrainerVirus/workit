@@ -65,14 +65,16 @@ export const defaultOperations: YouTrackOperations = {
   verifyToken: () => unwrap(verifyYouTrackToken()),
   context: (input) => legacyContext(input as never),
   parseDuration: (text, workspaceRoot) => legacyParseDuration(text, workspaceRoot),
-  postComment: (issueId, markdown, workspaceRoot) =>
-    legacyPostUpdate({
-      confirmed: true,
-      issueId,
-      markdown,
-      workspace_root: workspaceRoot,
-    } as never),
-  logTime: (input) => legacyLogTime(input as never),
+  postComment: async (issueId, markdown, workspaceRoot) =>
+    unwrap(
+      await legacyPostUpdate({
+        confirmed: true,
+        issueId,
+        markdown,
+        workspace_root: workspaceRoot,
+      } as never),
+    ),
+  logTime: async (input) => unwrap(await legacyLogTime(input as never)),
 };
 
 type PostInput = {

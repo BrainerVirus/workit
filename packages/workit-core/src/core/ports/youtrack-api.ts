@@ -11,7 +11,7 @@ if (cmd === "log-time" || cmd === "post-comment") {
     process.exit(1);
   }
 }
-const out = youTrackApi(args, process.env.WORKFLOW_YT_WRITE ?? "");
+const out = await youTrackApi(args, process.env.WORKFLOW_YT_WRITE ?? "");
 if ("error" in out) {
   console.log(JSON.stringify({ ok: false, error: out.error }));
   process.exit(1);

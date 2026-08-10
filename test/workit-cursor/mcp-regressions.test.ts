@@ -6,6 +6,7 @@ import { spawnSync } from "node:child_process";
 
 import { changelogApply } from "../../packages/workit-core/src/core/changelog";
 import { postUpdate } from "../../packages/workit-core/src/core/youtrack";
+import { releaseNotesContext } from "../../packages/workit-core/src/core/repo-context";
 import { buildHandoffPrompt } from "../../packages/workit-core/src/core/handoff-tools";
 import { docsValidate } from "../../packages/workit-core/src/core/docs-validate";
 
@@ -217,10 +218,10 @@ test("YouTrack post orchestration accepts injected operations", () => {
   expect(postUpdate.length).toBe(2);
 });
 
-test("YouTrack partial time failure never hides a posted comment", () => {
+test("YouTrack partial time failure never hides a posted comment", async () => {
   let comments = 0;
   let timeLogs = 0;
-  const result = postUpdate(
+  const result = await postUpdate(
     {
       confirmed: true,
       issueId: "NSR-40",
@@ -261,17 +262,13 @@ test("release notes require and expose an explicit range", () => {
     writeFileSync(path.join(root, "file.txt"), "release\n");
     spawnSync("git", ["add", "file.txt"], { cwd: root });
     spawnSync("git", ["commit", "-q", "-m", "release fixture"], { cwd: root });
-    const script = path.join(REPO_ROOT, "packages/workit-core/scripts/release-notes-context.sh");
 
-    const missing = spawnSync("bash", [script], { cwd: root, encoding: "utf8" });
-    expect(missing.status).not.toBe(0);
+    const missing = releaseNotesContext(root, "");
+    expect(missing.exitCode).not.toBe(0);
     expect(missing.stderr).toMatch(/release tag or range required/);
 
-    const explicit = spawnSync("bash", [script, "HEAD"], {
-      cwd: root,
-      encoding: "utf8",
-    });
-    expect(explicit.status).toBe(0);
+    const explicit = releaseNotesContext(root, "HEAD");
+    expect(explicit.exitCode).toBe(0);
     expect(explicit.stdout).toMatch(/^requested: HEAD$/m);
     expect(explicit.stdout).toMatch(/^range: .+$/m);
   } finally {

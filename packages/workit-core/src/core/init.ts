@@ -239,7 +239,7 @@ export function initStatusData(configDirPath = configDir()): Record<string, any>
 }
 
 /** Port of scripts/init/toolkit-status.sh — filesystem + API health check. */
-export function toolkitStatusData(configDirPath = configDir()): Record<string, any> {
+export async function toolkitStatusData(configDirPath = configDir()): Promise<Record<string, any>> {
   const status = initStatusData(configDirPath);
   const tokenItem = status.items.find((i: Record<string, any>) => i.id === "youtrack_token") ?? {};
   const placeholder = Boolean(tokenItem.placeholder);
@@ -253,10 +253,10 @@ export function toolkitStatusData(configDirPath = configDir()): Record<string, a
 
   const verify = placeholder
     ? { ok: false, error: "token still placeholder YOUR_TOKEN_HERE" }
-    : youTrackVerifyToken();
+    : await youTrackVerifyToken();
   const vcsVerify = vcsPlaceholder
     ? { ok: false, error: "vcs token still placeholder YOUR_TOKEN_HERE" }
-    : vcsVerifyToken();
+    : await vcsVerifyToken();
 
   status.youtrack_verify = verify;
   status.youtrack_ok = placeholder ? false : Boolean((verify as Record<string, any>).ok);
@@ -488,7 +488,7 @@ export function initStatus(): Record<string, any> {
   };
 }
 
-export function toolkitStatus(): Record<string, any> {
+export async function toolkitStatus(): Promise<Record<string, any>> {
   return toolkitStatusData();
 }
 

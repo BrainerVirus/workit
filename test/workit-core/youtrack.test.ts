@@ -12,17 +12,10 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
 
 // The config chain WORKFLOW_TOOLKIT_CONFIG → WORKFLOW_TOOLKIT_CONFIG_DIR → XDG must
 // resolve via XDG alone in isolation tests: earlier test files may leak the override
 // vars into the ambient env (same fix family as config.test.ts).
-const neutralEnv = (): Record<string, string | undefined> => {
-  const env: Record<string, string | undefined> = { ...process.env };
-  delete env.WORKFLOW_TOOLKIT_CONFIG;
-  delete env.WORKFLOW_TOOLKIT_CONFIG_DIR;
-  return env;
-};
 
 const withNeutralXdg = async <T>(xdg: string, fn: () => Promise<T> | T): Promise<T> => {
   const saved = {
@@ -71,6 +64,12 @@ import {
   readCredentials,
   redact,
 } from "../../packages/workit-core/src/core/youtrack-tools";
+import {
+  youTrackApi,
+  youTrackConfigLoad,
+  youTrackTokenCreateUrl,
+} from "../../packages/workit-core/src/core/youtrack";
+import { initApplyData, initStatusData } from "../../packages/workit-core/src/core/init";
 import { createYouTrackTools } from "../../packages/workit-opencode/src/tools/youtrack";
 
 test("comment success plus ambiguous time failure does not recommend retry", async () => {
@@ -383,66 +382,47 @@ test.skipIf(process.platform === "win32")("bundled YouTrack scripts honor XDG_CO
     }),
   );
 
-  const result = spawnSync("bash", ["packages/workit-core/scripts/youtrack/config.sh", "load"], {
-    cwd: path.resolve(import.meta.dir, "..", ".."),
-    encoding: "utf8",
-    env: { ...neutralEnv(), HOME: path.join(xdg, "unused-home"), XDG_CONFIG_HOME: xdg },
+  withNeutralXdg(xdg, () => {
+    const out = youTrackConfigLoad();
+    expect("data" in out ? out.data.meetingIssue : null).toBe("IRPT-12");
   });
-  expect(result.status).toBe(0);
-  expect(JSON.parse(result.stdout).meetingIssue).toBe("IRPT-12");
 });
 
 test("init scaffolding and status share the neutral XDG config directory", () => {
   const xdg = mkdtempSync(path.join(os.tmpdir(), "wf-youtrack-init-"));
-  const env = {
-    ...neutralEnv(),
-    HOME: path.join(xdg, "unused-home"),
-    XDG_CONFIG_HOME: xdg,
-  };
-  const apply = spawnSync(
-    "bash",
-    ["packages/workit-core/scripts/init/apply.sh", "youtrack_scaffold", "true"],
-    {
-      cwd: path.resolve(import.meta.dir, "..", ".."),
-      encoding: "utf8",
-      env,
-    },
-  );
-  expect(apply.status).toBe(0);
-  const directory = path.join(xdg, "workit");
-  const config = JSON.parse(readFileSync(path.join(directory, "youtrack.json"), "utf8"));
-  expect(config.tokenFile).toBe(path.join(directory, "youtrack.token"));
-  expect(config.tokenDefaults.description).toContain("OpenCode workit");
-  expect(config.tokenDefaults.description).not.toContain("Cursor");
+  withNeutralXdg(xdg, () => {
+    initApplyData("youtrack_scaffold");
+    const directory = path.join(xdg, "workit");
+    const config = JSON.parse(readFileSync(path.join(directory, "youtrack.json"), "utf8"));
+    expect(config.tokenFile).toBe(path.join(directory, "youtrack.token"));
+    expect(config.tokenDefaults.description).toContain("OpenCode workit");
+    expect(config.tokenDefaults.description).not.toContain("Cursor");
 
-  const status = spawnSync("bash", ["packages/workit-core/scripts/init/status.sh"], {
-    cwd: path.resolve(import.meta.dir, "..", ".."),
-    encoding: "utf8",
-    env,
+    const configEditPath = initStatusData().youtrack_config.config_edit_path;
+    if (process.platform === "win32") {
+      expect(existsSync(configEditPath)).toBe(true);
+      expect(path.basename(configEditPath)).toBe("youtrack.json");
+    } else {
+      expect(configEditPath).toBe(path.join(realpathSync(directory), "youtrack.json"));
+    }
   });
-  expect(status.status).toBe(0);
-  const configEditPath = JSON.parse(status.stdout).youtrack_config.config_edit_path;
-  if (process.platform === "win32") {
-    expect(existsSync(configEditPath)).toBe(true);
-    expect(path.basename(configEditPath)).toBe("youtrack.json");
-  } else {
-    expect(configEditPath).toBe(path.join(realpathSync(directory), "youtrack.json"));
-  }
 });
 
 test("token helper runtime output uses OpenCode-neutral descriptions", () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "wf-token-help-"));
   const config = path.join(root, "youtrack.json");
   writeFileSync(config, JSON.stringify({ baseUrl: "https://example.youtrack.cloud" }));
-  const result = spawnSync("bash", ["packages/workit-core/scripts/youtrack/token-create-url.sh"], {
-    cwd: path.resolve(import.meta.dir, "..", ".."),
-    encoding: "utf8",
-    env: { ...process.env, WORKFLOW_YOUTRACK_CONFIG: config },
-  });
-  const output = JSON.parse(result.stdout);
-  expect(output.tokenDescription).toContain("OpenCode workit");
-  expect(JSON.stringify(output)).not.toContain("Cursor");
-  rmSync(root, { recursive: true, force: true });
+  const previous = process.env.WORKFLOW_YOUTRACK_CONFIG;
+  process.env.WORKFLOW_YOUTRACK_CONFIG = config;
+  try {
+    const output = youTrackTokenCreateUrl().data;
+    expect(output.tokenDescription).toContain("OpenCode workit");
+    expect(JSON.stringify(output)).not.toContain("Cursor");
+  } finally {
+    if (previous === undefined) delete process.env.WORKFLOW_YOUTRACK_CONFIG;
+    else process.env.WORKFLOW_YOUTRACK_CONFIG = previous;
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("meeting context exposes only the configured meetingIssue", () => {
@@ -473,12 +453,8 @@ test("meeting context exposes only the configured meetingIssue", () => {
   });
 });
 
-test("bundled API failures never expose the token or authorization header", () => {
+test("bundled API failures never expose the token or authorization header", async () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "wf-youtrack-redact-"));
-  const bin = path.join(root, "bin");
-  mkdirSync(bin);
-  const curl = path.join(bin, "curl");
-  writeFileSync(curl, "#!/usr/bin/env bash\nexit 22\n", { mode: 0o755 });
   const tokenPath = path.join(root, "youtrack.token");
   const config = path.join(root, "youtrack.json");
   writeFileSync(tokenPath, "secret-token\n", { mode: 0o600 });
@@ -487,18 +463,27 @@ test("bundled API failures never expose the token or authorization header", () =
     JSON.stringify({ tokenFile: tokenPath, baseUrl: "https://youtrack.example.test" }),
   );
 
-  const result = spawnSync(
-    "bash",
-    ["packages/workit-core/scripts/youtrack/api.sh", "post-comment", "NSR-40", "Revisado"],
-    {
-      cwd: path.resolve(import.meta.dir, "..", ".."),
-      encoding: "utf8",
-      env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, WORKFLOW_YOUTRACK_CONFIG: config },
-    },
-  );
-  expect(result.status).toBe(1);
-  expect(result.stdout + result.stderr).not.toContain("secret-token");
-  expect(result.stdout + result.stderr).not.toContain("Authorization");
+  const previousConfig = process.env.WORKFLOW_YOUTRACK_CONFIG;
+  const originalFetch = globalThis.fetch;
+  let called = false;
+  globalThis.fetch = (async () => {
+    called = true;
+    throw new Error("offline");
+  }) as unknown as typeof fetch;
+  process.env.WORKFLOW_YOUTRACK_CONFIG = config;
+  try {
+    const result = await youTrackApi(["post-comment", "NSR-40", "Revisado"], "1");
+    expect(called).toBe(true); // fetch is used, not the curl binary
+    expect("error" in result).toBe(true);
+    const text = JSON.stringify(result);
+    expect(text).not.toContain("secret-token");
+    expect(text).not.toContain("Authorization");
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (previousConfig === undefined) delete process.env.WORKFLOW_YOUTRACK_CONFIG;
+    else process.env.WORKFLOW_YOUTRACK_CONFIG = previousConfig;
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("registers seven standard tools without workspace_root and guards mutations", async () => {

@@ -66,7 +66,7 @@ const truthy = (v: string | undefined): boolean =>
 
 // Port of python's shutil.which — scan PATH in-process (no `which` binary needed).
 function whichOnPath(tool: string): string | null {
-  for (const dir of (process.env.PATH ?? "").split(":")) {
+  for (const dir of (process.env.PATH ?? "").split(path.delimiter)) {
     if (!dir) continue;
     const candidate = path.join(dir, tool);
     try {

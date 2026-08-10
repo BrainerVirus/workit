@@ -1,10 +1,18 @@
 import { fail, ok, run } from "../core";
 
-type RunResult = ReturnType<typeof run>;
+export type RunResult = ReturnType<typeof run>;
 
 export type RepoRuntime = {
-  runScript(root: string, script: string, args: string[], env?: Record<string, string>): RunResult;
   git(root: string, args: string[]): RunResult;
+  verifyProject(root: string, dryRun: boolean): RunResult;
+  prContext(root: string, range: string | undefined): RunResult;
+  changelogContext(root: string, range: string | undefined): RunResult;
+  docsContext(root: string, range: string | undefined): RunResult;
+  releaseContext(root: string, range: string): RunResult;
+  prCreate(root: string, env: Record<string, string>): RunResult;
+  initApply(root: string, action: string, env: Record<string, string>): RunResult;
+  initStatus(root: string): RunResult;
+  toolkitStatus(root: string): RunResult | Promise<RunResult>;
 };
 
 export const normalizeLegacyResult = (value: Record<string, unknown>) => {

@@ -12,7 +12,11 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { createRepoTools } from "../../packages/workit-opencode/src/tools/repo";
-import { normalizeLegacyResult } from "../../packages/workit-core/src/core/repo-tools";
+import {
+  normalizeLegacyResult,
+  type RepoRuntime,
+} from "../../packages/workit-core/src/core/repo-tools";
+import { initStatusData, initApplyData } from "../../packages/workit-core/src/core/init";
 import { PLUGIN_ROOT } from "../../packages/workit-core/src/core/scripts";
 
 // Isolate from the developer's global config: tests assume gitflow semantics
@@ -46,9 +50,30 @@ afterAll(() => {
   rmSync(isolatedConfig, { recursive: true, force: true });
 });
 
-const calls: Array<{ root: string; script: string; args: string[]; env?: Record<string, string> }> =
-  [];
-const gitCalls: Array<{ root: string; args: string[] }> = [];
+type RuntimeCalls = {
+  git: Array<{ root: string; args: string[] }>;
+  verifyProject: Array<{ root: string; dryRun: boolean }>;
+  prContext: Array<{ root: string; range?: string }>;
+  changelogContext: Array<{ root: string; range?: string }>;
+  docsContext: Array<{ root: string; range?: string }>;
+  releaseContext: Array<{ root: string; range: string }>;
+  prCreate: Array<{ root: string; env: Record<string, string> }>;
+  initApply: Array<{ root: string; action: string; env: Record<string, string> }>;
+};
+const calls: RuntimeCalls = {
+  git: [],
+  verifyProject: [],
+  prContext: [],
+  changelogContext: [],
+  docsContext: [],
+  releaseContext: [],
+  prCreate: [],
+  initApply: [],
+};
+const totalCalls = () => Object.values(calls).reduce((n, bucket) => n + bucket.length, 0);
+const resetCalls = () => {
+  for (const bucket of Object.values(calls)) bucket.length = 0;
+};
 const outputs: Record<string, string> = {
   "init/status.sh": JSON.stringify({ ready: false, items: [{ id: "config", ok: true }] }),
   "init/toolkit-status.sh": JSON.stringify({ ready: true, next_step: "All checks passed" }),
@@ -71,13 +96,9 @@ const outputs: Record<string, string> = {
   "init/apply.sh": JSON.stringify({ ok: true, action: "youtrack_json" }),
 };
 
-const runtime = {
-  runScript: (root: string, script: string, args: string[], env?: Record<string, string>) => {
-    calls.push({ root, script, args, ...(env ? { env } : {}) });
-    return { exitCode: 0, stdout: outputs[script] ?? "", stderr: "", cwd: root };
-  },
+const runtime: RepoRuntime = {
   git: (root: string, args: string[]) => {
-    gitCalls.push({ root, args });
+    calls.git.push({ root, args });
     return {
       exitCode: 0,
       stdout: args[0] === "branch" ? "feature/native-tools\n" : "committed\n",
@@ -85,6 +106,46 @@ const runtime = {
       cwd: root,
     };
   },
+  verifyProject: (root: string, dryRun: boolean) => {
+    calls.verifyProject.push({ root, dryRun });
+    return { exitCode: 0, stdout: outputs["verify-project.sh"], stderr: "", cwd: root };
+  },
+  prContext: (root: string, range?: string) => {
+    calls.prContext.push({ root, range });
+    return { exitCode: 0, stdout: outputs["pr-ready-context.sh"], stderr: "", cwd: root };
+  },
+  changelogContext: (root: string, range?: string) => {
+    calls.changelogContext.push({ root, range });
+    return { exitCode: 0, stdout: outputs["changelog-context.sh"], stderr: "", cwd: root };
+  },
+  docsContext: (root: string, range?: string) => {
+    calls.docsContext.push({ root, range });
+    return { exitCode: 0, stdout: outputs["docs-refresh-context.sh"], stderr: "", cwd: root };
+  },
+  releaseContext: (root: string, range: string) => {
+    calls.releaseContext.push({ root, range });
+    return { exitCode: 0, stdout: outputs["release-notes-context.sh"], stderr: "", cwd: root };
+  },
+  prCreate: (root: string, env: Record<string, string>) => {
+    calls.prCreate.push({ root, env });
+    return { exitCode: 0, stdout: outputs["pr-create.sh"], stderr: "", cwd: root };
+  },
+  initApply: (root: string, action: string, env: Record<string, string>) => {
+    calls.initApply.push({ root, action, env });
+    return { exitCode: 0, stdout: outputs["init/apply.sh"], stderr: "", cwd: root };
+  },
+  initStatus: (root: string) => ({
+    exitCode: 0,
+    stdout: outputs["init/status.sh"],
+    stderr: "",
+    cwd: root,
+  }),
+  toolkitStatus: (root: string) => ({
+    exitCode: 0,
+    stdout: outputs["init/toolkit-status.sh"],
+    stderr: "",
+    cwd: root,
+  }),
 };
 
 const execute = async (
@@ -125,17 +186,17 @@ test("repo tools expose native names without workspace override", () => {
 });
 
 test("release notes rejects a missing range before running a script", async () => {
-  calls.length = 0;
+  resetCalls();
   expect(await execute("workflow_release_notes_context", { range_or_tag: "" })).toEqual({
     ok: false,
     data: null,
     error: "release tag or range required",
   });
-  expect(calls).toHaveLength(0);
+  expect(totalCalls()).toBe(0);
 });
 
 test("revision context rejects option-like inputs before scripts run", async () => {
-  calls.length = 0;
+  resetCalls();
   for (const [name, args] of [
     ["workflow_pr_context", { range: "--output=/tmp/owned" }],
     ["workflow_changelog_context", { range: "-p" }],
@@ -144,7 +205,7 @@ test("revision context rejects option-like inputs before scripts run", async () 
     const result = await execute(name, args);
     expect(result.error).toContain("invalid Git revision");
   }
-  expect(calls).toHaveLength(0);
+  expect(totalCalls()).toBe(0);
 });
 
 test("revision context resolves revisions and cannot create option-selected files", async () => {
@@ -170,9 +231,9 @@ test("revision context resolves revisions and cannot create option-selected file
 });
 
 test("script tools use ToolContext.directory", async () => {
-  calls.length = 0;
+  resetCalls();
   await execute("workflow_verify", { dry_run: true });
-  expect(calls).toEqual([{ root: "/repo", script: "verify-project.sh", args: ["--dry-run"] }]);
+  expect(calls.verifyProject).toEqual([{ root: "/repo", dryRun: true }]);
 });
 
 test("verification output is structured", async () => {
@@ -248,7 +309,12 @@ test("status scripts decode JSON into the Result data field", async () => {
 test("script failures keep diagnostics in a failed Result", async () => {
   const failing = createRepoTools({
     ...runtime,
-    runScript: (root: string) => ({ exitCode: 2, stdout: "partial", stderr: "broken", cwd: root }),
+    docsContext: (root: string) => ({
+      exitCode: 2,
+      stdout: "partial",
+      stderr: "broken",
+      cwd: root,
+    }),
   });
   const raw = await failing.workflow_docs_context.execute({}, {
     directory: "/repo",
@@ -262,8 +328,7 @@ test("script failures keep diagnostics in a failed Result", async () => {
 });
 
 test("mutations reject missing confirmation", async () => {
-  calls.length = 0;
-  gitCalls.length = 0;
+  resetCalls();
   const tools = createRepoTools(runtime);
   for (const name of [
     "workflow_changelog_apply",
@@ -278,8 +343,7 @@ test("mutations reject missing confirmation", async () => {
     );
     expect(JSON.parse(raw as string).error).toBe("confirmed: true required");
   }
-  expect(calls).toHaveLength(0);
-  expect(gitCalls).toHaveLength(0);
+  expect(totalCalls()).toBe(0);
 });
 
 test("commit blocks protected branches", async () => {
@@ -298,7 +362,7 @@ test("commit blocks protected branches", async () => {
 });
 
 test("commit accepts only feature or bugfix branches and never stages files", async () => {
-  gitCalls.length = 0;
+  calls.git.length = 0;
   const result = await execute("workflow_commit", {
     confirmed: true,
     message: "feat: native mutation",
@@ -308,7 +372,7 @@ test("commit accepts only feature or bugfix branches and never stages files", as
     data: { stdout: "committed", exitCode: 0 },
     error: null,
   });
-  expect(gitCalls).toEqual([
+  expect(calls.git).toEqual([
     { root: "/repo", args: ["branch", "--show-current"] },
     { root: "/repo", args: ["commit", "-m", "feat: native mutation"] },
   ]);
@@ -355,7 +419,7 @@ test("PR creation rejects protected and unsupported branches before external wor
         stderr: "",
         cwd: root,
       }),
-      runScript: (root) => {
+      prCreate: (root) => {
         externalCalls++;
         return { exitCode: 0, stdout: "{}", stderr: "", cwd: root };
       },
@@ -489,7 +553,7 @@ test("branch setup treats quote-bearing manifest paths as data", async () => {
 });
 
 test("confirmed script mutations use package scripts, argument arrays, and scoped environment", async () => {
-  calls.length = 0;
+  resetCalls();
   const root = mkdtempSync(path.join(os.tmpdir(), "workflow-toolkit-scripts-"));
   expect(
     await execute("workflow_pr_create", {
@@ -512,11 +576,9 @@ test("confirmed script mutations use package scripts, argument arrays, and scope
     }),
   ).toEqual({ ok: true, data: { action: "youtrack_json", exitCode: 0 }, error: null });
 
-  expect(calls).toEqual([
+  expect(calls.prCreate).toEqual([
     {
       root: "/repo",
-      script: "pr-create.sh",
-      args: [],
       env: {
         WF_PR_TITLE: "Native tools",
         WF_PR_BODY: "Ready",
@@ -525,10 +587,11 @@ test("confirmed script mutations use package scripts, argument arrays, and scope
         WF_PR_TARGET: "develop",
       },
     },
+  ]);
+  expect(calls.initApply).toEqual([
     {
       root: "/repo",
-      script: "init/apply.sh",
-      args: ["youtrack_json", "true"],
+      action: "youtrack_json",
       env: { WORKFLOW_YT_BASE_URL: "https://youtrack.example.test" },
     },
   ]);
@@ -539,7 +602,7 @@ test("mutation scripts normalize legacy errors into a failed Result", async () =
   const root = mkdtempSync(path.join(os.tmpdir(), "workflow-toolkit-error-"));
   const raw = await createRepoTools({
     ...runtime,
-    runScript: (root: string) => ({
+    prCreate: (root: string) => ({
       exitCode: 1,
       stdout: JSON.stringify({ error: "legacy failure" }),
       stderr: "",
@@ -567,7 +630,7 @@ test("legacy ok false values normalize to failures", async () => {
   try {
     const raw = await createRepoTools({
       ...runtime,
-      runScript: (cwd: string) => ({
+      initApply: (cwd: string) => ({
         exitCode: 0,
         stdout: JSON.stringify({ ok: false }),
         stderr: "",
@@ -588,7 +651,7 @@ test("legacy ok false values normalize to failures", async () => {
 });
 
 test("mutation paths cannot escape ToolContext.directory", async () => {
-  calls.length = 0;
+  resetCalls();
   const parent = mkdtempSync(path.join(os.tmpdir(), "workflow-toolkit-boundary-"));
   try {
     const root = path.join(parent, "repo");
@@ -604,7 +667,7 @@ test("mutation paths cannot escape ToolContext.directory", async () => {
       { directory: root, worktree: root } as never,
     );
     expect(JSON.parse(branchRaw as string).error).toBe("path must stay inside repository root");
-    expect(calls).toHaveLength(0);
+    expect(totalCalls()).toBe(0);
 
     writeFileSync(path.join(outside, "CHANGELOG.md"), "# Outside\n");
     symlinkSync(path.join(outside, "CHANGELOG.md"), path.join(root, "CHANGELOG.md"));
@@ -746,24 +809,13 @@ test("OpenCode init omits obsolete MCP dependency installation", () => {
 
   const config = mkdtempSync(path.join(os.tmpdir(), "workflow-toolkit-init-"));
   try {
-    const status = spawnSync("bash", [path.join(PLUGIN_ROOT, "scripts/init/status.sh")], {
-      encoding: "utf8",
-      env: { ...process.env, WORKFLOW_TOOLKIT_CONFIG: config },
-    });
-    expect(status.status).toBe(0);
-    const data = JSON.parse(status.stdout);
-    expect(data.items.some((item: { id: string }) => item.id === "mcp_deps")).toBe(false);
-
-    const apply = spawnSync(
-      "bash",
-      [path.join(PLUGIN_ROOT, "scripts/init/apply.sh"), "npm_install", "true"],
-      {
-        encoding: "utf8",
-        env: { ...process.env, WORKFLOW_TOOLKIT_CONFIG: config },
-      },
+    const status = initStatusData(config);
+    expect((status.items as Array<{ id: string }>).some((item) => item.id === "mcp_deps")).toBe(
+      false,
     );
-    expect(apply.status).not.toBe(0);
-    expect(apply.stderr).toContain("unknown action npm_install");
+
+    const apply = initApplyData("npm_install", { ...process.env, WORKFLOW_TOOLKIT_CONFIG: config });
+    expect(String(apply.error)).toContain("unknown action npm_install");
   } finally {
     rmSync(config, { recursive: true, force: true });
   }

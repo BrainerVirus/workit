@@ -1,52 +1,31 @@
 import { expect, test } from "bun:test";
-import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { scaffoldVcs, scaffoldYouTrack } from "../../packages/workit-cli/src/logic";
+import { initApplyData } from "../../packages/workit-core/src/core/init";
 
-// ponytail: pins parity between the wizard scaffolds (packages/workit-cli/src/logic.ts) and the bash
-// scripts/init/apply.sh writes — both must produce the same youtrack.json / vcs.json.
-// apply.sh honors WORKFLOW_YT_*/WORKFLOW_VCS_* env overrides; the wizard ignores them
-// (documented in logic.ts), so run apply.sh with a clean env.
+// ponytail: pins parity between the wizard scaffolds (packages/workit-cli/src/logic.ts)
+// and the initApplyData port of scripts/init/apply.sh writes — both must produce the
+// same youtrack.json / vcs.json. initApplyData honors WORKFLOW_YT_*/WORKFLOW_VCS_*
+// env overrides; the wizard ignores them (documented in logic.ts), so run it with a
+// clean env.
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const BASE_URL = "https://enghouseamg.youtrack.cloud";
 
-function bashAvailable(): boolean {
-  // win32 CI has no bash — skip the parity check there
-  if (process.platform === "win32") return false;
-  for (const [cmd, args] of [
-    ["bash", ["--version"]],
-    ["python3", ["--version"]],
-  ] as const) {
-    const r = spawnSync(cmd, args, { encoding: "utf8" });
-    if (r.status !== 0) return false;
-  }
-  return true;
-}
-
-function runApply(action: string, configDir: string): string {
-  const env: Record<string, string> = {};
-  for (const [k, v] of Object.entries(process.env)) {
-    if (v === undefined) continue;
-    if (/^WORKFLOW_(YT|VCS|GITLAB|GITHUB)_/.test(k)) continue; // env overrides would break parity
-    env[k] = v;
+function runApply(action: string, configDir: string): void {
+  const env: NodeJS.ProcessEnv = { ...process.env };
+  for (const key of Object.keys(env)) {
+    if (/^WORKFLOW_(YT|VCS|GITLAB|GITHUB)_/.test(key)) delete env[key]; // env overrides would break parity
   }
   env.WORKFLOW_TOOLKIT_CONFIG = configDir;
-  const r = spawnSync("bash", ["packages/workit-core/scripts/init/apply.sh", action, "true"], {
-    cwd: repoRoot,
-    env,
-    encoding: "utf8",
-  });
-  expect(r.status, `${action} failed: ${r.stderr}`).toBe(0);
-  return r.stdout;
+  const out = initApplyData(action, env);
+  if (out.error) throw new Error(`${action} failed: ${out.error}`);
 }
 
-test("wizard scaffolds match scripts/init/apply.sh output (youtrack + vcs)", () => {
-  if (!bashAvailable()) return; // no bash/python3 (e.g. win32 CI) — skip gracefully
-
+test("wizard scaffolds match initApplyData output (youtrack + vcs)", () => {
   const tsDir = mkdtempSync(path.join(os.tmpdir(), "wf-parity-ts-"));
   const shDir = mkdtempSync(path.join(os.tmpdir(), "wf-parity-sh-"));
   try {

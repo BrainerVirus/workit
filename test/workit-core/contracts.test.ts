@@ -184,10 +184,10 @@ test("native runtime outputs use OpenCode-neutral vocabulary", () => {
   const root = path.resolve(import.meta.dir, "..", "..", "packages", "workit-core");
   const sources = [
     "src/core/sdd.ts",
-    "scripts/_shared/common.sh",
-    "scripts/changelog-context.sh",
-    "scripts/init/apply.sh",
-    "scripts/vcs/token-create-urls.sh",
+    "src/core/repo-context.ts",
+    "src/core/verify-project.ts",
+    "src/core/init.ts",
+    "src/core/vcs-config.ts",
   ]
     .map((file) => readFileSync(path.join(root, file), "utf8"))
     .join("\n");
@@ -227,7 +227,7 @@ test("quality templates and findings are wired into contracts", () => {
 
 test("cursor session-start includes the contract reminder", () => {
   const hook = readFileSync(
-    path.resolve(import.meta.dir, "../../packages/workit-cursor/hooks/session-start"),
+    path.resolve(import.meta.dir, "../../packages/workit-cursor/hooks/session-start.ts"),
     "utf8",
   );
   expect(hook).toContain("Bounded user choices");

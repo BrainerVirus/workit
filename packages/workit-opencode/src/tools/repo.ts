@@ -1,6 +1,6 @@
 import path from "node:path";
 import { realpathSync } from "node:fs";
-import { tool, type ToolContext } from "@opencode-ai/plugin";
+import { tool } from "@opencode-ai/plugin";
 import { fail, gitRevisionParts, ok, resolveInside, run } from "@brainervirus/workit-core/src/core";
 import { changelogApply } from "@brainervirus/workit-core/src/core/changelog";
 import { gitContext } from "@brainervirus/workit-core/src/core/git";
@@ -20,19 +20,62 @@ import {
 } from "@brainervirus/workit-core/src/core/config";
 import { ensureProjectGitignore } from "@brainervirus/workit-core/src/core/gitignore";
 import { ensureHygieneFiles } from "@brainervirus/workit-core/src/core/hygiene";
-import { PLUGIN_ROOT } from "@brainervirus/workit-core/src/core/scripts";
+import {
+  changelogContext,
+  docsRefreshContext,
+  prReadyContext,
+  releaseNotesContext,
+} from "@brainervirus/workit-core/src/core/repo-context";
+import { runVerifyProject } from "@brainervirus/workit-core/src/core/verify-project";
+import { prCreate } from "@brainervirus/workit-core/src/core/pr-create";
+import {
+  initApply,
+  initStatusData,
+  toolkitStatusData,
+} from "@brainervirus/workit-core/src/core/init";
 import {
   normalizeLegacyResult,
   type RepoRuntime,
+  type RunResult,
 } from "@brainervirus/workit-core/src/core/repo-tools";
 
-const scripts = path.join(PLUGIN_ROOT, "scripts");
-type RunResult = ReturnType<typeof run>;
-
 const defaultRuntime: RepoRuntime = {
-  runScript: (root, script, args, env) =>
-    run(root, "bash", [path.join(scripts, script), ...args], env),
   git: (root, args) => run(root, "git", args),
+  verifyProject: (root, dryRun) => runVerifyProject(root, dryRun),
+  prContext: (root, range) => prReadyContext(root, range),
+  changelogContext: (root, range) => changelogContext(root, range),
+  docsContext: (root, range) => docsRefreshContext(root, range),
+  releaseContext: (root, range) => releaseNotesContext(root, range),
+  prCreate: (root, env) => {
+    const out = prCreate(env, root);
+    return {
+      exitCode: out.error || out.ok === false ? 1 : 0,
+      stdout: JSON.stringify(out),
+      stderr: "",
+      cwd: root,
+    };
+  },
+  initApply: (root, action, env) => {
+    const out = initApply({ action, confirmed: true, env });
+    return {
+      exitCode: out.error ? 1 : 0,
+      stdout: JSON.stringify(out.data ?? out),
+      stderr: "",
+      cwd: root,
+    };
+  },
+  initStatus: (root) => ({
+    exitCode: 0,
+    stdout: JSON.stringify(initStatusData()),
+    stderr: "",
+    cwd: root,
+  }),
+  toolkitStatus: async (root) => ({
+    exitCode: 0,
+    stdout: JSON.stringify(await toolkitStatusData()),
+    stderr: "",
+    cwd: root,
+  }),
 };
 
 const output = (value: unknown) => JSON.stringify(value, null, 2);
@@ -166,9 +209,9 @@ export function createRepoTools(runtime: RepoRuntime = defaultRuntime) {
       if (resolved.exitCode !== 0) throw new Error(`invalid Git revision or range: ${value}`);
     }
   };
-  const contextWithRange = (
+  const contextWithRange = async (
     root: string,
-    script: string,
+    runContext: (root: string, value: string | undefined) => RunResult | Promise<RunResult>,
     value: string | undefined,
     parse: (stdout: string) => Record<string, unknown>,
   ) => {
@@ -177,23 +220,21 @@ export function createRepoTools(runtime: RepoRuntime = defaultRuntime) {
     } catch (error) {
       return output(fail(error instanceof Error ? error.message : "invalid Git revision or range"));
     }
-    return output(scriptResult(runtime.runScript(root, script, value ? [value] : []), parse));
+    return output(scriptResult(await runContext(root, value), parse));
   };
-  const invoke =
-    (script: string, parse: (stdout: string) => Record<string, unknown>, args: string[] = []) =>
-    async (_input: unknown, context: ToolContext) =>
-      output(scriptResult(runtime.runScript(context.directory, script, args), parse));
 
   return {
     workflow_toolkit_init_status: tool({
       description: "Inspect toolkit initialization",
       args: {},
-      execute: invoke("init/status.sh", json),
+      execute: async (_input, context) =>
+        output(scriptResult(await runtime.initStatus(context.directory), json)),
     }),
     workflow_toolkit_status: tool({
       description: "Inspect toolkit and repository state",
       args: {},
-      execute: invoke("init/toolkit-status.sh", json),
+      execute: async (_input, context) =>
+        output(scriptResult(await runtime.toolkitStatus(context.directory), json)),
     }),
     workflow_git_context: tool({
       description: "Read Git branch and change context",
@@ -206,7 +247,7 @@ export function createRepoTools(runtime: RepoRuntime = defaultRuntime) {
       execute: async ({ dry_run }, context) =>
         output(
           scriptResult(
-            runtime.runScript(context.directory, "verify-project.sh", dry_run ? ["--dry-run"] : []),
+            runtime.verifyProject(context.directory, Boolean(dry_run)),
             parseVerifyOutput,
           ),
         ),
@@ -215,13 +256,13 @@ export function createRepoTools(runtime: RepoRuntime = defaultRuntime) {
       description: "Gather branch-exclusive PR context",
       args: { range: tool.schema.string().optional() },
       execute: async ({ range }, context) =>
-        contextWithRange(context.directory, "pr-ready-context.sh", range, parsePr),
+        contextWithRange(context.directory, runtime.prContext, range, parsePr),
     }),
     workflow_changelog_context: tool({
       description: "Gather changelog context",
       args: { range: tool.schema.string().optional() },
       execute: async ({ range }, context) =>
-        contextWithRange(context.directory, "changelog-context.sh", range, parseChangelog),
+        contextWithRange(context.directory, runtime.changelogContext, range, parseChangelog),
     }),
     workflow_release_notes_context: tool({
       description: "Gather release notes for an explicit range",
@@ -231,7 +272,7 @@ export function createRepoTools(runtime: RepoRuntime = defaultRuntime) {
           ? output(fail("release tag or range required"))
           : contextWithRange(
               context.directory,
-              "release-notes-context.sh",
+              (root, value) => runtime.releaseContext(root, value ?? ""),
               range_or_tag,
               parseRelease,
             ),
@@ -240,12 +281,7 @@ export function createRepoTools(runtime: RepoRuntime = defaultRuntime) {
       description: "Gather documentation refresh context",
       args: { range: tool.schema.string().optional() },
       execute: async ({ range }, context) =>
-        output(
-          scriptResult(
-            runtime.runScript(context.directory, "docs-refresh-context.sh", range ? [range] : []),
-            parseDocs,
-          ),
-        ),
+        output(scriptResult(runtime.docsContext(context.directory, range), parseDocs)),
     }),
     workflow_changelog_apply: tool({
       description: "Apply confirmed Keep a Changelog entries to Unreleased",
@@ -371,7 +407,7 @@ export function createRepoTools(runtime: RepoRuntime = defaultRuntime) {
         }
         return output(
           legacyScriptResult(
-            runtime.runScript(context.directory, "pr-create.sh", [], {
+            runtime.prCreate(context.directory, {
               WF_PR_TITLE: title,
               WF_PR_BODY: body ?? "",
               WF_PR_CONFIRMED: "true",
@@ -474,11 +510,7 @@ export function createRepoTools(runtime: RepoRuntime = defaultRuntime) {
             WORKFLOW_VCS_TARGET_BRANCH: vcs_target_branch,
           }).filter((entry): entry is [string, string] => entry[1] !== undefined),
         );
-        return output(
-          legacyScriptResult(
-            runtime.runScript(context.directory, "init/apply.sh", [action, "true"], env),
-          ),
-        );
+        return output(legacyScriptResult(runtime.initApply(context.directory, action, env)));
       },
     }),
   };

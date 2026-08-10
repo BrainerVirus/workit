@@ -3,12 +3,19 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
-import { runScript } from "@brainervirus/workit-core/src/core/scripts";
 import {
   parseSections,
   parseKeyValueLines,
 } from "@brainervirus/workit-core/src/core/parse-sections";
 import { parseVerifyOutput } from "@brainervirus/workit-core/src/core/verify-parse";
+import {
+  changelogContext,
+  docsRefreshContext,
+  prReadyContext,
+  releaseNotesContext,
+} from "@brainervirus/workit-core/src/core/repo-context";
+import { runVerifyProject } from "@brainervirus/workit-core/src/core/verify-project";
+import { prCreate } from "@brainervirus/workit-core/src/core/pr-create";
 import { gitContext } from "@brainervirus/workit-core/src/core/git";
 import {
   parsePlanTasks,
@@ -86,8 +93,7 @@ server.registerTool(
     },
   },
   async ({ dry_run, workspace_root }) => {
-    const args = dry_run ? ["--dry-run"] : [];
-    const { stdout, stderr, exitCode, cwd } = runScript("verify-project.sh", args, workspace_root);
+    const { stdout, stderr, exitCode, cwd } = runVerifyProject(workspace_root, Boolean(dry_run));
     const parsed = parseVerifyOutput(stdout);
     return jsonResult(
       withWorkspace(workspace_root, {
@@ -112,12 +118,7 @@ server.registerTool(
     },
   },
   async ({ range, workspace_root }) => {
-    const args = range ? [range] : [];
-    const { stdout, stderr, exitCode, cwd } = runScript(
-      "pr-ready-context.sh",
-      args,
-      workspace_root,
-    );
+    const { stdout, stderr, exitCode, cwd } = prReadyContext(workspace_root, range);
     if (exitCode !== 0) {
       const errLines = (stderr + "\n" + stdout).split("\n");
       const error =
@@ -199,27 +200,25 @@ server.registerTool(
   },
   async ({ confirmed, title, body, draft, target_branch, workspace_root }) => {
     if (!confirmed) return jsonResult({ error: "confirmed: true required" });
-    const { stdout, stderr, exitCode, cwd } = runScript("pr-create.sh", [], workspace_root, {
-      WF_PR_TITLE: title,
-      WF_PR_BODY: body ?? "",
-      WF_PR_CONFIRMED: "true",
-      WF_PR_DRAFT: draft ? "true" : "false",
-      WF_PR_TARGET: target_branch ?? "",
-    });
-    try {
-      const data = JSON.parse(stdout.trim());
-      if (data.error) {
-        return jsonResult(withWorkspace(workspace_root, { error: data.error, ...data }));
-      }
-      return jsonResult(withWorkspace(workspace_root, { ...data, workspace_root: cwd }));
-    } catch {
+    const data = prCreate(
+      {
+        WF_PR_TITLE: title,
+        WF_PR_BODY: body ?? "",
+        WF_PR_CONFIRMED: "true",
+        WF_PR_DRAFT: draft ? "true" : "false",
+        WF_PR_TARGET: target_branch ?? "",
+      },
+      workspace_root,
+    );
+    if (data.error || data.ok === false) {
       return jsonResult(
         withWorkspace(workspace_root, {
-          error: stderr.trim() || stdout.trim() || "pr-create failed",
-          exitCode,
+          error: data.error ?? "pr-create failed",
+          ...data,
         }),
       );
     }
+    return jsonResult(withWorkspace(workspace_root, { ...data }));
   },
 );
 
@@ -234,12 +233,7 @@ server.registerTool(
     },
   },
   async ({ range, workspace_root }) => {
-    const args = range ? [range] : [];
-    const { stdout, stderr, exitCode, cwd } = runScript(
-      "changelog-context.sh",
-      args,
-      workspace_root,
-    );
+    const { stdout, stderr, exitCode, cwd } = changelogContext(workspace_root, range);
     const sections = parseSections(stdout);
     const unreleased = changelogUnreleasedStats(workspace_root);
     return jsonResult(
@@ -325,12 +319,7 @@ server.registerTool(
     },
   },
   async ({ range_or_tag, workspace_root }) => {
-    const args = [range_or_tag];
-    const { stdout, stderr, exitCode, cwd } = runScript(
-      "release-notes-context.sh",
-      args,
-      workspace_root,
-    );
+    const { stdout, stderr, exitCode, cwd } = releaseNotesContext(workspace_root, range_or_tag);
     const sections = parseSections(stdout);
     const repo = parseKeyValueLines(sections.Repository ?? "", ["requested", "range"]);
     return jsonResult(
@@ -362,12 +351,7 @@ server.registerTool(
     },
   },
   async ({ range, workspace_root }) => {
-    const args = range ? [range] : [];
-    const { stdout, stderr, exitCode, cwd } = runScript(
-      "docs-refresh-context.sh",
-      args,
-      workspace_root,
-    );
+    const { stdout, stderr, exitCode, cwd } = docsRefreshContext(workspace_root, range);
     const sections = parseSections(stdout);
     return jsonResult(
       withWorkspace(workspace_root, {
@@ -677,7 +661,7 @@ server.registerTool(
     inputSchema: {},
   },
   async () => {
-    const data = toolkitStatus();
+    const data = await toolkitStatus();
     if (data.error) return jsonResult({ error: data.error });
     return jsonResult(data);
   },
@@ -875,7 +859,7 @@ server.registerTool(
     },
   },
   async ({ issueId, minutes, text, dateMs, workspace_root }) => {
-    const data = youtrackLogTime({
+    const data = await youtrackLogTime({
       issueId,
       minutes,
       text,
@@ -917,7 +901,7 @@ server.registerTool(
     },
   },
   async ({ confirmed, issueId, markdown, minutes, workspace_root }) => {
-    const data = youtrackPostUpdate({
+    const data = await youtrackPostUpdate({
       confirmed,
       issueId,
       markdown,

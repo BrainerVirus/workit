@@ -3,7 +3,6 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { configDir } from "./config";
 import { resolveWorkspace } from "./workspaces";
-
 // Ports of scripts/vcs/config.sh + verify-token.sh + token-create-urls.sh + merged-style.sh.
 // Token never printed.
 
@@ -113,7 +112,7 @@ export function vcsConfig(mode: "load" | "summary" | "resolve", cwd?: string): R
 }
 
 /** Port of scripts/vcs/verify-token.sh — soft-fail JSON out, always exit 0. */
-export function vcsVerifyToken(): Record<string, any> {
+export async function vcsVerifyToken(): Promise<Record<string, any>> {
   const cfg = vcsConfig("load");
   if (!cfg.ok) return { ok: false, error: cfg.error ?? "vcs config not ready" };
   const provider = cfg.provider as string;
@@ -133,23 +132,32 @@ export function vcsVerifyToken(): Record<string, any> {
       /\/+$/,
       "",
     );
-    const result = spawnSync("curl", ["-fsS", "-H", `PRIVATE-TOKEN: ${token}`, `${api}/user`], {
-      encoding: "utf8",
-    });
-    if (result.status !== 0) {
+    let user: Record<string, any>;
+    try {
+      const res = await fetch(`${api}/user`, {
+        headers: { "PRIVATE-TOKEN": token },
+      });
+      if (!res.ok) {
+        return {
+          ok: false,
+          provider,
+          error: "GitLab API rejected token",
+          detail: (await res.text()).slice(0, 200),
+        };
+      }
+      user = JSON.parse(await res.text()) as Record<string, any>;
+    } catch (err) {
+      if (err instanceof SyntaxError) {
+        return { ok: false, provider, error: "invalid JSON from GitLab /user" };
+      }
       return {
         ok: false,
         provider,
         error: "GitLab API rejected token",
-        detail: (result.stderr ?? result.stdout ?? "").slice(0, 200),
+        detail: (err instanceof Error ? err.message : "network error").slice(0, 200),
       };
     }
-    try {
-      const user = JSON.parse(result.stdout ?? "") as Record<string, any>;
-      return { ok: true, provider, username: user.username ?? user.login, name: user.name };
-    } catch {
-      return { ok: false, provider, error: "invalid JSON from GitLab /user" };
-    }
+    return { ok: true, provider, username: user.username ?? user.login, name: user.name };
   }
   if (provider === "github") {
     const result = spawnSync("gh", ["api", "user"], {
