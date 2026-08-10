@@ -119,7 +119,6 @@ GitHub Actions:
 
 - **CI** — on push/PR to `main`: matrix of 3 OS (ubuntu, macos, windows) running `actions/checkout@v7` + `oven-sh/setup-bun@v2`, then `bun install --frozen-lockfile` + `bun run check`
 - **Release** — on push to `main`: [semantic-release](https://github.com/semantic-release/semantic-release) computes the next version from Conventional Commits, publishes the four workspaces to npm in dependency order — `workit-core`, `workit-opencode`, `workit-cursor`, `workit-cli` (with provenance), and creates the git tag + GitHub Release
-- **Code review** — on every PR: the [OpenCode GitHub integration](https://opencode.ai/docs/github/) reviews the diff (see [Code review](#code-review))
 
 No manual tags — semantic-release owns the version/tag flow:
 
@@ -127,22 +126,10 @@ No manual tags — semantic-release owns the version/tag flow:
 git push origin main
 ```
 
-## Code review
+## Quality gates
 
-Every pull request is automatically reviewed by [OpenCode](https://opencode.ai/docs/github/) via `.github/workflows/opencode-review.yml` — it checks code quality, potential bugs, and this repo's own standards (the spec/plan contract, Conventional Commits, the CONTRIBUTING.md review flow). Model: `opencode-go/deepseek-v4-flash`.
-
-Checks fall into two categories:
-
-- **BLOCKING — the `pull_request` review** (`review` job): runs on every PR (opened/synchronized/reopened/ready_for_review) and is registered as a required check in branch protection — the PR cannot merge while it's red.
-- **ADVISORY — on-demand and triage flows** (never block merge): mention `/oc` or `/opencode` in a comment — issue, PR thread, or a specific line in the Files tab — to have OpenCode fix, explain, or update the PR (`oc` job); new issues are triaged with guidance and doc links (`triage` job).
-
-To activate the review on a fork or fresh clone:
-
-1. Install the [OpenCode GitHub app](https://github.com/apps/opencode-agent) on the repository.
-2. Add the `OPENCODE_API_KEY` secret under Settings → Secrets and variables → Actions.
-3. PRs trigger the review on opened/synchronized/reopened events automatically.
-
-[Cursor Bugbot](https://cursor.com/dashboard/bugbot) is an optional alternative to the OpenCode review.
+- **CI checks** — the per-package check jobs (workit-core/opencode/cursor/cli/shared) are required in branch protection; the PR cannot merge while any is red.
+- **Subagent review** — `wk-implement` runs a two-stage review (spec compliance + code quality) per task with fresh `general` agents.
 
 ## Architecture
 

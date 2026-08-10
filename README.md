@@ -120,7 +120,6 @@ GitHub Actions:
 
 - **CI** — on push/PR to `main`: matrix of 3 OS (ubuntu, macos, windows) running `actions/checkout@v7` + `oven-sh/setup-bun@v2`, then `bun install --frozen-lockfile` + `bun run check`
 - **Release** — on push to `main`: [semantic-release](https://github.com/semantic-release/semantic-release) computes the next version from Conventional Commits, publishes the four workspaces to npm in dependency order — `workit-core`, `workit-opencode`, `workit-cursor`, `workit-cli` (with provenance), and creates the git tag + GitHub Release
-- **Code review** — on every PR: the [OpenCode GitHub integration](https://opencode.ai/docs/github/) reviews the diff (see [Code review](#code-review))
 
 No manual tags — semantic-release owns the version/tag flow:
 
@@ -128,21 +127,10 @@ No manual tags — semantic-release owns the version/tag flow:
 git push origin main
 ```
 
-## Code review
+## Quality gates
 
-Automated OpenCode PR review was evaluated and **removed** (too slow for this repo's diff sizes — the review agent explored the whole repo instead of just the diff). The quality gate is the per-package CI checks (required in branch protection) plus the two-stage subagent review inside `wk-implement`.
-
-Optional fast reviewers if you want machine review on PRs:
-- [CodeRabbit](https://www.coderabbit.ai/) — instant AI review on every PR
-- [Cursor Bugbot](https://cursor.com/dashboard/bugbot) — Cursor's PR review (appears as a required check)
-
-To activate the review on a fork or fresh clone:
-
-1. Install the [OpenCode GitHub app](https://github.com/apps/opencode-agent) on the repository.
-2. Add the `OPENCODE_API_KEY` secret under Settings → Secrets and variables → Actions.
-3. PRs trigger the review on opened/synchronized/reopened events automatically.
-
-[Cursor Bugbot](https://cursor.com/dashboard/bugbot) is an optional alternative to the OpenCode review.
+- **CI checks** — the per-package check jobs (workit-core/opencode/cursor/cli/shared) are required in branch protection; the PR cannot merge while any is red.
+- **Subagent review** — `wk-implement` runs a two-stage review (spec compliance + code quality) per task with fresh `general` agents.
 
 ## Architecture
 
