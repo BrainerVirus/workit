@@ -70,12 +70,12 @@ export const resolveWorkspace = (cwd: string): WorkspaceConfig | null => {
   if (!parsed || typeof parsed !== "object") return null;
   const list = (parsed as { workspaces?: unknown }).workspaces;
   if (!Array.isArray(list)) return null;
-  const cwdPosix = cwd.split(path.sep).join("/");
+  const cwdPosix = cwd.replaceAll("\\", "/");
   for (const entry of list) {
     if (!entry || typeof entry !== "object") continue;
     const ws = entry as WorkspaceConfig;
     if (typeof ws.glob !== "string" || !ws.glob) continue;
-    if (globToRegExp(ws.glob).test(cwdPosix)) return ws;
+    if (globToRegExp(ws.glob.replaceAll("\\", "/")).test(cwdPosix)) return ws;
   }
   return null;
 };

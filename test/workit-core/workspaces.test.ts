@@ -186,6 +186,19 @@ test("catchall ** matches drive-letter and posix paths (Windows CI regression)",
   });
 });
 
+test("native Windows separators in workspace globs match normalized paths", () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "wf-ws-windows-glob-"));
+  writeWorkspaces(
+    dir,
+    JSON.stringify({
+      workspaces: [{ name: "windows", glob: "D:\\a\\workflow-toolkit\\**" }],
+    }),
+  );
+  withIsolatedConfig(dir, () => {
+    expect(resolveWorkspace("D:/a/workflow-toolkit/repo")?.name).toBe("windows");
+  });
+});
+
 test("resolveWorkspace skips non-object entries in the workspaces array", () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "wf-ws-junk-"));
   writeWorkspaces(
