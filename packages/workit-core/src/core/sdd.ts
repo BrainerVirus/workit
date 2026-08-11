@@ -173,6 +173,9 @@ export function sddReviewPackage({
     const diff = execFileSync("git", ["diff", base_sha, head_sha], {
       cwd: contained.base,
       encoding: "utf8",
+      // AR-14: a failed diff (missing shas, non-repo fixture) must stay in the
+      // captured error, never in the suite output.
+      stdio: ["pipe", "pipe", "pipe"],
     });
     writeFileSync(diffPath, diff, "utf8");
     const rel = posix(path.relative(contained.base, diffPath));

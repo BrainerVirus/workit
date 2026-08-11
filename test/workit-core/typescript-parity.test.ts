@@ -427,6 +427,17 @@ test("git context exposes the same branch and status fields the shell produced",
   }
 });
 
+test("git context surfaces captured stderr when the cwd is not a git repository", () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "wf-parity-nogit-"));
+  try {
+    const ctx = gitContext(dir);
+    expect(ctx.stderr).toContain("not a git repository");
+    expect(ctx.exitCode).not.toBe(0);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("PATH scanning uses path.delimiter (Windows-safe) not a literal colon", () => {
   const prCreateSource = readFileSync(
     path.resolve(import.meta.dir, "..", "..", "packages", "workit-core", "src/core/pr-create.ts"),

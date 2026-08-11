@@ -1,4 +1,5 @@
 import { afterAll, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import {
@@ -30,6 +31,23 @@ const run = (overrides: { env?: NodeJS.ProcessEnv; cwd?: string } = {}) =>
     cwd: overrides.cwd ?? fixture.cwd,
     env: overrides.env,
   });
+
+// Installer mode (DG-09/AR-11): the installers enforce an explicit required set
+// — selected-host runtime/assets/launcher/registration, malformed config, and
+// required utilities — while optional parity checks may downgrade to warnings.
+const runInstaller = (overrides: { env?: NodeJS.ProcessEnv; cwd?: string } = {}) =>
+  runDoctor({
+    host: "cli",
+    home: fixture.home,
+    configDir: fixture.configDir,
+    stateDir: fixture.stateDir,
+    dev: fixture.dev,
+    cwd: overrides.cwd ?? fixture.cwd,
+    env: overrides.env,
+    installer: true,
+  });
+
+const repoRoot = path.resolve(path.dirname(import.meta.dir), "..", "..");
 
 // Fix helpers mutate a file then restore the original content at teardown.
 const writeConfig = (p: string, content: string, mode?: number) => {
@@ -450,4 +468,129 @@ test("no network code path runs: the report marks offline and never spawns netwo
   const report = run();
   expect(report.offline).toBe(true);
   expect(report).not.toHaveProperty("network");
+});
+
+// Installer-health fixtures (AR-11/CA-40): removing any required selected-host
+// surface must fail the installer run with a specific fix, never a warning.
+// Each removal maps to its own typed check/fix.
+const expectInstallerFailure = (id: string, fixKeyword: string) => {
+  const report = runInstaller();
+  expect(report.ok, JSON.stringify(report.checks)).toBe(false);
+  expect(report.exitCode).toBe(1);
+  const check = report.checks.find((c) => c.id === id)!;
+  expect(check.status).toBe("fail");
+  expect(check.fix).toBeTruthy();
+  expect(check.fix, id).toContain(fixKeyword);
+  expect(report.fixes.some((f) => f.id === id)).toBe(true);
+};
+
+test("installer fails when a selected-host asset is missing", () => {
+  const asset = path.join(fixture.dev, "packages/workit-opencode/assets/commands/wk-init.md");
+  rmSync(asset, { force: true });
+  try {
+    expectInstallerFailure("assets", "Reinstall or rebuild");
+  } finally {
+    writeConfig(asset, "# wk-init\n");
+  }
+  expect(check(runInstaller(), "assets").status).toBe("pass");
+});
+
+test("installer fails when a selected-host launcher entry is missing", () => {
+  const removed = [
+    path.join(fixture.dev, "packages/workit-cursor/dist/mcp-server.js"),
+    path.join(fixture.dev, "packages/workit-cursor/dist/cursor-session-start.js"),
+    path.join(fixture.dev, "packages/workit-cursor/mcp/run-server.sh"),
+    path.join(fixture.dev, "packages/workit-cursor/hooks/session-start"),
+  ];
+  for (const p of removed) rmSync(p, { force: true });
+  try {
+    expectInstallerFailure("launcher", "Rebuild the workit package");
+  } finally {
+    for (const p of removed) writeConfig(p, p.endsWith(".js") ? "// bundle\n" : "#!/bin/sh\n");
+  }
+  expect(check(runInstaller(), "launcher").status).toBe("pass");
+});
+
+test("installer fails when the runtime is unavailable", () => {
+  const emptyBin = path.join(fixture.root, "empty-bin");
+  mkdirSync(emptyBin, { recursive: true });
+  const report = runInstaller({ env: { ...process.env, PATH: emptyBin } });
+  expect(report.ok).toBe(false);
+  expect(report.exitCode).toBe(1);
+  expect(check(report, "runtime").status).toBe("fail");
+  expect(check(report, "runtime").fix).toContain("Install Node");
+});
+
+test("installer fails when a required utility (git) is missing", () => {
+  const bin = binDirWithRuntimes(fixture.root);
+  const report = runInstaller({ env: { ...process.env, PATH: bin } });
+  expect(report.ok).toBe(false);
+  expect(report.exitCode).toBe(1);
+  expect(check(report, "utility").status).toBe("fail");
+  expect(check(report, "utility").fix).toContain("Install git");
+});
+
+test("installer fails on a broken selected-host registration", () => {
+  writeConfig(
+    fixture.opencodeConfig,
+    JSON.stringify({ plugin: ["workit-opencode@git+file:///nonexistent/stale"] }),
+  );
+  try {
+    expectInstallerFailure("stale_pin", "install-opencode-plugin.sh");
+  } finally {
+    writeConfig(
+      fixture.opencodeConfig,
+      JSON.stringify({ plugin: [`file://${fixture.dev}/packages/workit-opencode/src/plugin.ts`] }),
+    );
+  }
+  expect(check(runInstaller(), "stale_pin").status).toBe("pass");
+});
+
+test("installer fails on malformed config", () => {
+  const configFile = path.join(fixture.configDir, "config.json");
+  writeConfig(configFile, "{not valid json");
+  try {
+    expectInstallerFailure("malformed_config", "Repair the malformed config");
+  } finally {
+    rmSync(configFile, { force: true });
+  }
+  expect(check(runInstaller(), "malformed_config").status).toBe("pass");
+});
+
+test("installer downgrades optional parity checks to warnings, not failures", () => {
+  const opencodePkg = path.join(fixture.dev, "packages/workit-opencode/package.json");
+  const original = JSON.parse(readFileSync(opencodePkg, "utf8"));
+  try {
+    writeConfig(
+      opencodePkg,
+      JSON.stringify({
+        ...original,
+        dependencies: { ...original.dependencies, "@brainervirus/workit-core": "^0.3.0" },
+      }),
+    );
+    const report = runInstaller();
+    expect(report.ok).toBe(true);
+    expect(report.exitCode).toBe(0);
+    expect(check(report, "versions").status).toBe("warn");
+  } finally {
+    writeConfig(opencodePkg, JSON.stringify(original));
+  }
+  expect(check(runInstaller(), "versions").status).toBe("pass");
+});
+
+test("AR-14: negative fixtures never leak raw git usage/fatal dumps into the suite output", () => {
+  const noisy = [
+    "test/workit-core/handoff.test.ts",
+    "test/workit-core/sdd.test.ts",
+    "test/workit-core/repo.test.ts",
+  ];
+  const r = spawnSync("bun", ["test", ...noisy], {
+    cwd: repoRoot,
+    encoding: "utf8",
+    timeout: 300_000,
+  });
+  expect(r.status, r.stderr.slice(0, 2000)).toBe(0);
+  const output = `${r.stdout ?? ""}\n${r.stderr ?? ""}`;
+  expect(output).not.toMatch(/usage: git diff/);
+  expect(output).not.toMatch(/fatal: /);
 });

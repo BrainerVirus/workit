@@ -75,7 +75,26 @@ function makeStub(pluginTs: string) {
     { mode: 0o755 },
   );
   writeFileSync(path.join(stub, "packages/workit-opencode/src/plugin.ts"), pluginTs);
+  // A real sync-runtime copies the opencode assets into the checkout; the stub
+  // sync is a no-op, so mirror the synced layout (AR-11 requires them present).
+  writeSyncedOpencodeAssets(stub);
   return { stub, home };
+}
+
+// Asset files a completed sync-runtime leaves under the opencode package, so
+// the post-install doctor (AR-11/CA-40) can pass on a healthy stub install.
+function writeSyncedOpencodeAssets(stub: string) {
+  const base = path.join(stub, "packages/workit-opencode/assets");
+  const files = [
+    "commands/wk-init.md",
+    "skills/wk-init/SKILL.md",
+    "templates/spec-template.md",
+    "vendor/superpowers/skills/brainstorming/SKILL.md",
+  ];
+  for (const rel of files) {
+    mkdirSync(path.dirname(path.join(base, rel)), { recursive: true });
+    writeFileSync(path.join(base, rel), "# stub\n");
+  }
 }
 
 function runInstall(s: ReturnType<typeof makeStub>) {
@@ -104,6 +123,7 @@ function makeNestedStub() {
     { mode: 0o755 },
   );
   writeFileSync(path.join(stub, "packages/workit-opencode/src/plugin.ts"), "export default {};\n");
+  writeSyncedOpencodeAssets(stub);
   mkdirSync(path.join(home, ".config/opencode"), { recursive: true });
   writeFileSync(
     path.join(home, ".config/opencode/opencode.json"),
@@ -139,6 +159,26 @@ function makeCursorStub() {
     '#!/usr/bin/env bash\nprintf "%s" "$WORKFLOW_TOOLKIT_DEV" > "$HOME/sync-dev"\n',
     { mode: 0o755 },
   );
+  // A real sync-runtime copies the cursor package (assets, mcp shims, hooks)
+  // into the checkout; the stub sync is a no-op, so mirror the synced layout
+  // (AR-11 requires the selected-host surfaces present).
+  mkdirSync(path.join(stub, "packages/workit-cursor/assets/templates"), { recursive: true });
+  writeFileSync(
+    path.join(stub, "packages/workit-cursor/assets/templates/spec-template.md"),
+    "# spec\n",
+  );
+  writeFileSync(
+    path.join(stub, "packages/workit-cursor/mcp.json"),
+    JSON.stringify({ mcpServers: { workit: { command: "node", args: ["dist/mcp-server.js"] } } }),
+  );
+  writeFileSync(
+    path.join(stub, "packages/workit-cursor/marketplace.json"),
+    JSON.stringify({ name: "workit", version: "0.4.0" }),
+  );
+  mkdirSync(path.join(stub, "packages/workit-cursor/mcp"), { recursive: true });
+  writeFileSync(path.join(stub, "packages/workit-cursor/mcp/run-server.sh"), "#!/bin/sh\n");
+  mkdirSync(path.join(stub, "packages/workit-cursor/hooks"), { recursive: true });
+  writeFileSync(path.join(stub, "packages/workit-cursor/hooks/session-start"), "#!/bin/sh\n");
   mkdirSync(path.join(home, ".cursor"), { recursive: true });
   return { stub, home };
 }

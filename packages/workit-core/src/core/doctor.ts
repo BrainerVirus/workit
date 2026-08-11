@@ -672,9 +672,15 @@ const RUN_CHECKS: Array<(res: Resolved) => DoctorCheck> = [
   checkLogWritable,
 ];
 
-// Registration/config checks are the ones an installer guarantees; the rest are
-// downgraded to warnings so a stub/dev install does not fail a post-install run.
+// AR-11/CA-40: the installer guarantees the selected host itself — runtime,
+// assets, launchers, registration, and required utilities — plus the config it
+// just wrote. Those defects stay failures with nonzero status; only optional
+// parity checks (versions/workspace/credentials/log) may downgrade to warnings.
 const INSTALLER_REQUIRED = new Set<DoctorCheckId>([
+  "runtime",
+  "assets",
+  "launcher",
+  "utility",
   "stale_pin",
   "duplicate_registration",
   "malformed_config",
