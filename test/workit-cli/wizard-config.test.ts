@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import {
   chmodSync,
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
@@ -466,6 +467,131 @@ test("readSetupState and buildSetupPreview never write (no pre-Apply write, CA-1
     expect(snapshot(dir)).toEqual(before);
     expect(existsSync(path.join(dir, "youtrack.json"))).toBe(false);
     expect(existsSync(path.join(dir, "youtrack.token"))).toBe(false);
+  } finally {
+    clean(dir);
+  }
+});
+
+test("preview plans host registration and adapter copy mutations (AR-09)", () => {
+  const dir = tempDir();
+  const home = tempDir();
+  try {
+    const preview = buildSetupPreview(values({ platforms: ["opencode", "cursor"] }), {
+      dir,
+      cwd: dir,
+      env: {},
+      home,
+    });
+    expect(preview.ok).toBe(true);
+    const platformPaths = preview.mutations
+      .filter((m) => m.type === "register-platform" || m.type === "install-adapter")
+      .map((m) => (m.type === "register-platform" ? `${m.platform}:${m.path}` : `copy:${m.path}`));
+    expect(platformPaths).toEqual([
+      `opencode:${path.join(home, ".config", "opencode", "opencode.json")}`,
+      `copy:${path.join(home, ".cursor", "plugins", "local", "workflow-toolkit")}`,
+      `cursor:${path.join(home, ".cursor", "settings.json")}`,
+      `cursor:${path.join(home, ".cursor", "mcp.json")}`,
+    ]);
+  } finally {
+    clean(dir);
+    clean(home);
+  }
+});
+
+test("existing custom token paths are reused in the draft; canary bytes preserved (AR-10)", () => {
+  const dir = tempDir();
+  try {
+    const ytJson = path.join(dir, "youtrack.json");
+    const customYt = path.join(dir, "secrets", "yt.token");
+    const vcsJson = path.join(dir, "vcs.json");
+    const customGl = path.join(dir, "secrets", "gl.token");
+    const customGh = path.join(dir, "secrets", "gh.token");
+    mkdirSync(path.join(dir, "secrets"), { recursive: true });
+    writeFileSync(
+      ytJson,
+      JSON.stringify({ baseUrl: "https://org.example.com", tokenFile: customYt }),
+      "utf8",
+    );
+    writeFileSync(customYt, "canary-yt\n", { mode: 0o600 });
+    writeFileSync(
+      vcsJson,
+      JSON.stringify({
+        provider: "gitlab",
+        gitlab: { host: "gitlab.example.com", tokenFile: customGl },
+        github: { tokenFile: customGh },
+      }),
+      "utf8",
+    );
+    writeFileSync(customGl, "canary-gl\n", { mode: 0o600 });
+    writeFileSync(customGh, "canary-gh\n", { mode: 0o600 });
+
+    const preview = buildSetupPreview(
+      values({ baseUrl: "https://new.example.com", vcsProvider: "gitlab" }),
+      { dir, env: {} },
+    );
+    expect(preview.ok).toBe(true);
+    // the custom files are preserved; the default paths are never written
+    expect(preview.preserved).toEqual(expect.arrayContaining([customYt, customGl]));
+    for (const def of [path.join(dir, "youtrack.token"), path.join(dir, "gitlab.token")]) {
+      expect(preview.mutations.some((m) => m.path === def)).toBe(false);
+    }
+    // reuse means no path replacement mutation anywhere
+    expect(preview.mutations.some((m) => m.type === "set-token-path")).toBe(false);
+    // the drafts keep the custom paths authoritative
+    const yt = preview.mutations.find((m) => m.path === ytJson) as Extract<
+      SetupMutation,
+      { type: "merge-json" }
+    >;
+    expect((yt.value as { tokenFile: string }).tokenFile).toBe(customYt);
+    const vcs = preview.mutations.find((m) => m.path === vcsJson) as Extract<
+      SetupMutation,
+      { type: "merge-json" }
+    >;
+    const v = vcs.value as { gitlab: { tokenFile: string }; github: { tokenFile: string } };
+    expect(v.gitlab.tokenFile).toBe(customGl);
+    expect(v.github.tokenFile).toBe(customGh);
+    // canary bytes untouched by the pure preview
+    expect(readFileSync(customYt, "utf8")).toBe("canary-yt\n");
+    expect(readFileSync(customGl, "utf8")).toBe("canary-gl\n");
+    expect(readFileSync(customGh, "utf8")).toBe("canary-gh\n");
+  } finally {
+    clean(dir);
+  }
+});
+
+test("a deliberate token path replacement is its own distinct mutation (AR-10)", () => {
+  const dir = tempDir();
+  try {
+    const ytJson = path.join(dir, "youtrack.json");
+    writeFileSync(ytJson, JSON.stringify({ tokenFile: path.join(dir, "old.token") }), "utf8");
+    const next = path.join(dir, "new.token");
+    const preview = buildSetupPreview(
+      values({ baseUrl: "https://yt.example.com", tokenPaths: { youtrack: next } }),
+      { dir, env: {} },
+    );
+    expect(preview.ok).toBe(true);
+    const set = preview.mutations.find((m) => m.type === "set-token-path");
+    expect(set).toEqual({
+      type: "set-token-path",
+      path: ytJson,
+      key: "tokenFile",
+      value: next,
+    });
+    // the config draft no longer hides the path change inside the generic merge
+    const yt = preview.mutations.find((m) => m.path === ytJson) as Extract<
+      SetupMutation,
+      { type: "merge-json" }
+    >;
+    expect(JSON.stringify(yt.value)).not.toContain("tokenFile");
+    // the new path is created as a separate reviewed mutation; the old file is
+    // never written
+    expect(
+      preview.mutations.some(
+        (m) =>
+          m.type === "create-file" && m.path === next && m.content.trim() === TOKEN_PLACEHOLDER,
+      ),
+    ).toBe(true);
+    expect(preview.mutations.some((m) => m.path === path.join(dir, "old.token"))).toBe(false);
   } finally {
     clean(dir);
   }

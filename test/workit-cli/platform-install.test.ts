@@ -6,6 +6,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -50,6 +51,12 @@ const values = (over: Partial<SetupPreviewInput> = {}): SetupPreviewInput => ({
 const envFor = (home: string, configDir: string) =>
   isolatedEnv(home, { WORKFLOW_TOOLKIT_CONFIG: configDir });
 
+const wsEntry = (name: string, glob: string) => ({
+  name,
+  glob,
+  vcs: { provider: "gitlab" as const, defaultTargetBranch: "main" },
+});
+
 const opts = (
   home: string,
   configDir: string,
@@ -63,7 +70,10 @@ const opts = (
 });
 
 const apply = (dir: string, home: string, over: Partial<SetupPreviewInput> = {}): SetupResult =>
-  applySetupPreview(buildSetupPreview(values(over), { dir, cwd: dir, env: {} }), opts(home, dir));
+  applySetupPreview(
+    buildSetupPreview(values(over), { dir, cwd: dir, env: {}, home }),
+    opts(home, dir),
+  );
 
 const statusOf = (result: SetupResult, file: string): string | undefined =>
   result.entries.find((e) => e.file === file)?.status;
@@ -220,7 +230,12 @@ test("partial platform failure propagates nonzero + Failed entry; healthy platfo
     );
 
     const result = applySetupPreview(
-      buildSetupPreview(values({ platforms: ["opencode", "cursor"] }), { dir, cwd: dir, env: {} }),
+      buildSetupPreview(values({ platforms: ["opencode", "cursor"] }), {
+        dir,
+        cwd: dir,
+        env: {},
+        home,
+      }),
       opts(home, dir, { dev }),
     );
     expect(result.ok).toBe(false);
@@ -339,7 +354,7 @@ test("unreadable platform config is Failed with the path, never rewritten (EACCE
     chmodSync(opencodeCfg, 0o000);
 
     const result = apply(dir, home, { platforms: ["opencode"] });
-    expect(result.ok).toBe(false);
+    expect(result.ok, JSON.stringify(result.entries)).toBe(false);
     expect(result.exitCode).toBe(1);
     const entry = result.entries.find((e) => e.file === opencodeCfg);
     expect(entry?.status).toBe("Failed");
@@ -354,6 +369,220 @@ test("unreadable platform config is Failed with the path, never rewritten (EACCE
       /* file may already be gone */
     }
     clean(home);
+    clean(dir);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Task 28 (AR-09/AR-10, CA-39): preview/apply parity and custom credential
+// paths. Every file Apply changes must have been previewed as a mutation, and
+// existing configured token paths + bytes stay authoritative.
+// ---------------------------------------------------------------------------
+
+const treeFiles = (root: string): Map<string, string> => {
+  const out = new Map<string, string>();
+  const walk = (dir: string) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(p);
+      else out.set(p, readFileSync(p, "utf8"));
+    }
+  };
+  walk(root);
+  return out;
+};
+
+const collectTree = (...roots: string[]): Map<string, string> => {
+  const map = new Map<string, string>();
+  for (const root of roots) {
+    if (!existsSync(root)) continue;
+    for (const [p, content] of treeFiles(root)) map.set(p, content);
+  }
+  return map;
+};
+
+test("preview/apply parity: every Apply write was previewed, exactly (AR-09/CA-39)", () => {
+  const home = tempDir("workit-parity-home-");
+  const dir = tempDir("workit-parity-cfg-");
+  try {
+    const preview = buildSetupPreview(
+      values({
+        platforms: ["opencode", "cursor"],
+        baseUrl: "https://yt.example.com",
+        vcsProvider: "gitlab",
+        workspaces: [wsEntry("work", "/work/**")],
+        applyProject: true,
+      }),
+      { dir, cwd: dir, env: {}, home },
+    );
+    expect(preview.ok, JSON.stringify(preview.blocked)).toBe(true);
+
+    // content classes: the preview covers every write class Apply performs
+    const types = new Set(preview.mutations.map((m) => m.type));
+    for (const t of [
+      "create-file",
+      "merge-json",
+      "update-workspaces",
+      "append-gitignore",
+      "register-platform",
+      "install-adapter",
+    ]) {
+      expect(types.has(t as never), `preview must plan a ${t} write`).toBe(true);
+    }
+
+    const before = collectTree(home, dir);
+    const result = applySetupPreview(preview, opts(home, dir));
+    expect(result.ok, JSON.stringify(result.entries)).toBe(true);
+    const after = collectTree(home, dir);
+
+    const changed = [...after.entries()].filter(([p, c]) => {
+      const prev = before.get(p);
+      return prev === undefined || prev !== c;
+    });
+    // nothing was deleted by Apply
+    for (const p of before.keys()) {
+      expect(existsSync(p), `Apply deleted ${p}`).toBe(true);
+    }
+
+    // every changed path was previewed: exact match, or inside the previewed
+    // adapter copy directory for the cursor plugin package
+    const previewedPaths = new Set(preview.mutations.map((m) => m.path));
+    const isCovered = (p: string): boolean =>
+      previewedPaths.has(p) ||
+      preview.mutations.some(
+        (m) => m.type === "install-adapter" && p.startsWith(`${m.path}${path.sep}`),
+      );
+    const uncovered = changed.map(([p]) => p).filter((p) => !isCovered(p));
+    expect(uncovered).toEqual([]);
+
+    // exact equality in both directions: each previewed mutation maps to a
+    // changed path (collapsing the adapter copy dir onto its files), and every
+    // changed path maps back to a previewed mutation
+    const collapsed = new Set(
+      changed.map(([p]) => {
+        const inst = preview.mutations.find(
+          (m) => m.type === "install-adapter" && p.startsWith(`${m.path}${path.sep}`),
+        );
+        return inst ? inst.path : p;
+      }),
+    );
+    expect(collapsed).toEqual(previewedPaths);
+  } finally {
+    clean(home);
+    clean(dir);
+  }
+});
+
+test("custom credential paths and canary bytes survive Apply (AR-10)", () => {
+  const home = tempDir("workit-token-home-");
+  const dir = tempDir("workit-token-cfg-");
+  try {
+    const ytJson = path.join(dir, "youtrack.json");
+    const vcsJson = path.join(dir, "vcs.json");
+    const customYt = path.join(dir, "secrets", "yt.token");
+    const customGl = path.join(dir, "secrets", "gl.token");
+    const customGh = path.join(dir, "secrets", "gh.token");
+    mkdirSync(path.join(dir, "secrets"), { recursive: true });
+    writeFileSync(
+      ytJson,
+      JSON.stringify({
+        baseUrl: "https://org.example.com",
+        tokenFile: customYt,
+        meetingIssue: "ORG-1",
+      }),
+      "utf8",
+    );
+    writeFileSync(customYt, "canary-yt-123\n", { mode: 0o600 });
+    writeFileSync(
+      vcsJson,
+      JSON.stringify({
+        provider: "gitlab",
+        gitlab: { host: "gitlab.example.com", tokenFile: customGl },
+        github: { tokenFile: customGh },
+      }),
+      "utf8",
+    );
+    writeFileSync(customGl, "canary-gl-123\n", { mode: 0o600 });
+    writeFileSync(customGh, "canary-gh-123\n", { mode: 0o600 });
+
+    const result = apply(dir, home, {
+      platforms: ["opencode"],
+      baseUrl: "https://new.example.com",
+      vcsProvider: "gitlab",
+    });
+    expect(result.ok, JSON.stringify(result.entries)).toBe(true);
+
+    // configs still point at the custom paths; unrelated keys preserved
+    const yt = JSON.parse(readFileSync(ytJson, "utf8")) as Record<string, unknown>;
+    expect(yt.tokenFile).toBe(customYt);
+    expect(yt.meetingIssue).toBe("ORG-1");
+    expect(yt.baseUrl).toBe("https://new.example.com");
+    const vcs = JSON.parse(readFileSync(vcsJson, "utf8")) as {
+      gitlab: { tokenFile: string };
+      github: { tokenFile: string };
+    };
+    expect(vcs.gitlab.tokenFile).toBe(customGl);
+    expect(vcs.github.tokenFile).toBe(customGh);
+
+    // canary bytes byte-for-byte intact, reported preserved
+    for (const [p, bytes] of [
+      [customYt, "canary-yt-123\n"],
+      [customGl, "canary-gl-123\n"],
+    ] as const) {
+      expect(readFileSync(p, "utf8")).toBe(bytes);
+      expect(result.entries.some((e) => e.file === p && e.status === "Skipped")).toBe(true);
+    }
+    // no default token files were created next to the configs
+    for (const def of [path.join(dir, "youtrack.token"), path.join(dir, "gitlab.token")]) {
+      expect(existsSync(def)).toBe(false);
+    }
+  } finally {
+    clean(home);
+    clean(dir);
+  }
+});
+
+test("apply fails fast when apply options differ from preview options (AR-13)", () => {
+  const homeA = tempDir("workit-contract-a-");
+  const homeB = tempDir("workit-contract-b-");
+  const dir = tempDir("workit-contract-cfg-");
+  try {
+    const preview = buildSetupPreview(values({ platforms: ["opencode", "cursor"] }), {
+      dir,
+      cwd: dir,
+      env: {},
+      home: homeA,
+    });
+    expect(preview.ok, JSON.stringify(preview.blocked)).toBe(true);
+    const platformMutations = preview.mutations.filter(
+      (m) => m.type === "register-platform" || m.type === "install-adapter",
+    );
+    expect(platformMutations.length).toBe(4);
+    for (const m of platformMutations) {
+      expect(m.path.startsWith(homeA)).toBe(true);
+    }
+
+    // Apply with DIFFERENT options (a different home): the reviewed mutation
+    // paths are homeA paths, the apply-time resolution points at homeB. Apply
+    // must refuse the write (Failed) — it must never write an unreviewed path.
+    const result = applySetupPreview(preview, opts(homeB, dir));
+    expect(result.ok).toBe(false);
+    expect(result.exitCode).toBe(1);
+    for (const m of platformMutations) {
+      const entry = result.entries.find((e) => e.file === m.path);
+      expect(entry?.status, `mutation ${m.type}:${m.path}`).toBe("Failed");
+    }
+    for (const root of [homeA, homeB]) {
+      expect(existsSync(path.join(root, ".config", "opencode", "opencode.json"))).toBe(false);
+      expect(existsSync(path.join(root, ".cursor", "settings.json"))).toBe(false);
+      expect(existsSync(path.join(root, ".cursor", "mcp.json"))).toBe(false);
+      expect(existsSync(path.join(root, ".cursor", "plugins", "local", "workflow-toolkit"))).toBe(
+        false,
+      );
+    }
+  } finally {
+    clean(homeA);
+    clean(homeB);
     clean(dir);
   }
 });

@@ -49,13 +49,24 @@ export type SetupPreviewInput = {
   vcsProvider: VcsProvider | "skip";
   workspaces: WorkspaceConfig[];
   applyProject: boolean;
+  /** Deliberate token-path overrides. When they differ from an existing
+   *  configured tokenFile, the replacement is planned as its own distinct
+   *  reviewed mutation (AR-10). */
+  tokenPaths?: { youtrack?: string; gitlab?: string; github?: string };
 };
 
 export type SetupMutation =
   | { type: "create-file"; path: string; content: string; mode?: number }
   | { type: "merge-json"; path: string; value: unknown }
   | { type: "update-workspaces"; path: string; entries: WorkspaceConfig[] }
-  | { type: "append-gitignore"; path: string; entries: string[] };
+  | { type: "append-gitignore"; path: string; entries: string[] }
+  // AR-09: host registration merges and the adapter package copy are planned
+  // during preview so the reviewed mutation set IS the Apply write set.
+  | { type: "register-platform"; platform: Platform; path: string }
+  | { type: "install-adapter"; platform: "cursor"; path: string }
+  // AR-10: changing a configured tokenFile path is never hidden inside a
+  // generic merge — it is its own reviewed mutation.
+  | { type: "set-token-path"; path: string; key: string; value: string };
 
 export type SetupOverride = {
   envKey: string;
@@ -114,10 +125,12 @@ export const activeSetupOverrides = (env: NodeJS.ProcessEnv = process.env): Setu
 
 // Neutral youtrack.json draft: no organization names, issue IDs, greetings, or
 // language defaults (WZ-04/CA-14). merge-json preserves unrelated keys on Apply.
-function youtrackDraft(values: SetupPreviewInput, dir: string): Record<string, unknown> {
+// The tokenFile is the RESOLVED path (existing configured path reused, override
+// honored) — a default path never silently replaces a custom one (AR-10).
+function youtrackDraft(values: SetupPreviewInput, tokenPath: string): Record<string, unknown> {
   return {
     baseUrl: values.baseUrl.replace(/\/+$/, ""),
-    tokenFile: path.join(dir, "youtrack.token"),
+    tokenFile: tokenPath,
     timezone: values.timezone,
     locale: values.locale,
     tokenDefaults: {
@@ -129,15 +142,19 @@ function youtrackDraft(values: SetupPreviewInput, dir: string): Record<string, u
   };
 }
 
-function vcsDraft(provider: VcsProvider, dir: string): Record<string, unknown> {
+function vcsDraft(
+  provider: VcsProvider,
+  gitlabToken: string,
+  githubToken: string,
+): Record<string, unknown> {
   return {
     provider,
     gitlab: {
       host: "gitlab.com",
       apiUrl: "https://gitlab.com/api/v4",
-      tokenFile: path.join(dir, "gitlab.token"),
+      tokenFile: gitlabToken,
     },
-    github: { host: "github.com", tokenFile: path.join(dir, "github.token") },
+    github: { host: "github.com", tokenFile: githubToken },
     pr: { squashOnMerge: true, removeSourceBranch: true, pushBranch: true, confirmSkip: true },
     tokenDefaults: {
       name: "workit",
@@ -149,9 +166,57 @@ function vcsDraft(provider: VcsProvider, dir: string): Record<string, unknown> {
   };
 }
 
+// Resolve the token file for a service: an explicit override wins, then the
+// configured tokenFile from an existing valid config, then the default path.
+// Reuse means a custom credential location stays authoritative (AR-10).
+const configuredTokenPath = (
+  config: Record<string, unknown> | null,
+  ...keys: string[]
+): string | null => {
+  let cursor: unknown = config;
+  for (const key of keys) {
+    if (!isRecord(cursor)) return null;
+    cursor = cursor[key];
+  }
+  if (typeof cursor === "string" && cursor.trim() !== "") return cursor;
+  return null;
+};
+
+const resolveTokenPath = (
+  configured: string | null,
+  fallback: string,
+  override?: string,
+): string => {
+  if (override && override.trim() !== "") return override;
+  return configured ?? fallback;
+};
+
+// Read a config file that readSetupState already classified as valid. Only
+// called inside the blocked.length === 0 branch, so unreadable/malformed files
+// never reach here; a missing file returns null.
+const readConfigRecord = (file: string): Record<string, unknown> | null => {
+  try {
+    const value = JSON.parse(readFileSync(file, "utf8"));
+    return isRecord(value) ? value : null;
+  } catch {
+    return null;
+  }
+};
+
+const deleteAtPath = (obj: Record<string, unknown>, keyPath: string): void => {
+  const keys = keyPath.split(".");
+  let cursor = obj;
+  for (const key of keys.slice(0, -1)) {
+    const next = cursor[key];
+    if (!isRecord(next)) return;
+    cursor = next;
+  }
+  delete cursor[keys[keys.length - 1]];
+};
+
 export function buildSetupPreview(
   values: SetupPreviewInput,
-  opts: { dir?: string; cwd?: string; env?: NodeJS.ProcessEnv } = {},
+  opts: SetupPreviewOptions = {},
 ): SetupPreview {
   const env = opts.env ?? process.env;
   const state = readSetupState(opts.dir ?? resolveConfigDir());
@@ -210,12 +275,31 @@ export function buildSetupPreview(
     }
 
     if (values.baseUrl.trim()) {
+      const ytPath = path.join(state.configDir, "youtrack.json");
+      const ytExisting = readConfigRecord(ytPath);
+      const ytConfigured = configuredTokenPath(ytExisting, "tokenFile");
+      const tokenPath = resolveTokenPath(
+        ytConfigured,
+        path.join(state.configDir, "youtrack.token"),
+        values.tokenPaths?.youtrack,
+      );
+      const draft = youtrackDraft(values, tokenPath);
+      if (ytConfigured !== null && tokenPath !== ytConfigured) {
+        // AR-10: a real tokenFile replacement is its own reviewed mutation —
+        // never hidden inside the generic config merge.
+        delete draft.tokenFile;
+        mutations.push({
+          type: "set-token-path",
+          path: ytPath,
+          key: "tokenFile",
+          value: tokenPath,
+        });
+      }
       mutations.push({
         type: "merge-json",
-        path: path.join(state.configDir, "youtrack.json"),
-        value: youtrackDraft(values, state.configDir),
+        path: ytPath,
+        value: draft,
       });
-      const tokenPath = path.join(state.configDir, "youtrack.token");
       if (existsSync(tokenPath)) preserved.push(tokenPath);
       else
         mutations.push({
@@ -227,20 +311,68 @@ export function buildSetupPreview(
     }
 
     if (values.vcsProvider !== "skip") {
+      const vcsPath = path.join(state.configDir, "vcs.json");
+      const vcsExisting = readConfigRecord(vcsPath);
+      const glConfigured = configuredTokenPath(vcsExisting, "gitlab", "tokenFile");
+      const ghConfigured = configuredTokenPath(vcsExisting, "github", "tokenFile");
+      const gitlabToken = resolveTokenPath(
+        glConfigured,
+        path.join(state.configDir, "gitlab.token"),
+        values.tokenPaths?.gitlab,
+      );
+      const githubToken = resolveTokenPath(
+        ghConfigured,
+        path.join(state.configDir, "github.token"),
+        values.tokenPaths?.github,
+      );
+      const draft = vcsDraft(values.vcsProvider, gitlabToken, githubToken);
+      for (const [configured, token, key] of [
+        [glConfigured, gitlabToken, "gitlab.tokenFile"],
+        [ghConfigured, githubToken, "github.tokenFile"],
+      ] as const) {
+        if (configured !== null && token !== configured) {
+          deleteAtPath(draft, key);
+          mutations.push({
+            type: "set-token-path",
+            path: vcsPath,
+            key,
+            value: token,
+          });
+        }
+      }
       mutations.push({
         type: "merge-json",
-        path: path.join(state.configDir, "vcs.json"),
-        value: vcsDraft(values.vcsProvider, state.configDir),
+        path: vcsPath,
+        value: draft,
       });
-      const tokenPath = path.join(state.configDir, `${values.vcsProvider}.token`);
-      if (existsSync(tokenPath)) preserved.push(tokenPath);
+      const activeToken = values.vcsProvider === "gitlab" ? gitlabToken : githubToken;
+      if (existsSync(activeToken)) preserved.push(activeToken);
       else
         mutations.push({
           type: "create-file",
-          path: tokenPath,
+          path: activeToken,
           content: TOKEN_PLACEHOLDER + "\n",
           mode: 0o600,
         });
+    }
+
+    // AR-09: host registrations and the adapter package copy are planned here
+    // with the exact target paths Apply will write, so the reviewed mutation
+    // set IS the Apply write set. Apply re-resolves the adapter SOURCE with
+    // its own options (dev/cwd) — a resolution failure reports Failed without
+    // writing, it never creates an unreviewed write.
+    const platforms = values.platforms ?? [];
+    if (platforms.length > 0) {
+      const paths = resolveSetupPaths(opts, state.configDir);
+      for (const platform of platforms) {
+        if (platform === "opencode") {
+          mutations.push({ type: "register-platform", platform, path: paths.opencodeConfig });
+        } else if (platform === "cursor") {
+          mutations.push({ type: "install-adapter", platform, path: paths.cursorPluginDir });
+          mutations.push({ type: "register-platform", platform, path: paths.cursorSettings });
+          mutations.push({ type: "register-platform", platform, path: paths.cursorMcp });
+        }
+      }
     }
 
     if (values.applyProject) {
@@ -301,6 +433,8 @@ export type SetupResult = {
   doctor: DoctorReport[];
 };
 
+export type SetupPreviewOptions = ApplySetupOptions & { dir?: string };
+
 export type ApplySetupOptions = {
   home?: string;
   configDir?: string;
@@ -326,13 +460,19 @@ type ResolvedApply = {
   cursorPluginDir: string;
 };
 
-function resolveApply(preview: SetupPreview, options: ApplySetupOptions): ResolvedApply {
+// Shared path resolution for preview AND apply: the preview plans the platform
+// write targets with the same resolution apply uses, so the mutation paths ARE
+// the apply write paths (AR-09). Callers must build the preview and apply with
+// the same options (defaulting both from env) — tests pass `home` explicitly.
+const resolveSetupPaths = (
+  options: ApplySetupOptions,
+  configDir: string,
+): Omit<ResolvedApply, "dev"> => {
   const env = options.env ?? process.env;
   const home = options.home ?? env.HOME ?? os.homedir();
   return {
     home,
-    configDir: options.configDir ?? preview.state.configDir,
-    dev: options.dev ?? env.WORKFLOW_TOOLKIT_DEV ?? null,
+    configDir,
     cwd: options.cwd ?? process.cwd(),
     env,
     opencodeConfig:
@@ -341,6 +481,14 @@ function resolveApply(preview: SetupPreview, options: ApplySetupOptions): Resolv
     cursorMcp: options.cursorMcp ?? path.join(home, ".cursor", "mcp.json"),
     cursorPluginDir:
       options.cursorPluginDir ?? path.join(home, ".cursor", "plugins", "local", "workflow-toolkit"),
+  };
+};
+
+function resolveApply(preview: SetupPreview, options: ApplySetupOptions): ResolvedApply {
+  const paths = resolveSetupPaths(options, options.configDir ?? preview.state.configDir);
+  return {
+    ...paths,
+    dev: options.dev ?? paths.env.WORKFLOW_TOOLKIT_DEV ?? null,
   };
 }
 
@@ -399,7 +547,15 @@ const readFileSafe = (p: string): string | null => {
   }
 };
 
-function applyMutation(m: SetupMutation): SetupResultEntry {
+// Core mutations are dispatched by applyMutation; platform mutations
+// (register-platform / install-adapter) are handled by the dispatcher with
+// adapter resolution (AR-09).
+type CoreMutation = Exclude<
+  SetupMutation,
+  { type: "register-platform" } | { type: "install-adapter" }
+>;
+
+function applyMutation(m: CoreMutation): SetupResultEntry {
   const dir = path.dirname(m.path);
   switch (m.type) {
     case "create-file": {
@@ -485,6 +641,43 @@ function applyMutation(m: SetupMutation): SetupResultEntry {
         status: "Configured",
         detail: `appended ${add.length} entr${add.length === 1 ? "y" : "ies"}`,
       };
+    }
+    case "set-token-path": {
+      // AR-10: a reviewed tokenFile replacement. Writes ONLY the config key at
+      // the key path — the token file itself is a separate create-file or
+      // preserved entry, and any file at the old path is never touched.
+      const existing = readExisting(m.path);
+      if (existing.kind === "malformed") {
+        return {
+          platform: "core",
+          file: m.path,
+          status: "Failed",
+          detail: `cannot merge into malformed config: ${existing.error}`,
+        };
+      }
+      const keys = m.key.split(".");
+      const patch: Record<string, unknown> = {};
+      let cursor = patch;
+      for (const key of keys.slice(0, -1)) {
+        const next: Record<string, unknown> = {};
+        cursor[key] = next;
+        cursor = next;
+      }
+      cursor[keys[keys.length - 1]] = m.value;
+      const merged = deepMerge(existing.kind === "record" ? existing.value : {}, patch);
+      if (existing.kind === "record" && JSON.stringify(existing.value) === JSON.stringify(merged)) {
+        return {
+          platform: "core",
+          file: m.path,
+          status: "Skipped",
+          detail: "already configured",
+        };
+      }
+      mkdirSync(path.dirname(m.path), { recursive: true });
+      writeFileSync(m.path, JSON.stringify(merged, null, 2) + "\n", "utf8");
+      return existing.kind === "record"
+        ? { platform: "core", file: m.path, status: "Configured" }
+        : { platform: "core", file: m.path, status: "Installed" };
     }
   }
 }
@@ -615,75 +808,69 @@ function copyPluginDir(src: string, dest: string): SetupResultStatus {
   return hadDir ? "Configured" : "Installed";
 }
 
-function applyCursor(root: string, res: ResolvedApply): SetupResultEntry[] {
-  const entries: SetupResultEntry[] = [];
-  const dirStatus = copyPluginDir(root, res.cursorPluginDir);
-  entries.push({ platform: "cursor", file: res.cursorPluginDir, status: dirStatus });
-
+// One reviewed mutation per Cursor write target (AR-09): the settings merge and
+// the mcp merge are dispatched independently, exactly like the adapter copy.
+function applyCursorSettings(root: string, res: ResolvedApply): SetupResultEntry {
   mkdirSync(path.dirname(res.cursorSettings), { recursive: true });
   const settingsExisting = readExisting(res.cursorSettings);
   if (settingsExisting.kind === "malformed") {
-    entries.push({
+    return {
       platform: "cursor",
       file: res.cursorSettings,
       status: "Failed",
       detail: `cannot merge into malformed config: ${settingsExisting.error} — repair or remove the file`,
-    });
-  } else {
-    const settings = mergeCursorSettings(
-      settingsExisting.kind === "record" ? settingsExisting.value : {},
-      res.cursorPluginDir,
-    );
-    if (settings.changed.length > 0) {
-      writeFileSync(res.cursorSettings, JSON.stringify(settings.config, null, 2) + "\n", "utf8");
-      entries.push({
-        platform: "cursor",
-        file: res.cursorSettings,
-        status: settingsExisting.kind === "record" ? "Configured" : "Installed",
-      });
-    } else {
-      entries.push({
-        platform: "cursor",
-        file: res.cursorSettings,
-        status: "Skipped",
-        detail: "already registered",
-      });
-    }
+    };
   }
+  const settings = mergeCursorSettings(
+    settingsExisting.kind === "record" ? settingsExisting.value : {},
+    res.cursorPluginDir,
+  );
+  if (settings.changed.length === 0) {
+    return {
+      platform: "cursor",
+      file: res.cursorSettings,
+      status: "Skipped",
+      detail: "already registered",
+    };
+  }
+  writeFileSync(res.cursorSettings, JSON.stringify(settings.config, null, 2) + "\n", "utf8");
+  return {
+    platform: "cursor",
+    file: res.cursorSettings,
+    status: settingsExisting.kind === "record" ? "Configured" : "Installed",
+  };
+}
 
+function applyCursorMcp(root: string, res: ResolvedApply): SetupResultEntry {
   mkdirSync(path.dirname(res.cursorMcp), { recursive: true });
   const mcpExisting = readExisting(res.cursorMcp);
   if (mcpExisting.kind === "malformed") {
-    entries.push({
+    return {
       platform: "cursor",
       file: res.cursorMcp,
       status: "Failed",
       detail: `cannot merge into malformed config: ${mcpExisting.error} — repair or remove the file`,
-    });
-  } else {
-    const mcp = mergeCursorMcp(
-      mcpExisting.kind === "record" ? mcpExisting.value : {},
-      "workit",
-      cursorMcpServerEntry(res.cursorPluginDir),
-    );
-    if (mcp.changed.length > 0) {
-      writeFileSync(res.cursorMcp, JSON.stringify(mcp.config, null, 2) + "\n", "utf8");
-      entries.push({
-        platform: "cursor",
-        file: res.cursorMcp,
-        status: mcpExisting.kind === "record" ? "Configured" : "Installed",
-      });
-    } else {
-      entries.push({
-        platform: "cursor",
-        file: res.cursorMcp,
-        status: "Skipped",
-        detail: "already registered",
-      });
-    }
+    };
   }
-
-  return entries;
+  const mcp = mergeCursorMcp(
+    mcpExisting.kind === "record" ? mcpExisting.value : {},
+    "workit",
+    cursorMcpServerEntry(res.cursorPluginDir),
+  );
+  if (mcp.changed.length === 0) {
+    return {
+      platform: "cursor",
+      file: res.cursorMcp,
+      status: "Skipped",
+      detail: "already registered",
+    };
+  }
+  writeFileSync(res.cursorMcp, JSON.stringify(mcp.config, null, 2) + "\n", "utf8");
+  return {
+    platform: "cursor",
+    file: res.cursorMcp,
+    status: mcpExisting.kind === "record" ? "Configured" : "Installed",
+  };
 }
 
 function verifyPlatform(platform: Platform, res: ResolvedApply): DoctorReport | null {
@@ -741,8 +928,63 @@ export function applySetupPreview(
 
   const res = resolveApply(preview, options);
   const entries: SetupResultEntry[] = [];
-
-  for (const mutation of preview.mutations) entries.push(applyMutation(mutation));
+  // AR-09/AR-13: Apply dispatches ONLY the reviewed mutation union. The adapter
+  // source is re-resolved with the apply options (dev/cwd); a resolution
+  // failure reports Failed without writing — it never produces a write that
+  // was not previewed. The reviewed path itself is code-enforced: a platform
+  // mutation whose planned path does not exactly equal the apply-time resolved
+  // path (a caller that resolved the preview with different options) fails
+  // fast — Failed, no write — instead of silently writing an unreviewed path.
+  const rootFor = new Map<Platform, string | null>();
+  for (const mutation of preview.mutations) {
+    if (mutation.type !== "register-platform" && mutation.type !== "install-adapter") {
+      entries.push(applyMutation(mutation));
+      continue;
+    }
+    const platform = mutation.platform;
+    const resolvedPath =
+      mutation.type === "install-adapter"
+        ? res.cursorPluginDir
+        : platform === "opencode"
+          ? res.opencodeConfig
+          : mutation.path === res.cursorSettings
+            ? res.cursorSettings
+            : res.cursorMcp;
+    if (mutation.path !== resolvedPath) {
+      entries.push({
+        platform,
+        file: mutation.path,
+        status: "Failed",
+        detail: `preview/apply path mismatch: apply resolved ${resolvedPath}, the previewed write was ${mutation.path} — rebuild the preview with the same options`,
+      });
+      continue;
+    }
+    let root = rootFor.get(platform);
+    if (root === undefined) {
+      root = adapterRoot(platform, res);
+      rootFor.set(platform, root);
+    }
+    if (root === null) {
+      entries.push({
+        platform,
+        file: mutation.path,
+        status: "Failed",
+        detail: `@brainervirus/workit-${platform} package not found — set WORKFLOW_TOOLKIT_DEV to your checkout or install the package`,
+      });
+      continue;
+    }
+    if (mutation.type === "install-adapter") {
+      entries.push({ platform, file: mutation.path, status: copyPluginDir(root, mutation.path) });
+    } else if (platform === "opencode") {
+      entries.push(applyOpenCode(root, res));
+    } else {
+      entries.push(
+        mutation.path === res.cursorSettings
+          ? applyCursorSettings(root, res)
+          : applyCursorMcp(root, res),
+      );
+    }
+  }
   for (const preserved of preview.preserved) {
     entries.push({
       platform: "core",
@@ -752,53 +994,36 @@ export function applySetupPreview(
     });
   }
 
+  // Post-apply verification per platform (read-only): a registered host whose
+  // writes succeeded is verified by the shared offline doctor.
   const doctor: DoctorReport[] = [];
   for (const platform of preview.platforms) {
     if (platform !== "opencode" && platform !== "cursor") continue;
-    const root = adapterRoot(platform, res);
-    if (!root) {
-      entries.push({
-        platform,
-        file: platform === "opencode" ? res.opencodeConfig : res.cursorSettings,
-        status: "Failed",
-        detail: `@brainervirus/workit-${platform} package not found — set WORKFLOW_TOOLKIT_DEV to your checkout or install the package`,
-      });
-      continue;
-    }
+    const root = rootFor.get(platform);
+    if (root === null || root === undefined) continue;
+    if (!entries.some((e) => e.platform === platform && e.status !== "Failed")) continue;
+    const report = verifyPlatform(platform, res);
+    if (!report) continue;
+    doctor.push(report);
+    if (report.exitCode === 0) continue;
     if (platform === "opencode") {
-      const entry = applyOpenCode(root, res);
-      entries.push(entry);
-      if (entry.status !== "Failed") {
-        const report = verifyPlatform(platform, res);
-        if (report) {
-          doctor.push(report);
-          if (report.exitCode !== 0) {
-            entry.status = "Failed";
-            entry.detail = `${entry.detail ? entry.detail + " — " : ""}doctor: ${failedDetail(report)}`;
-          }
-        }
+      const entry = entries.find((e) => e.platform === "opencode" && e.file === res.opencodeConfig);
+      if (entry) {
+        entry.status = "Failed";
+        entry.detail = `${entry.detail ? entry.detail + " — " : ""}doctor: ${failedDetail(report)}`;
       }
     } else {
-      for (const entry of applyCursor(root, res)) entries.push(entry);
-      const report = verifyPlatform(platform, res);
-      if (report) {
-        doctor.push(report);
-        if (report.exitCode !== 0) {
-          const primary = entries.find(
-            (e) => e.platform === "cursor" && e.file === res.cursorSettings,
-          );
-          if (primary) {
-            primary.status = "Failed";
-            primary.detail = `${primary.detail ? primary.detail + " — " : ""}doctor: ${failedDetail(report)}`;
-          } else {
-            entries.push({
-              platform: "cursor",
-              file: res.cursorSettings,
-              status: "Failed",
-              detail: `doctor: ${failedDetail(report)}`,
-            });
-          }
-        }
+      const primary = entries.find((e) => e.platform === "cursor" && e.file === res.cursorSettings);
+      if (primary) {
+        primary.status = "Failed";
+        primary.detail = `${primary.detail ? primary.detail + " — " : ""}doctor: ${failedDetail(report)}`;
+      } else {
+        entries.push({
+          platform: "cursor",
+          file: res.cursorSettings,
+          status: "Failed",
+          detail: `doctor: ${failedDetail(report)}`,
+        });
       }
     }
   }

@@ -341,7 +341,7 @@ test("apply writes workspaces and preserves existing tokens (WZ-12/CA-13)", () =
         baseUrl: "https://yt.example.com",
         workspaces: [entry("work", "/work/**")],
       }),
-      { dir, cwd: dir, env: {} },
+      { dir, cwd: dir, env: {}, home },
     );
     expect(preview.ok).toBe(true);
     expect(preview.preserved).toContain(tokenPath);
@@ -610,6 +610,8 @@ test("summary shows the update-workspaces mutation after an add", async () => {
     expect(frame).toContain("Will apply");
     expect(frame).toContain("workspaces.json");
     expect(frame).toContain("1 workspace");
+    // AR-09: the host registration itself is a previewed, reviewed mutation
+    expect(frame).toContain("register opencode");
     await tty.keys("y"); // apply
     expect(exitCalls).toEqual([true]);
     tty.unmount();

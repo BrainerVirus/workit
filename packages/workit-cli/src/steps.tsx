@@ -195,6 +195,12 @@ function describeMutation(m: SetupMutation): string {
       return `+ update ${m.path} (${m.entries.length} workspace${m.entries.length === 1 ? "" : "s"})`;
     case "append-gitignore":
       return `+ append ${m.path} (${m.entries.length} entr${m.entries.length === 1 ? "y" : "ies"})`;
+    case "register-platform":
+      return `+ register ${m.platform}: ${m.path}`;
+    case "install-adapter":
+      return `+ copy adapter ${m.platform}: ${m.path}`;
+    case "set-token-path":
+      return `+ change ${m.key} in ${m.path} → ${m.value}`;
   }
 }
 

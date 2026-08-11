@@ -73,6 +73,7 @@ type PackedPreview = {
   ok: boolean;
   blocked: string[];
   platforms: string[];
+  preserved: string[];
   mutations: { type: string; path: string; entries?: { name: string }[] }[];
 };
 type PackedResult = {
@@ -252,6 +253,76 @@ test("packed CLI partial failure exits nonzero with a Failed entry", async () =>
     expect(result.entries.some((e) => e.platform === "cursor" && e.status === "Failed")).toBe(true);
     // the healthy platform is still registered and verified
     expect(existsSync(path.join(home, ".config", "opencode", "opencode.json"))).toBe(true);
+  } finally {
+    rmSync(install, { recursive: true, force: true });
+  }
+}, 120_000);
+
+test("packed CLI: custom credential paths and canary bytes survive preview/apply rerun (CA-39)", async () => {
+  const packs = packWorkspacePackages();
+  const install = tmp("wk-packedcli-creds-");
+  try {
+    const nm = path.join(install, "node_modules");
+    mkdirSync(nm, { recursive: true });
+    installDeclaredClosure(nm, packs, byName(packs, CLI));
+    const setup = await loadSetup(nm);
+
+    const home = path.join(install, "home");
+    const configDir = path.join(home, ".config", "workit");
+    mkdirSync(configDir, { recursive: true });
+    mkdirSync(path.join(configDir, "secrets"), { recursive: true });
+    const customYt = path.join(configDir, "secrets", "yt.token");
+    const customGl = path.join(configDir, "secrets", "gl.token");
+    writeFileSync(
+      path.join(configDir, "youtrack.json"),
+      JSON.stringify({ baseUrl: "https://org.example.com", tokenFile: customYt }),
+      "utf8",
+    );
+    writeFileSync(customYt, "canary-yt-packed\n", { mode: 0o600 });
+    writeFileSync(
+      path.join(configDir, "vcs.json"),
+      JSON.stringify({ provider: "gitlab", gitlab: { tokenFile: customGl }, github: {} }),
+      "utf8",
+    );
+    writeFileSync(customGl, "canary-gl-packed\n", { mode: 0o600 });
+    const env = isolatedEnv(home, { WORKFLOW_TOOLKIT_CONFIG: configDir });
+
+    const preview = setup.buildSetupPreview(
+      { ...PREVIEW_VALUES, baseUrl: "https://yt.example.com", vcsProvider: "gitlab" },
+      { dir: configDir, cwd: install, env },
+    );
+    expect(preview.ok, JSON.stringify(preview)).toBe(true);
+    // truthful preview: the host registrations and the adapter copy are listed
+    expect(preview.mutations.some((m) => m.type === "register-platform")).toBe(true);
+    expect(preview.mutations.some((m) => m.type === "install-adapter")).toBe(true);
+    // custom credential files preserved, no default token paths planned
+    expect(preview.preserved).toContain(customYt);
+    expect(preview.preserved).toContain(customGl);
+    for (const def of ["youtrack.token", "gitlab.token"]) {
+      expect(preview.mutations.some((m) => m.path === path.join(configDir, def))).toBe(false);
+    }
+
+    const result = setup.applySetupPreview(preview, { home, configDir, cwd: install, env });
+    expect(result.ok, JSON.stringify(result.entries)).toBe(true);
+    // configs still point at the custom paths; bytes intact
+    const yt = JSON.parse(readFileSync(path.join(configDir, "youtrack.json"), "utf8")) as {
+      tokenFile: string;
+    };
+    expect(yt.tokenFile).toBe(customYt);
+    const vcs = JSON.parse(readFileSync(path.join(configDir, "vcs.json"), "utf8")) as {
+      gitlab: { tokenFile: string };
+    };
+    expect(vcs.gitlab.tokenFile).toBe(customGl);
+    expect(readFileSync(customYt, "utf8")).toBe("canary-yt-packed\n");
+    expect(readFileSync(customGl, "utf8")).toBe("canary-gl-packed\n");
+
+    // idempotent second run: tokens still Skipped, bytes still intact
+    const again = setup.applySetupPreview(preview, { home, configDir, cwd: install, env });
+    expect(again.ok, JSON.stringify(again.entries)).toBe(true);
+    for (const p of [customYt, customGl]) {
+      expect(again.entries.some((e) => e.file === p && e.status === "Skipped")).toBe(true);
+      expect(readFileSync(p, "utf8")).toContain("canary");
+    }
   } finally {
     rmSync(install, { recursive: true, force: true });
   }
