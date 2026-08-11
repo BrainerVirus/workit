@@ -210,13 +210,13 @@ test("cursorMcpServerEntry prefers the node dist bundle and falls back to the sh
     writeFileSync(path.join(dist, "mcp-server.js"), "");
     const entry = cursorMcpServerEntry(root);
     expect(entry.command).toBe("node");
-    expect(entry.args[0]).toContain("dist/mcp-server.js");
+    expect(entry.args[0]).toContain(path.join("dist", "mcp-server.js"));
     expect(entry.args[1]).toBe("${workspaceFolder}");
     rmSync(dist, { recursive: true, force: true });
 
     const fallback = cursorMcpServerEntry(root);
     expect(fallback.command).toBe("bash");
-    expect(fallback.args[0]).toContain("mcp/run-server.sh");
+    expect(fallback.args[0]).toContain(path.join("mcp", "run-server.sh"));
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
