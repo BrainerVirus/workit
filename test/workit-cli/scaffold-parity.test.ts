@@ -60,22 +60,50 @@ test("wizard scaffolds match initApplyData output (youtrack + vcs)", () => {
   }
 });
 
-test("wizard summary keeps nested output indented", () => {
-  const source = readFileSync(path.join(repoRoot, "packages/workit-cli/src/steps.tsx"), "utf8");
-
-  expect(source.match(/\{"  "\}token placeholder/g)).toHaveLength(2);
-  expect(source.match(/\{"  "\}create token/g)).toHaveLength(2);
-  expect(source).toContain('{"  "}+ {file}');
-});
-
-test("wizard summary suppresses success and index exits nonzero until configuration completed (WZ-10)", () => {
+test("wizard is a sequential state machine: one reducer owns all draft transitions", () => {
   const stepsSource = readFileSync(
     path.join(repoRoot, "packages/workit-cli/src/steps.tsx"),
     "utf8",
   );
-  expect(stepsSource).toMatch(/complete \? "Setup complete" : "Setup incomplete"/);
-  expect(stepsSource).toMatch(/\{complete &&[\s\S]*Paste the token/);
-  expect(stepsSource).toContain("Blocked");
+  const stateSource = readFileSync(
+    path.join(repoRoot, "packages/workit-cli/src/wizard-state.ts"),
+    "utf8",
+  );
+
+  expect(stateSource).toContain("type WizardDraft");
+  expect(stateSource).toContain("screen: WizardScreen");
+  expect(stateSource).toContain("values: SetupValues");
+  expect(stateSource).toContain("errors: Record<string, string>");
+  expect(stateSource).toContain("cancelled: boolean");
+  // The reducer is the single source of Back/Next/Cancel/Apply transitions.
+  expect(stateSource).toMatch(/export function reducer\(/);
+  expect(stateSource).toMatch(/case "next"/);
+  expect(stateSource).toMatch(/case "back"/);
+  expect(stateSource).toMatch(/case "cancel"/);
+  expect(stateSource).toMatch(/case "apply"/);
+  // The wizard dispatches to the reducer and mounts one screen at a time.
+  expect(stepsSource).toMatch(/useReducer\(reducer, undefined, createInitialDraft\)/);
+  expect(stepsSource).toMatch(/<Screen key=\{draft\.screen\}/);
+});
+
+test("wizard writes nothing before Apply; index exits nonzero until configuration completed (WZ-10)", () => {
+  const stepsSource = readFileSync(
+    path.join(repoRoot, "packages/workit-cli/src/steps.tsx"),
+    "utf8",
+  );
+
+  // No filesystem application inside the wizard — that is deferred to Apply
+  // (Tasks 13-14); the screens only accumulate an in-memory draft.
+  for (const write of [
+    "writeConfig",
+    "scaffoldYouTrack",
+    "scaffoldVcs",
+    "writeWorkspaces",
+    "runProjectSetup",
+    "writeFileSync",
+  ]) {
+    expect(stepsSource).not.toContain(write);
+  }
 
   const indexSource = readFileSync(
     path.join(repoRoot, "packages/workit-cli/src/index.tsx"),
