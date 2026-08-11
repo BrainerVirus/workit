@@ -1,5 +1,12 @@
 import { render } from "ink";
 import { Wizard } from "./steps";
+import { createLogger } from "@brainervirus/workit-core/src/core/logger";
+
+// Secret-safe diagnostic logger (DG-01-DG-03, DG-05, DG-10). Sink injection
+// only: CLI events mirror to stderr, never the Ink-rendered stdout.
+export const logger = createLogger({
+  stderr: (event) => process.stderr.write(`${JSON.stringify(event)}\n`),
+});
 
 const HELP = `workit — workflow rails for agentic coding
 

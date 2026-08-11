@@ -3,6 +3,13 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
+import { createLogger } from "@brainervirus/workit-core/src/core/logger";
+
+// Secret-safe diagnostic logger (DG-01-DG-03, DG-05, DG-10). Sink injection
+// only: Cursor events mirror to stderr. MCP stdout stays protocol-only.
+export const logger = createLogger({
+  stderr: (event) => process.stderr.write(`${JSON.stringify(event)}\n`),
+});
 import {
   parseSections,
   parseKeyValueLines,

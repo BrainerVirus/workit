@@ -1,6 +1,14 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createLogger } from "@brainervirus/workit-core/src/core/logger";
+
+// Secret-safe diagnostic logger (DG-01-DG-03, DG-05, DG-10). Sink injection
+// only: session-start summaries mirror to stderr; the JSON contract on stdout
+// stays protocol-only.
+export const logger = createLogger({
+  stderr: (event) => process.stderr.write(`${JSON.stringify(event)}\n`),
+});
 
 // Node-compatible TS sessionStart entry (RL-09): resolves the toolkit root and
 // injects the workflow contract into Cursor's session context. Performs NO

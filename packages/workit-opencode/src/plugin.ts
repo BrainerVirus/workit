@@ -43,6 +43,40 @@ import {
 import { createTools } from "./tools";
 import { adaptPluginHandoffClient } from "./tools/handoff";
 import { WorkflowStateStore } from "@brainervirus/workit-core/src/state";
+import { createLogger } from "@brainervirus/workit-core/src/core/logger";
+
+// Secret-safe diagnostic logger (DG-01-DG-03, DG-05, DG-10). Sink injection
+// only: events mirror to OpenCode's server log and stderr, never the agent
+// conversation. MCP stdout is never written by the logger.
+type AppLogClient = {
+  app?: {
+    log?: (options: {
+      body: {
+        service: string;
+        level: "debug" | "info" | "warn" | "error";
+        message: string;
+        extra: Record<string, unknown>;
+      };
+    }) => Promise<unknown>;
+  };
+};
+
+let openCodeClient: AppLogClient | undefined;
+
+export const logger = createLogger({
+  appLog: (event) => {
+    const result = openCodeClient?.app?.log?.({
+      body: {
+        service: "workit",
+        level: event.level,
+        message: event.message,
+        extra: event.context,
+      },
+    });
+    if (result) void result.catch(() => {});
+  },
+  stderr: (event) => process.stderr.write(`${JSON.stringify(event)}\n`),
+});
 
 // Commands/skills/vendor/templates ship package-locally under assets/ so the
 // packaged plugin resolves them without a share/checkout or monorepo dependency
@@ -87,6 +121,7 @@ const withWorktreeDenials = (configuredPermission: unknown): MutablePermission =
 };
 
 const plugin: Plugin = async ({ client }) => {
+  openCodeClient = client as unknown as AppLogClient;
   const state = new WorkflowStateStore();
   return {
     tool: createTools(adaptPluginHandoffClient(client), state),
