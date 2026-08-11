@@ -201,6 +201,39 @@ test("never writes to MCP stdout", () => {
   expect((records[0].record.context as { scope: string }).scope).toBe("startup");
 });
 
+test("does not throw on a circular context and keeps logging", () => {
+  const stateDir = tempDir();
+  const logger = createLogger({ stateDir });
+  const circular: Record<string, unknown> = { name: "self" };
+  circular.self = circular;
+  expect(() => logger.info("circular-context", circular)).not.toThrow();
+  logger.info("still-works");
+  const records = readRecords(stateDir);
+  expect(records.length).toBe(2);
+  expect(records.some((r) => r.record.message === "still-works")).toBe(true);
+});
+
+test("does not starve warn/error canaries under an info flood", () => {
+  const stateDir = tempDir();
+  let current = new Date(2026, 7, 10, 12, 0, 0);
+  const logger = createLogger({
+    stateDir,
+    now: () => current,
+    maxRate: 2,
+    rateWindowMs: 1000,
+  });
+  for (let i = 0; i < 5; i++) logger.info(`info-${i}`);
+  logger.error("canary-error");
+  logger.warn("canary-warn");
+  const records = readRecords(stateDir);
+  expect(
+    records.some((r) => r.record.level === "error" && r.record.message === "canary-error"),
+  ).toBe(true);
+  expect(records.some((r) => r.record.level === "warn" && r.record.message === "canary-warn")).toBe(
+    true,
+  );
+});
+
 test("isolates failing detectors without breaking logging", () => {
   const stateDir = tempDir();
   const logger = createLogger({ stateDir });
@@ -258,12 +291,17 @@ test("redacts secrets, content, queries, home prefixes, and long stacks", () => 
     authorization: "Bearer live-token-abc",
     password: "hunter2-secret",
     apiKey: "api-key-live",
+    accessToken: "sk-secret-1",
+    clientSecret: "cs-secret-2",
+    refreshToken: "rt-secret-3",
+    TOKEN: "tok-secret-4",
+    ApiKey: "ak-secret-5",
     prompt: "translate this user prompt to french",
     message: "user content message",
     content: "file content body",
     url: "https://example.com/search?q=secret-query&token=qv",
     file: path.join(home, "workflow-toolkit", "config.json"),
-    stack: longStack,
+    stack: `    at fn0 (${path.join(home, "workflow-toolkit", "src", "core.ts")}:1:1)\n${longStack}`,
     nested: { credentials: { accessToken: "nested-secret" } },
   });
 
@@ -275,6 +313,11 @@ test("redacts secrets, content, queries, home prefixes, and long stacks", () => 
   expect(raw).not.toContain("live-token-abc");
   expect(raw).not.toContain("hunter2-secret");
   expect(raw).not.toContain("api-key-live");
+  expect(raw).not.toContain("sk-secret-1");
+  expect(raw).not.toContain("cs-secret-2");
+  expect(raw).not.toContain("rt-secret-3");
+  expect(raw).not.toContain("tok-secret-4");
+  expect(raw).not.toContain("ak-secret-5");
   expect(raw).not.toContain("translate this user prompt");
   expect(raw).not.toContain("user content message");
   expect(raw).not.toContain("file content body");
@@ -282,8 +325,9 @@ test("redacts secrets, content, queries, home prefixes, and long stacks", () => 
   expect(raw).not.toContain("nested-secret");
   expect(raw).not.toContain(home);
   expect(raw).toContain("~/workflow-toolkit/config.json");
+  expect(raw).toContain("~/workflow-toolkit/src/core.ts");
   expect(raw).not.toContain("fn30 (");
-  expect(raw).toContain("70 more");
+  expect(raw).toContain("71 more");
 
   const records = readRecords(stateDir);
   expect(records.length).toBe(1);
@@ -319,6 +363,27 @@ describe("redact", () => {
     const bounded = redact({ stack }) as { stack: string };
     expect(bounded.stack).toContain("70 more");
     expect(bounded.stack).not.toContain("fn50");
+  });
+
+  test("redacts case-variant standalone secret keys", () => {
+    expect(redact({ accessToken: "sk-secret-1" })).toEqual({ accessToken: "[REDACTED]" });
+    expect(redact({ clientSecret: "cs-secret-2" })).toEqual({ clientSecret: "[REDACTED]" });
+    expect(redact({ refreshToken: "rt-secret-3" })).toEqual({ refreshToken: "[REDACTED]" });
+    expect(redact({ TOKEN: "tok-secret-4" })).toEqual({ TOKEN: "[REDACTED]" });
+    expect(redact({ Authorization: "authz-token-xyz" })).toEqual({ Authorization: "[REDACTED]" });
+    expect(redact({ ApiKey: "ak-secret-5" })).toEqual({ ApiKey: "[REDACTED]" });
+  });
+
+  test("redacts the home prefix inside stack values", () => {
+    const stack = `    at foo (${path.join(os.homedir(), "app", "x.ts")}:1:1)\n    at bar (b.ts:2:2)`;
+    expect(redact({ stack })).toEqual({
+      stack: `    at foo (~/app/x.ts:1:1)\n    at bar (b.ts:2:2)`,
+    });
+  });
+
+  test("preserves the key name and full value for key=value secrets", () => {
+    expect(redact("x_token=abc123")).toBe("x_token=[REDACTED]");
+    expect(redact("password: hunter2 leaked tail")).toBe("password: [REDACTED]");
   });
 });
 

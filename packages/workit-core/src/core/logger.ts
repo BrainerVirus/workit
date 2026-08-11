@@ -61,8 +61,11 @@ const RETAINED_DAYS = 7;
 // content word is fully replaced, a stack/trace field is line-bounded.
 const SECRET_VALUE = /\b(?:Bearer|Basic|Digest|Token)\s+\S+/g;
 const KEY_EQ_VALUE =
-  /\b[A-Za-z0-9_-]*(?:token|secret|password|passwd|apikey|api[_-]?key|authorization|credential|bearer)[A-Za-z0-9_-]*\s*([:=])\s*[^\s&,;]+/g;
+  /\b([A-Za-z0-9_-]*(?:token|secret|password|passwd|apikey|api[_-]?key|authorization|credential|bearer)[A-Za-z0-9_-]*)([:=]\s*).+/g;
 const URL_QUERY = /(https?:\/\/[^?#\s]+)\?[^#\s]*/g;
+
+const splitKey = (key: string): string[] =>
+  key.split(/[_-]+|(?<=[a-z0-9])(?=[A-Z])/).map((word) => word.toLowerCase());
 
 const SENSITIVE_WORDS = new Set([
   "token",
@@ -99,8 +102,6 @@ const SENSITIVE_WORDS = new Set([
 
 const STACK_WORDS = new Set(["stack", "stacktrace", "trace"]);
 
-const splitKey = (key: string): string[] => key.split(/[_-]+|(?<=[a-z0-9])(?=[A-Z])/);
-
 const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 export const resolveStateDir = (): string => {
@@ -125,14 +126,19 @@ type RedactOptions = {
 
 const homePattern = new RegExp(`${escapeRegExp(os.homedir())}(?=/|$)|\\$HOME(?=/|$)`, "g");
 
-const redactString = (value: string, options: RedactOptions): string => {
+const applyPatterns = (value: string): string => {
   let out = value;
   out = out.replace(SECRET_VALUE, REDACTED);
-  out = out.replace(KEY_EQ_VALUE, (_, sep: string) => `${sep}${REDACTED}`);
+  out = out.replace(KEY_EQ_VALUE, "$1$2[REDACTED]");
   out = out.replace(URL_QUERY, "$1?[REDACTED]");
   out = out.replace(homePattern, "~");
+  return out;
+};
+
+const redactString = (value: string, options: RedactOptions): string => {
+  const out = applyPatterns(value);
   if (out.length > options.maxFieldLength) {
-    out = `${out.slice(0, options.maxFieldLength)}…`;
+    return `${out.slice(0, options.maxFieldLength)}…`;
   }
   return out;
 };
@@ -140,7 +146,7 @@ const redactString = (value: string, options: RedactOptions): string => {
 const boundStack = (value: unknown, options: RedactOptions): JsonValue => {
   if (typeof value !== "string") return redact(value, options);
   const lines = value.split("\n");
-  const kept = lines.slice(0, options.maxStackLines);
+  const kept = lines.slice(0, options.maxStackLines).map(applyPatterns);
   const dropped = lines.length - kept.length;
   const body = dropped > 0 ? [...kept, `    ... ${dropped} more`] : kept;
   return body.join("\n");
@@ -207,36 +213,57 @@ export const createLogger = (options: LoggerOptions = {}): Logger => {
   };
 
   let windowStart = 0;
-  let windowCount = 0;
+  const windowCounts: Record<LogLevel, number> = { debug: 0, info: 0, warn: 0, error: 0 };
 
   const emit = (level: LogLevel, message: string, context?: Record<string, unknown>): void => {
     const date = now();
     const elapsed = date.getTime() - windowStart;
     if (elapsed >= rateWindowMs || windowStart === 0) {
       windowStart = date.getTime();
-      windowCount = 0;
+      windowCounts.debug = 0;
+      windowCounts.info = 0;
+      windowCounts.warn = 0;
+      windowCounts.error = 0;
     }
-    windowCount += 1;
-    if (windowCount > maxRate) return;
+    windowCounts[level] += 1;
+    if (windowCounts[level] > maxRate) return;
 
-    const event: LogEvent = {
-      level,
-      time: date.toISOString(),
-      message: redactString(message, redactOptions),
-      context: redact(context ?? {}, redactOptions) as Record<string, JsonValue>,
-    };
-    const line = `${JSON.stringify(event)}\n`;
-
+    // ponytail: per-level budget so an info flood can't starve warn/error
+    // canaries; shared-token budget would need cross-level prioritization.
+    let event: LogEvent | null = null;
     try {
+      event = {
+        level,
+        time: date.toISOString(),
+        message: redactString(message, redactOptions),
+        context: redact(context ?? {}, redactOptions) as Record<string, JsonValue>,
+      };
+      const line = `${JSON.stringify(event)}\n`;
       mkdirSync(logDir, { recursive: true, mode: 0o700 });
       appendFileSync(path.join(logDir, dailyFileName(date)), line, { mode: 0o600 });
       pruneOldFiles(logDir);
     } catch {
-      // logging must never break the host
+      // Serialization (e.g. a circular context) must never throw into the
+      // caller: record a bounded failure event instead.
+      try {
+        event = {
+          level,
+          time: date.toISOString(),
+          message: redactString(message, redactOptions),
+          context: { redaction_failed: true },
+        };
+        mkdirSync(logDir, { recursive: true, mode: 0o700 });
+        appendFileSync(path.join(logDir, dailyFileName(date)), `${JSON.stringify(event)}\n`, {
+          mode: 0o600,
+        });
+      } catch {
+        // logging must never break the host
+      }
     }
 
     for (const sink of [options.appLog, options.stderr]) {
       if (!sink) continue;
+      if (!event) continue;
       try {
         sink(event);
       } catch {
