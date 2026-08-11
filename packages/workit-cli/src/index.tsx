@@ -11,6 +11,7 @@ import {
   setupCompletionGuidance,
   type SetupResult,
 } from "@brainervirus/workit-core/src/core/setup.ts";
+import { readSetupState, type SetupState } from "@brainervirus/workit-core/src/core/setup-state";
 
 // Secret-safe diagnostic logger (DG-01-DG-03, DG-05, DG-10). Sink injection
 // only: CLI events mirror to stderr, never the Ink-rendered stdout.
@@ -47,7 +48,25 @@ function printApplySummary(result: SetupResult): void {
   for (const line of setupCompletionGuidance()) console.log(line);
 }
 
+// WZ-06 / RL-01: the one friendly blocked output for malformed setup state,
+// shared by the pre-wizard guard and the post-Apply preview guard.
+function printMalformedBlocked(state: SetupState): void {
+  console.log("Apply blocked — malformed configuration:");
+  for (const entry of [state.config, state.youtrack, state.vcs, state.workspaces]) {
+    if (entry.status === "malformed") console.log(`  ${entry.error ?? entry.file}`);
+  }
+}
+
 async function runInit() {
+  // RL-01: a malformed config.json used to throw inside the wizard's initial
+  // draft (createInitialDraft -> readConfig) and die via the
+  // unhandledRejection/uncaughtException handler. Detect it before render and
+  // surface the same graceful blocked output Apply would have shown.
+  const state = readSetupState();
+  if (state.config.status === "malformed") {
+    printMalformedBlocked(state);
+    process.exit(1);
+  }
   // ponytail: no-TTY guard — piping/disabling stdin would hang render(); print
   // guidance and exit nonzero instead of silently pretending setup happened
   if (process.stdin.isTTY !== true) {
@@ -72,8 +91,7 @@ async function runInit() {
   if (exit && exit.complete && exit.values) {
     const preview = buildSetupPreview(exit.values, { cwd: process.cwd(), env: process.env });
     if (!preview.ok) {
-      console.log("Apply blocked — malformed configuration:");
-      for (const blocked of preview.blocked) console.log(`  ${blocked}`);
+      printMalformedBlocked(preview.state);
       process.exit(1);
     }
     const result = applySetupPreview(preview, { cwd: process.cwd(), env: process.env });

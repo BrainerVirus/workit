@@ -255,6 +255,34 @@ test("packed CLI: non-TTY init gives guidance + nonzero; --help exits 0", () => 
   }
 }, 120_000);
 
+test("packed CLI: workit init on malformed config.json blocks gracefully (no crash)", () => {
+  const packs = packWorkspacePackages();
+  const install = tmp("wk-packedcli-malformed-");
+  try {
+    const nm = path.join(install, "node_modules");
+    mkdirSync(nm, { recursive: true });
+    const cliDir = installPackedPackage(nm, byName(packs, CLI));
+    const home = path.join(install, "home");
+    const configDir = path.join(home, ".config", "workit");
+    mkdirSync(configDir, { recursive: true });
+    writeFileSync(path.join(configDir, "config.json"), "{ not json", "utf8");
+    const env = isolatedEnv(home, { WORKFLOW_TOOLKIT_CONFIG: configDir });
+    const entry = path.join(cliDir, "dist", "index.js");
+
+    // previously createInitialDraft()'s default readConfig() threw inside the
+    // wizard render and died via the unhandledRejection/uncaughtException
+    // handler; it must instead surface the graceful Apply-blocked message.
+    const init = runInIsolation(install, "node", [entry, "init"], env);
+    expect(init.status, init.stdout + init.stderr).toBe(1);
+    expect(init.stdout).toContain("Apply blocked — malformed configuration:");
+    expect(init.stdout).toContain("config.json");
+    expect(init.stderr).not.toContain("unhandledRejection");
+    expect(init.stderr).not.toContain("uncaughtException");
+  } finally {
+    rmSync(install, { recursive: true, force: true });
+  }
+}, 120_000);
+
 test("packed CLI ships completion guidance and hygiene templates", () => {
   const packs = packWorkspacePackages();
   const install = tmp("wk-packedcli-assets-");

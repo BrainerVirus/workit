@@ -163,6 +163,24 @@ test("RL-02: readConfig derives policy from the preset and resets divergent fiel
   }
 });
 
+test("RL-02/CA-23: custom preset without persisted allowed/protected inherits the current (default) policy", () => {
+  const dir = cfgDir();
+  try {
+    writeFileSync(
+      path.join(dir, "config.json"),
+      JSON.stringify({ branchPolicy: { preset: "custom" } }),
+      "utf8",
+    );
+    const cfg = readConfig();
+    expect(cfg.branchPolicy.preset).toBe("custom");
+    expect(cfg.branchPolicy.allowed).toEqual([...PRESETS.gitflow.allowed]);
+    expect(cfg.branchPolicy.protected).toEqual([...PRESETS.gitflow.protected]);
+  } finally {
+    cleanupEnv();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("RL-02/CA-23: mergeConfigValues routes every consumer through mergePreset", () => {
   const current: ToolkitConfig = {
     locale: "en",

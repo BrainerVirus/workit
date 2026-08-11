@@ -282,8 +282,14 @@ export function prReadyContext(root: string, range?: string): ContextResult {
 
   stdout += printSection("VCS Config");
   const vc = vcsConfig("resolve", cwd);
-  stdout += `workspace: ${String(vc.workspace_name ?? "none")}\n`;
-  stdout += `provider: ${String(vc.provider ?? "gitlab")}\n`;
+  if (vc.ok) {
+    stdout += `workspace: ${String(vc.workspace_name ?? "none")}\n`;
+    stdout += `provider: ${String(vc.provider ?? "gitlab")}\n`;
+  } else {
+    // RL-01: never report silent defaults for malformed vcs.json — surface the
+    // exact-path diagnostic instead.
+    stdout += `vcs: unreadable (malformed) — ${String(vc.error ?? "cannot read vcs.json")}\n`;
+  }
   const summary = vcsConfig("summary", cwd);
   if (summary.ok) {
     stdout += JSON.stringify(summary) + "\n";

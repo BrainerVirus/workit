@@ -345,6 +345,17 @@ test("pr-ready-context.sh: VCS Config section reports workspace + provider", () 
   expect(r.stdout).not.toContain("vcs: not configured");
 });
 
+test("pr-ready-context.sh: malformed vcs.json reports unreadable instead of silent defaults (RL-01)", () => {
+  const r = withConfigFiles({ "vcs.json": "{ broken !!" }, {}, () =>
+    prReadyContext(repoRoot, "HEAD~1..HEAD"),
+  );
+  expect(r.exitCode, r.stderr).toBe(0);
+  expect(r.stdout).toContain("vcs: unreadable (malformed)");
+  expect(r.stdout).toContain("vcs.json");
+  expect(r.stdout).not.toContain("workspace: none");
+  expect(r.stdout).not.toContain("provider: gitlab");
+});
+
 test("pr-ready-context.sh uses the workspace target branch", () => {
   const repo = realpathSync(mkdtempSync(path.join(os.tmpdir(), "wf-pr-base-")));
   const git = (args: string[]) => spawnSync("git", args, { cwd: repo, encoding: "utf8" });
