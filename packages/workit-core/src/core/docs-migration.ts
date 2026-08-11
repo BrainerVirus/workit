@@ -12,6 +12,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
+import { resolveCanonicalLayout } from "./docs-layout";
 
 // Bounded legacy detection and atomic copy-only migration (DC-05-DC-11). The
 // legacy root `docs/superpowers/` is reserved (Task 16): it is never written
@@ -252,9 +253,13 @@ type PlannedCopy = {
 
 // Rewrite references from this entry's legacy paths to the canonical slug. The
 // scope is bounded to the copied file's own workflow name (DC-09): other
-// workflows' legacy paths are left untouched.
-const rewriteLegacyReferences = (text: string, legacyName: string, slug: string): string =>
-  text.split(`docs/superpowers/${legacyName}`).join(`docs/${slug}`);
+// workflows' legacy paths are left untouched. A `/` or end-of-string boundary
+// after the name prevents rewriting sibling-name-prefix paths such as
+// docs/superpowers/flowchart/... when the workflow name is flow.
+const rewriteLegacyReferences = (text: string, legacyName: string, slug: string): string => {
+  const escaped = legacyName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return text.split(new RegExp(`docs/superpowers/${escaped}(?=/|$)`, "g")).join(`docs/${slug}`);
+};
 
 // Valid JSON flow paths may be rewritten; invalid flow state is preserved
 // byte-for-byte and reported as malformed (DC-09).
@@ -322,18 +327,26 @@ const classifySdd = (
 
 // Walk a source tree (files and symlinks) producing planned file copies.
 // Symlinks are resolved: escaping the workspace aborts the whole migration
-// atomically; in-workspace targets are copied as regular file content.
+// atomically; in-workspace targets are copied as regular file content. The
+// destination root is the canonical (realpath) docs/<slug>/ dir resolved by the
+// layout contract, so writes can never land outside the workspace.
 const planTree = (
   workspace: string,
   legacyAbs: string,
   legacyRel: string,
   destRelRoot: string,
+  destAbsRoot: string,
   legacyName: string,
   slug: string,
   plan: PlannedCopy[],
   visits: Set<string>,
 ): { ok: true } | { ok: false; error: string } => {
-  const real = realpathSync(legacyAbs);
+  let real: string;
+  try {
+    real = realpathSync(legacyAbs);
+  } catch {
+    return { ok: false, error: `dangling symlink refused: ${legacyRel}` };
+  }
   if (real !== workspace && !real.startsWith(workspace + path.sep)) {
     return { ok: false, error: `symlink escape refused: ${legacyRel}` };
   }
@@ -344,17 +357,42 @@ const planTree = (
     const fromRel = posix(path.join(legacyRel, entry.name));
     const toRel = posix(path.join(destRelRoot, entry.name));
     if (entry.isDirectory()) {
-      const sub = planTree(workspace, fromAbs, fromRel, toRel, legacyName, slug, plan, visits);
+      const sub = planTree(
+        workspace,
+        fromAbs,
+        fromRel,
+        toRel,
+        path.join(destAbsRoot, entry.name),
+        legacyName,
+        slug,
+        plan,
+        visits,
+      );
       if (!sub.ok) return sub;
     } else if (entry.isFile() || entry.isSymbolicLink()) {
       let targetAbs = fromAbs;
       if (entry.isSymbolicLink()) {
-        const target = realpathSync(fromAbs);
+        let target: string;
+        try {
+          target = realpathSync(fromAbs);
+        } catch {
+          return { ok: false, error: `dangling symlink refused: ${fromRel}` };
+        }
         if (target !== workspace && !target.startsWith(workspace + path.sep)) {
           return { ok: false, error: `symlink escape refused: ${fromRel}` };
         }
         if (statSync(target).isDirectory()) {
-          const sub = planTree(workspace, fromAbs, fromRel, toRel, legacyName, slug, plan, visits);
+          const sub = planTree(
+            workspace,
+            fromAbs,
+            fromRel,
+            toRel,
+            path.join(destAbsRoot, entry.name),
+            legacyName,
+            slug,
+            plan,
+            visits,
+          );
           if (!sub.ok) return sub;
           continue;
         }
@@ -369,7 +407,7 @@ const planTree = (
         fromAbs,
         fromRel,
         toRel,
-        destAbs: path.join(workspace, toRel),
+        destAbs: path.join(destAbsRoot, entry.name),
         bytes: classified.bytes,
         status: classified.status,
       });
@@ -381,6 +419,7 @@ const planTree = (
 const planEntry = (
   workspace: string,
   entry: LegacyEntry,
+  destDirAbs: string,
   plan: PlannedCopy[],
   visits: Set<string>,
 ): { ok: true } | { ok: false; error: string } => {
@@ -390,7 +429,7 @@ const planEntry = (
     legacyName,
     slug: entry.slug,
     toRel: posix(path.join("docs", entry.slug, `${kind}.md`)),
-    destAbs: path.join(workspace, "docs", entry.slug, `${kind}.md`),
+    destAbs: path.join(destDirAbs, `${kind}.md`),
   });
   if (entry.spec) {
     const classified = classifyDoc(
@@ -431,6 +470,7 @@ const planEntry = (
       path.join(workspace, legacySdd),
       legacySdd,
       posix(path.join("docs", entry.slug, "sdd")),
+      path.join(destDirAbs, "sdd"),
       legacyName,
       entry.slug,
       plan,
@@ -495,9 +535,20 @@ export const migrateLegacyDocs = (input: {
   }
 
   const plan: PlannedCopy[] = [];
-  const visits = new Set<string>();
   for (const entry of detect.paired) {
-    const planned = planEntry(workspace_root, entry, plan, visits);
+    // Resolve the destination through the canonical layout contract (DC-01,
+    // DC-02): a docs/<slug> symlink escaping the workspace is refused here,
+    // before any write is planned, instead of silently writing outside.
+    const layout = resolveCanonicalLayout({ workspace_root, slug: entry.slug });
+    if (!layout.ok) {
+      return abort(
+        `legacy migration aborted: destination docs/${entry.slug} refused (${layout.error})`,
+      );
+    }
+    // Per-entry visit set: a symlinked subtree shared between workflows is
+    // copied for every workflow, not silently skipped after the first.
+    const visits = new Set<string>();
+    const planned = planEntry(workspace_root, entry, layout.layout.dir, plan, visits);
     if (!planned.ok) return abort(planned.error);
   }
 

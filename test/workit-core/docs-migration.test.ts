@@ -495,6 +495,89 @@ test("migrate copies SDD state when docs/*/sdd is gitignored", () => {
   }
 });
 
+test("migrate copies both workflows sharing a symlinked sdd dir (per-entry visits)", () => {
+  const root = tmp();
+  try {
+    gitRepo(root);
+    writeFileSync(path.join(root, ".gitignore"), "docs/*/sdd/\n", "utf8");
+    putLegacy(root, "a", { sdd: true });
+    putLegacy(root, "b", { sdd: false });
+    symlinkSync(path.join("..", "a", "sdd"), path.join(root, "docs", "superpowers", "b", "sdd"));
+    const result = migrateLegacyDocs({ workspace_root: root, slug: "a", confirmed: true });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.copied).toContain("docs/a/sdd/progress.md");
+      expect(result.data.copied).toContain("docs/b/sdd/progress.md");
+    }
+    expect(readFileSync(path.join(root, "docs", "b", "sdd", "progress.md"), "utf8")).toBe(
+      "Task 1: complete\n",
+    );
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("migrate refuses a docs/<slug> symlink escaping the workspace and writes nothing outside", () => {
+  const root = tmp();
+  try {
+    putLegacy(root, "foo");
+    const outside = tmp();
+    try {
+      mkdirSync(path.join(root, "docs"), { recursive: true });
+      symlinkSync(outside, path.join(root, "docs", "foo"));
+      const result = migrateLegacyDocs({ workspace_root: root, slug: "foo", confirmed: true });
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toMatch(/escape|stay inside|inside repository/i);
+      expect(readdirSync(outside)).toEqual([]);
+    } finally {
+      cleanup(outside);
+    }
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("migrate does not rewrite sibling-name-prefix legacy references", () => {
+  const root = tmp();
+  try {
+    gitRepo(root);
+    writeFileSync(path.join(root, ".gitignore"), "docs/*/sdd/\n", "utf8");
+    putLegacy(root, "flow", { sdd: true, flow: true });
+    const planText = readFileSync(
+      path.join(root, "docs", "superpowers", "flow", "plan.md"),
+      "utf8",
+    );
+    const prefixed = `${planText}\n\n**See also:** \`docs/superpowers/flowchart/plan.md\`\n`;
+    writeFileSync(path.join(root, "docs", "superpowers", "flow", "plan.md"), prefixed, "utf8");
+    const result = migrateLegacyDocs({ workspace_root: root, slug: "flow", confirmed: true });
+    expect(result.ok).toBe(true);
+    const copiedPlan = readFileSync(path.join(root, "docs", "flow", "plan.md"), "utf8");
+    expect(copiedPlan).toContain("**Spec:** `docs/flow/spec.md`");
+    expect(copiedPlan).toContain("docs/superpowers/flowchart/plan.md");
+    expect(copiedPlan).not.toContain("docs/flowchart/plan.md");
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("migrate aborts cleanly on a dangling symlink instead of throwing", () => {
+  const root = tmp();
+  try {
+    gitRepo(root);
+    writeFileSync(path.join(root, ".gitignore"), "docs/*/sdd/\n", "utf8");
+    putLegacy(root, "foo", { sdd: true });
+    symlinkSync(
+      path.join("missing-target"),
+      path.join(root, "docs", "superpowers", "foo", "sdd", "dangling.md"),
+    );
+    const result = migrateLegacyDocs({ workspace_root: root, slug: "foo", confirmed: true });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toMatch(/dangling|symlink|realpath/i);
+  } finally {
+    cleanup(root);
+  }
+});
+
 test("migrate cannot create a divergent active workflow when SDD copy is refused", () => {
   const root = tmp();
   try {

@@ -54,7 +54,7 @@ export function createDocsRepoTools() {
             fail(result.error, {
               collisions: result.collisions ?? [],
               detect,
-            } as never),
+            }),
           );
         }
         const result = prepareDocsLayout({
@@ -108,7 +108,7 @@ export function createDocsRepoTools() {
               index_updated: result.index_updated,
             }),
           );
-        return output(fail(result.error, { findings: result.findings ?? [] } as never));
+        return output(fail(result.error, { findings: result.findings ?? [] }));
       },
     }),
   };
