@@ -1,9 +1,10 @@
 import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import { mergePreset, readConfigFromDir, resolveConfigDir, type BranchPreset } from "./config";
 import { readSetupState, type SetupState } from "./setup-state";
-import type { WorkspaceConfig } from "./workspaces";
+import { loadWorkspacesFrom, type WorkspaceConfig } from "./workspaces";
 import { GITIGNORE_ENTRIES } from "./gitignore";
 import { planHygieneFiles } from "./hygiene";
 import { packageRoot } from "./package-root";
@@ -184,7 +185,11 @@ export function buildSetupPreview(
       },
     });
 
-    if (values.workspaces.length > 0) {
+    // WZ-12 parity: the draft is authoritative but a no-op workspaces section
+    // (unchanged vs disk, including the initial seed) must not claim a rewrite.
+    // Removing every workspace differs from disk and therefore still writes [].
+    const diskWorkspaces = loadWorkspacesFrom(state.configDir);
+    if (!isDeepStrictEqual(values.workspaces, diskWorkspaces)) {
       mutations.push({
         type: "update-workspaces",
         path: path.join(state.configDir, "workspaces.json"),

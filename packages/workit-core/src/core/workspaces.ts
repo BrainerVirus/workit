@@ -54,29 +54,38 @@ const globToRegExp = (glob: string): RegExp => {
   return new RegExp(`^${out}$`);
 };
 
-/** Match a cwd against the workspaces.json under an explicit config dir. */
-export const resolveWorkspaceFrom = (cwd: string, dir: string): WorkspaceConfig | null => {
+/** Parse the workspaces.json list under an explicit config dir; [] when missing/malformed. */
+export const loadWorkspacesFrom = (dir: string): WorkspaceConfig[] => {
   let raw: string;
   try {
     raw = readFileSync(path.join(dir, "workspaces.json"), "utf8");
   } catch {
-    return null;
+    return [];
   }
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch {
-    return null;
+    return [];
   }
-  if (!parsed || typeof parsed !== "object") return null;
+  if (!parsed || typeof parsed !== "object") return [];
   const list = (parsed as { workspaces?: unknown }).workspaces;
-  if (!Array.isArray(list)) return null;
+  return Array.isArray(list) ? (list as WorkspaceConfig[]) : [];
+};
+
+/** Shared authoritative workspace matcher (WZ-12): the wizard's pattern
+ *  preview and resolveWorkspaceFrom both route through it. */
+export const matchWorkspace = (glob: string, target: string): boolean =>
+  globToRegExp(glob.replaceAll("\\", "/")).test(target.replaceAll("\\", "/"));
+
+/** Match a cwd against the workspaces.json under an explicit config dir. */
+export const resolveWorkspaceFrom = (cwd: string, dir: string): WorkspaceConfig | null => {
   const cwdPosix = cwd.replaceAll("\\", "/");
-  for (const entry of list) {
+  for (const entry of loadWorkspacesFrom(dir)) {
     if (!entry || typeof entry !== "object") continue;
     const ws = entry as WorkspaceConfig;
     if (typeof ws.glob !== "string" || !ws.glob) continue;
-    if (globToRegExp(ws.glob.replaceAll("\\", "/")).test(cwdPosix)) return ws;
+    if (matchWorkspace(ws.glob, cwdPosix)) return ws;
   }
   return null;
 };

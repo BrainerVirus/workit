@@ -19,6 +19,7 @@ const ENTER = "\r";
 // triple-ESC simulates pressing Escape deterministically without a sleep.
 const ESC = "\x1b\x1b\x1b";
 const DOWN = "\u001b[B";
+const UP = "\u001b[A";
 const SPACE = " ";
 const BACKSPACE = "\x7f";
 
@@ -167,7 +168,10 @@ test("exactly one input control is mounted on every screen", async () => {
   await tty.keys(ENTER); // youtrack -> vcs
   expect(tty.inputListenerCount()).toBe(3);
   await tty.keys(ENTER); // vcs -> workspaces
-  await tty.keys(ENTER); // workspaces -> project
+  // the workspaces screen renders real controls (WZ-12), not a placeholder
+  expect(tty.lastFrame()).toContain("Add workspace");
+  expect(tty.inputListenerCount()).toBe(3);
+  await tty.keys(ENTER); // workspaces (Done highlighted) -> project
   await tty.keys("y"); // project -> summary
   expect(tty.inputListenerCount()).toBe(3);
   tty.unmount();
@@ -330,7 +334,16 @@ test("summary shows the authoritative preview and Apply completes with it", asyn
     await tty.keys(ENTER); // -> youtrack
     await tty.keys("https://yt.example.com", ENTER); // -> vcs
     await tty.keys(ENTER); // -> workspaces
-    await tty.keys(ENTER); // -> project
+    // the workspaces screen is a real menu (not a placeholder): edit the seeded
+    // entry so the preview carries a workspace rewrite (Task 15 parity — an
+    // untouched draft claims no rewrite).
+    expect(tty.lastFrame()).toContain("Edit work");
+    await tty.keys(UP, UP, UP, UP, ENTER); // Edit work
+    await tty.keys(ENTER); // keep the name
+    for (let i = 0; i < "/work/**".length; i++) await tty.key(BACKSPACE);
+    await tty.keys("/other/**", ENTER); // changed glob -> provider
+    await tty.keys(ENTER); // provider -> save -> menu (Done highlighted)
+    await tty.keys(ENTER); // Done -> project
     await tty.keys("y"); // -> summary
 
     const frame = tty.lastFrame();

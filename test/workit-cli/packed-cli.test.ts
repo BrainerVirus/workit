@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -43,6 +43,7 @@ type PackedPreview = {
   ok: boolean;
   blocked: string[];
   platforms: string[];
+  mutations: { type: string; path: string; entries?: { name: string }[] }[];
 };
 type PackedResult = {
   ok: boolean;
@@ -87,12 +88,26 @@ test("packed CLI setup flow configures OpenCode + Cursor and doctor verifies it"
     mkdirSync(project, { recursive: true });
     const env = isolatedEnv(home, { WORKFLOW_TOOLKIT_CONFIG: configDir });
 
-    const preview = setup.buildSetupPreview(PREVIEW_VALUES, { dir: configDir, cwd: project, env });
+    // workspace draft added through the extracted preview (WZ-12 apply path)
+    const wsEntry = {
+      name: "demo",
+      glob: path.join(project, "**").split(path.sep).join("/"),
+      vcs: { provider: "gitlab" },
+    };
+    const preview = setup.buildSetupPreview(
+      { ...PREVIEW_VALUES, workspaces: [wsEntry] },
+      { dir: configDir, cwd: project, env },
+    );
     expect(preview.ok, JSON.stringify(preview)).toBe(true);
+    const wsMutation = preview.mutations.find((m) => m.type === "update-workspaces");
+    expect(wsMutation).toBeDefined();
+    expect(wsMutation!.entries).toEqual([wsEntry]);
     const result = setup.applySetupPreview(preview, { home, configDir, cwd: project, env });
     expect(result.ok, JSON.stringify(result.entries)).toBe(true);
     expect(result.exitCode).toBe(0);
     expect(result.entries.some((e) => e.status === "Failed")).toBe(false);
+    const wsWritten = JSON.parse(readFileSync(path.join(configDir, "workspaces.json"), "utf8"));
+    expect(wsWritten.workspaces).toEqual([wsEntry]);
 
     // OpenCode: package-native file:// pin to the extracted adapter's dist entry
     const opencodeCfg = path.join(home, ".config", "opencode", "opencode.json");
@@ -125,6 +140,7 @@ test("packed CLI setup flow configures OpenCode + Cursor and doctor verifies it"
     // idempotent re-apply: every config file Skipped, bytes untouched
     const files = [
       path.join(configDir, "config.json"),
+      path.join(configDir, "workspaces.json"),
       opencodeCfg,
       cursorSettings,
       cursorMcp,
@@ -141,6 +157,41 @@ test("packed CLI setup flow configures OpenCode + Cursor and doctor verifies it"
       expect(entry?.status).toBe("Skipped");
       expect(readFileSync(file, "utf8")).toBe(before[file]);
     }
+  } finally {
+    rmSync(install, { recursive: true, force: true });
+  }
+}, 120_000);
+
+test("packed CLI: identical workspaces emit no update-workspaces mutation", async () => {
+  const packs = packWorkspacePackages();
+  const install = tmp("wk-packedcli-ws-parity-");
+  try {
+    const nm = path.join(install, "node_modules");
+    mkdirSync(nm, { recursive: true });
+    installPackedPackage(nm, byName(packs, CORE));
+    const setup = await loadSetup(nm);
+
+    const home = path.join(install, "home");
+    const configDir = path.join(home, ".config", "workit");
+    mkdirSync(configDir, { recursive: true });
+    const wsEntry = {
+      name: "demo",
+      glob: "/home/**/demo/**",
+      vcs: { provider: "gitlab" },
+    };
+    writeFileSync(
+      path.join(configDir, "workspaces.json"),
+      JSON.stringify({ workspaces: [wsEntry] }, null, 2) + "\n",
+      "utf8",
+    );
+    const env = isolatedEnv(home, { WORKFLOW_TOOLKIT_CONFIG: configDir });
+    // draft identical to disk: the extracted preview must not claim a rewrite
+    const preview = setup.buildSetupPreview(
+      { ...PREVIEW_VALUES, workspaces: [wsEntry] },
+      { dir: configDir, cwd: install, env },
+    );
+    expect(preview.ok, JSON.stringify(preview)).toBe(true);
+    expect(preview.mutations.some((m) => m.type === "update-workspaces")).toBe(false);
   } finally {
     rmSync(install, { recursive: true, force: true });
   }

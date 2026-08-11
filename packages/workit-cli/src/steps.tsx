@@ -7,6 +7,7 @@ import {
   type ToolkitConfig,
 } from "@brainervirus/workit-core/src/core/config.ts";
 import { buildSetupPreview, parseList, type SetupMutation } from "./logic";
+import { matchWorkspace } from "@brainervirus/workit-core/src/core/workspaces.ts";
 import {
   createInitialDraft,
   reducer,
@@ -46,7 +47,19 @@ const TEXT_SCREENS: ReadonlySet<WizardScreen> = new Set([
   "branchAllowed",
   "branchProtected",
   "youtrack",
+  "workspaceName",
+  "workspaceGlob",
 ]);
+
+// Deterministic match-preview samples derived from the current project path:
+// the project itself, its parent, and a synthetic child repo. Every accepted
+// pattern gets a visible ✓/✗ verdict per sample via the shared core matcher.
+function workspacePreviewTargets(cwd: string): string[] {
+  const norm = cwd.replace(/[\\/]+$/, "");
+  const idx = norm.lastIndexOf("/");
+  const parent = idx > 0 ? norm.slice(0, idx) : norm;
+  return [norm, parent, `${norm}/child-repo`];
+}
 
 type ScreenProps = {
   draft: WizardDraft;
@@ -355,25 +368,119 @@ function Screen({ draft, dispatch }: ScreenProps): JSX.Element {
           <Text dimColor>Enter to continue · b Back · Esc Cancel</Text>
         </Box>
       );
-    case "workspaces":
+    case "workspaces": {
+      const cwd = process.cwd();
+      const options = [
+        ...draft.values.workspaces.map((w, i) => ({
+          label: `Edit ${w.name} (${w.glob})`,
+          value: `edit:${i}`,
+        })),
+        ...draft.values.workspaces.map((w, i) => ({
+          label: `Remove ${w.name}`,
+          value: `remove:${i}`,
+        })),
+        { label: "Add workspace", value: "add" },
+        { label: `Use current project (${cwd})`, value: "current" },
+        { label: "Done", value: "done" },
+      ];
       return (
         <Box flexDirection="column" gap={1}>
           <Text bold>Step 5 — Workspaces</Text>
           {draft.values.workspaces.length === 0 ? (
             <Text dimColor>No workspaces configured yet.</Text>
           ) : (
-            draft.values.workspaces.map((w) => (
-              <Text key={`${w.name}|${w.glob}|${w.vcs?.provider ?? ""}`}>
-                • {w.name} — {w.vcs?.provider ?? "?"} — {w.glob}
-              </Text>
-            ))
+            <Box flexDirection="column" gap={0}>
+              {draft.values.workspaces.map((w) => {
+                const matches = matchWorkspace(w.glob, cwd);
+                return (
+                  <Text key={`${w.name}|${w.glob}|${w.vcs?.provider ?? ""}`}>
+                    {matches ? "✓ matches" : "✗ no match"} {w.name} — {w.vcs?.provider ?? "?"} —{" "}
+                    {w.glob}
+                  </Text>
+                );
+              })}
+            </Box>
           )}
           <SelectList
-            options={[{ label: "Done", value: "done" }]}
+            key={draft.values.workspaces.map((w) => `${w.name}:${w.glob}`).join("|")}
+            options={options}
             value="done"
-            onSelect={() => dispatch({ type: "next" })}
+            onSelect={(value) => {
+              if (value.startsWith("edit:"))
+                dispatch({ type: "workspaceEdit", index: Number(value.slice(5)) });
+              else if (value.startsWith("remove:"))
+                dispatch({ type: "workspaceRemove", index: Number(value.slice(7)) });
+              else if (value === "add") dispatch({ type: "workspaceAdd" });
+              else if (value === "current") dispatch({ type: "workspaceAddCurrent", path: cwd });
+              else dispatch({ type: "next" });
+            }}
           />
           <Text dimColor>Enter to continue · b Back · Esc Cancel</Text>
+        </Box>
+      );
+    }
+    case "workspaceName":
+      return (
+        <Box flexDirection="column" gap={1}>
+          <Text bold>Step 5 — Workspaces · Name</Text>
+          <Text dimColor>
+            {draft.workspaceIndex === null
+              ? "New workspace name:"
+              : `Edit workspace name (${draft.values.workspaces[draft.workspaceIndex]?.name ?? ""}):`}
+          </Text>
+          <TextInput
+            defaultValue={draft.workspaceDraft?.name ?? ""}
+            onChange={(value) => dispatch({ type: "workspaceDraftName", value })}
+            onSubmit={() => dispatch({ type: "next" })}
+          />
+          {draft.errors.workspaceName && <Text color="red">{draft.errors.workspaceName}</Text>}
+          <Text dimColor>Enter to continue · Esc Back</Text>
+        </Box>
+      );
+    case "workspaceGlob": {
+      const glob = draft.workspaceDraft?.glob ?? "";
+      return (
+        <Box flexDirection="column" gap={1}>
+          <Text bold>Step 5 — Workspaces · Pattern</Text>
+          <Text dimColor>Workspace pattern (glob, e.g. /work/**):</Text>
+          <TextInput
+            defaultValue={glob}
+            onChange={(value) => dispatch({ type: "workspaceDraftGlob", value })}
+            onSubmit={() => dispatch({ type: "next" })}
+          />
+          {glob.trim() !== "" && (
+            <Box flexDirection="column" gap={0}>
+              <Text bold>Match preview (shared matcher):</Text>
+              {workspacePreviewTargets(process.cwd()).map((target) => {
+                const matches = matchWorkspace(glob, target);
+                return (
+                  <Text key={target} color={matches ? "green" : "red"}>
+                    {matches ? "✓ matches" : "✗ no match"} {target}
+                  </Text>
+                );
+              })}
+            </Box>
+          )}
+          {draft.errors.workspaceGlob && <Text color="red">{draft.errors.workspaceGlob}</Text>}
+          <Text dimColor>Enter to continue · Esc Back</Text>
+        </Box>
+      );
+    }
+    case "workspaceProvider":
+      return (
+        <Box flexDirection="column" gap={1}>
+          <Text bold>Step 5 — Workspaces · Provider</Text>
+          <Text dimColor>Version control provider for this workspace:</Text>
+          <SelectList
+            options={VCS_PROVIDERS.filter((option) => option.value !== "skip")}
+            value={draft.workspaceDraft?.vcs?.provider ?? "gitlab"}
+            onChange={(value) => dispatch({ type: "workspaceDraftProvider", value })}
+            onSelect={(value) => {
+              dispatch({ type: "workspaceDraftProvider", value });
+              dispatch({ type: "workspaceSave" });
+            }}
+          />
+          <Text dimColor>Enter to save · b Back · Esc Cancel</Text>
         </Box>
       );
     case "project":
