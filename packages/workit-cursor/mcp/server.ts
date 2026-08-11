@@ -3,12 +3,44 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
-import { createLogger } from "@brainervirus/workit-core/src/core/logger";
+import { createLogger, redact } from "@brainervirus/workit-core/src/core/logger";
+import { EVENT, errorDetail } from "@brainervirus/workit-core/src/core/boundary";
+import { setDiagnosticLogger } from "@brainervirus/workit-core/src/core/config";
 
 // Secret-safe diagnostic logger (DG-01-DG-03, DG-05, DG-10). Sink injection
 // only: Cursor events mirror to stderr. MCP stdout stays protocol-only.
 export const logger = createLogger({
   stderr: (event) => process.stderr.write(`${JSON.stringify(event)}\n`),
+});
+
+const readServerVersion = (): string => {
+  try {
+    // Runtime read, not hardcoded: semantic-release bumps versions only in CI
+    // (no commit-back), so any literal here would drift from the published tag.
+    // package.json ships in the tarball regardless of the files whitelist.
+    return (
+      JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version ??
+      "0.0.0"
+    );
+  } catch (err) {
+    logger.warn(EVENT.provenance, errorDetail(err));
+    return "unknown";
+  }
+};
+
+const VERSION = readServerVersion();
+setDiagnosticLogger(logger);
+logger.info(EVENT.initialization, { host: "cursor-mcp", server: "workit", version: VERSION });
+
+// Uncaught process failures are bounded sanitized events on stderr; stdout stays
+// protocol-only. The MCP process owns itself, so an uncaught exception is logged
+// and the process exits with a nonzero status (DG-04).
+process.on("unhandledRejection", (reason) =>
+  logger.error(EVENT.uncaughtFailure, { phase: "unhandledRejection", ...errorDetail(reason) }),
+);
+process.on("uncaughtException", (err) => {
+  logger.error(EVENT.uncaughtFailure, { phase: "uncaughtException", ...errorDetail(err) });
+  process.exit(1);
 });
 import {
   parseSections,
@@ -76,20 +108,44 @@ const workspaceRootSchema = z
 
 const server = new McpServer({
   name: "workit",
-  // Runtime read, not hardcoded: semantic-release bumps versions only in CI
-  // (no commit-back), so any literal here would drift from the published tag.
-  // package.json ships in the tarball regardless of the files whitelist.
-  version: JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version,
+  version: VERSION,
 });
 
 function jsonResult(data: Record<string, unknown>): CallToolResult {
+  // Domain failures keep their structured detail but are never successful-looking
+  // (DG-06): any payload carrying an `error` field is marked isError: true.
+  const isError = Boolean(data.error);
   return {
     content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
     structuredContent: data,
+    ...(isError ? { isError: true } : {}),
   };
 }
 
-server.registerTool(
+// A throwing handler is caught here: the host stays usable, the failure is a
+// bounded sanitized stderr event, and the client receives structured content
+// with isError: true instead of a crash or a protocol error (DG-06, DG-10).
+const registerTool = (
+  name: string,
+  config: Record<string, unknown>,
+  cb: (args: any) => unknown,
+): void => {
+  server.registerTool(name, config as never, async (args) => {
+    try {
+      return (await cb(args as never)) as CallToolResult;
+    } catch (err) {
+      logger.error(EVENT.toolsFailed, { tool: name, ...errorDetail(err) });
+      const safe = redact(err instanceof Error ? err.message : String(err)) as string;
+      return {
+        content: [{ type: "text", text: JSON.stringify({ error: safe }, null, 2) }],
+        structuredContent: { error: safe, tool: name },
+        isError: true,
+      };
+    }
+  });
+};
+
+registerTool(
   "workflow_verify",
   {
     description:
@@ -114,7 +170,7 @@ server.registerTool(
   },
 );
 
-server.registerTool(
+registerTool(
   "workflow_pr_context",
   {
     description:
@@ -191,7 +247,7 @@ server.registerTool(
   },
 );
 
-server.registerTool(
+registerTool(
   "workflow_pr_create",
   {
     description:
@@ -229,7 +285,7 @@ server.registerTool(
   },
 );
 
-server.registerTool(
+registerTool(
   "workflow_changelog_context",
   {
     description:
@@ -271,7 +327,7 @@ const changelogCategorySchema = z.enum([
   "Security",
 ]);
 
-server.registerTool(
+registerTool(
   "workflow_changelog_apply",
   {
     description:
@@ -315,7 +371,7 @@ server.registerTool(
   },
 );
 
-server.registerTool(
+registerTool(
   "workflow_release_notes_context",
   {
     description:
@@ -347,7 +403,7 @@ server.registerTool(
   },
 );
 
-server.registerTool(
+registerTool(
   "workflow_docs_context",
   {
     description:
@@ -375,7 +431,7 @@ server.registerTool(
   },
 );
 
-server.registerTool(
+registerTool(
   "workflow_git_context",
   {
     description:
@@ -391,7 +447,7 @@ server.registerTool(
   },
 );
 
-server.registerTool(
+registerTool(
   "workflow_resolve_branch",
   {
     description:
@@ -409,7 +465,7 @@ server.registerTool(
   },
 );
 
-server.registerTool(
+registerTool(
   "workflow_branch_setup",
   {
     description:
@@ -435,7 +491,7 @@ server.registerTool(
   },
 );
 
-server.registerTool(
+registerTool(
   "workflow_sdd_context",
   {
     description:
@@ -453,7 +509,7 @@ server.registerTool(
   },
 );
 
-server.registerTool(
+registerTool(
   "workflow_sdd_task_brief",
   {
     description: "Write task-N-brief.md under docs/<slug>/sdd/",
@@ -475,7 +531,7 @@ server.registerTool(
   },
 );
 
-server.registerTool(
+registerTool(
   "workflow_sdd_review_package",
   {
     description: "Write review diff under SDD dir between base and head SHAs",
@@ -498,7 +554,7 @@ server.registerTool(
   },
 );
 
-server.registerTool(
+registerTool(
   "workflow_sdd_append_progress",
   {
     description: "Append one validated line to docs/<slug>/sdd/progress.md",
@@ -515,7 +571,7 @@ server.registerTool(
   },
 );
 
-server.registerTool(
+registerTool(
   "workflow_docs_branch",
   {
     description:
@@ -533,7 +589,7 @@ server.registerTool(
   },
 );
 
-server.registerTool(
+registerTool(
   "workflow_docs_validate",
   {
     description:
@@ -555,7 +611,7 @@ server.registerTool(
   },
 );
 
-server.registerTool(
+registerTool(
   "workflow_plan_tasks",
   {
     description:
@@ -587,7 +643,7 @@ server.registerTool(
   },
 );
 
-server.registerTool(
+registerTool(
   "workflow_handoff_prompt",
   {
     description:
@@ -647,7 +703,7 @@ server.registerTool(
   },
 );
 
-server.registerTool(
+registerTool(
   "workflow_toolkit_init_status",
   {
     description: "Check workit setup (MCP deps, YouTrack config, token)",
@@ -660,7 +716,7 @@ server.registerTool(
   },
 );
 
-server.registerTool(
+registerTool(
   "workflow_toolkit_status",
   {
     description:
@@ -674,7 +730,7 @@ server.registerTool(
   },
 );
 
-server.registerTool(
+registerTool(
   "workflow_toolkit_init_apply",
   {
     description:
@@ -768,7 +824,7 @@ server.registerTool(
   },
 );
 
-server.registerTool(
+registerTool(
   "workflow_youtrack_verify_token",
   {
     description: "Read-only YouTrack token test (GET /api/users/me). No work items created.",
@@ -783,7 +839,7 @@ server.registerTool(
   },
 );
 
-server.registerTool(
+registerTool(
   "workflow_youtrack_parse_issue",
   {
     description: "Parse YouTrack issue URL or bare id (e.g. NSR-40) into issueId",
@@ -800,7 +856,7 @@ server.registerTool(
   },
 );
 
-server.registerTool(
+registerTool(
   "workflow_youtrack_context",
   {
     description: "YouTrack config, greeting, issue resolution (from issue_url/id or meetings)",
@@ -834,7 +890,7 @@ server.registerTool(
   },
 );
 
-server.registerTool(
+registerTool(
   "workflow_youtrack_parse_duration",
   {
     description: "Parse duration text (e.g. 1h 30m) to integer minutes",
@@ -850,7 +906,7 @@ server.registerTool(
   },
 );
 
-server.registerTool(
+registerTool(
   "workflow_youtrack_log_time",
   {
     description: "POST YouTrack work item (time only, no comment)",
@@ -878,7 +934,7 @@ server.registerTool(
   },
 );
 
-server.registerTool(
+registerTool(
   "workflow_youtrack_draft",
   {
     description: "Build ES-CL comment markdown without posting (envelope only by default)",
@@ -895,7 +951,7 @@ server.registerTool(
   async (input) => jsonResult(youtrackBuildDraft(input)),
 );
 
-server.registerTool(
+registerTool(
   "workflow_youtrack_post",
   {
     description: "Post YouTrack comment and optional time — requires confirmed: true",
@@ -920,7 +976,7 @@ server.registerTool(
   },
 );
 
-server.registerTool(
+registerTool(
   "workflow_present_ascii",
   {
     description: "Render deterministic ASCII UI wireframe from JSON spec",
@@ -937,7 +993,7 @@ server.registerTool(
   },
 );
 
-server.registerTool(
+registerTool(
   "workflow_present_flow",
   {
     description: "Render mermaid flowchart from JSON nodes/edges",
@@ -967,7 +1023,7 @@ server.registerTool(
   },
 );
 
-server.registerTool(
+registerTool(
   "workflow_flow_status",
   {
     description: "Read the spec/plan approval flow state for a workflow",
@@ -992,7 +1048,7 @@ server.registerTool(
   },
 );
 
-server.registerTool(
+registerTool(
   "workflow_spec_approve",
   {
     description:
@@ -1012,7 +1068,7 @@ server.registerTool(
   },
 );
 
-server.registerTool(
+registerTool(
   "workflow_plan_approve",
   {
     description:
@@ -1032,7 +1088,7 @@ server.registerTool(
   },
 );
 
-server.registerTool(
+registerTool(
   "workflow_plan_menu",
   {
     description: "Record the answered post-plan choice menu (called after native question)",
@@ -1052,7 +1108,7 @@ server.registerTool(
   },
 );
 
-server.registerTool(
+registerTool(
   "workflow_docs_repo_link",
   {
     description: "Link the component docs repo in the toolkit config",
@@ -1068,7 +1124,7 @@ server.registerTool(
   },
 );
 
-server.registerTool(
+registerTool(
   "workflow_docs_list",
   {
     description: "List local specs with docs-repo promotion status",
@@ -1077,7 +1133,7 @@ server.registerTool(
   async ({ workspace_root }) => jsonResult(listSpecs(workspace_root)),
 );
 
-server.registerTool(
+registerTool(
   "workflow_docs_promote",
   {
     description: "Promote a spec (+plan) to the linked docs repo with quality gate",
@@ -1099,7 +1155,7 @@ server.registerTool(
   },
 );
 
-server.registerTool(
+registerTool(
   "workflow_template_list",
   {
     description: "List editable templates with their source",
@@ -1108,7 +1164,7 @@ server.registerTool(
   async () => jsonResult({ templates: listTemplates() }),
 );
 
-server.registerTool(
+registerTool(
   "workflow_template_edit",
   {
     description: "Write an edited template to the toolkit config dir",
@@ -1125,7 +1181,7 @@ server.registerTool(
   },
 );
 
-server.registerTool(
+registerTool(
   "workflow_rule_list",
   {
     description: "List canonical rules (config) with platforms",
@@ -1134,7 +1190,7 @@ server.registerTool(
   async () => jsonResult({ rules: listRules() }),
 );
 
-server.registerTool(
+registerTool(
   "workflow_rule_edit",
   {
     description: "Write a canonical rule to the toolkit config dir",
@@ -1154,4 +1210,10 @@ server.registerTool(
 );
 
 const transport = new StdioServerTransport();
-await server.connect(transport);
+try {
+  await server.connect(transport);
+  logger.info(EVENT.mcpConnection, { host: "cursor-mcp", server: "workit" });
+} catch (err) {
+  logger.error(EVENT.mcpConnection, errorDetail(err));
+  throw err;
+}

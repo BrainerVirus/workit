@@ -44,6 +44,11 @@ import { createTools } from "./tools";
 import { adaptPluginHandoffClient } from "./tools/handoff";
 import { WorkflowStateStore } from "@brainervirus/workit-core/src/state";
 import { createLogger } from "@brainervirus/workit-core/src/core/logger";
+import { EVENT, errorDetail } from "@brainervirus/workit-core/src/core/boundary";
+import {
+  describeConfigSource,
+  setDiagnosticLogger,
+} from "@brainervirus/workit-core/src/core/config";
 
 // Secret-safe diagnostic logger (DG-01-DG-03, DG-05, DG-10). Sink injection
 // only: events mirror to OpenCode's server log and stderr, never the agent
@@ -82,6 +87,49 @@ export const logger = createLogger({
 // packaged plugin resolves them without a share/checkout or monorepo dependency
 // (PT-06/PT-07). src/ and dist/ are both one level below the package root.
 const root = fileURLToPath(new URL("../assets/", import.meta.url));
+
+// Package provenance: name + version only; a missing/unreadable package.json is
+// a bounded warn event, never a crash (DG-04).
+export const loadProvenance = (pkgUrl: string | URL): Record<string, string> => {
+  try {
+    const pkg = JSON.parse(readFileSync(pkgUrl, "utf8")) as { name?: string; version?: string };
+    return {
+      name: String(pkg.name ?? "workit-opencode"),
+      version: String(pkg.version ?? "unknown"),
+    };
+  } catch (err) {
+    logger.warn(EVENT.provenance, errorDetail(err));
+    return { name: "workit-opencode", version: "unknown" };
+  }
+};
+
+// Asset loading is fail-open: one missing command template is a sanitized warn
+// event, and the rest of the plugin still loads (DG-04, DG-05).
+export const loadCommandTemplates = (rootDir: string, names: string[]): Record<string, string> => {
+  const out: Record<string, string> = {};
+  for (const name of names) {
+    try {
+      out[name] = readFileSync(path.join(rootDir, "commands", `${name}.md`), "utf8").trim();
+    } catch (err) {
+      logger.warn(EVENT.assets, { component: "command", name, ...errorDetail(err) });
+    }
+  }
+  return out;
+};
+
+// Uncaught failures are reported as bounded sanitized events; the host owns the
+// process, so this only logs (DG-04). The handler is installed once inside the
+// plugin factory, where the host boundary actually exists.
+export const reportUncaught = (phase: string, reason: unknown): void => {
+  logger.error(EVENT.uncaughtFailure, { phase, ...errorDetail(reason) });
+};
+
+let uncaughtHandlersInstalled = false;
+const installUncaughtHandlers = (): void => {
+  if (uncaughtHandlersInstalled) return;
+  uncaughtHandlersInstalled = true;
+  process.on("unhandledRejection", (reason) => reportUncaught("unhandledRejection", reason));
+};
 const descriptions: Record<string, string> = {
   "wk-init": "Initialize workit configuration",
   "wk-status": "Show workflow and repository status",
@@ -122,6 +170,11 @@ const withWorktreeDenials = (configuredPermission: unknown): MutablePermission =
 
 const plugin: Plugin = async ({ client }) => {
   openCodeClient = client as unknown as AppLogClient;
+  installUncaughtHandlers();
+  logger.info(EVENT.initialization, { host: "opencode", plugin_root: root });
+  logger.info(EVENT.provenance, loadProvenance(new URL("../package.json", import.meta.url)));
+  logger.info(EVENT.configurationSource, describeConfigSource());
+  setDiagnosticLogger(logger);
   const state = new WorkflowStateStore();
   return {
     tool: createTools(adaptPluginHandoffClient(client), state),
@@ -130,10 +183,13 @@ const plugin: Plugin = async ({ client }) => {
         skills?: { paths?: string[] };
       };
       config.command ??= {};
+      const templates = loadCommandTemplates(root, Object.keys(descriptions));
       for (const [name, description] of Object.entries(descriptions)) {
+        const template = templates[name];
+        if (template === undefined) continue;
         config.command[name] = {
           description,
-          template: readFileSync(path.join(root, "commands", `${name}.md`), "utf8").trim(),
+          template,
         };
       }
       mutable.skills ??= {};
@@ -151,6 +207,7 @@ const plugin: Plugin = async ({ client }) => {
         if (!agent) continue;
         agent.permission = withWorktreeDenials(agent.permission) as typeof agent.permission;
       }
+      logger.info(EVENT.assets, { commands_loaded: Object.keys(templates).length });
     },
     "experimental.session.compacting": async ({ sessionID }, output) => {
       const context = state.compactionContext(sessionID);
@@ -284,8 +341,9 @@ const plugin: Plugin = async ({ client }) => {
             currentUser.parts.unshift(makePart(ISSUE_RAIL_TEXT, "ir"));
           }
         }
-      } catch {
-        // never break the session from a hook
+      } catch (err) {
+        // never break the session from a hook, but report the failure (DG-05)
+        logger.warn(EVENT.hooks, { boundary: "chat.messages.transform", ...errorDetail(err) });
       }
     },
   };

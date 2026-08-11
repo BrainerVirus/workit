@@ -9,6 +9,15 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import type { Logger } from "./logger";
+import { EVENT, errorDetail } from "./boundary";
+
+// Optional diagnostic seam: adapters install their host logger so config
+// migration and provenance events land in the same sanitized log stream.
+let diagnosticLogger: Logger | undefined;
+export const setDiagnosticLogger = (logger: Logger | undefined): void => {
+  diagnosticLogger = logger;
+};
 
 export type BranchPreset = "gitflow" | "github-flow" | "trunk-based" | "custom";
 
@@ -66,6 +75,7 @@ export const ensureConfigDir = (dir: string = resolveConfigDir()): string => {
   }
   migrationFailed = false;
   mkdirSync(dir, { recursive: true });
+  diagnosticLogger?.info(EVENT.migration, { from: legacy, to: dir });
   for (const entry of readdirSync(legacy, { withFileTypes: true })) {
     const src = path.join(legacy, entry.name);
     const dest = path.join(dir, entry.name);
@@ -75,6 +85,7 @@ export const ensureConfigDir = (dir: string = resolveConfigDir()): string => {
       else if (entry.isFile()) copyFileSync(src, dest);
     } catch (err) {
       migrationFailed = true;
+      diagnosticLogger?.warn(EVENT.migration, { from: src, ok: false, ...errorDetail(err) });
       console.warn(`[workit] config migration: failed to copy ${src}: ${(err as Error).message}`);
     }
   }
@@ -141,6 +152,23 @@ export const writeConfig = (config: ToolkitConfig): void => {
   const dir = configDir();
   mkdirSync(dir, { recursive: true });
   writeFileSync(path.join(dir, "config.json"), JSON.stringify(config, null, 2) + "\n", "utf8");
+};
+
+// Configuration provenance for startup diagnostics: where config.json came from
+// and whether it parsed. Only paths + a malformed flag — never the file body.
+export const describeConfigSource = (
+  dir: string = resolveConfigDir(),
+): { source: string; config_dir: string; malformed: boolean } => {
+  const file = path.join(dir, "config.json");
+  if (!existsSync(file)) return { source: "defaults", config_dir: dir, malformed: false };
+  const raw = readSafe(file);
+  if (raw === null) return { source: "unreadable", config_dir: dir, malformed: true };
+  try {
+    JSON.parse(raw);
+    return { source: "file", config_dir: dir, malformed: false };
+  } catch {
+    return { source: "defaults", config_dir: dir, malformed: true };
+  }
 };
 
 export const resolveBranchPolicy = (

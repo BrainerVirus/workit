@@ -2,6 +2,8 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createLogger } from "@brainervirus/workit-core/src/core/logger";
+import { EVENT, errorDetail } from "@brainervirus/workit-core/src/core/boundary";
+import { setDiagnosticLogger } from "@brainervirus/workit-core/src/core/config";
 
 // Secret-safe diagnostic logger (DG-01-DG-03, DG-05, DG-10). Sink injection
 // only: session-start summaries mirror to stderr; the JSON contract on stdout
@@ -19,6 +21,9 @@ const hookDir = path.dirname(fileURLToPath(import.meta.url));
 const pluginDir = path.resolve(hookDir, "..");
 const marker = path.join(pluginDir, ".workflow-toolkit-root");
 
+setDiagnosticLogger(logger);
+logger.info(EVENT.initialization, { host: "cursor-hook", hook_dir: hookDir });
+
 const resolveRepoRoot = (): string => {
   if (process.env.WORKFLOW_TOOLKIT_ROOT && existsSync(path.join(process.env.WORKFLOW_TOOLKIT_ROOT, "templates"))) {
     return process.env.WORKFLOW_TOOLKIT_ROOT;
@@ -35,11 +40,18 @@ const resolveRepoRoot = (): string => {
   return path.resolve(hookDir, "../../workit-core");
 };
 
-const body = (() => {
-  const contract = path.join(resolveRepoRoot(), "templates", "superpowers-doc-contract.md");
-  if (!existsSync(contract)) return null;
-  return readFileSync(contract, "utf8");
-})();
+// Fail-open: an unreadable contract (missing file or directory where the file
+// should be) is a bounded sanitized stderr event; the session still starts with
+// an empty context so the host protocol is never corrupted (DG-04, DG-05).
+let body: string | null = null;
+const repoRoot = resolveRepoRoot();
+try {
+  const contract = path.join(repoRoot, "templates", "superpowers-doc-contract.md");
+  if (existsSync(contract)) body = readFileSync(contract, "utf8");
+} catch (err) {
+  logger.error(EVENT.hooks, { boundary: "session-start", root: repoRoot, ...errorDetail(err) });
+  body = null;
+}
 
 if (body === null) {
   process.stdout.write("{}\n");
