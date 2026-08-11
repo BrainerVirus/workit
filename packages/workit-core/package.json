@@ -27,7 +27,8 @@
     "vendor/superpowers/skills/",
     "templates/",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "!scripts/verify-project.sh"
   ],
   "type": "module",
   "main": "./src/core.ts",

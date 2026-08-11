@@ -18,18 +18,19 @@
     "url": "https://github.com/BrainerVirus/workit.git"
   },
   "files": [
-    "src/"
+    "dist/",
+    "assets/"
   ],
   "type": "module",
-  "main": "./src/plugin.ts",
+  "main": "./dist/plugin.js",
   "exports": {
-    ".": "./src/plugin.ts",
-    "./src/*": "./src/*"
+    ".": "./dist/plugin.js"
   },
   "publishConfig": {
     "access": "public"
   },
   "scripts": {
+    "build": "bun scripts/build.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

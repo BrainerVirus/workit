@@ -33,8 +33,8 @@ describe("plugin registration", () => {
     expect(Object.keys(config.command).sort()).toEqual([...names].sort());
     expect(config.skills.paths).toHaveLength(2);
     const normalize = (p: string) => p.split(path.sep).join("/");
-    expect(normalize(config.skills.paths[0])).toEndWith("workit-core/skills");
-    expect(normalize(config.skills.paths[1])).toEndWith("vendor/superpowers/skills");
+    expect(normalize(config.skills.paths[0])).toEndWith("assets/skills");
+    expect(normalize(config.skills.paths[1])).toEndWith("assets/vendor/superpowers/skills");
   });
 
   test("registration is idempotent with a preexisting skill path", async () => {
@@ -43,7 +43,7 @@ describe("plugin registration", () => {
       worktree: "/repo",
       serverUrl: new URL("http://localhost"),
     } as never);
-    const skillPath = path.resolve(import.meta.dir, "../../packages/workit-core/skills");
+    const skillPath = path.resolve(import.meta.dir, "../../packages/workit-opencode/assets/skills");
     const config: Record<string, any> = { skills: { paths: [skillPath] } };
 
     await hooks.config?.(config);
@@ -52,7 +52,10 @@ describe("plugin registration", () => {
     expect(Object.keys(config.command).sort()).toEqual([...names].sort());
     expect(config.skills.paths).toEqual([
       skillPath,
-      path.resolve(import.meta.dir, "../../packages/workit-core/vendor/superpowers/skills"),
+      path.resolve(
+        import.meta.dir,
+        "../../packages/workit-opencode/assets/vendor/superpowers/skills",
+      ),
     ]);
   });
   test("registers native bash deny rules for worktree creation", async () => {

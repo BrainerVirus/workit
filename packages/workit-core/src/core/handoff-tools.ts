@@ -1,7 +1,7 @@
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { fail, ok, type Result } from "../core";
 import { resolveWorkflowPaths, buildHandoffContract } from "./handoff-context";
+import { assetRoot } from "./package-root";
 
 type ApiResponse<T> = { data?: T; error?: unknown };
 type ApiResult<T> = Promise<ApiResponse<T>>;
@@ -100,10 +100,7 @@ export type HandoffContextResult =
 export const buildHandoffPrompt = (root: string, message: string): HandoffContextResult => {
   const resolved = resolveWorkflowPaths(root, message);
   if ("error" in resolved) return { error: resolved.error };
-  const templatePath = path.resolve(
-    path.dirname(fileURLToPath(import.meta.url)),
-    "../../templates/execution-contract.md",
-  );
+  const templatePath = path.join(assetRoot(), "templates", "execution-contract.md");
   const contract = buildHandoffContract({
     root,
     spec: resolved.spec,

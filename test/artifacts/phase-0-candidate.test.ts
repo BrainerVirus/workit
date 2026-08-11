@@ -109,12 +109,15 @@ test("expected entry files ship in each packed tarball", () => {
   const byName = (name: string) => packs.find((p) => p.packageName === name)!;
 
   const opencode = byName(OPENCODE).tarball;
-  expect(hasEntry(opencode, "src/plugin.ts")).toBe(true);
+  expect(hasEntry(opencode, "dist/plugin.js")).toBe(true);
+  expect(hasEntry(opencode, "assets/commands/")).toBe(true);
+  expect(hasEntry(opencode, "assets/skills/")).toBe(true);
 
   const cursor = byName(CURSOR).tarball;
   for (const f of [
+    "dist/mcp-server.js",
+    "dist/cursor-session-start.js",
     "mcp/run-server.sh",
-    "mcp/server.ts",
     "mcp.json",
     "marketplace.json",
     ".cursor-plugin/plugin.json",

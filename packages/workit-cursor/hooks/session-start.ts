@@ -1,5 +1,4 @@
 import { existsSync, readFileSync } from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -11,7 +10,6 @@ import { fileURLToPath } from "node:url";
 const hookDir = path.dirname(fileURLToPath(import.meta.url));
 const pluginDir = path.resolve(hookDir, "..");
 const marker = path.join(pluginDir, ".workflow-toolkit-root");
-const share = path.join(os.homedir(), ".local/share/workflow-toolkit");
 
 const resolveRepoRoot = (): string => {
   if (process.env.WORKFLOW_TOOLKIT_ROOT && existsSync(path.join(process.env.WORKFLOW_TOOLKIT_ROOT, "templates"))) {
@@ -20,8 +18,10 @@ const resolveRepoRoot = (): string => {
   if (existsSync(marker)) {
     return readFileSync(marker, "utf8").replace(/\n+$/, "");
   }
-  if (existsSync(path.join(share, "packages/workit-core/templates"))) {
-    return path.join(share, "packages/workit-core");
+  // Packaged install: contract ships under the plugin's own assets root.
+  const ownAssets = path.join(pluginDir, "assets");
+  if (existsSync(path.join(ownAssets, "templates"))) {
+    return ownAssets;
   }
   // Live monorepo: workit-cursor/hooks → packages/workit-core (workspace sibling).
   return path.resolve(hookDir, "../../workit-core");

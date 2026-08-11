@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
 # sessionStart — inject Superpowers workflow contract (RL-09: NO network sync).
-# Thin launcher for the Node-compatible TS entry hooks/session-start.ts.
+# Prefer the self-contained Node bundle (dist/cursor-session-start.js); fall back
+# to the dev TS entry via Bun. Fail-open: a missing runtime must not break start.
 set -euo pipefail
 
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+if [ -f "$SCRIPT_DIR/../dist/cursor-session-start.js" ] && command -v node >/dev/null 2>&1; then
+  exec node "$SCRIPT_DIR/../dist/cursor-session-start.js"
+fi
 
 BUN_BIN="${BUN:-}"
 if [ -z "$BUN_BIN" ]; then
@@ -12,7 +16,6 @@ if [ -z "$BUN_BIN" ]; then
   done
 fi
 if [ -z "$BUN_BIN" ] || [ ! -x "$BUN_BIN" ]; then
-  # Fail-open: a missing runtime must not break session start.
   printf '{}\n'
   exit 0
 fi

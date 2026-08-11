@@ -1,7 +1,6 @@
-import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { assetRoot, packageRoot } from "./package-root";
 
-const dirname = path.dirname(fileURLToPath(import.meta.url));
-export const PLUGIN_ROOT = path.resolve(dirname, "../..");
+export const PLUGIN_ROOT = packageRoot();
+export const ASSET_ROOT = assetRoot();
 
 export const resolveWorkspaceRoot = (explicit?: string) => explicit || process.cwd();

@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
-import { createRequire } from "node:module";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import type { Plugin } from "@opencode-ai/plugin";
 
 import { getWorkflowBootstrap } from "./bootstrap";
@@ -44,11 +44,10 @@ import { createTools } from "./tools";
 import { adaptPluginHandoffClient } from "./tools/handoff";
 import { WorkflowStateStore } from "@brainervirus/workit-core/src/state";
 
-// Skills/commands/vendor/templates live in the core package. Resolve its root
-// through node_modules (workspace symlink in the monorepo, sibling in a
-// published install) instead of a relative path off this file.
-const require = createRequire(import.meta.url);
-const root = path.dirname(require.resolve("@brainervirus/workit-core/package.json"));
+// Commands/skills/vendor/templates ship package-locally under assets/ so the
+// packaged plugin resolves them without a share/checkout or monorepo dependency
+// (PT-06/PT-07). src/ and dist/ are both one level below the package root.
+const root = fileURLToPath(new URL("../assets/", import.meta.url));
 const descriptions: Record<string, string> = {
   "wk-init": "Initialize workit configuration",
   "wk-status": "Show workflow and repository status",

@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { changelogUnreleasedStats } from "./changelog";
+import { assetRoot } from "./package-root";
 
 export type HygieneFile =
   | "CHANGELOG.md"
@@ -12,7 +12,7 @@ export type HygieneFile =
   | "CONTRIBUTING.md";
 type State = "missing" | "invalid" | "ok" | "skip";
 
-const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+const repoRoot = assetRoot();
 const templatesDir = () => path.join(repoRoot, "templates", "hygiene");
 
 const packageJson = (root: string): Record<string, unknown> | null => {

@@ -176,8 +176,11 @@ test("plugin registers without a Cursor runtime path", async () => {
     await hooks.config?.(config);
     expect(Object.keys(config.command)).toHaveLength(12);
     expect(config.skills.paths).toEqual([
-      path.resolve(import.meta.dir, "../../packages/workit-core/skills"),
-      path.resolve(import.meta.dir, "../../packages/workit-core/vendor/superpowers/skills"),
+      path.resolve(import.meta.dir, "../../packages/workit-opencode/assets/skills"),
+      path.resolve(
+        import.meta.dir,
+        "../../packages/workit-opencode/assets/vendor/superpowers/skills",
+      ),
     ]);
     expect(Object.keys(hooks.tool ?? {})).toHaveLength(42);
   } finally {

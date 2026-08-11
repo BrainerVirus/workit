@@ -57,32 +57,16 @@ export function packWorkspacePackages(): PackedPackage[] {
       throw new Error(`rewrite-workspace-deps failed: ${rewrite.stderr}`);
     }
 
-    // Deterministic CLI dist: the build script is the CLI's only entry; dist/ is
-    // gitignored, so a fresh checkout packs an empty tarball without this build.
-    const cliDist = path.join(sandbox, "packages", "workit-cli", "dist");
-    rmSync(cliDist, { recursive: true, force: true });
-    mkdirSync(cliDist, { recursive: true });
-    const build = spawnSync(
-      "bun",
-      [
-        "build",
-        "./src/index.tsx",
-        "--outdir",
-        cliDist,
-        "--target",
-        "node",
-        "--format",
-        "esm",
-        "--banner",
-        "#!/usr/bin/env node",
-        "--external",
-        "react-devtools-core",
-        "--splitting",
-      ],
-      { cwd: path.join(REPO_ROOT, "packages", "workit-cli"), encoding: "utf8" },
-    );
-    if (build.status !== 0) {
-      throw new Error(`workit-cli build failed: ${build.stderr}`);
+    // Deterministic adapter dist + assets: run each adapter's own build script
+    // against the sandbox copy. dist/ is gitignored, so a fresh checkout packs an
+    // empty tarball without this build.
+    for (const pkg of ["workit-opencode", "workit-cursor", "workit-cli"]) {
+      const buildScript = path.join(REPO_ROOT, "packages", pkg, "scripts", "build.ts");
+      const target = path.join(sandbox, "packages", pkg);
+      const build = spawnSync("bun", [buildScript, target], { encoding: "utf8" });
+      if (build.status !== 0) {
+        throw new Error(`${pkg} build failed: ${build.stderr}`);
+      }
     }
 
     cached = packSandbox(sandbox, tarballs);
@@ -132,7 +116,10 @@ export function extractTarball(tarball: string): { root: string; packageDir: str
 
 // List the files inside a packed tarball (paths relative to `package/`).
 export function listTarball(tarball: string): string[] {
-  const run = spawnSync("tar", ["-tzf", tarball], { encoding: "utf8" });
+  const run = spawnSync("tar", ["-tzf", tarball], {
+    encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024,
+  });
   if (run.status !== 0) throw new Error(`tar list failed: ${run.stderr}`);
   return run.stdout
     .split("\n")
@@ -142,7 +129,10 @@ export function listTarball(tarball: string): string[] {
 
 // Read a single file (relative to `package/`) straight out of a tarball.
 export function readTarballFile(tarball: string, entry: string): string {
-  const run = spawnSync("tar", ["-xOf", tarball, `package/${entry}`], { encoding: "utf8" });
+  const run = spawnSync("tar", ["-xOf", tarball, `package/${entry}`], {
+    encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024,
+  });
   if (run.status !== 0) throw new Error(`tar read ${entry} failed: ${run.stderr}`);
   return run.stdout;
 }
@@ -220,6 +210,12 @@ export function runInIsolation(
   args: string[],
   env: Record<string, string>,
 ): { status: number; stdout: string; stderr: string } {
-  const res = spawnSync(bin, args, { cwd, env, encoding: "utf8", timeout: 60_000 });
+  const res = spawnSync(bin, args, {
+    cwd,
+    env,
+    encoding: "utf8",
+    timeout: 60_000,
+    maxBuffer: 64 * 1024 * 1024,
+  });
   return { status: res.status ?? -1, stdout: res.stdout ?? "", stderr: res.stderr ?? "" };
 }
