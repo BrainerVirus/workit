@@ -15,6 +15,7 @@ import {
   sddTaskBrief,
 } from "@brainervirus/workit-core/src/core/sdd";
 import { assertProductGates, slugFromSddPath } from "@brainervirus/workit-core/src/core/flow-state";
+import { opencodeMutationContext } from "./flow";
 import { WorkflowStateStore } from "@brainervirus/workit-core/src/state";
 
 const output = (value: unknown) => JSON.stringify(value, null, 2);
@@ -22,11 +23,17 @@ const requireConfirmed = (confirmed: boolean) =>
   confirmed === true ? null : output(fail("confirmed: true required"));
 
 // FG-03/CA-18: non-document product writes are blocked until the spec, plan,
-// docs, and execution-menu gates all pass. Returns a rendered failure or null.
-const gateProductWrite = (root: string, sddPath: string) => {
+// docs, and execution-menu gates all pass, and the coordinator boundary holds
+// (FG-05/CA-20). Returns a rendered failure or null.
+const gateProductWrite = (root: string, sddPath: string, context: ToolContext) => {
   const slug = slugFromSddPath(sddPath);
   if (!slug) return output(fail("could not derive slug — expected docs/<slug>/sdd/..."));
-  const gate = assertProductGates(root, slug, { requireMenu: true, requireDocs: true });
+  const gate = assertProductGates(
+    root,
+    slug,
+    { requireMenu: true, requireDocs: true },
+    opencodeMutationContext(context),
+  );
   if (!gate.ok) return output(fail(gate.error, { code: gate.code }));
   return null;
 };
@@ -183,7 +190,7 @@ export function createSddTools(state: WorkflowStateStore) {
       execute: async ({ confirmed, sdd_dir, task_id, section_text }, context) => {
         const rejected = requireConfirmed(confirmed);
         if (rejected) return rejected;
-        const gated = gateProductWrite(context.directory, sdd_dir);
+        const gated = gateProductWrite(context.directory, sdd_dir, context);
         if (gated) return gated;
         return invoke(() => {
           relativePath(context.directory, sdd_dir);
@@ -214,7 +221,7 @@ export function createSddTools(state: WorkflowStateStore) {
         } catch (error) {
           return output(fail(error instanceof Error ? error.message : "workflow operation failed"));
         }
-        const gated = gateProductWrite(context.directory, sdd_dir);
+        const gated = gateProductWrite(context.directory, sdd_dir, context);
         if (gated) return gated;
         return invoke(() =>
           sddReviewPackage({
@@ -236,7 +243,7 @@ export function createSddTools(state: WorkflowStateStore) {
       execute: async ({ confirmed, progress_path, line }, context) => {
         const rejected = requireConfirmed(confirmed);
         if (rejected) return rejected;
-        const gated = gateProductWrite(context.directory, progress_path);
+        const gated = gateProductWrite(context.directory, progress_path, context);
         if (gated) return gated;
         return invoke(() => {
           relativePath(context.directory, progress_path);

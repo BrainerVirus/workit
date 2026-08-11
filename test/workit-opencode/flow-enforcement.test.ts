@@ -8,7 +8,10 @@ import {
 } from "../../packages/workit-opencode/src/tools/flow";
 import { createSddTools } from "../../packages/workit-opencode/src/tools/sdd";
 import { WorkflowStateStore } from "../../packages/workit-core/src/state";
-import { assertHostEvidence } from "../../packages/workit-core/src/core/flow-state";
+import {
+  COORDINATOR_RECOVERY_TEXT,
+  assertHostEvidence,
+} from "../../packages/workit-core/src/core/flow-state";
 
 const COMPLIANT_SPEC = (slug: string) =>
   `# ${slug}\n\n**Branch:** \`feature/${slug}\`\n\n## Context\n\n## Goals\n\n## Non-goals\n\n## Architecture\n\n## Acceptance criteria\n\n- CA-01: test\n`;
@@ -221,6 +224,93 @@ test("full flow through the opencode tools: approvals + menu + gated SDD writes"
     expect(status.data.plan.status).toBe("approved");
     expect(status.data.menu).toMatchObject({ presented: true, chosen: "handoff" });
     expect(status.data.menu.evidence).toBeDefined();
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("opencode threads MutationContext: coordinator blocked, authenticated worker allowed", async () => {
+  const { root, tools, ctx } = fixture();
+  try {
+    await run(tools, "workflow_flow_status", { plan_path: "docs/oc-flow/plan.md" }, ctx);
+    const spec = "docs/oc-flow/spec.md";
+    const plan = "docs/oc-flow/plan.md";
+    await run(
+      tools,
+      "workflow_spec_approve",
+      { spec_path: spec, evidence: evidence("opencode") },
+      ctx,
+    );
+    await run(
+      tools,
+      "workflow_spec_approve",
+      { spec_path: spec, evidence: evidence("opencode") },
+      ctx,
+    );
+    await run(
+      tools,
+      "workflow_plan_approve",
+      { plan_path: plan, evidence: evidence("opencode") },
+      ctx,
+    );
+    await run(
+      tools,
+      "workflow_plan_approve",
+      { plan_path: plan, evidence: evidence("opencode") },
+      ctx,
+    );
+    const menu = await run(
+      tools,
+      "workflow_plan_menu",
+      {
+        choice: "subagent-driven",
+        plan_path: plan,
+        evidence: evidence("opencode", "subagent-driven"),
+      },
+      ctx,
+    );
+    expect(menu.ok).toBe(true);
+
+    const coordinatorCtx = {
+      directory: root,
+      worktree: root,
+      sessionID: "oc",
+      agent: "build",
+    } as never;
+    const blocked = await run(
+      tools,
+      "workflow_sdd_append_progress",
+      {
+        confirmed: true,
+        progress_path: "docs/oc-flow/sdd/progress.md",
+        line: "Task 1: work (commits abcdef0..1234567, tests pass)",
+      },
+      coordinatorCtx,
+    );
+    expect(blocked.ok).toBe(false);
+    if (blocked.ok === false) {
+      expect(blocked.data?.code).toBe("coordinator_blocked");
+      expect(blocked.error).toContain(COORDINATOR_RECOVERY_TEXT);
+    }
+
+    const workerCtx = {
+      directory: root,
+      worktree: root,
+      sessionID: "oc",
+      agent: "workit-worker",
+    } as never;
+    const brief = await run(
+      tools,
+      "workflow_sdd_task_brief",
+      {
+        confirmed: true,
+        sdd_dir: "docs/oc-flow/sdd",
+        task_id: 1,
+        section_text: "- [ ] Work\n",
+      },
+      workerCtx,
+    );
+    expect(brief.ok).toBe(true);
   } finally {
     cleanup(root);
   }

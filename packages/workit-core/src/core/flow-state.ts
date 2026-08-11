@@ -5,6 +5,28 @@ import { resolveCanonicalLayout } from "./docs-layout";
 
 export type FlowHost = "opencode" | "cursor";
 export type FlowStatus = "draft" | "self_reviewed" | "approved";
+export type FlowRole = "coordinator" | "delegated";
+
+/**
+ * Host-bound identity for every flow/product mutation (FG-05, CA-20, CA-21):
+ * the authoritative host workspace, the coordinator/delegated role, the host
+ * session, and the authenticated task identity a delegated worker carries.
+ * Cursor has no per-session identity, so it derives a deterministic session
+ * from the workspace root; OpenCode derives it from the tool context.
+ */
+export type MutationContext = {
+  hostWorkspace: string;
+  role: FlowRole;
+  sessionId: string;
+  taskIdentity?: string;
+};
+
+/** Recovery guidance surfaced on a blocked coordinator mutation (FG-07). */
+export const COORDINATOR_RECOVERY_TEXT =
+  "A subagent-driven plan is active: coordinator product edits are blocked. " +
+  "Delegate product mutations (task briefs, progress, review packages) to an " +
+  "authenticated delegated worker via `task` / `wk-implement` instead of " +
+  "editing in the coordinator session.";
 
 /**
  * The only acceptable approval / execution-menu evidence (FG-04, CA-19): an
@@ -155,12 +177,111 @@ const readFlowStrict = (root: string, slug: string): StrictRead => {
   }
 };
 
+// Unique per-write temporary buffer so two concurrent writers never share the
+// same `<file>.tmp` (FG-08, CA-21). Pattern mirrors docs-migration.ts:597.
+const uniqueTempPath = (file: string) =>
+  `${file}.${process.pid}-${Math.random().toString(36).slice(2)}.tmp`;
+
 export const writeFlowState = (root: string, state: FlowState) => {
   const file = flowPath(root, state.slug);
   mkdirSync(path.dirname(file), { recursive: true });
-  const tmp = `${file}.tmp`;
+  const tmp = uniqueTempPath(file);
   writeFileSync(tmp, JSON.stringify(state, null, 2) + "\n", "utf8");
   renameSync(tmp, file);
+};
+
+const MAX_WRITE_ATTEMPTS = 5;
+
+export type FlowWriteResult = { ok: true } | { ok: false; conflict: true };
+
+/**
+ * Compare-and-write (FG-08): write `next` only if the on-disk content still
+ * equals the version this writer read (`expected`). A stale writer gets
+ * `conflict` instead of clobbering a concurrent newer write; the caller re-reads
+ * and retries the transition (bounded). Unique per-write temp names keep the
+ * write buffer from being shared between writers.
+ */
+export const writeFlowStateIfCurrent = (
+  root: string,
+  expected: FlowState,
+  next: FlowState,
+): FlowWriteResult => {
+  const file = flowPath(root, next.slug);
+  const expectedText = JSON.stringify(expected, null, 2) + "\n";
+  const nextText = JSON.stringify(next, null, 2) + "\n";
+  if (expectedText === nextText) return { ok: true };
+  for (let attempt = 0; attempt < MAX_WRITE_ATTEMPTS; attempt++) {
+    try {
+      const currentText = existsSync(file) ? readFileSync(file, "utf8") : null;
+      if (currentText !== expectedText) return { ok: false, conflict: true };
+      mkdirSync(path.dirname(file), { recursive: true });
+      const tmp = uniqueTempPath(file);
+      writeFileSync(tmp, nextText, "utf8");
+      renameSync(tmp, file);
+      return { ok: true };
+    } catch {
+      // transient temp collision or IO — retry once with a fresh temp name
+    }
+  }
+  return { ok: false, conflict: true };
+};
+
+type MutateResult = { ok: true; next: FlowState } | FlowError;
+
+// Unlocked read-modify-write made safe (FG-08): read strict, mutate in memory,
+// then commit only if the on-disk state still matches what was read; otherwise
+// re-read and retry the transition, bounded.
+const readModifyWrite = (
+  root: string,
+  slug: string,
+  mutate: (state: FlowState) => MutateResult,
+): FlowGateResult => {
+  for (let attempt = 0; attempt < MAX_WRITE_ATTEMPTS; attempt++) {
+    const strict = readFlowStrict(root, slug);
+    if (!strict.ok) return strict;
+    const result = mutate(strict.state);
+    if (!result.ok) return result;
+    const commit = writeFlowStateIfCurrent(root, strict.state, result.next);
+    if (commit.ok) return { ok: true };
+    // a concurrent writer won the race — re-read and retry the transition
+  }
+  return err(
+    "flow_concurrent_conflict",
+    `concurrent flow update detected for ${slug}: re-read the flow state and retry the transition`,
+  );
+};
+
+// The caller-supplied workspace must be the host workspace the context names
+// (CA-21): a context built for another repo must not drive writes here.
+const assertMutationWorkspace = (root: string, ctx?: MutationContext): FlowGateResult => {
+  if (ctx && ctx.hostWorkspace !== root) {
+    return err(
+      "workspace_mismatch",
+      `mutation context workspace ${JSON.stringify(ctx.hostWorkspace)} does not match flow workspace ${JSON.stringify(root)}`,
+    );
+  }
+  return { ok: true };
+};
+
+/**
+ * Coordinator boundary (FG-05, CA-20): once a plan is subagent-driven, the
+ * coordinator session cannot mutate product state — only authenticated
+ * delegated workers can. A delegated worker without a task identity is blocked.
+ */
+export const assertCoordinatorBoundary = (
+  ctx: MutationContext | undefined,
+  menu: FlowMenuState,
+): FlowGateResult => {
+  if (ctx?.role === "coordinator" && menu.chosen === "subagent-driven") {
+    return err("coordinator_blocked", COORDINATOR_RECOVERY_TEXT);
+  }
+  if (ctx?.role === "delegated" && !ctx.taskIdentity) {
+    return err(
+      "delegated_unauthenticated",
+      "delegated mutations require an authenticated task identity (taskIdentity) — re-run inside the delegated worker session",
+    );
+  }
+  return { ok: true };
 };
 
 /**
@@ -260,7 +381,10 @@ export const prepareFlowState = (
   root: string,
   slug: string,
   opts: { spec_path?: string; plan_path?: string } = {},
+  ctx?: MutationContext,
 ): FlowGateResult => {
+  const bound = assertMutationWorkspace(root, ctx);
+  if (!bound.ok) return bound;
   const resolved = resolveCanonicalLayout({
     workspace_root: root,
     slug,
@@ -295,52 +419,57 @@ export const transitionSpec = (
   slug: string,
   specPath: string,
   evidence: unknown,
+  ctx?: MutationContext,
 ): FlowGateResult => {
+  const bound = assertMutationWorkspace(root, ctx);
+  if (!bound.ok) return bound;
   const recorded = createNativeChoiceEvidence(evidence);
   if (!recorded.ok) return err("evidence_invalid", recorded.error);
   const doc = resolveDoc(root, slug, specPath, "spec");
   if (!doc.ok) return err("path_invalid", doc.error);
-  const strict = readFlowStrict(root, slug);
-  if (!strict.ok) return strict;
-  if (!existsSync(doc.path)) return err("spec_missing", `spec not found: ${specPath}`);
-  const state = strict.state;
-  if (state.spec.status === "draft") {
-    let text: string;
-    try {
-      text = readFileSync(doc.path, "utf8");
-    } catch (error) {
-      return err(
-        "spec_self_review_failed",
-        `spec self-review failed: unreadable spec: ${error instanceof Error ? error.message : String(error)}`,
-      );
+  return readModifyWrite(root, slug, (state) => {
+    if (!existsSync(doc.path)) return err("spec_missing", `spec not found: ${specPath}`);
+    if (state.spec.status === "draft") {
+      let text: string;
+      try {
+        text = readFileSync(doc.path, "utf8");
+      } catch (error) {
+        return err(
+          "spec_self_review_failed",
+          `spec self-review failed: unreadable spec: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+      const hard = qualitySpec(text).filter((f) => f.severity === "hard");
+      const missing: string[] = [];
+      if (!/^\s*\*+Branch:\*+/im.test(stripFences(text)))
+        missing.push("**Branch:** header missing");
+      if (hard.length > 0 || missing.length > 0) {
+        return err(
+          "spec_self_review_failed",
+          "spec self-review failed: " +
+            hard
+              .map((f) => `${f.code} — ${f.message}`)
+              .concat(missing)
+              .join("; ") +
+            " — see templates/spec-template.md for the required structure",
+        );
+      }
     }
-    const hard = qualitySpec(text).filter((f) => f.severity === "hard");
-    const missing: string[] = [];
-    if (!/^\s*\*+Branch:\*+/im.test(stripFences(text))) missing.push("**Branch:** header missing");
-    if (hard.length > 0 || missing.length > 0) {
-      return err(
-        "spec_self_review_failed",
-        "spec self-review failed: " +
-          hard
-            .map((f) => `${f.code} — ${f.message}`)
-            .concat(missing)
-            .join("; ") +
-          " — see templates/spec-template.md for the required structure",
-      );
-    }
-  }
-  const step = nextFlowStatus(state.spec.status);
-  if (!step.ok) return step;
-  writeFlowState(root, {
-    ...state,
-    spec: {
-      path: path.posix.join("docs", slug, "spec.md"),
-      status: step.next,
-      evidence: recorded.evidence,
-    },
-    updated_at: Date.now(),
+    const step = nextFlowStatus(state.spec.status);
+    if (!step.ok) return step;
+    return {
+      ok: true,
+      next: {
+        ...state,
+        spec: {
+          path: path.posix.join("docs", slug, "spec.md"),
+          status: step.next,
+          evidence: recorded.evidence,
+        },
+        updated_at: Date.now(),
+      },
+    };
   });
-  return { ok: true };
 };
 
 export const transitionPlan = (
@@ -348,49 +477,53 @@ export const transitionPlan = (
   slug: string,
   planPath: string,
   evidence: unknown,
+  ctx?: MutationContext,
 ): FlowGateResult => {
+  const bound = assertMutationWorkspace(root, ctx);
+  if (!bound.ok) return bound;
   const recorded = createNativeChoiceEvidence(evidence);
   if (!recorded.ok) return err("evidence_invalid", recorded.error);
   const doc = resolveDoc(root, slug, planPath, "plan");
   if (!doc.ok) return err("path_invalid", doc.error);
-  const strict = readFlowStrict(root, slug);
-  if (!strict.ok) return strict;
-  if (!existsSync(doc.path)) return err("plan_missing", `plan not found: ${planPath}`);
-  const state = strict.state;
-  if (state.spec.status !== "approved") {
-    return err("spec_not_approved", "spec must be approved before the plan can be approved");
-  }
-  if (state.plan.status === "draft") {
-    let text: string;
-    try {
-      text = readFileSync(doc.path, "utf8");
-    } catch (error) {
-      return err(
-        "plan_self_review_failed",
-        `plan self-review failed: unreadable plan: ${error instanceof Error ? error.message : String(error)}`,
-      );
+  return readModifyWrite(root, slug, (state) => {
+    if (!existsSync(doc.path)) return err("plan_missing", `plan not found: ${planPath}`);
+    if (state.spec.status !== "approved") {
+      return err("spec_not_approved", "spec must be approved before the plan can be approved");
     }
-    const missing: string[] = [];
-    const stripped = stripFences(text);
-    if (parseTasksFromPlan(text).length === 0)
-      missing.push("no ### Task N: sections outside fences");
-    if (!/^\s*\*+Spec:\*+/im.test(stripped)) missing.push("**Spec:** header missing");
-    if (!/^\s*\*+Branch:\*+/im.test(stripped)) missing.push("**Branch:** header missing");
-    if (missing.length > 0)
-      return err("plan_self_review_failed", "plan self-review failed: " + missing.join("; "));
-  }
-  const step = nextFlowStatus(state.plan.status);
-  if (!step.ok) return step;
-  writeFlowState(root, {
-    ...state,
-    plan: {
-      path: path.posix.join("docs", slug, "plan.md"),
-      status: step.next,
-      evidence: recorded.evidence,
-    },
-    updated_at: Date.now(),
+    if (state.plan.status === "draft") {
+      let text: string;
+      try {
+        text = readFileSync(doc.path, "utf8");
+      } catch (error) {
+        return err(
+          "plan_self_review_failed",
+          `plan self-review failed: unreadable plan: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+      const missing: string[] = [];
+      const stripped = stripFences(text);
+      if (parseTasksFromPlan(text).length === 0)
+        missing.push("no ### Task N: sections outside fences");
+      if (!/^\s*\*+Spec:\*+/im.test(stripped)) missing.push("**Spec:** header missing");
+      if (!/^\s*\*+Branch:\*+/im.test(stripped)) missing.push("**Branch:** header missing");
+      if (missing.length > 0)
+        return err("plan_self_review_failed", "plan self-review failed: " + missing.join("; "));
+    }
+    const step = nextFlowStatus(state.plan.status);
+    if (!step.ok) return step;
+    return {
+      ok: true,
+      next: {
+        ...state,
+        plan: {
+          path: path.posix.join("docs", slug, "plan.md"),
+          status: step.next,
+          evidence: recorded.evidence,
+        },
+        updated_at: Date.now(),
+      },
+    };
   });
-  return { ok: true };
 };
 
 export const recordMenuChoice = (
@@ -399,7 +532,10 @@ export const recordMenuChoice = (
   planPath: string,
   choice: unknown,
   evidence: unknown,
+  ctx?: MutationContext,
 ): FlowGateResult => {
+  const bound = assertMutationWorkspace(root, ctx);
+  if (!bound.ok) return bound;
   const recorded = createNativeChoiceEvidence(evidence);
   if (!recorded.ok) return err("evidence_invalid", recorded.error);
   if (typeof choice !== "string" || !MENU_CHOICES.includes(choice as MenuChoice)) {
@@ -415,20 +551,21 @@ export const recordMenuChoice = (
   }
   const doc = resolveDoc(root, slug, planPath, "plan");
   if (!doc.ok) return err("path_invalid", doc.error);
-  const strict = readFlowStrict(root, slug);
-  if (!strict.ok) return strict;
-  const state = strict.state;
-  if (state.spec.status !== "approved")
-    return err("spec_not_approved", "spec must be approved before the execution menu");
-  if (state.plan.status !== "approved")
-    return err("plan_not_approved", "plan must be approved before the execution menu");
-  writeFlowState(root, {
-    ...state,
-    plan: state.plan.path ? state.plan : { path: planPath, status: state.plan.status },
-    menu: { presented: true, chosen: choice, evidence: recorded.evidence },
-    updated_at: Date.now(),
+  return readModifyWrite(root, slug, (state) => {
+    if (state.spec.status !== "approved")
+      return err("spec_not_approved", "spec must be approved before the execution menu");
+    if (state.plan.status !== "approved")
+      return err("plan_not_approved", "plan must be approved before the execution menu");
+    return {
+      ok: true,
+      next: {
+        ...state,
+        plan: state.plan.path ? state.plan : { path: planPath, status: state.plan.status },
+        menu: { presented: true, chosen: choice, evidence: recorded.evidence },
+        updated_at: Date.now(),
+      },
+    };
   });
-  return { ok: true };
 };
 
 export const slugFromPath = (p: string) => {
@@ -479,12 +616,16 @@ export const assertFlowGates = (
  * Shared mutation guard for non-document product writes (FG-03, CA-18): a write
  * is blocked until the spec is approved, the plan is approved, the execution
  * menu has been recorded (when required), and the canonical docs validate.
+ * The optional MutationContext adds the coordinator boundary (FG-05, CA-20).
  */
 export const assertProductGates = (
   root: string,
   slug: string,
   opts: { requireMenu?: boolean; requireDocs?: boolean } = {},
+  ctx?: MutationContext,
 ): FlowGateResult => {
+  const bound = assertMutationWorkspace(root, ctx);
+  if (!bound.ok) return bound;
   const state = readFlowState(root, slug);
   if (state.spec.status !== "approved") {
     return err(
@@ -514,5 +655,5 @@ export const assertProductGates = (
     });
     if (validated.ok === false) return err("docs_invalid", validated.error);
   }
-  return { ok: true };
+  return assertCoordinatorBoundary(ctx, state.menu);
 };

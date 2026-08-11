@@ -1,4 +1,4 @@
-import { tool } from "@opencode-ai/plugin";
+import { tool, type ToolContext } from "@opencode-ai/plugin";
 import { fail, ok } from "@brainervirus/workit-core/src/core";
 import {
   assertHostEvidence,
@@ -9,6 +9,7 @@ import {
   transitionPlan,
   recordMenuChoice,
   type EvidenceResult,
+  type MutationContext,
   type NativeChoiceEvidence,
 } from "@brainervirus/workit-core/src/core/flow-state";
 import { resolveCanonicalLayout } from "@brainervirus/workit-core/src/core/docs-layout";
@@ -54,6 +55,21 @@ export const opencodeQuestionEvidence = (
 
 const HOST = "opencode" as const;
 
+// OpenCode's default primary agent is "build" (docs: config → Default agent);
+// a session spawned by the `task` tool runs a different agent, which doubles as
+// the authenticated task identity for delegated workers.
+// ponytail: agent-name heuristic for coordinator vs delegated; upgrade to the
+// session parentID once the SDK exposes it on ToolContext.
+export const opencodeMutationContext = (context: ToolContext): MutationContext => {
+  const delegated = Boolean(context.agent && context.agent !== "build");
+  return {
+    hostWorkspace: context.directory,
+    role: delegated ? "delegated" : "coordinator",
+    sessionId: context.sessionID,
+    taskIdentity: delegated ? context.agent : undefined,
+  };
+};
+
 export function createFlowTools() {
   return {
     workflow_flow_status: tool({
@@ -71,7 +87,12 @@ export function createFlowTools() {
           const slug = slugged.slug;
           let state = readFlowState(context.directory, slug);
           if (!state.activated) {
-            const prepared = prepareFlowState(context.directory, slug, { spec_path, plan_path });
+            const prepared = prepareFlowState(
+              context.directory,
+              slug,
+              { spec_path, plan_path },
+              opencodeMutationContext(context),
+            );
             if (!prepared.ok) return output(fail(prepared.error, { code: prepared.code }));
             state = readFlowState(context.directory, slug);
           }
@@ -102,7 +123,13 @@ export function createFlowTools() {
         const slug = slugged.slug;
         const hostOk = assertHostEvidence(HOST, evidence as NativeChoiceEvidence);
         if (!hostOk.ok) return output(fail(hostOk.error, { code: hostOk.code }));
-        const result = transitionSpec(context.directory, slug, spec_path, evidence);
+        const result = transitionSpec(
+          context.directory,
+          slug,
+          spec_path,
+          evidence,
+          opencodeMutationContext(context),
+        );
         return output(
           result.ok
             ? ok({ spec: spec_path, status: readFlowState(context.directory, slug).spec.status })
@@ -123,7 +150,13 @@ export function createFlowTools() {
         const slug = slugged.slug;
         const hostOk = assertHostEvidence(HOST, evidence as NativeChoiceEvidence);
         if (!hostOk.ok) return output(fail(hostOk.error, { code: hostOk.code }));
-        const result = transitionPlan(context.directory, slug, plan_path, evidence);
+        const result = transitionPlan(
+          context.directory,
+          slug,
+          plan_path,
+          evidence,
+          opencodeMutationContext(context),
+        );
         return output(
           result.ok
             ? ok({ plan: plan_path, status: readFlowState(context.directory, slug).plan.status })
@@ -151,7 +184,14 @@ export function createFlowTools() {
         const slug = slugged.slug;
         const hostOk = assertHostEvidence(HOST, evidence as NativeChoiceEvidence);
         if (!hostOk.ok) return output(fail(hostOk.error, { code: hostOk.code }));
-        const result = recordMenuChoice(context.directory, slug, plan_path, choice, evidence);
+        const result = recordMenuChoice(
+          context.directory,
+          slug,
+          plan_path,
+          choice,
+          evidence,
+          opencodeMutationContext(context),
+        );
         return output(
           result.ok
             ? ok({ menu: { presented: true, chosen: choice } })

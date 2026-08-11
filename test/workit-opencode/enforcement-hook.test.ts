@@ -1,4 +1,7 @@
 import { expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import plugin from "../../packages/workit-opencode/src/plugin";
 import { REMINDER_TEXT } from "../../packages/workit-core/src/core/reminder";
 
@@ -93,6 +96,33 @@ test("no correction when assistant did not use prose choices", async () => {
   await hooks["experimental.chat.messages.transform"]?.({} as never, output as never);
   const userText = output.messages[1].parts.find((p: any) => p.type === "text")!.text;
   expect(userText).not.toContain("workflow-detection");
+});
+
+test("CA-21: subagent-driven discovery scans the host workspace, not process.cwd()", async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wf-host-root-"));
+  const slug = "host-root";
+  const dir = path.join(root, "docs", slug, "sdd");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(
+    path.join(dir, "flow.json"),
+    JSON.stringify({ menu: { chosen: "subagent-driven" }, plan: { status: "approved" } }),
+  );
+  try {
+    const hooks = await plugin({
+      directory: root,
+      worktree: root,
+      serverUrl: new URL("http://localhost"),
+    } as never);
+    const output = { messages: [userMessage("hello")] };
+    await hooks["experimental.chat.messages.transform"]?.({} as never, output as never);
+    const text = output.messages[0].parts
+      .filter((p: any) => p.type === "text")
+      .map((p: any) => p.text)
+      .join("\n");
+    expect(text).toContain("workflow-sdd-reminder");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("reminder includes the doc delivery rule", () => {

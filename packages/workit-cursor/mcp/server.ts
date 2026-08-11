@@ -73,6 +73,7 @@ import {
   slugFromSddPath,
   type NativeChoiceEvidence,
 } from "@brainervirus/workit-core/src/core/flow-state";
+import { cursorMutationContext } from "./flow-evidence";
 import {
   resolveCanonicalLayout,
   prepareDocsLayout,
@@ -552,7 +553,12 @@ registerTool(
   async ({ sdd_dir, task_id, section_text, workspace_root }) => {
     const slug = slugFromSddPath(sdd_dir);
     if (!slug) return jsonResult({ error: "could not derive slug — expected docs/<slug>/sdd/..." });
-    const gate = assertProductGates(workspace_root, slug, { requireMenu: true, requireDocs: true });
+    const gate = assertProductGates(
+      workspace_root,
+      slug,
+      { requireMenu: true, requireDocs: true },
+      cursorMutationContext(workspace_root),
+    );
     if (!gate.ok) return jsonResult({ error: gate.error, code: gate.code });
     const data = sddTaskBrief({
       sdd_dir,
@@ -578,7 +584,12 @@ registerTool(
   async ({ sdd_dir, base_sha, head_sha, workspace_root }) => {
     const slug = slugFromSddPath(sdd_dir);
     if (!slug) return jsonResult({ error: "could not derive slug — expected docs/<slug>/sdd/..." });
-    const gate = assertProductGates(workspace_root, slug, { requireMenu: true, requireDocs: true });
+    const gate = assertProductGates(
+      workspace_root,
+      slug,
+      { requireMenu: true, requireDocs: true },
+      cursorMutationContext(workspace_root),
+    );
     if (!gate.ok) return jsonResult({ error: gate.error, code: gate.code });
     const data = sddReviewPackage({
       sdd_dir,
@@ -604,7 +615,12 @@ registerTool(
   async ({ progress_path, line, workspace_root }) => {
     const slug = slugFromSddPath(progress_path);
     if (!slug) return jsonResult({ error: "could not derive slug — expected docs/<slug>/sdd/..." });
-    const gate = assertProductGates(workspace_root, slug, { requireMenu: true, requireDocs: true });
+    const gate = assertProductGates(
+      workspace_root,
+      slug,
+      { requireMenu: true, requireDocs: true },
+      cursorMutationContext(workspace_root),
+    );
     if (!gate.ok) return jsonResult({ error: gate.error, code: gate.code });
     const data = sddAppendProgress({ progress_path, line, workspace_root });
     if (data.error) return jsonResult({ error: data.error });
@@ -1142,7 +1158,12 @@ registerTool(
     const { workspace, slug } = resolved.layout;
     let state = readFlowState(workspace, slug);
     if (!state.activated) {
-      const prepared = prepareFlowState(workspace, slug, { spec_path, plan_path });
+      const prepared = prepareFlowState(
+        workspace,
+        slug,
+        { spec_path, plan_path },
+        cursorMutationContext(workspace),
+      );
       if (!prepared.ok) return jsonResult({ error: prepared.error, code: prepared.code });
       state = readFlowState(workspace, slug);
     }
@@ -1184,7 +1205,13 @@ registerTool(
     const { workspace, slug } = resolved.layout;
     const bound = hostBound(evidence);
     if (!bound.ok) return jsonResult({ error: bound.error, code: bound.code });
-    const result = transitionSpec(workspace, slug, spec_path, evidence);
+    const result = transitionSpec(
+      workspace,
+      slug,
+      spec_path,
+      evidence,
+      cursorMutationContext(workspace),
+    );
     if (result.ok === false) return jsonResult({ error: result.error, code: result.code });
     return jsonResult({ spec: spec_path, status: readFlowState(workspace, slug).spec.status });
   },
@@ -1207,7 +1234,13 @@ registerTool(
     const { workspace, slug } = resolved.layout;
     const bound = hostBound(evidence);
     if (!bound.ok) return jsonResult({ error: bound.error, code: bound.code });
-    const result = transitionPlan(workspace, slug, plan_path, evidence);
+    const result = transitionPlan(
+      workspace,
+      slug,
+      plan_path,
+      evidence,
+      cursorMutationContext(workspace),
+    );
     if (result.ok === false) return jsonResult({ error: result.error, code: result.code });
     return jsonResult({ plan: plan_path, status: readFlowState(workspace, slug).plan.status });
   },
@@ -1231,7 +1264,14 @@ registerTool(
     const { workspace, slug } = resolved.layout;
     const bound = hostBound(evidence);
     if (!bound.ok) return jsonResult({ error: bound.error, code: bound.code });
-    const result = recordMenuChoice(workspace, slug, plan_path, choice, evidence);
+    const result = recordMenuChoice(
+      workspace,
+      slug,
+      plan_path,
+      choice,
+      evidence,
+      cursorMutationContext(workspace),
+    );
     if (result.ok === false) return jsonResult({ error: result.error, code: result.code });
     return jsonResult({ menu: { presented: true, chosen: choice } });
   },

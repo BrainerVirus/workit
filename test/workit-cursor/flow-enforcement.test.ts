@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { cursorQuestionEvidence } from "../../packages/workit-cursor/mcp/flow-evidence";
 import {
+  COORDINATOR_RECOVERY_TEXT,
   assertHostEvidence,
   transitionSpec,
   createFlowEvidence,
@@ -115,6 +116,72 @@ const cursorEvidenceFor = (label: string) => {
   if (!ev.ok) throw new Error(ev.error);
   return ev.evidence;
 };
+
+test("cursor MCP threads MutationContext: coordinator product edits blocked after subagent-driven", async () => {
+  const { root } = fixture();
+  const { child, request } = startServer();
+  try {
+    await request("initialize", {
+      protocolVersion: "2024-11-05",
+      capabilities: {},
+      clientInfo: { name: "flow-enforcement", version: "1.0" },
+    });
+    child.stdin.write(
+      `${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })}\n`,
+    );
+
+    const call = (name: string, arguments_: unknown) =>
+      request("tools/call", { name, arguments: arguments_ });
+
+    await call("workflow_flow_status", {
+      plan_path: "docs/cf-flow/plan.md",
+      workspace_root: root,
+    });
+    const spec = "docs/cf-flow/spec.md";
+    const plan = "docs/cf-flow/plan.md";
+    await call("workflow_spec_approve", {
+      spec_path: spec,
+      workspace_root: root,
+      evidence: cursorEvidenceFor("Approve"),
+    });
+    await call("workflow_spec_approve", {
+      spec_path: spec,
+      workspace_root: root,
+      evidence: cursorEvidenceFor("Approve"),
+    });
+    await call("workflow_plan_approve", {
+      plan_path: plan,
+      workspace_root: root,
+      evidence: cursorEvidenceFor("Approve plan"),
+    });
+    await call("workflow_plan_approve", {
+      plan_path: plan,
+      workspace_root: root,
+      evidence: cursorEvidenceFor("Approve plan"),
+    });
+    const menu = await call("workflow_plan_menu", {
+      choice: "subagent-driven",
+      plan_path: plan,
+      workspace_root: root,
+      evidence: cursorEvidenceFor("subagent-driven"),
+    });
+    expect((menu as any).result.isError).not.toBe(true);
+
+    const blocked = await call("workflow_sdd_append_progress", {
+      confirmed: true,
+      progress_path: "docs/cf-flow/sdd/progress.md",
+      line: "Task 1: work (commits abcdef0..1234567, tests pass)",
+      workspace_root: root,
+    });
+    expect((blocked as any).result.isError).toBe(true);
+    const blockedText = JSON.parse((blocked as any).result.content?.[0]?.text ?? "{}");
+    expect(blockedText.code).toBe("coordinator_blocked");
+    expect(JSON.stringify(blockedText)).toContain(COORDINATOR_RECOVERY_TEXT);
+  } finally {
+    child.kill();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test("cursor MCP enforces the same evidence gates as opencode over stdio", async () => {
   const { root } = fixture();

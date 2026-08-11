@@ -158,18 +158,19 @@ test("assets boundary failure is bounded, sanitized, and mirrored", async () => 
 
 test("hooks boundary failure is logged and the session survives", async () => {
   const { client, events } = makeClient();
-  const hooks = await plugin({ client, ...clientArgs } as never);
-  events.length = 0;
+  // Discovery scans the host workspace (the plugin `directory`), not
+  // process.cwd() (FG-06): a docs/ path that is a file throws on scan.
   const hookCwd = scratchDir("wf-hooks-");
   writeFileSync(path.join(hookCwd, "docs"), "a regular file, not a directory");
-  const previousCwd = process.cwd();
-  process.chdir(hookCwd);
-  try {
-    const output = { messages: [userMessage("hello")] };
-    await hooks["experimental.chat.messages.transform"]?.({} as never, output as never);
-  } finally {
-    process.chdir(previousCwd);
-  }
+  const hooks = await plugin({
+    client,
+    directory: hookCwd,
+    worktree: hookCwd,
+    serverUrl: new URL("http://localhost"),
+  } as never);
+  events.length = 0;
+  const output = { messages: [userMessage("hello")] };
+  await hooks["experimental.chat.messages.transform"]?.({} as never, output as never);
   const hookEvents = events.filter((e) => e.message === "hooks");
   expect(hookEvents.length).toBe(1);
   expect(hookEvents[0].level).toBe("warn");

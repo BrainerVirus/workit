@@ -168,7 +168,7 @@ const withWorktreeDenials = (configuredPermission: unknown): MutablePermission =
   return permission;
 };
 
-const plugin: Plugin = async ({ client }) => {
+const plugin: Plugin = async ({ client, directory }) => {
   openCodeClient = client as unknown as AppLogClient;
   installUncaughtHandlers();
   logger.info(EVENT.initialization, { host: "opencode", plugin_root: root });
@@ -291,8 +291,8 @@ const plugin: Plugin = async ({ client }) => {
         }
 
         // Every turn: subagent-driven rail — active approved plans get one reminder (idempotent)
-        // ponytail: process.cwd() ceiling — sessions launched from another directory scan the wrong docs/ tree
-        const activePlans = findActiveSubagentDrivenPlans(process.cwd());
+        // FG-06/CA-21: discovery scans the host session workspace, never process.cwd()
+        const activePlans = findActiveSubagentDrivenPlans(directory);
         if (activePlans.length > 0 && shouldInjectSddReminder(currentText)) {
           currentUser.parts.unshift(makePart(SDD_REMINDER_TEXT, "sdd"));
         }
