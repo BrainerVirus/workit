@@ -2,7 +2,7 @@ import { readFileSync, statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fail, ok, type Result } from "../core";
-import { configDir } from "./config";
+import { configDir, isConfigObject } from "./config";
 import {
   context as legacyContext,
   logTime as legacyLogTime,
@@ -29,7 +29,18 @@ export const configPath = (env: NodeJS.ProcessEnv = process.env, home = os.homed
 
 export function readCredentials(env: NodeJS.ProcessEnv = process.env, home = os.homedir()) {
   const resolvedConfig = configPath(env, home);
-  const config = JSON.parse(readFileSync(resolvedConfig, "utf8")) as { tokenFile?: string };
+  // AR-07/CA-37: a parseable non-object youtrack.json is malformed — exact-path
+  // error, never a raw TypeError or a silent tokenFile default.
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(resolvedConfig, "utf8"));
+  } catch {
+    throw new Error(`${resolvedConfig} is not valid JSON`);
+  }
+  if (!isConfigObject(parsed)) {
+    throw new Error(`${resolvedConfig} is not a JSON object`);
+  }
+  const config = parsed as { tokenFile?: string };
   const tokenFile = config.tokenFile ?? "youtrack.token";
   const tokenPath = path.resolve(path.dirname(resolvedConfig), tokenFile.replace(/^~(?=\/)/, home));
   if (process.platform !== "win32" && (statSync(tokenPath).mode & 0o777) !== 0o600)

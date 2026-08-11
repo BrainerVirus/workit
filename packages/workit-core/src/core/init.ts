@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { configDir } from "./config";
+import { configDir, isConfigObject } from "./config";
 import { PLUGIN_ROOT } from "./scripts";
 import { writeFileExclusive } from "./safe-write";
 import { resolveWorkspace, workspacesPath } from "./workspaces";
@@ -9,9 +9,12 @@ import { youTrackTokenCreateUrl, youTrackVerifyToken } from "./youtrack";
 
 const TOKEN_PLACEHOLDER = "YOUR_TOKEN_HERE";
 
+// AR-07/CA-37: a parseable non-object (null, scalar, array) is not a config
+// file — never display it as configured (fail-open) nor as unconfigured.
 const readJson = (p: string): Record<string, any> | null => {
   try {
-    return JSON.parse(fs.readFileSync(p, "utf8")) as Record<string, any>;
+    const parsed: unknown = JSON.parse(fs.readFileSync(p, "utf8"));
+    return isConfigObject(parsed) ? (parsed as Record<string, any>) : null;
   } catch {
     return null;
   }
@@ -98,7 +101,18 @@ export function initStatusData(configDirPath = configDir()): Record<string, any>
       youtrackConfig.tokenCreate = youtrackTokenCreate;
     }
   } else if (fs.existsSync(ytJson)) {
-    youtrackConfig = { config_edit_path: resolvePath(ytJson), error: "invalid youtrack.json" };
+    // Distinguish parse failure (legacy message, path in config_edit_path) from a
+    // parseable non-object, which gets the shared shape diagnostic with the path.
+    let parseFailed = false;
+    try {
+      JSON.parse(fs.readFileSync(ytJson, "utf8"));
+    } catch {
+      parseFailed = true;
+    }
+    youtrackConfig = {
+      config_edit_path: resolvePath(ytJson),
+      error: parseFailed ? "invalid youtrack.json" : `${resolvePath(ytJson)} is not a JSON object`,
+    };
   }
 
   items.push({

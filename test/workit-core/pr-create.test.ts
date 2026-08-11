@@ -168,6 +168,22 @@ test("B2: day-first date segments never derive a numeric issue id", () => {
   expect(prBuildBody({ GH_LINK_ON_PR: "true", BRANCH: "feature/2024-fix" })).toBe("Closes #2024");
 });
 
+test("AR-08: complete dates anywhere in a segment never close an issue", () => {
+  // Task 22 advisory: date rejection was year-first only; an embedded year-first
+  // or day-first date (release-2024-01-15, v2-2024-01-15-fix) still derived a
+  // year/day id. Complete dates must be rejected anywhere in a segment.
+  expect(prBuildBody({ GH_LINK_ON_PR: "true", BRANCH: "release-2024-01-15" })).toBe("");
+  expect(prBuildBody({ GH_LINK_ON_PR: "true", BRANCH: "v2-2024-01-15-fix" })).toBe("");
+  expect(prBuildBody({ GH_LINK_ON_PR: "true", BRANCH: "release-2024-01-15/fix" })).toBe("");
+  expect(prBuildBody({ GH_LINK_ON_PR: "true", BRANCH: "fix-2024-01-15" })).toBe("");
+  expect(prBuildBody({ GH_LINK_ON_PR: "true", BRANCH: "fix-15-01-2024" })).toBe("");
+  expect(prBuildBody({ GH_LINK_ON_PR: "true", BRANCH: "feature/fix-15-01-2024" })).toBe("");
+  // deliberate numeric issue branches still link
+  expect(prBuildBody({ GH_LINK_ON_PR: "true", BRANCH: "feature/42-title" })).toBe("Closes #42");
+  expect(prBuildBody({ GH_LINK_ON_PR: "true", BRANCH: "feature/2024-fix" })).toBe("Closes #2024");
+  expect(prBuildBody({ GH_LINK_ON_PR: "true", BRANCH: "release/2024-fix" })).toBe("Closes #2024");
+});
+
 test("B6: env-driven WORKFLOW_GH_ISSUE reaches prCreate through the OpenCode wrapper", async () => {
   setupRepo();
   git(root, ["checkout", "-q", "-b", "feature/b6"]);

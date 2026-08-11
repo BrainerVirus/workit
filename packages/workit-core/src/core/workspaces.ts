@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { configDir } from "./config";
+import { configDir, isConfigObject } from "./config";
 
 export type VcsProvider = "gitlab" | "github";
 
@@ -38,10 +38,10 @@ export const readWorkspacesResult = (dir: string = configDir()): WorkspacesResul
   } catch {
     return { status: "malformed", path: file, entries: [], error: `${file} is not valid JSON` };
   }
-  const list =
-    parsed && typeof parsed === "object"
-      ? (parsed as { workspaces?: unknown }).workspaces
-      : undefined;
+  if (!isConfigObject(parsed)) {
+    return { status: "malformed", path: file, entries: [], error: `${file} is not a JSON object` };
+  }
+  const list = (parsed as { workspaces?: unknown }).workspaces;
   return {
     status: "valid",
     path: file,

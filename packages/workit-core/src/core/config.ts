@@ -155,6 +155,12 @@ export type ReaderResult<T> = {
   error?: string;
 };
 
+// AR-07/CA-37: the one shared fail-closed shape rule for every object-config
+// reader (config, setup-state, workspaces, doctor). A parseable non-object
+// (null, scalar, array) is malformed, never defaults.
+export const isConfigObject = (value: unknown): boolean =>
+  value !== null && typeof value === "object" && !Array.isArray(value);
+
 const parseConfigResult = (raw: string | null, file: string): ReaderResult<ToolkitConfig> => {
   if (raw === null) return { status: "missing", path: file };
   let parsed: unknown;
@@ -163,11 +169,10 @@ const parseConfigResult = (raw: string | null, file: string): ReaderResult<Toolk
   } catch {
     return { status: "malformed", path: file, error: `${file} is not valid JSON` };
   }
-  // A parseable scalar/array/null is treated as an empty object, matching the
-  // doctor's parsesAsJson and readSetupState (parse gate only).
-  const input = (
-    parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {}
-  ) as Partial<ToolkitConfig>;
+  if (!isConfigObject(parsed)) {
+    return { status: "malformed", path: file, error: `${file} is not a JSON object` };
+  }
+  const input = parsed as Partial<ToolkitConfig>;
   const locale = LOCALE_RE.test(String(input.locale ?? ""))
     ? (input.locale as string)
     : DEFAULTS.locale;
@@ -257,7 +262,10 @@ export const describeConfigSource = (
   const raw = readSafe(file);
   if (raw === null) return { source: "unreadable", config_dir: dir, malformed: true };
   try {
-    JSON.parse(raw);
+    const parsed = JSON.parse(raw);
+    if (!isConfigObject(parsed)) {
+      return { source: "defaults", config_dir: dir, malformed: true };
+    }
     return { source: "file", config_dir: dir, malformed: false };
   } catch {
     return { source: "defaults", config_dir: dir, malformed: true };

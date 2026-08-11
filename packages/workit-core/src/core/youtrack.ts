@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { readTemplate } from "./templates";
 import { resolveWorkspaceRoot } from "./scripts";
-import { configDir } from "./config";
+import { configDir, isConfigObject } from "./config";
 
 const ISSUE_RE = /^[A-Z]+-\d+$/;
 const TOKEN_PLACEHOLDER = "YOUR_TOKEN_HERE";
@@ -18,25 +18,45 @@ const youTrackTokenModeOk = (p: string): boolean => {
   return mode === 0o600;
 };
 
+// AR-07/CA-37: the shared shape rule applies here too — a parseable non-object
+// youtrack.json (null, scalar, array) is malformed with the exact path, never
+// missing/unconfigured, never silently defaulted.
 function readYouTrackConfig(
   required: boolean,
-): { config: Record<string, any>; path: string } | { error: string } {
+): { config: Record<string, any>; path: string } | { error: string; path: string } {
   const cfgPath = youTrackConfigPath();
   if (!fs.existsSync(cfgPath)) {
-    return required ? { error: "ERROR: missing youtrack.json" } : { config: {}, path: cfgPath };
+    return required
+      ? { error: "ERROR: missing youtrack.json", path: cfgPath }
+      : { config: {}, path: cfgPath };
   }
+  let parsed: unknown;
   try {
-    const config = JSON.parse(fs.readFileSync(cfgPath, "utf8")) as Record<string, any>;
-    return { config, path: cfgPath };
+    parsed = JSON.parse(fs.readFileSync(cfgPath, "utf8"));
   } catch {
-    return { error: "invalid youtrack.json" };
+    return { error: `${cfgPath} is not valid JSON`, path: cfgPath };
   }
+  if (!isConfigObject(parsed)) {
+    return { error: `${cfgPath} is not a JSON object`, path: cfgPath };
+  }
+  return { config: parsed as Record<string, any>, path: cfgPath };
 }
 
+// RL-01: typed load result — malformed carries {ok:false, error, configPath}
+// mirroring vcsConfig, so risky consumers stop on the exact path.
+export type YouTrackConfigResult =
+  | { data: Record<string, any> }
+  | { error: string }
+  | { ok: false; error: string; configPath: string };
+
 /** Load + redact youtrack.json; validates the token file like youtrack/config.sh load. */
-export function youTrackConfigLoad(): { data: Record<string, any> } | { error: string } {
+export function youTrackConfigLoad(): YouTrackConfigResult {
   const loaded = readYouTrackConfig(true);
-  if ("error" in loaded) return loaded;
+  if ("error" in loaded) {
+    // RL-01: malformed (parse failure or non-object) fails closed with the exact
+    // path, mirroring vcsConfig's {ok:false,error,configPath} shape.
+    return { ok: false, error: loaded.error, configPath: loaded.path };
+  }
   const cfgPath = loaded.path;
   const tokenFile = String(loaded.config.tokenFile ?? "");
   const tokenPath = tokenFile
@@ -86,8 +106,23 @@ export function youTrackGreeting(configOverride?: string): {
   stderr: string;
 } {
   const cfgPath = configOverride ?? youTrackConfigPath();
+  let parsed: unknown;
   try {
-    const config = JSON.parse(fs.readFileSync(cfgPath, "utf8")) as Record<string, any>;
+    parsed = JSON.parse(fs.readFileSync(cfgPath, "utf8"));
+  } catch {
+    return {
+      stdout: "",
+      exitCode: 1,
+      stderr: fs.existsSync(cfgPath)
+        ? `${cfgPath} is not valid JSON`
+        : `missing youtrack.json: ${cfgPath}`,
+    };
+  }
+  if (!isConfigObject(parsed)) {
+    return { stdout: "", exitCode: 1, stderr: `${cfgPath} is not a JSON object` };
+  }
+  const config = parsed as Record<string, any>;
+  try {
     const tz = String(config.timezone ?? "America/Santiago");
     const now = new Date();
     const { y, m, d, hour, minute } = tzParts(now, tz);
@@ -133,11 +168,20 @@ export function youTrackWorkDateMs(
 ): { data: { dateMs: number; timezone: string; localDate: string } } | { error: string } {
   const cfgPath = youTrackConfigPath();
   let tz = "America/Santiago";
-  try {
-    const config = JSON.parse(fs.readFileSync(cfgPath, "utf8")) as Record<string, any>;
-    tz = String(config.timezone ?? "America/Santiago");
-  } catch {
-    /* defaults */
+  // Missing file is a legitimate unconfigured state (reader: "missing" keeps
+  // defaults); a parseable non-object is malformed and must propagate the
+  // exact-path error instead of silently defaulting the timezone.
+  if (fs.existsSync(cfgPath)) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(fs.readFileSync(cfgPath, "utf8"));
+    } catch {
+      return { error: `${cfgPath} is not valid JSON` };
+    }
+    if (!isConfigObject(parsed)) {
+      return { error: `${cfgPath} is not a JSON object` };
+    }
+    tz = String((parsed as Record<string, any>).timezone ?? "America/Santiago");
   }
   const raw = dateRaw || "auto";
   try {
@@ -343,8 +387,10 @@ export async function youTrackVerifyToken(): Promise<
 export function youTrackTokenCreateUrl(): { data: Record<string, any> } {
   const tokenName = process.env.WORKFLOW_YT_TOKEN_NAME ?? "workit";
   const loaded = readYouTrackConfig(false);
-  const config = loaded && "config" in loaded ? loaded.config : {};
-  const cfgPath = loaded && "config" in loaded ? loaded.path : youTrackConfigPath();
+  if ("error" in loaded) {
+    return { data: { error: loaded.error } };
+  }
+  const config = loaded.config;
   const defaults = (config.tokenDefaults ?? {}) as Record<string, any>;
   const name = String(defaults.name ?? tokenName);
   const desc = String(
@@ -352,7 +398,9 @@ export function youTrackTokenCreateUrl(): { data: Record<string, any> } {
   );
   const scopes = Array.isArray(defaults.scopes) ? defaults.scopes : ["YouTrack"];
   const base = String(config.baseUrl ?? "https://enghouseamg.youtrack.cloud").replace(/\/+$/, "");
-  const tokenFile = String(config.tokenFile ?? path.join(path.dirname(cfgPath), "youtrack.token"));
+  const tokenFile = String(
+    config.tokenFile ?? path.join(path.dirname(loaded.path), "youtrack.token"),
+  );
   const tab = String(defaults.profileTab ?? "account-security");
   const createUrl = `${base}/users/me?${new URLSearchParams({ tab })}`;
   const docsUrl = "https://www.jetbrains.com/help/youtrack/cloud/manage-permanent-token.html";

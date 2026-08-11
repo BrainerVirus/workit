@@ -197,6 +197,41 @@ test("readSetupState classifies missing/valid/malformed files", () => {
   }
 });
 
+test("AR-07: readSetupState classifies non-object shapes as malformed on every file", () => {
+  const dir = tempDir();
+  try {
+    for (const [name, key] of [
+      ["config.json", "config"],
+      ["youtrack.json", "youtrack"],
+      ["vcs.json", "vcs"],
+      ["workspaces.json", "workspaces"],
+    ] as Array<[string, "config" | "youtrack" | "vcs" | "workspaces"]>) {
+      for (const content of ["null", '"a string"', "42", "[]"]) {
+        writeFileSync(path.join(dir, name), content, "utf8");
+        const state = readSetupState(dir);
+        expect(state[key].status, `${name} = ${content}`).toBe("malformed");
+        expect(state[key].error).toContain(path.join(dir, name));
+      }
+      rmSync(path.join(dir, name), { force: true });
+    }
+  } finally {
+    clean(dir);
+  }
+});
+
+test("a non-object config.json blocks Apply instead of defaulting (AR-07)", () => {
+  const dir = tempDir();
+  try {
+    writeFileSync(path.join(dir, "config.json"), "null", "utf8");
+    const preview = buildSetupPreview(values(), { dir, env: {} });
+    expect(preview.ok).toBe(false);
+    expect(preview.mutations).toEqual([]);
+    expect(preview.blocked.some((b) => b.includes("config.json"))).toBe(true);
+  } finally {
+    clean(dir);
+  }
+});
+
 test("an existing-but-unreadable setup file is blocked, not treated as missing (EACCES)", () => {
   // root bypasses file permissions and win32 chmod is not advisory — skip both.
   if (

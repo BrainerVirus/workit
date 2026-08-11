@@ -10,7 +10,7 @@ import os from "node:os";
 import path from "node:path";
 import { SUPPORT_MATRIX } from "./support-matrix";
 import { EVENT } from "./boundary";
-import { getDiagnosticLogger } from "./config";
+import { getDiagnosticLogger, isConfigObject } from "./config";
 import { isWorkitPlugin } from "./registration";
 import { resolveWorkspaceFrom } from "./workspaces";
 
@@ -141,12 +141,12 @@ const readJson = (p: string): Record<string, any> | null => {
   }
 };
 
-// A scalar/array JSON file parses fine but is not a config object; only a parse
-// failure means the file is malformed.
-const parsesAsJson = (p: string): boolean => {
+// AR-07/CA-37: a JSON file that parses but is not an object (null, scalar,
+// array) is not a config file — the readers classify it malformed, so the
+// doctor must flag it too (a parse-only gate would call it healthy = fail-open).
+const parsesAsConfigObject = (p: string): boolean => {
   try {
-    JSON.parse(readFileSync(p, "utf8"));
-    return true;
+    return isConfigObject(JSON.parse(readFileSync(p, "utf8")));
   } catch {
     return false;
   }
@@ -535,14 +535,14 @@ const checkMalformedConfig = (res: Resolved): DoctorCheck => {
   if (opencodeHost && existsSync(res.opencodeConfig)) files.push(res.opencodeConfig);
   if (cursorHost && existsSync(res.cursorSettings)) files.push(res.cursorSettings);
   if (cursorHost && existsSync(res.cursorMcp)) files.push(res.cursorMcp);
-  const bad = files.filter((p) => !parsesAsJson(p));
+  const bad = files.filter((p) => !parsesAsConfigObject(p));
   if (bad.length === 0)
     return { id: "malformed_config", status: "pass", detail: "config files parse" };
   return {
     id: "malformed_config",
     status: "fail",
-    detail: `malformed JSON: ${bad.join(", ")}`,
-    fix: `Repair the malformed JSON in ${bad[0]}`,
+    detail: `malformed config: ${bad.join(", ")}`,
+    fix: `Repair the malformed config in ${bad[0]}`,
   };
 };
 

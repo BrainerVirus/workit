@@ -68,6 +68,7 @@ import {
   youTrackApi,
   youTrackConfigLoad,
   youTrackTokenCreateUrl,
+  youTrackWorkDateMs,
 } from "../../packages/workit-core/src/core/youtrack";
 import { initApplyData, initStatusData } from "../../packages/workit-core/src/core/init";
 import { createYouTrackTools } from "../../packages/workit-opencode/src/tools/youtrack";
@@ -386,6 +387,38 @@ test.skipIf(process.platform === "win32")("bundled YouTrack scripts honor XDG_CO
     const out = youTrackConfigLoad();
     expect("data" in out ? out.data.meetingIssue : null).toBe("IRPT-12");
   });
+});
+
+test("AR-07: non-object youtrack.json shapes fail closed with the exact path", () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "wf-yt-shapes-"));
+  const workit = path.join(dir, "workit");
+  mkdirSync(workit, { recursive: true });
+  const ytFile = path.join(workit, "youtrack.json");
+  try {
+    for (const content of ["null", '"just a string"', "42", "[]", "[1, 2, 3]"]) {
+      writeFileSync(ytFile, content, "utf8");
+      withNeutralXdg(dir, () => {
+        const out = youTrackConfigLoad() as { ok?: boolean; error?: string; configPath?: string };
+        expect(out.error, content).toBeTruthy();
+        expect(String(out.error ?? ""), content).toContain(ytFile);
+        expect(out.ok, content).toBe(false);
+        expect(out.configPath, content).toBe(ytFile);
+
+        const work = youTrackWorkDateMs("auto") as { error?: string };
+        expect(work.error, content).toBeTruthy();
+        expect(String(work.error ?? ""), content).toContain(ytFile);
+
+        expect(() => readCredentials(), content).toThrow(ytFile);
+
+        const status = initStatusData(workit);
+        const item = status.items.find((i: { id: string }) => i.id === "youtrack_json");
+        expect(item.ok, content).toBe(false);
+        expect(String(status.youtrack_config?.error ?? ""), content).toContain(ytFile);
+      });
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("init scaffolding and status share the neutral XDG config directory", () => {

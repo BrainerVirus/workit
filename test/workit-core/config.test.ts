@@ -140,6 +140,22 @@ test("RL-01: readConfig throws an exact-path diagnostic on malformed config (no 
   }
 });
 
+test("AR-07: non-object config.json shapes are malformed with exact paths, never defaults", () => {
+  const dir = cfgDir();
+  try {
+    for (const content of ["null", '"just a string"', "42", "true", "[]", "[1, 2, 3]"]) {
+      writeFileSync(path.join(dir, "config.json"), content, "utf8");
+      const result = readConfigTyped();
+      expect(result.status, content).toBe("malformed");
+      expect(result.error).toContain(path.join(dir, "config.json"));
+      expect(() => readConfig(), content).toThrow(path.join(dir, "config.json"));
+    }
+  } finally {
+    cleanupEnv();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("RL-02: readConfig derives policy from the preset and resets divergent fields", () => {
   const dir = cfgDir();
   try {

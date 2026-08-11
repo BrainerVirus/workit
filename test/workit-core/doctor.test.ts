@@ -6,6 +6,9 @@ import {
   type DoctorCheck,
   type DoctorReport,
 } from "../../packages/workit-core/src/core/doctor";
+import { readVcsConfig } from "../../packages/workit-core/src/core/vcs-config";
+import { readSetupState } from "../../packages/workit-core/src/core/setup-state";
+import { readWorkspacesResult } from "../../packages/workit-core/src/core/workspaces";
 import { binDirWithRuntimes, makeDoctorFixture } from "../shared/helpers/doctor-fixture";
 
 // The offline doctor engine (DG-07/DG-08, CA-09): one fixture tree, one broken
@@ -309,15 +312,58 @@ test("detects malformed config files and clears once repaired", () => {
   expect(check(run(), "malformed_config").status).toBe("pass");
 });
 
-test("a JSON scalar or array config file is treated as empty, not malformed", () => {
+test("AR-07: non-object config shapes are flagged malformed, never healthy", () => {
   const configFile = path.join(fixture.configDir, "config.json");
-  for (const content of ['"just a string"', "[1, 2, 3]"]) {
+  for (const content of ["null", '"just a string"', "42", "[]", "[1, 2, 3]"]) {
     writeConfig(configFile, content);
     const report = run();
-    expect(check(report, "malformed_config").status, content).toBe("pass");
-    expect(report.exitCode).toBe(0);
+    expect(check(report, "malformed_config").status, content).toBe("fail");
+    expect(check(report, "malformed_config").detail, content).toContain("config.json");
   }
   rmSync(configFile, { force: true });
+  expect(check(run(), "malformed_config").status).toBe("pass");
+});
+
+test("AR-07: doctor agrees with the readers on malformed shapes", () => {
+  const vcsFile = path.join(fixture.configDir, "vcs.json");
+  const wsFile = path.join(fixture.configDir, "workspaces.json");
+  const prev = process.env.WORKFLOW_TOOLKIT_CONFIG;
+  process.env.WORKFLOW_TOOLKIT_CONFIG = fixture.configDir;
+  try {
+    for (const content of ["null", "42"]) {
+      writeConfig(vcsFile, content);
+      expect(check(run(), "malformed_config").status, content).toBe("fail");
+      expect(readVcsConfig().status).toBe("malformed");
+      expect(readVcsConfig().error).toContain(vcsFile);
+      expect(readSetupState(fixture.configDir).vcs.status).toBe("malformed");
+
+      writeConfig(wsFile, content);
+      expect(readWorkspacesResult(fixture.configDir).status).toBe("malformed");
+      expect(readWorkspacesResult(fixture.configDir).error).toContain(wsFile);
+      expect(readSetupState(fixture.configDir).workspaces.status).toBe("malformed");
+    }
+  } finally {
+    if (prev === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+    else process.env.WORKFLOW_TOOLKIT_CONFIG = prev;
+    rmSync(vcsFile, { force: true });
+    rmSync(wsFile, { force: true });
+  }
+  expect(check(run(), "malformed_config").status).toBe("pass");
+});
+
+test("AR-07: doctor agrees with the readers on malformed youtrack.json shapes", () => {
+  const ytFile = path.join(fixture.configDir, "youtrack.json");
+  try {
+    for (const content of ["null", "42"]) {
+      writeConfig(ytFile, content);
+      expect(check(run(), "malformed_config").status, content).toBe("fail");
+      expect(check(run(), "malformed_config").detail, content).toContain("youtrack.json");
+      expect(readSetupState(fixture.configDir).youtrack.status, content).toBe("malformed");
+      expect(readSetupState(fixture.configDir).youtrack.error, content).toContain(ytFile);
+    }
+  } finally {
+    rmSync(ytFile, { force: true });
+  }
   expect(check(run(), "malformed_config").status).toBe("pass");
 });
 
