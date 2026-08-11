@@ -12,11 +12,11 @@ import { parseVerifyOutput } from "@brainervirus/workit-core/src/core/verify-par
 import { branchSetup } from "@brainervirus/workit-core/src/core/branch";
 import {
   configDir,
+  mergeConfigValues,
   readConfig,
   writeConfig,
   resolveBranchPolicy,
   type BranchPreset,
-  type ToolkitConfig,
 } from "@brainervirus/workit-core/src/core/config";
 import { ensureProjectGitignore } from "@brainervirus/workit-core/src/core/gitignore";
 import { ensureHygieneFiles } from "@brainervirus/workit-core/src/core/hygiene";
@@ -486,16 +486,19 @@ export function createRepoTools(runtime: RepoRuntime = defaultRuntime) {
             );
           }
           const current = readConfig();
-          const next: ToolkitConfig = {
-            locale: locale ?? current.locale,
-            localeOptions: locale_options ?? current.localeOptions,
-            timezone: timezone ?? current.timezone,
-            branchPolicy: {
-              preset: (branch_policy_preset as BranchPreset) ?? current.branchPolicy.preset,
-              allowed: branch_policy_allowed ?? current.branchPolicy.allowed,
-              protected: branch_policy_protected ?? current.branchPolicy.protected,
+          // RL-02/CA-23: the preset is authoritative — derived policy fields
+          // always reset through the one shared merge (no divergent values).
+          const next = mergeConfigValues(
+            {
+              locale,
+              localeOptions: locale_options,
+              timezone,
+              preset: branch_policy_preset as BranchPreset,
+              allowed: branch_policy_allowed,
+              protectedNames: branch_policy_protected,
             },
-          };
+            current,
+          );
           writeConfig(next);
           return output(
             ok({ action: "config", path: path.join(configDir(), "config.json"), ...next }),

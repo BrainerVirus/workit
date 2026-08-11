@@ -4,8 +4,11 @@ import os from "node:os";
 import path from "node:path";
 import {
   readConfig,
+  readConfigFromDir,
+  readConfigTyped,
   writeConfig,
   resolveBranchPolicy,
+  mergeConfigValues,
   PRESETS,
   type ToolkitConfig,
 } from "../../packages/workit-core/src/core/config";
@@ -100,4 +103,92 @@ test("resolveBranchPolicy honors preset and custom overrides", () => {
     cleanupEnv();
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("RL-01: readConfigTyped distinguishes missing, valid, and malformed with exact paths", () => {
+  const dir = cfgDir();
+  try {
+    expect(readConfigTyped().status).toBe("missing");
+    expect(readConfigTyped().path).toBe(path.join(dir, "config.json"));
+
+    writeFileSync(path.join(dir, "config.json"), JSON.stringify({ locale: "es-CL" }), "utf8");
+    const valid = readConfigTyped();
+    expect(valid.status).toBe("valid");
+    expect(valid.config?.locale).toBe("es-CL");
+    expect(valid.error).toBeUndefined();
+
+    writeFileSync(path.join(dir, "config.json"), "{ not json", "utf8");
+    const malformed = readConfigTyped();
+    expect(malformed.status).toBe("malformed");
+    expect(malformed.path).toBe(path.join(dir, "config.json"));
+    expect(malformed.error).toContain(path.join(dir, "config.json"));
+  } finally {
+    cleanupEnv();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("RL-01: readConfig throws an exact-path diagnostic on malformed config (no silent defaults)", () => {
+  const dir = cfgDir();
+  try {
+    writeFileSync(path.join(dir, "config.json"), "{ broken", "utf8");
+    expect(() => readConfig()).toThrow(path.join(dir, "config.json"));
+    expect(() => readConfigFromDir(dir)).toThrow(path.join(dir, "config.json"));
+  } finally {
+    cleanupEnv();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("RL-02: readConfig derives policy from the preset and resets divergent fields", () => {
+  const dir = cfgDir();
+  try {
+    writeFileSync(
+      path.join(dir, "config.json"),
+      JSON.stringify({
+        branchPolicy: {
+          preset: "github-flow",
+          allowed: ["feature/*", "stale/*"],
+          protected: ["main", "develop"],
+        },
+      }),
+      "utf8",
+    );
+    const cfg = readConfig();
+    expect(cfg.branchPolicy.allowed).toEqual(["*"]);
+    expect(cfg.branchPolicy.protected).toEqual(["main"]);
+  } finally {
+    cleanupEnv();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("RL-02/CA-23: mergeConfigValues routes every consumer through mergePreset", () => {
+  const current: ToolkitConfig = {
+    locale: "en",
+    localeOptions: ["en"],
+    timezone: "UTC",
+    branchPolicy: { preset: "gitflow", allowed: ["feature/*"], protected: ["main"] },
+  };
+  const github = mergeConfigValues({ preset: "github-flow" }, current);
+  expect(github.branchPolicy).toEqual({
+    preset: "github-flow",
+    allowed: ["*"],
+    protected: ["main"],
+  });
+  const trunk = mergeConfigValues({ preset: "trunk-based" }, current);
+  expect(trunk.branchPolicy).toEqual({
+    preset: "trunk-based",
+    allowed: ["*"],
+    protected: ["main"],
+  });
+  const custom = mergeConfigValues(
+    { preset: "custom", allowed: ["codex/*"], protectedNames: ["main", "develop"] },
+    current,
+  );
+  expect(custom.branchPolicy).toEqual({
+    preset: "custom",
+    allowed: ["codex/*"],
+    protected: ["main", "develop"],
+  });
 });

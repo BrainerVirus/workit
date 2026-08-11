@@ -3,11 +3,13 @@ import { isDeepStrictEqual } from "node:util";
 import path from "node:path";
 import {
   LOCALE_RE,
-  mergePreset,
+  configDir,
+  mergeConfigValues,
   type BranchPreset,
   type ToolkitConfig,
 } from "@brainervirus/workit-core/src/core/config.ts";
 import {
+  loadWorkspacesFrom,
   workspacesPath,
   type WorkspaceConfig,
 } from "@brainervirus/workit-core/src/core/workspaces.ts";
@@ -55,12 +57,7 @@ export type ConfigInput = {
 };
 
 export function collectConfigValues(input: ConfigInput, current: ToolkitConfig): ToolkitConfig {
-  return {
-    locale: input.locale ?? current.locale,
-    localeOptions: current.localeOptions,
-    timezone: input.timezone ?? current.timezone,
-    branchPolicy: mergePreset(input.preset ?? current.branchPolicy.preset, input, current),
-  };
+  return mergeConfigValues(input, current);
 }
 
 export type ProjectSetupResult = {
@@ -327,21 +324,7 @@ export function shouldWriteWorkspaces(
 }
 
 export function loadWorkspaces(): WorkspaceConfig[] {
-  let raw: string;
-  try {
-    raw = readFileSync(workspacesPath(), "utf8");
-  } catch {
-    return [];
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return [];
-  }
-  if (!parsed || typeof parsed !== "object") return [];
-  const list = (parsed as { workspaces?: unknown }).workspaces;
-  return Array.isArray(list) ? (list as WorkspaceConfig[]) : [];
+  return loadWorkspacesFrom(configDir());
 }
 
 export type WriteWorkspacesResult = { ok: boolean; error?: string; path: string };

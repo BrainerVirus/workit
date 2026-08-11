@@ -1,9 +1,10 @@
 import { expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { initStatus } from "../../packages/workit-core/src/core/init";
 import {
+  readWorkspacesResult,
   resolveWorkspace,
   workspacesPath,
   type WorkspaceConfig,
@@ -217,4 +218,28 @@ test("workspacesPath follows the configDir env chain", () => {
   withIsolatedConfig(dir, () => {
     expect(workspacesPath()).toBe(path.join(dir, "workspaces.json"));
   });
+});
+
+test("RL-01: readWorkspacesResult distinguishes missing, valid, and malformed with exact paths", () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "wf-ws-result-"));
+  try {
+    withIsolatedConfig(dir, () => {
+      expect(readWorkspacesResult().status).toBe("missing");
+      expect(readWorkspacesResult().path).toBe(path.join(dir, "workspaces.json"));
+
+      writeWorkspaces(dir, JSON.stringify(WORKSPACES, null, 2));
+      const valid = readWorkspacesResult();
+      expect(valid.status).toBe("valid");
+      expect(valid.entries).toHaveLength(2);
+      expect(valid.error).toBeUndefined();
+
+      writeWorkspaces(dir, "{ nope !!");
+      const malformed = readWorkspacesResult();
+      expect(malformed.status).toBe("malformed");
+      expect(malformed.path).toBe(path.join(dir, "workspaces.json"));
+      expect(malformed.error).toContain(path.join(dir, "workspaces.json"));
+    });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

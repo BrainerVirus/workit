@@ -84,7 +84,12 @@ import {
   migrationQuestion,
 } from "@brainervirus/workit-core/src/core/docs-migration";
 import { linkDocsRepo, listSpecs, promoteSpec } from "@brainervirus/workit-core/src/core/docs-repo";
-import { configDir, readConfig, writeConfig } from "@brainervirus/workit-core/src/core/config";
+import {
+  configDir,
+  mergeConfigValues,
+  readConfig,
+  writeConfig,
+} from "@brainervirus/workit-core/src/core/config";
 import { ensureProjectGitignore } from "@brainervirus/workit-core/src/core/gitignore";
 import { ensureHygieneFiles } from "@brainervirus/workit-core/src/core/hygiene";
 import { listTemplates, writeTemplate } from "@brainervirus/workit-core/src/core/templates";
@@ -913,16 +918,17 @@ registerTool(
         });
       }
       const current = readConfig();
-      const next = {
-        locale: locale ?? current.locale,
-        localeOptions: locale_options ?? current.localeOptions,
-        timezone: timezone ?? current.timezone,
-        branchPolicy: {
-          preset: (branch_policy_preset as any) ?? current.branchPolicy.preset,
-          allowed: branch_policy_allowed ?? current.branchPolicy.allowed,
-          protected: branch_policy_protected ?? current.branchPolicy.protected,
+      const next = mergeConfigValues(
+        {
+          locale,
+          localeOptions: locale_options,
+          timezone,
+          preset: branch_policy_preset as any,
+          allowed: branch_policy_allowed,
+          protectedNames: branch_policy_protected,
         },
-      };
+        current,
+      );
       writeConfig(next);
       return jsonResult({ action: "config", path: `${configDir()}/config.json`, ...next });
     }

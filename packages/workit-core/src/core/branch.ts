@@ -8,8 +8,12 @@ import { vcsConfig } from "./vcs-config";
 const policy = () => resolveBranchPolicy(readConfig());
 const allowedBranch = (name: string) => policy().allowed.some((r) => r.test(name));
 const isProtected = (name: string) => policy().protected.has(name.toLowerCase());
-const baseBranch = (cwd: string) =>
-  String(vcsConfig("resolve", cwd).defaultTargetBranch ?? "develop");
+// RL-01: malformed vcs.json blocks branch resolution with an exact-path error.
+const baseBranch = (cwd: string): { base: string } | { error: string } => {
+  const resolved = vcsConfig("resolve", cwd);
+  if (resolved.ok === false) return { error: String(resolved.error) };
+  return { base: String(resolved.defaultTargetBranch ?? "develop") };
+};
 const DECLARE_RE = /^\s*\*+Branch:\*+\s*`?([^`\s|]+)`?\s*$/gim;
 const USE_CURRENT_RE = /^\s*\*+Branch:\*+\s*use-current\s*$/im;
 const readSafe = (p: string): string | null => {
@@ -140,7 +144,9 @@ export const docsBranch = ({
   const git = gitContext(cwd);
   const current = git.branch;
   const kindArg = (kind ?? "feature").toLowerCase();
-  const base = baseBranch(cwd);
+  const baseResolved = baseBranch(cwd);
+  if ("error" in baseResolved) return { error: baseResolved.error };
+  const base = baseResolved.base;
 
   if (current === base || current === "main" || current === "master" || current === "develop") {
     let slug = "";
@@ -311,7 +317,9 @@ export const branchSetup = ({
         };
       }
       try {
-        const baseResult = ensureBaseBranch(cwd, baseBranch(cwd));
+        const baseResolved = baseBranch(cwd);
+        if ("error" in baseResolved) return { error: baseResolved.error };
+        const baseResult = ensureBaseBranch(cwd, baseResolved.base);
         if (!baseResult.ok) return { error: baseResult.error };
         exec(["checkout", "-b", target]);
       } catch (createError) {

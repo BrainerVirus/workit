@@ -90,6 +90,9 @@ export function resolvePrBranchContext(
   }
 
   const resolved = vcsConfig("resolve", cwd);
+  if (resolved.ok === false) {
+    return { ok: false, error: String(resolved.error) };
+  }
   const base = String(resolved.defaultTargetBranch ?? "");
   if (!base || runGit(cwd, ["check-ref-format", "--branch", base]).exitCode !== 0) {
     return { ok: false, error: `invalid configured PR target branch ${base}` };

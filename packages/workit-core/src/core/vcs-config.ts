@@ -16,22 +16,39 @@ const workspacesPath = (): string => path.join(configDir(), "workspaces.json");
 const vcsCwd = (cwd?: string): string =>
   process.env.WORKFLOW_WORKSPACE_ROOT ?? cwd ?? process.cwd();
 
-function readVcsJson(): { config: Record<string, any>; path: string; ok: boolean } {
-  const cfgPath = vcsConfigPath();
-  let config: Record<string, any> = {};
-  let ok = false;
-  if (fs.existsSync(cfgPath)) {
-    try {
-      const parsed = JSON.parse(fs.readFileSync(cfgPath, "utf8")) as unknown;
-      if (parsed && typeof parsed === "object") {
-        config = parsed as Record<string, any>;
-        ok = true;
-      }
-    } catch {
-      /* missing or invalid */
-    }
+// RL-01: typed vcs.json reader. Missing is a legitimate unconfigured state;
+// malformed (parse failure or a non-object) is reported with the exact path so
+// risky consumers stop instead of silently reading defaults.
+export type VcsConfigResult = {
+  status: "missing" | "valid" | "malformed";
+  path: string;
+  config: Record<string, any>;
+  error?: string;
+};
+
+export const readVcsConfig = (): VcsConfigResult => {
+  const file = vcsConfigPath();
+  let raw: string;
+  try {
+    raw = fs.readFileSync(file, "utf8");
+  } catch {
+    return { status: "missing", path: file, config: {} };
   }
-  return { config, path: cfgPath, ok };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return { status: "malformed", path: file, config: {}, error: `${file} is not valid JSON` };
+  }
+  if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+    return { status: "valid", path: file, config: parsed as Record<string, any> };
+  }
+  return { status: "malformed", path: file, config: {}, error: `${file} is not a JSON object` };
+};
+
+function readVcsJson(): { config: Record<string, any>; path: string; ok: boolean } {
+  const { status, path: cfgPath, config } = readVcsConfig();
+  return { config, path: cfgPath, ok: status === "valid" };
 }
 
 /** Port of scripts/vcs/config.sh — mode: load | summary | resolve. */
@@ -40,7 +57,7 @@ export function vcsConfig(mode: "load" | "summary" | "resolve", cwd?: string): R
   const wsVcs = (ws?.vcs ?? {}) as Record<string, any>;
   const wsYt = (ws?.youtrack ?? {}) as Record<string, any>;
   const wsIssues = (ws?.issues ?? {}) as Record<string, any>;
-  const { config: cfg, path: cfgPath, ok: cfgOk } = readVcsJson();
+  const { status: cfgStatus, path: cfgPath, config: cfg, error: cfgError } = readVcsConfig();
 
   const provider = String(wsVcs.provider ?? cfg.provider ?? "gitlab").toLowerCase();
   const defaultTarget = String(wsVcs.defaultTargetBranch ?? cfg.defaultTargetBranch ?? "develop");
@@ -59,6 +76,10 @@ export function vcsConfig(mode: "load" | "summary" | "resolve", cwd?: string): R
   }
 
   if (mode === "resolve") {
+    // RL-01: malformed vcs.json blocks resolution with an exact-path diagnostic
+    // instead of silently resolving defaults; a missing file is still a
+    // legitimate unconfigured state that falls back to defaults.
+    if (cfgStatus === "malformed") return { ok: false, error: cfgError, configPath: cfgPath };
     return {
       ok: true,
       workspace_name: ws?.name ?? null,
@@ -71,7 +92,12 @@ export function vcsConfig(mode: "load" | "summary" | "resolve", cwd?: string): R
     };
   }
 
-  if (!cfgOk) return { ok: false, error: "missing or invalid vcs.json" };
+  if (cfgStatus === "malformed") {
+    return { ok: false, error: cfgError, configPath: cfgPath };
+  }
+  if (cfgStatus === "missing") {
+    return { ok: false, error: `vcs.json is missing: ${cfgPath}`, configPath: cfgPath };
+  }
 
   const prov = (cfg[provider] ?? {}) as Record<string, any>;
   const tokenFile = String(prov.tokenFile ?? path.join(configDir(), `${provider}.token`));

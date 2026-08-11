@@ -109,7 +109,11 @@ export const ensureConfigDir = (dir: string = resolveConfigDir()): string => {
     } catch (err) {
       migrationFailed = true;
       diagnosticLogger?.warn(EVENT.migration, { from: src, ok: false, ...errorDetail(err) });
-      console.warn(`[workit] config migration: failed to copy ${src}: ${(err as Error).message}`);
+      // Task 10 advisory: never leak the raw legacy source path to the terminal —
+      // the structured warn above carries it through the sanitized logger.
+      console.warn(
+        `[workit] config migration: a file could not be copied to ${dir}; it will be retried on the next run`,
+      );
     }
   }
   if (!migrationFailed) migratedDir = dir;
@@ -139,42 +143,103 @@ const readSafe = (p: string): string | null => {
   }
 };
 
-const parseConfig = (raw: string | null): ToolkitConfig => {
-  if (!raw) return DEFAULTS;
-  try {
-    const parsed = JSON.parse(raw) as Partial<ToolkitConfig>;
-    const locale = LOCALE_RE.test(String(parsed.locale ?? ""))
-      ? (parsed.locale as string)
-      : DEFAULTS.locale;
-    const preset = (parsed.branchPolicy?.preset ?? "gitflow") as BranchPreset;
-    const presetOk = Object.hasOwn(PRESETS, preset) ? preset : "gitflow";
-    const presetDefs = PRESETS[presetOk];
-    return {
-      locale,
-      localeOptions: Array.isArray(parsed.localeOptions)
-        ? parsed.localeOptions
-        : DEFAULTS.localeOptions,
-      timezone: parsed.timezone ?? DEFAULTS.timezone,
-      branchPolicy: {
-        preset: presetOk,
-        allowed: Array.isArray(parsed.branchPolicy?.allowed)
-          ? parsed.branchPolicy.allowed
-          : presetDefs.allowed,
-        protected: Array.isArray(parsed.branchPolicy?.protected)
-          ? parsed.branchPolicy.protected
-          : presetDefs.protected,
-      },
-    };
-  } catch {
-    return DEFAULTS;
-  }
+// RL-01: typed reader contract. Every config reader distinguishes missing from
+// valid from malformed and reports the exact file path; risky consumers stop on
+// malformed instead of silently falling back to defaults.
+export type ReaderStatus = "missing" | "valid" | "malformed";
+
+export type ReaderResult<T> = {
+  status: ReaderStatus;
+  path: string;
+  config?: T;
+  error?: string;
 };
 
-export const readConfig = (): ToolkitConfig =>
-  parseConfig(readSafe(path.join(configDir(), "config.json")));
+const parseConfigResult = (raw: string | null, file: string): ReaderResult<ToolkitConfig> => {
+  if (raw === null) return { status: "missing", path: file };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return { status: "malformed", path: file, error: `${file} is not valid JSON` };
+  }
+  // A parseable scalar/array/null is treated as an empty object, matching the
+  // doctor's parsesAsJson and readSetupState (parse gate only).
+  const input = (
+    parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {}
+  ) as Partial<ToolkitConfig>;
+  const locale = LOCALE_RE.test(String(input.locale ?? ""))
+    ? (input.locale as string)
+    : DEFAULTS.locale;
+  const preset = (
+    Object.hasOwn(PRESETS, input.branchPolicy?.preset as string)
+      ? input.branchPolicy?.preset
+      : "gitflow"
+  ) as BranchPreset;
+  return {
+    status: "valid",
+    path: file,
+    config: {
+      locale,
+      localeOptions: Array.isArray(input.localeOptions)
+        ? input.localeOptions
+        : DEFAULTS.localeOptions,
+      timezone: input.timezone ?? DEFAULTS.timezone,
+      // RL-02/CA-23: the persisted preset is authoritative; derived allowed /
+      // protected fields always reset from PRESETS via the one shared merge.
+      branchPolicy: mergePreset(
+        preset,
+        {
+          allowed: Array.isArray(input.branchPolicy?.allowed)
+            ? input.branchPolicy.allowed
+            : undefined,
+          protectedNames: Array.isArray(input.branchPolicy?.protected)
+            ? input.branchPolicy.protected
+            : undefined,
+        },
+        DEFAULTS,
+      ),
+    },
+  };
+};
 
-export const readConfigFromDir = (dir: string): ToolkitConfig =>
-  parseConfig(readSafe(path.join(dir, "config.json")));
+export const readConfigTyped = (dir?: string): ReaderResult<ToolkitConfig> => {
+  const file = path.join(dir ?? configDir(), "config.json");
+  return parseConfigResult(readSafe(file), file);
+};
+
+// RL-01: no silent fallback on malformed config — every consumer gets an
+// exact-path diagnostic instead of defaults. Missing config still defaults.
+export const readConfig = (): ToolkitConfig => {
+  const result = readConfigTyped();
+  if (result.status === "malformed") throw new Error(result.error);
+  return result.config ?? DEFAULTS;
+};
+
+export const readConfigFromDir = (dir: string): ToolkitConfig => {
+  const result = readConfigTyped(dir);
+  if (result.status === "malformed") throw new Error(result.error);
+  return result.config ?? DEFAULTS;
+};
+
+export type ConfigInput = {
+  locale?: string;
+  localeOptions?: string[];
+  timezone?: string;
+  preset?: BranchPreset;
+  allowed?: string[];
+  protectedNames?: string[];
+};
+
+// RL-02: the single authoritative ToolkitConfig merge. CLI, OpenCode, and Cursor
+// adapters all route their `config` writes through this so a preset switch
+// resets every derived policy field identically everywhere.
+export const mergeConfigValues = (input: ConfigInput, current: ToolkitConfig): ToolkitConfig => ({
+  locale: input.locale ?? current.locale,
+  localeOptions: input.localeOptions ?? current.localeOptions,
+  timezone: input.timezone ?? current.timezone,
+  branchPolicy: mergePreset(input.preset ?? current.branchPolicy.preset, input, current),
+});
 
 export const writeConfig = (config: ToolkitConfig): void => {
   const dir = configDir();

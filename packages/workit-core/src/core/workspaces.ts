@@ -14,6 +14,45 @@ export type WorkspaceConfig = {
 
 export const workspacesPath = (): string => path.join(configDir(), "workspaces.json");
 
+// RL-01: typed workspaces reader. Missing is a legitimate unconfigured state
+// (empty list); malformed JSON is reported with the exact path so risky
+// consumers (wizard/installer/doctor) can block instead of silently resetting.
+export type WorkspacesResult = {
+  status: "missing" | "valid" | "malformed";
+  path: string;
+  entries: WorkspaceConfig[];
+  error?: string;
+};
+
+export const readWorkspacesResult = (dir: string = configDir()): WorkspacesResult => {
+  const file = path.join(dir, "workspaces.json");
+  let raw: string;
+  try {
+    raw = readFileSync(file, "utf8");
+  } catch {
+    return { status: "missing", path: file, entries: [] };
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return { status: "malformed", path: file, entries: [], error: `${file} is not valid JSON` };
+  }
+  const list =
+    parsed && typeof parsed === "object"
+      ? (parsed as { workspaces?: unknown }).workspaces
+      : undefined;
+  return {
+    status: "valid",
+    path: file,
+    entries: Array.isArray(list) ? (list as WorkspaceConfig[]) : [],
+  };
+};
+
+/** Parse the workspaces.json list under an explicit config dir; [] when missing/malformed. */
+export const loadWorkspacesFrom = (dir: string): WorkspaceConfig[] =>
+  readWorkspacesResult(dir).entries;
+
 // ponytail: only globstar (`**`) is supported; if more minimatch parity is needed
 // (char classes, braces, `?`), swap this matcher for the minimatch dependency.
 const globToRegExp = (glob: string): RegExp => {
@@ -52,25 +91,6 @@ const globToRegExp = (glob: string): RegExp => {
     }
   }
   return new RegExp(`^${out}$`);
-};
-
-/** Parse the workspaces.json list under an explicit config dir; [] when missing/malformed. */
-export const loadWorkspacesFrom = (dir: string): WorkspaceConfig[] => {
-  let raw: string;
-  try {
-    raw = readFileSync(path.join(dir, "workspaces.json"), "utf8");
-  } catch {
-    return [];
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return [];
-  }
-  if (!parsed || typeof parsed !== "object") return [];
-  const list = (parsed as { workspaces?: unknown }).workspaces;
-  return Array.isArray(list) ? (list as WorkspaceConfig[]) : [];
 };
 
 /** Shared authoritative workspace matcher (WZ-12): the wizard's pattern

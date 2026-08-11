@@ -15,6 +15,7 @@ import { readSetupState } from "../../packages/workit-core/src/core/setup-state"
 import {
   buildSetupPreview,
   TOKEN_PLACEHOLDER,
+  collectConfigValues,
   type SetupMutation,
   type SetupPreviewInput,
 } from "../../packages/workit-cli/src/logic";
@@ -295,6 +296,44 @@ test("active environment overrides are exposed in the preview (RL-06)", () => {
   } finally {
     clean(dir);
   }
+});
+
+test("buildSetupPreview exposes active VCS overrides alongside YouTrack ones (RL-06)", () => {
+  const dir = tempDir();
+  try {
+    const preview = buildSetupPreview(values({ vcsProvider: "gitlab" }), {
+      dir,
+      env: { WORKFLOW_VCS_PROVIDER: "github", WORKFLOW_GITLAB_HOST: "gitlab.example.com" },
+    });
+    const provider = preview.overrides.find((o) => o.envKey === "WORKFLOW_VCS_PROVIDER");
+    expect(provider).toBeDefined();
+    expect(provider!.value).toBe("github");
+    expect(provider!.affects).toContain("provider");
+    const host = preview.overrides.find((o) => o.envKey === "WORKFLOW_GITLAB_HOST");
+    expect(host).toBeDefined();
+    expect(host!.value).toBe("gitlab.example.com");
+  } finally {
+    clean(dir);
+  }
+});
+
+test("collectConfigValues routes through mergePreset — no divergent persisted values (RL-02/CA-23)", () => {
+  const current = config({ preset: "gitflow", allowed: ["feature/*"], protected: ["main"] });
+  const github = collectConfigValues({ preset: "github-flow" }, current);
+  expect(github.branchPolicy).toEqual({
+    preset: "github-flow",
+    allowed: ["*"],
+    protected: ["main"],
+  });
+  const custom = collectConfigValues(
+    { preset: "custom", allowed: ["codex/*"], protectedNames: ["main", "develop"] },
+    current,
+  );
+  expect(custom.branchPolicy).toEqual({
+    preset: "custom",
+    allowed: ["codex/*"],
+    protected: ["main", "develop"],
+  });
 });
 
 test("readSetupState and buildSetupPreview never write (no pre-Apply write, CA-12)", () => {
