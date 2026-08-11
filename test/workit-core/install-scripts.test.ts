@@ -100,6 +100,34 @@ function makeNestedStub() {
   return { stub, home };
 }
 
+// Stub checkout for the cursor installer: needs a .cursor-plugin dir (the
+// LOCAL_ROOT guard on line 25), a stub sync-runtime.sh that records the ROOT it
+// was run against, and a .cursor home so the registration merge has a writable
+// target.
+function makeCursorStub() {
+  const stub = mkdtempSync(path.join(os.tmpdir(), "wk-install-cursor-stub-"));
+  const home = mkdtempSync(path.join(os.tmpdir(), "wk-install-cursor-home-"));
+  spawnSync("git", ["init", "-q"], { cwd: stub });
+  mkdirSync(path.join(stub, "packages/workit-core/scripts/lib"), { recursive: true });
+  mkdirSync(path.join(stub, "packages/workit-core/src/core"), { recursive: true });
+  mkdirSync(path.join(stub, "packages/workit-cursor/.cursor-plugin"), { recursive: true });
+  cpSync(
+    path.join(repoRoot, "packages/workit-core/scripts/install-cursor-plugin.sh"),
+    path.join(stub, "packages/workit-core/scripts/install-cursor-plugin.sh"),
+  );
+  cpSync(
+    path.join(repoRoot, "packages/workit-core/src/core/registration.ts"),
+    path.join(stub, "packages/workit-core/src/core/registration.ts"),
+  );
+  writeFileSync(
+    path.join(stub, "packages/workit-core/scripts/sync-runtime.sh"),
+    '#!/usr/bin/env bash\nprintf "%s" "$WORKFLOW_TOOLKIT_DEV" > "$HOME/sync-dev"\n',
+    { mode: 0o755 },
+  );
+  mkdirSync(path.join(home, ".cursor"), { recursive: true });
+  return { stub, home };
+}
+
 test("install-opencode-plugin.sh writes a file:// pin and fails loudly on an empty pinned entry", () => {
   if (!bashAvailable()) return;
   const good = makeStub("export default {};\n");
@@ -201,6 +229,36 @@ test("installers clone from the public HTTPS URL, never SSH (RR-05)", () => {
     const src = readFileSync(path.join(repoRoot, "packages/workit-core/scripts", name), "utf8");
     expect(src, name).not.toMatch(/git@github\.com:/);
     expect(src, name).toMatch(/https:\/\/github\.com\//);
+  }
+});
+
+test("install-cursor-plugin.sh resolves the local checkout root and never falls back to GitHub", () => {
+  if (!bashAvailable()) return;
+  const fixture = makeCursorStub();
+  try {
+    // A share clone with a dead remote makes the FROM_GITHUB fallback
+    // deterministically fail offline (no network). A green run therefore proves
+    // the installer used the local checkout tree, and sync-dev records which
+    // ROOT it synced from.
+    const share = path.join(fixture.home, ".local/share/workflow-toolkit");
+    mkdirSync(path.join(share, ".git"), { recursive: true });
+    spawnSync("git", ["init", "-q"], { cwd: share });
+    spawnSync("git", ["remote", "add", "origin", "https://127.0.0.1:1/workflow-toolkit.git"], {
+      cwd: share,
+    });
+
+    const installed = spawnSync("bash", ["packages/workit-core/scripts/install-cursor-plugin.sh"], {
+      cwd: fixture.stub,
+      env: { ...process.env, HOME: fixture.home, WORKFLOW_TOOLKIT_DEV: fixture.stub },
+      encoding: "utf8",
+    });
+    expect(installed.status, installed.stderr).toBe(0);
+    expect(readFileSync(path.join(fixture.home, "sync-dev"), "utf8")).toBe(
+      realpathSync(fixture.stub),
+    );
+  } finally {
+    rmSync(fixture.stub, { recursive: true, force: true });
+    rmSync(fixture.home, { recursive: true, force: true });
   }
 });
 

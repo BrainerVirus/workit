@@ -53,8 +53,7 @@ export function mergeOpenCodeConfig(
   if (isRecord(skills) && Array.isArray(skills.paths)) {
     const next = skills.paths.filter((p) => !String(p).includes("workflow-toolkit"));
     if (next.length !== skills.paths.length) {
-      skills.paths = next;
-      base.skills = skills;
+      base.skills = { ...skills, paths: next };
       changed.push("skills.paths");
     }
   }
@@ -76,8 +75,19 @@ export function mergeCursorPluginDirs(
   pluginDirs: unknown,
   pluginDir: string,
 ): MergeResult<string[]> {
+  // path.join does not strip a single trailing separator; do it explicitly for
+  // the dedup comparison (guarding the filesystem-root case).
+  const strip = (p: string) => {
+    const j = path.join(p);
+    return path.dirname(j) === j ? j : j.replace(/[\\/]+$/, "");
+  };
+  const normalized = strip(pluginDir);
   const prev = Array.isArray(pluginDirs) ? pluginDirs.map(String) : [];
-  const next = prev.includes(pluginDir) ? prev : [...prev, pluginDir];
+  // Normalize both sides for comparison so a trailing-slash variant of an
+  // existing entry is not appended as a duplicate; existing entries are kept
+  // verbatim.
+  const exists = prev.some((d) => strip(d) === normalized);
+  const next = exists ? prev : [...prev, normalized];
   const changed = next.length !== prev.length ? ["plugin_dirs"] : [];
   return { config: next, changed };
 }

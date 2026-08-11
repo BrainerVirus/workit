@@ -250,8 +250,8 @@ test("packed tarball locations never reference the repository checkout", () => {
 
 test("declared platform matrix is pinned across CI, engines, and lockfiles (PT-11/PT-12)", () => {
   // The support matrix is the single source of truth for the published
-  // toolchain. No Deno is advertised anywhere in the repo surface.
-  expect(SUPPORT_MATRIX.os).toEqual(["ubuntu-latest", "macos-latest", "windows-latest"]);
+  // toolchain. No Deno is advertised anywhere in the repo surface. (The OS list
+  // itself is asserted via ci.yml below and in manifests.test.ts.)
 
   const ci = readFileSync(path.join(REPO_ROOT, ".github/workflows/ci.yml"), "utf8");
   expect(ci).toContain(SUPPORT_MATRIX.bun);

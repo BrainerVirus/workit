@@ -11,7 +11,7 @@ LOCAL_ROOT=""
 if [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "${BASH_SOURCE[0]}" ]; then
   SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
   # RR-05: LOCAL_ROOT is the checkout root (scripts live under <root>/packages/workit-core/scripts)
-  LOCAL_ROOT="$(CDPATH= cd -- "$SCRIPT_DIR/../.." && pwd)"
+  LOCAL_ROOT="$(CDPATH= cd -- "$SCRIPT_DIR/../../.." && pwd)"
 else
   FROM_GITHUB=1
 fi

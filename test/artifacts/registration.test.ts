@@ -7,6 +7,7 @@ import {
   isWorkitPlugin,
   mergeCursorHooks,
   mergeCursorMcp,
+  mergeCursorPluginDirs,
   mergeCursorSettings,
   mergeOpenCodeConfig,
   mergeOpenCodePlugins,
@@ -117,6 +118,29 @@ test("mergeCursorSettings keeps a single plugin identity, appends dirs, preserve
   expect(config["chat.temperature"]).toBe(0.3);
   expect(JSON.stringify(config.telemetry)).toBe(JSON.stringify(input.telemetry));
   expect(changed).toEqual(["enabled_plugins", "plugin_dirs"]);
+});
+
+test("mergeOpenCodeConfig does not mutate the caller's nested skills object", () => {
+  const skills = { paths: ["/x/share/workflow-toolkit/skills", "/other"], enabled: ["wk-commit"] };
+  const input = { plugin: ["other-plugin"], skills };
+  const before = JSON.stringify(skills);
+  mergeOpenCodeConfig(input, PIN);
+  expect(JSON.stringify(skills)).toBe(before);
+  expect(skills.paths).toEqual(["/x/share/workflow-toolkit/skills", "/other"]);
+});
+
+test("mergeCursorPluginDirs normalizes trailing slashes so variants do not duplicate", () => {
+  const appended = mergeCursorPluginDirs([], "/pkg/");
+  expect(appended.config).toEqual(["/pkg"]);
+  expect(appended.changed).toEqual(["plugin_dirs"]);
+
+  const dedup = mergeCursorPluginDirs(["/pkg"], "/pkg/");
+  expect(dedup.config).toEqual(["/pkg"]);
+  expect(dedup.changed).toEqual([]);
+
+  const existing = mergeCursorPluginDirs(["/pkg/"], "/pkg");
+  expect(existing.config).toEqual(["/pkg/"]);
+  expect(existing.changed).toEqual([]);
 });
 
 test("mergeCursorSettings is idempotent", () => {
