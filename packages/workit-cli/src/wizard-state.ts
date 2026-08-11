@@ -5,6 +5,7 @@ import {
   type ToolkitConfig,
 } from "@brainervirus/workit-core/src/core/config.ts";
 import type { WorkspaceConfig } from "@brainervirus/workit-core/src/core/workspaces.ts";
+import { validateWorkspaceGlob } from "@brainervirus/workit-core/src/core/workspaces.ts";
 import {
   loadWorkspaces,
   parseList,
@@ -176,10 +177,12 @@ function validateScreen(draft: WizardDraft): { field: string; message: string } 
       return (draft.workspaceDraft?.name ?? "").trim()
         ? null
         : { field: "workspaceName", message: "workspace name is required" };
-    case "workspaceGlob":
-      return (draft.workspaceDraft?.glob ?? "").trim()
-        ? null
-        : { field: "workspaceGlob", message: "workspace pattern is required" };
+    case "workspaceGlob": {
+      const glob = (draft.workspaceDraft?.glob ?? "").trim();
+      if (!glob) return { field: "workspaceGlob", message: "workspace pattern is required" };
+      const v = validateWorkspaceGlob(glob);
+      return v.ok ? null : { field: "workspaceGlob", message: v.error };
+    }
     default:
       return null;
   }

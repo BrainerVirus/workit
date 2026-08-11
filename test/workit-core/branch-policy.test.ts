@@ -7,6 +7,9 @@ import { createRepoTools } from "../../packages/workit-opencode/src/tools/repo";
 import { createSddTools } from "../../packages/workit-opencode/src/tools/sdd";
 import { WorkflowStateStore } from "../../packages/workit-core/src/state";
 import { docsBranch, resolveBranch } from "../../packages/workit-core/src/core/branch";
+import { vcsConfig } from "../../packages/workit-core/src/core/vcs-config";
+import { resolvePrBranchContext } from "../../packages/workit-core/src/core/repo-context";
+import { prCreate } from "../../packages/workit-core/src/core/pr-create";
 
 const git = (cwd: string, args: string[]) => spawnSync("git", args, { cwd, encoding: "utf8" });
 
@@ -480,6 +483,100 @@ test("docsBranch reports keep and create_from_develop and HEAD errors", () => {
     expect(created.branch).toBe("bugfix/x");
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("RL-03: every PR surface resolves the one configured target branch per preset", async () => {
+  // CLI/resolve, PR context, docs branch, OpenCode tool, and Cursor create all
+  // consume the same target from authoritative config — no per-surface override.
+  const CASES = [
+    { preset: "gitflow", target: "develop" },
+    { preset: "github-flow", target: "main" },
+    { preset: "trunk-based", target: "main" },
+    { preset: "custom", target: "trunk" },
+  ] as const;
+  const stubBin = mkdtempSync(path.join(os.tmpdir(), "wf-rel03-bin-"));
+  const logFile = path.join(stubBin, "glab-args.txt");
+  writeFileSync(
+    path.join(stubBin, "glab"),
+    `#!/bin/sh\nprintf '%s\\n' "$*" >> "${logFile}"\necho "https://gitlab.com/o/r/-/merge_requests/1"\n`,
+    { mode: 0o755 },
+  );
+  const prevPath = process.env.PATH;
+  try {
+    process.env.PATH = `${stubBin}${path.delimiter}${prevPath ?? ""}`;
+    for (const c of CASES) {
+      const { root, remote } = repoWithDevelop();
+      if (c.target === "trunk") {
+        git(root, ["checkout", "-q", "-b", "trunk"]);
+        git(root, ["push", "-q", "-u", "origin", "trunk"]);
+      }
+      writeFileSync(
+        path.join(isolatedConfig, "workit", "config.json"),
+        JSON.stringify({
+          branchPolicy: {
+            preset: c.preset,
+            allowed: c.preset === "custom" ? ["feature/*"] : undefined,
+            protected: ["main"],
+          },
+        }),
+      );
+      writeFileSync(
+        path.join(isolatedConfig, "workit", "vcs.json"),
+        JSON.stringify({ provider: "gitlab", defaultTargetBranch: c.target }),
+      );
+      writeFileSync(path.join(isolatedConfig, "workit", "gitlab.token"), "test-token\n");
+      writeFileSync(
+        path.join(isolatedConfig, "workit", "workspaces.json"),
+        JSON.stringify({
+          workspaces: [
+            {
+              name: "t",
+              glob: `${root}/**`,
+              vcs: { provider: "gitlab", defaultTargetBranch: c.target },
+            },
+          ],
+        }),
+      );
+      try {
+        git(root, ["checkout", "-q", "-b", "feature/rel03"]);
+
+        // surface 1 — CLI / config resolve
+        const resolved = vcsConfig("resolve", root);
+        expect(resolved.defaultTargetBranch).toBe(c.target);
+
+        // surface 2 — PR context base_ref
+        const ctx = resolvePrBranchContext(root);
+        expect(ctx.ok, `${c.preset}: ${ctx.ok === false ? ctx.error : ""}`).toBe(true);
+        if (ctx.ok) expect([`origin/${c.target}`, c.target]).toContain(ctx.value.baseRef);
+
+        // surface 3 — docs branch base
+        const db = docsBranch({ plan_path: "docs/x/plan.md", workspace_root: root });
+        expect("error" in db).toBe(false);
+        if (!("error" in db)) expect(db.base).toBe(c.target);
+
+        // surface 4 — OpenCode workflow_pr_create
+        const raw = await createRepoTools().workflow_pr_create.execute(
+          { confirmed: true, title: "T" },
+          { directory: root, worktree: root } as never,
+        );
+        const toolResult = JSON.parse(raw as string);
+        expect(toolResult.ok, `${c.preset}: ${JSON.stringify(toolResult)}`).toBe(true);
+        expect(toolResult.data.targetBranch).toBe(c.target);
+
+        // surface 5 — Cursor workflow_pr_create routes through the same prCreate
+        const p = prCreate({ WF_PR_CONFIRMED: "true", WF_PR_TITLE: "T" }, root);
+        expect(p.ok, `${c.preset}: ${JSON.stringify(p)}`).toBe(true);
+        expect(p.targetBranch).toBe(c.target);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+        rmSync(remote, { recursive: true, force: true });
+      }
+    }
+  } finally {
+    if (prevPath === undefined) delete process.env.PATH;
+    else process.env.PATH = prevPath;
+    rmSync(stubBin, { recursive: true, force: true });
   }
 });
 

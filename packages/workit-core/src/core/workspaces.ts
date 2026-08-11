@@ -98,6 +98,28 @@ const globToRegExp = (glob: string): RegExp => {
 export const matchWorkspace = (glob: string, target: string): boolean =>
   globToRegExp(glob.replaceAll("\\", "/")).test(target.replaceAll("\\", "/"));
 
+// RL-08: the matcher above implements `*` and `**` only. Classic glob
+// metacharacters it would otherwise store as literals (char classes, `?`,
+// brace expansion) are rejected at write time so a saved pattern never
+// silently matches nothing (Task 15 advisory: unsupported patterns were
+// accepted and shown as "no match").
+const UNSUPPORTED_GLOB = /[?[\]{}]/;
+
+export type GlobValidation = { ok: true } | { ok: false; error: string };
+
+export const validateWorkspaceGlob = (glob: string): GlobValidation => {
+  const trimmed = glob.trim();
+  if (!trimmed) return { ok: false, error: "workspace pattern is required" };
+  const m = UNSUPPORTED_GLOB.exec(trimmed);
+  if (m) {
+    return {
+      ok: false,
+      error: `unsupported glob character ${JSON.stringify(m[0])} in workspace pattern ${JSON.stringify(glob)} — the matcher supports * and ** only (e.g. /work/**)`,
+    };
+  }
+  return { ok: true };
+};
+
 /** Match a cwd against the workspaces.json under an explicit config dir. */
 export const resolveWorkspaceFrom = (cwd: string, dir: string): WorkspaceConfig | null => {
   const cwdPosix = cwd.replaceAll("\\", "/");

@@ -10,6 +10,7 @@ import {
 } from "@brainervirus/workit-core/src/core/config.ts";
 import {
   loadWorkspacesFrom,
+  validateWorkspaceGlob,
   workspacesPath,
   type WorkspaceConfig,
 } from "@brainervirus/workit-core/src/core/workspaces.ts";
@@ -342,6 +343,14 @@ export function writeWorkspaces(entries: WorkspaceConfig[]): WriteWorkspacesResu
     }
     if (typeof entry.glob !== "string" || !entry.glob.trim()) {
       return { ok: false, error: `workspace "${entry.name}" missing a glob`, path: file };
+    }
+    const globValidation = validateWorkspaceGlob(entry.glob);
+    if (!globValidation.ok) {
+      return {
+        ok: false,
+        error: `workspace "${entry.name}": ${globValidation.error}`,
+        path: file,
+      };
     }
     const provider = entry.vcs?.provider;
     if (provider && !VALID_PROVIDERS.includes(provider)) {

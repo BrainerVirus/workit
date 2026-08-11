@@ -336,6 +336,29 @@ test("collectConfigValues routes through mergePreset — no divergent persisted 
   });
 });
 
+test("unsupported workspace glob blocks the preview without a write mutation (RL-08/CA-31)", () => {
+  const dir = tempDir();
+  try {
+    const okPreview = buildSetupPreview(values({ workspaces: [wsEntry("work", "/work/**")] }), {
+      dir,
+      cwd: dir,
+      env: {},
+    });
+    expect(okPreview.ok).toBe(true);
+
+    const badPreview = buildSetupPreview(
+      values({ workspaces: [wsEntry("work", "/work/[abc]/**")] }),
+      { dir, cwd: dir, env: {} },
+    );
+    expect(badPreview.ok).toBe(false);
+    expect(badPreview.blocked.some((b) => b.includes("unsupported"))).toBe(true);
+    expect(badPreview.mutations.some((m) => m.type === "update-workspaces")).toBe(false);
+    expect(existsSync(path.join(dir, "workspaces.json"))).toBe(false);
+  } finally {
+    clean(dir);
+  }
+});
+
 test("readSetupState and buildSetupPreview never write (no pre-Apply write, CA-12)", () => {
   const dir = tempDir();
   try {

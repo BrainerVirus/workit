@@ -14,7 +14,12 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { vcsConfig } from "../../packages/workit-core/src/core/vcs-config";
 import { prBuildBody, prCreate } from "../../packages/workit-core/src/core/pr-create";
-import { prReadyContext } from "../../packages/workit-core/src/core/repo-context";
+import { validateWorkspaceGlob } from "../../packages/workit-core/src/core/workspaces";
+import {
+  prReadyContext,
+  resolvePrBranchContext,
+} from "../../packages/workit-core/src/core/repo-context";
+import { writeWorkspaces } from "../../packages/workit-cli/src/logic";
 
 // Parity tests for the TS ports of scripts/vcs/config.sh resolve/load, pr-create.sh
 // missing-CLI guard, pr-create.sh --build-body issue linking, and pr-ready-context.sh
@@ -465,6 +470,27 @@ test("pr-create.sh --build-body: version-like tokens are not linked (POSTGRES-16
   ).toBe("Related to: https://yt.example.com/issue/IRP-123");
 });
 
+test("pr-create.sh --build-body: date-like branch prefixes never close an unrelated issue (RL-03/CA-25)", () => {
+  // Task 15 advisory: feature/2024-01-15/x derived a year and closed #2024.
+  // Year-first date segments must not be interpreted as issue ids.
+  expect(buildBody({ GH_LINK_ON_PR: "true", BRANCH: "feature/2024-01-15/fix" })).toBe("");
+  expect(buildBody({ GH_LINK_ON_PR: "true", BRANCH: "2024-01-15/fix" })).toBe("");
+  expect(buildBody({ GH_LINK_ON_PR: "true", BRANCH: "feature/2024-01/foo" })).toBe("");
+  expect(buildBody({ GH_LINK_ON_PR: "true", BRANCH: "feature/2024-11-30" })).toBe("");
+  expect(buildBody({ GH_LINK_ON_PR: "true", BRANCH: "2024-1-2" })).toBe("");
+  // deliberate numeric issue branches still link
+  expect(buildBody({ GH_LINK_ON_PR: "true", BRANCH: "feature/42-title" })).toBe("Closes #42");
+  expect(buildBody({ GH_LINK_ON_PR: "true", BRANCH: "feature/2024-fix" })).toBe("Closes #2024");
+  // youtrack letter derivation is unaffected by date segments
+  expect(
+    buildBody({
+      LINK_ISSUES: "true",
+      BRANCH: "feature/2024-01-15/IRP-123",
+      YT_BASE_URL: "https://yt.example.com",
+    }),
+  ).toBe("Related to: https://yt.example.com/issue/IRP-123");
+});
+
 test("pr-create.sh --build-body: explicit WORKFLOW_YT_ISSUE wins over branch-derived id", () => {
   expect(
     buildBody({
@@ -612,5 +638,113 @@ test("pr-create.sh create: cfg-driven wiring emits Closes #N into the real gh in
   } finally {
     rmSync(stubBin, { recursive: true, force: true });
     rmSync(repoDir, { recursive: true, force: true });
+  }
+});
+
+test("pr-create.sh create: target branch flows from config for every preset (RL-03)", () => {
+  const CASES = [
+    { preset: "gitflow", provider: "gitlab", target: "develop" },
+    { preset: "github-flow", provider: "github", target: "main" },
+    { preset: "trunk-based", provider: "github", target: "main" },
+    { preset: "custom", provider: "gitlab", target: "trunk" },
+  ] as const;
+  for (const c of CASES) {
+    const stubBin = mkdtempSync(path.join(os.tmpdir(), "wf-pr-target-"));
+    const stub = c.provider === "gitlab" ? "glab" : "gh";
+    const logFile = path.join(stubBin, `${stub}-args.txt`);
+    writeFileSync(
+      path.join(stubBin, stub),
+      `#!/bin/sh\nprintf '%s\\n' "$*" >> "${logFile}"\necho "https://example.com/ok"\n`,
+      { mode: 0o755 },
+    );
+    const pathDirs = (process.env.PATH ?? "").split(path.delimiter);
+    const cleanPath = pathDirs.filter(
+      (d) => d && !existsSync(path.join(d, "gh")) && !existsSync(path.join(d, "glab")),
+    );
+    const repo = realpathSync(mkdtempSync(path.join(os.tmpdir(), "wf-pr-target-repo-")));
+    const git = (args: string[]) => spawnSync("git", args, { cwd: repo, encoding: "utf8" });
+    git(["init", "-q", "-b", "develop"]);
+    git(["config", "user.name", "Workflow Test"]);
+    git(["config", "user.email", "workflow@example.test"]);
+    writeFileSync(path.join(repo, "README.md"), "base\n");
+    git(["add", "README.md"]);
+    git(["commit", "-q", "-m", "base"]);
+    try {
+      const r = withConfigFiles(
+        {
+          "vcs.json": JSON.stringify({ provider: c.provider, defaultTargetBranch: c.target }),
+          "workspaces.json": workspacesJson(`${repo}/**`, c.provider, {
+            vcs: { defaultTargetBranch: c.target },
+          }),
+          [`${c.provider}.token`]: "test-token-123",
+        },
+        {
+          PATH: `${stubBin}${path.delimiter}${cleanPath.join(path.delimiter)}`,
+          WF_PR_CONFIRMED: "true",
+          WF_PR_TITLE: "T",
+        },
+        () => prCreate({ ...process.env, WF_PR_CONFIRMED: "true", WF_PR_TITLE: "T" }, repo),
+      );
+      expect(r.ok, `${c.preset}: ${JSON.stringify(r)}`).toBe(true);
+      expect(r.targetBranch).toBe(c.target);
+      const logged = readFileSync(logFile, "utf8");
+      if (c.provider === "gitlab") expect(logged).toContain(`-b ${c.target}`);
+      else expect(logged).toContain(`--base ${c.target}`);
+    } finally {
+      rmSync(stubBin, { recursive: true, force: true });
+      rmSync(repo, { recursive: true, force: true });
+    }
+  }
+});
+
+test("RL-08: writeWorkspaces rejects unsupported glob grammar at write time", () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "wf-ws-write-"));
+  try {
+    withEnv({ WORKFLOW_TOOLKIT_CONFIG: dir }, () => {
+      const ok = writeWorkspaces([
+        { name: "work", glob: "/home/*/work/**", vcs: { provider: "gitlab" } },
+      ]);
+      expect(ok.ok).toBe(true);
+      expect(ok.path).toBe(path.join(dir, "workspaces.json"));
+      expect(existsSync(ok.path)).toBe(true);
+      for (const bad of ["/home/*/[abc]/**", "/home/*/x?/**", "/home/*/{a,b}/**", "**/[ab]/**"]) {
+        const r = writeWorkspaces([{ name: "work", glob: bad, vcs: { provider: "gitlab" } }]);
+        expect(r.ok).toBe(false);
+        expect(r.error).toContain("unsupported");
+      }
+      expect(validateWorkspaceGlob("**").ok).toBe(true);
+      expect(validateWorkspaceGlob("/x/?/**").ok).toBe(false);
+    });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("PR context base_ref and prCreate target agree for the same workspace (RL-03)", () => {
+  const repo = realpathSync(mkdtempSync(path.join(os.tmpdir(), "wf-pr-ctx-create-")));
+  const git = (args: string[]) => spawnSync("git", args, { cwd: repo, encoding: "utf8" });
+  git(["init", "-q", "-b", "main"]);
+  git(["config", "user.name", "Workflow Test"]);
+  git(["config", "user.email", "workflow@example.test"]);
+  writeFileSync(path.join(repo, "README.md"), "base\n");
+  git(["add", "README.md"]);
+  git(["commit", "-q", "-m", "base"]);
+  git(["branch", "develop"]);
+  git(["checkout", "-q", "-b", "feature/ctx-create"]);
+  try {
+    const ctx = withConfigFiles(
+      {
+        "vcs.json": JSON.stringify({ provider: "gitlab", defaultTargetBranch: "develop" }),
+        "workspaces.json": workspacesJson(`${repo}/**`, "gitlab", {
+          vcs: { defaultTargetBranch: "main" },
+        }),
+      },
+      {},
+      () => resolvePrBranchContext(repo),
+    );
+    expect(ctx.ok).toBe(true);
+    if (ctx.ok) expect([`origin/main`, `main`]).toContain(ctx.value.baseRef);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
   }
 });

@@ -19,6 +19,19 @@ function parseGhIssue(value: string): string {
   return m ? m[1] : String(value).trim().replace(/^#/, "");
 }
 
+// RL-03/CA-25: a branch-derived numeric issue id must be a bare number at a
+// segment or dash boundary — and never part of a year-first date segment
+// (feature/2024-01-15/x must not close #2024). Deliberate numeric issue
+// branches (feature/42-title, feature/2024-fix) keep linking.
+function deriveGhIssueFromBranch(branch: string): string {
+  for (const segment of branch.split("/")) {
+    if (/^\d{4}-\d/.test(segment)) continue; // year-first date-like segment
+    const m = /(?:^|-)(\d+)(?:-|$)/.exec(segment);
+    if (m) return m[1];
+  }
+  return "";
+}
+
 function buildBody(
   body: string,
   branch: string,
@@ -44,9 +57,7 @@ function buildBody(
     if (!issue && branch) {
       // pure-number issue id (feature/42-title -> 42); digits must be followed by a dash or end-of-string
       // so version tokens (release/1.2.3, backport/8.0.1, lodash-4.17.21, 2024.1) never link
-      // ponytail: known date-style false positive (feature/2024-01-fix -> Closes #2024); accepted — bare 42-title support is deliberate
-      const m = /(?:^|\/|-)(\d+)(?:-|$)/.exec(branch);
-      if (m) issue = m[1];
+      issue = deriveGhIssueFromBranch(branch);
     }
     if (issue) {
       if (ghRelation === "related") {

@@ -4,7 +4,7 @@ import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { mergePreset, readConfigFromDir, resolveConfigDir, type BranchPreset } from "./config";
 import { readSetupState, type SetupState } from "./setup-state";
-import { loadWorkspacesFrom, type WorkspaceConfig } from "./workspaces";
+import { loadWorkspacesFrom, validateWorkspaceGlob, type WorkspaceConfig } from "./workspaces";
 import { GITIGNORE_ENTRIES } from "./gitignore";
 import { planHygieneFiles } from "./hygiene";
 import { packageRoot } from "./package-root";
@@ -190,11 +190,23 @@ export function buildSetupPreview(
     // Removing every workspace differs from disk and therefore still writes [].
     const diskWorkspaces = loadWorkspacesFrom(state.configDir);
     if (!isDeepStrictEqual(values.workspaces, diskWorkspaces)) {
-      mutations.push({
-        type: "update-workspaces",
-        path: path.join(state.configDir, "workspaces.json"),
-        entries: values.workspaces,
-      });
+      // RL-08: unsupported matcher grammar is rejected before any write —
+      // same gate the direct writeWorkspaces path and the wizard enforce.
+      for (const entry of values.workspaces) {
+        if (!entry || typeof entry.glob !== "string") continue;
+        const v = validateWorkspaceGlob(entry.glob);
+        if (!v.ok) {
+          blocked.push(v.error);
+          break;
+        }
+      }
+      if (blocked.length === 0) {
+        mutations.push({
+          type: "update-workspaces",
+          path: path.join(state.configDir, "workspaces.json"),
+          entries: values.workspaces,
+        });
+      }
     }
 
     if (values.baseUrl.trim()) {
@@ -422,6 +434,13 @@ function applyMutation(m: SetupMutation): SetupResultEntry {
         : { platform: "core", file: m.path, status: "Installed" };
     }
     case "update-workspaces": {
+      // RL-08: a mutation built by a non-wizard caller still cannot write an
+      // unsupported matcher pattern — reported Failed, never silently stored.
+      for (const entry of m.entries) {
+        if (!entry || typeof entry.glob !== "string") continue;
+        const v = validateWorkspaceGlob(entry.glob);
+        if (!v.ok) return { platform: "core", file: m.path, status: "Failed", detail: v.error };
+      }
       const next = JSON.stringify({ workspaces: m.entries }, null, 2) + "\n";
       const prev = readFileSafe(m.path);
       if (prev === next)
