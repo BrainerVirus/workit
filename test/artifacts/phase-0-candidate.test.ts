@@ -225,7 +225,8 @@ test("Cursor MCP launcher starts the server from the extracted package, repo-fre
     expect(launcher).not.toContain("Documents/projects");
     const mcpJson = JSON.parse(readFileSync(path.join(cursorDir, "mcp.json"), "utf8"));
     const serverArgs = mcpJson.mcpServers.workit.args.join(" ").replace("${workspaceFolder}", "");
-    expect(serverArgs).toContain("run-server.sh");
+    expect(mcpJson.mcpServers.workit.command).toBe("node");
+    expect(serverArgs).toContain("dist/mcp-server.js");
     expect(serverArgs).not.toContain("$HOME");
 
     // Runtime: with a temp HOME and every WORKFLOW_* var stripped, the launcher

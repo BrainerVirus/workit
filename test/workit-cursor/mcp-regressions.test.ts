@@ -294,14 +294,15 @@ test("cursor MCP manifests stay package-relative (mcp.json, marketplace.json, ho
   const joined = [server.command, ...(server.args ?? [])]
     .join(" ")
     .replace("${workspaceFolder}", "");
+  expect(server.command).toBe("node"); // PT-10: explicit Node for Windows compatibility
   expect(joined).not.toMatch(/\$HOME/);
   expect(joined).not.toContain(".local/share");
   expect(joined).not.toContain("Documents/projects");
-  expect(joined).toMatch(/run-server\.sh/);
+  expect(joined).toMatch(/dist\/mcp-server\.js/);
 
   expect(marketplace.homepage).toBe("https://github.com/BrainerVirus/workit");
   expect(marketplace.repository).toBe("https://github.com/BrainerVirus/workit.git");
-  expect(hooks.hooks.sessionStart).toEqual([{ command: "./hooks/session-start" }]);
+  expect(hooks.hooks.sessionStart).toEqual([{ command: "./dist/cursor-session-start.js" }]);
   expect(launcher).not.toMatch(/Documents\/projects/);
   expect(launcher).not.toMatch(/\$HOME\/\.local\/share\/workflow-toolkit/);
 });

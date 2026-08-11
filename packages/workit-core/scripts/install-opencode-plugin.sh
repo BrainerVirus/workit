@@ -36,29 +36,18 @@ fi
 mkdir -p "$(dirname "$CONFIG")"
 [ -f "$CONFIG" ] || printf '%s\n' "{}" >"$CONFIG"
 
-CONFIG_PATH="$CONFIG" PIN_PATH="$PIN" bun -e '
+# Merge/dedupe registrations via the shared core helper (RR-06): one dev pin,
+# no legacy/current duplicates, unrelated user settings preserved.
+CONFIG_PATH="$CONFIG" PIN_PATH="$PIN" REGISTRATION_TS="$ROOT/packages/workit-core/src/core/registration.ts" bun -e '
 import fs from "node:fs";
+const { mergeOpenCodeConfig } = await import(process.env.REGISTRATION_TS!);
 const path = process.env.CONFIG_PATH!;
-const pin = process.env.PIN_PATH!;
 const data = JSON.parse(fs.readFileSync(path, "utf8"));
-let plugins = data.plugin || [];
-if (typeof plugins === "string") plugins = [plugins];
-// Load the dev pin first and remove every stale/current Workit identity.
-const isWorkit = (p) => {
-  const value = String(p);
-  return value.includes("workflow-toolkit") ||
-    value.includes("@brainervirus/workit-opencode") ||
-    value.includes("/packages/workit-opencode/");
-};
-data.plugin = [pin, ...plugins.filter((p) => !isWorkit(p))];
-// Drop share skills.paths — native ~/.config/opencode/skills links avoid triple-load dups
-const skills = data.skills;
-if (skills && typeof skills === "object") {
-  skills.paths = (skills.paths || []).filter((p) => !String(p).includes("workflow-toolkit"));
-  data.skills = skills;
-}
-fs.writeFileSync(path, JSON.stringify(data, null, 2) + "\n");
-console.log("Pinned:", pin);
+const { config, changed } = mergeOpenCodeConfig(data, process.env.PIN_PATH!);
+fs.writeFileSync(path, JSON.stringify(config, null, 2) + "\n");
+console.log("Pinned:", process.env.PIN_PATH!);
+if (changed.includes("plugin")) console.log("Deduplicated Workit plugin entries");
+if (changed.includes("skills.paths")) console.log("Dropped share skill paths");
 console.log("Native skills/commands via ~/.config/opencode/{skills,commands}");
 '
 

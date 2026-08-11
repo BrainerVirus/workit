@@ -1,0 +1,195 @@
+import { expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import {
+  cursorMcpServerEntry,
+  isWorkitPlugin,
+  mergeCursorHooks,
+  mergeCursorMcp,
+  mergeCursorSettings,
+  mergeOpenCodeConfig,
+  mergeOpenCodePlugins,
+} from "../../packages/workit-core/src/core/registration";
+
+// Task 8 registration gate (RR-06): the installer registration merges accept an
+// existing user config, deduplicate every current + legacy Workit identity, and
+// return the deduplicated config PLUS the explicit list of keys changed — never
+// rewriting unrelated user settings (values round-trip JSON-identical).
+
+const PIN = "file:///work/packages/workit-opencode/src/plugin.ts";
+
+test("isWorkitPlugin matches every legacy and current identity, never unrelated plugins", () => {
+  for (const id of [
+    "workflow-toolkit-opencode",
+    "workflow-toolkit-opencode@git+file:///old/checkout",
+    "@brainervirus/workit-opencode",
+    "@brainervirus/workit-opencode@1.0.0",
+    "file:///work/packages/workit-opencode/src/plugin.ts",
+  ]) {
+    expect(isWorkitPlugin(id), id).toBe(true);
+  }
+  for (const id of ["@dietrichgebert/ponytail", "@opencode-ai/plugin", "my-plugin"]) {
+    expect(isWorkitPlugin(id), id).toBe(false);
+  }
+});
+
+test("mergeOpenCodePlugins dedups legacy + current identities to a single pin", () => {
+  const existing = [
+    "@dietrichgebert/ponytail",
+    "workflow-toolkit-opencode@git+file:///old/checkout",
+    "@brainervirus/workit-opencode",
+    PIN,
+  ];
+  const { config, changed } = mergeOpenCodePlugins(existing, PIN);
+  expect(config).toEqual([PIN, "@dietrichgebert/ponytail"]);
+  expect(changed).toEqual(["plugin"]);
+});
+
+test("mergeOpenCodeConfig dedups plugins and preserves unrelated settings byte-for-byte", () => {
+  const input: Record<string, unknown> = {
+    model: "gpt-5",
+    theme: "dark",
+    $schema: "https://opencode.ai/config.json",
+    plugin: [
+      "@dietrichgebert/ponytail",
+      "workflow-toolkit-opencode@git+file:///old/checkout",
+      "@brainervirus/workit-opencode",
+      PIN,
+    ],
+  };
+  const { config, changed } = mergeOpenCodeConfig(input, PIN);
+  expect(config.plugin).toEqual([PIN, "@dietrichgebert/ponytail"]);
+  expect(changed).toEqual(["plugin"]);
+  for (const key of ["model", "theme", "$schema"]) {
+    expect(JSON.stringify(config[key]), key).toBe(JSON.stringify(input[key]));
+  }
+  expect(Object.keys(config).sort()).toEqual(Object.keys(input).sort());
+});
+
+test("mergeOpenCodeConfig drops stale workflow-toolkit skill paths, keeps unrelated paths", () => {
+  const input = {
+    plugin: ["other-plugin"],
+    skills: {
+      paths: [
+        "/x/share/workflow-toolkit/skills",
+        "~/.config/opencode/skills",
+        "/other/custom-skills",
+      ],
+      enabled: ["wk-commit"],
+    },
+  };
+  const { config, changed } = mergeOpenCodeConfig(input, PIN);
+  const skills = config.skills as { paths?: string[]; enabled?: string[] };
+  expect(skills.paths).toEqual(["~/.config/opencode/skills", "/other/custom-skills"]);
+  expect(skills.enabled).toEqual(["wk-commit"]);
+  expect(changed).toEqual(["plugin", "skills.paths"]);
+});
+
+test("mergeOpenCodeConfig reports no changes when the config is already canonical", () => {
+  const input = { plugin: [PIN], skills: { paths: ["/other/skills"] } };
+  const { config, changed } = mergeOpenCodeConfig(input, PIN);
+  expect(config.plugin).toEqual([PIN]);
+  expect(changed).toEqual([]);
+});
+
+test("mergeOpenCodeConfig tolerates a missing config and a string plugin field", () => {
+  const { config } = mergeOpenCodeConfig(undefined, PIN);
+  expect(config.plugin).toEqual([PIN]);
+  const str = mergeOpenCodeConfig({ plugin: "@brainervirus/workit-opencode" }, PIN);
+  expect(str.config.plugin).toEqual([PIN]);
+});
+
+test("mergeCursorSettings keeps a single plugin identity, appends dirs, preserves unrelated settings", () => {
+  const pluginDir = "/home/user/.cursor/plugins/local/workflow-toolkit";
+  const input = {
+    enabled_plugins: { "local/workflow-toolkit": true, "some-other-plugin": true },
+    plugin_dirs: ["/home/user/.cursor/plugins/local/other"],
+    "chat.temperature": 0.3,
+    telemetry: { machineId: "abc" },
+  };
+  const { config, changed } = mergeCursorSettings(input, pluginDir);
+  expect(config.enabled_plugins).toEqual({
+    "workflow-toolkit": true,
+    "some-other-plugin": true,
+  });
+  expect(config.plugin_dirs).toEqual(["/home/user/.cursor/plugins/local/other", pluginDir]);
+  expect(config["chat.temperature"]).toBe(0.3);
+  expect(JSON.stringify(config.telemetry)).toBe(JSON.stringify(input.telemetry));
+  expect(changed).toEqual(["enabled_plugins", "plugin_dirs"]);
+});
+
+test("mergeCursorSettings is idempotent", () => {
+  const pluginDir = "/home/user/.cursor/plugins/local/workflow-toolkit";
+  const once = mergeCursorSettings({ enabled_plugins: {}, plugin_dirs: [] }, pluginDir);
+  expect(once.config.plugin_dirs).toEqual([pluginDir]);
+  const twice = mergeCursorSettings(once.config, pluginDir);
+  expect(twice.config).toEqual(once.config);
+  expect(twice.changed).toEqual([]);
+});
+
+test("mergeCursorMcp replaces the legacy MCP name with one portable server", () => {
+  const portable = { command: "node", args: ["/pkg/dist/mcp-server.js", "${workspaceFolder}"] };
+  const input = {
+    mcpServers: {
+      "workflow-toolkit": { command: "bash", args: ["-lc", "legacy"] },
+      "other-server": { command: "python", args: ["-m", "http.server"] },
+    },
+  };
+  const { config, changed } = mergeCursorMcp(input, "workit", portable);
+  const servers = config.mcpServers as Record<string, unknown>;
+  expect(Object.keys(servers).sort()).toEqual(["other-server", "workit"]);
+  expect(servers.workit).toEqual(portable);
+  expect(JSON.stringify(servers["other-server"])).toBe(
+    JSON.stringify(input.mcpServers["other-server"]),
+  );
+  expect(changed).toEqual(["mcpServers"]);
+});
+
+test("mergeCursorMcp is idempotent", () => {
+  const portable = { command: "node", args: ["/pkg/dist/mcp-server.js", "${workspaceFolder}"] };
+  const once = mergeCursorMcp({ mcpServers: {} }, "workit", portable);
+  const twice = mergeCursorMcp(once.config, "workit", portable);
+  expect(twice.config).toEqual(once.config);
+  expect(twice.changed).toEqual([]);
+});
+
+test("mergeCursorHooks swaps the sessionStart command and keeps unrelated hook config", () => {
+  const input = {
+    version: 1,
+    hooks: {
+      sessionStart: [{ command: "./hooks/session-start" }],
+      otherHook: [{ command: "echo hi" }],
+    },
+  };
+  const { config, changed } = mergeCursorHooks(input, {
+    command: "./dist/cursor-session-start.js",
+  });
+  const hooks = config.hooks as {
+    sessionStart?: { command: string }[];
+    otherHook?: { command: string }[];
+  };
+  expect(hooks.sessionStart).toEqual([{ command: "./dist/cursor-session-start.js" }]);
+  expect(hooks.otherHook).toEqual([{ command: "echo hi" }]);
+  expect(changed).toEqual(["hooks.sessionStart"]);
+});
+
+test("cursorMcpServerEntry prefers the node dist bundle and falls back to the shim", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wk-entry-"));
+  try {
+    const dist = path.join(root, "dist");
+    mkdirSync(dist, { recursive: true });
+    writeFileSync(path.join(dist, "mcp-server.js"), "");
+    const entry = cursorMcpServerEntry(root);
+    expect(entry.command).toBe("node");
+    expect(entry.args[0]).toContain("dist/mcp-server.js");
+    expect(entry.args[1]).toBe("${workspaceFolder}");
+    rmSync(dist, { recursive: true, force: true });
+
+    const fallback = cursorMcpServerEntry(root);
+    expect(fallback.command).toBe("bash");
+    expect(fallback.args[0]).toContain("mcp/run-server.sh");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

@@ -60,14 +60,14 @@ Local dev variant (absolute path to this repo):
 }
 ```
 
-**Cursor** — the MCP server runs from the package's `cursor/` directory. Add to `.cursor/mcp.json`:
+**Cursor** — the MCP server runs from the package's self-contained Node bundle. Add to `.cursor/mcp.json` (or install the plugin, whose `.cursor-plugin/plugin.json` registers the same package-relative server):
 
 ```json
 {
   "mcpServers": {
     "workit": {
-      "command": "bun",
-      "args": ["run", "node_modules/@brainervirus/workit-cursor/mcp/server.ts"]
+      "command": "node",
+      "args": ["./node_modules/@brainervirus/workit-cursor/dist/mcp-server.js", "${workspaceFolder}"]
     }
   }
 }
@@ -77,7 +77,8 @@ Local dev variant: point `WORKFLOW_TOOLKIT_ROOT` at this repo's `packages/workit
 
 ## Requirements
 
-- **Bun ≥ 1.0** — runtime for the shared `src/core` logic, the OpenCode plugin, and the Cursor MCP server (`bun server.ts`). Install once:
+- **Node.js ≥ 20** — the published CLI, OpenCode plugin, and Cursor MCP/hook artifacts run on Node 20+ (CI exercises Node 20 and 22).
+- **Bun 1.3.14** — development, build, and test runtime. Install once:
 
 ```bash
 curl -fsSL https://bun.sh/install | bash
@@ -89,6 +90,7 @@ Then add to your shell profile (or rely on the MCP launcher's `~/.bun/bin/bun` f
 export PATH="$HOME/.bun/bin:$PATH"
 ```
 
+- **OpenCode ≥ 1.15.0** — the OpenCode plugin pins `@opencode-ai/plugin` 1.17.7; 1.15.0 is the declared minimum (both are exercised by the packed-runtime gate).
 - **Git** — branch resolution, SDD review diffs, and verify gates.
 
 ## Repo layout

@@ -1,9 +1,10 @@
 import { expect, test } from "bun:test";
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { SUPPORT_MATRIX } from "../../packages/workit-core/src/core/support-matrix";
 import {
   installPackedPackage,
   isolatedEnv,
@@ -80,6 +81,29 @@ function startNodeMcp(
   return { child, request };
 }
 
+// Install a stub @opencode-ai/plugin at the given version with the exact SDK
+// surface the plugin imports, then import the packed entry. Proves the packed
+// plugin loads against both the declared minimum and the pinned current host SDK.
+function writeOpenCodeStub(nm: string, version: string): void {
+  const stubDir = path.join(nm, "@opencode-ai", "plugin");
+  mkdirSync(stubDir, { recursive: true });
+  writeFileSync(
+    path.join(stubDir, "package.json"),
+    JSON.stringify({
+      name: "@opencode-ai/plugin",
+      version,
+      type: "module",
+      main: "index.js",
+    }),
+  );
+  writeFileSync(
+    path.join(stubDir, "index.js"),
+    `export const tool = (def) => def;
+tool.schema = { string: () => ({ type: "string" }), boolean: () => ({ type: "boolean" }), enum: (v) => ({ type: "string", enum: v }), optional: (s) => s, array: (s) => ({ type: "array", items: s }) };
+`,
+  );
+}
+
 test("opencode plugin loads from dist/plugin.js with a stub @opencode-ai/plugin", async () => {
   const packs = packWorkspacePackages();
   const install = tmp("wk-runtime-opencode-");
@@ -89,26 +113,30 @@ test("opencode plugin loads from dist/plugin.js with a stub @opencode-ai/plugin"
     mkdirSync(nm, { recursive: true });
     installPackedPackage(nm, byName(packs, OPENCODE));
 
-    const stubDir = path.join(nm, "@opencode-ai", "plugin");
-    mkdirSync(stubDir, { recursive: true });
-    writeFileSync(
-      path.join(stubDir, "package.json"),
-      JSON.stringify({
-        name: "@opencode-ai/plugin",
-        version: "1.17.7",
-        type: "module",
-        main: "index.js",
-      }),
-    );
-    writeFileSync(
-      path.join(stubDir, "index.js"),
-      `export const tool = (def) => def;
-tool.schema = { string: () => ({ type: "string" }), boolean: () => ({ type: "boolean" }), enum: (v) => ({ type: "string", enum: v }), optional: (s) => s, array: (s) => ({ type: "array", items: s }) };
-`,
-    );
+    writeOpenCodeStub(nm, SUPPORT_MATRIX.opencode.current);
 
     const entry = path.join(install, "node_modules", OPENCODE, "dist", "plugin.js");
     expect(existsSync(entry)).toBe(true);
+    const mod = await import(pathToFileURL(entry).href);
+    expect(typeof mod.default).toBe("function");
+  } finally {
+    rmSync(install, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("opencode plugin loads against the declared minimum @opencode-ai/plugin version (RR-10)", async () => {
+  const packs = packWorkspacePackages();
+  const install = tmp("wk-runtime-opencode-min-");
+  const home = tmp("wk-runtime-opencode-min-home-");
+  try {
+    const nm = path.join(install, "node_modules");
+    mkdirSync(nm, { recursive: true });
+    installPackedPackage(nm, byName(packs, OPENCODE));
+
+    writeOpenCodeStub(nm, SUPPORT_MATRIX.opencode.minimum);
+
+    const entry = path.join(install, "node_modules", OPENCODE, "dist", "plugin.js");
     const mod = await import(pathToFileURL(entry).href);
     expect(typeof mod.default).toBe("function");
   } finally {
@@ -218,4 +246,20 @@ test("packed tarball locations never reference the repository checkout", () => {
   for (const pack of packs) {
     expect(pack.tarball, pack.packageName).not.toContain(normalized);
   }
+});
+
+test("declared platform matrix is pinned across CI, engines, and lockfiles (PT-11/PT-12)", () => {
+  // The support matrix is the single source of truth for the published
+  // toolchain. No Deno is advertised anywhere in the repo surface.
+  expect(SUPPORT_MATRIX.os).toEqual(["ubuntu-latest", "macos-latest", "windows-latest"]);
+
+  const ci = readFileSync(path.join(REPO_ROOT, ".github/workflows/ci.yml"), "utf8");
+  expect(ci).toContain(SUPPORT_MATRIX.bun);
+  expect(ci).toContain(SUPPORT_MATRIX.node.minimum);
+  expect(ci).toContain(SUPPORT_MATRIX.node.current);
+  expect(ci).not.toMatch(/[Dd]eno/);
+
+  const lock = readFileSync(path.join(REPO_ROOT, "bun.lock"), "utf8");
+  expect(lock).toContain(SUPPORT_MATRIX.bun);
+  expect(lock).toContain(SUPPORT_MATRIX.opencode.current);
 });

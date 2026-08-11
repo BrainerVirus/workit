@@ -1,12 +1,8 @@
 {
   "mcpServers": {
     "workit": {
-      "command": "bash",
-      "args": [
-        "-lc",
-        "exec ./mcp/run-server.sh \"$0\"",
-        "${workspaceFolder}"
-      ]
+      "command": "node",
+      "args": ["./dist/mcp-server.js", "${workspaceFolder}"]
     }
   }
 }

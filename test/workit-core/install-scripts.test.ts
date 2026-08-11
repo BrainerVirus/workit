@@ -31,16 +31,22 @@ function flockAvailable(): boolean {
 
 // Stub monorepo (scripts copied in, tiny tree) so sync-runtime + the install
 // script run without network or a full-repo rsync; HOME points into tmp so no
-// real ~/.config/opencode is touched.
+// real ~/.config/opencode is touched. The installer imports the shared
+// registration helper from src/core, so the stub must mirror it.
 function makeStub(pluginTs: string) {
   const stub = mkdtempSync(path.join(os.tmpdir(), "wk-install-stub-"));
   const home = mkdtempSync(path.join(os.tmpdir(), "wk-install-home-"));
   spawnSync("git", ["init", "-q"], { cwd: stub });
   mkdirSync(path.join(stub, "packages/workit-core/scripts/lib"), { recursive: true });
+  mkdirSync(path.join(stub, "packages/workit-core/src/core"), { recursive: true });
   mkdirSync(path.join(stub, "packages/workit-opencode/src"), { recursive: true });
   cpSync(
     path.join(repoRoot, "packages/workit-core/scripts/install-opencode-plugin.sh"),
     path.join(stub, "packages/workit-core/scripts/install-opencode-plugin.sh"),
+  );
+  cpSync(
+    path.join(repoRoot, "packages/workit-core/src/core/registration.ts"),
+    path.join(stub, "packages/workit-core/src/core/registration.ts"),
   );
   writeFileSync(
     path.join(stub, "packages/workit-core/scripts/sync-runtime.sh"),
@@ -64,10 +70,15 @@ function makeNestedStub() {
   const home = mkdtempSync(path.join(os.tmpdir(), "wk-install-nested-home-"));
   spawnSync("git", ["init", "-q"], { cwd: stub });
   mkdirSync(path.join(stub, "packages/workit-core/scripts/lib"), { recursive: true });
+  mkdirSync(path.join(stub, "packages/workit-core/src/core"), { recursive: true });
   mkdirSync(path.join(stub, "packages/workit-opencode/src"), { recursive: true });
   cpSync(
     path.join(repoRoot, "packages/workit-core/scripts/install-opencode-plugin.sh"),
     path.join(stub, "packages/workit-core/scripts/install-opencode-plugin.sh"),
+  );
+  cpSync(
+    path.join(repoRoot, "packages/workit-core/src/core/registration.ts"),
+    path.join(stub, "packages/workit-core/src/core/registration.ts"),
   );
   writeFileSync(
     path.join(stub, "packages/workit-core/scripts/sync-runtime.sh"),

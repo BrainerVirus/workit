@@ -32,6 +32,10 @@ for (const [entry, out] of entries) {
       "node",
       "--format",
       "esm",
+      // The Cursor hooks manifest invokes the entry as a direct path; the
+      // shebang documents/selects the Node runtime (RR-07/PT-10).
+      "--banner",
+      "#!/usr/bin/env node",
     ],
     { encoding: "utf8" },
   );
