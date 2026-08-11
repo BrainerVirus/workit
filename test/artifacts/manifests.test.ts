@@ -48,16 +48,20 @@ test("cursor hooks-cursor.json references a package-relative Node entry", () => 
         : readTarballFile(byName(packs, CURSOR).tarball, "hooks/hooks-cursor.json");
     const hooks = JSON.parse(raw) as {
       version: number;
-      hooks: { sessionStart: { command: string }[] };
+      hooks: { sessionStart: { command: string; args?: string[] }[] };
     };
     expect(hooks.version, source).toBe(1);
-    const command = hooks.hooks.sessionStart[0].command;
-    expect(command, source).toBe("./dist/cursor-session-start.js");
-    expect(command, source).not.toMatch(/\$HOME/);
-    expect(command, source).not.toMatch(/^\//);
+    const entry = hooks.hooks.sessionStart[0];
+    expect(entry.command, source).toBe("node");
+    expect(entry.args?.[0], source).toBe("./dist/cursor-session-start.js");
+    expect(JSON.stringify(entry), source).not.toMatch(/\$HOME/);
+    expect(JSON.stringify(entry), source).not.toMatch(/^\//);
     // the referenced entry is Node (shebang documents the runtime)
-    const entry = readTarballFile(byName(packs, CURSOR).tarball, "dist/cursor-session-start.js");
-    expect(entry.startsWith("#!/usr/bin/env node"), source).toBe(true);
+    const entryFile = readTarballFile(
+      byName(packs, CURSOR).tarball,
+      "dist/cursor-session-start.js",
+    );
+    expect(entryFile.startsWith("#!/usr/bin/env node"), source).toBe(true);
   }
 });
 

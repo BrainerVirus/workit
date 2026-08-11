@@ -185,3 +185,23 @@ export function cursorMcpServerEntry(packageDir: string): {
     args: [path.join(packageDir, "mcp", "run-server.sh"), "${workspaceFolder}"],
   };
 }
+
+/**
+ * Portable Cursor sessionStart hook entry: prefer the self-contained node dist
+ * bundle; fall back to the bash shim for a dist-less dev checkout (AR-06).
+ */
+export function cursorHooksEntry(packageDir: string): {
+  command: string;
+  args: string[];
+} {
+  if (existsSync(path.join(packageDir, "dist", "cursor-session-start.js"))) {
+    return {
+      command: "node",
+      args: [path.join(packageDir, "dist", "cursor-session-start.js")],
+    };
+  }
+  return {
+    command: "bash",
+    args: [path.join(packageDir, "hooks", "session-start")],
+  };
+}

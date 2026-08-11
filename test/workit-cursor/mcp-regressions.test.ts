@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 
 import { changelogApply } from "../../packages/workit-core/src/core/changelog";
@@ -284,6 +285,35 @@ test("plugin and MCP versions are synchronized", () => {
   expect(manifest.version).toBe(opencode.version);
 });
 
+// AR-06: build scripts decode import.meta.url through fileURLToPath; the raw
+// URL pathname drops Windows drive letters (Task 26 portability correction).
+test("build scripts derive their directory with fileURLToPath, not URL pathname", () => {
+  for (const rel of [
+    "packages/workit-opencode/scripts/build.ts",
+    "packages/workit-cursor/scripts/build.ts",
+    "packages/workit-cli/scripts/build.ts",
+  ]) {
+    const source = readFileSync(path.join(REPO_ROOT, rel), "utf8");
+    expect(source, rel).toContain("fileURLToPath(import.meta.url)");
+    expect(source, rel).not.toContain("new URL(import.meta.url).pathname");
+    expect(source, rel).not.toContain(".pathname");
+  }
+  // Drive-letter simulation (path.win32 parity, Task 8 precedent): a Windows
+  // file URL must decode to a drive-pinned path — resolving the URL pathname
+  // under the Windows resolver yields a root-relative path instead.
+  const winUrl = "file:///C:/work/pkg/scripts/build.ts";
+  const pathname = new URL(winUrl).pathname;
+  expect(pathname).toBe("/C:/work/pkg/scripts/build.ts");
+  expect(path.win32.resolve(pathname).startsWith("\\")).toBe(true); // current-drive-root, not pinned
+  expect(path.win32.resolve("C:/work/pkg/scripts/build.ts")).toBe(
+    "C:\\work\\pkg\\scripts\\build.ts",
+  );
+  if (process.platform === "win32") {
+    // Real Windows evidence: fileURLToPath restores the drive (CI matrix job).
+    expect(fileURLToPath(winUrl)).toBe("C:\\work\\pkg\\scripts\\build.ts");
+  }
+});
+
 test("cursor MCP manifests stay package-relative (mcp.json, marketplace.json, hooks-cursor.json)", () => {
   const mcpJson = JSON.parse(readFileSync(path.join(CURSOR_ROOT, "mcp.json"), "utf8"));
   const marketplace = JSON.parse(readFileSync(path.join(CURSOR_ROOT, "marketplace.json"), "utf8"));
@@ -302,7 +332,10 @@ test("cursor MCP manifests stay package-relative (mcp.json, marketplace.json, ho
 
   expect(marketplace.homepage).toBe("https://github.com/BrainerVirus/workit");
   expect(marketplace.repository).toBe("https://github.com/BrainerVirus/workit.git");
-  expect(hooks.hooks.sessionStart).toEqual([{ command: "./dist/cursor-session-start.js" }]);
+  // AR-06: the committed hook entry starts through Node with a package-relative arg.
+  expect(hooks.hooks.sessionStart).toEqual([
+    { command: "node", args: ["./dist/cursor-session-start.js"] },
+  ]);
   expect(launcher).not.toMatch(/Documents\/projects/);
   expect(launcher).not.toMatch(/\$HOME\/\.local\/share\/workflow-toolkit/);
 });

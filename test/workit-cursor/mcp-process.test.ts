@@ -1,8 +1,9 @@
 import { expect, test } from "bun:test";
 import { spawn } from "node:child_process";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { isolatedEnv } from "../shared/helpers/packages";
 
 // C1: the packaged Cursor MCP server must initialize and list every registered
 // tool over stdio, and representative handlers must run without a
@@ -53,11 +54,18 @@ const REQUIRED_TOOLS = [
   "workflow_rule_edit",
 ];
 
-function startServer() {
-  const child = spawn("bun", ["packages/workit-cursor/mcp/server.ts"], {
-    cwd: REPO_ROOT,
-    stdio: ["pipe", "pipe", "pipe"],
-  });
+function startServer(
+  options: { cwd?: string; env?: Record<string, string>; entry?: string; args?: string[] } = {},
+) {
+  const child = spawn(
+    "bun",
+    [options.entry ?? "packages/workit-cursor/mcp/server.ts", ...(options.args ?? [])],
+    {
+      cwd: options.cwd ?? REPO_ROOT,
+      env: options.env ?? process.env,
+      stdio: ["pipe", "pipe", "pipe"],
+    },
+  );
   let buffer = "";
   const pending = new Map<number, (value: unknown) => void>();
   child.stdout.setEncoding("utf8");
@@ -162,5 +170,79 @@ test("cursor MCP representative handlers run without workspace_root faults", asy
     expect((gitDefault as any).result.content?.[0]?.text).toBeDefined();
   } finally {
     child.kill();
+  }
+});
+
+// AR-05: the launcher-provided workspace (mcp/run-server.ts <workspace>) is the
+// default root for omitted workspace_root, never the launcher's own cwd.
+test("run-server <workspace> from an unrelated cwd defaults omitted roots to the launcher workspace", async () => {
+  const ws = mkdtempSync(path.join(os.tmpdir(), "workit-mcp-launcher-ws-"));
+  const elsewhere = mkdtempSync(path.join(os.tmpdir(), "workit-mcp-launcher-cwd-"));
+  try {
+    const { child, request } = startServer({
+      cwd: elsewhere,
+      env: isolatedEnv(elsewhere),
+      entry: path.join(REPO_ROOT, "packages/workit-cursor/mcp/run-server.ts"),
+      args: [ws],
+    });
+    try {
+      await request("initialize", {
+        protocolVersion: "2024-11-05",
+        capabilities: {},
+        clientInfo: { name: "test", version: "1.0" },
+      });
+      child.stdin.write(
+        `${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })}\n`,
+      );
+      const git = await request("tools/call", {
+        name: "workflow_git_context",
+        arguments: {},
+      });
+      expect((git as any).result.isError).not.toBe(true);
+      const text = (git as any).result.content?.[0]?.text ?? "";
+      const parsed = JSON.parse(text);
+      expect(parsed.workspace_root).toBe(ws);
+    } finally {
+      child.kill();
+    }
+  } finally {
+    rmSync(ws, { recursive: true, force: true });
+    rmSync(elsewhere, { recursive: true, force: true });
+  }
+});
+
+// AR-05: WORKFLOW_WORKSPACE_ROOT beats the spawned process cwd.
+test("WORKFLOW_WORKSPACE_ROOT env beats the process cwd for omitted tool roots", async () => {
+  const ws = mkdtempSync(path.join(os.tmpdir(), "workit-mcp-env-ws-"));
+  const elsewhere = mkdtempSync(path.join(os.tmpdir(), "workit-mcp-env-cwd-"));
+  try {
+    const { child, request } = startServer({
+      cwd: elsewhere,
+      env: isolatedEnv(elsewhere, { WORKFLOW_WORKSPACE_ROOT: ws }),
+      entry: path.join(REPO_ROOT, "packages/workit-cursor/mcp/server.ts"),
+    });
+    try {
+      await request("initialize", {
+        protocolVersion: "2024-11-05",
+        capabilities: {},
+        clientInfo: { name: "test", version: "1.0" },
+      });
+      child.stdin.write(
+        `${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })}\n`,
+      );
+      const git = await request("tools/call", {
+        name: "workflow_git_context",
+        arguments: {},
+      });
+      expect((git as any).result.isError).not.toBe(true);
+      const text = (git as any).result.content?.[0]?.text ?? "";
+      const parsed = JSON.parse(text);
+      expect(parsed.workspace_root).toBe(ws);
+    } finally {
+      child.kill();
+    }
+  } finally {
+    rmSync(ws, { recursive: true, force: true });
+    rmSync(elsewhere, { recursive: true, force: true });
   }
 });

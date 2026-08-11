@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
+  cursorHooksEntry,
   cursorMcpServerEntry,
   isWorkitPlugin,
   mergeCursorHooks,
@@ -265,13 +266,16 @@ test("mergeCursorHooks swaps the sessionStart command and keeps unrelated hook c
     },
   };
   const { config, changed } = mergeCursorHooks(input, {
-    command: "./dist/cursor-session-start.js",
+    command: "node",
+    args: ["./dist/cursor-session-start.js"],
   });
   const hooks = config.hooks as {
-    sessionStart?: { command: string }[];
+    sessionStart?: { command: string; args?: string[] }[];
     otherHook?: { command: string }[];
   };
-  expect(hooks.sessionStart).toEqual([{ command: "./dist/cursor-session-start.js" }]);
+  expect(hooks.sessionStart).toEqual([
+    { command: "node", args: ["./dist/cursor-session-start.js"] },
+  ]);
   expect(hooks.otherHook).toEqual([{ command: "echo hi" }]);
   expect(changed).toEqual(["hooks.sessionStart"]);
 });
@@ -291,6 +295,25 @@ test("cursorMcpServerEntry prefers the node dist bundle and falls back to the sh
     const fallback = cursorMcpServerEntry(root);
     expect(fallback.command).toBe("bash");
     expect(fallback.args[0]).toContain(path.join("mcp", "run-server.sh"));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("cursorHooksEntry prefers the node dist bundle and falls back to the shim", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wk-hooks-entry-"));
+  try {
+    const dist = path.join(root, "dist");
+    mkdirSync(dist, { recursive: true });
+    writeFileSync(path.join(dist, "cursor-session-start.js"), "");
+    const entry = cursorHooksEntry(root);
+    expect(entry.command).toBe("node");
+    expect(entry.args[0]).toContain(path.join("dist", "cursor-session-start.js"));
+    rmSync(dist, { recursive: true, force: true });
+
+    const fallback = cursorHooksEntry(root);
+    expect(fallback.command).toBe("bash");
+    expect(fallback.args[0]).toContain(path.join("hooks", "session-start"));
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

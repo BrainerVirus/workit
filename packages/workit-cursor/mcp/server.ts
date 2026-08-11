@@ -123,8 +123,10 @@ import {
 const workspaceRootSchema = z
   .string()
   .optional()
-  .default(() => process.cwd())
-  .describe("Git repository root. Defaults to the Cursor workspace folder (${workspaceFolder}).");
+  .default(() => process.env.WORKFLOW_WORKSPACE_ROOT ?? process.cwd())
+  .describe(
+    "Git repository root. Defaults to the launcher workspace (WORKFLOW_WORKSPACE_ROOT), then the Cursor workspace folder (${workspaceFolder}), then the process cwd.",
+  );
 
 const server = new McpServer({
   name: "workit",
