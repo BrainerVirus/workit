@@ -47,7 +47,10 @@ const defaultRuntime: RepoRuntime = {
   docsContext: (root, range) => docsRefreshContext(root, range),
   releaseContext: (root, range) => releaseNotesContext(root, range),
   prCreate: (root, env) => {
-    const out = prCreate(env, root);
+    // B6: merge the process env so WORKFLOW_YT_ISSUE/WORKFLOW_GH_ISSUE (and
+    // any other env-driven issue linking) set by the host still reaches
+    // prCreate alongside the 5 explicit WF_PR_* tool arguments.
+    const out = prCreate({ ...process.env, ...env }, root);
     return {
       exitCode: out.error || out.ok === false ? 1 : 0,
       stdout: JSON.stringify(out),

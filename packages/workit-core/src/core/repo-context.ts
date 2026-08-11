@@ -290,15 +290,14 @@ export function prReadyContext(root: string, range?: string): ContextResult {
     // exact-path diagnostic instead.
     stdout += `vcs: unreadable (malformed) — ${String(vc.error ?? "cannot read vcs.json")}\n`;
   }
-  const summary = vcsConfig("summary", cwd);
-  if (summary.ok) {
-    stdout += JSON.stringify(summary) + "\n";
-  } else {
+  // B4: the shell printed only workspace:/provider: (the summary dump was
+  // discarded). Keep that concise shape — no raw summary JSON in the context.
+  if (!vcsConfig("summary", cwd).ok) {
     stdout += "vcs: not configured — run /wk-init action vcs_scaffold\n";
   }
 
   stdout += printSection("Merged PR Style");
-  const style = mergedPrStyle(6);
+  const style = mergedPrStyle(6, cwd);
   stdout += JSON.stringify(style, null, 2) + "\n";
 
   return { stdout, stderr: "", exitCode: 0, cwd };
