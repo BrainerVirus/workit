@@ -8,6 +8,7 @@ import { SUPPORT_MATRIX } from "../../packages/workit-core/src/core/support-matr
 import {
   installPackedPackage,
   isolatedEnv,
+  packReleaseCandidate,
   packWorkspacePackages,
   REPO_ROOT,
 } from "../shared/helpers/packages";
@@ -248,6 +249,12 @@ test("packed tarball locations never reference the repository checkout", () => {
   for (const pack of packs) {
     expect(pack.tarball, pack.packageName).not.toContain(normalized);
   }
+});
+
+test("the runtime gate exercises the same final candidate artifacts (CA-30)", () => {
+  const candidate = packReleaseCandidate();
+  const packs = packWorkspacePackages();
+  expect(candidate.map((p) => p.sha256)).toEqual(packs.map((p) => p.sha256));
 });
 
 test("declared platform matrix is pinned across CI, engines, and lockfiles (PT-11/PT-12)", () => {

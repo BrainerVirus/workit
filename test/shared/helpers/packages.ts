@@ -38,8 +38,8 @@ function copyPackage(pkg: string, sandbox: string) {
 // layout into a temp sandbox, apply the release-time workspace rewrite (RR-01 /
 // RR-09) and the existing CLI build, then pack each package with `bun pm pack`.
 // Deterministic and offline — no registry, no tags, no marketplace operations.
-export function packWorkspacePackages(): PackedPackage[] {
-  if (cached) return cached;
+export function packWorkspacePackages(options: { force?: boolean } = {}): PackedPackage[] {
+  if (cached && !options.force) return cached;
   const sandbox = mkdtempSync(path.join(os.tmpdir(), "wk-pack-sandbox-"));
   const tarballs = mkdtempSync(path.join(os.tmpdir(), "wk-pack-tarballs-"));
   try {
@@ -74,6 +74,27 @@ export function packWorkspacePackages(): PackedPackage[] {
   } finally {
     rmSync(sandbox, { recursive: true, force: true });
   }
+}
+
+// Final-gate entry (Task 23, CA-30): the deterministic, pack-only candidate
+// over packWorkspacePackages. Packing never publishes — `bun pm pack` only
+// writes a local tarball — and this wrapper asserts the tarballs stay local to
+// the temp pack dir so a publish/registry/tag path can never look like this
+// gate. `force: true` bypasses the module cache to prove repack determinism.
+export function packReleaseCandidate(options: { force?: boolean } = {}): PackedPackage[] {
+  const packs = packWorkspacePackages(options);
+  for (const pack of packs) {
+    if (!existsSync(pack.tarball)) {
+      throw new Error(`release candidate missing tarball: ${pack.packageName}`);
+    }
+    // ponytail: tmp-dir provenance is the "not published" guard — a published
+    // package would resolve from a registry cache or the repo, never a fresh
+    // temp pack dir; raise to a registry readback if publishing ever runs here.
+    if (!pack.tarball.startsWith(os.tmpdir())) {
+      throw new Error(`release candidate tarball outside the temp pack dir: ${pack.tarball}`);
+    }
+  }
+  return packs;
 }
 
 function packSandbox(sandbox: string, tarballs: string): PackedPackage[] {

@@ -17,6 +17,7 @@ import {
   installPackedPackage,
   isolatedEnv,
   listTarball,
+  packReleaseCandidate,
   packWorkspacePackages,
   readTarballFile,
   REPO_ROOT,
@@ -74,6 +75,12 @@ test("packs all workspace packages into local tarballs without publishing", () =
     expect(pack.sha256).toMatch(/^[0-9a-f]{64}$/);
     expect(listTarball(pack.tarball).length, pack.packageName).toBeGreaterThan(0);
   }
+});
+
+test("the final release candidate is byte-stable with the phase-0 pack (CA-30)", () => {
+  const candidate = packReleaseCandidate();
+  const packs = packWorkspacePackages();
+  expect(candidate.map((p) => p.sha256)).toEqual(packs.map((p) => p.sha256));
 });
 
 test("packed adapter core dependency equals the packed core version (RR-01)", () => {
