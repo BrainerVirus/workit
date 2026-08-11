@@ -608,7 +608,10 @@ export const slugFromSddPath = (p: string): string => {
   const match = p
     .split(path.sep)
     .join("/")
-    .match(/^docs\/([^/]+)\/sdd(\/|$)/);
+    // The sdd dir name may be followed by a separator, end-of-string, or a
+    // quote char part of a quote-bearing dir name; `sdd-attack` (hyphen/letter
+    // continuation) is still rejected.
+    .match(/^docs\/([^/]+)\/sdd(\/|$|['"])/);
   return match?.[1] ?? "";
 };
 

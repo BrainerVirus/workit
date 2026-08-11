@@ -23,14 +23,20 @@ const isRecord = (v: unknown): v is Record<string, unknown> =>
 export function isWorkitPlugin(value: unknown): boolean {
   const s = String(value);
   const named = (name: string) => s === name || s.startsWith(`${name}@`);
+  const url = s.startsWith("file://") || s.startsWith("git+file://");
+  const pkgPath =
+    s.includes("/packages/workit-opencode/") ||
+    s.includes("/packages/workit-cursor/") ||
+    s.includes("/node_modules/@brainervirus/workit-opencode/") ||
+    s.includes("/node_modules/@brainervirus/workit-cursor/");
   return (
     named("workflow-toolkit") ||
     named("workflow-toolkit-opencode") ||
     named("local/workflow-toolkit") ||
     s.startsWith("@brainervirus/workit-opencode") ||
     s.startsWith("@brainervirus/workit-cursor") ||
-    (s.includes("file://") && s.includes("/packages/workit-opencode/")) ||
-    (s.includes("git+file://") && s.includes("workflow-toolkit"))
+    (url && pkgPath) ||
+    (s.startsWith("git+file://") && s.includes("workflow-toolkit"))
   );
 }
 

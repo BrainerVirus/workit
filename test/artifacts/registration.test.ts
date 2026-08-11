@@ -33,6 +33,8 @@ test("isWorkitPlugin matches every legacy and current identity, never unrelated 
     "@brainervirus/workit-cursor@2.0.0",
     "file:///work/packages/workit-opencode/src/plugin.ts",
     "git+file:///work/workflow-toolkit",
+    "file:///x/node_modules/@brainervirus/workit-opencode/dist/plugin.js",
+    "file:///x/packages/workit-opencode/src/plugin.ts",
     "workflow-toolkit",
     "local/workflow-toolkit",
   ]) {
@@ -47,6 +49,7 @@ test("isWorkitPlugin preserves unrelated plugin ids that merely contain workflow
   for (const id of [
     "some-workflow-toolkit-helper",
     "my-workflow-toolkit-plugins",
+    "my-workflow-toolkit-plugin",
     "workflow-toolkit-mcp",
     "org/plugin-workflow-toolkit-v2",
     "github.com/owner/workflow-toolkit-fork",
