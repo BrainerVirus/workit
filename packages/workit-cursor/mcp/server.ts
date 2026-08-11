@@ -67,8 +67,11 @@ import {
   transitionSpec,
   transitionPlan,
   recordMenuChoice,
-  slugFromPath,
 } from "@brainervirus/workit-core/src/core/flow-state";
+import {
+  resolveCanonicalLayout,
+  prepareDocsLayout,
+} from "@brainervirus/workit-core/src/core/docs-layout";
 import { linkDocsRepo, listSpecs, promoteSpec } from "@brainervirus/workit-core/src/core/docs-repo";
 import { configDir, readConfig, writeConfig } from "@brainervirus/workit-core/src/core/config";
 import { ensureProjectGitignore } from "@brainervirus/workit-core/src/core/gitignore";
@@ -606,6 +609,25 @@ registerTool(
 );
 
 registerTool(
+  "workflow_docs_layout",
+  {
+    description:
+      "Prepare the canonical docs layout: create missing docs/ and docs/<slug>/, return canonical (realpath) paths and read-only legacy detection",
+    inputSchema: {
+      slug: z.string().optional(),
+      spec_path: z.string().optional(),
+      plan_path: z.string().optional(),
+      workspace_root: workspaceRootSchema,
+    },
+  },
+  async ({ slug, spec_path, plan_path, workspace_root }) => {
+    const result = prepareDocsLayout({ workspace_root, slug, spec_path, plan_path });
+    if (!result.ok) return jsonResult(withWorkspace(workspace_root, { error: result.error }));
+    return jsonResult(withWorkspace(workspace_root, result));
+  },
+);
+
+registerTool(
   "workflow_docs_validate",
   {
     description:
@@ -1050,10 +1072,14 @@ registerTool(
     },
   },
   async ({ plan_path, spec_path, workspace_root }) => {
-    const root = workspace_root;
-    const slug = slugFromPath(plan_path ?? spec_path ?? "");
-    if (!slug) return jsonResult({ error: "plan_path or spec_path required" });
-    const state = readFlowState(root, slug);
+    const resolved = resolveCanonicalLayout({
+      workspace_root,
+      spec_path,
+      plan_path,
+    });
+    if (!resolved.ok) return jsonResult(withWorkspace(workspace_root, { error: resolved.error }));
+    const { workspace, slug } = resolved.layout;
+    const state = readFlowState(workspace, slug);
     return jsonResult({
       slug,
       spec: state.spec,
@@ -1076,11 +1102,12 @@ registerTool(
     },
   },
   async ({ confirmed, spec_path, workspace_root }) => {
-    const root = workspace_root;
-    const slug = slugFromPath(spec_path);
-    const result = transitionSpec(root, slug, spec_path, confirmed);
+    const resolved = resolveCanonicalLayout({ workspace_root, spec_path });
+    if (!resolved.ok) return jsonResult(withWorkspace(workspace_root, { error: resolved.error }));
+    const { workspace, slug } = resolved.layout;
+    const result = transitionSpec(workspace, slug, spec_path, confirmed);
     if (result.ok === false) return jsonResult({ error: result.error });
-    return jsonResult({ spec: spec_path, status: readFlowState(root, slug).spec.status });
+    return jsonResult({ spec: spec_path, status: readFlowState(workspace, slug).spec.status });
   },
 );
 
@@ -1096,11 +1123,12 @@ registerTool(
     },
   },
   async ({ confirmed, plan_path, workspace_root }) => {
-    const root = workspace_root;
-    const slug = slugFromPath(plan_path);
-    const result = transitionPlan(root, slug, plan_path, confirmed);
+    const resolved = resolveCanonicalLayout({ workspace_root, plan_path });
+    if (!resolved.ok) return jsonResult(withWorkspace(workspace_root, { error: resolved.error }));
+    const { workspace, slug } = resolved.layout;
+    const result = transitionPlan(workspace, slug, plan_path, confirmed);
     if (result.ok === false) return jsonResult({ error: result.error });
-    return jsonResult({ plan: plan_path, status: readFlowState(root, slug).plan.status });
+    return jsonResult({ plan: plan_path, status: readFlowState(workspace, slug).plan.status });
   },
 );
 
@@ -1116,9 +1144,10 @@ registerTool(
     },
   },
   async ({ confirmed, plan_path, choice, workspace_root }) => {
-    const root = workspace_root;
-    const slug = slugFromPath(plan_path);
-    const result = recordMenuChoice(root, slug, plan_path, choice, confirmed);
+    const resolved = resolveCanonicalLayout({ workspace_root, plan_path });
+    if (!resolved.ok) return jsonResult(withWorkspace(workspace_root, { error: resolved.error }));
+    const { workspace, slug } = resolved.layout;
+    const result = recordMenuChoice(workspace, slug, plan_path, choice, confirmed);
     if (result.ok === false) return jsonResult({ error: result.error });
     return jsonResult({ menu: { presented: true, chosen: choice } });
   },

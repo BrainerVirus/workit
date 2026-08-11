@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync } from 
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { configDir } from "./config";
+import { resolveCanonicalLayout } from "./docs-layout";
 
 const configPath = () =>
   process.env.WORKFLOW_DOCS_REPO_CONFIG ?? path.join(configDir(), "docs-repo.json");
@@ -111,8 +112,6 @@ const specRepos = (specText: string): string => {
   return match?.[1]?.trim() ?? "—";
 };
 
-const SLUG_RE = /^[a-z0-9][a-z0-9._-]*$/i;
-
 export const promoteSpec = (
   workspaceRoot: string,
   slug: string,
@@ -121,23 +120,26 @@ export const promoteSpec = (
   | { ok: true; target_dir: string; files: string[]; index_updated: boolean }
   | { ok: false; error: string; findings?: unknown[] } => {
   if (!opts.confirmed) return { ok: false, error: "confirmed: true required" };
-  if (!SLUG_RE.test(slug)) return { ok: false, error: `invalid slug: ${JSON.stringify(slug)}` };
+  // One shared contained path contract (DC-01, DC-02): invalid slugs and
+  // non-canonical workspace roots fail here before any read or write.
+  const resolved = resolveCanonicalLayout({ workspace_root: workspaceRoot, slug });
+  if (!resolved.ok) return { ok: false, error: resolved.error };
+  const workspaceRootCanonical = resolved.layout.workspace;
   const repoPath = docsRepoPath();
   if (!repoPath) return { ok: false, error: "docs repo not linked — run workflow_docs_repo_link" };
   const repoValid = validateDocsRepo(repoPath);
   if (!repoValid.ok) return { ok: false, error: repoValid.error };
-
   const specRel = path.posix.join("docs", slug, "spec.md");
   const planRel = path.posix.join("docs", slug, "plan.md");
-  const specText = readSafe(path.join(workspaceRoot, specRel));
+  const specText = readSafe(resolved.layout.spec);
   if (specText === null) return { ok: false, error: `docs/${slug}/spec.md not found` };
 
-  const planText = readSafe(path.join(workspaceRoot, planRel));
+  const planText = readSafe(resolved.layout.plan);
   if (planText !== null) {
     const validated = docsValidate({
       spec_path: specRel,
       plan_path: planRel,
-      workspace_root: workspaceRoot,
+      workspace_root: workspaceRootCanonical,
     });
     if (validated.ok === false) return { ok: false, error: validated.error };
   }
@@ -154,14 +156,14 @@ export const promoteSpec = (
 
   // SDD working state must be gitignored before promotion
   if (!opts.force) {
-    const sddDir = path.join(workspaceRoot, "docs", slug, "sdd");
+    const sddDir = path.join(workspaceRootCanonical, "docs", slug, "sdd");
     if (existsSync(sddDir)) {
       try {
         execFileSync(
           "git",
           [
             "-C",
-            workspaceRoot,
+            workspaceRootCanonical,
             "check-ignore",
             path.posix.join("docs", slug, "sdd", "progress.md"),
           ],

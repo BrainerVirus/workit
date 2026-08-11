@@ -5,7 +5,6 @@ import path from "node:path";
 
 import { resolveWorkspaceRoot } from "../../packages/workit-core/src/core/scripts";
 import { readFlowState, slugFromPath } from "../../packages/workit-core/src/core/flow-state";
-
 const REPO_ROOT = path.resolve(import.meta.dir, "..", "..");
 const CORE_SRC = path.join(REPO_ROOT, "packages", "workit-core", "src");
 const CURSOR_SERVER = path.join(REPO_ROOT, "packages", "workit-cursor", "mcp", "server.ts");
@@ -59,8 +58,8 @@ test("cursor normalizes workspace root once through resolveWorkspaceRoot", () =>
 
 test("opencode and cursor flow registrations share the same pure core functions", async () => {
   const server = readFileSync(CURSOR_SERVER, "utf8");
-  expect(server).toMatch(/slugFromPath\(plan_path \?\? spec_path \?\? ""\)/);
-  expect(server).toMatch(/readFlowState\(root, slug\)/);
+  expect(server).toMatch(/resolveCanonicalLayout\(\{\s*workspace_root,\s*spec_path,\s*plan_path/s);
+  expect(server).toMatch(/readFlowState\(workspace, slug\)/);
 
   const { createFlowTools } = await import("../../packages/workit-opencode/src/tools/flow");
   const root = mkdtempSync(path.join(os.tmpdir(), "wf-boundary-"));
@@ -100,4 +99,15 @@ test("opencode and cursor flow registrations share the same pure core functions"
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("both hosts register workflow_docs_layout prepare", async () => {
+  const server = readFileSync(CURSOR_SERVER, "utf8");
+  expect(server).toMatch(/"workflow_docs_layout"/);
+  expect(server).toMatch(/prepareDocsLayout\(\{ workspace_root, slug, spec_path, plan_path \}\)/);
+
+  const { createDocsRepoTools } =
+    await import("../../packages/workit-opencode/src/tools/docs-repo");
+  const tools = createDocsRepoTools();
+  expect(typeof tools.workflow_docs_layout).toBe("object");
 });

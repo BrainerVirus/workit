@@ -188,10 +188,11 @@ test("transitions reject a missing doc file", () => {
   const { root, slug } = fixture();
   try {
     const spec = `docs/${slug}/spec.md`;
-    const missingPlan = `docs/${slug}/missing-plan.md`;
+    const plan = `docs/${slug}/plan.md`;
+    rmSync(path.join(root, plan), { force: true });
     transitionSpec(root, slug, spec, true);
     transitionSpec(root, slug, spec, true);
-    const result = transitionPlan(root, slug, missingPlan, true);
+    const result = transitionPlan(root, slug, plan, true);
     expect(result.ok).toBe(false);
     expect(String((result as { error: string }).error)).toContain("plan not found");
   } finally {

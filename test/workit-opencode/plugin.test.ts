@@ -236,6 +236,7 @@ describe("plugin registration", () => {
             plan_path: "missing-plan.md",
           },
           workflow_docs_branch: {},
+          workflow_docs_layout: { slug: "fixture-layout" },
           workflow_changelog_apply: { confirmed: false },
           workflow_branch_setup: { confirmed: false },
           workflow_commit: { confirmed: false, message: "test: fixture" },

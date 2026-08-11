@@ -5,13 +5,28 @@ import {
   transitionSpec,
   transitionPlan,
   recordMenuChoice,
-  slugFromPath,
 } from "@brainervirus/workit-core/src/core/flow-state";
+import { resolveCanonicalLayout } from "@brainervirus/workit-core/src/core/docs-layout";
 import path from "node:path";
 
 const output = (value: unknown) => JSON.stringify(value, null, 2);
 
 const flowPathFor = (slug: string) => path.posix.join("docs", slug, "sdd", "flow.json");
+
+// One shared contained path contract (DC-01, DC-02): slug comes from the
+// resolver, which rejects absolute/traversal/cross-slug/wrong-basename paths.
+const resolveSlug = (
+  root: string,
+  input: { spec_path?: string; plan_path?: string },
+): { slug: string } | { error: string } => {
+  const resolved = resolveCanonicalLayout({
+    workspace_root: root,
+    spec_path: input.spec_path,
+    plan_path: input.plan_path,
+  });
+  if (!resolved.ok) return { error: resolved.error };
+  return { slug: resolved.layout.slug };
+};
 
 export function createFlowTools() {
   return {
@@ -23,8 +38,10 @@ export function createFlowTools() {
       },
       execute: async ({ plan_path, spec_path }, context) => {
         try {
-          const slug = slugFromPath(plan_path ?? spec_path ?? "");
-          if (!slug) return output(fail("plan_path or spec_path required"));
+          if (!plan_path && !spec_path) return output(fail("plan_path or spec_path required"));
+          const slugged = resolveSlug(context.directory, { plan_path, spec_path });
+          if ("error" in slugged) return output(fail(slugged.error));
+          const slug = slugged.slug;
           const state = readFlowState(context.directory, slug);
           return output(
             ok({
@@ -48,7 +65,9 @@ export function createFlowTools() {
         spec_path: tool.schema.string(),
       },
       execute: async ({ confirmed, spec_path }, context) => {
-        const slug = slugFromPath(spec_path);
+        const slugged = resolveSlug(context.directory, { spec_path });
+        if ("error" in slugged) return output(fail(slugged.error));
+        const slug = slugged.slug;
         const result = transitionSpec(context.directory, slug, spec_path, confirmed);
         return output(
           result.ok
@@ -65,7 +84,9 @@ export function createFlowTools() {
         plan_path: tool.schema.string(),
       },
       execute: async ({ confirmed, plan_path }, context) => {
-        const slug = slugFromPath(plan_path);
+        const slugged = resolveSlug(context.directory, { plan_path });
+        if ("error" in slugged) return output(fail(slugged.error));
+        const slug = slugged.slug;
         const result = transitionPlan(context.directory, slug, plan_path, confirmed);
         return output(
           result.ok
@@ -88,7 +109,9 @@ export function createFlowTools() {
         ]),
       },
       execute: async ({ confirmed, plan_path, choice }, context) => {
-        const slug = slugFromPath(plan_path);
+        const slugged = resolveSlug(context.directory, { plan_path });
+        if ("error" in slugged) return output(fail(slugged.error));
+        const slug = slugged.slug;
         const result = recordMenuChoice(context.directory, slug, plan_path, choice, confirmed);
         return output(
           result.ok ? ok({ menu: { presented: true, chosen: choice } }) : fail(result.error),

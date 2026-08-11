@@ -4,13 +4,9 @@ import path from "node:path";
 import { parseTasksFromPlan } from "./docs-validate";
 import { docsValidate } from "./docs-validate";
 import { readFlowState } from "./flow-state";
+import { resolveCanonicalLayout, resolveDocsPath } from "./docs-layout";
 
 const posix = (p: string) => p.split(path.sep).join("/");
-
-export const slugFromPlan = (planPath: string) => {
-  const dirName = path.basename(path.dirname(planPath));
-  return dirName === "." || dirName === "/" || dirName === "" ? "" : dirName;
-};
 
 /** OpenCode todowrite payload. SDD ledger is persistence, not a UI substitute. */
 export function todosFromTasks(
@@ -40,13 +36,12 @@ export function sddContext({
   plan_path?: string;
   workspace_root: string;
 }) {
-  const cwd = path.resolve(workspace_root);
-  let resolvedSlug = slug;
-  let resolvedPlanPath = plan_path;
-  if (!resolvedSlug && plan_path) {
-    resolvedPlanPath = path.isAbsolute(plan_path) ? plan_path : path.join(cwd, plan_path);
-    resolvedSlug = slugFromPlan(resolvedPlanPath);
-  }
+  // One shared contained path contract (DC-01, DC-02): slug and/or plan_path
+  // resolve to a canonical layout or the call fails before anything is read.
+  const resolved = resolveCanonicalLayout({ workspace_root, slug, plan_path });
+  if (!resolved.ok) return { error: resolved.error };
+  const cwd = resolved.layout.workspace;
+  const resolvedSlug = resolved.layout.slug;
   if (!resolvedSlug) return { error: "slug or plan_path required" };
 
   const sdd_dir = path.posix.join("docs", resolvedSlug, "sdd");
@@ -55,7 +50,7 @@ export function sddContext({
 
   let progress_lines: string[] = [];
   let completed_task_ids: number[] = [];
-  const absProgress = path.join(cwd, progress_path);
+  const absProgress = path.join(resolved.layout.sdd, "progress.md");
   if (existsSync(absProgress)) {
     progress_lines = readFileSync(absProgress, "utf8")
       .split("\n")
@@ -69,7 +64,7 @@ export function sddContext({
   }
 
   let manifest: Record<string, unknown> = {};
-  const absManifest = path.join(cwd, manifest_path);
+  const absManifest = path.join(resolved.layout.sdd, "manifest.json");
   if (existsSync(absManifest)) {
     try {
       manifest = JSON.parse(readFileSync(absManifest, "utf8"));
@@ -84,12 +79,15 @@ export function sddContext({
   let todos: { id: string; content: string; status: string }[] = [];
   let task_count = 0;
   if (plan_path) {
-    const absPlan = path.isAbsolute(plan_path) ? plan_path : path.join(cwd, plan_path);
-    const planText = readFileSync(absPlan, "utf8");
+    const planText = readFileSync(resolved.layout.plan, "utf8");
     const specMatch = planText.match(/^\*\*Spec:\*\*\s*(?:`([^`]+)`|(\S+))/m);
     const spec_path = specMatch?.[1] ?? specMatch?.[2] ?? "";
     if (spec_path) {
-      const validated = docsValidate({ spec_path, plan_path, workspace_root: cwd });
+      const validated = docsValidate({
+        spec_path,
+        plan_path: path.relative(cwd, resolved.layout.plan),
+        workspace_root: cwd,
+      });
       if (validated.ok === false)
         return { ok: false, errors: validated.errors, error: validated.error };
     }
@@ -136,12 +134,13 @@ export function sddTaskBrief({
   section_text: string;
   workspace_root: string;
 }) {
-  const cwd = path.resolve(workspace_root);
-  const dir = path.isAbsolute(sdd_dir) ? sdd_dir : path.join(cwd, sdd_dir);
+  const contained = resolveDocsPath({ workspace_root, path: sdd_dir });
+  if (!contained.ok) return { error: contained.error };
+  const dir = contained.path;
   mkdirSync(dir, { recursive: true });
   const out = path.join(dir, `task-${task_id}-brief.md`);
   writeFileSync(out, `# Task ${task_id} brief\n\n${section_text}\n`, "utf8");
-  const rel = posix(path.relative(cwd, out));
+  const rel = posix(path.relative(contained.base, out));
   return { brief_path: rel, task_id };
 }
 
@@ -156,16 +155,20 @@ export function sddReviewPackage({
   head_sha: string;
   workspace_root: string;
 }) {
-  const cwd = path.resolve(workspace_root);
-  const dir = path.isAbsolute(sdd_dir) ? sdd_dir : path.join(cwd, sdd_dir);
+  const contained = resolveDocsPath({ workspace_root, path: sdd_dir });
+  if (!contained.ok) return { error: contained.error };
+  const dir = contained.path;
   mkdirSync(dir, { recursive: true });
   const base7 = base_sha.slice(0, 7);
   const head7 = head_sha.slice(0, 7);
   const diffPath = path.join(dir, `review-${base7}..${head7}.diff`);
   try {
-    const diff = execFileSync("git", ["diff", base_sha, head_sha], { cwd, encoding: "utf8" });
+    const diff = execFileSync("git", ["diff", base_sha, head_sha], {
+      cwd: contained.base,
+      encoding: "utf8",
+    });
     writeFileSync(diffPath, diff, "utf8");
-    const rel = posix(path.relative(cwd, diffPath));
+    const rel = posix(path.relative(contained.base, diffPath));
     return { diff_path: rel, base_sha, head_sha, base7, head7 };
   } catch (error) {
     return { error: error instanceof Error ? error.message : "git diff failed" };
@@ -183,14 +186,15 @@ export function sddAppendProgress({
   line: string;
   workspace_root: string;
 }) {
-  const cwd = path.resolve(workspace_root);
-  const path_ = path.isAbsolute(progress_path) ? progress_path : path.join(cwd, progress_path);
+  const contained = resolveDocsPath({ workspace_root, path: progress_path });
+  if (!contained.ok) return { error: contained.error };
+  const path_ = contained.path;
   const trimmed = line.trim();
   if (!PROGRESS_RE.test(trimmed)) {
     return { error: "invalid progress line format" };
   }
   mkdirSync(path.dirname(path_), { recursive: true });
   appendFileSync(path_, trimmed + "\n", "utf8");
-  const rel = posix(path.relative(cwd, path_));
+  const rel = posix(path.relative(contained.base, path_));
   return { ok: true, line: trimmed, progress_path: rel };
 }

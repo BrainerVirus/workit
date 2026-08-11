@@ -469,6 +469,11 @@ test("no docs/superpowers paths remain in sources", () => {
           .includes("packages/workit-core/scripts/update-superpowers.sh")
       )
         continue; // sed patterns intentionally reference the old layout
+      if (
+        full.split(path.sep).join("/").includes("packages/workit-core/src/core/docs-layout.ts") ||
+        full.split(path.sep).join("/").includes("test/workit-core/docs-paths.test.ts")
+      )
+        continue; // docs-layout.ts reserves docs/superpowers as the legacy root to reject/detect (DC-05)
       const content = readFileSync(full, "utf8");
       if (content.includes("docs/superpowers")) {
         offenders.push(path.relative(root, full));

@@ -4,6 +4,7 @@ import { spawnSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import { createSddTools } from "../../packages/workit-opencode/src/tools/sdd";
+import { docsValidate } from "../../packages/workit-core/src/core/docs-validate";
 import { WorkflowStateStore } from "../../packages/workit-core/src/state";
 
 const fixture = () => {
@@ -122,6 +123,67 @@ test("no sdd_not_ignored when sdd is gitignored", async () => {
     );
     const out = JSON.parse(raw as string);
     expect(out.data.quality.some((f: any) => f.code === "sdd_not_ignored")).toBe(false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("docsValidate rejects cross-slug pairs through the shared resolver", () => {
+  const { root } = fixture();
+  try {
+    mkdirSync(path.join(root, "docs", "other"), { recursive: true });
+    writeFileSync(path.join(root, "docs/other/spec.md"), "# Other\n");
+    const result = docsValidate({
+      spec_path: "docs/2026-08-04-gates/spec.md",
+      plan_path: "docs/other/plan.md",
+      workspace_root: root,
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok === false) expect(result.error).toMatch(/cross-slug|shared|contract|docs\//i);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("docsValidate rejects wrong basenames through the shared resolver", () => {
+  const { root, plan } = fixture();
+  try {
+    const result = docsValidate({
+      spec_path: "docs/2026-08-04-gates/spec.txt",
+      plan_path: plan,
+      workspace_root: root,
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok === false) expect(result.error).toMatch(/docs\/<slug>\/\(spec\|plan\)\.md/i);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("docsValidate rejects traversal through the shared resolver", () => {
+  const { root, spec } = fixture();
+  try {
+    const result = docsValidate({
+      spec_path: spec,
+      plan_path: "docs/../outside/plan.md",
+      workspace_root: root,
+    });
+    expect(result.ok).toBe(false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("docsValidate rejects absolute paths through the shared resolver", () => {
+  const { root, spec, plan } = fixture();
+  try {
+    const result = docsValidate({
+      spec_path: path.join(root, spec),
+      plan_path: plan,
+      workspace_root: root,
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok === false) expect(result.error).toMatch(/absolute/i);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

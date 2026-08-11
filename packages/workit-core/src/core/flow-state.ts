@@ -1,6 +1,7 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync, existsSync } from "node:fs";
 import path from "node:path";
 import { parseTasksFromPlan, qualitySpec, stripFences } from "./docs-validate";
+import { resolveCanonicalLayout } from "./docs-layout";
 
 export type FlowStatus = "draft" | "self_reviewed" | "approved";
 export type FlowDocState = { path: string; status: FlowStatus };
@@ -19,6 +20,23 @@ const SLUG_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const flowPath = (root: string, slug: string) => {
   if (!SLUG_RE.test(slug)) throw new Error(`invalid slug: ${JSON.stringify(slug)}`);
   return path.join(root, "docs", slug, "sdd", "flow.json");
+};
+
+// Resolve one spec/plan doc path under the shared contained contract (DC-01,
+// DC-02): the caller-supplied slug must match the slug derived from the path.
+const resolveDoc = (
+  root: string,
+  slug: string,
+  docPath: string,
+  kind: "spec" | "plan",
+): { ok: true; path: string } | { ok: false; error: string } => {
+  const resolved = resolveCanonicalLayout({
+    workspace_root: root,
+    ...(slug ? { slug } : {}),
+    [kind === "spec" ? "spec_path" : "plan_path"]: docPath,
+  });
+  if (!resolved.ok) return { ok: false, error: resolved.error };
+  return { ok: true, path: resolved.layout[kind === "spec" ? "spec" : "plan"] };
 };
 
 export const readFlowState = (root: string, slug: string): FlowState => {
@@ -76,20 +94,21 @@ export const transitionSpec = (
   specPath: string,
   confirmed: boolean,
 ): Result => {
+  const doc = resolveDoc(root, slug, specPath, "spec");
+  if (!doc.ok) return { ok: false, error: doc.error };
   let state: FlowState;
   try {
     state = readFlowState(root, slug);
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : "invalid flow state" };
   }
-  if (!existsSync(path.isAbsolute(specPath) ? specPath : path.join(root, specPath))) {
+  if (!existsSync(doc.path)) {
     return { ok: false, error: `spec not found: ${specPath}` };
   }
   if (state.spec.status === "draft" && confirmed) {
-    const specFile = path.isAbsolute(specPath) ? specPath : path.join(root, specPath);
     let text: string;
     try {
-      text = readFileSync(specFile, "utf8");
+      text = readFileSync(doc.path, "utf8");
     } catch (error) {
       return {
         ok: false,
@@ -128,23 +147,24 @@ export const transitionPlan = (
   planPath: string,
   confirmed: boolean,
 ): Result => {
+  const doc = resolveDoc(root, slug, planPath, "plan");
+  if (!doc.ok) return { ok: false, error: doc.error };
   let state: FlowState;
   try {
     state = readFlowState(root, slug);
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : "invalid flow state" };
   }
-  if (!existsSync(path.isAbsolute(planPath) ? planPath : path.join(root, planPath))) {
+  if (!existsSync(doc.path)) {
     return { ok: false, error: `plan not found: ${planPath}` };
   }
   if (state.spec.status !== "approved") {
     return { ok: false, error: "spec must be approved before the plan can be approved" };
   }
   if (state.plan.status === "draft" && confirmed) {
-    const planFile = path.isAbsolute(planPath) ? planPath : path.join(root, planPath);
     let text: string;
     try {
-      text = readFileSync(planFile, "utf8");
+      text = readFileSync(doc.path, "utf8");
     } catch (error) {
       return {
         ok: false,
@@ -179,6 +199,8 @@ export const recordMenuChoice = (
   confirmed: boolean,
 ): Result => {
   if (!confirmed) return { ok: false, error: "confirmed: true required" };
+  const doc = resolveDoc(root, slug, planPath, "plan");
+  if (!doc.ok) return { ok: false, error: doc.error };
   let state: FlowState;
   try {
     state = readFlowState(root, slug);
@@ -204,6 +226,8 @@ export const assertFlowGates = (
   planPath: string,
   opts: { requireMenu?: boolean } = {},
 ): Result => {
+  const doc = resolveDoc(root, "", planPath, "plan");
+  if (!doc.ok) return { ok: false, error: doc.error };
   const slug = slugFromPath(planPath);
   const state = readFlowState(root, slug);
   if (state.spec.status !== "approved") {
