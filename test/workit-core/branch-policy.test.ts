@@ -564,7 +564,15 @@ test("RL-03: every PR surface resolves the one configured target branch per pres
         expect(toolResult.ok, `${c.preset}: ${JSON.stringify(toolResult)}`).toBe(true);
         expect(toolResult.data.targetBranch).toBe(c.target);
 
-        // surface 5 — Cursor workflow_pr_create routes through the same prCreate
+        // surface 5 — Cursor workflow_pr_create. This calls core prCreate
+        // directly rather than packages/workit-cursor/mcp/server.ts: the MCP
+        // adapter's workflow_pr_create handler is a thin passthrough — it
+        // registers the tool, requires confirmed:true, then calls prCreate
+        // with the same 5 WF_PR_* keys (mcp/server.ts) — and exercising it
+        // needs a full stdio MCP client. The adapter wiring is asserted by
+        // source scans in test/workit-cursor/mcp-regressions.test.ts. B1's
+        // override validation lives in prCreate itself, so this surface is
+        // covered here exactly as the adapter would invoke it.
         const p = prCreate({ WF_PR_CONFIRMED: "true", WF_PR_TITLE: "T" }, root);
         expect(p.ok, `${c.preset}: ${JSON.stringify(p)}`).toBe(true);
         expect(p.targetBranch).toBe(c.target);
