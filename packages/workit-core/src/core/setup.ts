@@ -332,8 +332,13 @@ const isRecord = (v: unknown): v is Record<string, unknown> =>
 
 type Existing =
   | { kind: "missing" }
+  | { kind: "malformed"; error: string }
   | { kind: "record"; value: Record<string, unknown>; raw: string };
 
+// Platform config (opencode.json/settings.json/mcp.json) is NOT covered by the
+// WZ-06 preview scan (which gates only the workit config dir), so a malformed
+// file here must not be silently replaced with a fresh config (CA-14). Callers
+// turn { kind: "malformed" } into a Failed entry and leave the file untouched.
 const readExisting = (p: string): Existing => {
   let raw: string;
   try {
@@ -341,13 +346,14 @@ const readExisting = (p: string): Existing => {
   } catch {
     return { kind: "missing" };
   }
+  let value: unknown;
   try {
-    const value = JSON.parse(raw);
-    if (isRecord(value)) return { kind: "record", value, raw };
+    value = JSON.parse(raw);
   } catch {
-    /* non-record or unparseable → replace (the preview blocks malformed state) */
+    return { kind: "malformed", error: `${p} is not valid JSON` };
   }
-  return { kind: "missing" };
+  if (isRecord(value)) return { kind: "record", value, raw };
+  return { kind: "malformed", error: `${p} is not a JSON object` };
 };
 
 // Deep-merge preserves every unrelated key/value; arrays and scalars are
@@ -389,6 +395,14 @@ function applyMutation(m: SetupMutation): SetupResultEntry {
     }
     case "merge-json": {
       const existing = readExisting(m.path);
+      if (existing.kind === "malformed") {
+        return {
+          platform: "core",
+          file: m.path,
+          status: "Failed",
+          detail: `cannot merge into malformed config: ${existing.error}`,
+        };
+      }
       const merged =
         existing.kind === "record"
           ? deepMerge(existing.value, m.value as Record<string, unknown>)
@@ -511,6 +525,14 @@ function applyOpenCode(root: string, res: ResolvedApply): SetupResultEntry {
   }
   mkdirSync(path.dirname(res.opencodeConfig), { recursive: true });
   const existing = readExisting(res.opencodeConfig);
+  if (existing.kind === "malformed") {
+    return {
+      platform: "opencode",
+      file: res.opencodeConfig,
+      status: "Failed",
+      detail: `cannot merge into malformed config: ${existing.error} — repair or remove the file`,
+    };
+  }
   const merged = mergeOpenCodeConfig(existing.kind === "record" ? existing.value : {}, pin);
   if (merged.changed.length === 0) {
     return {
@@ -572,47 +594,65 @@ function applyCursor(root: string, res: ResolvedApply): SetupResultEntry[] {
 
   mkdirSync(path.dirname(res.cursorSettings), { recursive: true });
   const settingsExisting = readExisting(res.cursorSettings);
-  const settings = mergeCursorSettings(
-    settingsExisting.kind === "record" ? settingsExisting.value : {},
-    res.cursorPluginDir,
-  );
-  if (settings.changed.length > 0) {
-    writeFileSync(res.cursorSettings, JSON.stringify(settings.config, null, 2) + "\n", "utf8");
+  if (settingsExisting.kind === "malformed") {
     entries.push({
       platform: "cursor",
       file: res.cursorSettings,
-      status: settingsExisting.kind === "record" ? "Configured" : "Installed",
+      status: "Failed",
+      detail: `cannot merge into malformed config: ${settingsExisting.error} — repair or remove the file`,
     });
   } else {
-    entries.push({
-      platform: "cursor",
-      file: res.cursorSettings,
-      status: "Skipped",
-      detail: "already registered",
-    });
+    const settings = mergeCursorSettings(
+      settingsExisting.kind === "record" ? settingsExisting.value : {},
+      res.cursorPluginDir,
+    );
+    if (settings.changed.length > 0) {
+      writeFileSync(res.cursorSettings, JSON.stringify(settings.config, null, 2) + "\n", "utf8");
+      entries.push({
+        platform: "cursor",
+        file: res.cursorSettings,
+        status: settingsExisting.kind === "record" ? "Configured" : "Installed",
+      });
+    } else {
+      entries.push({
+        platform: "cursor",
+        file: res.cursorSettings,
+        status: "Skipped",
+        detail: "already registered",
+      });
+    }
   }
 
   mkdirSync(path.dirname(res.cursorMcp), { recursive: true });
   const mcpExisting = readExisting(res.cursorMcp);
-  const mcp = mergeCursorMcp(
-    mcpExisting.kind === "record" ? mcpExisting.value : {},
-    "workit",
-    cursorMcpServerEntry(res.cursorPluginDir),
-  );
-  if (mcp.changed.length > 0) {
-    writeFileSync(res.cursorMcp, JSON.stringify(mcp.config, null, 2) + "\n", "utf8");
+  if (mcpExisting.kind === "malformed") {
     entries.push({
       platform: "cursor",
       file: res.cursorMcp,
-      status: mcpExisting.kind === "record" ? "Configured" : "Installed",
+      status: "Failed",
+      detail: `cannot merge into malformed config: ${mcpExisting.error} — repair or remove the file`,
     });
   } else {
-    entries.push({
-      platform: "cursor",
-      file: res.cursorMcp,
-      status: "Skipped",
-      detail: "already registered",
-    });
+    const mcp = mergeCursorMcp(
+      mcpExisting.kind === "record" ? mcpExisting.value : {},
+      "workit",
+      cursorMcpServerEntry(res.cursorPluginDir),
+    );
+    if (mcp.changed.length > 0) {
+      writeFileSync(res.cursorMcp, JSON.stringify(mcp.config, null, 2) + "\n", "utf8");
+      entries.push({
+        platform: "cursor",
+        file: res.cursorMcp,
+        status: mcpExisting.kind === "record" ? "Configured" : "Installed",
+      });
+    } else {
+      entries.push({
+        platform: "cursor",
+        file: res.cursorMcp,
+        status: "Skipped",
+        detail: "already registered",
+      });
+    }
   }
 
   return entries;
@@ -650,14 +690,20 @@ export function applySetupPreview(
   options: ApplySetupOptions = {},
 ): SetupResult {
   if (!preview.ok) {
+    const malformed = [
+      preview.state.config,
+      preview.state.youtrack,
+      preview.state.vcs,
+      preview.state.workspaces,
+    ].filter((s) => s.status === "malformed");
     return {
       ok: false,
       exitCode: 1,
-      entries: preview.blocked.map((blocked) => ({
+      entries: malformed.map((s) => ({
         platform: "core" as const,
-        file: blocked,
+        file: s.file,
         status: "Failed" as const,
-        detail: "apply blocked by malformed configuration",
+        detail: s.error ?? "apply blocked by malformed configuration",
       })),
       preserved: [],
       blocked: preview.blocked,
@@ -699,12 +745,8 @@ export function applySetupPreview(
         if (report) {
           doctor.push(report);
           if (report.exitCode !== 0) {
-            entries.push({
-              platform: "opencode",
-              file: res.opencodeConfig,
-              status: "Failed",
-              detail: `doctor: ${failedDetail(report)}`,
-            });
+            entry.status = "Failed";
+            entry.detail = `${entry.detail ? entry.detail + " — " : ""}doctor: ${failedDetail(report)}`;
           }
         }
       }
@@ -714,12 +756,20 @@ export function applySetupPreview(
       if (report) {
         doctor.push(report);
         if (report.exitCode !== 0) {
-          entries.push({
-            platform: "cursor",
-            file: res.cursorSettings,
-            status: "Failed",
-            detail: `doctor: ${failedDetail(report)}`,
-          });
+          const primary = entries.find(
+            (e) => e.platform === "cursor" && e.file === res.cursorSettings,
+          );
+          if (primary) {
+            primary.status = "Failed";
+            primary.detail = `${primary.detail ? primary.detail + " — " : ""}doctor: ${failedDetail(report)}`;
+          } else {
+            entries.push({
+              platform: "cursor",
+              file: res.cursorSettings,
+              status: "Failed",
+              detail: `doctor: ${failedDetail(report)}`,
+            });
+          }
         }
       }
     }

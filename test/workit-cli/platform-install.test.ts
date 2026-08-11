@@ -269,6 +269,38 @@ test("packaged hygiene assets are applied without overwriting existing files (CA
   }
 });
 
+test("corrupted platform config is preserved, not overwritten (CA-14)", () => {
+  const home = tempDir("workit-install-home-");
+  const dir = tempDir("workit-install-cfg-");
+  try {
+    const opencodeCfg = path.join(home, ".config", "opencode", "opencode.json");
+    const cursorSettings = path.join(home, ".cursor", "settings.json");
+    const cursorMcp = path.join(home, ".cursor", "mcp.json");
+    mkdirSync(path.dirname(opencodeCfg), { recursive: true });
+    mkdirSync(path.dirname(cursorSettings), { recursive: true });
+    writeFileSync(opencodeCfg, "{ not valid json");
+    writeFileSync(cursorSettings, "{ nope");
+    writeFileSync(cursorMcp, "definitely-not-json");
+
+    const result = apply(dir, home, { platforms: ["opencode", "cursor"] });
+    expect(result.ok).toBe(false);
+    expect(result.exitCode).toBe(1);
+    for (const file of [opencodeCfg, cursorSettings, cursorMcp]) {
+      expect(statusOf(result, file)).toBe("Failed");
+      expect(readFileSync(file, "utf8")).toBe(
+        file === opencodeCfg
+          ? "{ not valid json"
+          : file === cursorSettings
+            ? "{ nope"
+            : "definitely-not-json",
+      );
+    }
+  } finally {
+    clean(home);
+    clean(dir);
+  }
+});
+
 test("blocked preview → exitCode 1, Failed entries, nothing written (WZ-06/CA-22)", () => {
   const home = tempDir("workit-install-home-");
   const dir = tempDir("workit-install-cfg-");
