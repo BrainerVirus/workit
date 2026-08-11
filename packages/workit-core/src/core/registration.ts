@@ -15,13 +15,22 @@ export interface MergeResult<T> {
 const isRecord = (v: unknown): v is Record<string, unknown> =>
   v !== null && typeof v === "object" && !Array.isArray(v);
 
-/** True when a plugin identity is a current or legacy Workit entry. */
+/**
+ * True when a plugin identity is a current or legacy Workit entry. Matched by
+ * exact identity, never by substring: an unrelated plugin whose id merely
+ * contains "workflow-toolkit" is preserved (D3).
+ */
 export function isWorkitPlugin(value: unknown): boolean {
   const s = String(value);
+  const named = (name: string) => s === name || s.startsWith(`${name}@`);
   return (
-    s.includes("workflow-toolkit") ||
-    s.includes("@brainervirus/workit-opencode") ||
-    s.includes("/packages/workit-opencode/")
+    named("workflow-toolkit") ||
+    named("workflow-toolkit-opencode") ||
+    named("local/workflow-toolkit") ||
+    s.startsWith("@brainervirus/workit-opencode") ||
+    s.startsWith("@brainervirus/workit-cursor") ||
+    (s.includes("file://") && s.includes("/packages/workit-opencode/")) ||
+    (s.includes("git+file://") && s.includes("workflow-toolkit"))
   );
 }
 

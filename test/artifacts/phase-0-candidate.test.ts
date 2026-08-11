@@ -78,8 +78,12 @@ test("packs all workspace packages into local tarballs without publishing", () =
 });
 
 test("the final release candidate is byte-stable with the phase-0 pack (CA-30)", () => {
-  const candidate = packReleaseCandidate();
+  // Force a fresh pack against the earlier (cached) phase-0 pack: comparing two
+  // calls that both hit the module cache would be comparing an array with
+  // itself (D12). Order matters — packWorkspacePackages() must run first so the
+  // force actually repacks.
   const packs = packWorkspacePackages();
+  const candidate = packReleaseCandidate({ force: true });
   expect(candidate.map((p) => p.sha256)).toEqual(packs.map((p) => p.sha256));
 });
 

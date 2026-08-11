@@ -252,6 +252,10 @@ test("packed tarball locations never reference the repository checkout", () => {
 });
 
 test("the runtime gate exercises the same final candidate artifacts (CA-30)", () => {
+  // Both calls resolve to the same cached pack, so this asserts the gate uses
+  // the final candidate, not fresh-vs-cached bytes. Byte-stability across a
+  // forced repack is proven in release-candidate.test.ts ("a fresh repack
+  // yields byte-identical sha256") and phase-0-candidate.test.ts (D12).
   const candidate = packReleaseCandidate();
   const packs = packWorkspacePackages();
   expect(candidate.map((p) => p.sha256)).toEqual(packs.map((p) => p.sha256));

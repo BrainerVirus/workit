@@ -42,6 +42,10 @@ export function packWorkspacePackages(options: { force?: boolean } = {}): Packed
   if (cached && !options.force) return cached;
   const sandbox = mkdtempSync(path.join(os.tmpdir(), "wk-pack-sandbox-"));
   const tarballs = mkdtempSync(path.join(os.tmpdir(), "wk-pack-tarballs-"));
+  // ponytail: the tarball temp dir deliberately leaks to a fresh OS temp dir —
+  // the returned PackedPackage entries reference the tarballs after this call
+  // returns, so cleanup here would break callers; the OS tempdir sweep reclaims
+  // it. Cleanup only if the pack itself throws before any caller can hold them.
   try {
     for (const pkg of WORKSPACE_PACKAGES) copyPackage(pkg, sandbox);
 
@@ -122,6 +126,13 @@ function packSandbox(sandbox: string, tarballs: string): PackedPackage[] {
 // and the extracted `package/` directory.
 export function extractTarball(tarball: string): { root: string; packageDir: string } {
   const root = mkdtempSync(path.join(os.tmpdir(), "wk-extract-"));
+  // Cheap traversal guard (D9): reject any entry with a `..` path component
+  // before extraction. Our own `bun pm pack` tarballs never have one; this
+  // only hardens against a tampered tarball ever reaching the gate.
+  if (listTarball(tarball).some((entry) => entry.split("/").includes(".."))) {
+    rmSync(root, { recursive: true, force: true });
+    throw new Error(`tar traversal refused: ${tarball}`);
+  }
   const run = spawnSync("tar", ["-xzf", tarball, "-C", root], { encoding: "utf8" });
   if (run.status !== 0) {
     rmSync(root, { recursive: true, force: true });
@@ -174,22 +185,34 @@ export function installPackedPackage(nodeModulesDir: string, pack: PackedPackage
 }
 
 // Offline registry stand-in: copy the hoisted third-party runtime deps of the
-// given packages (BFS over each package.json's dependencies) into an isolated
-// node_modules, so an extracted candidate resolves them without a network.
+// given packages (BFS over each package.json's dependencies AND
+// optionalDependencies) into an isolated node_modules, so an extracted
+// candidate resolves them without a network. Symlinks are dereferenced so a
+// workspace-symlinked hoisted root cannot leak a repo-absolute path into the
+// isolated install (D9). Optional deps that are absent (e.g. other-platform
+// @msgpackr-extract binaries) are skipped — optional means optional.
 export function copyHoistedDeps(nodeModulesDir: string, roots: string[]): void {
   const queue = [...roots];
+  const optional = new Set<string>();
   const seen = new Set<string>();
   while (queue.length) {
     const spec = queue.shift()!;
     if (seen.has(spec)) continue;
     seen.add(spec);
     const src = path.join(REPO_ROOT, "node_modules", spec);
-    if (!existsSync(src)) throw new Error(`hoisted dependency not found: ${spec}`);
+    if (!existsSync(src)) {
+      if (optional.has(spec)) continue;
+      throw new Error(`hoisted dependency not found: ${spec}`);
+    }
     const dest = path.join(nodeModulesDir, spec);
     mkdirSync(path.dirname(dest), { recursive: true });
-    cpSync(src, dest, { recursive: true });
+    cpSync(src, dest, { recursive: true, dereference: true });
     const meta = JSON.parse(readFileSync(path.join(src, "package.json"), "utf8"));
     for (const dep of Object.keys(meta.dependencies ?? {})) queue.push(dep);
+    for (const dep of Object.keys(meta.optionalDependencies ?? {})) {
+      optional.add(dep);
+      queue.push(dep);
+    }
   }
 }
 

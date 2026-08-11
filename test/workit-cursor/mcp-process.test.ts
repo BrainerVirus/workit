@@ -151,6 +151,15 @@ test("cursor MCP representative handlers run without workspace_root faults", asy
       arguments: { text: "1h 30m", workspace_root: tmp },
     });
     expect((parseDuration as any).result.isError).not.toBe(true);
+
+    // D6: omitting workspace_root exercises the schema `.default()` (process.cwd()
+    // in the spawned server) instead of an explicit root — the handler must work.
+    const gitDefault = await request("tools/call", {
+      name: "workflow_git_context",
+      arguments: {},
+    });
+    expect((gitDefault as any).result.isError).not.toBe(true);
+    expect((gitDefault as any).result.content?.[0]?.text).toBeDefined();
   } finally {
     child.kill();
   }

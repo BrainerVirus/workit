@@ -124,3 +124,27 @@ test("a domain error return is marked isError:true, not a successful-looking res
     server.child.kill();
   }
 });
+
+test("a domain error string containing a secret is redacted before reaching the MCP client (D5)", async () => {
+  const server = startServer();
+  try {
+    await initialize(server);
+    // workflow_toolkit_init_apply echoes the invalid locale into the domain
+    // error; hide a value-pattern secret inside it so redact() must strip it.
+    const response = await server.request("tools/call", {
+      name: "workflow_toolkit_init_apply",
+      arguments: {
+        action: "config",
+        confirmed: false,
+        locale: "es Authorization: canary-secret-99",
+      },
+    });
+    const result = (response as any).result;
+    expect(result.isError).toBe(true);
+    const raw = JSON.stringify(result);
+    expect(raw).toContain("[REDACTED]");
+    expect(raw).not.toContain("canary-secret-99");
+  } finally {
+    server.child.kill();
+  }
+});

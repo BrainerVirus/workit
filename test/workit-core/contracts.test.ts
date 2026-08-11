@@ -253,9 +253,23 @@ test("SDD contracts name gitignored docs/<slug>/sdd/ with no nested slug and no 
   expect(surfaces).not.toMatch(/tracked (SDD|state|ledger|brief|diff|under `docs\/<slug>\/sdd)/i);
   // No nested slug level under sdd/ on any shipped surface.
   expect(surfaces).not.toContain("sdd/<slug>");
-  // Nothing claims the context creates the sdd dir or an empty progress ledger.
-  expect(surfaces).not.toMatch(/creates\s+`?docs\/<slug>\/sdd\/progress\.md`?/i);
-  expect(surfaces).not.toMatch(/creates\s+`?docs\/<slug>\/sdd\/?`?/i);
+  // Nothing claims the context creates the sdd dir or an empty progress ledger —
+  // including the cursor rule's bold `**creates** `docs/<slug>/sdd/progress.md``
+  // phrasing (D8: `\s+` alone would fail on the `**` boundary).
+  expect(surfaces).not.toMatch(/creates\s*\*{0,2}\s*`?docs\/<slug>\/sdd\/progress\.md`?/i);
+  expect(surfaces).not.toMatch(/creates\s*\*{0,2}\s*`?docs\/<slug>\/sdd\/?`?/i);
+});
+
+test("SDD create-prohibition regex catches the bold **creates** phrasing (D8)", () => {
+  for (const bold of [
+    "**creates** `docs/<slug>/sdd/progress.md`",
+    "**creates** docs/<slug>/sdd/progress.md",
+    "creates `docs/<slug>/sdd/progress.md`",
+  ]) {
+    expect(bold).toMatch(/creates\s*\*{0,2}\s*`?docs\/<slug>\/sdd\/progress\.md`?/i);
+    expect(bold).toMatch(/creates\s*\*{0,2}\s*`?docs\/<slug>\/sdd\/?`?/i);
+  }
+  expect("**creates** `docs/<slug>/sdd/`").toMatch(/creates\s*\*{0,2}\s*`?docs\/<slug>\/sdd\/?`?/i);
 });
 
 test("cursor session-start includes the contract reminder", () => {

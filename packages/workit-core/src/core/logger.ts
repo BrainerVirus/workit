@@ -59,13 +59,22 @@ const RETAINED_DAYS = 7;
 // Home prefixes, URL queries, and inline secret values are redacted inside any
 // string. Key names drive the rest: a field whose name contains a secret or
 // content word is fully replaced, a stack/trace field is line-bounded.
-const SECRET_VALUE = /\b(?:Bearer|Basic|Digest|Token)\s+\S+/g;
+const SECRET_VALUE = /\b(?:Bearer|Basic|Digest|Token)\s+\S+/gi;
+// Case-insensitive: `Authorization: abc`, `Api-Token=xyz`, `Bearer`-style
+// headers are redacted regardless of casing (D2). The alternation is the same
+// secret vocabulary as SENSITIVE_WORDS, so the over-redaction risk is limited
+// to values next to a secret-ish key — acceptable for a security logger.
 const KEY_EQ_VALUE =
-  /\b([A-Za-z0-9_-]*(?:token|secret|password|passwd|apikey|api[_-]?key|authorization|credential|bearer)[A-Za-z0-9_-]*)([:=]\s*).+/g;
+  /\b([A-Za-z0-9_-]*(?:token|secret|password|passwd|apikey|api[_-]?key|authorization|credential|bearer)[A-Za-z0-9_-]*)([:=]\s*).+/gi;
 const URL_QUERY = /(https?:\/\/[^?#\s]+)\?[^#\s]*/g;
 
+// Split camelCase AND acronym+word compounds (APIToken -> api|token, so the
+// "token" word lands in SENSITIVE_WORDS instead of the whole lowercase
+// compound "apitoken" leaking past it) (D1).
 const splitKey = (key: string): string[] =>
-  key.split(/[_-]+|(?<=[a-z0-9])(?=[A-Z])/).map((word) => word.toLowerCase());
+  key
+    .split(/[_-]+|(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])/)
+    .map((word) => word.toLowerCase());
 
 const SENSITIVE_WORDS = new Set([
   "token",
@@ -78,6 +87,10 @@ const SENSITIVE_WORDS = new Set([
   "cookie",
   "api",
   "apikey",
+  "apitoken",
+  "accesstoken",
+  "clientsecret",
+  "refreshtoken",
   "key",
   "bearer",
   "prompt",
@@ -134,6 +147,13 @@ const applyPatterns = (value: string): string => {
   out = out.replace(homePattern, "~");
   return out;
 };
+
+/**
+ * Pattern-only redaction: strips secret value patterns from a string while
+ * preserving its full text — no field-length truncation. The receiver owns its
+ * own size bound (e.g. an MCP error string must stay intact for the client).
+ */
+export const redactSecrets = (value: string): string => applyPatterns(value);
 
 const redactString = (value: string, options: RedactOptions): string => {
   const out = applyPatterns(value);

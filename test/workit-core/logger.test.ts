@@ -374,6 +374,23 @@ describe("redact", () => {
     expect(redact({ ApiKey: "ak-secret-5" })).toEqual({ ApiKey: "[REDACTED]" });
   });
 
+  test("redacts uppercase-acronym compounds split by the camelCase boundary (D1)", () => {
+    expect(redact({ APIToken: "sk-apitoken-1" })).toEqual({ APIToken: "[REDACTED]" });
+    expect(redact({ APISecret: "sk-apisecret-2" })).toEqual({ APISecret: "[REDACTED]" });
+    expect(redact({ APIClientSecret: "sk-apiclient-3" })).toEqual({ APIClientSecret: "[REDACTED]" });
+    expect(redact({ apitoken: "sk-lower-4" })).toEqual({ apitoken: "[REDACTED]" });
+    expect(redact({ accesstoken: "sk-lower-5" })).toEqual({ accesstoken: "[REDACTED]" });
+    expect(redact({ authHeader: "Bearer abc" })).toEqual({ authHeader: "[REDACTED]" });
+  });
+
+  test("redacts mixed-case inline value patterns (D2)", () => {
+    expect(redact("Authorization: abc123def")).toBe("Authorization: [REDACTED]");
+    expect(redact("authorization: abc123def")).toBe("authorization: [REDACTED]");
+    expect(redact("API_TOKEN=secret-xyz")).toBe("API_TOKEN=[REDACTED]");
+    expect(redact("Bearer xyz123")).toBe("[REDACTED]");
+    expect(redact("bearer xyz123")).toBe("[REDACTED]");
+  });
+
   test("redacts the home prefix inside stack values", () => {
     const stack = `    at foo (${path.join(os.homedir(), "app", "x.ts")}:1:1)\n    at bar (b.ts:2:2)`;
     expect(redact({ stack })).toEqual({

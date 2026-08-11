@@ -555,13 +555,22 @@ export const migrateLegacyDocs = (input: {
   // Preflight classification (no writes yet): differing destinations abort the
   // whole migration atomically; destinations matching the exact bytes that
   // would be written are already migrated (idempotent retries stay green).
+  // A destination that is a directory, or a symlink to one, is a collision —
+  // readFileSync would throw EISDIR uncaught, so any read failure is treated
+  // as a collision and aborts structurally (D4).
   const collisions: string[] = [];
   for (const item of plan) {
     if (!existsSync(item.destAbs)) continue;
-    if (lstatSync(item.destAbs).isDirectory() || !readFileSync(item.destAbs).equals(item.bytes)) {
-      collisions.push(item.toRel);
-    } else {
+    let identical = false;
+    try {
+      identical = !lstatSync(item.destAbs).isDirectory() && readFileSync(item.destAbs).equals(item.bytes);
+    } catch {
+      identical = false;
+    }
+    if (identical) {
       item.status = "already_migrated";
+    } else {
+      collisions.push(item.toRel);
     }
   }
   if (collisions.length > 0) {

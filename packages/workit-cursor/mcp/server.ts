@@ -3,7 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
-import { createLogger, redact } from "@brainervirus/workit-core/src/core/logger";
+import { createLogger, redact, redactSecrets } from "@brainervirus/workit-core/src/core/logger";
 import { EVENT, errorDetail } from "@brainervirus/workit-core/src/core/boundary";
 import { setDiagnosticLogger } from "@brainervirus/workit-core/src/core/config";
 
@@ -133,8 +133,14 @@ const server = new McpServer({
 
 function jsonResult(data: Record<string, unknown>): CallToolResult {
   // Domain failures keep their structured detail but are never successful-looking
-  // (DG-06): any payload carrying an `error` field is marked isError: true.
+  // (DG-06): any payload carrying an `error` field is marked isError: true. The
+  // error string is redacted like the throw-path wrapper (DG-05, DG-10), so a
+  // secret in a domain error never reaches the MCP client raw. Pattern-only
+  // (no truncation): the recovery/actionable text must stay intact for the model.
   const isError = Boolean(data.error);
+  if (isError && typeof data.error === "string") {
+    data.error = redactSecrets(data.error);
+  }
   return {
     content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
     structuredContent: data,

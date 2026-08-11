@@ -1,8 +1,8 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { runDoctor, type DoctorOptions } from "../../../packages/workit-core/src/core/doctor";
-import { makeDoctorFixture } from "./doctor-fixture";
-import { packReleaseCandidate, type PackedPackage } from "./packages";
+import { binDirWithRuntimes, makeDoctorFixture } from "./doctor-fixture";
+import { isolatedEnv, packReleaseCandidate, type PackedPackage } from "./packages";
 
 // Deterministic reliability report (Task 23, RL-08/RL-10): aggregates the
 // offline doctor's checks/fixes, the structured logger's event/file counts, the
@@ -51,10 +51,14 @@ const countLogs = (logDir: string): { files: number; events: number } => {
 export function buildReliabilityReport(options: ReliabilityReportOptions = {}): ReliabilityReport {
   const candidate = options.candidate ?? packReleaseCandidate();
   const fixture = makeDoctorFixture();
+  const bin = binDirWithRuntimes(fixture.root);
   try {
     const report = runDoctor(
       options.doctor ?? {
-        // Default: a disposable isolated fixture, never the caller's real HOME.
+        // Default: a disposable isolated fixture, never the caller's real HOME,
+        // with an env-isolated PATH (only node+bun, no git) so the utility
+        // counts are deterministic across machines (D11) — WORKFLOW_*/XDG_*
+        // overrides are stripped by isolatedEnv.
         home: fixture.home,
         configDir: fixture.configDir,
         stateDir: fixture.stateDir,
@@ -63,14 +67,14 @@ export function buildReliabilityReport(options: ReliabilityReportOptions = {}): 
         opencodeConfig: fixture.opencodeConfig,
         cursorSettings: fixture.cursorSettings,
         cursorMcp: fixture.cursorMcp,
+        env: isolatedEnv(fixture.home, { PATH: bin }),
       },
     );
     const logDir = options.logDir ?? path.join(fixture.stateDir, "logs");
-    const installs = options.installs ?? {
-      installed: candidate.length,
-      started: candidate.length,
-      required_failures: 0,
-    };
+    // Honest default: no install run happened in this process, so installed/
+    // started are 0 ("not run"), never a tautological mirror of candidate
+    // length (D11). Real install runs must pass `installs` explicitly.
+    const installs = options.installs ?? { installed: 0, started: 0, required_failures: 0 };
     return {
       generated_at: (options.now ?? (() => new Date()))().toISOString(),
       published: false,

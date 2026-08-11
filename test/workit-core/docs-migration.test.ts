@@ -284,6 +284,29 @@ test("migrate treats identical destinations as already migrated and is idempoten
   }
 });
 
+test("migrate treats a destination symlink to a directory as a collision, not a throw (D4)", () => {
+  const root = tmp();
+  try {
+    putLegacy(root, "foo");
+    mkdirSync(path.join(root, "docs", "foo"), { recursive: true });
+    const target = tmp();
+    symlinkSync(target, path.join(root, "docs", "foo", "spec.md"));
+    try {
+      const result = migrateLegacyDocs({ workspace_root: root, slug: "foo", confirmed: true });
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.collisions ?? []).toContain("docs/foo/spec.md");
+        expect(result.error).toMatch(/collision/i);
+      }
+      expect(existsSync(path.join(root, "docs", "foo", "plan.md"))).toBe(false);
+    } finally {
+      cleanup(target);
+    }
+  } finally {
+    cleanup(root);
+  }
+});
+
 test("migrate copies a paired workflow and preserves sources byte-identical", () => {
   const root = tmp();
   try {

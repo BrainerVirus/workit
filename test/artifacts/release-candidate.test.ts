@@ -1,5 +1,4 @@
 import { expect, test } from "bun:test";
-import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -10,6 +9,7 @@ import {
   packReleaseCandidate,
   readTarballFile,
   REPO_ROOT,
+  runInIsolation,
 } from "../shared/helpers/packages";
 
 // Task 23 release-candidate gate (RL-08/RL-10, CA-30): the FINAL packed
@@ -45,13 +45,16 @@ test("a fresh repack yields byte-identical sha256 for every package", () => {
 });
 
 test("packing the candidate never invokes a publication command (RL-08/CA-30)", () => {
-  // Comment text may mention publishing; the pack flow's CODE must not run it.
+  // Comment text may mention publishing; the pack flow's CODE must not run it,
+  // and no bare "publish" literal may appear either (D10).
   const codeOnly = (src: string) => src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
   const forbidden =
     /\b(?:npm|npx|bun|yarn|pnpm)\s+(?:publish|login|adduser)\b|\bgit\s+(?:push|tag)\b|\bgh\s+release\b/;
   for (const rel of PACK_FLOW_SOURCES) {
-    const src = readFileSync(path.join(REPO_ROOT, rel), "utf8");
-    expect(codeOnly(src), rel).not.toMatch(forbidden);
+    const code = codeOnly(readFileSync(path.join(REPO_ROOT, rel), "utf8"));
+    expect(code, rel).not.toMatch(forbidden);
+    expect(code, rel).not.toContain('"publish"');
+    expect(code, rel).not.toContain("'publish'");
   }
   for (const pack of packReleaseCandidate()) {
     expect(pack.tarball.startsWith(os.tmpdir()), pack.packageName).toBe(true);
@@ -93,11 +96,12 @@ test("the packed candidate starts in isolation from an unrelated working directo
     mkdirSync(nm, { recursive: true });
     installPackedPackage(nm, cli);
     const cliDir = path.join(nm, CLI);
-    const res = spawnSync("node", [path.join(cliDir, "dist", "index.js"), "--help"], {
-      cwd: cliDir,
-      env: isolatedEnv(home),
-      encoding: "utf8",
-    });
+    const res = runInIsolation(
+      cliDir,
+      "node",
+      [path.join(cliDir, "dist", "index.js"), "--help"],
+      isolatedEnv(home),
+    );
     expect(res.status, res.stderr ?? "").toBe(0);
     expect(res.stdout).toContain("workit");
   } finally {

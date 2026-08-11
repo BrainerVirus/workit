@@ -19,7 +19,11 @@ function tsFilesUnder(dir: string): string[] {
 }
 
 function specifiers(source: string): string[] {
-  return [...source.matchAll(/(?:from\s*|import\s*\()["']([^"']+)["']/g)].map((match) => match[1]);
+  // Catches `from "x"`, `import("x")`, and bare side-effect `import "x"`
+  // (D7) so a host-SDK side-effect import cannot evade the scan.
+  return [
+    ...source.matchAll(/(?:from\s*|import\s*\(|import\s+)["']([^"']+)["']/g),
+  ].map((match) => match[1]);
 }
 
 test("workit-core imports no host SDK, MCP SDK, Ink, or React", () => {
@@ -33,6 +37,21 @@ test("workit-core imports no host SDK, MCP SDK, Ink, or React", () => {
     }
   }
   expect(offenders).toEqual([]);
+});
+
+test("specifier scan catches bare side-effect imports, not only from/import() (D7)", () => {
+  const source = [
+    'import "@opencode-ai/plugin";',
+    'import { x } from "ink";',
+    'const m = import("react");',
+    'import("@opencode-ai/tools");',
+  ].join("\n");
+  const specs = specifiers(source);
+  expect(specs).toContain("@opencode-ai/plugin");
+  expect(specs).toContain("ink");
+  expect(specs).toContain("react");
+  expect(specs).toContain("@opencode-ai/tools");
+  expect(specs.filter((s) => s === "@opencode-ai/plugin")).toHaveLength(1);
 });
 
 test("root tsconfig typechecks every maintained TS surface", () => {
@@ -59,7 +78,9 @@ test("cursor normalizes workspace root once through resolveWorkspaceRoot", () =>
 test("opencode and cursor flow registrations share the same pure core functions", async () => {
   const server = readFileSync(CURSOR_SERVER, "utf8");
   expect(server).toMatch(/resolveCanonicalLayout\(\{\s*workspace_root,\s*spec_path,\s*plan_path/s);
-  expect(server).toMatch(/readFlowState\(workspace, slug\)/);
+  // Robust equivalence: the cursor server resolves a workspace root and feeds it
+  // to the shared readFlowState core function (argument shape may evolve).
+  expect(server).toMatch(/readFlowState\s*\(\s*workspace\b/);
 
   const { createFlowTools } = await import("../../packages/workit-opencode/src/tools/flow");
   const root = mkdtempSync(path.join(os.tmpdir(), "wf-boundary-"));

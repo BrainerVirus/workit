@@ -29,13 +29,41 @@ test("isWorkitPlugin matches every legacy and current identity, never unrelated 
     "workflow-toolkit-opencode@git+file:///old/checkout",
     "@brainervirus/workit-opencode",
     "@brainervirus/workit-opencode@1.0.0",
+    "@brainervirus/workit-cursor",
+    "@brainervirus/workit-cursor@2.0.0",
     "file:///work/packages/workit-opencode/src/plugin.ts",
+    "git+file:///work/workflow-toolkit",
+    "workflow-toolkit",
+    "local/workflow-toolkit",
   ]) {
     expect(isWorkitPlugin(id), id).toBe(true);
   }
   for (const id of ["@dietrichgebert/ponytail", "@opencode-ai/plugin", "my-plugin"]) {
     expect(isWorkitPlugin(id), id).toBe(false);
   }
+});
+
+test("isWorkitPlugin preserves unrelated plugin ids that merely contain workflow-toolkit (D3)", () => {
+  for (const id of [
+    "some-workflow-toolkit-helper",
+    "my-workflow-toolkit-plugins",
+    "workflow-toolkit-mcp",
+    "org/plugin-workflow-toolkit-v2",
+    "github.com/owner/workflow-toolkit-fork",
+  ]) {
+    expect(isWorkitPlugin(id), id).toBe(false);
+  }
+});
+
+test("mergeOpenCodePlugins preserves unrelated workflow-toolkit-containing ids (D3)", () => {
+  const existing = [
+    "some-workflow-toolkit-helper",
+    "@brainervirus/workit-opencode",
+    PIN,
+  ];
+  const { config, changed } = mergeOpenCodePlugins(existing, PIN);
+  expect(config).toEqual([PIN, "some-workflow-toolkit-helper"]);
+  expect(changed).toEqual(["plugin"]);
 });
 
 test("mergeOpenCodePlugins dedups legacy + current identities to a single pin", () => {

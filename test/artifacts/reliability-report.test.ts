@@ -28,9 +28,18 @@ test("default report aggregates the deterministic candidate and an isolated doct
   }
   const packs = packReleaseCandidate();
   expect(report.candidate.map((c) => c.sha256)).toEqual(packs.map((p) => p.sha256));
-  expect(report.doctor.total).toBe(11);
+  // The default env-isolated doctor (node+bun on PATH, no git) is deterministic:
+  // exactly the utility check fails (D11/D13).
+  expect(report.doctor).toEqual({
+    ok: false,
+    passed: 10,
+    warned: 0,
+    failed: 1,
+    total: 11,
+    fixes: 1,
+  });
   expect(report.logs).toEqual({ files: 0, events: 0 });
-  expect(report.installs).toEqual({ installed: 4, started: 4, required_failures: 0 });
+  expect(report.installs).toEqual({ installed: 0, started: 0, required_failures: 0 });
 });
 
 test("report doctor counts are exact against a controlled isolated fixture", () => {
@@ -83,7 +92,7 @@ test("report log counts reflect real logger writes", () => {
 
 test("report install counts are exact and not hardcoded", () => {
   const defaulted = buildReliabilityReport({ now: () => new Date(0) });
-  expect(defaulted.installs).toEqual({ installed: 4, started: 4, required_failures: 0 });
+  expect(defaulted.installs).toEqual({ installed: 0, started: 0, required_failures: 0 });
 
   const overridden = buildReliabilityReport({
     now: () => new Date(0),
