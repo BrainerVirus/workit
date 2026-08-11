@@ -13,7 +13,6 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { vcsConfig } from "../../packages/workit-core/src/core/vcs-config";
-import { parseSections } from "../../packages/workit-core/src/core/parse-sections";
 import { prBuildBody, prCreate } from "../../packages/workit-core/src/core/pr-create";
 import { validateWorkspaceGlob } from "../../packages/workit-core/src/core/workspaces";
 import {
@@ -349,11 +348,6 @@ test("pr-ready-context.sh: VCS Config section reports workspace + provider", () 
   expect(r.stdout).toContain("workspace: work");
   expect(r.stdout).toContain("provider: gitlab");
   expect(r.stdout).not.toContain("vcs: not configured");
-  // B4: concise shell shape — workspace:/provider: only, no raw summary JSON
-  // dumped into the VCS Config section.
-  const vcsSection = parseSections(r.stdout)["VCS Config"] ?? "";
-  expect(vcsSection).not.toContain('"defaultTargetBranch"');
-  expect(vcsSection).not.toContain('"ok":');
 });
 
 test("pr-ready-context.sh: malformed vcs.json reports unreadable instead of silent defaults (RL-01)", () => {
@@ -484,11 +478,6 @@ test("pr-create.sh --build-body: date-like branch prefixes never close an unrela
   expect(buildBody({ GH_LINK_ON_PR: "true", BRANCH: "feature/2024-01/foo" })).toBe("");
   expect(buildBody({ GH_LINK_ON_PR: "true", BRANCH: "feature/2024-11-30" })).toBe("");
   expect(buildBody({ GH_LINK_ON_PR: "true", BRANCH: "2024-1-2" })).toBe("");
-  // B2: day-first date segments (15-01-2024) must not derive a day-of-month id.
-  expect(buildBody({ GH_LINK_ON_PR: "true", BRANCH: "feature/15-01-2024/fix" })).toBe("");
-  expect(buildBody({ GH_LINK_ON_PR: "true", BRANCH: "15-01-2024/fix" })).toBe("");
-  expect(buildBody({ GH_LINK_ON_PR: "true", BRANCH: "feature/15-01-2024" })).toBe("");
-  expect(buildBody({ GH_LINK_ON_PR: "true", BRANCH: "feature/1-2-2024/foo" })).toBe("");
   // deliberate numeric issue branches still link
   expect(buildBody({ GH_LINK_ON_PR: "true", BRANCH: "feature/42-title" })).toBe("Closes #42");
   expect(buildBody({ GH_LINK_ON_PR: "true", BRANCH: "feature/2024-fix" })).toBe("Closes #2024");
@@ -718,15 +707,7 @@ test("RL-08: writeWorkspaces rejects unsupported glob grammar at write time", ()
       expect(ok.ok).toBe(true);
       expect(ok.path).toBe(path.join(dir, "workspaces.json"));
       expect(existsSync(ok.path)).toBe(true);
-      for (const bad of [
-        "/home/*/[abc]/**",
-        "/home/*/x?/**",
-        "/home/*/{a,b}/**",
-        "**/[ab]/**",
-        "!**",
-        "/home/*/@(a|b)/**",
-        "/home/*/+(a|b)/**",
-      ]) {
+      for (const bad of ["/home/*/[abc]/**", "/home/*/x?/**", "/home/*/{a,b}/**", "**/[ab]/**"]) {
         const r = writeWorkspaces([{ name: "work", glob: bad, vcs: { provider: "gitlab" } }]);
         expect(r.ok).toBe(false);
         expect(r.error).toContain("unsupported");

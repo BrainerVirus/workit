@@ -278,3 +278,18 @@ test("contract includes the doc delivery section", () => {
   expect(contract).toContain("## Doc delivery");
   expect(contract).toMatch(/\[spec\.md\]\(docs\/<slug>\/spec\.md\)/);
 });
+
+test("flow contract prose grounds flow-tool confirmations in NativeChoiceEvidence", () => {
+  const read = (rel: string) => readFileSync(path.join(import.meta.dir, "..", "..", rel), "utf8");
+  const surfaces = [
+    "packages/workit-core/skills/wk-implement/SKILL.md",
+    "packages/workit-core/templates/execution-contract.md",
+    "packages/workit-core/templates/superpowers-doc-contract.md",
+  ]
+    .map(read)
+    .join("\n");
+  expect(surfaces).toContain("NativeChoiceEvidence");
+  for (const field of ["host", "questionId", "selectedLabel", "recordedAt"]) {
+    expect(surfaces).toContain(field);
+  }
+});

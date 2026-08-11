@@ -34,7 +34,8 @@ Before writing **Branch:** into a new spec or plan, call `workflow_docs_branch` 
 - Implementation uses `wk-implement` and subagent-driven development, with native `todowrite` and `task`.
 - Commits use `wk-commit` after its native `question` confirmation.
 - Continuation uses `wk-handoff`, whose `workflow_handoff_session` creates and seeds the OpenCode session automatically.
-- Never use worktrees. Resolve the declared branch with `workflow_resolve_branch`, preview dirty-tree stash choices with `question`, and apply an approved in-place checkout through `workflow_branch_setup` with `confirmed: true`.
+- Never use worktrees. Resolve the declared branch with `workflow_resolve_branch`, preview dirty-tree stash choices with `question`, and apply an approved in-place checkout through `workflow_branch_setup` with `confirmed: true` (grounded in the recorded NativeChoiceEvidence).
+- Flow-tool confirmations are never agent-typed booleans: pass `confirmed: true` only after the user's answer to the native `question` is recorded as NativeChoiceEvidence — `host`, `questionId`, `selectedLabel`, `recordedAt`.
 - Keep all SDD state under the gitignored `docs/<slug>/sdd/`; use `workflow_sdd_context` and the registered `workflow_sdd_*` tools.
 - After implementation, use `question` before an approved stash reapply through `workflow_branch_setup` with `confirmed: true`.
 

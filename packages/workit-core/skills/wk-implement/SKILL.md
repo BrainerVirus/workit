@@ -16,7 +16,7 @@ The parent agent is coordinator-only. It must not edit product code or perform d
 4. Initialize native `todowrite` from returned tasks and mark ledger-completed task IDs completed.
 5. Call `workflow_resolve_branch`, then show the current branch, target branch, and stash behavior before any branch checkout/setup mutation.
 6. Always use native `question` before that mutation. For a clean tree, ask whether to proceed or cancel. For a dirty tree, add the stash choice and state what will be stashed; allow a custom answer.
-7. Call `workflow_branch_setup` with `confirmed: true` only after approval; never use worktrees.
+7. Call `workflow_branch_setup` with `confirmed: true` only after approval; never use worktrees. Flow-tool confirmations are never agent-typed booleans — pass `confirmed: true` only after the user's answer to the native `question` is recorded as NativeChoiceEvidence (`host`, `questionId`, `selectedLabel`, `recordedAt`).
 8. Report any setup failure stage or partial result; never infer success.
 9. Fill specs/plans from the quality templates: `templates/spec-template.md` for specs, `templates/plan-template.md` for plans. After `workflow_docs_validate`, surface the returned `quality` findings: hard findings (missing required section, missing CA-XX) block task start unless the user explicitly waives them; warnings are advisory.
 

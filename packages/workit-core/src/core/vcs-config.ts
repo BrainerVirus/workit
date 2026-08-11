@@ -274,8 +274,8 @@ export function vcsTokenCreateUrls(): Record<string, any> {
 }
 
 /** Port of scripts/vcs/merged-style.sh — recent merged MR/PR bodies for style reference. */
-export function mergedPrStyle(limit = 6, cwd?: string): Record<string, any> {
-  const cfg = vcsConfig("load", cwd);
+export function mergedPrStyle(limit = 6): Record<string, any> {
+  const cfg = vcsConfig("load");
   if (!cfg.ok || !cfg.tokenReady) return { ok: false, error: "vcs not configured" };
   const provider = cfg.provider as string;
   const token = fs.readFileSync(cfg.tokenPath as string, "utf8").trim();
@@ -291,15 +291,14 @@ export function mergedPrStyle(limit = 6, cwd?: string): Record<string, any> {
   });
 
   if (provider === "gitlab") {
-    const remote = spawnSync("git", ["remote", "get-url", "origin"], { cwd, encoding: "utf8" });
+    const remote = spawnSync("git", ["remote", "get-url", "origin"], { encoding: "utf8" });
     if (remote.status !== 0) return { ok: false, error: "no origin remote" };
     const url = (remote.stdout ?? "").trim();
     const m = /gitlab\.com[:/](.+?)(?:\.git)?$/.exec(url);
     if (!m) return { ok: false, error: "not a gitlab.com origin" };
     const project = m[1];
     const env = { ...process.env, GITLAB_TOKEN: token };
-    const run = (args: string[]) =>
-      spawnSync("glab", ["api", ...args], { cwd, encoding: "utf8", env });
+    const run = (args: string[]) => spawnSync("glab", ["api", ...args], { encoding: "utf8", env });
     let r = run([
       `projects/${project.replaceAll("/", "%2F")}/merge_requests?state=merged&per_page=${limit}&order_by=updated_at&sort=desc`,
     ]);
@@ -320,7 +319,7 @@ export function mergedPrStyle(limit = 6, cwd?: string): Record<string, any> {
     const r = spawnSync(
       "gh",
       ["pr", "list", "--state", "merged", "--limit", String(limit), "--json", "title,url,body"],
-      { cwd, encoding: "utf8", env: { ...process.env, GH_TOKEN: token } },
+      { encoding: "utf8", env: { ...process.env, GH_TOKEN: token } },
     );
     if (r.status !== 0) return { ok: false, error: "could not list pull requests" };
     for (const pr of JSON.parse(r.stdout ?? "[]") as Array<Record<string, any>>) {

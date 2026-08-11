@@ -215,8 +215,6 @@ test("pr-ready-context sections match the shell output (auto branch-exclusive ra
     expect(sections.Summary ?? "").toContain("- fix");
     expect(sections["VCS Config"] ?? "").toContain("workspace: work");
     expect(sections["VCS Config"] ?? "").toContain("provider: gitlab");
-    // B4: concise shell shape — workspace:/provider: only, no raw summary JSON.
-    expect(sections["VCS Config"] ?? "").not.toContain('"defaultTargetBranch"');
     expect(sections["Merged PR Style"] ?? "").toContain("vcs not configured"); // no token -> no network
   } finally {
     rmSync(repo, { recursive: true, force: true });
@@ -476,11 +474,7 @@ test("no runtime source spawns curl anymore", () => {
   expect(vcs).not.toMatch(/spawnSync\(\s*"curl"/);
 });
 
-// The skills-rsync sub-case wraps the real rsync (REAL_RSYNC) for the
-// non-skills copies, so a missing rsync makes the first rsync fail with a
-// different error than "skills rsync failed". Skip the whole parity test when
-// rsync is unavailable instead of asserting on the wrong error (B7).
-test.skipIf(!bashAvailable() || !flockAvailable() || !findOnPath("rsync"))(
+test.skipIf(!bashAvailable() || !flockAvailable())(
   "syncRuntime matches sync-runtime.sh RR-05 failure behavior",
   async () => {
     const runScript = (env: Record<string, string>) =>

@@ -233,11 +233,6 @@ test("RL-08: validateWorkspaceGlob enforces the supported matcher grammar", () =
     "/home/*/{a,b}/**",
     "{a,b}/**",
     "**/[x]",
-    "!**",
-    "!/home/*/work/**",
-    "/home/*/@(a|b)/**",
-    "/home/*/+(a|b)/**",
-    "/home/*/foo*(bar)/**",
   ]) {
     const r = validateWorkspaceGlob(bad);
     expect(r.ok).toBe(false);

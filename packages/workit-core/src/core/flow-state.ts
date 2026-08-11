@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, renameSync, writeFileSync, existsSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import path from "node:path";
 import { docsValidate, parseTasksFromPlan, qualitySpec, stripFences } from "./docs-validate";
 import { resolveCanonicalLayout } from "./docs-layout";
@@ -164,7 +164,7 @@ const readFlowStrict = (root: string, slug: string): StrictRead => {
   if (!existsSync(file)) {
     return err(
       "flow_not_activated",
-      `flow not activated for ${slug} — run workflow_docs_layout prepare or workflow_flow_status first`,
+      `flow not activated for ${slug} — run workflow_flow_status first`,
     );
   }
   try {
@@ -192,7 +192,10 @@ export const writeFlowState = (root: string, state: FlowState) => {
 
 const MAX_WRITE_ATTEMPTS = 5;
 
-export type FlowWriteResult = { ok: true } | { ok: false; conflict: true };
+export type FlowWriteResult =
+  | { ok: true }
+  | { ok: false; conflict: true }
+  | { ok: false; io_error: string };
 
 /**
  * Compare-and-write (FG-08): write `next` only if the on-disk content still
@@ -210,6 +213,12 @@ export type FlowWriteResult = { ok: true } | { ok: false; conflict: true };
  * hold an O_EXCL advisory lock on `<file>.lock` across the read-modify-write,
  * or move to renameat2(RENAME_EXCHANGE)/an OS-level CAS when a second
  * concurrent process becomes a supported topology.
+ *
+ * A thrown error here is a real IO/permission failure (EACCES, ENOSPC, ...),
+ * not a conflict: it is returned as `io_error` so callers surface it instead of
+ * advising a pointless re-read-and-retry. Any unique `.tmp` staged by this
+ * writer is removed on every non-success path so crashed writers don't
+ * accumulate temp buffers.
  */
 export const writeFlowStateIfCurrent = (
   root: string,
@@ -220,22 +229,28 @@ export const writeFlowStateIfCurrent = (
   const expectedText = JSON.stringify(expected, null, 2) + "\n";
   const nextText = JSON.stringify(next, null, 2) + "\n";
   if (expectedText === nextText) return { ok: true };
-  for (let attempt = 0; attempt < MAX_WRITE_ATTEMPTS; attempt++) {
+  const tmp = uniqueTempPath(file);
+  try {
+    const currentText = existsSync(file) ? readFileSync(file, "utf8") : null;
+    if (currentText !== expectedText) return { ok: false, conflict: true };
+    mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(tmp, nextText, "utf8");
+    const reRead = existsSync(file) ? readFileSync(file, "utf8") : null;
+    if (reRead !== expectedText) return { ok: false, conflict: true };
+    renameSync(tmp, file);
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, io_error: error instanceof Error ? error.message : String(error) };
+  } finally {
+    // On success the rename moved the buffer into place; on any other exit the
+    // unique temp is orphaned — remove it so crashed writers don't accumulate
+    // `<file>.<pid>-<rand>.tmp` buffers.
     try {
-      const currentText = existsSync(file) ? readFileSync(file, "utf8") : null;
-      if (currentText !== expectedText) return { ok: false, conflict: true };
-      mkdirSync(path.dirname(file), { recursive: true });
-      const tmp = uniqueTempPath(file);
-      writeFileSync(tmp, nextText, "utf8");
-      const reRead = existsSync(file) ? readFileSync(file, "utf8") : null;
-      if (reRead !== expectedText) return { ok: false, conflict: true };
-      renameSync(tmp, file);
-      return { ok: true };
+      if (existsSync(tmp)) rmSync(tmp, { force: true });
     } catch {
-      // transient temp collision or IO — retry once with a fresh temp name
+      // best effort: a leftover temp is preferable to masking the real error
     }
   }
-  return { ok: false, conflict: true };
 };
 
 type MutateResult = { ok: true; next: FlowState } | FlowError;
@@ -255,6 +270,12 @@ const readModifyWrite = (
     if (!result.ok) return result;
     const commit = writeFlowStateIfCurrent(root, strict.state, result.next);
     if (commit.ok) return { ok: true };
+    if ("io_error" in commit) {
+      return err(
+        "flow_io_error",
+        `flow state write failed for ${slug}: ${commit.io_error}`,
+      );
+    }
     // a concurrent writer won the race — re-read and retry the transition
   }
   return err(
@@ -590,7 +611,7 @@ export const slugFromSddPath = (p: string): string => {
   const match = p
     .split(path.sep)
     .join("/")
-    .match(/^docs\/([^/]+)\/sdd\b/);
+    .match(/^docs\/([^/]+)\/sdd(\/|$)/);
   return match?.[1] ?? "";
 };
 
@@ -638,7 +659,12 @@ export const assertProductGates = (
 ): FlowGateResult => {
   const bound = assertMutationWorkspace(root, ctx);
   if (!bound.ok) return bound;
-  const state = readFlowState(root, slug);
+  // Strict read (CA-18): missing or corrupt state surfaces flow_not_activated /
+  // flow_corrupt, never a misleading spec_not_approved from a silent draft
+  // fallback. Fail-closed is preserved — no gate ever passes on absent state.
+  const strict = readFlowStrict(root, slug);
+  if (!strict.ok) return strict;
+  const state = strict.state;
   if (state.spec.status !== "approved") {
     return err(
       "spec_not_approved",

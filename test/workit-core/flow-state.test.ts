@@ -114,11 +114,37 @@ test("menu choice records presented + chosen with exact evidence", () => {
   }
 });
 
-import { assertFlowGates, slugFromPath } from "../../packages/workit-core/src/core/flow-state";
+import {
+  assertFlowGates,
+  slugFromPath,
+  slugFromSddPath,
+} from "../../packages/workit-core/src/core/flow-state";
 
 test("slugFromPath strips -design suffix", () => {
   expect(slugFromPath("docs/x/plan.md")).toBe("x");
   expect(slugFromPath("docs/x/spec.md")).toBe("x");
+});
+
+test("slugFromSddPath requires a real sdd segment and rejects sdd-prefixed lookalikes", () => {
+  expect(slugFromSddPath("docs/x/sdd/flow.json")).toBe("x");
+  expect(slugFromSddPath("docs/x/sdd/progress.md")).toBe("x");
+  expect(slugFromSddPath("docs/x/sdd")).toBe("x");
+  expect(slugFromSddPath("docs/x/sdd-attack/flow.json")).toBe("");
+  expect(slugFromSddPath("docs/x/sdd/attack/flow.json")).toBe("x");
+});
+
+test("missing flow state hint names only workflow_flow_status as the activation path", () => {
+  const { root, slug } = fixture();
+  try {
+    const result = transitionSpec(root, slug, `docs/${slug}/spec.md`, evidence());
+    expect(result.ok).toBe(false);
+    if (result.ok === false) {
+      expect(result.error).toContain("workflow_flow_status");
+      expect(result.error).not.toContain("docs_layout");
+    }
+  } finally {
+    cleanup(root);
+  }
 });
 
 test("assertFlowGates fails without approvals", () => {

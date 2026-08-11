@@ -198,7 +198,7 @@ test("product mutation is blocked before spec/plan/menu/docs gates all pass", ()
     const plan = `docs/${slug}/plan.md`;
     const before = assertProductGates(root, slug, { requireMenu: true, requireDocs: true });
     expect(before.ok).toBe(false);
-    if (before.ok === false) expect(before.code).toBe("spec_not_approved");
+    if (before.ok === false) expect(before.code).toBe("flow_not_activated");
 
     prepareFlowState(root, slug, { spec_path: spec, plan_path: plan });
     const draft = assertProductGates(root, slug, { requireMenu: true, requireDocs: true });
@@ -341,6 +341,38 @@ test("flow state persists evidence provenance across reads", () => {
     expect(flow.spec.evidence.questionId).toBe("q-Approve");
     expect(typeof flow.spec.evidence.recordedAt).toBe("number");
     expect(flow.menu.evidence).toBeDefined();
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("product gates use the strict read: missing flow state is flow_not_activated, never spec_not_approved", () => {
+  const { root, slug } = fixture();
+  try {
+    const gate = assertProductGates(root, slug, { requireMenu: true, requireDocs: true });
+    expect(gate.ok).toBe(false);
+    if (gate.ok === false) {
+      expect(gate.code).toBe("flow_not_activated");
+      expect(gate.error).not.toContain("spec not approved");
+    }
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("product gates use the strict read: corrupt flow state is flow_corrupt, not a silent draft fallback", () => {
+  const { root, slug } = fixture();
+  try {
+    const spec = `docs/${slug}/spec.md`;
+    const plan = `docs/${slug}/plan.md`;
+    prepareFlowState(root, slug, { spec_path: spec, plan_path: plan });
+    writeFileSync(path.join(root, "docs", slug, "sdd", "flow.json"), "{not-json", "utf8");
+    const gate = assertProductGates(root, slug, { requireMenu: true, requireDocs: true });
+    expect(gate.ok).toBe(false);
+    if (gate.ok === false) {
+      expect(gate.code).toBe("flow_corrupt");
+      expect(gate.error).toContain("corrupt");
+    }
   } finally {
     cleanup(root);
   }

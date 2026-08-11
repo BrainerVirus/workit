@@ -2,7 +2,6 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { vcsConfig } from "./vcs-config";
-import { readConfig, resolveBranchPolicy } from "./config";
 
 // Port of scripts/pr-create.sh — build MR/PR body issue linking + create via glab/gh.
 
@@ -21,14 +20,12 @@ function parseGhIssue(value: string): string {
 }
 
 // RL-03/CA-25: a branch-derived numeric issue id must be a bare number at a
-// segment or dash boundary — and never part of a date segment. Year-first
-// (feature/2024-01-15/x) and day-first (feature/15-01-2024/x) dates are both
-// skipped so no date digit ever closes an issue. Deliberate numeric issue
+// segment or dash boundary — and never part of a year-first date segment
+// (feature/2024-01-15/x must not close #2024). Deliberate numeric issue
 // branches (feature/42-title, feature/2024-fix) keep linking.
 function deriveGhIssueFromBranch(branch: string): string {
   for (const segment of branch.split("/")) {
     if (/^\d{4}-\d/.test(segment)) continue; // year-first date-like segment
-    if (/\d{1,2}-\d{1,2}-\d{4}/.test(segment)) continue; // day-first date-like segment
     const m = /(?:^|-)(\d+)(?:-|$)/.exec(segment);
     if (m) return m[1];
   }
@@ -130,26 +127,6 @@ export function prCreate(env: NodeJS.ProcessEnv, cwd: string): Record<string, an
   const provider = cfg.provider as string;
   if (provider !== "gitlab" && provider !== "github")
     return { error: `unsupported provider: ${provider}` };
-
-  // B1/RL-03: WF_PR_TARGET is the one deliberate override knob on the create
-  // surface (resolvePrBranchContext/docsBranch have none). Unlike the config
-  // default — which is authoritative by construction — a caller-supplied
-  // target is validated against the resolved branch policy so a PR can never
-  // be aimed at a protected or disallowed branch.
-  const targetOverride = env.WF_PR_TARGET;
-  const target = targetOverride || String(cfg.defaultTargetBranch ?? "develop");
-  if (targetOverride) {
-    const { allowed, protected: protectedTargets } = resolveBranchPolicy(readConfig());
-    if (protectedTargets.has(targetOverride.toLowerCase()))
-      return {
-        error: `PR target ${JSON.stringify(targetOverride)} is a protected branch — override must be an allowed non-protected target`,
-      };
-    if (!allowed.some((r) => r.test(targetOverride)))
-      return {
-        error: `PR target ${JSON.stringify(targetOverride)} is not allowed by the branch policy`,
-      };
-  }
-
   const cli = provider === "gitlab" ? "glab" : "gh";
   const installUrl =
     provider === "gitlab" ? "https://gitlab.com/gitlab-org/cli" : "https://cli.github.com";
@@ -167,6 +144,7 @@ export function prCreate(env: NodeJS.ProcessEnv, cwd: string): Record<string, an
   const title = String(env.WF_PR_TITLE ?? "");
   const body = env.WF_PR_BODY ?? "";
   const draft = String(env.WF_PR_DRAFT ?? "false").toLowerCase() === "true";
+  const target = env.WF_PR_TARGET || String(cfg.defaultTargetBranch ?? "develop");
 
   const br = spawnSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
     cwd: root,

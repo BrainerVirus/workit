@@ -11,7 +11,8 @@ Load `using-superpowers`, `subagent-driven-development`, `test-driven-developmen
 - Never use a worktree. Branch changes are in-place through `workflow_branch_setup` on `feature/*` or `bugfix/*`; never commit on protected branches.
 - Working state, briefs, ledgers, and review diffs live only under gitignored `<SDD_DIR>` in `docs/<slug>/sdd/` and use `workflow_sdd_*` tools.
 - Use native `todowrite` for visible task state as well as the gitignored ledger.
-- Use native `question` for branch/stash choices and guarded external mutations; call mutation tools only after approval with `confirmed: true`.
+- Use native `question` for branch/stash choices and guarded external mutations; call mutation tools only after approval with `confirmed: true` (grounded in the recorded NativeChoiceEvidence).
+- Flow-tool confirmations are never agent-typed booleans: pass `confirmed: true` only after the user's answer to the native `question` is recorded as NativeChoiceEvidence — `host`, `questionId`, `selectedLabel`, `recordedAt`.
 - Use native `task` with only the built-in `explore` and `general` agents.
 
 ## Flow gates (HARD)

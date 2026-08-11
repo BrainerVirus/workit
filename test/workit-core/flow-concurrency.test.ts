@@ -1,5 +1,14 @@
 import { expect, test, mock } from "bun:test";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import * as nodeFs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -221,7 +230,7 @@ test("FG-08: stale concurrent writers are preserved via compare/retry, never clo
       updated_at: Date.now(),
     });
     expect(clobbering.ok).toBe(false);
-    if (!clobbering.ok) expect(clobbering.conflict).toBe(true);
+    if (!clobbering.ok && "conflict" in clobbering) expect(clobbering.conflict).toBe(true);
     expect(readFlowState(root, slug).menu.chosen).toBe("subagent-driven");
   } finally {
     cleanup(root);
@@ -274,7 +283,7 @@ test("CA-28: a failed-session fixture cannot be skipped and keeps flow state iso
       coordinator(root),
     );
     expect(gate.ok).toBe(false);
-    if (!gate.ok) expect(gate.code).toBe("spec_not_approved");
+    if (!gate.ok) expect(gate.code).toBe("flow_not_activated");
 
     const transition = transitionSpec(root, slug, `docs/${slug}/spec.md`, evidence());
     expect(transition.ok).toBe(false);
@@ -331,11 +340,88 @@ test("FG-08: two writers with the same expected text — only one wins", () => {
 
     const commit = writeFlowStateIfCurrent(root, expected, writerB);
     expect(commit.ok).toBe(false);
-    if (!commit.ok) expect(commit.conflict).toBe(true);
+    if (!commit.ok && "conflict" in commit) expect(commit.conflict).toBe(true);
     const finalState = readFlowState(root, slug);
     expect(finalState.menu.chosen).toBe("subagent-driven");
     expect(injected).toBe(true);
   } finally {
+    cleanup(root);
+  }
+});
+
+test("A4: an EACCES flow write surfaces io_error (never conflict) and leaves no .tmp behind", () => {
+  const { root, slug } = fixture();
+  const sddDir = path.join(root, "docs", slug, "sdd");
+  try {
+    writeDocs(root, slug);
+    const plan = `docs/${slug}/plan.md`;
+    const prep = prepareFlowState(root, slug, {
+      spec_path: `docs/${slug}/spec.md`,
+      plan_path: plan,
+    });
+    expect(prep.ok).toBe(true);
+    const expected = readFlowState(root, slug);
+
+    chmodSync(sddDir, 0o555);
+    const result = writeFlowStateIfCurrent(root, expected, {
+      ...expected,
+      menu: { presented: true, chosen: "inline", evidence: null },
+      updated_at: Date.now(),
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect("conflict" in result).toBe(false);
+      expect("io_error" in result).toBe(true);
+      if ("io_error" in result) expect(result.io_error).toMatch(/EACCES|permission/i);
+    }
+    chmodSync(sddDir, 0o755);
+    expect(readdirSync(sddDir).filter((f) => f.endsWith(".tmp"))).toEqual([]);
+  } finally {
+    chmodSync(sddDir, 0o755);
+    cleanup(root);
+  }
+});
+
+test("A4: a transition with an unwritable flow store returns flow_io_error, not a conflict retry", () => {
+  const { root, slug } = fixture();
+  const sddDir = path.join(root, "docs", slug, "sdd");
+  try {
+    writeDocs(root, slug);
+    const plan = `docs/${slug}/plan.md`;
+    const prep = prepareFlowState(root, slug, {
+      spec_path: `docs/${slug}/spec.md`,
+      plan_path: plan,
+    });
+    expect(prep.ok).toBe(true);
+    chmodSync(sddDir, 0o555);
+    const result = transitionSpec(
+      root,
+      slug,
+      `docs/${slug}/spec.md`,
+      evidence("opencode", "Approve spec"),
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.code).toBe("flow_io_error");
+  } finally {
+    chmodSync(sddDir, 0o755);
+    cleanup(root);
+  }
+});
+
+test("A5: a mutation context for another workspace is rejected with workspace_mismatch", () => {
+  const { root, slug } = fixture();
+  const other = mkdtempSync(path.join(os.tmpdir(), "wf-other-ws-"));
+  try {
+    const gate = assertProductGates(
+      root,
+      slug,
+      { requireMenu: true, requireDocs: true },
+      { hostWorkspace: other, role: "coordinator", sessionId: "other-session" },
+    );
+    expect(gate.ok).toBe(false);
+    if (!gate.ok) expect(gate.code).toBe("workspace_mismatch");
+  } finally {
+    rmSync(other, { recursive: true, force: true });
     cleanup(root);
   }
 });

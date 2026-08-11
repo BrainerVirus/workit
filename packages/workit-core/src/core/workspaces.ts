@@ -105,13 +105,6 @@ export const matchWorkspace = (glob: string, target: string): boolean =>
 // accepted and shown as "no match").
 const UNSUPPORTED_GLOB = /[?[\]{}]/;
 
-// B3: `!`-negation and extglob prefixes (@(...), +(...), *(...)) are the same
-// no-match trap — the matcher stores them as literals, so `!**` or `@(a|b)`
-// silently matches nothing. Reject them at write time too; the Task 15 match
-// preview still routes through matchWorkspace (literals -> no match) and is
-// unchanged.
-const UNSUPPORTED_EXTGLOB = /[@+*]\(|!/;
-
 export type GlobValidation = { ok: true } | { ok: false; error: string };
 
 export const validateWorkspaceGlob = (glob: string): GlobValidation => {
@@ -122,15 +115,6 @@ export const validateWorkspaceGlob = (glob: string): GlobValidation => {
     return {
       ok: false,
       error: `unsupported glob character ${JSON.stringify(m[0])} in workspace pattern ${JSON.stringify(glob)} — the matcher supports * and ** only (e.g. /work/**)`,
-    };
-  }
-  const ext = UNSUPPORTED_EXTGLOB.exec(trimmed);
-  if (ext) {
-    const token = ext[0];
-    const kind = token === "!" ? "negation (!)" : `extglob (${token})`;
-    return {
-      ok: false,
-      error: `unsupported glob ${kind} in workspace pattern ${JSON.stringify(glob)} — the matcher supports * and ** only (e.g. /work/**)`,
     };
   }
   return { ok: true };
