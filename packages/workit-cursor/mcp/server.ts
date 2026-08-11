@@ -72,6 +72,11 @@ import {
   resolveCanonicalLayout,
   prepareDocsLayout,
 } from "@brainervirus/workit-core/src/core/docs-layout";
+import {
+  detectLegacyDocs,
+  migrateLegacyDocs,
+  migrationQuestion,
+} from "@brainervirus/workit-core/src/core/docs-migration";
 import { linkDocsRepo, listSpecs, promoteSpec } from "@brainervirus/workit-core/src/core/docs-repo";
 import { configDir, readConfig, writeConfig } from "@brainervirus/workit-core/src/core/config";
 import { ensureProjectGitignore } from "@brainervirus/workit-core/src/core/gitignore";
@@ -612,15 +617,53 @@ registerTool(
   "workflow_docs_layout",
   {
     description:
-      "Prepare the canonical docs layout: create missing docs/ and docs/<slug>/, return canonical (realpath) paths and read-only legacy detection",
+      "Canonical docs layout: prepare creates missing docs/ and docs/<slug>/; migrate detects legacy docs/superpowers/ and copies safe pairs after a native Migrate safely / Not now question",
     inputSchema: {
+      action: z.enum(["prepare", "migrate"]).default("prepare"),
       slug: z.string().optional(),
       spec_path: z.string().optional(),
       plan_path: z.string().optional(),
+      confirmed: z.boolean().optional(),
       workspace_root: workspaceRootSchema,
     },
   },
-  async ({ slug, spec_path, plan_path, workspace_root }) => {
+  async ({ action, slug, spec_path, plan_path, confirmed, workspace_root }) => {
+    if (action === "migrate") {
+      const detect = detectLegacyDocs(workspace_root);
+      if (confirmed === undefined) {
+        return jsonResult(
+          withWorkspace(workspace_root, {
+            action: "migrate",
+            stage: detect.entries.length === 0 ? "nothing_to_migrate" : "awaiting_confirmation",
+            question: migrationQuestion(detect),
+            detect,
+          }),
+        );
+      }
+      const result = migrateLegacyDocs({ workspace_root, slug, confirmed });
+      if (result.ok) {
+        return jsonResult(
+          withWorkspace(workspace_root, { action: "migrate", stage: "migrated", ...result.data }),
+        );
+      }
+      if (result.declined) {
+        return jsonResult(
+          withWorkspace(workspace_root, {
+            action: "migrate",
+            stage: "declined",
+            active_workflow: result.active_workflow,
+            detect,
+          }),
+        );
+      }
+      return jsonResult(
+        withWorkspace(workspace_root, {
+          error: result.error,
+          collisions: result.collisions ?? [],
+          detect,
+        }),
+      );
+    }
     const result = prepareDocsLayout({ workspace_root, slug, spec_path, plan_path });
     if (!result.ok) return jsonResult(withWorkspace(workspace_root, { error: result.error }));
     return jsonResult(withWorkspace(workspace_root, result));

@@ -471,9 +471,21 @@ test("no docs/superpowers paths remain in sources", () => {
         continue; // sed patterns intentionally reference the old layout
       if (
         full.split(path.sep).join("/").includes("packages/workit-core/src/core/docs-layout.ts") ||
-        full.split(path.sep).join("/").includes("test/workit-core/docs-paths.test.ts")
+        full
+          .split(path.sep)
+          .join("/")
+          .includes("packages/workit-core/src/core/docs-migration.ts") ||
+        full
+          .split(path.sep)
+          .join("/")
+          .includes("packages/workit-opencode/src/tools/docs-repo.ts") ||
+        full.split(path.sep).join("/").includes("packages/workit-cursor/mcp/server.ts") ||
+        full.split(path.sep).join("/").includes("test/workit-core/docs-paths.test.ts") ||
+        full.split(path.sep).join("/").includes("test/workit-core/docs-migration.test.ts") ||
+        full.split(path.sep).join("/").includes("test/workit-opencode/docs-migration.test.ts") ||
+        full.split(path.sep).join("/").includes("test/workit-cursor/docs-migration.test.ts")
       )
-        continue; // docs-layout.ts reserves docs/superpowers as the legacy root to reject/detect (DC-05)
+        continue; // docs-layout reserves and docs-migration migrates docs/superpowers as the legacy root (DC-05)
       const content = readFileSync(full, "utf8");
       if (content.includes("docs/superpowers")) {
         offenders.push(path.relative(root, full));
