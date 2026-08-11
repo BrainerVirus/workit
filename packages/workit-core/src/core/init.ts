@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { configDir } from "./config";
 import { PLUGIN_ROOT } from "./scripts";
+import { writeFileExclusive } from "./safe-write";
 import { resolveWorkspace, workspacesPath } from "./workspaces";
 import { vcsTokenCreateUrls, vcsVerifyToken } from "./vcs-config";
 import { youTrackTokenCreateUrl, youTrackVerifyToken } from "./youtrack";
@@ -361,7 +362,9 @@ export function initApplyData(
     }
     case "youtrack_token_placeholder": {
       const p = path.join(dir, "youtrack.token");
-      fs.writeFileSync(p, TOKEN_PLACEHOLDER + "\n", { encoding: "utf8", mode: 0o600 });
+      // wx + EEXIST-as-preserved (CA-13): an existing real token is never
+      // clobbered — shared with the CLI wizard's ensureToken via safe-write.
+      const preserved = writeFileExclusive(p, TOKEN_PLACEHOLDER + "\n", 0o600) === "preserved";
       const abs = path.resolve(p);
       return {
         action,
@@ -369,6 +372,7 @@ export function initApplyData(
         path: abs,
         token_edit_path: abs,
         placeholder: TOKEN_PLACEHOLDER,
+        preserved,
         instruction: `Open ${abs} in your editor, replace YOUR_TOKEN_HERE with your YouTrack permanent token, save, then run /wk-status`,
       };
     }
@@ -376,7 +380,8 @@ export function initApplyData(
       const jsonOut = path.join(dir, "youtrack.json");
       const tokenOut = path.join(dir, "youtrack.token");
       fs.writeFileSync(jsonOut, JSON.stringify(youtrackJsonContent(dir), null, 2) + "\n", "utf8");
-      fs.writeFileSync(tokenOut, TOKEN_PLACEHOLDER + "\n", { encoding: "utf8", mode: 0o600 });
+      const preserved =
+        writeFileExclusive(tokenOut, TOKEN_PLACEHOLDER + "\n", 0o600) === "preserved";
       const configPath = path.resolve(jsonOut);
       const tokenPath = path.resolve(tokenOut);
       const prev = process.env.WORKFLOW_YOUTRACK_CONFIG;
@@ -397,6 +402,7 @@ export function initApplyData(
           token_create: tokenCreate,
           config_edit_path: configPath,
           placeholder: TOKEN_PLACEHOLDER,
+          preserved,
           youtrack_config: {
             config_edit_path: configPath,
             baseUrl: base,
@@ -433,8 +439,11 @@ export function initApplyData(
       fs.writeFileSync(jsonOut, JSON.stringify(vcsJsonContent(dir), null, 2) + "\n", "utf8");
       const glPath = path.join(dir, "gitlab.token");
       const ghPath = path.join(dir, "github.token");
+      const preservedTokens: string[] = [];
       for (const p of [glPath, ghPath]) {
-        fs.writeFileSync(p, TOKEN_PLACEHOLDER + "\n", { encoding: "utf8", mode: 0o600 });
+        if (writeFileExclusive(p, TOKEN_PLACEHOLDER + "\n", 0o600) === "preserved") {
+          preservedTokens.push(path.resolve(p));
+        }
       }
       const configPath = path.resolve(jsonOut);
       const prev = process.env.WORKFLOW_VCS_CONFIG;
@@ -455,6 +464,7 @@ export function initApplyData(
           token_edit_path: activePath,
           token_create_url: active.createUrl,
           token_create_urls: tokenUrls,
+          preserved_tokens: preservedTokens,
           vcs_config: {
             config_edit_path: configPath,
             provider,

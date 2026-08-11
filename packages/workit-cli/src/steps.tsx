@@ -130,7 +130,11 @@ function effectivePolicy(values: SetupValues): ToolkitConfig["branchPolicy"] {
   });
 }
 
-export function Wizard({ onExit }: { onExit: (complete: boolean) => void }): JSX.Element {
+export function Wizard({
+  onExit,
+}: {
+  onExit: (complete: boolean, values?: SetupValues) => void;
+}): JSX.Element {
   const [draft, dispatch] = useReducer(reducer, undefined, createInitialDraft);
   const exitedRef = useRef(false);
 
@@ -146,7 +150,7 @@ export function Wizard({ onExit }: { onExit: (complete: boolean) => void }): JSX
   useEffect(() => {
     if (draft.screen === "exit" && !exitedRef.current) {
       exitedRef.current = true;
-      onExit(!draft.cancelled);
+      onExit(!draft.cancelled, draft.values);
     }
   }, [draft.screen, draft.cancelled, onExit]);
 

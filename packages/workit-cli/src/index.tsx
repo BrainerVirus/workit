@@ -1,9 +1,16 @@
 import { render } from "ink";
 import { Wizard } from "./steps";
+import type { SetupValues } from "./wizard-state";
 import { createLogger } from "@brainervirus/workit-core/src/core/logger";
 import { EVENT, errorDetail } from "@brainervirus/workit-core/src/core/boundary";
 import { setDiagnosticLogger } from "@brainervirus/workit-core/src/core/config";
 import { runDoctor } from "@brainervirus/workit-core/src/core/doctor";
+import {
+  applySetupPreview,
+  buildSetupPreview,
+  setupCompletionGuidance,
+  type SetupResult,
+} from "@brainervirus/workit-core/src/core/setup.ts";
 
 // Secret-safe diagnostic logger (DG-01-DG-03, DG-05, DG-10). Sink injection
 // only: CLI events mirror to stderr, never the Ink-rendered stdout.
@@ -21,27 +28,64 @@ Usage:
 Run \`npx workit init\` to configure platforms, YouTrack, VCS and project hygiene.
 `;
 
+// WZ-13-WZ-15 / CA-31: Apply prints one line per platform/file (Installed /
+// Configured / Skipped / Failed), the post-apply doctor summary, and the
+// /wk-status + doctor completion guidance. Partial failures propagate to a
+// nonzero exit code.
+function printApplySummary(result: SetupResult): void {
+  for (const entry of result.entries) {
+    console.log(
+      `${entry.status.padEnd(11)} ${entry.file}${entry.detail ? ` — ${entry.detail}` : ""}`,
+    );
+  }
+  for (const report of result.doctor) {
+    console.log(
+      `doctor ${report.host}: ${report.ok ? "healthy" : "problems found"} (${report.summary.failed} failed)`,
+    );
+  }
+  console.log(result.ok ? "Setup complete." : "Setup finished with problems.");
+  for (const line of setupCompletionGuidance()) console.log(line);
+}
+
 async function runInit() {
-  // ponytail: no-TTY guard — piping/disabling stdin would hang render(); print and exit cleanly
+  // ponytail: no-TTY guard — piping/disabling stdin would hang render(); print
+  // guidance and exit nonzero instead of silently pretending setup happened
   if (process.stdin.isTTY !== true) {
     console.log("workit init requires an interactive terminal (TTY).");
-    process.exit(0);
+    for (const line of setupCompletionGuidance()) console.log(line);
+    process.exit(1);
   }
   logger.info(EVENT.installSteps, { step: "wizard_start" });
-  let complete = false;
+  const exits: Array<{ complete: boolean; values?: SetupValues }> = [];
   let done: () => void = () => {};
   const { waitUntilExit, unmount } = render(
     <Wizard
-      onExit={(ok) => {
-        complete = ok;
+      onExit={(complete, values) => {
+        exits.push({ complete, values });
         done();
       }}
     />,
   );
   done = unmount;
   await waitUntilExit();
-  logger.info(EVENT.installSteps, { step: "wizard_done", complete });
-  process.exit(complete ? 0 : 1);
+  const exit = exits[0];
+  if (exit && exit.complete && exit.values) {
+    const preview = buildSetupPreview(exit.values, { cwd: process.cwd(), env: process.env });
+    if (!preview.ok) {
+      console.log("Apply blocked — malformed configuration:");
+      for (const blocked of preview.blocked) console.log(`  ${blocked}`);
+      process.exit(1);
+    }
+    const result = applySetupPreview(preview, { cwd: process.cwd(), env: process.env });
+    logger.info(EVENT.installSteps, { step: "wizard_apply", ok: result.ok });
+    printApplySummary(result);
+    process.exit(result.exitCode);
+  }
+  logger.info(EVENT.installSteps, {
+    step: "wizard_done",
+    complete: exit !== undefined && exit.complete,
+  });
+  process.exit(exit !== undefined && exit.complete ? 0 : 1);
 }
 
 // `workit doctor` (DG-07): offline engine, human or --json report, exit code

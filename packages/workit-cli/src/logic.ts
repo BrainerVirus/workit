@@ -4,22 +4,17 @@ import path from "node:path";
 import {
   LOCALE_RE,
   mergePreset,
-  readConfigFromDir,
-  resolveConfigDir,
   type BranchPreset,
   type ToolkitConfig,
 } from "@brainervirus/workit-core/src/core/config.ts";
-import { readSetupState, type SetupState } from "@brainervirus/workit-core/src/core/setup-state.ts";
 import {
   workspacesPath,
   type WorkspaceConfig,
 } from "@brainervirus/workit-core/src/core/workspaces.ts";
-import { GITIGNORE_ENTRIES } from "@brainervirus/workit-core/src/core/gitignore.ts";
-import { planHygieneFiles } from "@brainervirus/workit-core/src/core/hygiene.ts";
 import { ensureProjectGitignore } from "@brainervirus/workit-core/src/core/gitignore.ts";
 import { ensureHygieneFiles, hygieneFiles } from "@brainervirus/workit-core/src/core/hygiene.ts";
-
-export const TOKEN_PLACEHOLDER = "YOUR_TOKEN_HERE";
+import { writeFileExclusive } from "@brainervirus/workit-core/src/core/safe-write.ts";
+import { TOKEN_PLACEHOLDER, type VcsProvider } from "@brainervirus/workit-core/src/core/setup.ts";
 
 export function validateLocale(locale: string): string | null {
   if (!LOCALE_RE.test(locale)) {
@@ -49,13 +44,6 @@ export function validateBaseUrl(url: string): string | null {
   }
   if (parsed.protocol !== "https:") return "base URL must use https";
   return null;
-}
-
-export function parseList(raw: string): string[] {
-  return raw
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
 }
 
 export type ConfigInput = {
@@ -145,18 +133,14 @@ function malformedBlock(
 }
 
 function ensureToken(path: string, outcome: { created: string[]; preserved: string[] }): void {
-  try {
-    writeFileSync(path, TOKEN_PLACEHOLDER + "\n", { encoding: "utf8", flag: "wx", mode: 0o600 });
+  // wx (exclusive create) closes the TOCTOU window: a token created between any
+  // existence check and write now races the write itself, and EEXIST means the
+  // other writer won — preserve their bytes instead of clobbering them. Shared
+  // with initApplyData via core/safe-write.ts (Task 14 Step 7 / CA-13).
+  if (writeFileExclusive(path, TOKEN_PLACEHOLDER + "\n", 0o600) === "created") {
     outcome.created.push(path);
-  } catch (err) {
-    // wx (exclusive create) closes the TOCTOU window: a token created between any
-    // existence check and write now races the write itself, and EEXIST means the
-    // other writer won — preserve their bytes instead of clobbering them.
-    if ((err as NodeJS.ErrnoException).code === "EEXIST") {
-      outcome.preserved.push(path);
-      return;
-    }
-    throw err;
+  } else {
+    outcome.preserved.push(path);
   }
 }
 
@@ -250,8 +234,6 @@ export function scaffoldYouTrack(
     tokenCreateUrl,
   };
 }
-
-export type VcsProvider = "gitlab" | "github";
 
 export type VcsScaffold = ScaffoldOutcome & {
   vcsJson: string;
@@ -413,219 +395,27 @@ export function writeWorkspaces(entries: WorkspaceConfig[]): WriteWorkspacesResu
 }
 
 // ---------------------------------------------------------------------------
-// Setup preview (WZ-04-WZ-06, WZ-08, RL-06; CA-12, CA-14, CA-22, CA-23).
-// buildSetupPreview is a pure reader: it classifies the current setup state and
-// returns the exact mutations Apply would perform WITHOUT applying them, so the
-// preview is authoritative and nothing touches the filesystem before Apply.
-// Integrations are neutral and optional: youtrack is skipped when baseUrl is
-// empty, vcs when the provider is "skip", and neither ships private defaults.
+// Setup preview + apply moved to the shared core (Task 14):
+// @brainervirus/workit-core/src/core/setup.ts owns buildSetupPreview /
+// applySetupPreview / SetupResult so the same authoritative flow runs in the
+// bundled CLI, the host adapters, and the extracted-package tests. The CLI
+// re-exports them for backward compatibility.
 // ---------------------------------------------------------------------------
-
-export type SetupPreviewInput = {
-  locale: string;
-  timezone: string;
-  branchPreset: BranchPreset;
-  branchAllowed: string;
-  branchProtected: string;
-  baseUrl: string;
-  vcsProvider: VcsProvider | "skip";
-  workspaces: WorkspaceConfig[];
-  applyProject: boolean;
-};
-
-export type SetupMutation =
-  | { type: "create-file"; path: string; content: string; mode?: number }
-  | { type: "merge-json"; path: string; value: unknown }
-  | { type: "update-workspaces"; path: string; entries: WorkspaceConfig[] }
-  | { type: "append-gitignore"; path: string; entries: string[] };
-
-export type SetupOverride = {
-  envKey: string;
-  affects: string;
-  value: string;
-  note: string;
-};
-
-export type SetupPreview = {
-  ok: boolean;
-  /** Path-specific blocking diagnostics, set when any setup file is malformed. */
-  blocked: string[];
-  mutations: SetupMutation[];
-  /** Environment overrides active for the shell init/apply path (RL-06). */
-  overrides: SetupOverride[];
-  /** Credential files left byte-for-byte untouched. */
-  preserved: string[];
-  state: SetupState;
-};
-
-const YT_OVERRIDES: { envKey: string; affects: string }[] = [
-  { envKey: "WORKFLOW_YT_BASE_URL", affects: "youtrack.json baseUrl" },
-  { envKey: "WORKFLOW_YT_TOKEN_FILE", affects: "youtrack.json tokenFile" },
-  { envKey: "WORKFLOW_YT_TIMEZONE", affects: "youtrack.json timezone" },
-  { envKey: "WORKFLOW_YT_MENTION", affects: "youtrack.json defaultMention" },
-  { envKey: "WORKFLOW_YT_MEETING_ISSUE", affects: "youtrack.json meetingIssue" },
-  { envKey: "WORKFLOW_YT_WEB_MEETING_ISSUE", affects: "youtrack.json web meeting issue" },
-];
-
-const VCS_OVERRIDES: { envKey: string; affects: string }[] = [
-  { envKey: "WORKFLOW_VCS_PROVIDER", affects: "vcs.json provider" },
-  { envKey: "WORKFLOW_VCS_TARGET_BRANCH", affects: "vcs.json defaultTargetBranch" },
-  { envKey: "WORKFLOW_GITLAB_HOST", affects: "vcs.json gitlab.host" },
-  { envKey: "WORKFLOW_GITLAB_API_URL", affects: "vcs.json gitlab.apiUrl" },
-  { envKey: "WORKFLOW_GITHUB_HOST", affects: "vcs.json github.host" },
-];
-
-const SETUP_OVERRIDES = [...YT_OVERRIDES, ...VCS_OVERRIDES];
-
-export const activeSetupOverrides = (env: NodeJS.ProcessEnv = process.env): SetupOverride[] => {
-  const overrides: SetupOverride[] = [];
-  for (const { envKey, affects } of SETUP_OVERRIDES) {
-    const value = env[envKey];
-    if (value === undefined || value === "") continue;
-    overrides.push({
-      envKey,
-      affects,
-      value,
-      note: "set in the environment; the interactive wizard does not apply it, but the shell init/apply path would use it",
-    });
-  }
-  return overrides;
-};
-
-// Neutral youtrack.json draft: no organization names, issue IDs, greetings, or
-// language defaults (WZ-04/CA-14). merge-json preserves unrelated keys on Apply.
-function youtrackDraft(values: SetupPreviewInput, dir: string): Record<string, unknown> {
-  return {
-    baseUrl: values.baseUrl.replace(/\/+$/, ""),
-    tokenFile: path.join(dir, "youtrack.token"),
-    timezone: values.timezone,
-    locale: values.locale,
-    tokenDefaults: {
-      name: "workit",
-      description: "OpenCode workit — /wk-issue-update and /wk-meetings",
-      scopes: ["YouTrack"],
-      profileTab: "account-security",
-    },
-  };
-}
-
-function vcsDraft(provider: VcsProvider, dir: string): Record<string, unknown> {
-  return {
-    provider,
-    gitlab: {
-      host: "gitlab.com",
-      apiUrl: "https://gitlab.com/api/v4",
-      tokenFile: path.join(dir, "gitlab.token"),
-    },
-    github: { host: "github.com", tokenFile: path.join(dir, "github.token") },
-    pr: { squashOnMerge: true, removeSourceBranch: true, pushBranch: true, confirmSkip: true },
-    tokenDefaults: {
-      name: "workit",
-      description: "OpenCode workit — /wk-pr and glab/gh",
-      gitlabScopes: ["api"],
-      githubPermissions: { pull_requests: "write", contents: "write", metadata: "read" },
-      githubClassicScopes: ["repo"],
-    },
-  };
-}
-
-export function buildSetupPreview(
-  values: SetupPreviewInput,
-  opts: { dir?: string; cwd?: string; env?: NodeJS.ProcessEnv } = {},
-): SetupPreview {
-  const env = opts.env ?? process.env;
-  const state = readSetupState(opts.dir ?? resolveConfigDir());
-  const blocked: string[] = [];
-  const mutations: SetupMutation[] = [];
-  const preserved: string[] = [];
-  const overrides = activeSetupOverrides(env);
-
-  for (const entry of [state.config, state.youtrack, state.vcs, state.workspaces]) {
-    if (entry.status === "malformed") blocked.push(entry.error ?? entry.file);
-  }
-
-  if (blocked.length === 0) {
-    const current = readConfigFromDir(state.configDir);
-    mutations.push({
-      type: "merge-json",
-      path: path.join(state.configDir, "config.json"),
-      value: {
-        locale: values.locale,
-        localeOptions: current.localeOptions,
-        timezone: values.timezone,
-        branchPolicy: mergePreset(
-          values.branchPreset,
-          {
-            allowed: values.branchPreset === "custom" ? parseList(values.branchAllowed) : undefined,
-            protectedNames:
-              values.branchPreset === "custom" ? parseList(values.branchProtected) : undefined,
-          },
-          current,
-        ),
-      },
-    });
-
-    if (values.workspaces.length > 0) {
-      mutations.push({
-        type: "update-workspaces",
-        path: path.join(state.configDir, "workspaces.json"),
-        entries: values.workspaces,
-      });
-    }
-
-    if (values.baseUrl.trim()) {
-      mutations.push({
-        type: "merge-json",
-        path: path.join(state.configDir, "youtrack.json"),
-        value: youtrackDraft(values, state.configDir),
-      });
-      const tokenPath = path.join(state.configDir, "youtrack.token");
-      if (existsSync(tokenPath)) preserved.push(tokenPath);
-      else
-        mutations.push({
-          type: "create-file",
-          path: tokenPath,
-          content: TOKEN_PLACEHOLDER + "\n",
-          mode: 0o600,
-        });
-    }
-
-    if (values.vcsProvider !== "skip") {
-      mutations.push({
-        type: "merge-json",
-        path: path.join(state.configDir, "vcs.json"),
-        value: vcsDraft(values.vcsProvider, state.configDir),
-      });
-      const tokenPath = path.join(state.configDir, `${values.vcsProvider}.token`);
-      if (existsSync(tokenPath)) preserved.push(tokenPath);
-      else
-        mutations.push({
-          type: "create-file",
-          path: tokenPath,
-          content: TOKEN_PLACEHOLDER + "\n",
-          mode: 0o600,
-        });
-    }
-
-    if (values.applyProject) {
-      const root = path.resolve(opts.cwd ?? process.cwd());
-      const gitignorePath = path.join(root, ".gitignore");
-      const existing = existsSync(gitignorePath) ? readFileSync(gitignorePath, "utf8") : "";
-      const existingLines = new Set(
-        existing
-          .split("\n")
-          .map((l) => l.trim())
-          .filter(Boolean),
-      );
-      const entries = GITIGNORE_ENTRIES.filter(
-        (e) => e.trim() !== "" && !existingLines.has(e.trim()),
-      );
-      mutations.push({ type: "append-gitignore", path: gitignorePath, entries });
-      for (const planned of planHygieneFiles(root)) {
-        mutations.push({ type: "create-file", path: planned.path, content: planned.content });
-      }
-    }
-  }
-
-  return { ok: blocked.length === 0, blocked, mutations, overrides, preserved, state };
-}
+export {
+  TOKEN_PLACEHOLDER,
+  parseList,
+  buildSetupPreview,
+  activeSetupOverrides,
+  applySetupPreview,
+  setupCompletionGuidance,
+  type SetupPreviewInput,
+  type SetupMutation,
+  type SetupOverride,
+  type SetupPreview,
+  type Platform,
+  type SetupResult,
+  type SetupResultEntry,
+  type SetupResultStatus,
+  type ApplySetupOptions,
+} from "@brainervirus/workit-core/src/core/setup.ts";
+export type { VcsProvider };

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -109,5 +109,40 @@ test("wizard writes nothing before Apply; index exits nonzero until configuratio
     path.join(repoRoot, "packages/workit-cli/src/index.tsx"),
     "utf8",
   );
-  expect(indexSource).toMatch(/process\.exit\(complete \? 0 : 1\)/);
+  expect(indexSource).toMatch(/process\.exit\(exit !== undefined && exit\.complete \? 0 : 1\)/);
+});
+
+// Task 14 Step 7 (CA-13): initApplyData token writes must use the same wx +
+// EEXIST-as-preserved semantics as the wizard's ensureToken — an existing real
+// token is never clobbered by a scaffold/placeholder write.
+test("initApplyData never clobbers existing credentials (wx + EEXIST, CA-13)", () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "wf-parity-token-"));
+  try {
+    const env: NodeJS.ProcessEnv = { ...process.env, WORKFLOW_TOOLKIT_CONFIG: dir };
+    for (const key of Object.keys(env)) {
+      if (/^WORKFLOW_(YT|VCS|GITLAB|GITHUB)_/.test(key)) delete env[key]; // env overrides would break parity
+    }
+
+    const ytToken = path.join(dir, "youtrack.token");
+    writeFileSync(ytToken, "perm_yt_123\n", { mode: 0o600 });
+    const placeholder = initApplyData("youtrack_token_placeholder", env);
+    expect(placeholder.preserved).toBe(true);
+    expect(readFileSync(ytToken, "utf8")).toBe("perm_yt_123\n");
+
+    const scaffold = initApplyData("youtrack_scaffold", env);
+    expect(scaffold.preserved).toBe(true);
+    expect(readFileSync(ytToken, "utf8")).toBe("perm_yt_123\n");
+
+    const glToken = path.join(dir, "gitlab.token");
+    const ghToken = path.join(dir, "github.token");
+    writeFileSync(glToken, "glpat-secret\n", { mode: 0o600 });
+    writeFileSync(ghToken, "ghp_secret\n", { mode: 0o600 });
+    const vcs = initApplyData("vcs_scaffold", env);
+    expect(vcs.preserved_tokens).toContain(path.resolve(glToken));
+    expect(vcs.preserved_tokens).toContain(path.resolve(ghToken));
+    expect(readFileSync(glToken, "utf8")).toBe("glpat-secret\n");
+    expect(readFileSync(ghToken, "utf8")).toBe("ghp_secret\n");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
