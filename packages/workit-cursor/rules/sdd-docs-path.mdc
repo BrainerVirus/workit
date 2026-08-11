@@ -10,7 +10,7 @@ alwaysApply: true
 ## Required
 
 1. MCP `workflow_sdd_context` with `plan_path` — **always**, including fresh projects
-2. Use returned `sdd_dir` (`docs/<plan-basename>/sdd/`) for all SDD artifacts
+2. Use returned `sdd_dir` (`docs/<slug>/sdd/`) for all SDD artifacts
 3. `workflow_sdd_task_brief`, `workflow_sdd_review_package`, `workflow_sdd_append_progress` — never Superpowers `sdd-workspace` script
 
 ## Forbidden
@@ -19,4 +19,4 @@ alwaysApply: true
 - `cat .superpowers/sdd/progress.md` — missing file there does NOT mean "start fresh"
 - Superpowers `task-brief` / `review-package` scripts under `.agents/skills/`
 
-Fresh project with no ledger → `workflow_sdd_context` **creates** `docs/<slug>/sdd/progress.md`.
+Fresh project with no ledger → `workflow_sdd_context` creates nothing; `progress.md` appears only on the first confirmed `workflow_sdd_append_progress`.

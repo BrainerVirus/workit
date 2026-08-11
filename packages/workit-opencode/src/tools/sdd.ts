@@ -133,12 +133,15 @@ export function createSddTools(state: WorkflowStateStore) {
     }),
     workflow_sdd_context: tool({
       description: "Resolve the SDD workspace and progress ledger",
-      args: { plan_path: tool.schema.string() },
-      execute: async ({ plan_path }, context) =>
+      args: {
+        plan_path: tool.schema.string().optional(),
+        slug: tool.schema.string().optional(),
+      },
+      execute: async ({ plan_path, slug }, context) =>
         invoke(() => {
-          relativePath(context.directory, plan_path);
+          if (plan_path) relativePath(context.directory, plan_path);
           const parsed = sddContext({
-            slug: undefined,
+            slug,
             plan_path,
             workspace_root: context.directory,
           }) as Record<string, unknown>;
@@ -151,7 +154,7 @@ export function createSddTools(state: WorkflowStateStore) {
           const data = {
             ...parsed,
             todos,
-            ...planPaths(context.directory, plan_path),
+            ...(plan_path ? planPaths(context.directory, plan_path) : {}),
             sdd_dir: parsed.sdd_dir,
           };
           record(context, data);

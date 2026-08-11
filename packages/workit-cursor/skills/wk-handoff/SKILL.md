@@ -19,7 +19,7 @@ Call MCP tool `workflow_handoff_prompt` with the **full** user message as `messa
 Use the tool return value as ground truth. Do not read git, run npm, or infer repo state yourself.
 If the tool errors, report the error and stop.
 
-The pasted prompt includes instructions to call `workflow_sdd_context`, **Cursor TodoWrite** (with returned `todos`), and `workflow_plan_tasks` in Chat B before Task 1. SDD artifacts go to `docs/<plan-basename>/sdd/` — never `.superpowers/sdd`. TodoWrite is required for the native Cursor task list UI (remaining/completed); the SDD ledger is persistence only. The fenced `prompt` does not contain `section_text`. **Branch** is resolved automatically in the prompt (from spec/plan or derived as `feature/*` / `bugfix/*`). **No worktrees** — Chat B uses `workflow_resolve_branch` + `workflow_branch_setup` in-place. Commits use workit **/wk-commit** skill — no separate commit-policy field.
+The pasted prompt includes instructions to call `workflow_sdd_context`, **Cursor TodoWrite** (with returned `todos`), and `workflow_plan_tasks` in Chat B before Task 1. SDD artifacts go to `docs/<slug>/sdd/` — never `.superpowers/sdd`. TodoWrite is required for the native Cursor task list UI (remaining/completed); the SDD ledger is persistence only. The fenced `prompt` does not contain `section_text`. **Branch** is resolved automatically in the prompt (from spec/plan or derived as `feature/*` / `bugfix/*`). **No worktrees** — Chat B uses `workflow_resolve_branch` + `workflow_branch_setup` in-place. Commits use workit **/wk-commit** skill — no separate commit-policy field.
 
 `workflow_handoff_prompt` also returns `tasks[]`, `branch`, `sdd_dir`, `completed_task_ids`, and `todos` for same-session MCP use — not copy-paste transport.
 

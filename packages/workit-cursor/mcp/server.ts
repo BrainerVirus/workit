@@ -519,7 +519,7 @@ registerTool(
   "workflow_sdd_context",
   {
     description:
-      "Ensure docs/<slug>/sdd/ exists; return progress ledger + Cursor TodoWrite todos[]. NEVER use .superpowers/sdd.",
+      "Resolve canonical docs/<slug>/sdd/ paths; creates nothing (progress.md appears only on the first confirmed append). NEVER use .superpowers/sdd.",
     inputSchema: {
       slug: z.string().optional(),
       plan_path: z.string().optional(),

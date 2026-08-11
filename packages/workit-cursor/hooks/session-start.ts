@@ -71,7 +71,7 @@ HARD-GATE: NEVER using-git-worktrees or git worktree. In-place feature/* or bugf
 </workflow-toolkit-no-worktrees>
 
 <workflow-toolkit-sdd-path>
-HARD-GATE: NEVER .superpowers/sdd. ALWAYS workflow_sdd_context with plan_path first — creates docs/<slug>/sdd/ even on fresh projects. workflow_sdd_task_brief, workflow_sdd_review_package, workflow_sdd_append_progress only.
+HARD-GATE: NEVER .superpowers/sdd. ALWAYS workflow_sdd_context with plan_path first — resolves canonical docs/<slug>/sdd/ and creates nothing (no empty ledger; progress.md appears only on the first confirmed append). workflow_sdd_task_brief, workflow_sdd_review_package, workflow_sdd_append_progress only.
 </workflow-toolkit-sdd-path>
 
 <workflow-toolkit-todowrite>

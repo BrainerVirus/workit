@@ -20,7 +20,7 @@ The parent agent is coordinator-only. It must not edit product code or perform d
 8. Report any setup failure stage or partial result; never infer success.
 9. Fill specs/plans from the quality templates: `templates/spec-template.md` for specs, `templates/plan-template.md` for plans. After `workflow_docs_validate`, surface the returned `quality` findings: hard findings (missing required section, missing CA-XX) block task start unless the user explicitly waives them; warnings are advisory.
 
-State lives only in tracked `docs/<slug>/sdd/<slug>/`. Never use an untracked or legacy SDD directory. Load the package-neutral execution contract by name, not an installation-specific path.
+Working state lives only in gitignored `docs/<slug>/sdd/` — never `.superpowers/sdd`, never an extra nested slug level. Load the package-neutral execution contract by name, not an installation-specific path.
 
 ## Per-task loop
 

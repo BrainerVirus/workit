@@ -225,6 +225,32 @@ test("quality templates and findings are wired into contracts", () => {
   expect(specContract).toMatch(/spec-template\.md/);
 });
 
+test("SDD contracts name gitignored docs/<slug>/sdd/ with no nested slug and no early ledger", () => {
+  const read = (rel: string) => readFileSync(path.join(import.meta.dir, "..", "..", rel), "utf8");
+  const surfaces = [
+    "packages/workit-core/skills/wk-implement/SKILL.md",
+    "packages/workit-opencode/assets/skills/wk-implement/SKILL.md",
+    "packages/workit-cursor/skills/wk-implement/SKILL.md",
+    "packages/workit-cursor/rules/sdd-docs-path.mdc",
+    "packages/workit-cursor/hooks/session-start.ts",
+    "packages/workit-core/templates/execution-contract.md",
+    "packages/workit-opencode/assets/templates/execution-contract.md",
+    "packages/workit-cursor/assets/templates/execution-contract.md",
+    "packages/workit-cursor/skills/wk-handoff/SKILL.md",
+  ]
+    .map(read)
+    .join("\n");
+  // Canonical working state is docs/<slug>/sdd/ and is gitignored, never tracked.
+  expect(surfaces).toContain("docs/<slug>/sdd/");
+  expect(surfaces).toContain("gitignored");
+  expect(surfaces).not.toMatch(/tracked `docs\/<slug>\/sdd/);
+  // No nested slug level under sdd/ on any shipped surface.
+  expect(surfaces).not.toContain("sdd/<slug>");
+  // Nothing claims the context creates the sdd dir or an empty progress ledger.
+  expect(surfaces).not.toMatch(/creates\s+`?docs\/<slug>\/sdd\/progress\.md`?/i);
+  expect(surfaces).not.toMatch(/creates\s+`?docs\/<slug>\/sdd\/?`?/i);
+});
+
 test("cursor session-start includes the contract reminder", () => {
   const hook = readFileSync(
     path.resolve(import.meta.dir, "../../packages/workit-cursor/hooks/session-start.ts"),

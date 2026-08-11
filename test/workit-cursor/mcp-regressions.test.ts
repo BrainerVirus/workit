@@ -449,7 +449,9 @@ test("present surfaces script failures", () => {
 test("no docs/superpowers paths remain in sources", () => {
   const { readdirSync, statSync } = require("node:fs") as typeof import("node:fs");
   const root = path.resolve(import.meta.dir, "..", "..");
-  const skipDirs = new Set(["node_modules", ".git", ".cache", "docs", "vendor"]);
+  // dist/ is generated, gitignored build output: bundled entries inline the
+  // documented legacy root (docs-migration.ts) and are not sources.
+  const skipDirs = new Set(["node_modules", ".git", ".cache", "docs", "vendor", "dist"]);
   const selfFile = path.basename(import.meta.file ?? "");
   const offenders: string[] = [];
   const walk = (dir: string) => {
