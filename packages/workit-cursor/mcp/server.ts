@@ -67,13 +67,20 @@ import {
   transitionSpec,
   transitionPlan,
   recordMenuChoice,
-  assertHostEvidence,
   assertProductGates,
   prepareFlowState,
   slugFromSddPath,
   type NativeChoiceEvidence,
 } from "@brainervirus/workit-core/src/core/flow-state";
-import { cursorMutationContext } from "./flow-evidence";
+import { cursorMutationContext, cursorQuestionEvidence } from "./flow-evidence";
+
+// The policy-only constant is valid by construction; the adapter never takes
+// caller input, so a failing shape here is a programming error, not forgery.
+const cursorConfirmation = (): NativeChoiceEvidence => {
+  const result = cursorQuestionEvidence();
+  if (!result.ok) throw new Error(result.error);
+  return result.evidence;
+};
 import {
   resolveCanonicalLayout,
   prepareDocsLayout,
@@ -1191,39 +1198,25 @@ registerTool(
   },
 );
 
-const evidenceSchema = z.object({
-  host: z.enum(["opencode", "cursor"]),
-  questionId: z.string(),
-  selectedLabel: z.string(),
-  recordedAt: z.number(),
-});
-
-const HOST = "cursor" as const;
-
-const hostBound = (evidence: unknown) => assertHostEvidence(HOST, evidence as NativeChoiceEvidence);
-
 registerTool(
   "workflow_spec_approve",
   {
     description:
-      "Advance spec status with native-question evidence: first call self_reviewed, second call approved. Evidence is required; bare booleans are rejected (FG-04, CA-19).",
+      "Advance spec status with the Cursor policy-only confirmation: first call self_reviewed, second call approved. Cursor records attested: false (the MCP cannot observe AskQuestion results); there is no evidence argument (CA-42).",
     inputSchema: {
       spec_path: z.string(),
-      evidence: evidenceSchema,
       workspace_root: workspaceRootSchema,
     },
   },
-  async ({ spec_path, evidence, workspace_root }) => {
+  async ({ spec_path, workspace_root }) => {
     const resolved = resolveCanonicalLayout({ workspace_root, spec_path });
     if (!resolved.ok) return jsonResult(withWorkspace(workspace_root, { error: resolved.error }));
     const { workspace, slug } = resolved.layout;
-    const bound = hostBound(evidence);
-    if (!bound.ok) return jsonResult({ error: bound.error, code: bound.code });
     const result = transitionSpec(
       workspace,
       slug,
       spec_path,
-      evidence,
+      cursorConfirmation(),
       cursorMutationContext(workspace),
     );
     if (result.ok === false) return jsonResult({ error: result.error, code: result.code });
@@ -1235,24 +1228,21 @@ registerTool(
   "workflow_plan_approve",
   {
     description:
-      "Advance plan status with native-question evidence: first call self_reviewed, second call approved. Requires approved spec. Evidence is required; bare booleans are rejected.",
+      "Advance plan status with the Cursor policy-only confirmation: first call self_reviewed, second call approved. Requires approved spec. Cursor records attested: false; there is no evidence argument (CA-42).",
     inputSchema: {
       plan_path: z.string(),
-      evidence: evidenceSchema,
       workspace_root: workspaceRootSchema,
     },
   },
-  async ({ plan_path, evidence, workspace_root }) => {
+  async ({ plan_path, workspace_root }) => {
     const resolved = resolveCanonicalLayout({ workspace_root, plan_path });
     if (!resolved.ok) return jsonResult(withWorkspace(workspace_root, { error: resolved.error }));
     const { workspace, slug } = resolved.layout;
-    const bound = hostBound(evidence);
-    if (!bound.ok) return jsonResult({ error: bound.error, code: bound.code });
     const result = transitionPlan(
       workspace,
       slug,
       plan_path,
-      evidence,
+      cursorConfirmation(),
       cursorMutationContext(workspace),
     );
     if (result.ok === false) return jsonResult({ error: result.error, code: result.code });
@@ -1264,26 +1254,23 @@ registerTool(
   "workflow_plan_menu",
   {
     description:
-      "Record the answered post-plan choice menu with native-question evidence (called after the native question). Evidence label must match the choice exactly.",
+      "Record the answered post-plan choice menu with the Cursor policy-only confirmation. subagent-driven is rejected as unsupported on Cursor (CA-42); there is no evidence argument.",
     inputSchema: {
       plan_path: z.string(),
       choice: z.enum(["subagent-driven", "inline", "handoff", "review-spec", "review-plan"]),
-      evidence: evidenceSchema,
       workspace_root: workspaceRootSchema,
     },
   },
-  async ({ plan_path, choice, evidence, workspace_root }) => {
+  async ({ plan_path, choice, workspace_root }) => {
     const resolved = resolveCanonicalLayout({ workspace_root, plan_path });
     if (!resolved.ok) return jsonResult(withWorkspace(workspace_root, { error: resolved.error }));
     const { workspace, slug } = resolved.layout;
-    const bound = hostBound(evidence);
-    if (!bound.ok) return jsonResult({ error: bound.error, code: bound.code });
     const result = recordMenuChoice(
       workspace,
       slug,
       plan_path,
       choice,
-      evidence,
+      cursorConfirmation(),
       cursorMutationContext(workspace),
     );
     if (result.ok === false) return jsonResult({ error: result.error, code: result.code });

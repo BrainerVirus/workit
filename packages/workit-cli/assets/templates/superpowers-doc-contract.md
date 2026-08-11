@@ -34,7 +34,8 @@ Before writing **Branch:** into a new spec or plan, call `workflow_docs_branch` 
 - Implementation uses `wk-implement` and subagent-driven development, with native `todowrite` and `task`.
 - Commits use `wk-commit` after its native `question` confirmation.
 - Continuation uses `wk-handoff`, whose `workflow_handoff_session` creates and seeds the OpenCode session automatically.
-- Never use worktrees. Resolve the declared branch with `workflow_resolve_branch`, preview dirty-tree stash choices with `question`, and apply an approved in-place checkout through `workflow_branch_setup` with `confirmed: true`.
+- Never use worktrees. Resolve the declared branch with `workflow_resolve_branch`, preview dirty-tree stash choices with `question`, and apply an approved in-place checkout through `workflow_branch_setup` with `confirmed: true` (grounded in the recorded NativeChoiceEvidence).
+- Flow-tool confirmations are never agent-typed booleans and never caller-supplied evidence objects: on OpenCode the plugin records the user's native-`question` answer as a host-observed one-use receipt (`attested: true`, `callID`, `selectedLabel`, `recordedAt`) consumed by `workflow_spec_approve` / `workflow_plan_approve` / `workflow_plan_menu` — no evidence argument exists, and delegated worker status comes from host session parentage (`parentID`), never a caller `role` field. On Cursor, confirmations are policy-only (`attested: false`) and subagent-driven execution is rejected as unsupported.
 - Keep all SDD state under the gitignored `docs/<slug>/sdd/`; use `workflow_sdd_context` and the registered `workflow_sdd_*` tools.
 - After implementation, use `question` before an approved stash reapply through `workflow_branch_setup` with `confirmed: true`.
 

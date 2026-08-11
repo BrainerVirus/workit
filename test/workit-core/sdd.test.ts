@@ -6,6 +6,7 @@ import { spawnSync } from "node:child_process";
 import { createSddTools } from "../../packages/workit-opencode/src/tools/sdd";
 import { WorkflowStateStore } from "../../packages/workit-core/src/state";
 import { establishApprovedFlow } from "./flow-fixtures";
+import { HostReceiptStore } from "../../packages/workit-core/src/core/flow-state";
 
 // Isolate from the developer's global config: tests assume gitflow semantics
 // (PRESETS.gitflow in src/core/config.ts), like CI with no global config.
@@ -155,7 +156,7 @@ test("progress.md appears only on the first confirmed append, never on context",
   const root = mkdtempSync(path.join(os.tmpdir(), "wf-sdd-lazy-"));
   const tools = createSddTools(new WorkflowStateStore());
   try {
-    establishApprovedFlow(root, "x");
+    establishApprovedFlow(root, "x", new HostReceiptStore(), "s1");
     await tools.workflow_sdd_context.execute({ plan_path: "docs/x/plan.md" }, {
       directory: root,
       worktree: root,
@@ -232,7 +233,7 @@ test("SDD tools expose standard schemas and guard writes", async () => {
 test("confirmed SDD writes use repository-relative paths and standard results", async () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "wf-sdd-write-"));
   const tools = createSddTools(new WorkflowStateStore());
-  establishApprovedFlow(root, "x");
+  establishApprovedFlow(root, "x", new HostReceiptStore(), "s1");
   const brief = JSON.parse(
     (await tools.workflow_sdd_task_brief.execute(
       {
@@ -300,7 +301,7 @@ test("branch resolution returns repository and plan facts", async () => {
 test("confirmed review package writes its diff inside the repository", async () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "wf-sdd-review-"));
   const git = (args: string[]) => spawnSync("git", args, { cwd: root, encoding: "utf8" });
-  establishApprovedFlow(root, "review");
+  establishApprovedFlow(root, "review", new HostReceiptStore(), "s1");
   expect(git(["init", "-q", "-b", "feature/review"]).status).toBe(0);
   git(["config", "user.name", "Workflow Test"]);
   git(["config", "user.email", "workflow@example.test"]);
@@ -354,7 +355,7 @@ test("review package safely writes to a quote-bearing contained path", async () 
   const root = mkdtempSync(path.join(os.tmpdir(), "wf-sdd-quoted-path-"));
   const git = (args: string[]) => spawnSync("git", args, { cwd: root, encoding: "utf8" });
   try {
-    establishApprovedFlow(root, "review");
+    establishApprovedFlow(root, "review", new HostReceiptStore(), "s1");
     git(["init", "-q", "-b", "feature/review"]);
     git(["config", "user.name", "Workflow Test"]);
     git(["config", "user.email", "workflow@example.test"]);

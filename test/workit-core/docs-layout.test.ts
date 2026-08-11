@@ -5,6 +5,7 @@ import path from "node:path";
 import { createSddTools } from "../../packages/workit-opencode/src/tools/sdd";
 import { WorkflowStateStore } from "../../packages/workit-core/src/state";
 import { createFlowTools } from "../../packages/workit-opencode/src/tools/flow";
+import { HostReceiptStore } from "../../packages/workit-core/src/core/flow-state";
 import { buildHandoffPrompt } from "../../packages/workit-core/src/core/handoff-tools";
 import { createDocsRepoTools } from "../../packages/workit-opencode/src/tools/docs-repo";
 
@@ -31,22 +32,13 @@ const cleanup = (root: string) => rmSync(root, { recursive: true, force: true })
 test("flow state lives at docs/<slug>/sdd/flow.json", async () => {
   const { root, slug } = fixture();
   try {
-    const tools = createFlowTools();
-    const ctx = { directory: root } as any;
+    const receipts = new HostReceiptStore();
+    const tools = createFlowTools(receipts, { session: { get: async () => ({ data: {} }) } });
+    const ctx = { directory: root, sessionID: "s1" } as any;
     const spec = `docs/${slug}/spec.md`;
     await tools.workflow_flow_status.execute({ plan_path: `docs/${slug}/plan.md` }, ctx);
-    const raw = await tools.workflow_spec_approve.execute(
-      {
-        spec_path: spec,
-        evidence: {
-          host: "opencode",
-          questionId: "q-approve",
-          selectedLabel: "Approve",
-          recordedAt: Date.now(),
-        },
-      },
-      ctx,
-    );
+    receipts.record("s1", "call-approve", "Approve");
+    const raw = await tools.workflow_spec_approve.execute({ spec_path: spec }, ctx);
     const out = JSON.parse(raw as string);
     expect(out.ok).toBe(true);
     expect(existsSync(path.join(root, "docs", slug, "sdd", "flow.json"))).toBe(true);
@@ -138,31 +130,17 @@ test("docs validate rejects cross-slug pairs through the shared resolver", async
 test("flow tools reject wrong basenames through the shared resolver", async () => {
   const { root, slug } = fixture();
   try {
-    const tools = createFlowTools();
+    const tools = createFlowTools(new HostReceiptStore(), {
+      session: { get: async () => ({ data: {} }) },
+    });
     const ctx = { directory: root } as never;
     const out = await tools.workflow_spec_approve.execute(
-      {
-        spec_path: `docs/${slug}/spec.txt`,
-        evidence: {
-          host: "opencode",
-          questionId: "q",
-          selectedLabel: "Approve",
-          recordedAt: Date.now(),
-        },
-      },
+      { spec_path: `docs/${slug}/spec.txt` },
       ctx,
     );
     expect(JSON.parse(out as string).ok).toBe(false);
     const planOut = await tools.workflow_plan_approve.execute(
-      {
-        plan_path: `docs/${slug}/notes.md`,
-        evidence: {
-          host: "opencode",
-          questionId: "q",
-          selectedLabel: "Approve",
-          recordedAt: Date.now(),
-        },
-      },
+      { plan_path: `docs/${slug}/notes.md` },
       ctx,
     );
     expect(JSON.parse(planOut as string).ok).toBe(false);
@@ -174,20 +152,11 @@ test("flow tools reject wrong basenames through the shared resolver", async () =
 test("flow tools reject traversal through the shared resolver", async () => {
   const { root } = fixture();
   try {
-    const tools = createFlowTools();
+    const tools = createFlowTools(new HostReceiptStore(), {
+      session: { get: async () => ({ data: {} }) },
+    });
     const ctx = { directory: root } as never;
-    const out = await tools.workflow_spec_approve.execute(
-      {
-        spec_path: "../outside.md",
-        evidence: {
-          host: "opencode",
-          questionId: "q",
-          selectedLabel: "Approve",
-          recordedAt: Date.now(),
-        },
-      },
-      ctx,
-    );
+    const out = await tools.workflow_spec_approve.execute({ spec_path: "../outside.md" }, ctx);
     expect(JSON.parse(out as string).ok).toBe(false);
   } finally {
     cleanup(root);

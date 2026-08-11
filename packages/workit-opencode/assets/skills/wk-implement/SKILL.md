@@ -16,7 +16,7 @@ The parent agent is coordinator-only. It must not edit product code or perform d
 4. Initialize native `todowrite` from returned tasks and mark ledger-completed task IDs completed.
 5. Call `workflow_resolve_branch`, then show the current branch, target branch, and stash behavior before any branch checkout/setup mutation.
 6. Always use native `question` before that mutation. For a clean tree, ask whether to proceed or cancel. For a dirty tree, add the stash choice and state what will be stashed; allow a custom answer.
-7. Call `workflow_branch_setup` with `confirmed: true` only after approval; never use worktrees. Flow-tool confirmations are never agent-typed booleans — pass `confirmed: true` only after the user's answer to the native `question` is recorded as NativeChoiceEvidence (`host`, `questionId`, `selectedLabel`, `recordedAt`).
+7. Call `workflow_branch_setup` with `confirmed: true` only after approval; never use worktrees. Flow-tool confirmations are never agent-typed booleans and never caller-supplied evidence: the plugin records your native-`question` answer as a host-observed one-use receipt (`attested: true`, `callID`, `selectedLabel`, `recordedAt`) consumed by the approval/menu tools — no evidence argument exists. Delegated worker status comes from host session parentage (`parentID`), never a caller `role` field.
 8. Report any setup failure stage or partial result; never infer success.
 9. Fill specs/plans from the quality templates: `templates/spec-template.md` for specs, `templates/plan-template.md` for plans. After `workflow_docs_validate`, surface the returned `quality` findings: hard findings (missing required section, missing CA-XX) block task start unless the user explicitly waives them; warnings are advisory.
 
@@ -34,7 +34,7 @@ For every plan task whose ID is absent from `completed_task_ids`:
 6. Dispatch separate `general` agents for spec-compliance review and code-quality review. **Blocking findings** (Critical, Important, or spec-compliance) may trigger at most **two** fix+re-review rounds per task. **Advisory** findings (Minor, style, YAGNI, taste) never pause the loop — append them to `<SDD_DIR>/advisories.md` with the task id.
 7. Append the validated ledger line with `workflow_sdd_append_progress` using `confirmed: true`, then mark the task completed with `todowrite`.
 
-Every dispatched worker performs the SDD mutations itself: instruct each worker to pass `role: "delegated"` and a `taskIdentity` (e.g. `wk-worker-<task_id>`) on `workflow_sdd_task_brief`, `workflow_sdd_review_package`, and `workflow_sdd_append_progress`. The coordinator boundary is fail-closed — a worker that omits `role` is treated as the coordinator and blocked.
+Every dispatched worker performs the SDD mutations itself in its child session: delegation is host-derived from session parentage (`parentID`), so `workflow_sdd_task_brief`, `workflow_sdd_review_package`, and `workflow_sdd_append_progress` take no role argument. The coordinator boundary is fail-closed — a root session is the coordinator and blocked for subagent-driven product edits, and its shell is restricted to bounded read/test/review commands while the plan is active.
 
 Never redispatch completed task IDs. Pass task briefs and review diffs to agents; do not make them reparse the plan. Keep commits on the in-place feature/bugfix branch.
 

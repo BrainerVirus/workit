@@ -1,16 +1,15 @@
 import { tool, type ToolContext } from "@opencode-ai/plugin";
 import { fail, ok } from "@brainervirus/workit-core/src/core";
 import {
-  assertHostEvidence,
-  createFlowEvidence,
+  HostReceiptStore,
+  createOpenCodeEvidence,
   prepareFlowState,
   readFlowState,
+  roleFromParentage,
   transitionSpec,
   transitionPlan,
   recordMenuChoice,
-  type EvidenceResult,
   type MutationContext,
-  type NativeChoiceEvidence,
 } from "@brainervirus/workit-core/src/core/flow-state";
 import { resolveCanonicalLayout } from "@brainervirus/workit-core/src/core/docs-layout";
 import path from "node:path";
@@ -34,53 +33,49 @@ const resolveSlug = (
   return { slug: resolved.layout.slug };
 };
 
-const evidenceSchema = tool.schema.object({
-  host: tool.schema.enum(["opencode", "cursor"]),
-  questionId: tool.schema.string(),
-  selectedLabel: tool.schema.string(),
-  recordedAt: tool.schema.number(),
-});
-
-// Fail-closed mutation identity (CA-20): role + taskIdentity are explicit tool
-// args — the boundary never infers delegation from the session agent name, so
-// a coordinator under a custom agent name cannot bypass it. A missing role
-// defaults to coordinator (blocked for subagent-driven product mutations).
-export const roleSchema = tool.schema.enum(["coordinator", "delegated"]).optional();
-export const taskIdentitySchema = tool.schema.string().optional();
-
 /**
- * The OpenCode native-question adapter (FG-04): turns an answered native
- * `question` result into host-bound evidence. Models must pass evidence
- * produced here (or re-recorded from the native result) — a bare boolean is
- * never accepted by the transitions.
+ * The host session lookup used for delegation (AR-12, CA-20). OpenCode 1.17.x
+ * SDK shape: `session.get({ path: { id } })` returns the session with an
+ * optional `parentID`; a session with a parent is a child (delegated worker).
+ * (Task 30: newer SDKs use `session.get({ sessionID })` — this adapter binds
+ * to the shape verified against the installed @opencode-ai/sdk 1.17.7.)
  */
-export const opencodeQuestionEvidence = (
-  questionId: string,
-  selectedLabel: string,
-  recordedAt?: number,
-): EvidenceResult => createFlowEvidence("opencode", questionId, selectedLabel, recordedAt);
-
-const HOST = "opencode" as const;
-
-// OpenCode's default primary agent is "build" (docs: config → Default agent);
-// a session spawned by the `task` tool runs a different agent. The coordinator
-// boundary is fail-closed: role + taskIdentity are explicit tool args, never
-// inferred from the agent name, so a coordinator under a custom primary agent
-// cannot be auto-classified delegated. Missing role → coordinator (blocked).
-export const opencodeMutationContext = (
-  context: ToolContext,
-  args?: { role?: string; taskIdentity?: string },
-): MutationContext => {
-  const delegated = args?.role === "delegated";
-  return {
-    hostWorkspace: context.directory,
-    role: delegated ? "delegated" : "coordinator",
-    sessionId: context.sessionID,
-    taskIdentity: delegated ? args?.taskIdentity : undefined,
+export type SessionLookup = {
+  session: {
+    get: (input: {
+      path: { id: string };
+    }) => Promise<{ data?: { parentID?: string; directory?: string } }>;
   };
 };
 
-export function createFlowTools() {
+/**
+ * Fail-closed mutation identity (AR-12): delegated status is derived from the
+ * host session's parentage via `client.session.get`, never from caller-supplied
+ * role fields (removed from every schema). A session whose parentage cannot be
+ * verified is treated as the root coordinator (blocked for subagent-driven
+ * product mutations). The child session id is the authenticated task identity.
+ */
+export const opencodeMutationContext = async (
+  context: ToolContext,
+  client?: SessionLookup,
+): Promise<MutationContext> => {
+  let parentID: string | undefined;
+  try {
+    const session = await client?.session.get({ path: { id: context.sessionID } });
+    parentID = session?.data?.parentID;
+  } catch {
+    // fail closed: an unverifiable session is the root coordinator
+  }
+  const role = roleFromParentage(parentID);
+  return {
+    hostWorkspace: context.directory,
+    role,
+    sessionId: context.sessionID,
+    taskIdentity: role === "delegated" ? context.sessionID : undefined,
+  };
+};
+
+export function createFlowTools(receipts: HostReceiptStore, client?: SessionLookup) {
   return {
     workflow_flow_status: tool({
       description:
@@ -88,10 +83,8 @@ export function createFlowTools() {
       args: {
         plan_path: tool.schema.string().optional(),
         spec_path: tool.schema.string().optional(),
-        role: roleSchema,
-        taskIdentity: taskIdentitySchema,
       },
-      execute: async ({ plan_path, spec_path, role, taskIdentity }, context) => {
+      execute: async ({ plan_path, spec_path }, context) => {
         try {
           if (!plan_path && !spec_path) return output(fail("plan_path or spec_path required"));
           const slugged = resolveSlug(context.directory, { plan_path, spec_path });
@@ -103,7 +96,7 @@ export function createFlowTools() {
               context.directory,
               slug,
               { spec_path, plan_path },
-              opencodeMutationContext(context, { role, taskIdentity }),
+              await opencodeMutationContext(context, client),
             );
             if (!prepared.ok) return output(fail(prepared.error, { code: prepared.code }));
             state = readFlowState(context.directory, slug);
@@ -124,65 +117,78 @@ export function createFlowTools() {
     }),
     workflow_spec_approve: tool({
       description:
-        "Advance spec status with native-question evidence: first call self_reviewed, second call approved. Evidence is required; bare booleans are rejected (FG-04, CA-19).",
+        "Advance spec status from a host-observed native-question receipt: first call self_reviewed, second call approved. The receipt is recorded automatically when the user answers the `question` tool; there is no evidence argument (AR-12).",
       args: {
         spec_path: tool.schema.string(),
-        evidence: evidenceSchema,
-        role: roleSchema,
-        taskIdentity: taskIdentitySchema,
       },
-      execute: async ({ spec_path, evidence, role, taskIdentity }, context) => {
+      execute: async ({ spec_path }, context) => {
         const slugged = resolveSlug(context.directory, { spec_path });
         if ("error" in slugged) return output(fail(slugged.error));
         const slug = slugged.slug;
-        const hostOk = assertHostEvidence(HOST, evidence as NativeChoiceEvidence);
-        if (!hostOk.ok) return output(fail(hostOk.error, { code: hostOk.code }));
+        // FINDING 5 (round 3): consume FIRST — the atomic one-use take IS the
+        // gate. peek-then-consume raced: two concurrent approve calls in one
+        // message could both peek the same receipt and drive draft -> approved
+        // on a single answer. Semantics: spent-on-any-attempt — a failed gate
+        // (draft spec, invalid docs, already-approved) spends the user's
+        // answer; the model must ask the native question again. Stricter and
+        // race-free; correlation: session + one-use + freshness + non-negative
+        // label (FINDING 2/3).
+        const consumed = receipts.consume(context.sessionID);
+        if (!consumed.ok) return output(fail(consumed.error, { code: consumed.code }));
         const result = transitionSpec(
           context.directory,
           slug,
           spec_path,
-          evidence,
-          opencodeMutationContext(context, { role, taskIdentity }),
+          createOpenCodeEvidence(consumed.receipt),
+          await opencodeMutationContext(context, client),
         );
         return output(
           result.ok
-            ? ok({ spec: spec_path, status: readFlowState(context.directory, slug).spec.status })
+            ? ok({
+                spec: spec_path,
+                status: readFlowState(context.directory, slug).spec.status,
+                question: consumed.receipt.question,
+              })
             : fail(result.error, { code: result.code }),
         );
       },
     }),
     workflow_plan_approve: tool({
       description:
-        "Advance plan status with native-question evidence: first call self_reviewed, second call approved. Requires approved spec. Evidence is required; bare booleans are rejected.",
+        "Advance plan status from a host-observed native-question receipt: first call self_reviewed, second call approved. Requires approved spec. There is no evidence argument (AR-12).",
       args: {
         plan_path: tool.schema.string(),
-        evidence: evidenceSchema,
-        role: roleSchema,
-        taskIdentity: taskIdentitySchema,
       },
-      execute: async ({ plan_path, evidence, role, taskIdentity }, context) => {
+      execute: async ({ plan_path }, context) => {
         const slugged = resolveSlug(context.directory, { plan_path });
         if ("error" in slugged) return output(fail(slugged.error));
         const slug = slugged.slug;
-        const hostOk = assertHostEvidence(HOST, evidence as NativeChoiceEvidence);
-        if (!hostOk.ok) return output(fail(hostOk.error, { code: hostOk.code }));
+        // FINDING 5 (round 3): consume-before-transition, same as
+        // workflow_spec_approve — the atomic one-use take gates the transition
+        // and is spent on any attempt.
+        const consumed = receipts.consume(context.sessionID);
+        if (!consumed.ok) return output(fail(consumed.error, { code: consumed.code }));
         const result = transitionPlan(
           context.directory,
           slug,
           plan_path,
-          evidence,
-          opencodeMutationContext(context, { role, taskIdentity }),
+          createOpenCodeEvidence(consumed.receipt),
+          await opencodeMutationContext(context, client),
         );
         return output(
           result.ok
-            ? ok({ plan: plan_path, status: readFlowState(context.directory, slug).plan.status })
+            ? ok({
+                plan: plan_path,
+                status: readFlowState(context.directory, slug).plan.status,
+                question: consumed.receipt.question,
+              })
             : fail(result.error, { code: result.code }),
         );
       },
     }),
     workflow_plan_menu: tool({
       description:
-        "Record the answered post-plan choice menu with native-question evidence (called after the native question). Evidence label must match the choice exactly.",
+        "Record the answered post-plan choice menu (called after the native question). The receipt label must match the choice exactly; there is no evidence argument (AR-12).",
       args: {
         plan_path: tool.schema.string(),
         choice: tool.schema.enum([
@@ -192,27 +198,31 @@ export function createFlowTools() {
           "review-spec",
           "review-plan",
         ]),
-        evidence: evidenceSchema,
-        role: roleSchema,
-        taskIdentity: taskIdentitySchema,
       },
-      execute: async ({ plan_path, choice, evidence, role, taskIdentity }, context) => {
+      execute: async ({ plan_path, choice }, context) => {
         const slugged = resolveSlug(context.directory, { plan_path });
         if ("error" in slugged) return output(fail(slugged.error));
         const slug = slugged.slug;
-        const hostOk = assertHostEvidence(HOST, evidence as NativeChoiceEvidence);
-        if (!hostOk.ok) return output(fail(hostOk.error, { code: hostOk.code }));
+        // FINDING 5 (round 3): consume-before-transition with the exact-choice
+        // label pin. A label MISMATCH does not spend the receipt (it stays
+        // queued for the choice it actually matched); a failed menu gate
+        // (plan not approved, unsupported mode) spends it like the approvals.
+        const consumed = receipts.consume(context.sessionID, { label: choice });
+        if (!consumed.ok) return output(fail(consumed.error, { code: consumed.code }));
         const result = recordMenuChoice(
           context.directory,
           slug,
           plan_path,
           choice,
-          evidence,
-          opencodeMutationContext(context, { role, taskIdentity }),
+          createOpenCodeEvidence(consumed.receipt),
+          await opencodeMutationContext(context, client),
         );
         return output(
           result.ok
-            ? ok({ menu: { presented: true, chosen: choice } })
+            ? ok({
+                menu: { presented: true, chosen: choice },
+                question: consumed.receipt.question,
+              })
             : fail(result.error, { code: result.code }),
         );
       },

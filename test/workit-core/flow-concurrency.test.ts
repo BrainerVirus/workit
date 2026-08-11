@@ -26,6 +26,10 @@ import {
   type MutationContext,
 } from "../../packages/workit-core/src/core/flow-state";
 import { findActiveSubagentDrivenPlans } from "../../packages/workit-core/src/core/detector";
+import {
+  roleFromParentage,
+  subagentDrivenInterception,
+} from "../../packages/workit-core/src/core/flow-state";
 import { COMPLIANT_PLAN, COMPLIANT_SPEC, evidence } from "./flow-fixtures";
 
 const fixture = () => {
@@ -59,10 +63,10 @@ const approveSpecAndPlan = (root: string, slug: string) => {
   const spec = `docs/${slug}/spec.md`;
   const plan = `docs/${slug}/plan.md`;
   for (const step of [
-    transitionSpec(root, slug, spec, evidence("opencode", "Approve spec")),
-    transitionSpec(root, slug, spec, evidence("opencode", "Approve spec")),
-    transitionPlan(root, slug, plan, evidence("opencode", "Approve plan")),
-    transitionPlan(root, slug, plan, evidence("opencode", "Approve plan")),
+    transitionSpec(root, slug, spec, evidence("Approve spec")),
+    transitionSpec(root, slug, spec, evidence("Approve spec")),
+    transitionPlan(root, slug, plan, evidence("Approve plan")),
+    transitionPlan(root, slug, plan, evidence("Approve plan")),
   ])
     if (!step.ok) throw new Error(step.error);
 };
@@ -81,7 +85,7 @@ const establishSubagentDriven = (root: string, slug: string) => {
     slug,
     plan,
     "subagent-driven",
-    evidence("opencode", "subagent-driven"),
+    evidence("subagent-driven"),
   );
   if (!recorded.ok) throw new Error(recorded.error);
 };
@@ -119,7 +123,7 @@ test("CA-20: coordinator stays allowed when the menu was not subagent-driven", (
     });
     expect(prep.ok).toBe(true);
     approveSpecAndPlan(root, slug);
-    const recorded = recordMenuChoice(root, slug, plan, "handoff", evidence("opencode", "handoff"));
+    const recorded = recordMenuChoice(root, slug, plan, "handoff", evidence("handoff"));
     expect(recorded.ok).toBe(true);
     const gate = assertProductGates(
       root,
@@ -187,12 +191,7 @@ test("FG-08/CA-21: unique per-write temp names never reuse a shared <file>.tmp",
     expect(prep.ok).toBe(true);
     const stale = `${flowFile(root, slug)}.tmp`;
     writeFileSync(stale, "stale-writer-buffer", "utf8");
-    const result = transitionSpec(
-      root,
-      slug,
-      `docs/${slug}/spec.md`,
-      evidence("opencode", "Approve spec"),
-    );
+    const result = transitionSpec(root, slug, `docs/${slug}/spec.md`, evidence("Approve spec"));
     expect(result.ok).toBe(true);
     expect(readFileSync(stale, "utf8")).toBe("stale-writer-buffer");
     expect(readFlowState(root, slug).spec.status).toBe("self_reviewed");
@@ -254,12 +253,7 @@ test("FG-08: a transition re-reads and retries on the fresh state after a concur
     });
     expect(committed.ok).toBe(true);
 
-    const result = transitionSpec(
-      root,
-      slug,
-      `docs/${slug}/spec.md`,
-      evidence("opencode", "Approve spec"),
-    );
+    const result = transitionSpec(root, slug, `docs/${slug}/spec.md`, evidence("Approve spec"));
     expect(result.ok).toBe(true);
     const finalState = readFlowState(root, slug);
     expect(finalState.spec.status).toBe("self_reviewed");
@@ -285,7 +279,7 @@ test("CA-28: a failed-session fixture cannot be skipped and keeps flow state iso
     expect(gate.ok).toBe(false);
     if (!gate.ok) expect(gate.code).toBe("flow_not_activated");
 
-    const transition = transitionSpec(root, slug, `docs/${slug}/spec.md`, evidence());
+    const transition = transitionSpec(root, slug, `docs/${slug}/spec.md`, evidence("Approve"));
     expect(transition.ok).toBe(false);
     if (!transition.ok) expect(transition.code).toBe("flow_not_activated");
 
@@ -394,12 +388,7 @@ test("A4: a transition with an unwritable flow store returns flow_io_error, not 
     });
     expect(prep.ok).toBe(true);
     chmodSync(sddDir, 0o555);
-    const result = transitionSpec(
-      root,
-      slug,
-      `docs/${slug}/spec.md`,
-      evidence("opencode", "Approve spec"),
-    );
+    const result = transitionSpec(root, slug, `docs/${slug}/spec.md`, evidence("Approve spec"));
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.code).toBe("flow_io_error");
   } finally {
@@ -422,6 +411,81 @@ test("A5: a mutation context for another workspace is rejected with workspace_mi
     if (!gate.ok) expect(gate.code).toBe("workspace_mismatch");
   } finally {
     rmSync(other, { recursive: true, force: true });
+    cleanup(root);
+  }
+});
+
+test("CA-20/AR-12: delegation derives from host parentage, and delegated contexts pass the product gate", () => {
+  const { root, slug } = fixture();
+  try {
+    establishSubagentDriven(root, slug);
+    const child = roleFromParentage("coordinator-session");
+    expect(child).toBe("delegated");
+    const allowed = assertProductGates(
+      root,
+      slug,
+      { requireMenu: true, requireDocs: true },
+      {
+        hostWorkspace: root,
+        role: child,
+        sessionId: "child-session",
+        taskIdentity: "child-session",
+      },
+    );
+    expect(allowed.ok).toBe(true);
+    const rootSession = roleFromParentage(undefined);
+    expect(rootSession).toBe("coordinator");
+    const blocked = assertProductGates(
+      root,
+      slug,
+      { requireMenu: true, requireDocs: true },
+      { hostWorkspace: root, role: rootSession, sessionId: "root-session" },
+    );
+    expect(blocked.ok).toBe(false);
+    if (!blocked.ok) expect(blocked.code).toBe("coordinator_blocked");
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("CA-18/AR-13: root-session interception blocks write tools and mutating shell once subagent-driven is active", () => {
+  const { root, slug } = fixture();
+  try {
+    establishSubagentDriven(root, slug);
+    const active = findActiveSubagentDrivenPlans(root).length > 0;
+    expect(active).toBe(true);
+    for (const tool of ["write", "edit", "apply_patch", "patch", "workflow_sdd_task_brief"]) {
+      const decision = subagentDrivenInterception({
+        tool,
+        parentID: undefined,
+        active,
+      });
+      expect(decision.ok, tool).toBe(false);
+    }
+    const shell = subagentDrivenInterception({
+      tool: "bash",
+      command: "git push origin main",
+      parentID: undefined,
+      active,
+    });
+    expect(shell.ok).toBe(false);
+    if (!shell.ok) expect(shell.code).toBe("coordinator_shell_denied");
+    const read = subagentDrivenInterception({
+      tool: "bash",
+      command: "bun run check",
+      parentID: undefined,
+      active,
+    });
+    expect(read.ok).toBe(true);
+    // A delegated child session is never intercepted, even with plans active.
+    const child = subagentDrivenInterception({
+      tool: "write",
+      command: undefined,
+      parentID: "root-session",
+      active,
+    });
+    expect(child.ok).toBe(true);
+  } finally {
     cleanup(root);
   }
 });

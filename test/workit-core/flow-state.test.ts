@@ -10,6 +10,7 @@ import {
   prepareFlowState,
 } from "../../packages/workit-core/src/core/flow-state";
 import { establishApprovedFlow, evidence } from "./flow-fixtures";
+import { HostReceiptStore } from "../../packages/workit-core/src/core/flow-state";
 
 const COMPLIANT_SPEC = (slug: string) =>
   `# ${slug}\n\n**Branch:** \`feature/${slug}\`\n\n## Context\n\n## Goals\n\n## Non-goals\n\n## Architecture\n\n## Acceptance criteria\n\n- CA-01: test\n`;
@@ -92,7 +93,7 @@ test("plan approve hard-fails while spec is draft", () => {
 test("plan approve requires spec approved", () => {
   const { root, slug } = fixture();
   try {
-    establishApprovedFlow(root, slug);
+    establishApprovedFlow(root, slug, new HostReceiptStore(), "s1");
     const state = readFlowState(root, slug);
     expect(state.spec.status).toBe("approved");
     expect(state.plan.status).toBe("approved");
@@ -104,11 +105,13 @@ test("plan approve requires spec approved", () => {
 test("menu choice records presented + chosen with exact evidence", () => {
   const { root, slug } = fixture();
   try {
-    establishApprovedFlow(root, slug);
+    establishApprovedFlow(root, slug, new HostReceiptStore(), "s1");
     const state = readFlowState(root, slug);
     expect(state.menu.presented).toBe(true);
     expect(state.menu.chosen).toBe("handoff");
-    expect(state.menu.evidence?.selectedLabel).toBe("handoff");
+    if (state.menu.evidence?.host === "opencode") {
+      expect(state.menu.evidence.selectedLabel).toBe("handoff");
+    }
   } finally {
     cleanup(root);
   }
@@ -164,7 +167,7 @@ test("assertFlowGates requires menu when requested", () => {
   const { root, slug } = fixture();
   try {
     const plan = `docs/${slug}/plan.md`;
-    establishApprovedFlow(root, slug);
+    establishApprovedFlow(root, slug, new HostReceiptStore(), "s1");
     const withoutMenu = assertFlowGates(root, plan, { requireMenu: true });
     expect(withoutMenu.ok).toBe(true); // establishApprovedFlow already presented the menu
   } finally {
@@ -187,7 +190,7 @@ test("assertFlowGates blocks execution before the menu is presented", () => {
     const withoutMenu = assertFlowGates(root, plan, { requireMenu: true });
     expect(withoutMenu.ok).toBe(false);
     if (withoutMenu.ok === false) expect(withoutMenu.code).toBe("menu_not_presented");
-    recordMenuChoice(root, slug, plan, "inline", evidence("opencode", "inline"));
+    recordMenuChoice(root, slug, plan, "inline", evidence("inline"));
     const withMenu = assertFlowGates(root, plan, { requireMenu: true });
     expect(withMenu.ok).toBe(true);
   } finally {
@@ -209,7 +212,7 @@ test("invalid slug is rejected before any write", () => {
 test("corrupt flow.json at the canonical sdd path blocks transitions with a structured error", () => {
   const { root, slug } = fixture();
   try {
-    establishApprovedFlow(root, slug);
+    establishApprovedFlow(root, slug, new HostReceiptStore(), "s1");
     writeFileSync(path.join(root, "docs", slug, "sdd", "flow.json"), "{not-json", "utf8");
     const result = transitionPlan(root, slug, `docs/${slug}/plan.md`, evidence());
     expect(result.ok).toBe(false);
@@ -225,7 +228,7 @@ test("corrupt flow.json at the canonical sdd path blocks transitions with a stru
 test("already approved spec rejects further transitions", () => {
   const { root, slug } = fixture();
   try {
-    establishApprovedFlow(root, slug);
+    establishApprovedFlow(root, slug, new HostReceiptStore(), "s1");
     const third = transitionSpec(root, slug, `docs/${slug}/spec.md`, evidence());
     expect(third.ok).toBe(false);
     if (third.ok === false) {

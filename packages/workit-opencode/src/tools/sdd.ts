@@ -15,7 +15,7 @@ import {
   sddTaskBrief,
 } from "@brainervirus/workit-core/src/core/sdd";
 import { assertProductGates, slugFromSddPath } from "@brainervirus/workit-core/src/core/flow-state";
-import { opencodeMutationContext, roleSchema, taskIdentitySchema } from "./flow";
+import { opencodeMutationContext, type SessionLookup } from "./flow";
 import { WorkflowStateStore } from "@brainervirus/workit-core/src/state";
 
 const output = (value: unknown) => JSON.stringify(value, null, 2);
@@ -24,14 +24,14 @@ const requireConfirmed = (confirmed: boolean) =>
 
 // FG-03/CA-18: non-document product writes are blocked until the spec, plan,
 // docs, and execution-menu gates all pass, and the coordinator boundary holds
-// (FG-05/CA-20). Delegated workers must pass role="delegated" + taskIdentity;
-// a missing role defaults to coordinator (blocked). Returns a rendered failure
-// or null.
-const gateProductWrite = (
+// (FG-05/CA-20). Delegated status is host-derived from session parentage
+// (AR-12): a child session is the authenticated worker; the root session is
+// the coordinator (blocked). Returns a rendered failure or null.
+const gateProductWrite = async (
   root: string,
   sddPath: string,
   context: ToolContext,
-  identity?: { role?: string; taskIdentity?: string },
+  client?: SessionLookup,
 ) => {
   const slug = slugFromSddPath(sddPath);
   if (!slug) return output(fail("could not derive slug — expected docs/<slug>/sdd/..."));
@@ -39,7 +39,7 @@ const gateProductWrite = (
     root,
     slug,
     { requireMenu: true, requireDocs: true },
-    opencodeMutationContext(context, identity),
+    await opencodeMutationContext(context, client),
   );
   if (!gate.ok) return output(fail(gate.error, { code: gate.code }));
   return null;
@@ -78,7 +78,7 @@ const planPaths = (root: string, planPath: string, suppliedSpecPath?: string) =>
   };
 };
 
-export function createSddTools(state: WorkflowStateStore) {
+export function createSddTools(state: WorkflowStateStore, client?: SessionLookup) {
   const record = (context: ToolContext, data: Record<string, unknown>) =>
     state.set(context.sessionID, {
       spec: String(data.spec_path ?? ""),
@@ -188,22 +188,17 @@ export function createSddTools(state: WorkflowStateStore) {
     }),
     workflow_sdd_task_brief: tool({
       description:
-        'Write a confirmed task brief. Delegated workers must pass role="delegated" + taskIdentity; a missing role is treated as the coordinator (blocked for subagent-driven product edits).',
+        "Write a confirmed task brief. Delegated status is host-derived from session parentage (child session = worker; root = coordinator, blocked for subagent-driven product edits).",
       args: {
         confirmed: tool.schema.boolean(),
         sdd_dir: tool.schema.string(),
         task_id: tool.schema.number(),
         section_text: tool.schema.string(),
-        role: roleSchema,
-        taskIdentity: taskIdentitySchema,
       },
-      execute: async (
-        { confirmed, sdd_dir, task_id, section_text, role, taskIdentity },
-        context,
-      ) => {
+      execute: async ({ confirmed, sdd_dir, task_id, section_text }, context) => {
         const rejected = requireConfirmed(confirmed);
         if (rejected) return rejected;
-        const gated = gateProductWrite(context.directory, sdd_dir, context, { role, taskIdentity });
+        const gated = await gateProductWrite(context.directory, sdd_dir, context, client);
         if (gated) return gated;
         return invoke(() => {
           relativePath(context.directory, sdd_dir);
@@ -218,16 +213,14 @@ export function createSddTools(state: WorkflowStateStore) {
     }),
     workflow_sdd_review_package: tool({
       description:
-        'Write a confirmed task review diff. Delegated workers must pass role="delegated" + taskIdentity; a missing role is treated as the coordinator (blocked for subagent-driven product edits).',
+        "Write a confirmed task review diff. Delegated status is host-derived from session parentage (child session = worker; root = coordinator, blocked for subagent-driven product edits).",
       args: {
         confirmed: tool.schema.boolean(),
         sdd_dir: tool.schema.string(),
         base_sha: tool.schema.string(),
         head_sha: tool.schema.string(),
-        role: roleSchema,
-        taskIdentity: taskIdentitySchema,
       },
-      execute: async ({ confirmed, sdd_dir, base_sha, head_sha, role, taskIdentity }, context) => {
+      execute: async ({ confirmed, sdd_dir, base_sha, head_sha }, context) => {
         const rejected = requireConfirmed(confirmed);
         if (rejected) return rejected;
         try {
@@ -237,7 +230,7 @@ export function createSddTools(state: WorkflowStateStore) {
         } catch (error) {
           return output(fail(error instanceof Error ? error.message : "workflow operation failed"));
         }
-        const gated = gateProductWrite(context.directory, sdd_dir, context, { role, taskIdentity });
+        const gated = await gateProductWrite(context.directory, sdd_dir, context, client);
         if (gated) return gated;
         return invoke(() =>
           sddReviewPackage({
@@ -251,21 +244,16 @@ export function createSddTools(state: WorkflowStateStore) {
     }),
     workflow_sdd_append_progress: tool({
       description:
-        'Append one confirmed validated SDD progress line. Delegated workers must pass role="delegated" + taskIdentity; a missing role is treated as the coordinator (blocked for subagent-driven product edits).',
+        "Append one confirmed validated SDD progress line. Delegated status is host-derived from session parentage (child session = worker; root = coordinator, blocked for subagent-driven product edits).",
       args: {
         confirmed: tool.schema.boolean(),
         progress_path: tool.schema.string(),
         line: tool.schema.string(),
-        role: roleSchema,
-        taskIdentity: taskIdentitySchema,
       },
-      execute: async ({ confirmed, progress_path, line, role, taskIdentity }, context) => {
+      execute: async ({ confirmed, progress_path, line }, context) => {
         const rejected = requireConfirmed(confirmed);
         if (rejected) return rejected;
-        const gated = gateProductWrite(context.directory, progress_path, context, {
-          role,
-          taskIdentity,
-        });
+        const gated = await gateProductWrite(context.directory, progress_path, context, client);
         if (gated) return gated;
         return invoke(() => {
           relativePath(context.directory, progress_path);

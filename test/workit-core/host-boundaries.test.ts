@@ -83,6 +83,7 @@ test("opencode and cursor flow registrations share the same pure core functions"
   expect(server).toMatch(/readFlowState\s*\(\s*workspace\b/);
 
   const { createFlowTools } = await import("../../packages/workit-opencode/src/tools/flow");
+  const { HostReceiptStore } = await import("../../packages/workit-core/src/core/flow-state");
   const root = mkdtempSync(path.join(os.tmpdir(), "wf-boundary-"));
   try {
     mkdirSync(path.join(root, "docs", "x", "sdd"), { recursive: true });
@@ -102,10 +103,9 @@ test("opencode and cursor flow registrations share the same pure core functions"
       }),
     );
 
-    const raw = await createFlowTools().workflow_flow_status.execute(
-      { plan_path: "docs/x/plan.md" },
-      { directory: root } as never,
-    );
+    const raw = await createFlowTools(new HostReceiptStore(), {
+      session: { get: async () => ({ data: {} }) },
+    }).workflow_flow_status.execute({ plan_path: "docs/x/plan.md" }, { directory: root } as never);
     const result = JSON.parse(raw as string);
     expect(result.ok).toBe(true);
     const slug = slugFromPath("docs/x/plan.md");

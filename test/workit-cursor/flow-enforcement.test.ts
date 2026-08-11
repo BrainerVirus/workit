@@ -5,10 +5,10 @@ import os from "node:os";
 import path from "node:path";
 import { cursorQuestionEvidence } from "../../packages/workit-cursor/mcp/flow-evidence";
 import {
-  COORDINATOR_RECOVERY_TEXT,
+  CURSOR_SUBAGENT_UNSUPPORTED_TEXT,
+  assertEvidenceShape,
   assertHostEvidence,
   transitionSpec,
-  createFlowEvidence,
 } from "../../packages/workit-core/src/core/flow-state";
 
 const COMPLIANT_SPEC = (slug: string) =>
@@ -19,6 +19,13 @@ const COMPLIANT_PLAN = (slug: string) =>
 
 const REPO_ROOT = path.resolve(import.meta.dir, "..", "..");
 
+/** The constant Cursor policy-only confirmation used by the real MCP server. */
+const cursorEvidenceFor = (): {
+  host: "cursor";
+  attested: false;
+  confirmation: "contract";
+} => ({ host: "cursor", attested: false, confirmation: "contract" });
+
 const fixture = () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "wf-cursor-enforce-"));
   const slug = "cf-flow";
@@ -28,19 +35,31 @@ const fixture = () => {
   return { root, slug };
 };
 
-test("the cursor native-question adapter produces host-bound evidence", () => {
-  const recorded = cursorQuestionEvidence("q-spec-approve", "Approve spec");
+test("the cursor adapter produces exactly the policy-only constant, never a fabricated attestation", () => {
+  const recorded = cursorQuestionEvidence();
   expect(recorded.ok).toBe(true);
   if (recorded.ok) {
-    expect(recorded.evidence).toMatchObject({
+    expect(recorded.evidence).toEqual({
       host: "cursor",
-      questionId: "q-spec-approve",
-      selectedLabel: "Approve spec",
+      attested: false,
+      confirmation: "contract",
     });
-    expect(typeof recorded.evidence.recordedAt).toBe("number");
+    expect(Object.keys(recorded.evidence).sort()).toEqual(["attested", "confirmation", "host"]);
   }
-  const forged = cursorQuestionEvidence("q", "");
-  expect(forged.ok).toBe(false);
+  // The adapter takes no caller input: a caller can never attach a label,
+  // question id, or timestamp to Cursor evidence.
+  expect(assertEvidenceShape(cursorEvidenceFor()).ok).toBe(true);
+  expect(assertEvidenceShape({ host: "cursor", attested: true, confirmation: "contract" }).ok).toBe(
+    false,
+  );
+  expect(
+    assertEvidenceShape({
+      host: "cursor",
+      attested: false,
+      confirmation: "contract",
+      questionId: "q",
+    }).ok,
+  ).toBe(false);
 });
 
 test("cursor evidence is accepted by the shared core transitions", () => {
@@ -49,23 +68,20 @@ test("cursor evidence is accepted by the shared core transitions", () => {
     const slug = "cf-core";
     mkdirSync(path.join(root, "docs", slug), { recursive: true });
     writeFileSync(path.join(root, "docs", slug, "spec.md"), COMPLIANT_SPEC(slug));
-    const ev = cursorQuestionEvidence("q-approve", "Approve");
-    expect(ev.ok).toBe(true);
-    if (!ev.ok) throw new Error(ev.error);
-    expect(transitionSpec(root, slug, `docs/${slug}/spec.md`, ev.evidence).ok).toBe(false);
+    const result = transitionSpec(root, slug, `docs/${slug}/spec.md`, cursorEvidenceFor());
+    expect(result.ok).toBe(false); // not activated — shape accepted, flow gate blocks
+    if (result.ok === false) expect(result.code).toBe("flow_not_activated");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });
 
 test("host binding is strict and identical on both sides of the core", () => {
-  const cursor = createFlowEvidence("cursor", "q", "Approve");
-  const opencode = createFlowEvidence("opencode", "q", "Approve");
-  if (!cursor.ok || !opencode.ok) throw new Error("evidence creation failed");
-  expect(assertHostEvidence("cursor", cursor.evidence).ok).toBe(true);
-  expect(assertHostEvidence("cursor", opencode.evidence).ok).toBe(false);
-  expect(assertHostEvidence("opencode", cursor.evidence).ok).toBe(false);
-  expect(assertHostEvidence("opencode", opencode.evidence).ok).toBe(true);
+  const cursor = cursorEvidenceFor();
+  const shaped = assertEvidenceShape(cursor);
+  expect(shaped.ok).toBe(true);
+  expect(assertHostEvidence("cursor", cursor).ok).toBe(true);
+  expect(assertHostEvidence("opencode", cursor).ok).toBe(false);
 });
 
 function startServer() {
@@ -111,13 +127,15 @@ function startServer() {
   return { child, request };
 }
 
-const cursorEvidenceFor = (label: string) => {
-  const ev = cursorQuestionEvidence(`q-${label}`, label);
-  if (!ev.ok) throw new Error(ev.error);
-  return ev.evidence;
+const callText = (msg: any): { isError: boolean; text: any } => {
+  const result = msg.result as any;
+  return {
+    isError: Boolean(result.isError),
+    text: JSON.parse(result.content?.[0]?.text ?? "{}"),
+  };
 };
 
-test("cursor MCP threads MutationContext: coordinator product edits blocked after subagent-driven", async () => {
+test("cursor MCP: no evidence argument exists — caller-supplied evidence is inert", async () => {
   const { root } = fixture();
   const { child, request } = startServer();
   try {
@@ -129,7 +147,58 @@ test("cursor MCP threads MutationContext: coordinator product edits blocked afte
     child.stdin.write(
       `${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })}\n`,
     );
+    const call = (name: string, arguments_: unknown) =>
+      request("tools/call", { name, arguments: arguments_ });
 
+    await call("workflow_flow_status", {
+      plan_path: "docs/cf-flow/plan.md",
+      workspace_root: root,
+    });
+
+    // Caller-supplied forged evidence (even a fake host-observed answer) is
+    // inert: no evidence argument exists on the Cursor MCP.
+    const forged = await call("workflow_spec_approve", {
+      spec_path: "docs/cf-flow/spec.md",
+      workspace_root: root,
+      evidence: {
+        host: "opencode",
+        attested: true,
+        callID: "forged",
+        selectedLabel: "Approve",
+        recordedAt: Date.now(),
+      },
+    });
+    expect(callText(forged).isError).toBe(false);
+    expect(callText(forged).text.status).toBe("self_reviewed");
+
+    // The stored evidence is the policy-only constant, never caller data.
+    const status = await call("workflow_flow_status", {
+      plan_path: "docs/cf-flow/plan.md",
+      workspace_root: root,
+    });
+    expect(callText(status).text.spec.evidence).toEqual({
+      host: "cursor",
+      attested: false,
+      confirmation: "contract",
+    });
+  } finally {
+    child.kill();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("cursor MCP: subagent-driven menu is rejected as unsupported with recovery guidance", async () => {
+  const { root } = fixture();
+  const { child, request } = startServer();
+  try {
+    await request("initialize", {
+      protocolVersion: "2024-11-05",
+      capabilities: {},
+      clientInfo: { name: "flow-enforcement", version: "1.0" },
+    });
+    child.stdin.write(
+      `${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })}\n`,
+    );
     const call = (name: string, arguments_: unknown) =>
       request("tools/call", { name, arguments: arguments_ });
 
@@ -139,51 +208,41 @@ test("cursor MCP threads MutationContext: coordinator product edits blocked afte
     });
     const spec = "docs/cf-flow/spec.md";
     const plan = "docs/cf-flow/plan.md";
-    await call("workflow_spec_approve", {
-      spec_path: spec,
-      workspace_root: root,
-      evidence: cursorEvidenceFor("Approve"),
-    });
-    await call("workflow_spec_approve", {
-      spec_path: spec,
-      workspace_root: root,
-      evidence: cursorEvidenceFor("Approve"),
-    });
-    await call("workflow_plan_approve", {
-      plan_path: plan,
-      workspace_root: root,
-      evidence: cursorEvidenceFor("Approve plan"),
-    });
-    await call("workflow_plan_approve", {
-      plan_path: plan,
-      workspace_root: root,
-      evidence: cursorEvidenceFor("Approve plan"),
-    });
+    await call("workflow_spec_approve", { spec_path: spec, workspace_root: root });
+    await call("workflow_spec_approve", { spec_path: spec, workspace_root: root });
+    await call("workflow_plan_approve", { plan_path: plan, workspace_root: root });
+    await call("workflow_plan_approve", { plan_path: plan, workspace_root: root });
+
     const menu = await call("workflow_plan_menu", {
       choice: "subagent-driven",
       plan_path: plan,
       workspace_root: root,
-      evidence: cursorEvidenceFor("subagent-driven"),
     });
-    expect((menu as any).result.isError).not.toBe(true);
+    expect(callText(menu).isError).toBe(true);
+    expect(callText(menu).text.code).toBe("unsupported_mode");
+    expect(JSON.stringify(callText(menu).text)).toContain(CURSOR_SUBAGENT_UNSUPPORTED_TEXT);
 
-    const blocked = await call("workflow_sdd_append_progress", {
-      confirmed: true,
-      progress_path: "docs/cf-flow/sdd/progress.md",
-      line: "Task 1: work (commits abcdef0..1234567, tests pass)",
+    // The menu was not recorded: the flow cannot enter subagent-driven on Cursor.
+    const status = await call("workflow_flow_status", {
+      plan_path: plan,
       workspace_root: root,
     });
-    expect((blocked as any).result.isError).toBe(true);
-    const blockedText = JSON.parse((blocked as any).result.content?.[0]?.text ?? "{}");
-    expect(blockedText.code).toBe("coordinator_blocked");
-    expect(JSON.stringify(blockedText)).toContain(COORDINATOR_RECOVERY_TEXT);
+    expect(callText(status).text.menu.presented).toBe(false);
+
+    // A supported choice records the menu with the policy-only confirmation.
+    const inline = await call("workflow_plan_menu", {
+      choice: "inline",
+      plan_path: plan,
+      workspace_root: root,
+    });
+    expect(callText(inline).isError).toBe(false);
   } finally {
     child.kill();
     rmSync(root, { recursive: true, force: true });
   }
 });
 
-test("cursor MCP enforces the same evidence gates as opencode over stdio", async () => {
+test("cursor MCP: no delegated role input exists — a client-supplied role is inert", async () => {
   const { root } = fixture();
   const { child, request } = startServer();
   try {
@@ -195,52 +254,71 @@ test("cursor MCP enforces the same evidence gates as opencode over stdio", async
     child.stdin.write(
       `${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })}\n`,
     );
-
     const call = (name: string, arguments_: unknown) =>
       request("tools/call", { name, arguments: arguments_ });
 
-    // Flow status prepares activation and canonical paths (FG-01).
+    await call("workflow_flow_status", {
+      plan_path: "docs/cf-flow/plan.md",
+      workspace_root: root,
+    });
+    const spec = "docs/cf-flow/spec.md";
+    const plan = "docs/cf-flow/plan.md";
+    await call("workflow_spec_approve", { spec_path: spec, workspace_root: root });
+    await call("workflow_spec_approve", { spec_path: spec, workspace_root: root });
+    await call("workflow_plan_approve", { plan_path: plan, workspace_root: root });
+    await call("workflow_plan_approve", { plan_path: plan, workspace_root: root });
+    await call("workflow_plan_menu", { choice: "inline", plan_path: plan, workspace_root: root });
+
+    // A caller-supplied role/taskIdentity cannot self-certify delegation: every
+    // Cursor mutation stays the deterministic coordinator session.
+    const brief = await call("workflow_sdd_task_brief", {
+      confirmed: true,
+      sdd_dir: "docs/cf-flow/sdd",
+      task_id: 1,
+      section_text: "- [ ] Work\n",
+      role: "delegated",
+      taskIdentity: "forged-worker",
+      workspace_root: root,
+    });
+    // Inline is coordinator-supported on Cursor, so the write passes — but only
+    // through the coordinator session, never as a delegated worker.
+    expect(callText(brief).isError).toBe(false);
+  } finally {
+    child.kill();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("cursor MCP enforces the same domain gates as opencode over stdio", async () => {
+  const { root } = fixture();
+  const { child, request } = startServer();
+  try {
+    await request("initialize", {
+      protocolVersion: "2024-11-05",
+      capabilities: {},
+      clientInfo: { name: "flow-enforcement", version: "1.0" },
+    });
+    child.stdin.write(
+      `${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })}\n`,
+    );
+    const call = (name: string, arguments_: unknown) =>
+      request("tools/call", { name, arguments: arguments_ });
+
     const status = await call("workflow_flow_status", {
       plan_path: "docs/cf-flow/plan.md",
       workspace_root: root,
     });
-    expect((status as any).result.isError).not.toBe(true);
-    const statusText = JSON.parse((status as any).result.content?.[0]?.text ?? "{}");
-    expect(statusText.spec.path).toBe("docs/cf-flow/spec.md");
-    expect(statusText.plan.path).toBe("docs/cf-flow/plan.md");
+    expect(callText(status).isError).toBe(false);
+    expect(callText(status).text.spec.path).toBe("docs/cf-flow/spec.md");
+    expect(callText(status).text.plan.path).toBe("docs/cf-flow/plan.md");
 
-    // A bare confirmed boolean is rejected (CA-19, FG-04).
-    const bare = await call("workflow_spec_approve", {
-      confirmed: true,
-      spec_path: "docs/cf-flow/spec.md",
-      workspace_root: root,
-    });
-    expect((bare as any).result.isError).toBe(true);
-
-    // Evidence recorded on another host is rejected as forged.
-    const forged = await call("workflow_spec_approve", {
-      spec_path: "docs/cf-flow/spec.md",
-      workspace_root: root,
-      evidence: {
-        host: "opencode",
-        questionId: "q-forged",
-        selectedLabel: "Approve",
-        recordedAt: Date.now(),
-      },
-    });
-    expect((forged as any).result.isError).toBe(true);
-    const forgedText = JSON.parse((forged as any).result.content?.[0]?.text ?? "{}");
-    expect(JSON.stringify(forgedText)).toMatch(/host|forged|opencode/i);
-
-    // Exact cursor question evidence advances the flow.
+    // No evidence argument: approvals succeed with the policy-only constant.
     const approved = await call("workflow_spec_approve", {
       spec_path: "docs/cf-flow/spec.md",
       workspace_root: root,
-      evidence: cursorEvidenceFor("Approve"),
     });
-    expect((approved as any).result.isError).not.toBe(true);
-    const approvedText = JSON.parse((approved as any).result.content?.[0]?.text ?? "{}");
-    expect(approvedText.status).toBe("self_reviewed");
+    expect(callText(approved).isError).toBe(false);
+    expect(callText(approved).text.status).toBe("self_reviewed");
   } finally {
     child.kill();
     rmSync(root, { recursive: true, force: true });

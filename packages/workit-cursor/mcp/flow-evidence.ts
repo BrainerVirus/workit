@@ -1,19 +1,18 @@
 import {
-  createFlowEvidence,
+  createCursorConfirmation,
   type EvidenceResult,
   type MutationContext,
 } from "@brainervirus/workit-core/src/core/flow-state";
 
 /**
- * Cursor native-question adapter (FG-04): turns an answered AskQuestion result
- * into host-bound evidence. Bare booleans never reach this function — the flow
- * transitions only accept the evidence it produces.
+ * Cursor question adapter (CA-42): the Cursor MCP cannot observe the
+ * AskQuestion result (registerTool receives only tool arguments), so it never
+ * fabricates a host-observed answer. Every confirmation is the policy-only
+ * constant `{ host: "cursor", attested: false, confirmation: "contract" }` —
+ * unauthenticated by design, carrying no caller-supplied question data. The
+ * tool schemas expose no evidence argument; this adapter takes no input.
  */
-export const cursorQuestionEvidence = (
-  questionId: string,
-  selectedLabel: string,
-  recordedAt?: number,
-): EvidenceResult => createFlowEvidence("cursor", questionId, selectedLabel, recordedAt);
+export const cursorQuestionEvidence = (): EvidenceResult => createCursorConfirmation();
 
 export const CURSOR_HOST = "cursor" as const;
 

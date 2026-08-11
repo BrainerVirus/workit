@@ -293,17 +293,50 @@ test("contract includes the doc delivery section", () => {
   expect(contract).toMatch(/\[spec\.md\]\(docs\/<slug>\/spec\.md\)/);
 });
 
-test("flow contract prose grounds flow-tool confirmations in NativeChoiceEvidence", () => {
+test("flow contracts state the host-capability boundary: OpenCode receipts + parentage, Cursor attested:false, no caller evidence/role", () => {
   const read = (rel: string) => readFileSync(path.join(import.meta.dir, "..", "..", rel), "utf8");
   const surfaces = [
     "packages/workit-core/skills/wk-implement/SKILL.md",
+    "packages/workit-opencode/assets/skills/wk-implement/SKILL.md",
+    "packages/workit-cursor/skills/wk-implement/SKILL.md",
+    "packages/workit-cursor/rules/ask-question-only.mdc",
     "packages/workit-core/templates/execution-contract.md",
+    "packages/workit-opencode/assets/templates/execution-contract.md",
+    "packages/workit-cursor/assets/templates/execution-contract.md",
+    "packages/workit-cli/assets/templates/execution-contract.md",
     "packages/workit-core/templates/superpowers-doc-contract.md",
+    "packages/workit-opencode/assets/templates/superpowers-doc-contract.md",
+    "packages/workit-cursor/assets/templates/superpowers-doc-contract.md",
+    "packages/workit-cli/assets/templates/superpowers-doc-contract.md",
   ]
     .map(read)
     .join("\n");
+  // OpenCode trust comes from host-observed one-use receipts consumed by the
+  // approval/menu tools; no evidence argument exists anywhere (AR-12).
+  expect(surfaces).toContain("one-use receipt");
+  expect(surfaces).toContain("attested: true");
+  expect(surfaces).toContain("no evidence argument");
   expect(surfaces).toContain("NativeChoiceEvidence");
-  for (const field of ["host", "questionId", "selectedLabel", "recordedAt"]) {
+  for (const field of ["attested", "callID", "selectedLabel", "recordedAt"]) {
     expect(surfaces).toContain(field);
+  }
+  // Delegation comes from host session parentage, never a caller role field.
+  expect(surfaces).toContain("parentID");
+  expect(surfaces).not.toContain('role: "delegated"');
+  expect(surfaces).not.toContain("taskIdentity");
+  expect(surfaces).not.toContain("questionId");
+  // Cursor reports its policy-only boundary honestly and rejects subagent-driven.
+  expect(surfaces).toContain("attested: false");
+  expect(surfaces).toMatch(/subagent-driven[^\n]*(unsupported|rejected)/i);
+  // Host contract copies stay byte-identical across the four template roots.
+  const templates = [
+    "packages/workit-core/templates",
+    "packages/workit-opencode/assets/templates",
+    "packages/workit-cursor/assets/templates",
+    "packages/workit-cli/assets/templates",
+  ];
+  for (const name of ["execution-contract.md", "superpowers-doc-contract.md"]) {
+    const contents = templates.map((dir) => read(`${dir}/${name}`));
+    for (const copy of contents) expect(copy).toBe(contents[0]);
   }
 });

@@ -1,12 +1,12 @@
 ---
 name: wk-implement
-description: Execute a Superpowers plan as SDD coordinator with subagent-per-task and mandatory review loops. Use for /wk-implement or "implement from plan using subagent-driven-development".
+description: Execute an approved Superpowers plan on Cursor as the coordinator session (inline only). subagent-driven is unsupported on Cursor and the MCP rejects that menu choice. Use for /wk-implement or "implement from plan".
 disable-model-invocation: true
 ---
 
 # Implement
 
-Execute a plan as **coordinator only** (subagent-driven-development). Do not edit product code in this thread.
+Execute the plan **inline in this coordinator session**. subagent-driven execution is unsupported on Cursor: the MCP rejects the subagent-driven menu choice (`unsupported_mode`) — Cursor has no child sessions. Plan-level edits stay coordinator-gated.
 
 ## Step 1 — Gather facts (required)
 
@@ -24,7 +24,7 @@ Load `templates/execution-contract.md`. Substitute `<SPEC_PATH>`, `<PLAN_PATH>`,
 
 ## Step 3 — Follow contract
 
-Announce: "Using implement + subagent-driven-development."
+Announce: "Using implement + inline."
 
 **Before Task 1 — validate + SDD + TodoWrite UI + branch (no worktrees):**
 
