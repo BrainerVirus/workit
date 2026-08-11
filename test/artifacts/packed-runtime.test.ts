@@ -255,8 +255,7 @@ test("declared platform matrix is pinned across CI, engines, and lockfiles (PT-1
 
   const ci = readFileSync(path.join(REPO_ROOT, ".github/workflows/ci.yml"), "utf8");
   expect(ci).toContain(SUPPORT_MATRIX.bun);
-  expect(ci).toContain(SUPPORT_MATRIX.node.minimum);
-  expect(ci).toContain(SUPPORT_MATRIX.node.current);
+  // NODE_MINIMUM/NODE_CURRENT pinning is asserted exactly in manifests.test.ts.
   expect(ci).not.toMatch(/[Dd]eno/);
 
   const lock = readFileSync(path.join(REPO_ROOT, "bun.lock"), "utf8");

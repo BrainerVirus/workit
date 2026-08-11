@@ -19,6 +19,9 @@ import {
 // rewriting unrelated user settings (values round-trip JSON-identical).
 
 const PIN = "file:///work/packages/workit-opencode/src/plugin.ts";
+const CURSOR_ROOT = path.join("/home/user", ".cursor");
+const CURSOR_PLUGIN_DIR = path.join(CURSOR_ROOT, "plugins", "local", "workflow-toolkit");
+const OTHER_PLUGIN_DIR = path.join(CURSOR_ROOT, "plugins", "local", "other");
 
 test("isWorkitPlugin matches every legacy and current identity, never unrelated plugins", () => {
   for (const id of [
@@ -102,19 +105,18 @@ test("mergeOpenCodeConfig tolerates a missing config and a string plugin field",
 });
 
 test("mergeCursorSettings keeps a single plugin identity, appends dirs, preserves unrelated settings", () => {
-  const pluginDir = "/home/user/.cursor/plugins/local/workflow-toolkit";
   const input = {
     enabled_plugins: { "local/workflow-toolkit": true, "some-other-plugin": true },
-    plugin_dirs: ["/home/user/.cursor/plugins/local/other"],
+    plugin_dirs: [OTHER_PLUGIN_DIR],
     "chat.temperature": 0.3,
     telemetry: { machineId: "abc" },
   };
-  const { config, changed } = mergeCursorSettings(input, pluginDir);
+  const { config, changed } = mergeCursorSettings(input, CURSOR_PLUGIN_DIR);
   expect(config.enabled_plugins).toEqual({
     "workflow-toolkit": true,
     "some-other-plugin": true,
   });
-  expect(config.plugin_dirs).toEqual(["/home/user/.cursor/plugins/local/other", pluginDir]);
+  expect(config.plugin_dirs).toEqual([OTHER_PLUGIN_DIR, CURSOR_PLUGIN_DIR]);
   expect(config["chat.temperature"]).toBe(0.3);
   expect(JSON.stringify(config.telemetry)).toBe(JSON.stringify(input.telemetry));
   expect(changed).toEqual(["enabled_plugins", "plugin_dirs"]);
@@ -130,24 +132,26 @@ test("mergeOpenCodeConfig does not mutate the caller's nested skills object", ()
 });
 
 test("mergeCursorPluginDirs normalizes trailing slashes so variants do not duplicate", () => {
-  const appended = mergeCursorPluginDirs([], "/pkg/");
-  expect(appended.config).toEqual(["/pkg"]);
+  const pkg = path.join("/pkg");
+  const pkgTrailing = `${pkg}${path.sep}`;
+
+  const appended = mergeCursorPluginDirs([], pkgTrailing);
+  expect(appended.config).toEqual([pkg]);
   expect(appended.changed).toEqual(["plugin_dirs"]);
 
-  const dedup = mergeCursorPluginDirs(["/pkg"], "/pkg/");
-  expect(dedup.config).toEqual(["/pkg"]);
+  const dedup = mergeCursorPluginDirs([pkg], pkgTrailing);
+  expect(dedup.config).toEqual([pkg]);
   expect(dedup.changed).toEqual([]);
 
-  const existing = mergeCursorPluginDirs(["/pkg/"], "/pkg");
-  expect(existing.config).toEqual(["/pkg/"]);
+  const existing = mergeCursorPluginDirs([pkgTrailing], pkg);
+  expect(existing.config).toEqual([pkgTrailing]);
   expect(existing.changed).toEqual([]);
 });
 
 test("mergeCursorSettings is idempotent", () => {
-  const pluginDir = "/home/user/.cursor/plugins/local/workflow-toolkit";
-  const once = mergeCursorSettings({ enabled_plugins: {}, plugin_dirs: [] }, pluginDir);
-  expect(once.config.plugin_dirs).toEqual([pluginDir]);
-  const twice = mergeCursorSettings(once.config, pluginDir);
+  const once = mergeCursorSettings({ enabled_plugins: {}, plugin_dirs: [] }, CURSOR_PLUGIN_DIR);
+  expect(once.config.plugin_dirs).toEqual([CURSOR_PLUGIN_DIR]);
+  const twice = mergeCursorSettings(once.config, CURSOR_PLUGIN_DIR);
   expect(twice.config).toEqual(once.config);
   expect(twice.changed).toEqual([]);
 });
