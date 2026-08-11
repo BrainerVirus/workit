@@ -155,9 +155,7 @@ function validateScreen(draft: WizardDraft): { field: string; message: string } 
     case "locale":
       return values.locale.trim() ? null : { field: "locale", message: "locale is required" };
     case "timezone":
-      return values.timezone.trim()
-        ? null
-        : { field: "timezone", message: "timezone is required" };
+      return values.timezone.trim() ? null : { field: "timezone", message: "timezone is required" };
     case "localeOther": {
       const error = validateLocale(values.locale);
       return error ? { field: "locale", message: error } : null;
@@ -203,10 +201,7 @@ const decodeBranchPreset = (value: string, fallback: BranchPreset): BranchPreset
     ? value
     : fallback;
 
-const decodeVcsProvider = (
-  value: string,
-  fallback: VcsProvider | "skip",
-): VcsProvider | "skip" =>
+const decodeVcsProvider = (value: string, fallback: VcsProvider | "skip"): VcsProvider | "skip" =>
   value === "gitlab" || value === "github" || value === "skip" ? value : fallback;
 
 function setTextValue(

@@ -271,10 +271,7 @@ const readModifyWrite = (
     const commit = writeFlowStateIfCurrent(root, strict.state, result.next);
     if (commit.ok) return { ok: true };
     if ("io_error" in commit) {
-      return err(
-        "flow_io_error",
-        `flow state write failed for ${slug}: ${commit.io_error}`,
-      );
+      return err("flow_io_error", `flow state write failed for ${slug}: ${commit.io_error}`);
     }
     // a concurrent writer won the race — re-read and retry the transition
   }

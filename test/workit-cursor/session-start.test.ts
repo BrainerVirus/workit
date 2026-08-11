@@ -82,7 +82,10 @@ test("session-start transitive imports perform no fetch/http-based network I/O",
     const dir = path.dirname(file);
     for (const match of src.matchAll(/import[^;]*?\bfrom\s+["']([^"']+)["']/g)) {
       const spec = match[1];
-      if (spec.startsWith("node:") || !spec.startsWith(".") && !spec.startsWith("@brainervirus/workit-core/")) {
+      if (
+        spec.startsWith("node:") ||
+        (!spec.startsWith(".") && !spec.startsWith("@brainervirus/workit-core/"))
+      ) {
         continue; // builtins / external packages are not scanned
       }
       let target = spec.startsWith("@brainervirus/workit-core/")

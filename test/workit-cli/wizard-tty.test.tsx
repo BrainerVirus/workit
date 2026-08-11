@@ -350,10 +350,9 @@ test("Ctrl+C cancels from a text screen instead of walking back (Task 12 advisor
     const exitCalls: boolean[] = [];
     // exitOnCtrlC disabled so Ink hands \x03 to the wizard's handler — this is
     // the exact latent path the advisory flagged (Ink intercepts it by default).
-    const tty = await renderInk(
-      <Wizard onExit={(complete) => exitCalls.push(complete)} />,
-      { exitOnCtrlC: false },
-    );
+    const tty = await renderInk(<Wizard onExit={(complete) => exitCalls.push(complete)} />, {
+      exitOnCtrlC: false,
+    });
     await tty.keys(SPACE, ENTER); // -> locale
     await tty.keys(DOWN, DOWN, ENTER); // -> Other (text screen)
     await tty.key("\x03"); // ctrl+c must cancel, never walk back

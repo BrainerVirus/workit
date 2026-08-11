@@ -377,7 +377,9 @@ describe("redact", () => {
   test("redacts uppercase-acronym compounds split by the camelCase boundary (D1)", () => {
     expect(redact({ APIToken: "sk-apitoken-1" })).toEqual({ APIToken: "[REDACTED]" });
     expect(redact({ APISecret: "sk-apisecret-2" })).toEqual({ APISecret: "[REDACTED]" });
-    expect(redact({ APIClientSecret: "sk-apiclient-3" })).toEqual({ APIClientSecret: "[REDACTED]" });
+    expect(redact({ APIClientSecret: "sk-apiclient-3" })).toEqual({
+      APIClientSecret: "[REDACTED]",
+    });
     expect(redact({ apitoken: "sk-lower-4" })).toEqual({ apitoken: "[REDACTED]" });
     expect(redact({ accesstoken: "sk-lower-5" })).toEqual({ accesstoken: "[REDACTED]" });
     expect(redact({ authHeader: "Bearer abc" })).toEqual({ authHeader: "[REDACTED]" });

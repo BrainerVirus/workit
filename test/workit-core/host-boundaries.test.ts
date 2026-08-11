@@ -21,9 +21,9 @@ function tsFilesUnder(dir: string): string[] {
 function specifiers(source: string): string[] {
   // Catches `from "x"`, `import("x")`, and bare side-effect `import "x"`
   // (D7) so a host-SDK side-effect import cannot evade the scan.
-  return [
-    ...source.matchAll(/(?:from\s*|import\s*\(|import\s+)["']([^"']+)["']/g),
-  ].map((match) => match[1]);
+  return [...source.matchAll(/(?:from\s*|import\s*\(|import\s+)["']([^"']+)["']/g)].map(
+    (match) => match[1],
+  );
 }
 
 test("workit-core imports no host SDK, MCP SDK, Ink, or React", () => {

@@ -13,10 +13,7 @@ import os from "node:os";
 import path from "node:path";
 import { mergePreset, type ToolkitConfig } from "../../packages/workit-core/src/core/config";
 import { readSetupState } from "../../packages/workit-core/src/core/setup-state";
-import {
-  planHygieneFiles,
-  ensureHygieneFiles,
-} from "../../packages/workit-core/src/core/hygiene";
+import { planHygieneFiles, ensureHygieneFiles } from "../../packages/workit-core/src/core/hygiene";
 import {
   buildSetupPreview,
   TOKEN_PLACEHOLDER,

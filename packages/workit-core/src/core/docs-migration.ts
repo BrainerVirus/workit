@@ -563,7 +563,8 @@ export const migrateLegacyDocs = (input: {
     if (!existsSync(item.destAbs)) continue;
     let identical = false;
     try {
-      identical = !lstatSync(item.destAbs).isDirectory() && readFileSync(item.destAbs).equals(item.bytes);
+      identical =
+        !lstatSync(item.destAbs).isDirectory() && readFileSync(item.destAbs).equals(item.bytes);
     } catch {
       identical = false;
     }

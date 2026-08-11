@@ -56,11 +56,7 @@ test("isWorkitPlugin preserves unrelated plugin ids that merely contain workflow
 });
 
 test("mergeOpenCodePlugins preserves unrelated workflow-toolkit-containing ids (D3)", () => {
-  const existing = [
-    "some-workflow-toolkit-helper",
-    "@brainervirus/workit-opencode",
-    PIN,
-  ];
+  const existing = ["some-workflow-toolkit-helper", "@brainervirus/workit-opencode", PIN];
   const { config, changed } = mergeOpenCodePlugins(existing, PIN);
   expect(config).toEqual([PIN, "some-workflow-toolkit-helper"]);
   expect(changed).toEqual(["plugin"]);

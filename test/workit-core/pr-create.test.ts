@@ -114,16 +114,10 @@ const customPolicy = {
 test("B1: caller-supplied WF_PR_TARGET is validated against the branch policy", () => {
   setupRepo();
   git(root, ["checkout", "-q", "-b", "feature/b1"]);
-  const result = withEnv(
-    { WORKFLOW_TOOLKIT_CONFIG: cfgDir, PATH: stubPath() },
-    () => {
-      writeConfig(customPolicy, "trunk");
-      return prCreate(
-        { WF_PR_CONFIRMED: "true", WF_PR_TITLE: "T", WF_PR_TARGET: "main" },
-        root,
-      );
-    },
-  );
+  const result = withEnv({ WORKFLOW_TOOLKIT_CONFIG: cfgDir, PATH: stubPath() }, () => {
+    writeConfig(customPolicy, "trunk");
+    return prCreate({ WF_PR_CONFIRMED: "true", WF_PR_TITLE: "T", WF_PR_TARGET: "main" }, root);
+  });
   expect(result.ok, `create failed: ${JSON.stringify(result)}`).toBe(true);
   expect(result.targetBranch).toBe("main");
   expect(readFileSync(logFile, "utf8")).toContain("--base main");
@@ -140,10 +134,7 @@ test("B1: invalid WF_PR_TARGET override is rejected (protected + disallowed)", (
       },
       () => {
         writeConfig(customPolicy, "trunk");
-        return prCreate(
-          { WF_PR_CONFIRMED: "true", WF_PR_TITLE: "T", WF_PR_TARGET: target },
-          root,
-        );
+        return prCreate({ WF_PR_CONFIRMED: "true", WF_PR_TITLE: "T", WF_PR_TARGET: target }, root);
       },
     );
   const protectedTarget = run("develop");
@@ -157,13 +148,10 @@ test("B1: invalid WF_PR_TARGET override is rejected (protected + disallowed)", (
 test("B1: no override still flows the configured default target (unvalidated)", () => {
   setupRepo();
   git(root, ["checkout", "-q", "-b", "feature/b1"]);
-  const result = withEnv(
-    { WORKFLOW_TOOLKIT_CONFIG: cfgDir, PATH: stubPath() },
-    () => {
-      writeConfig(customPolicy, "trunk");
-      return prCreate({ WF_PR_CONFIRMED: "true", WF_PR_TITLE: "T" }, root);
-    },
-  );
+  const result = withEnv({ WORKFLOW_TOOLKIT_CONFIG: cfgDir, PATH: stubPath() }, () => {
+    writeConfig(customPolicy, "trunk");
+    return prCreate({ WF_PR_CONFIRMED: "true", WF_PR_TITLE: "T" }, root);
+  });
   expect(result.ok, `create failed: ${JSON.stringify(result)}`).toBe(true);
   expect(result.targetBranch).toBe("trunk");
 });
