@@ -32,7 +32,31 @@ function flockAvailable(): boolean {
 // Stub monorepo (scripts copied in, tiny tree) so sync-runtime + the install
 // script run without network or a full-repo rsync; HOME points into tmp so no
 // real ~/.config/opencode is touched. The installer imports the shared
-// registration helper from src/core, so the stub must mirror it.
+// registration helper from src/core, so the stub must mirror it (doctor-check
+// pulls the same core modules).
+function copyCoreSources(stub: string) {
+  for (const name of [
+    "registration.ts",
+    "doctor.ts",
+    "doctor-check.ts",
+    "config.ts",
+    "boundary.ts",
+    "logger.ts",
+    "workspaces.ts",
+    "support-matrix.ts",
+  ]) {
+    const src =
+      name === "doctor-check.ts"
+        ? path.join(repoRoot, "packages/workit-core/scripts/doctor-check.ts")
+        : path.join(repoRoot, "packages/workit-core/src/core", name);
+    const dest =
+      name === "doctor-check.ts"
+        ? path.join(stub, "packages/workit-core/scripts/doctor-check.ts")
+        : path.join(stub, "packages/workit-core/src/core", name);
+    cpSync(src, dest);
+  }
+}
+
 function makeStub(pluginTs: string) {
   const stub = mkdtempSync(path.join(os.tmpdir(), "wk-install-stub-"));
   const home = mkdtempSync(path.join(os.tmpdir(), "wk-install-home-"));
@@ -44,10 +68,7 @@ function makeStub(pluginTs: string) {
     path.join(repoRoot, "packages/workit-core/scripts/install-opencode-plugin.sh"),
     path.join(stub, "packages/workit-core/scripts/install-opencode-plugin.sh"),
   );
-  cpSync(
-    path.join(repoRoot, "packages/workit-core/src/core/registration.ts"),
-    path.join(stub, "packages/workit-core/src/core/registration.ts"),
-  );
+  copyCoreSources(stub);
   writeFileSync(
     path.join(stub, "packages/workit-core/scripts/sync-runtime.sh"),
     "#!/usr/bin/env bash\nexit 0\n",
@@ -76,10 +97,7 @@ function makeNestedStub() {
     path.join(repoRoot, "packages/workit-core/scripts/install-opencode-plugin.sh"),
     path.join(stub, "packages/workit-core/scripts/install-opencode-plugin.sh"),
   );
-  cpSync(
-    path.join(repoRoot, "packages/workit-core/src/core/registration.ts"),
-    path.join(stub, "packages/workit-core/src/core/registration.ts"),
-  );
+  copyCoreSources(stub);
   writeFileSync(
     path.join(stub, "packages/workit-core/scripts/sync-runtime.sh"),
     '#!/usr/bin/env bash\nprintf "%s" "$WORKFLOW_TOOLKIT_DEV" > "$HOME/sync-dev"\n',
@@ -115,10 +133,7 @@ function makeCursorStub() {
     path.join(repoRoot, "packages/workit-core/scripts/install-cursor-plugin.sh"),
     path.join(stub, "packages/workit-core/scripts/install-cursor-plugin.sh"),
   );
-  cpSync(
-    path.join(repoRoot, "packages/workit-core/src/core/registration.ts"),
-    path.join(stub, "packages/workit-core/src/core/registration.ts"),
-  );
+  copyCoreSources(stub);
   writeFileSync(
     path.join(stub, "packages/workit-core/scripts/sync-runtime.sh"),
     '#!/usr/bin/env bash\nprintf "%s" "$WORKFLOW_TOOLKIT_DEV" > "$HOME/sync-dev"\n',

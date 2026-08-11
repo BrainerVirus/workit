@@ -70,4 +70,10 @@ if [ ! -s "$PLUGIN_ENTRY" ]; then
   exit 1
 fi
 
+# DG-09: verify the just-written registration with the shared offline doctor.
+if ! bun "$ROOT/packages/workit-core/scripts/doctor-check.ts" opencode; then
+  echo "FATAL: post-install doctor found an unhealthy OpenCode registration" >&2
+  exit 1
+fi
+
 echo "OpenCode install done. Fully quit all opencode processes, then restart."

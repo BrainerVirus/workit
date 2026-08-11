@@ -18,6 +18,7 @@ let diagnosticLogger: Logger | undefined;
 export const setDiagnosticLogger = (logger: Logger | undefined): void => {
   diagnosticLogger = logger;
 };
+export const getDiagnosticLogger = (): Logger | undefined => diagnosticLogger;
 
 export type BranchPreset = "gitflow" | "github-flow" | "trunk-based" | "custom";
 

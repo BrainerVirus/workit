@@ -13,6 +13,7 @@ export const EVENT = {
   installSteps: "install_steps",
   uncaughtFailure: "uncaught_failure",
   toolsFailed: "tools_failed",
+  doctor: "doctor",
 } as const;
 
 // Safe error metadata for log events: name + message only. The message passes

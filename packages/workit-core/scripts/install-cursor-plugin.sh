@@ -94,6 +94,12 @@ if (!fs.existsSync(path.join(process.env.PLUGIN_DIR!, "dist", "cursor-session-st
 }
 '
 
+# DG-09: verify the just-written Cursor registration with the shared offline doctor.
+if ! bun "$ROOT/packages/workit-core/scripts/doctor-check.ts" cursor; then
+  echo "FATAL: post-install doctor found an unhealthy Cursor registration" >&2
+  exit 1
+fi
+
 echo "Cursor plugin installed + auto-sync enabled (sessionStart)."
 echo "Share: $SHARE"
 ls "$HOME/.cursor/plugins/local/workflow-toolkit/skills" | grep '^wk-' || true

@@ -54,6 +54,7 @@ import {
   releaseNotesContext,
 } from "@brainervirus/workit-core/src/core/repo-context";
 import { runVerifyProject } from "@brainervirus/workit-core/src/core/verify-project";
+import { runDoctor } from "@brainervirus/workit-core/src/core/doctor";
 import { prCreate } from "@brainervirus/workit-core/src/core/pr-create";
 import { gitContext } from "@brainervirus/workit-core/src/core/git";
 import {
@@ -167,6 +168,21 @@ registerTool(
         workspace_root: cwd,
       }),
     );
+  },
+);
+
+registerTool(
+  "workflow_doctor",
+  {
+    description:
+      "Run the offline workit doctor and report installation health. Defaults to Cursor workspace; pass workspace_root when the target repo differs.",
+    inputSchema: {
+      workspace_root: workspaceRootSchema,
+    },
+  },
+  async ({ workspace_root }) => {
+    const report = runDoctor({ host: "cursor", cwd: workspace_root });
+    return jsonResult(report);
   },
 );
 

@@ -54,10 +54,11 @@ const globToRegExp = (glob: string): RegExp => {
   return new RegExp(`^${out}$`);
 };
 
-export const resolveWorkspace = (cwd: string): WorkspaceConfig | null => {
+/** Match a cwd against the workspaces.json under an explicit config dir. */
+export const resolveWorkspaceFrom = (cwd: string, dir: string): WorkspaceConfig | null => {
   let raw: string;
   try {
-    raw = readFileSync(workspacesPath(), "utf8");
+    raw = readFileSync(path.join(dir, "workspaces.json"), "utf8");
   } catch {
     return null;
   }
@@ -79,3 +80,6 @@ export const resolveWorkspace = (cwd: string): WorkspaceConfig | null => {
   }
   return null;
 };
+
+export const resolveWorkspace = (cwd: string): WorkspaceConfig | null =>
+  resolveWorkspaceFrom(cwd, configDir());

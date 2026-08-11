@@ -8,6 +8,7 @@ import { createFlowTools } from "./flow";
 import { createDocsRepoTools } from "./docs-repo";
 import { createTemplateTools } from "./templates";
 import { createRuleTools } from "./rules";
+import { createDoctorTool } from "./doctor";
 
 export const createTools = (client: HandoffClient, state: WorkflowStateStore) => ({
   ...createRepoTools(),
@@ -19,4 +20,5 @@ export const createTools = (client: HandoffClient, state: WorkflowStateStore) =>
   ...createDocsRepoTools(),
   ...createTemplateTools(),
   ...createRuleTools(),
+  ...createDoctorTool(),
 });

@@ -223,6 +223,7 @@ describe("plugin registration", () => {
         } as never);
         const fixtures: Record<string, Record<string, unknown>> = {
           workflow_toolkit_init_status: {},
+          workflow_doctor: {},
           workflow_toolkit_status: {},
           workflow_git_context: { paths: [] },
           workflow_verify: { dry_run: true },
