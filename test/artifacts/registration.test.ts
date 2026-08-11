@@ -40,7 +40,37 @@ test("isWorkitPlugin matches every legacy and current identity, never unrelated 
   ]) {
     expect(isWorkitPlugin(id), id).toBe(true);
   }
-  for (const id of ["@dietrichgebert/ponytail", "@opencode-ai/plugin", "my-plugin"]) {
+  for (const id of [
+    "@dietrichgebert/ponytail",
+    "@opencode-ai/plugin",
+    "my-plugin",
+    "@brainervirus/workit-opencode-helper",
+    "@brainervirus/workit-cursor-tools",
+    "@brainervirus/workit-opencode-extra",
+    "@brainervirus/workit-cursor-legacy",
+  ]) {
+    expect(isWorkitPlugin(id), id).toBe(false);
+  }
+});
+
+// AR-04: prefix-shared names are unrelated packages, never Workit identities.
+test("isWorkitPlugin rejects prefix-shared @brainervirus names, still accepts exact names", () => {
+  for (const id of [
+    "@brainervirus/workit-opencode",
+    "@brainervirus/workit-opencode@0.4.0",
+    "@brainervirus/workit-opencode@^0.4.0",
+    "@brainervirus/workit-cursor",
+    "@brainervirus/workit-cursor@0.4.0",
+  ]) {
+    expect(isWorkitPlugin(id), id).toBe(true);
+  }
+  for (const id of [
+    "@brainervirus/workit-opencode-helper",
+    "@brainervirus/workit-cursor-tools",
+    "@brainervirus/workit-opencode-extra",
+    "@brainervirus/workit-cursor-legacy",
+    "@brainervirus/workit-cursor-tools@1.0.0",
+  ]) {
     expect(isWorkitPlugin(id), id).toBe(false);
   }
 });
@@ -62,6 +92,23 @@ test("mergeOpenCodePlugins preserves unrelated workflow-toolkit-containing ids (
   const existing = ["some-workflow-toolkit-helper", "@brainervirus/workit-opencode", PIN];
   const { config, changed } = mergeOpenCodePlugins(existing, PIN);
   expect(config).toEqual([PIN, "some-workflow-toolkit-helper"]);
+  expect(changed).toEqual(["plugin"]);
+});
+
+// AR-04: prefix-shared helper packages survive a registration merge unchanged.
+test("mergeOpenCodePlugins preserves prefix-shared helper packages (AR-04)", () => {
+  const existing = [
+    "@brainervirus/workit-opencode-helper",
+    "@brainervirus/workit-cursor-tools",
+    "@brainervirus/workit-opencode",
+    PIN,
+  ];
+  const { config, changed } = mergeOpenCodePlugins(existing, PIN);
+  expect(config).toEqual([
+    PIN,
+    "@brainervirus/workit-opencode-helper",
+    "@brainervirus/workit-cursor-tools",
+  ]);
   expect(changed).toEqual(["plugin"]);
 });
 

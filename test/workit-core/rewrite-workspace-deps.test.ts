@@ -103,3 +103,46 @@ test("rewrite-workspace-deps.ts: repo package.jsons keep workspace:* for dev (sc
     expect(data.dependencies["@brainervirus/workit-core"]).toBe("workspace:*");
   }
 });
+
+// AR-03: the CLI's adapter dependencies are internal workspace deps too; the
+// release rewrite must pin every @brainervirus dependency, not only workit-core.
+test("rewrite-workspace-deps.ts: pins every internal @brainervirus dependency including CLI adapter deps", () => {
+  const sandbox = mkdtempSync(path.join(os.tmpdir(), "wf-rewrite-closure-"));
+  try {
+    for (const pkg of ["workit-core", "workit-opencode", "workit-cursor", "workit-cli"]) {
+      const file = path.join(sandbox, `packages/${pkg}/package.json`);
+      const data = JSON.parse(
+        readFileSync(path.join(repoRoot, `packages/${pkg}/package.json`), "utf8"),
+      );
+      if (pkg === "workit-cli") {
+        data.dependencies["@brainervirus/workit-opencode"] = "workspace:*";
+        data.dependencies["@brainervirus/workit-cursor"] = "workspace:*";
+      }
+      mkdirSync(path.dirname(file), { recursive: true });
+      writeFileSync(file, `${JSON.stringify(data, null, 2)}\n`);
+    }
+    for (const f of [".cursor-plugin/plugin.json", "marketplace.json"]) {
+      const dst = path.join(sandbox, `packages/workit-cursor/${f}`);
+      mkdirSync(path.dirname(dst), { recursive: true });
+      cpSync(path.join(repoRoot, `packages/workit-cursor/${f}`), dst);
+    }
+    const script = path.join(repoRoot, "packages/workit-core/scripts/rewrite-workspace-deps.ts");
+    const run = spawnSync("bun", [script, sandbox], { encoding: "utf8" });
+    expect(run.status, run.stderr).toBe(0);
+
+    const cli = JSON.parse(
+      readFileSync(path.join(sandbox, "packages/workit-cli/package.json"), "utf8"),
+    );
+    const version = core(sandbox).version;
+    for (const name of [
+      "@brainervirus/workit-core",
+      "@brainervirus/workit-opencode",
+      "@brainervirus/workit-cursor",
+    ]) {
+      expect(cli.dependencies[name], name).toBe(`^${version}`);
+    }
+    expect(JSON.stringify(cli)).not.toContain("workspace:*");
+  } finally {
+    rmSync(sandbox, { recursive: true, force: true });
+  }
+});

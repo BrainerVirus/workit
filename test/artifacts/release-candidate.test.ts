@@ -74,6 +74,19 @@ test("packed release metadata is synchronized: adapter core dep equals core vers
   }
 });
 
+// AR-03: the packed CLI manifest declares BOTH adapters at the same release
+// version, so a manifest-driven install carries the full setup closure.
+test("packed CLI manifest declares both adapters at the core release version", () => {
+  const packs = packReleaseCandidate();
+  const coreVersion = JSON.parse(
+    readTarballFile(byName(packs, CORE).tarball, "package.json"),
+  ).version;
+  const cli = JSON.parse(readTarballFile(byName(packs, CLI).tarball, "package.json"));
+  expect(cli.dependencies["@brainervirus/workit-opencode"]).toBe(`^${coreVersion}`);
+  expect(cli.dependencies["@brainervirus/workit-cursor"]).toBe(`^${coreVersion}`);
+  expect(JSON.stringify(cli.dependencies)).not.toContain("workspace:");
+});
+
 test("candidate entries are self-contained: no dist .ts, workspace:, or checkout paths", () => {
   const normalizedRoot = REPO_ROOT.split(path.sep).join("/");
   for (const pack of packReleaseCandidate()) {

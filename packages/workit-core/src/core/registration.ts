@@ -33,8 +33,8 @@ export function isWorkitPlugin(value: unknown): boolean {
     named("workflow-toolkit") ||
     named("workflow-toolkit-opencode") ||
     named("local/workflow-toolkit") ||
-    s.startsWith("@brainervirus/workit-opencode") ||
-    s.startsWith("@brainervirus/workit-cursor") ||
+    named("@brainervirus/workit-opencode") ||
+    named("@brainervirus/workit-cursor") ||
     (url && pkgPath) ||
     (s.startsWith("git+file://") && s.includes("workflow-toolkit"))
   );

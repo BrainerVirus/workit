@@ -23,10 +23,12 @@
       "name": "@brainervirus/workit-cli",
       "version": "0.4.0",
       "bin": {
-        "workit": "./src/index.tsx",
+        "workit": "./dist/index.js",
       },
       "dependencies": {
         "@brainervirus/workit-core": "workspace:*",
+        "@brainervirus/workit-cursor": "workspace:*",
+        "@brainervirus/workit-opencode": "workspace:*",
         "@inkjs/ui": "2.0.0",
         "ink": "7.1.1",
         "react": "19.2.8",

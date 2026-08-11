@@ -4,9 +4,11 @@ import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import {
+  copyHoistedDeps,
   installPackedPackage,
   isolatedEnv,
   packWorkspacePackages,
+  readTarballFile,
   runInIsolation,
 } from "../shared/helpers/packages";
 
@@ -18,11 +20,39 @@ import {
 
 const CORE = "@brainervirus/workit-core";
 const OPENCODE = "@brainervirus/workit-opencode";
-const CURSOR = "@brainervirus/workit-cursor";
 const CLI = "@brainervirus/workit-cli";
 
 const byName = (packs: ReturnType<typeof packWorkspacePackages>, name: string) =>
   packs.find((p) => p.packageName === name)!;
+
+// AR-03: install a packed package plus ONLY the closure its packed manifest
+// declares — workspace packages from their packed tarballs, third-party deps
+// from the hoisted offline copy. No manual adapter extraction.
+function installDeclaredClosure(
+  nm: string,
+  packs: ReturnType<typeof packWorkspacePackages>,
+  root: ReturnType<typeof packWorkspacePackages>[number],
+): void {
+  const queue = [root];
+  const installed = new Set<string>();
+  const hoisted = new Set<string>();
+  while (queue.length) {
+    const pack = queue.shift()!;
+    if (installed.has(pack.packageName)) continue;
+    installed.add(pack.packageName);
+    const meta = JSON.parse(readTarballFile(pack.tarball, "package.json"));
+    for (const [name, spec] of Object.entries(meta.dependencies ?? {})) {
+      if (name.startsWith("@brainervirus/")) {
+        queue.push(byName(packs, name));
+      } else {
+        hoisted.add(name);
+        void spec;
+      }
+    }
+  }
+  for (const name of installed) installPackedPackage(nm, byName(packs, name));
+  if (hoisted.size > 0) copyHoistedDeps(nm, [...hoisted]);
+}
 
 const tmp = (prefix: string) => mkdtempSync(path.join(os.tmpdir(), prefix));
 
@@ -75,10 +105,8 @@ test("packed CLI setup flow configures OpenCode + Cursor and doctor verifies it"
   try {
     const nm = path.join(install, "node_modules");
     mkdirSync(nm, { recursive: true });
-    installPackedPackage(nm, byName(packs, CORE));
-    installPackedPackage(nm, byName(packs, OPENCODE));
-    installPackedPackage(nm, byName(packs, CURSOR));
-    installPackedPackage(nm, byName(packs, CLI));
+    // only what the packed CLI manifest declares: core + adapters + third-party
+    installDeclaredClosure(nm, packs, byName(packs, CLI));
     const setup = await loadSetup(nm);
 
     const home = path.join(install, "home");

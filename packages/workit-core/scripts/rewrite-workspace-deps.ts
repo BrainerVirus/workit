@@ -1,11 +1,11 @@
 #!/usr/bin/env bun
-// Release-sync before publish: rewrite workspace:* core deps to ^<released
-// version> in the platform packages, and mirror the core version + canonical
-// URLs into the cursor plugin/marketplace manifests. Neither npm nor bun
-// rewrites workspace:*, so a packed tarball with it silently drops the core
-// dependency. Runs as semantic-release prepareCmd (after the version bumps,
-// before the npm publish phase); the writes stay in CI and never reach the
-// repo (semantic-release does not commit back).
+// Release-sync before publish: rewrite every internal workspace:* dependency to
+// ^<released version> in the platform packages, and mirror the core version +
+// canonical URLs into the cursor plugin/marketplace manifests. Neither npm nor
+// bun rewrites workspace:*, so a packed tarball with it silently drops the
+// dependency (RR-01/AR-03). Runs as semantic-release prepareCmd (after the
+// version bumps, before the npm publish phase); the writes stay in CI and never
+// reach the repo (semantic-release does not commit back).
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
@@ -17,9 +17,11 @@ if (!core.version || typeof core.version !== "string") {
 for (const pkg of ["workit-opencode", "workit-cursor", "workit-cli"]) {
   const file = resolve(root, `packages/${pkg}/package.json`);
   const data = JSON.parse(readFileSync(file, "utf8"));
-  const dep = data.dependencies?.["@brainervirus/workit-core"];
-  if (dep === undefined) continue;
-  data.dependencies["@brainervirus/workit-core"] = `^${core.version}`;
+  const deps = data.dependencies;
+  if (!deps) continue;
+  for (const name of Object.keys(deps)) {
+    if (name.startsWith("@brainervirus/")) deps[name] = `^${core.version}`;
+  }
   writeFileSync(file, `${JSON.stringify(data, null, 2)}\n`);
 }
 for (const file of [
