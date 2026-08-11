@@ -236,6 +236,11 @@ test("SDD contracts name gitignored docs/<slug>/sdd/ with no nested slug and no 
     "packages/workit-core/templates/execution-contract.md",
     "packages/workit-opencode/assets/templates/execution-contract.md",
     "packages/workit-cursor/assets/templates/execution-contract.md",
+    "packages/workit-cli/assets/templates/execution-contract.md",
+    "packages/workit-core/templates/superpowers-doc-contract.md",
+    "packages/workit-opencode/assets/templates/superpowers-doc-contract.md",
+    "packages/workit-cursor/assets/templates/superpowers-doc-contract.md",
+    "packages/workit-cli/assets/templates/superpowers-doc-contract.md",
     "packages/workit-cursor/skills/wk-handoff/SKILL.md",
   ]
     .map(read)
@@ -244,6 +249,8 @@ test("SDD contracts name gitignored docs/<slug>/sdd/ with no nested slug and no 
   expect(surfaces).toContain("docs/<slug>/sdd/");
   expect(surfaces).toContain("gitignored");
   expect(surfaces).not.toMatch(/tracked `docs\/<slug>\/sdd/);
+  // No "tracked" adjective may describe SDD working state on any shipped copy.
+  expect(surfaces).not.toMatch(/tracked (SDD|state|ledger|brief|diff|under `docs\/<slug>\/sdd)/i);
   // No nested slug level under sdd/ on any shipped surface.
   expect(surfaces).not.toContain("sdd/<slug>");
   // Nothing claims the context creates the sdd dir or an empty progress ledger.

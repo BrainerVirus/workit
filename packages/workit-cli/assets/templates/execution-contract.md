@@ -9,8 +9,8 @@ Load `using-superpowers`, `subagent-driven-development`, `test-driven-developmen
 
 - The parent is coordinator-only: it does not edit product code or perform delegated exploration.
 - Never use a worktree. Branch changes are in-place through `workflow_branch_setup` on `feature/*` or `bugfix/*`; never commit on protected branches.
-- Tracked state, briefs, ledgers, and review diffs live only under `<SDD_DIR>` in `docs/<slug>/sdd/` and use `workflow_sdd_*` tools.
-- Use native `todowrite` for visible task state as well as the tracked ledger.
+- Working state, briefs, ledgers, and review diffs live only under gitignored `<SDD_DIR>` in `docs/<slug>/sdd/` and use `workflow_sdd_*` tools.
+- Use native `todowrite` for visible task state as well as the gitignored ledger.
 - Use native `question` for branch/stash choices and guarded external mutations; call mutation tools only after approval with `confirmed: true`.
 - Use native `task` with only the built-in `explore` and `general` agents.
 
@@ -35,16 +35,16 @@ Load `using-superpowers`, `subagent-driven-development`, `test-driven-developmen
 For each top-level task absent from `completed_task_ids`:
 
 1. Mark it `in_progress` with `todowrite`.
-2. Create a tracked brief with `workflow_sdd_task_brief` and `confirmed: true`.
+2. Create a working-state brief with `workflow_sdd_task_brief` and `confirmed: true`.
 3. Delegate read-only discovery, when needed, to an `explore` agent. Delegate implementation to a fresh `general` agent. Product changes follow TDD.
-4. Create a tracked diff with `workflow_sdd_review_package` and `confirmed: true`.
+4. Create a working-state diff with `workflow_sdd_review_package` and `confirmed: true`.
 5. Delegate spec-compliance review and code-quality review to separate `general` agents.
 6. **Blocking** findings (Critical, Important, or spec-compliance) may trigger at most **two** fix+re-review rounds per task. **Advisory** findings (Minor, style, YAGNI, taste) never pause the loop — append them to `<SDD_DIR>/advisories.md`.
 7. Append the validated ledger entry with `workflow_sdd_append_progress` and `confirmed: true`; mark the todo completed.
 
 ## Final gate
 
-Run a separate full-branch code review, then `workflow_verify`. Present the full `<SDD_DIR>/advisories.md` roll-up once, then use native `question` so the user can choose which advisory items to fix, discuss, or discard. Report exact check results and never infer success. Use `workflow_git_context` for a commit preview and load `wk-commit` through `skill` for an approved commit. If tracked state contains a stash reference, preview reapplication through `question`, then call `workflow_branch_setup` with `confirmed: true` after approval.
+Run a separate full-branch code review, then `workflow_verify`. Present the full `<SDD_DIR>/advisories.md` roll-up once, then use native `question` so the user can choose which advisory items to fix, discuss, or discard. Report exact check results and never infer success. Use `workflow_git_context` for a commit preview and load `wk-commit` through `skill` for an approved commit. If working state contains a stash reference, preview reapplication through `question`, then call `workflow_branch_setup` with `confirmed: true` after approval.
 
 ## Task order
 

@@ -35,7 +35,7 @@ Before writing **Branch:** into a new spec or plan, call `workflow_docs_branch` 
 - Commits use `wk-commit` after its native `question` confirmation.
 - Continuation uses `wk-handoff`, whose `workflow_handoff_session` creates and seeds the OpenCode session automatically.
 - Never use worktrees. Resolve the declared branch with `workflow_resolve_branch`, preview dirty-tree stash choices with `question`, and apply an approved in-place checkout through `workflow_branch_setup` with `confirmed: true`.
-- Keep all SDD state tracked under `docs/<slug>/sdd/`; use `workflow_sdd_context` and the registered `workflow_sdd_*` tools.
+- Keep all SDD state under the gitignored `docs/<slug>/sdd/`; use `workflow_sdd_context` and the registered `workflow_sdd_*` tools.
 - After implementation, use `question` before an approved stash reapply through `workflow_branch_setup` with `confirmed: true`.
 
 ## YouTrack content
@@ -46,7 +46,7 @@ Chat follows the user's language. YouTrack task comments are Spanish (`es-CL`) a
 
 Before handoff, call `workflow_docs_validate` on the linked spec/plan pair. Hard-fail on any error; never offer execution when validation fails.
 
-Before handoff, verify the saved spec path, plan path, declared branch, top-level task numbering, and tracked SDD directory through the registered read-only workflow tools. Report structured failures; never infer success.
+Before handoff, verify the saved spec path, plan path, declared branch, top-level task numbering, and workflow-managed SDD directory through the registered read-only workflow tools. Report structured failures; never infer success.
 
 ## Post-plan execution choice
 
