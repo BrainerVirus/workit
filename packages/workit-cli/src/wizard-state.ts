@@ -150,6 +150,14 @@ function validateScreen(draft: WizardDraft): { field: string; message: string } 
       return values.platforms.length > 0
         ? null
         : { field: "platforms", message: "Select at least one platform to continue." };
+    // WZ-07: the select screens can carry an empty value only when the custom
+    // (Other) input was cleared before walking back — block committing it.
+    case "locale":
+      return values.locale.trim() ? null : { field: "locale", message: "locale is required" };
+    case "timezone":
+      return values.timezone.trim()
+        ? null
+        : { field: "timezone", message: "timezone is required" };
     case "localeOther": {
       const error = validateLocale(values.locale);
       return error ? { field: "locale", message: error } : null;
@@ -187,6 +195,19 @@ function validateScreen(draft: WizardDraft): { field: string; message: string } 
       return null;
   }
 }
+
+// Guarded decodes for reducer-set string fields (Task 12 advisory): an unknown
+// value falls back to the draft's current value instead of being `as`-cast.
+const decodeBranchPreset = (value: string, fallback: BranchPreset): BranchPreset =>
+  value === "gitflow" || value === "github-flow" || value === "trunk-based" || value === "custom"
+    ? value
+    : fallback;
+
+const decodeVcsProvider = (
+  value: string,
+  fallback: VcsProvider | "skip",
+): VcsProvider | "skip" =>
+  value === "gitlab" || value === "github" || value === "skip" ? value : fallback;
 
 function setTextValue(
   draft: WizardDraft,
@@ -251,12 +272,18 @@ export function reducer(draft: WizardDraft, action: WizardAction): WizardDraft {
         case "branchPreset":
           return {
             ...draft,
-            values: { ...draft.values, branchPreset: action.value as BranchPreset },
+            values: {
+              ...draft.values,
+              branchPreset: decodeBranchPreset(action.value, draft.values.branchPreset),
+            },
           };
         case "vcsProvider":
           return {
             ...draft,
-            values: { ...draft.values, vcsProvider: action.value as VcsProvider | "skip" },
+            values: {
+              ...draft.values,
+              vcsProvider: decodeVcsProvider(action.value, draft.values.vcsProvider),
+            },
           };
         case "applyProject":
           return { ...draft, values: { ...draft.values, applyProject: action.value } };
@@ -343,14 +370,15 @@ export function reducer(draft: WizardDraft, action: WizardAction): WizardDraft {
     case "workspaceDraftProvider": {
       const base = draft.workspaceDraft ?? { name: "", glob: "" };
       const vcs = draft.workspaceDraft?.vcs;
+      const provider: VcsProvider =
+        action.value === "gitlab" || action.value === "github"
+          ? action.value
+          : (vcs?.provider ?? "gitlab");
       return {
         ...draft,
         workspaceDraft: {
           ...base,
-          vcs: {
-            ...(vcs ?? { provider: "gitlab" as VcsProvider }),
-            provider: action.value as VcsProvider,
-          },
+          vcs: { provider, defaultTargetBranch: vcs?.defaultTargetBranch },
         },
       };
     }

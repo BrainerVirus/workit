@@ -152,7 +152,11 @@ export function Wizard({
   const exitedRef = useRef(false);
 
   useInput((input, key) => {
-    if (key.escape || (key.ctrl && input.toLowerCase() === "c")) {
+    // Ctrl+C always cancels — independent of Ink's exitOnCtrlC setting, so
+    // disabling it can never turn ctrl+c into a back-navigation on text screens.
+    if (key.ctrl && input.toLowerCase() === "c") {
+      dispatch({ type: "cancel" });
+    } else if (key.escape) {
       if (TEXT_SCREENS.has(draft.screen)) dispatch({ type: "back" });
       else dispatch({ type: "cancel" });
     } else if (input.toLowerCase() === "b" && !TEXT_SCREENS.has(draft.screen)) {
@@ -233,6 +237,7 @@ function Screen({ draft, dispatch }: ScreenProps): JSX.Element {
               }
             }}
           />
+          {draft.errors.locale && <Text color="red">{draft.errors.locale}</Text>}
           <Text dimColor>Enter to continue · b Back · Esc Cancel</Text>
         </Box>
       );
@@ -268,6 +273,7 @@ function Screen({ draft, dispatch }: ScreenProps): JSX.Element {
               }
             }}
           />
+          {draft.errors.timezone && <Text color="red">{draft.errors.timezone}</Text>}
           <Text dimColor>Enter to continue · b Back · Esc Cancel</Text>
         </Box>
       );
@@ -544,7 +550,7 @@ function Screen({ draft, dispatch }: ScreenProps): JSX.Element {
               <Text bold>Environment overrides (not applied by the wizard):</Text>
               {preview.overrides.map((o) => (
                 <Text key={o.envKey} color="yellow">
-                  {o.envKey} → {o.affects}
+                  {o.envKey} → {o.affects}: {o.value}
                 </Text>
               ))}
             </Box>

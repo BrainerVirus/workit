@@ -151,84 +151,110 @@ test("cancel and apply both terminate on the exit screen with the right flag", (
   expect(applied.cancelled).toBe(false);
 });
 
+test("empty locale and timezone cannot be committed from the select screens", () => {
+  let d = { ...at("gitflow", "locale"), values: { ...at("gitflow", "locale").values, locale: "" } };
+  d = reducer(d, { type: "next" });
+  expect(d.screen).toBe("locale");
+  expect(d.errors.locale).toContain("locale is required");
+  d = {
+    ...at("gitflow", "timezone"),
+    values: { ...at("gitflow", "timezone").values, timezone: "" },
+  };
+  d = reducer(d, { type: "next" });
+  expect(d.screen).toBe("timezone");
+  expect(d.errors.timezone).toContain("timezone is required");
+});
+
 // ---------------------------------------------------------------------------
 // Deterministic TTY tests
 // ---------------------------------------------------------------------------
 
 test("exactly one input control is mounted on every screen", async () => {
   const cleanup = withSeedConfig(seedConfig);
-  const tty = await renderInk(<Wizard onExit={noop} />);
-  // Ink tab-navigation listener + wizard nav handler + the screen control
-  expect(tty.inputListenerCount()).toBe(3);
-  await tty.keys(SPACE, ENTER); // platforms -> locale
-  expect(tty.inputListenerCount()).toBe(3);
-  await tty.keys(ENTER); // locale -> timezone
-  await tty.keys(ENTER); // timezone -> branchPreset
-  await tty.keys(DOWN, ENTER); // github-flow -> youtrack
-  await tty.keys(ENTER); // youtrack -> vcs
-  expect(tty.inputListenerCount()).toBe(3);
-  await tty.keys(ENTER); // vcs -> workspaces
-  // the workspaces screen renders real controls (WZ-12), not a placeholder
-  expect(tty.lastFrame()).toContain("Add workspace");
-  expect(tty.inputListenerCount()).toBe(3);
-  await tty.keys(ENTER); // workspaces (Done highlighted) -> project
-  await tty.keys("y"); // project -> summary
-  expect(tty.inputListenerCount()).toBe(3);
-  tty.unmount();
-  cleanup();
+  try {
+    const tty = await renderInk(<Wizard onExit={noop} />);
+    // Ink tab-navigation listener + wizard nav handler + the screen control
+    expect(tty.inputListenerCount()).toBe(3);
+    await tty.keys(SPACE, ENTER); // platforms -> locale
+    expect(tty.inputListenerCount()).toBe(3);
+    await tty.keys(ENTER); // locale -> timezone
+    await tty.keys(ENTER); // timezone -> branchPreset
+    await tty.keys(DOWN, ENTER); // github-flow -> youtrack
+    await tty.keys(ENTER); // youtrack -> vcs
+    expect(tty.inputListenerCount()).toBe(3);
+    await tty.keys(ENTER); // vcs -> workspaces
+    // the workspaces screen renders real controls (WZ-12), not a placeholder
+    expect(tty.lastFrame()).toContain("Add workspace");
+    expect(tty.inputListenerCount()).toBe(3);
+    await tty.keys(ENTER); // workspaces (Done highlighted) -> project
+    await tty.keys("y"); // project -> summary
+    expect(tty.inputListenerCount()).toBe(3);
+    tty.unmount();
+  } finally {
+    cleanup();
+  }
 });
 
 test("locale and timezone inputs are independent; revisiting shows the current value", async () => {
   const cleanup = withSeedConfig(seedConfig);
-  const tty = await renderInk(<Wizard onExit={noop} />);
-  await tty.keys(SPACE, ENTER); // -> locale
-  const localeFrame = tty.lastFrame();
-  expect(localeFrame).toContain("Locale");
-  expect(localeFrame).not.toContain("Timezone");
+  try {
+    const tty = await renderInk(<Wizard onExit={noop} />);
+    await tty.keys(SPACE, ENTER); // -> locale
+    const localeFrame = tty.lastFrame();
+    expect(localeFrame).toContain("Locale");
+    expect(localeFrame).not.toContain("Timezone");
 
-  await tty.keys(DOWN, DOWN, ENTER); // en -> es-CL -> Other
-  await tty.keys("es-MX", ENTER); // -> timezone
-  const tzFrame = tty.lastFrame();
-  expect(tzFrame).toContain("Timezone");
-  expect(tzFrame).not.toContain("es-MX");
+    await tty.keys(DOWN, DOWN, ENTER); // en -> es-CL -> Other
+    await tty.keys("es-MX", ENTER); // -> timezone
+    const tzFrame = tty.lastFrame();
+    expect(tzFrame).toContain("Timezone");
+    expect(tzFrame).not.toContain("es-MX");
 
-  await tty.keys("b"); // back -> locale
-  const backFrame = tty.lastFrame();
-  expect(backFrame).toContain("es-MX");
-  expect(backFrame).not.toContain("UTC");
-  tty.unmount();
-  cleanup();
+    await tty.keys("b"); // back -> locale
+    const backFrame = tty.lastFrame();
+    expect(backFrame).toContain("es-MX");
+    expect(backFrame).not.toContain("UTC");
+    tty.unmount();
+  } finally {
+    cleanup();
+  }
 });
 
 test("a custom Other value is validated before advancing", async () => {
   const cleanup = withSeedConfig(seedConfig);
-  const tty = await renderInk(<Wizard onExit={noop} />);
-  await tty.keys(SPACE, ENTER); // -> locale
-  await tty.keys(DOWN, DOWN, ENTER); // -> Other
-  await tty.keys("en_US", ENTER); // invalid BCP-47
-  const invalid = tty.lastFrame();
-  expect(invalid).toContain("invalid locale");
-  expect(invalid).toContain("custom");
-  for (let i = 0; i < "en_US".length; i++) await tty.key(BACKSPACE);
-  await tty.keys("es-MX", ENTER);
-  expect(tty.lastFrame()).toContain("Timezone");
-  tty.unmount();
-  cleanup();
+  try {
+    const tty = await renderInk(<Wizard onExit={noop} />);
+    await tty.keys(SPACE, ENTER); // -> locale
+    await tty.keys(DOWN, DOWN, ENTER); // -> Other
+    await tty.keys("en_US", ENTER); // invalid BCP-47
+    const invalid = tty.lastFrame();
+    expect(invalid).toContain("invalid locale");
+    expect(invalid).toContain("custom");
+    for (let i = 0; i < "en_US".length; i++) await tty.key(BACKSPACE);
+    await tty.keys("es-MX", ENTER);
+    expect(tty.lastFrame()).toContain("Timezone");
+    tty.unmount();
+  } finally {
+    cleanup();
+  }
 });
 
 test("branch policy screen shows the resolved policy, not the raw preset", async () => {
   const cleanup = withSeedConfig(seedConfig);
-  const tty = await renderInk(<Wizard onExit={noop} />);
-  await tty.keys(SPACE, ENTER, ENTER, ENTER); // -> branchPreset
-  const gitflow = tty.lastFrame();
-  expect(gitflow).toContain("feature/*");
-  expect(gitflow).toContain("main");
-  await tty.keys(DOWN); // highlight github-flow
-  const githubFlow = tty.lastFrame();
-  expect(githubFlow).toContain("*");
-  expect(githubFlow).not.toContain("feature/*");
-  tty.unmount();
-  cleanup();
+  try {
+    const tty = await renderInk(<Wizard onExit={noop} />);
+    await tty.keys(SPACE, ENTER, ENTER, ENTER); // -> branchPreset
+    const gitflow = tty.lastFrame();
+    expect(gitflow).toContain("feature/*");
+    expect(gitflow).toContain("main");
+    await tty.keys(DOWN); // highlight github-flow
+    const githubFlow = tty.lastFrame();
+    expect(githubFlow).toContain("*");
+    expect(githubFlow).not.toContain("feature/*");
+    tty.unmount();
+  } finally {
+    cleanup();
+  }
 });
 
 test("custom branch policy requires nonempty allowed and protected patterns", async () => {
@@ -236,74 +262,127 @@ test("custom branch policy requires nonempty allowed and protected patterns", as
     ...seedConfig,
     branchPolicy: { preset: "custom", allowed: [], protected: [] },
   });
-  const tty = await renderInk(<Wizard onExit={noop} />);
-  await tty.keys(SPACE, ENTER, ENTER, ENTER); // -> branchPreset (custom)
-  await tty.keys(ENTER); // -> branchAllowed
-  expect(tty.lastFrame()).toContain("Allowed branch patterns");
-  await tty.keys(ENTER); // empty -> validation error
-  expect(tty.lastFrame()).toContain("at least one allowed branch pattern");
-  await tty.keys("feature/*", ENTER); // -> branchProtected
-  expect(tty.lastFrame()).toContain("Protected branch names");
-  await tty.keys(ENTER); // empty -> validation error
-  expect(tty.lastFrame()).toContain("at least one protected branch name");
-  await tty.keys("main", ENTER); // -> youtrack
-  expect(tty.lastFrame()).toContain("YouTrack");
-  tty.unmount();
-  cleanup();
+  try {
+    const tty = await renderInk(<Wizard onExit={noop} />);
+    await tty.keys(SPACE, ENTER, ENTER, ENTER); // -> branchPreset (custom)
+    await tty.keys(ENTER); // -> branchAllowed
+    expect(tty.lastFrame()).toContain("Allowed branch patterns");
+    await tty.keys(ENTER); // empty -> validation error
+    expect(tty.lastFrame()).toContain("at least one allowed branch pattern");
+    await tty.keys("feature/*", ENTER); // -> branchProtected
+    expect(tty.lastFrame()).toContain("Protected branch names");
+    await tty.keys(ENTER); // empty -> validation error
+    expect(tty.lastFrame()).toContain("at least one protected branch name");
+    await tty.keys("main", ENTER); // -> youtrack
+    expect(tty.lastFrame()).toContain("YouTrack");
+    tty.unmount();
+  } finally {
+    cleanup();
+  }
 });
 
 test("Back preserves the draft values entered so far", async () => {
   const cleanup = withSeedConfig(seedConfig);
-  const tty = await renderInk(<Wizard onExit={noop} />);
-  await tty.keys(SPACE, ENTER); // -> locale
-  await tty.keys(DOWN, DOWN, ENTER); // -> Other
-  await tty.keys("es-MX", ENTER); // -> timezone
-  await tty.keys(ENTER); // -> branchPreset
-  await tty.keys(DOWN, ENTER); // github-flow -> youtrack
-  await tty.keys(ENTER); // -> vcs
-  await tty.keys(DOWN, ENTER); // github -> workspaces
-  await tty.keys("b"); // back -> vcs
-  expect(tty.lastFrame()).toContain("GitHub");
-  await tty.keys("b"); // back -> youtrack
-  await tty.keys(ESC); // back from a text screen -> branchPreset
-  expect(tty.lastFrame()).toContain("GitHub Flow");
-  await tty.keys("b"); // back -> timezone
-  await tty.keys("b"); // back -> locale
-  expect(tty.lastFrame()).toContain("es-MX");
-  tty.unmount();
-  cleanup();
+  try {
+    const tty = await renderInk(<Wizard onExit={noop} />);
+    await tty.keys(SPACE, ENTER); // -> locale
+    await tty.keys(DOWN, DOWN, ENTER); // -> Other
+    await tty.keys("es-MX", ENTER); // -> timezone
+    await tty.keys(ENTER); // -> branchPreset
+    await tty.keys(DOWN, ENTER); // github-flow -> youtrack
+    await tty.keys(ENTER); // -> vcs
+    await tty.keys(DOWN, ENTER); // github -> workspaces
+    await tty.keys("b"); // back -> vcs
+    expect(tty.lastFrame()).toContain("GitHub");
+    await tty.keys("b"); // back -> youtrack
+    await tty.keys(ESC); // back from a text screen -> branchPreset
+    expect(tty.lastFrame()).toContain("GitHub Flow");
+    await tty.keys("b"); // back -> timezone
+    await tty.keys("b"); // back -> locale
+    expect(tty.lastFrame()).toContain("es-MX");
+    tty.unmount();
+  } finally {
+    cleanup();
+  }
 });
 
 test("Escape cancels without writing anything", async () => {
   const base = mkdtempSync(path.join(os.tmpdir(), "workit-wiz-"));
   const configPath = path.join(base, "config");
   process.env.WORKFLOW_TOOLKIT_CONFIG = configPath;
-  const exitCalls: boolean[] = [];
-  const tty = await renderInk(<Wizard onExit={(complete) => exitCalls.push(complete)} />);
-  await tty.keys(SPACE, ENTER); // -> locale
-  await tty.keys(DOWN, DOWN, ENTER); // -> Other
-  await tty.keys("es-MX", ENTER); // -> timezone
-  await tty.keys(ESC); // cancel (select screen)
-  expect(exitCalls).toEqual([false]);
-  expect(existsSync(configPath)).toBe(false);
-  tty.unmount();
-  delete process.env.WORKFLOW_TOOLKIT_CONFIG;
-  rmSync(base, { recursive: true, force: true });
+  try {
+    const exitCalls: boolean[] = [];
+    const tty = await renderInk(<Wizard onExit={(complete) => exitCalls.push(complete)} />);
+    await tty.keys(SPACE, ENTER); // -> locale
+    await tty.keys(DOWN, DOWN, ENTER); // -> Other
+    await tty.keys("es-MX", ENTER); // -> timezone
+    await tty.keys(ESC); // cancel (select screen)
+    expect(exitCalls).toEqual([false]);
+    expect(existsSync(configPath)).toBe(false);
+    tty.unmount();
+  } finally {
+    delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+    rmSync(base, { recursive: true, force: true });
+  }
 });
 
 test("no competing Enter/provider race — one submit path per screen", async () => {
   const cleanup = withSeedConfig(seedConfig);
-  const tty = await renderInk(<Wizard onExit={noop} />);
-  await tty.keys(SPACE, ENTER, ENTER, ENTER, ENTER, ENTER); // -> vcs
-  expect(tty.lastFrame()).toContain("Step 4");
-  await tty.keys(DOWN, ENTER); // gitlab -> github, submit once
-  expect(tty.lastFrame()).toContain("Workspaces");
-  await tty.keys("b"); // back -> vcs
-  expect(tty.lastFrame()).toContain("GitHub");
-  await tty.keys(ENTER); // submit again -> workspaces
-  expect(tty.lastFrame()).toContain("Workspaces");
-  tty.unmount();
-  cleanup();
+  try {
+    const tty = await renderInk(<Wizard onExit={noop} />);
+    await tty.keys(SPACE, ENTER, ENTER, ENTER, ENTER, ENTER); // -> vcs
+    expect(tty.lastFrame()).toContain("Step 4");
+    await tty.keys(DOWN, ENTER); // gitlab -> github, submit once
+    expect(tty.lastFrame()).toContain("Workspaces");
+    await tty.keys("b"); // back -> vcs
+    expect(tty.lastFrame()).toContain("GitHub");
+    await tty.keys(ENTER); // submit again -> workspaces
+    expect(tty.lastFrame()).toContain("Workspaces");
+    tty.unmount();
+  } finally {
+    cleanup();
+  }
+});
+
+test("Ctrl+C cancels from a text screen instead of walking back (Task 12 advisory)", async () => {
+  const cleanup = withSeedConfig(seedConfig);
+  try {
+    const exitCalls: boolean[] = [];
+    // exitOnCtrlC disabled so Ink hands \x03 to the wizard's handler — this is
+    // the exact latent path the advisory flagged (Ink intercepts it by default).
+    const tty = await renderInk(
+      <Wizard onExit={(complete) => exitCalls.push(complete)} />,
+      { exitOnCtrlC: false },
+    );
+    await tty.keys(SPACE, ENTER); // -> locale
+    await tty.keys(DOWN, DOWN, ENTER); // -> Other (text screen)
+    await tty.key("\x03"); // ctrl+c must cancel, never walk back
+    expect(exitCalls).toEqual([false]);
+    tty.unmount();
+  } finally {
+    cleanup();
+  }
+});
+
+test("backspace-to-empty custom locale surfaces the block on the select screen", async () => {
+  const cleanup = withSeedConfig(seedConfig);
+  try {
+    const tty = await renderInk(<Wizard onExit={noop} />);
+    await tty.keys(SPACE, ENTER); // -> locale
+    await tty.keys(DOWN, DOWN, ENTER); // -> Other
+    await tty.keys("en_US"); // invalid BCP-47 stored while editing
+    for (let i = 0; i < "en_US".length; i++) await tty.key(BACKSPACE);
+    await tty.keys(ESC); // back -> locale select, value now ""
+    // the parent select screen must surface the block (and the empty "Use
+    // current ()" option) instead of letting Enter commit an empty locale
+    const frame = tty.lastFrame();
+    expect(frame).toContain("Use current ()");
+    expect(frame).toContain("invalid locale");
+    expect(frame).not.toContain("Timezone");
+    tty.unmount();
+  } finally {
+    cleanup();
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -353,6 +432,7 @@ test("summary shows the authoritative preview and Apply completes with it", asyn
     expect(frame).toContain("workspaces.json");
     expect(frame).toContain("https://yt.example.com");
     expect(frame).toContain("WORKFLOW_YT_BASE_URL"); // active override exposed
+    expect(frame).toContain("https://env.example.com"); // ...with its actual value
 
     await tty.keys("y"); // apply
     expect(exitCalls).toEqual([true]);

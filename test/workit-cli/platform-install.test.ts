@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import {
+  chmodSync,
   cpSync,
   existsSync,
   mkdirSync,
@@ -315,6 +316,43 @@ test("blocked preview → exitCode 1, Failed entries, nothing written (WZ-06/CA-
     expect(result.entries.every((e) => e.status === "Failed")).toBe(true);
     expect(existsSync(path.join(home, ".config", "opencode", "opencode.json"))).toBe(false);
   } finally {
+    clean(home);
+    clean(dir);
+  }
+});
+
+test("unreadable platform config is Failed with the path, never rewritten (EACCES)", () => {
+  // root bypasses file permissions and win32 chmod is not advisory — skip both.
+  if (
+    process.platform === "win32" ||
+    (typeof process.getuid === "function" && process.getuid() === 0)
+  ) {
+    return;
+  }
+  const home = tempDir("workit-install-eacces-");
+  const dir = tempDir("workit-install-eacces-cfg-");
+  const opencodeCfg = path.join(home, ".config", "opencode", "opencode.json");
+  const original = JSON.stringify({ model: "gpt-5" });
+  try {
+    mkdirSync(path.dirname(opencodeCfg), { recursive: true });
+    writeFileSync(opencodeCfg, original, "utf8");
+    chmodSync(opencodeCfg, 0o000);
+
+    const result = apply(dir, home, { platforms: ["opencode"] });
+    expect(result.ok).toBe(false);
+    expect(result.exitCode).toBe(1);
+    const entry = result.entries.find((e) => e.file === opencodeCfg);
+    expect(entry?.status).toBe("Failed");
+    expect(entry?.detail).toContain(opencodeCfg);
+    // no write attempt: the original bytes are untouched once perms are restored
+    chmodSync(opencodeCfg, 0o644);
+    expect(readFileSync(opencodeCfg, "utf8")).toBe(original);
+  } finally {
+    try {
+      chmodSync(opencodeCfg, 0o644);
+    } catch {
+      /* file may already be gone */
+    }
     clean(home);
     clean(dir);
   }

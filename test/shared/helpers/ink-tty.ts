@@ -75,7 +75,10 @@ function InputListenerProbe({ counts }: { counts: number[] }): null {
   return null;
 }
 
-export async function renderInk(element: React.ReactElement): Promise<InkTty> {
+export async function renderInk(
+  element: React.ReactElement,
+  options: { exitOnCtrlC?: boolean } = {},
+): Promise<InkTty> {
   const stdout = new PassThrough() as PassThrough & {
     isTTY: boolean;
     columns: number;
@@ -108,6 +111,7 @@ export async function renderInk(element: React.ReactElement): Promise<InkTty> {
       interactive: true,
       patchConsole: false,
       kittyKeyboard: { mode: "disabled" },
+      exitOnCtrlC: options.exitOnCtrlC ?? true,
     },
   );
 

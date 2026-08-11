@@ -361,6 +361,10 @@ const readExisting = (p: string): Existing => {
   try {
     raw = readFileSync(p, "utf8");
   } catch {
+    // A read-permission error (EACCES) must not look like a missing file: a
+    // write attempt would throw after partially touching the filesystem.
+    // Classify it malformed so callers report Failed with the path untouched.
+    if (existsSync(p)) return { kind: "malformed", error: `${p} is not readable` };
     return { kind: "missing" };
   }
   let value: unknown;

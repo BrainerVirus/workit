@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { resolveConfigDir } from "./config";
 
@@ -26,6 +26,12 @@ export const classifySetupFile = (dir: string, name: string): FileState => {
   try {
     raw = readFileSync(file, "utf8");
   } catch {
+    // An existing-but-unreadable file (EACCES) is NOT "missing": mutations must
+    // never be generated against it. Report it as malformed so risky consumers
+    // (wizard/installer/doctor) block on the exact path.
+    if (existsSync(file)) {
+      return { file, status: "malformed", error: `${file} is not readable` };
+    }
     return { file, status: "missing" };
   }
   try {

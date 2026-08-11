@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import {
+  chmodSync,
   existsSync,
   mkdtempSync,
   readFileSync,
@@ -12,6 +13,10 @@ import os from "node:os";
 import path from "node:path";
 import { mergePreset, type ToolkitConfig } from "../../packages/workit-core/src/core/config";
 import { readSetupState } from "../../packages/workit-core/src/core/setup-state";
+import {
+  planHygieneFiles,
+  ensureHygieneFiles,
+} from "../../packages/workit-core/src/core/hygiene";
 import {
   buildSetupPreview,
   TOKEN_PLACEHOLDER,
@@ -192,6 +197,63 @@ test("readSetupState classifies missing/valid/malformed files", () => {
     expect(readSetupState(dir).workspaces.file).toBe(path.join(dir, "workspaces.json"));
   } finally {
     clean(dir);
+  }
+});
+
+test("an existing-but-unreadable setup file is blocked, not treated as missing (EACCES)", () => {
+  // root bypasses file permissions and win32 chmod is not advisory — skip both.
+  if (
+    process.platform === "win32" ||
+    (typeof process.getuid === "function" && process.getuid() === 0)
+  ) {
+    return;
+  }
+  const dir = tempDir();
+  const vcsJson = path.join(dir, "vcs.json");
+  try {
+    writeFileSync(path.join(dir, "config.json"), JSON.stringify({ locale: "en" }), "utf8");
+    writeFileSync(vcsJson, JSON.stringify({ provider: "gitlab" }), "utf8");
+    chmodSync(vcsJson, 0o000);
+    const state = readSetupState(dir);
+    expect(state.config.status).toBe("valid");
+    expect(state.vcs.status).toBe("malformed");
+    expect(state.vcs.error).toContain("vcs.json");
+    // the preview blocks too — no mutations are generated against the unreadable file
+    const preview = buildSetupPreview(values({ vcsProvider: "gitlab" }), { dir, env: {} });
+    expect(preview.ok).toBe(false);
+    expect(preview.mutations).toEqual([]);
+  } finally {
+    try {
+      chmodSync(vcsJson, 0o644);
+    } catch {
+      /* file may already be gone */
+    }
+    clean(dir);
+  }
+});
+
+test("hygiene includeOpenSource defaults to auto-detection when omitted (Task 13 advisory)", () => {
+  const open = tempDir();
+  const closed = tempDir();
+  try {
+    // open-source by npm default: package.json without `private`
+    writeFileSync(path.join(open, "package.json"), JSON.stringify({ name: "demo" }), "utf8");
+    // closed: explicit `private: true` and no LICENSE
+    writeFileSync(
+      path.join(closed, "package.json"),
+      JSON.stringify({ name: "demo", private: true }),
+      "utf8",
+    );
+    const openPlanned = planHygieneFiles(open);
+    expect(openPlanned.some((p) => p.path.endsWith("LICENSE"))).toBe(true);
+    const closedPlanned = planHygieneFiles(closed);
+    expect(closedPlanned.some((p) => p.path.endsWith("LICENSE"))).toBe(false);
+    const applied = ensureHygieneFiles(open, { confirmed: true });
+    expect(applied.ok).toBe(true);
+    expect((applied as { created: string[] }).created).toContain("LICENSE");
+  } finally {
+    clean(open);
+    clean(closed);
   }
 });
 
