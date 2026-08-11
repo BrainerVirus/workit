@@ -25,7 +25,14 @@ const cleanup = (root: string) => rmSync(root, { recursive: true, force: true })
 const run = (tools: any, name: string, args: any, ctx: any) =>
   tools[name].execute(args, ctx).then((raw: string) => JSON.parse(raw));
 
-test("flow_status returns draft when no state exists", async () => {
+const ev = (label = "Approve") => ({
+  host: "opencode",
+  questionId: `q-${label}`,
+  selectedLabel: label,
+  recordedAt: Date.now(),
+});
+
+test("flow_status activates the flow and returns draft when no state exists", async () => {
   const { root, tools, ctx } = fixture();
   try {
     const out = await run(
@@ -38,6 +45,7 @@ test("flow_status returns draft when no state exists", async () => {
     );
     expect(out.ok).toBe(true);
     expect(out.data.spec.status).toBe("draft");
+    expect(out.data.spec.path).toBe("docs/x/spec.md");
     expect(out.data.menu.presented).toBe(false);
     expect(out.data.flow_path).toContain("docs/x/sdd/flow.json");
   } finally {
@@ -45,7 +53,7 @@ test("flow_status returns draft when no state exists", async () => {
   }
 });
 
-test("spec_approve without confirmed fails", async () => {
+test("spec_approve without evidence fails", async () => {
   const { root, tools, ctx } = fixture();
   try {
     const out = await run(
@@ -63,24 +71,25 @@ test("spec_approve without confirmed fails", async () => {
   }
 });
 
-test("full flow: spec approve x2 -> plan approve x2 -> menu", async () => {
+test("full flow: activate + spec approve x2 -> plan approve x2 -> menu", async () => {
   const { root, tools, ctx } = fixture();
   try {
     const spec = "docs/x/spec.md";
     const plan = "docs/x/plan.md";
-    await run(tools, "workflow_spec_approve", { confirmed: true, spec_path: spec }, ctx);
-    await run(tools, "workflow_spec_approve", { confirmed: true, spec_path: spec }, ctx);
+    await run(tools, "workflow_flow_status", { plan_path: plan }, ctx);
+    await run(tools, "workflow_spec_approve", { spec_path: spec, evidence: ev() }, ctx);
+    await run(tools, "workflow_spec_approve", { spec_path: spec, evidence: ev() }, ctx);
     const planFirst = await run(
       tools,
       "workflow_plan_approve",
-      { confirmed: true, plan_path: plan },
+      { plan_path: plan, evidence: ev() },
       ctx,
     );
     expect(planFirst.ok).toBe(true);
     const planSecond = await run(
       tools,
       "workflow_plan_approve",
-      { confirmed: true, plan_path: plan },
+      { plan_path: plan, evidence: ev() },
       ctx,
     );
     expect(planSecond.ok).toBe(true);
@@ -88,9 +97,9 @@ test("full flow: spec approve x2 -> plan approve x2 -> menu", async () => {
       tools,
       "workflow_plan_menu",
       {
-        confirmed: true,
         plan_path: plan,
         choice: "handoff",
+        evidence: ev("handoff"),
       },
       ctx,
     );
@@ -98,7 +107,7 @@ test("full flow: spec approve x2 -> plan approve x2 -> menu", async () => {
     const status = await run(tools, "workflow_flow_status", { plan_path: plan }, ctx);
     expect(status.data.spec.status).toBe("approved");
     expect(status.data.plan.status).toBe("approved");
-    expect(status.data.menu).toEqual({ presented: true, chosen: "handoff" });
+    expect(status.data.menu).toMatchObject({ presented: true, chosen: "handoff" });
   } finally {
     cleanup(root);
   }
@@ -108,12 +117,8 @@ test("plan_approve hard-fails while spec is draft", async () => {
   const { root, tools, ctx } = fixture();
   try {
     const plan = "docs/x/plan.md";
-    const out = await run(
-      tools,
-      "workflow_plan_approve",
-      { confirmed: true, plan_path: plan },
-      ctx,
-    );
+    await run(tools, "workflow_flow_status", { plan_path: plan }, ctx);
+    const out = await run(tools, "workflow_plan_approve", { plan_path: plan, evidence: ev() }, ctx);
     expect(out.ok).toBe(false);
     expect(out.error).toContain("spec");
   } finally {

@@ -34,8 +34,17 @@ test("flow state lives at docs/<slug>/sdd/flow.json", async () => {
     const tools = createFlowTools();
     const ctx = { directory: root } as any;
     const spec = `docs/${slug}/spec.md`;
+    await tools.workflow_flow_status.execute({ plan_path: `docs/${slug}/plan.md` }, ctx);
     const raw = await tools.workflow_spec_approve.execute(
-      { confirmed: true, spec_path: spec },
+      {
+        spec_path: spec,
+        evidence: {
+          host: "opencode",
+          questionId: "q-approve",
+          selectedLabel: "Approve",
+          recordedAt: Date.now(),
+        },
+      },
       ctx,
     );
     const out = JSON.parse(raw as string);
@@ -132,12 +141,28 @@ test("flow tools reject wrong basenames through the shared resolver", async () =
     const tools = createFlowTools();
     const ctx = { directory: root } as never;
     const out = await tools.workflow_spec_approve.execute(
-      { confirmed: true, spec_path: `docs/${slug}/spec.txt` },
+      {
+        spec_path: `docs/${slug}/spec.txt`,
+        evidence: {
+          host: "opencode",
+          questionId: "q",
+          selectedLabel: "Approve",
+          recordedAt: Date.now(),
+        },
+      },
       ctx,
     );
     expect(JSON.parse(out as string).ok).toBe(false);
     const planOut = await tools.workflow_plan_approve.execute(
-      { confirmed: true, plan_path: `docs/${slug}/notes.md` },
+      {
+        plan_path: `docs/${slug}/notes.md`,
+        evidence: {
+          host: "opencode",
+          questionId: "q",
+          selectedLabel: "Approve",
+          recordedAt: Date.now(),
+        },
+      },
       ctx,
     );
     expect(JSON.parse(planOut as string).ok).toBe(false);
@@ -152,7 +177,15 @@ test("flow tools reject traversal through the shared resolver", async () => {
     const tools = createFlowTools();
     const ctx = { directory: root } as never;
     const out = await tools.workflow_spec_approve.execute(
-      { confirmed: true, spec_path: "../outside.md" },
+      {
+        spec_path: "../outside.md",
+        evidence: {
+          host: "opencode",
+          questionId: "q",
+          selectedLabel: "Approve",
+          recordedAt: Date.now(),
+        },
+      },
       ctx,
     );
     expect(JSON.parse(out as string).ok).toBe(false);

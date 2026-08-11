@@ -1,10 +1,15 @@
 import { tool } from "@opencode-ai/plugin";
 import { fail, ok } from "@brainervirus/workit-core/src/core";
 import {
+  assertHostEvidence,
+  createFlowEvidence,
+  prepareFlowState,
   readFlowState,
   transitionSpec,
   transitionPlan,
   recordMenuChoice,
+  type EvidenceResult,
+  type NativeChoiceEvidence,
 } from "@brainervirus/workit-core/src/core/flow-state";
 import { resolveCanonicalLayout } from "@brainervirus/workit-core/src/core/docs-layout";
 import path from "node:path";
@@ -28,10 +33,32 @@ const resolveSlug = (
   return { slug: resolved.layout.slug };
 };
 
+const evidenceSchema = tool.schema.object({
+  host: tool.schema.enum(["opencode", "cursor"]),
+  questionId: tool.schema.string(),
+  selectedLabel: tool.schema.string(),
+  recordedAt: tool.schema.number(),
+});
+
+/**
+ * The OpenCode native-question adapter (FG-04): turns an answered native
+ * `question` result into host-bound evidence. Models must pass evidence
+ * produced here (or re-recorded from the native result) — a bare boolean is
+ * never accepted by the transitions.
+ */
+export const opencodeQuestionEvidence = (
+  questionId: string,
+  selectedLabel: string,
+  recordedAt?: number,
+): EvidenceResult => createFlowEvidence("opencode", questionId, selectedLabel, recordedAt);
+
+const HOST = "opencode" as const;
+
 export function createFlowTools() {
   return {
     workflow_flow_status: tool({
-      description: "Read the spec/plan approval flow state for a workflow",
+      description:
+        "Read the spec/plan approval flow state for a workflow; on first read it records flow activation and canonical document paths (FG-01)",
       args: {
         plan_path: tool.schema.string().optional(),
         spec_path: tool.schema.string().optional(),
@@ -42,7 +69,12 @@ export function createFlowTools() {
           const slugged = resolveSlug(context.directory, { plan_path, spec_path });
           if ("error" in slugged) return output(fail(slugged.error));
           const slug = slugged.slug;
-          const state = readFlowState(context.directory, slug);
+          let state = readFlowState(context.directory, slug);
+          if (!state.activated) {
+            const prepared = prepareFlowState(context.directory, slug, { spec_path, plan_path });
+            if (!prepared.ok) return output(fail(prepared.error, { code: prepared.code }));
+            state = readFlowState(context.directory, slug);
+          }
           return output(
             ok({
               slug,
@@ -59,46 +91,50 @@ export function createFlowTools() {
     }),
     workflow_spec_approve: tool({
       description:
-        "Advance spec status: first call self_reviewed, second call approved (after user approval)",
+        "Advance spec status with native-question evidence: first call self_reviewed, second call approved. Evidence is required; bare booleans are rejected (FG-04, CA-19).",
       args: {
-        confirmed: tool.schema.boolean(),
         spec_path: tool.schema.string(),
+        evidence: evidenceSchema,
       },
-      execute: async ({ confirmed, spec_path }, context) => {
+      execute: async ({ spec_path, evidence }, context) => {
         const slugged = resolveSlug(context.directory, { spec_path });
         if ("error" in slugged) return output(fail(slugged.error));
         const slug = slugged.slug;
-        const result = transitionSpec(context.directory, slug, spec_path, confirmed);
+        const hostOk = assertHostEvidence(HOST, evidence as NativeChoiceEvidence);
+        if (!hostOk.ok) return output(fail(hostOk.error, { code: hostOk.code }));
+        const result = transitionSpec(context.directory, slug, spec_path, evidence);
         return output(
           result.ok
             ? ok({ spec: spec_path, status: readFlowState(context.directory, slug).spec.status })
-            : fail(result.error),
+            : fail(result.error, { code: result.code }),
         );
       },
     }),
     workflow_plan_approve: tool({
       description:
-        "Advance plan status: first call self_reviewed, second call approved. Requires approved spec.",
+        "Advance plan status with native-question evidence: first call self_reviewed, second call approved. Requires approved spec. Evidence is required; bare booleans are rejected.",
       args: {
-        confirmed: tool.schema.boolean(),
         plan_path: tool.schema.string(),
+        evidence: evidenceSchema,
       },
-      execute: async ({ confirmed, plan_path }, context) => {
+      execute: async ({ plan_path, evidence }, context) => {
         const slugged = resolveSlug(context.directory, { plan_path });
         if ("error" in slugged) return output(fail(slugged.error));
         const slug = slugged.slug;
-        const result = transitionPlan(context.directory, slug, plan_path, confirmed);
+        const hostOk = assertHostEvidence(HOST, evidence as NativeChoiceEvidence);
+        if (!hostOk.ok) return output(fail(hostOk.error, { code: hostOk.code }));
+        const result = transitionPlan(context.directory, slug, plan_path, evidence);
         return output(
           result.ok
             ? ok({ plan: plan_path, status: readFlowState(context.directory, slug).plan.status })
-            : fail(result.error),
+            : fail(result.error, { code: result.code }),
         );
       },
     }),
     workflow_plan_menu: tool({
-      description: "Record the answered post-plan choice menu (called after native question)",
+      description:
+        "Record the answered post-plan choice menu with native-question evidence (called after the native question). Evidence label must match the choice exactly.",
       args: {
-        confirmed: tool.schema.boolean(),
         plan_path: tool.schema.string(),
         choice: tool.schema.enum([
           "subagent-driven",
@@ -107,14 +143,19 @@ export function createFlowTools() {
           "review-spec",
           "review-plan",
         ]),
+        evidence: evidenceSchema,
       },
-      execute: async ({ confirmed, plan_path, choice }, context) => {
+      execute: async ({ plan_path, choice, evidence }, context) => {
         const slugged = resolveSlug(context.directory, { plan_path });
         if ("error" in slugged) return output(fail(slugged.error));
         const slug = slugged.slug;
-        const result = recordMenuChoice(context.directory, slug, plan_path, choice, confirmed);
+        const hostOk = assertHostEvidence(HOST, evidence as NativeChoiceEvidence);
+        if (!hostOk.ok) return output(fail(hostOk.error, { code: hostOk.code }));
+        const result = recordMenuChoice(context.directory, slug, plan_path, choice, evidence);
         return output(
-          result.ok ? ok({ menu: { presented: true, chosen: choice } }) : fail(result.error),
+          result.ok
+            ? ok({ menu: { presented: true, chosen: choice } })
+            : fail(result.error, { code: result.code }),
         );
       },
     }),

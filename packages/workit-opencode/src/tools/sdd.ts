@@ -14,11 +14,22 @@ import {
   sddReviewPackage,
   sddTaskBrief,
 } from "@brainervirus/workit-core/src/core/sdd";
+import { assertProductGates, slugFromSddPath } from "@brainervirus/workit-core/src/core/flow-state";
 import { WorkflowStateStore } from "@brainervirus/workit-core/src/state";
 
 const output = (value: unknown) => JSON.stringify(value, null, 2);
 const requireConfirmed = (confirmed: boolean) =>
   confirmed === true ? null : output(fail("confirmed: true required"));
+
+// FG-03/CA-18: non-document product writes are blocked until the spec, plan,
+// docs, and execution-menu gates all pass. Returns a rendered failure or null.
+const gateProductWrite = (root: string, sddPath: string) => {
+  const slug = slugFromSddPath(sddPath);
+  if (!slug) return output(fail("could not derive slug — expected docs/<slug>/sdd/..."));
+  const gate = assertProductGates(root, slug, { requireMenu: true, requireDocs: true });
+  if (!gate.ok) return output(fail(gate.error, { code: gate.code }));
+  return null;
+};
 
 const relativePath = (root: string, candidate: string) => {
   if (path.isAbsolute(candidate)) throw new Error("path must be repository-relative");
@@ -172,6 +183,8 @@ export function createSddTools(state: WorkflowStateStore) {
       execute: async ({ confirmed, sdd_dir, task_id, section_text }, context) => {
         const rejected = requireConfirmed(confirmed);
         if (rejected) return rejected;
+        const gated = gateProductWrite(context.directory, sdd_dir);
+        if (gated) return gated;
         return invoke(() => {
           relativePath(context.directory, sdd_dir);
           return sddTaskBrief({
@@ -194,17 +207,23 @@ export function createSddTools(state: WorkflowStateStore) {
       execute: async ({ confirmed, sdd_dir, base_sha, head_sha }, context) => {
         const rejected = requireConfirmed(confirmed);
         if (rejected) return rejected;
-        return invoke(() => {
+        try {
           relativePath(context.directory, sdd_dir);
           resolveGitRevision(context.directory, base_sha);
           resolveGitRevision(context.directory, head_sha);
-          return sddReviewPackage({
+        } catch (error) {
+          return output(fail(error instanceof Error ? error.message : "workflow operation failed"));
+        }
+        const gated = gateProductWrite(context.directory, sdd_dir);
+        if (gated) return gated;
+        return invoke(() =>
+          sddReviewPackage({
             sdd_dir,
             base_sha,
             head_sha,
             workspace_root: context.directory,
-          });
-        });
+          }),
+        );
       },
     }),
     workflow_sdd_append_progress: tool({
@@ -217,6 +236,8 @@ export function createSddTools(state: WorkflowStateStore) {
       execute: async ({ confirmed, progress_path, line }, context) => {
         const rejected = requireConfirmed(confirmed);
         if (rejected) return rejected;
+        const gated = gateProductWrite(context.directory, progress_path);
+        if (gated) return gated;
         return invoke(() => {
           relativePath(context.directory, progress_path);
           return sddAppendProgress({ progress_path, line, workspace_root: context.directory });

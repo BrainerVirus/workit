@@ -67,6 +67,11 @@ import {
   transitionSpec,
   transitionPlan,
   recordMenuChoice,
+  assertHostEvidence,
+  assertProductGates,
+  prepareFlowState,
+  slugFromSddPath,
+  type NativeChoiceEvidence,
 } from "@brainervirus/workit-core/src/core/flow-state";
 import {
   resolveCanonicalLayout,
@@ -545,6 +550,10 @@ registerTool(
     },
   },
   async ({ sdd_dir, task_id, section_text, workspace_root }) => {
+    const slug = slugFromSddPath(sdd_dir);
+    if (!slug) return jsonResult({ error: "could not derive slug — expected docs/<slug>/sdd/..." });
+    const gate = assertProductGates(workspace_root, slug, { requireMenu: true, requireDocs: true });
+    if (!gate.ok) return jsonResult({ error: gate.error, code: gate.code });
     const data = sddTaskBrief({
       sdd_dir,
       task_id,
@@ -567,6 +576,10 @@ registerTool(
     },
   },
   async ({ sdd_dir, base_sha, head_sha, workspace_root }) => {
+    const slug = slugFromSddPath(sdd_dir);
+    if (!slug) return jsonResult({ error: "could not derive slug — expected docs/<slug>/sdd/..." });
+    const gate = assertProductGates(workspace_root, slug, { requireMenu: true, requireDocs: true });
+    if (!gate.ok) return jsonResult({ error: gate.error, code: gate.code });
     const data = sddReviewPackage({
       sdd_dir,
       base_sha,
@@ -589,6 +602,10 @@ registerTool(
     },
   },
   async ({ progress_path, line, workspace_root }) => {
+    const slug = slugFromSddPath(progress_path);
+    if (!slug) return jsonResult({ error: "could not derive slug — expected docs/<slug>/sdd/..." });
+    const gate = assertProductGates(workspace_root, slug, { requireMenu: true, requireDocs: true });
+    if (!gate.ok) return jsonResult({ error: gate.error, code: gate.code });
     const data = sddAppendProgress({ progress_path, line, workspace_root });
     if (data.error) return jsonResult({ error: data.error });
     return jsonResult(withWorkspace(workspace_root, data));
@@ -1107,7 +1124,8 @@ registerTool(
 registerTool(
   "workflow_flow_status",
   {
-    description: "Read the spec/plan approval flow state for a workflow",
+    description:
+      "Read the spec/plan approval flow state for a workflow; on first read it records flow activation and canonical document paths (FG-01)",
     inputSchema: {
       plan_path: z.string().optional(),
       spec_path: z.string().optional(),
@@ -1122,7 +1140,12 @@ registerTool(
     });
     if (!resolved.ok) return jsonResult(withWorkspace(workspace_root, { error: resolved.error }));
     const { workspace, slug } = resolved.layout;
-    const state = readFlowState(workspace, slug);
+    let state = readFlowState(workspace, slug);
+    if (!state.activated) {
+      const prepared = prepareFlowState(workspace, slug, { spec_path, plan_path });
+      if (!prepared.ok) return jsonResult({ error: prepared.error, code: prepared.code });
+      state = readFlowState(workspace, slug);
+    }
     return jsonResult({
       slug,
       spec: state.spec,
@@ -1133,23 +1156,36 @@ registerTool(
   },
 );
 
+const evidenceSchema = z.object({
+  host: z.enum(["opencode", "cursor"]),
+  questionId: z.string(),
+  selectedLabel: z.string(),
+  recordedAt: z.number(),
+});
+
+const HOST = "cursor" as const;
+
+const hostBound = (evidence: unknown) => assertHostEvidence(HOST, evidence as NativeChoiceEvidence);
+
 registerTool(
   "workflow_spec_approve",
   {
     description:
-      "Advance spec status: first call self_reviewed, second call approved (after user approval)",
+      "Advance spec status with native-question evidence: first call self_reviewed, second call approved. Evidence is required; bare booleans are rejected (FG-04, CA-19).",
     inputSchema: {
-      confirmed: z.boolean(),
       spec_path: z.string(),
+      evidence: evidenceSchema,
       workspace_root: workspaceRootSchema,
     },
   },
-  async ({ confirmed, spec_path, workspace_root }) => {
+  async ({ spec_path, evidence, workspace_root }) => {
     const resolved = resolveCanonicalLayout({ workspace_root, spec_path });
     if (!resolved.ok) return jsonResult(withWorkspace(workspace_root, { error: resolved.error }));
     const { workspace, slug } = resolved.layout;
-    const result = transitionSpec(workspace, slug, spec_path, confirmed);
-    if (result.ok === false) return jsonResult({ error: result.error });
+    const bound = hostBound(evidence);
+    if (!bound.ok) return jsonResult({ error: bound.error, code: bound.code });
+    const result = transitionSpec(workspace, slug, spec_path, evidence);
+    if (result.ok === false) return jsonResult({ error: result.error, code: result.code });
     return jsonResult({ spec: spec_path, status: readFlowState(workspace, slug).spec.status });
   },
 );
@@ -1158,19 +1194,21 @@ registerTool(
   "workflow_plan_approve",
   {
     description:
-      "Advance plan status: first call self_reviewed, second call approved. Requires approved spec.",
+      "Advance plan status with native-question evidence: first call self_reviewed, second call approved. Requires approved spec. Evidence is required; bare booleans are rejected.",
     inputSchema: {
-      confirmed: z.boolean(),
       plan_path: z.string(),
+      evidence: evidenceSchema,
       workspace_root: workspaceRootSchema,
     },
   },
-  async ({ confirmed, plan_path, workspace_root }) => {
+  async ({ plan_path, evidence, workspace_root }) => {
     const resolved = resolveCanonicalLayout({ workspace_root, plan_path });
     if (!resolved.ok) return jsonResult(withWorkspace(workspace_root, { error: resolved.error }));
     const { workspace, slug } = resolved.layout;
-    const result = transitionPlan(workspace, slug, plan_path, confirmed);
-    if (result.ok === false) return jsonResult({ error: result.error });
+    const bound = hostBound(evidence);
+    if (!bound.ok) return jsonResult({ error: bound.error, code: bound.code });
+    const result = transitionPlan(workspace, slug, plan_path, evidence);
+    if (result.ok === false) return jsonResult({ error: result.error, code: result.code });
     return jsonResult({ plan: plan_path, status: readFlowState(workspace, slug).plan.status });
   },
 );
@@ -1178,20 +1216,23 @@ registerTool(
 registerTool(
   "workflow_plan_menu",
   {
-    description: "Record the answered post-plan choice menu (called after native question)",
+    description:
+      "Record the answered post-plan choice menu with native-question evidence (called after the native question). Evidence label must match the choice exactly.",
     inputSchema: {
-      confirmed: z.boolean(),
       plan_path: z.string(),
       choice: z.enum(["subagent-driven", "inline", "handoff", "review-spec", "review-plan"]),
+      evidence: evidenceSchema,
       workspace_root: workspaceRootSchema,
     },
   },
-  async ({ confirmed, plan_path, choice, workspace_root }) => {
+  async ({ plan_path, choice, evidence, workspace_root }) => {
     const resolved = resolveCanonicalLayout({ workspace_root, plan_path });
     if (!resolved.ok) return jsonResult(withWorkspace(workspace_root, { error: resolved.error }));
     const { workspace, slug } = resolved.layout;
-    const result = recordMenuChoice(workspace, slug, plan_path, choice, confirmed);
-    if (result.ok === false) return jsonResult({ error: result.error });
+    const bound = hostBound(evidence);
+    if (!bound.ok) return jsonResult({ error: bound.error, code: bound.code });
+    const result = recordMenuChoice(workspace, slug, plan_path, choice, evidence);
+    if (result.ok === false) return jsonResult({ error: result.error, code: result.code });
     return jsonResult({ menu: { presented: true, chosen: choice } });
   },
 );

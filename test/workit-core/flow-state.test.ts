@@ -7,7 +7,9 @@ import {
   transitionSpec,
   transitionPlan,
   recordMenuChoice,
+  prepareFlowState,
 } from "../../packages/workit-core/src/core/flow-state";
+import { establishApprovedFlow, evidence } from "./flow-fixtures";
 
 const COMPLIANT_SPEC = (slug: string) =>
   `# ${slug}\n\n**Branch:** \`feature/${slug}\`\n\n## Context\n\n## Goals\n\n## Non-goals\n\n## Architecture\n\n## Acceptance criteria\n\n- CA-01: test\n`;
@@ -30,6 +32,7 @@ test("missing flow.json reads as draft with no menu", () => {
   const { root, slug } = fixture();
   try {
     const state = readFlowState(root, slug);
+    expect(state.activated).toBe(false);
     expect(state.spec.status).toBe("draft");
     expect(state.plan.status).toBe("draft");
     expect(state.menu.presented).toBe(false);
@@ -38,14 +41,18 @@ test("missing flow.json reads as draft with no menu", () => {
   }
 });
 
-test("spec transitions draft -> self_reviewed -> approved", () => {
+test("spec transitions draft -> self_reviewed -> approved with native evidence", () => {
   const { root, slug } = fixture();
   try {
-    const first = transitionSpec(root, slug, `docs/${slug}/spec.md`, true);
+    const spec = `docs/${slug}/spec.md`;
+    const plan = `docs/${slug}/plan.md`;
+    const blocked = transitionSpec(root, slug, spec, evidence());
+    expect(blocked.ok).toBe(false); // activation required first
+    prepareFlowState(root, slug, { spec_path: spec, plan_path: plan });
+    const first = transitionSpec(root, slug, spec, evidence());
     expect(first.ok).toBe(true);
     expect(readFlowState(root, slug).spec.status).toBe("self_reviewed");
-
-    const second = transitionSpec(root, slug, `docs/${slug}/spec.md`, true);
+    const second = transitionSpec(root, slug, spec, evidence());
     expect(second.ok).toBe(true);
     expect(readFlowState(root, slug).spec.status).toBe("approved");
   } finally {
@@ -53,10 +60,10 @@ test("spec transitions draft -> self_reviewed -> approved", () => {
   }
 });
 
-test("confirmed:false never transitions", () => {
+test("confirmed:false boolean is never evidence", () => {
   const { root, slug } = fixture();
   try {
-    const result = transitionSpec(root, slug, `docs/${slug}/spec.md`, false);
+    const result = transitionSpec(root, slug, `docs/${slug}/spec.md`, false as never);
     expect(result.ok).toBe(false);
     expect(readFlowState(root, slug).spec.status).toBe("draft");
   } finally {
@@ -67,9 +74,15 @@ test("confirmed:false never transitions", () => {
 test("plan approve hard-fails while spec is draft", () => {
   const { root, slug } = fixture();
   try {
-    const result = transitionPlan(root, slug, `docs/${slug}/plan.md`, true);
+    const spec = `docs/${slug}/spec.md`;
+    const plan = `docs/${slug}/plan.md`;
+    prepareFlowState(root, slug, { spec_path: spec, plan_path: plan });
+    const result = transitionPlan(root, slug, plan, evidence());
     expect(result.ok).toBe(false);
-    expect(String((result as { error: string }).error)).toContain("spec");
+    if (result.ok === false) {
+      expect(result.error).toContain("spec");
+      expect(result.code).toBe("spec_not_approved");
+    }
     expect(readFlowState(root, slug).plan.status).toBe("draft");
   } finally {
     cleanup(root);
@@ -79,27 +92,23 @@ test("plan approve hard-fails while spec is draft", () => {
 test("plan approve requires spec approved", () => {
   const { root, slug } = fixture();
   try {
-    transitionSpec(root, slug, `docs/${slug}/spec.md`, true);
-    transitionSpec(root, slug, `docs/${slug}/spec.md`, true);
-    const first = transitionPlan(root, slug, `docs/${slug}/plan.md`, true);
-    expect(first.ok).toBe(true);
-    expect(readFlowState(root, slug).plan.status).toBe("self_reviewed");
-    const second = transitionPlan(root, slug, `docs/${slug}/plan.md`, true);
-    expect(second.ok).toBe(true);
-    expect(readFlowState(root, slug).plan.status).toBe("approved");
+    establishApprovedFlow(root, slug);
+    const state = readFlowState(root, slug);
+    expect(state.spec.status).toBe("approved");
+    expect(state.plan.status).toBe("approved");
   } finally {
     cleanup(root);
   }
 });
 
-test("menu choice records presented + chosen", () => {
+test("menu choice records presented + chosen with exact evidence", () => {
   const { root, slug } = fixture();
   try {
-    const result = recordMenuChoice(root, slug, `docs/${slug}/plan.md`, "handoff", true);
-    expect(result.ok).toBe(true);
+    establishApprovedFlow(root, slug);
     const state = readFlowState(root, slug);
     expect(state.menu.presented).toBe(true);
     expect(state.menu.chosen).toBe("handoff");
+    expect(state.menu.evidence?.selectedLabel).toBe("handoff");
   } finally {
     cleanup(root);
   }
@@ -117,6 +126,7 @@ test("assertFlowGates fails without approvals", () => {
   try {
     const result = assertFlowGates(root, `docs/${slug}/plan.md`);
     expect(result.ok).toBe(false);
+    if (result.ok === false) expect(result.code).toBe("spec_not_approved");
   } finally {
     cleanup(root);
   }
@@ -125,17 +135,31 @@ test("assertFlowGates fails without approvals", () => {
 test("assertFlowGates requires menu when requested", () => {
   const { root, slug } = fixture();
   try {
+    const plan = `docs/${slug}/plan.md`;
+    establishApprovedFlow(root, slug);
+    const withoutMenu = assertFlowGates(root, plan, { requireMenu: true });
+    expect(withoutMenu.ok).toBe(true); // establishApprovedFlow already presented the menu
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("assertFlowGates blocks execution before the menu is presented", () => {
+  const { root, slug } = fixture();
+  try {
     const spec = `docs/${slug}/spec.md`;
     const plan = `docs/${slug}/plan.md`;
     writeFileSync(path.join(root, spec), COMPLIANT_SPEC(slug));
     writeFileSync(path.join(root, plan), COMPLIANT_PLAN(slug));
-    transitionSpec(root, slug, spec, true);
-    transitionSpec(root, slug, spec, true);
-    transitionPlan(root, slug, plan, true);
-    transitionPlan(root, slug, plan, true);
+    prepareFlowState(root, slug, { spec_path: spec, plan_path: plan });
+    transitionSpec(root, slug, spec, evidence());
+    transitionSpec(root, slug, spec, evidence());
+    transitionPlan(root, slug, plan, evidence());
+    transitionPlan(root, slug, plan, evidence());
     const withoutMenu = assertFlowGates(root, plan, { requireMenu: true });
     expect(withoutMenu.ok).toBe(false);
-    recordMenuChoice(root, slug, plan, "inline", true);
+    if (withoutMenu.ok === false) expect(withoutMenu.code).toBe("menu_not_presented");
+    recordMenuChoice(root, slug, plan, "inline", evidence("opencode", "inline"));
     const withMenu = assertFlowGates(root, plan, { requireMenu: true });
     expect(withMenu.ok).toBe(true);
   } finally {
@@ -146,22 +170,25 @@ test("assertFlowGates requires menu when requested", () => {
 test("invalid slug is rejected before any write", () => {
   const { root, slug } = fixture();
   try {
-    const result = transitionSpec(root, "..", `docs/${slug}/spec.md`, true);
+    const result = transitionSpec(root, "..", `docs/${slug}/spec.md`, evidence());
     expect(result.ok).toBe(false);
-    expect(String((result as { error: string }).error)).toContain("invalid slug");
+    if (result.ok === false) expect(result.error).toContain("invalid slug");
   } finally {
     cleanup(root);
   }
 });
 
-test("corrupt flow.json falls back to draft without throwing", () => {
+test("corrupt flow.json at the canonical sdd path blocks transitions with a structured error", () => {
   const { root, slug } = fixture();
   try {
-    mkdirSync(path.join(root, "docs", slug, "sdd"), { recursive: true });
-    writeFileSync(path.join(root, "docs", slug, "flow.json"), "{not-json", "utf8");
-    const state = readFlowState(root, slug);
-    expect(state.spec.status).toBe("draft");
-    expect(state.plan.status).toBe("draft");
+    establishApprovedFlow(root, slug);
+    writeFileSync(path.join(root, "docs", slug, "sdd", "flow.json"), "{not-json", "utf8");
+    const result = transitionPlan(root, slug, `docs/${slug}/plan.md`, evidence());
+    expect(result.ok).toBe(false);
+    if (result.ok === false) {
+      expect(result.error).toContain("corrupt");
+      expect(result.code).toBe("flow_corrupt");
+    }
   } finally {
     cleanup(root);
   }
@@ -170,15 +197,13 @@ test("corrupt flow.json falls back to draft without throwing", () => {
 test("already approved spec rejects further transitions", () => {
   const { root, slug } = fixture();
   try {
-    const spec = `docs/${slug}/spec.md`;
-    const plan = `docs/${slug}/plan.md`;
-    writeFileSync(path.join(root, spec), COMPLIANT_SPEC(slug));
-    writeFileSync(path.join(root, plan), COMPLIANT_PLAN(slug));
-    transitionSpec(root, slug, spec, true);
-    transitionSpec(root, slug, spec, true);
-    const third = transitionSpec(root, slug, spec, true);
+    establishApprovedFlow(root, slug);
+    const third = transitionSpec(root, slug, `docs/${slug}/spec.md`, evidence());
     expect(third.ok).toBe(false);
-    expect(String((third as { error: string }).error)).toContain("already approved");
+    if (third.ok === false) {
+      expect(third.error).toContain("already approved");
+      expect(third.code).toBe("flow_already_approved");
+    }
   } finally {
     cleanup(root);
   }
@@ -187,14 +212,13 @@ test("already approved spec rejects further transitions", () => {
 test("transitions reject a missing doc file", () => {
   const { root, slug } = fixture();
   try {
-    const spec = `docs/${slug}/spec.md`;
     const plan = `docs/${slug}/plan.md`;
+    const spec = `docs/${slug}/spec.md`;
+    prepareFlowState(root, slug, { spec_path: spec, plan_path: plan });
     rmSync(path.join(root, plan), { force: true });
-    transitionSpec(root, slug, spec, true);
-    transitionSpec(root, slug, spec, true);
-    const result = transitionPlan(root, slug, plan, true);
+    const result = transitionPlan(root, slug, plan, evidence());
     expect(result.ok).toBe(false);
-    expect(String((result as { error: string }).error)).toContain("plan not found");
+    if (result.ok === false) expect(result.error).toContain("plan not found");
   } finally {
     cleanup(root);
   }

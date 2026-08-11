@@ -99,7 +99,7 @@ function writeOpenCodeStub(nm: string, version: string): void {
   writeFileSync(
     path.join(stubDir, "index.js"),
     `export const tool = (def) => def;
-tool.schema = { string: () => ({ type: "string" }), boolean: () => ({ type: "boolean" }), enum: (v) => ({ type: "string", enum: v }), optional: (s) => s, array: (s) => ({ type: "array", items: s }) };
+tool.schema = { string: () => ({ type: "string" }), number: () => ({ type: "number" }), boolean: () => ({ type: "boolean" }), enum: (v) => ({ type: "string", enum: v }), object: (s) => ({ type: "object", properties: s }), optional: (s) => s, array: (s) => ({ type: "array", items: s }) };
 `,
   );
 }
