@@ -1,7 +1,10 @@
-import { expect, test } from "bun:test";
+import { expect, test, mock } from "bun:test";
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import * as nodeFs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+
+const realFs = { ...nodeFs };
 import {
   COORDINATOR_RECOVERY_TEXT,
   assertProductGates,
@@ -279,6 +282,59 @@ test("CA-28: a failed-session fixture cannot be skipped and keeps flow state iso
 
     expect(findActiveSubagentDrivenPlans(root)).toEqual([]);
     expect(existsSync(flowFile(root, slug))).toBe(false);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("FG-08: two writers with the same expected text — only one wins", () => {
+  const { root, slug } = fixture();
+  try {
+    writeDocs(root, slug);
+    const prep = prepareFlowState(root, slug, {
+      spec_path: `docs/${slug}/spec.md`,
+      plan_path: `docs/${slug}/plan.md`,
+    });
+    expect(prep.ok).toBe(true);
+    const expected = readFlowState(root, slug);
+
+    const writerA = {
+      ...expected,
+      menu: { presented: true, chosen: "subagent-driven", evidence: null },
+      updated_at: Date.now(),
+    };
+    const writerB = {
+      ...expected,
+      menu: { presented: true, chosen: "handoff", evidence: null },
+      updated_at: Date.now(),
+    };
+
+    // Writer B holds the same expected text as writer A. Simulate A committing
+    // in the window between B's compare and B's rename: when B stages its temp
+    // buffer, A's content is already on disk, so B must lose the race.
+    let injected = false;
+    mock.module("node:fs", () => ({
+      ...realFs,
+      writeFileSync: (p: unknown, data: unknown, enc?: unknown) => {
+        const result = realFs.writeFileSync(p as string, data as string, enc as BufferEncoding);
+        if (!injected && typeof p === "string" && p.endsWith(".tmp")) {
+          injected = true;
+          realFs.writeFileSync(
+            flowFile(root, slug),
+            JSON.stringify(writerA, null, 2) + "\n",
+            "utf8",
+          );
+        }
+        return result;
+      },
+    }));
+
+    const commit = writeFlowStateIfCurrent(root, expected, writerB);
+    expect(commit.ok).toBe(false);
+    if (!commit.ok) expect(commit.conflict).toBe(true);
+    const finalState = readFlowState(root, slug);
+    expect(finalState.menu.chosen).toBe("subagent-driven");
+    expect(injected).toBe(true);
   } finally {
     cleanup(root);
   }

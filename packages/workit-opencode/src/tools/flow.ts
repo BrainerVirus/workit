@@ -41,6 +41,13 @@ const evidenceSchema = tool.schema.object({
   recordedAt: tool.schema.number(),
 });
 
+// Fail-closed mutation identity (CA-20): role + taskIdentity are explicit tool
+// args — the boundary never infers delegation from the session agent name, so
+// a coordinator under a custom agent name cannot bypass it. A missing role
+// defaults to coordinator (blocked for subagent-driven product mutations).
+export const roleSchema = tool.schema.enum(["coordinator", "delegated"]).optional();
+export const taskIdentitySchema = tool.schema.string().optional();
+
 /**
  * The OpenCode native-question adapter (FG-04): turns an answered native
  * `question` result into host-bound evidence. Models must pass evidence
@@ -56,17 +63,20 @@ export const opencodeQuestionEvidence = (
 const HOST = "opencode" as const;
 
 // OpenCode's default primary agent is "build" (docs: config → Default agent);
-// a session spawned by the `task` tool runs a different agent, which doubles as
-// the authenticated task identity for delegated workers.
-// ponytail: agent-name heuristic for coordinator vs delegated; upgrade to the
-// session parentID once the SDK exposes it on ToolContext.
-export const opencodeMutationContext = (context: ToolContext): MutationContext => {
-  const delegated = Boolean(context.agent && context.agent !== "build");
+// a session spawned by the `task` tool runs a different agent. The coordinator
+// boundary is fail-closed: role + taskIdentity are explicit tool args, never
+// inferred from the agent name, so a coordinator under a custom primary agent
+// cannot be auto-classified delegated. Missing role → coordinator (blocked).
+export const opencodeMutationContext = (
+  context: ToolContext,
+  args?: { role?: string; taskIdentity?: string },
+): MutationContext => {
+  const delegated = args?.role === "delegated";
   return {
     hostWorkspace: context.directory,
     role: delegated ? "delegated" : "coordinator",
     sessionId: context.sessionID,
-    taskIdentity: delegated ? context.agent : undefined,
+    taskIdentity: delegated ? args?.taskIdentity : undefined,
   };
 };
 
@@ -78,8 +88,10 @@ export function createFlowTools() {
       args: {
         plan_path: tool.schema.string().optional(),
         spec_path: tool.schema.string().optional(),
+        role: roleSchema,
+        taskIdentity: taskIdentitySchema,
       },
-      execute: async ({ plan_path, spec_path }, context) => {
+      execute: async ({ plan_path, spec_path, role, taskIdentity }, context) => {
         try {
           if (!plan_path && !spec_path) return output(fail("plan_path or spec_path required"));
           const slugged = resolveSlug(context.directory, { plan_path, spec_path });
@@ -91,7 +103,7 @@ export function createFlowTools() {
               context.directory,
               slug,
               { spec_path, plan_path },
-              opencodeMutationContext(context),
+              opencodeMutationContext(context, { role, taskIdentity }),
             );
             if (!prepared.ok) return output(fail(prepared.error, { code: prepared.code }));
             state = readFlowState(context.directory, slug);
@@ -116,8 +128,10 @@ export function createFlowTools() {
       args: {
         spec_path: tool.schema.string(),
         evidence: evidenceSchema,
+        role: roleSchema,
+        taskIdentity: taskIdentitySchema,
       },
-      execute: async ({ spec_path, evidence }, context) => {
+      execute: async ({ spec_path, evidence, role, taskIdentity }, context) => {
         const slugged = resolveSlug(context.directory, { spec_path });
         if ("error" in slugged) return output(fail(slugged.error));
         const slug = slugged.slug;
@@ -128,7 +142,7 @@ export function createFlowTools() {
           slug,
           spec_path,
           evidence,
-          opencodeMutationContext(context),
+          opencodeMutationContext(context, { role, taskIdentity }),
         );
         return output(
           result.ok
@@ -143,8 +157,10 @@ export function createFlowTools() {
       args: {
         plan_path: tool.schema.string(),
         evidence: evidenceSchema,
+        role: roleSchema,
+        taskIdentity: taskIdentitySchema,
       },
-      execute: async ({ plan_path, evidence }, context) => {
+      execute: async ({ plan_path, evidence, role, taskIdentity }, context) => {
         const slugged = resolveSlug(context.directory, { plan_path });
         if ("error" in slugged) return output(fail(slugged.error));
         const slug = slugged.slug;
@@ -155,7 +171,7 @@ export function createFlowTools() {
           slug,
           plan_path,
           evidence,
-          opencodeMutationContext(context),
+          opencodeMutationContext(context, { role, taskIdentity }),
         );
         return output(
           result.ok
@@ -177,8 +193,10 @@ export function createFlowTools() {
           "review-plan",
         ]),
         evidence: evidenceSchema,
+        role: roleSchema,
+        taskIdentity: taskIdentitySchema,
       },
-      execute: async ({ plan_path, choice, evidence }, context) => {
+      execute: async ({ plan_path, choice, evidence, role, taskIdentity }, context) => {
         const slugged = resolveSlug(context.directory, { plan_path });
         if ("error" in slugged) return output(fail(slugged.error));
         const slug = slugged.slug;
@@ -190,7 +208,7 @@ export function createFlowTools() {
           plan_path,
           choice,
           evidence,
-          opencodeMutationContext(context),
+          opencodeMutationContext(context, { role, taskIdentity }),
         );
         return output(
           result.ok

@@ -98,8 +98,10 @@ function writeOpenCodeStub(nm: string, version: string): void {
   );
   writeFileSync(
     path.join(stubDir, "index.js"),
+    // The real SDK schemas are chainable (enum(...).optional(), string().optional()).
     `export const tool = (def) => def;
-tool.schema = { string: () => ({ type: "string" }), number: () => ({ type: "number" }), boolean: () => ({ type: "boolean" }), enum: (v) => ({ type: "string", enum: v }), object: (s) => ({ type: "object", properties: s }), optional: (s) => s, array: (s) => ({ type: "array", items: s }) };
+const mk = (t) => ({ ...t, optional() { return this; } });
+tool.schema = { string: () => mk({ type: "string" }), number: () => mk({ type: "number" }), boolean: () => mk({ type: "boolean" }), enum: (v) => mk({ type: "string", enum: v }), object: (s) => mk({ type: "object", properties: s }), optional: (s) => s, array: (s) => mk({ type: "array", items: s }) };
 `,
   );
 }

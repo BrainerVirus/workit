@@ -307,10 +307,82 @@ test("opencode threads MutationContext: coordinator blocked, authenticated worke
         sdd_dir: "docs/oc-flow/sdd",
         task_id: 1,
         section_text: "- [ ] Work\n",
+        role: "delegated",
+        taskIdentity: "workit-worker",
       },
       workerCtx,
     );
     expect(brief.ok).toBe(true);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("opencode fails closed: a coordinator under a custom agent name cannot bypass the boundary", async () => {
+  const { root, tools, ctx } = fixture();
+  try {
+    await run(tools, "workflow_flow_status", { plan_path: "docs/oc-flow/plan.md" }, ctx);
+    const spec = "docs/oc-flow/spec.md";
+    const plan = "docs/oc-flow/plan.md";
+    await run(
+      tools,
+      "workflow_spec_approve",
+      { spec_path: spec, evidence: evidence("opencode") },
+      ctx,
+    );
+    await run(
+      tools,
+      "workflow_spec_approve",
+      { spec_path: spec, evidence: evidence("opencode") },
+      ctx,
+    );
+    await run(
+      tools,
+      "workflow_plan_approve",
+      { plan_path: plan, evidence: evidence("opencode") },
+      ctx,
+    );
+    await run(
+      tools,
+      "workflow_plan_approve",
+      { plan_path: plan, evidence: evidence("opencode") },
+      ctx,
+    );
+    const menu = await run(
+      tools,
+      "workflow_plan_menu",
+      {
+        choice: "subagent-driven",
+        plan_path: plan,
+        evidence: evidence("opencode", "subagent-driven"),
+      },
+      ctx,
+    );
+    expect(menu.ok).toBe(true);
+
+    // Any agent that does not pass role="delegated" is the coordinator — the
+    // agent-name heuristic must not reclassify a custom-named session.
+    const customCoordinatorCtx = {
+      directory: root,
+      worktree: root,
+      sessionID: "oc",
+      agent: "custom-lead",
+    } as never;
+    const blocked = await run(
+      tools,
+      "workflow_sdd_append_progress",
+      {
+        confirmed: true,
+        progress_path: "docs/oc-flow/sdd/progress.md",
+        line: "Task 1: work (commits abcdef0..1234567, tests pass)",
+      },
+      customCoordinatorCtx,
+    );
+    expect(blocked.ok).toBe(false);
+    if (blocked.ok === false) {
+      expect(blocked.data?.code).toBe("coordinator_blocked");
+      expect(blocked.error).toContain(COORDINATOR_RECOVERY_TEXT);
+    }
   } finally {
     cleanup(root);
   }

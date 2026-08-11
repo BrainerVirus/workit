@@ -24,7 +24,9 @@ export const CURSOR_HOST = "cursor" as const;
  * request against the same repo is attributed to the same stable session, and
  * nothing machine-generated crosses a repo boundary. Cursor has no delegated
  * workers (no subagent-driven `task` flow), so every Cursor mutation is the
- * coordinator session.
+ * coordinator session. Fail-closed by construction: role/taskIdentity are
+ * never accepted as tool args on the Cursor MCP — a client-supplied role would
+ * let the model self-certify as a delegated worker and re-open the boundary.
  */
 export const cursorMutationContext = (workspaceRoot: string): MutationContext => ({
   hostWorkspace: workspaceRoot,

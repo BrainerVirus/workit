@@ -200,6 +200,16 @@ export type FlowWriteResult = { ok: true } | { ok: false; conflict: true };
  * `conflict` instead of clobbering a concurrent newer write; the caller re-reads
  * and retries the transition (bounded). Unique per-write temp names keep the
  * write buffer from being shared between writers.
+ *
+ * The first compare happens before the buffer is staged; the file is re-read
+ * immediately before the rename so a writer that committed between the two
+ * points still wins. Without the re-read, two writers holding the same expected
+ * text would both pass the compare and both rename — a lost update.
+ * ponytail: the re-read shrinks but cannot close the cross-process window (a
+ * writer can still commit between this re-read and the rename). Upgrade path:
+ * hold an O_EXCL advisory lock on `<file>.lock` across the read-modify-write,
+ * or move to renameat2(RENAME_EXCHANGE)/an OS-level CAS when a second
+ * concurrent process becomes a supported topology.
  */
 export const writeFlowStateIfCurrent = (
   root: string,
@@ -217,6 +227,8 @@ export const writeFlowStateIfCurrent = (
       mkdirSync(path.dirname(file), { recursive: true });
       const tmp = uniqueTempPath(file);
       writeFileSync(tmp, nextText, "utf8");
+      const reRead = existsSync(file) ? readFileSync(file, "utf8") : null;
+      if (reRead !== expectedText) return { ok: false, conflict: true };
       renameSync(tmp, file);
       return { ok: true };
     } catch {

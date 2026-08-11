@@ -34,6 +34,8 @@ For every plan task whose ID is absent from `completed_task_ids`:
 6. Dispatch separate `general` agents for spec-compliance review and code-quality review. **Blocking findings** (Critical, Important, or spec-compliance) may trigger at most **two** fix+re-review rounds per task. **Advisory** findings (Minor, style, YAGNI, taste) never pause the loop — append them to `<SDD_DIR>/advisories.md` with the task id.
 7. Append the validated ledger line with `workflow_sdd_append_progress` using `confirmed: true`, then mark the task completed with `todowrite`.
 
+Every dispatched worker performs the SDD mutations itself: instruct each worker to pass `role: "delegated"` and a `taskIdentity` (e.g. `wk-worker-<task_id>`) on `workflow_sdd_task_brief`, `workflow_sdd_review_package`, and `workflow_sdd_append_progress`. The coordinator boundary is fail-closed — a worker that omits `role` is treated as the coordinator and blocked.
+
 Never redispatch completed task IDs. Pass task briefs and review diffs to agents; do not make them reparse the plan. Keep commits on the in-place feature/bugfix branch.
 
 ## Final gate
