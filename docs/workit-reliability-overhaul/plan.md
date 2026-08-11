@@ -13,7 +13,7 @@
 
 ## Global Constraints
 
-- Execute the recovery pre-phase and Phases 0 through 8 in order; no later phase starts before the preceding phase gate passes.
+- Tasks 1-23 and Phases 0-8 are historical completed implementation; execute Phase 9 Tasks 24-31 in order and do not treat earlier green evidence as closure for a post-implementation finding.
 - Every production change requires observed RED evidence, the minimum GREEN implementation, focused verification, and `bun run check`; retain the failing command and reason in SDD progress.
 - Keep each phase releasable, reversible, and independently reviewed; do not mix unrelated later-phase work.
 - Keep maintained first-party runtime logic in TypeScript and publish only compiled, self-contained JavaScript entries.
@@ -23,7 +23,7 @@
 - Never log prompts, messages, content, raw tool arguments/results, credentials, tokens, authorization headers, issue data, URL queries, home prefixes, or unbounded stacks.
 - Preserve existing credentials and unrelated host configuration byte-for-byte unless a reviewed mutation explicitly replaces them.
 - Legacy migration is native-question-confirmed, copy-only, no-clobber, recoverable, idempotent, and never deletes source files.
-- Native question results, not caller-supplied booleans, establish approval and execution-menu evidence.
+- OpenCode approvals/menu choices use host-observed one-use question receipts and host-derived session parentage. Cursor confirmations are audited with `attested: false`; Cursor accepts no delegated role and blocks unsupported subagent-driven mutation.
 - Keep workflow-managed SDD state only at `docs/<slug>/sdd/`; never add an extra slug level or create an empty progress ledger.
 - Do not advertise Deno or add Codex-specific behavior without an executable host matrix.
 - Do not publish packages, tags, registry releases, or marketplace releases in this plan.
@@ -32,7 +32,7 @@
 
 ```mermaid
 flowchart LR
-  %% Workit reliability delivery gates
+  %% Reliability Remediation Delivery
   recovery["Pre-phase: runtime recovery"]
   p0["Phase 0: safety candidate"]
   p1["Phase 1: typed boundaries"]
@@ -42,7 +42,8 @@ flowchart LR
   p5["Phase 5: docs migration"]
   p6["Phase 6: structural gates"]
   p7["Phase 7: config and VCS"]
-  p8["Phase 8: release proof"]
+  p8["Phase 8: initial release proof"]
+  p9["Phase 9: audit remediation and final proof"]
   recovery -->|CA-32| p0
   p0 -->|corrective candidate| p1
   p1 -->|host-neutral core| p2
@@ -50,8 +51,9 @@ flowchart LR
   p3 -->|doctor contract| p4
   p4 -->|safe apply model| p5
   p5 -->|canonical paths| p6
-  p6 -->|enforced flow| p7
+  p6 -->|capability-aware flow| p7
   p7 -->|reliability gate| p8
+  p8 -->|independent audit findings| p9
 ```
 
 ## Traceability
@@ -68,6 +70,7 @@ flowchart LR
 | 6 | 19-20 | FG-01-FG-09 | CA-18-CA-21, CA-28, CA-31 |
 | 7 | 21-22 | RL-01-RL-07, RL-09 | CA-22-CA-25, CA-31 |
 | 8 | 23 | RL-08, RL-10, all audit and Ponytail closure | CA-01, CA-02, CA-04, CA-05, CA-08, CA-26-CA-31 |
+| 9 | 24-31 | AR-01-AR-15; corrected FG-04, FG-05, FG-09 | CA-18-CA-20, CA-33-CA-45 |
 
 ---
 
@@ -573,7 +576,7 @@ flowchart LR
 - [ ] **Step 6: Run the task gate and checkpoint**
   Run `bun run check` and request `wk-commit` with `feat(flow): enforce native approval evidence`.
 
-**Criteria:** Plan/product writes cannot bypass approval/menu gates, and only exact native question results establish evidence on either host.
+**Criteria:** Historical Phase 6 transition tests pass. Independent audit later proved the evidence object itself caller-forgeable; Task 30 supersedes the native-attestation claim.
 
 ### Task 20: Enforce coordinator boundaries, host workspace, and concurrent state
 
@@ -599,7 +602,7 @@ flowchart LR
 - [ ] **Step 6: Record bypass/recovery evidence and checkpoint**
   Confirm broken-plugin failure and healthy spec/plan/menu sequences; request `wk-commit` with `feat(flow): enforce coordinator boundaries`.
 
-**Criteria:** Coordinator and direct-edit bypasses fail, delegated workers remain usable, host workspace is authoritative, and concurrent transitions preserve newer state.
+**Criteria:** Historical Phase 6 state/workspace/concurrency tests pass. Task 30 supersedes caller-supplied delegated identity and direct-edit enforcement claims.
 
 ### Task 21: Make configuration parsing and preset behavior authoritative
 
@@ -680,32 +683,252 @@ flowchart LR
 - [ ] **Step 7: Checkpoint the release-ready branch**
   Request `wk-commit` with `test(release): prove the Workit release candidate`, then prepare a reviewed PR separately from any publication approval.
 
-**Criteria:** Every mandatory traceability item and acceptance criterion has executable passing evidence, clean packed installs pass the full support matrix, rollback artifacts exist, and nothing is published.
+**Criteria:** The test-assembled candidate remains reproducible and unpublished. Tasks 24 and 31 supersede final release-orchestration and clean-dependency-closure proof.
+
+### Task 24: Make release orchestration fail before publication
+
+**Requirements:** AR-01, AR-02; CA-33, CA-44.
+
+**Files:**
+- Modify: `package.json`, `.github/workflows/release.yml`, `release.config.cjs`
+- Modify: `packages/workit-opencode/package.json`, `packages/workit-cursor/package.json`, `packages/workit-cli/package.json`
+- Test: `test/artifacts/release-orchestration.test.ts`, `test/artifacts/release-candidate.test.ts`, `test/workit-core/rewrite-workspace-deps.test.ts`
+
+**Interfaces:** Root `build` runs the three adapter builds; root `verify:release-candidate` runs the pack-only final artifact gate. Release dependency rewriting executes before npm package verification and after semantic-release assigns versions. Every build, pack, protocol, and dependency check completes before the semantic-release publication step.
+
+- [ ] **Step 1: Write the failing real-workflow regression**
+  Assert a clean checkout has no tracked adapter `dist/`, root scripts exist, release workflow order is install → build → candidate verification → semantic-release, and no workspace/dependency assertion appears only after semantic-release.
+- [ ] **Step 2: Run RED**
+  Run `bun test test/artifacts/release-orchestration.test.ts test/artifacts/release-candidate.test.ts test/workit-core/rewrite-workspace-deps.test.ts`; expected failure is absent root scripts, missing pre-release build/gate, or rewrite verification ordered after npm/release work.
+- [ ] **Step 3: Implement minimum release ordering**
+  Add root scripts, invoke them before semantic-release, split semantic-release rewrite hooks if necessary so verify-time and prepare-time ordering are both correct, and remove the ineffective post-release-only protocol check.
+- [ ] **Step 4: Run GREEN from a clean package sandbox**
+  Re-run the RED command after deleting only generated sandbox outputs; expected result is built entries and a passing pack-only candidate without registry, tag, or marketplace operations.
+- [ ] **Step 5: Run focused workflow validation**
+  Run `bun run build && bun run verify:release-candidate`; expected result is exit 0 with all four local tarballs verified and no publication command.
+- [ ] **Step 6: Run the task gate and checkpoint**
+  Run `bun run check`, review the workflow order, and request `wk-commit` with `fix(release): gate artifacts before publication`.
+
+**Criteria:** A clean checkout cannot reach semantic-release before built artifacts and the release-candidate gate pass; all failure checks are pre-publication.
+
+### Task 25: Close CLI dependencies and exact registration identity
+
+**Requirements:** AR-03, AR-04; CA-34, CA-35.
+
+**Files:**
+- Modify: `packages/workit-cli/package.json`, `packages/workit-core/scripts/rewrite-workspace-deps.ts`, `bun.lock`
+- Modify: `packages/workit-core/src/core/registration.ts`
+- Test: `test/artifacts/release-candidate.test.ts`, `test/workit-cli/packed-cli.test.ts`, `test/workit-core/rewrite-workspace-deps.test.ts`, `test/artifacts/registration.test.ts`
+
+**Interfaces:** The CLI declares `@brainervirus/workit-opencode` and `@brainervirus/workit-cursor` at the same release version. Release rewrite updates every internal `workspace:*` dependency. `isWorkitPlugin(value)` matches only exact package names with optional `@<version>` suffixes and canonical file paths.
+
+- [ ] **Step 1: Write failing clean-dependency and identity tests**
+  Install the packed CLI plus only dependencies declared by its packed manifest, run selected OpenCode/Cursor setup, and assert `@brainervirus/workit-opencode-helper` and `@brainervirus/workit-cursor-tools` survive merge unchanged.
+- [ ] **Step 2: Run RED**
+  Run `bun test test/artifacts/registration.test.ts test/workit-core/rewrite-workspace-deps.test.ts test/workit-cli/packed-cli.test.ts test/artifacts/release-candidate.test.ts`; expected failure is missing adapter discovery or prefix-matched helper removal.
+- [ ] **Step 3: Implement minimum dependency closure**
+  Declare both adapters in CLI dependencies, rewrite all internal workspace dependencies to the prepared version, tighten identity matching, and regenerate only `bun.lock`.
+- [ ] **Step 4: Run GREEN**
+  Re-run the RED command; do not manually extract adapter tarballs outside the manifest-driven dependency installer.
+- [ ] **Step 5: Verify packed metadata and setup**
+  Inspect packed CLI metadata and run the setup flow from an unrelated cwd with repository `node_modules` unavailable; expected result is both selected hosts configured from declared dependencies.
+- [ ] **Step 6: Run the task gate and checkpoint**
+  Run `bun run check` and request `wk-commit` with `fix(cli): declare adapter dependency closure`.
+
+**Criteria:** Installing the CLI's declared closure is sufficient for both host setups, and unrelated prefix-sharing packages are preserved.
+
+### Task 26: Make Cursor workspace and entries portable
+
+**Requirements:** AR-05, AR-06; CA-36.
+
+**Files:**
+- Modify: `packages/workit-cursor/mcp/server.ts`, `packages/workit-cursor/mcp/run-server.ts`
+- Modify: `packages/workit-cursor/hooks/hooks-cursor.json`, `packages/workit-cursor/mcp.json`, `packages/workit-core/src/core/registration.ts`
+- Modify: `packages/workit-opencode/scripts/build.ts`, `packages/workit-cursor/scripts/build.ts`, `packages/workit-cli/scripts/build.ts`
+- Test: `test/workit-cursor/mcp-process.test.ts`, `test/workit-cursor/mcp-regressions.test.ts`, `test/artifacts/manifests.test.ts`, `test/artifacts/registration.test.ts`
+
+**Interfaces:** `workspaceRootSchema` defaults to `WORKFLOW_WORKSPACE_ROOT` before cwd. Build scripts derive their directory through `fileURLToPath(import.meta.url)`. Cursor manifests use explicit `node` commands and package-relative arguments on every OS.
+
+- [ ] **Step 1: Write failing process and path tests**
+  Launch `mcp/run-server.ts <workspace>` from an unrelated cwd, omit `workspace_root` in a tool call, assert the response root equals `<workspace>`, simulate Windows URL/path conversion, and assert MCP/hook commands invoke Node explicitly.
+- [ ] **Step 2: Run RED**
+  Run `bun test test/workit-cursor/mcp-process.test.ts test/workit-cursor/mcp-regressions.test.ts test/artifacts/manifests.test.ts test/artifacts/registration.test.ts`; expected failure is cwd leakage, URL pathname misuse, or direct hook execution.
+- [ ] **Step 3: Implement minimum portability correction**
+  Prefer the launcher environment root, use `fileURLToPath`, and update committed/generated registration entries without adding shell wrappers.
+- [ ] **Step 4: Run GREEN**
+  Re-run focused tests on the current OS.
+- [ ] **Step 5: Run the declared OS matrix**
+  Run the package/process jobs on Linux, macOS, and Windows; expected result is identical package-relative workspace and launch behavior.
+- [ ] **Step 6: Run the task gate and checkpoint**
+  Run `bun run check` and request `wk-commit` with `fix(cursor): honor workspace and portable entries`.
+
+**Criteria:** Omitted tool roots use the Cursor workspace, and built MCP/hook entries start through Node on all supported OSes.
+
+### Task 27: Fail closed on config shapes and date branches
+
+**Requirements:** AR-07, AR-08; CA-37, CA-38.
+
+**Files:**
+- Modify: `packages/workit-core/src/core/config.ts`, `packages/workit-core/src/core/setup-state.ts`, `packages/workit-core/src/core/doctor.ts`, `packages/workit-core/src/core/pr-create.ts`
+- Review/modify if affected: `packages/workit-core/src/core/vcs-config.ts`, `packages/workit-core/src/core/workspaces.ts`
+- Test: `test/workit-core/config.test.ts`, `test/workit-cli/wizard-config.test.ts`, `test/workit-core/doctor.test.ts`, `test/workit-core/pr-create.test.ts`
+
+**Interfaces:** Object-config readers share the rule `non-null object and not array`; shape errors retain exact paths. Date rejection recognizes a complete year-first or day-first date anywhere in a branch segment before numeric issue extraction.
+
+- [ ] **Step 1: Write failing shape/date tables**
+  Cover `null`, strings, numbers, arrays, unreadable files, invalid JSON, `release-2024-01-15`, `v2-2024-01-15-fix`, day-first dates, and deliberate `42-title`/`2024-fix` branches.
+- [ ] **Step 2: Run RED**
+  Run `bun test test/workit-core/config.test.ts test/workit-cli/wizard-config.test.ts test/workit-core/doctor.test.ts test/workit-core/pr-create.test.ts`; expected failure is default/healthy classification or `Closes #2024` from an embedded date.
+- [ ] **Step 3: Implement shared fail-closed semantics**
+  Reject non-object shapes consistently and tighten date detection without changing explicit numeric issue behavior.
+- [ ] **Step 4: Run GREEN**
+  Re-run the RED command and confirm every malformed fixture names its file.
+- [ ] **Step 5: Run cross-surface config/PR checks**
+  Run `bun test test/workit-core/config-guard.test.ts test/workit-core/config-dir.test.ts test/workit-core/workspaces.test.ts test/workit-core/workspaces-scripts.test.ts`.
+- [ ] **Step 6: Run the task gate and checkpoint**
+  Run `bun run check` and request `wk-commit` with `fix(config): reject invalid shapes and date issues`.
+
+**Criteria:** Object-required config never fails open, doctor agrees with readers/setup, and date segments cannot close issues.
+
+### Task 28: Make setup preview authoritative and preserve credential paths
+
+**Requirements:** AR-09, AR-10; CA-39.
+
+**Files:**
+- Modify: `packages/workit-core/src/core/setup.ts`, `packages/workit-cli/src/steps.tsx`
+- Test: `test/workit-cli/wizard-config.test.ts`, `test/workit-cli/platform-install.test.ts`, `test/workit-cli/packed-cli.test.ts`, `test/workit-cli/workspace-wizard.test.tsx`
+
+**Interfaces:** `SetupPreview.mutations` contains every Apply write, including adapter copy and host registration operations. Credential drafts reuse existing configured token paths; a path replacement is a distinct reviewed mutation. `applySetupPreview` consumes only preview mutations and adds no derived writes.
+
+- [ ] **Step 1: Write failing preview/apply parity tests**
+  Snapshot all files before and after Apply, assert every changed path/content class appeared in preview, seed custom YouTrack/GitLab/GitHub token paths with canary bytes, and assert no default token file/config replacement occurs.
+- [ ] **Step 2: Run RED**
+  Run `bun test test/workit-cli/wizard-config.test.ts test/workit-cli/platform-install.test.ts test/workit-cli/packed-cli.test.ts test/workit-cli/workspace-wizard.test.tsx`; expected failure is unpreviewed host writes or custom token path replacement.
+- [ ] **Step 3: Implement one mutation model**
+  Plan host registration/package-copy operations during preview, resolve existing token paths before drafting config, and make Apply dispatch only the reviewed mutation union.
+- [ ] **Step 4: Run GREEN**
+  Re-run focused tests and compare preview/apply changed-path sets exactly.
+- [ ] **Step 5: Run packed TTY/setup verification**
+  Exercise review → Apply from the extracted CLI with selected hosts and custom credentials; expected result is truthful preview, preserved bytes, and idempotent second run.
+- [ ] **Step 6: Run the task gate and checkpoint**
+  Run `bun run check` and request `wk-commit` with `fix(init): make preview authoritative`.
+
+**Criteria:** Apply cannot write an unreviewed path and custom credential locations remain authoritative unless replacement is explicitly previewed.
+
+### Task 29: Make doctor and verification output trustworthy
+
+**Requirements:** AR-11, AR-14; CA-40, CA-43.
+
+**Files:**
+- Modify: `packages/workit-core/src/core/doctor.ts`
+- Modify: negative-path test helpers that currently inherit raw Git stderr
+- Test: `test/workit-core/doctor.test.ts`, `test/workit-opencode/doctor.test.ts`, `test/workit-cursor/doctor.test.ts`, `test/workit-cli/doctor.test.ts`
+
+**Interfaces:** Installer doctor has an explicit required-check set containing selected-host runtime, assets, launcher, registration, malformed config, and required utility checks. Optional parity checks may warn. Expected negative subprocess stderr is captured and asserted rather than inherited by the full suite.
+
+- [ ] **Step 1: Write failing installer-health fixtures**
+  Remove each selected-host asset/launcher/runtime/registration/utility independently and assert installer report `ok: false`, nonzero exit, and a specific fix. Add a full-check subprocess assertion that repeated raw Git usage/fatal text is absent.
+- [ ] **Step 2: Run RED**
+  Run `bun test test/workit-core/doctor.test.ts test/workit-opencode/doctor.test.ts test/workit-cursor/doctor.test.ts test/workit-cli/doctor.test.ts`; expected failure is a required check downgraded to warning or noisy inherited stderr.
+- [ ] **Step 3: Implement minimum severity/output fixes**
+  Correct installer-required classification and capture expected negative Git stderr at the fixture boundary without suppressing unexpected failures.
+- [ ] **Step 4: Run GREEN**
+  Re-run doctor tests and the focused noisy fixture files; expected output contains assertions, not raw Git help dumps.
+- [ ] **Step 5: Run a fresh full check and inspect output**
+  Run `bun run check`; require zero failures and no repeated raw Git usage/fatal dumps.
+- [ ] **Step 6: Checkpoint**
+  Review severity changes and request `wk-commit` with `fix(doctor): fail incomplete installs clearly`.
+
+**Criteria:** Required installation defects are nonzero failures and successful verification output remains readable without hiding unexpected errors.
+
+### Task 30: Replace self-certified flow security with host capabilities
+
+**Requirements:** AR-12, AR-13; corrected FG-04, FG-05, FG-09; CA-18-CA-20, CA-41, CA-42.
+
+**Files:**
+- Modify: `packages/workit-core/src/core/flow-state.ts`
+- Modify: `packages/workit-opencode/src/plugin.ts`, `packages/workit-opencode/src/tools/flow.ts`, OpenCode tool assembly/state
+- Modify: `packages/workit-cursor/mcp/server.ts`, `packages/workit-cursor/mcp/flow-evidence.ts`
+- Modify: shipped flow contracts under `packages/workit-core/templates/`, adapter `assets/templates/`, Cursor rules, and relevant skills
+- Test: `test/workit-core/flow-enforcement.test.ts`, `test/workit-core/flow-concurrency.test.ts`, `test/workit-opencode/flow-enforcement.test.ts`, `test/workit-opencode/plugin.test.ts`, `test/workit-cursor/flow-enforcement.test.ts`, `test/workit-core/contracts.test.ts`
+
+**Interfaces:** OpenCode observes `question` through `tool.execute.before/after`, stores a one-use receipt bound to `sessionID`, `callID`, exact selected label, and timestamp, and consumes it inside approval/menu tools whose schemas expose no evidence object. OpenCode derives delegated status from `client.session.get({ sessionID }).data.parentID`; caller role fields are removed. While subagent-driven is active, known write tools and coordinator shell mutations are denied, with a bounded read/test/review command allowlist. Cursor records `{ host: "cursor", attested: false, confirmation: "contract" }`, exposes no delegated role, and rejects subagent-driven mutation with recovery guidance.
+
+- [ ] **Step 1: Write failing forgery/replay/identity/interception tests**
+  Reproduce invented evidence, replay, wrong session/label, caller `role: delegated`, root-session edit/write/apply-patch, coordinator mutating shell, real question receipt, real child session, Cursor unauthenticated provenance, and Cursor unsupported subagent-driven behavior.
+- [ ] **Step 2: Run RED**
+  Run `bun test test/workit-core/flow-enforcement.test.ts test/workit-core/flow-concurrency.test.ts test/workit-opencode/flow-enforcement.test.ts test/workit-opencode/plugin.test.ts test/workit-cursor/flow-enforcement.test.ts test/workit-core/contracts.test.ts`; expected failure is accepted fabricated evidence/identity or missing host limitation reporting.
+- [ ] **Step 3: Implement OpenCode host-derived trust**
+  Add the in-memory receipt lifecycle and host session-parent lookup, remove evidence/role/taskIdentity tool arguments, and enforce coordinator write/shell interception through plugin hooks.
+- [ ] **Step 4: Implement the honest Cursor boundary**
+  Replace fake native attestation with explicit `attested: false` confirmation provenance, remove delegated-role inputs, block unsupported subagent-driven mutation, and align contracts/docs with the chosen capability boundary.
+- [ ] **Step 5: Run GREEN and adversarial process checks**
+  Re-run the RED command plus real OpenCode tool-hook and Cursor stdio sequences; require every forged/replayed/root-session attempt to fail and valid supported paths to pass.
+- [ ] **Step 6: Run the task gate and checkpoint**
+  Run `bun run check`, review the trust-boundary diff separately, and request `wk-commit` with `fix(flow): derive trust from host capabilities`.
+
+**Criteria:** OpenCode no longer trusts model-created evidence or roles; Cursor reports its policy-only boundary honestly and cannot self-certify delegation.
+
+### Task 31: Prove remediation and reconcile the branch
+
+**Requirements:** AR-15 and all Phase 9 closure; CA-44, CA-45.
+
+**Files:**
+- Modify: `test/artifacts/release-candidate.test.ts`, `test/artifacts/reliability-report.test.ts`, traceability tests if needed
+- Update through registered SDD tools: `docs/workit-reliability-overhaul/sdd/progress.md`, task report/review artifacts
+- Validate: `docs/workit-reliability-overhaul/spec.md`, `docs/workit-reliability-overhaul/plan.md`
+
+**Interfaces:** Final evidence maps POST-01-POST-15, AR-01-AR-15, and CA-33-CA-45 to runnable checks. Branch reconciliation uses `workflow_resolve_branch` and confirmed in-place `workflow_branch_setup`; no worktree, force push, publication, or destructive reset is allowed.
+
+- [ ] **Step 1: Write the failing Phase 9 traceability gate**
+  Assert every post-audit row maps to an exact test/command and fails if any item is prose-only, any package is manually injected outside declared dependencies, or release ordering is not exercised.
+- [ ] **Step 2: Run RED**
+  Run the focused traceability/release gate; expected failure names every still-unmapped POST/AR/CA item.
+- [ ] **Step 3: Close evidence gaps only**
+  Add missing process/matrix/report assertions without changing behavior already proven by Tasks 24-30.
+- [ ] **Step 4: Run final GREEN verification**
+  Run `bun run build && bun run verify:release-candidate && bun run check`, Linux/macOS/Windows package jobs, clean CLI dependency install/setup, OpenCode host flow adversarial checks, Cursor provenance checks, and doctor fixtures. Record exact counts/checksums and `not published`.
+- [ ] **Step 5: Validate documents and SDD state**
+  Run `workflow_docs_validate`, `workflow_plan_tasks`, `workflow_sdd_context`, and `workflow_git_context`; require 31 sequential tasks, canonical linked paths/branch, tracked SDD directory, and no hard finding.
+- [ ] **Step 6: Reconcile with current main non-destructively**
+  Resolve and select the declared branch with `workflow_resolve_branch` plus confirmed in-place `workflow_branch_setup`, preview any dirty-tree handling through native `question`, fetch the configured remote, and merge current `main` with non-interactive `git merge --no-edit origin/main`. Confirm `git merge-base origin/main HEAD` equals `git rev-parse origin/main`, then re-run Step 4; never use a worktree, rebase, force push, or destructive reset.
+- [ ] **Step 7: Final review and checkpoint**
+  Review `origin/main...HEAD` for only intended overhaul/remediation changes, request a reviewed `wk-commit` for final evidence if files changed, and prepare a PR separately. Do not publish.
+
+**Criteria:** Every post-audit finding has fresh RED/GREEN evidence, all final gates pass after current-main reconciliation, the diff is clean, and no release or force push occurs.
 
 ## Task Status
 
 | Status | Task |
 | --- | --- |
-| pending | 1: Close the restarted OpenCode recovery gate |
-| pending | 2: Correct release metadata and Cursor initialization |
-| pending | 3: Stop installer, wizard, and credential false success |
-| pending | 4: Pack and gate the Phase 0 corrective candidate |
-| pending | 5: Establish strict TypeScript and host-neutral boundaries |
-| pending | 6: Port maintained shell behavior to shared TypeScript |
-| pending | 7: Build self-contained adapters and deterministic assets |
-| pending | 8: Correct registration, manifests, pins, and the platform matrix |
-| pending | 9: Implement the secret-safe structured logger |
-| pending | 10: Instrument runtime boundaries and MCP domain failures |
-| pending | 11: Add shared doctor and installer health enforcement |
-| pending | 12: Replace the wizard with a sequential in-memory state machine |
-| pending | 13: Make configuration optional, safe, and previewable |
-| pending | 14: Apply and verify selected platform installations |
-| pending | 15: Complete workspace UX and deterministic wizard coverage |
-| pending | 16: Centralize canonical document path safety and preparation |
-| pending | 17: Implement bounded legacy detection and atomic migration |
-| pending | 18: Correct SDD creation contracts and host parity |
-| pending | 19: Capture flow activation and native approval evidence |
-| pending | 20: Enforce coordinator boundaries, host workspace, and concurrent state |
-| pending | 21: Make configuration parsing and preset behavior authoritative |
-| pending | 22: Correct PR policy, workspace patterns, issue derivation, and updates |
-| pending | 23: Close debt and prove the final release candidate |
+| complete | 1: Close the restarted OpenCode recovery gate |
+| complete | 2: Correct release metadata and Cursor initialization |
+| complete | 3: Stop installer, wizard, and credential false success |
+| complete | 4: Pack and gate the Phase 0 corrective candidate |
+| complete | 5: Establish strict TypeScript and host-neutral boundaries |
+| complete | 6: Port maintained shell behavior to shared TypeScript |
+| complete | 7: Build self-contained adapters and deterministic assets |
+| complete | 8: Correct registration, manifests, pins, and the platform matrix |
+| complete | 9: Implement the secret-safe structured logger |
+| complete | 10: Instrument runtime boundaries and MCP domain failures |
+| complete | 11: Add shared doctor and installer health enforcement |
+| complete | 12: Replace the wizard with a sequential in-memory state machine |
+| complete | 13: Make configuration optional, safe, and previewable |
+| complete | 14: Apply and verify selected platform installations |
+| complete | 15: Complete workspace UX and deterministic wizard coverage |
+| complete | 16: Centralize canonical document path safety and preparation |
+| complete | 17: Implement bounded legacy detection and atomic migration |
+| complete | 18: Correct SDD creation contracts and host parity |
+| complete | 19: Capture flow activation and native approval evidence |
+| complete | 20: Enforce coordinator boundaries, host workspace, and concurrent state |
+| complete | 21: Make configuration parsing and preset behavior authoritative |
+| complete | 22: Correct PR policy, workspace patterns, issue derivation, and updates |
+| complete | 23: Close debt and prove the initial release candidate |
+| pending | 24: Make release orchestration fail before publication |
+| pending | 25: Close CLI dependencies and exact registration identity |
+| pending | 26: Make Cursor workspace and entries portable |
+| pending | 27: Fail closed on config shapes and date branches |
+| pending | 28: Make setup preview authoritative and preserve credential paths |
+| pending | 29: Make doctor and verification output trustworthy |
+| pending | 30: Replace self-certified flow security with host capabilities |
+| pending | 31: Prove remediation and reconcile the branch |
