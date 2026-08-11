@@ -2,15 +2,20 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "
 import { isDeepStrictEqual } from "node:util";
 import path from "node:path";
 import {
-  PRESETS,
   LOCALE_RE,
+  mergePreset,
+  readConfigFromDir,
+  resolveConfigDir,
   type BranchPreset,
   type ToolkitConfig,
 } from "@brainervirus/workit-core/src/core/config.ts";
+import { readSetupState, type SetupState } from "@brainervirus/workit-core/src/core/setup-state.ts";
 import {
   workspacesPath,
   type WorkspaceConfig,
 } from "@brainervirus/workit-core/src/core/workspaces.ts";
+import { GITIGNORE_ENTRIES } from "@brainervirus/workit-core/src/core/gitignore.ts";
+import { planHygieneFiles } from "@brainervirus/workit-core/src/core/hygiene.ts";
 import { ensureProjectGitignore } from "@brainervirus/workit-core/src/core/gitignore.ts";
 import { ensureHygieneFiles, hygieneFiles } from "@brainervirus/workit-core/src/core/hygiene.ts";
 
@@ -62,23 +67,11 @@ export type ConfigInput = {
 };
 
 export function collectConfigValues(input: ConfigInput, current: ToolkitConfig): ToolkitConfig {
-  const preset = input.preset ?? current.branchPolicy.preset;
-  const presetDefs = PRESETS[preset];
   return {
     locale: input.locale ?? current.locale,
     localeOptions: current.localeOptions,
     timezone: input.timezone ?? current.timezone,
-    branchPolicy: {
-      preset,
-      allowed:
-        preset === "custom"
-          ? (input.allowed ?? current.branchPolicy.allowed)
-          : [...presetDefs.allowed],
-      protected:
-        preset === "custom"
-          ? (input.protectedNames ?? current.branchPolicy.protected)
-          : [...presetDefs.protected],
-    },
+    branchPolicy: mergePreset(input.preset ?? current.branchPolicy.preset, input, current),
   };
 }
 
@@ -102,8 +95,6 @@ export function runProjectSetup(
   ];
   return { gitignore, hygiene, openSource, created };
 }
-
-export const DEFAULT_BASE_URL = "https://enghouseamg.youtrack.cloud";
 
 // Shared scaffold outcome envelope (WZ-05/WZ-06): credentials are preserved
 // byte-for-byte unless absent, and malformed config files block every write.
@@ -419,4 +410,222 @@ export function writeWorkspaces(entries: WorkspaceConfig[]): WriteWorkspacesResu
     return { ok: false, error: `failed to write ${file}: ${(err as Error).message}`, path: file };
   }
   return { ok: true, path: file };
+}
+
+// ---------------------------------------------------------------------------
+// Setup preview (WZ-04-WZ-06, WZ-08, RL-06; CA-12, CA-14, CA-22, CA-23).
+// buildSetupPreview is a pure reader: it classifies the current setup state and
+// returns the exact mutations Apply would perform WITHOUT applying them, so the
+// preview is authoritative and nothing touches the filesystem before Apply.
+// Integrations are neutral and optional: youtrack is skipped when baseUrl is
+// empty, vcs when the provider is "skip", and neither ships private defaults.
+// ---------------------------------------------------------------------------
+
+export type SetupPreviewInput = {
+  locale: string;
+  timezone: string;
+  branchPreset: BranchPreset;
+  branchAllowed: string;
+  branchProtected: string;
+  baseUrl: string;
+  vcsProvider: VcsProvider | "skip";
+  workspaces: WorkspaceConfig[];
+  applyProject: boolean;
+};
+
+export type SetupMutation =
+  | { type: "create-file"; path: string; content: string; mode?: number }
+  | { type: "merge-json"; path: string; value: unknown }
+  | { type: "update-workspaces"; path: string; entries: WorkspaceConfig[] }
+  | { type: "append-gitignore"; path: string; entries: string[] };
+
+export type SetupOverride = {
+  envKey: string;
+  affects: string;
+  value: string;
+  note: string;
+};
+
+export type SetupPreview = {
+  ok: boolean;
+  /** Path-specific blocking diagnostics, set when any setup file is malformed. */
+  blocked: string[];
+  mutations: SetupMutation[];
+  /** Environment overrides active for the shell init/apply path (RL-06). */
+  overrides: SetupOverride[];
+  /** Credential files left byte-for-byte untouched. */
+  preserved: string[];
+  state: SetupState;
+};
+
+const YT_OVERRIDES: { envKey: string; affects: string }[] = [
+  { envKey: "WORKFLOW_YT_BASE_URL", affects: "youtrack.json baseUrl" },
+  { envKey: "WORKFLOW_YT_TOKEN_FILE", affects: "youtrack.json tokenFile" },
+  { envKey: "WORKFLOW_YT_TIMEZONE", affects: "youtrack.json timezone" },
+  { envKey: "WORKFLOW_YT_MENTION", affects: "youtrack.json defaultMention" },
+  { envKey: "WORKFLOW_YT_MEETING_ISSUE", affects: "youtrack.json meetingIssue" },
+  { envKey: "WORKFLOW_YT_WEB_MEETING_ISSUE", affects: "youtrack.json web meeting issue" },
+];
+
+const VCS_OVERRIDES: { envKey: string; affects: string }[] = [
+  { envKey: "WORKFLOW_VCS_PROVIDER", affects: "vcs.json provider" },
+  { envKey: "WORKFLOW_VCS_TARGET_BRANCH", affects: "vcs.json defaultTargetBranch" },
+  { envKey: "WORKFLOW_GITLAB_HOST", affects: "vcs.json gitlab.host" },
+  { envKey: "WORKFLOW_GITLAB_API_URL", affects: "vcs.json gitlab.apiUrl" },
+  { envKey: "WORKFLOW_GITHUB_HOST", affects: "vcs.json github.host" },
+];
+
+const SETUP_OVERRIDES = [...YT_OVERRIDES, ...VCS_OVERRIDES];
+
+export const activeSetupOverrides = (env: NodeJS.ProcessEnv = process.env): SetupOverride[] => {
+  const overrides: SetupOverride[] = [];
+  for (const { envKey, affects } of SETUP_OVERRIDES) {
+    const value = env[envKey];
+    if (value === undefined || value === "") continue;
+    overrides.push({
+      envKey,
+      affects,
+      value,
+      note: "set in the environment; the interactive wizard does not apply it, but the shell init/apply path would use it",
+    });
+  }
+  return overrides;
+};
+
+// Neutral youtrack.json draft: no organization names, issue IDs, greetings, or
+// language defaults (WZ-04/CA-14). merge-json preserves unrelated keys on Apply.
+function youtrackDraft(values: SetupPreviewInput, dir: string): Record<string, unknown> {
+  return {
+    baseUrl: values.baseUrl.replace(/\/+$/, ""),
+    tokenFile: path.join(dir, "youtrack.token"),
+    timezone: values.timezone,
+    locale: values.locale,
+    tokenDefaults: {
+      name: "workit",
+      description: "OpenCode workit — /wk-issue-update and /wk-meetings",
+      scopes: ["YouTrack"],
+      profileTab: "account-security",
+    },
+  };
+}
+
+function vcsDraft(provider: VcsProvider, dir: string): Record<string, unknown> {
+  return {
+    provider,
+    gitlab: {
+      host: "gitlab.com",
+      apiUrl: "https://gitlab.com/api/v4",
+      tokenFile: path.join(dir, "gitlab.token"),
+    },
+    github: { host: "github.com", tokenFile: path.join(dir, "github.token") },
+    pr: { squashOnMerge: true, removeSourceBranch: true, pushBranch: true, confirmSkip: true },
+    tokenDefaults: {
+      name: "workit",
+      description: "OpenCode workit — /wk-pr and glab/gh",
+      gitlabScopes: ["api"],
+      githubPermissions: { pull_requests: "write", contents: "write", metadata: "read" },
+      githubClassicScopes: ["repo"],
+    },
+  };
+}
+
+export function buildSetupPreview(
+  values: SetupPreviewInput,
+  opts: { dir?: string; cwd?: string; env?: NodeJS.ProcessEnv } = {},
+): SetupPreview {
+  const env = opts.env ?? process.env;
+  const state = readSetupState(opts.dir ?? resolveConfigDir());
+  const blocked: string[] = [];
+  const mutations: SetupMutation[] = [];
+  const preserved: string[] = [];
+  const overrides = activeSetupOverrides(env);
+
+  for (const entry of [state.config, state.youtrack, state.vcs, state.workspaces]) {
+    if (entry.status === "malformed") blocked.push(entry.error ?? entry.file);
+  }
+
+  if (blocked.length === 0) {
+    const current = readConfigFromDir(state.configDir);
+    mutations.push({
+      type: "merge-json",
+      path: path.join(state.configDir, "config.json"),
+      value: {
+        locale: values.locale,
+        localeOptions: current.localeOptions,
+        timezone: values.timezone,
+        branchPolicy: mergePreset(
+          values.branchPreset,
+          {
+            allowed: values.branchPreset === "custom" ? parseList(values.branchAllowed) : undefined,
+            protectedNames:
+              values.branchPreset === "custom" ? parseList(values.branchProtected) : undefined,
+          },
+          current,
+        ),
+      },
+    });
+
+    if (values.workspaces.length > 0) {
+      mutations.push({
+        type: "update-workspaces",
+        path: path.join(state.configDir, "workspaces.json"),
+        entries: values.workspaces,
+      });
+    }
+
+    if (values.baseUrl.trim()) {
+      mutations.push({
+        type: "merge-json",
+        path: path.join(state.configDir, "youtrack.json"),
+        value: youtrackDraft(values, state.configDir),
+      });
+      const tokenPath = path.join(state.configDir, "youtrack.token");
+      if (existsSync(tokenPath)) preserved.push(tokenPath);
+      else
+        mutations.push({
+          type: "create-file",
+          path: tokenPath,
+          content: TOKEN_PLACEHOLDER + "\n",
+          mode: 0o600,
+        });
+    }
+
+    if (values.vcsProvider !== "skip") {
+      mutations.push({
+        type: "merge-json",
+        path: path.join(state.configDir, "vcs.json"),
+        value: vcsDraft(values.vcsProvider, state.configDir),
+      });
+      const tokenPath = path.join(state.configDir, `${values.vcsProvider}.token`);
+      if (existsSync(tokenPath)) preserved.push(tokenPath);
+      else
+        mutations.push({
+          type: "create-file",
+          path: tokenPath,
+          content: TOKEN_PLACEHOLDER + "\n",
+          mode: 0o600,
+        });
+    }
+
+    if (values.applyProject) {
+      const root = path.resolve(opts.cwd ?? process.cwd());
+      const gitignorePath = path.join(root, ".gitignore");
+      const existing = existsSync(gitignorePath) ? readFileSync(gitignorePath, "utf8") : "";
+      const existingLines = new Set(
+        existing
+          .split("\n")
+          .map((l) => l.trim())
+          .filter(Boolean),
+      );
+      const entries = GITIGNORE_ENTRIES.filter(
+        (e) => e.trim() !== "" && !existingLines.has(e.trim()),
+      );
+      mutations.push({ type: "append-gitignore", path: gitignorePath, entries });
+      for (const planned of planHygieneFiles(root)) {
+        mutations.push({ type: "create-file", path: planned.path, content: planned.content });
+      }
+    }
+  }
+
+  return { ok: blocked.length === 0, blocked, mutations, overrides, preserved, state };
 }

@@ -1,8 +1,12 @@
 import { Box, Text, useInput } from "ink";
 import { ConfirmInput, MultiSelect, TextInput } from "@inkjs/ui";
 import { useEffect, useReducer, useRef, useState, type Dispatch, type JSX } from "react";
-import { PRESETS, type BranchPreset } from "@brainervirus/workit-core/src/core/config.ts";
-import { parseList } from "./logic";
+import {
+  mergePreset,
+  type BranchPreset,
+  type ToolkitConfig,
+} from "@brainervirus/workit-core/src/core/config.ts";
+import { buildSetupPreview, parseList, type SetupMutation } from "./logic";
 import {
   createInitialDraft,
   reducer,
@@ -27,6 +31,7 @@ const BRANCH_PRESETS: { label: string; value: BranchPreset }[] = [
 const VCS_PROVIDERS = [
   { label: "GitLab", value: "gitlab" },
   { label: "GitHub", value: "github" },
+  { label: "Skip — configure later", value: "skip" },
 ];
 
 const LOCALE_CHOICES = ["en", "es-CL"];
@@ -116,19 +121,13 @@ function timezoneOptions(current: string): { label: string; value: string }[] {
   return [...list, { label: "Other…", value: "other" }];
 }
 
-function effectivePolicy(values: SetupValues): {
-  preset: BranchPreset;
-  allowed: string[];
-  protectedNames: string[];
-} {
-  const preset = values.branchPreset;
-  return preset === "custom"
-    ? {
-        preset,
-        allowed: parseList(values.branchAllowed),
-        protectedNames: parseList(values.branchProtected),
-      }
-    : { preset, allowed: PRESETS[preset].allowed, protectedNames: PRESETS[preset].protected };
+function effectivePolicy(values: SetupValues): ToolkitConfig["branchPolicy"] {
+  // RL-02: one shared preset merge — non-custom presets always reset their
+  // derived allowed/protected fields, custom uses the validated draft input.
+  return mergePreset(values.branchPreset, {
+    allowed: parseList(values.branchAllowed),
+    protectedNames: parseList(values.branchProtected),
+  });
 }
 
 export function Wizard({ onExit }: { onExit: (complete: boolean) => void }): JSX.Element {
@@ -163,6 +162,19 @@ export function Wizard({ onExit }: { onExit: (complete: boolean) => void }): JSX
       <Screen key={draft.screen} draft={draft} dispatch={dispatch} />
     </Box>
   );
+}
+
+function describeMutation(m: SetupMutation): string {
+  switch (m.type) {
+    case "create-file":
+      return `+ create ${m.path}`;
+    case "merge-json":
+      return `+ write ${m.path}`;
+    case "update-workspaces":
+      return `+ update ${m.path} (${m.entries.length} workspace${m.entries.length === 1 ? "" : "s"})`;
+    case "append-gitignore":
+      return `+ append ${m.path} (${m.entries.length} entr${m.entries.length === 1 ? "y" : "ies"})`;
+  }
 }
 
 function Screen({ draft, dispatch }: ScreenProps): JSX.Element {
@@ -272,7 +284,7 @@ function Screen({ draft, dispatch }: ScreenProps): JSX.Element {
               Allowed: <Text color="green">{policy.allowed.join(", ") || "—"}</Text>
             </Text>
             <Text>
-              Protected: <Text color="green">{policy.protectedNames.join(", ") || "—"}</Text>
+              Protected: <Text color="green">{policy.protected.join(", ") || "—"}</Text>
             </Text>
           </Box>
           <Text dimColor>
@@ -382,6 +394,10 @@ function Screen({ draft, dispatch }: ScreenProps): JSX.Element {
       );
     case "summary": {
       const policy = effectivePolicy(draft.values);
+      // WZ-08: the summary renders the authoritative preview (read-only) — the
+      // exact mutations Apply would perform. Malformed setup state (WZ-06)
+      // blocks Apply: no confirm control is mounted until it is fixed.
+      const preview = buildSetupPreview(draft.values);
       return (
         <Box flexDirection="column" gap={1}>
           <Text bold color="cyan">
@@ -398,10 +414,13 @@ function Screen({ draft, dispatch }: ScreenProps): JSX.Element {
           </Text>
           <Text>
             Branch policy: <Text color="green">{policy.preset}</Text> — allowed:{" "}
-            {policy.allowed.join(", ")} · protected: {policy.protectedNames.join(", ")}
+            {policy.allowed.join(", ")} · protected: {policy.protected.join(", ")}
           </Text>
           <Text>
-            YouTrack base URL: <Text color="green">{draft.values.baseUrl}</Text>
+            YouTrack base URL:{" "}
+            <Text color="green">
+              {draft.values.baseUrl.trim() ? draft.values.baseUrl : "— (skip)"}
+            </Text>
           </Text>
           <Text>
             VCS provider: <Text color="green">{draft.values.vcsProvider}</Text>
@@ -409,13 +428,54 @@ function Screen({ draft, dispatch }: ScreenProps): JSX.Element {
           <Text>
             Project hygiene: <Text color="green">{draft.values.applyProject ? "yes" : "no"}</Text>
           </Text>
-          <ConfirmInput
-            defaultChoice="confirm"
-            submitOnEnter={false}
-            onConfirm={() => dispatch({ type: "apply" })}
-            onCancel={() => {}}
-          />
-          <Text dimColor>y to apply · b Back · Esc Cancel</Text>
+          {preview.overrides.length > 0 && (
+            <Box flexDirection="column" gap={0}>
+              <Text bold>Environment overrides (not applied by the wizard):</Text>
+              {preview.overrides.map((o) => (
+                <Text key={o.envKey} color="yellow">
+                  {o.envKey} → {o.affects}
+                </Text>
+              ))}
+            </Box>
+          )}
+          {preview.ok ? (
+            <Box flexDirection="column" gap={0}>
+              <Text bold>Will apply:</Text>
+              {preview.mutations.map((m) => (
+                <Text key={`${m.type}:${m.path}`}>{describeMutation(m)}</Text>
+              ))}
+              {preview.preserved.map((p) => (
+                <Text key={p} color="green">
+                  preserve {p} (existing token)
+                </Text>
+              ))}
+            </Box>
+          ) : (
+            <Box flexDirection="column" gap={0}>
+              <Text bold color="red">
+                Apply blocked — malformed configuration:
+              </Text>
+              {preview.blocked.map((b) => (
+                <Text key={b} color="red">
+                  {b}
+                </Text>
+              ))}
+              <Text dimColor>
+                Fix or remove the blocked file above, then return here. Esc Cancel.
+              </Text>
+            </Box>
+          )}
+          {preview.ok && (
+            <ConfirmInput
+              defaultChoice="confirm"
+              submitOnEnter={false}
+              onConfirm={() => dispatch({ type: "apply" })}
+              onCancel={() => {}}
+            />
+          )}
+          <Text dimColor>
+            {preview.ok ? "y to apply · b Back · Esc Cancel" : "b Back · Esc Cancel"}
+          </Text>
         </Box>
       );
     }

@@ -301,3 +301,85 @@ test("no competing Enter/provider race — one submit path per screen", async ()
   tty.unmount();
   cleanup();
 });
+
+// ---------------------------------------------------------------------------
+// Apply preview (Task 13: WZ-08 preview is authoritative, WZ-06 malformed
+// state blocks Apply, WZ-04 integrations are optional)
+// ---------------------------------------------------------------------------
+
+test("summary shows the authoritative preview and Apply completes with it", async () => {
+  const base = mkdtempSync(path.join(os.tmpdir(), "workit-wiz-"));
+  const configPath = path.join(base, "config");
+  process.env.WORKFLOW_TOOLKIT_CONFIG = configPath;
+  process.env.WORKFLOW_YT_BASE_URL = "https://env.example.com";
+  try {
+    mkdirSync(configPath, { recursive: true });
+    writeFileSync(path.join(configPath, "config.json"), JSON.stringify(seedConfig), "utf8");
+    writeFileSync(
+      path.join(configPath, "workspaces.json"),
+      JSON.stringify({
+        workspaces: [{ name: "work", glob: "/work/**", vcs: { provider: "gitlab" } }],
+      }),
+      "utf8",
+    );
+    const exitCalls: boolean[] = [];
+    const tty = await renderInk(<Wizard onExit={(ok) => exitCalls.push(ok)} />);
+    await tty.keys(SPACE, ENTER); // -> locale
+    await tty.keys(ENTER); // -> timezone
+    await tty.keys(ENTER); // -> branchPreset
+    await tty.keys(ENTER); // -> youtrack
+    await tty.keys("https://yt.example.com", ENTER); // -> vcs
+    await tty.keys(ENTER); // -> workspaces
+    await tty.keys(ENTER); // -> project
+    await tty.keys("y"); // -> summary
+
+    const frame = tty.lastFrame();
+    expect(frame).toContain("Will apply");
+    expect(frame).toContain("config.json");
+    expect(frame).toContain("youtrack.json");
+    expect(frame).toContain("workspaces.json");
+    expect(frame).toContain("https://yt.example.com");
+    expect(frame).toContain("WORKFLOW_YT_BASE_URL"); // active override exposed
+
+    await tty.keys("y"); // apply
+    expect(exitCalls).toEqual([true]);
+    tty.unmount();
+  } finally {
+    delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+    delete process.env.WORKFLOW_YT_BASE_URL;
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test("malformed configuration blocks Apply in the TTY flow (WZ-06)", async () => {
+  const base = mkdtempSync(path.join(os.tmpdir(), "workit-wiz-"));
+  const configPath = path.join(base, "config");
+  process.env.WORKFLOW_TOOLKIT_CONFIG = configPath;
+  try {
+    mkdirSync(configPath, { recursive: true });
+    writeFileSync(path.join(configPath, "config.json"), JSON.stringify(seedConfig), "utf8");
+    writeFileSync(path.join(configPath, "youtrack.json"), "{ not json", "utf8");
+    const exitCalls: boolean[] = [];
+    const tty = await renderInk(<Wizard onExit={(ok) => exitCalls.push(ok)} />);
+    await tty.keys(SPACE, ENTER); // -> locale
+    await tty.keys(ENTER); // -> timezone
+    await tty.keys(ENTER); // -> branchPreset
+    await tty.keys(ENTER); // -> youtrack
+    await tty.keys(ENTER); // -> vcs
+    await tty.keys(ENTER); // -> workspaces
+    await tty.keys(ENTER); // -> project
+    await tty.keys("y"); // -> summary
+
+    const frame = tty.lastFrame();
+    expect(frame).toContain("Apply blocked");
+    expect(frame).toContain("youtrack.json");
+    expect(frame).not.toContain("Will apply");
+
+    await tty.keys("y"); // ignored: no confirm control, never completes
+    expect(exitCalls).toEqual([]);
+    tty.unmount();
+  } finally {
+    delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+    rmSync(base, { recursive: true, force: true });
+  }
+});

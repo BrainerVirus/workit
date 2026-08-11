@@ -1,11 +1,12 @@
 import {
+  mergePreset,
   readConfig,
   type BranchPreset,
   type ToolkitConfig,
 } from "@brainervirus/workit-core/src/core/config.ts";
 import type { WorkspaceConfig } from "@brainervirus/workit-core/src/core/workspaces.ts";
 import {
-  DEFAULT_BASE_URL,
+  loadWorkspaces,
   parseList,
   validateBaseUrl,
   validateLocale,
@@ -43,7 +44,7 @@ export type SetupValues = {
   branchAllowed: string;
   branchProtected: string;
   baseUrl: string;
-  vcsProvider: VcsProvider;
+  vcsProvider: VcsProvider | "skip";
   workspaces: WorkspaceConfig[];
   applyProject: boolean;
 };
@@ -146,6 +147,9 @@ function validateScreen(
         ? null
         : { field: "branchProtected", message: "at least one protected branch name is required" };
     case "youtrack": {
+      // WZ-04: YouTrack is optional — an empty base URL means "skip this
+      // integration" and produces no youtrack mutations in the preview.
+      if (values.baseUrl.trim() === "") return null;
       const error = validateBaseUrl(values.baseUrl);
       return error ? { field: "baseUrl", message: error } : null;
     }
@@ -172,7 +176,9 @@ function setTextValue(
             ? parseList(value).length > 0
               ? null
               : "at least one protected branch name is required"
-            : validateBaseUrl(value);
+            : value.trim() === ""
+              ? null
+              : validateBaseUrl(value);
   const errors = { ...draft.errors };
   if (message) errors[field] = message;
   else delete errors[field];
@@ -180,6 +186,9 @@ function setTextValue(
 }
 
 export function createInitialDraft(config: ToolkitConfig = readConfig()): WizardDraft {
+  // RL-02/CA-23: the draft's allowed/protected values always derive from the
+  // preset (one shared merge), never from divergent persisted values.
+  const policy = mergePreset(config.branchPolicy.preset, {}, config);
   return {
     screen: "platforms",
     values: {
@@ -187,11 +196,13 @@ export function createInitialDraft(config: ToolkitConfig = readConfig()): Wizard
       locale: config.locale,
       timezone: config.timezone,
       branchPreset: config.branchPolicy.preset,
-      branchAllowed: config.branchPolicy.allowed.join(", "),
-      branchProtected: config.branchPolicy.protected.join(", "),
-      baseUrl: DEFAULT_BASE_URL,
+      branchAllowed: policy.allowed.join(", "),
+      branchProtected: policy.protected.join(", "),
+      // WZ-04/CA-14: no organization-specific default base URL — empty means
+      // the YouTrack integration is not selected.
+      baseUrl: "",
       vcsProvider: "gitlab",
-      workspaces: [],
+      workspaces: loadWorkspaces(),
       applyProject: false,
     },
     errors: {},
@@ -213,7 +224,7 @@ export function reducer(draft: WizardDraft, action: WizardAction): WizardDraft {
         case "vcsProvider":
           return {
             ...draft,
-            values: { ...draft.values, vcsProvider: action.value as VcsProvider },
+            values: { ...draft.values, vcsProvider: action.value as VcsProvider | "skip" },
           };
         case "applyProject":
           return { ...draft, values: { ...draft.values, applyProject: action.value } };

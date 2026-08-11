@@ -39,6 +39,28 @@ export const PRESETS: Record<BranchPreset, { allowed: string[]; protected: strin
   custom: { allowed: [], protected: [] },
 };
 
+// RL-02: one shared preset merge helper. Changing the preset resets every
+// derived policy field from PRESETS; only `custom` carries explicit values
+// (falling back to the current policy when none are given).
+export const mergePreset = (
+  preset: BranchPreset,
+  input: { allowed?: string[]; protectedNames?: string[] } = {},
+  current: { branchPolicy: ToolkitConfig["branchPolicy"] } = {
+    branchPolicy: { preset, allowed: [], protected: [] },
+  },
+): ToolkitConfig["branchPolicy"] => {
+  const defs = PRESETS[preset];
+  return {
+    preset,
+    allowed:
+      preset === "custom" ? (input.allowed ?? current.branchPolicy.allowed) : [...defs.allowed],
+    protected:
+      preset === "custom"
+        ? (input.protectedNames ?? current.branchPolicy.protected)
+        : [...defs.protected],
+  };
+};
+
 export const resolveConfigDir = (): string =>
   process.env.WORKFLOW_TOOLKIT_CONFIG ??
   process.env.WORKFLOW_TOOLKIT_CONFIG_DIR ??
@@ -117,8 +139,7 @@ const readSafe = (p: string): string | null => {
   }
 };
 
-export const readConfig = (): ToolkitConfig => {
-  const raw = readSafe(path.join(configDir(), "config.json"));
+const parseConfig = (raw: string | null): ToolkitConfig => {
   if (!raw) return DEFAULTS;
   try {
     const parsed = JSON.parse(raw) as Partial<ToolkitConfig>;
@@ -148,6 +169,12 @@ export const readConfig = (): ToolkitConfig => {
     return DEFAULTS;
   }
 };
+
+export const readConfig = (): ToolkitConfig =>
+  parseConfig(readSafe(path.join(configDir(), "config.json")));
+
+export const readConfigFromDir = (dir: string): ToolkitConfig =>
+  parseConfig(readSafe(path.join(dir, "config.json")));
 
 export const writeConfig = (config: ToolkitConfig): void => {
   const dir = configDir();
