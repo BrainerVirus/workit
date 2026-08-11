@@ -29,8 +29,10 @@ const tmp = (prefix: string) => mkdtempSync(path.join(os.tmpdir(), prefix));
 
 // The pack flow runs ONLY through these sources: a sandbox copy + the
 // release-time workspace rewrite + each adapter's own build + bun pm pack.
+// The Task 24 gate script reuses the same pack-only candidate.
 const PACK_FLOW_SOURCES = [
   path.join("test", "shared", "helpers", "packages.ts"),
+  path.join("scripts", "verify-release-candidate.ts"),
   path.join("packages", "workit-core", "scripts", "rewrite-workspace-deps.ts"),
   path.join("packages", "workit-opencode", "scripts", "build.ts"),
   path.join("packages", "workit-cursor", "scripts", "build.ts"),

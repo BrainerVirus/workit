@@ -13,6 +13,8 @@
     ".": "./packages/workit-opencode/src/plugin.ts"
   },
   "scripts": {
+    "build": "bun packages/workit-opencode/scripts/build.ts && bun packages/workit-cursor/scripts/build.ts && bun packages/workit-cli/scripts/build.ts",
+    "verify:release-candidate": "bun scripts/verify-release-candidate.ts",
     "lint": "oxlint --deny-warnings packages/workit-core/src packages/workit-opencode/src packages/workit-cli/src packages/workit-cursor/mcp/server.ts test",
     "lint:fix": "oxlint --fix packages/workit-core/src packages/workit-opencode/src packages/workit-cli/src packages/workit-cursor/mcp/server.ts test",
     "format": "oxfmt packages/workit-core/src packages/workit-opencode/src packages/workit-cli/src packages/workit-cursor/mcp/server.ts test package.json packages/*/package.json tsconfig.json",

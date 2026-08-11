@@ -34,7 +34,8 @@
     "access": "public"
   },
   "scripts": {
-    "build": "bun scripts/build.ts"
+    "build": "bun scripts/build.ts",
+    "prepublishOnly": "bun run build"
   },
   "dependencies": {
     "@brainervirus/workit-core": "workspace:*",

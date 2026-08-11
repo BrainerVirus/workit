@@ -31,6 +31,16 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      # AR-01/CA-33: a clean checkout tracks no adapter dist/, so the adapters
+      # must be built here — before the gate and before any publish path runs.
+      - name: Build adapters
+        run: bun run build
+
+      # AR-01/CA-33: the pack-only candidate gate (no registry, tag, or
+      # marketplace op) must pass before semantic-release can publish.
+      - name: Verify release candidate
+        run: bun run verify:release-candidate
+
       - name: Release
         run: npx semantic-release
         env:
@@ -41,11 +51,3 @@ jobs:
           # placeholder that wins over NPM_TOKEN. NPM_TOKEN alone is not read
           # by npm when a userconfig exists.
           NODE_AUTH_TOKEN: ${{ secrets.NPMJS }}
-
-      - name: Verify workspace:* rewritten before publish
-        run: |
-          set -euo pipefail
-          if grep -q 'workspace:\*' packages/workit-opencode/package.json packages/workit-cursor/package.json packages/workit-cli/package.json; then
-            echo "workspace:* leaked — platform packages published without @brainervirus/workit-core" >&2
-            exit 1
-          fi
