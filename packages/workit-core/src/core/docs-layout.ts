@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, realpathSync } from "node:fs";
+import { existsSync, mkdirSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 
 // One canonical document path contract (DC-01, DC-02, DC-04, DC-14): workspace
@@ -189,6 +189,10 @@ export const prepareDocsLayout = (input: {
       mkdirSync(dir, { recursive: true });
       const rel = posix(path.relative(layout.workspace, dir));
       created.push(rel || ".");
+    } else if (!statSync(dir).isDirectory()) {
+      throw new Error(
+        `path exists but is not a directory: ${posix(path.relative(layout.workspace, dir))}`,
+      );
     }
   };
   try {
@@ -230,7 +234,11 @@ export const resolveDocsPath = (input: {
   try {
     const abs = canonicalize(workspace, input.path);
     const relative = posix(path.relative(workspace, abs));
-    if (!relative.startsWith("docs/") || relative.startsWith(`docs/${LEGACY_SLUG}/`)) {
+    if (
+      !relative.startsWith("docs/") ||
+      relative === `docs/${LEGACY_SLUG}` ||
+      relative.startsWith(`docs/${LEGACY_SLUG}/`)
+    ) {
       return {
         ok: false,
         error: `path must live under docs/ and not under docs/${LEGACY_SLUG}/: ${input.path}`,

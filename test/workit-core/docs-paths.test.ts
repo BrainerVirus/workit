@@ -16,7 +16,13 @@ import {
   prepareDocsLayout,
   probeLegacyDocs,
   resolveCanonicalLayout,
+  resolveDocsPath,
 } from "../../packages/workit-core/src/core/docs-layout";
+import {
+  sddAppendProgress,
+  sddReviewPackage,
+  sddTaskBrief,
+} from "../../packages/workit-core/src/core/sdd";
 import { createDocsRepoTools } from "../../packages/workit-opencode/src/tools/docs-repo";
 
 const posix = (p: string) => p.split(path.sep).join("/");
@@ -345,6 +351,96 @@ test("workflow_docs_layout prepare registers on the opencode adapter and prepare
       expect(posix(out.data.layout.dir)).toBe(posix(realpathSync(path.join(root, "docs", slug))));
       expect(out.data.created.sort()).toEqual(["docs", `docs/${slug}`]);
     }
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("resolveDocsPath rejects the reserved legacy root exactly and as a prefix", () => {
+  const root = tmp();
+  try {
+    mkdirSync(path.join(root, "docs", "superpowers"), { recursive: true });
+    const exact = resolveDocsPath({ workspace_root: root, path: "docs/superpowers" });
+    expect(exact.ok).toBe(false);
+    if (!exact.ok) expect(exact.error).toMatch(/legacy|superpowers/i);
+    const nested = resolveDocsPath({
+      workspace_root: root,
+      path: "docs/superpowers/brief.md",
+    });
+    expect(nested.ok).toBe(false);
+    const sibling = resolveDocsPath({ workspace_root: root, path: "docs/ok-slug/sdd" });
+    expect(sibling.ok).toBe(true);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("sddAppendProgress rejects the reserved legacy root without throwing", () => {
+  const root = tmp();
+  try {
+    mkdirSync(path.join(root, "docs", "superpowers"), { recursive: true });
+    const res = sddAppendProgress({
+      progress_path: "docs/superpowers",
+      line: "Task 2: complete (commits abcdef0..1234567, tests pass)",
+      workspace_root: root,
+    });
+    expect("error" in res).toBe(true);
+    if ("error" in res) expect(String(res.error)).toMatch(/legacy|directory|superpowers/i);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("sddAppendProgress returns an error when the progress path is a directory", () => {
+  const root = tmp();
+  try {
+    mkdirSync(path.join(root, "docs", "x", "sdd"), { recursive: true });
+    const res = sddAppendProgress({
+      progress_path: "docs/x/sdd",
+      line: "Task 2: complete (commits abcdef0..1234567, tests pass)",
+      workspace_root: root,
+    });
+    expect("error" in res).toBe(true);
+    if ("error" in res) expect(String(res.error)).toMatch(/directory/i);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("sddTaskBrief and sddReviewPackage do not write into the reserved legacy root", () => {
+  const root = tmp();
+  try {
+    mkdirSync(path.join(root, "docs", "superpowers"), { recursive: true });
+    writeFileSync(path.join(root, "docs", "superpowers", "existing.md"), "keep", "utf8");
+    const before = readdirSync(path.join(root, "docs", "superpowers")).sort();
+    const brief = sddTaskBrief({
+      sdd_dir: "docs/superpowers",
+      task_id: 1,
+      section_text: "- [ ] No\n",
+      workspace_root: root,
+    });
+    expect("error" in brief).toBe(true);
+    const review = sddReviewPackage({
+      sdd_dir: "docs/superpowers",
+      base_sha: "abcdef0",
+      head_sha: "1234567",
+      workspace_root: root,
+    });
+    expect("error" in review).toBe(true);
+    expect(readdirSync(path.join(root, "docs", "superpowers")).sort()).toEqual(before);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("prepareDocsLayout errors when docs/<slug> exists as a regular file", () => {
+  const root = tmp();
+  try {
+    mkdirSync(path.join(root, "docs"), { recursive: true });
+    writeFileSync(path.join(root, "docs", slug), "not a directory", "utf8");
+    const res = prepareDocsLayout({ workspace_root: root, slug });
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error).toMatch(/directory/i);
   } finally {
     cleanup(root);
   }

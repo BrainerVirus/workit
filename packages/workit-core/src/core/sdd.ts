@@ -1,4 +1,11 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync } from "node:fs";
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { parseTasksFromPlan } from "./docs-validate";
@@ -192,6 +199,9 @@ export function sddAppendProgress({
   const trimmed = line.trim();
   if (!PROGRESS_RE.test(trimmed)) {
     return { error: "invalid progress line format" };
+  }
+  if (existsSync(path_) && statSync(path_).isDirectory()) {
+    return { error: `progress path is a directory: ${progress_path}` };
   }
   mkdirSync(path.dirname(path_), { recursive: true });
   appendFileSync(path_, trimmed + "\n", "utf8");
