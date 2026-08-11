@@ -1,5 +1,5 @@
 import { afterAll, expect, test } from "bun:test";
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import {
   runDoctor,
@@ -65,6 +65,81 @@ test("detects a stale opencode pin and clears once re-pinned", () => {
     JSON.stringify({ plugin: [`file://${fixture.dev}/packages/workit-opencode/src/plugin.ts`] }),
   );
   expect(check(run(), "stale_pin").status).toBe("pass");
+});
+
+test("detects a stale git+file workit pin and clears once re-pinned", () => {
+  writeConfig(
+    fixture.opencodeConfig,
+    JSON.stringify({ plugin: ["workflow-toolkit-opencode@git+file:///legacy"] }),
+  );
+  const report = run();
+  expect(report.exitCode).not.toBe(0);
+  const stale = check(report, "stale_pin");
+  expect(stale.status).toBe("fail");
+  expect(stale.detail).toContain("stale workit pin");
+  expect(stale.fix).toBeTruthy();
+
+  writeConfig(
+    fixture.opencodeConfig,
+    JSON.stringify({ plugin: [`file://${fixture.dev}/packages/workit-opencode/src/plugin.ts`] }),
+  );
+  expect(check(run(), "stale_pin").status).toBe("pass");
+});
+
+test("detects a workit pin pointing at a deleted file and clears once restored", () => {
+  const plugin = path.join(fixture.dev, "packages/workit-opencode/src/plugin.ts");
+  writeConfig(fixture.opencodeConfig, JSON.stringify({ plugin: [`file://${plugin}`] }));
+  rmSync(plugin, { force: true });
+  try {
+    const report = run();
+    expect(report.exitCode).not.toBe(0);
+    const stale = check(report, "stale_pin");
+    expect(stale.status).toBe("fail");
+    expect(stale.detail).toContain("missing file");
+    expect(stale.fix).toBeTruthy();
+  } finally {
+    writeConfig(plugin, "export default {};\n");
+  }
+  expect(check(run(), "stale_pin").status).toBe("pass");
+});
+
+test("accepts a string plugin entry (not just an array) when checking the pin", () => {
+  writeConfig(
+    fixture.opencodeConfig,
+    JSON.stringify({ plugin: `file://${fixture.dev}/packages/workit-opencode/src/plugin.ts` }),
+  );
+  try {
+    expect(check(run(), "stale_pin").status).toBe("pass");
+  } finally {
+    writeConfig(
+      fixture.opencodeConfig,
+      JSON.stringify({ plugin: [`file://${fixture.dev}/packages/workit-opencode/src/plugin.ts`] }),
+    );
+  }
+});
+
+test("cursor host never inspects the opencode config for stale pins", () => {
+  writeConfig(
+    fixture.opencodeConfig,
+    JSON.stringify({ plugin: ["workflow-toolkit-opencode@git+file:///legacy"] }),
+  );
+  try {
+    const report = runDoctor({
+      host: "cursor",
+      home: fixture.home,
+      configDir: fixture.configDir,
+      stateDir: fixture.stateDir,
+      dev: fixture.dev,
+      cwd: fixture.cwd,
+    });
+    expect(report.exitCode).toBe(0);
+    expect(check(report, "stale_pin").status).toBe("pass");
+  } finally {
+    writeConfig(
+      fixture.opencodeConfig,
+      JSON.stringify({ plugin: [`file://${fixture.dev}/packages/workit-opencode/src/plugin.ts`] }),
+    );
+  }
 });
 
 test("detects mixed core versions across adapters and clears once aligned", () => {
@@ -234,6 +309,18 @@ test("detects malformed config files and clears once repaired", () => {
   expect(check(run(), "malformed_config").status).toBe("pass");
 });
 
+test("a JSON scalar or array config file is treated as empty, not malformed", () => {
+  const configFile = path.join(fixture.configDir, "config.json");
+  for (const content of ['"just a string"', "[1, 2, 3]"]) {
+    writeConfig(configFile, content);
+    const report = run();
+    expect(check(report, "malformed_config").status, content).toBe("pass");
+    expect(report.exitCode).toBe(0);
+  }
+  rmSync(configFile, { force: true });
+  expect(check(run(), "malformed_config").status).toBe("pass");
+});
+
 test("detects a workspace mismatch and clears once the glob matches", () => {
   const workspacesFile = path.join(fixture.configDir, "workspaces.json");
   writeConfig(
@@ -271,6 +358,23 @@ test("credential metadata flags missing/unsafe-mode/placeholder token files", ()
   const placeholder = run();
   expect(check(placeholder, "credential_metadata").status).toBe("fail");
   expect(JSON.stringify(placeholder)).not.toContain("YOUR_TOKEN_HERE");
+
+  rmSync(youtrackJson, { force: true });
+  rmSync(tokenFile, { force: true });
+});
+
+test("credential metadata only flags providers actually configured in vcs.json", () => {
+  const vcsFile = path.join(fixture.configDir, "vcs.json");
+  const gitlabToken = path.join(fixture.configDir, "gitlab.token");
+  writeConfig(vcsFile, JSON.stringify({ gitlab: { tokenFile: "gitlab.token" } }));
+  writeConfig(gitlabToken, "glpat-ok-11\n", 0o600);
+  try {
+    expect(check(run(), "credential_metadata").status).toBe("pass");
+  } finally {
+    rmSync(vcsFile, { force: true });
+    rmSync(gitlabToken, { force: true });
+  }
+  expect(check(run(), "credential_metadata").status).toBe("pass");
 });
 
 test("detects unwritable log dir and clears once writable", () => {
@@ -286,6 +390,14 @@ test("detects unwritable log dir and clears once writable", () => {
     rmSync(logsBlocker, { force: true });
   }
   expect(check(run(), "log_writable").status).toBe("pass");
+});
+
+test("log writability probe leaves no stray file behind", () => {
+  const logsDir = path.join(fixture.stateDir, "logs");
+  writeConfig(path.join(logsDir, "doctor-probe.tmp"), '{"probe":true}\n');
+  const report = run();
+  expect(check(report, "log_writable").status).toBe("pass");
+  expect(readdirSync(logsDir).filter((f) => f.startsWith("doctor-probe"))).toEqual([]);
 });
 
 test("no network code path runs: the report marks offline and never spawns network tools", () => {

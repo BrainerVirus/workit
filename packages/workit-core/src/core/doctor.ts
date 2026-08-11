@@ -132,14 +132,31 @@ const resolve = (options: DoctorOptions): Resolved => {
 
 const readJson = (p: string): Record<string, any> | null => {
   try {
-    const raw = readFileSync(p, "utf8");
-    const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+    const parsed = JSON.parse(readFileSync(p, "utf8"));
+    return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)
       ? (parsed as Record<string, any>)
       : null;
   } catch {
     return null;
   }
+};
+
+// A scalar/array JSON file parses fine but is not a config object; only a parse
+// failure means the file is malformed.
+const parsesAsJson = (p: string): boolean => {
+  try {
+    JSON.parse(readFileSync(p, "utf8"));
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+// OpenCode accepts `plugin` as a string or an array; normalize before reading.
+const pluginEntries = (cfg: Record<string, any> | null): string[] => {
+  const plugin = cfg?.plugin;
+  const list = Array.isArray(plugin) ? plugin : typeof plugin === "string" ? [plugin] : [];
+  return list.map(String).filter(isWorkitPlugin);
 };
 
 const commandOnPath = (name: string, env: NodeJS.ProcessEnv): boolean => {
@@ -415,11 +432,18 @@ const staleEntry = (entry: string): "ok" | "stale" | "missing-file" => {
 };
 
 const checkStalePin = (res: Resolved): DoctorCheck => {
+  if (res.host === "cursor") {
+    return {
+      id: "stale_pin",
+      status: "pass",
+      detail: "opencode pin not inspected on the cursor host",
+    };
+  }
   if (!existsSync(res.opencodeConfig)) {
     return { id: "stale_pin", status: "pass", detail: "no opencode config — not registered" };
   }
   const cfg = readJson(res.opencodeConfig);
-  const entries = Array.isArray(cfg?.plugin) ? cfg.plugin.map(String).filter(isWorkitPlugin) : [];
+  const entries = pluginEntries(cfg);
   if (entries.length === 0) {
     return {
       id: "stale_pin",
@@ -455,7 +479,7 @@ const checkDuplicateRegistration = (res: Resolved): DoctorCheck => {
 
   if (opencodeHost && existsSync(res.opencodeConfig)) {
     const cfg = readJson(res.opencodeConfig);
-    const entries = Array.isArray(cfg?.plugin) ? cfg.plugin.map(String).filter(isWorkitPlugin) : [];
+    const entries = pluginEntries(cfg);
     if (entries.length > 1)
       problems.push(`opencode registers ${entries.length} workit plugin entries`);
   }
@@ -511,7 +535,7 @@ const checkMalformedConfig = (res: Resolved): DoctorCheck => {
   if (opencodeHost && existsSync(res.opencodeConfig)) files.push(res.opencodeConfig);
   if (cursorHost && existsSync(res.cursorSettings)) files.push(res.cursorSettings);
   if (cursorHost && existsSync(res.cursorMcp)) files.push(res.cursorMcp);
-  const bad = files.filter((p) => readJson(p) === null);
+  const bad = files.filter((p) => !parsesAsJson(p));
   if (bad.length === 0)
     return { id: "malformed_config", status: "pass", detail: "config files parse" };
   return {
@@ -569,10 +593,13 @@ const checkCredentialMetadata = (res: Resolved): DoctorCheck => {
 
   const vcsJson = readJson(path.join(res.configDir, "vcs.json"));
   for (const key of ["gitlab", "github"] as const) {
-    const tf = vcsJson?.[key]?.tokenFile;
-    const fallback = path.join(res.configDir, `${key}.token`);
-    if (vcsJson) tokenPaths.push(typeof tf === "string" ? tf : fallback);
-    else if (existsSync(fallback)) tokenPaths.push(fallback);
+    const provider = vcsJson?.[key];
+    if (provider && typeof provider === "object") {
+      const tf = provider.tokenFile;
+      tokenPaths.push(typeof tf === "string" ? tf : path.join(res.configDir, `${key}.token`));
+    } else if (!vcsJson && existsSync(path.join(res.configDir, `${key}.token`))) {
+      tokenPaths.push(path.join(res.configDir, `${key}.token`));
+    }
   }
 
   if (tokenPaths.length === 0) {
@@ -608,11 +635,12 @@ const checkCredentialMetadata = (res: Resolved): DoctorCheck => {
 
 const checkLogWritable = (res: Resolved): DoctorCheck => {
   const logsDir = path.join(res.stateDir, "logs");
+  // Fixed-name probe: even a killed process leaves at most one bounded file that
+  // the next run overwrites; the finally removes it on any thrown path.
+  const probe = path.join(logsDir, "doctor-probe.tmp");
   try {
     mkdirSync(logsDir, { recursive: true, mode: 0o700 });
-    const probe = path.join(logsDir, `doctor-probe-${process.pid}.jsonl`);
     writeFileSync(probe, '{"probe":true}\n', { mode: 0o600 });
-    unlinkSync(probe);
     return { id: "log_writable", status: "pass", detail: "log directory writable" };
   } catch (err) {
     return {
@@ -621,6 +649,12 @@ const checkLogWritable = (res: Resolved): DoctorCheck => {
       detail: `log directory not writable: ${err instanceof Error ? err.message : String(err)}`,
       fix: `Fix permissions on ${logsDir} or set WORKFLOW_TOOLKIT_STATE to a writable directory`,
     };
+  } finally {
+    try {
+      unlinkSync(probe);
+    } catch {
+      /* already gone */
+    }
   }
 };
 
