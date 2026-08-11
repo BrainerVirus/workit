@@ -1,6 +1,8 @@
 import { expect, test } from "bun:test";
+import { existsSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
 import path from "node:path";
 import {
+  extractTarball,
   listTarball,
   packWorkspacePackages,
   readTarballFile,
@@ -203,5 +205,84 @@ test("adapter tarballs expose a top-level assets root and no runtime TypeScript"
       name,
     ).toBe(true);
     expect(tsEntries(tarball), name).toEqual([]);
+  }
+});
+
+// --- Finding: vendored content must be inert and internally consistent ---
+// The opencode build copies the core vendor skill tree into assets/vendor with a
+// filter that dropped only `.sh`, so executable shell/JS tools shipped alongside
+// skill markdown that (after filtering) referenced them. Packaged vendor content
+// must ship no executable or shebang file, and shipped vendor markdown must not
+// point at files that the build filtered out (unless explicitly allowlisted as
+// intentionally filtered operational tools).
+
+const SOURCE_VENDOR = path.join(REPO_ROOT, "packages/workit-core/vendor");
+
+// References in shipped vendor markdown to files that ARE filtered out of the
+// package by policy (active vendored shell/executables) and intentionally left
+// documented upstream. These are the ONLY allowed dead references.
+const FILTERED_REF_ALLOWLIST: Record<string, string[]> = {
+  "assets/vendor/superpowers/skills/subagent-driven-development/SKILL.md": [
+    "scripts/review-package",
+    "scripts/task-brief",
+  ],
+  "assets/vendor/superpowers/skills/subagent-driven-development/task-reviewer-prompt.md": [
+    "scripts/review-package",
+    "scripts/task-brief",
+  ],
+  "assets/vendor/superpowers/skills/systematic-debugging/root-cause-tracing.md": [
+    "./find-polluter.sh",
+  ],
+  "assets/vendor/superpowers/skills/writing-skills/SKILL.md": ["./render-graphs.js"],
+};
+
+const vendorRefRe = /(\bscripts\/|\.\/)([\w./-]+)/g;
+
+const walkFiles = (dir: string, visit: (file: string) => void): void => {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const p = path.join(dir, entry.name);
+    if (entry.isDirectory()) walkFiles(p, visit);
+    else visit(p);
+  }
+};
+
+test("adapter assets/vendor ships no executable or shebang files (finding)", () => {
+  const packs = packWorkspacePackages();
+  for (const pack of packs) {
+    if (!listTarball(pack.tarball).some((e) => e.startsWith("assets/vendor/"))) continue;
+    const { root, packageDir } = extractTarball(pack.tarball);
+    try {
+      walkFiles(path.join(packageDir, "assets/vendor"), (file) => {
+        const rel = path.relative(packageDir, file).split(path.sep).join("/");
+        expect(statSync(file).mode & 0o111, `${pack.packageName}/${rel}`).toBe(0);
+        const head = readFileSync(file).subarray(0, 2).toString("latin1");
+        expect(head, `${pack.packageName}/${rel}`).not.toBe("#!");
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }
+});
+
+test("shipped vendor markdown references no filtered-out files (finding)", () => {
+  const packs = packWorkspacePackages();
+  const tarball = byName(packs, OPENCODE).tarball;
+  const entries = new Set(listTarball(tarball));
+  for (const entry of entries) {
+    if (!entry.endsWith(".md") || !entry.startsWith("assets/vendor/")) continue;
+    const md = readTarballFile(tarball, entry);
+    const mdDir = entry.slice(0, entry.lastIndexOf("/"));
+    const allow = FILTERED_REF_ALLOWLIST[entry] ?? [];
+    vendorRefRe.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = vendorRefRe.exec(md)) !== null) {
+      const ref = m[1] + m[2];
+      // `./x` resolves inside the same skill dir; `scripts/x` under its scripts/.
+      const target = m[1] === "./" ? `${mdDir}/${m[2]}` : `${mdDir}/${ref}`;
+      if (entries.has(target)) continue; // ships → consistent
+      const source = path.join(SOURCE_VENDOR, target.slice("assets/vendor/".length));
+      if (!existsSync(source)) continue; // illustrative prose, never existed upstream
+      expect(allow, `${entry}: ${ref}`).toContain(ref);
+    }
   }
 });

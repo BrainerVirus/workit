@@ -12,10 +12,13 @@ import { fileURLToPath } from "node:url";
 // and a bundled adapter entry (packages/<pkg>/dist/….js).
 export const packageRoot = (): string => {
   let dir = path.dirname(fileURLToPath(import.meta.url));
-  while (!existsSync(path.join(dir, "package.json"))) {
-    dir = path.dirname(dir);
+  while (true) {
+    const parent = path.dirname(dir);
+    // ponytail: stop at the filesystem root even without an ancestor package.json,
+    // so the upward walk can never loop forever.
+    if (existsSync(path.join(dir, "package.json")) || parent === dir) return dir;
+    dir = parent;
   }
-  return dir;
 };
 
 export const assetRoot = (): string => {

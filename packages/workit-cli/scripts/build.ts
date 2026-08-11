@@ -13,6 +13,7 @@ const coreDir = path.resolve(pkgDir, "..", "workit-core");
 const target = process.argv[2] ? path.resolve(process.argv[2]) : pkgDir;
 
 const dist = path.join(target, "dist");
+rmSync(dist, { recursive: true, force: true });
 mkdirSync(dist, { recursive: true });
 
 const build = spawnSync(
