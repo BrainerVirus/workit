@@ -50,6 +50,7 @@ const TEXT_SCREENS: ReadonlySet<WizardScreen> = new Set([
   "youtrack",
   "workspaceName",
   "workspaceGlob",
+  "branchPolicyDevelop",
 ]);
 
 // Deterministic match-preview samples derived from the current project path:
@@ -145,11 +146,14 @@ function effectivePolicy(values: SetupValues): ToolkitConfig["branchPolicy"] {
 
 // CA-06: proposal screen shown between workspaces and project when the
 // resolution root is a git repo. On mount it runs the shared detector and
-// dispatches the proposal into the draft; editing (integration / develop) is
-// component-local state — no extra top-level WizardScreens. Accepting stores
-// the proposal into values.branchPolicy so runInit applies it through the same
-// shared helper the host init action uses (byte-identical write).
-type BranchPolicyEditMode = "menu" | "integration" | "develop";
+// dispatches the proposal into the draft; the develop-branch edit is a real
+// top-level text screen ("branchPolicyDevelop") so 'b' types into the input
+// instead of navigating back (I2); the integration edit stays a component-local
+// select (selects already have correct b/Esc semantics on this screen).
+// Accepting stores the proposal into values.branchPolicy so runInit applies it
+// through the same shared helper the host init action uses (byte-identical
+// write).
+type BranchPolicyEditMode = "menu" | "integration";
 
 const BRANCH_POLICY_ACTIONS: { label: string; value: string }[] = [
   { label: "Accept defaults", value: "accept" },
@@ -165,6 +169,9 @@ const INTEGRATION_OPTIONS: { label: string; value: "pr" | "merge" }[] = [
 
 function BranchPolicyScreen({ draft, dispatch }: ScreenProps): JSX.Element {
   const detected = draft.values.branchPolicyDetected;
+  // I1: render the composed (edited) policy when present, the proposal otherwise
+  // so edits show live on return from the integration/develop editors.
+  const policy = draft.values.branchPolicy ?? detected;
   const [mode, setMode] = useState<BranchPolicyEditMode>("menu");
 
   useEffect(() => {
@@ -182,7 +189,7 @@ function BranchPolicyScreen({ draft, dispatch }: ScreenProps): JSX.Element {
         <Text bold>Step 5 — Branch policy · Integration</Text>
         <SelectList
           options={INTEGRATION_OPTIONS}
-          value={detected?.integration ?? "merge"}
+          value={policy?.integration ?? "merge"}
           onSelect={(value) => {
             dispatch({ type: "set", field: "branchPolicyIntegration", value });
             setMode("menu");
@@ -192,42 +199,26 @@ function BranchPolicyScreen({ draft, dispatch }: ScreenProps): JSX.Element {
       </Box>
     );
   }
-  if (mode === "develop") {
-    return (
-      <Box flexDirection="column" gap={1}>
-        <Text bold>Step 5 — Branch policy · Develop branch</Text>
-        <Text dimColor>Integration/develop branch name (leave empty to unset):</Text>
-        <TextInput
-          defaultValue={detected?.developBranch ?? ""}
-          onSubmit={(value) => {
-            dispatch({ type: "set", field: "branchPolicyDevelop", value });
-            setMode("menu");
-          }}
-        />
-        <Text dimColor>Enter to save · Esc Back</Text>
-      </Box>
-    );
-  }
   return (
     <Box flexDirection="column" gap={1}>
       <Text bold>Step 5 — Branch policy</Text>
-      {detected ? (
+      {policy ? (
         <Box flexDirection="column" gap={0}>
           <Text>
-            Detected preset: <Text color="green">{detected.preset}</Text>
+            Detected preset: <Text color="green">{policy.preset}</Text>
           </Text>
           <Text>
-            Develop branch: <Text color="green">{detected.developBranch ?? "—"}</Text>
+            Develop branch: <Text color="green">{policy.developBranch ?? "—"}</Text>
           </Text>
           <Text>
-            Integration: <Text color="green">{detected.integration}</Text>
+            Integration: <Text color="green">{policy.integration}</Text>
           </Text>
           <Text>
             Prefixes:{" "}
-            <Text color="green">{Object.values(detected.prefixes).join(", ") || "—"}</Text>
+            <Text color="green">{Object.values(policy.prefixes ?? {}).join(", ") || "—"}</Text>
           </Text>
           <Text>
-            Protected: <Text color="green">{detected.protected.join(", ") || "—"}</Text>
+            Protected: <Text color="green">{policy.protected?.join(", ") || "—"}</Text>
           </Text>
         </Box>
       ) : (
@@ -237,11 +228,13 @@ function BranchPolicyScreen({ draft, dispatch }: ScreenProps): JSX.Element {
         options={BRANCH_POLICY_ACTIONS}
         value="accept"
         onSelect={(value) => {
-          if (value === "accept" && detected) {
-            dispatch({ type: "set", field: "branchPolicy", value: detected });
+          // I1: Accept keeps whatever the user already edited; without edits it
+          // stores the detected proposal.
+          if (value === "accept" && policy) {
+            if (detected) dispatch({ type: "set", field: "branchPolicy", value: detected });
             dispatch({ type: "next" });
           } else if (value === "integration") setMode("integration");
-          else if (value === "develop") setMode("develop");
+          else if (value === "develop") dispatch({ type: "branchPolicyEditDevelop" });
           else dispatch({ type: "next" });
         }}
       />
@@ -604,6 +597,25 @@ function Screen({ draft, dispatch }: ScreenProps): JSX.Element {
       );
     case "branchPolicy":
       return <BranchPolicyScreen draft={draft} dispatch={dispatch} />;
+    case "branchPolicyDevelop":
+      return (
+        <Box flexDirection="column" gap={1}>
+          <Text bold>Step 5 — Branch policy · Develop branch</Text>
+          <Text dimColor>Integration/develop branch name (leave empty to unset):</Text>
+          <TextInput
+            defaultValue={
+              draft.values.branchPolicy?.developBranch ??
+              draft.values.branchPolicyDetected?.developBranch ??
+              ""
+            }
+            onSubmit={(value) => {
+              dispatch({ type: "set", field: "branchPolicyDevelop", value });
+              dispatch({ type: "next" });
+            }}
+          />
+          <Text dimColor>Enter to save · Esc Back</Text>
+        </Box>
+      );
     case "project":
       return (
         <Box flexDirection="column" gap={1}>

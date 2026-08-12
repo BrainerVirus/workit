@@ -42,6 +42,7 @@ export type WizardScreen =
   | "workspaceGlob"
   | "workspaceProvider"
   | "branchPolicy"
+  | "branchPolicyDevelop"
   | "project"
   | "summary"
   | "exit";
@@ -109,6 +110,7 @@ export type WizardAction =
   | { type: "workspaceDraftGlob"; value: string }
   | { type: "workspaceDraftProvider"; value: string }
   | { type: "workspaceSave" }
+  | { type: "branchPolicyEditDevelop" }
   | { type: "next" }
   | { type: "back" }
   | { type: "cancel" }
@@ -130,6 +132,7 @@ const NEXT: Record<WizardScreen, WizardScreen | null> = {
   workspaceGlob: "workspaceProvider",
   workspaceProvider: null,
   branchPolicy: "project",
+  branchPolicyDevelop: "branchPolicy",
   project: "summary",
   summary: null,
   exit: null,
@@ -151,6 +154,7 @@ const PREV: Record<WizardScreen, WizardScreen | null> = {
   workspaceGlob: "workspaceName",
   workspaceProvider: "workspaceGlob",
   branchPolicy: "workspaces",
+  branchPolicyDevelop: "branchPolicy",
   project: "branchPolicy",
   summary: "project",
   exit: null,
@@ -159,12 +163,12 @@ const PREV: Record<WizardScreen, WizardScreen | null> = {
 const skipsCustomBranch = (screen: WizardScreen, preset: BranchPreset): boolean =>
   (screen === "branchAllowed" || screen === "branchProtected") && preset !== "custom";
 
-// CA-06: the branch-policy screen only exists when the resolution root is a git
+// CA-06: the branch-policy screens only exist when the resolution root is a git
 // repo (a detected convention is meaningless otherwise). Only the branchPolicy
 // hop is gated — "project" is reached via that hop, never skipped itself — so a
 // non-git repo keeps the exact prior flow (workspaces ↔ project directly).
 const skipsBranchPolicy = (screen: WizardScreen): boolean =>
-  screen === "branchPolicy" &&
+  (screen === "branchPolicy" || screen === "branchPolicyDevelop") &&
   !existsSync(path.join(process.env.WORKFLOW_WORKSPACE_ROOT ?? process.cwd(), ".git"));
 
 function nextScreen(screen: WizardScreen, preset: BranchPreset): WizardScreen {
@@ -323,6 +327,9 @@ export function reducer(draft: WizardDraft, action: WizardAction): WizardDraft {
         case "branchPolicyDetected":
           return { ...draft, values: { ...draft.values, branchPolicyDetected: action.value } };
         case "branchPolicy":
+          // I1: an already-edited policy wins — edits compose and survive the
+          // Accept hop instead of being overwritten by the raw detected proposal.
+          if (draft.values.branchPolicy) return draft;
           return {
             ...draft,
             values: {
@@ -334,28 +341,30 @@ export function reducer(draft: WizardDraft, action: WizardAction): WizardDraft {
             },
           };
         case "branchPolicyIntegration": {
-          const detected = draft.values.branchPolicyDetected;
-          if (!detected) return draft;
+          // I1: compose on top of the current edited policy (or the detected
+          // proposal) so a later edit never silently reverts an earlier one.
+          const base = draft.values.branchPolicy ?? draft.values.branchPolicyDetected;
+          if (!base) return draft;
           return {
             ...draft,
             values: {
               ...draft.values,
               branchPolicy: {
-                ...detected,
-                developBranch: detected.developBranch ?? undefined,
+                ...base,
+                developBranch: base.developBranch ?? undefined,
                 integration: action.value,
               },
             },
           };
         }
         case "branchPolicyDevelop": {
-          const detected = draft.values.branchPolicyDetected;
-          if (!detected) return draft;
+          const base = draft.values.branchPolicy ?? draft.values.branchPolicyDetected;
+          if (!base) return draft;
           return {
             ...draft,
             values: {
               ...draft.values,
-              branchPolicy: { ...detected, developBranch: action.value || undefined },
+              branchPolicy: { ...base, developBranch: action.value || undefined },
             },
           };
         }
@@ -366,6 +375,8 @@ export function reducer(draft: WizardDraft, action: WizardAction): WizardDraft {
       if (draft.screen === "locale") return { ...draft, screen: "localeOther" };
       if (draft.screen === "timezone") return { ...draft, screen: "timezoneOther" };
       return draft;
+    case "branchPolicyEditDevelop":
+      return { ...draft, screen: "branchPolicyDevelop" };
     case "next": {
       const invalid = validateScreen(draft);
       if (invalid)
