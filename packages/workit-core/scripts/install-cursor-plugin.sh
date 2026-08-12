@@ -10,7 +10,8 @@ FROM_GITHUB=0
 LOCAL_ROOT=""
 if [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "${BASH_SOURCE[0]}" ]; then
   SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-  LOCAL_ROOT="$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)"
+  # RR-05: LOCAL_ROOT is the checkout root (scripts live under <root>/packages/workit-core/scripts)
+  LOCAL_ROOT="$(CDPATH= cd -- "$SCRIPT_DIR/../../.." && pwd)"
 else
   FROM_GITHUB=1
 fi
@@ -33,7 +34,7 @@ if [ "$FROM_GITHUB" -eq 1 ]; then
     git -C "$SHARE" pull --ff-only origin main
   else
     rm -rf "$SHARE"
-    git clone --depth 1 "git@github.com:${REPO_SLUG}.git" "$SHARE"
+    git clone --depth 1 "https://github.com/${REPO_SLUG}.git" "$SHARE"
   fi
   ROOT="$SHARE"
 else
@@ -42,41 +43,63 @@ fi
 
 chmod +x "$ROOT/packages/workit-core/scripts/sync-runtime.sh" "$ROOT/packages/workit-core/scripts/"*.sh
 # Prefer syncing from this ROOT (dev or freshly cloned share)
-WORKFLOW_TOOLKIT_DEV="$ROOT" "$ROOT/packages/workit-core/scripts/sync-runtime.sh"
+export WORKFLOW_TOOLKIT_DEV="$ROOT"
+"$ROOT/packages/workit-core/scripts/sync-runtime.sh"
 
 # Drop stale CLI skill symlinks (duplicate /wf-* and /wk-* entries)
 if [ -d "$SKILLS_DIR" ]; then
   rm -f "$SKILLS_DIR"/wf-* "$SKILLS_DIR"/wk-*
 fi
 
-CURSOR_SETTINGS="$HOME/.cursor/settings.json" bun -e '
+PLUGIN_DIR="$HOME/.cursor/plugins/local/workflow-toolkit"
+REGISTRATION_TS="$ROOT/packages/workit-core/src/core/registration.ts"
+CURSOR_SETTINGS="$HOME/.cursor/settings.json" CURSOR_MCP="$HOME/.cursor/mcp.json" PLUGIN_DIR="$PLUGIN_DIR" REGISTRATION_TS="$REGISTRATION_TS" bun -e '
 import fs from "node:fs";
-import os from "node:os";
-const path = process.env.CURSOR_SETTINGS!;
-let data = {};
-if (fs.existsSync(path)) data = JSON.parse(fs.readFileSync(path, "utf8"));
-const prev = data.enabled_plugins && typeof data.enabled_plugins === "object" ? data.enabled_plugins : {};
-const plugin = `${os.homedir()}/.cursor/plugins/local/workflow-toolkit`;
-data.enabled_plugins = { ...prev, "workflow-toolkit": true, "local/workflow-toolkit": true };
-data.plugin_dirs = [plugin];
-fs.writeFileSync(path, JSON.stringify(data, null, 2) + "\n");
+import path from "node:path";
+const { mergeCursorSettings, mergeCursorMcp, mergeCursorHooks, cursorMcpServerEntry } =
+  await import(process.env.REGISTRATION_TS!);
+
+// RR-06: collapse current + legacy identities; never replace unrelated settings.
+const settingsPath = process.env.CURSOR_SETTINGS!;
+const settings = fs.existsSync(settingsPath)
+  ? JSON.parse(fs.readFileSync(settingsPath, "utf8"))
+  : {};
+const merged = mergeCursorSettings(settings, process.env.PLUGIN_DIR!);
+fs.writeFileSync(settingsPath, JSON.stringify(merged.config, null, 2) + "\n");
+
+// RR-06: one portable workit MCP registration (node dist when present, bash
+// shim in a dist-less dev checkout); stale "workflow-toolkit" entries removed.
+const server = cursorMcpServerEntry(process.env.PLUGIN_DIR!);
+const mcpPath = process.env.CURSOR_MCP!;
+const mcp = fs.existsSync(mcpPath)
+  ? JSON.parse(fs.readFileSync(mcpPath, "utf8"))
+  : { mcpServers: {} };
+const mergedMcp = mergeCursorMcp(mcp, "workit", server);
+fs.writeFileSync(mcpPath, JSON.stringify(mergedMcp.config, null, 2) + "\n");
+
+// Keep the synced plugin manifests consistent with the current checkout state:
+// only in a dist-less dev checkout, point them at the shims so Cursor still
+// launches MCP/hooks (the shipped manifests already reference dist).
+const distMcp = path.join(process.env.PLUGIN_DIR!, "dist", "mcp-server.js");
+const pluginMcp = path.join(process.env.PLUGIN_DIR!, "mcp.json");
+if (!fs.existsSync(distMcp) && fs.existsSync(pluginMcp)) {
+  const inPkg = JSON.parse(fs.readFileSync(pluginMcp, "utf8"));
+  const patched = mergeCursorMcp(inPkg, "workit", server);
+  fs.writeFileSync(pluginMcp, JSON.stringify(patched.config, null, 2) + "\n");
+}
+const pluginHooks = path.join(process.env.PLUGIN_DIR!, "hooks", "hooks-cursor.json");
+if (!fs.existsSync(path.join(process.env.PLUGIN_DIR!, "dist", "cursor-session-start.js")) && fs.existsSync(pluginHooks)) {
+  const inPkg = JSON.parse(fs.readFileSync(pluginHooks, "utf8"));
+  const patched = mergeCursorHooks(inPkg, { command: "./hooks/session-start" });
+  fs.writeFileSync(pluginHooks, JSON.stringify(patched.config, null, 2) + "\n");
+}
 '
 
-CURSOR_MCP="$HOME/.cursor/mcp.json" bun -e '
-import fs from "node:fs";
-const path = process.env.CURSOR_MCP!;
-const data = fs.existsSync(path) ? JSON.parse(fs.readFileSync(path, "utf8")) : { mcpServers: {} };
-data.mcpServers = data.mcpServers ?? {};
-data.mcpServers["workflow-toolkit"] = {
-  command: "bash",
-  args: [
-    "-lc",
-    "exec \"$HOME/.local/share/workflow-toolkit/packages/workit-core/scripts/run-cursor-mcp.sh\" \"$0\"",
-    "${workspaceFolder}",
-  ],
-};
-fs.writeFileSync(path, JSON.stringify(data, null, 2) + "\n");
-'
+# DG-09: verify the just-written Cursor registration with the shared offline doctor.
+if ! bun "$ROOT/packages/workit-core/scripts/doctor-check.ts" cursor; then
+  echo "FATAL: post-install doctor found an unhealthy Cursor registration" >&2
+  exit 1
+fi
 
 echo "Cursor plugin installed + auto-sync enabled (sessionStart)."
 echo "Share: $SHARE"

@@ -13,10 +13,12 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { configDir } from "../../packages/workit-core/src/core/config";
-import { vcsTokenCreateUrls } from "../../packages/workit-core/src/core/vcs-config";
-import { configPath } from "../../packages/workit-core/src/tools/youtrack";
-
-const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+import {
+  readVcsConfig,
+  vcsConfig,
+  vcsTokenCreateUrls,
+} from "../../packages/workit-core/src/core/vcs-config";
+import { configPath } from "../../packages/workit-core/src/core/youtrack-tools";
 
 const savedEnv = new Map<string, string | undefined>();
 
@@ -169,8 +171,7 @@ test("CA-07: copy failure is non-fatal and retried (cache set only post-loop)", 
   }
 });
 
-test("CA-06: bash resolve_config_dir matches TS after migration; config.sh load reads the migrated workit dir", () => {
-  if (process.platform === "win32") return; // no bash
+test("CA-06: TS configDir migration matches the legacy bash resolve_config_dir behavior", () => {
   const xdg = mkdtempSync(path.join(os.tmpdir(), "wk-ca06-"));
   const legacy = path.join(xdg, "workflow-toolkit");
   mkdirSync(legacy, { recursive: true });
@@ -178,13 +179,6 @@ test("CA-06: bash resolve_config_dir matches TS after migration; config.sh load 
     path.join(legacy, "vcs.json"),
     JSON.stringify({ provider: "github", defaultTargetBranch: "main" }),
   );
-  const env: Record<string, string> = {};
-  for (const [k, v] of Object.entries(process.env)) {
-    if (v === undefined || /^WORKFLOW_(VCS|TOOLKIT_CONFIG)/.test(k) || k === "XDG_CONFIG_HOME")
-      continue;
-    env[k] = v;
-  }
-  env.XDG_CONFIG_HOME = xdg;
   try {
     isolate({ XDG_CONFIG_HOME: xdg }, () => {
       const dir = configDir();
@@ -192,24 +186,107 @@ test("CA-06: bash resolve_config_dir matches TS after migration; config.sh load 
       expect(readFileSync(path.join(dir, "vcs.json"), "utf8")).toContain("github");
 
       writeFileSync(path.join(dir, "vcs.json"), JSON.stringify({ provider: "gitlab" }), "utf8");
-      const resolve = spawnSync(
-        "bash",
-        ["-c", ". packages/workit-core/scripts/lib/config-dir.sh; resolve_config_dir"],
-        { cwd: repoRoot, env, encoding: "utf8" },
-      );
-      expect(resolve.status, resolve.stderr).toBe(0);
-      expect(resolve.stdout.trim()).toBe(dir); // workit already exists -> no re-migration
+      expect(configDir()).toBe(dir); // workit already exists -> no re-migration
       expect(readFileSync(path.join(dir, "vcs.json"), "utf8")).toContain("gitlab"); // legacy untouched as source
+      expect(readFileSync(path.join(legacy, "vcs.json"), "utf8")).toContain("github");
 
-      const load = spawnSync(
-        "bash",
-        [path.join(repoRoot, "packages/workit-core/scripts/vcs/config.sh"), "load"],
-        { cwd: repoRoot, env, encoding: "utf8" },
-      );
-      expect(load.status, load.stderr).toBe(0);
-      expect(JSON.parse(load.stdout).provider).toBe("gitlab");
-      expect(JSON.parse(load.stdout).tokenReady).toBe(false);
+      const load = vcsConfig("load");
+      expect(load.ok).toBe(true);
+      expect(load.provider).toBe("gitlab");
+      expect(load.tokenReady).toBe(false);
     });
+  } finally {
+    rmSync(xdg, { recursive: true, force: true });
+  }
+});
+
+test("RL-01: vcsConfig load reports a path-specific malformed diagnostic (no generic fallback)", () => {
+  const xdg = mkdtempSync(path.join(os.tmpdir(), "wk-rl01-"));
+  const legacy = path.join(xdg, "workflow-toolkit");
+  mkdirSync(legacy, { recursive: true });
+  writeFileSync(path.join(legacy, "vcs.json"), "{ broken !!");
+  try {
+    isolate({ XDG_CONFIG_HOME: xdg }, () => {
+      const cfg = vcsConfig("load");
+      expect(cfg.ok).toBe(false);
+      expect(cfg.error).toContain(path.join(xdg, "workit", "vcs.json"));
+    });
+  } finally {
+    rmSync(xdg, { recursive: true, force: true });
+  }
+});
+
+test("RL-01: readVcsConfig classifies missing, valid, and malformed with exact paths", () => {
+  const xdg = mkdtempSync(path.join(os.tmpdir(), "wk-vcstyped-"));
+  try {
+    isolate({ XDG_CONFIG_HOME: xdg }, () => {
+      expect(readVcsConfig().status).toBe("missing");
+      expect(readVcsConfig().path).toBe(path.join(xdg, "workit", "vcs.json"));
+    });
+    const workit = path.join(xdg, "workit");
+    mkdirSync(workit, { recursive: true });
+    writeFileSync(path.join(workit, "vcs.json"), '{"provider":"github"}', "utf8");
+    isolate({ XDG_CONFIG_HOME: xdg }, () => {
+      const valid = readVcsConfig();
+      expect(valid.status).toBe("valid");
+      expect(valid.config.provider).toBe("github");
+      expect(valid.error).toBeUndefined();
+    });
+    writeFileSync(path.join(workit, "vcs.json"), "{ bad json", "utf8");
+    isolate({ XDG_CONFIG_HOME: xdg }, () => {
+      const malformed = readVcsConfig();
+      expect(malformed.status).toBe("malformed");
+      expect(malformed.path).toBe(path.join(xdg, "workit", "vcs.json"));
+      expect(malformed.error).toContain(path.join(xdg, "workit", "vcs.json"));
+    });
+  } finally {
+    rmSync(xdg, { recursive: true, force: true });
+  }
+});
+
+// RL-07: migration cache contract. The memo is process-local (a fresh process
+// re-runs the migration check); the on-disk workit dir is the cross-process
+// authority — an existing dir is never re-copied over, an absent dir migrates.
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+const spawnMigrate = (env: Record<string, string>) => {
+  const script = `import { configDir } from "./packages/workit-core/src/core/config.ts"; import { readFileSync } from "node:fs"; import path from "node:path"; const dir = configDir(); console.log(JSON.stringify({ dir, cfg: readFileSync(path.join(dir, "config.json"), "utf8") }));`;
+  const childEnv = { ...process.env, ...env };
+  delete childEnv.WORKFLOW_TOOLKIT_CONFIG;
+  delete childEnv.WORKFLOW_TOOLKIT_CONFIG_DIR;
+  return spawnSync("bun", ["-e", script], { cwd: REPO_ROOT, env: childEnv, encoding: "utf8" });
+};
+
+test("RL-07: a fresh process never re-copies over an existing migrated workit dir", () => {
+  const xdg = mkdtempSync(path.join(os.tmpdir(), "wk-rl07-"));
+  const legacy = path.join(xdg, "workflow-toolkit");
+  mkdirSync(legacy, { recursive: true });
+  writeFileSync(path.join(legacy, "config.json"), '{"locale":"es-CL"}');
+  try {
+    isolate({ XDG_CONFIG_HOME: xdg }, () => {
+      expect(configDir()).toBe(path.join(xdg, "workit"));
+      writeFileSync(path.join(xdg, "workit", "config.json"), "MODIFIED");
+      const child = spawnMigrate({ XDG_CONFIG_HOME: xdg });
+      expect(child.status, child.stderr).toBe(0);
+      const out = JSON.parse(child.stdout);
+      expect(out.dir).toBe(path.join(xdg, "workit"));
+      expect(out.cfg).toBe("MODIFIED");
+    });
+  } finally {
+    rmSync(xdg, { recursive: true, force: true });
+  }
+});
+
+test("RL-07: migration runs again in a fresh process when the workit dir is absent (memo is per-process)", () => {
+  const xdg = mkdtempSync(path.join(os.tmpdir(), "wk-rl07b-"));
+  const legacy = path.join(xdg, "workflow-toolkit");
+  mkdirSync(legacy, { recursive: true });
+  writeFileSync(path.join(legacy, "config.json"), '{"locale":"es-CL"}');
+  try {
+    const child = spawnMigrate({ XDG_CONFIG_HOME: xdg });
+    expect(child.status, child.stderr).toBe(0);
+    const out = JSON.parse(child.stdout);
+    expect(out.cfg).toBe('{"locale":"es-CL"}');
+    expect(existsSync(path.join(xdg, "workit", "config.json"))).toBe(true);
   } finally {
     rmSync(xdg, { recursive: true, force: true });
   }

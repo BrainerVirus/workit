@@ -1,11 +1,11 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { configDir } from "./config";
+import { assetRoot } from "./package-root";
 
 export type TemplateName = "issue-update" | "greeting" | "headers";
 
-const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+const repoRoot = assetRoot();
 
 export const templatePath = (name: TemplateName): string =>
   path.join(configDir(), "templates", `${name}.md`);

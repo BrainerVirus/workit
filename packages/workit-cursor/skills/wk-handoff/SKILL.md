@@ -12,14 +12,14 @@ Emit a copy-paste prompt for a **new** implementation chat.
 
 Call MCP tool `workflow_handoff_prompt` with the **full** user message as `message`.
 
-**Workspace root:** defaults to the Cursor workspace. Pass `workspace_root` when spec/plan paths are relative to a different repository.
+**Repository calls:** For every repository-scoped `workflow_*` call, pass the active Cursor workspace as `workspace_root`; never rely on the MCP process default.
 
 **Thread context:** If this thread has a known spec/plan pair (from brainstorming, writing-plans, or open files), append both paths to `message` even when the user only typed `/wk-handoff`. Without explicit paths, the tool picks the **most recently touched** linked pair under `docs/<slug>/` (plan `**Spec:**` link + file mtimes) — not “only one file in the folder.”
 
 Use the tool return value as ground truth. Do not read git, run npm, or infer repo state yourself.
 If the tool errors, report the error and stop.
 
-The pasted prompt includes instructions to call `workflow_sdd_context`, **Cursor TodoWrite** (with returned `todos`), and `workflow_plan_tasks` in Chat B before Task 1. SDD artifacts go to `docs/<plan-basename>/sdd/` — never `.superpowers/sdd`. TodoWrite is required for the native Cursor task list UI (remaining/completed); the SDD ledger is persistence only. The fenced `prompt` does not contain `section_text`. **Branch** is resolved automatically in the prompt (from spec/plan or derived as `feature/*` / `bugfix/*`). **No worktrees** — Chat B uses `workflow_resolve_branch` + `workflow_branch_setup` in-place. Commits use workit **/wk-commit** skill — no separate commit-policy field.
+The pasted prompt includes instructions to call `workflow_sdd_context`, **Cursor TodoWrite** (with returned `todos`), and `workflow_plan_tasks` in Chat B before Task 1. SDD artifacts go to `docs/<slug>/sdd/` — never `.superpowers/sdd`. TodoWrite is required for the native Cursor task list UI (remaining/completed); the SDD ledger is persistence only. The fenced `prompt` does not contain `section_text`. **Branch** is resolved automatically in the prompt (from spec/plan or derived as `feature/*` / `bugfix/*`). **No worktrees** — Chat B uses `workflow_resolve_branch` + `workflow_branch_setup` in-place. Commits use workit **/wk-commit** skill — no separate commit-policy field.
 
 `workflow_handoff_prompt` also returns `tasks[]`, `branch`, `sdd_dir`, `completed_task_ids`, and `todos` for same-session MCP use — not copy-paste transport.
 

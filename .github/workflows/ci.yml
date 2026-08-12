@@ -13,6 +13,17 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Declared support matrix (RR-10/PT-11): single source of truth for the pinned
+# toolchain and host versions. test/artifacts/manifests.test.ts and
+# test/artifacts/packed-runtime.test.ts assert these match
+# packages/workit-core/src/core/support-matrix.ts.
+env:
+  BUN_VERSION: "1.3.14"
+  NODE_MINIMUM: "20"
+  NODE_CURRENT: "22"
+  OPENCODE_MINIMUM: "1.15.0"
+  OPENCODE_CURRENT: "1.17.7"
+
 jobs:
   # One check job per package (mirrors test/<package>/), so the checks matrix
   # shows per-category results. workit-core gets the full 3-OS matrix because
@@ -29,10 +40,16 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: ${{ env.BUN_VERSION }}
 
       - name: Install deps
         run: bun install --frozen-lockfile
+
+      # The dev-checkout install tests (cursor-install-mcp, setup flows) install
+      # the adapters from this checkout; dist/ and the vendored skills are build
+      # products (gitignored), so the checkout must be built before testing.
+      - name: Build packages
+        run: bun run build
 
       - name: Test workit-core
         run: bun test test/workit-core
@@ -48,7 +65,7 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: ${{ env.BUN_VERSION }}
 
       - name: Install deps
         run: bun install --frozen-lockfile
@@ -67,7 +84,7 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: ${{ env.BUN_VERSION }}
 
       - name: Install deps
         run: bun install --frozen-lockfile
@@ -86,10 +103,16 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: ${{ env.BUN_VERSION }}
 
       - name: Install deps
         run: bun install --frozen-lockfile
+
+      # Dev-checkout install tests (packed-cli, platform-install) install the
+      # adapters from this checkout; dist/ and the vendored skills are build
+      # products (gitignored), so the checkout must be built before testing.
+      - name: Build packages
+        run: bun run build
 
       - name: Test workit-cli
         run: bun test test/workit-cli
@@ -107,7 +130,7 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: ${{ env.BUN_VERSION }}
 
       - name: Install deps
         run: bun install --frozen-lockfile
@@ -120,3 +143,56 @@ jobs:
 
       - name: Typecheck (whole repo)
         run: bun run typecheck
+
+  # Phase 2 artifact matrix (CA-26): the packed-artifact, registration, and
+  # manifest gates run on every declared OS × Node version combination. Node is
+  # provided explicitly so the packed adapters are exercised on both the
+  # declared minimum and current Node lines.
+  artifacts:
+    name: check (artifacts) ${{ matrix.os }} / node-${{ matrix.node }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        node: [20, 22]
+    steps:
+      # The phase-9 traceability gate asserts the DECLARED branch is active;
+      # the default PR checkout is detached at the merge commit, so check out
+      # the head ref (fallback: the default ref, e.g. main pushes).
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.head_ref }}
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: Install deps
+        run: bun install --frozen-lockfile
+
+      - name: Packed artifact, registration, and manifest gates
+        run: bun test test/artifacts
+
+  candidate:
+    # Phase 0 release-candidate gate (RR-11 / CA-30): pack every workspace
+    # package WITHOUT publishing and verify the corrective candidate installs
+    # and starts in isolation. bun pm pack only writes a local tarball — no
+    # registry, no tags, no marketplace operations.
+    name: check (phase-0 candidate)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Install deps
+        run: bun install --frozen-lockfile
+
+      - name: Pack and gate the corrective candidate
+        run: bun test test/artifacts/phase-0-candidate.test.ts

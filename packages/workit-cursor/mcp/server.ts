@@ -1,28 +1,102 @@
 import { readFileSync } from "node:fs";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
-import { runScript } from "@brainervirus/workit-core/src/core/scripts";
+import { createLogger, redact, redactSecrets } from "@brainervirus/workit-core/src/core/logger";
+import { EVENT, errorDetail } from "@brainervirus/workit-core/src/core/boundary";
+import { setDiagnosticLogger } from "@brainervirus/workit-core/src/core/config";
+
+// Secret-safe diagnostic logger (DG-01-DG-03, DG-05, DG-10). Sink injection
+// only: Cursor events mirror to stderr. MCP stdout stays protocol-only.
+export const logger = createLogger({
+  stderr: (event) => process.stderr.write(`${JSON.stringify(event)}\n`),
+});
+
+const readServerVersion = (): string => {
+  try {
+    // Runtime read, not hardcoded: semantic-release bumps versions only in CI
+    // (no commit-back), so any literal here would drift from the published tag.
+    // package.json ships in the tarball regardless of the files whitelist.
+    return (
+      JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version ??
+      "0.0.0"
+    );
+  } catch (err) {
+    logger.warn(EVENT.provenance, errorDetail(err));
+    return "unknown";
+  }
+};
+
+const VERSION = readServerVersion();
+setDiagnosticLogger(logger);
+logger.info(EVENT.initialization, { host: "cursor-mcp", server: "workit", version: VERSION });
+
+// Uncaught process failures are bounded sanitized events on stderr; stdout stays
+// protocol-only. The MCP process owns itself, so an uncaught exception is logged
+// and the process exits with a nonzero status (DG-04).
+process.on("unhandledRejection", (reason) =>
+  logger.error(EVENT.uncaughtFailure, { phase: "unhandledRejection", ...errorDetail(reason) }),
+);
+process.on("uncaughtException", (err) => {
+  logger.error(EVENT.uncaughtFailure, { phase: "uncaughtException", ...errorDetail(err) });
+  process.exit(1);
+});
 import {
   parseSections,
   parseKeyValueLines,
 } from "@brainervirus/workit-core/src/core/parse-sections";
 import { parseVerifyOutput } from "@brainervirus/workit-core/src/core/verify-parse";
+import {
+  changelogContext,
+  docsRefreshContext,
+  prReadyContext,
+  releaseNotesContext,
+} from "@brainervirus/workit-core/src/core/repo-context";
+import { runVerifyProject } from "@brainervirus/workit-core/src/core/verify-project";
+import { runDoctor } from "@brainervirus/workit-core/src/core/doctor";
+import { prCreate } from "@brainervirus/workit-core/src/core/pr-create";
 import { gitContext } from "@brainervirus/workit-core/src/core/git";
 import {
   parsePlanTasks,
   resolveHandoffBranch,
 } from "@brainervirus/workit-core/src/core/plan-tasks";
-import { buildHandoffPrompt } from "@brainervirus/workit-core/src/tools/handoff";
+import { buildHandoffPrompt } from "@brainervirus/workit-core/src/core/handoff-tools";
 import {
   readFlowState,
   transitionSpec,
   transitionPlan,
   recordMenuChoice,
-  slugFromPath,
+  assertProductGates,
+  prepareFlowState,
+  slugFromSddPath,
+  type NativeChoiceEvidence,
 } from "@brainervirus/workit-core/src/core/flow-state";
+import { cursorMutationContext, cursorQuestionEvidence } from "./flow-evidence";
+
+// The policy-only constant is valid by construction; the adapter never takes
+// caller input, so a failing shape here is a programming error, not forgery.
+const cursorConfirmation = (): NativeChoiceEvidence => {
+  const result = cursorQuestionEvidence();
+  if (!result.ok) throw new Error(result.error);
+  return result.evidence;
+};
+import {
+  resolveCanonicalLayout,
+  prepareDocsLayout,
+} from "@brainervirus/workit-core/src/core/docs-layout";
+import {
+  detectLegacyDocs,
+  migrateLegacyDocs,
+  migrationQuestion,
+} from "@brainervirus/workit-core/src/core/docs-migration";
 import { linkDocsRepo, listSpecs, promoteSpec } from "@brainervirus/workit-core/src/core/docs-repo";
-import { configDir, readConfig, writeConfig } from "@brainervirus/workit-core/src/core/config";
+import {
+  configDir,
+  mergeConfigValues,
+  readConfig,
+  writeConfig,
+} from "@brainervirus/workit-core/src/core/config";
 import { ensureProjectGitignore } from "@brainervirus/workit-core/src/core/gitignore";
 import { ensureHygieneFiles } from "@brainervirus/workit-core/src/core/hygiene";
 import { listTemplates, writeTemplate } from "@brainervirus/workit-core/src/core/templates";
@@ -56,24 +130,57 @@ import {
 const workspaceRootSchema = z
   .string()
   .optional()
-  .describe("Git repository root. Defaults to the Cursor workspace folder (${workspaceFolder}).");
+  .default(() => process.env.WORKFLOW_WORKSPACE_ROOT ?? process.cwd())
+  .describe(
+    "Git repository root. Defaults to the launcher workspace (WORKFLOW_WORKSPACE_ROOT), then the Cursor workspace folder (${workspaceFolder}), then the process cwd.",
+  );
 
 const server = new McpServer({
   name: "workit",
-  // Runtime read, not hardcoded: semantic-release bumps versions only in CI
-  // (no commit-back), so any literal here would drift from the published tag.
-  // package.json ships in the tarball regardless of the files whitelist.
-  version: JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version,
+  version: VERSION,
 });
 
-function jsonResult(data) {
+function jsonResult(data: Record<string, unknown>): CallToolResult {
+  // Domain failures keep their structured detail but are never successful-looking
+  // (DG-06): any payload carrying an `error` field is marked isError: true. The
+  // error string is redacted like the throw-path wrapper (DG-05, DG-10), so a
+  // secret in a domain error never reaches the MCP client raw. Pattern-only
+  // (no truncation): the recovery/actionable text must stay intact for the model.
+  const isError = Boolean(data.error);
+  if (isError && typeof data.error === "string") {
+    data.error = redactSecrets(data.error);
+  }
   return {
     content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
     structuredContent: data,
+    ...(isError ? { isError: true } : {}),
   };
 }
 
-server.registerTool(
+// A throwing handler is caught here: the host stays usable, the failure is a
+// bounded sanitized stderr event, and the client receives structured content
+// with isError: true instead of a crash or a protocol error (DG-06, DG-10).
+const registerTool = (
+  name: string,
+  config: Record<string, unknown>,
+  cb: (args: any) => unknown,
+): void => {
+  server.registerTool(name, config as never, async (args) => {
+    try {
+      return (await cb(args as never)) as CallToolResult;
+    } catch (err) {
+      logger.error(EVENT.toolsFailed, { tool: name, ...errorDetail(err) });
+      const safe = redact(err instanceof Error ? err.message : String(err)) as string;
+      return {
+        content: [{ type: "text", text: JSON.stringify({ error: safe }, null, 2) }],
+        structuredContent: { error: safe, tool: name },
+        isError: true,
+      };
+    }
+  });
+};
+
+registerTool(
   "workflow_verify",
   {
     description:
@@ -84,8 +191,7 @@ server.registerTool(
     },
   },
   async ({ dry_run, workspace_root }) => {
-    const args = dry_run ? ["--dry-run"] : [];
-    const { stdout, stderr, exitCode, cwd } = runScript("verify-project.sh", args, workspace_root);
+    const { stdout, stderr, exitCode, cwd } = runVerifyProject(workspace_root, Boolean(dry_run));
     const parsed = parseVerifyOutput(stdout);
     return jsonResult(
       withWorkspace(workspace_root, {
@@ -99,7 +205,22 @@ server.registerTool(
   },
 );
 
-server.registerTool(
+registerTool(
+  "workflow_doctor",
+  {
+    description:
+      "Run the offline workit doctor and report installation health. Defaults to Cursor workspace; pass workspace_root when the target repo differs.",
+    inputSchema: {
+      workspace_root: workspaceRootSchema,
+    },
+  },
+  async ({ workspace_root }) => {
+    const report = runDoctor({ host: "cursor", cwd: workspace_root });
+    return jsonResult(report);
+  },
+);
+
+registerTool(
   "workflow_pr_context",
   {
     description:
@@ -110,12 +231,7 @@ server.registerTool(
     },
   },
   async ({ range, workspace_root }) => {
-    const args = range ? [range] : [];
-    const { stdout, stderr, exitCode, cwd } = runScript(
-      "pr-ready-context.sh",
-      args,
-      workspace_root,
-    );
+    const { stdout, stderr, exitCode, cwd } = prReadyContext(workspace_root, range);
     if (exitCode !== 0) {
       const errLines = (stderr + "\n" + stdout).split("\n");
       const error =
@@ -181,7 +297,7 @@ server.registerTool(
   },
 );
 
-server.registerTool(
+registerTool(
   "workflow_pr_create",
   {
     description:
@@ -197,31 +313,29 @@ server.registerTool(
   },
   async ({ confirmed, title, body, draft, target_branch, workspace_root }) => {
     if (!confirmed) return jsonResult({ error: "confirmed: true required" });
-    const { stdout, stderr, exitCode, cwd } = runScript("pr-create.sh", [], workspace_root, {
-      WF_PR_TITLE: title,
-      WF_PR_BODY: body ?? "",
-      WF_PR_CONFIRMED: "true",
-      WF_PR_DRAFT: draft ? "true" : "false",
-      WF_PR_TARGET: target_branch ?? "",
-    });
-    try {
-      const data = JSON.parse(stdout.trim());
-      if (data.error) {
-        return jsonResult(withWorkspace(workspace_root, { error: data.error, ...data }));
-      }
-      return jsonResult(withWorkspace(workspace_root, { ...data, workspace_root: cwd }));
-    } catch {
+    const data = prCreate(
+      {
+        WF_PR_TITLE: title,
+        WF_PR_BODY: body ?? "",
+        WF_PR_CONFIRMED: "true",
+        WF_PR_DRAFT: draft ? "true" : "false",
+        WF_PR_TARGET: target_branch ?? "",
+      },
+      workspace_root,
+    );
+    if (data.error || data.ok === false) {
       return jsonResult(
         withWorkspace(workspace_root, {
-          error: stderr.trim() || stdout.trim() || "pr-create failed",
-          exitCode,
+          error: data.error ?? "pr-create failed",
+          ...data,
         }),
       );
     }
+    return jsonResult(withWorkspace(workspace_root, { ...data }));
   },
 );
 
-server.registerTool(
+registerTool(
   "workflow_changelog_context",
   {
     description:
@@ -232,12 +346,7 @@ server.registerTool(
     },
   },
   async ({ range, workspace_root }) => {
-    const args = range ? [range] : [];
-    const { stdout, stderr, exitCode, cwd } = runScript(
-      "changelog-context.sh",
-      args,
-      workspace_root,
-    );
+    const { stdout, stderr, exitCode, cwd } = changelogContext(workspace_root, range);
     const sections = parseSections(stdout);
     const unreleased = changelogUnreleasedStats(workspace_root);
     return jsonResult(
@@ -268,7 +377,7 @@ const changelogCategorySchema = z.enum([
   "Security",
 ]);
 
-server.registerTool(
+registerTool(
   "workflow_changelog_apply",
   {
     description:
@@ -312,7 +421,7 @@ server.registerTool(
   },
 );
 
-server.registerTool(
+registerTool(
   "workflow_release_notes_context",
   {
     description:
@@ -323,12 +432,7 @@ server.registerTool(
     },
   },
   async ({ range_or_tag, workspace_root }) => {
-    const args = [range_or_tag];
-    const { stdout, stderr, exitCode, cwd } = runScript(
-      "release-notes-context.sh",
-      args,
-      workspace_root,
-    );
+    const { stdout, stderr, exitCode, cwd } = releaseNotesContext(workspace_root, range_or_tag);
     const sections = parseSections(stdout);
     const repo = parseKeyValueLines(sections.Repository ?? "", ["requested", "range"]);
     return jsonResult(
@@ -349,7 +453,7 @@ server.registerTool(
   },
 );
 
-server.registerTool(
+registerTool(
   "workflow_docs_context",
   {
     description:
@@ -360,12 +464,7 @@ server.registerTool(
     },
   },
   async ({ range, workspace_root }) => {
-    const args = range ? [range] : [];
-    const { stdout, stderr, exitCode, cwd } = runScript(
-      "docs-refresh-context.sh",
-      args,
-      workspace_root,
-    );
+    const { stdout, stderr, exitCode, cwd } = docsRefreshContext(workspace_root, range);
     const sections = parseSections(stdout);
     return jsonResult(
       withWorkspace(workspace_root, {
@@ -382,7 +481,7 @@ server.registerTool(
   },
 );
 
-server.registerTool(
+registerTool(
   "workflow_git_context",
   {
     description:
@@ -398,7 +497,7 @@ server.registerTool(
   },
 );
 
-server.registerTool(
+registerTool(
   "workflow_resolve_branch",
   {
     description:
@@ -411,12 +510,12 @@ server.registerTool(
   },
   async ({ spec_path, plan_path, workspace_root }) => {
     const data = resolveBranch({ spec_path, plan_path, workspace_root });
-    if (data.error) return jsonResult({ error: data.error });
+    if ("error" in data) return jsonResult({ error: data.error });
     return jsonResult(withWorkspace(workspace_root, data));
   },
 );
 
-server.registerTool(
+registerTool(
   "workflow_branch_setup",
   {
     description:
@@ -442,11 +541,11 @@ server.registerTool(
   },
 );
 
-server.registerTool(
+registerTool(
   "workflow_sdd_context",
   {
     description:
-      "Ensure docs/<slug>/sdd/ exists; return progress ledger + Cursor TodoWrite todos[]. NEVER use .superpowers/sdd.",
+      "Resolve canonical docs/<slug>/sdd/ paths; creates nothing (progress.md appears only on the first confirmed append). NEVER use .superpowers/sdd.",
     inputSchema: {
       slug: z.string().optional(),
       plan_path: z.string().optional(),
@@ -460,7 +559,7 @@ server.registerTool(
   },
 );
 
-server.registerTool(
+registerTool(
   "workflow_sdd_task_brief",
   {
     description: "Write task-N-brief.md under docs/<slug>/sdd/",
@@ -472,18 +571,26 @@ server.registerTool(
     },
   },
   async ({ sdd_dir, task_id, section_text, workspace_root }) => {
+    const slug = slugFromSddPath(sdd_dir);
+    if (!slug) return jsonResult({ error: "could not derive slug — expected docs/<slug>/sdd/..." });
+    const gate = assertProductGates(
+      workspace_root,
+      slug,
+      { requireMenu: true, requireDocs: true },
+      cursorMutationContext(workspace_root),
+    );
+    if (!gate.ok) return jsonResult({ error: gate.error, code: gate.code });
     const data = sddTaskBrief({
       sdd_dir,
       task_id,
       section_text,
       workspace_root,
     });
-    if (data.error) return jsonResult({ error: data.error });
     return jsonResult(withWorkspace(workspace_root, data));
   },
 );
 
-server.registerTool(
+registerTool(
   "workflow_sdd_review_package",
   {
     description: "Write review diff under SDD dir between base and head SHAs",
@@ -495,6 +602,15 @@ server.registerTool(
     },
   },
   async ({ sdd_dir, base_sha, head_sha, workspace_root }) => {
+    const slug = slugFromSddPath(sdd_dir);
+    if (!slug) return jsonResult({ error: "could not derive slug — expected docs/<slug>/sdd/..." });
+    const gate = assertProductGates(
+      workspace_root,
+      slug,
+      { requireMenu: true, requireDocs: true },
+      cursorMutationContext(workspace_root),
+    );
+    if (!gate.ok) return jsonResult({ error: gate.error, code: gate.code });
     const data = sddReviewPackage({
       sdd_dir,
       base_sha,
@@ -506,7 +622,7 @@ server.registerTool(
   },
 );
 
-server.registerTool(
+registerTool(
   "workflow_sdd_append_progress",
   {
     description: "Append one validated line to docs/<slug>/sdd/progress.md",
@@ -517,13 +633,22 @@ server.registerTool(
     },
   },
   async ({ progress_path, line, workspace_root }) => {
+    const slug = slugFromSddPath(progress_path);
+    if (!slug) return jsonResult({ error: "could not derive slug — expected docs/<slug>/sdd/..." });
+    const gate = assertProductGates(
+      workspace_root,
+      slug,
+      { requireMenu: true, requireDocs: true },
+      cursorMutationContext(workspace_root),
+    );
+    if (!gate.ok) return jsonResult({ error: gate.error, code: gate.code });
     const data = sddAppendProgress({ progress_path, line, workspace_root });
     if (data.error) return jsonResult({ error: data.error });
     return jsonResult(withWorkspace(workspace_root, data));
   },
 );
 
-server.registerTool(
+registerTool(
   "workflow_docs_branch",
   {
     description:
@@ -541,7 +666,64 @@ server.registerTool(
   },
 );
 
-server.registerTool(
+registerTool(
+  "workflow_docs_layout",
+  {
+    description:
+      "Canonical docs layout: prepare creates missing docs/ and docs/<slug>/; migrate detects legacy docs/superpowers/ and copies safe pairs after a native Migrate safely / Not now question",
+    inputSchema: {
+      action: z.enum(["prepare", "migrate"]).default("prepare"),
+      slug: z.string().optional(),
+      spec_path: z.string().optional(),
+      plan_path: z.string().optional(),
+      confirmed: z.boolean().optional(),
+      workspace_root: workspaceRootSchema,
+    },
+  },
+  async ({ action, slug, spec_path, plan_path, confirmed, workspace_root }) => {
+    if (action === "migrate") {
+      const detect = detectLegacyDocs(workspace_root);
+      if (confirmed === undefined) {
+        return jsonResult(
+          withWorkspace(workspace_root, {
+            action: "migrate",
+            stage: detect.entries.length === 0 ? "nothing_to_migrate" : "awaiting_confirmation",
+            question: migrationQuestion(detect),
+            detect,
+          }),
+        );
+      }
+      const result = migrateLegacyDocs({ workspace_root, slug, confirmed });
+      if (result.ok) {
+        return jsonResult(
+          withWorkspace(workspace_root, { action: "migrate", stage: "migrated", ...result.data }),
+        );
+      }
+      if (result.declined) {
+        return jsonResult(
+          withWorkspace(workspace_root, {
+            action: "migrate",
+            stage: "declined",
+            active_workflow: result.active_workflow,
+            detect,
+          }),
+        );
+      }
+      return jsonResult(
+        withWorkspace(workspace_root, {
+          error: result.error,
+          collisions: result.collisions ?? [],
+          detect,
+        }),
+      );
+    }
+    const result = prepareDocsLayout({ workspace_root, slug, spec_path, plan_path });
+    if (!result.ok) return jsonResult(withWorkspace(workspace_root, { error: result.error }));
+    return jsonResult(withWorkspace(workspace_root, result));
+  },
+);
+
+registerTool(
   "workflow_docs_validate",
   {
     description:
@@ -554,7 +736,7 @@ server.registerTool(
   },
   async ({ spec_path, plan_path, workspace_root }) => {
     const data = docsValidate({ spec_path, plan_path, workspace_root });
-    if (data.error) {
+    if (data.ok === false) {
       return jsonResult(
         withWorkspace(workspace_root, { error: data.error, errors: data.errors ?? [] }),
       );
@@ -563,7 +745,7 @@ server.registerTool(
   },
 );
 
-server.registerTool(
+registerTool(
   "workflow_plan_tasks",
   {
     description:
@@ -576,12 +758,12 @@ server.registerTool(
   },
   async ({ plan_path, spec_path, workspace_root }) => {
     const data = parsePlanTasks(plan_path, workspace_root);
-    if (data.error) {
+    if ("error" in data) {
       return jsonResult(withWorkspace(workspace_root, { error: data.error }));
     }
     if (spec_path) {
       const branchData = resolveHandoffBranch(spec_path, plan_path, workspace_root);
-      if (branchData.error) {
+      if ("error" in branchData) {
         return jsonResult(
           withWorkspace(workspace_root, {
             ...data,
@@ -595,7 +777,7 @@ server.registerTool(
   },
 );
 
-server.registerTool(
+registerTool(
   "workflow_handoff_prompt",
   {
     description:
@@ -606,7 +788,7 @@ server.registerTool(
     },
   },
   async ({ message, workspace_root }) => {
-    const root = workspace_root ?? process.cwd();
+    const root = workspace_root;
     const built = buildHandoffPrompt(root, message ?? "");
     if ("error" in built) {
       return jsonResult(withWorkspace(workspace_root, { error: built.error }));
@@ -615,7 +797,7 @@ server.registerTool(
 
     if (planPath) {
       const tasksData = parsePlanTasks(planPath, root);
-      if (tasksData.error) {
+      if ("error" in tasksData) {
         return jsonResult(
           withWorkspace(workspace_root, {
             prompt,
@@ -631,7 +813,7 @@ server.registerTool(
       };
       if (specPath) {
         const branchData = resolveHandoffBranch(specPath, planPath, root);
-        if (!branchData.error) {
+        if (!("error" in branchData)) {
           payload.branch = branchData.branch;
         }
       }
@@ -655,7 +837,7 @@ server.registerTool(
   },
 );
 
-server.registerTool(
+registerTool(
   "workflow_toolkit_init_status",
   {
     description: "Check workit setup (MCP deps, YouTrack config, token)",
@@ -668,7 +850,7 @@ server.registerTool(
   },
 );
 
-server.registerTool(
+registerTool(
   "workflow_toolkit_status",
   {
     description:
@@ -676,13 +858,13 @@ server.registerTool(
     inputSchema: {},
   },
   async () => {
-    const data = toolkitStatus();
+    const data = await toolkitStatus();
     if (data.error) return jsonResult({ error: data.error });
     return jsonResult(data);
   },
 );
 
-server.registerTool(
+registerTool(
   "workflow_toolkit_init_apply",
   {
     description:
@@ -697,6 +879,7 @@ server.registerTool(
         "config",
         "gitignore",
         "hygiene",
+        "branch_policy",
       ]),
       confirmed: z.boolean(),
       base_url: z.string().optional(),
@@ -704,6 +887,9 @@ server.registerTool(
       meeting_issue: z.string().optional(),
       vcs_provider: z.enum(["gitlab", "github"]).optional(),
       vcs_target_branch: z.string().optional(),
+      name: z.string().optional(),
+      develop_branch: z.string().optional(),
+      integration: z.enum(["pr", "merge"]).optional(),
       locale: z.string().optional(),
       locale_options: z.array(z.string()).optional(),
       timezone: z.string().optional(),
@@ -711,6 +897,7 @@ server.registerTool(
       branch_policy_allowed: z.array(z.string()).optional(),
       branch_policy_protected: z.array(z.string()).optional(),
       include_open_source: z.boolean().optional(),
+      workspace_root: workspaceRootSchema,
     },
   },
   async ({
@@ -721,6 +908,9 @@ server.registerTool(
     meeting_issue,
     vcs_provider,
     vcs_target_branch,
+    name,
+    develop_branch,
+    integration,
     locale,
     locale_options,
     timezone,
@@ -728,9 +918,10 @@ server.registerTool(
     branch_policy_allowed,
     branch_policy_protected,
     include_open_source,
+    workspace_root,
   }) => {
     if (action === "hygiene") {
-      const result = ensureHygieneFiles(workspace_root ?? process.cwd(), {
+      const result = ensureHygieneFiles(workspace_root, {
         confirmed,
         includeOpenSource: include_open_source,
       });
@@ -738,7 +929,7 @@ server.registerTool(
       return jsonResult(result);
     }
     if (action === "gitignore") {
-      const result = ensureProjectGitignore(workspace_root ?? process.cwd(), confirmed);
+      const result = ensureProjectGitignore(workspace_root, confirmed);
       if (!result.ok) return jsonResult({ error: result.error });
       return jsonResult(result);
     }
@@ -749,32 +940,37 @@ server.registerTool(
         });
       }
       const current = readConfig();
-      const next = {
-        locale: locale ?? current.locale,
-        localeOptions: locale_options ?? current.localeOptions,
-        timezone: timezone ?? current.timezone,
-        branchPolicy: {
-          preset: (branch_policy_preset as any) ?? current.branchPolicy.preset,
-          allowed: branch_policy_allowed ?? current.branchPolicy.allowed,
-          protected: branch_policy_protected ?? current.branchPolicy.protected,
+      const next = mergeConfigValues(
+        {
+          locale,
+          localeOptions: locale_options,
+          timezone,
+          preset: branch_policy_preset as any,
+          allowed: branch_policy_allowed,
+          protectedNames: branch_policy_protected,
         },
-      };
+        current,
+      );
       writeConfig(next);
       return jsonResult({ action: "config", path: `${configDir()}/config.json`, ...next });
     }
-    const env = {};
+    const env: Record<string, string> = {};
     if (base_url) env.WORKFLOW_YT_BASE_URL = base_url;
     if (default_mention) env.WORKFLOW_YT_MENTION = default_mention;
     if (meeting_issue) env.WORKFLOW_YT_MEETING_ISSUE = meeting_issue;
     if (vcs_provider) env.WORKFLOW_VCS_PROVIDER = vcs_provider;
     if (vcs_target_branch) env.WORKFLOW_VCS_TARGET_BRANCH = vcs_target_branch;
+    env.WORKFLOW_WORKSPACE_ROOT = workspace_root;
+    if (name) env.WORKFLOW_BP_NAME = name;
+    if (develop_branch) env.WORKFLOW_BP_DEVELOP = develop_branch;
+    if (integration) env.WORKFLOW_BP_INTEGRATION = integration;
     const data = initApply({ action, confirmed, env });
     if (data.error) return jsonResult({ error: data.error });
     return jsonResult(data.data);
   },
 );
 
-server.registerTool(
+registerTool(
   "workflow_youtrack_verify_token",
   {
     description: "Read-only YouTrack token test (GET /api/users/me). No work items created.",
@@ -789,7 +985,7 @@ server.registerTool(
   },
 );
 
-server.registerTool(
+registerTool(
   "workflow_youtrack_parse_issue",
   {
     description: "Parse YouTrack issue URL or bare id (e.g. NSR-40) into issueId",
@@ -801,12 +997,12 @@ server.registerTool(
   },
   async ({ issue_ref }) => {
     const data = youtrackParseIssueRef(issue_ref);
-    if (data.error) return jsonResult({ error: data.error });
+    if ("error" in data) return jsonResult({ error: data.error });
     return jsonResult(data);
   },
 );
 
-server.registerTool(
+registerTool(
   "workflow_youtrack_context",
   {
     description: "YouTrack config, greeting, issue resolution (from issue_url/id or meetings)",
@@ -840,7 +1036,7 @@ server.registerTool(
   },
 );
 
-server.registerTool(
+registerTool(
   "workflow_youtrack_parse_duration",
   {
     description: "Parse duration text (e.g. 1h 30m) to integer minutes",
@@ -856,7 +1052,7 @@ server.registerTool(
   },
 );
 
-server.registerTool(
+registerTool(
   "workflow_youtrack_log_time",
   {
     description: "POST YouTrack work item (time only, no comment)",
@@ -872,7 +1068,7 @@ server.registerTool(
     },
   },
   async ({ issueId, minutes, text, dateMs, workspace_root }) => {
-    const data = youtrackLogTime({
+    const data = await youtrackLogTime({
       issueId,
       minutes,
       text,
@@ -884,7 +1080,7 @@ server.registerTool(
   },
 );
 
-server.registerTool(
+registerTool(
   "workflow_youtrack_draft",
   {
     description: "Build ES-CL comment markdown without posting (envelope only by default)",
@@ -901,7 +1097,7 @@ server.registerTool(
   async (input) => jsonResult(youtrackBuildDraft(input)),
 );
 
-server.registerTool(
+registerTool(
   "workflow_youtrack_post",
   {
     description: "Post YouTrack comment and optional time — requires confirmed: true",
@@ -914,7 +1110,7 @@ server.registerTool(
     },
   },
   async ({ confirmed, issueId, markdown, minutes, workspace_root }) => {
-    const data = youtrackPostUpdate({
+    const data = await youtrackPostUpdate({
       confirmed,
       issueId,
       markdown,
@@ -926,7 +1122,7 @@ server.registerTool(
   },
 );
 
-server.registerTool(
+registerTool(
   "workflow_present_ascii",
   {
     description: "Render deterministic ASCII UI wireframe from JSON spec",
@@ -943,7 +1139,7 @@ server.registerTool(
   },
 );
 
-server.registerTool(
+registerTool(
   "workflow_present_flow",
   {
     description: "Render mermaid flowchart from JSON nodes/edges",
@@ -973,10 +1169,11 @@ server.registerTool(
   },
 );
 
-server.registerTool(
+registerTool(
   "workflow_flow_status",
   {
-    description: "Read the spec/plan approval flow state for a workflow",
+    description:
+      "Read the spec/plan approval flow state for a workflow; on first read it records flow activation and canonical document paths (FG-01)",
     inputSchema: {
       plan_path: z.string().optional(),
       spec_path: z.string().optional(),
@@ -984,10 +1181,24 @@ server.registerTool(
     },
   },
   async ({ plan_path, spec_path, workspace_root }) => {
-    const root = workspace_root ?? process.cwd();
-    const slug = slugFromPath(plan_path ?? spec_path ?? "");
-    if (!slug) return jsonResult({ error: "plan_path or spec_path required" });
-    const state = readFlowState(root, slug);
+    const resolved = resolveCanonicalLayout({
+      workspace_root,
+      spec_path,
+      plan_path,
+    });
+    if (!resolved.ok) return jsonResult(withWorkspace(workspace_root, { error: resolved.error }));
+    const { workspace, slug } = resolved.layout;
+    let state = readFlowState(workspace, slug);
+    if (!state.activated) {
+      const prepared = prepareFlowState(
+        workspace,
+        slug,
+        { spec_path, plan_path },
+        cursorMutationContext(workspace),
+      );
+      if (!prepared.ok) return jsonResult({ error: prepared.error, code: prepared.code });
+      state = readFlowState(workspace, slug);
+    }
     return jsonResult({
       slug,
       spec: state.spec,
@@ -998,67 +1209,87 @@ server.registerTool(
   },
 );
 
-server.registerTool(
+registerTool(
   "workflow_spec_approve",
   {
     description:
-      "Advance spec status: first call self_reviewed, second call approved (after user approval)",
+      "Advance spec status with the Cursor policy-only confirmation: draft -> approved in a single call. The self-review validation runs automatically inside the transition; only the final approval asks for your confirmation. Cursor records attested: false (the MCP cannot observe AskQuestion results); there is no evidence argument (CA-42).",
     inputSchema: {
-      confirmed: z.boolean(),
       spec_path: z.string(),
       workspace_root: workspaceRootSchema,
     },
   },
-  async ({ confirmed, spec_path, workspace_root }) => {
-    const root = workspace_root ?? process.cwd();
-    const slug = slugFromPath(spec_path);
-    const result = transitionSpec(root, slug, spec_path, confirmed);
-    if (result.ok === false) return jsonResult({ error: result.error });
-    return jsonResult({ spec: spec_path, status: readFlowState(root, slug).spec.status });
+  async ({ spec_path, workspace_root }) => {
+    const resolved = resolveCanonicalLayout({ workspace_root, spec_path });
+    if (!resolved.ok) return jsonResult(withWorkspace(workspace_root, { error: resolved.error }));
+    const { workspace, slug } = resolved.layout;
+    const result = transitionSpec(
+      workspace,
+      slug,
+      spec_path,
+      cursorConfirmation(),
+      cursorMutationContext(workspace),
+    );
+    if (result.ok === false) return jsonResult({ error: result.error, code: result.code });
+    return jsonResult({ spec: spec_path, status: readFlowState(workspace, slug).spec.status });
   },
 );
 
-server.registerTool(
+registerTool(
   "workflow_plan_approve",
   {
     description:
-      "Advance plan status: first call self_reviewed, second call approved. Requires approved spec.",
+      "Advance plan status with the Cursor policy-only confirmation: draft -> approved in a single call. The self-review validation runs automatically inside the transition; only the final approval asks for your confirmation. Requires approved spec. Cursor records attested: false; there is no evidence argument (CA-42).",
     inputSchema: {
-      confirmed: z.boolean(),
       plan_path: z.string(),
       workspace_root: workspaceRootSchema,
     },
   },
-  async ({ confirmed, plan_path, workspace_root }) => {
-    const root = workspace_root ?? process.cwd();
-    const slug = slugFromPath(plan_path);
-    const result = transitionPlan(root, slug, plan_path, confirmed);
-    if (result.ok === false) return jsonResult({ error: result.error });
-    return jsonResult({ plan: plan_path, status: readFlowState(root, slug).plan.status });
+  async ({ plan_path, workspace_root }) => {
+    const resolved = resolveCanonicalLayout({ workspace_root, plan_path });
+    if (!resolved.ok) return jsonResult(withWorkspace(workspace_root, { error: resolved.error }));
+    const { workspace, slug } = resolved.layout;
+    const result = transitionPlan(
+      workspace,
+      slug,
+      plan_path,
+      cursorConfirmation(),
+      cursorMutationContext(workspace),
+    );
+    if (result.ok === false) return jsonResult({ error: result.error, code: result.code });
+    return jsonResult({ plan: plan_path, status: readFlowState(workspace, slug).plan.status });
   },
 );
 
-server.registerTool(
+registerTool(
   "workflow_plan_menu",
   {
-    description: "Record the answered post-plan choice menu (called after native question)",
+    description:
+      "Record the answered post-plan choice menu with the Cursor policy-only confirmation. subagent-driven is rejected as unsupported on Cursor (CA-42); there is no evidence argument.",
     inputSchema: {
-      confirmed: z.boolean(),
       plan_path: z.string(),
       choice: z.enum(["subagent-driven", "inline", "handoff", "review-spec", "review-plan"]),
       workspace_root: workspaceRootSchema,
     },
   },
-  async ({ confirmed, plan_path, choice, workspace_root }) => {
-    const root = workspace_root ?? process.cwd();
-    const slug = slugFromPath(plan_path);
-    const result = recordMenuChoice(root, slug, plan_path, choice, confirmed);
-    if (result.ok === false) return jsonResult({ error: result.error });
+  async ({ plan_path, choice, workspace_root }) => {
+    const resolved = resolveCanonicalLayout({ workspace_root, plan_path });
+    if (!resolved.ok) return jsonResult(withWorkspace(workspace_root, { error: resolved.error }));
+    const { workspace, slug } = resolved.layout;
+    const result = recordMenuChoice(
+      workspace,
+      slug,
+      plan_path,
+      choice,
+      cursorConfirmation(),
+      cursorMutationContext(workspace),
+    );
+    if (result.ok === false) return jsonResult({ error: result.error, code: result.code });
     return jsonResult({ menu: { presented: true, chosen: choice } });
   },
 );
 
-server.registerTool(
+registerTool(
   "workflow_docs_repo_link",
   {
     description: "Link the component docs repo in the toolkit config",
@@ -1074,16 +1305,16 @@ server.registerTool(
   },
 );
 
-server.registerTool(
+registerTool(
   "workflow_docs_list",
   {
     description: "List local specs with docs-repo promotion status",
     inputSchema: { workspace_root: workspaceRootSchema },
   },
-  async ({ workspace_root }) => jsonResult(listSpecs(workspace_root ?? process.cwd())),
+  async ({ workspace_root }) => jsonResult(listSpecs(workspace_root)),
 );
 
-server.registerTool(
+registerTool(
   "workflow_docs_promote",
   {
     description: "Promote a spec (+plan) to the linked docs repo with quality gate",
@@ -1095,7 +1326,7 @@ server.registerTool(
     },
   },
   async ({ slug, confirmed, force, workspace_root }) => {
-    const result = promoteSpec(workspace_root ?? process.cwd(), slug, { confirmed, force });
+    const result = promoteSpec(workspace_root, slug, { confirmed, force });
     if (!result.ok) return jsonResult({ error: result.error, findings: result.findings ?? [] });
     return jsonResult({
       target_dir: result.target_dir,
@@ -1105,7 +1336,7 @@ server.registerTool(
   },
 );
 
-server.registerTool(
+registerTool(
   "workflow_template_list",
   {
     description: "List editable templates with their source",
@@ -1114,7 +1345,7 @@ server.registerTool(
   async () => jsonResult({ templates: listTemplates() }),
 );
 
-server.registerTool(
+registerTool(
   "workflow_template_edit",
   {
     description: "Write an edited template to the toolkit config dir",
@@ -1131,7 +1362,7 @@ server.registerTool(
   },
 );
 
-server.registerTool(
+registerTool(
   "workflow_rule_list",
   {
     description: "List canonical rules (config) with platforms",
@@ -1140,7 +1371,7 @@ server.registerTool(
   async () => jsonResult({ rules: listRules() }),
 );
 
-server.registerTool(
+registerTool(
   "workflow_rule_edit",
   {
     description: "Write a canonical rule to the toolkit config dir",
@@ -1160,4 +1391,10 @@ server.registerTool(
 );
 
 const transport = new StdioServerTransport();
-await server.connect(transport);
+try {
+  await server.connect(transport);
+  logger.info(EVENT.mcpConnection, { host: "cursor-mcp", server: "workit" });
+} catch (err) {
+  logger.error(EVENT.mcpConnection, errorDetail(err));
+  throw err;
+}

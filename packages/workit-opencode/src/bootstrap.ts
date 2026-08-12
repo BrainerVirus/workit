@@ -1,12 +1,11 @@
 import { readFileSync } from "node:fs";
-import { createRequire } from "node:module";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { readConfig } from "@brainervirus/workit-core/src/core/config";
 import { compiledOpenCodeSections } from "@brainervirus/workit-core/src/core/rules";
 
-// templates/ lives in the core package (same resolution as plugin.ts).
-const require = createRequire(import.meta.url);
-const root = path.dirname(require.resolve("@brainervirus/workit-core/package.json"));
+// templates/ ships package-locally under assets/ (same layout as plugin.ts).
+const root = fileURLToPath(new URL("../assets/", import.meta.url));
 const marker = "<workflow-toolkit-contract>";
 
 let cached: string | null | undefined;

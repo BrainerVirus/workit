@@ -1,20 +1,28 @@
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { isDeepStrictEqual } from "node:util";
 import path from "node:path";
 import {
-  PRESETS,
   LOCALE_RE,
+  configDir,
+  mergeConfigValues,
   type BranchPreset,
   type ToolkitConfig,
 } from "@brainervirus/workit-core/src/core/config.ts";
 import {
+  loadWorkspacesFrom,
+  validateWorkspaceGlob,
   workspacesPath,
   type WorkspaceConfig,
 } from "@brainervirus/workit-core/src/core/workspaces.ts";
 import { ensureProjectGitignore } from "@brainervirus/workit-core/src/core/gitignore.ts";
 import { ensureHygieneFiles, hygieneFiles } from "@brainervirus/workit-core/src/core/hygiene.ts";
-
-export const TOKEN_PLACEHOLDER = "YOUR_TOKEN_HERE";
+import { writeFileExclusive } from "@brainervirus/workit-core/src/core/safe-write.ts";
+import {
+  applyWorkspaceBranchPolicy,
+  TOKEN_PLACEHOLDER,
+  type VcsProvider,
+} from "@brainervirus/workit-core/src/core/setup.ts";
+import type { WorkspaceBranchPolicy } from "@brainervirus/workit-core/src/core/workspaces.ts";
 
 export function validateLocale(locale: string): string | null {
   if (!LOCALE_RE.test(locale)) {
@@ -46,13 +54,6 @@ export function validateBaseUrl(url: string): string | null {
   return null;
 }
 
-export function parseList(raw: string): string[] {
-  return raw
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
-}
-
 export type ConfigInput = {
   locale?: string;
   timezone?: string;
@@ -62,24 +63,7 @@ export type ConfigInput = {
 };
 
 export function collectConfigValues(input: ConfigInput, current: ToolkitConfig): ToolkitConfig {
-  const preset = input.preset ?? current.branchPolicy.preset;
-  const presetDefs = PRESETS[preset];
-  return {
-    locale: input.locale ?? current.locale,
-    localeOptions: current.localeOptions,
-    timezone: input.timezone ?? current.timezone,
-    branchPolicy: {
-      preset,
-      allowed:
-        preset === "custom"
-          ? (input.allowed ?? current.branchPolicy.allowed)
-          : [...presetDefs.allowed],
-      protected:
-        preset === "custom"
-          ? (input.protectedNames ?? current.branchPolicy.protected)
-          : [...presetDefs.protected],
-    },
-  };
+  return mergeConfigValues(input, current);
 }
 
 export type ProjectSetupResult = {
@@ -103,13 +87,78 @@ export function runProjectSetup(
   return { gitignore, hygiene, openSource, created };
 }
 
-export const DEFAULT_BASE_URL = "https://enghouseamg.youtrack.cloud";
+// Shared scaffold outcome envelope (WZ-05/WZ-06): credentials are preserved
+// byte-for-byte unless absent, and malformed config files block every write.
+export type ScaffoldStatus = "missing" | "preserved" | "malformed";
 
-export type YouTrackScaffold = {
+export type ScaffoldOutcome = {
+  ok: boolean;
+  status: ScaffoldStatus;
+  /** Blocking diagnostic, set when status === "malformed". */
+  error?: string;
+  /** Malformed file that blocked the scaffold, set when status === "malformed". */
+  file?: string;
+  /** Files written by this scaffold (config + placeholders created). */
+  created: string[];
+  /** Credential files left byte-for-byte untouched. */
+  preserved: string[];
+};
+
+export type YouTrackScaffold = ScaffoldOutcome & {
   youtrackJson: string;
   tokenPath: string;
   tokenCreateUrl: string;
 };
+
+type LoadedConfig = { ok: true; value: unknown } | { ok: false } | null;
+
+function loadConfig(p: string): LoadedConfig {
+  if (!existsSync(p)) return null;
+  try {
+    return { ok: true, value: JSON.parse(readFileSync(p, "utf8")) };
+  } catch {
+    return { ok: false };
+  }
+}
+
+function malformedBlock(
+  file: string,
+  message: string,
+): {
+  ok: false;
+  status: "malformed";
+  error: string;
+  file: string;
+  created: never[];
+  preserved: never[];
+} {
+  return { ok: false, status: "malformed", error: message, file, created: [], preserved: [] };
+}
+
+function ensureToken(path: string, outcome: { created: string[]; preserved: string[] }): void {
+  // wx (exclusive create) closes the TOCTOU window: a token created between any
+  // existence check and write now races the write itself, and EEXIST means the
+  // other writer won — preserve their bytes instead of clobbering them. Shared
+  // with initApplyData via core/safe-write.ts (Task 14 Step 7 / CA-13).
+  if (writeFileExclusive(path, TOKEN_PLACEHOLDER + "\n", 0o600) === "created") {
+    outcome.created.push(path);
+  } else {
+    outcome.preserved.push(path);
+  }
+}
+
+function finalStatus(outcome: ScaffoldOutcome): ScaffoldStatus {
+  return outcome.preserved.length > 0 ? "preserved" : "missing";
+}
+
+// WZ-10: a host is only "complete" when it was scaffolded successfully — an
+// unconfigured (null) or blocked (ok: false) host keeps setup incomplete.
+export function isSetupComplete(results: {
+  youtrack?: { ok: boolean } | null;
+  vcs?: { ok: boolean } | null;
+}): boolean {
+  return (results.youtrack?.ok ?? false) && (results.vcs?.ok ?? false);
+}
 
 // ponytail: mirrors scripts/init/apply.sh write_youtrack_json + write_token_placeholder +
 // scripts/youtrack/token-create-url.sh in TS — initApply shells out to bash (CA-01 forbids bash)
@@ -123,6 +172,26 @@ export function scaffoldYouTrack(
   mkdirSync(dir, { recursive: true });
   const youtrackJson = path.join(dir, "youtrack.json");
   const tokenPath = path.join(dir, "youtrack.token");
+  const base = baseUrl.replace(/\/+$/, "");
+  const tokenCreateUrl = `${base}/users/me?tab=account-security`;
+  const loaded = loadConfig(youtrackJson);
+  if (
+    loaded &&
+    (!loaded.ok ||
+      typeof loaded.value !== "object" ||
+      loaded.value === null ||
+      Array.isArray(loaded.value))
+  ) {
+    return {
+      ...malformedBlock(
+        youtrackJson,
+        `youtrack.json is malformed — refusing to overwrite it: ${youtrackJson}`,
+      ),
+      youtrackJson,
+      tokenPath,
+      tokenCreateUrl,
+    };
+  }
   const config = {
     baseUrl,
     tokenFile: tokenPath,
@@ -157,18 +226,19 @@ export function scaffoldYouTrack(
     },
   };
   writeFileSync(youtrackJson, JSON.stringify(config, null, 2) + "\n", "utf8");
-  writeFileSync(tokenPath, TOKEN_PLACEHOLDER + "\n", { encoding: "utf8", mode: 0o600 });
-  const base = baseUrl.replace(/\/+$/, "");
+  const outcome: ScaffoldOutcome = { ok: true, status: "missing", created: [], preserved: [] };
+  outcome.created.push(youtrackJson);
+  ensureToken(tokenPath, outcome);
   return {
+    ...outcome,
+    status: finalStatus(outcome),
     youtrackJson,
     tokenPath,
-    tokenCreateUrl: `${base}/users/me?tab=account-security`,
+    tokenCreateUrl,
   };
 }
 
-export type VcsProvider = "gitlab" | "github";
-
-export type VcsScaffold = {
+export type VcsScaffold = ScaffoldOutcome & {
   vcsJson: string;
   tokenPaths: string[];
   activeTokenPath: string;
@@ -191,18 +261,6 @@ export function scaffoldVcs(dir: string, provider: VcsProvider): VcsScaffold {
   const vcsJson = path.join(dir, "vcs.json");
   const gitlabToken = path.join(dir, "gitlab.token");
   const githubToken = path.join(dir, "github.token");
-  const config = {
-    provider,
-    defaultTargetBranch: "develop",
-    gitlab: { host: "gitlab.com", apiUrl: "https://gitlab.com/api/v4", tokenFile: gitlabToken },
-    github: { host: "github.com", tokenFile: githubToken },
-    pr: { squashOnMerge: true, removeSourceBranch: true, pushBranch: true, confirmSkip: true },
-    tokenDefaults: TOKEN_DEFAULTS,
-  };
-  writeFileSync(vcsJson, JSON.stringify(config, null, 2) + "\n", "utf8");
-  for (const p of [gitlabToken, githubToken]) {
-    writeFileSync(p, TOKEN_PLACEHOLDER + "\n", { encoding: "utf8", mode: 0o600 });
-  }
 
   const gitlabUrl = `https://gitlab.com/-/user_settings/personal_access_tokens?${new URLSearchParams(
     {
@@ -218,12 +276,48 @@ export function scaffoldVcs(dir: string, provider: VcsProvider): VcsScaffold {
     contents: "write",
     metadata: "read",
   })}`;
+  const tokenCreateUrl = provider === "gitlab" ? gitlabUrl : githubUrl;
+  const activeTokenPath = provider === "gitlab" ? gitlabToken : githubToken;
+
+  const loaded = loadConfig(vcsJson);
+  if (
+    loaded &&
+    (!loaded.ok ||
+      typeof loaded.value !== "object" ||
+      loaded.value === null ||
+      Array.isArray(loaded.value))
+  ) {
+    return {
+      ...malformedBlock(vcsJson, `vcs.json is malformed — refusing to overwrite it: ${vcsJson}`),
+      vcsJson,
+      tokenPaths: [gitlabToken, githubToken],
+      activeTokenPath,
+      tokenCreateUrl,
+      provider,
+    };
+  }
+  const config = {
+    provider,
+    defaultTargetBranch: "develop",
+    gitlab: { host: "gitlab.com", apiUrl: "https://gitlab.com/api/v4", tokenFile: gitlabToken },
+    github: { host: "github.com", tokenFile: githubToken },
+    pr: { squashOnMerge: true, removeSourceBranch: true, pushBranch: true, confirmSkip: true },
+    tokenDefaults: TOKEN_DEFAULTS,
+  };
+  writeFileSync(vcsJson, JSON.stringify(config, null, 2) + "\n", "utf8");
+  const outcome: ScaffoldOutcome = { ok: true, status: "missing", created: [], preserved: [] };
+  outcome.created.push(vcsJson);
+  for (const p of [gitlabToken, githubToken]) {
+    ensureToken(p, outcome);
+  }
 
   return {
+    ...outcome,
+    status: finalStatus(outcome),
     vcsJson,
     tokenPaths: [gitlabToken, githubToken],
-    activeTokenPath: provider === "gitlab" ? gitlabToken : githubToken,
-    tokenCreateUrl: provider === "gitlab" ? gitlabUrl : githubUrl,
+    activeTokenPath,
+    tokenCreateUrl,
     provider,
   };
 }
@@ -236,21 +330,7 @@ export function shouldWriteWorkspaces(
 }
 
 export function loadWorkspaces(): WorkspaceConfig[] {
-  let raw: string;
-  try {
-    raw = readFileSync(workspacesPath(), "utf8");
-  } catch {
-    return [];
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return [];
-  }
-  if (!parsed || typeof parsed !== "object") return [];
-  const list = (parsed as { workspaces?: unknown }).workspaces;
-  return Array.isArray(list) ? (list as WorkspaceConfig[]) : [];
+  return loadWorkspacesFrom(configDir());
 }
 
 export type WriteWorkspacesResult = { ok: boolean; error?: string; path: string };
@@ -268,6 +348,14 @@ export function writeWorkspaces(entries: WorkspaceConfig[]): WriteWorkspacesResu
     }
     if (typeof entry.glob !== "string" || !entry.glob.trim()) {
       return { ok: false, error: `workspace "${entry.name}" missing a glob`, path: file };
+    }
+    const globValidation = validateWorkspaceGlob(entry.glob);
+    if (!globValidation.ok) {
+      return {
+        ok: false,
+        error: `workspace "${entry.name}": ${globValidation.error}`,
+        path: file,
+      };
     }
     const provider = entry.vcs?.provider;
     if (provider && !VALID_PROVIDERS.includes(provider)) {
@@ -301,4 +389,51 @@ export function writeWorkspaces(entries: WorkspaceConfig[]): WriteWorkspacesResu
     return { ok: false, error: `failed to write ${file}: ${(err as Error).message}`, path: file };
   }
   return { ok: true, path: file };
+}
+
+// ---------------------------------------------------------------------------
+// Setup preview + apply moved to the shared core (Task 14):
+// @brainervirus/workit-core/src/core/setup.ts owns buildSetupPreview /
+// applySetupPreview / SetupResult so the same authoritative flow runs in the
+// bundled CLI, the host adapters, and the extracted-package tests. The CLI
+// re-exports them for backward compatibility.
+// ---------------------------------------------------------------------------
+export {
+  TOKEN_PLACEHOLDER,
+  parseList,
+  buildSetupPreview,
+  activeSetupOverrides,
+  applySetupPreview,
+  setupCompletionGuidance,
+  type SetupPreviewInput,
+  type SetupMutation,
+  type SetupOverride,
+  type SetupPreview,
+  type Platform,
+  type SetupResult,
+  type SetupResultEntry,
+  type SetupResultStatus,
+  type ApplySetupOptions,
+} from "@brainervirus/workit-core/src/core/setup.ts";
+export type { VcsProvider };
+
+// CA-06: the wizard's branch-policy apply routes through the same shared
+// proposal→write helper as the host init action (init.ts branch_policy), so
+// both produce byte-identical workspaces.json writes on the same fixture.
+// The env override construction lives HERE (not in the host entrypoint) so the
+// wizard and the host side cannot drift; ambient WORKFLOW_BP_* overrides are
+// stripped so both sides are hermetic.
+export function applyWizardBranchPolicy(
+  branchPolicy: WorkspaceBranchPolicy | undefined,
+  workspace_root: string,
+  env: NodeJS.ProcessEnv = process.env,
+): Record<string, any> {
+  const clean: NodeJS.ProcessEnv = { ...env };
+  delete clean.WORKFLOW_BP_INTEGRATION;
+  delete clean.WORKFLOW_BP_DEVELOP;
+  delete clean.WORKFLOW_BP_NAME;
+  clean.WORKFLOW_WORKSPACE_ROOT = workspace_root;
+  if (branchPolicy?.integration) clean.WORKFLOW_BP_INTEGRATION = branchPolicy.integration;
+  if (branchPolicy?.developBranch) clean.WORKFLOW_BP_DEVELOP = branchPolicy.developBranch;
+  return applyWorkspaceBranchPolicy({ workspace_root, env: clean });
 }

@@ -39,7 +39,7 @@ After writing a plan, **do not emit** Superpowers' inline text beginning “Two 
 
 After `workflow_docs_validate` succeeds on the saved spec/plan pair, call Cursor `AskQuestion` with exactly:
 
-- Subagent-driven → `wk-implement`
+- Subagent-driven → **unsupported on Cursor** (the MCP rejects it as `unsupported_mode`; use OpenCode `wk-implement`)
 - Inline → execute in this session
 - Handoff → `/wk-handoff` (new session only)
 - Review spec first

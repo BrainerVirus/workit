@@ -8,10 +8,9 @@ import {
   CONFIG_GAP_MARKER,
   describeConfigGaps,
 } from "../../packages/workit-core/src/core/config-guard";
-import {
-  createYouTrackTools,
-  readCredentials,
-} from "../../packages/workit-core/src/tools/youtrack";
+import { createYouTrackTools } from "../../packages/workit-opencode/src/tools/youtrack";
+import { readCredentials } from "../../packages/workit-core/src/core/youtrack-tools";
+import { initStatus } from "../../packages/workit-core/src/core/init";
 import { withIsolatedXDG } from "../shared/helpers/env";
 
 test("empty config dir reports all item ids missing without throwing", async () => {
@@ -121,4 +120,18 @@ test("youtrack tools honor WORKFLOW_TOOLKIT_CONFIG_DIR-only pointing at the conf
     }
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("RL-01: malformed youtrack.json is reported with its exact path, never treated as valid", async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "wf-guard-malformed-"));
+  const workit = path.join(dir, "workit");
+  mkdirSync(workit, { recursive: true });
+  writeFileSync(path.join(workit, "youtrack.json"), "{ broken {{", "utf8");
+  await withIsolatedXDG(dir, () => {
+    const status = initStatus();
+    const item = status.items.find((i: { id: string }) => i.id === "youtrack_json");
+    expect(item.ok).toBe(false);
+    expect(item.path).toContain(path.join(dir, "workit", "youtrack.json"));
+    expect(status.youtrack_config.error).toBe("invalid youtrack.json");
+  });
 });

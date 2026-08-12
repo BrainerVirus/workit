@@ -1,52 +1,31 @@
 import { expect, test } from "bun:test";
-import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { scaffoldVcs, scaffoldYouTrack } from "../../packages/workit-cli/src/logic";
+import { initApplyData } from "../../packages/workit-core/src/core/init";
 
-// ponytail: pins parity between the wizard scaffolds (packages/workit-cli/src/logic.ts) and the bash
-// scripts/init/apply.sh writes — both must produce the same youtrack.json / vcs.json.
-// apply.sh honors WORKFLOW_YT_*/WORKFLOW_VCS_* env overrides; the wizard ignores them
-// (documented in logic.ts), so run apply.sh with a clean env.
+// ponytail: pins parity between the wizard scaffolds (packages/workit-cli/src/logic.ts)
+// and the initApplyData port of scripts/init/apply.sh writes — both must produce the
+// same youtrack.json / vcs.json. initApplyData honors WORKFLOW_YT_*/WORKFLOW_VCS_*
+// env overrides; the wizard ignores them (documented in logic.ts), so run it with a
+// clean env.
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const BASE_URL = "https://enghouseamg.youtrack.cloud";
 
-function bashAvailable(): boolean {
-  // win32 CI has no bash — skip the parity check there
-  if (process.platform === "win32") return false;
-  for (const [cmd, args] of [
-    ["bash", ["--version"]],
-    ["python3", ["--version"]],
-  ] as const) {
-    const r = spawnSync(cmd, args, { encoding: "utf8" });
-    if (r.status !== 0) return false;
-  }
-  return true;
-}
-
-function runApply(action: string, configDir: string): string {
-  const env: Record<string, string> = {};
-  for (const [k, v] of Object.entries(process.env)) {
-    if (v === undefined) continue;
-    if (/^WORKFLOW_(YT|VCS|GITLAB|GITHUB)_/.test(k)) continue; // env overrides would break parity
-    env[k] = v;
+function runApply(action: string, configDir: string): void {
+  const env: NodeJS.ProcessEnv = { ...process.env };
+  for (const key of Object.keys(env)) {
+    if (/^WORKFLOW_(YT|VCS|GITLAB|GITHUB)_/.test(key)) delete env[key]; // env overrides would break parity
   }
   env.WORKFLOW_TOOLKIT_CONFIG = configDir;
-  const r = spawnSync("bash", ["packages/workit-core/scripts/init/apply.sh", action, "true"], {
-    cwd: repoRoot,
-    env,
-    encoding: "utf8",
-  });
-  expect(r.status, `${action} failed: ${r.stderr}`).toBe(0);
-  return r.stdout;
+  const out = initApplyData(action, env);
+  if (out.error) throw new Error(`${action} failed: ${out.error}`);
 }
 
-test("wizard scaffolds match scripts/init/apply.sh output (youtrack + vcs)", () => {
-  if (!bashAvailable()) return; // no bash/python3 (e.g. win32 CI) — skip gracefully
-
+test("wizard scaffolds match initApplyData output (youtrack + vcs)", () => {
   const tsDir = mkdtempSync(path.join(os.tmpdir(), "wf-parity-ts-"));
   const shDir = mkdtempSync(path.join(os.tmpdir(), "wf-parity-sh-"));
   try {
@@ -81,10 +60,89 @@ test("wizard scaffolds match scripts/init/apply.sh output (youtrack + vcs)", () 
   }
 });
 
-test("wizard summary keeps nested output indented", () => {
-  const source = readFileSync(path.join(repoRoot, "packages/workit-cli/src/steps.tsx"), "utf8");
+test("wizard is a sequential state machine: one reducer owns all draft transitions", () => {
+  const stepsSource = readFileSync(
+    path.join(repoRoot, "packages/workit-cli/src/steps.tsx"),
+    "utf8",
+  );
+  const stateSource = readFileSync(
+    path.join(repoRoot, "packages/workit-cli/src/wizard-state.ts"),
+    "utf8",
+  );
 
-  expect(source.match(/\{"  "\}token placeholder/g)).toHaveLength(2);
-  expect(source.match(/\{"  "\}create token/g)).toHaveLength(2);
-  expect(source).toContain('{"  "}+ {file}');
+  expect(stateSource).toContain("type WizardDraft");
+  expect(stateSource).toContain("screen: WizardScreen");
+  expect(stateSource).toContain("values: SetupValues");
+  expect(stateSource).toContain("errors: Record<string, string>");
+  expect(stateSource).toContain("cancelled: boolean");
+  // The reducer is the single source of Back/Next/Cancel/Apply transitions.
+  expect(stateSource).toMatch(/export function reducer\(/);
+  expect(stateSource).toMatch(/case "next"/);
+  expect(stateSource).toMatch(/case "back"/);
+  expect(stateSource).toMatch(/case "cancel"/);
+  expect(stateSource).toMatch(/case "apply"/);
+  // The wizard dispatches to the reducer and mounts one screen at a time.
+  expect(stepsSource).toMatch(/useReducer\(reducer, undefined, createInitialDraft\)/);
+  expect(stepsSource).toMatch(/<Screen key=\{draft\.screen\}/);
+});
+
+test("wizard writes nothing before Apply; index exits nonzero until configuration completed (WZ-10)", () => {
+  const stepsSource = readFileSync(
+    path.join(repoRoot, "packages/workit-cli/src/steps.tsx"),
+    "utf8",
+  );
+
+  // No filesystem application inside the wizard — that is deferred to Apply
+  // (Tasks 13-14); the screens only accumulate an in-memory draft.
+  for (const write of [
+    "writeConfig",
+    "scaffoldYouTrack",
+    "scaffoldVcs",
+    "writeWorkspaces",
+    "runProjectSetup",
+    "writeFileSync",
+  ]) {
+    expect(stepsSource).not.toContain(write);
+  }
+
+  const indexSource = readFileSync(
+    path.join(repoRoot, "packages/workit-cli/src/index.tsx"),
+    "utf8",
+  );
+  expect(indexSource).toMatch(/process\.exit\(exit !== undefined && exit\.complete \? 0 : 1\)/);
+});
+
+// Task 14 Step 7 (CA-13): initApplyData token writes must use the same wx +
+// EEXIST-as-preserved semantics as the wizard's ensureToken — an existing real
+// token is never clobbered by a scaffold/placeholder write.
+test("initApplyData never clobbers existing credentials (wx + EEXIST, CA-13)", () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "wf-parity-token-"));
+  try {
+    const env: NodeJS.ProcessEnv = { ...process.env, WORKFLOW_TOOLKIT_CONFIG: dir };
+    for (const key of Object.keys(env)) {
+      if (/^WORKFLOW_(YT|VCS|GITLAB|GITHUB)_/.test(key)) delete env[key]; // env overrides would break parity
+    }
+
+    const ytToken = path.join(dir, "youtrack.token");
+    writeFileSync(ytToken, "perm_yt_123\n", { mode: 0o600 });
+    const placeholder = initApplyData("youtrack_token_placeholder", env);
+    expect(placeholder.preserved).toBe(true);
+    expect(readFileSync(ytToken, "utf8")).toBe("perm_yt_123\n");
+
+    const scaffold = initApplyData("youtrack_scaffold", env);
+    expect(scaffold.preserved).toBe(true);
+    expect(readFileSync(ytToken, "utf8")).toBe("perm_yt_123\n");
+
+    const glToken = path.join(dir, "gitlab.token");
+    const ghToken = path.join(dir, "github.token");
+    writeFileSync(glToken, "glpat-secret\n", { mode: 0o600 });
+    writeFileSync(ghToken, "ghp_secret\n", { mode: 0o600 });
+    const vcs = initApplyData("vcs_scaffold", env);
+    expect(vcs.preserved_tokens).toContain(path.resolve(glToken));
+    expect(vcs.preserved_tokens).toContain(path.resolve(ghToken));
+    expect(readFileSync(glToken, "utf8")).toBe("glpat-secret\n");
+    expect(readFileSync(ghToken, "utf8")).toBe("ghp_secret\n");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

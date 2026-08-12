@@ -15,6 +15,8 @@ Draft a merge request / pull request body, or create it on GitLab (`glab`) / Git
 
 Call MCP `workflow_pr_context` with **no `range` argument** unless the user supplied an explicit git range string.
 
+**Repository calls:** For every repository-scoped `workflow_*` call, pass the active Cursor workspace as `workspace_root`; never rely on the MCP process default.
+
 On `feature/*` or `bugfix/*`, the tool compares **only against `develop`** (never `main`).
 
 Use the tool return as ground truth. Pay attention to:

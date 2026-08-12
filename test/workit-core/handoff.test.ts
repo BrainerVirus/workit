@@ -5,10 +5,12 @@ import os from "node:os";
 import path from "node:path";
 import {
   adaptPluginHandoffClient,
-  buildHandoffPrompt,
   createHandoffTools,
+} from "../../packages/workit-opencode/src/tools/handoff";
+import {
+  buildHandoffPrompt,
   handoffSession,
-} from "../../packages/workit-core/src/tools/handoff";
+} from "../../packages/workit-core/src/core/handoff-tools";
 import { WorkflowStateStore } from "../../packages/workit-core/src/state";
 
 const posix = (p: string) => p.split(path.sep).join("/");

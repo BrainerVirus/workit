@@ -1,9 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
 import { readTemplate } from "./templates";
 import { resolveWorkspaceRoot } from "./scripts";
-import { configDir } from "./config";
+import { configDir, isConfigObject } from "./config";
 
 const ISSUE_RE = /^[A-Z]+-\d+$/;
 const TOKEN_PLACEHOLDER = "YOUR_TOKEN_HERE";
@@ -19,25 +18,45 @@ const youTrackTokenModeOk = (p: string): boolean => {
   return mode === 0o600;
 };
 
+// AR-07/CA-37: the shared shape rule applies here too — a parseable non-object
+// youtrack.json (null, scalar, array) is malformed with the exact path, never
+// missing/unconfigured, never silently defaulted.
 function readYouTrackConfig(
   required: boolean,
-): { config: Record<string, any>; path: string } | { error: string } {
+): { config: Record<string, any>; path: string } | { error: string; path: string } {
   const cfgPath = youTrackConfigPath();
   if (!fs.existsSync(cfgPath)) {
-    return required ? { error: "ERROR: missing youtrack.json" } : { config: {}, path: cfgPath };
+    return required
+      ? { error: "ERROR: missing youtrack.json", path: cfgPath }
+      : { config: {}, path: cfgPath };
   }
+  let parsed: unknown;
   try {
-    const config = JSON.parse(fs.readFileSync(cfgPath, "utf8")) as Record<string, any>;
-    return { config, path: cfgPath };
+    parsed = JSON.parse(fs.readFileSync(cfgPath, "utf8"));
   } catch {
-    return { error: "invalid youtrack.json" };
+    return { error: `${cfgPath} is not valid JSON`, path: cfgPath };
   }
+  if (!isConfigObject(parsed)) {
+    return { error: `${cfgPath} is not a JSON object`, path: cfgPath };
+  }
+  return { config: parsed as Record<string, any>, path: cfgPath };
 }
 
+// RL-01: typed load result — malformed carries {ok:false, error, configPath}
+// mirroring vcsConfig, so risky consumers stop on the exact path.
+export type YouTrackConfigResult =
+  | { data: Record<string, any> }
+  | { error: string }
+  | { ok: false; error: string; configPath: string };
+
 /** Load + redact youtrack.json; validates the token file like youtrack/config.sh load. */
-export function youTrackConfigLoad(): { data: Record<string, any> } | { error: string } {
+export function youTrackConfigLoad(): YouTrackConfigResult {
   const loaded = readYouTrackConfig(true);
-  if ("error" in loaded) return loaded;
+  if ("error" in loaded) {
+    // RL-01: malformed (parse failure or non-object) fails closed with the exact
+    // path, mirroring vcsConfig's {ok:false,error,configPath} shape.
+    return { ok: false, error: loaded.error, configPath: loaded.path };
+  }
   const cfgPath = loaded.path;
   const tokenFile = String(loaded.config.tokenFile ?? "");
   const tokenPath = tokenFile
@@ -87,8 +106,23 @@ export function youTrackGreeting(configOverride?: string): {
   stderr: string;
 } {
   const cfgPath = configOverride ?? youTrackConfigPath();
+  let parsed: unknown;
   try {
-    const config = JSON.parse(fs.readFileSync(cfgPath, "utf8")) as Record<string, any>;
+    parsed = JSON.parse(fs.readFileSync(cfgPath, "utf8"));
+  } catch {
+    return {
+      stdout: "",
+      exitCode: 1,
+      stderr: fs.existsSync(cfgPath)
+        ? `${cfgPath} is not valid JSON`
+        : `missing youtrack.json: ${cfgPath}`,
+    };
+  }
+  if (!isConfigObject(parsed)) {
+    return { stdout: "", exitCode: 1, stderr: `${cfgPath} is not a JSON object` };
+  }
+  const config = parsed as Record<string, any>;
+  try {
     const tz = String(config.timezone ?? "America/Santiago");
     const now = new Date();
     const { y, m, d, hour, minute } = tzParts(now, tz);
@@ -134,11 +168,20 @@ export function youTrackWorkDateMs(
 ): { data: { dateMs: number; timezone: string; localDate: string } } | { error: string } {
   const cfgPath = youTrackConfigPath();
   let tz = "America/Santiago";
-  try {
-    const config = JSON.parse(fs.readFileSync(cfgPath, "utf8")) as Record<string, any>;
-    tz = String(config.timezone ?? "America/Santiago");
-  } catch {
-    /* defaults */
+  // Missing file is a legitimate unconfigured state (reader: "missing" keeps
+  // defaults); a parseable non-object is malformed and must propagate the
+  // exact-path error instead of silently defaulting the timezone.
+  if (fs.existsSync(cfgPath)) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(fs.readFileSync(cfgPath, "utf8"));
+    } catch {
+      return { error: `${cfgPath} is not valid JSON` };
+    }
+    if (!isConfigObject(parsed)) {
+      return { error: `${cfgPath} is not a JSON object` };
+    }
+    tz = String((parsed as Record<string, any>).timezone ?? "America/Santiago");
   }
   const raw = dateRaw || "auto";
   try {
@@ -192,16 +235,38 @@ const youTrackToken = (): { token: string; base: string } | { error: string } =>
   return { token, base };
 };
 
-function youTrackCurl(args: string[]): { status: number; stdout: string; stderr: string } {
-  const result = spawnSync("curl", ["-fsS", ...args], { encoding: "utf8" });
-  return { status: result.status ?? 1, stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
+// fetch replaces the previous curl -fsS request helper: check res.ok,
+// surface HTTP errors without a token-bearing body, parse JSON on success.
+async function youTrackRequest(
+  url: string,
+  init: { method: string; token: string; body?: unknown },
+): Promise<{ status: number; stdout: string; stderr: string }> {
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${init.token}`,
+    Accept: "application/json",
+  };
+  let body: string | undefined;
+  if (init.body !== undefined) {
+    headers["Content-Type"] = "application/json";
+    body = JSON.stringify(init.body);
+  }
+  try {
+    const res = await fetch(url, { method: init.method, headers, body });
+    const text = await res.text();
+    if (!res.ok) {
+      return { status: res.status, stdout: "", stderr: text.slice(0, 200) };
+    }
+    return { status: 0, stdout: text, stderr: "" };
+  } catch (err) {
+    return { status: 1, stdout: "", stderr: err instanceof Error ? err.message : "network error" };
+  }
 }
 
 /** Port of scripts/youtrack/api.sh — log-time / post-comment with the WORKFLOW_YT_WRITE guard. */
-export function youTrackApi(
+export async function youTrackApi(
   args: string[],
   writeFlag = process.env.WORKFLOW_YT_WRITE ?? "",
-): { data: Record<string, any> } | { error: string } {
+): Promise<{ data: Record<string, any> } | { error: string }> {
   const cmd = args[0];
   if (cmd === "log-time" || cmd === "post-comment") {
     if (writeFlag !== "1") {
@@ -214,22 +279,20 @@ export function youTrackApi(
   const creds = youTrackToken();
   if ("error" in creds) return creds;
   const { token, base } = creds;
-  const auth = ["-H", `Authorization: Bearer ${token}`, "-H", "Accept: application/json"];
 
   if (cmd === "log-time") {
     const [issue, minutesRaw, text, dateArg] = args.slice(1);
     const minutes = Number(minutesRaw);
     const dateMs = youTrackWorkDateMs(dateArg ?? "auto");
     if ("error" in dateMs) return dateMs;
-    const body = JSON.stringify({ duration: { minutes }, text, date: dateMs.data.dateMs });
-    const out = youTrackCurl([
-      ...auth,
-      "-H",
-      "Content-Type: application/json",
-      "-d",
-      body,
+    const out = await youTrackRequest(
       `${base}/api/issues/${issue}/timeTracking/workItems?fields=id,idReadable`,
-    ]);
+      {
+        method: "POST",
+        token,
+        body: { duration: { minutes }, text, date: dateMs.data.dateMs },
+      },
+    );
     if (out.status !== 0) return { error: "YouTrack HTTP request failed" };
     try {
       const created = JSON.parse(out.stdout) as Record<string, any>;
@@ -248,15 +311,11 @@ export function youTrackApi(
   }
   if (cmd === "post-comment") {
     const [issue, text] = args.slice(1);
-    const body = JSON.stringify({ text });
-    const out = youTrackCurl([
-      ...auth,
-      "-H",
-      "Content-Type: application/json",
-      "-d",
-      body,
-      `${base}/api/issues/${issue}/comments`,
-    ]);
+    const out = await youTrackRequest(`${base}/api/issues/${issue}/comments`, {
+      method: "POST",
+      token,
+      body: { text },
+    });
     if (out.status !== 0) return { error: "YouTrack HTTP request failed" };
     return { data: { ok: true, issueId: issue } };
   }
@@ -264,26 +323,24 @@ export function youTrackApi(
 }
 
 /** Port of scripts/youtrack/verify-token.sh — read-only GET /api/users/me. */
-export function youTrackVerifyToken():
-  | { data: Record<string, any> }
-  | { error: string; http_status?: number; path?: string } {
+export async function youTrackVerifyToken(): Promise<
+  { data: Record<string, any> } | { error: string; http_status?: number; path?: string }
+> {
   const cfgPath = youTrackConfigPath();
   if (!fs.existsSync(cfgPath)) return { error: "missing youtrack.json" };
   const creds = youTrackToken();
   if ("error" in creds) return { error: creds.error };
   const { token, base } = creds;
 
-  const me = youTrackCurl([
-    "-H",
-    `Authorization: Bearer ${token}`,
-    "-H",
-    "Accept: application/json",
-    `${base}/api/users/me?fields=id,login,name,email`,
-  ]);
+  const me = await youTrackRequest(`${base}/api/users/me?fields=id,login,name,email`, {
+    method: "GET",
+    token,
+  });
   if (me.status !== 0) {
-    const body = me.stderr.trim() || me.stdout.trim();
     const err =
-      me.status === 22 ? "authentication failed (401/403)" : `HTTP error: ${body.slice(0, 200)}`;
+      me.status === 401 || me.status === 403
+        ? "authentication failed (401/403)"
+        : `HTTP error: ${me.stderr.slice(0, 200)}`;
     return { error: err, http_status: me.status };
   }
   let user: Record<string, any>;
@@ -304,13 +361,10 @@ export function youTrackVerifyToken():
   const meeting = readYouTrackConfig(false);
   const meetingIssue = "config" in meeting ? meeting.config.meetingIssue : undefined;
   if (meetingIssue) {
-    const issue = youTrackCurl([
-      "-H",
-      `Authorization: Bearer ${token}`,
-      "-H",
-      "Accept: application/json",
+    const issue = await youTrackRequest(
       `${base}/api/issues/${meetingIssue}?fields=id,idReadable,summary`,
-    ]);
+      { method: "GET", token },
+    );
     if (issue.status === 0) {
       try {
         const parsed = JSON.parse(issue.stdout) as Record<string, any>;
@@ -333,8 +387,10 @@ export function youTrackVerifyToken():
 export function youTrackTokenCreateUrl(): { data: Record<string, any> } {
   const tokenName = process.env.WORKFLOW_YT_TOKEN_NAME ?? "workit";
   const loaded = readYouTrackConfig(false);
-  const config = loaded && "config" in loaded ? loaded.config : {};
-  const cfgPath = loaded && "config" in loaded ? loaded.path : youTrackConfigPath();
+  if ("error" in loaded) {
+    return { data: { error: loaded.error } };
+  }
+  const config = loaded.config;
   const defaults = (config.tokenDefaults ?? {}) as Record<string, any>;
   const name = String(defaults.name ?? tokenName);
   const desc = String(
@@ -342,7 +398,9 @@ export function youTrackTokenCreateUrl(): { data: Record<string, any> } {
   );
   const scopes = Array.isArray(defaults.scopes) ? defaults.scopes : ["YouTrack"];
   const base = String(config.baseUrl ?? "https://enghouseamg.youtrack.cloud").replace(/\/+$/, "");
-  const tokenFile = String(config.tokenFile ?? path.join(path.dirname(cfgPath), "youtrack.token"));
+  const tokenFile = String(
+    config.tokenFile ?? path.join(path.dirname(loaded.path), "youtrack.token"),
+  );
   const tab = String(defaults.profileTab ?? "account-security");
   const createUrl = `${base}/users/me?${new URLSearchParams({ tab })}`;
   const docsUrl = "https://www.jetbrains.com/help/youtrack/cloud/manage-permanent-token.html";
@@ -394,7 +452,7 @@ export type YouTrackScripts = {
   config(): Record<string, any>;
   greeting(): { stdout: string; exitCode: number; stderr: string };
   parseDuration(text: string): Record<string, any>;
-  api(args: string[]): Record<string, any>;
+  api(args: string[]): Record<string, any> | Promise<Record<string, any>>;
 };
 
 const defaultScripts: YouTrackScripts = {
@@ -532,7 +590,7 @@ export function parseDuration(
   return out.data;
 }
 
-export function logTime(
+export async function logTime(
   {
     issueId,
     minutes,
@@ -549,13 +607,13 @@ export function logTime(
     workspace_root: string;
   },
   scripts: YouTrackScripts = defaultScripts,
-): Record<string, any> {
+): Promise<Record<string, any>> {
   if (!issueId || !ISSUE_RE.test(issueId)) return { error: "invalid issueId" };
   if (!minutes || minutes <= 0) return { error: "minutes must be positive" };
   const workText = text ?? "workit";
   const dateArg =
     dateMs != null ? String(dateMs) : date && /^\d+$/.test(String(date)) ? String(date) : "auto";
-  const out = scripts.api(["log-time", issueId, String(minutes), workText, dateArg]);
+  const out = await scripts.api(["log-time", issueId, String(minutes), workText, dateArg]);
   if (out.error) return { error: out.error };
   return { issueId, minutes, text: workText, ...out.data, ok: true };
 }
@@ -609,7 +667,7 @@ export function buildDraft({
   return { issueId, markdown };
 }
 
-export function postUpdate(
+export async function postUpdate(
   {
     confirmed,
     issueId,
@@ -624,7 +682,7 @@ export function postUpdate(
     workspace_root?: string;
   },
   operations?: Record<string, any>,
-): Record<string, any> {
+): Promise<Record<string, any>> {
   operations ??= {};
   if (!confirmed) return { error: "confirmed: true required" };
   if (!issueId || !ISSUE_RE.test(issueId)) return { error: "invalid issueId" };
@@ -635,11 +693,11 @@ export function postUpdate(
     ((id: string, text: string, _root: string) =>
       youTrackApi(["post-comment", id, text], process.env.WORKFLOW_YT_WRITE ?? ""));
   const logTimeOperation = operations.logTime ?? logTime;
-  const comment = postComment(issueId, markdown, workspace_root);
+  const comment = await postComment(issueId, markdown, workspace_root);
   if (comment.error) return { error: comment.error };
 
   if (minutes && minutes > 0) {
-    const time = logTimeOperation({
+    const time = await logTimeOperation({
       issueId,
       minutes,
       text: "workit update",

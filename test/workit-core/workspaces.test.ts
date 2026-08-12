@@ -1,10 +1,13 @@
 import { expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { initStatus } from "../../packages/workit-core/src/core/init";
 import {
+  matchWorkspace,
+  readWorkspacesResult,
   resolveWorkspace,
+  validateWorkspaceGlob,
   workspacesPath,
   type WorkspaceConfig,
 } from "../../packages/workit-core/src/core/workspaces";
@@ -217,4 +220,61 @@ test("workspacesPath follows the configDir env chain", () => {
   withIsolatedConfig(dir, () => {
     expect(workspacesPath()).toBe(path.join(dir, "workspaces.json"));
   });
+});
+
+test("RL-08: validateWorkspaceGlob enforces the supported matcher grammar", () => {
+  for (const good of ["/home/*/work/**", "**", "**/repo", "D:\\a\\repo\\**", "/x/y/**"]) {
+    expect(validateWorkspaceGlob(good).ok).toBe(true);
+  }
+  for (const bad of [
+    "[abc]",
+    "/home/*/[abc]/**",
+    "/home/*/?",
+    "/home/*/{a,b}/**",
+    "{a,b}/**",
+    "**/[x]",
+    "!**",
+    "!/home/*/work/**",
+    "/home/*/@(a|b)/**",
+    "/home/*/+(a|b)/**",
+    "/home/*/foo*(bar)/**",
+  ]) {
+    const r = validateWorkspaceGlob(bad);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toContain("unsupported");
+  }
+  expect(validateWorkspaceGlob("").ok).toBe(false);
+  expect(validateWorkspaceGlob("   ").ok).toBe(false);
+});
+
+test("RL-08: the unsupported-glob matcher rejects unsupported grammar (write-time parity)", () => {
+  // Task 15 advisory: unsupported patterns were accepted and shown as "no
+  // match". The matcher grammar and write-time validation must agree.
+  for (const bad of ["/home/*/[abc]/**", "/home/*/x?/**", "/home/*/{a,b}/**", "**/[ab]/**"]) {
+    expect(matchWorkspace(bad, "/home/u/work/repo")).toBe(false);
+  }
+});
+
+test("RL-01: readWorkspacesResult distinguishes missing, valid, and malformed with exact paths", () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "wf-ws-result-"));
+  try {
+    withIsolatedConfig(dir, () => {
+      expect(readWorkspacesResult().status).toBe("missing");
+      expect(readWorkspacesResult().path).toBe(path.join(dir, "workspaces.json"));
+
+      writeWorkspaces(dir, JSON.stringify(WORKSPACES, null, 2));
+      const valid = readWorkspacesResult();
+      expect(valid.status).toBe("valid");
+      expect(valid.entries).toHaveLength(2);
+      expect(valid.error).toBeUndefined();
+
+      writeWorkspaces(dir, "{ nope !!");
+      const malformed = readWorkspacesResult();
+      expect(malformed.status).toBe("malformed");
+      expect(malformed.path).toBe(path.join(dir, "workspaces.json"));
+      expect(malformed.error).toContain(path.join(dir, "workspaces.json"));
+    });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

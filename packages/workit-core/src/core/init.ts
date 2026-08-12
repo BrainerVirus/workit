@@ -1,16 +1,21 @@
 import fs from "node:fs";
 import path from "node:path";
-import { configDir } from "./config";
+import { configDir, isConfigObject } from "./config";
 import { PLUGIN_ROOT } from "./scripts";
+import { writeFileExclusive } from "./safe-write";
 import { resolveWorkspace, workspacesPath } from "./workspaces";
+import { applyWorkspaceBranchPolicy } from "./setup";
 import { vcsTokenCreateUrls, vcsVerifyToken } from "./vcs-config";
 import { youTrackTokenCreateUrl, youTrackVerifyToken } from "./youtrack";
 
 const TOKEN_PLACEHOLDER = "YOUR_TOKEN_HERE";
 
+// AR-07/CA-37: a parseable non-object (null, scalar, array) is not a config
+// file — never display it as configured (fail-open) nor as unconfigured.
 const readJson = (p: string): Record<string, any> | null => {
   try {
-    return JSON.parse(fs.readFileSync(p, "utf8")) as Record<string, any>;
+    const parsed: unknown = JSON.parse(fs.readFileSync(p, "utf8"));
+    return isConfigObject(parsed) ? (parsed as Record<string, any>) : null;
   } catch {
     return null;
   }
@@ -97,7 +102,18 @@ export function initStatusData(configDirPath = configDir()): Record<string, any>
       youtrackConfig.tokenCreate = youtrackTokenCreate;
     }
   } else if (fs.existsSync(ytJson)) {
-    youtrackConfig = { config_edit_path: resolvePath(ytJson), error: "invalid youtrack.json" };
+    // Distinguish parse failure (legacy message, path in config_edit_path) from a
+    // parseable non-object, which gets the shared shape diagnostic with the path.
+    let parseFailed = false;
+    try {
+      JSON.parse(fs.readFileSync(ytJson, "utf8"));
+    } catch {
+      parseFailed = true;
+    }
+    youtrackConfig = {
+      config_edit_path: resolvePath(ytJson),
+      error: parseFailed ? "invalid youtrack.json" : `${resolvePath(ytJson)} is not a JSON object`,
+    };
   }
 
   items.push({
@@ -239,7 +255,7 @@ export function initStatusData(configDirPath = configDir()): Record<string, any>
 }
 
 /** Port of scripts/init/toolkit-status.sh — filesystem + API health check. */
-export function toolkitStatusData(configDirPath = configDir()): Record<string, any> {
+export async function toolkitStatusData(configDirPath = configDir()): Promise<Record<string, any>> {
   const status = initStatusData(configDirPath);
   const tokenItem = status.items.find((i: Record<string, any>) => i.id === "youtrack_token") ?? {};
   const placeholder = Boolean(tokenItem.placeholder);
@@ -253,13 +269,14 @@ export function toolkitStatusData(configDirPath = configDir()): Record<string, a
 
   const verify = placeholder
     ? { ok: false, error: "token still placeholder YOUR_TOKEN_HERE" }
-    : youTrackVerifyToken();
+    : await youTrackVerifyToken();
   const vcsVerify = vcsPlaceholder
     ? { ok: false, error: "vcs token still placeholder YOUR_TOKEN_HERE" }
-    : vcsVerifyToken();
+    : await vcsVerifyToken();
+  const youTrackHealth = ("data" in verify ? verify.data : verify) as Record<string, any>;
 
   status.youtrack_verify = verify;
-  status.youtrack_ok = placeholder ? false : Boolean((verify as Record<string, any>).ok);
+  status.youtrack_ok = placeholder ? false : Boolean(youTrackHealth.ok);
   status.vcs_verify = vcsVerify;
   status.vcs_ok =
     vcsJsonOk && !vcsPlaceholder ? Boolean((vcsVerify as Record<string, any>).ok) : false;
@@ -361,7 +378,9 @@ export function initApplyData(
     }
     case "youtrack_token_placeholder": {
       const p = path.join(dir, "youtrack.token");
-      fs.writeFileSync(p, TOKEN_PLACEHOLDER + "\n", { encoding: "utf8", mode: 0o600 });
+      // wx + EEXIST-as-preserved (CA-13): an existing real token is never
+      // clobbered — shared with the CLI wizard's ensureToken via safe-write.
+      const preserved = writeFileExclusive(p, TOKEN_PLACEHOLDER + "\n", 0o600) === "preserved";
       const abs = path.resolve(p);
       return {
         action,
@@ -369,6 +388,7 @@ export function initApplyData(
         path: abs,
         token_edit_path: abs,
         placeholder: TOKEN_PLACEHOLDER,
+        preserved,
         instruction: `Open ${abs} in your editor, replace YOUR_TOKEN_HERE with your YouTrack permanent token, save, then run /wk-status`,
       };
     }
@@ -376,7 +396,8 @@ export function initApplyData(
       const jsonOut = path.join(dir, "youtrack.json");
       const tokenOut = path.join(dir, "youtrack.token");
       fs.writeFileSync(jsonOut, JSON.stringify(youtrackJsonContent(dir), null, 2) + "\n", "utf8");
-      fs.writeFileSync(tokenOut, TOKEN_PLACEHOLDER + "\n", { encoding: "utf8", mode: 0o600 });
+      const preserved =
+        writeFileExclusive(tokenOut, TOKEN_PLACEHOLDER + "\n", 0o600) === "preserved";
       const configPath = path.resolve(jsonOut);
       const tokenPath = path.resolve(tokenOut);
       const prev = process.env.WORKFLOW_YOUTRACK_CONFIG;
@@ -397,6 +418,7 @@ export function initApplyData(
           token_create: tokenCreate,
           config_edit_path: configPath,
           placeholder: TOKEN_PLACEHOLDER,
+          preserved,
           youtrack_config: {
             config_edit_path: configPath,
             baseUrl: base,
@@ -433,8 +455,11 @@ export function initApplyData(
       fs.writeFileSync(jsonOut, JSON.stringify(vcsJsonContent(dir), null, 2) + "\n", "utf8");
       const glPath = path.join(dir, "gitlab.token");
       const ghPath = path.join(dir, "github.token");
+      const preservedTokens: string[] = [];
       for (const p of [glPath, ghPath]) {
-        fs.writeFileSync(p, TOKEN_PLACEHOLDER + "\n", { encoding: "utf8", mode: 0o600 });
+        if (writeFileExclusive(p, TOKEN_PLACEHOLDER + "\n", 0o600) === "preserved") {
+          preservedTokens.push(path.resolve(p));
+        }
       }
       const configPath = path.resolve(jsonOut);
       const prev = process.env.WORKFLOW_VCS_CONFIG;
@@ -455,6 +480,7 @@ export function initApplyData(
           token_edit_path: activePath,
           token_create_url: active.createUrl,
           token_create_urls: tokenUrls,
+          preserved_tokens: preservedTokens,
           vcs_config: {
             config_edit_path: configPath,
             provider,
@@ -472,6 +498,12 @@ export function initApplyData(
         else process.env.WORKFLOW_VCS_CONFIG = prev;
       }
     }
+    case "branch_policy": {
+      const root = env.WORKFLOW_WORKSPACE_ROOT?.trim()
+        ? env.WORKFLOW_WORKSPACE_ROOT
+        : process.cwd();
+      return applyWorkspaceBranchPolicy({ workspace_root: root, env });
+    }
     default: {
       return {
         error: `unknown action ${action} (youtrack_scaffold|youtrack_json|youtrack_token_placeholder|vcs_scaffold)`,
@@ -488,7 +520,7 @@ export function initStatus(): Record<string, any> {
   };
 }
 
-export function toolkitStatus(): Record<string, any> {
+export async function toolkitStatus(): Promise<Record<string, any>> {
   return toolkitStatusData();
 }
 

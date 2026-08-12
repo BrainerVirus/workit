@@ -1,50 +1,22 @@
 import { Box, Text, useInput } from "ink";
-import { ConfirmInput, MultiSelect, Select, TextInput } from "@inkjs/ui";
-import { useState, type Dispatch, type JSX, type SetStateAction } from "react";
+import { ConfirmInput, MultiSelect, TextInput } from "@inkjs/ui";
+import { useEffect, useReducer, useRef, useState, type Dispatch, type JSX } from "react";
 import {
-  configDir,
-  readConfig,
-  writeConfig,
+  mergePreset,
   type BranchPreset,
   type ToolkitConfig,
 } from "@brainervirus/workit-core/src/core/config.ts";
-import type { WorkspaceConfig } from "@brainervirus/workit-core/src/core/workspaces.ts";
+import { buildSetupPreview, parseList, type SetupMutation } from "./logic";
+import { matchWorkspace } from "@brainervirus/workit-core/src/core/workspaces.ts";
+import { detectBranchPolicy } from "@brainervirus/workit-core/src/core/branch-policy.ts";
 import {
-  collectConfigValues,
-  DEFAULT_BASE_URL,
-  loadWorkspaces,
-  parseList,
-  runProjectSetup,
-  scaffoldVcs,
-  scaffoldYouTrack,
-  shouldWriteWorkspaces,
-  validateBaseUrl,
-  validateLocale,
-  validateTimezone,
-  writeWorkspaces,
-  type ProjectSetupResult,
-  type VcsProvider,
-  type VcsScaffold,
-  type YouTrackScaffold,
-} from "./logic";
-
-export type WizardResults = {
-  platforms: string[];
-  config: ToolkitConfig;
-  workspaces: WorkspaceConfig[];
-  youtrack: YouTrackScaffold | null;
-  vcs: VcsScaffold | null;
-  project: ProjectSetupResult | null;
-};
-
-type StepProps = {
-  results: WizardResults;
-  setResults: Dispatch<SetStateAction<WizardResults>>;
-  onDone: () => void;
-  onExit: () => void;
-};
-
-type StepComponent = (props: StepProps) => JSX.Element;
+  createInitialDraft,
+  reducer,
+  type SetupValues,
+  type WizardAction,
+  type WizardDraft,
+  type WizardScreen,
+} from "./wizard-state";
 
 const PLATFORMS = [
   { label: "OpenCode", value: "opencode" },
@@ -61,603 +33,701 @@ const BRANCH_PRESETS: { label: string; value: BranchPreset }[] = [
 const VCS_PROVIDERS = [
   { label: "GitLab", value: "gitlab" },
   { label: "GitHub", value: "github" },
+  { label: "Skip — configure later", value: "skip" },
 ];
 
-function continueLabel(): string {
-  return " y to continue · n to stay · Esc to exit";
+const LOCALE_CHOICES = ["en", "es-CL"];
+const TIMEZONE_CHOICES = ["UTC", "America/New_York", "Europe/London"];
+
+// Text screens cannot offer the 'b' back key (it is a printable character the
+// TextInput consumes), so there Esc walks back to the parent select screen and
+// cancel happens from select/confirm screens. Draft state survives either way.
+const TEXT_SCREENS: ReadonlySet<WizardScreen> = new Set([
+  "localeOther",
+  "timezoneOther",
+  "branchAllowed",
+  "branchProtected",
+  "youtrack",
+  "workspaceName",
+  "workspaceGlob",
+  "branchPolicyDevelop",
+]);
+
+// Deterministic match-preview samples derived from the current project path:
+// the project itself, its parent, and a synthetic child repo. Every accepted
+// pattern gets a visible ✓/✗ verdict per sample via the shared core matcher.
+function workspacePreviewTargets(cwd: string): string[] {
+  const norm = cwd.replace(/[\\/]+$/, "");
+  const idx = norm.lastIndexOf("/");
+  const parent = idx > 0 ? norm.slice(0, idx) : norm;
+  return [norm, parent, `${norm}/child-repo`];
 }
 
-export function Wizard({ onExit }: { onExit: () => void }): JSX.Element {
-  const [step, setStep] = useState(0);
-  const [results, setResults] = useState<WizardResults>(() => ({
-    platforms: [],
-    config: readConfig(),
-    workspaces: [],
-    youtrack: null,
-    vcs: null,
-    project: null,
-  }));
+type ScreenProps = {
+  draft: WizardDraft;
+  dispatch: Dispatch<WizardAction>;
+};
 
-  useInput((input, key) => {
-    if (key.escape || (key.ctrl && input.toLowerCase() === "c")) onExit();
+// Single-purpose list control: up/down move the highlight (dispatching the
+// value), Enter always submits the highlighted option. This is the WZ-11 fix —
+// unlike @inkjs/ui Select there is exactly one Enter path and no competing
+// onChange/onSubmit handlers, so Enter can never apply a stale value twice.
+function SelectList<T extends string>({
+  options,
+  value,
+  onChange,
+  onSelect,
+}: {
+  options: { label: string; value: T }[];
+  value: T;
+  onChange?: (value: T) => void;
+  onSelect: (value: T) => void;
+}): JSX.Element {
+  const [index, setIndex] = useState(() =>
+    Math.max(
+      0,
+      options.findIndex((option) => option.value === value),
+    ),
+  );
+
+  useInput((_input, key) => {
+    if (key.downArrow) {
+      setIndex((i) => {
+        const next = Math.min(i + 1, options.length - 1);
+        onChange?.(options[next].value);
+        return next;
+      });
+    } else if (key.upArrow) {
+      setIndex((i) => {
+        const next = Math.max(i - 1, 0);
+        onChange?.(options[next].value);
+        return next;
+      });
+    } else if (key.return) {
+      onSelect(options[index].value);
+    }
   });
 
-  const advance = () => setStep((s) => Math.min(s + 1, 6));
-  const props: StepProps = { results, setResults, onDone: advance, onExit };
-  const Step = (
-    step === 6
-      ? SummaryStep
-      : [PlatformStep, ConfigStep, YouTrackStep, VcsStep, WorkspacesStep, ProjectStep, SummaryStep][
-          step
-        ]
-  ) as StepComponent;
+  return (
+    <Box flexDirection="column" gap={0}>
+      {options.map((option, i) => (
+        <Text key={option.value} color={i === index ? "cyan" : "dim"}>
+          {i === index ? "❯ " : "  "}
+          {option.label}
+        </Text>
+      ))}
+    </Box>
+  );
+}
+
+function localeOptions(current: string): { label: string; value: string }[] {
+  const fixed = LOCALE_CHOICES.map((locale) => ({ label: locale, value: locale }));
+  const list = LOCALE_CHOICES.includes(current)
+    ? fixed
+    : [...fixed, { label: `Use current (${current})`, value: current }];
+  return [...list, { label: "Other…", value: "other" }];
+}
+function timezoneOptions(current: string): { label: string; value: string }[] {
+  const fixed = TIMEZONE_CHOICES.map((timezone) => ({ label: timezone, value: timezone }));
+  const list = TIMEZONE_CHOICES.includes(current)
+    ? fixed
+    : [...fixed, { label: `Use current (${current})`, value: current }];
+  return [...list, { label: "Other…", value: "other" }];
+}
+
+function effectivePolicy(values: SetupValues): ToolkitConfig["branchPolicy"] {
+  // RL-02: one shared preset merge — non-custom presets always reset their
+  // derived allowed/protected fields, custom uses the validated draft input.
+  return mergePreset(values.branchPreset, {
+    allowed: parseList(values.branchAllowed),
+    protectedNames: parseList(values.branchProtected),
+  });
+}
+
+// CA-06: proposal screen shown between workspaces and project when the
+// resolution root is a git repo. On mount it runs the shared detector and
+// dispatches the proposal into the draft; the develop-branch edit is a real
+// top-level text screen ("branchPolicyDevelop") so 'b' types into the input
+// instead of navigating back (I2); the integration edit stays a component-local
+// select (selects already have correct b/Esc semantics on this screen).
+// Accepting stores the proposal into values.branchPolicy so runInit applies it
+// through the same shared helper the host init action uses (byte-identical
+// write).
+type BranchPolicyEditMode = "menu" | "integration";
+
+const BRANCH_POLICY_ACTIONS: { label: string; value: string }[] = [
+  { label: "Accept defaults", value: "accept" },
+  { label: "Edit integration", value: "integration" },
+  { label: "Edit develop", value: "develop" },
+  { label: "Skip", value: "skip" },
+];
+
+const INTEGRATION_OPTIONS: { label: string; value: "pr" | "merge" }[] = [
+  { label: "Pull request (pr)", value: "pr" },
+  { label: "Merge commit", value: "merge" },
+];
+
+function BranchPolicyScreen({ draft, dispatch }: ScreenProps): JSX.Element {
+  const detected = draft.values.branchPolicyDetected;
+  // I1: render the composed (edited) policy when present, the proposal otherwise
+  // so edits show live on return from the integration/develop editors.
+  const policy = draft.values.branchPolicy ?? detected;
+  const [mode, setMode] = useState<BranchPolicyEditMode>("menu");
+
+  useEffect(() => {
+    if (detected) return;
+    dispatch({
+      type: "set",
+      field: "branchPolicyDetected",
+      value: detectBranchPolicy(process.env.WORKFLOW_WORKSPACE_ROOT ?? process.cwd()),
+    });
+  }, [detected, dispatch]);
+
+  if (mode === "integration") {
+    return (
+      <Box flexDirection="column" gap={1}>
+        <Text bold>Step 5 — Branch policy · Integration</Text>
+        <SelectList
+          options={INTEGRATION_OPTIONS}
+          value={policy?.integration ?? "merge"}
+          onSelect={(value) => {
+            dispatch({ type: "set", field: "branchPolicyIntegration", value });
+            setMode("menu");
+          }}
+        />
+        <Text dimColor>Enter to select · b Back · Esc Cancel</Text>
+      </Box>
+    );
+  }
+  return (
+    <Box flexDirection="column" gap={1}>
+      <Text bold>Step 5 — Branch policy</Text>
+      {policy ? (
+        <Box flexDirection="column" gap={0}>
+          <Text>
+            Detected preset: <Text color="green">{policy.preset}</Text>
+          </Text>
+          <Text>
+            Develop branch: <Text color="green">{policy.developBranch ?? "—"}</Text>
+          </Text>
+          <Text>
+            Integration: <Text color="green">{policy.integration}</Text>
+          </Text>
+          <Text>
+            Prefixes:{" "}
+            <Text color="green">{Object.values(policy.prefixes ?? {}).join(", ") || "—"}</Text>
+          </Text>
+          <Text>
+            Protected: <Text color="green">{policy.protected?.join(", ") || "—"}</Text>
+          </Text>
+        </Box>
+      ) : (
+        <Text dimColor>Detecting branch policy…</Text>
+      )}
+      <SelectList
+        options={BRANCH_POLICY_ACTIONS}
+        value="accept"
+        onSelect={(value) => {
+          // I1: Accept keeps whatever the user already edited; without edits it
+          // stores the detected proposal.
+          if (value === "accept" && policy) {
+            if (detected) dispatch({ type: "set", field: "branchPolicy", value: detected });
+            dispatch({ type: "next" });
+          } else if (value === "integration") setMode("integration");
+          else if (value === "develop") dispatch({ type: "branchPolicyEditDevelop" });
+          else dispatch({ type: "next" });
+        }}
+      />
+      <Text dimColor>Enter to continue · b Back · Esc Cancel</Text>
+    </Box>
+  );
+}
+
+export function Wizard({
+  onExit,
+}: {
+  onExit: (complete: boolean, values?: SetupValues) => void;
+}): JSX.Element {
+  const [draft, dispatch] = useReducer(reducer, undefined, createInitialDraft);
+  const exitedRef = useRef(false);
+
+  useInput((input, key) => {
+    // Ctrl+C always cancels — independent of Ink's exitOnCtrlC setting, so
+    // disabling it can never turn ctrl+c into a back-navigation on text screens.
+    if (key.ctrl && input.toLowerCase() === "c") {
+      dispatch({ type: "cancel" });
+    } else if (key.escape) {
+      if (TEXT_SCREENS.has(draft.screen)) dispatch({ type: "back" });
+      else dispatch({ type: "cancel" });
+    } else if (input.toLowerCase() === "b" && !TEXT_SCREENS.has(draft.screen)) {
+      dispatch({ type: "back" });
+    }
+  });
+
+  useEffect(() => {
+    if (draft.screen === "exit" && !exitedRef.current) {
+      exitedRef.current = true;
+      onExit(!draft.cancelled, draft.values);
+    }
+  }, [draft.screen, draft.cancelled, onExit]);
 
   return (
     <Box flexDirection="column" gap={1}>
       <Text bold color="cyan">
         workit — workflow rails for agentic coding
       </Text>
-      <Step {...props} />
+      {/* Screen changes mount the same element types (TextInput/SelectList) at the
+          same tree position, so React would reuse the previous screen's control
+          instance and leak its field state (e.g. "feature/*" into branchProtected).
+          Remounting per screen resets each control from the draft values. */}
+      <Screen key={draft.screen} draft={draft} dispatch={dispatch} />
     </Box>
   );
 }
 
-function PlatformStep({ results, setResults, onDone }: StepProps): JSX.Element {
-  const [error, setError] = useState(false);
-  return (
-    <Box flexDirection="column" gap={1}>
-      <Text bold>Step 1 — Platforms</Text>
-      <Text dimColor>Select the tools to configure (space to toggle):</Text>
-      <MultiSelect
-        options={PLATFORMS}
-        defaultValue={results.platforms}
-        onSubmit={(values) => {
-          if (values.length === 0) {
-            setError(true);
-            return;
-          }
-          setResults((r) => ({ ...r, platforms: values }));
-          onDone();
-        }}
-      />
-      {error && <Text color="red">Select at least one platform to continue.</Text>}
-      <Text dimColor>Enter to continue · Esc to exit</Text>
-    </Box>
-  );
+function describeMutation(m: SetupMutation): string {
+  switch (m.type) {
+    case "create-file":
+      return `+ create ${m.path}`;
+    case "merge-json":
+      return `+ write ${m.path}`;
+    case "update-workspaces":
+      return `+ update ${m.path} (${m.entries.length} workspace${m.entries.length === 1 ? "" : "s"})`;
+    case "append-gitignore":
+      return `+ append ${m.path} (${m.entries.length} entr${m.entries.length === 1 ? "y" : "ies"})`;
+    case "register-platform":
+      return `+ register ${m.platform}: ${m.path}`;
+    case "install-adapter":
+      return `+ copy adapter ${m.platform}: ${m.path}`;
+    case "set-token-path":
+      return `+ change ${m.key} in ${m.path} → ${m.value}`;
+  }
 }
 
-function ConfigStep({ results, setResults, onDone }: StepProps): JSX.Element {
-  const current = results.config;
-  const [locale, setLocale] = useState(current.locale);
-  const [localeOk, setLocaleOk] = useState(validateLocale(current.locale) === null);
-  const [localeError, setLocaleError] = useState<string | null>(null);
-  const [timezone, setTimezone] = useState(current.timezone);
-  const [tzOk, setTzOk] = useState(validateTimezone(current.timezone) === null);
-  const [tzError, setTzError] = useState<string | null>(null);
-  const [preset, setPreset] = useState<BranchPreset>(current.branchPolicy.preset);
-  const [allowed, setAllowed] = useState(current.branchPolicy.allowed.join(", "));
-  const [protectedNames, setProtectedNames] = useState(current.branchPolicy.protected.join(", "));
-
-  const save = () => {
-    const next = collectConfigValues(
-      {
-        locale: localeOk ? locale : undefined,
-        timezone: tzOk ? timezone : undefined,
-        preset,
-        allowed: preset === "custom" ? parseList(allowed) : undefined,
-        protectedNames: preset === "custom" ? parseList(protectedNames) : undefined,
-      },
-      current,
-    );
-    writeConfig(next);
-    setResults((r) => ({ ...r, config: next }));
-    onDone();
-  };
-
-  return (
-    <Box flexDirection="column" gap={1}>
-      <Text bold>Step 2 — Global config</Text>
-      <Text dimColor>Locale (BCP-47, e.g. en or es-CL):</Text>
-      <TextInput
-        defaultValue={locale}
-        onSubmit={(v) => {
-          const err = validateLocale(v);
-          if (err) {
-            setLocaleError(err);
-            setLocaleOk(false);
-          } else {
-            setLocaleError(null);
-            setLocale(v);
-            setLocaleOk(true);
-          }
-        }}
-      />
-      {localeError && <Text color="red">{localeError}</Text>}
-      <Text dimColor>Timezone (IANA name, e.g. America/Santiago):</Text>
-      <TextInput
-        defaultValue={timezone}
-        onSubmit={(v) => {
-          const err = validateTimezone(v);
-          if (err) {
-            setTzError(err);
-            setTzOk(false);
-          } else {
-            setTzError(null);
-            setTimezone(v);
-            setTzOk(true);
-          }
-        }}
-      />
-      {tzError && <Text color="red">{tzError}</Text>}
-      <Text dimColor>Branch policy preset:</Text>
-      <Select
-        options={BRANCH_PRESETS}
-        defaultValue={preset}
-        onChange={(v) => setPreset(v as BranchPreset)}
-      />
-      {preset === "custom" && (
-        <>
+function Screen({ draft, dispatch }: ScreenProps): JSX.Element {
+  switch (draft.screen) {
+    case "platforms":
+      return (
+        <Box flexDirection="column" gap={1}>
+          <Text bold>Step 1 — Platforms</Text>
+          <Text dimColor>Select the tools to configure (space to toggle):</Text>
+          <MultiSelect
+            options={PLATFORMS}
+            defaultValue={draft.values.platforms}
+            onChange={(values) => dispatch({ type: "set", field: "platforms", value: values })}
+            onSubmit={(values) => {
+              dispatch({ type: "set", field: "platforms", value: values });
+              dispatch({ type: "next" });
+            }}
+          />
+          {draft.errors.platforms && <Text color="red">{draft.errors.platforms}</Text>}
+          <Text dimColor>Enter to continue · Esc Cancel</Text>
+        </Box>
+      );
+    case "locale":
+      return (
+        <Box flexDirection="column" gap={1}>
+          <Text bold>Step 2 — Global config · Locale</Text>
+          <Text dimColor>Locale (BCP-47):</Text>
+          <SelectList
+            options={localeOptions(draft.values.locale)}
+            value={draft.values.locale}
+            onChange={(value) => {
+              if (value !== "other") dispatch({ type: "set", field: "locale", value });
+            }}
+            onSelect={(value) => {
+              if (value === "other") dispatch({ type: "pickOther" });
+              else {
+                dispatch({ type: "set", field: "locale", value });
+                dispatch({ type: "next" });
+              }
+            }}
+          />
+          {draft.errors.locale && <Text color="red">{draft.errors.locale}</Text>}
+          <Text dimColor>Enter to continue · b Back · Esc Cancel</Text>
+        </Box>
+      );
+    case "localeOther":
+      return (
+        <Box flexDirection="column" gap={1}>
+          <Text bold>Step 2 — Global config · Locale (custom)</Text>
+          <Text dimColor>Type a BCP-47 locale (e.g. en or es-CL):</Text>
+          <TextInput
+            onChange={(value) => dispatch({ type: "set", field: "locale", value })}
+            onSubmit={() => dispatch({ type: "next" })}
+          />
+          {draft.errors.locale && <Text color="red">{draft.errors.locale}</Text>}
+          <Text dimColor>Enter to continue · Esc Back</Text>
+        </Box>
+      );
+    case "timezone":
+      return (
+        <Box flexDirection="column" gap={1}>
+          <Text bold>Step 2 — Global config · Timezone</Text>
+          <Text dimColor>Timezone (IANA name):</Text>
+          <SelectList
+            options={timezoneOptions(draft.values.timezone)}
+            value={draft.values.timezone}
+            onChange={(value) => {
+              if (value !== "other") dispatch({ type: "set", field: "timezone", value });
+            }}
+            onSelect={(value) => {
+              if (value === "other") dispatch({ type: "pickOther" });
+              else {
+                dispatch({ type: "set", field: "timezone", value });
+                dispatch({ type: "next" });
+              }
+            }}
+          />
+          {draft.errors.timezone && <Text color="red">{draft.errors.timezone}</Text>}
+          <Text dimColor>Enter to continue · b Back · Esc Cancel</Text>
+        </Box>
+      );
+    case "timezoneOther":
+      return (
+        <Box flexDirection="column" gap={1}>
+          <Text bold>Step 2 — Global config · Timezone (custom)</Text>
+          <Text dimColor>Type an IANA timezone (e.g. America/Santiago):</Text>
+          <TextInput
+            onChange={(value) => dispatch({ type: "set", field: "timezone", value })}
+            onSubmit={() => dispatch({ type: "next" })}
+          />
+          {draft.errors.timezone && <Text color="red">{draft.errors.timezone}</Text>}
+          <Text dimColor>Enter to continue · Esc Back</Text>
+        </Box>
+      );
+    case "branchPreset": {
+      const policy = effectivePolicy(draft.values);
+      return (
+        <Box flexDirection="column" gap={1}>
+          <Text bold>Step 2 — Global config · Branch policy</Text>
+          <Text dimColor>Branch policy preset:</Text>
+          <SelectList
+            options={BRANCH_PRESETS}
+            value={draft.values.branchPreset}
+            onChange={(value) => dispatch({ type: "set", field: "branchPreset", value })}
+            onSelect={() => dispatch({ type: "next" })}
+          />
+          <Box flexDirection="column" gap={0}>
+            <Text>
+              Allowed: <Text color="green">{policy.allowed.join(", ") || "—"}</Text>
+            </Text>
+            <Text>
+              Protected: <Text color="green">{policy.protected.join(", ") || "—"}</Text>
+            </Text>
+          </Box>
+          <Text dimColor>
+            {policy.preset === "custom"
+              ? "Enter to continue — define the patterns next · b Back · Esc Cancel"
+              : "Enter to continue · b Back · Esc Cancel"}
+          </Text>
+        </Box>
+      );
+    }
+    case "branchAllowed":
+      return (
+        <Box flexDirection="column" gap={1}>
+          <Text bold>Step 2 — Global config · Allowed branch patterns</Text>
           <Text dimColor>Allowed branch patterns (comma-separated):</Text>
-          <TextInput defaultValue={allowed} onChange={setAllowed} />
+          <TextInput
+            defaultValue={draft.values.branchAllowed}
+            onChange={(value) => dispatch({ type: "set", field: "branchAllowed", value })}
+            onSubmit={() => dispatch({ type: "next" })}
+          />
+          {draft.errors.branchAllowed && <Text color="red">{draft.errors.branchAllowed}</Text>}
+          <Text dimColor>Enter to continue · Esc Back</Text>
+        </Box>
+      );
+    case "branchProtected":
+      return (
+        <Box flexDirection="column" gap={1}>
+          <Text bold>Step 2 — Global config · Protected branch names</Text>
           <Text dimColor>Protected branch names (comma-separated):</Text>
-          <TextInput defaultValue={protectedNames} onChange={setProtectedNames} />
-        </>
-      )}
-      <ConfirmInput
-        isDisabled={!localeOk || !tzOk}
-        defaultChoice="confirm"
-        submitOnEnter={false}
-        onConfirm={save}
-        onCancel={() => {}}
-      />
-      <Text dimColor>{continueLabel()}</Text>
-    </Box>
-  );
-}
-
-function YouTrackStep({ results, setResults, onDone }: StepProps): JSX.Element {
-  const [baseUrl, setBaseUrl] = useState(DEFAULT_BASE_URL);
-  const [urlError, setUrlError] = useState<string | null>(null);
-  const [scaffold, setScaffold] = useState<YouTrackScaffold | null>(results.youtrack);
-
-  return (
-    <Box flexDirection="column" gap={1}>
-      <Text bold>Step 3 — YouTrack</Text>
-      <Text dimColor>Base URL (https):</Text>
-      <TextInput
-        defaultValue={baseUrl}
-        isDisabled={scaffold !== null}
-        onSubmit={(v) => {
-          const err = validateBaseUrl(v);
-          if (err) {
-            setUrlError(err);
-            return;
-          }
-          setUrlError(null);
-          setBaseUrl(v);
-          const s = scaffoldYouTrack(configDir(), v, {
-            locale: results.config.locale,
-            timezone: results.config.timezone,
-          });
-          setScaffold(s);
-          setResults((r) => ({ ...r, youtrack: s }));
-        }}
-      />
-      {urlError && <Text color="red">{urlError}</Text>}
-      {scaffold ? (
-        <>
-          <Box flexDirection="column" gap={0}>
-            <Text color="green">Scaffolded {scaffold.youtrackJson}</Text>
-            <Text>Token placeholder: {scaffold.tokenPath}</Text>
-            <Text>Create token: {scaffold.tokenCreateUrl}</Text>
-          </Box>
-          {/* ponytail: @inkjs/ui has no focus system — render the ConfirmInput only once the scaffold
-              exists and disable the TextInput, so y reaches only the confirm (hint stays truthful) */}
+          <TextInput
+            defaultValue={draft.values.branchProtected}
+            onChange={(value) => dispatch({ type: "set", field: "branchProtected", value })}
+            onSubmit={() => dispatch({ type: "next" })}
+          />
+          {draft.errors.branchProtected && <Text color="red">{draft.errors.branchProtected}</Text>}
+          <Text dimColor>Enter to continue · Esc Back</Text>
+        </Box>
+      );
+    case "youtrack":
+      return (
+        <Box flexDirection="column" gap={1}>
+          <Text bold>Step 3 — YouTrack</Text>
+          <Text dimColor>Base URL (https):</Text>
+          <TextInput
+            defaultValue={draft.values.baseUrl}
+            onChange={(value) => dispatch({ type: "set", field: "baseUrl", value })}
+            onSubmit={() => dispatch({ type: "next" })}
+          />
+          {draft.errors.baseUrl && <Text color="red">{draft.errors.baseUrl}</Text>}
+          <Text dimColor>Enter to continue · Esc Back</Text>
+        </Box>
+      );
+    case "vcs":
+      return (
+        <Box flexDirection="column" gap={1}>
+          <Text bold>Step 4 — Version control</Text>
+          <Text dimColor>Provider:</Text>
+          <SelectList
+            options={VCS_PROVIDERS}
+            value={draft.values.vcsProvider}
+            onChange={(value) => dispatch({ type: "set", field: "vcsProvider", value })}
+            onSelect={() => dispatch({ type: "next" })}
+          />
+          <Text dimColor>Enter to continue · b Back · Esc Cancel</Text>
+        </Box>
+      );
+    case "workspaces": {
+      const cwd = process.cwd();
+      const options = [
+        ...draft.values.workspaces.map((w, i) => ({
+          label: `Edit ${w.name} (${w.glob})`,
+          value: `edit:${i}`,
+        })),
+        ...draft.values.workspaces.map((w, i) => ({
+          label: `Remove ${w.name}`,
+          value: `remove:${i}`,
+        })),
+        { label: "Add workspace", value: "add" },
+        { label: `Use current project (${cwd})`, value: "current" },
+        { label: "Done", value: "done" },
+      ];
+      return (
+        <Box flexDirection="column" gap={1}>
+          <Text bold>Step 5 — Workspaces</Text>
+          {draft.values.workspaces.length === 0 ? (
+            <Text dimColor>No workspaces configured yet.</Text>
+          ) : (
+            <Box flexDirection="column" gap={0}>
+              {draft.values.workspaces.map((w) => {
+                const matches = matchWorkspace(w.glob, cwd);
+                return (
+                  <Text key={`${w.name}|${w.glob}|${w.vcs?.provider ?? ""}`}>
+                    {matches ? "✓ matches" : "✗ no match"} {w.name} — {w.vcs?.provider ?? "?"} —{" "}
+                    {w.glob}
+                  </Text>
+                );
+              })}
+            </Box>
+          )}
+          <SelectList
+            key={draft.values.workspaces.map((w) => `${w.name}:${w.glob}`).join("|")}
+            options={options}
+            value="done"
+            onSelect={(value) => {
+              if (value.startsWith("edit:"))
+                dispatch({ type: "workspaceEdit", index: Number(value.slice(5)) });
+              else if (value.startsWith("remove:"))
+                dispatch({ type: "workspaceRemove", index: Number(value.slice(7)) });
+              else if (value === "add") dispatch({ type: "workspaceAdd" });
+              else if (value === "current") dispatch({ type: "workspaceAddCurrent", path: cwd });
+              else dispatch({ type: "next" });
+            }}
+          />
+          <Text dimColor>Enter to continue · b Back · Esc Cancel</Text>
+        </Box>
+      );
+    }
+    case "workspaceName":
+      return (
+        <Box flexDirection="column" gap={1}>
+          <Text bold>Step 5 — Workspaces · Name</Text>
+          <Text dimColor>
+            {draft.workspaceIndex === null
+              ? "New workspace name:"
+              : `Edit workspace name (${draft.values.workspaces[draft.workspaceIndex]?.name ?? ""}):`}
+          </Text>
+          <TextInput
+            defaultValue={draft.workspaceDraft?.name ?? ""}
+            onChange={(value) => dispatch({ type: "workspaceDraftName", value })}
+            onSubmit={() => dispatch({ type: "next" })}
+          />
+          {draft.errors.workspaceName && <Text color="red">{draft.errors.workspaceName}</Text>}
+          <Text dimColor>Enter to continue · Esc Back</Text>
+        </Box>
+      );
+    case "workspaceGlob": {
+      const glob = draft.workspaceDraft?.glob ?? "";
+      return (
+        <Box flexDirection="column" gap={1}>
+          <Text bold>Step 5 — Workspaces · Pattern</Text>
+          <Text dimColor>Workspace pattern (glob, e.g. /work/**):</Text>
+          <TextInput
+            defaultValue={glob}
+            onChange={(value) => dispatch({ type: "workspaceDraftGlob", value })}
+            onSubmit={() => dispatch({ type: "next" })}
+          />
+          {glob.trim() !== "" && (
+            <Box flexDirection="column" gap={0}>
+              <Text bold>Match preview (shared matcher):</Text>
+              {workspacePreviewTargets(process.cwd()).map((target) => {
+                const matches = matchWorkspace(glob, target);
+                return (
+                  <Text key={target} color={matches ? "green" : "red"}>
+                    {matches ? "✓ matches" : "✗ no match"} {target}
+                  </Text>
+                );
+              })}
+            </Box>
+          )}
+          {draft.errors.workspaceGlob && <Text color="red">{draft.errors.workspaceGlob}</Text>}
+          <Text dimColor>Enter to continue · Esc Back</Text>
+        </Box>
+      );
+    }
+    case "workspaceProvider":
+      return (
+        <Box flexDirection="column" gap={1}>
+          <Text bold>Step 5 — Workspaces · Provider</Text>
+          <Text dimColor>Version control provider for this workspace:</Text>
+          <SelectList
+            options={VCS_PROVIDERS.filter((option) => option.value !== "skip")}
+            value={draft.workspaceDraft?.vcs?.provider ?? "gitlab"}
+            onChange={(value) => dispatch({ type: "workspaceDraftProvider", value })}
+            onSelect={(value) => {
+              dispatch({ type: "workspaceDraftProvider", value });
+              dispatch({ type: "workspaceSave" });
+            }}
+          />
+          <Text dimColor>Enter to save · b Back · Esc Cancel</Text>
+        </Box>
+      );
+    case "branchPolicy":
+      return <BranchPolicyScreen draft={draft} dispatch={dispatch} />;
+    case "branchPolicyDevelop":
+      return (
+        <Box flexDirection="column" gap={1}>
+          <Text bold>Step 5 — Branch policy · Develop branch</Text>
+          <Text dimColor>Integration/develop branch name (leave empty to unset):</Text>
+          <TextInput
+            defaultValue={
+              draft.values.branchPolicy?.developBranch ??
+              draft.values.branchPolicyDetected?.developBranch ??
+              ""
+            }
+            onSubmit={(value) => {
+              dispatch({ type: "set", field: "branchPolicyDevelop", value });
+              dispatch({ type: "next" });
+            }}
+          />
+          <Text dimColor>Enter to save · Esc Back</Text>
+        </Box>
+      );
+    case "project":
+      return (
+        <Box flexDirection="column" gap={1}>
+          <Text bold>Step 6 — Project setup</Text>
+          <Text dimColor>
+            Will apply gitignore + hygiene in {process.cwd()} (existing files are never
+            overwritten):
+          </Text>
           <ConfirmInput
             defaultChoice="confirm"
             submitOnEnter={false}
-            onConfirm={onDone}
+            onConfirm={() => {
+              dispatch({ type: "set", field: "applyProject", value: true });
+              dispatch({ type: "next" });
+            }}
             onCancel={() => {}}
           />
-          <Text dimColor>{continueLabel()}</Text>
-        </>
-      ) : (
-        <Text dimColor>Enter to submit the URL — then y to continue</Text>
-      )}
-    </Box>
-  );
-}
-
-function VcsStep({ results, setResults, onDone }: StepProps): JSX.Element {
-  const [provider, setProvider] = useState<VcsProvider>(results.vcs?.provider ?? "gitlab");
-  const [scaffold, setScaffold] = useState<VcsScaffold | null>(results.vcs);
-
-  const apply = (p: VcsProvider) => {
-    const s = scaffoldVcs(configDir(), p);
-    setScaffold(s);
-    setResults((r) => ({ ...r, vcs: s }));
-  };
-
-  // ponytail: Select's onChange only fires when Enter picks a different option — this useInput
-  // covers Enter on the default provider; scaffoldVcs is idempotent so double-apply is harmless
-  useInput((_input, key) => {
-    if (key.return) apply(provider);
-  });
-
-  return (
-    <Box flexDirection="column" gap={1}>
-      <Text bold>Step 4 — Version control</Text>
-      <Text dimColor>Provider:</Text>
-      <Select
-        options={VCS_PROVIDERS}
-        defaultValue={provider}
-        onChange={(v) => {
-          const p = v as VcsProvider;
-          setProvider(p);
-          apply(p);
-        }}
-      />
-      {scaffold ? (
-        <>
-          <Box flexDirection="column" gap={0}>
+          <Text dimColor>y to continue · n to stay · b Back · Esc Cancel</Text>
+        </Box>
+      );
+    case "summary": {
+      const policy = effectivePolicy(draft.values);
+      // WZ-08: the summary renders the authoritative preview (read-only) — the
+      // exact mutations Apply would perform. Malformed setup state (WZ-06)
+      // blocks Apply: no confirm control is mounted until it is fixed.
+      const preview = buildSetupPreview(draft.values);
+      return (
+        <Box flexDirection="column" gap={1}>
+          <Text bold color="cyan">
+            Review
+          </Text>
+          <Text>
+            Platforms: <Text color="green">{draft.values.platforms.join(", ") || "—"}</Text>
+          </Text>
+          <Text>
+            Locale: <Text color="green">{draft.values.locale}</Text>
+          </Text>
+          <Text>
+            Timezone: <Text color="green">{draft.values.timezone}</Text>
+          </Text>
+          <Text>
+            Branch policy: <Text color="green">{policy.preset}</Text> — allowed:{" "}
+            {policy.allowed.join(", ")} · protected: {policy.protected.join(", ")}
+          </Text>
+          <Text>
+            YouTrack base URL:{" "}
             <Text color="green">
-              Scaffolded {scaffold.vcsJson} (provider: {scaffold.provider})
+              {draft.values.baseUrl.trim() ? draft.values.baseUrl : "— (skip)"}
             </Text>
-            <Text>Token placeholder: {scaffold.activeTokenPath}</Text>
-            <Text>Create token: {scaffold.tokenCreateUrl}</Text>
-          </Box>
-          <ConfirmInput
-            defaultChoice="confirm"
-            submitOnEnter={false}
-            onConfirm={onDone}
-            onCancel={() => {}}
-          />
-          <Text dimColor>{continueLabel()}</Text>
-        </>
-      ) : (
-        <Text dimColor>Enter to confirm the provider — then y to continue</Text>
-      )}
-    </Box>
-  );
-}
-
-type WsLinking = "youtrack" | "github" | "none";
-
-type WsDraft = {
-  name: string;
-  glob: string;
-  provider: VcsProvider;
-  branch: string;
-  linking: WsLinking;
-};
-
-type WsMode = "list" | "name" | "glob" | "provider" | "branch" | "linking" | "remove";
-
-// provider-gated linking: gitlab offers youtrack/none, github offers github-issues/none —
-// config.sh gates issues on provider github, and an ungated youtrack link would leak
-// "Related to: <youtrack>/issue/<id>" into GitHub PR bodies (writeWorkspaces enforces this too)
-const WS_LINKING: Record<VcsProvider, { label: string; value: WsLinking }[]> = {
-  gitlab: [
-    { label: "YouTrack", value: "youtrack" },
-    { label: "None", value: "none" },
-  ],
-  github: [
-    { label: "GitHub issues", value: "github" },
-    { label: "None", value: "none" },
-  ],
-};
-
-// ponytail: Select has no onSubmit — onChange fires on Enter once the value differs from
-// defaultValue, so action/provider/linking selects pass no defaultValue (undefined -> first
-// Enter is a change). TextInput onSubmit fires on Enter even for empty input (validation).
-// Each input gets a distinct key: mode swaps render the same element type at the same tree
-// position, so without keys React reuses the instance and the previous input's text leaks in.
-function WorkspacesStep({ setResults, onDone }: StepProps): JSX.Element {
-  const [loaded] = useState<WorkspaceConfig[]>(() => loadWorkspaces());
-  const [entries, setEntries] = useState<WorkspaceConfig[]>(loaded);
-  const [mode, setMode] = useState<WsMode>("list");
-  const [draft, setDraft] = useState<WsDraft>({
-    name: "",
-    glob: "",
-    provider: "gitlab",
-    branch: "develop",
-    linking: "none",
-  });
-  const [fieldError, setFieldError] = useState<string | null>(null);
-  const [writeError, setWriteError] = useState<string | null>(null);
-
-  const resetDraft = () =>
-    setDraft({ name: "", glob: "", provider: "gitlab", branch: "develop", linking: "none" });
-
-  const finish = () => {
-    setResults((r) => ({ ...r, workspaces: entries }));
-    if (!shouldWriteWorkspaces(loaded, entries)) {
-      onDone();
-      return;
+          </Text>
+          <Text>
+            VCS provider: <Text color="green">{draft.values.vcsProvider}</Text>
+          </Text>
+          <Text>
+            Project hygiene: <Text color="green">{draft.values.applyProject ? "yes" : "no"}</Text>
+          </Text>
+          {preview.overrides.length > 0 && (
+            <Box flexDirection="column" gap={0}>
+              <Text bold>Environment overrides (not applied by the wizard):</Text>
+              {preview.overrides.map((o) => (
+                <Text key={o.envKey} color="yellow">
+                  {o.envKey} → {o.affects}: {o.value}
+                </Text>
+              ))}
+            </Box>
+          )}
+          {preview.ok ? (
+            <Box flexDirection="column" gap={0}>
+              <Text bold>Will apply:</Text>
+              {preview.mutations.map((m) => (
+                <Text key={`${m.type}:${m.path}`}>{describeMutation(m)}</Text>
+              ))}
+              {preview.preserved.map((p) => (
+                <Text key={p} color="green">
+                  preserve {p} (existing token)
+                </Text>
+              ))}
+            </Box>
+          ) : (
+            <Box flexDirection="column" gap={0}>
+              <Text bold color="red">
+                Apply blocked — malformed configuration:
+              </Text>
+              {preview.blocked.map((b) => (
+                <Text key={b} color="red">
+                  {b}
+                </Text>
+              ))}
+              <Text dimColor>
+                Fix or remove the blocked file above, then return here. Esc Cancel.
+              </Text>
+            </Box>
+          )}
+          {preview.ok && (
+            <ConfirmInput
+              defaultChoice="confirm"
+              submitOnEnter={false}
+              onConfirm={() => dispatch({ type: "apply" })}
+              onCancel={() => {}}
+            />
+          )}
+          <Text dimColor>
+            {preview.ok ? "y to apply · b Back · Esc Cancel" : "b Back · Esc Cancel"}
+          </Text>
+        </Box>
+      );
     }
-    const result = writeWorkspaces(entries);
-    if (result.ok) {
-      onDone();
-    } else {
-      setWriteError(result.error ?? "failed to write workspaces.json");
-      setMode("list");
-    }
-  };
-
-  // ponytail: @inkjs/ui v2 Select options have no per-option isDisabled (whole Select only,
-  // which would also block Done) — the empty-list guard stays in the onChange instead
-  const actions = [
-    { label: "Add workspace", value: "add" },
-    { label: "Remove workspace", value: "remove" },
-    { label: "Done", value: "done" },
-  ];
-
-  if (mode === "list") {
-    return (
-      <Box flexDirection="column" gap={1}>
-        <Text bold>Step 5 — Workspaces</Text>
-        {entries.length === 0 && <Text dimColor>No workspaces configured yet.</Text>}
-        {entries.map((e) => (
-          <Text key={`${e.name}|${e.glob}|${e.vcs?.provider ?? ""}`}>
-            • {e.name} — {e.vcs?.provider ?? "?"} — {e.glob}
-          </Text>
-        ))}
-        <Text dimColor>Select an action:</Text>
-        <Select
-          key="actions"
-          options={actions}
-          onChange={(v) => {
-            if (v === "add") {
-              setFieldError(null);
-              setWriteError(null);
-              setMode("name");
-            } else if (v === "remove" && entries.length > 0) {
-              setFieldError(null);
-              setWriteError(null);
-              setMode("remove");
-            } else if (v === "done") {
-              finish();
-            }
-          }}
-        />
-        {writeError && <Text color="red">{writeError}</Text>}
-        <Text dimColor>Enter to pick · Esc to exit</Text>
-      </Box>
-    );
-  }
-
-  if (mode === "name") {
-    return (
-      <Box flexDirection="column" gap={1}>
-        <Text bold>Step 5 — Workspaces · new workspace</Text>
-        <Text dimColor>Name (e.g. work):</Text>
-        <TextInput
-          key="name"
-          onSubmit={(v) => {
-            const name = v.trim();
-            if (!name) {
-              setFieldError("name is required");
-              return;
-            }
-            if (entries.some((e) => e.name === name)) {
-              setFieldError(`"${name}" already exists — pick a unique name`);
-              return;
-            }
-            setFieldError(null);
-            setDraft({ ...draft, name });
-            setMode("glob");
-          }}
-        />
-        {fieldError && <Text color="red">{fieldError}</Text>}
-      </Box>
-    );
-  }
-
-  if (mode === "glob") {
-    return (
-      <Box flexDirection="column" gap={1}>
-        <Text bold>Step 5 — Workspaces · {draft.name}</Text>
-        <Text dimColor>Path glob (e.g. /home/*/Documents/projects/work/**):</Text>
-        <TextInput
-          key="glob"
-          onSubmit={(v) => {
-            if (!v.trim()) {
-              setFieldError("glob is required");
-              return;
-            }
-            setFieldError(null);
-            setDraft({ ...draft, glob: v.trim() });
-            setMode("provider");
-          }}
-        />
-        {fieldError && <Text color="red">{fieldError}</Text>}
-      </Box>
-    );
-  }
-
-  if (mode === "provider") {
-    return (
-      <Box flexDirection="column" gap={1}>
-        <Text bold>Step 5 — Workspaces · {draft.name}</Text>
-        <Text dimColor>VCS provider:</Text>
-        <Select
-          key="provider"
-          options={VCS_PROVIDERS}
-          onChange={(v) => {
-            const p = v as VcsProvider;
-            setDraft({ ...draft, provider: p, branch: p === "gitlab" ? "develop" : "main" });
-            setMode("branch");
-          }}
-        />
-      </Box>
-    );
-  }
-
-  if (mode === "branch") {
-    return (
-      <Box flexDirection="column" gap={1}>
-        <Text bold>Step 5 — Workspaces · {draft.name}</Text>
-        <Text dimColor>Default target branch (Enter to keep "{draft.branch}"):</Text>
-        <TextInput
-          key="branch"
-          defaultValue={draft.branch}
-          onSubmit={(v) => {
-            setDraft({ ...draft, branch: v.trim() });
-            setMode("linking");
-          }}
-        />
-      </Box>
-    );
-  }
-
-  if (mode === "linking") {
-    return (
-      <Box flexDirection="column" gap={1}>
-        <Text bold>Step 5 — Workspaces · {draft.name}</Text>
-        <Text dimColor>Issue linking:</Text>
-        <Select
-          key="linking"
-          options={WS_LINKING[draft.provider]}
-          onChange={(v) => {
-            const linking = v as WsLinking;
-            const vcs = {
-              provider: draft.provider,
-              ...(draft.branch ? { defaultTargetBranch: draft.branch } : {}),
-            };
-            setEntries([
-              ...entries,
-              {
-                name: draft.name,
-                glob: draft.glob,
-                vcs,
-                ...(linking === "youtrack" ? { youtrack: { link_issues: true } } : {}),
-                ...(linking === "github"
-                  ? { issues: { provider: "github", link_on_pr: true } }
-                  : {}),
-              },
-            ]);
-            resetDraft();
-            setWriteError(null);
-            setMode("list");
-          }}
-        />
-      </Box>
-    );
-  }
-
-  return (
-    <Box flexDirection="column" gap={1}>
-      <Text bold>Step 5 — Workspaces · remove</Text>
-      <Text dimColor>Select a workspace to remove:</Text>
-      <Select
-        key="remove"
-        options={entries.map((e) => ({
-          label: `${e.name} — ${e.vcs?.provider ?? "?"}`,
-          value: e.name,
-        }))}
-        onChange={(v) => {
-          setEntries(entries.filter((e) => e.name !== v));
-          setWriteError(null);
-          setMode("list");
-        }}
-      />
-    </Box>
-  );
-}
-
-function ProjectStep({ setResults, onDone }: StepProps): JSX.Element {
-  const apply = () => {
-    const result = runProjectSetup(process.cwd());
-    setResults((r) => ({ ...r, project: result }));
-    onDone();
-  };
-
-  return (
-    <Box flexDirection="column" gap={1}>
-      <Text bold>Step 6 — Project setup</Text>
-      <Text dimColor>
-        Will apply gitignore + hygiene in {process.cwd()} (existing files are never overwritten):
-      </Text>
-      <ConfirmInput
-        defaultChoice="confirm"
-        submitOnEnter={false}
-        onConfirm={apply}
-        onCancel={() => {}}
-      />
-      <Text dimColor>{continueLabel()}</Text>
-    </Box>
-  );
-}
-
-function SummaryStep({ results, onExit }: StepProps): JSX.Element {
-  return (
-    <Box flexDirection="column" gap={1}>
-      <Text bold color="cyan">
-        Setup complete
-      </Text>
-      <Text>
-        Platforms: <Text color="green">{results.platforms.join(", ")}</Text>
-      </Text>
-      <Text>
-        Global config: <Text color="green">{configDir()}/config.json</Text>
-      </Text>
-      {results.youtrack && (
-        <Box flexDirection="column" gap={0}>
-          <Text>
-            YouTrack: <Text color="green">{results.youtrack.youtrackJson}</Text>
-          </Text>
-          <Text>
-            {"  "}token placeholder: {results.youtrack.tokenPath}
-          </Text>
-          <Text>
-            {"  "}create token: {results.youtrack.tokenCreateUrl}
-          </Text>
+    case "exit":
+      return (
+        <Box flexDirection="column" gap={1}>
+          <Text dimColor>Exiting…</Text>
         </Box>
-      )}
-      {results.vcs && (
-        <Box flexDirection="column" gap={0}>
-          <Text>
-            VCS: <Text color="green">{results.vcs.vcsJson}</Text> (provider: {results.vcs.provider})
-          </Text>
-          <Text>
-            {"  "}token placeholder: {results.vcs.activeTokenPath}
-          </Text>
-          <Text>
-            {"  "}create token: {results.vcs.tokenCreateUrl}
-          </Text>
-        </Box>
-      )}
-      {results.workspaces.length > 0 && (
-        <Box flexDirection="column" gap={0}>
-          <Text>Workspaces:</Text>
-          {results.workspaces.map((w) => (
-            <Text key={`${w.name}|${w.glob}|${w.vcs?.provider ?? ""}`}>
-              {"  "}
-              {w.name} — {w.vcs?.provider ?? "?"}
-            </Text>
-          ))}
-        </Box>
-      )}
-      {results.project && results.project.created.length > 0 && (
-        <Box flexDirection="column" gap={0}>
-          <Text>Project files:</Text>
-          {results.project.created.map((file) => (
-            <Text key={file}>
-              {"  "}+ {file}
-            </Text>
-          ))}
-        </Box>
-      )}
-      <Text dimColor>
-        Paste the token(s) into the placeholder files, then run /wf-status to verify.
-      </Text>
-      <ConfirmInput
-        defaultChoice="confirm"
-        submitOnEnter={false}
-        onConfirm={onExit}
-        onCancel={() => {}}
-      />
-      <Text dimColor>{continueLabel()}</Text>
-    </Box>
-  );
+      );
+  }
 }

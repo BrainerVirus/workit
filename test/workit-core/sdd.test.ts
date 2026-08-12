@@ -3,8 +3,10 @@ import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { createSddTools } from "../../packages/workit-core/src/tools/sdd";
+import { createSddTools } from "../../packages/workit-opencode/src/tools/sdd";
 import { WorkflowStateStore } from "../../packages/workit-core/src/state";
+import { establishApprovedFlow } from "./flow-fixtures";
+import { HostReceiptStore } from "../../packages/workit-core/src/core/flow-state";
 
 // Isolate from the developer's global config: tests assume gitflow semantics
 // (PRESETS.gitflow in src/core/config.ts), like CI with no global config.
@@ -124,6 +126,80 @@ test("SDD context computes absent paths without creating repository files", asyn
   }
 });
 
+test("SDD context returns canonical paths and creates no nested slug level or empty progress ledger", async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wf-sdd-canonical-"));
+  try {
+    mkdirSync(path.join(root, "docs", "x"), { recursive: true });
+    writeFileSync(path.join(root, "docs/x/spec.md"), "# X\n**Branch:** `feature/x`\n");
+    writeFileSync(
+      path.join(root, "docs/x/plan.md"),
+      "# X\n\n**Spec:** `docs/x/spec.md`\n**Branch:** `feature/x`\n\n### Task 1: One\n\n- [ ] Step\n",
+    );
+    const raw = await createSddTools(new WorkflowStateStore()).workflow_sdd_context.execute(
+      { plan_path: "docs/x/plan.md" },
+      { directory: root, worktree: root, sessionID: "canonical" } as never,
+    );
+    const out = JSON.parse(raw as string);
+    expect(out.ok).toBe(true);
+    expect(out.data.sdd_dir).toBe("docs/x/sdd");
+    expect(out.data.progress_path).toBe("docs/x/sdd/progress.md");
+    // Only the canonical path is ever named: no docs/<slug>/sdd/<slug>/.
+    expect(existsSync(path.join(root, "docs/x/sdd"))).toBe(false);
+    expect(existsSync(path.join(root, "docs/x/sdd/x"))).toBe(false);
+    expect(existsSync(path.join(root, "docs/x/sdd/progress.md"))).toBe(false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("progress.md appears only on the first confirmed append, never on context", async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wf-sdd-lazy-"));
+  const tools = createSddTools(new WorkflowStateStore());
+  try {
+    establishApprovedFlow(root, "x", new HostReceiptStore(), "s1");
+    await tools.workflow_sdd_context.execute({ plan_path: "docs/x/plan.md" }, {
+      directory: root,
+      worktree: root,
+      sessionID: "lazy",
+    } as never);
+    expect(existsSync(path.join(root, "docs/x/sdd/progress.md"))).toBe(false);
+    const result = JSON.parse(
+      (await tools.workflow_sdd_append_progress.execute(
+        {
+          confirmed: true,
+          progress_path: "docs/x/sdd/progress.md",
+          line: "Task 1: complete (commits abcdef0..1234567, tests pass)",
+        },
+        { directory: root, worktree: root } as never,
+      )) as string,
+    );
+    expect(result.ok).toBe(true);
+    expect(existsSync(path.join(root, "docs/x/sdd/progress.md"))).toBe(true);
+    expect(readFileSync(path.join(root, "docs/x/sdd/progress.md"), "utf8")).toContain("Task 1:");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("sdd context accepts a bare slug like the cursor host and returns canonical paths", async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wf-sdd-slug-"));
+  try {
+    mkdirSync(path.join(root, "docs", "x"), { recursive: true });
+    writeFileSync(path.join(root, "docs/x/spec.md"), "# X\n**Branch:** `feature/x`\n");
+    const raw = await createSddTools(new WorkflowStateStore()).workflow_sdd_context.execute(
+      { slug: "x" },
+      { directory: root, worktree: root, sessionID: "slug" } as never,
+    );
+    const out = JSON.parse(raw as string);
+    expect(out.ok).toBe(true);
+    expect(out.data.sdd_dir).toBe("docs/x/sdd");
+    expect(out.data.progress_path).toBe("docs/x/sdd/progress.md");
+    expect(existsSync(path.join(root, "docs/x/sdd"))).toBe(false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("SDD tools expose standard schemas and guard writes", async () => {
   const tools = createSddTools(new WorkflowStateStore());
   expect(Object.keys(tools).sort()).toEqual(
@@ -157,6 +233,7 @@ test("SDD tools expose standard schemas and guard writes", async () => {
 test("confirmed SDD writes use repository-relative paths and standard results", async () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "wf-sdd-write-"));
   const tools = createSddTools(new WorkflowStateStore());
+  establishApprovedFlow(root, "x", new HostReceiptStore(), "s1");
   const brief = JSON.parse(
     (await tools.workflow_sdd_task_brief.execute(
       {
@@ -224,6 +301,7 @@ test("branch resolution returns repository and plan facts", async () => {
 test("confirmed review package writes its diff inside the repository", async () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "wf-sdd-review-"));
   const git = (args: string[]) => spawnSync("git", args, { cwd: root, encoding: "utf8" });
+  establishApprovedFlow(root, "review", new HostReceiptStore(), "s1");
   expect(git(["init", "-q", "-b", "feature/review"]).status).toBe(0);
   git(["config", "user.name", "Workflow Test"]);
   git(["config", "user.email", "workflow@example.test"]);
@@ -277,6 +355,7 @@ test("review package safely writes to a quote-bearing contained path", async () 
   const root = mkdtempSync(path.join(os.tmpdir(), "wf-sdd-quoted-path-"));
   const git = (args: string[]) => spawnSync("git", args, { cwd: root, encoding: "utf8" });
   try {
+    establishApprovedFlow(root, "review", new HostReceiptStore(), "s1");
     git(["init", "-q", "-b", "feature/review"]);
     git(["config", "user.name", "Workflow Test"]);
     git(["config", "user.email", "workflow@example.test"]);

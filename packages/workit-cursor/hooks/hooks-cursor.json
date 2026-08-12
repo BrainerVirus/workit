@@ -3,7 +3,8 @@
   "hooks": {
     "sessionStart": [
       {
-        "command": "./hooks/session-start"
+        "command": "node",
+        "args": ["./dist/cursor-session-start.js"]
       }
     ]
   }

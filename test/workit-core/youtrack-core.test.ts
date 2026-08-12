@@ -10,6 +10,7 @@ import {
   parseIssueRef,
   postUpdate,
   verifyYouTrackToken,
+  youTrackApi,
   type YouTrackScripts,
 } from "../../packages/workit-core/src/core/youtrack";
 
@@ -136,36 +137,39 @@ test("parseDuration delegates and maps errors", () => {
   expect(parseDuration("1h", os.tmpdir(), failing)).toEqual({ error: "bad" });
 });
 
-test("logTime validates, formats date arg, and delegates", () => {
+test("logTime validates, formats date arg, and delegates", async () => {
   expect(
-    logTime({ issueId: "bad", minutes: 30, workspace_root: os.tmpdir() }, scripts()).error,
+    (await logTime({ issueId: "bad", minutes: 30, workspace_root: os.tmpdir() }, scripts())).error,
   ).toContain("invalid issueId");
   expect(
-    logTime({ issueId: "NSR-1", minutes: 0, workspace_root: os.tmpdir() }, scripts()).error,
+    (await logTime({ issueId: "NSR-1", minutes: 0, workspace_root: os.tmpdir() }, scripts())).error,
   ).toContain("positive");
   expect(
-    logTime({ issueId: "NSR-1", minutes: -5, workspace_root: os.tmpdir() }, scripts()).error,
+    (await logTime({ issueId: "NSR-1", minutes: -5, workspace_root: os.tmpdir() }, scripts()))
+      .error,
   ).toContain("positive");
-  const withDateMs = logTime(
+  const withDateMs = await logTime(
     { issueId: "NSR-1", minutes: 30, dateMs: 123456, workspace_root: os.tmpdir() },
     scripts({ api: (args) => ({ data: { captured: args } }) }),
   );
   expect(withDateMs.ok).toBe(true);
   expect(withDateMs.captured).toContain("123456");
-  const withDate = logTime(
+  const withDate = await logTime(
     { issueId: "NSR-1", minutes: 30, date: "20260101", workspace_root: os.tmpdir() },
     scripts({ api: (args) => ({ data: { captured: args } }) }),
   );
   expect(withDate.captured).toContain("20260101");
-  const auto = logTime(
+  const auto = await logTime(
     { issueId: "NSR-1", minutes: 30, workspace_root: os.tmpdir() },
     scripts({ api: (args) => ({ data: { captured: args } }) }),
   );
   expect(auto.captured).toContain("auto");
   expect(
-    logTime(
-      { issueId: "NSR-1", minutes: 30, workspace_root: os.tmpdir() },
-      scripts({ api: () => ({ error: "api down" }) }),
+    (
+      await logTime(
+        { issueId: "NSR-1", minutes: 30, workspace_root: os.tmpdir() },
+        scripts({ api: () => ({ error: "api down" }) }),
+      )
     ).error,
   ).toBe("api down");
 });
@@ -192,26 +196,25 @@ test("buildDraft composes header, greeting, project, notes, and facts", () => {
   expect(full.markdown).toContain("- abc123 fix");
 });
 
-test("postUpdate validates confirmed, issueId, and markdown", () => {
-  expect(postUpdate({ confirmed: false, issueId: "NSR-1", markdown: "x" }).error).toContain(
+test("postUpdate validates confirmed, issueId, and markdown", async () => {
+  expect((await postUpdate({ confirmed: false, issueId: "NSR-1", markdown: "x" })).error).toContain(
     "confirmed",
   );
-  expect(postUpdate({ confirmed: true, issueId: "bad", markdown: "x" }).error).toContain(
+  expect((await postUpdate({ confirmed: true, issueId: "bad", markdown: "x" })).error).toContain(
     "invalid issueId",
   );
-  expect(postUpdate({ confirmed: true, issueId: "NSR-1", markdown: "  " }).error).toContain(
+  expect((await postUpdate({ confirmed: true, issueId: "NSR-1", markdown: "  " })).error).toContain(
     "markdown required",
   );
 });
-
-test("postUpdate surfaces comment errors and success with minutes", () => {
-  const commentFail = postUpdate(
+test("postUpdate surfaces comment errors and success with minutes", async () => {
+  const commentFail = await postUpdate(
     { confirmed: true, issueId: "NSR-1", markdown: "x", workspace_root: os.tmpdir() },
     { postComment: () => ({ error: "comment rejected" }) },
   );
   expect(commentFail.error).toBe("comment rejected");
 
-  const withMinutes = postUpdate(
+  const withMinutes = await postUpdate(
     { confirmed: true, issueId: "NSR-1", markdown: "x", minutes: 45, workspace_root: os.tmpdir() },
     {
       postComment: () => ({ data: { ok: true } }),
@@ -225,7 +228,7 @@ test("postUpdate surfaces comment errors and success with minutes", () => {
     loggedMinutes: 45,
   });
 
-  const noMinutes = postUpdate(
+  const noMinutes = await postUpdate(
     { confirmed: true, issueId: "NSR-1", markdown: "x", workspace_root: os.tmpdir() },
     { postComment: () => ({ data: { ok: true } }) },
   );
@@ -254,11 +257,11 @@ test("default scripts delegate only to read-only youtrack helpers", () => {
   expect(duration).toBeDefined();
 });
 
-test("write guard: logTime refuses to mutate without WORKFLOW_YT_WRITE", () => {
+test("write guard: logTime refuses to mutate without WORKFLOW_YT_WRITE", async () => {
   const previous = process.env.WORKFLOW_YT_WRITE;
   delete process.env.WORKFLOW_YT_WRITE;
   try {
-    const result = logTime(
+    const result = await logTime(
       { issueId: "NSR-40", minutes: 15, workspace_root: os.tmpdir() },
       scripts({
         api: () => ({
@@ -274,9 +277,9 @@ test("write guard: logTime refuses to mutate without WORKFLOW_YT_WRITE", () => {
   }
 });
 
-test("write guard: postUpdate confirmed sets the write flag for real api calls", () => {
+test("write guard: postUpdate confirmed sets the write flag for real api calls", async () => {
   const captured: string[][] = [];
-  const result = postUpdate(
+  const result = await postUpdate(
     { confirmed: true, issueId: "NSR-40", markdown: "x", workspace_root: os.tmpdir() },
     {
       postComment: (id: string, text: string, root: string) => {
@@ -290,32 +293,20 @@ test("write guard: postUpdate confirmed sets the write flag for real api calls",
   expect(captured).toHaveLength(1);
 });
 
-test("real api.sh rejects writes without WORKFLOW_YT_WRITE", () => {
-  // The guard must fail closed BEFORE any HTTP call. We point the config at a
-  // nonexistent file so even an "allowed" write can never reach the real API.
-  const { spawnSync } = require("node:child_process") as typeof import("node:child_process");
-  const script = path.join(
-    path.resolve(import.meta.dir, "..", ".."),
-    "packages/workit-core/scripts/youtrack/api.sh",
-  );
-  const env = (write: string) => ({
-    WORKFLOW_YT_WRITE: write,
-    WORKFLOW_YOUTRACK_CONFIG: "/nonexistent/youtrack.json",
-  });
-  const denied = spawnSync("bash", [script, "post-comment", "NSR-40", "test"], {
-    encoding: "utf8",
-    env: { ...process.env, ...env("") },
-  });
-  expect(denied.status).not.toBe(0);
-  expect(denied.stderr).toContain("WORKFLOW_YT_WRITE");
+test("real api guard rejects writes without WORKFLOW_YT_WRITE before any HTTP call", async () => {
+  const previous = process.env.WORKFLOW_YOUTRACK_CONFIG;
+  process.env.WORKFLOW_YOUTRACK_CONFIG = "/nonexistent/youtrack.json";
+  try {
+    const denied = await youTrackApi(["post-comment", "NSR-40", "test"], "");
+    expect("error" in denied ? denied.error : "").toContain("WORKFLOW_YT_WRITE");
 
-  const allowed = spawnSync("bash", [script, "post-comment", "NSR-40", "test"], {
-    encoding: "utf8",
-    env: { ...process.env, ...env("1") },
-  });
-  // Passes the guard but must fail on the missing config — never on a real API.
-  expect(allowed.status).not.toBe(0);
-  expect(allowed.stderr).not.toContain("WORKFLOW_YT_WRITE");
+    const allowed = await youTrackApi(["post-comment", "NSR-40", "test"], "1");
+    // Passes the guard but must fail on the missing config — never on a real API.
+    expect("error" in allowed ? allowed.error : "").toContain("missing youtrack.json");
+  } finally {
+    if (previous === undefined) delete process.env.WORKFLOW_YOUTRACK_CONFIG;
+    else process.env.WORKFLOW_YOUTRACK_CONFIG = previous;
+  }
 });
 
 test("no test may reach the real YouTrack API (write-guard structural scan)", () => {

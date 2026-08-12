@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import {
   collectConfigValues,
+  isSetupComplete,
   loadWorkspaces,
   parseList,
   runProjectSetup,
@@ -164,6 +165,85 @@ test("scaffoldVcs writes vcs.json for provider + active placeholder token", () =
     const gitlab = scaffoldVcs(dir, "gitlab");
     expect(gitlab.activeTokenPath).toBe(path.join(dir, "gitlab.token"));
     expect(gitlab.tokenCreateUrl).toContain("gitlab.com/-/user_settings/personal_access_tokens");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("scaffoldYouTrack preserves an existing token byte-for-byte (WZ-05)", () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "wf-cli-logic-"));
+  try {
+    const tokenPath = path.join(dir, "youtrack.token");
+    writeFileSync(tokenPath, "perm_abcdef123456\n", { mode: 0o600 });
+    const s = scaffoldYouTrack(dir, "https://youtrack.example.com", {
+      locale: "es-CL",
+      timezone: "America/Santiago",
+    });
+    expect(s.ok).toBe(true);
+    expect(s.status).toBe("preserved");
+    expect(s.preserved).toContain(tokenPath);
+    expect(readFileSync(tokenPath, "utf8")).toBe("perm_abcdef123456\n");
+    expect(readFileSync(s.youtrackJson, "utf8")).not.toContain(TOKEN_PLACEHOLDER);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("scaffoldVcs preserves existing token files byte-for-byte (WZ-05)", () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "wf-cli-logic-"));
+  try {
+    const gl = path.join(dir, "gitlab.token");
+    const gh = path.join(dir, "github.token");
+    writeFileSync(gl, "glpat-secret\n", { mode: 0o600 });
+    writeFileSync(gh, "ghp_secret\n", { mode: 0o600 });
+    const s = scaffoldVcs(dir, "gitlab");
+    expect(s.ok).toBe(true);
+    expect(s.status).toBe("preserved");
+    expect(s.preserved).toEqual([gl, gh]);
+    expect(readFileSync(gl, "utf8")).toBe("glpat-secret\n");
+    expect(readFileSync(gh, "utf8")).toBe("ghp_secret\n");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("scaffoldYouTrack blocks on malformed youtrack.json without overwriting (WZ-06)", () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "wf-cli-logic-"));
+  try {
+    const jsonPath = path.join(dir, "youtrack.json");
+    writeFileSync(jsonPath, "{ not json", "utf8");
+    const s = scaffoldYouTrack(dir, "https://youtrack.example.com", {});
+    expect(s.ok).toBe(false);
+    expect(s.status).toBe("malformed");
+    expect(s.error).toContain("youtrack.json");
+    expect(s.file).toBe(jsonPath);
+    expect(readFileSync(jsonPath, "utf8")).toBe("{ not json");
+    expect(existsSync(path.join(dir, "youtrack.token"))).toBe(false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("isSetupComplete: unconfigured or blocked hosts never count as complete (WZ-10)", () => {
+  expect(isSetupComplete({ youtrack: null, vcs: null })).toBe(false);
+  expect(isSetupComplete({ youtrack: { ok: false }, vcs: { ok: true } })).toBe(false);
+  expect(isSetupComplete({ youtrack: { ok: true }, vcs: null })).toBe(false);
+  expect(isSetupComplete({ youtrack: { ok: true }, vcs: { ok: false } })).toBe(false);
+  expect(isSetupComplete({ youtrack: { ok: true }, vcs: { ok: true } })).toBe(true);
+});
+
+test("scaffoldVcs blocks on malformed vcs.json without overwriting (WZ-06)", () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "wf-cli-logic-"));
+  try {
+    const jsonPath = path.join(dir, "vcs.json");
+    writeFileSync(jsonPath, "not json{{", "utf8");
+    const s = scaffoldVcs(dir, "github");
+    expect(s.ok).toBe(false);
+    expect(s.status).toBe("malformed");
+    expect(s.error).toContain("vcs.json");
+    expect(s.file).toBe(jsonPath);
+    expect(readFileSync(jsonPath, "utf8")).toBe("not json{{");
+    expect(existsSync(path.join(dir, "github.token"))).toBe(false);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

@@ -184,10 +184,10 @@ test("native runtime outputs use OpenCode-neutral vocabulary", () => {
   const root = path.resolve(import.meta.dir, "..", "..", "packages", "workit-core");
   const sources = [
     "src/core/sdd.ts",
-    "scripts/_shared/common.sh",
-    "scripts/changelog-context.sh",
-    "scripts/init/apply.sh",
-    "scripts/vcs/token-create-urls.sh",
+    "src/core/repo-context.ts",
+    "src/core/verify-project.ts",
+    "src/core/init.ts",
+    "src/core/vcs-config.ts",
   ]
     .map((file) => readFileSync(path.join(root, file), "utf8"))
     .join("\n");
@@ -225,9 +225,56 @@ test("quality templates and findings are wired into contracts", () => {
   expect(specContract).toMatch(/spec-template\.md/);
 });
 
+test("SDD contracts name gitignored docs/<slug>/sdd/ with no nested slug and no early ledger", () => {
+  const read = (rel: string) => readFileSync(path.join(import.meta.dir, "..", "..", rel), "utf8");
+  const surfaces = [
+    "packages/workit-core/skills/wk-implement/SKILL.md",
+    "packages/workit-opencode/assets/skills/wk-implement/SKILL.md",
+    "packages/workit-cursor/skills/wk-implement/SKILL.md",
+    "packages/workit-cursor/rules/sdd-docs-path.mdc",
+    "packages/workit-cursor/hooks/session-start.ts",
+    "packages/workit-core/templates/execution-contract.md",
+    "packages/workit-opencode/assets/templates/execution-contract.md",
+    "packages/workit-cursor/assets/templates/execution-contract.md",
+    "packages/workit-cli/assets/templates/execution-contract.md",
+    "packages/workit-core/templates/superpowers-doc-contract.md",
+    "packages/workit-opencode/assets/templates/superpowers-doc-contract.md",
+    "packages/workit-cursor/assets/templates/superpowers-doc-contract.md",
+    "packages/workit-cli/assets/templates/superpowers-doc-contract.md",
+    "packages/workit-cursor/skills/wk-handoff/SKILL.md",
+  ]
+    .map(read)
+    .join("\n");
+  // Canonical working state is docs/<slug>/sdd/ and is gitignored, never tracked.
+  expect(surfaces).toContain("docs/<slug>/sdd/");
+  expect(surfaces).toContain("gitignored");
+  expect(surfaces).not.toMatch(/tracked `docs\/<slug>\/sdd/);
+  // No "tracked" adjective may describe SDD working state on any shipped copy.
+  expect(surfaces).not.toMatch(/tracked (SDD|state|ledger|brief|diff|under `docs\/<slug>\/sdd)/i);
+  // No nested slug level under sdd/ on any shipped surface.
+  expect(surfaces).not.toContain("sdd/<slug>");
+  // Nothing claims the context creates the sdd dir or an empty progress ledger —
+  // including the cursor rule's bold `**creates** `docs/<slug>/sdd/progress.md``
+  // phrasing (D8: `\s+` alone would fail on the `**` boundary).
+  expect(surfaces).not.toMatch(/creates\s*\*{0,2}\s*`?docs\/<slug>\/sdd\/progress\.md`?/i);
+  expect(surfaces).not.toMatch(/creates\s*\*{0,2}\s*`?docs\/<slug>\/sdd\/?`?/i);
+});
+
+test("SDD create-prohibition regex catches the bold **creates** phrasing (D8)", () => {
+  for (const bold of [
+    "**creates** `docs/<slug>/sdd/progress.md`",
+    "**creates** docs/<slug>/sdd/progress.md",
+    "creates `docs/<slug>/sdd/progress.md`",
+  ]) {
+    expect(bold).toMatch(/creates\s*\*{0,2}\s*`?docs\/<slug>\/sdd\/progress\.md`?/i);
+    expect(bold).toMatch(/creates\s*\*{0,2}\s*`?docs\/<slug>\/sdd\/?`?/i);
+  }
+  expect("**creates** `docs/<slug>/sdd/`").toMatch(/creates\s*\*{0,2}\s*`?docs\/<slug>\/sdd\/?`?/i);
+});
+
 test("cursor session-start includes the contract reminder", () => {
   const hook = readFileSync(
-    path.resolve(import.meta.dir, "../../packages/workit-cursor/hooks/session-start"),
+    path.resolve(import.meta.dir, "../../packages/workit-cursor/hooks/session-start.ts"),
     "utf8",
   );
   expect(hook).toContain("Bounded user choices");
@@ -244,4 +291,52 @@ test("contract includes the doc delivery section", () => {
   );
   expect(contract).toContain("## Doc delivery");
   expect(contract).toMatch(/\[spec\.md\]\(docs\/<slug>\/spec\.md\)/);
+});
+
+test("flow contracts state the host-capability boundary: OpenCode receipts + parentage, Cursor attested:false, no caller evidence/role", () => {
+  const read = (rel: string) => readFileSync(path.join(import.meta.dir, "..", "..", rel), "utf8");
+  const surfaces = [
+    "packages/workit-core/skills/wk-implement/SKILL.md",
+    "packages/workit-opencode/assets/skills/wk-implement/SKILL.md",
+    "packages/workit-cursor/skills/wk-implement/SKILL.md",
+    "packages/workit-cursor/rules/ask-question-only.mdc",
+    "packages/workit-core/templates/execution-contract.md",
+    "packages/workit-opencode/assets/templates/execution-contract.md",
+    "packages/workit-cursor/assets/templates/execution-contract.md",
+    "packages/workit-cli/assets/templates/execution-contract.md",
+    "packages/workit-core/templates/superpowers-doc-contract.md",
+    "packages/workit-opencode/assets/templates/superpowers-doc-contract.md",
+    "packages/workit-cursor/assets/templates/superpowers-doc-contract.md",
+    "packages/workit-cli/assets/templates/superpowers-doc-contract.md",
+  ]
+    .map(read)
+    .join("\n");
+  // OpenCode trust comes from host-observed one-use receipts consumed by the
+  // approval/menu tools; no evidence argument exists anywhere (AR-12).
+  expect(surfaces).toContain("one-use receipt");
+  expect(surfaces).toContain("attested: true");
+  expect(surfaces).toContain("no evidence argument");
+  expect(surfaces).toContain("NativeChoiceEvidence");
+  for (const field of ["attested", "callID", "selectedLabel", "recordedAt"]) {
+    expect(surfaces).toContain(field);
+  }
+  // Delegation comes from host session parentage, never a caller role field.
+  expect(surfaces).toContain("parentID");
+  expect(surfaces).not.toContain('role: "delegated"');
+  expect(surfaces).not.toContain("taskIdentity");
+  expect(surfaces).not.toContain("questionId");
+  // Cursor reports its policy-only boundary honestly and rejects subagent-driven.
+  expect(surfaces).toContain("attested: false");
+  expect(surfaces).toMatch(/subagent-driven[^\n]*(unsupported|rejected)/i);
+  // Host contract copies stay byte-identical across the four template roots.
+  const templates = [
+    "packages/workit-core/templates",
+    "packages/workit-opencode/assets/templates",
+    "packages/workit-cursor/assets/templates",
+    "packages/workit-cli/assets/templates",
+  ];
+  for (const name of ["execution-contract.md", "superpowers-doc-contract.md"]) {
+    const contents = templates.map((dir) => read(`${dir}/${name}`));
+    for (const copy of contents) expect(copy).toBe(contents[0]);
+  }
 });

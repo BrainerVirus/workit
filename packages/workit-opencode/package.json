@@ -18,22 +18,27 @@
     "url": "https://github.com/BrainerVirus/workit.git"
   },
   "files": [
-    "src/"
+    "dist/",
+    "assets/"
   ],
   "type": "module",
-  "main": "./src/plugin.ts",
+  "main": "./dist/plugin.js",
   "exports": {
-    ".": "./src/plugin.ts",
-    "./src/*": "./src/*"
+    ".": "./dist/plugin.js"
   },
   "publishConfig": {
     "access": "public"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "build": "bun scripts/build.ts",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "bun run build && bun run typecheck"
   },
   "dependencies": {
     "@brainervirus/workit-core": "workspace:*",
     "@opencode-ai/plugin": "1.17.7"
+  },
+  "engines": {
+    "node": ">=20"
   }
 }

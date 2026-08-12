@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { hygieneFiles } from "./hygiene";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
+import { resolveCanonicalLayout, resolveDocsPath } from "./docs-layout";
 
 export type DocError = { code: string; message: string; path?: string };
 
@@ -107,9 +108,15 @@ export const docsValidate = ({
       quality: QualityFinding[];
     }
   | { ok: false; errors: DocError[]; error: string } => {
-  const cwd = path.resolve(workspace_root);
-  const specAbs = path.isAbsolute(spec_path) ? spec_path : path.join(cwd, spec_path);
-  const planAbs = path.isAbsolute(plan_path) ? plan_path : path.join(cwd, plan_path);
+  // One shared contained path contract (DC-01, DC-02): absolute/traversal/
+  // symlink-escape/cross-slug/wrong-basename/legacy paths all fail here before
+  // any document bytes are read.
+  const resolved = resolveCanonicalLayout({ workspace_root, spec_path, plan_path });
+  if (!resolved.ok) return failValidate([err("path_contract", resolved.error)]);
+  const cwd = resolved.layout.workspace;
+  const specAbs = resolved.layout.spec;
+  const planAbs = resolved.layout.plan;
+  const slug = resolved.layout.slug;
   const errors: DocError[] = [];
 
   const read = (p: string): string | null => {
@@ -138,8 +145,14 @@ export const docsValidate = ({
     errors.push(err("missing_spec_link", "**Spec:** link required in plan", plan_path));
   } else {
     const linked = (linkMatch[1] ?? linkMatch[2] ?? "").trim();
-    const linkedAbs = path.isAbsolute(linked) ? linked : path.join(cwd, linked);
-    if (path.resolve(linkedAbs) !== path.resolve(specAbs)) {
+    // The plan link is a path inside the workspace docs tree: canonicalize it
+    // under the same contained contract before comparing to the canonical spec.
+    const linkedResolved = resolveDocsPath({ workspace_root: cwd, path: linked });
+    if (!linkedResolved.ok) {
+      errors.push(
+        err("spec_link_escape", `plan **Spec:** ${linked} is not a contained docs path`, plan_path),
+      );
+    } else if (linkedResolved.path !== specAbs) {
       errors.push(
         err(
           "spec_mismatch",
@@ -189,7 +202,6 @@ export const docsValidate = ({
   const relSpec = path.isAbsolute(spec_path) ? path.relative(cwd, specAbs) : spec_path;
   const relPlan = path.isAbsolute(plan_path) ? path.relative(cwd, planAbs) : plan_path;
   const quality = qualitySpec(specText!);
-  const slug = path.basename(path.dirname(spec_path));
   if (!sddIgnored(cwd, slug)) {
     quality.push({
       code: "sdd_not_ignored",

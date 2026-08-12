@@ -19,6 +19,13 @@ TypeScript portability audits. Duplicate findings are consolidated into shared
 requirements, but every original finding and every active `ponytail:` marker is
 mapped in the traceability sections so no item disappears during planning.
 
+After Tasks 1-23 were implemented, an independent final-tree audit found that
+several gates proved a sandbox assembled by tests rather than the actual release
+workflow, and that some flow-security claims exceeded what the hosts can attest.
+Phase 9 is the mandatory remediation pass for those findings. Earlier task
+evidence remains historical; it does not close a Phase 9 finding without a new
+RED/GREEN regression against the final runtime or release entry point.
+
 The intended outcome is a boring installation: each supported host loads a
 self-contained package, reports its provenance and health, follows the same
 document and approval contracts, and fails explicitly when those contracts are
@@ -40,8 +47,10 @@ unavailable.
 - G-06: Add secret-safe first-party logs and a shared doctor so plugin, hook,
   package, configuration, and version failures are diagnosable without relying
   only on host logs.
-- G-07: Make spec, plan, validation, execution-mode, and coordinator boundaries
-  structurally enforceable instead of relying only on model instructions.
+- G-07: Enforce spec, plan, validation, execution-mode, and coordinator
+  boundaries wherever the host exposes a trustworthy interception or identity
+  surface, and state weaker policy-only boundaries explicitly instead of
+  representing caller-supplied fields as host attestation.
 - G-08: Resolve every active reliability ceiling identified by the audits or
   explicitly classify it as accepted future work with a measurable trigger.
 - G-09: Require a failing regression first and an independently runnable green
@@ -70,6 +79,9 @@ unavailable.
 - Publishing packages, tags, or marketplace releases as part of this work. The
   completed pull request must be release-ready, but publication requires a later
   explicit user approval.
+- Building a Cursor extension solely to attest `AskQuestion` answers. Cursor MCP
+  confirmation remains an explicit audited policy boundary until Cursor exposes
+  a trusted result callback; a future bridge requires a separate specification.
 
 ## Architecture
 
@@ -104,6 +116,14 @@ The core owns domain behavior, canonical path resolution, migrations, logging,
 diagnostics, and flow state. Host packages own only host SDK registration,
 native questions, hooks, manifests, and presentation. Each host package bundles
 the core behavior it needs and ships its required static assets explicitly.
+
+Flow evidence is capability-aware. OpenCode can observe tool calls and session
+parentage, so its adapter must derive one-use question receipts and delegated
+identity from host data. Cursor MCP cannot observe native `AskQuestion` results
+or intercept arbitrary editor writes; it records explicit contract confirmation
+with `attested: false`, never calls that confirmation host-trusted, and blocks
+the unsupported subagent-driven mutation path rather than accepting a
+caller-asserted delegated role.
 
 ### Wizard UX target
 
@@ -334,18 +354,23 @@ evidence even when the final suite is green.
   approved.
 - FG-03: Block non-document mutations until spec approval, plan approval,
   document validation, and execution-menu evidence all pass.
-- FG-04: Automatically derive approval and execution-menu evidence from exact
-  native question results; models cannot fabricate confirmation by passing a
-  boolean alone.
-- FG-05: Block coordinator product edits when subagent-driven mode is selected;
-  delegated worker contexts remain allowed.
+- FG-04: On OpenCode, derive approval and execution-menu evidence from an exact,
+  one-use, session-bound native `question` result observed by host hooks; the
+  workflow tool schema accepts no model-created evidence object. On Cursor,
+  record explicit confirmation as unauthenticated policy evidence with
+  `attested: false` and never describe it as a native-result attestation.
+- FG-05: On OpenCode, block coordinator product edits when subagent-driven mode
+  is selected and derive delegated status from host session parentage, never
+  caller-supplied `role` or `taskIdentity`. Cursor has no delegated-worker
+  identity, so selecting subagent-driven blocks mutation with recovery guidance.
 - FG-06: Use the host workspace directory instead of `process.cwd()` for active
   plan and document discovery.
 - FG-07: Keep post-hoc reminders as UX support, not as the primary enforcement
   boundary.
 - FG-08: Protect flow state against concurrent sessions with unique temporary
   files and compare/retry semantics before adding a heavier lock.
-- FG-09: Apply the same transition matrix and errors through OpenCode and Cursor.
+- FG-09: Apply the same transition matrix and domain errors through OpenCode and
+  Cursor while exposing each host's evidence provenance and enforcement limits.
 
 #### Configuration, VCS, and remaining reliability
 
@@ -369,6 +394,53 @@ evidence even when the final suite is green.
   Updates occur during explicit install/update operations and report failures.
 - RL-10: Establish a tested host/runtime support matrix and fail CI when a
   declared host SDK changes the plugin or hook contract.
+
+#### Post-implementation audit remediation
+
+- AR-01: The real release workflow builds OpenCode, Cursor, and CLI artifacts and
+  runs the release-candidate gate before semantic-release; no required check may
+  occur only after a package could already have been published.
+- AR-02: Release dependency rewriting runs before package verification and again
+  after semantic-release version preparation. The root exposes runnable `build`
+  and `verify:release-candidate` scripts used by CI and release automation.
+- AR-03: A clean install of `@brainervirus/workit-cli` includes the selected
+  OpenCode and Cursor adapter packages through declared same-release dependencies;
+  tests may not manually install undeclared siblings to simulate success.
+- AR-04: Registration deduplication matches exact current package identities and
+  version suffixes only; helper packages sharing a prefix remain untouched.
+- AR-05: Cursor's launcher-provided workspace becomes the default root for every
+  MCP tool when `workspace_root` is omitted, and process cwd is only the final
+  fallback when no host workspace exists.
+- AR-06: Build scripts decode `import.meta.url` with `fileURLToPath`; Cursor MCP
+  and hook manifests invoke Node explicitly and pass on Linux, macOS, and Windows.
+- AR-07: Every config reader, setup preflight, and doctor classifies parseable
+  scalar, array, and null JSON as malformed when an object schema is required.
+- AR-08: Date-like numeric sequences anywhere in a branch segment cannot derive
+  GitHub issue closures; explicit issue branches such as `feature/42-title` and
+  `feature/2024-fix` remain supported.
+- AR-09: Setup preview lists every exact host registration, copied package,
+  credential, project, and config mutation that Apply can perform. Apply rejects
+  any unreviewed mutation rather than deriving extra writes after confirmation.
+- AR-10: Existing custom YouTrack, GitLab, and GitHub `tokenFile` paths and bytes
+  remain authoritative unless the preview explicitly shows and the user approves
+  a replacement.
+- AR-11: Doctor never reports an incomplete selected host as healthy. Installer
+  mode may downgrade optional parity checks only; selected-host registration,
+  assets, launchers, runtime, malformed config, and required utilities remain
+  failures with nonzero status.
+- AR-12: OpenCode flow approval, menu, and delegated identity come from host
+  observations, not caller-created evidence, `role`, or `taskIdentity` fields.
+  Cursor surfaces unauthenticated confirmation honestly and cannot select a fake
+  delegated identity.
+- AR-13: OpenCode intercepts known file-write tools and denies coordinator shell
+  mutation while subagent-driven mode is active; a bounded read/verification
+  allowlist remains available. Cursor documentation explicitly states that MCP
+  cannot intercept arbitrary editor writes.
+- AR-14: The full check captures expected negative-command stderr so successful
+  verification is readable and free of repeated Git usage/fatal dumps.
+- AR-15: The final branch merges current `main` so the PR merge-base no longer
+  predates the already-squashed recovery change, then the exact branch diff is
+  revalidated before PR creation without force-pushing or publishing.
 
 ## Phased delivery
 
@@ -534,6 +606,28 @@ Scope: RL-08, RL-10, all traceability closure, and final release evidence.
 doctor is green on clean OpenCode and Cursor installs, and rollback packages are
 available.
 
+### Phase 9: Independent audit remediation and final proof
+
+Scope: AR-01 through AR-15 and corrected FG-04, FG-05, FG-09, CA-18 through
+CA-20.
+
+- Reproduce every post-implementation finding against the actual workflow,
+  packed dependency graph, host process, or malformed fixture before editing.
+- Correct release ordering and clean-install dependency closure first.
+- Correct Cursor portability/workspace propagation, config/date parsing, wizard
+  preview/credential preservation, and doctor failure semantics.
+- Replace model-asserted OpenCode evidence and delegated identity with host
+  observations; expose Cursor's policy-only boundary without false attestation.
+- Re-run isolated package, host, matrix, full-check, traceability, and document
+  gates, then reconcile branch history with current `main` before PR preparation.
+
+**Gate:** all AR rows map to observed RED and passing GREEN evidence; the actual
+release workflow invokes build and release-candidate verification before release;
+a clean CLI dependency install configures both adapters; OpenCode rejects forged
+evidence/roles and coordinator writes; Cursor reports `attested: false`; focused
+and full checks are readable and green; the branch diff contains only the intended
+overhaul relative to current `main`. Nothing is published or force-pushed.
+
 ## Test strategy
 
 ### Required test layers
@@ -643,6 +737,26 @@ Audit identifiers refer to the five completed research tracks:
 | PORT-08 CLI bundle loses assets/platform install is false | PT-07, WZ-09, WZ-13 | 2, 4 |
 | PORT-09 workspace rewrite is fragile/late | RR-01, RR-09 | 0, 2 |
 
+### Post-implementation audit
+
+| Finding | Requirement | Phase |
+| --- | --- | --- |
+| POST-01 release can publish without built adapter `dist/` | AR-01, AR-02 | 9 |
+| POST-02 release rewrite/check order is after a possible publish | AR-01, AR-02 | 9 |
+| POST-03 clean CLI install omits both adapter packages | AR-03 | 9 |
+| POST-04 Workit package-prefix matching removes helper packages | AR-04 | 9 |
+| POST-05 Cursor launcher workspace is ignored by defaulted tools | AR-05 | 9 |
+| POST-06 URL pathname builds and direct hook entry are not Windows-safe | AR-06 | 9 |
+| POST-07 object-shaped config accepts scalar/array/null JSON | AR-07 | 9 |
+| POST-08 embedded year-first dates derive `Closes #2024` | AR-08 | 9 |
+| POST-09 preview omits host writes performed during Apply | AR-09 | 9 |
+| POST-10 custom credential paths are replaced by defaults | AR-10 | 9 |
+| POST-11 doctor downgrades required installer failures | AR-11 | 9 |
+| POST-12 native-choice evidence is model-forgeable | AR-12, FG-04 | 9 |
+| POST-13 delegated identity and direct edits bypass coordinator gates | AR-12, AR-13, FG-05 | 9 |
+| POST-14 successful full checks emit unbounded negative Git diagnostics | AR-14 | 9 |
+| POST-15 feature history still carries the pre-squash recovery lineage | AR-15 | 9 |
+
 ## Ponytail debt traceability
 
 There are 18 active tracked `ponytail:` markers. They are not separate hidden
@@ -709,12 +823,16 @@ scope; each maps below to a requirement or an accepted trigger.
   and is idempotent.
 - CA-17: Declining migration for the active legacy workflow cannot create a
   second divergent canonical source of truth.
-- CA-18: Direct plan or product edits cannot bypass spec, plan, validation,
-  execution-menu, or coordinator gates on OpenCode or Cursor.
-- CA-19: Native question results, not agent-provided booleans, are the evidence
-  for user approvals and execution choices.
-- CA-20: Subagent-driven selection prevents coordinator product edits while
-  allowing approved delegated worker contexts.
+- CA-18: OpenCode direct write tools and coordinator shell mutations cannot
+  bypass spec, plan, validation, menu, or subagent-driven gates. Cursor exposes
+  the same domain transition gates but explicitly reports that MCP cannot
+  intercept arbitrary editor writes.
+- CA-19: OpenCode approvals and menu choices consume exact one-use native
+  question receipts bound to the host session. Cursor confirmations are stored
+  with `attested: false` and are never represented as host-observed answers.
+- CA-20: OpenCode subagent-driven selection blocks root-session product edits
+  while allowing child sessions derived from host parentage. Cursor blocks the
+  unsupported subagent-driven mutation path and accepts no delegated-role field.
 - CA-21: Active plan discovery uses the real host workspace, and concurrent flow
   transitions cannot overwrite newer state or share a temporary filename.
 - CA-22: Invalid configuration blocks risky actions with path-specific errors;
@@ -743,6 +861,36 @@ scope; each maps below to a requirement or an accepted trigger.
 - CA-32: Before Phase 0 starts, a restarted development OpenCode process loads
   the direct Workit source entry and exposes the required commands, tools,
   bootstrap assets, and skills without downloading or releasing a package.
+- CA-33: On a clean checkout with no generated `dist/`, the release job builds all
+  adapters and completes `verify:release-candidate` before semantic-release can
+  run; all dependency/protocol checks are pre-publication.
+- CA-34: Installing only the packed CLI and its declared dependency closure makes
+  both adapter packages discoverable and permits selected-host setup without
+  manually copying sibling tarballs.
+- CA-35: Unrelated package names that begin with a Workit package prefix survive
+  registration merging unchanged.
+- CA-36: Cursor tools called without `workspace_root` use the launcher workspace,
+  and all build/hook entry paths pass Windows process tests.
+- CA-37: Scalar, array, null, unreadable, and syntactically invalid configuration
+  fixtures block readers, setup, and doctor with exact paths and nonzero status.
+- CA-38: Full date segments embedded after text cannot create issue clauses while
+  explicit numeric issue branches retain their documented behavior.
+- CA-39: Preview and Apply mutation sets are identical, including host package
+  copies and registration files, and custom credential paths/bytes survive rerun.
+- CA-40: Installer doctor treats selected-host runtime, assets, launchers,
+  registration, malformed config, and required utility defects as failures.
+- CA-41: Forged OpenCode evidence, replayed receipts, mismatched sessions/labels,
+  and caller-supplied delegated roles fail; a real host question plus child
+  session succeeds.
+- CA-42: Cursor flow results expose unauthenticated confirmation provenance and
+  subagent-driven selection returns actionable unsupported-mode failure.
+- CA-43: A successful `bun run check` has zero test failures and no repeated raw
+  Git usage/fatal dumps from expected negative fixtures.
+- CA-44: The Phase 9 release candidate passes clean dependency install, isolated
+  runtime, Linux/macOS/Windows, doctor, traceability, and no-publication checks.
+- CA-45: Before PR creation, the feature branch has current `main` as its base,
+  documents validate with all tasks numbered, and the PR diff excludes the
+  already-squashed recovery lineage.
 
 ## Decisions
 
@@ -762,7 +910,9 @@ scope; each maps below to a requirement or an accepted trigger.
 - D-07: Wizard setup is draft-review-apply and integration-neutral; safety takes
   precedence over preserving incremental-write behavior.
 - D-08: Legacy migration is copy-only, no-clobber, confirmed, and recoverable.
-- D-09: Structural mutation gates are authoritative; reminders are advisory UX.
+- D-09: Structural mutation gates are authoritative only where the host exposes
+  trustworthy interception and identity. Reminders are advisory UX, and a host
+  limitation is reported rather than hidden behind model-supplied evidence.
 - D-10: Logging is sparse, local, secret-safe, and dependency-free. Doctor is
   offline unless network verification is explicitly requested.
 - D-11: Tests against monorepo source do not prove package or host correctness.
@@ -773,6 +923,17 @@ scope; each maps below to a requirement or an accepted trigger.
   implementation task, not optional process guidance.
 - D-14: This implementation ends with a release-ready pull request and verified
   local artifacts. Publishing is a separate, explicitly approved operation.
+- D-15: OpenCode uses host-observed question calls and session parentage for
+  attestation; flow tools do not accept caller-created evidence or role fields.
+- D-16: Cursor uses the honest capability boundary selected after audit: explicit
+  audited confirmation with `attested: false`, no fake delegated identity, and
+  no claim that MCP intercepts editor writes.
+- D-17: Release proof must execute through the same root scripts and workflow
+  ordering used for publication; a test-only sandbox assembly is supporting
+  evidence, not release orchestration evidence.
+- D-18: Branch-history reconciliation occurs only after Phase 9 is green and
+  merges current `main` through non-destructive in-place workflow tooling; no
+  rebase, force push, or publication is part of remediation.
 
 ## Future work
 
@@ -784,5 +945,7 @@ scope; each maps below to a requirement or an accepted trigger.
   packages have configured trusted publishers and release verification passes.
 - Publish the verified package and marketplace release after separate user
   review and approval of the completed pull request and release candidate.
+- Add a Cursor extension attestation bridge only if Cursor exposes a stable
+  native-question callback and policy-only confirmation becomes insufficient.
 - Add richer operation timing only if sparse startup/error logs and doctor do
   not provide enough production diagnosis.

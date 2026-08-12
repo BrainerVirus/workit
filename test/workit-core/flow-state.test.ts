@@ -7,7 +7,11 @@ import {
   transitionSpec,
   transitionPlan,
   recordMenuChoice,
+  prepareFlowState,
+  writeFlowState,
 } from "../../packages/workit-core/src/core/flow-state";
+import { establishApprovedFlow, evidence } from "./flow-fixtures";
+import { HostReceiptStore } from "../../packages/workit-core/src/core/flow-state";
 
 const COMPLIANT_SPEC = (slug: string) =>
   `# ${slug}\n\n**Branch:** \`feature/${slug}\`\n\n## Context\n\n## Goals\n\n## Non-goals\n\n## Architecture\n\n## Acceptance criteria\n\n- CA-01: test\n`;
@@ -30,6 +34,7 @@ test("missing flow.json reads as draft with no menu", () => {
   const { root, slug } = fixture();
   try {
     const state = readFlowState(root, slug);
+    expect(state.activated).toBe(false);
     expect(state.spec.status).toBe("draft");
     expect(state.plan.status).toBe("draft");
     expect(state.menu.presented).toBe(false);
@@ -38,25 +43,58 @@ test("missing flow.json reads as draft with no menu", () => {
   }
 });
 
-test("spec transitions draft -> self_reviewed -> approved", () => {
+test("spec transitions draft -> approved in one receipt with native evidence", () => {
   const { root, slug } = fixture();
   try {
-    const first = transitionSpec(root, slug, `docs/${slug}/spec.md`, true);
+    const spec = `docs/${slug}/spec.md`;
+    const plan = `docs/${slug}/plan.md`;
+    const blocked = transitionSpec(root, slug, spec, evidence());
+    expect(blocked.ok).toBe(false); // activation required first
+    prepareFlowState(root, slug, { spec_path: spec, plan_path: plan });
+    const first = transitionSpec(root, slug, spec, evidence());
     expect(first.ok).toBe(true);
-    expect(readFlowState(root, slug).spec.status).toBe("self_reviewed");
-
-    const second = transitionSpec(root, slug, `docs/${slug}/spec.md`, true);
-    expect(second.ok).toBe(true);
     expect(readFlowState(root, slug).spec.status).toBe("approved");
+    // The single receipt consumed the whole draft -> approved transition.
+    const second = transitionSpec(root, slug, spec, evidence());
+    expect(second.ok).toBe(false);
+    if (second.ok === false) expect(second.code).toBe("flow_already_approved");
   } finally {
     cleanup(root);
   }
 });
 
-test("confirmed:false never transitions", () => {
+test("a legacy self_reviewed state advances to approved on the next receipt", () => {
   const { root, slug } = fixture();
   try {
-    const result = transitionSpec(root, slug, `docs/${slug}/spec.md`, false);
+    const spec = `docs/${slug}/spec.md`;
+    const plan = `docs/${slug}/plan.md`;
+    prepareFlowState(root, slug, { spec_path: spec, plan_path: plan });
+    // A flow.json written by the previous two-step matrix: self_reviewed.
+    writeFlowState(root, {
+      slug,
+      activated: true,
+      spec: { path: spec, status: "self_reviewed", evidence: null },
+      plan: { path: plan, status: "self_reviewed", evidence: null },
+      menu: { presented: false, chosen: "", evidence: null },
+      updated_at: Date.now(),
+    });
+    const first = transitionSpec(root, slug, spec, evidence());
+    expect(first.ok).toBe(true);
+    expect(readFlowState(root, slug).spec.status).toBe("approved");
+    const planStillLegacy = readFlowState(root, slug).plan.status;
+    expect(planStillLegacy).toBe("self_reviewed");
+    const planApproved = transitionPlan(root, slug, plan, evidence());
+    expect(planApproved.ok).toBe(true);
+    expect(readFlowState(root, slug).plan.status).toBe("approved");
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("confirmed:false boolean is never evidence", () => {
+  const { root, slug } = fixture();
+  try {
+    const result = transitionSpec(root, slug, `docs/${slug}/spec.md`, false as never);
     expect(result.ok).toBe(false);
     expect(readFlowState(root, slug).spec.status).toBe("draft");
   } finally {
@@ -67,9 +105,15 @@ test("confirmed:false never transitions", () => {
 test("plan approve hard-fails while spec is draft", () => {
   const { root, slug } = fixture();
   try {
-    const result = transitionPlan(root, slug, `docs/${slug}/plan.md`, true);
+    const spec = `docs/${slug}/spec.md`;
+    const plan = `docs/${slug}/plan.md`;
+    prepareFlowState(root, slug, { spec_path: spec, plan_path: plan });
+    const result = transitionPlan(root, slug, plan, evidence());
     expect(result.ok).toBe(false);
-    expect(String((result as { error: string }).error)).toContain("spec");
+    if (result.ok === false) {
+      expect(result.error).toContain("spec");
+      expect(result.code).toBe("spec_not_approved");
+    }
     expect(readFlowState(root, slug).plan.status).toBe("draft");
   } finally {
     cleanup(root);
@@ -79,37 +123,63 @@ test("plan approve hard-fails while spec is draft", () => {
 test("plan approve requires spec approved", () => {
   const { root, slug } = fixture();
   try {
-    transitionSpec(root, slug, `docs/${slug}/spec.md`, true);
-    transitionSpec(root, slug, `docs/${slug}/spec.md`, true);
-    const first = transitionPlan(root, slug, `docs/${slug}/plan.md`, true);
-    expect(first.ok).toBe(true);
-    expect(readFlowState(root, slug).plan.status).toBe("self_reviewed");
-    const second = transitionPlan(root, slug, `docs/${slug}/plan.md`, true);
-    expect(second.ok).toBe(true);
-    expect(readFlowState(root, slug).plan.status).toBe("approved");
+    establishApprovedFlow(root, slug, new HostReceiptStore(), "s1");
+    const state = readFlowState(root, slug);
+    expect(state.spec.status).toBe("approved");
+    expect(state.plan.status).toBe("approved");
   } finally {
     cleanup(root);
   }
 });
 
-test("menu choice records presented + chosen", () => {
+test("menu choice records presented + chosen with exact evidence", () => {
   const { root, slug } = fixture();
   try {
-    const result = recordMenuChoice(root, slug, `docs/${slug}/plan.md`, "handoff", true);
-    expect(result.ok).toBe(true);
+    establishApprovedFlow(root, slug, new HostReceiptStore(), "s1");
     const state = readFlowState(root, slug);
     expect(state.menu.presented).toBe(true);
     expect(state.menu.chosen).toBe("handoff");
+    if (state.menu.evidence?.host === "opencode") {
+      expect(state.menu.evidence.selectedLabel).toBe("handoff");
+    }
   } finally {
     cleanup(root);
   }
 });
 
-import { assertFlowGates, slugFromPath } from "../../packages/workit-core/src/core/flow-state";
+import {
+  assertFlowGates,
+  slugFromPath,
+  slugFromSddPath,
+} from "../../packages/workit-core/src/core/flow-state";
 
 test("slugFromPath strips -design suffix", () => {
   expect(slugFromPath("docs/x/plan.md")).toBe("x");
   expect(slugFromPath("docs/x/spec.md")).toBe("x");
+});
+
+test("slugFromSddPath requires a real sdd segment and rejects sdd-prefixed lookalikes", () => {
+  expect(slugFromSddPath("docs/x/sdd/flow.json")).toBe("x");
+  expect(slugFromSddPath("docs/x/sdd/progress.md")).toBe("x");
+  expect(slugFromSddPath("docs/x/sdd")).toBe("x");
+  expect(slugFromSddPath("docs/x/sdd-attack/flow.json")).toBe("");
+  expect(slugFromSddPath("docs/x/sdd/attack/flow.json")).toBe("x");
+  expect(slugFromSddPath("docs/review/sdd'quoted")).toBe("review");
+  expect(slugFromSddPath("docs/x/sdd'attack/flow.json")).toBe("x");
+});
+
+test("missing flow state hint names only workflow_flow_status as the activation path", () => {
+  const { root, slug } = fixture();
+  try {
+    const result = transitionSpec(root, slug, `docs/${slug}/spec.md`, evidence());
+    expect(result.ok).toBe(false);
+    if (result.ok === false) {
+      expect(result.error).toContain("workflow_flow_status");
+      expect(result.error).not.toContain("docs_layout");
+    }
+  } finally {
+    cleanup(root);
+  }
 });
 
 test("assertFlowGates fails without approvals", () => {
@@ -117,6 +187,7 @@ test("assertFlowGates fails without approvals", () => {
   try {
     const result = assertFlowGates(root, `docs/${slug}/plan.md`);
     expect(result.ok).toBe(false);
+    if (result.ok === false) expect(result.code).toBe("spec_not_approved");
   } finally {
     cleanup(root);
   }
@@ -125,17 +196,29 @@ test("assertFlowGates fails without approvals", () => {
 test("assertFlowGates requires menu when requested", () => {
   const { root, slug } = fixture();
   try {
+    const plan = `docs/${slug}/plan.md`;
+    establishApprovedFlow(root, slug, new HostReceiptStore(), "s1");
+    const withoutMenu = assertFlowGates(root, plan, { requireMenu: true });
+    expect(withoutMenu.ok).toBe(true); // establishApprovedFlow already presented the menu
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("assertFlowGates blocks execution before the menu is presented", () => {
+  const { root, slug } = fixture();
+  try {
     const spec = `docs/${slug}/spec.md`;
     const plan = `docs/${slug}/plan.md`;
     writeFileSync(path.join(root, spec), COMPLIANT_SPEC(slug));
     writeFileSync(path.join(root, plan), COMPLIANT_PLAN(slug));
-    transitionSpec(root, slug, spec, true);
-    transitionSpec(root, slug, spec, true);
-    transitionPlan(root, slug, plan, true);
-    transitionPlan(root, slug, plan, true);
+    prepareFlowState(root, slug, { spec_path: spec, plan_path: plan });
+    transitionSpec(root, slug, spec, evidence());
+    transitionPlan(root, slug, plan, evidence());
     const withoutMenu = assertFlowGates(root, plan, { requireMenu: true });
     expect(withoutMenu.ok).toBe(false);
-    recordMenuChoice(root, slug, plan, "inline", true);
+    if (withoutMenu.ok === false) expect(withoutMenu.code).toBe("menu_not_presented");
+    recordMenuChoice(root, slug, plan, "inline", evidence("inline"));
     const withMenu = assertFlowGates(root, plan, { requireMenu: true });
     expect(withMenu.ok).toBe(true);
   } finally {
@@ -146,22 +229,25 @@ test("assertFlowGates requires menu when requested", () => {
 test("invalid slug is rejected before any write", () => {
   const { root, slug } = fixture();
   try {
-    const result = transitionSpec(root, "..", `docs/${slug}/spec.md`, true);
+    const result = transitionSpec(root, "..", `docs/${slug}/spec.md`, evidence());
     expect(result.ok).toBe(false);
-    expect(String((result as { error: string }).error)).toContain("invalid slug");
+    if (result.ok === false) expect(result.error).toContain("invalid slug");
   } finally {
     cleanup(root);
   }
 });
 
-test("corrupt flow.json falls back to draft without throwing", () => {
+test("corrupt flow.json at the canonical sdd path blocks transitions with a structured error", () => {
   const { root, slug } = fixture();
   try {
-    mkdirSync(path.join(root, "docs", slug, "sdd"), { recursive: true });
-    writeFileSync(path.join(root, "docs", slug, "flow.json"), "{not-json", "utf8");
-    const state = readFlowState(root, slug);
-    expect(state.spec.status).toBe("draft");
-    expect(state.plan.status).toBe("draft");
+    establishApprovedFlow(root, slug, new HostReceiptStore(), "s1");
+    writeFileSync(path.join(root, "docs", slug, "sdd", "flow.json"), "{not-json", "utf8");
+    const result = transitionPlan(root, slug, `docs/${slug}/plan.md`, evidence());
+    expect(result.ok).toBe(false);
+    if (result.ok === false) {
+      expect(result.error).toContain("corrupt");
+      expect(result.code).toBe("flow_corrupt");
+    }
   } finally {
     cleanup(root);
   }
@@ -170,15 +256,13 @@ test("corrupt flow.json falls back to draft without throwing", () => {
 test("already approved spec rejects further transitions", () => {
   const { root, slug } = fixture();
   try {
-    const spec = `docs/${slug}/spec.md`;
-    const plan = `docs/${slug}/plan.md`;
-    writeFileSync(path.join(root, spec), COMPLIANT_SPEC(slug));
-    writeFileSync(path.join(root, plan), COMPLIANT_PLAN(slug));
-    transitionSpec(root, slug, spec, true);
-    transitionSpec(root, slug, spec, true);
-    const third = transitionSpec(root, slug, spec, true);
+    establishApprovedFlow(root, slug, new HostReceiptStore(), "s1");
+    const third = transitionSpec(root, slug, `docs/${slug}/spec.md`, evidence());
     expect(third.ok).toBe(false);
-    expect(String((third as { error: string }).error)).toContain("already approved");
+    if (third.ok === false) {
+      expect(third.error).toContain("already approved");
+      expect(third.code).toBe("flow_already_approved");
+    }
   } finally {
     cleanup(root);
   }
@@ -187,13 +271,13 @@ test("already approved spec rejects further transitions", () => {
 test("transitions reject a missing doc file", () => {
   const { root, slug } = fixture();
   try {
+    const plan = `docs/${slug}/plan.md`;
     const spec = `docs/${slug}/spec.md`;
-    const missingPlan = `docs/${slug}/missing-plan.md`;
-    transitionSpec(root, slug, spec, true);
-    transitionSpec(root, slug, spec, true);
-    const result = transitionPlan(root, slug, missingPlan, true);
+    prepareFlowState(root, slug, { spec_path: spec, plan_path: plan });
+    rmSync(path.join(root, plan), { force: true });
+    const result = transitionPlan(root, slug, plan, evidence());
     expect(result.ok).toBe(false);
-    expect(String((result as { error: string }).error)).toContain("plan not found");
+    if (result.ok === false) expect(result.error).toContain("plan not found");
   } finally {
     cleanup(root);
   }

@@ -22,19 +22,22 @@
     "workit": "./dist/index.js"
   },
   "files": [
-    "dist/"
+    "dist/",
+    "assets/"
   ],
   "type": "module",
   "publishConfig": {
     "access": "public"
   },
   "scripts": {
-    "build": "bun build ./src/index.tsx --outdir dist --target node --format esm --banner \"#!/usr/bin/env node\" --external react-devtools-core --splitting",
+    "build": "bun scripts/build.ts",
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "bun run build && bun run typecheck"
   },
   "dependencies": {
     "@brainervirus/workit-core": "workspace:*",
+    "@brainervirus/workit-cursor": "workspace:*",
+    "@brainervirus/workit-opencode": "workspace:*",
     "@inkjs/ui": "2.0.0",
     "ink": "7.1.1",
     "react": "19.2.8"

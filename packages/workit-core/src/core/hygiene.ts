@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { changelogUnreleasedStats } from "./changelog";
+import { assetRoot } from "./package-root";
 
 export type HygieneFile =
   | "CHANGELOG.md"
@@ -12,7 +12,7 @@ export type HygieneFile =
   | "CONTRIBUTING.md";
 type State = "missing" | "invalid" | "ok" | "skip";
 
-const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+const repoRoot = assetRoot();
 const templatesDir = () => path.join(repoRoot, "templates", "hygiene");
 
 const packageJson = (root: string): Record<string, unknown> | null => {
@@ -75,25 +75,39 @@ export const hygieneFiles = (
   return { state, openSource };
 };
 
-export const ensureHygieneFiles = (
+// Pure planner: which hygiene files would be created and with what content,
+// without touching the filesystem. Drives the wizard preview (WZ-08) and the
+// apply path; ensureHygieneFiles is just "plan then write".
+export const planHygieneFiles = (
   root: string,
-  opts: { confirmed: boolean; includeOpenSource?: boolean },
-): { ok: true; created: string[] } | { ok: false; error: string } => {
-  if (!opts.confirmed) return { ok: false, error: "confirmed: true required" };
+  opts: { includeOpenSource?: boolean } = {},
+): Array<{ path: string; content: string }> => {
+  const openSource = opts.includeOpenSource ?? isOpenSource(root);
   const files = ["CHANGELOG.md", "README.md", ".editorconfig", ".gitattributes"] as HygieneFile[];
-  if (opts.includeOpenSource) files.push("LICENSE", "CONTRIBUTING.md");
-  const created: string[] = [];
-  const tplDir = templatesDir();
+  if (openSource) files.push("LICENSE", "CONTRIBUTING.md");
+  const planned: Array<{ path: string; content: string }> = [];
   for (const file of files) {
     if (existsSync(path.join(root, file))) continue;
-    const tpl = path.join(tplDir, file);
+    const tpl = path.join(templatesDir(), file);
     if (!existsSync(tpl)) continue; // skip missing template, never fail
     const content = readFileSync(tpl, "utf8")
       .replace(/<PROJECT>/g, path.basename(root))
       .replace(/<YEAR>/g, String(new Date().getFullYear()))
       .replace(/<HOLDER>\s*/g, licenseHolder(root));
-    writeFileSync(path.join(root, file), content, "utf8");
-    created.push(file);
+    planned.push({ path: path.join(root, file), content });
+  }
+  return planned;
+};
+
+export const ensureHygieneFiles = (
+  root: string,
+  opts: { confirmed: boolean; includeOpenSource?: boolean },
+): { ok: true; created: string[] } | { ok: false; error: string } => {
+  if (!opts.confirmed) return { ok: false, error: "confirmed: true required" };
+  const created: string[] = [];
+  for (const planned of planHygieneFiles(root, opts)) {
+    writeFileSync(planned.path, planned.content, "utf8");
+    created.push(path.basename(planned.path));
   }
   return { ok: true, created };
 };

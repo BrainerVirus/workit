@@ -2,15 +2,19 @@ import { expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 
 import { changelogApply } from "../../packages/workit-core/src/core/changelog";
 import { postUpdate } from "../../packages/workit-core/src/core/youtrack";
-import { buildHandoffPrompt } from "../../packages/workit-core/src/tools/handoff";
+import { releaseNotesContext } from "../../packages/workit-core/src/core/repo-context";
+import { buildHandoffPrompt } from "../../packages/workit-core/src/core/handoff-tools";
 import { docsValidate } from "../../packages/workit-core/src/core/docs-validate";
 
 const REPO_ROOT = path.resolve(import.meta.dir, "..", "..");
 const CURSOR_ROOT = path.join(REPO_ROOT, "packages", "workit-cursor");
+const WORKSPACE_ROOT_RULE =
+  "pass the active Cursor workspace as `workspace_root`; never rely on the MCP process default";
 
 function temporaryDirectory() {
   return mkdtempSync(path.join(os.tmpdir(), "workflow-toolkit-"));
@@ -156,6 +160,8 @@ test("handoff includes every parsed task row", () => {
     if (!("error" in result)) {
       expect(result.prompt).toContain("- Task 1: First repair");
       expect(result.prompt).toContain("- Task 2: Second repair");
+      expect(result.prompt).toContain("workflow_docs_validate");
+      expect(result.prompt).toContain(WORKSPACE_ROOT_RULE);
     }
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -213,14 +219,47 @@ test("question choices use Cursor AskQuestion without an MCP adapter", () => {
   expect(issue).toMatch(/YouTrack/);
 });
 
+test("repository-scoped Cursor skill calls pass the active workspace_root", () => {
+  const excluded = ["wk-init", "wk-meetings", "wk-status"];
+  const repositoryTools = new Set([
+    "workflow_branch_setup",
+    "workflow_changelog_apply",
+    "workflow_changelog_context",
+    "workflow_docs_context",
+    "workflow_docs_validate",
+    "workflow_git_context",
+    "workflow_handoff_prompt",
+    "workflow_plan_tasks",
+    "workflow_pr_context",
+    "workflow_pr_create",
+    "workflow_release_notes_context",
+    "workflow_resolve_branch",
+    "workflow_sdd_context",
+    "workflow_verify",
+  ]);
+  const skills = readdirSync(path.join(CURSOR_ROOT, "skills")).sort();
+  const unaffected: string[] = [];
+
+  expect(skills).toHaveLength(12);
+  for (const skill of skills) {
+    const source = readFileSync(path.join(CURSOR_ROOT, "skills", skill, "SKILL.md"), "utf8");
+    const calls = [...source.matchAll(/\bworkflow_[a-z_]+\b/g)].map(([call]) => call);
+    expect(calls.length, `${skill} workflow calls`).toBeGreaterThan(0);
+    const repositoryCalls = calls.filter((call) => repositoryTools.has(call));
+    if (repositoryCalls.length === 0) unaffected.push(skill);
+    else expect(source, `${skill}: ${repositoryCalls.join(", ")}`).toContain(WORKSPACE_ROOT_RULE);
+  }
+  expect(unaffected).toEqual(excluded);
+});
+
 test("YouTrack post orchestration accepts injected operations", () => {
   expect(postUpdate.length).toBe(2);
 });
 
-test("YouTrack partial time failure never hides a posted comment", () => {
+test("YouTrack partial time failure never hides a posted comment", async () => {
   let comments = 0;
   let timeLogs = 0;
-  const result = postUpdate(
+  const result = await postUpdate(
     {
       confirmed: true,
       issueId: "NSR-40",
@@ -261,17 +300,13 @@ test("release notes require and expose an explicit range", () => {
     writeFileSync(path.join(root, "file.txt"), "release\n");
     spawnSync("git", ["add", "file.txt"], { cwd: root });
     spawnSync("git", ["commit", "-q", "-m", "release fixture"], { cwd: root });
-    const script = path.join(REPO_ROOT, "packages/workit-core/scripts/release-notes-context.sh");
 
-    const missing = spawnSync("bash", [script], { cwd: root, encoding: "utf8" });
-    expect(missing.status).not.toBe(0);
+    const missing = releaseNotesContext(root, "");
+    expect(missing.exitCode).not.toBe(0);
     expect(missing.stderr).toMatch(/release tag or range required/);
 
-    const explicit = spawnSync("bash", [script, "HEAD"], {
-      cwd: root,
-      encoding: "utf8",
-    });
-    expect(explicit.status).toBe(0);
+    const explicit = releaseNotesContext(root, "HEAD");
+    expect(explicit.exitCode).toBe(0);
     expect(explicit.stdout).toMatch(/^requested: HEAD$/m);
     expect(explicit.stdout).toMatch(/^range: .+$/m);
   } finally {
@@ -285,6 +320,67 @@ test("plugin and MCP versions are synchronized", () => {
   );
   const opencode = JSON.parse(readFileSync(path.join(REPO_ROOT, "package.json"), "utf8"));
   expect(manifest.version).toBe(opencode.version);
+});
+
+// AR-06: build scripts decode import.meta.url through fileURLToPath; the raw
+// URL pathname drops Windows drive letters (Task 26 portability correction).
+test("build scripts derive their directory with fileURLToPath, not URL pathname", () => {
+  for (const rel of [
+    "packages/workit-opencode/scripts/build.ts",
+    "packages/workit-cursor/scripts/build.ts",
+    "packages/workit-cli/scripts/build.ts",
+  ]) {
+    const source = readFileSync(path.join(REPO_ROOT, rel), "utf8");
+    expect(source, rel).toContain("fileURLToPath(import.meta.url)");
+    expect(source, rel).not.toContain("new URL(import.meta.url).pathname");
+    expect(source, rel).not.toContain(".pathname");
+  }
+  // Drive-letter simulation (path.win32 parity, Task 8 precedent): a Windows
+  // file URL must decode to a drive-pinned path — resolving the URL pathname
+  // under the Windows resolver yields a root-relative path instead.
+  const winUrl = "file:///C:/work/pkg/scripts/build.ts";
+  const pathname = new URL(winUrl).pathname;
+  expect(pathname).toBe("/C:/work/pkg/scripts/build.ts");
+  expect(path.win32.resolve(pathname).startsWith("\\")).toBe(true); // current-drive-root, not pinned
+  expect(path.win32.resolve("C:/work/pkg/scripts/build.ts")).toBe(
+    "C:\\work\\pkg\\scripts\\build.ts",
+  );
+  if (process.platform === "win32") {
+    // Real Windows evidence: fileURLToPath restores the drive (CI matrix job).
+    expect(fileURLToPath(winUrl)).toBe("C:\\work\\pkg\\scripts\\build.ts");
+  }
+});
+
+test("cursor MCP manifests stay package-relative (mcp.json, marketplace.json, hooks-cursor.json)", () => {
+  const mcpJson = JSON.parse(readFileSync(path.join(CURSOR_ROOT, "mcp.json"), "utf8"));
+  const marketplace = JSON.parse(readFileSync(path.join(CURSOR_ROOT, "marketplace.json"), "utf8"));
+  const hooks = JSON.parse(readFileSync(path.join(CURSOR_ROOT, "hooks/hooks-cursor.json"), "utf8"));
+  const launcher = readFileSync(path.join(CURSOR_ROOT, "mcp/run-server.sh"), "utf8");
+
+  const server = mcpJson.mcpServers.workit;
+  const joined = [server.command, ...(server.args ?? [])]
+    .join(" ")
+    .replace("${workspaceFolder}", "");
+  expect(server.command).toBe("node"); // PT-10: explicit Node for Windows compatibility
+  expect(joined).not.toMatch(/\$HOME/);
+  expect(joined).not.toContain(".local/share");
+  expect(joined).not.toContain("Documents/projects");
+  expect(joined).toMatch(/dist\/mcp-server\.js/);
+
+  expect(marketplace.homepage).toBe("https://github.com/BrainerVirus/workit");
+  expect(marketplace.repository).toBe("https://github.com/BrainerVirus/workit.git");
+  // AR-06: the committed hook entry starts through Node with a package-relative arg.
+  expect(hooks.hooks.sessionStart).toEqual([
+    { command: "node", args: ["./dist/cursor-session-start.js"] },
+  ]);
+  expect(launcher).not.toMatch(/Documents\/projects/);
+  expect(launcher).not.toMatch(/\$HOME\/\.local\/share\/workflow-toolkit/);
+});
+
+test("root tsconfig includes Cursor MCP source in strict typechecking", () => {
+  const tsconfig = JSON.parse(readFileSync(path.join(REPO_ROOT, "tsconfig.json"), "utf8"));
+  expect(tsconfig.include).toContain("packages/workit-cursor/mcp/**/*.ts");
+  expect(tsconfig.compilerOptions.strict).toBe(true);
 });
 
 test("cursor MCP server registers the full required tool surface", () => {
@@ -423,7 +519,9 @@ test("present surfaces script failures", () => {
 test("no docs/superpowers paths remain in sources", () => {
   const { readdirSync, statSync } = require("node:fs") as typeof import("node:fs");
   const root = path.resolve(import.meta.dir, "..", "..");
-  const skipDirs = new Set(["node_modules", ".git", ".cache", "docs", "vendor"]);
+  // dist/ is generated, gitignored build output: bundled entries inline the
+  // documented legacy root (docs-migration.ts) and are not sources.
+  const skipDirs = new Set(["node_modules", ".git", ".cache", "docs", "vendor", "dist"]);
   const selfFile = path.basename(import.meta.file ?? "");
   const offenders: string[] = [];
   const walk = (dir: string) => {
@@ -443,6 +541,23 @@ test("no docs/superpowers paths remain in sources", () => {
           .includes("packages/workit-core/scripts/update-superpowers.sh")
       )
         continue; // sed patterns intentionally reference the old layout
+      if (
+        full.split(path.sep).join("/").includes("packages/workit-core/src/core/docs-layout.ts") ||
+        full
+          .split(path.sep)
+          .join("/")
+          .includes("packages/workit-core/src/core/docs-migration.ts") ||
+        full
+          .split(path.sep)
+          .join("/")
+          .includes("packages/workit-opencode/src/tools/docs-repo.ts") ||
+        full.split(path.sep).join("/").includes("packages/workit-cursor/mcp/server.ts") ||
+        full.split(path.sep).join("/").includes("test/workit-core/docs-paths.test.ts") ||
+        full.split(path.sep).join("/").includes("test/workit-core/docs-migration.test.ts") ||
+        full.split(path.sep).join("/").includes("test/workit-opencode/docs-migration.test.ts") ||
+        full.split(path.sep).join("/").includes("test/workit-cursor/docs-migration.test.ts")
+      )
+        continue; // docs-layout reserves and docs-migration migrates docs/superpowers as the legacy root (DC-05)
       const content = readFileSync(full, "utf8");
       if (content.includes("docs/superpowers")) {
         offenders.push(path.relative(root, full));

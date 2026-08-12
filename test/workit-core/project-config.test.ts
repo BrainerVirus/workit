@@ -12,7 +12,7 @@ test("root package exposes pinned Oxc lint and format checks", () => {
   expect(pkg.scripts.format).toStartWith("oxfmt ");
   expect(pkg.scripts["format:check"]).toStartWith("oxfmt --check ");
   expect(pkg.scripts.check).toBe(
-    "bun run lint && bun run format:check && bun test && tsc --noEmit",
+    "bun run build && bun run lint && bun run format:check && bun test && tsc --noEmit",
   );
 });
 

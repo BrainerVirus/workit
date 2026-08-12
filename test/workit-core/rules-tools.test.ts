@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createRuleTools } from "../../packages/workit-core/src/tools/rules";
+import { createRuleTools } from "../../packages/workit-opencode/src/tools/rules";
 import { listRules } from "../../packages/workit-core/src/core/rules";
 
 test("rule_edit writes config; rule_list reports it", async () => {

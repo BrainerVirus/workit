@@ -3,7 +3,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { configDir } from "./config";
 import { resolveWorkspace } from "./workspaces";
-
+import { resolveBranchPolicyFor } from "./branch";
 // Ports of scripts/vcs/config.sh + verify-token.sh + token-create-urls.sh + merged-style.sh.
 // Token never printed.
 
@@ -17,22 +17,52 @@ const workspacesPath = (): string => path.join(configDir(), "workspaces.json");
 const vcsCwd = (cwd?: string): string =>
   process.env.WORKFLOW_WORKSPACE_ROOT ?? cwd ?? process.cwd();
 
-function readVcsJson(): { config: Record<string, any>; path: string; ok: boolean } {
-  const cfgPath = vcsConfigPath();
-  let config: Record<string, any> = {};
-  let ok = false;
-  if (fs.existsSync(cfgPath)) {
-    try {
-      const parsed = JSON.parse(fs.readFileSync(cfgPath, "utf8")) as unknown;
-      if (parsed && typeof parsed === "object") {
-        config = parsed as Record<string, any>;
-        ok = true;
-      }
-    } catch {
-      /* missing or invalid */
-    }
+// RL-03b: the origin remote is the ground truth for PR creation. A stale global
+// provider (e.g. gitlab from another repo) must not drive glab on a
+// github.com-hosted checkout. Recognized hosts only — custom/self-hosted
+// remotes keep the configured provider, and a missing origin is untouched.
+const remoteProvider = (cwd: string): string | null => {
+  const r = spawnSync("git", ["remote", "get-url", "origin"], { cwd, encoding: "utf8" });
+  if (r.status !== 0) return null;
+  const url = (r.stdout ?? "").trim();
+  if (/github\.com[:/]/.test(url)) return "github";
+  if (/gitlab\.com[:/]/.test(url)) return "gitlab";
+  return null;
+};
+
+// RL-01: typed vcs.json reader. Missing is a legitimate unconfigured state;
+// malformed (parse failure or a non-object) is reported with the exact path so
+// risky consumers stop instead of silently reading defaults.
+export type VcsConfigResult = {
+  status: "missing" | "valid" | "malformed";
+  path: string;
+  config: Record<string, any>;
+  error?: string;
+};
+
+export const readVcsConfig = (): VcsConfigResult => {
+  const file = vcsConfigPath();
+  let raw: string;
+  try {
+    raw = fs.readFileSync(file, "utf8");
+  } catch {
+    return { status: "missing", path: file, config: {} };
   }
-  return { config, path: cfgPath, ok };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return { status: "malformed", path: file, config: {}, error: `${file} is not valid JSON` };
+  }
+  if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+    return { status: "valid", path: file, config: parsed as Record<string, any> };
+  }
+  return { status: "malformed", path: file, config: {}, error: `${file} is not a JSON object` };
+};
+
+function readVcsJson(): { config: Record<string, any>; path: string; ok: boolean } {
+  const { status, path: cfgPath, config } = readVcsConfig();
+  return { config, path: cfgPath, ok: status === "valid" };
 }
 
 /** Port of scripts/vcs/config.sh — mode: load | summary | resolve. */
@@ -41,10 +71,31 @@ export function vcsConfig(mode: "load" | "summary" | "resolve", cwd?: string): R
   const wsVcs = (ws?.vcs ?? {}) as Record<string, any>;
   const wsYt = (ws?.youtrack ?? {}) as Record<string, any>;
   const wsIssues = (ws?.issues ?? {}) as Record<string, any>;
-  const { config: cfg, path: cfgPath, ok: cfgOk } = readVcsJson();
+  const { status: cfgStatus, path: cfgPath, config: cfg, error: cfgError } = readVcsConfig();
 
-  const provider = String(wsVcs.provider ?? cfg.provider ?? "gitlab").toLowerCase();
-  const defaultTarget = String(wsVcs.defaultTargetBranch ?? cfg.defaultTargetBranch ?? "develop");
+  // Explicit workspace vcs.provider is the user's per-repo intent and wins;
+  // otherwise, with a determinate repo root (explicit cwd or host-provided
+  // WORKFLOW_WORKSPACE_ROOT), the origin remote is authoritative over the
+  // global default (RL-03b). Ambient process.cwd() callers keep the legacy
+  // config-only contract (CA-06 parity), so a stale global default cannot
+  // contaminate host-agnostic reads.
+  const root = vcsCwd(cwd);
+  const determinateRoot = cwd !== undefined || process.env.WORKFLOW_WORKSPACE_ROOT !== undefined;
+  const provider = String(
+    wsVcs.provider ?? (determinateRoot ? remoteProvider(root) : null) ?? cfg.provider ?? "gitlab",
+  ).toLowerCase();
+  // CA-05: workspace/global explicit target wins; when unset the resolved
+  // branch-policy preset supplies the default (gitflow->develop,
+  // github-flow->main, trunk-based->master, custom->develop). Shared by load
+  // and resolve so both surfaces stay consistent.
+  // CA-09: the one resolver wrapper — same policy resolution every consumer
+  // uses, so the tightened gate in branch-policy-resolver.test.ts stays green.
+  const defaultTarget = String(
+    wsVcs.defaultTargetBranch ??
+      cfg.defaultTargetBranch ??
+      resolveBranchPolicyFor(root).defaultTargetBranch ??
+      "develop",
+  );
   const linkIssues = typeof wsYt.link_issues === "boolean" ? wsYt.link_issues : null;
   const youtrackBaseUrl = typeof wsYt.baseUrl === "string" ? wsYt.baseUrl : null;
   // github issues path only when BOTH providers are github (mirrors WorkspaceConfig.issues).
@@ -60,6 +111,10 @@ export function vcsConfig(mode: "load" | "summary" | "resolve", cwd?: string): R
   }
 
   if (mode === "resolve") {
+    // RL-01: malformed vcs.json blocks resolution with an exact-path diagnostic
+    // instead of silently resolving defaults; a missing file is still a
+    // legitimate unconfigured state that falls back to defaults.
+    if (cfgStatus === "malformed") return { ok: false, error: cfgError, configPath: cfgPath };
     return {
       ok: true,
       workspace_name: ws?.name ?? null,
@@ -72,7 +127,12 @@ export function vcsConfig(mode: "load" | "summary" | "resolve", cwd?: string): R
     };
   }
 
-  if (!cfgOk) return { ok: false, error: "missing or invalid vcs.json" };
+  if (cfgStatus === "malformed") {
+    return { ok: false, error: cfgError, configPath: cfgPath };
+  }
+  if (cfgStatus === "missing") {
+    return { ok: false, error: `vcs.json is missing: ${cfgPath}`, configPath: cfgPath };
+  }
 
   const prov = (cfg[provider] ?? {}) as Record<string, any>;
   const tokenFile = String(prov.tokenFile ?? path.join(configDir(), `${provider}.token`));
@@ -113,7 +173,7 @@ export function vcsConfig(mode: "load" | "summary" | "resolve", cwd?: string): R
 }
 
 /** Port of scripts/vcs/verify-token.sh — soft-fail JSON out, always exit 0. */
-export function vcsVerifyToken(): Record<string, any> {
+export async function vcsVerifyToken(): Promise<Record<string, any>> {
   const cfg = vcsConfig("load");
   if (!cfg.ok) return { ok: false, error: cfg.error ?? "vcs config not ready" };
   const provider = cfg.provider as string;
@@ -133,23 +193,32 @@ export function vcsVerifyToken(): Record<string, any> {
       /\/+$/,
       "",
     );
-    const result = spawnSync("curl", ["-fsS", "-H", `PRIVATE-TOKEN: ${token}`, `${api}/user`], {
-      encoding: "utf8",
-    });
-    if (result.status !== 0) {
+    let user: Record<string, any>;
+    try {
+      const res = await fetch(`${api}/user`, {
+        headers: { "PRIVATE-TOKEN": token },
+      });
+      if (!res.ok) {
+        return {
+          ok: false,
+          provider,
+          error: "GitLab API rejected token",
+          detail: (await res.text()).slice(0, 200),
+        };
+      }
+      user = JSON.parse(await res.text()) as Record<string, any>;
+    } catch (err) {
+      if (err instanceof SyntaxError) {
+        return { ok: false, provider, error: "invalid JSON from GitLab /user" };
+      }
       return {
         ok: false,
         provider,
         error: "GitLab API rejected token",
-        detail: (result.stderr ?? result.stdout ?? "").slice(0, 200),
+        detail: (err instanceof Error ? err.message : "network error").slice(0, 200),
       };
     }
-    try {
-      const user = JSON.parse(result.stdout ?? "") as Record<string, any>;
-      return { ok: true, provider, username: user.username ?? user.login, name: user.name };
-    } catch {
-      return { ok: false, provider, error: "invalid JSON from GitLab /user" };
-    }
+    return { ok: true, provider, username: user.username ?? user.login, name: user.name };
   }
   if (provider === "github") {
     const result = spawnSync("gh", ["api", "user"], {
@@ -240,8 +309,8 @@ export function vcsTokenCreateUrls(): Record<string, any> {
 }
 
 /** Port of scripts/vcs/merged-style.sh — recent merged MR/PR bodies for style reference. */
-export function mergedPrStyle(limit = 6): Record<string, any> {
-  const cfg = vcsConfig("load");
+export function mergedPrStyle(limit = 6, cwd?: string): Record<string, any> {
+  const cfg = vcsConfig("load", cwd);
   if (!cfg.ok || !cfg.tokenReady) return { ok: false, error: "vcs not configured" };
   const provider = cfg.provider as string;
   const token = fs.readFileSync(cfg.tokenPath as string, "utf8").trim();
@@ -257,14 +326,15 @@ export function mergedPrStyle(limit = 6): Record<string, any> {
   });
 
   if (provider === "gitlab") {
-    const remote = spawnSync("git", ["remote", "get-url", "origin"], { encoding: "utf8" });
+    const remote = spawnSync("git", ["remote", "get-url", "origin"], { cwd, encoding: "utf8" });
     if (remote.status !== 0) return { ok: false, error: "no origin remote" };
     const url = (remote.stdout ?? "").trim();
     const m = /gitlab\.com[:/](.+?)(?:\.git)?$/.exec(url);
     if (!m) return { ok: false, error: "not a gitlab.com origin" };
     const project = m[1];
     const env = { ...process.env, GITLAB_TOKEN: token };
-    const run = (args: string[]) => spawnSync("glab", ["api", ...args], { encoding: "utf8", env });
+    const run = (args: string[]) =>
+      spawnSync("glab", ["api", ...args], { cwd, encoding: "utf8", env });
     let r = run([
       `projects/${project.replaceAll("/", "%2F")}/merge_requests?state=merged&per_page=${limit}&order_by=updated_at&sort=desc`,
     ]);
@@ -285,7 +355,7 @@ export function mergedPrStyle(limit = 6): Record<string, any> {
     const r = spawnSync(
       "gh",
       ["pr", "list", "--state", "merged", "--limit", String(limit), "--json", "title,url,body"],
-      { encoding: "utf8", env: { ...process.env, GH_TOKEN: token } },
+      { cwd, encoding: "utf8", env: { ...process.env, GH_TOKEN: token } },
     );
     if (r.status !== 0) return { ok: false, error: "could not list pull requests" };
     for (const pr of JSON.parse(r.stdout ?? "[]") as Array<Record<string, any>>) {

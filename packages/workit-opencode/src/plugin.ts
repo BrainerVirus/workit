@@ -1,6 +1,6 @@
-import { existsSync, readFileSync } from "node:fs";
-import { createRequire } from "node:module";
+import { existsSync } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import type { Plugin } from "@opencode-ai/plugin";
 
 import { getWorkflowBootstrap } from "./bootstrap";
@@ -40,15 +40,68 @@ import {
   detectBlindReviewAcceptance,
   detectInstructionOption,
 } from "@brainervirus/workit-core/src/core/detector";
-import { createTools } from "@brainervirus/workit-core/src/tools";
-import { adaptPluginHandoffClient } from "@brainervirus/workit-core/src/tools/handoff";
+import {
+  COORDINATOR_WRITE_TOOLS,
+  HostReceiptStore,
+  subagentDrivenInterception,
+} from "@brainervirus/workit-core/src/core/flow-state";
+import { createTools } from "./tools";
+import { adaptPluginHandoffClient } from "./tools/handoff";
 import { WorkflowStateStore } from "@brainervirus/workit-core/src/state";
+import { createLogger } from "@brainervirus/workit-core/src/core/logger";
+import { EVENT, errorDetail } from "@brainervirus/workit-core/src/core/boundary";
+import {
+  describeConfigSource,
+  setDiagnosticLogger,
+} from "@brainervirus/workit-core/src/core/config";
+import { loadCommandTemplates, loadProvenance, reportUncaught } from "./runtime";
 
-// Skills/commands/vendor/templates live in the core package. Resolve its root
-// through node_modules (workspace symlink in the monorepo, sibling in a
-// published install) instead of a relative path off this file.
-const require = createRequire(import.meta.url);
-const root = path.dirname(require.resolve("@brainervirus/workit-core/package.json"));
+// Secret-safe diagnostic logger (DG-01-DG-03, DG-05, DG-10). Sink injection
+// only: events mirror to OpenCode's server log and stderr, never the agent
+// conversation. MCP stdout is never written by the logger.
+type AppLogClient = {
+  app?: {
+    log?: (options: {
+      body: {
+        service: string;
+        level: "debug" | "info" | "warn" | "error";
+        message: string;
+        extra: Record<string, unknown>;
+      };
+    }) => Promise<unknown>;
+  };
+};
+
+let openCodeClient: AppLogClient | undefined;
+
+const logger = createLogger({
+  appLog: (event) => {
+    const result = openCodeClient?.app?.log?.({
+      body: {
+        service: "workit",
+        level: event.level,
+        message: event.message,
+        extra: event.context,
+      },
+    });
+    if (result) void result.catch(() => {});
+  },
+  stderr: (event) => process.stderr.write(`${JSON.stringify(event)}\n`),
+});
+
+// Commands/skills/vendor/templates ship package-locally under assets/ so the
+// packaged plugin resolves them without a share/checkout or monorepo dependency
+// (PT-06/PT-07). src/ and dist/ are both one level below the package root.
+const root = fileURLToPath(new URL("../assets/", import.meta.url));
+
+let uncaughtHandlersInstalled = false;
+const installUncaughtHandlers = (): void => {
+  if (uncaughtHandlersInstalled) return;
+  uncaughtHandlersInstalled = true;
+  process.on("unhandledRejection", (reason) =>
+    reportUncaught(logger, "unhandledRejection", reason),
+  );
+};
 const descriptions: Record<string, string> = {
   "wk-init": "Initialize workit configuration",
   "wk-status": "Show workflow and repository status",
@@ -87,19 +140,97 @@ const withWorktreeDenials = (configuredPermission: unknown): MutablePermission =
   return permission;
 };
 
-const plugin: Plugin = async ({ client }) => {
+/**
+ * Extract the selected label from the answered `question` tool result
+ * (AR-12). The host returns `metadata.answers` as an array of label arrays
+ * (one per question); flow questions are single-select, so only a
+ * one-element first answer yields a receipt. Multi-select or unanswered
+ * questions produce no receipt and the approval tool then fails closed.
+ */
+const questionAnswerLabel = (result: { metadata?: unknown }): string | undefined => {
+  const answers = (result.metadata as { answers?: unknown } | undefined)?.answers;
+  if (!Array.isArray(answers)) return undefined;
+  const first = answers[0];
+  if (!Array.isArray(first) || first.length !== 1) return undefined;
+  const label = first[0];
+  return typeof label === "string" ? label : undefined;
+};
+
+// AR-12: observe the answered native `question` and store a one-use
+// receipt bound to sessionID + callID + exact selected label + timestamp.
+// Correlation is by session + freshness + one-use + negative-label rejection
+// (see HostReceiptStore in flow-state.ts, FINDING 2) — no execution window
+// exists, because on a real host the model first calls the native `question`
+// (user answers), then calls the approval tool.
+
+const plugin: Plugin = async ({ client, directory }) => {
+  openCodeClient = client as unknown as AppLogClient;
+  installUncaughtHandlers();
+  logger.info(EVENT.initialization, { host: "opencode", plugin_root: root });
+  logger.info(
+    EVENT.provenance,
+    loadProvenance(logger, new URL("../package.json", import.meta.url)),
+  );
+  logger.info(EVENT.configurationSource, describeConfigSource());
+  setDiagnosticLogger(logger);
   const state = new WorkflowStateStore();
+  const receipts = new HostReceiptStore();
   return {
-    tool: createTools(adaptPluginHandoffClient(client), state),
+    tool: createTools(adaptPluginHandoffClient(client), state, client, receipts),
+    // AR-12: observe the answered native `question` and store a one-use
+    // receipt bound to sessionID + callID + exact selected label + timestamp
+    // (+ the question text, best effort). The approval/menu tools consume the
+    // session's most recent receipt (FINDING 2); their schemas expose no
+    // evidence object, so model-crafted evidence cannot be injected.
+    "tool.execute.after": async (input, output) => {
+      if (input.tool !== "question") return;
+      const label = questionAnswerLabel(output);
+      if (label === undefined) return; // multi-select/unanswered → no receipt
+      const args = input.args as { question?: string; title?: string } | undefined;
+      const questionText = args?.question ?? args?.title;
+      receipts.record(input.sessionID, input.callID, label, Date.now(), questionText);
+    },
+    // CA-18/AR-13: while a subagent-driven plan is active, the root
+    // (coordinator) session is denied known write tools and any shell command
+    // outside the bounded read/test/review allowlist. Delegated child sessions
+    // (host parentage) are the workers and are never intercepted. Fail-closed:
+    // an unverifiable session is treated as the root coordinator. Scope note
+    // (round 3): interception covers the SESSION's own workspace (its host
+    // `directory`); a root session living in a DIFFERENT workspace than the
+    // plan root is not that plan's coordinator and is not intercepted there —
+    // the coordinator session is the one in the plan's workspace.
+    "tool.execute.before": async (input, output) => {
+      if (input.tool !== "bash" && !COORDINATOR_WRITE_TOOLS.includes(input.tool)) return;
+      let parentID: string | undefined;
+      let sessionDirectory: string | undefined;
+      try {
+        const session = await client.session.get({ path: { id: input.sessionID } });
+        parentID = session?.data?.parentID;
+        sessionDirectory = session?.data?.directory;
+      } catch {
+        // fail closed: treated as the root coordinator
+      }
+      const active = findActiveSubagentDrivenPlans(sessionDirectory ?? directory).length > 0;
+      const decision = subagentDrivenInterception({
+        tool: input.tool,
+        command: (output.args as { command?: string } | undefined)?.command,
+        parentID,
+        active,
+      });
+      if (!decision.ok) throw new Error(decision.error);
+    },
     config: async (config) => {
       const mutable = config as typeof config & {
         skills?: { paths?: string[] };
       };
       config.command ??= {};
+      const templates = loadCommandTemplates(logger, root, Object.keys(descriptions));
       for (const [name, description] of Object.entries(descriptions)) {
+        const template = templates[name];
+        if (template === undefined) continue;
         config.command[name] = {
           description,
-          template: readFileSync(path.join(root, "commands", `${name}.md`), "utf8").trim(),
+          template,
         };
       }
       mutable.skills ??= {};
@@ -117,6 +248,7 @@ const plugin: Plugin = async ({ client }) => {
         if (!agent) continue;
         agent.permission = withWorktreeDenials(agent.permission) as typeof agent.permission;
       }
+      logger.info(EVENT.assets, { commands_loaded: Object.keys(templates).length });
     },
     "experimental.session.compacting": async ({ sessionID }, output) => {
       const context = state.compactionContext(sessionID);
@@ -200,8 +332,8 @@ const plugin: Plugin = async ({ client }) => {
         }
 
         // Every turn: subagent-driven rail — active approved plans get one reminder (idempotent)
-        // ponytail: process.cwd() ceiling — sessions launched from another directory scan the wrong docs/ tree
-        const activePlans = findActiveSubagentDrivenPlans(process.cwd());
+        // FG-06/CA-21: discovery scans the host session workspace, never process.cwd()
+        const activePlans = findActiveSubagentDrivenPlans(directory);
         if (activePlans.length > 0 && shouldInjectSddReminder(currentText)) {
           currentUser.parts.unshift(makePart(SDD_REMINDER_TEXT, "sdd"));
         }
@@ -250,8 +382,9 @@ const plugin: Plugin = async ({ client }) => {
             currentUser.parts.unshift(makePart(ISSUE_RAIL_TEXT, "ir"));
           }
         }
-      } catch {
-        // never break the session from a hook
+      } catch (err) {
+        // never break the session from a hook, but report the failure (DG-05)
+        logger.warn(EVENT.hooks, { boundary: "chat.messages.transform", ...errorDetail(err) });
       }
     },
   };

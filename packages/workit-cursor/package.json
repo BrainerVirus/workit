@@ -18,19 +18,32 @@
     "url": "https://github.com/BrainerVirus/workit.git"
   },
   "files": [
-    "mcp/",
-    "hooks/",
+    "dist/",
+    "assets/",
+    "mcp/run-server.sh",
+    "mcp.json",
+    "marketplace.json",
+    ".cursor-plugin/",
     "rules/",
     "skills/",
-    ".cursor-plugin/",
-    "mcp.json",
-    "marketplace.json"
+    "vendor/superpowers/skills/",
+    "hooks/session-start",
+    "hooks/hooks-cursor.json"
   ],
   "type": "module",
   "publishConfig": {
     "access": "public"
   },
+  "scripts": {
+    "build": "bun scripts/build.ts",
+    "prepublishOnly": "bun run build"
+  },
   "dependencies": {
-    "@brainervirus/workit-core": "workspace:*"
+    "@brainervirus/workit-core": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "zod": "^3.24.0"
+  },
+  "engines": {
+    "node": ">=20"
   }
 }
