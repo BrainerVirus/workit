@@ -341,13 +341,23 @@ const planTree = (
   plan: PlannedCopy[],
   visits: Set<string>,
 ): { ok: true } | { ok: false; error: string } => {
+  // Canonicalize the workspace once: a raw path containing a symlink segment
+  // (e.g. macOS TMPDIR=/tmp -> /private/tmp) would otherwise make every real
+  // source path "escape" the un-resolved workspace string. Real-to-real
+  // comparison keeps true escapes refused.
+  let workspaceReal: string;
+  try {
+    workspaceReal = realpathSync(workspace);
+  } catch {
+    workspaceReal = workspace;
+  }
   let real: string;
   try {
     real = realpathSync(legacyAbs);
   } catch {
     return { ok: false, error: `dangling symlink refused: ${legacyRel}` };
   }
-  if (real !== workspace && !real.startsWith(workspace + path.sep)) {
+  if (real !== workspaceReal && !real.startsWith(workspaceReal + path.sep)) {
     return { ok: false, error: `symlink escape refused: ${legacyRel}` };
   }
   if (visits.has(real)) return { ok: true };
@@ -378,7 +388,7 @@ const planTree = (
         } catch {
           return { ok: false, error: `dangling symlink refused: ${fromRel}` };
         }
-        if (target !== workspace && !target.startsWith(workspace + path.sep)) {
+        if (target !== workspaceReal && !target.startsWith(workspaceReal + path.sep)) {
           return { ok: false, error: `symlink escape refused: ${fromRel}` };
         }
         if (statSync(target).isDirectory()) {

@@ -385,6 +385,33 @@ test("migrate copies a symlinked source as regular content bytes", () => {
   }
 });
 
+test("migrate does not false-refuse a workspace reached through a symlinked path segment", () => {
+  // macOS runners may report TMPDIR=/tmp, and /tmp is a symlink to
+  // /private/tmp: the raw workspace path then contains a symlink segment that
+  // realpathSync resolves, so the escape guard must compare real-to-real.
+  const base = mkdtempSync(path.join(os.tmpdir(), "wf-migrate-real-"));
+  const alias = path.join(os.tmpdir(), `wf-migrate-alias-${process.pid}`);
+  try {
+    symlinkSync(base, alias);
+    const root = mkdtempSync(path.join(alias, "wf-migrate-"));
+    try {
+      gitRepo(root);
+      writeFileSync(path.join(root, ".gitignore"), "docs/*/sdd/\n", "utf8");
+      putLegacy(root, "foo", { sdd: true });
+      mkdirSync(path.join(root, "docs", "foo"), { recursive: true });
+      writeFileSync(path.join(root, "docs", "foo", "sdd"), "blocking file", "utf8");
+      const first = migrateLegacyDocs({ workspace_root: root, slug: "foo", confirmed: true });
+      expect(first.ok).toBe(false);
+      if (!first.ok) expect(first.error).toMatch(/retry|copy|directory/i);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  } finally {
+    rmSync(alias, { force: true });
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
 test("migrate retries safely after a partial copy failure", () => {
   const root = tmp();
   try {
