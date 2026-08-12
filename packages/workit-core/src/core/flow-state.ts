@@ -344,12 +344,12 @@ export const assertCoordinatorBoundary = (
 };
 
 /**
- * The shared transition matrix (FG-09): draft -> self_reviewed -> approved for
- * both the spec and the plan. Errors use the same FlowGateResult shape as
- * every mutation guard.
+ * The shared transition matrix (FG-09): draft -> approved in one receipt; a
+ * legacy self_reviewed state still advances to approved. The self-review
+ * validation runs automatically inside the draft transition.
  */
 export const nextFlowStatus = (current: FlowStatus): StatusTransition => {
-  if (current === "draft") return { ok: true, next: "self_reviewed" };
+  if (current === "draft") return { ok: true, next: "approved" };
   if (current === "self_reviewed") return { ok: true, next: "approved" };
   return err("flow_already_approved", "already approved; no further transitions");
 };

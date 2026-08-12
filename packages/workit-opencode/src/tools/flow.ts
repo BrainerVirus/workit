@@ -117,7 +117,7 @@ export function createFlowTools(receipts: HostReceiptStore, client?: SessionLook
     }),
     workflow_spec_approve: tool({
       description:
-        "Advance spec status from a host-observed native-question receipt: first call self_reviewed, second call approved. The receipt is recorded automatically when the user answers the `question` tool; there is no evidence argument (AR-12).",
+        "Advance spec status from a host-observed native-question receipt: draft -> approved in a single call. The self-review validation runs automatically inside the transition; only the final approval asks for your confirmation. The receipt is recorded automatically when the user answers the `question` tool; there is no evidence argument (AR-12).",
       args: {
         spec_path: tool.schema.string(),
       },
@@ -155,7 +155,7 @@ export function createFlowTools(receipts: HostReceiptStore, client?: SessionLook
     }),
     workflow_plan_approve: tool({
       description:
-        "Advance plan status from a host-observed native-question receipt: first call self_reviewed, second call approved. Requires approved spec. There is no evidence argument (AR-12).",
+        "Advance plan status from a host-observed native-question receipt: draft -> approved in a single call. The self-review validation runs automatically inside the transition; only the final approval asks for your confirmation. Requires approved spec. There is no evidence argument (AR-12).",
       args: {
         plan_path: tool.schema.string(),
       },

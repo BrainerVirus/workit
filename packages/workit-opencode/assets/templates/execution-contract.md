@@ -20,7 +20,7 @@ Load `using-superpowers`, `subagent-driven-development`, `test-driven-developmen
 
 - `wk-implement` refuses to run unless the plan is `approved` (flow.json) and the post-plan menu was presented.
 - `wk-handoff` refuses to run unless both spec and plan are `approved`.
-- Sequence is enforced by tools: `workflow_spec_approve` (×2), `workflow_plan_approve` (×2), `workflow_plan_menu` — never skip a step.
+- Sequence is enforced by tools: `workflow_spec_approve`, `workflow_plan_approve`, `workflow_plan_menu` — never skip a step (the spec/plan self-review runs automatically inside the transition; only the final approval asks for your confirmation).
 
 ## Setup
 

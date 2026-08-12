@@ -15,9 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Repository checks now run lint, format verification, tests, and TypeScript typechecking.
+- Spec/plan approval now needs a single confirmation per document; the self-review validation runs automatically during the transition.
 ### Fixed
 - OpenCode development installation now pins the active checkout and removes stale Workit plugin identities.
 - Feature branch creation and PR context now honor workspace/global target-branch policy instead of hardcoding `develop`.
+- Cursor install rewrites the plugin mcp.json to an absolute path so plugin MCP servers start in any project directory (package-relative shipped manifest unchanged).
 
 ## [0.6.0] - 2026-08-10
 

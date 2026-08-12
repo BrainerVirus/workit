@@ -1213,7 +1213,7 @@ registerTool(
   "workflow_spec_approve",
   {
     description:
-      "Advance spec status with the Cursor policy-only confirmation: first call self_reviewed, second call approved. Cursor records attested: false (the MCP cannot observe AskQuestion results); there is no evidence argument (CA-42).",
+      "Advance spec status with the Cursor policy-only confirmation: draft -> approved in a single call. The self-review validation runs automatically inside the transition; only the final approval asks for your confirmation. Cursor records attested: false (the MCP cannot observe AskQuestion results); there is no evidence argument (CA-42).",
     inputSchema: {
       spec_path: z.string(),
       workspace_root: workspaceRootSchema,
@@ -1239,7 +1239,7 @@ registerTool(
   "workflow_plan_approve",
   {
     description:
-      "Advance plan status with the Cursor policy-only confirmation: first call self_reviewed, second call approved. Requires approved spec. Cursor records attested: false; there is no evidence argument (CA-42).",
+      "Advance plan status with the Cursor policy-only confirmation: draft -> approved in a single call. The self-review validation runs automatically inside the transition; only the final approval asks for your confirmation. Requires approved spec. Cursor records attested: false; there is no evidence argument (CA-42).",
     inputSchema: {
       plan_path: z.string(),
       workspace_root: workspaceRootSchema,

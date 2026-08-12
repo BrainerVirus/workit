@@ -96,8 +96,6 @@ const establishSubagentDriven = async (root: string, slug: string, receipts: Hos
   };
   for (const step of [
     transitionSpec(root, slug, spec, ev("Approve spec")),
-    transitionSpec(root, slug, spec, ev("Approve spec")),
-    transitionPlan(root, slug, plan, ev("Approve plan")),
     transitionPlan(root, slug, plan, ev("Approve plan")),
   ])
     if (!step.ok) throw new Error(step.error);
@@ -164,7 +162,7 @@ test("a host-issued question receipt is consumed by the approval tool without ev
       ctx,
     );
     expect(accepted.ok).toBe(true);
-    expect(accepted.data.status).toBe("self_reviewed");
+    expect(accepted.data.status).toBe("approved");
     expect(receipts.count("oc")).toBe(0);
   } finally {
     cleanup(root);
@@ -186,14 +184,14 @@ test("a recent positive answer to any question authorizes the approval (document
       ctx,
     );
     expect(accepted.ok).toBe(true);
-    expect(accepted.data.status).toBe("self_reviewed");
+    expect(accepted.data.status).toBe("approved");
     const status = await run(
       tools,
       "workflow_flow_status",
       { plan_path: "docs/oc-flow/plan.md" },
       ctx,
     );
-    expect(status.data.spec.status).toBe("self_reviewed");
+    expect(status.data.spec.status).toBe("approved");
   } finally {
     cleanup(root);
   }
@@ -246,8 +244,6 @@ test("a negative answer cannot be laundered into a menu choice (FINDING 3)", asy
     const plan = "docs/oc-flow/plan.md";
     for (const step of [
       transitionSpec(root, slug, spec, receiptEvidence(receipts, "Approve spec")),
-      transitionSpec(root, slug, spec, receiptEvidence(receipts, "Approve spec")),
-      transitionPlan(root, slug, plan, receiptEvidence(receipts, "Approve plan")),
       transitionPlan(root, slug, plan, receiptEvidence(receipts, "Approve plan")),
     ])
       if (!step.ok) throw new Error(step.error);
@@ -311,14 +307,14 @@ test("FINDING 5: two concurrent approve calls with ONE receipt — exactly one s
     expect(winners.length).toBe(1);
     const losers = [a, b].filter((r) => r.ok === false);
     if (losers[0]?.ok === false) expect(losers[0].error).toMatch(/receipt/i);
-    // One answer drove exactly one transition: self_reviewed, NOT approved.
+    // One answer drove exactly one transition: draft -> approved on a single call.
     const status = await run(
       tools,
       "workflow_flow_status",
       { plan_path: "docs/oc-flow/plan.md" },
       ctx,
     );
-    expect(status.data.spec.status).toBe("self_reviewed");
+    expect(status.data.spec.status).toBe("approved");
     expect(receipts.count("oc")).toBe(0);
   } finally {
     cleanup(root);
@@ -351,10 +347,6 @@ test("menu consumption binds the exact selected label: a mismatched receipt labe
     const plan = "docs/oc-flow/plan.md";
     recordQuestion(receipts, "Approve");
     await run(tools, "workflow_spec_approve", { spec_path: spec }, ctx);
-    recordQuestion(receipts, "Approve");
-    await run(tools, "workflow_spec_approve", { spec_path: spec }, ctx);
-    recordQuestion(receipts, "Approve");
-    await run(tools, "workflow_plan_approve", { plan_path: plan }, ctx);
     recordQuestion(receipts, "Approve");
     await run(tools, "workflow_plan_approve", { plan_path: plan }, ctx);
 
@@ -389,8 +381,6 @@ test("menu consumption accepts the capitalized label exactly as the user answers
     const plan = `docs/${slug}/plan.md`;
     for (const step of [
       transitionSpec(root, slug, spec, receiptEvidence(receipts, "Approve spec")),
-      transitionSpec(root, slug, spec, receiptEvidence(receipts, "Approve spec")),
-      transitionPlan(root, slug, plan, receiptEvidence(receipts, "Approve plan")),
       transitionPlan(root, slug, plan, receiptEvidence(receipts, "Approve plan")),
     ])
       if (!step.ok) throw new Error(step.error);
@@ -492,10 +482,6 @@ test("full flow through the opencode tools with host receipts: approvals + menu 
 
     recordQuestion(receipts, "Approve spec");
     await run(tools, "workflow_spec_approve", { spec_path: spec }, ctx);
-    recordQuestion(receipts, "Approve spec");
-    await run(tools, "workflow_spec_approve", { spec_path: spec }, ctx);
-    recordQuestion(receipts, "Approve plan");
-    await run(tools, "workflow_plan_approve", { plan_path: plan }, ctx);
     recordQuestion(receipts, "Approve plan");
     await run(tools, "workflow_plan_approve", { plan_path: plan }, ctx);
 

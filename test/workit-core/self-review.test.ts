@@ -30,8 +30,6 @@ const approveSpec = (root: string, slug: string) => {
   const specPath = `docs/${slug}/spec.md`;
   const first = transitionSpec(root, slug, specPath, evidence());
   expect(first.ok).toBe(true);
-  const second = transitionSpec(root, slug, specPath, evidence());
-  expect(second.ok).toBe(true);
 };
 
 const fixture = () => {
@@ -76,7 +74,7 @@ test("spec without CA-XX is rejected with missing_acceptance_criteria", () => {
   }
 });
 
-test("compliant spec transitions draft -> self_reviewed -> approved", () => {
+test("compliant spec transitions draft -> approved in one receipt", () => {
   const { root, slug } = fixture();
   try {
     const specPath = `docs/${slug}/spec.md`;
@@ -84,9 +82,6 @@ test("compliant spec transitions draft -> self_reviewed -> approved", () => {
     activate(root, slug);
     const first = transitionSpec(root, slug, specPath, evidence());
     expect(first.ok).toBe(true);
-    expect(readFlowState(root, slug).spec.status).toBe("self_reviewed");
-    const second = transitionSpec(root, slug, specPath, evidence());
-    expect(second.ok).toBe(true);
     expect(readFlowState(root, slug).spec.status).toBe("approved");
   } finally {
     cleanup(root);
@@ -101,7 +96,7 @@ test("warning-only spec transitions fine", () => {
     activate(root, slug);
     const result = transitionSpec(root, slug, specPath, evidence());
     expect(result.ok).toBe(true);
-    expect(readFlowState(root, slug).spec.status).toBe("self_reviewed");
+    expect(readFlowState(root, slug).spec.status).toBe("approved");
   } finally {
     cleanup(root);
   }
@@ -116,8 +111,11 @@ test("second transition is not gated by spec quality", () => {
     const first = transitionSpec(root, slug, specPath, evidence());
     expect(first.ok).toBe(true);
     writeFileSync(path.join(root, specPath), "# broken");
+    // A legacy re-approval attempt is not gated by spec quality — but the
+    // one-receipt matrix is already approved, so it errors.
     const second = transitionSpec(root, slug, specPath, evidence());
-    expect(second.ok).toBe(true);
+    expect(second.ok).toBe(false);
+    if (second.ok === false) expect(second.code).toBe("flow_already_approved");
     expect(readFlowState(root, slug).spec.status).toBe("approved");
   } finally {
     cleanup(root);
@@ -232,7 +230,7 @@ test("plan with headers only inside a fence is rejected by the fence-aware heade
   }
 });
 
-test("compliant plan transitions draft -> self_reviewed -> approved", () => {
+test("compliant plan transitions draft -> approved in one receipt", () => {
   const { root, slug } = fixture();
   try {
     const specPath = `docs/${slug}/spec.md`;
@@ -243,9 +241,6 @@ test("compliant plan transitions draft -> self_reviewed -> approved", () => {
     writeFileSync(path.join(root, planPath), COMPLIANT_PLAN(slug));
     const first = transitionPlan(root, slug, planPath, evidence());
     expect(first.ok).toBe(true);
-    expect(readFlowState(root, slug).plan.status).toBe("self_reviewed");
-    const second = transitionPlan(root, slug, planPath, evidence());
-    expect(second.ok).toBe(true);
     expect(readFlowState(root, slug).plan.status).toBe("approved");
   } finally {
     cleanup(root);
@@ -263,7 +258,7 @@ test("plan with only warning-ish issues passes the gate", () => {
     writeFileSync(path.join(root, planPath), WARNING_PLAN(slug));
     const result = transitionPlan(root, slug, planPath, evidence());
     expect(result.ok).toBe(true);
-    expect(readFlowState(root, slug).plan.status).toBe("self_reviewed");
+    expect(readFlowState(root, slug).plan.status).toBe("approved");
   } finally {
     cleanup(root);
   }

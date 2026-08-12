@@ -8,6 +8,7 @@ import {
   transitionPlan,
   recordMenuChoice,
   prepareFlowState,
+  writeFlowState,
 } from "../../packages/workit-core/src/core/flow-state";
 import { establishApprovedFlow, evidence } from "./flow-fixtures";
 import { HostReceiptStore } from "../../packages/workit-core/src/core/flow-state";
@@ -42,7 +43,7 @@ test("missing flow.json reads as draft with no menu", () => {
   }
 });
 
-test("spec transitions draft -> self_reviewed -> approved with native evidence", () => {
+test("spec transitions draft -> approved in one receipt with native evidence", () => {
   const { root, slug } = fixture();
   try {
     const spec = `docs/${slug}/spec.md`;
@@ -52,10 +53,39 @@ test("spec transitions draft -> self_reviewed -> approved with native evidence",
     prepareFlowState(root, slug, { spec_path: spec, plan_path: plan });
     const first = transitionSpec(root, slug, spec, evidence());
     expect(first.ok).toBe(true);
-    expect(readFlowState(root, slug).spec.status).toBe("self_reviewed");
-    const second = transitionSpec(root, slug, spec, evidence());
-    expect(second.ok).toBe(true);
     expect(readFlowState(root, slug).spec.status).toBe("approved");
+    // The single receipt consumed the whole draft -> approved transition.
+    const second = transitionSpec(root, slug, spec, evidence());
+    expect(second.ok).toBe(false);
+    if (second.ok === false) expect(second.code).toBe("flow_already_approved");
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("a legacy self_reviewed state advances to approved on the next receipt", () => {
+  const { root, slug } = fixture();
+  try {
+    const spec = `docs/${slug}/spec.md`;
+    const plan = `docs/${slug}/plan.md`;
+    prepareFlowState(root, slug, { spec_path: spec, plan_path: plan });
+    // A flow.json written by the previous two-step matrix: self_reviewed.
+    writeFlowState(root, {
+      slug,
+      activated: true,
+      spec: { path: spec, status: "self_reviewed", evidence: null },
+      plan: { path: plan, status: "self_reviewed", evidence: null },
+      menu: { presented: false, chosen: "", evidence: null },
+      updated_at: Date.now(),
+    });
+    const first = transitionSpec(root, slug, spec, evidence());
+    expect(first.ok).toBe(true);
+    expect(readFlowState(root, slug).spec.status).toBe("approved");
+    const planStillLegacy = readFlowState(root, slug).plan.status;
+    expect(planStillLegacy).toBe("self_reviewed");
+    const planApproved = transitionPlan(root, slug, plan, evidence());
+    expect(planApproved.ok).toBe(true);
+    expect(readFlowState(root, slug).plan.status).toBe("approved");
   } finally {
     cleanup(root);
   }
@@ -184,8 +214,6 @@ test("assertFlowGates blocks execution before the menu is presented", () => {
     writeFileSync(path.join(root, plan), COMPLIANT_PLAN(slug));
     prepareFlowState(root, slug, { spec_path: spec, plan_path: plan });
     transitionSpec(root, slug, spec, evidence());
-    transitionSpec(root, slug, spec, evidence());
-    transitionPlan(root, slug, plan, evidence());
     transitionPlan(root, slug, plan, evidence());
     const withoutMenu = assertFlowGates(root, plan, { requireMenu: true });
     expect(withoutMenu.ok).toBe(false);

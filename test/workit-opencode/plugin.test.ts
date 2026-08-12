@@ -102,7 +102,7 @@ test("the plugin records a real question result as a one-use receipt and the app
     } as never);
     const result = JSON.parse(after as string);
     expect(result.ok).toBe(true);
-    expect(result.data.status).toBe("self_reviewed");
+    expect(result.data.status).toBe("approved");
 
     // Replay fails: the receipt was consumed exactly once.
     const replay = await hooks.tool?.workflow_spec_approve.execute({ spec_path: spec }, {
@@ -112,7 +112,9 @@ test("the plugin records a real question result as a one-use receipt and the app
     } as never);
     expect(JSON.parse(replay as string).ok).toBe(false);
 
-    // A fresh answer is needed for the second transition.
+    // The single receipt consumed the whole draft -> approved transition: a
+    // fresh answer on an already-approved spec cannot advance further and the
+    // receipt IS spent (consume-before-transition).
     await hooks["tool.execute.after"]?.(
       { tool: "question", sessionID: "s1", callID: "call-2", args: {} },
       {
@@ -126,7 +128,9 @@ test("the plugin records a real question result as a one-use receipt and the app
       worktree: root,
       sessionID: "s1",
     } as never);
-    expect(JSON.parse(second as string).ok).toBe(true);
+    const secondResult = JSON.parse(second as string);
+    expect(secondResult.ok).toBe(false);
+    expect(secondResult.data?.code).toBe("flow_already_approved");
 
     // A forged multi-select answer produces no receipt (single-select only).
     await hooks["tool.execute.after"]?.(
@@ -181,8 +185,6 @@ const establishSubagentDriven = (root: string, slug: string) => {
   if (!prep.ok) throw new Error(prep.error);
   for (const step of [
     transitionSpec(root, slug, spec, ev("Approve")),
-    transitionSpec(root, slug, spec, ev("Approve")),
-    transitionPlan(root, slug, plan, ev("Approve")),
     transitionPlan(root, slug, plan, ev("Approve")),
   ])
     if (!step.ok) throw new Error(step.error);

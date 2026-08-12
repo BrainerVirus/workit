@@ -75,22 +75,18 @@ test("spec_approve without a host receipt fails", async () => {
   }
 });
 
-test("full flow: activate + spec approve x2 -> plan approve x2 -> menu", async () => {
+test("full flow: activate + spec approve -> plan approve -> menu", async () => {
   const { root, tools, ctx, receipts } = fixture();
   try {
     const spec = "docs/x/spec.md";
     const plan = "docs/x/plan.md";
     await run(tools, "workflow_flow_status", { plan_path: plan }, ctx);
     question(receipts);
-    await run(tools, "workflow_spec_approve", { spec_path: spec }, ctx);
-    question(receipts);
-    await run(tools, "workflow_spec_approve", { spec_path: spec }, ctx);
+    const specOut = await run(tools, "workflow_spec_approve", { spec_path: spec }, ctx);
+    expect(specOut.ok).toBe(true);
     question(receipts, "Approve");
     const planFirst = await run(tools, "workflow_plan_approve", { plan_path: plan }, ctx);
     expect(planFirst.ok).toBe(true);
-    question(receipts, "Approve");
-    const planSecond = await run(tools, "workflow_plan_approve", { plan_path: plan }, ctx);
-    expect(planSecond.ok).toBe(true);
     question(receipts, "handoff");
     const menu = await run(
       tools,
@@ -125,10 +121,8 @@ test("plan_approve hard-fails while spec is draft; the attempted receipt IS spen
     const retry = await run(tools, "workflow_plan_approve", { plan_path: plan }, ctx);
     expect(retry.ok).toBe(false);
     if (retry.ok === false) expect(retry.error).toMatch(/receipt/i);
-    // Approve the spec with its own receipts, then ask the plan question
+    // Approve the spec with its own receipt, then ask the plan question
     // AGAIN: the fresh answer authorizes (re-answer UX).
-    question(receipts);
-    await run(tools, "workflow_spec_approve", { spec_path: spec }, ctx);
     question(receipts);
     await run(tools, "workflow_spec_approve", { spec_path: spec }, ctx);
     question(receipts, "Approve");

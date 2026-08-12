@@ -64,8 +64,6 @@ const approveSpecAndPlan = (root: string, slug: string) => {
   const plan = `docs/${slug}/plan.md`;
   for (const step of [
     transitionSpec(root, slug, spec, evidence("Approve spec")),
-    transitionSpec(root, slug, spec, evidence("Approve spec")),
-    transitionPlan(root, slug, plan, evidence("Approve plan")),
     transitionPlan(root, slug, plan, evidence("Approve plan")),
   ])
     if (!step.ok) throw new Error(step.error);
@@ -194,7 +192,7 @@ test("FG-08/CA-21: unique per-write temp names never reuse a shared <file>.tmp",
     const result = transitionSpec(root, slug, `docs/${slug}/spec.md`, evidence("Approve spec"));
     expect(result.ok).toBe(true);
     expect(readFileSync(stale, "utf8")).toBe("stale-writer-buffer");
-    expect(readFlowState(root, slug).spec.status).toBe("self_reviewed");
+    expect(readFlowState(root, slug).spec.status).toBe("approved");
   } finally {
     cleanup(root);
   }
@@ -256,7 +254,7 @@ test("FG-08: a transition re-reads and retries on the fresh state after a concur
     const result = transitionSpec(root, slug, `docs/${slug}/spec.md`, evidence("Approve spec"));
     expect(result.ok).toBe(true);
     const finalState = readFlowState(root, slug);
-    expect(finalState.spec.status).toBe("self_reviewed");
+    expect(finalState.spec.status).toBe("approved");
     expect(finalState.menu.chosen).toBe("inline");
   } finally {
     cleanup(root);

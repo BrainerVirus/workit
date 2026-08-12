@@ -49,12 +49,6 @@ const approveAll = (root: string, slug: string) => {
   expect(transitionSpec(root, slug, spec, openEvidence(store, sessionId, "Approve spec")).ok).toBe(
     true,
   );
-  expect(transitionSpec(root, slug, spec, openEvidence(store, sessionId, "Approve spec")).ok).toBe(
-    true,
-  );
-  expect(transitionPlan(root, slug, plan, openEvidence(store, sessionId, "Approve plan")).ok).toBe(
-    true,
-  );
   expect(transitionPlan(root, slug, plan, openEvidence(store, sessionId, "Approve plan")).ok).toBe(
     true,
   );
@@ -220,7 +214,7 @@ test("only host-issued receipts establish OpenCode evidence", () => {
     }
     expect(transitionSpec(root, slug, spec, approved).ok).toBe(true);
     const state = readFlowState(root, slug);
-    expect(state.spec.status).toBe("self_reviewed");
+    expect(state.spec.status).toBe("approved");
     expect(state.spec.evidence).toEqual(approved);
   } finally {
     cleanup(root);
@@ -489,12 +483,6 @@ test("menu records only the exact selected label as evidence (OpenCode receipts)
     expect(transitionSpec(root, slug, spec, openEvidence(store, sessionId, "Approve")).ok).toBe(
       true,
     );
-    expect(transitionSpec(root, slug, spec, openEvidence(store, sessionId, "Approve")).ok).toBe(
-      true,
-    );
-    expect(transitionPlan(root, slug, plan, openEvidence(store, sessionId, "Approve")).ok).toBe(
-      true,
-    );
     expect(transitionPlan(root, slug, plan, openEvidence(store, sessionId, "Approve")).ok).toBe(
       true,
     );
@@ -551,8 +539,6 @@ test("Cursor menu cannot record subagent-driven: unsupported mode with recovery 
     const plan = `docs/${slug}/plan.md`;
     prepareFlowState(root, slug, { spec_path: spec, plan_path: plan });
     expect(transitionSpec(root, slug, spec, cursorEvidence()).ok).toBe(true);
-    expect(transitionSpec(root, slug, spec, cursorEvidence()).ok).toBe(true);
-    expect(transitionPlan(root, slug, plan, cursorEvidence()).ok).toBe(true);
     expect(transitionPlan(root, slug, plan, cursorEvidence()).ok).toBe(true);
 
     const blocked = recordMenuChoice(root, slug, plan, "subagent-driven", cursorEvidence());
@@ -570,10 +556,11 @@ test("Cursor menu cannot record subagent-driven: unsupported mode with recovery 
   }
 });
 
-test("the shared transition matrix yields identical gate results for both transitions", () => {
+test("the shared transition matrix lands both docs at approved in one step (FG-09)", () => {
   const { root, slug } = fixture();
   try {
-    expect(nextFlowStatus("draft")).toEqual({ ok: true, next: "self_reviewed" });
+    expect(nextFlowStatus("draft")).toEqual({ ok: true, next: "approved" });
+    // A legacy self_reviewed state still advances to approved.
     expect(nextFlowStatus("self_reviewed")).toEqual({ ok: true, next: "approved" });
     const done = nextFlowStatus("approved");
     expect(done.ok).toBe(false);

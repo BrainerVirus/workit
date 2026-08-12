@@ -83,15 +83,11 @@ export const establishApprovedFlow = (
     host === "opencode"
       ? [
           transitionSpec(root, slug, spec, openEvidence(store, sessionId, "Approve spec")),
-          transitionSpec(root, slug, spec, openEvidence(store, sessionId, "Approve spec")),
-          transitionPlan(root, slug, plan, openEvidence(store, sessionId, "Approve plan")),
           transitionPlan(root, slug, plan, openEvidence(store, sessionId, "Approve plan")),
           recordMenuChoice(root, slug, plan, "handoff", openEvidence(store, sessionId, "handoff")),
         ]
       : [
           transitionSpec(root, slug, spec, cursorEvidence()),
-          transitionSpec(root, slug, spec, cursorEvidence()),
-          transitionPlan(root, slug, plan, cursorEvidence()),
           transitionPlan(root, slug, plan, cursorEvidence()),
           recordMenuChoice(root, slug, plan, "handoff", cursorEvidence()),
         ];

@@ -169,7 +169,7 @@ test("cursor MCP: no evidence argument exists — caller-supplied evidence is in
       },
     });
     expect(callText(forged).isError).toBe(false);
-    expect(callText(forged).text.status).toBe("self_reviewed");
+    expect(callText(forged).text.status).toBe("approved");
 
     // The stored evidence is the policy-only constant, never caller data.
     const status = await call("workflow_flow_status", {
@@ -209,8 +209,6 @@ test("cursor MCP: subagent-driven menu is rejected as unsupported with recovery 
     const spec = "docs/cf-flow/spec.md";
     const plan = "docs/cf-flow/plan.md";
     await call("workflow_spec_approve", { spec_path: spec, workspace_root: root });
-    await call("workflow_spec_approve", { spec_path: spec, workspace_root: root });
-    await call("workflow_plan_approve", { plan_path: plan, workspace_root: root });
     await call("workflow_plan_approve", { plan_path: plan, workspace_root: root });
 
     const menu = await call("workflow_plan_menu", {
@@ -264,8 +262,6 @@ test("cursor MCP: no delegated role input exists — a client-supplied role is i
     const spec = "docs/cf-flow/spec.md";
     const plan = "docs/cf-flow/plan.md";
     await call("workflow_spec_approve", { spec_path: spec, workspace_root: root });
-    await call("workflow_spec_approve", { spec_path: spec, workspace_root: root });
-    await call("workflow_plan_approve", { plan_path: plan, workspace_root: root });
     await call("workflow_plan_approve", { plan_path: plan, workspace_root: root });
     await call("workflow_plan_menu", { choice: "inline", plan_path: plan, workspace_root: root });
 
@@ -318,7 +314,7 @@ test("cursor MCP enforces the same domain gates as opencode over stdio", async (
       workspace_root: root,
     });
     expect(callText(approved).isError).toBe(false);
-    expect(callText(approved).text.status).toBe("self_reviewed");
+    expect(callText(approved).text.status).toBe("approved");
   } finally {
     child.kill();
     rmSync(root, { recursive: true, force: true });
