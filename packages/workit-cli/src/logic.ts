@@ -17,7 +17,11 @@ import {
 import { ensureProjectGitignore } from "@brainervirus/workit-core/src/core/gitignore.ts";
 import { ensureHygieneFiles, hygieneFiles } from "@brainervirus/workit-core/src/core/hygiene.ts";
 import { writeFileExclusive } from "@brainervirus/workit-core/src/core/safe-write.ts";
-import { TOKEN_PLACEHOLDER, type VcsProvider } from "@brainervirus/workit-core/src/core/setup.ts";
+import {
+  applyWorkspaceBranchPolicy,
+  TOKEN_PLACEHOLDER,
+  type VcsProvider,
+} from "@brainervirus/workit-core/src/core/setup.ts";
 
 export function validateLocale(locale: string): string | null {
   if (!LOCALE_RE.test(locale)) {
@@ -411,3 +415,13 @@ export {
   type ApplySetupOptions,
 } from "@brainervirus/workit-core/src/core/setup.ts";
 export type { VcsProvider };
+
+// CA-06: the wizard's branch-policy apply routes through the same shared
+// proposal→write helper as the host init action (init.ts branch_policy), so
+// both produce byte-identical workspaces.json writes on the same fixture.
+export function applyWizardBranchPolicy(
+  workspace_root: string,
+  env: NodeJS.ProcessEnv,
+): Record<string, any> {
+  return applyWorkspaceBranchPolicy({ workspace_root, env });
+}

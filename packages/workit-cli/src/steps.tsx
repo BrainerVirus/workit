@@ -8,6 +8,7 @@ import {
 } from "@brainervirus/workit-core/src/core/config.ts";
 import { buildSetupPreview, parseList, type SetupMutation } from "./logic";
 import { matchWorkspace } from "@brainervirus/workit-core/src/core/workspaces.ts";
+import { detectBranchPolicy } from "@brainervirus/workit-core/src/core/branch-policy.ts";
 import {
   createInitialDraft,
   reducer,
@@ -125,7 +126,6 @@ function localeOptions(current: string): { label: string; value: string }[] {
     : [...fixed, { label: `Use current (${current})`, value: current }];
   return [...list, { label: "Other…", value: "other" }];
 }
-
 function timezoneOptions(current: string): { label: string; value: string }[] {
   const fixed = TIMEZONE_CHOICES.map((timezone) => ({ label: timezone, value: timezone }));
   const list = TIMEZONE_CHOICES.includes(current)
@@ -141,6 +141,113 @@ function effectivePolicy(values: SetupValues): ToolkitConfig["branchPolicy"] {
     allowed: parseList(values.branchAllowed),
     protectedNames: parseList(values.branchProtected),
   });
+}
+
+// CA-06: proposal screen shown between workspaces and project when the
+// resolution root is a git repo. On mount it runs the shared detector and
+// dispatches the proposal into the draft; editing (integration / develop) is
+// component-local state — no extra top-level WizardScreens. Accepting stores
+// the proposal into values.branchPolicy so runInit applies it through the same
+// shared helper the host init action uses (byte-identical write).
+type BranchPolicyEditMode = "menu" | "integration" | "develop";
+
+const BRANCH_POLICY_ACTIONS: { label: string; value: string }[] = [
+  { label: "Accept defaults", value: "accept" },
+  { label: "Edit integration", value: "integration" },
+  { label: "Edit develop", value: "develop" },
+  { label: "Skip", value: "skip" },
+];
+
+const INTEGRATION_OPTIONS: { label: string; value: "pr" | "merge" }[] = [
+  { label: "Pull request (pr)", value: "pr" },
+  { label: "Merge commit", value: "merge" },
+];
+
+function BranchPolicyScreen({ draft, dispatch }: ScreenProps): JSX.Element {
+  const detected = draft.values.branchPolicyDetected;
+  const [mode, setMode] = useState<BranchPolicyEditMode>("menu");
+
+  useEffect(() => {
+    if (detected) return;
+    dispatch({
+      type: "set",
+      field: "branchPolicyDetected",
+      value: detectBranchPolicy(process.env.WORKFLOW_WORKSPACE_ROOT ?? process.cwd()),
+    });
+  }, [detected, dispatch]);
+
+  if (mode === "integration") {
+    return (
+      <Box flexDirection="column" gap={1}>
+        <Text bold>Step 5 — Branch policy · Integration</Text>
+        <SelectList
+          options={INTEGRATION_OPTIONS}
+          value={detected?.integration ?? "merge"}
+          onSelect={(value) => {
+            dispatch({ type: "set", field: "branchPolicyIntegration", value });
+            setMode("menu");
+          }}
+        />
+        <Text dimColor>Enter to select · b Back · Esc Cancel</Text>
+      </Box>
+    );
+  }
+  if (mode === "develop") {
+    return (
+      <Box flexDirection="column" gap={1}>
+        <Text bold>Step 5 — Branch policy · Develop branch</Text>
+        <Text dimColor>Integration/develop branch name (leave empty to unset):</Text>
+        <TextInput
+          defaultValue={detected?.developBranch ?? ""}
+          onSubmit={(value) => {
+            dispatch({ type: "set", field: "branchPolicyDevelop", value });
+            setMode("menu");
+          }}
+        />
+        <Text dimColor>Enter to save · Esc Back</Text>
+      </Box>
+    );
+  }
+  return (
+    <Box flexDirection="column" gap={1}>
+      <Text bold>Step 5 — Branch policy</Text>
+      {detected ? (
+        <Box flexDirection="column" gap={0}>
+          <Text>
+            Detected preset: <Text color="green">{detected.preset}</Text>
+          </Text>
+          <Text>
+            Develop branch: <Text color="green">{detected.developBranch ?? "—"}</Text>
+          </Text>
+          <Text>
+            Integration: <Text color="green">{detected.integration}</Text>
+          </Text>
+          <Text>
+            Prefixes:{" "}
+            <Text color="green">{Object.values(detected.prefixes).join(", ") || "—"}</Text>
+          </Text>
+          <Text>
+            Protected: <Text color="green">{detected.protected.join(", ") || "—"}</Text>
+          </Text>
+        </Box>
+      ) : (
+        <Text dimColor>Detecting branch policy…</Text>
+      )}
+      <SelectList
+        options={BRANCH_POLICY_ACTIONS}
+        value="accept"
+        onSelect={(value) => {
+          if (value === "accept" && detected) {
+            dispatch({ type: "set", field: "branchPolicy", value: detected });
+            dispatch({ type: "next" });
+          } else if (value === "integration") setMode("integration");
+          else if (value === "develop") setMode("develop");
+          else dispatch({ type: "next" });
+        }}
+      />
+      <Text dimColor>Enter to continue · b Back · Esc Cancel</Text>
+    </Box>
+  );
 }
 
 export function Wizard({
@@ -495,6 +602,8 @@ function Screen({ draft, dispatch }: ScreenProps): JSX.Element {
           <Text dimColor>Enter to save · b Back · Esc Cancel</Text>
         </Box>
       );
+    case "branchPolicy":
+      return <BranchPolicyScreen draft={draft} dispatch={dispatch} />;
     case "project":
       return (
         <Box flexDirection="column" gap={1}>

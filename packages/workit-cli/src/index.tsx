@@ -12,6 +12,7 @@ import {
   type SetupResult,
 } from "@brainervirus/workit-core/src/core/setup.ts";
 import { readSetupState, type SetupState } from "@brainervirus/workit-core/src/core/setup-state";
+import { applyWizardBranchPolicy } from "./logic";
 
 // Secret-safe diagnostic logger (DG-01-DG-03, DG-05, DG-10). Sink injection
 // only: CLI events mirror to stderr, never the Ink-rendered stdout.
@@ -95,6 +96,23 @@ async function runInit() {
       process.exit(1);
     }
     const result = applySetupPreview(preview, { cwd: process.cwd(), env: process.env });
+    // CA-06: the branch-policy screen is applied separately through the shared
+    // proposal→write helper (byte-identical to the host init action) right
+    // after the setup preview; its status line joins the summary below.
+    if (exit.values.branchPolicy) {
+      const workspaceRoot = process.env.WORKFLOW_WORKSPACE_ROOT ?? process.cwd();
+      const overrides: NodeJS.ProcessEnv = {
+        WORKFLOW_WORKSPACE_ROOT: workspaceRoot,
+        ...(exit.values.branchPolicy.integration
+          ? { WORKFLOW_BP_INTEGRATION: exit.values.branchPolicy.integration }
+          : {}),
+        ...(exit.values.branchPolicy.developBranch
+          ? { WORKFLOW_BP_DEVELOP: exit.values.branchPolicy.developBranch }
+          : {}),
+      };
+      const bp = applyWizardBranchPolicy(workspaceRoot, { ...process.env, ...overrides });
+      console.log(`${String(bp.status).padEnd(11)} ${bp.config_path} — branch policy`);
+    }
     logger.info(EVENT.installSteps, { step: "wizard_apply", ok: result.ok });
     printApplySummary(result);
     process.exit(result.exitCode);

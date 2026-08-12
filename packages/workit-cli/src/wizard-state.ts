@@ -1,10 +1,15 @@
+import { existsSync } from "node:fs";
+import path from "node:path";
 import {
   mergePreset,
   readConfig,
   type BranchPreset,
   type ToolkitConfig,
 } from "@brainervirus/workit-core/src/core/config.ts";
-import type { WorkspaceConfig } from "@brainervirus/workit-core/src/core/workspaces.ts";
+import type {
+  WorkspaceBranchPolicy,
+  WorkspaceConfig,
+} from "@brainervirus/workit-core/src/core/workspaces.ts";
 import { validateWorkspaceGlob } from "@brainervirus/workit-core/src/core/workspaces.ts";
 import {
   loadWorkspaces,
@@ -36,9 +41,21 @@ export type WizardScreen =
   | "workspaceName"
   | "workspaceGlob"
   | "workspaceProvider"
+  | "branchPolicy"
   | "project"
   | "summary"
   | "exit";
+
+// Shape of detectBranchPolicy's return (branch-policy.ts): a proposal the
+// wizard shows and, when accepted, applies byte-identically to the host action.
+export type BranchPolicyProposal = {
+  preset: BranchPreset;
+  developBranch: string | null;
+  integration: "pr" | "merge";
+  protected: string[];
+  allowed: string[];
+  prefixes: { feature: string; bugfix: string; release: string; hotfix: string };
+};
 
 export type SetupValues = {
   platforms: string[];
@@ -51,6 +68,11 @@ export type SetupValues = {
   vcsProvider: VcsProvider | "skip";
   workspaces: WorkspaceConfig[];
   applyProject: boolean;
+  /** Accepted branch-policy proposal (set when the branchPolicy screen was
+   *  accepted, undefined when skipped or the repo was not a git repo). */
+  branchPolicy?: WorkspaceBranchPolicy;
+  /** The detected proposal shown by the branchPolicy screen. */
+  branchPolicyDetected?: BranchPolicyProposal | undefined;
 };
 
 export type WizardDraft = {
@@ -69,6 +91,10 @@ export type WizardAction =
   | { type: "set"; field: "branchPreset"; value: string }
   | { type: "set"; field: "vcsProvider"; value: string }
   | { type: "set"; field: "applyProject"; value: boolean }
+  | { type: "set"; field: "branchPolicyDetected"; value: BranchPolicyProposal }
+  | { type: "set"; field: "branchPolicy"; value: BranchPolicyProposal }
+  | { type: "set"; field: "branchPolicyIntegration"; value: "pr" | "merge" }
+  | { type: "set"; field: "branchPolicyDevelop"; value: string }
   | {
       type: "set";
       field: "locale" | "timezone" | "branchAllowed" | "branchProtected" | "baseUrl";
@@ -99,10 +125,11 @@ const NEXT: Record<WizardScreen, WizardScreen | null> = {
   branchProtected: "youtrack",
   youtrack: "vcs",
   vcs: "workspaces",
-  workspaces: "project",
+  workspaces: "branchPolicy",
   workspaceName: "workspaceGlob",
   workspaceGlob: "workspaceProvider",
   workspaceProvider: null,
+  branchPolicy: "project",
   project: "summary",
   summary: null,
   exit: null,
@@ -123,7 +150,8 @@ const PREV: Record<WizardScreen, WizardScreen | null> = {
   workspaceName: "workspaces",
   workspaceGlob: "workspaceName",
   workspaceProvider: "workspaceGlob",
-  project: "workspaces",
+  branchPolicy: "workspaces",
+  project: "branchPolicy",
   summary: "project",
   exit: null,
 };
@@ -131,15 +159,23 @@ const PREV: Record<WizardScreen, WizardScreen | null> = {
 const skipsCustomBranch = (screen: WizardScreen, preset: BranchPreset): boolean =>
   (screen === "branchAllowed" || screen === "branchProtected") && preset !== "custom";
 
+// CA-06: the branch-policy screen only exists when the resolution root is a git
+// repo (a detected convention is meaningless otherwise). Only the branchPolicy
+// hop is gated — "project" is reached via that hop, never skipped itself — so a
+// non-git repo keeps the exact prior flow (workspaces ↔ project directly).
+const skipsBranchPolicy = (screen: WizardScreen): boolean =>
+  screen === "branchPolicy" &&
+  !existsSync(path.join(process.env.WORKFLOW_WORKSPACE_ROOT ?? process.cwd(), ".git"));
+
 function nextScreen(screen: WizardScreen, preset: BranchPreset): WizardScreen {
   let next = NEXT[screen];
-  while (next && skipsCustomBranch(next, preset)) next = NEXT[next];
+  while (next && (skipsCustomBranch(next, preset) || skipsBranchPolicy(next))) next = NEXT[next];
   return next ?? screen;
 }
 
 function prevScreen(screen: WizardScreen, preset: BranchPreset): WizardScreen {
   let prev = PREV[screen];
-  while (prev && skipsCustomBranch(prev, preset)) prev = PREV[prev];
+  while (prev && (skipsCustomBranch(prev, preset) || skipsBranchPolicy(prev))) prev = PREV[prev];
   return prev ?? screen;
 }
 
@@ -282,6 +318,47 @@ export function reducer(draft: WizardDraft, action: WizardAction): WizardDraft {
           };
         case "applyProject":
           return { ...draft, values: { ...draft.values, applyProject: action.value } };
+        // CA-06: branch-policy fields hold objects, never setTextValue — the
+        // detected proposal and the accepted policy are stored as-is.
+        case "branchPolicyDetected":
+          return { ...draft, values: { ...draft.values, branchPolicyDetected: action.value } };
+        case "branchPolicy":
+          return {
+            ...draft,
+            values: {
+              ...draft.values,
+              branchPolicy: {
+                ...action.value,
+                developBranch: action.value.developBranch ?? undefined,
+              },
+            },
+          };
+        case "branchPolicyIntegration": {
+          const detected = draft.values.branchPolicyDetected;
+          if (!detected) return draft;
+          return {
+            ...draft,
+            values: {
+              ...draft.values,
+              branchPolicy: {
+                ...detected,
+                developBranch: detected.developBranch ?? undefined,
+                integration: action.value,
+              },
+            },
+          };
+        }
+        case "branchPolicyDevelop": {
+          const detected = draft.values.branchPolicyDetected;
+          if (!detected) return draft;
+          return {
+            ...draft,
+            values: {
+              ...draft.values,
+              branchPolicy: { ...detected, developBranch: action.value || undefined },
+            },
+          };
+        }
         default:
           return setTextValue(draft, action.field, action.value);
       }

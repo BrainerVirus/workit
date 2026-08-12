@@ -25,6 +25,22 @@ const BACKSPACE = "\x7f";
 
 const noop = () => {};
 
+// CA-06 (Task 5): the branchPolicy screen appears only when the resolution root
+// is a git repo. This suite drives the non-git flow (workspaces ↔ project
+// directly), but it runs in the repo root (a git repo), so pin
+// WORKFLOW_WORKSPACE_ROOT to a guaranteed non-git path for the tests that walk
+// past the workspaces step.
+async function withNonGitRoot(run: () => void | Promise<void>): Promise<void> {
+  const prev = process.env.WORKFLOW_WORKSPACE_ROOT;
+  process.env.WORKFLOW_WORKSPACE_ROOT = path.join(os.tmpdir(), `wiz-nongit-${process.pid}`);
+  try {
+    await run();
+  } finally {
+    if (prev === undefined) delete process.env.WORKFLOW_WORKSPACE_ROOT;
+    else process.env.WORKFLOW_WORKSPACE_ROOT = prev;
+  }
+}
+
 const seedConfig: ToolkitConfig = {
   locale: "en",
   localeOptions: ["en", "es-CL"],
@@ -65,24 +81,26 @@ function at(preset: BranchPreset, screen: WizardScreen): WizardDraft {
 // Reducer transitions (pure, deterministic)
 // ---------------------------------------------------------------------------
 
-test("next advances through the sequential screens", () => {
-  let d = reducer(draft("gitflow"), { type: "set", field: "platforms", value: ["opencode"] });
-  const sequence: WizardScreen[] = [
-    "locale",
-    "timezone",
-    "branchPreset",
-    "youtrack",
-    "vcs",
-    "workspaces",
-    "project",
-    "summary",
-  ];
-  for (const expected of sequence) {
-    d = reducer(d, { type: "next" });
-    expect(d.screen).toBe(expected);
-  }
-  // summary has no next
-  expect(reducer(d, { type: "next" }).screen).toBe("summary");
+test("next advances through the sequential screens", async () => {
+  await withNonGitRoot(() => {
+    let d = reducer(draft("gitflow"), { type: "set", field: "platforms", value: ["opencode"] });
+    const sequence: WizardScreen[] = [
+      "locale",
+      "timezone",
+      "branchPreset",
+      "youtrack",
+      "vcs",
+      "workspaces",
+      "project",
+      "summary",
+    ];
+    for (const expected of sequence) {
+      d = reducer(d, { type: "next" });
+      expect(d.screen).toBe(expected);
+    }
+    // summary has no next
+    expect(reducer(d, { type: "next" }).screen).toBe("summary");
+  });
 });
 
 test("next skips the custom branch screens when the preset is not custom", () => {
@@ -101,13 +119,15 @@ test("next visits the custom branch screens when the preset is custom", () => {
   expect(reducer(d, { type: "next" }).screen).toBe("youtrack");
 });
 
-test("back reverses through screens and skips custom branch screens when not custom", () => {
-  let d = at("gitflow", "youtrack");
-  expect(reducer(d, { type: "back" }).screen).toBe("branchPreset");
-  d = at("gitflow", "summary");
-  d = reducer(d, { type: "back" });
-  d = reducer(d, { type: "back" });
-  expect(d.screen).toBe("workspaces");
+test("back reverses through screens and skips custom branch screens when not custom", async () => {
+  await withNonGitRoot(() => {
+    let d = at("gitflow", "youtrack");
+    expect(reducer(d, { type: "back" }).screen).toBe("branchPreset");
+    d = at("gitflow", "summary");
+    d = reducer(d, { type: "back" });
+    d = reducer(d, { type: "back" });
+    expect(d.screen).toBe("workspaces");
+  });
 });
 
 test("back from a custom-value screen returns to its parent select screen", () => {
@@ -170,29 +190,31 @@ test("empty locale and timezone cannot be committed from the select screens", ()
 // ---------------------------------------------------------------------------
 
 test("exactly one input control is mounted on every screen", async () => {
-  const cleanup = withSeedConfig(seedConfig);
-  try {
-    const tty = await renderInk(<Wizard onExit={noop} />);
-    // Ink tab-navigation listener + wizard nav handler + the screen control
-    expect(tty.inputListenerCount()).toBe(3);
-    await tty.keys(SPACE, ENTER); // platforms -> locale
-    expect(tty.inputListenerCount()).toBe(3);
-    await tty.keys(ENTER); // locale -> timezone
-    await tty.keys(ENTER); // timezone -> branchPreset
-    await tty.keys(DOWN, ENTER); // github-flow -> youtrack
-    await tty.keys(ENTER); // youtrack -> vcs
-    expect(tty.inputListenerCount()).toBe(3);
-    await tty.keys(ENTER); // vcs -> workspaces
-    // the workspaces screen renders real controls (WZ-12), not a placeholder
-    expect(tty.lastFrame()).toContain("Add workspace");
-    expect(tty.inputListenerCount()).toBe(3);
-    await tty.keys(ENTER); // workspaces (Done highlighted) -> project
-    await tty.keys("y"); // project -> summary
-    expect(tty.inputListenerCount()).toBe(3);
-    tty.unmount();
-  } finally {
-    cleanup();
-  }
+  await withNonGitRoot(async () => {
+    const cleanup = withSeedConfig(seedConfig);
+    try {
+      const tty = await renderInk(<Wizard onExit={noop} />);
+      // Ink tab-navigation listener + wizard nav handler + the screen control
+      expect(tty.inputListenerCount()).toBe(3);
+      await tty.keys(SPACE, ENTER); // platforms -> locale
+      expect(tty.inputListenerCount()).toBe(3);
+      await tty.keys(ENTER); // locale -> timezone
+      await tty.keys(ENTER); // timezone -> branchPreset
+      await tty.keys(DOWN, ENTER); // github-flow -> youtrack
+      await tty.keys(ENTER); // youtrack -> vcs
+      expect(tty.inputListenerCount()).toBe(3);
+      await tty.keys(ENTER); // vcs -> workspaces
+      // the workspaces screen renders real controls (WZ-12), not a placeholder
+      expect(tty.lastFrame()).toContain("Add workspace");
+      expect(tty.inputListenerCount()).toBe(3);
+      await tty.keys(ENTER); // workspaces (Done highlighted) -> project
+      await tty.keys("y"); // project -> summary
+      expect(tty.inputListenerCount()).toBe(3);
+      tty.unmount();
+    } finally {
+      cleanup();
+    }
+  });
 });
 
 test("locale and timezone inputs are independent; revisiting shows the current value", async () => {
@@ -390,88 +412,92 @@ test("backspace-to-empty custom locale surfaces the block on the select screen",
 // ---------------------------------------------------------------------------
 
 test("summary shows the authoritative preview and Apply completes with it", async () => {
-  const base = mkdtempSync(path.join(os.tmpdir(), "workit-wiz-"));
-  const configPath = path.join(base, "config");
-  process.env.WORKFLOW_TOOLKIT_CONFIG = configPath;
-  process.env.WORKFLOW_YT_BASE_URL = "https://env.example.com";
-  try {
-    mkdirSync(configPath, { recursive: true });
-    writeFileSync(path.join(configPath, "config.json"), JSON.stringify(seedConfig), "utf8");
-    writeFileSync(
-      path.join(configPath, "workspaces.json"),
-      JSON.stringify({
-        workspaces: [{ name: "work", glob: "/work/**", vcs: { provider: "gitlab" } }],
-      }),
-      "utf8",
-    );
-    const exitCalls: boolean[] = [];
-    const tty = await renderInk(<Wizard onExit={(ok) => exitCalls.push(ok)} />);
-    await tty.keys(SPACE, ENTER); // -> locale
-    await tty.keys(ENTER); // -> timezone
-    await tty.keys(ENTER); // -> branchPreset
-    await tty.keys(ENTER); // -> youtrack
-    await tty.keys("https://yt.example.com", ENTER); // -> vcs
-    await tty.keys(ENTER); // -> workspaces
-    // the workspaces screen is a real menu (not a placeholder): edit the seeded
-    // entry so the preview carries a workspace rewrite (Task 15 parity — an
-    // untouched draft claims no rewrite).
-    expect(tty.lastFrame()).toContain("Edit work");
-    await tty.keys(UP, UP, UP, UP, ENTER); // Edit work
-    await tty.keys(ENTER); // keep the name
-    for (let i = 0; i < "/work/**".length; i++) await tty.key(BACKSPACE);
-    await tty.keys("/other/**", ENTER); // changed glob -> provider
-    await tty.keys(ENTER); // provider -> save -> menu (Done highlighted)
-    await tty.keys(ENTER); // Done -> project
-    await tty.keys("y"); // -> summary
+  await withNonGitRoot(async () => {
+    const base = mkdtempSync(path.join(os.tmpdir(), "workit-wiz-"));
+    const configPath = path.join(base, "config");
+    process.env.WORKFLOW_TOOLKIT_CONFIG = configPath;
+    process.env.WORKFLOW_YT_BASE_URL = "https://env.example.com";
+    try {
+      mkdirSync(configPath, { recursive: true });
+      writeFileSync(path.join(configPath, "config.json"), JSON.stringify(seedConfig), "utf8");
+      writeFileSync(
+        path.join(configPath, "workspaces.json"),
+        JSON.stringify({
+          workspaces: [{ name: "work", glob: "/work/**", vcs: { provider: "gitlab" } }],
+        }),
+        "utf8",
+      );
+      const exitCalls: boolean[] = [];
+      const tty = await renderInk(<Wizard onExit={(ok) => exitCalls.push(ok)} />);
+      await tty.keys(SPACE, ENTER); // -> locale
+      await tty.keys(ENTER); // -> timezone
+      await tty.keys(ENTER); // -> branchPreset
+      await tty.keys(ENTER); // -> youtrack
+      await tty.keys("https://yt.example.com", ENTER); // -> vcs
+      await tty.keys(ENTER); // -> workspaces
+      // the workspaces screen is a real menu (not a placeholder): edit the seeded
+      // entry so the preview carries a workspace rewrite (Task 15 parity — an
+      // untouched draft claims no rewrite).
+      expect(tty.lastFrame()).toContain("Edit work");
+      await tty.keys(UP, UP, UP, UP, ENTER); // Edit work
+      await tty.keys(ENTER); // keep the name
+      for (let i = 0; i < "/work/**".length; i++) await tty.key(BACKSPACE);
+      await tty.keys("/other/**", ENTER); // changed glob -> provider
+      await tty.keys(ENTER); // provider -> save -> menu (Done highlighted)
+      await tty.keys(ENTER); // Done -> project
+      await tty.keys("y"); // -> summary
 
-    const frame = tty.lastFrame();
-    expect(frame).toContain("Will apply");
-    expect(frame).toContain("config.json");
-    expect(frame).toContain("youtrack.json");
-    expect(frame).toContain("workspaces.json");
-    expect(frame).toContain("https://yt.example.com");
-    expect(frame).toContain("WORKFLOW_YT_BASE_URL"); // active override exposed
-    expect(frame).toContain("https://env.example.com"); // ...with its actual value
+      const frame = tty.lastFrame();
+      expect(frame).toContain("Will apply");
+      expect(frame).toContain("config.json");
+      expect(frame).toContain("youtrack.json");
+      expect(frame).toContain("workspaces.json");
+      expect(frame).toContain("https://yt.example.com");
+      expect(frame).toContain("WORKFLOW_YT_BASE_URL"); // active override exposed
+      expect(frame).toContain("https://env.example.com"); // ...with its actual value
 
-    await tty.keys("y"); // apply
-    expect(exitCalls).toEqual([true]);
-    tty.unmount();
-  } finally {
-    delete process.env.WORKFLOW_TOOLKIT_CONFIG;
-    delete process.env.WORKFLOW_YT_BASE_URL;
-    rmSync(base, { recursive: true, force: true });
-  }
+      await tty.keys("y"); // apply
+      expect(exitCalls).toEqual([true]);
+      tty.unmount();
+    } finally {
+      delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+      delete process.env.WORKFLOW_YT_BASE_URL;
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
 });
 
 test("malformed configuration blocks Apply in the TTY flow (WZ-06)", async () => {
-  const base = mkdtempSync(path.join(os.tmpdir(), "workit-wiz-"));
-  const configPath = path.join(base, "config");
-  process.env.WORKFLOW_TOOLKIT_CONFIG = configPath;
-  try {
-    mkdirSync(configPath, { recursive: true });
-    writeFileSync(path.join(configPath, "config.json"), JSON.stringify(seedConfig), "utf8");
-    writeFileSync(path.join(configPath, "youtrack.json"), "{ not json", "utf8");
-    const exitCalls: boolean[] = [];
-    const tty = await renderInk(<Wizard onExit={(ok) => exitCalls.push(ok)} />);
-    await tty.keys(SPACE, ENTER); // -> locale
-    await tty.keys(ENTER); // -> timezone
-    await tty.keys(ENTER); // -> branchPreset
-    await tty.keys(ENTER); // -> youtrack
-    await tty.keys(ENTER); // -> vcs
-    await tty.keys(ENTER); // -> workspaces
-    await tty.keys(ENTER); // -> project
-    await tty.keys("y"); // -> summary
+  await withNonGitRoot(async () => {
+    const base = mkdtempSync(path.join(os.tmpdir(), "workit-wiz-"));
+    const configPath = path.join(base, "config");
+    process.env.WORKFLOW_TOOLKIT_CONFIG = configPath;
+    try {
+      mkdirSync(configPath, { recursive: true });
+      writeFileSync(path.join(configPath, "config.json"), JSON.stringify(seedConfig), "utf8");
+      writeFileSync(path.join(configPath, "youtrack.json"), "{ not json", "utf8");
+      const exitCalls: boolean[] = [];
+      const tty = await renderInk(<Wizard onExit={(ok) => exitCalls.push(ok)} />);
+      await tty.keys(SPACE, ENTER); // -> locale
+      await tty.keys(ENTER); // -> timezone
+      await tty.keys(ENTER); // -> branchPreset
+      await tty.keys(ENTER); // -> youtrack
+      await tty.keys(ENTER); // -> vcs
+      await tty.keys(ENTER); // -> workspaces
+      await tty.keys(ENTER); // -> project
+      await tty.keys("y"); // -> summary
 
-    const frame = tty.lastFrame();
-    expect(frame).toContain("Apply blocked");
-    expect(frame).toContain("youtrack.json");
-    expect(frame).not.toContain("Will apply");
+      const frame = tty.lastFrame();
+      expect(frame).toContain("Apply blocked");
+      expect(frame).toContain("youtrack.json");
+      expect(frame).not.toContain("Will apply");
 
-    await tty.keys("y"); // ignored: no confirm control, never completes
-    expect(exitCalls).toEqual([]);
-    tty.unmount();
-  } finally {
-    delete process.env.WORKFLOW_TOOLKIT_CONFIG;
-    rmSync(base, { recursive: true, force: true });
-  }
+      await tty.keys("y"); // ignored: no confirm control, never completes
+      expect(exitCalls).toEqual([]);
+      tty.unmount();
+    } finally {
+      delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
 });
