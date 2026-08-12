@@ -82,14 +82,19 @@ const truthy = (v: string | undefined): boolean =>
 
 // Port of python's shutil.which — scan PATH in-process (no `which` binary needed).
 function whichOnPath(tool: string): string | null {
+  // win32 CLIs/stubs carry .exe/.cmd suffixes (gh.exe, gh.cmd), so probe them
+  // too — accessSync with the bare name would never find them.
+  const names = process.platform === "win32" ? [tool, `${tool}.exe`, `${tool}.cmd`] : [tool];
   for (const dir of (process.env.PATH ?? "").split(path.delimiter)) {
     if (!dir) continue;
-    const candidate = path.join(dir, tool);
-    try {
-      fs.accessSync(candidate, fs.constants.X_OK);
-      return candidate;
-    } catch {
-      /* keep scanning */
+    for (const name of names) {
+      const candidate = path.join(dir, name);
+      try {
+        fs.accessSync(candidate, fs.constants.X_OK);
+        return candidate;
+      } catch {
+        /* keep scanning */
+      }
     }
   }
   return null;

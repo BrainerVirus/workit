@@ -177,7 +177,13 @@ test("cursor MCP server boots over stdio from the extracted package with node (n
       expect(names).toContain("workflow_git_context");
       expect(names).toContain("workflow_toolkit_init_apply");
     } finally {
+      // win32 keeps deleted files/dirs locked until the child fully exits, so
+      // wait for the kill to land before the outer finally rmSync's the tree.
       child.kill();
+      await Promise.race([
+        new Promise((resolve) => child.once("exit", resolve)),
+        new Promise((resolve) => setTimeout(resolve, 5000)),
+      ]);
     }
   } finally {
     rmSync(install, { recursive: true, force: true });

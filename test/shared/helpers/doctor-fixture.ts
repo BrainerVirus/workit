@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -224,6 +224,20 @@ export const makeDoctorFixture = (): DoctorFixture => {
 export const binDirWithRuntimes = (root: string): string => {
   const bin = mk(root, "path-bin");
   for (const name of ["node", "bun"]) {
+    if (process.platform === "win32") {
+      // git-bash `command -v` yields msys paths symlinks cannot use; resolve
+      // via `where` and copy the real executable so the bin actually runs.
+      const which = spawnSync("where", [name], { encoding: "utf8" });
+      const target = which.stdout?.split("\n")[0]?.trim();
+      if (target && existsSync(target)) {
+        try {
+          copyFileSync(target, path.join(bin, `${name}.exe`));
+        } catch {
+          /* keep going */
+        }
+      }
+      continue;
+    }
     const real = spawnSync("bash", ["-c", `command -v ${name}`], { encoding: "utf8" });
     const target = real.stdout?.trim();
     if (target) {

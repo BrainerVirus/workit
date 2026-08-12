@@ -150,6 +150,10 @@ const applyPatterns = (value: string): string => {
   out = out.replace(KEY_EQ_VALUE, "$1$2[REDACTED]");
   out = out.replace(URL_QUERY, "$1?[REDACTED]");
   out = out.replace(homePattern, "~");
+  // win32 paths keep backslashes after the ~ substitution (~\repo); normalize
+  // separators so logged paths are portable and match the shell-shaped ~/
+  // form. Other platforms are untouched.
+  if (process.platform === "win32") out = out.replace(/\\/g, "/");
   return out;
 };
 

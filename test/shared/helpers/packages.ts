@@ -153,10 +153,14 @@ export function listTarball(tarball: string): string[] {
     maxBuffer: 64 * 1024 * 1024,
   });
   if (run.status !== 0) throw new Error(`tar list failed: ${run.stderr}`);
-  return run.stdout
-    .split("\n")
-    .filter(Boolean)
-    .map((line) => line.replace(/^package\//, ""));
+  return (
+    run.stdout
+      .split("\n")
+      .filter(Boolean)
+      // Windows bsdtar emits CRLF line endings — strip the \r so entries match
+      // their tar-form forward-slash names on every platform.
+      .map((line) => line.replace(/\r$/, "").replace(/^package\//, ""))
+  );
 }
 
 // Read a single file (relative to `package/`) straight out of a tarball.
