@@ -807,10 +807,19 @@ function applyOpenCode(root: string, res: ResolvedApply): SetupResultEntry {
 // Mirror the sync-runtime plugin mirror: copy the package (minus node_modules),
 // keep launchers executable, and write the same `.workflow-toolkit-root` marker
 // so a re-sync from the same source is a truthful Skipped.
+//
+// The installed plugin's mcp.json is a derived artifact: the shipped manifest
+// stays package-relative (PT-10), but Cursor spawns plugin MCP servers with
+// the workspace as cwd, so the installed copy must carry an absolute entry.
+const cursorMcpManifest = (dir: string): string =>
+  JSON.stringify({ mcpServers: { workit: cursorMcpServerEntry(dir) } }, null, 2) + "\n";
+
 const samePluginContent = (src: string, dest: string, relative = ""): boolean => {
   try {
     for (const entry of readdirSync(src, { withFileTypes: true })) {
       if (entry.name === "node_modules") continue;
+      // mcp.json is derived at install time (cursorMcpManifest), not copied.
+      if (relative === "" && entry.name === "mcp.json") continue;
       const source = path.join(src, entry.name);
       const installed = path.join(dest, entry.name);
       if (entry.isDirectory()) {
@@ -828,6 +837,7 @@ const samePluginContent = (src: string, dest: string, relative = ""): boolean =>
       const rel = path.join(relative, entry.name);
       if (rel === ".workflow-toolkit-root") continue;
       if (relative === "rules" && entry.isFile() && entry.name.endsWith(".mdc")) continue;
+      if (relative === "" && entry.name === "mcp.json") continue;
       return false;
     }
     return true;
@@ -854,7 +864,12 @@ const preservedCursorRules = (src: string, dest: string): Map<string, Buffer> =>
 
 function copyPluginDir(src: string, dest: string): SetupResultStatus {
   const marker = path.join(dest, ".workflow-toolkit-root");
-  const synced = readFileSafe(marker)?.trim() === src && samePluginContent(src, dest);
+  const synced =
+    readFileSafe(marker)?.trim() === src &&
+    samePluginContent(src, dest) &&
+    // The mcp.json equality makes the Skipped verdict truthful: the derived
+    // manifest on disk must be the one this install would write.
+    readFileSafe(path.join(dest, "mcp.json")) === cursorMcpManifest(dest);
   if (synced) return "Skipped";
   const hadDir = existsSync(dest);
   const rules = preservedCursorRules(src, dest);
@@ -888,6 +903,10 @@ function copyPluginDir(src: string, dest: string): SetupResultStatus {
       if (hadDir && !existsSync(dest)) renameSync(backup, dest);
       throw error;
     }
+    // Derive the installed manifest against the FINAL installed path: the
+    // stage path dies with the swap dir, and the entry's dist check needs the
+    // live plugin dir to exist.
+    writeFileSync(path.join(dest, "mcp.json"), cursorMcpManifest(dest), "utf8");
     rmSync(backup, { recursive: true, force: true });
   } finally {
     rmSync(swap, { recursive: true, force: true });
