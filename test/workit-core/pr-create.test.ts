@@ -184,6 +184,60 @@ test("AR-08: complete dates anywhere in a segment never close an issue", () => {
   expect(prBuildBody({ GH_LINK_ON_PR: "true", BRANCH: "release/2024-fix" })).toBe("Closes #2024");
 });
 
+test("CA-04: merge integration finishes the feature into the target without a PR", () => {
+  // bare origin remote, like branch-policy.test.ts's repoWithDevelop
+  const remote = mkdtempSync(path.join(os.tmpdir(), "wf-merge-remote-"));
+  try {
+    git(remote, ["init", "-q", "--bare"]);
+    setupRepo();
+    git(root, ["remote", "add", "origin", remote]);
+    git(root, ["push", "-q", "-u", "origin", "develop"]);
+    git(root, ["branch", "main"]);
+    git(root, ["checkout", "-q", "main"]);
+    git(root, ["checkout", "-q", "-b", "feature/merge-mode"]);
+    // the brief's literal test omitted a feature commit; without one develop is
+    // up to date and --no-ff merges nothing, so the "T" commit never appears.
+    writeFileSync(path.join(root, "feature.md"), "work\n");
+    git(root, ["add", "feature.md"]);
+    git(root, ["commit", "-q", "-m", "feature work"]);
+    git(root, ["push", "-q", "-u", "origin", "feature/merge-mode"]);
+    writeFileSync(
+      path.join(cfgDir, "config.json"),
+      JSON.stringify({ branchPolicy: { preset: "gitflow" } }, null, 2),
+      "utf8",
+    );
+    writeFileSync(
+      path.join(cfgDir, "vcs.json"),
+      JSON.stringify({ provider: "github", defaultTargetBranch: "develop" }),
+      "utf8",
+    );
+    writeFileSync(
+      path.join(cfgDir, "workspaces.json"),
+      JSON.stringify({
+        workspaces: [
+          {
+            name: "t",
+            glob: `${root}/**`,
+            branchPolicy: { preset: "gitflow", integration: "merge" },
+          },
+        ],
+      }),
+      "utf8",
+    );
+    writeFileSync(path.join(cfgDir, "github.token"), "test-token\n", "utf8");
+    const p = withEnv({ WORKFLOW_TOOLKIT_CONFIG: cfgDir, PATH: stubPath() }, () =>
+      prCreate({ WF_PR_CONFIRMED: "true", WF_PR_TITLE: "T", WF_PR_BODY: "" }, root),
+    );
+    expect(p.ok, JSON.stringify(p)).toBe(true);
+    expect(p.mode).toBe("merge");
+    expect(p.targetBranch).toBe("develop");
+    const log = git(root, ["log", "--oneline", "-1", "develop"]).stdout;
+    expect(log).toContain("T");
+  } finally {
+    rmSync(remote, { recursive: true, force: true });
+  }
+});
+
 test("B6: env-driven WORKFLOW_GH_ISSUE reaches prCreate through the OpenCode wrapper", async () => {
   setupRepo();
   git(root, ["checkout", "-q", "-b", "feature/b6"]);

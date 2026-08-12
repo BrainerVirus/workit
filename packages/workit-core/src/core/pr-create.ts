@@ -152,6 +152,56 @@ export function prCreate(env: NodeJS.ProcessEnv, cwd: string): Record<string, an
       };
   }
 
+  const title = String(env.WF_PR_TITLE ?? "");
+  const br = spawnSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
+    cwd: root,
+    encoding: "utf8",
+  });
+  const branch = br.status === 0 ? (br.stdout ?? "").trim() : "";
+
+  const policy = resolveBranchPolicyFor(root);
+  if (policy.integration === "merge") {
+    const finish = (): Record<string, any> => {
+      const merge = spawnSync("git", ["merge", "--no-ff", branch, "-m", title], {
+        cwd: root,
+        encoding: "utf8",
+      });
+      if (merge.status !== 0)
+        return {
+          error: "merge failed",
+          mode: "merge",
+          targetBranch: target,
+          stderr: (merge.stderr ?? "").slice(0, 800),
+        };
+      const push = spawnSync("git", ["push", "origin", target], { cwd: root, encoding: "utf8" });
+      if (push.status !== 0)
+        return {
+          error: "push failed",
+          mode: "merge",
+          targetBranch: target,
+          stderr: (push.stderr ?? "").slice(0, 800),
+        };
+      return {
+        ok: true,
+        mode: "merge",
+        targetBranch: target,
+        merged: true,
+        pushed: true,
+        output: (push.stdout ?? "").trim(),
+      };
+    };
+    const co = spawnSync("git", ["checkout", target], { cwd: root, encoding: "utf8" });
+    if (co.status !== 0)
+      return {
+        error: `cannot checkout target ${target}`,
+        mode: "merge",
+        stderr: (co.stderr ?? "").slice(0, 800),
+      };
+    const result = finish();
+    spawnSync("git", ["checkout", branch], { cwd: root, encoding: "utf8" }); // best-effort return
+    return result;
+  }
+
   const cli = provider === "gitlab" ? "glab" : "gh";
   const installUrl =
     provider === "gitlab" ? "https://gitlab.com/gitlab-org/cli" : "https://cli.github.com";
@@ -166,15 +216,8 @@ export function prCreate(env: NodeJS.ProcessEnv, cwd: string): Record<string, an
 
   const pr = (cfg.pr ?? {}) as Record<string, any>;
   const token = fs.readFileSync(cfg.tokenPath as string, "utf8").trim();
-  const title = String(env.WF_PR_TITLE ?? "");
   const body = env.WF_PR_BODY ?? "";
   const draft = String(env.WF_PR_DRAFT ?? "false").toLowerCase() === "true";
-
-  const br = spawnSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
-    cwd: root,
-    encoding: "utf8",
-  });
-  const branch = br.status === 0 ? (br.stdout ?? "").trim() : "";
 
   let baseUrl = cfg.youtrack_base_url as string | undefined;
   if (!baseUrl) {
