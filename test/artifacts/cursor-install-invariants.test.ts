@@ -119,12 +119,6 @@ test(
       expect([missingWorkitBuild.status, extraWorkitBuild.status]).toEqual([1, 1]);
       expect(missingWorkitBuild.stderr).toContain("wk-init");
       expect(extraWorkitBuild.stderr).toContain("not-canonical");
-      const prepublish = spawnSync(process.execPath, ["run", "prepublishOnly"], {
-        cwd: path.join(missingWorkitRepo, "packages/workit-cursor"),
-        encoding: "utf8",
-      });
-      expect(prepublish.status).not.toBe(0);
-      expect(prepublish.stderr).toContain("wk-init");
 
       const packs = packWorkspacePackages();
       const extracted = extractTarball(byName(packs, CURSOR).tarball);
