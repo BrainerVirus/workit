@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { CANONICAL_SKILLS } from "../../../packages/workit-core/src/core/skill-manifests";
 
 // Shared fixture builder for the offline doctor (DG-07/DG-08). Builds an
 // isolated HOME + fake monorepo (dev) + config/state dirs so every check runs
@@ -45,6 +46,11 @@ export const makeDoctorFixture = (): DoctorFixture => {
 
   // Fake monorepo: core + three adapters with version/asset/launcher layout.
   mk(dev, "packages", "workit-core");
+  for (const skill of CANONICAL_SKILLS.superpowers) {
+    mk(dev, "packages", "workit-core", "vendor", "superpowers", "skills", skill);
+    mk(pluginDir, "vendor", "superpowers", "skills", skill);
+  }
+  for (const skill of CANONICAL_SKILLS.workit) mk(pluginDir, "skills", skill);
   mk(dev, "packages", "workit-opencode", "src");
   mk(dev, "packages", "workit-opencode", "assets", "commands");
   mk(dev, "packages", "workit-opencode", "assets", "skills", "wk-init");
@@ -70,6 +76,28 @@ export const makeDoctorFixture = (): DoctorFixture => {
   writeFileSync(
     path.join(dev, "packages", "workit-core", "package.json"),
     JSON.stringify({ name: "@brainervirus/workit-core", version: "0.4.0" }),
+  );
+  for (const skill of CANONICAL_SKILLS.superpowers) {
+    writeFileSync(
+      path.join(dev, "packages/workit-core/vendor/superpowers/skills", skill, "SKILL.md"),
+      "# skill\n",
+    );
+    writeFileSync(
+      path.join(pluginDir, "vendor/superpowers/skills", skill, "SKILL.md"),
+      "# skill\n",
+    );
+  }
+  for (const skill of CANONICAL_SKILLS.workit) {
+    writeFileSync(path.join(pluginDir, "skills", skill, "SKILL.md"), "# skill\n");
+  }
+  mkdirSync(path.join(pluginDir, "dist"), { recursive: true });
+  writeFileSync(
+    path.join(pluginDir, "dist", "mcp-server.js"),
+    "#!/usr/bin/env node\n// installed bundle\n",
+  );
+  writeFileSync(
+    path.join(pluginDir, "dist", "cursor-session-start.js"),
+    "#!/usr/bin/env node\n// installed hook bundle\n",
   );
   const adapter = (name: string, extra: Record<string, string> = {}) =>
     JSON.stringify({
@@ -169,7 +197,11 @@ export const makeDoctorFixture = (): DoctorFixture => {
   );
   writeFileSync(
     cursorMcp,
-    JSON.stringify({ mcpServers: { workit: { command: "node", args: ["dist/mcp-server.js"] } } }),
+    JSON.stringify({
+      mcpServers: {
+        workit: { command: "node", args: [path.join(pluginDir, "dist", "mcp-server.js")] },
+      },
+    }),
   );
 
   return {

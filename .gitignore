@@ -3,6 +3,7 @@ cursor/mcp/node_modules/
 packages/workit-cli/dist/
 packages/workit-opencode/dist/
 packages/workit-cursor/dist/
+packages/workit-cursor/vendor/
 
 # Feature SDD state is working files, not versioned (spec.md/plan.md stay tracked)
 docs/*/sdd/

@@ -272,9 +272,10 @@ export async function toolkitStatusData(configDirPath = configDir()): Promise<Re
   const vcsVerify = vcsPlaceholder
     ? { ok: false, error: "vcs token still placeholder YOUR_TOKEN_HERE" }
     : await vcsVerifyToken();
+  const youTrackHealth = ("data" in verify ? verify.data : verify) as Record<string, any>;
 
   status.youtrack_verify = verify;
-  status.youtrack_ok = placeholder ? false : Boolean((verify as Record<string, any>).ok);
+  status.youtrack_ok = placeholder ? false : Boolean(youTrackHealth.ok);
   status.vcs_verify = vcsVerify;
   status.vcs_ok =
     vcsJsonOk && !vcsPlaceholder ? Boolean((vcsVerify as Record<string, any>).ok) : false;

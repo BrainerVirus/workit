@@ -1,5 +1,18 @@
 import { expect, test } from "bun:test";
-import { existsSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import {
+  chmodSync,
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+} from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import {
   extractTarball,
@@ -25,7 +38,8 @@ const byName = (packs: ReturnType<typeof packWorkspacePackages>, name: string) =
 // Files that are allowed to stay in a tarball even though they are `.ts`:
 // vendored upstream skill examples are documented test/vendor data, not runtime
 // entries of this project.
-const isAllowedTs = (entry: string) => entry.startsWith("assets/vendor/") && entry.endsWith(".ts");
+const isAllowedTs = (entry: string) =>
+  (entry.startsWith("assets/vendor/") || entry.startsWith("vendor/")) && entry.endsWith(".ts");
 
 const tsEntries = (tarball: string) =>
   listTarball(tarball).filter((e) => e.endsWith(".ts") && !isAllowedTs(e));
@@ -222,18 +236,16 @@ const SOURCE_VENDOR = path.join(REPO_ROOT, "packages/workit-core/vendor");
 // package by policy (active vendored shell/executables) and intentionally left
 // documented upstream. These are the ONLY allowed dead references.
 const FILTERED_REF_ALLOWLIST: Record<string, string[]> = {
-  "assets/vendor/superpowers/skills/subagent-driven-development/SKILL.md": [
+  "superpowers/skills/subagent-driven-development/SKILL.md": [
     "scripts/review-package",
     "scripts/task-brief",
   ],
-  "assets/vendor/superpowers/skills/subagent-driven-development/task-reviewer-prompt.md": [
+  "superpowers/skills/subagent-driven-development/task-reviewer-prompt.md": [
     "scripts/review-package",
     "scripts/task-brief",
   ],
-  "assets/vendor/superpowers/skills/systematic-debugging/root-cause-tracing.md": [
-    "./find-polluter.sh",
-  ],
-  "assets/vendor/superpowers/skills/writing-skills/SKILL.md": ["./render-graphs.js"],
+  "superpowers/skills/systematic-debugging/root-cause-tracing.md": ["./find-polluter.sh"],
+  "superpowers/skills/writing-skills/SKILL.md": ["./render-graphs.js"],
 };
 
 const vendorRefRe = /(\bscripts\/|\.\/)([\w./-]+)/g;
@@ -246,43 +258,92 @@ const walkFiles = (dir: string, visit: (file: string) => void): void => {
   }
 };
 
-test("adapter assets/vendor ships no executable or shebang files (finding)", () => {
+test("adapter vendor trees ship no executable or shebang files (finding)", () => {
   const packs = packWorkspacePackages();
   for (const pack of packs) {
-    if (!listTarball(pack.tarball).some((e) => e.startsWith("assets/vendor/"))) continue;
+    if (pack.packageName === CORE) continue;
+    const roots = ["assets/vendor", "vendor"].filter((root) =>
+      listTarball(pack.tarball).some((entry) => entry.startsWith(`${root}/`)),
+    );
+    if (roots.length === 0) continue;
     const { root, packageDir } = extractTarball(pack.tarball);
     try {
-      walkFiles(path.join(packageDir, "assets/vendor"), (file) => {
-        const rel = path.relative(packageDir, file).split(path.sep).join("/");
-        expect(statSync(file).mode & 0o111, `${pack.packageName}/${rel}`).toBe(0);
-        const head = readFileSync(file).subarray(0, 2).toString("latin1");
-        expect(head, `${pack.packageName}/${rel}`).not.toBe("#!");
-      });
+      for (const vendorRoot of roots) {
+        walkFiles(path.join(packageDir, vendorRoot), (file) => {
+          const rel = path.relative(packageDir, file).split(path.sep).join("/");
+          expect(statSync(file).mode & 0o111, `${pack.packageName}/${rel}`).toBe(0);
+          const head = readFileSync(file).subarray(0, 2).toString("latin1");
+          expect(head, `${pack.packageName}/${rel}`).not.toBe("#!");
+        });
+      }
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
   }
 });
 
+test("cursor vendor filtering rejects shebang files when executable metadata is unavailable", () => {
+  const fixture = mkdtempSync(path.join(os.tmpdir(), "wk-cursor-windows-mode-"));
+  const target = path.join(fixture, "output");
+  try {
+    mkdirSync(path.join(fixture, "packages"));
+    for (const pkg of ["workit-core", "workit-cursor"]) {
+      cpSync(path.join(REPO_ROOT, "packages", pkg), path.join(fixture, "packages", pkg), {
+        recursive: true,
+        filter: (src) => !src.includes(`${path.sep}node_modules`),
+      });
+    }
+    symlinkSync(
+      path.join(REPO_ROOT, "node_modules"),
+      path.join(fixture, "node_modules"),
+      "junction",
+    );
+    const source = path.join(
+      fixture,
+      "packages/workit-core/vendor/superpowers/skills/writing-skills/render-graphs.js",
+    );
+    chmodSync(source, 0o644);
+    const build = spawnSync(
+      "bun",
+      [path.join(fixture, "packages/workit-cursor/scripts/build.ts"), target],
+      { encoding: "utf8" },
+    );
+    expect(build.status, build.stderr).toBe(0);
+    walkFiles(path.join(target, "vendor"), (file) => {
+      const head = readFileSync(file).subarray(0, 2).toString("latin1");
+      expect(head, path.relative(target, file)).not.toBe("#!");
+    });
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
 test("shipped vendor markdown references no filtered-out files (finding)", () => {
   const packs = packWorkspacePackages();
-  const tarball = byName(packs, OPENCODE).tarball;
-  const entries = new Set(listTarball(tarball));
-  for (const entry of entries) {
-    if (!entry.endsWith(".md") || !entry.startsWith("assets/vendor/")) continue;
-    const md = readTarballFile(tarball, entry);
-    const mdDir = entry.slice(0, entry.lastIndexOf("/"));
-    const allow = FILTERED_REF_ALLOWLIST[entry] ?? [];
-    vendorRefRe.lastIndex = 0;
-    let m: RegExpExecArray | null;
-    while ((m = vendorRefRe.exec(md)) !== null) {
-      const ref = m[1] + m[2];
-      // `./x` resolves inside the same skill dir; `scripts/x` under its scripts/.
-      const target = m[1] === "./" ? `${mdDir}/${m[2]}` : `${mdDir}/${ref}`;
-      if (entries.has(target)) continue; // ships → consistent
-      const source = path.join(SOURCE_VENDOR, target.slice("assets/vendor/".length));
-      if (!existsSync(source)) continue; // illustrative prose, never existed upstream
-      expect(allow, `${entry}: ${ref}`).toContain(ref);
+  for (const [packageName, vendorRoot] of [
+    [OPENCODE, "assets/vendor"],
+    [CURSOR, "vendor"],
+  ] as const) {
+    const tarball = byName(packs, packageName).tarball;
+    const entries = new Set(listTarball(tarball));
+    for (const entry of entries) {
+      if (!entry.endsWith(".md") || !entry.startsWith(`${vendorRoot}/`)) continue;
+      const md = readTarballFile(tarball, entry);
+      const mdDir = entry.slice(0, entry.lastIndexOf("/"));
+      const canonicalEntry = entry.slice(`${vendorRoot}/`.length);
+      const allow = FILTERED_REF_ALLOWLIST[canonicalEntry] ?? [];
+      vendorRefRe.lastIndex = 0;
+      let m: RegExpExecArray | null;
+      while ((m = vendorRefRe.exec(md)) !== null) {
+        const ref = m[1] + m[2];
+        // `./x` resolves inside the same skill dir; `scripts/x` under its scripts/.
+        const target = m[1] === "./" ? `${mdDir}/${m[2]}` : `${mdDir}/${ref}`;
+        if (entries.has(target)) continue; // ships → consistent
+        const canonicalTarget = target.slice(`${vendorRoot}/`.length);
+        const source = path.join(SOURCE_VENDOR, canonicalTarget);
+        if (!existsSync(source)) continue; // illustrative prose, never existed upstream
+        expect(allow, `${packageName}/${entry}: ${ref}`).toContain(ref);
+      }
     }
   }
 });

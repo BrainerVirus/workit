@@ -14,8 +14,8 @@ DEV="${WORKFLOW_TOOLKIT_DEV:-$DEV_DEFAULT}"
 REPO_SLUG="${WORKFLOW_TOOLKIT_REPO:-BrainerVirus/workit}"
 LOCK="${XDG_RUNTIME_DIR:-/tmp}/workflow-toolkit-sync.lock"
 
-# RR-05: missing required tools, an unacquirable lock, a failed clone, or a failed
-# dependency install must never look like a successful sync.
+# RR-05: missing required tools, an unacquirable lock, or a failed clone must
+# never look like a successful sync.
 if ! command -v flock >/dev/null 2>&1; then
   echo "FATAL: sync-runtime requires flock (util-linux) — not found in PATH" >&2
   exit 1
@@ -52,6 +52,49 @@ else
   SRC="$SHARE"
 fi
 
+CURSOR_SRC="$SRC/packages/workit-cursor"
+BUN_BIN=""
+if [ -n "${BUN:-}" ]; then
+  BUN_BIN="$BUN"
+  if [ ! -x "$BUN_BIN" ]; then
+    echo "FATAL: BUN is set but unusable: $BUN_BIN" >&2
+    exit 1
+  fi
+elif [ -x "$HOME/.bun/bin/bun" ]; then
+  BUN_BIN="$HOME/.bun/bin/bun"
+elif command -v bun >/dev/null 2>&1; then
+  BUN_BIN="$(command -v bun)"
+else
+  echo "FATAL: Bun is required to build the Cursor adapter" >&2
+  exit 1
+fi
+
+for DEP in @brainervirus/workit-core @modelcontextprotocol/sdk zod; do
+  if [ ! -e "$SRC/node_modules/$DEP" ]; then
+    if [ ! -f "$SRC/bun.lock" ]; then
+      echo "FATAL: dependency install requires $SRC/bun.lock" >&2
+      exit 1
+    fi
+    if ! (cd "$SRC" && "$BUN_BIN" install --frozen-lockfile); then
+      echo "FATAL: root dependency install failed in $SRC" >&2
+      exit 1
+    fi
+    break
+  fi
+done
+
+if ! (cd "$SRC" && PATH="$(dirname "$BUN_BIN"):$PATH" "$BUN_BIN" "$CURSOR_SRC/scripts/build.ts"); then
+  echo "FATAL: Cursor adapter build failed in $CURSOR_SRC" >&2
+  exit 1
+fi
+for ENTRY in mcp-server.js cursor-session-start.js; do
+  DIST_ENTRY="$CURSOR_SRC/dist/$ENTRY"
+  if [ ! -f "$DIST_ENTRY" ] || [ ! -s "$DIST_ENTRY" ] || [ "$(IFS= read -r LINE <"$DIST_ENTRY"; printf '%s' "$LINE")" != '#!/usr/bin/env node' ]; then
+    echo "FATAL: Cursor adapter invalid dist entry: $DIST_ENTRY" >&2
+    exit 1
+  fi
+done
+
 if [ "$SRC" != "$SHARE" ]; then
   mkdir -p "$SHARE"
   # Keep .git if share is a clone; never wipe it when syncing from the monorepo
@@ -69,15 +112,15 @@ mkdir -p "$PLUGIN_DIR"
 rsync -a --delete \
   --exclude 'mcp/node_modules' \
   "$SHARE/packages/workit-cursor/" "$PLUGIN_DIR/"
-# Vendored skills for Cursor (same folder layout as OpenCode registration)
-mkdir -p "$PLUGIN_DIR/vendor/superpowers"
-if [ -d "$SHARE/packages/workit-core/vendor/superpowers/skills" ]; then
-  rsync -a --delete "$SHARE/packages/workit-core/vendor/superpowers/skills" "$PLUGIN_DIR/vendor/superpowers/"
+
+if ! "$BUN_BIN" "$SHARE/packages/workit-core/src/core/skill-manifests.ts" "$PLUGIN_DIR"; then
+  echo "FATAL: Cursor skill validation failed: $PLUGIN_DIR" >&2
+  exit 1
 fi
 # Canonical user rules -> Cursor .mdc (compiled by the shared core)
 CONFIG_RULES_DIR="$(resolve_config_dir)/rules"
 if [ -d "$CONFIG_RULES_DIR" ]; then
-  "$HOME/.bun/bin/bun" -e "
+  "$BUN_BIN" -e "
     import('${SHARE}/packages/workit-core/src/core/rules.ts').then(async ({ writeCompiledCursorRules }) => {
       writeCompiledCursorRules('${PLUGIN_DIR}/rules');
     });
@@ -86,28 +129,13 @@ fi
 printf '%s\n' "$SHARE/packages/workit-core" >"$PLUGIN_DIR/.workflow-toolkit-root"
 chmod +x "$PLUGIN_DIR/hooks/session-start" "$PLUGIN_DIR/mcp/run-server.sh" 2>/dev/null || true
 
-if [ ! -d "$PLUGIN_DIR/mcp/node_modules" ]; then
-  if ! (cd "$PLUGIN_DIR/mcp" && npm install --silent); then
-    echo "FATAL: MCP dependency install failed in $PLUGIN_DIR/mcp" >&2
-    exit 1
-  fi
-fi
-
-# Share MCP also needs deps when launched via run-cursor-mcp fallback
-if [ ! -d "$SHARE/packages/workit-cursor/mcp/node_modules" ]; then
-  if ! (cd "$SHARE/packages/workit-cursor/mcp" && npm install --silent); then
-    echo "FATAL: MCP dependency install failed in $SHARE/packages/workit-cursor/mcp" >&2
-    exit 1
-  fi
-fi
-
 # Remove broken TLA live-loader if present (OpenCode ignored it; /wk-* vanished)
 rm -f "${OPENCODE_PLUGINS}/workflow-toolkit.ts"
 
 # Ensure OpenCode has plugin peer dep
 PKG="${HOME}/.config/opencode/package.json"
 if [ -f "$PKG" ]; then
-  PKG_PATH="$PKG" bun -e '
+  PKG_PATH="$PKG" "$BUN_BIN" -e '
 import fs from "node:fs";
 const path = process.env.PKG_PATH!;
 const data = JSON.parse(fs.readFileSync(path, "utf8"));

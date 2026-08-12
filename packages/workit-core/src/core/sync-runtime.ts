@@ -1,13 +1,24 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  accessSync,
+  constants,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { validateCursorSkills } from "./skill-manifests";
 
 // Port of scripts/sync-runtime.sh — explicit runtime sync used by the installers.
 // NOT part of runtime startup: the session-start hook performs no sync (RL-09).
 // The bash installer scripts still invoke sync-runtime.sh directly; this typed
 // operation mirrors the same RR-05 failure semantics (missing flock, held lock,
-// failed fetch, failed dependency install all fail loudly).
+// and failed fetch all fail loudly).
 
 export type SyncRuntimeResult = { ok: true } | { ok: false; error: string };
 
@@ -152,6 +163,54 @@ export async function syncRuntime(options: SyncRuntimeOptions = {}): Promise<Syn
       src = share;
     }
 
+    const cursorSrc = path.join(src, "packages/workit-cursor");
+    const cursorEntries = ["mcp-server.js", "cursor-session-start.js"];
+    const bun = resolveBun(env, home);
+    if (!bun.ok) return bun;
+    const dependencies = ["@brainervirus/workit-core", "@modelcontextprotocol/sdk", "zod"];
+    if (
+      dependencies.some((dependency) => !existsSync(path.join(src, "node_modules", dependency)))
+    ) {
+      if (!existsSync(path.join(src, "bun.lock"))) {
+        return { ok: false, error: `FATAL: dependency install requires ${src}/bun.lock` };
+      }
+      const install = run(bun.path, ["install", "--frozen-lockfile"], { cwd: src, env });
+      if (install.exitCode !== 0) {
+        return {
+          ok: false,
+          error: `FATAL: root dependency install failed in ${src}: ${install.stderr}`,
+        };
+      }
+    }
+    const build = run(bun.path, [path.join(cursorSrc, "scripts/build.ts")], {
+      cwd: src,
+      env: { ...env, PATH: `${path.dirname(bun.path)}${path.delimiter}${env.PATH ?? ""}` },
+    });
+    if (build.exitCode !== 0) {
+      return {
+        ok: false,
+        error: `FATAL: Cursor adapter build failed in ${cursorSrc}: ${build.stderr}`,
+      };
+    }
+    for (const entry of cursorEntries) {
+      const distEntry = path.join(cursorSrc, "dist", entry);
+      try {
+        const stat = statSync(distEntry);
+        if (
+          !stat.isFile() ||
+          stat.size === 0 ||
+          !readFileSync(distEntry, "utf8").startsWith("#!/usr/bin/env node\n")
+        ) {
+          throw new Error("invalid");
+        }
+      } catch {
+        return {
+          ok: false,
+          error: `FATAL: Cursor adapter invalid dist entry: ${distEntry}`,
+        };
+      }
+    }
+
     if (src !== share) {
       mkdirSync(share, { recursive: true });
       // Keep .git if share is a clone; never wipe it when syncing from the monorepo.
@@ -193,28 +252,16 @@ export async function syncRuntime(options: SyncRuntimeOptions = {}): Promise<Syn
     if (cursorCopy.exitCode !== 0) {
       return { ok: false, error: `FATAL: rsync cursor plugin failed: ${cursorCopy.stderr}` };
     }
-
-    // Vendored skills for Cursor (same folder layout as OpenCode registration).
-    const skillsSrc = path.join(share, "packages/workit-core/vendor/superpowers/skills");
-    if (existsSync(skillsSrc)) {
-      mkdirSync(path.join(pluginDir, "vendor/superpowers"), { recursive: true });
-      const r = run(
-        "rsync",
-        ["-a", "--delete", skillsSrc, path.join(pluginDir, "vendor/superpowers/")],
-        { env },
-      );
-      if (r.exitCode !== 0) {
-        return { ok: false, error: `FATAL: skills rsync failed: ${r.stderr}` };
-      }
-    }
+    const vendorError = validateCursorSkills(pluginDir);
+    if (vendorError) return { ok: false, error: `FATAL: ${vendorError}` };
 
     // Canonical user rules -> Cursor .mdc (compiled by the shared core).
     const configRules = path.join(env.WORKFLOW_TOOLKIT_CONFIG ?? "", "rules");
     if (env.WORKFLOW_TOOLKIT_CONFIG && existsSync(configRules)) {
-      const bun = resolveBun(env);
-      if (bun) {
+      const rulesBun = resolveBun(env, home);
+      if (rulesBun.ok) {
         run(
-          bun,
+          rulesBun.path,
           [
             "-e",
             `import('${share}/packages/workit-core/src/core/rules.ts').then(({ writeCompiledCursorRules }) => writeCompiledCursorRules('${pluginDir}/rules'));`,
@@ -227,30 +274,6 @@ export async function syncRuntime(options: SyncRuntimeOptions = {}): Promise<Syn
       path.join(pluginDir, ".workflow-toolkit-root"),
       `${share}/packages/workit-core\n`,
     );
-
-    if (!existsSync(path.join(pluginDir, "mcp/node_modules"))) {
-      const r = run("npm", ["install", "--silent"], { cwd: path.join(pluginDir, "mcp"), env });
-      if (r.exitCode !== 0) {
-        return {
-          ok: false,
-          error: `FATAL: MCP dependency install failed in ${pluginDir}/mcp: ${r.stderr}`,
-        };
-      }
-    }
-
-    // Share MCP also needs deps when launched via run-cursor-mcp fallback.
-    if (!existsSync(path.join(share, "packages/workit-cursor/mcp/node_modules"))) {
-      const r = run("npm", ["install", "--silent"], {
-        cwd: path.join(share, "packages/workit-cursor/mcp"),
-        env,
-      });
-      if (r.exitCode !== 0) {
-        return {
-          ok: false,
-          error: `FATAL: MCP dependency install failed in ${share}/packages/workit-cursor/mcp: ${r.stderr}`,
-        };
-      }
-    }
 
     // Remove broken TLA live-loader if present (OpenCode ignored it; /wk-* vanished).
     rmSync(path.join(opencodePlugins, "workflow-toolkit.ts"), { force: true });
@@ -290,15 +313,36 @@ export async function syncRuntime(options: SyncRuntimeOptions = {}): Promise<Syn
   }
 }
 
-const resolveBun = (env: NodeJS.ProcessEnv): string | null => {
-  if (env.BUN) return env.BUN;
-  const candidates = [
-    path.join(os.homedir(), ".bun/bin/bun"),
-    "/usr/local/bin/bun",
-    "/usr/bin/bun",
-  ];
-  for (const c of candidates) {
-    if (existsSync(c)) return c;
+const resolveBun = (
+  env: NodeJS.ProcessEnv,
+  home: string,
+): { ok: true; path: string } | { ok: false; error: string } => {
+  if (env.BUN) {
+    return executable(env.BUN)
+      ? { ok: true, path: env.BUN }
+      : { ok: false, error: `FATAL: BUN is set but unusable: ${env.BUN}` };
+  }
+  const homeBun = path.join(home, ".bun/bin/bun");
+  if (executable(homeBun)) return { ok: true, path: homeBun };
+  const pathBun = executableOnPath("bun", env);
+  return pathBun
+    ? { ok: true, path: pathBun }
+    : { ok: false, error: "FATAL: Bun is required to build the Cursor adapter" };
+};
+
+const executable = (file: string): boolean => {
+  try {
+    accessSync(file, constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const executableOnPath = (name: string, env: NodeJS.ProcessEnv): string | null => {
+  for (const dir of (env.PATH ?? "").split(path.delimiter)) {
+    const candidate = path.join(dir, name);
+    if (executable(candidate)) return candidate;
   }
   return null;
 };

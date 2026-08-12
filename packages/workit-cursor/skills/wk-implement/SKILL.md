@@ -12,7 +12,7 @@ Execute the plan **inline in this coordinator session**. subagent-driven executi
 
 Call MCP tool `workflow_plan_tasks` with `plan_path` from the user's message and `spec_path` when known.
 
-**Workspace root:** defaults to the Cursor workspace. Pass `workspace_root` when plan/spec paths are relative to a different repository.
+**Repository calls:** For every repository-scoped `workflow_*` call, pass the active Cursor workspace as `workspace_root`; never rely on the MCP process default.
 
 Use the returned `tasks[]` as ground truth. Cache each `section_text` for subagent prompts. Do not read the plan file for task text.
 

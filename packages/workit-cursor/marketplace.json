@@ -1,6 +1,6 @@
 {
   "name": "workit",
-  "displayName": "Workflow Toolkit",
+  "displayName": "Workit",
   "description": "Workflow rails for agentic coding: specs, plans, YouTrack, CI-gated commits",
   "publisher": "cristhofer-pincetti",
   "version": "0.4.0",

@@ -13,6 +13,7 @@ import { EVENT } from "./boundary";
 import { getDiagnosticLogger, isConfigObject } from "./config";
 import { isWorkitPlugin } from "./registration";
 import { resolveWorkspaceFrom } from "./workspaces";
+import { validateCursorSkills } from "./skill-manifests";
 
 // Mirrors init.ts TOKEN_PLACEHOLDER; kept local so the doctor never needs to
 // import the YouTrack/VCS stack just to label a credential state.
@@ -332,20 +333,30 @@ const hostsFor = (host: DoctorHost): DoctorHost[] =>
 
 const checkAssets = (res: Resolved): DoctorCheck => {
   const dev = res.dev;
-  if (!dev) {
+  const missing = dev
+    ? hostsFor(res.host).flatMap((h) =>
+        assetPathsFor(h, dev)
+          .filter((p) => !existsSync(p))
+          .map((p) => `${h}: ${p}`),
+      )
+    : [];
+  if (res.host === "cursor" || res.host === "cli") {
+    const cursorError = validateCursorSkills(res.cursorPluginDir);
+    if (cursorError) missing.push(`cursor: ${cursorError}`);
+  }
+  if (missing.length === 0) {
+    if (!dev && res.host === "opencode") {
+      return {
+        id: "assets",
+        status: "warn",
+        detail: "no dev checkout found (WORKFLOW_TOOLKIT_DEV) — skipping asset check",
+      };
+    }
     return {
       id: "assets",
-      status: "warn",
-      detail: "no dev checkout found (WORKFLOW_TOOLKIT_DEV) — skipping asset check",
+      status: "pass",
+      detail: dev ? `${res.host} assets present` : "installed Cursor skills valid",
     };
-  }
-  const missing = hostsFor(res.host).flatMap((h) =>
-    assetPathsFor(h, dev)
-      .filter((p) => !existsSync(p))
-      .map((p) => `${h}: ${p}`),
-  );
-  if (missing.length === 0) {
-    return { id: "assets", status: "pass", detail: `${res.host} assets present` };
   }
   return {
     id: "assets",
@@ -373,29 +384,88 @@ const launcherSlotsFor = (host: DoctorHost, dev: string): string[][] => {
   }
 };
 
+const validNodeEntry = (entry: string, runtime: string, env: NodeJS.ProcessEnv): boolean => {
+  try {
+    const stat = statSync(entry);
+    if (
+      !stat.isFile() ||
+      stat.size === 0 ||
+      !readFileSync(entry, "utf8").startsWith("#!/usr/bin/env node\n")
+    ) {
+      return false;
+    }
+    return spawnSync(runtime, ["--check", entry], { encoding: "utf8", env }).status === 0;
+  } catch {
+    return false;
+  }
+};
+
+const registeredCursorLauncher = (
+  res: Resolved,
+): { runtime: string; entry: string } | null | "invalid" => {
+  if (!existsSync(res.cursorMcp)) return "invalid";
+  const config = readJson(res.cursorMcp);
+  if (!config) return null; // malformed_config owns malformed JSON/object reporting
+  const server = config.mcpServers?.workit;
+  if (!server || typeof server !== "object" || Array.isArray(server)) return "invalid";
+  const command = server.command;
+  const args = server.args;
+  if (typeof command !== "string" || !Array.isArray(args) || typeof args[0] !== "string") {
+    return "invalid";
+  }
+  const executable = path.basename(command).toLowerCase();
+  if (executable !== "node" && executable !== "node.exe") return "invalid";
+  return {
+    runtime: command,
+    entry: path.isAbsolute(args[0]) ? args[0] : path.resolve(path.dirname(res.cursorMcp), args[0]),
+  };
+};
+
 const checkLauncher = (res: Resolved): DoctorCheck => {
   const dev = res.dev;
-  if (!dev) {
+  const hosts = hostsFor(res.host);
+  const registered = hosts.includes("cursor") ? registeredCursorLauncher(res) : null;
+  const runtime = registered && registered !== "invalid" ? registered.runtime : "node";
+  const missing = hosts.includes("cursor")
+    ? ["dist/mcp-server.js", "dist/cursor-session-start.js"]
+        .map((rel) => path.join(res.cursorPluginDir, rel))
+        .filter((p) => !validNodeEntry(p, runtime, res.env))
+        .map((p) => `cursor: ${p}`)
+    : [];
+  if (hosts.includes("cursor")) {
+    if (registered === "invalid") {
+      missing.push(`cursor: canonical workit MCP launcher in ${res.cursorMcp}`);
+    } else if (registered && !validNodeEntry(registered.entry, registered.runtime, res.env)) {
+      missing.push(`cursor: registered ${registered.entry}`);
+    }
+  }
+  if (dev) {
+    missing.push(
+      ...hosts
+        .filter((h) => h !== "cursor")
+        .flatMap((h) =>
+          launcherSlotsFor(h, dev)
+            .filter((slot) => !slot.some((p) => existsSync(p)))
+            .map((slot) => `${h}: ${slot.join(" or ")}`),
+        ),
+    );
+  }
+  if (missing.length > 0) {
+    return {
+      id: "launcher",
+      status: "fail",
+      detail: `missing or invalid launcher entry: ${missing.join("; ")}`,
+      fix: `Rebuild and reinstall the workit package (bun run build) — dist entries must be non-empty Node launchers`,
+    };
+  }
+  if (!dev && res.host !== "cursor") {
     return {
       id: "launcher",
       status: "warn",
-      detail: "no dev checkout found (WORKFLOW_TOOLKIT_DEV) — skipping launcher check",
+      detail: "no dev checkout found (WORKFLOW_TOOLKIT_DEV) — skipping non-Cursor launcher checks",
     };
   }
-  const missing = hostsFor(res.host).flatMap((h) =>
-    launcherSlotsFor(h, dev)
-      .filter((slot) => !slot.some((p) => existsSync(p)))
-      .map((s) => `${h}: ${s.join(" or ")}`),
-  );
-  if (missing.length === 0) {
-    return { id: "launcher", status: "pass", detail: `${res.host} launcher/hook entries present` };
-  }
-  return {
-    id: "launcher",
-    status: "fail",
-    detail: `missing launcher entry: ${missing.join("; ")}`,
-    fix: `Rebuild the workit package (bun run build) — missing dist/ entry`,
-  };
+  return { id: "launcher", status: "pass", detail: `${res.host} launcher/hook entries present` };
 };
 
 const checkUtility = (res: Resolved): DoctorCheck => {

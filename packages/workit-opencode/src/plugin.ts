@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Plugin } from "@opencode-ai/plugin";
@@ -54,6 +54,7 @@ import {
   describeConfigSource,
   setDiagnosticLogger,
 } from "@brainervirus/workit-core/src/core/config";
+import { loadCommandTemplates, loadProvenance, reportUncaught } from "./runtime";
 
 // Secret-safe diagnostic logger (DG-01-DG-03, DG-05, DG-10). Sink injection
 // only: events mirror to OpenCode's server log and stderr, never the agent
@@ -73,7 +74,7 @@ type AppLogClient = {
 
 let openCodeClient: AppLogClient | undefined;
 
-export const logger = createLogger({
+const logger = createLogger({
   appLog: (event) => {
     const result = openCodeClient?.app?.log?.({
       body: {
@@ -93,47 +94,13 @@ export const logger = createLogger({
 // (PT-06/PT-07). src/ and dist/ are both one level below the package root.
 const root = fileURLToPath(new URL("../assets/", import.meta.url));
 
-// Package provenance: name + version only; a missing/unreadable package.json is
-// a bounded warn event, never a crash (DG-04).
-export const loadProvenance = (pkgUrl: string | URL): Record<string, string> => {
-  try {
-    const pkg = JSON.parse(readFileSync(pkgUrl, "utf8")) as { name?: string; version?: string };
-    return {
-      name: String(pkg.name ?? "workit-opencode"),
-      version: String(pkg.version ?? "unknown"),
-    };
-  } catch (err) {
-    logger.warn(EVENT.provenance, errorDetail(err));
-    return { name: "workit-opencode", version: "unknown" };
-  }
-};
-
-// Asset loading is fail-open: one missing command template is a sanitized warn
-// event, and the rest of the plugin still loads (DG-04, DG-05).
-export const loadCommandTemplates = (rootDir: string, names: string[]): Record<string, string> => {
-  const out: Record<string, string> = {};
-  for (const name of names) {
-    try {
-      out[name] = readFileSync(path.join(rootDir, "commands", `${name}.md`), "utf8").trim();
-    } catch (err) {
-      logger.warn(EVENT.assets, { component: "command", name, ...errorDetail(err) });
-    }
-  }
-  return out;
-};
-
-// Uncaught failures are reported as bounded sanitized events; the host owns the
-// process, so this only logs (DG-04). The handler is installed once inside the
-// plugin factory, where the host boundary actually exists.
-export const reportUncaught = (phase: string, reason: unknown): void => {
-  logger.error(EVENT.uncaughtFailure, { phase, ...errorDetail(reason) });
-};
-
 let uncaughtHandlersInstalled = false;
 const installUncaughtHandlers = (): void => {
   if (uncaughtHandlersInstalled) return;
   uncaughtHandlersInstalled = true;
-  process.on("unhandledRejection", (reason) => reportUncaught("unhandledRejection", reason));
+  process.on("unhandledRejection", (reason) =>
+    reportUncaught(logger, "unhandledRejection", reason),
+  );
 };
 const descriptions: Record<string, string> = {
   "wk-init": "Initialize workit configuration",
@@ -180,7 +147,7 @@ const withWorktreeDenials = (configuredPermission: unknown): MutablePermission =
  * one-element first answer yields a receipt. Multi-select or unanswered
  * questions produce no receipt and the approval tool then fails closed.
  */
-export const questionAnswerLabel = (result: { metadata?: unknown }): string | undefined => {
+const questionAnswerLabel = (result: { metadata?: unknown }): string | undefined => {
   const answers = (result.metadata as { answers?: unknown } | undefined)?.answers;
   if (!Array.isArray(answers)) return undefined;
   const first = answers[0];
@@ -200,7 +167,10 @@ const plugin: Plugin = async ({ client, directory }) => {
   openCodeClient = client as unknown as AppLogClient;
   installUncaughtHandlers();
   logger.info(EVENT.initialization, { host: "opencode", plugin_root: root });
-  logger.info(EVENT.provenance, loadProvenance(new URL("../package.json", import.meta.url)));
+  logger.info(
+    EVENT.provenance,
+    loadProvenance(logger, new URL("../package.json", import.meta.url)),
+  );
   logger.info(EVENT.configurationSource, describeConfigSource());
   setDiagnosticLogger(logger);
   const state = new WorkflowStateStore();
@@ -254,7 +224,7 @@ const plugin: Plugin = async ({ client, directory }) => {
         skills?: { paths?: string[] };
       };
       config.command ??= {};
-      const templates = loadCommandTemplates(root, Object.keys(descriptions));
+      const templates = loadCommandTemplates(logger, root, Object.keys(descriptions));
       for (const [name, description] of Object.entries(descriptions)) {
         const template = templates[name];
         if (template === undefined) continue;

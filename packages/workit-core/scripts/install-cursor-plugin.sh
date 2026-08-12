@@ -43,7 +43,8 @@ fi
 
 chmod +x "$ROOT/packages/workit-core/scripts/sync-runtime.sh" "$ROOT/packages/workit-core/scripts/"*.sh
 # Prefer syncing from this ROOT (dev or freshly cloned share)
-WORKFLOW_TOOLKIT_DEV="$ROOT" "$ROOT/packages/workit-core/scripts/sync-runtime.sh"
+export WORKFLOW_TOOLKIT_DEV="$ROOT"
+"$ROOT/packages/workit-core/scripts/sync-runtime.sh"
 
 # Drop stale CLI skill symlinks (duplicate /wf-* and /wk-* entries)
 if [ -d "$SKILLS_DIR" ]; then

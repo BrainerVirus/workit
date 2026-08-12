@@ -12,7 +12,6 @@ import {
 import os from "node:os";
 import path from "node:path";
 import {
-  copyHoistedDeps,
   extractTarball,
   installPackedPackage,
   isolatedEnv,
@@ -225,11 +224,6 @@ test("Cursor MCP launcher starts the server from the extracted package, repo-fre
     mkdirSync(nm, { recursive: true });
     installPackedPackage(nm, core);
     const cursorDir = installPackedPackage(nm, cursor);
-    // @opencode-ai/plugin is an undeclared runtime dep of the cursor package via
-    // core's src/tools/* (RR-08, deferred to Phase 1); the gate supplies it
-    // offline as the registry stand-in and records the finding.
-    copyHoistedDeps(nm, ["@modelcontextprotocol/sdk", "@opencode-ai/plugin"]);
-
     // Static: the packed launcher/manifest stay package-relative (RR-03).
     const launcher = readFileSync(path.join(cursorDir, "mcp/run-server.sh"), "utf8");
     expect(launcher).not.toContain(".local/share");
@@ -348,15 +342,33 @@ test("packed installers fail loudly on a required failure in a temp HOME (RR-05)
     );
     mkdirSync(path.join(stub, "packages", "workit-cursor", ".cursor-plugin"), { recursive: true });
     mkdirSync(path.join(stub, "packages", "workit-cursor", "mcp"), { recursive: true });
-    spawnSync("git", ["init", "-q"], { cwd: stub, stdio: "ignore" });
-    // A failing dependency install must never look like a successful install.
+    mkdirSync(path.join(stub, "packages", "workit-cursor", "scripts"), { recursive: true });
+    mkdirSync(path.join(stub, "packages", "workit-cursor", "dist"), { recursive: true });
+    for (const dependency of ["@brainervirus/workit-core", "@modelcontextprotocol/sdk", "zod"]) {
+      mkdirSync(path.join(stub, "node_modules", dependency), { recursive: true });
+    }
     writeFileSync(
-      path.join(binDir, "npm"),
-      "#!/usr/bin/env bash\necho 'npm unavailable' >&2\nexit 1\n",
+      path.join(stub, "packages", "workit-cursor", "scripts", "build.ts"),
+      "// build\n",
+    );
+    for (const entry of ["mcp-server.js", "cursor-session-start.js"]) {
+      writeFileSync(
+        path.join(stub, "packages", "workit-cursor", "dist", entry),
+        "#!/usr/bin/env node\n",
+      );
+    }
+    spawnSync("git", ["init", "-q"], { cwd: stub, stdio: "ignore" });
+    // A failed required copy must never look like a successful install.
+    writeFileSync(
+      path.join(binDir, "rsync"),
+      "#!/usr/bin/env bash\necho 'FATAL: rsync unavailable' >&2\nexit 1\n",
       { mode: 0o755 },
     );
+    const bun = path.join(binDir, "bun");
+    writeFileSync(bun, "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
 
     const env = isolatedEnv(home, {
+      BUN: bun,
       PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
     });
     const res = runInIsolation(
@@ -367,7 +379,7 @@ test("packed installers fail loudly on a required failure in a temp HOME (RR-05)
     );
     expect(res.status, res.stdout + res.stderr).not.toBe(0);
     expect(res.stdout + res.stderr).toContain("FATAL");
-    expect(res.stdout + res.stderr).toContain("npm");
+    expect(res.stdout + res.stderr).toContain("rsync");
   } finally {
     rmSync(stub, { recursive: true, force: true });
     rmSync(home, { recursive: true, force: true });

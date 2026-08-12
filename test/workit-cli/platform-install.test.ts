@@ -141,6 +141,105 @@ test("selected OpenCode + Cursor configure idempotently; second apply changes no
   }
 });
 
+test("reapplying the same Cursor source removes stale package files and preserves compiled rules", () => {
+  const home = tempDir("workit-install-refresh-home-");
+  const dir = tempDir("workit-install-refresh-cfg-");
+  const dev = tempDir("workit-install-refresh-dev-");
+  const source = path.join(dev, "packages", "workit-cursor");
+  const pluginDir = path.join(home, ".cursor", "plugins", "local", "workflow-toolkit");
+  const staleVendor = path.join("vendor", "legacy", "start-server.sh");
+  const compiledRule = path.join("rules", "user-managed.mdc");
+  try {
+    mkdirSync(path.dirname(source), { recursive: true });
+    cpSync(path.join(repoRoot, "packages", "workit-cursor"), source, {
+      recursive: true,
+      filter: (src) => !src.split(path.sep).includes("node_modules"),
+    });
+    mkdirSync(path.dirname(path.join(source, staleVendor)), { recursive: true });
+    writeFileSync(path.join(source, staleVendor), "#!/usr/bin/env bash\n", { mode: 0o755 });
+    const applyCursor = () => {
+      const preview = buildSetupPreview(values({ platforms: ["cursor"] }), {
+        dir,
+        cwd: dir,
+        env: {},
+        home,
+      });
+      return applySetupPreview(preview, opts(home, dir, { dev }));
+    };
+
+    const first = applyCursor();
+    expect(first.ok, JSON.stringify(first.entries)).toBe(true);
+    writeFileSync(path.join(pluginDir, compiledRule), "---\nalwaysApply: true\n---\n# User rule\n");
+    rmSync(path.join(source, staleVendor));
+
+    const refreshed = applyCursor();
+    expect(statusOf(refreshed, pluginDir)).toBe("Configured");
+    expect(existsSync(path.join(pluginDir, staleVendor))).toBe(false);
+    expect(readFileSync(path.join(pluginDir, compiledRule), "utf8")).toContain("# User rule");
+
+    expect(statusOf(applyCursor(), pluginDir)).toBe("Skipped");
+  } finally {
+    clean(home);
+    clean(dir);
+    clean(dev);
+  }
+});
+
+test("Cursor refresh staging failure keeps the prior live install and returns Failed", () => {
+  if (
+    process.platform === "win32" ||
+    (typeof process.getuid === "function" && process.getuid() === 0)
+  ) {
+    return;
+  }
+  const home = tempDir("workit-install-atomic-home-");
+  const dir = tempDir("workit-install-atomic-cfg-");
+  const dev = tempDir("workit-install-atomic-dev-");
+  const source = path.join(dev, "packages", "workit-cursor");
+  const pluginDir = path.join(home, ".cursor", "plugins", "local", "workflow-toolkit");
+  const skill = path.join("skills", "wk-init", "SKILL.md");
+  const sourceSkill = path.join(source, skill);
+  try {
+    mkdirSync(path.dirname(source), { recursive: true });
+    cpSync(path.join(repoRoot, "packages", "workit-cursor"), source, {
+      recursive: true,
+      filter: (src) => !src.split(path.sep).includes("node_modules"),
+    });
+    const applyCursor = () => {
+      const preview = buildSetupPreview(values({ platforms: ["cursor"] }), {
+        dir,
+        cwd: dir,
+        env: {},
+        home,
+      });
+      return applySetupPreview(preview, opts(home, dir, { dev }));
+    };
+    const first = applyCursor();
+    expect(first.ok, JSON.stringify(first.entries)).toBe(true);
+    const installedBefore = readFileSync(path.join(pluginDir, skill), "utf8");
+    writeFileSync(sourceSkill, "# changed but unreadable\n");
+    chmodSync(sourceSkill, 0o000);
+
+    const failed = applyCursor();
+    expect(failed.ok).toBe(false);
+    expect(statusOf(failed, pluginDir)).toBe("Failed");
+    expect(readFileSync(path.join(pluginDir, skill), "utf8")).toBe(installedBefore);
+    const parent = path.dirname(pluginDir);
+    expect(readdirSync(parent).filter((name) => name.includes(".workflow-toolkit.swap-"))).toEqual(
+      [],
+    );
+  } finally {
+    try {
+      chmodSync(sourceSkill, 0o644);
+    } catch {
+      /* source may not exist */
+    }
+    clean(home);
+    clean(dir);
+    clean(dev);
+  }
+});
+
 test("unrelated config is preserved byte-for-byte; credentials never clobbered (CA-13/WZ-05)", () => {
   const home = tempDir("workit-install-home-");
   const dir = tempDir("workit-install-cfg-");

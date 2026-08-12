@@ -1,6 +1,6 @@
 import { afterAll, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import {
   runDoctor,
@@ -220,11 +220,10 @@ test("detects missing assets and clears once restored", () => {
 });
 
 test("detects a missing cursor launcher and clears once restored", () => {
-  const launcher = path.join(fixture.dev, "packages/workit-cursor/dist/mcp-server.js");
-  const hook = path.join(fixture.dev, "packages/workit-cursor/dist/cursor-session-start.js");
-  const shim = path.join(fixture.dev, "packages/workit-cursor/mcp/run-server.sh");
-  const hookShim = path.join(fixture.dev, "packages/workit-cursor/hooks/session-start");
-  const removed = [launcher, hook, shim, hookShim];
+  const removed = [
+    path.join(fixture.pluginDir, "dist/mcp-server.js"),
+    path.join(fixture.pluginDir, "dist/cursor-session-start.js"),
+  ];
   for (const p of removed) rmSync(p, { force: true });
   try {
     const report = run();
@@ -232,9 +231,147 @@ test("detects a missing cursor launcher and clears once restored", () => {
     expect(check(report, "launcher").status).toBe("fail");
     expect(check(report, "launcher").fix).toBeTruthy();
   } finally {
-    for (const p of removed) writeConfig(p, p.endsWith(".js") ? "// bundle\n" : "#!/bin/sh\n");
+    for (const p of removed) writeConfig(p, "#!/usr/bin/env node\n// bundle\n");
   }
   expect(check(run(), "launcher").status).toBe("pass");
+});
+
+test("cursor launcher checks use the installed registered runtime", () => {
+  const launcher = path.join(fixture.pluginDir, "dist", "mcp-server.js");
+  rmSync(launcher, { force: true });
+  try {
+    for (const host of ["cursor", "cli"] as const) {
+      const report = runDoctor({
+        host,
+        home: fixture.home,
+        configDir: fixture.configDir,
+        stateDir: fixture.stateDir,
+        dev: fixture.dev,
+        cwd: fixture.cwd,
+        cursorPluginDir: fixture.pluginDir,
+      });
+      expect(check(report, "launcher").status, host).toBe("fail");
+      expect(check(report, "launcher").detail, host).toContain(launcher);
+    }
+  } finally {
+    writeConfig(launcher, "#!/usr/bin/env node\n// installed bundle\n");
+  }
+});
+
+test("cursor launcher rejects empty or non-Node installed dist entries", () => {
+  const entries = ["mcp-server.js", "cursor-session-start.js"];
+  for (const entry of entries) {
+    const installed = path.join(fixture.pluginDir, "dist", entry);
+    for (const invalid of ["", "console.log('not a Node launcher');\n"]) {
+      writeConfig(installed, invalid);
+      try {
+        for (const host of ["cursor", "cli"] as const) {
+          const report = runDoctor({
+            host,
+            home: fixture.home,
+            configDir: fixture.configDir,
+            stateDir: fixture.stateDir,
+            dev: fixture.dev,
+            cwd: fixture.cwd,
+            cursorPluginDir: fixture.pluginDir,
+          });
+          const launcher = check(report, "launcher");
+          expect(launcher.status, `${host}/${entry}/${JSON.stringify(invalid)}`).toBe("fail");
+          expect(launcher.detail).toContain(installed);
+          expect(launcher.fix).toContain("Rebuild");
+        }
+      } finally {
+        writeConfig(installed, "#!/usr/bin/env node\n// bundle\n");
+      }
+    }
+  }
+});
+
+test("cursor launcher rejects shebang-valid JavaScript syntax errors without executing them", () => {
+  const marker = path.join(fixture.root, "must-not-execute");
+  const installed = path.join(fixture.pluginDir, "dist", "mcp-server.js");
+  writeConfig(
+    installed,
+    `#!/usr/bin/env node\nwriteFileSync(${JSON.stringify(marker)}, "executed");\nconst broken = ;\n`,
+  );
+  try {
+    for (const host of ["cursor", "cli"] as const) {
+      const report = runDoctor({
+        host,
+        home: fixture.home,
+        configDir: fixture.configDir,
+        stateDir: fixture.stateDir,
+        dev: fixture.dev,
+        cwd: fixture.cwd,
+        cursorPluginDir: fixture.pluginDir,
+      });
+      expect(check(report, "launcher").status, host).toBe("fail");
+      expect(check(report, "launcher").detail, host).toContain(installed);
+    }
+    expect(existsSync(marker)).toBe(false);
+  } finally {
+    writeConfig(installed, "#!/usr/bin/env node\n// bundle\n");
+  }
+});
+
+test("cursor launcher syntax validation never executes valid plugin code", () => {
+  const marker = path.join(fixture.root, "valid-code-must-not-execute");
+  const installed = path.join(fixture.pluginDir, "dist", "mcp-server.js");
+  writeConfig(
+    installed,
+    `#!/usr/bin/env node\nimport { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(marker)}, "executed");\n`,
+  );
+  try {
+    const report = runDoctor({
+      host: "cursor",
+      home: fixture.home,
+      configDir: fixture.configDir,
+      stateDir: fixture.stateDir,
+      dev: fixture.dev,
+      cwd: fixture.cwd,
+      cursorPluginDir: fixture.pluginDir,
+    });
+    expect(check(report, "launcher").status).toBe("pass");
+    expect(existsSync(marker)).toBe(false);
+  } finally {
+    writeConfig(installed, "#!/usr/bin/env node\n// bundle\n");
+  }
+});
+
+test("cursor launcher validates the canonical registered MCP target", () => {
+  const registered = path.join(fixture.root, "registered", "workit-server.js");
+  writeConfig(registered, "#!/usr/bin/env node\nconst broken = ;\n");
+  writeConfig(
+    fixture.cursorMcp,
+    JSON.stringify({ mcpServers: { workit: { command: "node", args: [registered] } } }),
+  );
+  try {
+    for (const host of ["cursor", "cli"] as const) {
+      const report = runDoctor({
+        host,
+        home: fixture.home,
+        configDir: fixture.configDir,
+        stateDir: fixture.stateDir,
+        dev: fixture.dev,
+        cwd: fixture.cwd,
+        cursorPluginDir: fixture.pluginDir,
+      });
+      expect(check(report, "launcher").status, host).toBe("fail");
+      expect(check(report, "launcher").detail, host).toContain(registered);
+    }
+  } finally {
+    writeConfig(
+      fixture.cursorMcp,
+      JSON.stringify({
+        mcpServers: {
+          workit: {
+            command: "node",
+            args: [path.join(fixture.pluginDir, "dist", "mcp-server.js")],
+          },
+        },
+      }),
+    );
+  }
 });
 
 test("detects an unavailable runtime (no node/bun on PATH) and clears with a full PATH", () => {
@@ -293,7 +430,7 @@ test("detects duplicate cursor registration in settings and mcp and clears once 
     fixture.cursorMcp,
     JSON.stringify({
       mcpServers: {
-        workit: { command: "node", args: ["dist/mcp-server.js"] },
+        workit: { command: "node", args: [path.join(fixture.pluginDir, "dist/mcp-server.js")] },
         "workflow-toolkit": { command: "node", args: ["legacy.js"] },
       },
     }),
@@ -312,7 +449,11 @@ test("detects duplicate cursor registration in settings and mcp and clears once 
   );
   writeConfig(
     fixture.cursorMcp,
-    JSON.stringify({ mcpServers: { workit: { command: "node", args: ["dist/mcp-server.js"] } } }),
+    JSON.stringify({
+      mcpServers: {
+        workit: { command: "node", args: [path.join(fixture.pluginDir, "dist/mcp-server.js")] },
+      },
+    }),
   );
   expect(check(run(), "duplicate_registration").status).toBe("pass");
 });
@@ -497,16 +638,14 @@ test("installer fails when a selected-host asset is missing", () => {
 
 test("installer fails when a selected-host launcher entry is missing", () => {
   const removed = [
-    path.join(fixture.dev, "packages/workit-cursor/dist/mcp-server.js"),
-    path.join(fixture.dev, "packages/workit-cursor/dist/cursor-session-start.js"),
-    path.join(fixture.dev, "packages/workit-cursor/mcp/run-server.sh"),
-    path.join(fixture.dev, "packages/workit-cursor/hooks/session-start"),
+    path.join(fixture.pluginDir, "dist/mcp-server.js"),
+    path.join(fixture.pluginDir, "dist/cursor-session-start.js"),
   ];
   for (const p of removed) rmSync(p, { force: true });
   try {
-    expectInstallerFailure("launcher", "Rebuild the workit package");
+    expectInstallerFailure("launcher", "Rebuild and reinstall");
   } finally {
-    for (const p of removed) writeConfig(p, p.endsWith(".js") ? "// bundle\n" : "#!/bin/sh\n");
+    for (const p of removed) writeConfig(p, "#!/usr/bin/env node\n// bundle\n");
   }
   expect(check(runInstaller(), "launcher").status).toBe("pass");
 });

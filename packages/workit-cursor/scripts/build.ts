@@ -4,14 +4,39 @@
 // (where workspace deps resolve); target dir defaults to the package dir and
 // can be overridden for the pack sandbox.
 import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, rmSync } from "node:fs";
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  rmSync,
+} from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  CANONICAL_SKILLS,
+  validateSkillManifests,
+} from "../../workit-core/src/core/skill-manifests";
+import { copySanitizedVendor } from "../../workit-core/scripts/vendor-assets";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const pkgDir = path.resolve(scriptDir, "..");
 const coreDir = path.resolve(pkgDir, "..", "workit-core");
 const target = process.argv[2] ? path.resolve(process.argv[2]) : pkgDir;
+const vendorSkills = path.join(coreDir, "vendor/superpowers/skills");
+
+const sourceWorkitError = validateSkillManifests(
+  path.join(pkgDir, "skills"),
+  CANONICAL_SKILLS.workit,
+  "Cursor Workit source skills",
+);
+if (sourceWorkitError) throw new Error(sourceWorkitError);
+
+const sourceVendorError = validateSkillManifests(
+  vendorSkills,
+  CANONICAL_SKILLS.superpowers,
+  "core Superpowers vendor",
+);
+if (sourceVendorError) throw new Error(sourceVendorError);
 
 const dist = path.join(target, "dist");
 rmSync(dist, { recursive: true, force: true });
@@ -23,7 +48,7 @@ const entries = [
 ] as const;
 for (const [entry, out] of entries) {
   const build = spawnSync(
-    "bun",
+    process.execPath,
     [
       "build",
       path.join(pkgDir, entry),
@@ -53,4 +78,17 @@ const templatesSrc = path.join(coreDir, "templates");
 if (existsSync(templatesSrc)) {
   cpSync(templatesSrc, path.join(assets, "templates"), { recursive: true });
 }
-console.log(`cursor: built dist/mcp-server.js + dist/cursor-session-start.js + assets/ (${target})`);
+
+const vendor = path.join(target, "vendor");
+rmSync(vendor, { recursive: true, force: true });
+const builtSkills = path.join(vendor, "superpowers/skills");
+copySanitizedVendor(vendorSkills, builtSkills);
+const builtVendorError = validateSkillManifests(
+  builtSkills,
+  CANONICAL_SKILLS.superpowers,
+  "filtered Cursor vendor",
+);
+if (builtVendorError) throw new Error(builtVendorError);
+console.log(
+  `cursor: built dist/mcp-server.js + dist/cursor-session-start.js + assets/ + vendor/ (${target})`,
+);

@@ -26,6 +26,7 @@
     ".cursor-plugin/",
     "rules/",
     "skills/",
+    "vendor/superpowers/skills/",
     "hooks/session-start",
     "hooks/hooks-cursor.json"
   ],

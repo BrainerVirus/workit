@@ -13,6 +13,7 @@ Load `using-superpowers`, `subagent-driven-development`, `test-driven-developmen
 - Use native `todowrite` for visible task state as well as the gitignored ledger.
 - Use native `question` for branch/stash choices and guarded external mutations; call mutation tools only after approval with `confirmed: true` (grounded in the recorded NativeChoiceEvidence).
 - Flow-tool confirmations are never agent-typed booleans and never caller-supplied evidence objects: on OpenCode the plugin records the user's native-`question` answer as a host-observed one-use receipt (`attested: true`, `callID`, `selectedLabel`, `recordedAt`) consumed by `workflow_spec_approve` / `workflow_plan_approve` / `workflow_plan_menu` — no evidence argument exists, and delegated worker status comes from host session parentage (`parentID`), never a caller `role` field. On Cursor, confirmations are policy-only (`attested: false`) and subagent-driven execution is rejected as unsupported.
+- On Cursor, for every repository-scoped `workflow_*` call, pass the active Cursor workspace as `workspace_root`; never rely on the MCP process default.
 - Use native `task` with only the built-in `explore` and `general` agents.
 
 ## Flow gates (HARD)

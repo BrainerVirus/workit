@@ -3,8 +3,8 @@
   "displayName": "Workit",
   "description": "OpenCode-style verify, PR, changelog, commit, and session handoff for Cursor",
   "version": "0.4.0",
-  "skills": "../skills/",
-  "rules": "../rules/",
-  "mcpServers": "../mcp.json",
-  "hooks": "../hooks/hooks-cursor.json"
+  "skills": ["skills/", "vendor/superpowers/skills/"],
+  "rules": "rules/",
+  "mcpServers": "mcp.json",
+  "hooks": "hooks/hooks-cursor.json"
 }

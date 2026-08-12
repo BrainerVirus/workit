@@ -70,7 +70,11 @@ import {
   youTrackTokenCreateUrl,
   youTrackWorkDateMs,
 } from "../../packages/workit-core/src/core/youtrack";
-import { initApplyData, initStatusData } from "../../packages/workit-core/src/core/init";
+import {
+  initApplyData,
+  initStatusData,
+  toolkitStatusData,
+} from "../../packages/workit-core/src/core/init";
 import { createYouTrackTools } from "../../packages/workit-opencode/src/tools/youtrack";
 
 test("comment success plus ambiguous time failure does not recommend retry", async () => {
@@ -439,6 +443,52 @@ test("init scaffolding and status share the neutral XDG config directory", () =>
       expect(configEditPath).toBe(path.join(realpathSync(directory), "youtrack.json"));
     }
   });
+});
+
+test("toolkit status reads YouTrack health from its Result data envelope", async () => {
+  const xdg = mkdtempSync(path.join(os.tmpdir(), "wf-toolkit-status-"));
+  const workit = path.join(xdg, "workit");
+  mkdirSync(workit, { recursive: true });
+  const youTrackToken = path.join(workit, "youtrack.token");
+  const gitLabToken = path.join(workit, "gitlab.token");
+  writeFileSync(youTrackToken, "youtrack-token\n", { mode: 0o600 });
+  writeFileSync(gitLabToken, "gitlab-token\n", { mode: 0o600 });
+  writeFileSync(
+    path.join(workit, "youtrack.json"),
+    JSON.stringify({ baseUrl: "https://youtrack.example.test", tokenFile: youTrackToken }),
+  );
+  writeFileSync(
+    path.join(workit, "vcs.json"),
+    JSON.stringify({
+      provider: "gitlab",
+      gitlab: { apiUrl: "https://gitlab.example.test/api/v4", tokenFile: gitLabToken },
+    }),
+  );
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    const url = String(input);
+    return url.includes("youtrack.example.test")
+      ? new Response(JSON.stringify({ id: "1", login: "workit" }))
+      : new Response(JSON.stringify({ username: "workit" }));
+  }) as typeof fetch;
+  try {
+    await withNeutralXdg(xdg, async () => {
+      const status = await toolkitStatusData(workit);
+      expect(status.youtrack_verify).toEqual({
+        data: expect.objectContaining({ ok: true, login: "workit" }),
+      });
+      expect(status.vcs_verify).toEqual(
+        expect.objectContaining({ ok: true, provider: "gitlab", username: "workit" }),
+      );
+      expect(status).toEqual(
+        expect.objectContaining({ youtrack_ok: true, vcs_ok: true, ready: true }),
+      );
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    rmSync(xdg, { recursive: true, force: true });
+  }
 });
 
 test("token helper runtime output uses OpenCode-neutral descriptions", () => {

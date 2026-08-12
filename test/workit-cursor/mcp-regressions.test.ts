@@ -13,6 +13,8 @@ import { docsValidate } from "../../packages/workit-core/src/core/docs-validate"
 
 const REPO_ROOT = path.resolve(import.meta.dir, "..", "..");
 const CURSOR_ROOT = path.join(REPO_ROOT, "packages", "workit-cursor");
+const WORKSPACE_ROOT_RULE =
+  "pass the active Cursor workspace as `workspace_root`; never rely on the MCP process default";
 
 function temporaryDirectory() {
   return mkdtempSync(path.join(os.tmpdir(), "workflow-toolkit-"));
@@ -158,6 +160,8 @@ test("handoff includes every parsed task row", () => {
     if (!("error" in result)) {
       expect(result.prompt).toContain("- Task 1: First repair");
       expect(result.prompt).toContain("- Task 2: Second repair");
+      expect(result.prompt).toContain("workflow_docs_validate");
+      expect(result.prompt).toContain(WORKSPACE_ROOT_RULE);
     }
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -213,6 +217,39 @@ test("question choices use Cursor AskQuestion without an MCP adapter", () => {
   expect(pr).toMatch(/MR\/PR/);
   expect(issue).toMatch(/AskQuestion/);
   expect(issue).toMatch(/YouTrack/);
+});
+
+test("repository-scoped Cursor skill calls pass the active workspace_root", () => {
+  const excluded = ["wk-init", "wk-meetings", "wk-status"];
+  const repositoryTools = new Set([
+    "workflow_branch_setup",
+    "workflow_changelog_apply",
+    "workflow_changelog_context",
+    "workflow_docs_context",
+    "workflow_docs_validate",
+    "workflow_git_context",
+    "workflow_handoff_prompt",
+    "workflow_plan_tasks",
+    "workflow_pr_context",
+    "workflow_pr_create",
+    "workflow_release_notes_context",
+    "workflow_resolve_branch",
+    "workflow_sdd_context",
+    "workflow_verify",
+  ]);
+  const skills = readdirSync(path.join(CURSOR_ROOT, "skills")).sort();
+  const unaffected: string[] = [];
+
+  expect(skills).toHaveLength(12);
+  for (const skill of skills) {
+    const source = readFileSync(path.join(CURSOR_ROOT, "skills", skill, "SKILL.md"), "utf8");
+    const calls = [...source.matchAll(/\bworkflow_[a-z_]+\b/g)].map(([call]) => call);
+    expect(calls.length, `${skill} workflow calls`).toBeGreaterThan(0);
+    const repositoryCalls = calls.filter((call) => repositoryTools.has(call));
+    if (repositoryCalls.length === 0) unaffected.push(skill);
+    else expect(source, `${skill}: ${repositoryCalls.join(", ")}`).toContain(WORKSPACE_ROOT_RULE);
+  }
+  expect(unaffected).toEqual(excluded);
 });
 
 test("YouTrack post orchestration accepts injected operations", () => {

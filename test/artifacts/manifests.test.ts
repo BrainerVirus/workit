@@ -1,8 +1,13 @@
 import { expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { SUPPORT_MATRIX } from "../../packages/workit-core/src/core/support-matrix";
-import { packWorkspacePackages, readTarballFile, REPO_ROOT } from "../shared/helpers/packages";
+import {
+  listTarball,
+  packWorkspacePackages,
+  readTarballFile,
+  REPO_ROOT,
+} from "../shared/helpers/packages";
 
 // Task 8 manifest gate (RR-07 / PT-10 / RR-10 / PT-11 / PT-12): the shipped
 // OpenCode + Cursor manifests are package-relative and invoke Node explicitly,
@@ -65,15 +70,60 @@ test("cursor hooks-cursor.json references a package-relative Node entry", () => 
   }
 });
 
-test("cursor .cursor-plugin/plugin.json is package-relative and versioned", () => {
-  const plugin = json<Record<string, unknown>>("packages/workit-cursor/.cursor-plugin/plugin.json");
+test("cursor .cursor-plugin/plugin.json uses valid plugin-root-relative components", () => {
+  const packs = packWorkspacePackages();
   const pkg = json<{ version: string }>("packages/workit-cursor/package.json");
-  expect(plugin.version).toBe(pkg.version);
-  for (const value of Object.values(plugin)) {
-    if (typeof value === "string" && value.includes("/")) {
-      expect(value.startsWith("../"), value).toBe(true);
-      expect(value).not.toMatch(/^\//);
-      expect(value).not.toContain("$HOME");
+  const packed = byName(packs, CURSOR).tarball;
+  let packedPlugin: Record<string, string | string[]>;
+  for (const source of ["committed", "packed"] as const) {
+    const raw =
+      source === "committed"
+        ? read("packages/workit-cursor/.cursor-plugin/plugin.json")
+        : readTarballFile(packed, ".cursor-plugin/plugin.json");
+    const plugin = JSON.parse(raw) as Record<string, string | string[]>;
+    if (source === "packed") packedPlugin = plugin;
+    expect(plugin.version, source).toBe(pkg.version);
+    expect(plugin.skills, source).toEqual(["skills/", "vendor/superpowers/skills/"]);
+    expect(plugin.rules, source).toBe("rules/");
+    expect(plugin.mcpServers, source).toBe("mcp.json");
+    expect(plugin.hooks, source).toBe("hooks/hooks-cursor.json");
+    for (const field of [plugin.skills, plugin.rules, plugin.mcpServers, plugin.hooks]) {
+      for (const value of Array.isArray(field) ? field : [field]) {
+        expect(value, source).not.toContain("..");
+        expect(value, source).not.toMatch(/^\//);
+        expect(value, source).not.toContain("$HOME");
+      }
+    }
+  }
+
+  const entries = new Set(listTarball(packed));
+  for (const field of [
+    packedPlugin!.skills,
+    packedPlugin!.rules,
+    packedPlugin!.mcpServers,
+    packedPlugin!.hooks,
+  ]) {
+    for (const value of Array.isArray(field) ? field : [field]) {
+      expect(
+        value.endsWith("/")
+          ? [...entries].some((entry) => entry.startsWith(value))
+          : entries.has(value),
+        value,
+      ).toBe(true);
+    }
+  }
+
+  const packedSkills = [...entries].filter((entry) => entry.endsWith("/SKILL.md"));
+  expect(packedSkills).toHaveLength(26);
+  for (const [source, target] of [
+    ["packages/workit-cursor/skills", "skills"],
+    ["packages/workit-core/vendor/superpowers/skills", "vendor/superpowers/skills"],
+  ] as const) {
+    const skills = readdirSync(path.join(REPO_ROOT, source)).filter((name) =>
+      existsSync(path.join(REPO_ROOT, source, name, "SKILL.md")),
+    );
+    for (const skill of skills) {
+      expect(entries, `${target}/${skill}/SKILL.md`).toContain(`${target}/${skill}/SKILL.md`);
     }
   }
 });

@@ -1,4 +1,16 @@
-import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
@@ -782,28 +794,90 @@ function applyOpenCode(root: string, res: ResolvedApply): SetupResultEntry {
 // Mirror the sync-runtime plugin mirror: copy the package (minus node_modules),
 // keep launchers executable, and write the same `.workflow-toolkit-root` marker
 // so a re-sync from the same source is a truthful Skipped.
+const samePluginContent = (src: string, dest: string, relative = ""): boolean => {
+  try {
+    for (const entry of readdirSync(src, { withFileTypes: true })) {
+      if (entry.name === "node_modules") continue;
+      const source = path.join(src, entry.name);
+      const installed = path.join(dest, entry.name);
+      if (entry.isDirectory()) {
+        if (
+          !statSync(installed).isDirectory() ||
+          !samePluginContent(source, installed, path.join(relative, entry.name))
+        )
+          return false;
+      } else if (!readFileSync(source).equals(readFileSync(installed))) {
+        return false;
+      }
+    }
+    for (const entry of readdirSync(dest, { withFileTypes: true })) {
+      if (existsSync(path.join(src, entry.name))) continue;
+      const rel = path.join(relative, entry.name);
+      if (rel === ".workflow-toolkit-root") continue;
+      if (relative === "rules" && entry.isFile() && entry.name.endsWith(".mdc")) continue;
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const preservedCursorRules = (src: string, dest: string): Map<string, Buffer> => {
+  const preserved = new Map<string, Buffer>();
+  const sourceRules = path.join(src, "rules");
+  const installedRules = path.join(dest, "rules");
+  try {
+    for (const entry of readdirSync(installedRules, { withFileTypes: true })) {
+      if (!entry.isFile() || !entry.name.endsWith(".mdc")) continue;
+      if (existsSync(path.join(sourceRules, entry.name))) continue;
+      preserved.set(entry.name, readFileSync(path.join(installedRules, entry.name)));
+    }
+  } catch {
+    /* no compiled user rules */
+  }
+  return preserved;
+};
+
 function copyPluginDir(src: string, dest: string): SetupResultStatus {
   const marker = path.join(dest, ".workflow-toolkit-root");
-  const synced = readFileSafe(marker)?.trim() === src;
+  const synced = readFileSafe(marker)?.trim() === src && samePluginContent(src, dest);
   if (synced) return "Skipped";
   const hadDir = existsSync(dest);
-  mkdirSync(dest, { recursive: true });
-  cpSync(src, dest, {
-    recursive: true,
-    // Exclude node_modules anywhere under the source (the package itself may
-    // live under the install's node_modules, so the filter must be relative).
-    filter: (s) => {
-      const rel = path.relative(src, s);
-      return !rel.split(path.sep).includes("node_modules");
-    },
-  });
-  writeFileSync(marker, src + "\n", "utf8");
-  for (const rel of ["hooks/session-start", "mcp/run-server.sh"]) {
-    try {
-      chmodSync(path.join(dest, rel), 0o755);
-    } catch {
-      /* optional launcher */
+  const rules = preservedCursorRules(src, dest);
+  const parent = path.dirname(dest);
+  mkdirSync(parent, { recursive: true });
+  const swap = mkdtempSync(path.join(parent, `.${path.basename(dest)}.swap-`));
+  const stage = path.join(swap, "stage");
+  const backup = path.join(swap, "backup");
+  try {
+    cpSync(src, stage, {
+      recursive: true,
+      filter: (entry) => !path.relative(src, entry).split(path.sep).includes("node_modules"),
+    });
+    for (const [name, content] of rules) {
+      mkdirSync(path.join(stage, "rules"), { recursive: true });
+      writeFileSync(path.join(stage, "rules", name), content);
     }
+    writeFileSync(path.join(stage, ".workflow-toolkit-root"), src + "\n", "utf8");
+    for (const rel of ["hooks/session-start", "mcp/run-server.sh"]) {
+      try {
+        chmodSync(path.join(stage, rel), 0o755);
+      } catch {
+        /* optional launcher */
+      }
+    }
+    if (!samePluginContent(src, stage)) throw new Error("staged adapter content is incomplete");
+    if (hadDir) renameSync(dest, backup);
+    try {
+      renameSync(stage, dest);
+    } catch (error) {
+      if (hadDir && !existsSync(dest)) renameSync(backup, dest);
+      throw error;
+    }
+    rmSync(backup, { recursive: true, force: true });
+  } finally {
+    rmSync(swap, { recursive: true, force: true });
   }
   return hadDir ? "Configured" : "Installed";
 }
@@ -974,7 +1048,16 @@ export function applySetupPreview(
       continue;
     }
     if (mutation.type === "install-adapter") {
-      entries.push({ platform, file: mutation.path, status: copyPluginDir(root, mutation.path) });
+      try {
+        entries.push({ platform, file: mutation.path, status: copyPluginDir(root, mutation.path) });
+      } catch (error) {
+        entries.push({
+          platform,
+          file: mutation.path,
+          status: "Failed",
+          detail: `adapter install failed: ${error instanceof Error ? error.message : String(error)}`,
+        });
+      }
     } else if (platform === "opencode") {
       entries.push(applyOpenCode(root, res));
     } else {

@@ -2,6 +2,7 @@ import { afterAll, afterEach, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createLogger } from "../../packages/workit-core/src/core/logger";
 
 // Set the state/config dirs BEFORE importing the plugin so its logger resolves
 // a scratch state dir (no writes to the real home) and config reads stay local.
@@ -36,7 +37,9 @@ afterAll(() => {
 // the module fresh for this file only (isolated logger + rate budget).
 const pluginSpecifier = "../../packages/workit-opencode/src/plugin.ts?boundary-test";
 const pluginModule = await import(pluginSpecifier);
-const { default: plugin, loadCommandTemplates, loadProvenance, reportUncaught } = pluginModule;
+const { default: plugin } = pluginModule;
+const runtimeSpecifier = "../../packages/workit-opencode/src/runtime.ts";
+const { loadCommandTemplates, loadProvenance, reportUncaught } = await import(runtimeSpecifier);
 
 type Captured = { level: string; message: string; context: Record<string, unknown> };
 
@@ -63,6 +66,13 @@ const makeClient = (): { client: unknown; events: Captured[] } => {
   };
   return { client, events };
 };
+
+const makeLogger = (events: Captured[]) =>
+  createLogger({
+    stateDir: scratchDir("wf-boundary-log-"),
+    appLog: (event) => events.push(event),
+    stderr: () => {},
+  });
 
 const clientArgs = {
   directory: "/repo",
@@ -127,11 +137,9 @@ test("configuration_source event reports a malformed config file", async () => {
 });
 
 test("provenance boundary failure is sanitized and mirrored", async () => {
-  const { client, events } = makeClient();
-  await plugin({ client, ...clientArgs } as never);
-  events.length = 0;
+  const events: Captured[] = [];
   const missing = path.join(scratchDir("wf-prov-token=sk-live-6-"), "package.json");
-  loadProvenance(missing);
+  loadProvenance(makeLogger(events), missing);
   const prov = events.find((e) => e.message === "provenance")!;
   expect(prov).toBeDefined();
   expect(prov.level).toBe("warn");
@@ -141,11 +149,9 @@ test("provenance boundary failure is sanitized and mirrored", async () => {
 });
 
 test("assets boundary failure is bounded, sanitized, and mirrored", async () => {
-  const { client, events } = makeClient();
-  await plugin({ client, ...clientArgs } as never);
-  events.length = 0;
+  const events: Captured[] = [];
   const missingRoot = scratchDir("wf-assets-token=sk-live-9-");
-  const loaded = loadCommandTemplates(missingRoot, ["wk-init"]);
+  const loaded = loadCommandTemplates(makeLogger(events), missingRoot, ["wk-init"]);
   expect(Object.keys(loaded)).toEqual([]);
   const assets = events.filter((e) => e.message === "assets");
   expect(assets.length).toBe(1);
@@ -185,10 +191,12 @@ test("hooks boundary failure is logged and the session survives", async () => {
 });
 
 test("uncaught failure boundary is bounded and sanitized", async () => {
-  const { client, events } = makeClient();
-  await plugin({ client, ...clientArgs } as never);
-  events.length = 0;
-  reportUncaught("unhandledRejection", new Error("Bearer sk-live-7 https://x.test/p?token=qv"));
+  const events: Captured[] = [];
+  reportUncaught(
+    makeLogger(events),
+    "unhandledRejection",
+    new Error("Bearer sk-live-7 https://x.test/p?token=qv"),
+  );
   const uncaught = events.find((e) => e.message === "uncaught_failure")!;
   expect(uncaught).toBeDefined();
   expect(uncaught.level).toBe("error");

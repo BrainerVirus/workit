@@ -3,8 +3,10 @@ import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import plugin from "../../packages/workit-opencode/src/plugin";
+import * as pluginModule from "../../packages/workit-opencode/src/plugin";
 import { WorkflowStateStore } from "../../packages/workit-core/src/state";
+
+const plugin = pluginModule.default;
 
 const names = [
   "wk-init",
@@ -20,6 +22,10 @@ const names = [
   "wk-meetings",
   "wk-issue-update",
 ];
+
+test("the plugin module only exports the default OpenCode plugin", () => {
+  expect(Object.keys(pluginModule)).toEqual(["default"]);
+});
 
 import {
   COORDINATOR_RECOVERY_TEXT,
