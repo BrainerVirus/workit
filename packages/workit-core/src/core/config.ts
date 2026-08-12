@@ -274,9 +274,35 @@ export const describeConfigSource = (
 
 export const resolveBranchPolicy = (
   config: ToolkitConfig,
-): { allowed: RegExp[]; protected: Set<string> } => {
-  const allowed = config.branchPolicy.allowed.map(
+  workspace?: { branchPolicy?: Record<string, any> } | null,
+): {
+  preset: BranchPreset;
+  allowed: RegExp[];
+  protected: Set<string>;
+  integration: "pr" | "merge";
+} => {
+  const preset = String(
+    workspace?.branchPolicy?.preset ?? config.branchPolicy?.preset ?? "gitflow",
+  ) as BranchPreset;
+  const wp = (workspace?.branchPolicy ?? {}) as Record<string, any>;
+  // RL-02: the preset is authoritative — allowed/protected re-derive from the
+  // workspace's own values or the preset table, never the global config's, and
+  // the current config remains the `custom` fallback when no values are given.
+  const merged = mergePreset(
+    preset,
+    {
+      allowed: wp.allowed,
+      protectedNames: wp.protected,
+    },
+    config,
+  );
+  const allowed = merged.allowed.map(
     (p) => new RegExp(`^${p.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*")}$`, "i"),
   );
-  return { allowed, protected: new Set(config.branchPolicy.protected.map((p) => p.toLowerCase())) };
+  return {
+    preset,
+    allowed,
+    protected: new Set(merged.protected.map((p) => p.toLowerCase())),
+    integration: wp.integration === "merge" ? "merge" : "pr",
+  };
 };

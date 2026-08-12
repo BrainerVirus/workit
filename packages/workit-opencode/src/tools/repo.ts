@@ -9,13 +9,12 @@ import {
   parseSections,
 } from "@brainervirus/workit-core/src/core/parse-sections";
 import { parseVerifyOutput } from "@brainervirus/workit-core/src/core/verify-parse";
-import { branchSetup } from "@brainervirus/workit-core/src/core/branch";
+import { branchSetup, resolveBranchPolicyFor } from "@brainervirus/workit-core/src/core/branch";
 import {
   configDir,
   mergeConfigValues,
   readConfig,
   writeConfig,
-  resolveBranchPolicy,
   type BranchPreset,
 } from "@brainervirus/workit-core/src/core/config";
 import { ensureProjectGitignore } from "@brainervirus/workit-core/src/core/gitignore";
@@ -85,7 +84,6 @@ const output = (value: unknown) => JSON.stringify(value, null, 2);
 const diagnostics = ({ stdout, stderr, exitCode }: RunResult) => ({ stdout, stderr, exitCode });
 const requireConfirmed = (confirmed: boolean) =>
   confirmed === true ? null : output(fail("confirmed: true required"));
-const branchPolicy = () => resolveBranchPolicy(readConfig());
 
 function scriptResult<T extends object>(result: RunResult, parse: (stdout: string) => T) {
   if (result.exitCode !== 0) {
@@ -371,7 +369,7 @@ export function createRepoTools(runtime: RepoRuntime = defaultRuntime) {
             ),
           );
         const name = branch.stdout.trim();
-        const pol = branchPolicy();
+        const pol = resolveBranchPolicyFor(context.directory);
         if (pol.protected.has(name.toLowerCase()))
           return output(fail(`cannot commit on protected branch ${name}`));
         if (!pol.allowed.some((r) => r.test(name)) || name.endsWith("/"))
@@ -404,7 +402,7 @@ export function createRepoTools(runtime: RepoRuntime = defaultRuntime) {
             ),
           );
         const name = branch.stdout.trim();
-        const pol = branchPolicy();
+        const pol = resolveBranchPolicyFor(context.directory);
         if (!pol.allowed.some((r) => r.test(name)) || name.endsWith("/")) {
           return output(fail(`PR creation requires an allowed branch (current: ${name})`));
         }

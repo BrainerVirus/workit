@@ -1,8 +1,19 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { configDir, isConfigObject } from "./config";
+import { configDir, isConfigObject, type BranchPreset } from "./config";
 
 export type VcsProvider = "gitlab" | "github";
+
+export type IntegrationMode = "pr" | "merge";
+
+export type WorkspaceBranchPolicy = {
+  preset: BranchPreset;
+  developBranch?: string;
+  prefixes?: { feature: string; bugfix: string; release: string; hotfix: string };
+  allowed?: string[];
+  protected?: string[];
+  integration: IntegrationMode;
+};
 
 export type WorkspaceConfig = {
   name: string;
@@ -10,6 +21,7 @@ export type WorkspaceConfig = {
   vcs?: { provider: VcsProvider; defaultTargetBranch?: string };
   youtrack?: { baseUrl?: string; link_issues?: boolean };
   issues?: { provider?: "github"; link_on_pr?: boolean };
+  branchPolicy?: WorkspaceBranchPolicy;
 };
 
 export const workspacesPath = (): string => path.join(configDir(), "workspaces.json");

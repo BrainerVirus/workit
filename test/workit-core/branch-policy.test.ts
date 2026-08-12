@@ -6,7 +6,11 @@ import { spawnSync } from "node:child_process";
 import { createRepoTools } from "../../packages/workit-opencode/src/tools/repo";
 import { createSddTools } from "../../packages/workit-opencode/src/tools/sdd";
 import { WorkflowStateStore } from "../../packages/workit-core/src/state";
-import { docsBranch, resolveBranch } from "../../packages/workit-core/src/core/branch";
+import {
+  docsBranch,
+  resolveBranch,
+  resolveBranchPolicyFor,
+} from "../../packages/workit-core/src/core/branch";
 import { vcsConfig } from "../../packages/workit-core/src/core/vcs-config";
 import { resolvePrBranchContext } from "../../packages/workit-core/src/core/repo-context";
 import { prCreate } from "../../packages/workit-core/src/core/pr-create";
@@ -534,6 +538,10 @@ test("RL-03: every PR surface resolves the one configured target branch per pres
               name: "t",
               glob: `${root}/**`,
               vcs: { provider: "gitlab", defaultTargetBranch: c.target },
+              branchPolicy:
+                c.preset === "custom"
+                  ? { preset: "custom", allowed: ["feature/*"], protected: ["main"] }
+                  : { preset: c.preset },
             },
           ],
         }),
@@ -585,6 +593,75 @@ test("RL-03: every PR surface resolves the one configured target branch per pres
     if (prevPath === undefined) delete process.env.PATH;
     else process.env.PATH = prevPath;
     rmSync(stubBin, { recursive: true, force: true });
+  }
+});
+
+test("CA-01: workspace branchPolicy overrides global config policy across consumers", async () => {
+  const stubBin = mkdtempSync(path.join(os.tmpdir(), "wf-ca01-bin-"));
+  const logFile = path.join(stubBin, "glab-args.txt");
+  writeFileSync(
+    path.join(stubBin, "glab"),
+    `#!/bin/sh\nprintf '%s\\n' "$*" >> "${logFile}"\necho "https://gitlab.com/o/r/-/merge_requests/1"\n`,
+    { mode: 0o755 },
+  );
+  const prevPath = process.env.PATH;
+  const { root, remote } = repoWithDevelop();
+  try {
+    process.env.PATH = `${stubBin}${path.delimiter}${prevPath ?? ""}`;
+    writeFileSync(
+      path.join(isolatedConfig, "workit", "config.json"),
+      JSON.stringify({ branchPolicy: { preset: "github-flow" } }),
+    );
+    writeFileSync(
+      path.join(isolatedConfig, "workit", "workspaces.json"),
+      JSON.stringify({
+        workspaces: [
+          {
+            name: "w",
+            glob: `${root}/**`,
+            branchPolicy: { preset: "gitflow", integration: "merge" },
+          },
+        ],
+      }),
+    );
+    writeFileSync(
+      path.join(isolatedConfig, "workit", "vcs.json"),
+      JSON.stringify({ provider: "gitlab", defaultTargetBranch: "develop" }),
+    );
+    writeFileSync(path.join(isolatedConfig, "workit", "gitlab.token"), "test-token\n");
+    git(root, ["checkout", "-q", "-b", "feature/rel03"]);
+    const pol = resolveBranchPolicyFor(root);
+    expect(pol.preset).toBe("gitflow");
+    expect(pol.integration).toBe("merge");
+    expect(pol.protected).toContain("develop");
+    const db = docsBranch({ plan_path: "docs/x/plan.md", workspace_root: root });
+    expect(db.base).toBe("develop");
+    const p = prCreate({ WF_PR_CONFIRMED: "true", WF_PR_TITLE: "T" }, root);
+    expect(p.ok, JSON.stringify(p)).toBe(true);
+  } finally {
+    if (prevPath === undefined) delete process.env.PATH;
+    else process.env.PATH = prevPath;
+    rmSync(stubBin, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+    rmSync(remote, { recursive: true, force: true });
+  }
+});
+
+test("CA-01: unmatched repo falls back to global policy, then preset defaults", async () => {
+  const { root, remote } = repoWithDevelop();
+  try {
+    writeFileSync(
+      path.join(isolatedConfig, "workit", "config.json"),
+      JSON.stringify({ branchPolicy: { preset: "github-flow" } }),
+    );
+    writeFileSync(path.join(isolatedConfig, "workit", "workspaces.json"), '{"workspaces":[]}');
+    git(root, ["checkout", "-q", "-b", "feature/x"]);
+    expect(resolveBranchPolicyFor(root).preset).toBe("github-flow");
+    rmSync(path.join(isolatedConfig, "workit", "config.json"), { force: true });
+    expect(resolveBranchPolicyFor(root).preset).toBe("gitflow"); // PRESETS default
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(remote, { recursive: true, force: true });
   }
 });
 

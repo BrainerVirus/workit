@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { vcsConfig } from "./vcs-config";
-import { readConfig, resolveBranchPolicy } from "./config";
+import { resolveBranchPolicyFor } from "./branch";
 
 // Port of scripts/pr-create.sh — build MR/PR body issue linking + create via glab/gh.
 
@@ -141,7 +141,7 @@ export function prCreate(env: NodeJS.ProcessEnv, cwd: string): Record<string, an
   const targetOverride = env.WF_PR_TARGET;
   const target = targetOverride || String(cfg.defaultTargetBranch ?? "develop");
   if (targetOverride) {
-    const { allowed, protected: protectedTargets } = resolveBranchPolicy(readConfig());
+    const { allowed, protected: protectedTargets } = resolveBranchPolicyFor(root);
     if (protectedTargets.has(targetOverride.toLowerCase()))
       return {
         error: `PR target ${JSON.stringify(targetOverride)} is a protected branch — override must be an allowed non-protected target`,

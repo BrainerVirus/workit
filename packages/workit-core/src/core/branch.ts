@@ -3,11 +3,17 @@ import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { gitContext } from "./git";
 import { readConfig, resolveBranchPolicy } from "./config";
+import { resolveWorkspace } from "./workspaces";
 import { vcsConfig } from "./vcs-config";
 
-const policy = () => resolveBranchPolicy(readConfig());
-const allowedBranch = (name: string) => policy().allowed.some((r) => r.test(name));
-const isProtected = (name: string) => policy().protected.has(name.toLowerCase());
+/** CA-09: the one policy resolver every consumer calls. */
+export const resolveBranchPolicyFor = (workspaceRoot: string) =>
+  resolveBranchPolicy(readConfig(), resolveWorkspace(workspaceRoot));
+
+const policy = (root: string) => resolveBranchPolicyFor(root);
+const allowedBranch = (root: string, name: string) =>
+  policy(root).allowed.some((r) => r.test(name));
+const isProtected = (root: string, name: string) => policy(root).protected.has(name.toLowerCase());
 // RL-01: malformed vcs.json blocks branch resolution with an exact-path error.
 const baseBranch = (cwd: string): { base: string } | { error: string } => {
   const resolved = vcsConfig("resolve", cwd);
@@ -24,10 +30,10 @@ const readSafe = (p: string): string | null => {
   }
 };
 
-const normalizeBranch = (name: string): string | null => {
+const normalizeBranch = (root: string, name: string): string | null => {
   const n = name.trim().replace(/`/g, "").replace(/\.+$/, "");
-  if (isProtected(n)) return null;
-  if (!allowedBranch(n)) return null;
+  if (isProtected(root, n)) return null;
+  if (!allowedBranch(root, n)) return null;
   const parts = n
     .toLowerCase()
     .split("/")
@@ -98,14 +104,14 @@ export const resolveBranch = ({
     const text = readSafe(file);
     if (!text) continue;
     if (USE_CURRENT_RE.test(text)) {
-      if (!current || !allowedBranch(current) || isProtected(current)) {
+      if (!current || !allowedBranch(cwd, current) || isProtected(cwd, current)) {
         return { error: `use-current but HEAD ${current} is not an allowed branch` };
       }
       return finish(current, "use-current");
     }
   }
 
-  if (current && allowedBranch(current) && !isProtected(current))
+  if (current && allowedBranch(cwd, current) && !isProtected(cwd, current))
     return finish(current, "keep-current");
 
   let declaredButInvalid: string | null = null;
@@ -113,7 +119,7 @@ export const resolveBranch = ({
     const text = readSafe(file);
     if (!text) continue;
     for (const match of text.matchAll(DECLARE_RE)) {
-      const normalized = normalizeBranch(match[1]);
+      const normalized = normalizeBranch(cwd, match[1]);
       if (normalized) return finish(normalized, file === spec ? "spec" : "plan");
       declaredButInvalid ??= match[1];
     }
@@ -168,7 +174,7 @@ export const docsBranch = ({
       dirty: Boolean(git.status_short.trim()),
     };
   }
-  if (current && allowedBranch(current) && !isProtected(current)) {
+  if (current && allowedBranch(cwd, current) && !isProtected(cwd, current)) {
     return {
       branch: current,
       action: "keep",
@@ -286,8 +292,8 @@ export const branchSetup = ({
 
   const target = target_branch ?? "";
   if (!target) return { error: "target branch required" };
-  if (isProtected(target)) return { error: `protected branch ${target}` };
-  if (!allowedBranch(target))
+  if (isProtected(cwd, target)) return { error: `protected branch ${target}` };
+  if (!allowedBranch(cwd, target))
     return { error: `target branch ${target} is not allowed by the branch policy` };
 
   let stash_ref: string | undefined;
