@@ -45,6 +45,12 @@ jobs:
       - name: Install deps
         run: bun install --frozen-lockfile
 
+      # The dev-checkout install tests (cursor-install-mcp, setup flows) install
+      # the adapters from this checkout; dist/ and the vendored skills are build
+      # products (gitignored), so the checkout must be built before testing.
+      - name: Build packages
+        run: bun run build
+
       - name: Test workit-core
         run: bun test test/workit-core
 
@@ -101,6 +107,12 @@ jobs:
 
       - name: Install deps
         run: bun install --frozen-lockfile
+
+      # Dev-checkout install tests (packed-cli, platform-install) install the
+      # adapters from this checkout; dist/ and the vendored skills are build
+      # products (gitignored), so the checkout must be built before testing.
+      - name: Build packages
+        run: bun run build
 
       - name: Test workit-cli
         run: bun test test/workit-cli
