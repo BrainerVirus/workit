@@ -15,6 +15,9 @@ export interface MergeResult<T> {
 const isRecord = (v: unknown): v is Record<string, unknown> =>
   v !== null && typeof v === "object" && !Array.isArray(v);
 
+/** Exact identity match — `name` or `name@version` — never a substring (D3). */
+const named = (s: string, name: string) => s === name || s.startsWith(`${name}@`);
+
 /**
  * True when a plugin identity is a current or legacy Workit entry. Matched by
  * exact identity, never by substring: an unrelated plugin whose id merely
@@ -22,7 +25,6 @@ const isRecord = (v: unknown): v is Record<string, unknown> =>
  */
 export function isWorkitPlugin(value: unknown): boolean {
   const s = String(value);
-  const named = (name: string) => s === name || s.startsWith(`${name}@`);
   const url = s.startsWith("file://") || s.startsWith("git+file://");
   const pkgPath =
     s.includes("/packages/workit-opencode/") ||
@@ -30,11 +32,11 @@ export function isWorkitPlugin(value: unknown): boolean {
     s.includes("/node_modules/@brainervirus/workit-opencode/") ||
     s.includes("/node_modules/@brainervirus/workit-cursor/");
   return (
-    named("workflow-toolkit") ||
-    named("workflow-toolkit-opencode") ||
-    named("local/workflow-toolkit") ||
-    named("@brainervirus/workit-opencode") ||
-    named("@brainervirus/workit-cursor") ||
+    named(s, "workflow-toolkit") ||
+    named(s, "workflow-toolkit-opencode") ||
+    named(s, "local/workflow-toolkit") ||
+    named(s, "@brainervirus/workit-opencode") ||
+    named(s, "@brainervirus/workit-cursor") ||
     (url && pkgPath) ||
     (s.startsWith("git+file://") && s.includes("workflow-toolkit"))
   );
@@ -63,10 +65,14 @@ export function mergeOpenCodeConfig(
   }
 
   // Drop share skills.paths — native ~/.config/opencode/skills links avoid
-  // triple-load duplicates.
+  // triple-load duplicates. Matched by exact path segment, never substring: an
+  // unrelated dir like `~/projects/my-workflow-toolkit-skills` is preserved (D3).
   const skills = base.skills;
   if (isRecord(skills) && Array.isArray(skills.paths)) {
-    const next = skills.paths.filter((p) => !String(p).includes("workflow-toolkit"));
+    const next = skills.paths.filter((p) => {
+      const segment = String(p).split(/[\\/]/);
+      return !segment.some((seg) => named(seg, "workflow-toolkit"));
+    });
     if (next.length !== skills.paths.length) {
       base.skills = { ...skills, paths: next };
       changed.push("skills.paths");

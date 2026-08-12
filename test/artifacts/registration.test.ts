@@ -165,6 +165,26 @@ test("mergeOpenCodeConfig drops stale workflow-toolkit skill paths, keeps unrela
   expect(changed).toEqual(["plugin", "skills.paths"]);
 });
 
+test("mergeOpenCodeConfig keeps skill paths that merely contain the substring, drops only canonical Workit dirs", () => {
+  const input = {
+    plugin: ["other-plugin"],
+    skills: {
+      paths: [
+        "/x/share/workflow-toolkit/skills",
+        "~/projects/my-workflow-toolkit-skills",
+        "~/.config/opencode/skills",
+      ],
+    },
+  };
+  const { config, changed } = mergeOpenCodeConfig(input, PIN);
+  const skills = config.skills as { paths?: string[] };
+  expect(skills.paths).toEqual([
+    "~/projects/my-workflow-toolkit-skills",
+    "~/.config/opencode/skills",
+  ]);
+  expect(changed).toEqual(["plugin", "skills.paths"]);
+});
+
 test("mergeOpenCodeConfig reports no changes when the config is already canonical", () => {
   const input = { plugin: [PIN], skills: { paths: ["/other/skills"] } };
   const { config, changed } = mergeOpenCodeConfig(input, PIN);
