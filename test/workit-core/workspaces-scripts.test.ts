@@ -303,39 +303,48 @@ test("config.sh load: merges the resolved workspace over global vcs.json", () =>
   }
 });
 
-test("pr-create.sh: missing gh/glab on PATH -> structured error with official install URL", () => {
-  const pathDirs = (process.env.PATH ?? "").split(path.delimiter);
-  const cleanPath = pathDirs.filter(
-    (d) => d && !existsSync(path.join(d, "gh")) && !existsSync(path.join(d, "glab")),
-  );
-
-  for (const [provider, cli, url] of [
-    ["github", "gh", "https://cli.github.com"],
-    ["gitlab", "glab", "https://gitlab.com/gitlab-org/cli"],
-  ] as const) {
-    const err = withConfigFiles(
-      {
-        "vcs.json": JSON.stringify({ provider: "github" }),
-        "workspaces.json": workspacesJson("**", provider),
-        "github.token": "test-token-123",
-        "gitlab.token": "test-token-123",
-      },
-      {
-        PATH: `${os.tmpdir()}${path.delimiter}${cleanPath.join(path.delimiter)}`,
-        WF_PR_CONFIRMED: "true",
-        WF_PR_TITLE: "Test title",
-      },
-      () =>
-        prCreate({ ...process.env, WF_PR_CONFIRMED: "true", WF_PR_TITLE: "Test title" }, repoRoot),
+test(
+  "pr-create.sh: missing gh/glab on PATH -> structured error with official install URL",
+  () => {
+    const pathDirs = (process.env.PATH ?? "").split(path.delimiter);
+    const cleanPath = pathDirs.filter(
+      (d) => d && !existsSync(path.join(d, "gh")) && !existsSync(path.join(d, "glab")),
     );
-    expect(err.ok).toBe(false);
-    expect(err.cli_missing).toBe(true);
-    expect(err.install_url).toBe(url);
-    expect(err.error).toContain(`workflow CLI missing: ${cli}`);
-    expect(err.error).toContain(`required for ${provider}`);
-    expect(String(err.error)).not.toContain("FileNotFoundError");
-  }
-});
+
+    for (const [provider, cli, url] of [
+      ["github", "gh", "https://cli.github.com"],
+      ["gitlab", "glab", "https://gitlab.com/gitlab-org/cli"],
+    ] as const) {
+      const err = withConfigFiles(
+        {
+          "vcs.json": JSON.stringify({ provider: "github" }),
+          "workspaces.json": workspacesJson("**", provider),
+          "github.token": "test-token-123",
+          "gitlab.token": "test-token-123",
+        },
+        {
+          PATH: `${os.tmpdir()}${path.delimiter}${cleanPath.join(path.delimiter)}`,
+          WF_PR_CONFIRMED: "true",
+          WF_PR_TITLE: "Test title",
+        },
+        () =>
+          prCreate(
+            { ...process.env, WF_PR_CONFIRMED: "true", WF_PR_TITLE: "Test title" },
+            repoRoot,
+          ),
+      );
+      expect(err.ok).toBe(false);
+      expect(err.cli_missing).toBe(true);
+      expect(err.install_url).toBe(url);
+      expect(err.error).toContain(`workflow CLI missing: ${cli}`);
+      expect(err.error).toContain(`required for ${provider}`);
+      expect(err.error).toContain(url);
+    }
+    // Each iteration spawns git several times; Windows git cold starts exceed
+    // the default 5s per-test budget.
+  },
+  { timeout: 60_000 },
+);
 
 test("pr-ready-context.sh: VCS Config section reports workspace + provider", () => {
   const r = withConfigFiles(

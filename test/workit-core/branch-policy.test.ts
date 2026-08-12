@@ -733,6 +733,45 @@ test("CA-05: defaultTargetBranch is preset-aware when unset", async () => {
   }
 });
 
+test("PROBE: win32 stub spawn resolution", () => {
+  if (process.platform !== "win32") return;
+  const dir = mkdtempSync(path.join(os.tmpdir(), "wk-probe-"));
+  const log = path.join(dir, "args.txt");
+  stubCli(dir, "gh", log, "https://github.com/o/r/pull/1");
+  stubCli(dir, "glab", log, "https://gitlab.com/o/r/-/merge_requests/1");
+  const prev = process.env.PATH;
+  process.env.PATH = stubPath(dir);
+  try {
+    const spawn = (name: string, cwd: string) => {
+      const r = spawnSync(name, ["probe-arg"], { cwd, encoding: "utf8" });
+      return JSON.stringify({
+        name,
+        status: r.status,
+        error: r.error ? String(r.error) : null,
+        stderr: r.stderr,
+        stdout: r.stdout,
+        log: existsSync(log) ? readFileSync(log, "utf8") : null,
+      });
+    };
+    const gh = spawn("gh", dir);
+    const glab = spawn("glab", dir);
+    const listing = (process.env.PATH ?? "")
+      .split(path.delimiter)
+      .filter((d) =>
+        ["gh", "gh.exe", "gh.cmd", "glab", "glab.exe", "glab.cmd"].some((n) =>
+          existsSync(path.join(d, n)),
+        ),
+      );
+    expect(
+      false,
+      `PROBE dir=${dir}\nPATH-dirs-with-cli=${JSON.stringify(listing)}\ngh=${gh}\nglab=${glab}`,
+    ).toBe(true);
+  } finally {
+    process.env.PATH = prev;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("workspace preset typo falls back to the global preset without crashing", async () => {
   const { root, remote } = repoWithDevelop();
   try {

@@ -226,14 +226,21 @@ export const binDirWithRuntimes = (root: string): string => {
   for (const name of ["node", "bun"]) {
     if (process.platform === "win32") {
       // git-bash `command -v` yields msys paths symlinks cannot use; resolve
-      // via `where` and copy the real executable so the bin actually runs.
+      // via `where` and symlink the real executable (copy as a fallback when
+      // symlink creation is unavailable — copying node+bun is ~200MB, so it
+      // is the last resort).
       const which = spawnSync("where", [name], { encoding: "utf8" });
       const target = which.stdout?.split("\n")[0]?.trim();
       if (target && existsSync(target)) {
         try {
-          copyFileSync(target, path.join(bin, `${name}.exe`));
+          require("node:fs").symlinkSync(target, path.join(bin, `${name}.exe`));
+          continue;
         } catch {
-          /* keep going */
+          try {
+            copyFileSync(target, path.join(bin, `${name}.exe`));
+          } catch {
+            /* keep going */
+          }
         }
       }
       continue;
