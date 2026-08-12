@@ -16,6 +16,19 @@ const workspacesPath = (): string => path.join(configDir(), "workspaces.json");
 const vcsCwd = (cwd?: string): string =>
   process.env.WORKFLOW_WORKSPACE_ROOT ?? cwd ?? process.cwd();
 
+// RL-03b: the origin remote is the ground truth for PR creation. A stale global
+// provider (e.g. gitlab from another repo) must not drive glab on a
+// github.com-hosted checkout. Recognized hosts only — custom/self-hosted
+// remotes keep the configured provider, and a missing origin is untouched.
+const remoteProvider = (cwd: string): string | null => {
+  const r = spawnSync("git", ["remote", "get-url", "origin"], { cwd, encoding: "utf8" });
+  if (r.status !== 0) return null;
+  const url = (r.stdout ?? "").trim();
+  if (/github\.com[:/]/.test(url)) return "github";
+  if (/gitlab\.com[:/]/.test(url)) return "gitlab";
+  return null;
+};
+
 // RL-01: typed vcs.json reader. Missing is a legitimate unconfigured state;
 // malformed (parse failure or a non-object) is reported with the exact path so
 // risky consumers stop instead of silently reading defaults.
@@ -59,7 +72,17 @@ export function vcsConfig(mode: "load" | "summary" | "resolve", cwd?: string): R
   const wsIssues = (ws?.issues ?? {}) as Record<string, any>;
   const { status: cfgStatus, path: cfgPath, config: cfg, error: cfgError } = readVcsConfig();
 
-  const provider = String(wsVcs.provider ?? cfg.provider ?? "gitlab").toLowerCase();
+  // Explicit workspace vcs.provider is the user's per-repo intent and wins;
+  // otherwise, with a determinate repo root (explicit cwd or host-provided
+  // WORKFLOW_WORKSPACE_ROOT), the origin remote is authoritative over the
+  // global default (RL-03b). Ambient process.cwd() callers keep the legacy
+  // config-only contract (CA-06 parity), so a stale global default cannot
+  // contaminate host-agnostic reads.
+  const root = vcsCwd(cwd);
+  const determinateRoot = cwd !== undefined || process.env.WORKFLOW_WORKSPACE_ROOT !== undefined;
+  const provider = String(
+    wsVcs.provider ?? (determinateRoot ? remoteProvider(root) : null) ?? cfg.provider ?? "gitlab",
+  ).toLowerCase();
   const defaultTarget = String(wsVcs.defaultTargetBranch ?? cfg.defaultTargetBranch ?? "develop");
   const linkIssues = typeof wsYt.link_issues === "boolean" ? wsYt.link_issues : null;
   const youtrackBaseUrl = typeof wsYt.baseUrl === "string" ? wsYt.baseUrl : null;

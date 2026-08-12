@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -589,6 +589,94 @@ test("RL-03: every PR surface resolves the one configured target branch per pres
 });
 
 import { writeConfig } from "../../packages/workit-core/src/core/config";
+
+test("RL-03b: provider reconciles with the actual origin remote across PR surfaces", async () => {
+  // A stale config provider (gitlab) must not drive glab on a github.com-hosted
+  // repo: vcsConfig load/resolve and prCreate derive the provider from the
+  // origin remote when no explicit workspace vcs.provider overrides it.
+  const stubBin = mkdtempSync(path.join(os.tmpdir(), "wf-remote-bin-"));
+  const ghLog = path.join(stubBin, "gh-args.txt");
+  const glabLog = path.join(stubBin, "glab-args.txt");
+  writeFileSync(
+    path.join(stubBin, "gh"),
+    `#!/bin/sh\nprintf '%s\\n' "$*" >> "${ghLog}"\necho "https://github.com/acme/workit/pull/1"\n`,
+    { mode: 0o755 },
+  );
+  writeFileSync(
+    path.join(stubBin, "glab"),
+    `#!/bin/sh\nprintf '%s\\n' "$*" >> "${glabLog}"\necho "https://gitlab.com/acme/workit/-/merge_requests/1"\n`,
+    { mode: 0o755 },
+  );
+  const cfgDir = mkdtempSync(path.join(os.tmpdir(), "wf-remote-cfg-"));
+  const prevConfig = process.env.WORKFLOW_TOOLKIT_CONFIG;
+  const prevPath = process.env.PATH;
+  const writeCfg = (provider: string) => {
+    writeFileSync(
+      path.join(cfgDir, "vcs.json"),
+      JSON.stringify({ provider, defaultTargetBranch: "main" }),
+    );
+    writeFileSync(path.join(cfgDir, "gitlab.token"), "gitlab-token\n", { mode: 0o600 });
+    writeFileSync(path.join(cfgDir, "github.token"), "github-token\n", { mode: 0o600 });
+  };
+  const repoWithRemote = (url: string) => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "wf-remote-repo-"));
+    const run = (args: string[]) => spawnSync("git", args, { cwd: root, encoding: "utf8" });
+    run(["init", "-q", "-b", "feature/t"]);
+    run(["config", "user.name", "T"]);
+    run(["config", "user.email", "t@t"]);
+    writeFileSync(path.join(root, "r.md"), "x");
+    run(["add", "r.md"]);
+    run(["commit", "-q", "-m", "base"]);
+    run(["remote", "add", "origin", url]);
+    return root;
+  };
+  try {
+    process.env.WORKFLOW_TOOLKIT_CONFIG = cfgDir;
+    process.env.PATH = `${stubBin}${path.delimiter}${prevPath ?? ""}`;
+    const ghRoot = repoWithRemote("https://github.com/acme/workit.git");
+    try {
+      writeCfg("gitlab");
+      expect(vcsConfig("resolve", ghRoot).provider).toBe("github");
+      const loaded = vcsConfig("load", ghRoot);
+      expect(loaded.provider).toBe("github");
+      expect(String(loaded.tokenPath)).toEndWith("github.token");
+      const p = prCreate(
+        { WF_PR_CONFIRMED: "true", WF_PR_TITLE: "T", WF_PR_BODY: "", WF_PR_DRAFT: "false" },
+        ghRoot,
+      );
+      expect(p.ok, JSON.stringify(p)).toBe(true);
+      expect(p.provider).toBe("github");
+      expect(existsSync(glabLog)).toBe(false);
+      expect(readFileSync(ghLog, "utf8")).toContain("pr create");
+    } finally {
+      rmSync(ghRoot, { recursive: true, force: true });
+    }
+    rmSync(glabLog, { force: true });
+    rmSync(ghLog, { force: true });
+    const glRoot = repoWithRemote("https://gitlab.com/acme/workit.git");
+    try {
+      writeCfg("github");
+      expect(vcsConfig("resolve", glRoot).provider).toBe("gitlab");
+      const p = prCreate(
+        { WF_PR_CONFIRMED: "true", WF_PR_TITLE: "T", WF_PR_BODY: "", WF_PR_DRAFT: "false" },
+        glRoot,
+      );
+      expect(p.ok, JSON.stringify(p)).toBe(true);
+      expect(p.provider).toBe("gitlab");
+      expect(existsSync(ghLog)).toBe(false);
+      expect(readFileSync(glabLog, "utf8")).toContain("mr create");
+    } finally {
+      rmSync(glRoot, { recursive: true, force: true });
+    }
+  } finally {
+    if (prevConfig === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+    else process.env.WORKFLOW_TOOLKIT_CONFIG = prevConfig;
+    if (prevPath === undefined) delete process.env.PATH;
+    else process.env.PATH = prevPath;
+    rmSync(stubBin, { recursive: true, force: true });
+    rmSync(cfgDir, { recursive: true, force: true });
+  }
+});
 
 test("branch policy rejects codex/ under gitflow and allows under custom", async () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "wf-branch-policy-"));
