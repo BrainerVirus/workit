@@ -307,8 +307,10 @@ test(
   "pr-create.sh: missing gh/glab on PATH -> structured error with official install URL",
   () => {
     const pathDirs = (process.env.PATH ?? "").split(path.delimiter);
+    // Strip real gh/glab entries too (gh.exe) so the guard cannot find a real
+    // CLI on the runner, not just the extensionless-name leftovers.
     const cleanPath = pathDirs.filter(
-      (d) => d && !existsSync(path.join(d, "gh")) && !existsSync(path.join(d, "glab")),
+      (d) => d && !["gh", "gh.exe", "glab", "glab.exe"].some((n) => existsSync(path.join(d, n))),
     );
 
     for (const [provider, cli, url] of [
