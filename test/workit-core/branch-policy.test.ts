@@ -762,12 +762,23 @@ test("PROBE: win32 stub spawn resolution", () => {
     const info = [
       spawn("gh", {}),
       spawn("gh", withEnv),
-      spawn("gh", { ...withEnv, cwd: longDir }),
-      spawn("glab", withEnv),
-      spawn("gh.cmd", {}),
+      spawn("gh", { env: { ...process.env } }),
+      spawn("gh", { env: { ...process.env, PATH: process.env.PATH } }),
+      spawn("gh", { env: { PATH: stubPath(dir) } }),
       spawn("gh", { env: { ...process.env, PATH: `${dir}${path.delimiter}${process.env.PATH}` } }),
+      spawn("gh", {
+        env: { ...process.env, GH_TOKEN: "x", PATH: `${dir}${path.delimiter}${process.env.PATH}` },
+      }),
+      spawn("glab", withEnv),
+      spawn("glab", {
+        env: { ...process.env, PATH: `${dir}${path.delimiter}${process.env.PATH}` },
+      }),
+      spawn("gh.cmd", {}),
     ].join("\n");
-    expect(false, `PROBE dir=${dir}\nlongDir=${longDir}\n${info}`).toBe(true);
+    expect(
+      false,
+      `PROBE envPATH=${process.env.PATH}\ndir=${dir}\nlongDir=${longDir}\n${info}`,
+    ).toBe(true);
   } finally {
     process.env.PATH = prev;
     rmSync(dir, { recursive: true, force: true });
