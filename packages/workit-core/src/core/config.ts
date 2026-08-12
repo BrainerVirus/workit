@@ -280,11 +280,15 @@ export const resolveBranchPolicy = (
   allowed: RegExp[];
   protected: Set<string>;
   integration: "pr" | "merge";
+  defaultTargetBranch: string;
 } => {
-  const preset = String(
-    workspace?.branchPolicy?.preset ?? config.branchPolicy?.preset ?? "gitflow",
-  ) as BranchPreset;
   const wp = (workspace?.branchPolicy ?? {}) as Record<string, any>;
+  // An invalid workspace preset (e.g. a typo) falls back to the global preset,
+  // preserving resolution order workspace > global > preset, instead of
+  // crashing on PRESETS[preset] (mirrors parseConfigResult's Object.hasOwn).
+  const preset = (
+    Object.hasOwn(PRESETS, wp.preset) ? wp.preset : (config.branchPolicy?.preset ?? "gitflow")
+  ) as BranchPreset;
   // RL-02: the preset is authoritative — allowed/protected re-derive from the
   // workspace's own values or the preset table, never the global config's, and
   // the current config remains the `custom` fallback when no values are given.
@@ -304,5 +308,8 @@ export const resolveBranchPolicy = (
     allowed,
     protected: new Set(merged.protected.map((p) => p.toLowerCase())),
     integration: wp.integration === "merge" ? "merge" : "pr",
+    // CA-05: preset-aware default target when vcs.defaultTargetBranch is unset.
+    defaultTargetBranch:
+      preset === "github-flow" ? "main" : preset === "trunk-based" ? "master" : "develop",
   };
 };

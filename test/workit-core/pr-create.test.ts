@@ -224,7 +224,8 @@ test("CA-04: merge integration finishes the feature into the target without a PR
       }),
       "utf8",
     );
-    writeFileSync(path.join(cfgDir, "github.token"), "test-token\n", "utf8");
+    // no token written on purpose: merge mode is local git merge + push and must
+    // work tokenless (SSH-push users have no glab/gh API token).
     const p = withEnv({ WORKFLOW_TOOLKIT_CONFIG: cfgDir, PATH: stubPath() }, () =>
       prCreate({ WF_PR_CONFIRMED: "true", WF_PR_TITLE: "T", WF_PR_BODY: "" }, root),
     );

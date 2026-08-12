@@ -124,9 +124,12 @@ export function prBuildBody(env: NodeJS.ProcessEnv, cwd?: string): string {
 /** Port of scripts/pr-create.sh create mode — glab/gh MR/PR creation. */
 export function prCreate(env: NodeJS.ProcessEnv, cwd: string): Record<string, any> {
   const root = process.env.WORKFLOW_WORKSPACE_ROOT ?? repoRoot(cwd);
+  const policy = resolveBranchPolicyFor(root);
   const cfg = vcsConfig("load", root);
   if (!cfg.ok) return { error: cfg.error ?? "vcs config missing" };
-  if (!cfg.tokenReady)
+  // Merge mode finishes the feature locally (git merge + push) — no glab/gh,
+  // no API token, so token readiness is only required for the PR path.
+  if (policy.integration !== "merge" && !cfg.tokenReady)
     return { error: "VCS token not ready — run /wk-init and edit token file locally" };
 
   const provider = cfg.provider as string;
@@ -139,9 +142,10 @@ export function prCreate(env: NodeJS.ProcessEnv, cwd: string): Record<string, an
   // target is validated against the resolved branch policy so a PR can never
   // be aimed at a protected or disallowed branch.
   const targetOverride = env.WF_PR_TARGET;
-  const target = targetOverride || String(cfg.defaultTargetBranch ?? "develop");
+  const target =
+    targetOverride || String(cfg.defaultTargetBranch ?? policy.defaultTargetBranch ?? "develop");
   if (targetOverride) {
-    const { allowed, protected: protectedTargets } = resolveBranchPolicyFor(root);
+    const { allowed, protected: protectedTargets } = policy;
     if (protectedTargets.has(targetOverride.toLowerCase()))
       return {
         error: `PR target ${JSON.stringify(targetOverride)} is a protected branch — override must be an allowed non-protected target`,
@@ -159,7 +163,6 @@ export function prCreate(env: NodeJS.ProcessEnv, cwd: string): Record<string, an
   });
   const branch = br.status === 0 ? (br.stdout ?? "").trim() : "";
 
-  const policy = resolveBranchPolicyFor(root);
   if (policy.integration === "merge") {
     const finish = (): Record<string, any> => {
       const merge = spawnSync("git", ["merge", "--no-ff", branch, "-m", title], {

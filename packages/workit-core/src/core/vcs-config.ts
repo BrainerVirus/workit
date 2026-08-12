@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { configDir } from "./config";
+import { configDir, readConfig, resolveBranchPolicy } from "./config";
 import { resolveWorkspace } from "./workspaces";
 // Ports of scripts/vcs/config.sh + verify-token.sh + token-create-urls.sh + merged-style.sh.
 // Token never printed.
@@ -83,7 +83,16 @@ export function vcsConfig(mode: "load" | "summary" | "resolve", cwd?: string): R
   const provider = String(
     wsVcs.provider ?? (determinateRoot ? remoteProvider(root) : null) ?? cfg.provider ?? "gitlab",
   ).toLowerCase();
-  const defaultTarget = String(wsVcs.defaultTargetBranch ?? cfg.defaultTargetBranch ?? "develop");
+  // CA-05: workspace/global explicit target wins; when unset the resolved
+  // branch-policy preset supplies the default (gitflow->develop,
+  // github-flow->main, trunk-based->master, custom->develop). Shared by load
+  // and resolve so both surfaces stay consistent.
+  const defaultTarget = String(
+    wsVcs.defaultTargetBranch ??
+      cfg.defaultTargetBranch ??
+      resolveBranchPolicy(readConfig(), ws).defaultTargetBranch ??
+      "develop",
+  );
   const linkIssues = typeof wsYt.link_issues === "boolean" ? wsYt.link_issues : null;
   const youtrackBaseUrl = typeof wsYt.baseUrl === "string" ? wsYt.baseUrl : null;
   // github issues path only when BOTH providers are github (mirrors WorkspaceConfig.issues).
