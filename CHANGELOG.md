@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Added an approved reliability-overhaul specification with full requirement, audit, and Ponytail traceability.
 - Added pinned Oxlint and Oxfmt checks for first-party TypeScript and package metadata.
+- Per-workspace branch policy (`workspaces.json` `branchPolicy`) with git-flow-style detection init and `integration: pr|merge` on OpenCode, Cursor, and the CLI wizard.
 ### Changed
 
 - Repository checks now run lint, format verification, tests, and TypeScript typechecking.

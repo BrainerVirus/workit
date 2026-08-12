@@ -126,13 +126,13 @@ export PATH="$HOME/.bun/bin:$PATH"
 
 Everything lives in `~/.config/workit/` (legacy `~/.config/workflow-toolkit/` auto-migrates). Tokens are never printed by tools; you edit token files locally.
 
-| File                                               | Purpose                | Key fields                                                                                                                                                            |
-| -------------------------------------------------- | ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `config.json`                                      | Global preferences     | `locale`, `timezone`, `branchPolicy: { preset: gitflow \| github-flow \| trunk-based \| custom, allowed, protected }`                                                 |
-| `youtrack.json`                                    | YouTrack integration   | `baseUrl`, `tokenFile`, `timezone`, `locale`, `defaultMention`, `meetingIssue`/`meetingIssues`, `greetings`, `commentHeader`, `tokenDefaults`                         |
-| `vcs.json`                                         | VCS defaults           | `provider: gitlab \| github`, `defaultTargetBranch`, per-provider `{ host, apiUrl, tokenFile }`, `pr: { squashOnMerge, removeSourceBranch, pushBranch, confirmSkip }` |
-| `workspaces.json`                                  | **Per-repo contexts**  | `workspaces: [{ name, glob, vcs: { provider, defaultTargetBranch }, youtrack: { baseUrl, link_issues }, issues: { provider: "github", link_on_pr } }]`                |
-| `youtrack.token` / `gitlab.token` / `github.token` | Credentials (mode 600) | created as placeholders by `/wk-init`; replace `YOUR_TOKEN_HERE` locally                                                                                              |
+| File                                               | Purpose                | Key fields                                                                                                                                                                                                                                              |
+| -------------------------------------------------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `config.json`                                      | Global preferences     | `locale`, `timezone`, `branchPolicy: { preset: gitflow \| github-flow \| trunk-based \| custom, allowed, protected }`                                                                                                                                   |
+| `youtrack.json`                                    | YouTrack integration   | `baseUrl`, `tokenFile`, `timezone`, `locale`, `defaultMention`, `meetingIssue`/`meetingIssues`, `greetings`, `commentHeader`, `tokenDefaults`                                                                                                           |
+| `vcs.json`                                         | VCS defaults           | `provider: gitlab \| github`, `defaultTargetBranch`, per-provider `{ host, apiUrl, tokenFile }`, `pr: { squashOnMerge, removeSourceBranch, pushBranch, confirmSkip }`                                                                                   |
+| `workspaces.json`                                  | **Per-repo contexts**  | `workspaces: [{ name, glob, branchPolicy: { preset, developBranch, prefixes, allowed, protected, integration: pr \| merge }, vcs: { provider, defaultTargetBranch }, youtrack: { baseUrl, link_issues }, issues: { provider: "github", link_on_pr } }]` |
+| `youtrack.token` / `gitlab.token` / `github.token` | Credentials (mode 600) | created as placeholders by `/wk-init`; replace `YOUR_TOKEN_HERE` locally                                                                                                                                                                                |
 
 **Multi-context setup (personal + work in one install)** — `workspaces.json` scopes VCS provider, PR target, and issue linking per repository glob, e.g.:
 
@@ -148,6 +148,7 @@ Everything lives in `~/.config/workit/` (legacy `~/.config/workflow-toolkit/` au
     {
       "name": "work",
       "glob": "/home/you/projects/work/**",
+      "branchPolicy": { "preset": "gitflow", "integration": "merge" },
       "vcs": { "provider": "gitlab", "defaultTargetBranch": "develop" },
       "youtrack": { "link_issues": true }
     }
@@ -155,7 +156,9 @@ Everything lives in `~/.config/workit/` (legacy `~/.config/workflow-toolkit/` au
 }
 ```
 
-Note: `branchPolicy.preset` and the YouTrack meeting/comment configuration are global today; per-workspace `vcs.provider`/`defaultTargetBranch`/issue linking are the workspace-scoped knobs.
+Note: `branchPolicy` is now per-workspace (workspace > global `config.json` > preset defaults); the YouTrack meeting/comment configuration remains global. Per-workspace `vcs.provider`/`defaultTargetBranch`/issue linking are the other workspace-scoped knobs.
+
+Run the init action (`workflow_toolkit_init_apply action=branch_policy` on OpenCode/Cursor, or the CLI wizard's branch-policy screen) to detect and pin a repo's convention: `develop` present → gitflow/merge; only `main` → github-flow/pr; only `master` → trunk-based/pr. Re-running updates the entry (already-configured when unchanged).
 
 Environment overrides: `WORKFLOW_TOOLKIT_CONFIG`, `WORKFLOW_TOOLKIT_STATE`, `WORKFLOW_WORKSPACE_ROOT`, `WORKFLOW_VCS_PROVIDER`, `WORKFLOW_VCS_TARGET_BRANCH`, `WORKFLOW_YT_BASE_URL`, `WORKFLOW_YT_MENTION`, `WORKFLOW_YT_MEETING_ISSUE`, `WORKFLOW_YT_TIMEZONE`, `WORKFLOW_GH_ISSUE` (+ `WORKFLOW_GH_ISSUE_RELATION`).
 
