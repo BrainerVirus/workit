@@ -21,7 +21,7 @@
     "format:check": "oxfmt --check packages/workit-core/src packages/workit-opencode/src packages/workit-cli/src packages/workit-cursor/mcp/server.ts test package.json packages/*/package.json tsconfig.json",
     "test": "bun test",
     "typecheck": "tsc --noEmit",
-    "check": "bun run lint && bun run format:check && bun test && tsc --noEmit"
+    "check": "bun run build && bun run lint && bun run format:check && bun test && tsc --noEmit"
   },
   "devDependencies": {
     "@semantic-release/commit-analyzer": "13.0.1",
@@ -34,6 +34,7 @@
     "@types/react": "19.2.18",
     "oxfmt": "0.63.0",
     "oxlint": "1.78.0",
+    "react-devtools-core": "7.0.1",
     "semantic-release": "25.0.9",
     "typescript": "5.8.2"
   }
