@@ -440,5 +440,20 @@ test("the declared branch is active (AR-15/CA-45 pre-reconciliation state)", () 
     encoding: "utf8",
   });
   expect(branch.status, branch.stderr ?? "").toBe(0);
-  expect(branch.stdout.trim()).toBe(DECLARED_BRANCH);
+  const head = branch.stdout.trim();
+  if (head === DECLARED_BRANCH) return;
+  // CI checks out the PR merge commit (detached HEAD): the declared branch
+  // must exist and be an ancestor of the checked-out state.
+  const ref = spawnSync(
+    "git",
+    ["rev-parse", "--verify", `refs/remotes/origin/${DECLARED_BRANCH}`],
+    { cwd: REPO_ROOT, encoding: "utf8" },
+  );
+  expect(ref.status, ref.stderr ?? "").toBe(0);
+  const ancestor = spawnSync(
+    "git",
+    ["merge-base", "--is-ancestor", ref.stdout.trim(), "HEAD"],
+    { cwd: REPO_ROOT, encoding: "utf8" },
+  );
+  expect(ancestor.status).toBe(0);
 });
