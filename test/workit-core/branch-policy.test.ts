@@ -741,31 +741,33 @@ test("PROBE: win32 stub spawn resolution", () => {
   stubCli(dir, "glab", log, "https://gitlab.com/o/r/-/merge_requests/1");
   const prev = process.env.PATH;
   process.env.PATH = stubPath(dir);
+  const longDir = spawnSync("git", ["rev-parse", "--show-toplevel"], {
+    cwd: dir,
+    encoding: "utf8",
+  }).stdout.trim();
   try {
-    const spawn = (name: string, cwd: string) => {
-      const r = spawnSync(name, ["probe-arg"], { cwd, encoding: "utf8" });
+    const spawn = (name: string, opts: Record<string, unknown>) => {
+      const r = spawnSync(name, ["probe-arg"], { cwd: dir, encoding: "utf8", ...opts } as never);
       return JSON.stringify({
         name,
+        opts: Object.keys(opts).join(","),
         status: r.status,
         error: r.error ? String(r.error) : null,
-        stderr: r.stderr,
+        stderr: (r.stderr ?? "").slice(0, 120),
         stdout: r.stdout,
         log: existsSync(log) ? readFileSync(log, "utf8") : null,
       });
     };
-    const gh = spawn("gh", dir);
-    const glab = spawn("glab", dir);
-    const listing = (process.env.PATH ?? "")
-      .split(path.delimiter)
-      .filter((d) =>
-        ["gh", "gh.exe", "gh.cmd", "glab", "glab.exe", "glab.cmd"].some((n) =>
-          existsSync(path.join(d, n)),
-        ),
-      );
-    expect(
-      false,
-      `PROBE dir=${dir}\nPATH-dirs-with-cli=${JSON.stringify(listing)}\ngh=${gh}\nglab=${glab}`,
-    ).toBe(true);
+    const withEnv = { env: { ...process.env, GH_TOKEN: "x" } };
+    const info = [
+      spawn("gh", {}),
+      spawn("gh", withEnv),
+      spawn("gh", { ...withEnv, cwd: longDir }),
+      spawn("glab", withEnv),
+      spawn("gh.cmd", {}),
+      spawn("gh", { env: { ...process.env, PATH: `${dir}${path.delimiter}${process.env.PATH}` } }),
+    ].join("\n");
+    expect(false, `PROBE dir=${dir}\nlongDir=${longDir}\n${info}`).toBe(true);
   } finally {
     process.env.PATH = prev;
     rmSync(dir, { recursive: true, force: true });

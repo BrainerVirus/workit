@@ -607,8 +607,10 @@ test("pr-create.sh create: cfg-driven wiring emits Closes #N into the real gh in
   const logFile = path.join(stubBin, "args.txt");
   stubCli(stubBin, "gh", logFile, "https://github.com/o/r/pull/1");
   const pathDirs = (process.env.PATH ?? "").split(path.delimiter);
+  // Strip real gh/glab entries too (gh.exe) so the guard cannot find a real
+  // CLI on the runner, not just the extensionless-name leftovers.
   const cleanPath = pathDirs.filter(
-    (d) => d && !existsSync(path.join(d, "gh")) && !existsSync(path.join(d, "glab")),
+    (d) => d && !["gh", "gh.exe", "glab", "glab.exe"].some((n) => existsSync(path.join(d, n))),
   );
 
   try {
