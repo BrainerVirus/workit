@@ -11,18 +11,22 @@ export type VerifyResult = { stdout: string; stderr: string; exitCode: number; c
 
 const commandOnPath = (name: string): boolean => {
   const dirs = (process.env.PATH ?? "").split(path.delimiter);
+  // win32 executables carry an .exe suffix (pytest.exe), so probe both names.
+  const names = process.platform === "win32" ? [name, `${name}.exe`] : [name];
   for (const dir of dirs) {
     if (!dir) continue;
-    const candidate = path.join(dir, name);
-    try {
-      statSync(candidate);
-      if (process.platform !== "win32") {
-        const mode = statSync(candidate).mode & 0o111;
-        if (mode === 0) continue;
+    for (const candidateName of names) {
+      const candidate = path.join(dir, candidateName);
+      try {
+        statSync(candidate);
+        if (process.platform !== "win32") {
+          const mode = statSync(candidate).mode & 0o111;
+          if (mode === 0) continue;
+        }
+        return true;
+      } catch {
+        /* keep scanning */
       }
-      return true;
-    } catch {
-      /* keep scanning */
     }
   }
   return false;

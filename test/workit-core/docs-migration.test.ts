@@ -389,6 +389,9 @@ test("migrate does not false-refuse a workspace reached through a symlinked path
   // macOS runners may report TMPDIR=/tmp, and /tmp is a symlink to
   // /private/tmp: the raw workspace path then contains a symlink segment that
   // realpathSync resolves, so the escape guard must compare real-to-real.
+  // Skipped on win32: bun's rmSync faults on Windows directory symlinks
+  // (EFAULT) and dir-symlink creation needs developer mode.
+  if (process.platform === "win32") return;
   const base = mkdtempSync(path.join(os.tmpdir(), "wf-migrate-real-"));
   const alias = path.join(os.tmpdir(), `wf-migrate-alias-${process.pid}`);
   try {

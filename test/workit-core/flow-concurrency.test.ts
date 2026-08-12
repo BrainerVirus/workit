@@ -342,6 +342,9 @@ test("FG-08: two writers with the same expected text — only one wins", () => {
 });
 
 test("A4: an EACCES flow write surfaces io_error (never conflict) and leaves no .tmp behind", () => {
+  // win32 chmod is not advisory — an 0555 dir stays writable, so the EACCES
+  // path cannot be exercised there (mirrors the workit-cli EACCES skips).
+  if (process.platform === "win32") return;
   const { root, slug } = fixture();
   const sddDir = path.join(root, "docs", slug, "sdd");
   try {

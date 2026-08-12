@@ -15,7 +15,7 @@ import { vcsConfig } from "../../packages/workit-core/src/core/vcs-config";
 import { resolvePrBranchContext } from "../../packages/workit-core/src/core/repo-context";
 import { prCreate } from "../../packages/workit-core/src/core/pr-create";
 import { writeConfig } from "../../packages/workit-core/src/core/config";
-import { stubCli } from "../shared/helpers/stub-cli";
+import { stubCli, stubPath } from "../shared/helpers/stub-cli";
 
 const git = (cwd: string, args: string[]) => spawnSync("git", args, { cwd, encoding: "utf8" });
 
@@ -506,7 +506,7 @@ test("RL-03: every PR surface resolves the one configured target branch per pres
   stubCli(stubBin, "glab", logFile, "https://gitlab.com/o/r/-/merge_requests/1");
   const prevPath = process.env.PATH;
   try {
-    process.env.PATH = `${stubBin}${path.delimiter}${prevPath ?? ""}`;
+    process.env.PATH = stubPath(stubBin);
     for (const c of CASES) {
       const { root, remote } = repoWithDevelop();
       if (c.target === "trunk") {
@@ -601,7 +601,7 @@ test("CA-01: workspace branchPolicy overrides global config policy across consum
   const prevPath = process.env.PATH;
   const { root, remote } = repoWithDevelop();
   try {
-    process.env.PATH = `${stubBin}${path.delimiter}${prevPath ?? ""}`;
+    process.env.PATH = stubPath(stubBin);
     writeFileSync(
       path.join(isolatedConfig, "workit", "config.json"),
       JSON.stringify({ branchPolicy: { preset: "github-flow" } }),
@@ -677,7 +677,7 @@ test("CA-05: defaultTargetBranch is preset-aware when unset", async () => {
     return dir;
   };
   try {
-    process.env.PATH = `${stubBin}${path.delimiter}${prevPath ?? ""}`;
+    process.env.PATH = stubPath(stubBin);
     const mainOnly = mainOnlyRepo();
     try {
       writeFileSync(
@@ -788,7 +788,7 @@ test("RL-03b: provider reconciles with the actual origin remote across PR surfac
   };
   try {
     process.env.WORKFLOW_TOOLKIT_CONFIG = cfgDir;
-    process.env.PATH = `${stubBin}${path.delimiter}${prevPath ?? ""}`;
+    process.env.PATH = stubPath(stubBin);
     const ghRoot = repoWithRemote("https://github.com/acme/workit.git");
     try {
       writeCfg("gitlab");

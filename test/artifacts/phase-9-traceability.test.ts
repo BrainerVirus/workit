@@ -4,6 +4,8 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { REPO_ROOT } from "../shared/helpers/packages";
 
+const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
 // Task 31 Phase 9 traceability gate (AR-15, CA-44, CA-45): every post-audit
 // finding (POST-01..15), every AR row (AR-01..15), and every Phase 9
 // acceptance criterion (CA-33..45) maps to an exact test file+case or an
@@ -374,7 +376,11 @@ function resolveTest(target: string): string {
   const file = path.join(REPO_ROOT, rel);
   expect(existsSync(file), `${rel}: file missing`).toBe(true);
   const src = readFileSync(file, "utf8");
-  expect(src.includes(`test("${name}"`), `${rel}::${name}: case missing`).toBe(true);
+  // Accept any whitespace between `test(` and the quoted name — formatters
+  // may split long declarations across lines, and the options variant
+  // `test("name", fn, { timeout })` is used by slow spawn-based cases.
+  const testRe = new RegExp(`test\\(\\s*"${escapeRegExp(name)}"`);
+  expect(testRe.test(src), `${rel}::${name}: case missing`).toBe(true);
   return `${rel}::${name}`;
 }
 

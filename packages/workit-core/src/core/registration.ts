@@ -21,10 +21,12 @@ const named = (s: string, name: string) => s === name || s.startsWith(`${name}@`
 /**
  * True when a plugin identity is a current or legacy Workit entry. Matched by
  * exact identity, never by substring: an unrelated plugin whose id merely
- * contains "workflow-toolkit" is preserved (D3).
+ * contains "workflow-toolkit" is preserved (D3). Path-style identities are
+ * compared with normalized separators so a Windows file:// pin (backslashes)
+ * still matches the packages/workit-* path checks.
  */
 export function isWorkitPlugin(value: unknown): boolean {
-  const s = String(value);
+  const s = String(value).replaceAll("\\", "/");
   const url = s.startsWith("file://") || s.startsWith("git+file://");
   const pkgPath =
     s.includes("/packages/workit-opencode/") ||

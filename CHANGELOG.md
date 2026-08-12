@@ -12,16 +12,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added an approved reliability-overhaul specification with full requirement, audit, and Ponytail traceability.
 - Added pinned Oxlint and Oxfmt checks for first-party TypeScript and package metadata.
 - Per-workspace branch policy (`workspaces.json` `branchPolicy`) with git-flow-style detection init and `integration: pr|merge` on OpenCode, Cursor, and the CLI wizard.
+
 ### Changed
 
 - Repository checks now run lint, format verification, tests, and TypeScript typechecking.
 - Spec/plan approval now needs a single confirmation per document; the self-review validation runs automatically during the transition.
+
 ### Fixed
+
 - OpenCode development installation now pins the active checkout and removes stale Workit plugin identities.
 - Feature branch creation and PR context now honor workspace/global target-branch policy instead of hardcoding `develop`.
 - Cursor install rewrites the plugin mcp.json to an absolute path so plugin MCP servers start in any project directory (package-relative shipped manifest unchanged).
 - Workspace matching tolerates OS temp-dir symlinks (`/var` → `/private/var` on macOS) so git-derived realpaths and logical config globs still match.
 - PR template discovery returns the actual on-disk template name on case-insensitive filesystems (macOS/Windows).
+- Doctor and verification runtime detection probes `*.exe` on Windows so installed node/bun/git are found.
+- Plugin identity matching normalizes path separators so Windows `file://` pins are recognized.
+- Log redaction and documentation-file listing emit portable path forms on Windows (home-prefix `~` and `./`-relative paths).
 
 ## [0.6.0] - 2026-08-10
 

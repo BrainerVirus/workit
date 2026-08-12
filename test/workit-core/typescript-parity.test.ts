@@ -6,7 +6,6 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
-  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -408,70 +407,98 @@ test("verify-project reproduces the shell's parsed counts and check labels", () 
   }
 });
 
-test("verify-project picks the package runner and runs package.json scripts", () => {
-  const { repo } = buildFixtureRepo();
-  try {
-    writeFileSync(path.join(repo, "package.json"), '{"name":"fixture","scripts":{"lint":"true"}}');
-    const result = runVerifyProject(repo);
-    const parsed = parseVerifyOutput(result.stdout);
-    expect(parsed.passed).toBe(2); // lint + changelog
-    const lint = parsed.commands.find((c: any) => c.label === "lint");
-    expect(lint).toEqual({ label: "lint", command: "npm run lint", status: "pass" });
-  } finally {
-    rmSync(repo, { recursive: true, force: true });
-  }
-});
+test(
+  "verify-project picks the package runner and runs package.json scripts",
+  () => {
+    const { repo } = buildFixtureRepo();
+    try {
+      // "true" is POSIX-only; node -e 0 exits 0 everywhere (win32 has no true).
+      writeFileSync(
+        path.join(repo, "package.json"),
+        '{"name":"fixture","scripts":{"lint":"node -e 0"}}',
+      );
+      const result = runVerifyProject(repo);
+      const parsed = parseVerifyOutput(result.stdout);
+      expect(parsed.passed).toBe(2); // lint + changelog
+      const lint = parsed.commands.find((c: any) => c.label === "lint");
+      expect(lint).toEqual({ label: "lint", command: "npm run lint", status: "pass" });
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  },
+  { timeout: 60_000 },
+);
 
-test("verify-project from a git subdirectory checks the repo root (shell cd parity)", () => {
-  const { repo } = buildFixtureRepo();
-  try {
-    writeFileSync(path.join(repo, "package.json"), '{"name":"fixture","scripts":{"lint":"true"}}');
-    const subdir = path.join(repo, "src");
-    mkdirSync(subdir, { recursive: true });
-    // The shell did `root=$(git rev-parse --show-toplevel || pwd); cd "$root"`, so
-    // verify run from a subdir must inspect the repo root's manifests. git
-    // returns the realpath (macOS /var -> /private/var), so compare real-to-real.
-    const result = runVerifyProject(subdir);
-    expect(result.cwd).toBe(realpathSync(repo));
-    const parsed = parseVerifyOutput(result.stdout);
-    expect(parsed.passed).toBe(2); // lint + changelog, both from the repo root
-    const lint = parsed.commands.find((c: any) => c.label === "lint");
-    expect(lint).toEqual({ label: "lint", command: "npm run lint", status: "pass" });
-  } finally {
-    rmSync(repo, { recursive: true, force: true });
-  }
-});
+test(
+  "verify-project from a git subdirectory checks the repo root (shell cd parity)",
+  () => {
+    const { repo } = buildFixtureRepo();
+    try {
+      writeFileSync(
+        path.join(repo, "package.json"),
+        '{"name":"fixture","scripts":{"lint":"node -e 0"}}',
+      );
+      const subdir = path.join(repo, "src");
+      mkdirSync(subdir, { recursive: true });
+      // The shell did `root=$(git rev-parse --show-toplevel || pwd); cd "$root"`, so
+      // verify run from a subdir must inspect the repo root's manifests. Compare
+      // against git's own output: it returns the canonical path (macOS /var ->
+      // /private/var, Windows 8.3 short names expanded).
+      const result = runVerifyProject(subdir);
+      const toplevel = spawnSync("git", ["rev-parse", "--show-toplevel"], {
+        cwd: repo,
+        encoding: "utf8",
+      }).stdout.trim();
+      expect(result.cwd).toBe(toplevel);
+      const parsed = parseVerifyOutput(result.stdout);
+      expect(parsed.passed).toBe(2); // lint + changelog, both from the repo root
+      const lint = parsed.commands.find((c: any) => c.label === "lint");
+      expect(lint).toEqual({ label: "lint", command: "npm run lint", status: "pass" });
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  },
+  { timeout: 60_000 },
+);
 
-test("maintained verify path runs against a fixture repo whose path contains a space", () => {
-  const parent = mkdtempSync(path.join(os.tmpdir(), "wf parity "));
-  const repo = path.join(parent, "repo with space");
-  try {
-    mkdirSync(repo, { recursive: true });
-    const git = (args: string[]) => spawnSync("git", args, { cwd: repo, encoding: "utf8" });
-    git(["init", "-q", "-b", "main"]);
-    git(["config", "user.name", "Workflow Test"]);
-    git(["config", "user.email", "workflow@example.test"]);
-    writeFileSync(path.join(repo, "package.json"), '{"name":"fixture","scripts":{"lint":"true"}}');
-    writeFileSync(
-      path.join(repo, "CHANGELOG.md"),
-      "# Changelog\n\n## [Unreleased]\n\n### Added\n\n- base\n",
-    );
-    git(["add", "-A"]);
-    git(["commit", "-q", "-m", "base"]);
-    const subdir = path.join(repo, "src");
-    mkdirSync(subdir, { recursive: true });
-    // A space in the toplevel path must survive repo_root normalization and the
-    // subdir must still resolve to the root, exactly like the quoted shell.
-    // Compare real-to-real: git --show-toplevel returns the realpath (macOS).
-    const result = runVerifyProject(subdir);
-    expect(result.exitCode).toBe(0);
-    expect(result.cwd).toBe(realpathSync(repo));
-    const parsed = parseVerifyOutput(result.stdout);
-    expect(parsed.passed).toBe(2);
-  } finally {
-    rmSync(parent, { recursive: true, force: true });
-  }
-});
+test(
+  "maintained verify path runs against a fixture repo whose path contains a space",
+  () => {
+    const parent = mkdtempSync(path.join(os.tmpdir(), "wf parity "));
+    const repo = path.join(parent, "repo with space");
+    try {
+      mkdirSync(repo, { recursive: true });
+      const git = (args: string[]) => spawnSync("git", args, { cwd: repo, encoding: "utf8" });
+      git(["init", "-q", "-b", "main"]);
+      git(["config", "user.name", "Workflow Test"]);
+      git(["config", "user.email", "workflow@example.test"]);
+      writeFileSync(
+        path.join(repo, "package.json"),
+        '{"name":"fixture","scripts":{"lint":"node -e 0"}}',
+      );
+      writeFileSync(
+        path.join(repo, "CHANGELOG.md"),
+        "# Changelog\n\n## [Unreleased]\n\n### Added\n\n- base\n",
+      );
+      git(["add", "-A"]);
+      git(["commit", "-q", "-m", "base"]);
+      const subdir = path.join(repo, "src");
+      mkdirSync(subdir, { recursive: true });
+      // A space in the toplevel path must survive repo_root normalization and the
+      // subdir must still resolve to the root, exactly like the quoted shell.
+      // Compare against git's canonical --show-toplevel output.
+      const result = runVerifyProject(subdir);
+      expect(result.exitCode).toBe(0);
+      const toplevel = git(["rev-parse", "--show-toplevel"]).stdout.trim();
+      expect(result.cwd).toBe(toplevel);
+      const parsed = parseVerifyOutput(result.stdout);
+      expect(parsed.passed).toBe(2);
+    } finally {
+      rmSync(parent, { recursive: true, force: true });
+    }
+  },
+  { timeout: 60_000 },
+);
 
 test("git context exposes the same branch and status fields the shell produced", () => {
   const { repo } = buildFixtureRepo();

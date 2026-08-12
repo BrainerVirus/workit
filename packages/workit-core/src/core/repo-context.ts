@@ -219,7 +219,9 @@ export const documentationFiles = (cwd: string): string[] => {
         if (excluded.has(entry.name)) continue;
         walk(path.join(dir, entry.name), depth + 1);
       } else if (entry.isFile() && (entry.name === "README.md" || entry.name.endsWith(".md"))) {
-        matches.push("./" + path.relative(cwd, path.join(dir, entry.name)));
+        // Shell parity: the script printed "./path" with forward slashes even
+        // on win32, where path.relative would otherwise emit backslashes.
+        matches.push("./" + path.relative(cwd, path.join(dir, entry.name)).replaceAll("\\", "/"));
       }
     }
   };

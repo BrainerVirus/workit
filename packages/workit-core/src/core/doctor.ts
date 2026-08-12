@@ -162,15 +162,20 @@ const pluginEntries = (cfg: Record<string, any> | null): string[] => {
 
 const commandOnPath = (name: string, env: NodeJS.ProcessEnv): boolean => {
   const dirs = (env.PATH ?? process.env.PATH ?? "").split(path.delimiter);
+  // win32 executables carry an .exe suffix (bun.exe, git.exe), so probe both
+  // names — statSync with the bare name would never find them.
+  const names = process.platform === "win32" ? [name, `${name}.exe`] : [name];
   for (const dir of dirs) {
     if (!dir) continue;
-    const candidate = path.join(dir, name);
-    try {
-      const st = statSync(candidate);
-      if (process.platform !== "win32" && (st.mode & 0o111) === 0) continue;
-      return true;
-    } catch {
-      /* keep scanning */
+    for (const candidateName of names) {
+      const candidate = path.join(dir, candidateName);
+      try {
+        const st = statSync(candidate);
+        if (process.platform !== "win32" && (st.mode & 0o111) === 0) continue;
+        return true;
+      } catch {
+        /* keep scanning */
+      }
     }
   }
   return false;

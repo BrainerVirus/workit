@@ -149,8 +149,13 @@ export const validateWorkspaceGlob = (glob: string): GlobValidation => {
 };
 
 const realpathOf = (p: string): string => {
+  // realpathSync.native goes through libuv, which expands Windows 8.3 short
+  // names (C:\Users\RUNNER~1 -> C:\Users\runneradmin); the plain realpathSync
+  // keeps them, so a git-derived long path would miss a glob written with the
+  // short form (GitHub runner TMP uses the short name).
+  const real = realpathSync.native ?? realpathSync;
   try {
-    return realpathSync(p);
+    return real(p);
   } catch {
     return p;
   }

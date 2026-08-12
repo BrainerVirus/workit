@@ -717,19 +717,23 @@ test("installer downgrades optional parity checks to warnings, not failures", ()
   expect(check(runInstaller(), "versions").status).toBe("pass");
 });
 
-test("AR-14: negative fixtures never leak raw git usage/fatal dumps into the suite output", () => {
-  const noisy = [
-    "test/workit-core/handoff.test.ts",
-    "test/workit-core/sdd.test.ts",
-    "test/workit-core/repo.test.ts",
-  ];
-  const r = spawnSync("bun", ["test", ...noisy], {
-    cwd: repoRoot,
-    encoding: "utf8",
-    timeout: 300_000,
-  });
-  expect(r.status, r.stderr.slice(0, 2000)).toBe(0);
-  const output = `${r.stdout ?? ""}\n${r.stderr ?? ""}`;
-  expect(output).not.toMatch(/usage: git diff/);
-  expect(output).not.toMatch(/fatal: /);
-});
+test(
+  "AR-14: negative fixtures never leak raw git usage/fatal dumps into the suite output",
+  () => {
+    const noisy = [
+      "test/workit-core/handoff.test.ts",
+      "test/workit-core/sdd.test.ts",
+      "test/workit-core/repo.test.ts",
+    ];
+    const r = spawnSync("bun", ["test", ...noisy], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      timeout: 300_000,
+    });
+    expect(r.status, r.stderr.slice(0, 2000)).toBe(0);
+    const output = `${r.stdout ?? ""}\n${r.stderr ?? ""}`;
+    expect(output).not.toMatch(/usage: git diff/);
+    expect(output).not.toMatch(/fatal: /);
+  },
+  { timeout: 300_000 },
+);

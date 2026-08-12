@@ -137,7 +137,12 @@ type RedactOptions = {
   maxStackLines: number;
 };
 
-const homePattern = new RegExp(`${escapeRegExp(os.homedir())}(?=/|$)|\\$HOME(?=/|$)`, "g");
+// The separator lookahead accepts both / and \ so home-relative Windows paths
+// (C:\Users\x\repo) redact too — os.homedir() uses backslashes there.
+const homePattern = new RegExp(
+  `${escapeRegExp(os.homedir())}(?=[/\\\\]|$)|\\$HOME(?=[/\\\\]|$)`,
+  "g",
+);
 
 const applyPatterns = (value: string): string => {
   let out = value;
