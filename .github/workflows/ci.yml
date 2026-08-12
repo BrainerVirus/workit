@@ -156,7 +156,12 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
         node: [20, 22]
     steps:
+      # The phase-9 traceability gate asserts the DECLARED branch is active;
+      # the default PR checkout is detached at the merge commit, so check out
+      # the head ref (fallback: the default ref, e.g. main pushes).
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.head_ref }}
 
       - uses: oven-sh/setup-bun@v2
         with:
