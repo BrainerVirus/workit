@@ -4,6 +4,7 @@ import { configDir, isConfigObject } from "./config";
 import { PLUGIN_ROOT } from "./scripts";
 import { writeFileExclusive } from "./safe-write";
 import { resolveWorkspace, workspacesPath } from "./workspaces";
+import { applyWorkspaceBranchPolicy } from "./setup";
 import { vcsTokenCreateUrls, vcsVerifyToken } from "./vcs-config";
 import { youTrackTokenCreateUrl, youTrackVerifyToken } from "./youtrack";
 
@@ -496,6 +497,10 @@ export function initApplyData(
         if (prev === undefined) delete process.env.WORKFLOW_VCS_CONFIG;
         else process.env.WORKFLOW_VCS_CONFIG = prev;
       }
+    }
+    case "branch_policy": {
+      const root = String(env.WORKFLOW_WORKSPACE_ROOT ?? process.cwd());
+      return applyWorkspaceBranchPolicy({ workspace_root: root, env });
     }
     default: {
       return {

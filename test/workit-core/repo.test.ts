@@ -592,7 +592,10 @@ test("confirmed script mutations use package scripts, argument arrays, and scope
     {
       root: "/repo",
       action: "youtrack_json",
-      env: { WORKFLOW_YT_BASE_URL: "https://youtrack.example.test" },
+      env: {
+        WORKFLOW_YT_BASE_URL: "https://youtrack.example.test",
+        WORKFLOW_WORKSPACE_ROOT: "/repo",
+      },
     },
   ]);
   rmSync(root, { recursive: true, force: true });

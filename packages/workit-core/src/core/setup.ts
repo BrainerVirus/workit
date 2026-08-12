@@ -14,9 +14,22 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
-import { mergePreset, readConfigFromDir, resolveConfigDir, type BranchPreset } from "./config";
+import {
+  configDir,
+  mergePreset,
+  readConfigFromDir,
+  resolveConfigDir,
+  type BranchPreset,
+} from "./config";
+import { detectBranchPolicy } from "./branch-policy";
 import { readSetupState, type SetupState } from "./setup-state";
-import { loadWorkspacesFrom, validateWorkspaceGlob, type WorkspaceConfig } from "./workspaces";
+import {
+  loadWorkspacesFrom,
+  matchWorkspace,
+  readWorkspacesResult,
+  validateWorkspaceGlob,
+  type WorkspaceConfig,
+} from "./workspaces";
 import { GITIGNORE_ENTRIES } from "./gitignore";
 import { planHygieneFiles } from "./hygiene";
 import { packageRoot } from "./package-root";
@@ -1128,3 +1141,57 @@ export const setupCompletionGuidance = (): string[] => [
   "Run `workit doctor` to verify your installation.",
   "Run /wk-status in OpenCode to review token setup steps.",
 ];
+
+// Shared per-workspace branch policy writer (CA-06): the initApplyData
+// branch_policy action (OpenCode/Cursor) and the Task 5 wizard both route
+// through this proposal→write path, so the written bytes are identical. The
+// write is idempotent: a matching entry is reported already-configured without
+// touching the file; an existing entry is updated; otherwise appended.
+export function applyWorkspaceBranchPolicy(opts: {
+  workspace_root: string;
+  env?: NodeJS.ProcessEnv;
+}): Record<string, any> {
+  const { workspace_root, env = process.env } = opts;
+  const dir = path.join(env.WORKFLOW_TOOLKIT_CONFIG ?? configDir());
+  const { status, path: wsPath, entries } = readWorkspacesResult(dir);
+  if (status === "malformed") return { ok: false, error: `malformed workspaces.json: ${wsPath}` };
+  const detection = detectBranchPolicy(workspace_root);
+  const name = String(env.WORKFLOW_BP_NAME ?? path.basename(workspace_root));
+  const integration = (env.WORKFLOW_BP_INTEGRATION ?? detection.integration) as "pr" | "merge";
+  const policy = {
+    preset: detection.preset,
+    developBranch: env.WORKFLOW_BP_DEVELOP ?? detection.developBranch ?? undefined,
+    prefixes: detection.prefixes,
+    allowed: detection.allowed,
+    protected: detection.protected,
+    integration,
+  };
+  const glob = `${workspace_root.replace(/[\\/]+$/, "")}/**`;
+  if (!validateWorkspaceGlob(glob).ok)
+    return { ok: false, error: `invalid workspace glob: ${glob}` };
+  const idx = entries.findIndex((w) => matchWorkspace(w.glob, workspace_root));
+  const existing = idx >= 0 ? entries[idx] : null;
+  if (existing?.branchPolicy && JSON.stringify(existing.branchPolicy) === JSON.stringify(policy)) {
+    return {
+      ok: true,
+      status: "already-configured",
+      workspace: existing,
+      policy,
+      config_path: wsPath,
+    };
+  }
+  const next = existing
+    ? entries.map((w, i) => (i === idx ? { ...w, branchPolicy: policy } : w))
+    : [...entries, { name, glob, branchPolicy: policy }];
+  mkdirSync(path.dirname(wsPath), { recursive: true });
+  writeFileSync(wsPath, JSON.stringify({ workspaces: next }, null, 2) + "\n", "utf8");
+  return {
+    ok: true,
+    status: existing ? "updated" : "configured",
+    workspace: existing
+      ? { ...existing, branchPolicy: policy }
+      : { name, glob, branchPolicy: policy },
+    policy,
+    config_path: wsPath,
+  };
+}

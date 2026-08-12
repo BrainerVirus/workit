@@ -879,6 +879,7 @@ registerTool(
         "config",
         "gitignore",
         "hygiene",
+        "branch_policy",
       ]),
       confirmed: z.boolean(),
       base_url: z.string().optional(),
@@ -886,6 +887,9 @@ registerTool(
       meeting_issue: z.string().optional(),
       vcs_provider: z.enum(["gitlab", "github"]).optional(),
       vcs_target_branch: z.string().optional(),
+      name: z.string().optional(),
+      develop_branch: z.string().optional(),
+      integration: z.enum(["pr", "merge"]).optional(),
       locale: z.string().optional(),
       locale_options: z.array(z.string()).optional(),
       timezone: z.string().optional(),
@@ -904,6 +908,9 @@ registerTool(
     meeting_issue,
     vcs_provider,
     vcs_target_branch,
+    name,
+    develop_branch,
+    integration,
     locale,
     locale_options,
     timezone,
@@ -953,6 +960,10 @@ registerTool(
     if (meeting_issue) env.WORKFLOW_YT_MEETING_ISSUE = meeting_issue;
     if (vcs_provider) env.WORKFLOW_VCS_PROVIDER = vcs_provider;
     if (vcs_target_branch) env.WORKFLOW_VCS_TARGET_BRANCH = vcs_target_branch;
+    env.WORKFLOW_WORKSPACE_ROOT = workspace_root;
+    if (name) env.WORKFLOW_BP_NAME = name;
+    if (develop_branch) env.WORKFLOW_BP_DEVELOP = develop_branch;
+    if (integration) env.WORKFLOW_BP_INTEGRATION = integration;
     const data = initApply({ action, confirmed, env });
     if (data.error) return jsonResult({ error: data.error });
     return jsonResult(data.data);
