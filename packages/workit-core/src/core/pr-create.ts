@@ -278,12 +278,15 @@ export function prCreate(env: NodeJS.ProcessEnv, cwd: string): Record<string, an
     if (draft) cmd.push("--draft");
     if (push) cmd.push("--push");
     if (skipConfirm) cmd.push("--yes");
-    cmdEnv = { ...process.env, GITLAB_TOKEN: token };
+    // bun's Windows spawn only consults PATH when the env object carries an
+    // explicit PATH key — a spread-only PATH is invisible to the lookup and
+    // uv_spawn fails with ENOENT even though the CLI is on PATH.
+    cmdEnv = { ...process.env, PATH: process.env.PATH ?? "", GITLAB_TOKEN: token };
   } else {
     cmd = ["gh", "pr", "create", "--title", title, "--base", target];
     if (finalBody) cmd.push("--body", finalBody);
     if (draft) cmd.push("--draft");
-    cmdEnv = { ...process.env, GH_TOKEN: token };
+    cmdEnv = { ...process.env, PATH: process.env.PATH ?? "", GH_TOKEN: token };
   }
 
   const result = spawnSync(cmd[0], cmd.slice(1), { cwd: root, encoding: "utf8", env: cmdEnv });

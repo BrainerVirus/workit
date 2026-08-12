@@ -733,58 +733,6 @@ test("CA-05: defaultTargetBranch is preset-aware when unset", async () => {
   }
 });
 
-test("PROBE: win32 stub spawn resolution", () => {
-  if (process.platform !== "win32") return;
-  const dir = mkdtempSync(path.join(os.tmpdir(), "wk-probe-"));
-  const log = path.join(dir, "args.txt");
-  stubCli(dir, "gh", log, "https://github.com/o/r/pull/1");
-  stubCli(dir, "glab", log, "https://gitlab.com/o/r/-/merge_requests/1");
-  const prev = process.env.PATH;
-  process.env.PATH = stubPath(dir);
-  const longDir = spawnSync("git", ["rev-parse", "--show-toplevel"], {
-    cwd: dir,
-    encoding: "utf8",
-  }).stdout.trim();
-  try {
-    const spawn = (name: string, opts: Record<string, unknown>) => {
-      const r = spawnSync(name, ["probe-arg"], { cwd: dir, encoding: "utf8", ...opts } as never);
-      return JSON.stringify({
-        name,
-        opts: Object.keys(opts).join(","),
-        status: r.status,
-        error: r.error ? String(r.error) : null,
-        stderr: (r.stderr ?? "").slice(0, 120),
-        stdout: r.stdout,
-        log: existsSync(log) ? readFileSync(log, "utf8") : null,
-      });
-    };
-    const withEnv = { env: { ...process.env, GH_TOKEN: "x" } };
-    const info = [
-      spawn("gh", {}),
-      spawn("gh", withEnv),
-      spawn("gh", { env: { ...process.env } }),
-      spawn("gh", { env: { ...process.env, PATH: process.env.PATH } }),
-      spawn("gh", { env: { PATH: stubPath(dir) } }),
-      spawn("gh", { env: { ...process.env, PATH: `${dir}${path.delimiter}${process.env.PATH}` } }),
-      spawn("gh", {
-        env: { ...process.env, GH_TOKEN: "x", PATH: `${dir}${path.delimiter}${process.env.PATH}` },
-      }),
-      spawn("glab", withEnv),
-      spawn("glab", {
-        env: { ...process.env, PATH: `${dir}${path.delimiter}${process.env.PATH}` },
-      }),
-      spawn("gh.cmd", {}),
-    ].join("\n");
-    expect(
-      false,
-      `PROBE envPATH=${process.env.PATH}\ndir=${dir}\nlongDir=${longDir}\n${info}`,
-    ).toBe(true);
-  } finally {
-    process.env.PATH = prev;
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-
 test("workspace preset typo falls back to the global preset without crashing", async () => {
   const { root, remote } = repoWithDevelop();
   try {

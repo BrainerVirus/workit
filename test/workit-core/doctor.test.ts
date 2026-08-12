@@ -385,16 +385,22 @@ test("detects an unavailable runtime (no node/bun on PATH) and clears with a ful
   expect(check(run(), "runtime").status).toBe("pass");
 });
 
-test("detects a missing utility (git absent) and warns when flock is absent", () => {
-  const bin = binDirWithRuntimes(fixture.root);
-  const report = run({ env: { ...process.env, PATH: bin } });
-  expect(report.exitCode).not.toBe(0);
-  expect(check(report, "utility").status).toBe("fail");
-  expect(check(report, "utility").fix).toBeTruthy();
+test(
+  "detects a missing utility (git absent) and warns when flock is absent",
+  () => {
+    const bin = binDirWithRuntimes(fixture.root);
+    const report = run({ env: { ...process.env, PATH: bin } });
+    expect(report.exitCode).not.toBe(0);
+    expect(check(report, "utility").status).toBe("fail");
+    expect(check(report, "utility").fix).toBeTruthy();
 
-  const full = run();
-  expect(check(full, "utility").status).not.toBe("fail");
-});
+    const full = run();
+    expect(check(full, "utility").status).not.toBe("fail");
+    // binDirWithRuntimes copies node+bun on win32 (no symlinks); the copy of
+    // both runtimes can exceed the default 5s per-test budget.
+  },
+  { timeout: 60_000 },
+);
 
 test("detects duplicate opencode registration and clears once deduplicated", () => {
   writeConfig(
@@ -660,14 +666,20 @@ test("installer fails when the runtime is unavailable", () => {
   expect(check(report, "runtime").fix).toContain("Install Node");
 });
 
-test("installer fails when a required utility (git) is missing", () => {
-  const bin = binDirWithRuntimes(fixture.root);
-  const report = runInstaller({ env: { ...process.env, PATH: bin } });
-  expect(report.ok).toBe(false);
-  expect(report.exitCode).toBe(1);
-  expect(check(report, "utility").status).toBe("fail");
-  expect(check(report, "utility").fix).toContain("Install git");
-});
+test(
+  "installer fails when a required utility (git) is missing",
+  () => {
+    const bin = binDirWithRuntimes(fixture.root);
+    const report = runInstaller({ env: { ...process.env, PATH: bin } });
+    expect(report.ok).toBe(false);
+    expect(report.exitCode).toBe(1);
+    expect(check(report, "utility").status).toBe("fail");
+    expect(check(report, "utility").fix).toContain("Install git");
+    // binDirWithRuntimes copies node+bun on win32 (no symlinks); the copy of
+    // both runtimes can exceed the default 5s per-test budget.
+  },
+  { timeout: 60_000 },
+);
 
 test("installer fails on a broken selected-host registration", () => {
   writeConfig(
