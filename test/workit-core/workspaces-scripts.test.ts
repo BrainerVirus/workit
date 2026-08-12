@@ -21,6 +21,7 @@ import {
   resolvePrBranchContext,
 } from "../../packages/workit-core/src/core/repo-context";
 import { writeWorkspaces } from "../../packages/workit-cli/src/logic";
+import { stubCli } from "../shared/helpers/stub-cli";
 
 // Parity tests for the TS ports of scripts/vcs/config.sh resolve/load, pr-create.sh
 // missing-CLI guard, pr-create.sh --build-body issue linking, and pr-ready-context.sh
@@ -595,11 +596,7 @@ test("pr-create.sh create: cfg-driven wiring emits Closes #N into the real gh in
   const stubBin = mkdtempSync(path.join(os.tmpdir(), "wf-bin-"));
   const repoDir = realpathSync(mkdtempSync(path.join(os.tmpdir(), "wf-gh-repo-")));
   const logFile = path.join(stubBin, "args.txt");
-  writeFileSync(
-    path.join(stubBin, "gh"),
-    `#!/bin/sh\nprintf '%s\\n' "$*" >> "${logFile}"\necho "https://github.com/o/r/pull/1"\n`,
-    { mode: 0o755 },
-  );
+  stubCli(stubBin, "gh", logFile, "https://github.com/o/r/pull/1");
   const pathDirs = (process.env.PATH ?? "").split(path.delimiter);
   const cleanPath = pathDirs.filter(
     (d) => d && !existsSync(path.join(d, "gh")) && !existsSync(path.join(d, "glab")),
@@ -663,11 +660,7 @@ test("pr-create.sh create: target branch flows from config for every preset (RL-
     const stubBin = mkdtempSync(path.join(os.tmpdir(), "wf-pr-target-"));
     const stub = c.provider === "gitlab" ? "glab" : "gh";
     const logFile = path.join(stubBin, `${stub}-args.txt`);
-    writeFileSync(
-      path.join(stubBin, stub),
-      `#!/bin/sh\nprintf '%s\\n' "$*" >> "${logFile}"\necho "https://example.com/ok"\n`,
-      { mode: 0o755 },
-    );
+    stubCli(stubBin, stub, logFile, "https://example.com/ok");
     const pathDirs = (process.env.PATH ?? "").split(path.delimiter);
     const cleanPath = pathDirs.filter(
       (d) => d && !existsSync(path.join(d, "gh")) && !existsSync(path.join(d, "glab")),

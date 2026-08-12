@@ -6,6 +6,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -428,9 +429,10 @@ test("verify-project from a git subdirectory checks the repo root (shell cd pari
     const subdir = path.join(repo, "src");
     mkdirSync(subdir, { recursive: true });
     // The shell did `root=$(git rev-parse --show-toplevel || pwd); cd "$root"`, so
-    // verify run from a subdir must inspect the repo root's manifests.
+    // verify run from a subdir must inspect the repo root's manifests. git
+    // returns the realpath (macOS /var -> /private/var), so compare real-to-real.
     const result = runVerifyProject(subdir);
-    expect(result.cwd).toBe(path.resolve(repo));
+    expect(result.cwd).toBe(realpathSync(repo));
     const parsed = parseVerifyOutput(result.stdout);
     expect(parsed.passed).toBe(2); // lint + changelog, both from the repo root
     const lint = parsed.commands.find((c: any) => c.label === "lint");
@@ -460,9 +462,10 @@ test("maintained verify path runs against a fixture repo whose path contains a s
     mkdirSync(subdir, { recursive: true });
     // A space in the toplevel path must survive repo_root normalization and the
     // subdir must still resolve to the root, exactly like the quoted shell.
+    // Compare real-to-real: git --show-toplevel returns the realpath (macOS).
     const result = runVerifyProject(subdir);
     expect(result.exitCode).toBe(0);
-    expect(result.cwd).toBe(path.resolve(repo));
+    expect(result.cwd).toBe(realpathSync(repo));
     const parsed = parseVerifyOutput(result.stdout);
     expect(parsed.passed).toBe(2);
   } finally {

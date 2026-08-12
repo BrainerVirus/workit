@@ -20,6 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - OpenCode development installation now pins the active checkout and removes stale Workit plugin identities.
 - Feature branch creation and PR context now honor workspace/global target-branch policy instead of hardcoding `develop`.
 - Cursor install rewrites the plugin mcp.json to an absolute path so plugin MCP servers start in any project directory (package-relative shipped manifest unchanged).
+- Workspace matching tolerates OS temp-dir symlinks (`/var` → `/private/var` on macOS) so git-derived realpaths and logical config globs still match.
+- PR template discovery returns the actual on-disk template name on case-insensitive filesystems (macOS/Windows).
 
 ## [0.6.0] - 2026-08-10
 

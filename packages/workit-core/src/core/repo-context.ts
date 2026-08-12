@@ -128,6 +128,22 @@ export const prRangeArgOrDefault = (arg: string | undefined, cwd: string): strin
 
 export const printSection = (title: string): string => `\n## ${title}\n\n`;
 
+// macOS/Windows filesystems are case-insensitive: existsSync() would match a
+// differently-cased candidate, so the returned template_path must be the
+// ACTUAL on-disk name. Probe each candidate directory case-insensitively and
+// report the real entry — identical to the case-sensitive Linux probe, which
+// only ever sees the exact on-disk name.
+const probeCaseInsensitive = (dir: string, wanted: string): string | null => {
+  try {
+    for (const entry of readdirSync(dir)) {
+      if (entry.toLowerCase() === wanted.toLowerCase()) return entry;
+    }
+  } catch {
+    /* missing dir */
+  }
+  return null;
+};
+
 export const findPrTemplate = (cwd: string): string | null => {
   for (const rel of [
     ".gitlab/merge_request_templates/Default.md",
@@ -139,7 +155,11 @@ export const findPrTemplate = (cwd: string): string | null => {
     "docs/PULL_REQUEST_TEMPLATE.md",
     "PULL_REQUEST_TEMPLATE.md",
   ]) {
-    if (existsSync(path.join(cwd, rel))) return rel;
+    const parts = rel.split("/");
+    const base = parts[parts.length - 1];
+    const dir = parts.length > 1 ? path.join(cwd, ...parts.slice(0, -1)) : cwd;
+    const actual = probeCaseInsensitive(dir, base);
+    if (actual) return [...parts.slice(0, -1), actual].join("/");
   }
   return null;
 };

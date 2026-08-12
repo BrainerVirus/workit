@@ -5,6 +5,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { createRepoTools } from "../../packages/workit-opencode/src/tools/repo";
 import { prBuildBody, prCreate } from "../../packages/workit-core/src/core/pr-create";
+import { stubCli } from "../shared/helpers/stub-cli";
 
 // B1/B6 advisory coverage: WF_PR_TARGET override validation against the branch
 // policy, and env-driven issue linking through the OpenCode tool wrapper.
@@ -51,11 +52,7 @@ beforeEach(() => {
   root = mkdtempSync(path.join(os.tmpdir(), "wf-pr-create-repo-"));
   stubBin = mkdtempSync(path.join(os.tmpdir(), "wf-pr-create-bin-"));
   logFile = path.join(stubBin, "gh-args.txt");
-  writeFileSync(
-    path.join(stubBin, "gh"),
-    `#!/bin/sh\nprintf '%s\\n' "$*" >> "${logFile}"\necho "https://github.com/o/r/pull/1"\n`,
-    { mode: 0o755 },
-  );
+  stubCli(stubBin, "gh", logFile, "https://github.com/o/r/pull/1");
 });
 
 afterEach(() => {

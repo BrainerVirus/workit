@@ -15,6 +15,7 @@ import { vcsConfig } from "../../packages/workit-core/src/core/vcs-config";
 import { resolvePrBranchContext } from "../../packages/workit-core/src/core/repo-context";
 import { prCreate } from "../../packages/workit-core/src/core/pr-create";
 import { writeConfig } from "../../packages/workit-core/src/core/config";
+import { stubCli } from "../shared/helpers/stub-cli";
 
 const git = (cwd: string, args: string[]) => spawnSync("git", args, { cwd, encoding: "utf8" });
 
@@ -502,11 +503,7 @@ test("RL-03: every PR surface resolves the one configured target branch per pres
   ] as const;
   const stubBin = mkdtempSync(path.join(os.tmpdir(), "wf-rel03-bin-"));
   const logFile = path.join(stubBin, "glab-args.txt");
-  writeFileSync(
-    path.join(stubBin, "glab"),
-    `#!/bin/sh\nprintf '%s\\n' "$*" >> "${logFile}"\necho "https://gitlab.com/o/r/-/merge_requests/1"\n`,
-    { mode: 0o755 },
-  );
+  stubCli(stubBin, "glab", logFile, "https://gitlab.com/o/r/-/merge_requests/1");
   const prevPath = process.env.PATH;
   try {
     process.env.PATH = `${stubBin}${path.delimiter}${prevPath ?? ""}`;
@@ -600,11 +597,7 @@ test("RL-03: every PR surface resolves the one configured target branch per pres
 test("CA-01: workspace branchPolicy overrides global config policy across consumers", async () => {
   const stubBin = mkdtempSync(path.join(os.tmpdir(), "wf-ca01-bin-"));
   const logFile = path.join(stubBin, "glab-args.txt");
-  writeFileSync(
-    path.join(stubBin, "glab"),
-    `#!/bin/sh\nprintf '%s\\n' "$*" >> "${logFile}"\necho "https://gitlab.com/o/r/-/merge_requests/1"\n`,
-    { mode: 0o755 },
-  );
+  stubCli(stubBin, "glab", logFile, "https://gitlab.com/o/r/-/merge_requests/1");
   const prevPath = process.env.PATH;
   const { root, remote } = repoWithDevelop();
   try {
@@ -671,11 +664,7 @@ test("CA-05: defaultTargetBranch is preset-aware when unset", async () => {
   // gitflow -> develop. Explicit workspace/global values still win (RL-03).
   const stubBin = mkdtempSync(path.join(os.tmpdir(), "wf-ca05-bin-"));
   const ghLog = path.join(stubBin, "gh-args.txt");
-  writeFileSync(
-    path.join(stubBin, "gh"),
-    `#!/bin/sh\nprintf '%s\\n' "$*" >> "${ghLog}"\necho "https://github.com/o/r/pull/1"\n`,
-    { mode: 0o755 },
-  );
+  stubCli(stubBin, "gh", ghLog, "https://github.com/o/r/pull/1");
   const prevPath = process.env.PATH;
   const mainOnlyRepo = () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), "wf-ca05-main-"));
@@ -772,16 +761,8 @@ test("RL-03b: provider reconciles with the actual origin remote across PR surfac
   const stubBin = mkdtempSync(path.join(os.tmpdir(), "wf-remote-bin-"));
   const ghLog = path.join(stubBin, "gh-args.txt");
   const glabLog = path.join(stubBin, "glab-args.txt");
-  writeFileSync(
-    path.join(stubBin, "gh"),
-    `#!/bin/sh\nprintf '%s\\n' "$*" >> "${ghLog}"\necho "https://github.com/acme/workit/pull/1"\n`,
-    { mode: 0o755 },
-  );
-  writeFileSync(
-    path.join(stubBin, "glab"),
-    `#!/bin/sh\nprintf '%s\\n' "$*" >> "${glabLog}"\necho "https://gitlab.com/acme/workit/-/merge_requests/1"\n`,
-    { mode: 0o755 },
-  );
+  stubCli(stubBin, "gh", ghLog, "https://github.com/acme/workit/pull/1");
+  stubCli(stubBin, "glab", glabLog, "https://gitlab.com/acme/workit/-/merge_requests/1");
   const cfgDir = mkdtempSync(path.join(os.tmpdir(), "wf-remote-cfg-"));
   const prevConfig = process.env.WORKFLOW_TOOLKIT_CONFIG;
   const prevPath = process.env.PATH;

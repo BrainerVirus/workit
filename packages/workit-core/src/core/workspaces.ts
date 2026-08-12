@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { configDir, isConfigObject, type BranchPreset } from "./config";
 
@@ -148,14 +148,45 @@ export const validateWorkspaceGlob = (glob: string): GlobValidation => {
   return { ok: true };
 };
 
+const realpathOf = (p: string): string => {
+  try {
+    return realpathSync(p);
+  } catch {
+    return p;
+  }
+};
+
+// Rebuild a glob with the realpath of its static prefix, so a config glob
+// written with the logical path also matches a canonical target (and vice
+// versa). The glob metacharacters themselves are left untouched.
+const canonicalGlob = (glob: string): string => {
+  const m = /[*?[\]{]/.exec(glob);
+  const prefix = m ? glob.slice(0, m.index) : glob;
+  const rest = m ? glob.slice(m.index) : "";
+  if (!prefix) return glob;
+  const real = realpathOf(prefix.replace(/\/+$/, "") || "/");
+  return real + (prefix.endsWith("/") ? "/" : "") + rest;
+};
+
 /** Match a cwd against the workspaces.json under an explicit config dir. */
 export const resolveWorkspaceFrom = (cwd: string, dir: string): WorkspaceConfig | null => {
-  const cwdPosix = cwd.replaceAll("\\", "/");
+  // macOS/Windows tmpdir symlinks (/var -> /private/var): git's
+  // --show-toplevel returns the realpath while config globs are usually
+  // written with the logical path, so a workspace would silently stop
+  // matching on macOS. Match both forms on each side — same class as the
+  // docs-migration escape-guard realpath comparison; on Linux both forms
+  // are identical so behavior is unchanged.
+  const targets = [cwd, realpathOf(cwd)].map((p) => p.replaceAll("\\", "/"));
   for (const entry of loadWorkspacesFrom(dir)) {
     if (!entry || typeof entry !== "object") continue;
     const ws = entry as WorkspaceConfig;
     if (typeof ws.glob !== "string" || !ws.glob) continue;
-    if (matchWorkspace(ws.glob, cwdPosix)) return ws;
+    const glob = ws.glob.replaceAll("\\", "/");
+    const canonical = canonicalGlob(glob);
+    for (const target of targets) {
+      if (matchWorkspace(glob, target)) return ws;
+      if (canonical !== glob && matchWorkspace(canonical, target)) return ws;
+    }
   }
   return null;
 };

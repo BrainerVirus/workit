@@ -364,6 +364,12 @@ test("packed installers fail loudly on a required failure in a temp HOME (RR-05)
       "#!/usr/bin/env bash\necho 'FATAL: rsync unavailable' >&2\nexit 1\n",
       { mode: 0o755 },
     );
+    // macOS ships no flock (util-linux), so sync-runtime.sh FATALs on the lock
+    // before ever reaching rsync; stub it so the rsync failure path is what
+    // this fixture exercises.
+    writeFileSync(path.join(binDir, "flock"), "#!/usr/bin/env bash\nexit 0\n", {
+      mode: 0o755,
+    });
     const bun = path.join(binDir, "bun");
     writeFileSync(bun, "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
 
