@@ -24,15 +24,21 @@ const tsFiles = (dir: string): string[] => {
 
 test("CA-09: consumers never resolve branch policy on their own", () => {
   const offenders: string[] = [];
+  // Definition files are exempt by exact core path, not filename substring:
+  // "vcs-config.ts" ends with "config.ts" and would otherwise dodge the gate.
+  const exempt = ["config.ts", "branch.ts", "workspaces.ts"].map((f) =>
+    path.join("src", "core", f),
+  );
   for (const dir of [CORE, ...ADAPTERS]) {
     for (const f of tsFiles(dir)) {
       if (f.includes("branch-policy-detect") || f.includes("branch-policy-resolver")) continue;
       const src = readFileSync(f, "utf8");
       if (/\bresolveBranchPolicy\(readConfig\(\)\)/.test(src)) offenders.push(f);
-      if (f.includes("config.ts") || f.includes("branch.ts") || f.includes("workspaces.ts"))
-        continue;
-      if (/\bresolveBranchPolicy\(/.test(src) && !/resolveBranchPolicyFor\(/.test(src))
-        offenders.push(f);
+      if (exempt.some((suffix) => f.endsWith(suffix))) continue;
+      // Per-call-site gate: any direct resolveBranchPolicy( call not routed
+      // through the resolveBranchPolicyFor wrapper flags the file — including
+      // the line-break and pre-bound-variable dodges the first regex allows.
+      if (/\bresolveBranchPolicy\((?!For)/.test(src)) offenders.push(f);
     }
   }
   expect(offenders).toEqual([]);

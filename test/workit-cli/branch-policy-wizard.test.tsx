@@ -65,19 +65,9 @@ test("CA-06: wizard branch-policy apply equals the host init action write", asyn
     expect(exitValues?.branchPolicy?.preset).toBe("gitflow");
 
     // Replay the wizard's values through the exact apply path runInit uses
-    // (applyWizardBranchPolicy with env overrides from exit.values.branchPolicy).
-    const wizardEnv: NodeJS.ProcessEnv = {
-      ...process.env,
-      WORKFLOW_TOOLKIT_CONFIG: cfg,
-      WORKFLOW_WORKSPACE_ROOT: root,
-      // hermetic: ambient BP overrides must not leak into either write
-      WORKFLOW_BP_NAME: undefined,
-      WORKFLOW_BP_INTEGRATION: exitValues!.branchPolicy!.integration,
-      ...(exitValues!.branchPolicy!.developBranch
-        ? { WORKFLOW_BP_DEVELOP: exitValues!.branchPolicy!.developBranch }
-        : {}),
-    };
-    const viaWizard = applyWizardBranchPolicy(root, wizardEnv);
+    // (applyWizardBranchPolicy — the shared seam owns env construction, so
+    // runInit and this test cannot drift).
+    const viaWizard = applyWizardBranchPolicy(exitValues!.branchPolicy, root, {});
     expect(viaWizard.ok, JSON.stringify(viaWizard)).toBe(true);
     expect(viaWizard.status).toBe("configured");
     const wsFile = readFileSync(path.join(cfg, "workspaces.json"), "utf8");

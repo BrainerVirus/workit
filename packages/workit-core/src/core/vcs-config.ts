@@ -1,8 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { configDir, readConfig, resolveBranchPolicy } from "./config";
+import { configDir } from "./config";
 import { resolveWorkspace } from "./workspaces";
+import { resolveBranchPolicyFor } from "./branch";
 // Ports of scripts/vcs/config.sh + verify-token.sh + token-create-urls.sh + merged-style.sh.
 // Token never printed.
 
@@ -87,10 +88,12 @@ export function vcsConfig(mode: "load" | "summary" | "resolve", cwd?: string): R
   // branch-policy preset supplies the default (gitflow->develop,
   // github-flow->main, trunk-based->master, custom->develop). Shared by load
   // and resolve so both surfaces stay consistent.
+  // CA-09: the one resolver wrapper — same policy resolution every consumer
+  // uses, so the tightened gate in branch-policy-resolver.test.ts stays green.
   const defaultTarget = String(
     wsVcs.defaultTargetBranch ??
       cfg.defaultTargetBranch ??
-      resolveBranchPolicy(readConfig(), ws).defaultTargetBranch ??
+      resolveBranchPolicyFor(root).defaultTargetBranch ??
       "develop",
   );
   const linkIssues = typeof wsYt.link_issues === "boolean" ? wsYt.link_issues : null;

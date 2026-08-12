@@ -98,24 +98,26 @@ async function runInit() {
     const result = applySetupPreview(preview, { cwd: process.cwd(), env: process.env });
     // CA-06: the branch-policy screen is applied separately through the shared
     // proposal→write helper (byte-identical to the host init action) right
-    // after the setup preview; its status line joins the summary below.
+    // after the setup preview; its status line joins the summary below. The
+    // shared seam builds the hermetic env, so runInit and the parity test
+    // cannot drift.
+    let exitCode = result.exitCode;
     if (exit.values.branchPolicy) {
-      const workspaceRoot = process.env.WORKFLOW_WORKSPACE_ROOT ?? process.cwd();
-      const overrides: NodeJS.ProcessEnv = {
-        WORKFLOW_WORKSPACE_ROOT: workspaceRoot,
-        ...(exit.values.branchPolicy.integration
-          ? { WORKFLOW_BP_INTEGRATION: exit.values.branchPolicy.integration }
-          : {}),
-        ...(exit.values.branchPolicy.developBranch
-          ? { WORKFLOW_BP_DEVELOP: exit.values.branchPolicy.developBranch }
-          : {}),
-      };
-      const bp = applyWizardBranchPolicy(workspaceRoot, { ...process.env, ...overrides });
-      console.log(`${String(bp.status).padEnd(11)} ${bp.config_path} — branch policy`);
+      const bp = applyWizardBranchPolicy(
+        exit.values.branchPolicy,
+        process.env.WORKFLOW_WORKSPACE_ROOT ?? process.cwd(),
+        process.env,
+      );
+      if (bp.ok) {
+        console.log(`${String(bp.status).padEnd(11)} ${bp.config_path} — branch policy`);
+      } else {
+        console.log("branch policy apply failed — " + (bp.error ?? "unknown"));
+        exitCode = 1;
+      }
     }
     logger.info(EVENT.installSteps, { step: "wizard_apply", ok: result.ok });
     printApplySummary(result);
-    process.exit(result.exitCode);
+    process.exit(exitCode);
   }
   logger.info(EVENT.installSteps, {
     step: "wizard_done",

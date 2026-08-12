@@ -232,8 +232,12 @@ test("CA-04: merge integration finishes the feature into the target without a PR
     expect(p.ok, JSON.stringify(p)).toBe(true);
     expect(p.mode).toBe("merge");
     expect(p.targetBranch).toBe("develop");
+    expect(p.merged).toBe(true);
+    expect(p.pushed).toBe(true);
     const log = git(root, ["log", "--oneline", "-1", "develop"]).stdout;
     expect(log).toContain("T");
+    const remoteLog = git(root, ["log", "--oneline", "-1", "origin/develop"]).stdout;
+    expect(remoteLog).toContain("T");
   } finally {
     rmSync(remote, { recursive: true, force: true });
   }

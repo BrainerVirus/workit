@@ -329,6 +329,8 @@ export function reducer(draft: WizardDraft, action: WizardAction): WizardDraft {
         case "branchPolicy":
           // I1: an already-edited policy wins — edits compose and survive the
           // Accept hop instead of being overwritten by the raw detected proposal.
+          // The early return is deliberate: re-accepting the detection must not
+          // clobber a policy the user already edited.
           if (draft.values.branchPolicy) return draft;
           return {
             ...draft,

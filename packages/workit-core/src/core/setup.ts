@@ -1171,7 +1171,7 @@ export function applyWorkspaceBranchPolicy(opts: {
     return { ok: false, error: `invalid workspace glob: ${glob}` };
   const idx = entries.findIndex((w) => matchWorkspace(w.glob, workspace_root));
   const existing = idx >= 0 ? entries[idx] : null;
-  if (existing?.branchPolicy && JSON.stringify(existing.branchPolicy) === JSON.stringify(policy)) {
+  if (existing?.branchPolicy && isDeepStrictEqual(existing.branchPolicy, policy)) {
     return {
       ok: true,
       status: "already-configured",

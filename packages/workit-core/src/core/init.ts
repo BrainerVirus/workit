@@ -499,7 +499,9 @@ export function initApplyData(
       }
     }
     case "branch_policy": {
-      const root = String(env.WORKFLOW_WORKSPACE_ROOT ?? process.cwd());
+      const root = env.WORKFLOW_WORKSPACE_ROOT?.trim()
+        ? env.WORKFLOW_WORKSPACE_ROOT
+        : process.cwd();
       return applyWorkspaceBranchPolicy({ workspace_root: root, env });
     }
     default: {

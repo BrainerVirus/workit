@@ -1,6 +1,13 @@
 import { spawnSync } from "node:child_process";
-import type { BranchPreset } from "./config";
+import { PRESETS, type BranchPreset } from "./config";
 import type { IntegrationMode } from "./workspaces";
+
+const PREFIXES = {
+  feature: "feature/*",
+  bugfix: "bugfix/*",
+  release: "release/*",
+  hotfix: "hotfix/*",
+};
 
 export const detectBranchPolicy = (workspaceRoot: string) => {
   const branchExists = (name: string): boolean => {
@@ -15,19 +22,14 @@ export const detectBranchPolicy = (workspaceRoot: string) => {
   const master = branchExists("master");
   const root = main ? "main" : master ? "master" : null;
 
-  if (develop && root) {
+  if (develop) {
     return {
       preset: "gitflow" as BranchPreset,
       developBranch: "develop",
       integration: "merge" as IntegrationMode,
-      protected: [root, "develop"],
-      allowed: ["feature/*", "bugfix/*", "hotfix/*", "release/*"],
-      prefixes: {
-        feature: "feature/*",
-        bugfix: "bugfix/*",
-        release: "release/*",
-        hotfix: "hotfix/*",
-      },
+      protected: root ? [root, "develop"] : ["develop"],
+      allowed: [...PRESETS.gitflow.allowed],
+      prefixes: PREFIXES,
     };
   }
   if (root === "main") {
@@ -37,12 +39,7 @@ export const detectBranchPolicy = (workspaceRoot: string) => {
       integration: "pr" as IntegrationMode,
       protected: [root],
       allowed: ["*"],
-      prefixes: {
-        feature: "feature/*",
-        bugfix: "bugfix/*",
-        release: "release/*",
-        hotfix: "hotfix/*",
-      },
+      prefixes: PREFIXES,
     };
   }
   if (root === "master") {
@@ -52,12 +49,7 @@ export const detectBranchPolicy = (workspaceRoot: string) => {
       integration: "pr" as IntegrationMode,
       protected: [root],
       allowed: ["*"],
-      prefixes: {
-        feature: "feature/*",
-        bugfix: "bugfix/*",
-        release: "release/*",
-        hotfix: "hotfix/*",
-      },
+      prefixes: PREFIXES,
     };
   }
   return {
@@ -66,11 +58,6 @@ export const detectBranchPolicy = (workspaceRoot: string) => {
     integration: "merge" as IntegrationMode,
     protected: [],
     allowed: [],
-    prefixes: {
-      feature: "feature/*",
-      bugfix: "bugfix/*",
-      release: "release/*",
-      hotfix: "hotfix/*",
-    },
+    prefixes: PREFIXES,
   };
 };

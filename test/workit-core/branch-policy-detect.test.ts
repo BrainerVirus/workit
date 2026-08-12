@@ -24,6 +24,7 @@ test("CA-02: detection matrix maps branch presence to the proposal", () => {
   const cases: Array<[string[], BranchPreset, string | null, IntegrationMode]> = [
     [["main", "develop"], "gitflow", "develop", "merge"],
     [["master", "develop"], "gitflow", "develop", "merge"],
+    [["develop"], "gitflow", "develop", "merge"],
     [["main"], "github-flow", null, "pr"],
     [["master"], "trunk-based", null, "pr"],
   ];
@@ -52,7 +53,8 @@ test("CA-02: detection matrix maps branch presence to the proposal", () => {
   }
 });
 
-test("CA-02: repo with no origin branches falls back to gitflow defaults", () => {
+test("CA-02: a non-repo directory falls back to gitflow defaults", () => {
+  // bare non-git temp dir (not a repo with an origin) — the fallback path
   const root = mkdtempSync(path.join(os.tmpdir(), "wf-detect-empty-"));
   try {
     const d = detectBranchPolicy(root);

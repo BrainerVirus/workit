@@ -22,6 +22,7 @@ import {
   TOKEN_PLACEHOLDER,
   type VcsProvider,
 } from "@brainervirus/workit-core/src/core/setup.ts";
+import type { WorkspaceBranchPolicy } from "@brainervirus/workit-core/src/core/workspaces.ts";
 
 export function validateLocale(locale: string): string | null {
   if (!LOCALE_RE.test(locale)) {
@@ -419,9 +420,20 @@ export type { VcsProvider };
 // CA-06: the wizard's branch-policy apply routes through the same shared
 // proposal→write helper as the host init action (init.ts branch_policy), so
 // both produce byte-identical workspaces.json writes on the same fixture.
+// The env override construction lives HERE (not in the host entrypoint) so the
+// wizard and the host side cannot drift; ambient WORKFLOW_BP_* overrides are
+// stripped so both sides are hermetic.
 export function applyWizardBranchPolicy(
+  branchPolicy: WorkspaceBranchPolicy | undefined,
   workspace_root: string,
-  env: NodeJS.ProcessEnv,
+  env: NodeJS.ProcessEnv = process.env,
 ): Record<string, any> {
-  return applyWorkspaceBranchPolicy({ workspace_root, env });
+  const clean: NodeJS.ProcessEnv = { ...env };
+  delete clean.WORKFLOW_BP_INTEGRATION;
+  delete clean.WORKFLOW_BP_DEVELOP;
+  delete clean.WORKFLOW_BP_NAME;
+  clean.WORKFLOW_WORKSPACE_ROOT = workspace_root;
+  if (branchPolicy?.integration) clean.WORKFLOW_BP_INTEGRATION = branchPolicy.integration;
+  if (branchPolicy?.developBranch) clean.WORKFLOW_BP_DEVELOP = branchPolicy.developBranch;
+  return applyWorkspaceBranchPolicy({ workspace_root, env: clean });
 }

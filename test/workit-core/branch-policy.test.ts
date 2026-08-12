@@ -14,6 +14,7 @@ import {
 import { vcsConfig } from "../../packages/workit-core/src/core/vcs-config";
 import { resolvePrBranchContext } from "../../packages/workit-core/src/core/repo-context";
 import { prCreate } from "../../packages/workit-core/src/core/pr-create";
+import { writeConfig } from "../../packages/workit-core/src/core/config";
 
 const git = (cwd: string, args: string[]) => spawnSync("git", args, { cwd, encoding: "utf8" });
 
@@ -764,8 +765,6 @@ test("workspace preset typo falls back to the global preset without crashing", a
   }
 });
 
-import { writeConfig } from "../../packages/workit-core/src/core/config";
-
 test("RL-03b: provider reconciles with the actual origin remote across PR surfaces", async () => {
   // A stale config provider (gitlab) must not drive glab on a github.com-hosted
   // repo: vcsConfig load/resolve and prCreate derive the provider from the
@@ -851,6 +850,33 @@ test("RL-03b: provider reconciles with the actual origin remote across PR surfac
     else process.env.PATH = prevPath;
     rmSync(stubBin, { recursive: true, force: true });
     rmSync(cfgDir, { recursive: true, force: true });
+  }
+});
+
+test("RL-01: malformed config.json throws the exact-path error from policy-aware resolve", () => {
+  // The now-policy-aware vcs resolve and resolveBranchPolicyFor both call
+  // readConfig(), which throws on malformed config.json instead of silently
+  // falling back to defaults — the diagnostic carries the exact file path.
+  const root = mkdtempSync(path.join(os.tmpdir(), "wf-malformed-cfg-repo-"));
+  const cfg = mkdtempSync(path.join(os.tmpdir(), "wf-malformed-cfg-"));
+  const prevConfig = process.env.WORKFLOW_TOOLKIT_CONFIG;
+  try {
+    const run = (args: string[]) => spawnSync("git", args, { cwd: root, encoding: "utf8" });
+    run(["init", "-q", "-b", "main"]);
+    run(["config", "user.name", "T"]);
+    run(["config", "user.email", "t@t"]);
+    writeFileSync(path.join(root, "r.md"), "x");
+    run(["add", "r.md"]);
+    run(["commit", "-q", "-m", "base"]);
+    writeFileSync(path.join(cfg, "config.json"), "{ not json\n", "utf8");
+    process.env.WORKFLOW_TOOLKIT_CONFIG = cfg;
+    expect(() => vcsConfig("resolve", root)).toThrow(/is not valid JSON/);
+    expect(() => resolveBranchPolicyFor(root)).toThrow(/is not valid JSON/);
+  } finally {
+    if (prevConfig === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+    else process.env.WORKFLOW_TOOLKIT_CONFIG = prevConfig;
+    rmSync(root, { recursive: true, force: true });
+    rmSync(cfg, { recursive: true, force: true });
   }
 });
 

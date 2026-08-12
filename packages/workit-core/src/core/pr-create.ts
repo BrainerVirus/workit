@@ -198,8 +198,14 @@ export function prCreate(env: NodeJS.ProcessEnv, cwd: string): Record<string, an
       return {
         error: `cannot checkout target ${target}`,
         mode: "merge",
+        targetBranch: target,
         stderr: (co.stderr ?? "").slice(0, 800),
       };
+    // finish() returns error objects, it never throws, so the best-effort
+    // `git checkout branch` restore below runs on ALL outcomes (success,
+    // merge failure, and push failure) — the tree always returns to the
+    // feature branch. Deliberately not a try/finally: the restore is
+    // best-effort and its own failure is not actionable on this path.
     const result = finish();
     spawnSync("git", ["checkout", branch], { cwd: root, encoding: "utf8" }); // best-effort return
     return result;
