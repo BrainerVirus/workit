@@ -57,8 +57,9 @@ import {
 import { loadCommandTemplates, loadProvenance, reportUncaught } from "./runtime";
 
 // Secret-safe diagnostic logger (DG-01-DG-03, DG-05, DG-10). Sink injection
-// only: events mirror to OpenCode's server log and stderr, never the agent
-// conversation. MCP stdout is never written by the logger.
+// only: events mirror to OpenCode's native app log (JSONL journal still
+// persists every record) and never to the agent conversation or the process
+// terminal. MCP stdout/stderr are never written by the logger.
 type AppLogClient = {
   app?: {
     log?: (options: {
@@ -86,7 +87,6 @@ const logger = createLogger({
     });
     if (result) void result.catch(() => {});
   },
-  stderr: (event) => process.stderr.write(`${JSON.stringify(event)}\n`),
 });
 
 // Commands/skills/vendor/templates ship package-locally under assets/ so the

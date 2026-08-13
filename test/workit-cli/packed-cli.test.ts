@@ -343,12 +343,14 @@ test("packed CLI: non-TTY init gives guidance + nonzero; --help exits 0", () => 
     const help = runInIsolation(install, "node", [entry, "--help"], env);
     expect(help.status, help.stderr).toBe(0);
     expect(help.stdout).toContain("workit");
+    expect(help.stderr).toBe("");
 
     const init = runInIsolation(install, "node", [entry, "init"], env);
     expect(init.status, init.stdout + init.stderr).toBe(1);
     expect(init.stdout).toContain("interactive terminal");
     expect(init.stdout).toContain("workit doctor");
     expect(init.stdout).toContain("/wk-status");
+    expect(init.stderr).not.toContain('"initialization"');
   } finally {
     rmSync(install, { recursive: true, force: true });
   }
