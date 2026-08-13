@@ -11,12 +11,14 @@ Multi-platform workit: OpenCode, Cursor, and the CLI share one core. Every featu
 | Tools | native plugin tools | MCP server (`workflow_*`) | `workit` commands |
 | Skills | `skills.paths` + vendored dirs | plugin `skills/` dirs | n/a |
 | Branch policy init | `workflow_toolkit_init_apply action=branch_policy` | same MCP tool | wizard screen |
+| Distribution | npm plugin entry (`opencode.json`) | Cursor Marketplace (git-discovered `.cursor-plugin/plugin.json`) | npm bin (`npx`) |
 
 ## Parity rules
 
 1. Core logic lives in `packages/workit-core/src/core/`; adapters only map host-native surfaces to it. Never re-implement core logic per host.
 2. A new feature adds: the core module, both host adapters, and the CLI surface (command or wizard screen), plus tests proving identical outcomes (parity test).
 3. Docs (README), this file, and the CHANGELOG Unreleased section are updated in the same change.
+4. Marketplace distribution is host-native: Cursor discovers the plugin from Git (`.cursor-plugin/plugin.json` + tracked skills/rules/assets), OpenCode installs the npm plugin entry, and the CLI ships as an npm bin. Never claim Marketplace publication or acceptance; keep the repository submission-ready but not submitted.
 
 ## Workflow contract
 

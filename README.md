@@ -1,13 +1,13 @@
 # Workit
 
-Multi-platform Superpowers workflow plugin for **Cursor** and **OpenCode**: verify, PR, changelog, commits, SDD implementation, session handoff, YouTrack, and deterministic UI presentation.
+Multi-platform Superpowers workflow plugin for **Cursor**, **OpenCode**, and the **CLI**: verify, PR, changelog, commits, SDD implementation, session handoff, YouTrack, and deterministic UI presentation.
 
-| Platform        | Path                                                                | Version                                                            |
-| --------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------ |
-| **OpenCode**    | `packages/workit-opencode/src/plugin.ts`                            | ![npm](https://img.shields.io/npm/v/@brainervirus/workit-opencode) |
-| **Cursor**      | `packages/workit-cursor/` (MCP + hooks + rules + skills)            | ![npm](https://img.shields.io/npm/v/@brainervirus/workit-cursor)   |
-| **Shared core** | `packages/workit-core/` (src, skills, commands, scripts, templates) | ![npm](https://img.shields.io/npm/v/@brainervirus/workit-core)     |
-| **CLI**         | `packages/workit-cli/` (Ink wizard, bin `workit`)                   | ![npm](https://img.shields.io/npm/v/@brainervirus/workit-cli)      |
+| Package         | Purpose                                                                     |
+| --------------- | --------------------------------------------------------------------------- |
+| **OpenCode**    | `packages/workit-opencode/` — native plugin (commands, skills, tools)       |
+| **Cursor**      | `packages/workit-cursor/` — MCP + hooks + rules + skills plugin             |
+| **Shared core** | `packages/workit-core/` — shared logic, skills, commands, scripts, templates |
+| **CLI**         | `packages/workit-cli/` — Ink setup wizard + doctor (bin `workit`)           |
 
 Config directory (both platforms): `~/.config/workit/` — legacy `~/.config/workflow-toolkit/` is auto-migrated on first run and kept as a fallback.
 
@@ -23,12 +23,12 @@ Config directory (both platforms): `~/.config/workit/` — legacy `~/.config/wor
 npx @brainervirus/workit-cli init
 ```
 
-The wizard installs the platform packages it configures (OpenCode plugin / Cursor MCP) — no manual `npm i` needed.
+The wizard installs the platform packages it configures (OpenCode plugin / Cursor plugin) — no manual `npm i` needed.
 
-Requirements:
+Requirements for the published packages:
 
-- **Node.js ≥ 20** (LTS) — the CLI is a node bundle; Node 16 and below fail (`ERR_MODULE_NOT_FOUND`/ESM syntax).
-- [bun](https://bun.sh) — only for the OpenCode plugin runtime (the OpenCode side executes `.ts` directly); the wizard and CLI itself run on node.
+- **Node.js ≥ 20** — the CLI, OpenCode plugin, and Cursor MCP/hook artifacts are self-contained Node bundles. Node 16 and below fail (`ERR_MODULE_NOT_FOUND`/ESM syntax).
+- **Bun** — development, build, and test only (see [Development](#development)). Published artifacts do not run through Bun.
 
 **Local development** — use the repo path instead; no package cache, disk is the source of truth:
 
@@ -41,12 +41,26 @@ bun i
 ## Features
 
 - **Document-driven development** — write `docs/<slug>/spec.md` + `plan.md`, gate approvals with native question receipts, execute plans task-by-task with delegated subagent implementation, review, and SDD progress tracking.
-- **12 `wk-*` commands/skills** on both platforms: `wk-init`, `wk-status`, `wk-verify`, `wk-commit`, `wk-pr`, `wk-changelog`, `wk-release-notes`, `wk-docs-refresh`, `wk-handoff`, `wk-implement`, `wk-meetings`, `wk-issue-update`.
-- **43 `workflow_*` MCP tools on Cursor** (native plugin tools on OpenCode) — branch setup, PR create/context, docs validate/promote, YouTrack post/log, templates, rules, present (ASCII/mermaid), doctor, handoff.
-- **Per-turn contract rails** — brainstorming-before-code, TDD, verification-before-completion, systematic-debugging, receiving-code-review, doc-delivery, config-guard, issue-rail reminders and post-hoc detectors.
-- **Secret-safe diagnostics** — structured JSONL logger with redaction, offline doctor (11 install checks), truthful readiness.
+- **12 `wk-*` skills** on OpenCode and Cursor (`wk-init`, `wk-status`, `wk-verify`, `wk-commit`, `wk-pr`, `wk-changelog`, `wk-release-notes`, `wk-docs-refresh`, `wk-handoff`, `wk-implement`, `wk-meetings`, `wk-issue-update`); the CLI exposes `workit init` and `workit doctor`.
+- **`workflow_*` tools** — branch setup, PR create/context, docs validate/promote, YouTrack post/log/time, templates, rules, presentation (ASCII/mermaid), doctor, and handoff (native plugin tools on OpenCode, an MCP server on Cursor).
+- **Per-turn contract rails** — brainstorming-before-code, TDD, verification-before-completion, systematic-debugging, receiving-code-review, doc-delivery, config-guard, and issue-rail reminders plus post-hoc detectors.
+- **Secret-safe diagnostics** — structured JSONL logger with redaction and an offline doctor for truthful readiness.
 - **Vendored Superpowers skills** (14) + optional Ponytail mode — lazy-engineer ruleset as a shared skill.
 - **Multi-context workspaces** — one install, per-repo VCS provider/PR target/issue linking (see [Per-install configuration](#per-install-configuration)).
+
+## Host capabilities
+
+Feature parity across hosts, implemented the best way each host allows. Core logic lives in `packages/workit-core`; each host adapts its native surfaces to it.
+
+| Capability     | OpenCode                                          | Cursor                                                        | CLI                                |
+| -------------- | ------------------------------------------------- | ------------------------------------------------------------- | ---------------------------------- |
+| Approval       | native `question` tool receipts (`attested: true`) | AskQuestion, policy-only (`attested: false`)                   | `--confirm` flags / TTY prompts    |
+| Implementation | subagent-driven task delegation (native `task`)    | not supported (no delegated identity)                          | n/a                                |
+| Commit         | `wk-commit` + native `question` confirmation       | `wk-commit`, policy-only                                       | n/a                                |
+| Handoff        | spawns a native OpenCode session                   | seeds a handoff prompt for the next agent                      | prints a handoff summary           |
+| Tools          | native plugin tools                                | MCP server (`workflow_*`)                                      | `workit` commands                  |
+| Skills         | `skills.paths` + vendored dirs                     | plugin `skills/` dirs                                          | n/a                                |
+| Diagnostics    | JSONL journal + native `client.app.log()`          | redacted stderr (stdout stays protocol-only)                   | `warn`/`error` on stderr           |
 
 ## Flows
 
@@ -97,12 +111,12 @@ Local dev variant (absolute path to this repo):
 }
 ```
 
-Local dev variant: point `WORKFLOW_TOOLKIT_ROOT` at this repo's `packages/workit-core` (the MCP launcher `packages/workit-core/scripts/run-cursor-mcp.sh` resolves it), or run the install script from the repo.
+A local (non-npm) Cursor install lives at `~/.cursor/plugins/local/workit` and registers `enabled_plugins.workit = true`; the installer migrates exact legacy `workflow-toolkit` entries after the replacement succeeds.
 
 ## Requirements
 
 - **Node.js ≥ 20** — the published CLI, OpenCode plugin, and Cursor MCP/hook artifacts run on Node 20+ (CI exercises Node 20 and 22).
-- **Bun 1.3.14** — development, build, and test runtime. Install once:
+- **Bun 1.3.14** — development, build, and test runtime only. Install once:
 
 ```bash
 curl -fsSL https://bun.sh/install | bash
@@ -114,7 +128,7 @@ Then add to your shell profile (or rely on the MCP launcher's `~/.bun/bin/bun` f
 export PATH="$HOME/.bun/bin:$PATH"
 ```
 
-- **OpenCode ≥ 1.15.0** — the OpenCode plugin pins `@opencode-ai/plugin` 1.17.7; 1.15.0 is the declared minimum (both are exercised by the packed-runtime gate).
+- **OpenCode ≥ 1.15.0** — the declared minimum OpenCode host; the build pins the SDK at 1.17.7 (bundled into the plugin, not a runtime dependency).
 - **Git** — branch resolution, SDD review diffs, and verify gates.
 - **Provider CLI for PRs/MRs** — installed **and authenticated**:
   - **`gh`** (GitHub CLI) for GitHub-hosted repos: `gh auth login`
@@ -162,6 +176,17 @@ Run the init action (`workflow_toolkit_init_apply action=branch_policy` on OpenC
 
 Environment overrides: `WORKFLOW_TOOLKIT_CONFIG`, `WORKFLOW_TOOLKIT_STATE`, `WORKFLOW_WORKSPACE_ROOT`, `WORKFLOW_VCS_PROVIDER`, `WORKFLOW_VCS_TARGET_BRANCH`, `WORKFLOW_YT_BASE_URL`, `WORKFLOW_YT_MENTION`, `WORKFLOW_YT_MEETING_ISSUE`, `WORKFLOW_YT_TIMEZONE`, `WORKFLOW_GH_ISSUE` (+ `WORKFLOW_GH_ISSUE_RELATION`).
 
+## Troubleshooting
+
+`workit doctor` (or `workflow_doctor`) checks the offline installation health and reports each check with a fix hint; it exits nonzero when problems are found.
+
+```bash
+npx @brainervirus/workit-cli doctor          # human-readable report
+npx @brainervirus/workit-cli doctor --json   # machine-readable report
+```
+
+Checks cover the runtime, toolchain versions, assets, launchers/hooks, stale plugin pins, duplicate registrations, malformed config, workspace mismatches, credential metadata, and log writability.
+
 ## Repo layout
 
 ```
@@ -174,23 +199,42 @@ workit/
 │   │   ├── scripts/        # shared shell + installers (all logic in src/, TS via bun)
 │   │   ├── templates/      # execution + superpowers contracts
 │   │   └── vendor/         # vendored superpowers skills
-│   ├── workit-opencode/    # @brainervirus/workit-opencode — OpenCode plugin (src/plugin.ts)
+│   ├── workit-opencode/    # @brainervirus/workit-opencode — OpenCode plugin (src/plugin.ts → dist/plugin.js)
 │   ├── workit-cursor/      # @brainervirus/workit-cursor — Cursor plugin (MCP, hooks, rules, skills)
 │   └── workit-cli/         # @brainervirus/workit-cli — Ink setup wizard (bin: workit)
 ├── .github/workflows/      # CI + release
-└── test/                   # bun tests (OpenCode plugin)
+└── test/                   # bun tests (per package + artifact gates)
 ```
 
-## CI / local checks
+## Development
+
+Published artifacts are built with Bun and run on Node. Build, check, and verify from the repo:
 
 ```bash
-bun run check    # bun test + tsc + cursor MCP regressions
+bun run build                 # build the OpenCode, Cursor, and CLI bundles
+bun run check                 # build + lint + format:check + bun test + tsc --noEmit
+bun run verify:release-candidate  # pack every package and verify the local tarballs (no publish)
 ```
+
+Each package also exposes its own scripts:
+
+| Package | Scripts |
+| --- | --- |
+| `workit-core` | `typecheck` |
+| `workit-opencode` | `build`, `typecheck` |
+| `workit-cursor` | `build` |
+| `workit-cli` | `build`, `typecheck` |
+
+## CI / release
 
 GitHub Actions:
 
-- **CI** — on push/PR to `main`: matrix of 3 OS (ubuntu, macos, windows) running `actions/checkout@v7` + `oven-sh/setup-bun@v2`, then `bun install --frozen-lockfile` + `bun run check`
-- **Release** — on push to `main`: [semantic-release](https://github.com/semantic-release/semantic-release) computes the next version from Conventional Commits, publishes the four workspaces to npm in dependency order — `workit-core`, `workit-opencode`, `workit-cursor`, `workit-cli` (with provenance), and creates the git tag + GitHub Release
+- **CI** (`ci.yml`) — on push/PR to `main`: per-package check jobs (`workit-core` on a 3-OS matrix, `workit-opencode`/`workit-cursor`/`workit-cli`/`shared` on ubuntu) run `bun test test/<package>` plus whole-repo typecheck (and lint/format in `shared`). An `artifacts` job runs the packed-artifact, registration, and manifest gates on a 3-OS × Node 20/22 matrix, and a `candidate` job packs and gates the release candidate without publishing. The pinned toolchain and host versions are declared in `packages/workit-core/src/core/support-matrix.ts` and enforced by tests.
+- **Release** (`release.yml`) — on push to `main`: build the adapters, run `verify:release-candidate`, then `npx semantic-release`.
+
+### Versioning
+
+[semantic-release](https://github.com/semantic-release/semantic-release) computes the next version from Conventional Commits and publishes the four workspaces to npm in dependency order (`workit-core`, `workit-opencode`, `workit-cursor`, `workit-cli`), then creates the git tag + GitHub Release.
 
 No manual tags — semantic-release owns the version/tag flow:
 
@@ -198,10 +242,7 @@ No manual tags — semantic-release owns the version/tag flow:
 git push origin main
 ```
 
-## Quality gates
-
-- **CI checks** — the per-package check jobs (workit-core/opencode/cursor/cli/shared) are required in branch protection; the PR cannot merge while any is red.
-- **Subagent review** — `wk-implement` runs a two-stage review (spec compliance + code quality) per task with fresh `general` agents.
+The repository's package manifests carry a fixed source version; semantic-release rewrites workspace versions **in CI only** (`packages/workit-core/scripts/rewrite-workspace-deps.ts`, run as `verifyConditionsCmd`/`prepareCmd`) and never commits the rewrite back. As a result the source manifests and the published npm versions can diverge; the [CHANGELOG](CHANGELOG.md) is the source of truth for released versions. npm provenance (OIDC trusted publishing) is not yet enabled — the release authenticates with `NPM_TOKEN`.
 
 ## Architecture
 
