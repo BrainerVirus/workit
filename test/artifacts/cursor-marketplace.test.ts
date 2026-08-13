@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import {
+  appendFileSync,
   cpSync,
   existsSync,
   mkdirSync,
@@ -17,7 +18,7 @@ import {
   CANONICAL_SKILLS,
   validateSkillManifests,
 } from "../../packages/workit-core/src/core/skill-manifests";
-import { copySanitizedVendor } from "../../packages/workit-core/scripts/vendor-assets";
+import { validateMarketplace } from "../../packages/workit-core/scripts/validate-cursor-marketplace";
 import { REPO_ROOT } from "../shared/helpers/packages";
 
 // Task 9 Marketplace gate (CA-13/CA-15/CA-17/CA-21): the tracked Marketplace
@@ -67,33 +68,6 @@ const cleanCheckoutCopy = (): string => {
     cpSync(src, dst);
   }
   return dir;
-};
-
-// Recursively compare two directory trees by relative file set and byte content
-// (ignores modes, matching the content-only parity the build guarantees).
-const treesEqual = (a: string, b: string): string[] => {
-  const diffs: string[] = [];
-  const walk = (dir: string, into: Map<string, string>): void => {
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      const p = path.join(dir, entry.name);
-      const rel = path.relative(dir, p);
-      if (entry.isDirectory()) {
-        walk(p, into);
-        continue;
-      }
-      into.set(rel.split(path.sep).join("/"), readFileSync(p, "utf8"));
-    }
-  };
-  const left = new Map<string, string>();
-  const right = new Map<string, string>();
-  walk(a, left);
-  walk(b, right);
-  for (const [rel, content] of left) {
-    if (!right.has(rel)) diffs.push(`missing in rebuilt: ${rel}`);
-    else if (right.get(rel) !== content) diffs.push(`content drift: ${rel}`);
-  }
-  for (const rel of right.keys()) if (!left.has(rel)) diffs.push(`extra in rebuilt: ${rel}`);
-  return diffs;
 };
 
 // Frontmatter block keys (leading `---` YAML-ish block) present in a file.
@@ -185,16 +159,22 @@ test("no active runtime path targets an ignored dist file (CA-17)", () => {
 });
 
 test("rebuilding the sanitized vendor tree yields no diff (CA-15)", () => {
-  const rebuilt = mkdtempSync(path.join(os.tmpdir(), "wk-vendor-rebuild-"));
+  expect(validateMarketplace(REPO_ROOT)).toEqual([]);
+});
+
+test("vendor content drift in a non-last skill is detected (regression)", () => {
+  const dir = cleanCheckoutCopy();
   try {
-    copySanitizedVendor(
-      path.join(REPO_ROOT, "packages/workit-core/vendor/superpowers/skills"),
-      rebuilt,
+    const skill = path.join(
+      dir,
+      PLUGIN_DIR_REL,
+      "vendor/superpowers/skills/brainstorming/SKILL.md",
     );
-    const tracked = path.join(REPO_ROOT, PLUGIN_DIR_REL, "vendor/superpowers/skills");
-    expect(treesEqual(rebuilt, tracked)).toEqual([]);
+    appendFileSync(skill, "\n// sentinel drift line\n");
+    const errors = validateMarketplace(dir);
+    expect(errors.some((e) => e.includes("vendor drift"))).toBe(true);
   } finally {
-    rmSync(rebuilt, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true });
   }
 });
 

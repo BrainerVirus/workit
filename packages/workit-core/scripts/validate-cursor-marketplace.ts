@@ -21,9 +21,7 @@
 // `.cursor-plugin/` is a sibling of those directories. Therefore
 // `source: "packages/workit-cursor"` is correct and kept verbatim.
 import {
-  cpSync,
   existsSync,
-  mkdirSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
@@ -42,9 +40,6 @@ const repoRoot = path.resolve(scriptDir, "..", "..", "..");
 const root = process.argv[2] ? path.resolve(process.argv[2]) : repoRoot;
 
 const MARKETPLACE_REL = ".cursor-plugin/marketplace.json";
-const SCHEMA_DIR = path.join(root, "test/fixtures/cursor-schemas");
-
-const read = (rel: string): string => readFileSync(path.join(root, rel), "utf8");
 
 const frontmatterKeys = (file: string): Set<string> => {
   const head = readFileSync(file, "utf8").slice(0, 4096);
@@ -61,17 +56,20 @@ const frontmatterKeys = (file: string): Set<string> => {
 
 const treesEqual = (a: string, b: string): string[] => {
   const diffs: string[] = [];
-  const walk = (dir: string, into: Map<string, string>): void => {
+  // Thread the tree root so each file is keyed by its ROOT-relative path —
+  // otherwise every `SKILL.md` collapses to one map entry and only the
+  // last-read (readdir-order-dependent) skill is actually compared.
+  const walk = (rootDir: string, dir: string, into: Map<string, string>): void => {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
       const p = path.join(dir, entry.name);
-      if (entry.isDirectory()) walk(p, into);
-      else into.set(path.relative(dir, p).split(path.sep).join("/"), readFileSync(p, "utf8"));
+      if (entry.isDirectory()) walk(rootDir, p, into);
+      else into.set(path.relative(rootDir, p).split(path.sep).join("/"), readFileSync(p, "utf8"));
     }
   };
   const left = new Map<string, string>();
   const right = new Map<string, string>();
-  walk(a, left);
-  walk(b, right);
+  walk(a, a, left);
+  walk(b, b, right);
   for (const [rel, content] of left) {
     if (!right.has(rel)) diffs.push(`missing in rebuilt: ${rel}`);
     else if (right.get(rel) !== content) diffs.push(`content drift: ${rel}`);
@@ -91,13 +89,14 @@ export const validateMarketplace = (rootArg: string): string[] => {
   // 1. Official JSON Schema evaluation (AJV + ajv-formats), verbatim snapshots.
   const validate = new Ajv({ strict: true, allErrors: true });
   addFormats(validate);
+  const schemaDir = path.join(rootArg, "test/fixtures/cursor-schemas");
   const pluginSchema = JSON.parse(
-    readFileSync(path.join(SCHEMA_DIR, "plugin.schema.json"), "utf8"),
+    readFileSync(path.join(schemaDir, "plugin.schema.json"), "utf8"),
   );
   const marketSchema = JSON.parse(
-    readFileSync(path.join(SCHEMA_DIR, "marketplace.schema.json"), "utf8"),
+    readFileSync(path.join(schemaDir, "marketplace.schema.json"), "utf8"),
   );
-  const market = JSON.parse(read(MARKETPLACE_REL));
+  const market = JSON.parse(readFileSync(path.join(rootArg, MARKETPLACE_REL), "utf8"));
   if (!validate.validate(marketSchema, market)) {
     errors.push(
       `marketplace.json invalid: ${(validate.errors ?? []).map((e) => e.message).join("; ")}`,
