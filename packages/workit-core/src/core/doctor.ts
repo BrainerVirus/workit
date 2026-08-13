@@ -376,12 +376,10 @@ const launcherSlotsFor = (host: DoctorHost, dev: string): string[][] => {
     case "opencode":
       return [[path.join(pkg, "src", "plugin.ts"), path.join(pkg, "dist", "plugin.js")]];
     case "cursor":
+      // The dist entries are the npm bin targets the npx launcher executes.
       return [
-        [path.join(pkg, "dist", "mcp-server.js"), path.join(pkg, "mcp", "run-server.sh")],
-        [
-          path.join(pkg, "dist", "cursor-session-start.js"),
-          path.join(pkg, "hooks", "session-start"),
-        ],
+        [path.join(pkg, "dist", "mcp-server.js")],
+        [path.join(pkg, "dist", "cursor-session-start.js")],
       ];
     case "cli":
       return [[path.join(pkg, "src", "index.tsx"), path.join(pkg, "dist", "index.js")]];
@@ -404,9 +402,9 @@ const validNodeEntry = (entry: string, runtime: string, env: NodeJS.ProcessEnv):
   }
 };
 
-const registeredCursorLauncher = (
-  res: Resolved,
-): { runtime: string; entry: string } | null | "invalid" => {
+type CursorLauncher = { kind: "node"; runtime: string; entry: string } | { kind: "npx" };
+
+const registeredCursorLauncher = (res: Resolved): CursorLauncher | null | "invalid" => {
   if (!existsSync(res.cursorMcp)) return "invalid";
   const config = readJson(res.cursorMcp);
   if (!config) return null; // malformed_config owns malformed JSON/object reporting
@@ -418,8 +416,17 @@ const registeredCursorLauncher = (
     return "invalid";
   }
   const executable = path.basename(command).toLowerCase();
+  // CA-17: the canonical launcher runs the published package through npx; the
+  // offline doctor validates its shape (never the registry reachability).
+  if (executable === "npx" || executable === "npx.exe" || executable === "npx.cmd") {
+    const joined = args.join(" ");
+    if (!joined.includes("--package=@brainervirus/workit-cursor@latest")) return "invalid";
+    if (!joined.includes("workit-cursor-mcp")) return "invalid";
+    return { kind: "npx" };
+  }
   if (executable !== "node" && executable !== "node.exe") return "invalid";
   return {
+    kind: "node",
     runtime: command,
     entry: path.isAbsolute(args[0]) ? args[0] : path.resolve(path.dirname(res.cursorMcp), args[0]),
   };
@@ -429,7 +436,10 @@ const checkLauncher = (res: Resolved): DoctorCheck => {
   const dev = res.dev;
   const hosts = hostsFor(res.host);
   const registered = hosts.includes("cursor") ? registeredCursorLauncher(res) : null;
-  const runtime = registered && registered !== "invalid" ? registered.runtime : "node";
+  const runtime =
+    registered && registered !== "invalid" && registered.kind === "node"
+      ? registered.runtime
+      : "node";
   const missing = hosts.includes("cursor")
     ? ["dist/mcp-server.js", "dist/cursor-session-start.js"]
         .map((rel) => path.join(res.cursorPluginDir, rel))
@@ -439,7 +449,11 @@ const checkLauncher = (res: Resolved): DoctorCheck => {
   if (hosts.includes("cursor")) {
     if (registered === "invalid") {
       missing.push(`cursor: canonical workit MCP launcher in ${res.cursorMcp}`);
-    } else if (registered && !validNodeEntry(registered.entry, registered.runtime, res.env)) {
+    } else if (
+      registered &&
+      registered.kind === "node" &&
+      !validNodeEntry(registered.entry, registered.runtime, res.env)
+    ) {
       missing.push(`cursor: registered ${registered.entry}`);
     }
   }

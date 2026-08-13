@@ -128,14 +128,15 @@ test("expected entry files ship in each packed tarball", () => {
   for (const f of [
     "dist/mcp-server.js",
     "dist/cursor-session-start.js",
-    "mcp/run-server.sh",
     "mcp.json",
     "assets/logo.svg",
     ".cursor-plugin/plugin.json",
-    "hooks/session-start",
+    "hooks/hooks-cursor.json",
   ]) {
     expect(hasEntry(cursor, f), f).toBe(true);
   }
+  expect(hasEntry(cursor, "mcp/run-server.sh")).toBe(false);
+  expect(hasEntry(cursor, "hooks/session-start")).toBe(false);
   const cursorPkg = JSON.parse(readTarballFile(cursor, "package.json"));
   expect(cursorPkg.bin["workit-cursor-mcp"]).toBe("./dist/mcp-server.js");
   expect(cursorPkg.bin["workit-cursor-session-start"]).toBe("./dist/cursor-session-start.js");
@@ -169,7 +170,7 @@ function startMcpServer(
   env: Record<string, string>,
 ): McpClient & { workspace: string } {
   const workspace = tmp("wk-mcp-ws-");
-  const child = spawn("bash", ["mcp/run-server.sh", workspace], {
+  const child = spawn("node", ["dist/mcp-server.js", workspace], {
     cwd: cursorDir,
     env,
     stdio: ["pipe", "pipe", "pipe"],
@@ -228,15 +229,18 @@ test("Cursor MCP launcher starts the server from the extracted package, repo-fre
     mkdirSync(nm, { recursive: true });
     installPackedPackage(nm, core);
     const cursorDir = installPackedPackage(nm, cursor);
-    // Static: the packed launcher/manifest stay package-relative (RR-03).
-    const launcher = readFileSync(path.join(cursorDir, "mcp/run-server.sh"), "utf8");
-    expect(launcher).not.toContain(".local/share");
-    expect(launcher).not.toContain("Documents/projects");
+    // Static: the packed manifest launches the published package via npx
+    // (CA-17), never a repo-relative dist/sh path.
     const mcpJson = JSON.parse(readFileSync(path.join(cursorDir, "mcp.json"), "utf8"));
-    const serverArgs = mcpJson.mcpServers.workit.args.join(" ").replace("${workspaceFolder}", "");
-    expect(mcpJson.mcpServers.workit.command).toBe("node");
-    expect(serverArgs).toContain("dist/mcp-server.js");
-    expect(serverArgs).not.toContain("$HOME");
+    const server = mcpJson.mcpServers.workit;
+    expect(server.command).toBe("npx");
+    expect(server.args).toEqual([
+      "-y",
+      "--package=@brainervirus/workit-cursor@latest",
+      "workit-cursor-mcp",
+      "${workspaceFolder}",
+    ]);
+    expect(server.args.join(" ")).not.toContain("$HOME");
 
     // Runtime: with a temp HOME and every WORKFLOW_* var stripped, the launcher
     // must resolve the installed core copy (not the repo) and serve MCP.

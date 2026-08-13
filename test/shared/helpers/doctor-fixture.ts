@@ -160,14 +160,21 @@ export const makeDoctorFixture = (): DoctorFixture => {
     path.join(dev, "packages", "workit-cursor", "assets", "templates", "spec-template.md"),
     "# spec\n",
   );
-  writeFileSync(path.join(dev, "packages", "workit-cursor", "mcp", "run-server.sh"), "#!/bin/sh\n");
-  writeFileSync(
-    path.join(dev, "packages", "workit-cursor", "hooks", "session-start"),
-    "#!/bin/sh\n",
-  );
   writeFileSync(
     path.join(dev, "packages", "workit-cursor", "mcp.json"),
-    JSON.stringify({ mcpServers: { workit: { command: "node", args: ["dist/mcp-server.js"] } } }),
+    JSON.stringify({
+      mcpServers: {
+        workit: {
+          command: "npx",
+          args: [
+            "-y",
+            "--package=@brainervirus/workit-cursor@latest",
+            "workit-cursor-mcp",
+            "${workspaceFolder}",
+          ],
+        },
+      },
+    }),
   );
   writeFileSync(
     path.join(dev, "packages", "workit-cursor", "marketplace.json"),
@@ -199,7 +206,15 @@ export const makeDoctorFixture = (): DoctorFixture => {
     cursorMcp,
     JSON.stringify({
       mcpServers: {
-        workit: { command: "node", args: [path.join(pluginDir, "dist", "mcp-server.js")] },
+        workit: {
+          command: "npx",
+          args: [
+            "-y",
+            "--package=@brainervirus/workit-cursor@latest",
+            "workit-cursor-mcp",
+            "${workspaceFolder}",
+          ],
+        },
       },
     }),
   );

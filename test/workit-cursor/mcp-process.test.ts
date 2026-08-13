@@ -1,9 +1,13 @@
 import { expect, test } from "bun:test";
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { isolatedEnv } from "../shared/helpers/packages";
+import {
+  installPackedPackage,
+  isolatedEnv,
+  packWorkspacePackages,
+} from "../shared/helpers/packages";
 
 // C1: the packaged Cursor MCP server must initialize and list every registered
 // tool over stdio, and representative handlers must run without a
@@ -55,10 +59,16 @@ const REQUIRED_TOOLS = [
 ];
 
 function startServer(
-  options: { cwd?: string; env?: Record<string, string>; entry?: string; args?: string[] } = {},
+  options: {
+    cwd?: string;
+    env?: Record<string, string>;
+    entry?: string;
+    args?: string[];
+    bin?: string;
+  } = {},
 ) {
   const child = spawn(
-    "bun",
+    options.bin ?? "bun",
     [options.entry ?? "packages/workit-cursor/mcp/server.ts", ...(options.args ?? [])],
     {
       cwd: options.cwd ?? REPO_ROOT,
@@ -244,5 +254,66 @@ test("WORKFLOW_WORKSPACE_ROOT env beats the process cwd for omitted tool roots",
   } finally {
     rmSync(ws, { recursive: true, force: true });
     rmSync(elsewhere, { recursive: true, force: true });
+  }
+});
+
+// CA-16/CA-17: the committed launcher configs point at the published package via
+// npx, and the npm bin those commands invoke resolves to a working MCP server.
+test("marketplace npx command shape resolves to a working npm bin (local install)", async () => {
+  const mcp = JSON.parse(
+    readFileSync(path.join(REPO_ROOT, "packages/workit-cursor/mcp.json"), "utf8"),
+  );
+  expect(mcp.mcpServers.workit.command).toBe("npx");
+  expect(mcp.mcpServers.workit.args).toEqual([
+    "-y",
+    "--package=@brainervirus/workit-cursor@latest",
+    "workit-cursor-mcp",
+    "${workspaceFolder}",
+  ]);
+  const hooks = JSON.parse(
+    readFileSync(path.join(REPO_ROOT, "packages/workit-cursor/hooks/hooks-cursor.json"), "utf8"),
+  );
+  expect(hooks.hooks.sessionStart).toEqual([
+    {
+      command: "npx -y --package=@brainervirus/workit-cursor@latest workit-cursor-session-start",
+    },
+  ]);
+
+  // Prep-mode: the public `npx @latest` registry smoke is blocked until the
+  // package is published, so prove the bin the npx command would exec
+  // (package.json bin -> ./dist/mcp-server.js) is a working server from a local
+  // pack install, driven under node over stdio.
+  const packs = packWorkspacePackages();
+  const cursor = packs.find((p) => p.packageName === "@brainervirus/workit-cursor")!;
+  const nm = mkdtempSync(path.join(os.tmpdir(), "wk-mcp-bin-"));
+  try {
+    const pkg = installPackedPackage(nm, cursor);
+    const pkgJson = JSON.parse(readFileSync(path.join(pkg, "package.json"), "utf8"));
+    expect(pkgJson.bin["workit-cursor-mcp"]).toBe("./dist/mcp-server.js");
+
+    const { child, request } = startServer({
+      bin: "node",
+      entry: path.join(pkg, "dist", "mcp-server.js"),
+      env: isolatedEnv(nm),
+    });
+    try {
+      const init = await request("initialize", {
+        protocolVersion: "2024-11-05",
+        capabilities: {},
+        clientInfo: { name: "npm-bin", version: "1.0" },
+      });
+      expect((init as any).result.serverInfo.name).toBe("workit");
+      child.stdin.write(
+        `${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })}\n`,
+      );
+      const listed = await request("tools/list", {});
+      const names = ((listed as any).result.tools as { name: string }[]).map((t) => t.name);
+      expect(names).toContain("workflow_verify");
+      expect(names).toContain("workflow_pr_context");
+    } finally {
+      child.kill();
+    }
+  } finally {
+    rmSync(nm, { recursive: true, force: true });
   }
 });

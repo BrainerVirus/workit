@@ -149,12 +149,18 @@ test("packed CLI setup flow configures OpenCode + Cursor and doctor verifies it"
     const settings = JSON.parse(readFileSync(cursorSettings, "utf8"));
     expect(settings.enabled_plugins?.["workit"]).toBe(true);
     expect(settings.plugin_dirs).toContain(pluginDir);
-    for (const rel of ["package.json", "mcp/run-server.sh", "dist/mcp-server.js"]) {
+    for (const rel of ["package.json", "dist/mcp-server.js"]) {
       expect(existsSync(path.join(pluginDir, rel)), `${pluginDir}/${rel}`).toBe(true);
     }
     const cursorMcp = path.join(home, ".cursor", "mcp.json");
     const mcp = JSON.parse(readFileSync(cursorMcp, "utf8"));
-    expect(mcp.mcpServers?.workit?.command).toBe("node");
+    expect(mcp.mcpServers?.workit?.command).toBe("npx");
+    expect(mcp.mcpServers?.workit?.args).toEqual([
+      "-y",
+      "--package=@brainervirus/workit-cursor@latest",
+      "workit-cursor-mcp",
+      "${workspaceFolder}",
+    ]);
 
     // packaged hygiene applied from the extracted package's own templates
     expect(readFileSync(path.join(project, "CHANGELOG.md"), "utf8")).toContain("# Changelog");

@@ -3,8 +3,7 @@
   "hooks": {
     "sessionStart": [
       {
-        "command": "node",
-        "args": ["./dist/cursor-session-start.js"]
+        "command": "npx -y --package=@brainervirus/workit-cursor@latest workit-cursor-session-start"
       }
     ]
   }

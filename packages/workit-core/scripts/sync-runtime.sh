@@ -127,7 +127,6 @@ if [ -d "$CONFIG_RULES_DIR" ]; then
   " >/dev/null 2>&1 || true
 fi
 printf '%s\n' "$SHARE/packages/workit-core" >"$PLUGIN_DIR/.workflow-toolkit-root"
-chmod +x "$PLUGIN_DIR/hooks/session-start" "$PLUGIN_DIR/mcp/run-server.sh" 2>/dev/null || true
 
 # CA-08/CA-09: migrate the legacy local plugin identity to `workit` only after
 # the canonical sync succeeded; carry the legacy user rules forward first.

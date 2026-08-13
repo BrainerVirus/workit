@@ -24,13 +24,11 @@
   "files": [
     "dist/",
     "assets/",
-    "mcp/run-server.sh",
     "mcp.json",
     ".cursor-plugin/",
     "rules/",
     "skills/",
     "vendor/superpowers/skills/",
-    "hooks/session-start",
     "hooks/hooks-cursor.json"
   ],
   "type": "module",

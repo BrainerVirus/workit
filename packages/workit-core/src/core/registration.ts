@@ -4,7 +4,6 @@
 // never rewritten — their values round-trip JSON-identical. The install
 // scripts (`packages/workit-core/scripts/install-*-plugin.sh`) import these so
 // there is exactly one source of truth for registration merging.
-import { existsSync } from "node:fs";
 import path from "node:path";
 
 export interface MergeResult<T> {
@@ -181,42 +180,35 @@ export function mergeCursorHooks(
 }
 
 /**
- * Portable Cursor MCP server entry for an installed plugin dir: prefer the
- * self-contained node dist bundle (PT-10); fall back to the bash shim for a
- * dist-less dev checkout.
+ * Portable Cursor MCP server entry (CA-16/CA-17): launch the published package
+ * through npx against its npm bin, so the Marketplace plugin never depends on a
+ * repo-relative or untracked dist file.
  */
-export function cursorMcpServerEntry(packageDir: string): {
+export function cursorMcpServerEntry(_packageDir: string): {
   command: string;
   args: string[];
 } {
-  if (existsSync(path.join(packageDir, "dist", "mcp-server.js"))) {
-    return {
-      command: "node",
-      args: [path.join(packageDir, "dist", "mcp-server.js"), "${workspaceFolder}"],
-    };
-  }
   return {
-    command: "bash",
-    args: [path.join(packageDir, "mcp", "run-server.sh"), "${workspaceFolder}"],
+    command: "npx",
+    args: [
+      "-y",
+      "--package=@brainervirus/workit-cursor@latest",
+      "workit-cursor-mcp",
+      "${workspaceFolder}",
+    ],
   };
 }
 
 /**
- * Portable Cursor sessionStart hook entry: prefer the self-contained node dist
- * bundle; fall back to the bash shim for a dist-less dev checkout (AR-06).
+ * Portable Cursor sessionStart hook entry (CA-17): a single command string in
+ * Cursor's documented format (no args array).
  */
-export function cursorHooksEntry(packageDir: string): {
+export function cursorHooksEntry(_packageDir: string): {
   command: string;
   args: string[];
 } {
-  if (existsSync(path.join(packageDir, "dist", "cursor-session-start.js"))) {
-    return {
-      command: "node",
-      args: [path.join(packageDir, "dist", "cursor-session-start.js")],
-    };
-  }
   return {
-    command: "bash",
-    args: [path.join(packageDir, "hooks", "session-start")],
+    command: "npx -y --package=@brainervirus/workit-cursor@latest workit-cursor-session-start",
+    args: [],
   };
 }

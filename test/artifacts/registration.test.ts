@@ -1,6 +1,4 @@
 import { expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import {
   cursorHooksEntry,
@@ -317,60 +315,41 @@ test("mergeCursorHooks swaps the sessionStart command and keeps unrelated hook c
   const input = {
     version: 1,
     hooks: {
-      sessionStart: [{ command: "./hooks/session-start" }],
+      sessionStart: [{ command: "echo legacy" }],
       otherHook: [{ command: "echo hi" }],
     },
   };
   const { config, changed } = mergeCursorHooks(input, {
-    command: "node",
-    args: ["./dist/cursor-session-start.js"],
+    command: "npx -y --package=@brainervirus/workit-cursor@latest workit-cursor-session-start",
   });
   const hooks = config.hooks as {
     sessionStart?: { command: string; args?: string[] }[];
     otherHook?: { command: string }[];
   };
   expect(hooks.sessionStart).toEqual([
-    { command: "node", args: ["./dist/cursor-session-start.js"] },
+    {
+      command: "npx -y --package=@brainervirus/workit-cursor@latest workit-cursor-session-start",
+    },
   ]);
   expect(hooks.otherHook).toEqual([{ command: "echo hi" }]);
   expect(changed).toEqual(["hooks.sessionStart"]);
 });
 
-test("cursorMcpServerEntry prefers the node dist bundle and falls back to the shim", () => {
-  const root = mkdtempSync(path.join(os.tmpdir(), "wk-entry-"));
-  try {
-    const dist = path.join(root, "dist");
-    mkdirSync(dist, { recursive: true });
-    writeFileSync(path.join(dist, "mcp-server.js"), "");
-    const entry = cursorMcpServerEntry(root);
-    expect(entry.command).toBe("node");
-    expect(entry.args[0]).toContain(path.join("dist", "mcp-server.js"));
-    expect(entry.args[1]).toBe("${workspaceFolder}");
-    rmSync(dist, { recursive: true, force: true });
-
-    const fallback = cursorMcpServerEntry(root);
-    expect(fallback.command).toBe("bash");
-    expect(fallback.args[0]).toContain(path.join("mcp", "run-server.sh"));
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
+test("cursorMcpServerEntry launches the published package via npx", () => {
+  const entry = cursorMcpServerEntry("/any/pkg/dir");
+  expect(entry.command).toBe("npx");
+  expect(entry.args).toEqual([
+    "-y",
+    "--package=@brainervirus/workit-cursor@latest",
+    "workit-cursor-mcp",
+    "${workspaceFolder}",
+  ]);
 });
 
-test("cursorHooksEntry prefers the node dist bundle and falls back to the shim", () => {
-  const root = mkdtempSync(path.join(os.tmpdir(), "wk-hooks-entry-"));
-  try {
-    const dist = path.join(root, "dist");
-    mkdirSync(dist, { recursive: true });
-    writeFileSync(path.join(dist, "cursor-session-start.js"), "");
-    const entry = cursorHooksEntry(root);
-    expect(entry.command).toBe("node");
-    expect(entry.args[0]).toContain(path.join("dist", "cursor-session-start.js"));
-    rmSync(dist, { recursive: true, force: true });
-
-    const fallback = cursorHooksEntry(root);
-    expect(fallback.command).toBe("bash");
-    expect(fallback.args[0]).toContain(path.join("hooks", "session-start"));
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
+test("cursorHooksEntry uses the documented single command string with no args", () => {
+  const entry = cursorHooksEntry("/any/pkg/dir");
+  expect(entry.command).toBe(
+    "npx -y --package=@brainervirus/workit-cursor@latest workit-cursor-session-start",
+  );
+  expect(entry.args).toEqual([]);
 });

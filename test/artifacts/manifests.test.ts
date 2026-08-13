@@ -25,7 +25,7 @@ const json = <T>(rel: string) => JSON.parse(read(rel)) as T;
 const byName = (packs: ReturnType<typeof packWorkspacePackages>, name: string) =>
   packs.find((p) => p.packageName === name)!;
 
-test("cursor mcp.json is package-relative and invokes Node explicitly (PT-10)", () => {
+test("cursor mcp.json launches the published package via npx (CA-17)", () => {
   for (const source of ["committed", "packed"] as const) {
     const raw =
       source === "committed"
@@ -36,9 +36,16 @@ test("cursor mcp.json is package-relative and invokes Node explicitly (PT-10)", 
     };
     const server = mcp.mcpServers.workit;
     expect(server, source).toBeDefined();
-    expect(server.command, source).toBe("node");
+    expect(server.command, source).toBe("npx");
+    expect(server.args, source).toEqual([
+      "-y",
+      "--package=@brainervirus/workit-cursor@latest",
+      "workit-cursor-mcp",
+      "${workspaceFolder}",
+    ]);
     const joined = [...server.args].join(" ");
-    expect(joined, source).toContain("dist/mcp-server.js");
+    expect(joined, source).not.toContain("dist/");
+    expect(joined, source).not.toContain("run-server");
     expect(joined, source).not.toMatch(/\$HOME/);
     expect(joined, source).not.toContain(".local/share");
     expect(joined, source).not.toContain("Documents/projects");
@@ -46,7 +53,7 @@ test("cursor mcp.json is package-relative and invokes Node explicitly (PT-10)", 
   }
 });
 
-test("cursor hooks-cursor.json references a package-relative Node entry", () => {
+test("cursor hooks-cursor.json uses the documented single command string (CA-17)", () => {
   const packs = packWorkspacePackages();
   for (const source of ["committed", "packed"] as const) {
     const raw =
@@ -59,16 +66,14 @@ test("cursor hooks-cursor.json references a package-relative Node entry", () => 
     };
     expect(hooks.version, source).toBe(1);
     const entry = hooks.hooks.sessionStart[0];
-    expect(entry.command, source).toBe("node");
-    expect(entry.args?.[0], source).toBe("./dist/cursor-session-start.js");
+    expect(entry.command, source).toBe(
+      "npx -y --package=@brainervirus/workit-cursor@latest workit-cursor-session-start",
+    );
+    expect(entry.args, source).toBeUndefined();
+    expect(JSON.stringify(entry), source).not.toContain("dist/");
+    expect(JSON.stringify(entry), source).not.toContain("run-server");
     expect(JSON.stringify(entry), source).not.toMatch(/\$HOME/);
     expect(JSON.stringify(entry), source).not.toMatch(/^\//);
-    // the referenced entry is Node (shebang documents the runtime)
-    const entryFile = readTarballFile(
-      byName(packs, CURSOR).tarball,
-      "dist/cursor-session-start.js",
-    );
-    expect(entryFile.startsWith("#!/usr/bin/env node"), source).toBe(true);
   }
 });
 

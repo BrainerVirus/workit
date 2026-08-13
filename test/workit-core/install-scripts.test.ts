@@ -188,16 +188,26 @@ function makeCursorStub() {
   );
   writeFileSync(
     path.join(stub, "packages/workit-cursor/mcp.json"),
-    JSON.stringify({ mcpServers: { workit: { command: "node", args: ["dist/mcp-server.js"] } } }),
+    JSON.stringify({
+      mcpServers: {
+        workit: {
+          command: "npx",
+          args: [
+            "-y",
+            "--package=@brainervirus/workit-cursor@latest",
+            "workit-cursor-mcp",
+            "${workspaceFolder}",
+          ],
+        },
+      },
+    }),
   );
   writeFileSync(
     path.join(stub, "packages/workit-cursor/marketplace.json"),
     JSON.stringify({ name: "workit", version: "0.4.0" }),
   );
   mkdirSync(path.join(stub, "packages/workit-cursor/mcp"), { recursive: true });
-  writeFileSync(path.join(stub, "packages/workit-cursor/mcp/run-server.sh"), "#!/bin/sh\n");
   mkdirSync(path.join(stub, "packages/workit-cursor/hooks"), { recursive: true });
-  writeFileSync(path.join(stub, "packages/workit-cursor/hooks/session-start"), "#!/bin/sh\n");
   mkdirSync(path.join(home, ".cursor"), { recursive: true });
   return { stub, home };
 }

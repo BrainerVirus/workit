@@ -120,7 +120,7 @@ test("cursor MCP server boots over stdio from the extracted package with node (n
     const cursorDir = path.join(nm, CURSOR);
     const env = isolatedEnv(home);
 
-    const { child, request } = startNodeMcp(cursorDir, "bash", ["mcp/run-server.sh"], env);
+    const { child, request } = startNodeMcp(cursorDir, "node", ["dist/mcp-server.js"], env);
     try {
       const init = await request("initialize", {
         protocolVersion: "2024-11-05",
@@ -163,7 +163,7 @@ test("cursor session-start emits the workflow contract payload from the extracte
     const cursorDir = path.join(nm, CURSOR);
     const env = isolatedEnv(home);
 
-    const child = spawn("bash", ["hooks/session-start"], {
+    const child = spawn("node", ["dist/cursor-session-start.js"], {
       cwd: cursorDir,
       env,
       stdio: ["pipe", "pipe", "pipe"],

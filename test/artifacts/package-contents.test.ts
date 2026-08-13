@@ -75,15 +75,17 @@ test("cursor tarball ships dist MCP + hook entries, manifests, assets and npm bi
   for (const required of [
     "dist/mcp-server.js",
     "dist/cursor-session-start.js",
-    "mcp/run-server.sh",
     "mcp.json",
     "assets/logo.svg",
     ".cursor-plugin/plugin.json",
-    "hooks/session-start",
     "hooks/hooks-cursor.json",
   ]) {
     expect(entries, required).toContain(required);
   }
+  // CA-17: the obsolete shell launchers ship no longer — the plugin launches
+  // the published package through npx, not a repo-relative dist/sh file.
+  expect(entries).not.toContain("mcp/run-server.sh");
+  expect(entries).not.toContain("hooks/session-start");
   expect(entries.some((e) => e.startsWith("assets/templates/"))).toBe(true);
   expect(tsEntries(tarball)).toEqual([]);
 
