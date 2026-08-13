@@ -58,6 +58,13 @@ test("opencode tarball ships one bundled dist entry plus its own assets (RR-02/P
   expect(entries.some((e) => e.startsWith("assets/templates/"))).toBe(true);
   expect(entries.some((e) => e.startsWith("assets/vendor/superpowers/skills/"))).toBe(true);
   expect(tsEntries(tarball)).toEqual([]);
+
+  // CA-07: the SDK helper/schema runtime is bundled, so the packed entry has no
+  // unresolved `@opencode-ai/plugin` import to resolve at load time.
+  const pluginJs = readTarballFile(tarball, "dist/plugin.js");
+  expect(pluginJs, "dist/plugin.js").not.toMatch(
+    /(?:from\s+|import\s*\(\s*)\s*["']@opencode-ai\/plugin["']/,
+  );
 });
 
 test("cursor tarball ships dist MCP + hook entries, package-relative manifests and assets (RR-03/PT-07)", () => {

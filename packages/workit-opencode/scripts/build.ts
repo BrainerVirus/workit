@@ -53,8 +53,6 @@ const build = spawnSync(
     "node",
     "--format",
     "esm",
-    "--external",
-    "@opencode-ai/plugin",
   ],
   { encoding: "utf8" },
 );

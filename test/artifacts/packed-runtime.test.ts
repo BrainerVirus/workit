@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -82,69 +82,28 @@ function startNodeMcp(
   return { child, request };
 }
 
-// Install a stub @opencode-ai/plugin at the given version with the exact SDK
-// surface the plugin imports, then import the packed entry. Proves the packed
-// plugin loads against both the declared minimum and the pinned current host SDK.
-function writeOpenCodeStub(nm: string, version: string): void {
-  const stubDir = path.join(nm, "@opencode-ai", "plugin");
-  mkdirSync(stubDir, { recursive: true });
-  writeFileSync(
-    path.join(stubDir, "package.json"),
-    JSON.stringify({
-      name: "@opencode-ai/plugin",
-      version,
-      type: "module",
-      main: "index.js",
-    }),
-  );
-  writeFileSync(
-    path.join(stubDir, "index.js"),
-    // The real SDK schemas are chainable (enum(...).optional(), string().optional()).
-    `export const tool = (def) => def;
-const mk = (t) => ({ ...t, optional() { return this; } });
-tool.schema = { string: () => mk({ type: "string" }), number: () => mk({ type: "number" }), boolean: () => mk({ type: "boolean" }), enum: (v) => mk({ type: "string", enum: v }), object: (s) => mk({ type: "object", properties: s }), optional: (s) => s, array: (s) => mk({ type: "array", items: s }) };
-`,
-  );
-}
-
-test("opencode plugin loads from dist/plugin.js with a stub @opencode-ai/plugin", async () => {
+// CA-07: the SDK helper/schema runtime is bundled into dist/plugin.js, so the
+// packed plugin loads standalone — no stub @opencode-ai/plugin is written and
+// no runtime import of it may remain in the bundle.
+test("opencode plugin loads from dist/plugin.js with no runtime @opencode-ai/plugin dependency", async () => {
   const packs = packWorkspacePackages();
   const install = tmp("wk-runtime-opencode-");
-  const home = tmp("wk-runtime-opencode-home-");
   try {
     const nm = path.join(install, "node_modules");
     mkdirSync(nm, { recursive: true });
     installPackedPackage(nm, byName(packs, OPENCODE));
-
-    writeOpenCodeStub(nm, SUPPORT_MATRIX.opencode.current);
 
     const entry = path.join(install, "node_modules", OPENCODE, "dist", "plugin.js");
     expect(existsSync(entry)).toBe(true);
+    const bundle = readFileSync(entry, "utf8");
+    expect(bundle, "dist/plugin.js").not.toMatch(
+      /(?:from\s+|import\s*\(\s*)\s*["']@opencode-ai\/plugin["']/,
+    );
+
     const mod = await import(pathToFileURL(entry).href);
     expect(typeof mod.default).toBe("function");
   } finally {
     rmSync(install, { recursive: true, force: true });
-    rmSync(home, { recursive: true, force: true });
-  }
-});
-
-test("opencode plugin loads against the declared minimum @opencode-ai/plugin version (RR-10)", async () => {
-  const packs = packWorkspacePackages();
-  const install = tmp("wk-runtime-opencode-min-");
-  const home = tmp("wk-runtime-opencode-min-home-");
-  try {
-    const nm = path.join(install, "node_modules");
-    mkdirSync(nm, { recursive: true });
-    installPackedPackage(nm, byName(packs, OPENCODE));
-
-    writeOpenCodeStub(nm, SUPPORT_MATRIX.opencode.minimum);
-
-    const entry = path.join(install, "node_modules", OPENCODE, "dist", "plugin.js");
-    const mod = await import(pathToFileURL(entry).href);
-    expect(typeof mod.default).toBe("function");
-  } finally {
-    rmSync(install, { recursive: true, force: true });
-    rmSync(home, { recursive: true, force: true });
   }
 });
 

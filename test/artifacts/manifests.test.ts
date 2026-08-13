@@ -139,20 +139,22 @@ test("cursor marketplace.json is package-relative and versioned", () => {
   }
 });
 
-test("opencode package.json ships a package-relative plugin entry and the pinned SDK", () => {
+test("opencode package.json ships a package-relative plugin entry and pins the SDK build-only", () => {
   const pkg = json<{
     main: string;
     exports: Record<string, string>;
-    dependencies: Record<string, string>;
+    dependencies?: Record<string, string>;
+    devDependencies?: Record<string, string>;
     engines?: { node?: string };
   }>("packages/workit-opencode/package.json");
   expect(pkg.main).toBe("./dist/plugin.js");
   expect(Object.values(pkg.exports)).toContain("./dist/plugin.js");
-  expect(pkg.dependencies["@opencode-ai/plugin"]).toBe(SUPPORT_MATRIX.opencode.current);
+  expect(pkg.dependencies?.["@opencode-ai/plugin"]).toBeUndefined();
+  expect(pkg.devDependencies?.["@opencode-ai/plugin"]).toBe(SUPPORT_MATRIX.opencode.current);
   expect(pkg.engines?.node).toBe(`>=${SUPPORT_MATRIX.node.minimum}`);
 });
 
-test("all platform packages declare the Node minimum and pin the SDK in the packed tarballs", () => {
+test("all platform packages declare the Node minimum and publish no OpenCode SDK runtime dependency", () => {
   const packs = packWorkspacePackages();
   for (const name of [OPENCODE, CURSOR]) {
     const raw = readTarballFile(byName(packs, name).tarball, "package.json");
@@ -162,7 +164,7 @@ test("all platform packages declare the Node minimum and pin the SDK in the pack
     };
     expect(pkg.engines?.node, name).toBe(`>=${SUPPORT_MATRIX.node.minimum}`);
     if (name === OPENCODE) {
-      expect(pkg.dependencies?.["@opencode-ai/plugin"], name).toBe(SUPPORT_MATRIX.opencode.current);
+      expect(pkg.dependencies?.["@opencode-ai/plugin"], name).toBeUndefined();
     }
   }
   const cli = json<{ engines?: { node?: string } }>("packages/workit-cli/package.json");
