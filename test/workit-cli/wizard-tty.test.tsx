@@ -8,6 +8,8 @@ import { renderInk } from "../shared/helpers/ink-tty";
 import {
   createInitialDraft,
   reducer,
+  type BranchPolicyProposal,
+  type WizardAction,
   type WizardDraft,
   type WizardScreen,
 } from "../../packages/workit-cli/src/wizard-state";
@@ -183,6 +185,168 @@ test("empty locale and timezone cannot be committed from the select screens", ()
   d = reducer(d, { type: "next" });
   expect(d.screen).toBe("timezone");
   expect(d.errors.timezone).toContain("timezone is required");
+});
+
+// ---------------------------------------------------------------------------
+// Reducer idempotency (D-02): unchanged values return the same draft object so
+// the wizard's useReducer bails out instead of re-rendering the control and
+// re-firing its onChange (the "Maximum update depth exceeded" feedback loop).
+// ---------------------------------------------------------------------------
+
+test("unchanged set values return the same draft object", () => {
+  // A settled draft: valid non-empty text values so validation produces no
+  // message and an unchanged dispatch is a true no-op.
+  let settled = draft("custom");
+  settled = reducer(settled, { type: "set", field: "locale", value: "es-CL" });
+  settled = reducer(settled, { type: "set", field: "timezone", value: "America/Santiago" });
+  settled = reducer(settled, { type: "set", field: "branchAllowed", value: "feature/*" });
+  settled = reducer(settled, { type: "set", field: "branchProtected", value: "main" });
+  settled = reducer(settled, { type: "set", field: "baseUrl", value: "https://yt.example.com" });
+  settled = reducer(settled, { type: "set", field: "vcsProvider", value: "github" });
+  settled = reducer(settled, { type: "set", field: "applyProject", value: true });
+  settled = reducer(settled, { type: "set", field: "platforms", value: ["opencode"] });
+
+  const wsName = reducer(reducer(draft("gitflow"), { type: "workspaceAdd" }), {
+    type: "workspaceDraftName",
+    value: "work",
+  });
+  const wsGlob = reducer(wsName, { type: "workspaceDraftGlob", value: "/work/**" });
+
+  const proposal: BranchPolicyProposal = {
+    preset: "gitflow",
+    developBranch: "develop",
+    integration: "pr",
+    protected: ["main"],
+    allowed: ["feature/*"],
+    prefixes: { feature: "feature/", bugfix: "bugfix/", release: "release/", hotfix: "hotfix/" },
+  };
+  const withPolicy = reducer(settled, { type: "set", field: "branchPolicy", value: proposal });
+
+  const cases: { name: string; state: WizardDraft; action: WizardAction }[] = [
+    {
+      name: "platforms",
+      state: settled,
+      action: { type: "set", field: "platforms", value: ["opencode"] },
+    },
+    { name: "locale", state: settled, action: { type: "set", field: "locale", value: "es-CL" } },
+    {
+      name: "timezone",
+      state: settled,
+      action: { type: "set", field: "timezone", value: "America/Santiago" },
+    },
+    {
+      name: "branchPreset",
+      state: settled,
+      action: { type: "set", field: "branchPreset", value: "custom" },
+    },
+    {
+      name: "branchAllowed",
+      state: settled,
+      action: { type: "set", field: "branchAllowed", value: "feature/*" },
+    },
+    {
+      name: "branchProtected",
+      state: settled,
+      action: { type: "set", field: "branchProtected", value: "main" },
+    },
+    {
+      name: "baseUrl",
+      state: settled,
+      action: { type: "set", field: "baseUrl", value: "https://yt.example.com" },
+    },
+    {
+      name: "vcsProvider",
+      state: settled,
+      action: { type: "set", field: "vcsProvider", value: "github" },
+    },
+    {
+      name: "applyProject",
+      state: settled,
+      action: { type: "set", field: "applyProject", value: true },
+    },
+    {
+      name: "workspaceDraftName",
+      state: wsName,
+      action: { type: "workspaceDraftName", value: "work" },
+    },
+    {
+      name: "workspaceDraftGlob",
+      state: wsGlob,
+      action: { type: "workspaceDraftGlob", value: "/work/**" },
+    },
+    {
+      name: "branchPolicyIntegration",
+      state: withPolicy,
+      action: { type: "set", field: "branchPolicyIntegration", value: "pr" },
+    },
+    {
+      name: "branchPolicyDevelop",
+      state: withPolicy,
+      action: { type: "set", field: "branchPolicyDevelop", value: "develop" },
+    },
+  ];
+
+  for (const { name, state, action } of cases) {
+    expect(reducer(state, action), name).toBe(state);
+  }
+});
+
+test("changed set values return a new draft with the expected value", () => {
+  const base = draft("gitflow");
+
+  const locale = reducer(base, { type: "set", field: "locale", value: "es-CL" });
+  expect(locale).not.toBe(base);
+  expect(locale.values.locale).toBe("es-CL");
+
+  const platforms = reducer(base, { type: "set", field: "platforms", value: ["opencode"] });
+  expect(platforms).not.toBe(base);
+  expect(platforms.values.platforms).toEqual(["opencode"]);
+
+  const preset = reducer(base, { type: "set", field: "branchPreset", value: "custom" });
+  expect(preset).not.toBe(base);
+  expect(preset.values.branchPreset).toBe("custom");
+
+  const vcs = reducer(base, { type: "set", field: "vcsProvider", value: "github" });
+  expect(vcs).not.toBe(base);
+  expect(vcs.values.vcsProvider).toBe("github");
+
+  const apply = reducer(base, { type: "set", field: "applyProject", value: true });
+  expect(apply).not.toBe(base);
+  expect(apply.values.applyProject).toBe(true);
+
+  const allowed = reducer(base, { type: "set", field: "branchAllowed", value: "feature/*" });
+  expect(allowed).not.toBe(base);
+  expect(allowed.values.branchAllowed).toBe("feature/*");
+});
+
+test("idle platform screen settles after a toggle (no update-depth loop)", async () => {
+  const cleanup = withSeedConfig(seedConfig);
+  const originalError = console.error;
+  const errors: string[] = [];
+  const commits: number[] = [];
+  console.error = (...args: unknown[]) => {
+    errors.push(args.map(String).join(" "));
+  };
+  let tty: Awaited<ReturnType<typeof renderInk>> | undefined;
+  try {
+    tty = await renderInk(
+      <React.Profiler id="wizard" onRender={() => commits.push(1)}>
+        <Wizard onExit={noop} />
+      </React.Profiler>,
+    );
+    await tty.key(SPACE); // toggle the first platform; deliberately no ENTER
+    for (let i = 0; i < 25; i++) await new Promise((resolve) => setImmediate(resolve));
+    const settledCommits = commits.length;
+    const settledErrors = errors.length;
+    for (let i = 0; i < 25; i++) await new Promise((resolve) => setImmediate(resolve));
+    expect(commits.length).toBe(settledCommits);
+    expect(errors.length).toBe(settledErrors);
+    expect(errors.join("\n")).not.toContain("Maximum update depth exceeded");
+  } finally {
+    console.error = originalError;
+    tty?.unmount();
+    cleanup();
+  }
 });
 
 // ---------------------------------------------------------------------------
