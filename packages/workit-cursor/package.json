@@ -17,6 +17,10 @@
     "type": "git",
     "url": "https://github.com/BrainerVirus/workit.git"
   },
+  "bin": {
+    "workit-cursor-mcp": "./dist/mcp-server.js",
+    "workit-cursor-session-start": "./dist/cursor-session-start.js"
+  },
   "files": [
     "dist/",
     "assets/",

@@ -70,6 +70,18 @@ test("cursor hooks-cursor.json references a package-relative Node entry", () => 
   }
 });
 
+test("cursor package.json declares the MCP and session-start npm executables (CA-16)", () => {
+  const pkg = json<{ bin?: Record<string, string> }>("packages/workit-cursor/package.json");
+  expect(pkg.bin).toEqual({
+    "workit-cursor-mcp": "./dist/mcp-server.js",
+    "workit-cursor-session-start": "./dist/cursor-session-start.js",
+  });
+  const packed = JSON.parse(
+    readTarballFile(byName(packWorkspacePackages(), CURSOR).tarball, "package.json"),
+  );
+  expect(packed.bin, "packed").toEqual(pkg.bin);
+});
+
 test("cursor .cursor-plugin/plugin.json uses valid plugin-root-relative components", () => {
   const packs = packWorkspacePackages();
   const pkg = json<{ version: string }>("packages/workit-cursor/package.json");

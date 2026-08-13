@@ -136,6 +136,9 @@ test("expected entry files ship in each packed tarball", () => {
   ]) {
     expect(hasEntry(cursor, f), f).toBe(true);
   }
+  const cursorPkg = JSON.parse(readTarballFile(cursor, "package.json"));
+  expect(cursorPkg.bin["workit-cursor-mcp"]).toBe("./dist/mcp-server.js");
+  expect(cursorPkg.bin["workit-cursor-session-start"]).toBe("./dist/cursor-session-start.js");
 
   const core = byName(CORE).tarball;
   for (const f of [

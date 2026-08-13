@@ -67,7 +67,7 @@ test("opencode tarball ships one bundled dist entry plus its own assets (RR-02/P
   );
 });
 
-test("cursor tarball ships dist MCP + hook entries, package-relative manifests and assets (RR-03/PT-07)", () => {
+test("cursor tarball ships dist MCP + hook entries, manifests, assets and npm bins (RR-03/PT-07/CA-16)", () => {
   const packs = packWorkspacePackages();
   const tarball = byName(packs, CURSOR).tarball;
   const entries = listTarball(tarball);
@@ -86,6 +86,14 @@ test("cursor tarball ships dist MCP + hook entries, package-relative manifests a
   }
   expect(entries.some((e) => e.startsWith("assets/templates/"))).toBe(true);
   expect(tsEntries(tarball)).toEqual([]);
+
+  // CA-16: the packed package.json exposes both npm executables at the exact
+  // built entry paths (no wrapper files, no source entries).
+  const pkg = JSON.parse(readTarballFile(tarball, "package.json"));
+  expect(pkg.bin).toEqual({
+    "workit-cursor-mcp": "./dist/mcp-server.js",
+    "workit-cursor-session-start": "./dist/cursor-session-start.js",
+  });
 });
 
 test("cli tarball ships a single nonsplitting dist entry plus bin (PT-10)", () => {
