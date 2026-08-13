@@ -24,9 +24,10 @@ for (const pkg of ["workit-opencode", "workit-cursor", "workit-cli"]) {
   }
   writeFileSync(file, `${JSON.stringify(data, null, 2)}\n`);
 }
+// The root marketplace index carries no release version; only the package
+// plugin manifest is versioned at release time.
 for (const file of [
   resolve(root, "packages/workit-cursor/.cursor-plugin/plugin.json"),
-  resolve(root, "packages/workit-cursor/marketplace.json"),
 ]) {
   const data = JSON.parse(readFileSync(file, "utf8"));
   data.version = core.version;

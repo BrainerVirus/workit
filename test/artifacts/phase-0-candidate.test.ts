@@ -130,7 +130,7 @@ test("expected entry files ship in each packed tarball", () => {
     "dist/cursor-session-start.js",
     "mcp/run-server.sh",
     "mcp.json",
-    "marketplace.json",
+    "assets/logo.svg",
     ".cursor-plugin/plugin.json",
     "hooks/session-start",
   ]) {

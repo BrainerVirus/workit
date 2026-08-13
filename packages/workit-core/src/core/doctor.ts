@@ -323,7 +323,6 @@ const assetPathsFor = (host: DoctorHost, dev: string): string[] => {
       return [
         path.join(pkg, "assets", "templates", "spec-template.md"),
         path.join(pkg, "mcp.json"),
-        path.join(pkg, "marketplace.json"),
         path.join(pkg, ".cursor-plugin"),
       ];
     case "cli":

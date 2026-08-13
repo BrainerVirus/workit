@@ -26,7 +26,6 @@
     "assets/",
     "mcp/run-server.sh",
     "mcp.json",
-    "marketplace.json",
     ".cursor-plugin/",
     "rules/",
     "skills/",

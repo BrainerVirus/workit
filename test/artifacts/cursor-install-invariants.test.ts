@@ -131,10 +131,12 @@ test(
           expect(statSync(file).mode & 0o111, file).toBe(0);
           expect(readFileSync(file).subarray(0, 2).toString("latin1"), file).not.toBe("#!");
         });
-        for (const manifest of ["marketplace.json", ".cursor-plugin/plugin.json"]) {
+        expect(existsSync(path.join(extracted.packageDir, "assets/logo.svg"))).toBe(true);
+        for (const manifest of [".cursor-plugin/plugin.json"]) {
           const json = JSON.parse(readFileSync(path.join(extracted.packageDir, manifest), "utf8"));
           expect(json.name, manifest).toBe("workit");
           expect(json.displayName, manifest).toBe("Workit");
+          expect(json.logo, manifest).toBe("assets/logo.svg");
           expect(JSON.stringify(json), manifest).not.toContain("Workflow Toolkit");
         }
       } finally {

@@ -1,6 +1,8 @@
 import { expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
+import { CANONICAL_SKILLS } from "../../packages/workit-core/src/core/skill-manifests";
 import { SUPPORT_MATRIX } from "../../packages/workit-core/src/core/support-matrix";
 import {
   listTarball,
@@ -95,6 +97,7 @@ test("cursor .cursor-plugin/plugin.json uses valid plugin-root-relative componen
     const plugin = JSON.parse(raw) as Record<string, string | string[]>;
     if (source === "packed") packedPlugin = plugin;
     expect(plugin.version, source).toBe(pkg.version);
+    expect(plugin.logo, source).toBe("assets/logo.svg");
     expect(plugin.skills, source).toEqual(["skills/", "vendor/superpowers/skills/"]);
     expect(plugin.rules, source).toBe("rules/");
     expect(plugin.mcpServers, source).toBe("mcp.json");
@@ -109,6 +112,7 @@ test("cursor .cursor-plugin/plugin.json uses valid plugin-root-relative componen
   }
 
   const entries = new Set(listTarball(packed));
+  expect(entries.has("assets/logo.svg")).toBe(true);
   for (const field of [
     packedPlugin!.skills,
     packedPlugin!.rules,
@@ -140,14 +144,62 @@ test("cursor .cursor-plugin/plugin.json uses valid plugin-root-relative componen
   }
 });
 
-test("cursor marketplace.json is package-relative and versioned", () => {
-  const market = json<Record<string, unknown>>("packages/workit-cursor/marketplace.json");
-  const pkg = json<{ version: string }>("packages/workit-cursor/package.json");
-  expect(market.version).toBe(pkg.version);
-  for (const value of Object.values(market)) {
-    expect(JSON.stringify(value), `${value}`).not.toContain("$HOME");
-    expect(JSON.stringify(value), `${value}`).not.toContain("Documents/projects");
-    expect(JSON.stringify(value), `${value}`).not.toContain(".local/share");
+test("root .cursor-plugin/marketplace.json indexes packages/workit-cursor (CA-13)", () => {
+  const market = json<{
+    name: string;
+    owner?: { name: string };
+    plugins: { name: string; source: string }[];
+  }>(".cursor-plugin/marketplace.json");
+  expect(market.name).toBe("workit");
+  expect(market.owner?.name).toBe("BrainerVirus");
+  expect(market.plugins).toHaveLength(1);
+  expect(market.plugins[0].name).toBe("workit");
+  expect(market.plugins[0].source).toBe("packages/workit-cursor");
+});
+
+test("package plugin manifest carries complete metadata and a committed logo (CA-14)", () => {
+  const plugin = json<Record<string, unknown>>("packages/workit-cursor/.cursor-plugin/plugin.json");
+  expect(plugin.name).toBe("workit");
+  expect(plugin.displayName).toBe("Workit");
+  expect(plugin.author).toEqual({ name: "Cristhofer Pincetti" });
+  expect(plugin.publisher).toBe("BrainerVirus");
+  expect(plugin.repository).toBe("https://github.com/BrainerVirus/workit");
+  expect(plugin.homepage).toBe("https://github.com/BrainerVirus/workit");
+  expect(plugin.license).toBe("MIT");
+  expect(plugin.logo).toBe("assets/logo.svg");
+  expect(plugin.keywords).toBeInstanceOf(Array);
+  expect(typeof plugin.category).toBe("string");
+  expect(plugin.tags).toBeInstanceOf(Array);
+  expect(existsSync(path.join(REPO_ROOT, "packages/workit-cursor/assets/logo.svg"))).toBe(true);
+});
+
+test("obsolete flat package marketplace.json is absent (CA-13)", () => {
+  expect(existsSync(path.join(REPO_ROOT, "packages/workit-cursor/marketplace.json"))).toBe(false);
+});
+
+test("clean checkout tracks all 26 declared skills and four rules (CA-15)", () => {
+  const tracked = spawnSync("git", ["ls-files", "--", "packages/workit-cursor"], {
+    cwd: REPO_ROOT,
+    encoding: "utf8",
+  });
+  expect(tracked.status).toBe(0);
+  const files = new Set(tracked.stdout.trim().split("\n").filter(Boolean));
+  for (const skill of CANONICAL_SKILLS.workit) {
+    expect(files.has(`packages/workit-cursor/skills/${skill}/SKILL.md`), skill).toBe(true);
+  }
+  for (const skill of CANONICAL_SKILLS.superpowers) {
+    expect(
+      files.has(`packages/workit-cursor/vendor/superpowers/skills/${skill}/SKILL.md`),
+      skill,
+    ).toBe(true);
+  }
+  for (const rule of [
+    "ask-question-only.mdc",
+    "cursor-todowrite.mdc",
+    "no-worktrees.mdc",
+    "sdd-docs-path.mdc",
+  ]) {
+    expect(files.has(`packages/workit-cursor/rules/${rule}`), rule).toBe(true);
   }
 });
 

@@ -77,7 +77,7 @@ test("cursor tarball ships dist MCP + hook entries, manifests, assets and npm bi
     "dist/cursor-session-start.js",
     "mcp/run-server.sh",
     "mcp.json",
-    "marketplace.json",
+    "assets/logo.svg",
     ".cursor-plugin/plugin.json",
     "hooks/session-start",
     "hooks/hooks-cursor.json",
