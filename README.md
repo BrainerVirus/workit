@@ -27,7 +27,7 @@ The wizard installs the platform packages it configures (OpenCode plugin / Curso
 
 Requirements for the published packages:
 
-- **Node.js ≥ 20** — the CLI, OpenCode plugin, and Cursor MCP/hook artifacts are self-contained Node bundles. Node 16 and below fail (`ERR_MODULE_NOT_FOUND`/ESM syntax).
+- **Node.js ≥ 22** — the CLI, OpenCode plugin, and Cursor MCP/hook artifacts are self-contained Node bundles. Node 21 and below fail (`ERR_MODULE_NOT_FOUND`/ESM syntax or the `>=22` engine gate).
 - **Bun** — development, build, and test only (see [Development](#development)). Published artifacts do not run through Bun.
 
 **Local development** — use the repo path instead; no package cache, disk is the source of truth:
@@ -115,7 +115,7 @@ A local (non-npm) Cursor install lives at `~/.cursor/plugins/local/workit` and r
 
 ## Requirements
 
-- **Node.js ≥ 20** — the published CLI, OpenCode plugin, and Cursor MCP/hook artifacts run on Node 20+ (CI exercises Node 20 and 22).
+- **Node.js ≥ 22** — the published CLI, OpenCode plugin, and Cursor MCP/hook artifacts run on Node 22+ (Ink 7 requires Node ≥ 22).
 - **Bun 1.3.14** — development, build, and test runtime only. Install once:
 
 ```bash
@@ -230,7 +230,7 @@ Each package also exposes its own scripts:
 
 GitHub Actions:
 
-- **CI** (`ci.yml`) — on push/PR to `main`: per-package check jobs (`workit-core` on a 3-OS matrix, `workit-opencode`/`workit-cursor`/`workit-cli`/`shared` on ubuntu) run `bun test test/<package>` plus whole-repo typecheck (and lint/format in `shared`). An `artifacts` job runs the packed-artifact, registration, and manifest gates on a 3-OS × Node 20/22 matrix, and a `candidate` job packs and gates the release candidate without publishing. The Cursor and candidate jobs also run `validate:cursor-marketplace` against the official Cursor schemas. The pinned toolchain and host versions are declared in `packages/workit-core/src/core/support-matrix.ts` and enforced by tests.
+- **CI** (`ci.yml`) — on push/PR to `main`: per-package check jobs (`workit-core` on a 3-OS matrix, `workit-opencode`/`workit-cursor`/`workit-cli`/`shared` on ubuntu) run `bun test test/<package>` plus whole-repo typecheck (and lint/format in `shared`). An `artifacts` job runs the packed-artifact, registration, and manifest gates on a 3-OS × Node 22 matrix, and a `candidate` job packs and gates the release candidate without publishing. The Cursor and candidate jobs also run `validate:cursor-marketplace` against the official Cursor schemas. The pinned toolchain and host versions are declared in `packages/workit-core/src/core/support-matrix.ts` and enforced by tests.
 - **Release** (`release.yml`) — on push to `main`: build the adapters, run `verify:release-candidate`, then `npx semantic-release`.
 
 ### Versioning

@@ -29,8 +29,7 @@ authenticated Marketplace submission flow.
   without React maximum-depth warnings or unbounded idle rerenders.
 - G-02: Keep durable structured diagnostics without printing routine JSON
   records over interactive CLI or OpenCode terminal output.
-- G-03: Preserve the advertised Node 20+ support, including warning-free CLI
-  installation and execution on Node 22.19.
+- G-03: Support a Node ≥ 22 floor (the pinned Ink 7 requires Node ≥ 22), including warning-free CLI installation and execution on Node 22.19.
 - G-04: Make `workit` the canonical Cursor local plugin identity and safely
   migrate exact legacy Workit registration and installation entries.
 - G-05: Refresh the root and four package READMEs as balanced user and
@@ -120,7 +119,7 @@ of leaving `@opencode-ai/plugin` as a published runtime dependency. The CLI keep
 its adapter package dependencies because setup resolves their package roots and
 copies their host assets. Removing the OpenCode adapter's published SDK
 dependency eliminates the OpenCode -> Effect -> `ini@7` install path while
-retaining Node `>=20`. Packed-artifact tests prove that OpenCode still loads
+retaining Node `>=22` (Ink 7 requires Node ≥ 22). Packed-artifact tests prove that OpenCode still loads
 through its real package entry, the CLI can still install both adapters, and CLI
 installation on Node 22.19 is warning-free.
 
@@ -162,7 +161,7 @@ review trade-off explicitly.
 | CLI stderr | Human-visible `warn` and `error` diagnostics only; no routine structured `info` records. |
 | OpenCode diagnostics | Redacted JSONL plus native `client.app.log()`; no direct `process.stderr` mirror. |
 | Cursor diagnostics | Redacted stderr remains for stdio protocol safety; stdout remains protocol-only. |
-| Node support | Published CLI, OpenCode, and Cursor artifacts run on Node 20+; Node 22.19 installation emits no Workit dependency engine warning. |
+| Node support | Published CLI, OpenCode, and Cursor artifacts run on Node 22+; Node 22.19 installation emits no Workit dependency engine warning. |
 | Cursor local identity | Folder and enabled key are `workit`; exact legacy Workit identities are removed only after successful replacement. |
 | Cursor display identity | Manifest `name` is `workit`; `displayName` is `Workit`. |
 | Marketplace index | Root `.cursor-plugin/marketplace.json` points to `packages/workit-cursor`. |
@@ -255,7 +254,7 @@ validate them from canonical registrations.
   the canonical source and contains no excluded executable artifacts.
 - CA-16: The Cursor package exposes runnable MCP and session-start npm
   executables, and `npx -y @brainervirus/workit-cursor@latest` invokes each
-  against the expected stdio contract on Node 20+.
+  against the expected stdio contract on Node 22+.
 - CA-17: Cursor's hook manifest uses the documented command-string format, and
   MCP configuration contains no repository-relative reference to an untracked
   `dist` file.
@@ -282,8 +281,9 @@ validate them from canonical registrations.
 - D-02: Fix the CLI feedback loop in the existing reducer by making unchanged
   updates idempotent; do not replace Ink controls or add callback abstractions.
 - D-03: Keep shared durable logging and adapt terminal sinks per host.
-- D-04: Preserve Node `>=20` and support Node 22.19 rather than raising the
-  minimum to match an unused transitive dependency.
+- D-04: Raise the Node support floor to `>=22` because the CLI's pinned Ink 7
+  requires Node ≥ 22, while still removing the unused `ini@7` transitive
+  dependency from the OpenCode package.
 - D-05: Bundle the OpenCode SDK surface needed by the adapter and keep the CLI's
   adapter packages as required install assets rather than overriding `ini`
   resolution or removing setup inputs.

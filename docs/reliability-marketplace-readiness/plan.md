@@ -9,12 +9,12 @@
 
 **Architecture:** Release 1 fixes state identity, host-specific diagnostic sinks, the OpenCode package dependency closure, local Cursor identity, and documentation without changing shared domain boundaries. Release 2 keeps Git-discovered plugin assets in the repository while launching MCP and session-start runtime code from the latest published Cursor npm package, then validates the clean checkout against Cursor's official schemas and component rules.
 
-**Tech Stack:** TypeScript 5.8, React 19, Ink 7, `@inkjs/ui`, Bun 1.3.14, Node 20/22, OpenCode plugin SDK, Cursor plugin JSON, AJV JSON Schema validation, Bun tests, semantic-release.
+**Tech Stack:** TypeScript 5.8, React 19, Ink 7, `@inkjs/ui`, Bun 1.3.14, Node 22, OpenCode plugin SDK, Cursor plugin JSON, AJV JSON Schema validation, Bun tests, semantic-release.
 
 ## Global Constraints
 
 - Keep core behavior in `packages/workit-core/src/core/`; adapters only map host-native surfaces.
-- Preserve Node `>=20`, including warning-free installation on Node 22.19.
+- Require Node `>=22` (Ink 7 requires ≥ 22), including warning-free installation on Node 22.19.
 - Preserve persistent JSONL diagnostics, OpenCode native app logs, CLI warning/error stderr, and Cursor protocol-safe stderr.
 - Canonical Cursor identity is `workit`; canonical display name is `Workit`.
 - Keep `WORKFLOW_TOOLKIT_*`, `.workflow-toolkit-root`, and `~/.local/share/workflow-toolkit` unless they determine Cursor's displayed/local plugin identity.
@@ -230,7 +230,7 @@ Use the documentation scope table in the spec. Remove stale Bun runtime claims f
 
 - [ ] **Step 2: Document Release 1 operations**
 
-Document Node 20+, `workit init`, `workit doctor [--json]`, local Cursor path `~/.cursor/plugins/local/workit`, OpenCode native logging, configuration migration, package-local scripts, actual CI topology, and semantic-release's CI-only package version rewrite.
+Document Node 22+, `workit init`, `workit doctor [--json]`, local Cursor path `~/.cursor/plugins/local/workit`, OpenCode native logging, configuration migration, package-local scripts, actual CI topology, and semantic-release's CI-only package version rewrite.
 
 - [ ] **Step 3: Update repository contract and changelog**
 
@@ -262,7 +262,7 @@ Expected: PASS. Then run a clean packed CLI install with Node 22.19 and verify `
 
 - [ ] **Step 1: Add packed-bin regressions**
 
-Assert the packed Cursor `package.json` exposes both exact bin names and paths. Install the tarball in isolation, invoke each executable through npm's package runner, and assert MCP `tools/list` plus session-start JSON output remain protocol-valid on Node 20 and 22.
+Assert the packed Cursor `package.json` exposes both exact bin names and paths. Install the tarball in isolation, invoke each executable through npm's package runner, and assert MCP `tools/list` plus session-start JSON output remain protocol-valid on Node 22.
 
 - [ ] **Step 2: Run focused artifact tests and observe RED**
 
@@ -370,7 +370,7 @@ Expected: PASS with no ignored-file dependency.
 
 Run: `npm view @brainervirus/workit-cursor@latest bin engines --json`
 
-Expected: both Task 6 bin names are present and engines includes Node 20. If not, stop Release 2; do not point the Marketplace plugin at an unavailable command.
+Expected: both Task 6 bin names are present and engines includes Node 22. If not, stop Release 2; do not point the Marketplace plugin at an unavailable command.
 
 - [ ] **Step 2: Add manifest and process regressions**
 

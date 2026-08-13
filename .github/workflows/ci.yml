@@ -19,7 +19,7 @@ concurrency:
 # packages/workit-core/src/core/support-matrix.ts.
 env:
   BUN_VERSION: "1.3.14"
-  NODE_MINIMUM: "20"
+  NODE_MINIMUM: "22"
   NODE_CURRENT: "22"
   OPENCODE_MINIMUM: "1.15.0"
   OPENCODE_CURRENT: "1.17.7"
@@ -159,7 +159,7 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        node: [20, 22]
+        node: [22]
     steps:
       # The phase-9 traceability gate asserts the DECLARED branch is active;
       # the default PR checkout is detached at the merge commit, so check out

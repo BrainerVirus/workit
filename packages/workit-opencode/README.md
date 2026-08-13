@@ -21,7 +21,7 @@ Local dev variant (absolute path to this repo):
 }
 ```
 
-Requirements: OpenCode ≥ 1.15.0, Node ≥ 20 (the published plugin is a self-contained Node bundle).
+Requirements: OpenCode ≥ 1.15.0, Node ≥ 22 (the published plugin is a self-contained Node bundle).
 
 ## What it provides
 

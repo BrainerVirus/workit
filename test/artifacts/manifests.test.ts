@@ -251,7 +251,7 @@ test("ci.yml pins the declared support matrix (Bun/Node/OpenCode, 3 OS, no Deno)
   for (const os of SUPPORT_MATRIX.os) {
     expect(ci).toContain(os);
   }
-  expect(ci).toMatch(/node:\s*\[20,\s*22\]/);
+  expect(ci).toMatch(/node:\s*\[22\]/);
   expect(ci).not.toMatch(/[Dd]eno/);
 });
 

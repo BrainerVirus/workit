@@ -4,7 +4,7 @@ The workit CLI — an interactive Ink wizard that configures workit for OpenCode
 
 ## Requirements
 
-- **Node.js ≥ 20** — the published CLI is a self-contained Node bundle (no Bun runtime). Node 16 and below fail (`ERR_MODULE_NOT_FOUND`/ESM syntax).
+- **Node.js ≥ 22** — the published CLI is a self-contained Node bundle (no Bun runtime). Node 21 and below fail (`ERR_MODULE_NOT_FOUND`/ESM syntax or the `>=22` engine gate).
 
 ## Install
 
@@ -32,7 +32,7 @@ workit                   # help
 - **Safe apply semantics** — a malformed `config.json` is detected before the wizard renders and reported as a friendly blocked output instead of crashing; the same guard runs after the Apply preview.
 - **Stable interaction** — unchanged wizard inputs are no-ops; they settle without React render warnings and never discard draft state.
 - **Clean terminal** — only `warn`/`error` diagnostics print to stderr; routine structured `info` records stay in the JSONL journal. Nonzero failures and human-readable errors remain visible.
-- **Node support** — the packed CLI runs on Node 20+; installation on Node 22.19 emits no engine warning from workit's dependency tree.
+- **Node support** — the packed CLI runs on Node 22+; installation on Node 22.19 emits no engine warning from workit's dependency tree.
 
 ## Package scripts
 
