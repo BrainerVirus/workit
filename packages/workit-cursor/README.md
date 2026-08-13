@@ -45,7 +45,7 @@ Cursor adapts workit through policy-only confirmation: approvals and commits are
 - Plugin metadata: `packages/workit-cursor/.cursor-plugin/plugin.json` (`name: "workit"`, `displayName: "Workit"`).
 - MCP server: `mcp.json`.
 - Session-start hook: `hooks/hooks-cursor.json`.
-- Rules: `rules/` (branch policy, doc delivery, ask-question-only, no-worktrees, SDD path).
+- Rules: `rules/` (`ask-question-only.mdc`, `cursor-todowrite.mdc`, `no-worktrees.mdc`, `sdd-docs-path.mdc`).
 - Skills: `skills/` (12 `wk-*`) and `vendor/superpowers/skills/` (14).
 
 ## Security and data handling
