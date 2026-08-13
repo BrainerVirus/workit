@@ -679,11 +679,7 @@ test.skipIf(!bashAvailable() || !flockAvailable() || !findOnPath("rsync"))(
         expect(ts).toEqual({ ok: true });
         expect(readFileSync(bunLog, "utf8")).toBe("install\nbuild\n");
         for (const entry of ["mcp-server.js", "cursor-session-start.js"]) {
-          const installed = path.join(
-            devHome,
-            ".cursor/plugins/local/workflow-toolkit/dist",
-            entry,
-          );
+          const installed = path.join(devHome, ".cursor/plugins/local/workit/dist", entry);
           expect(existsSync(installed), entry).toBe(true);
           expect(readFileSync(installed, "utf8")).toStartWith("#!/usr/bin/env node");
           expect(readFileSync(installed, "utf8")).not.toBe("stale\n");
@@ -705,11 +701,7 @@ test.skipIf(!bashAvailable() || !flockAvailable() || !findOnPath("rsync"))(
         expect(bash.status, bash.stderr).toBe(0);
         expect(readFileSync(bunLog, "utf8")).toBe("install\nbuild\n");
         for (const entry of ["mcp-server.js", "cursor-session-start.js"]) {
-          const installed = path.join(
-            devHome2,
-            ".cursor/plugins/local/workflow-toolkit/dist",
-            entry,
-          );
+          const installed = path.join(devHome2, ".cursor/plugins/local/workit/dist", entry);
           expect(existsSync(installed), entry).toBe(true);
           expect(readFileSync(installed, "utf8")).toStartWith("#!/usr/bin/env node");
         }

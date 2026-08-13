@@ -37,6 +37,8 @@ export function isWorkitPlugin(value: unknown): boolean {
     named(s, "workflow-toolkit") ||
     named(s, "workflow-toolkit-opencode") ||
     named(s, "local/workflow-toolkit") ||
+    named(s, "workit") ||
+    named(s, "local/workit") ||
     named(s, "@brainervirus/workit-opencode") ||
     named(s, "@brainervirus/workit-cursor") ||
     (url && pkgPath) ||
@@ -84,16 +86,17 @@ export function mergeOpenCodeConfig(
   return { config: base, changed };
 }
 
-/** Collapse current + legacy Cursor plugin identities to a single one. */
+/** Collapse current + legacy Cursor plugin identities to the canonical `workit`. */
 export function mergeCursorEnabledPlugins(enabled: unknown): MergeResult<Record<string, boolean>> {
   const prev = isRecord(enabled) ? { ...(enabled as Record<string, boolean>) } : {};
-  const next: Record<string, boolean> = { ...prev, "workflow-toolkit": true };
+  const next: Record<string, boolean> = { ...prev, workit: true };
+  delete next["workflow-toolkit"]; // legacy identity
   delete next["local/workflow-toolkit"]; // legacy duplicate identity
   const changed = JSON.stringify(next) !== JSON.stringify(prev) ? ["enabled_plugins"] : [];
   return { config: next, changed };
 }
 
-/** Append the plugin dir once, preserving any existing plugin directories. */
+/** Append the plugin dir once, dropping the exact legacy sibling directory. */
 export function mergeCursorPluginDirs(
   pluginDirs: unknown,
   pluginDir: string,
@@ -105,13 +108,17 @@ export function mergeCursorPluginDirs(
     return path.dirname(j) === j ? j : j.replace(/[\\/]+$/, "");
   };
   const normalized = strip(pluginDir);
+  // CA-08: the legacy local plugin dir is the exact sibling of the canonical
+  // dir; remove only that entry, never a similarly-named unrelated dir (D3).
+  const legacy = strip(path.join(path.dirname(pluginDir), "workflow-toolkit"));
   const prev = Array.isArray(pluginDirs) ? pluginDirs.map(String) : [];
+  const kept = prev.filter((d) => strip(d) !== legacy);
   // Normalize both sides for comparison so a trailing-slash variant of an
   // existing entry is not appended as a duplicate; existing entries are kept
   // verbatim.
-  const exists = prev.some((d) => strip(d) === normalized);
-  const next = exists ? prev : [...prev, normalized];
-  const changed = next.length !== prev.length ? ["plugin_dirs"] : [];
+  const exists = kept.some((d) => strip(d) === normalized);
+  const next = exists ? kept : [...kept, normalized];
+  const changed = JSON.stringify(next) !== JSON.stringify(prev) ? ["plugin_dirs"] : [];
   return { config: next, changed };
 }
 

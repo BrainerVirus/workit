@@ -40,7 +40,7 @@ export const makeDoctorFixture = (): DoctorFixture => {
   const opencodeConfig = path.join(home, ".config", "opencode", "opencode.json");
   const cursorSettings = path.join(home, ".cursor", "settings.json");
   const cursorMcp = path.join(home, ".cursor", "mcp.json");
-  const pluginDir = path.join(home, ".cursor", "plugins", "local", "workflow-toolkit");
+  const pluginDir = path.join(home, ".cursor", "plugins", "local", "workit");
   mkdirSync(path.dirname(opencodeConfig), { recursive: true });
   mkdirSync(path.dirname(cursorSettings), { recursive: true });
 
@@ -191,7 +191,7 @@ export const makeDoctorFixture = (): DoctorFixture => {
   writeFileSync(
     cursorSettings,
     JSON.stringify({
-      enabled_plugins: { "workflow-toolkit": true },
+      enabled_plugins: { workit: true },
       plugin_dirs: [pluginDir],
     }),
   );

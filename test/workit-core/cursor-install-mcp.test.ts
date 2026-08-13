@@ -57,7 +57,7 @@ test("the installed plugin mcp.json is rewritten to an absolute node entry at in
     const result = apply(dir, home);
     expect(result.ok, JSON.stringify(result.entries)).toBe(true);
 
-    const pluginDir = path.join(home, ".cursor", "plugins", "local", "workflow-toolkit");
+    const pluginDir = path.join(home, ".cursor", "plugins", "local", "workit");
     const pluginMcp = JSON.parse(readFileSync(path.join(pluginDir, "mcp.json"), "utf8"));
     const entry = pluginMcp.mcpServers.workit;
     expect(entry.command).toBe("node");
@@ -85,7 +85,7 @@ test("a second cursor apply reports the plugin Skipped — the derived mcp.json 
   const home = tempDir("wk-cursor-mcp-idem-home-");
   const dir = tempDir("wk-cursor-mcp-idem-cfg-");
   try {
-    const pluginDir = path.join(home, ".cursor", "plugins", "local", "workflow-toolkit");
+    const pluginDir = path.join(home, ".cursor", "plugins", "local", "workit");
     mkdirSync(path.dirname(pluginDir), { recursive: true });
 
     const first = apply(dir, home);

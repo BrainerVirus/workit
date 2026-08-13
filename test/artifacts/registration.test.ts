@@ -6,6 +6,7 @@ import {
   cursorHooksEntry,
   cursorMcpServerEntry,
   isWorkitPlugin,
+  mergeCursorEnabledPlugins,
   mergeCursorHooks,
   mergeCursorMcp,
   mergeCursorPluginDirs,
@@ -21,7 +22,8 @@ import {
 
 const PIN = "file:///work/packages/workit-opencode/src/plugin.ts";
 const CURSOR_ROOT = path.join("/home/user", ".cursor");
-const CURSOR_PLUGIN_DIR = path.join(CURSOR_ROOT, "plugins", "local", "workflow-toolkit");
+const CURSOR_PLUGIN_DIR = path.join(CURSOR_ROOT, "plugins", "local", "workit");
+const LEGACY_PLUGIN_DIR = path.join(CURSOR_ROOT, "plugins", "local", "workflow-toolkit");
 const OTHER_PLUGIN_DIR = path.join(CURSOR_ROOT, "plugins", "local", "other");
 
 test("isWorkitPlugin matches every legacy and current identity, never unrelated plugins", () => {
@@ -38,6 +40,9 @@ test("isWorkitPlugin matches every legacy and current identity, never unrelated 
     "file:///x/packages/workit-opencode/src/plugin.ts",
     "workflow-toolkit",
     "local/workflow-toolkit",
+    "workit",
+    "local/workit",
+    "workit@1.0.0",
   ]) {
     expect(isWorkitPlugin(id), id).toBe(true);
   }
@@ -199,22 +204,53 @@ test("mergeOpenCodeConfig tolerates a missing config and a string plugin field",
   expect(str.config.plugin).toEqual([PIN]);
 });
 
-test("mergeCursorSettings keeps a single plugin identity, appends dirs, preserves unrelated settings", () => {
+test("mergeCursorSettings writes the canonical workit identity and removes exact legacy entries", () => {
   const input = {
-    enabled_plugins: { "local/workflow-toolkit": true, "some-other-plugin": true },
-    plugin_dirs: [OTHER_PLUGIN_DIR],
+    enabled_plugins: {
+      "local/workflow-toolkit": true,
+      "workflow-toolkit": true,
+      "some-other-plugin": true,
+      "my-workflow-toolkit-plugin": true, // unrelated similarly-named plugin (D3)
+    },
+    plugin_dirs: [OTHER_PLUGIN_DIR, LEGACY_PLUGIN_DIR],
     "chat.temperature": 0.3,
     telemetry: { machineId: "abc" },
   };
   const { config, changed } = mergeCursorSettings(input, CURSOR_PLUGIN_DIR);
   expect(config.enabled_plugins).toEqual({
-    "workflow-toolkit": true,
+    workit: true,
     "some-other-plugin": true,
+    "my-workflow-toolkit-plugin": true,
   });
   expect(config.plugin_dirs).toEqual([OTHER_PLUGIN_DIR, CURSOR_PLUGIN_DIR]);
   expect(config["chat.temperature"]).toBe(0.3);
   expect(JSON.stringify(config.telemetry)).toBe(JSON.stringify(input.telemetry));
   expect(changed).toEqual(["enabled_plugins", "plugin_dirs"]);
+});
+
+test("mergeCursorEnabledPlugins writes workit and drops every legacy Workit key, preserving unrelated keys", () => {
+  const { config, changed } = mergeCursorEnabledPlugins({
+    "workflow-toolkit": true,
+    "local/workflow-toolkit": true,
+    "some-other-plugin": true,
+  });
+  expect(config).toEqual({ workit: true, "some-other-plugin": true });
+  expect(changed).toEqual(["enabled_plugins"]);
+});
+
+test("mergeCursorEnabledPlugins is idempotent once canonical", () => {
+  const once = mergeCursorEnabledPlugins({ workit: true });
+  expect(once.changed).toEqual([]);
+  expect(once.config).toEqual({ workit: true });
+});
+
+test("mergeCursorPluginDirs removes the exact legacy directory and appends the canonical one", () => {
+  const { config, changed } = mergeCursorPluginDirs(
+    [OTHER_PLUGIN_DIR, LEGACY_PLUGIN_DIR],
+    CURSOR_PLUGIN_DIR,
+  );
+  expect(config).toEqual([OTHER_PLUGIN_DIR, CURSOR_PLUGIN_DIR]);
+  expect(changed).toEqual(["plugin_dirs"]);
 });
 
 test("mergeOpenCodeConfig does not mutate the caller's nested skills object", () => {

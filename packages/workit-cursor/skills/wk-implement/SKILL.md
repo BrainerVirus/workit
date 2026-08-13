@@ -18,7 +18,7 @@ Use the returned `tasks[]` as ground truth. Cache each `section_text` for subage
 
 ## Step 2 — Load execution contract
 
-Resolve plugin root: `WORKFLOW_TOOLKIT_ROOT` env or `~/.cursor/plugins/local/workflow-toolkit/`.
+Resolve plugin root: `WORKFLOW_TOOLKIT_ROOT` env or `~/.cursor/plugins/local/workit/`.
 
 Load `templates/execution-contract.md`. Substitute `<SPEC_PATH>`, `<PLAN_PATH>`, `<BRANCH>`, `<SDD_DIR>`, `<TASK_LIST>` from MCP. If template missing, stop with error.
 

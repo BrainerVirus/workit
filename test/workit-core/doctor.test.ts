@@ -428,8 +428,11 @@ test("detects duplicate cursor registration in settings and mcp and clears once 
   writeConfig(
     fixture.cursorSettings,
     JSON.stringify({
-      enabled_plugins: { "workflow-toolkit": true, "local/workflow-toolkit": true },
-      plugin_dirs: [fixture.pluginDir, path.join(fixture.home, ".cursor/plugins/local/legacy")],
+      enabled_plugins: { workit: true, "workflow-toolkit": true },
+      plugin_dirs: [
+        fixture.pluginDir,
+        path.join(fixture.home, ".cursor", "plugins", "local", "workflow-toolkit"),
+      ],
     }),
   );
   writeConfig(
@@ -449,7 +452,7 @@ test("detects duplicate cursor registration in settings and mcp and clears once 
   writeConfig(
     fixture.cursorSettings,
     JSON.stringify({
-      enabled_plugins: { "workflow-toolkit": true },
+      enabled_plugins: { workit: true },
       plugin_dirs: [fixture.pluginDir],
     }),
   );

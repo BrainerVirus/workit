@@ -166,12 +166,12 @@ function makeCursorStub() {
     ["skills", CANONICAL_SKILLS.workit],
   ] as const) {
     for (const skill of skills) {
-      const dir = path.join(home, ".cursor/plugins/local/workflow-toolkit", root, skill);
+      const dir = path.join(home, ".cursor/plugins/local/workit", root, skill);
       mkdirSync(dir, { recursive: true });
       writeFileSync(path.join(dir, "SKILL.md"), "# skill\n");
     }
   }
-  const installedDist = path.join(home, ".cursor/plugins/local/workflow-toolkit/dist");
+  const installedDist = path.join(home, ".cursor/plugins/local/workit/dist");
   mkdirSync(installedDist, { recursive: true });
   writeFileSync(path.join(installedDist, "mcp-server.js"), "#!/usr/bin/env node\n// bundle\n");
   writeFileSync(
@@ -504,7 +504,7 @@ test("sync-runtime installs frozen dependencies before rebuilding and replacing 
     expect(r.status, r.stderr).toBe(0);
     expect(readFileSync(log, "utf8")).toBe("install\nbuild\n");
     for (const entry of ["mcp-server.js", "cursor-session-start.js"]) {
-      const installed = path.join(home, ".cursor/plugins/local/workflow-toolkit/dist", entry);
+      const installed = path.join(home, ".cursor/plugins/local/workit/dist", entry);
       expect(existsSync(installed), entry).toBe(true);
       expect(readFileSync(installed, "utf8")).toStartWith("#!/usr/bin/env node");
       expect(readFileSync(installed, "utf8")).not.toBe("stale\n");

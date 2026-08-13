@@ -144,10 +144,10 @@ test("packed CLI setup flow configures OpenCode + Cursor and doctor verifies it"
     expect(oc.plugin).toContain(`file://${path.join(nm, OPENCODE, "dist", "plugin.js")}`);
 
     // Cursor: settings + mcp + the plugin package copied package-locally
-    const pluginDir = path.join(home, ".cursor", "plugins", "local", "workflow-toolkit");
+    const pluginDir = path.join(home, ".cursor", "plugins", "local", "workit");
     const cursorSettings = path.join(home, ".cursor", "settings.json");
     const settings = JSON.parse(readFileSync(cursorSettings, "utf8"));
-    expect(settings.enabled_plugins?.["workflow-toolkit"]).toBe(true);
+    expect(settings.enabled_plugins?.["workit"]).toBe(true);
     expect(settings.plugin_dirs).toContain(pluginDir);
     for (const rel of ["package.json", "mcp/run-server.sh", "dist/mcp-server.js"]) {
       expect(existsSync(path.join(pluginDir, rel)), `${pluginDir}/${rel}`).toBe(true);

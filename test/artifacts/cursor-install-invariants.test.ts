@@ -143,7 +143,7 @@ test(
 
       const home = path.join(fixture, "packed-home");
       const nodeModules = path.join(fixture, "packed", "node_modules");
-      const plugin = path.join(home, ".cursor/plugins/local/workflow-toolkit");
+      const plugin = path.join(home, ".cursor/plugins/local/workit");
       mkdirSync(path.dirname(plugin), { recursive: true });
       mkdirSync(nodeModules, { recursive: true });
       installPackedPackage(nodeModules, byName(packs, CLI));
@@ -284,7 +284,7 @@ test.skipIf(!syncToolsAvailable)(
         } else {
           expect(await syncRuntime({ env })).toEqual({ ok: true });
         }
-        const plugin = path.join(home, ".cursor/plugins/local/workflow-toolkit");
+        const plugin = path.join(home, ".cursor/plugins/local/workit");
         expect(skillManifests(path.join(plugin, "skills"))).toEqual(WORKIT);
         expect(skillManifests(path.join(plugin, "vendor/superpowers/skills"))).toEqual(SUPERPOWERS);
         walkFiles(path.join(plugin, "vendor/superpowers/skills"), (file) => {

@@ -2,6 +2,7 @@ import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import {
   accessSync,
   constants,
+  copyFileSync,
   existsSync,
   mkdirSync,
   readFileSync,
@@ -107,7 +108,7 @@ export async function syncRuntime(options: SyncRuntimeOptions = {}): Promise<Syn
     path.join(home, "Documents/projects/personal/workflow-toolkit");
   const repoSlug = options.repoSlug ?? env.WORKFLOW_TOOLKIT_REPO ?? "BrainerVirus/workit";
   const share = path.join(home, ".local/share/workflow-toolkit");
-  const pluginDir = path.join(home, ".cursor/plugins/local/workflow-toolkit");
+  const pluginDir = path.join(home, ".cursor/plugins/local/workit");
   const opencodePlugins = path.join(home, ".config/opencode/plugins");
   const lock = path.join(
     options.lockDir ?? env.XDG_RUNTIME_DIR ?? "/tmp",
@@ -274,6 +275,23 @@ export async function syncRuntime(options: SyncRuntimeOptions = {}): Promise<Syn
       path.join(pluginDir, ".workflow-toolkit-root"),
       `${share}/packages/workit-core\n`,
     );
+
+    // CA-08/CA-09: migrate the legacy local plugin identity to `workit` only
+    // after the canonical sync succeeded; carry the legacy user rules forward
+    // first so no user data is lost.
+    const legacyDir = path.join(home, ".cursor", "plugins", "local", "workflow-toolkit");
+    if (legacyDir !== pluginDir && existsSync(legacyDir)) {
+      const legacyRules = path.join(legacyDir, "rules");
+      if (existsSync(legacyRules)) {
+        mkdirSync(path.join(pluginDir, "rules"), { recursive: true });
+        for (const entry of readdirSync(legacyRules, { withFileTypes: true })) {
+          if (!entry.isFile() || !entry.name.endsWith(".mdc")) continue;
+          const target = path.join(pluginDir, "rules", entry.name);
+          if (!existsSync(target)) copyFileSync(path.join(legacyRules, entry.name), target);
+        }
+      }
+      rmSync(legacyDir, { recursive: true, force: true });
+    }
 
     // Remove broken TLA live-loader if present (OpenCode ignored it; /wk-* vanished).
     rmSync(path.join(opencodePlugins, "workflow-toolkit.ts"), { force: true });

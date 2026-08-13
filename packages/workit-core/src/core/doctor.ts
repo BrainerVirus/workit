@@ -125,7 +125,7 @@ const resolve = (options: DoctorOptions): Resolved => {
     cursorSettings: options.cursorSettings ?? path.join(home, ".cursor", "settings.json"),
     cursorMcp: options.cursorMcp ?? path.join(home, ".cursor", "mcp.json"),
     cursorPluginDir:
-      options.cursorPluginDir ?? path.join(home, ".cursor", "plugins", "local", "workflow-toolkit"),
+      options.cursorPluginDir ?? path.join(home, ".cursor", "plugins", "local", "workit"),
     env,
     installer: options.installer ?? false,
   };
@@ -569,9 +569,15 @@ const checkDuplicateRegistration = (res: Resolved): DoctorCheck => {
         );
     }
     const dirs = Array.isArray(settings?.plugin_dirs)
-      ? settings.plugin_dirs
-          .map(String)
-          .filter((d) => isWorkitPlugin(d) || d.includes("workflow-toolkit"))
+      ? settings.plugin_dirs.map(String).filter((d) => {
+          // Exact local plugin-dir identities only (CA-09): a similarly-named
+          // unrelated dir (e.g. `local/workflow-toolkit-extra`) is preserved
+          // and must never be counted as a Workit entry.
+          const n = d.replaceAll("\\", "/").replace(/\/+$/, "");
+          return (
+            isWorkitPlugin(d) || n.endsWith("local/workit") || n.endsWith("local/workflow-toolkit")
+          );
+        })
       : [];
     if (dirs.length > 1) problems.push(`cursor plugin_dirs has ${dirs.length} workit entries`);
   }

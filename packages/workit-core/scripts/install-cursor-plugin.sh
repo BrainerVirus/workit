@@ -51,7 +51,7 @@ if [ -d "$SKILLS_DIR" ]; then
   rm -f "$SKILLS_DIR"/wf-* "$SKILLS_DIR"/wk-*
 fi
 
-PLUGIN_DIR="$HOME/.cursor/plugins/local/workflow-toolkit"
+PLUGIN_DIR="$HOME/.cursor/plugins/local/workit"
 REGISTRATION_TS="$ROOT/packages/workit-core/src/core/registration.ts"
 CURSOR_SETTINGS="$HOME/.cursor/settings.json" CURSOR_MCP="$HOME/.cursor/mcp.json" PLUGIN_DIR="$PLUGIN_DIR" REGISTRATION_TS="$REGISTRATION_TS" bun -e '
 import fs from "node:fs";
@@ -103,4 +103,4 @@ fi
 
 echo "Cursor plugin installed + auto-sync enabled (sessionStart)."
 echo "Share: $SHARE"
-ls "$HOME/.cursor/plugins/local/workflow-toolkit/skills" | grep '^wk-' || true
+ls "$HOME/.cursor/plugins/local/workit/skills" | grep '^wk-' || true

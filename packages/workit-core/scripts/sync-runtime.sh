@@ -7,7 +7,7 @@ SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 . "$SCRIPT_DIR/lib/config-dir.sh"
 
 SHARE="${HOME}/.local/share/workflow-toolkit"
-PLUGIN_DIR="${HOME}/.cursor/plugins/local/workflow-toolkit"
+PLUGIN_DIR="${HOME}/.cursor/plugins/local/workit"
 OPENCODE_PLUGINS="${HOME}/.config/opencode/plugins"
 DEV_DEFAULT="${HOME}/Documents/projects/personal/workflow-toolkit"
 DEV="${WORKFLOW_TOOLKIT_DEV:-$DEV_DEFAULT}"
@@ -128,6 +128,20 @@ if [ -d "$CONFIG_RULES_DIR" ]; then
 fi
 printf '%s\n' "$SHARE/packages/workit-core" >"$PLUGIN_DIR/.workflow-toolkit-root"
 chmod +x "$PLUGIN_DIR/hooks/session-start" "$PLUGIN_DIR/mcp/run-server.sh" 2>/dev/null || true
+
+# CA-08/CA-09: migrate the legacy local plugin identity to `workit` only after
+# the canonical sync succeeded; carry the legacy user rules forward first.
+LEGACY_DIR="${HOME}/.cursor/plugins/local/workflow-toolkit"
+if [ -d "$LEGACY_DIR" ] && [ "$LEGACY_DIR" != "$PLUGIN_DIR" ]; then
+  if [ -d "$LEGACY_DIR/rules" ]; then
+    mkdir -p "$PLUGIN_DIR/rules"
+    for rule in "$LEGACY_DIR"/rules/*.mdc; do
+      [ -e "$rule" ] || continue
+      [ -e "$PLUGIN_DIR/rules/$(basename "$rule")" ] || cp "$rule" "$PLUGIN_DIR/rules/"
+    done
+  fi
+  rm -rf "$LEGACY_DIR"
+fi
 
 # Remove broken TLA live-loader if present (OpenCode ignored it; /wk-* vanished)
 rm -f "${OPENCODE_PLUGINS}/workflow-toolkit.ts"
