@@ -144,17 +144,23 @@ test("packed CLI setup flow configures OpenCode + Cursor and doctor verifies it"
     expect(oc.plugin).toContain(`file://${path.join(nm, OPENCODE, "dist", "plugin.js")}`);
 
     // Cursor: settings + mcp + the plugin package copied package-locally
-    const pluginDir = path.join(home, ".cursor", "plugins", "local", "workflow-toolkit");
+    const pluginDir = path.join(home, ".cursor", "plugins", "local", "workit");
     const cursorSettings = path.join(home, ".cursor", "settings.json");
     const settings = JSON.parse(readFileSync(cursorSettings, "utf8"));
-    expect(settings.enabled_plugins?.["workflow-toolkit"]).toBe(true);
+    expect(settings.enabled_plugins?.["workit"]).toBe(true);
     expect(settings.plugin_dirs).toContain(pluginDir);
-    for (const rel of ["package.json", "mcp/run-server.sh", "dist/mcp-server.js"]) {
+    for (const rel of ["package.json", "dist/mcp-server.js"]) {
       expect(existsSync(path.join(pluginDir, rel)), `${pluginDir}/${rel}`).toBe(true);
     }
     const cursorMcp = path.join(home, ".cursor", "mcp.json");
     const mcp = JSON.parse(readFileSync(cursorMcp, "utf8"));
-    expect(mcp.mcpServers?.workit?.command).toBe("node");
+    expect(mcp.mcpServers?.workit?.command).toBe("npx");
+    expect(mcp.mcpServers?.workit?.args).toEqual([
+      "-y",
+      "--package=@brainervirus/workit-cursor@latest",
+      "workit-cursor-mcp",
+      "${workspaceFolder}",
+    ]);
 
     // packaged hygiene applied from the extracted package's own templates
     expect(readFileSync(path.join(project, "CHANGELOG.md"), "utf8")).toContain("# Changelog");
@@ -343,12 +349,14 @@ test("packed CLI: non-TTY init gives guidance + nonzero; --help exits 0", () => 
     const help = runInIsolation(install, "node", [entry, "--help"], env);
     expect(help.status, help.stderr).toBe(0);
     expect(help.stdout).toContain("workit");
+    expect(help.stderr).toBe("");
 
     const init = runInIsolation(install, "node", [entry, "init"], env);
     expect(init.status, init.stdout + init.stderr).toBe(1);
     expect(init.stdout).toContain("interactive terminal");
     expect(init.stdout).toContain("workit doctor");
     expect(init.stdout).toContain("/wk-status");
+    expect(init.stderr).not.toContain('"initialization"');
   } finally {
     rmSync(install, { recursive: true, force: true });
   }

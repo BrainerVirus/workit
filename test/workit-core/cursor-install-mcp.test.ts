@@ -50,29 +50,32 @@ const apply = (dir: string, home: string): SetupResult =>
 const statusOf = (result: SetupResult, file: string): string | undefined =>
   result.entries.find((e) => e.file === file)?.status;
 
-test("the installed plugin mcp.json is rewritten to an absolute node entry at install (PT-10)", () => {
+test("the installed plugin mcp.json carries the marketplace npx command (CA-17)", () => {
   const home = tempDir("wk-cursor-mcp-home-");
   const dir = tempDir("wk-cursor-mcp-cfg-");
   try {
     const result = apply(dir, home);
     expect(result.ok, JSON.stringify(result.entries)).toBe(true);
 
-    const pluginDir = path.join(home, ".cursor", "plugins", "local", "workflow-toolkit");
+    const pluginDir = path.join(home, ".cursor", "plugins", "local", "workit");
     const pluginMcp = JSON.parse(readFileSync(path.join(pluginDir, "mcp.json"), "utf8"));
     const entry = pluginMcp.mcpServers.workit;
-    expect(entry.command).toBe("node");
-    expect(entry.args[0]).toStartWith(`${pluginDir}${path.sep}`);
-    expect(entry.args[0]).toEndWith(path.join("dist", "mcp-server.js"));
+    expect(entry.command).toBe("npx");
+    expect(entry.args).toEqual([
+      "-y",
+      "--package=@brainervirus/workit-cursor@latest",
+      "workit-cursor-mcp",
+      "${workspaceFolder}",
+    ]);
 
-    // The SHIPPED manifest stays package-relative (PT-10): the installed copy
-    // is a derived artifact, never the source bytes.
+    // The shipped manifest is identical: the installed copy is no longer a
+    // derived absolute-dist artifact, it copies the Marketplace-safe command.
     const shipped = JSON.parse(
       readFileSync(path.join(repoRoot, "packages", "workit-cursor", "mcp.json"), "utf8"),
     );
-    expect(shipped.mcpServers.workit.args[0]).toBe("./dist/mcp-server.js");
-    expect(shipped.mcpServers.workit.args[0]).not.toBe(entry.args[0]);
+    expect(shipped.mcpServers.workit).toEqual(entry);
 
-    // ~/.cursor/mcp.json registers the same absolute entry.
+    // ~/.cursor/mcp.json registers the same npx entry.
     const userMcp = JSON.parse(readFileSync(path.join(home, ".cursor", "mcp.json"), "utf8"));
     expect(userMcp.mcpServers.workit).toEqual(entry);
   } finally {
@@ -85,7 +88,7 @@ test("a second cursor apply reports the plugin Skipped — the derived mcp.json 
   const home = tempDir("wk-cursor-mcp-idem-home-");
   const dir = tempDir("wk-cursor-mcp-idem-cfg-");
   try {
-    const pluginDir = path.join(home, ".cursor", "plugins", "local", "workflow-toolkit");
+    const pluginDir = path.join(home, ".cursor", "plugins", "local", "workit");
     mkdirSync(path.dirname(pluginDir), { recursive: true });
 
     const first = apply(dir, home);

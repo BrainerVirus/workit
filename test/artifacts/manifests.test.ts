@@ -1,6 +1,8 @@
 import { expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
+import { CANONICAL_SKILLS } from "../../packages/workit-core/src/core/skill-manifests";
 import { SUPPORT_MATRIX } from "../../packages/workit-core/src/core/support-matrix";
 import {
   listTarball,
@@ -23,7 +25,7 @@ const json = <T>(rel: string) => JSON.parse(read(rel)) as T;
 const byName = (packs: ReturnType<typeof packWorkspacePackages>, name: string) =>
   packs.find((p) => p.packageName === name)!;
 
-test("cursor mcp.json is package-relative and invokes Node explicitly (PT-10)", () => {
+test("cursor mcp.json launches the published package via npx (CA-17)", () => {
   for (const source of ["committed", "packed"] as const) {
     const raw =
       source === "committed"
@@ -34,9 +36,16 @@ test("cursor mcp.json is package-relative and invokes Node explicitly (PT-10)", 
     };
     const server = mcp.mcpServers.workit;
     expect(server, source).toBeDefined();
-    expect(server.command, source).toBe("node");
+    expect(server.command, source).toBe("npx");
+    expect(server.args, source).toEqual([
+      "-y",
+      "--package=@brainervirus/workit-cursor@latest",
+      "workit-cursor-mcp",
+      "${workspaceFolder}",
+    ]);
     const joined = [...server.args].join(" ");
-    expect(joined, source).toContain("dist/mcp-server.js");
+    expect(joined, source).not.toContain("dist/");
+    expect(joined, source).not.toContain("run-server");
     expect(joined, source).not.toMatch(/\$HOME/);
     expect(joined, source).not.toContain(".local/share");
     expect(joined, source).not.toContain("Documents/projects");
@@ -44,7 +53,7 @@ test("cursor mcp.json is package-relative and invokes Node explicitly (PT-10)", 
   }
 });
 
-test("cursor hooks-cursor.json references a package-relative Node entry", () => {
+test("cursor hooks-cursor.json uses the documented single command string (CA-17)", () => {
   const packs = packWorkspacePackages();
   for (const source of ["committed", "packed"] as const) {
     const raw =
@@ -57,17 +66,27 @@ test("cursor hooks-cursor.json references a package-relative Node entry", () => 
     };
     expect(hooks.version, source).toBe(1);
     const entry = hooks.hooks.sessionStart[0];
-    expect(entry.command, source).toBe("node");
-    expect(entry.args?.[0], source).toBe("./dist/cursor-session-start.js");
+    expect(entry.command, source).toBe(
+      "npx -y --package=@brainervirus/workit-cursor@latest workit-cursor-session-start",
+    );
+    expect(entry.args, source).toBeUndefined();
+    expect(JSON.stringify(entry), source).not.toContain("dist/");
+    expect(JSON.stringify(entry), source).not.toContain("run-server");
     expect(JSON.stringify(entry), source).not.toMatch(/\$HOME/);
     expect(JSON.stringify(entry), source).not.toMatch(/^\//);
-    // the referenced entry is Node (shebang documents the runtime)
-    const entryFile = readTarballFile(
-      byName(packs, CURSOR).tarball,
-      "dist/cursor-session-start.js",
-    );
-    expect(entryFile.startsWith("#!/usr/bin/env node"), source).toBe(true);
   }
+});
+
+test("cursor package.json declares the MCP and session-start npm executables (CA-16)", () => {
+  const pkg = json<{ bin?: Record<string, string> }>("packages/workit-cursor/package.json");
+  expect(pkg.bin).toEqual({
+    "workit-cursor-mcp": "./dist/mcp-server.js",
+    "workit-cursor-session-start": "./dist/cursor-session-start.js",
+  });
+  const packed = JSON.parse(
+    readTarballFile(byName(packWorkspacePackages(), CURSOR).tarball, "package.json"),
+  );
+  expect(packed.bin, "packed").toEqual(pkg.bin);
 });
 
 test("cursor .cursor-plugin/plugin.json uses valid plugin-root-relative components", () => {
@@ -83,6 +102,7 @@ test("cursor .cursor-plugin/plugin.json uses valid plugin-root-relative componen
     const plugin = JSON.parse(raw) as Record<string, string | string[]>;
     if (source === "packed") packedPlugin = plugin;
     expect(plugin.version, source).toBe(pkg.version);
+    expect(plugin.logo, source).toBe("assets/logo.svg");
     expect(plugin.skills, source).toEqual(["skills/", "vendor/superpowers/skills/"]);
     expect(plugin.rules, source).toBe("rules/");
     expect(plugin.mcpServers, source).toBe("mcp.json");
@@ -97,6 +117,7 @@ test("cursor .cursor-plugin/plugin.json uses valid plugin-root-relative componen
   }
 
   const entries = new Set(listTarball(packed));
+  expect(entries.has("assets/logo.svg")).toBe(true);
   for (const field of [
     packedPlugin!.skills,
     packedPlugin!.rules,
@@ -128,31 +149,81 @@ test("cursor .cursor-plugin/plugin.json uses valid plugin-root-relative componen
   }
 });
 
-test("cursor marketplace.json is package-relative and versioned", () => {
-  const market = json<Record<string, unknown>>("packages/workit-cursor/marketplace.json");
-  const pkg = json<{ version: string }>("packages/workit-cursor/package.json");
-  expect(market.version).toBe(pkg.version);
-  for (const value of Object.values(market)) {
-    expect(JSON.stringify(value), `${value}`).not.toContain("$HOME");
-    expect(JSON.stringify(value), `${value}`).not.toContain("Documents/projects");
-    expect(JSON.stringify(value), `${value}`).not.toContain(".local/share");
+test("root .cursor-plugin/marketplace.json indexes packages/workit-cursor (CA-13)", () => {
+  const market = json<{
+    name: string;
+    owner?: { name: string };
+    plugins: { name: string; source: string }[];
+  }>(".cursor-plugin/marketplace.json");
+  expect(market.name).toBe("workit");
+  expect(market.owner?.name).toBe("BrainerVirus");
+  expect(market.plugins).toHaveLength(1);
+  expect(market.plugins[0].name).toBe("workit");
+  expect(market.plugins[0].source).toBe("packages/workit-cursor");
+});
+
+test("package plugin manifest carries complete metadata and a committed logo (CA-14)", () => {
+  const plugin = json<Record<string, unknown>>("packages/workit-cursor/.cursor-plugin/plugin.json");
+  expect(plugin.name).toBe("workit");
+  expect(plugin.displayName).toBe("Workit");
+  expect(plugin.author).toEqual({ name: "Cristhofer Pincetti" });
+  expect(plugin.publisher).toBe("BrainerVirus");
+  expect(plugin.repository).toBe("https://github.com/BrainerVirus/workit");
+  expect(plugin.homepage).toBe("https://github.com/BrainerVirus/workit");
+  expect(plugin.license).toBe("MIT");
+  expect(plugin.logo).toBe("assets/logo.svg");
+  expect(plugin.keywords).toBeInstanceOf(Array);
+  expect(typeof plugin.category).toBe("string");
+  expect(plugin.tags).toBeInstanceOf(Array);
+  expect(existsSync(path.join(REPO_ROOT, "packages/workit-cursor/assets/logo.svg"))).toBe(true);
+});
+
+test("obsolete flat package marketplace.json is absent (CA-13)", () => {
+  expect(existsSync(path.join(REPO_ROOT, "packages/workit-cursor/marketplace.json"))).toBe(false);
+});
+
+test("clean checkout tracks all 26 declared skills and four rules (CA-15)", () => {
+  const tracked = spawnSync("git", ["ls-files", "--", "packages/workit-cursor"], {
+    cwd: REPO_ROOT,
+    encoding: "utf8",
+  });
+  expect(tracked.status).toBe(0);
+  const files = new Set(tracked.stdout.trim().split("\n").filter(Boolean));
+  for (const skill of CANONICAL_SKILLS.workit) {
+    expect(files.has(`packages/workit-cursor/skills/${skill}/SKILL.md`), skill).toBe(true);
+  }
+  for (const skill of CANONICAL_SKILLS.superpowers) {
+    expect(
+      files.has(`packages/workit-cursor/vendor/superpowers/skills/${skill}/SKILL.md`),
+      skill,
+    ).toBe(true);
+  }
+  for (const rule of [
+    "ask-question-only.mdc",
+    "cursor-todowrite.mdc",
+    "no-worktrees.mdc",
+    "sdd-docs-path.mdc",
+  ]) {
+    expect(files.has(`packages/workit-cursor/rules/${rule}`), rule).toBe(true);
   }
 });
 
-test("opencode package.json ships a package-relative plugin entry and the pinned SDK", () => {
+test("opencode package.json ships a package-relative plugin entry and pins the SDK build-only", () => {
   const pkg = json<{
     main: string;
     exports: Record<string, string>;
-    dependencies: Record<string, string>;
+    dependencies?: Record<string, string>;
+    devDependencies?: Record<string, string>;
     engines?: { node?: string };
   }>("packages/workit-opencode/package.json");
   expect(pkg.main).toBe("./dist/plugin.js");
   expect(Object.values(pkg.exports)).toContain("./dist/plugin.js");
-  expect(pkg.dependencies["@opencode-ai/plugin"]).toBe(SUPPORT_MATRIX.opencode.current);
+  expect(pkg.dependencies?.["@opencode-ai/plugin"]).toBeUndefined();
+  expect(pkg.devDependencies?.["@opencode-ai/plugin"]).toBe(SUPPORT_MATRIX.opencode.current);
   expect(pkg.engines?.node).toBe(`>=${SUPPORT_MATRIX.node.minimum}`);
 });
 
-test("all platform packages declare the Node minimum and pin the SDK in the packed tarballs", () => {
+test("all platform packages declare the Node minimum and publish no OpenCode SDK runtime dependency", () => {
   const packs = packWorkspacePackages();
   for (const name of [OPENCODE, CURSOR]) {
     const raw = readTarballFile(byName(packs, name).tarball, "package.json");
@@ -162,7 +233,7 @@ test("all platform packages declare the Node minimum and pin the SDK in the pack
     };
     expect(pkg.engines?.node, name).toBe(`>=${SUPPORT_MATRIX.node.minimum}`);
     if (name === OPENCODE) {
-      expect(pkg.dependencies?.["@opencode-ai/plugin"], name).toBe(SUPPORT_MATRIX.opencode.current);
+      expect(pkg.dependencies?.["@opencode-ai/plugin"], name).toBeUndefined();
     }
   }
   const cli = json<{ engines?: { node?: string } }>("packages/workit-cli/package.json");
@@ -180,7 +251,7 @@ test("ci.yml pins the declared support matrix (Bun/Node/OpenCode, 3 OS, no Deno)
   for (const os of SUPPORT_MATRIX.os) {
     expect(ci).toContain(os);
   }
-  expect(ci).toMatch(/node:\s*\[20,\s*22\]/);
+  expect(ci).toMatch(/node:\s*\[22\]/);
   expect(ci).not.toMatch(/[Dd]eno/);
 });
 

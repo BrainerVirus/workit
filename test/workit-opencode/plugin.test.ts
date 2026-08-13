@@ -634,7 +634,7 @@ describe("plugin registration", () => {
             "workflow config missing: youtrack_json, youtrack_token. Run `npx workit init` or `/wk-init` to configure.",
         });
         expect(existsSync(curlSentinel)).toBe(false);
-        expect(existsSync(path.join(root, ".cursor/plugins/local/workflow-toolkit"))).toBe(false);
+        expect(existsSync(path.join(root, ".cursor/plugins/local/workit"))).toBe(false);
       } finally {
         for (const key of envKeys) {
           const value = previousEnv[key];

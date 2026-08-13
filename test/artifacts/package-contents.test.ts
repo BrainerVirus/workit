@@ -58,9 +58,16 @@ test("opencode tarball ships one bundled dist entry plus its own assets (RR-02/P
   expect(entries.some((e) => e.startsWith("assets/templates/"))).toBe(true);
   expect(entries.some((e) => e.startsWith("assets/vendor/superpowers/skills/"))).toBe(true);
   expect(tsEntries(tarball)).toEqual([]);
+
+  // CA-07: the SDK helper/schema runtime is bundled, so the packed entry has no
+  // unresolved `@opencode-ai/plugin` import to resolve at load time.
+  const pluginJs = readTarballFile(tarball, "dist/plugin.js");
+  expect(pluginJs, "dist/plugin.js").not.toMatch(
+    /(?:from\s+|import\s*\(\s*)\s*["']@opencode-ai\/plugin["']/,
+  );
 });
 
-test("cursor tarball ships dist MCP + hook entries, package-relative manifests and assets (RR-03/PT-07)", () => {
+test("cursor tarball ships dist MCP + hook entries, manifests, assets and npm bins (RR-03/PT-07/CA-16)", () => {
   const packs = packWorkspacePackages();
   const tarball = byName(packs, CURSOR).tarball;
   const entries = listTarball(tarball);
@@ -68,17 +75,27 @@ test("cursor tarball ships dist MCP + hook entries, package-relative manifests a
   for (const required of [
     "dist/mcp-server.js",
     "dist/cursor-session-start.js",
-    "mcp/run-server.sh",
     "mcp.json",
-    "marketplace.json",
+    "assets/logo.svg",
     ".cursor-plugin/plugin.json",
-    "hooks/session-start",
     "hooks/hooks-cursor.json",
   ]) {
     expect(entries, required).toContain(required);
   }
+  // CA-17: the obsolete shell launchers ship no longer — the plugin launches
+  // the published package through npx, not a repo-relative dist/sh file.
+  expect(entries).not.toContain("mcp/run-server.sh");
+  expect(entries).not.toContain("hooks/session-start");
   expect(entries.some((e) => e.startsWith("assets/templates/"))).toBe(true);
   expect(tsEntries(tarball)).toEqual([]);
+
+  // CA-16: the packed package.json exposes both npm executables at the exact
+  // built entry paths (no wrapper files, no source entries).
+  const pkg = JSON.parse(readTarballFile(tarball, "package.json"));
+  expect(pkg.bin).toEqual({
+    "workit-cursor-mcp": "./dist/mcp-server.js",
+    "workit-cursor-session-start": "./dist/cursor-session-start.js",
+  });
 });
 
 test("cli tarball ships a single nonsplitting dist entry plus bin (PT-10)", () => {

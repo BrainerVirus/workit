@@ -19,7 +19,7 @@ concurrency:
 # packages/workit-core/src/core/support-matrix.ts.
 env:
   BUN_VERSION: "1.3.14"
-  NODE_MINIMUM: "20"
+  NODE_MINIMUM: "22"
   NODE_CURRENT: "22"
   OPENCODE_MINIMUM: "1.15.0"
   OPENCODE_CURRENT: "1.17.7"
@@ -95,6 +95,11 @@ jobs:
       - name: Typecheck (whole repo)
         run: bun run typecheck
 
+      # CA-21: the tracked Marketplace artifact validates against the official
+      # Cursor JSON schemas from a clean checkout (no build/dist reliance).
+      - name: Validate Cursor Marketplace artifact
+        run: bun run validate:cursor-marketplace
+
   cli:
     name: check (workit-cli)
     runs-on: ubuntu-latest
@@ -154,7 +159,7 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        node: [20, 22]
+        node: [22]
     steps:
       # The phase-9 traceability gate asserts the DECLARED branch is active;
       # the default PR checkout is detached at the merge commit, so check out
@@ -196,3 +201,8 @@ jobs:
 
       - name: Pack and gate the corrective candidate
         run: bun test test/artifacts/phase-0-candidate.test.ts
+
+      # CA-21: official-schema + clean-checkout Marketplace gate runs after the
+      # pack gate so the candidate and the artifact gate are checked together.
+      - name: Validate Cursor Marketplace artifact
+        run: bun run validate:cursor-marketplace

@@ -166,7 +166,7 @@ test("SDD context reports completed and pending tasks from the ledger", async ()
 test("plugin registers without a Cursor runtime path", async () => {
   const { root } = repository("feature/test");
   try {
-    expect(existsSync(path.join(root, ".cursor/plugins/local/workflow-toolkit"))).toBe(false);
+    expect(existsSync(path.join(root, ".cursor/plugins/local/workit"))).toBe(false);
     const hooks = await plugin({
       directory: root,
       worktree: root,

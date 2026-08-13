@@ -40,7 +40,7 @@ export const makeDoctorFixture = (): DoctorFixture => {
   const opencodeConfig = path.join(home, ".config", "opencode", "opencode.json");
   const cursorSettings = path.join(home, ".cursor", "settings.json");
   const cursorMcp = path.join(home, ".cursor", "mcp.json");
-  const pluginDir = path.join(home, ".cursor", "plugins", "local", "workflow-toolkit");
+  const pluginDir = path.join(home, ".cursor", "plugins", "local", "workit");
   mkdirSync(path.dirname(opencodeConfig), { recursive: true });
   mkdirSync(path.dirname(cursorSettings), { recursive: true });
 
@@ -160,14 +160,21 @@ export const makeDoctorFixture = (): DoctorFixture => {
     path.join(dev, "packages", "workit-cursor", "assets", "templates", "spec-template.md"),
     "# spec\n",
   );
-  writeFileSync(path.join(dev, "packages", "workit-cursor", "mcp", "run-server.sh"), "#!/bin/sh\n");
-  writeFileSync(
-    path.join(dev, "packages", "workit-cursor", "hooks", "session-start"),
-    "#!/bin/sh\n",
-  );
   writeFileSync(
     path.join(dev, "packages", "workit-cursor", "mcp.json"),
-    JSON.stringify({ mcpServers: { workit: { command: "node", args: ["dist/mcp-server.js"] } } }),
+    JSON.stringify({
+      mcpServers: {
+        workit: {
+          command: "npx",
+          args: [
+            "-y",
+            "--package=@brainervirus/workit-cursor@latest",
+            "workit-cursor-mcp",
+            "${workspaceFolder}",
+          ],
+        },
+      },
+    }),
   );
   writeFileSync(
     path.join(dev, "packages", "workit-cursor", "marketplace.json"),
@@ -191,7 +198,7 @@ export const makeDoctorFixture = (): DoctorFixture => {
   writeFileSync(
     cursorSettings,
     JSON.stringify({
-      enabled_plugins: { "workflow-toolkit": true },
+      enabled_plugins: { workit: true },
       plugin_dirs: [pluginDir],
     }),
   );
@@ -199,7 +206,15 @@ export const makeDoctorFixture = (): DoctorFixture => {
     cursorMcp,
     JSON.stringify({
       mcpServers: {
-        workit: { command: "node", args: [path.join(pluginDir, "dist", "mcp-server.js")] },
+        workit: {
+          command: "npx",
+          args: [
+            "-y",
+            "--package=@brainervirus/workit-cursor@latest",
+            "workit-cursor-mcp",
+            "${workspaceFolder}",
+          ],
+        },
       },
     }),
   );

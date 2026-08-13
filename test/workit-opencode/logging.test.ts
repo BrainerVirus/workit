@@ -94,13 +94,32 @@ const userMessage = (text: string) => ({
   ],
 });
 
-test("startup boundaries emit initialization, provenance, and configuration_source events", async () => {
+test("startup boundaries emit initialization, provenance, configuration_source, and assets events with clean terminal", async () => {
   const { client, events } = makeClient();
-  const hooks = await plugin({ client, ...clientArgs } as never);
+  const originalWrite = process.stderr.write;
+  let captured = "";
+  process.stderr.write = ((chunk: unknown) => {
+    captured += String(chunk);
+    return true;
+  }) as typeof process.stderr.write;
+  let hooks: Awaited<ReturnType<typeof plugin>>;
+  try {
+    hooks = await plugin({ client, ...clientArgs } as never);
+    const config: Record<string, any> = {};
+    await hooks.config?.(config);
+    expect(Object.keys(config.command).length).toBeGreaterThan(0);
+    expect(config.skills.paths.length).toBeGreaterThan(0);
+  } finally {
+    process.stderr.write = originalWrite;
+  }
+
   const names = events.map((e) => e.message);
   expect(names).toContain("initialization");
   expect(names).toContain("provenance");
   expect(names).toContain("configuration_source");
+  expect(names).toContain("assets");
+
+  expect(captured).toBe("");
 
   const init = events.find((e) => e.message === "initialization")!;
   expect(init.level).toBe("info");
@@ -115,11 +134,7 @@ test("startup boundaries emit initialization, provenance, and configuration_sour
   expect(typeof cfg.context.config_dir).toBe("string");
 
   // host usability preserved: tools register and the config hook still works
-  expect(hooks.tool?.workflow_verify).toBeDefined();
-  const config: Record<string, any> = {};
-  await hooks.config?.(config);
-  expect(Object.keys(config.command).length).toBeGreaterThan(0);
-  expect(config.skills.paths.length).toBeGreaterThan(0);
+  expect(hooks!.tool?.workflow_verify).toBeDefined();
 });
 
 test("configuration_source event reports a malformed config file", async () => {

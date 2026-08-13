@@ -27,9 +27,6 @@ test("session-start source performs no network I/O and imports no runtime sync",
   expect(src).not.toContain("sync-runtime");
   expect(src).not.toMatch(/git\s+(fetch|pull|clone)/);
   expect(src).not.toMatch(/\b(?:rsync|flock|npm install|curl)\b/);
-  const shim = readFileSync(path.join(CURSOR_ROOT, "hooks", "session-start"), "utf8");
-  expect(shim).not.toContain("sync-runtime");
-  expect(shim).not.toMatch(/git fetch|git pull|rsync|npm install/);
 });
 
 test("session-start with an empty PATH produces identical output (zero startup network calls)", () => {

@@ -128,7 +128,7 @@ test("forced broken fixture yields consistent nonzero and the host stays usable"
   writeFileSync(
     fixture.cursorSettings,
     JSON.stringify({
-      enabled_plugins: { "workflow-toolkit": true, "local/workflow-toolkit": true },
+      enabled_plugins: { workit: true, "workflow-toolkit": true },
       plugin_dirs: [fixture.pluginDir],
     }),
   );
@@ -161,7 +161,7 @@ test("forced broken fixture yields consistent nonzero and the host stays usable"
     writeFileSync(
       fixture.cursorSettings,
       JSON.stringify({
-        enabled_plugins: { "workflow-toolkit": true },
+        enabled_plugins: { workit: true },
         plugin_dirs: [fixture.pluginDir],
       }),
     );

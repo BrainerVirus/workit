@@ -1,5 +1,5 @@
 import {
-  chmodSync,
+  copyFileSync,
   cpSync,
   existsSync,
   mkdirSync,
@@ -505,7 +505,7 @@ const resolveSetupPaths = (
     cursorSettings: options.cursorSettings ?? path.join(home, ".cursor", "settings.json"),
     cursorMcp: options.cursorMcp ?? path.join(home, ".cursor", "mcp.json"),
     cursorPluginDir:
-      options.cursorPluginDir ?? path.join(home, ".cursor", "plugins", "local", "workflow-toolkit"),
+      options.cursorPluginDir ?? path.join(home, ".cursor", "plugins", "local", "workit"),
   };
 };
 
@@ -804,22 +804,14 @@ function applyOpenCode(root: string, res: ResolvedApply): SetupResultEntry {
       };
 }
 
-// Mirror the sync-runtime plugin mirror: copy the package (minus node_modules),
-// keep launchers executable, and write the same `.workflow-toolkit-root` marker
-// so a re-sync from the same source is a truthful Skipped.
-//
-// The installed plugin's mcp.json is a derived artifact: the shipped manifest
-// stays package-relative (PT-10), but Cursor spawns plugin MCP servers with
-// the workspace as cwd, so the installed copy must carry an absolute entry.
-const cursorMcpManifest = (dir: string): string =>
-  JSON.stringify({ mcpServers: { workit: cursorMcpServerEntry(dir) } }, null, 2) + "\n";
-
+// Mirror the sync-runtime plugin mirror: copy the package (minus node_modules)
+// and write the same `.workflow-toolkit-root` marker so a re-sync from the same
+// source is a truthful Skipped. The shipped mcp.json is the Marketplace-safe
+// npx command (CA-17), so it is copied verbatim — no absolute dist derivation.
 const samePluginContent = (src: string, dest: string, relative = ""): boolean => {
   try {
     for (const entry of readdirSync(src, { withFileTypes: true })) {
       if (entry.name === "node_modules") continue;
-      // mcp.json is derived at install time (cursorMcpManifest), not copied.
-      if (relative === "" && entry.name === "mcp.json") continue;
       const source = path.join(src, entry.name);
       const installed = path.join(dest, entry.name);
       if (entry.isDirectory()) {
@@ -837,7 +829,6 @@ const samePluginContent = (src: string, dest: string, relative = ""): boolean =>
       const rel = path.join(relative, entry.name);
       if (rel === ".workflow-toolkit-root") continue;
       if (relative === "rules" && entry.isFile() && entry.name.endsWith(".mdc")) continue;
-      if (relative === "" && entry.name === "mcp.json") continue;
       return false;
     }
     return true;
@@ -864,12 +855,7 @@ const preservedCursorRules = (src: string, dest: string): Map<string, Buffer> =>
 
 function copyPluginDir(src: string, dest: string): SetupResultStatus {
   const marker = path.join(dest, ".workflow-toolkit-root");
-  const synced =
-    readFileSafe(marker)?.trim() === src &&
-    samePluginContent(src, dest) &&
-    // The mcp.json equality makes the Skipped verdict truthful: the derived
-    // manifest on disk must be the one this install would write.
-    readFileSafe(path.join(dest, "mcp.json")) === cursorMcpManifest(dest);
+  const synced = readFileSafe(marker)?.trim() === src && samePluginContent(src, dest);
   if (synced) return "Skipped";
   const hadDir = existsSync(dest);
   const rules = preservedCursorRules(src, dest);
@@ -888,13 +874,6 @@ function copyPluginDir(src: string, dest: string): SetupResultStatus {
       writeFileSync(path.join(stage, "rules", name), content);
     }
     writeFileSync(path.join(stage, ".workflow-toolkit-root"), src + "\n", "utf8");
-    for (const rel of ["hooks/session-start", "mcp/run-server.sh"]) {
-      try {
-        chmodSync(path.join(stage, rel), 0o755);
-      } catch {
-        /* optional launcher */
-      }
-    }
     if (!samePluginContent(src, stage)) throw new Error("staged adapter content is incomplete");
     if (hadDir) renameSync(dest, backup);
     try {
@@ -903,16 +882,36 @@ function copyPluginDir(src: string, dest: string): SetupResultStatus {
       if (hadDir && !existsSync(dest)) renameSync(backup, dest);
       throw error;
     }
-    // Derive the installed manifest against the FINAL installed path: the
-    // stage path dies with the swap dir, and the entry's dist check needs the
-    // live plugin dir to exist.
-    writeFileSync(path.join(dest, "mcp.json"), cursorMcpManifest(dest), "utf8");
     rmSync(backup, { recursive: true, force: true });
   } finally {
     rmSync(swap, { recursive: true, force: true });
   }
   return hadDir ? "Configured" : "Installed";
 }
+
+// CA-08/CA-09: remove the exact legacy local plugin identity only AFTER the
+// canonical `workit` copy and registration succeeded. The legacy dir's own
+// user-compiled rules are carried forward first so no user data is lost; the
+// `.workflow-toolkit-root` marker, share path, and unrelated sibling dirs are
+// left untouched.
+const removeLegacyCursorDir = (res: ResolvedApply): void => {
+  const legacy = path.join(res.home, ".cursor", "plugins", "local", "workflow-toolkit");
+  if (legacy === res.cursorPluginDir || !existsSync(legacy)) return;
+  const legacyRules = path.join(legacy, "rules");
+  if (existsSync(legacyRules)) {
+    try {
+      mkdirSync(path.join(res.cursorPluginDir, "rules"), { recursive: true });
+      for (const entry of readdirSync(legacyRules, { withFileTypes: true })) {
+        if (!entry.isFile() || !entry.name.endsWith(".mdc")) continue;
+        const target = path.join(res.cursorPluginDir, "rules", entry.name);
+        if (!existsSync(target)) copyFileSync(path.join(legacyRules, entry.name), target);
+      }
+    } catch {
+      /* best-effort rule carry-forward */
+    }
+  }
+  rmSync(legacy, { recursive: true, force: true });
+};
 
 // One reviewed mutation per Cursor write target (AR-09): the settings merge and
 // the mcp merge are dispatched independently, exactly like the adapter copy.
@@ -1042,6 +1041,10 @@ export function applySetupPreview(
   // path (a caller that resolved the preview with different options) fails
   // fast — Failed, no write — instead of silently writing an unreviewed path.
   const rootFor = new Map<Platform, string | null>();
+  // CA-09: cursor registration and legacy cleanup only proceed after the
+  // canonical copy succeeded — a failed replacement must never remove the
+  // legacy identity or its registration.
+  let cursorCopyOk = false;
   for (const mutation of preview.mutations) {
     if (mutation.type !== "register-platform" && mutation.type !== "install-adapter") {
       entries.push(applyMutation(mutation));
@@ -1081,7 +1084,9 @@ export function applySetupPreview(
     }
     if (mutation.type === "install-adapter") {
       try {
-        entries.push({ platform, file: mutation.path, status: copyPluginDir(root, mutation.path) });
+        const status = copyPluginDir(root, mutation.path);
+        cursorCopyOk = true;
+        entries.push({ platform, file: mutation.path, status });
       } catch (error) {
         entries.push({
           platform,
@@ -1092,6 +1097,9 @@ export function applySetupPreview(
       }
     } else if (platform === "opencode") {
       entries.push(applyOpenCode(root, res));
+    } else if (!cursorCopyOk) {
+      // CA-09: the canonical copy failed — leave the legacy registration intact.
+      continue;
     } else {
       entries.push(
         mutation.path === res.cursorSettings
@@ -1099,6 +1107,15 @@ export function applySetupPreview(
           : applyCursorMcp(root, res),
       );
     }
+  }
+  // CA-08/CA-09: migrate the legacy local identity only after the canonical
+  // copy AND registration both succeeded.
+  if (
+    preview.platforms.includes("cursor") &&
+    cursorCopyOk &&
+    !entries.some((e) => e.platform === "cursor" && e.status === "Failed")
+  ) {
+    removeLegacyCursorDir(res);
   }
   for (const preserved of preview.preserved) {
     entries.push({

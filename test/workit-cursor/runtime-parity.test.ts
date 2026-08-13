@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { spawn, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -38,15 +38,6 @@ test("hooks/session-start executes a Node-compatible TS entry with the contract 
     expect(parsed.additional_context).toContain("HARD-GATE");
     expect(parsed.additional_context).toContain("never A/B/C or 1/2/3 lists in prose");
     expect(parsed.additional_context).toContain(contractText.trim());
-
-    // the manifest-facing shim produces the same JSON
-    const shim = spawnSync("bash", [path.join(CURSOR_ROOT, "hooks", "session-start")], {
-      cwd: REPO_ROOT,
-      env,
-      encoding: "utf8",
-    });
-    expect(shim.status, shim.stderr ?? "").toBe(0);
-    expect((shim.stdout ?? "").trim()).toBe(direct.stdout.trim());
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -107,72 +98,5 @@ test("the TS hook and launcher sources perform no network I/O", () => {
     expect(src).not.toContain("sync-runtime");
     expect(src).not.toMatch(/git\s+(fetch|pull|clone)/);
     expect(src).not.toMatch(/\b(?:rsync|flock|npm install|curl)\b/);
-  }
-  const shim = readFileSync(path.join(CURSOR_ROOT, "hooks", "session-start"), "utf8");
-  expect(shim).not.toContain("sync-runtime");
-  expect(shim).not.toMatch(/git fetch|git pull|rsync|npm install/);
-  const launcher = readFileSync(path.join(CURSOR_ROOT, "mcp", "run-server.sh"), "utf8");
-  expect(launcher).toContain("run-server.ts");
-  expect(launcher).not.toContain("sync-runtime");
-});
-
-test("mcp/run-server.sh launches the MCP server through the TS entry (initialize + tools/list)", async () => {
-  const child = spawn("bash", [path.join(CURSOR_ROOT, "mcp", "run-server.sh")], {
-    cwd: REPO_ROOT,
-    stdio: ["pipe", "pipe", "pipe"],
-    env: { ...process.env, BUN: process.execPath },
-  });
-  let buffer = "";
-  const pending = new Map<number, (value: unknown) => void>();
-  child.stdout?.setEncoding("utf8");
-  child.stdout?.on("data", (chunk: string) => {
-    buffer += chunk;
-    let newline = buffer.indexOf("\n");
-    while (newline >= 0) {
-      const line = buffer.slice(0, newline).trim();
-      buffer = buffer.slice(newline + 1);
-      if (!line) continue;
-      let msg: any;
-      try {
-        msg = JSON.parse(line);
-      } catch {
-        newline = buffer.indexOf("\n");
-        continue;
-      }
-      const resolve = pending.get(msg.id);
-      if (resolve) {
-        pending.delete(msg.id);
-        resolve(msg);
-      }
-      newline = buffer.indexOf("\n");
-    }
-  });
-  child.stderr?.on("data", () => {});
-  const nextId = { id: 0 };
-  const request = (method: string, params: unknown) => {
-    const id = ++nextId.id;
-    child.stdin?.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`);
-    return new Promise((resolve, reject) => {
-      pending.set(id, resolve);
-      setTimeout(() => reject(new Error(`timeout waiting for ${method}`)), 15000);
-    });
-  };
-  try {
-    const init = await request("initialize", {
-      protocolVersion: "2024-11-05",
-      capabilities: {},
-      clientInfo: { name: "runtime-parity", version: "1.0" },
-    });
-    expect((init as any).result.serverInfo.name).toBe("workit");
-    child.stdin?.write(
-      `${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })}\n`,
-    );
-    const listed = await request("tools/list", {});
-    const names = ((listed as any).result.tools as { name: string }[]).map((t) => t.name);
-    expect(names).toContain("workflow_verify");
-    expect(names).toContain("workflow_pr_context");
-    expect(names).toContain("workflow_changelog_context");
-  } finally {
-    child.kill();
   }
 });

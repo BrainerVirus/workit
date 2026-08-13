@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import {
   mergePreset,
   readConfig,
@@ -265,6 +266,15 @@ function setTextValue(
             : value.trim() === ""
               ? null
               : validateBaseUrl(value);
+  // D-02: an unchanged value whose validation message is also unchanged is a
+  // no-op — return the same draft so useReducer bails out instead of re-rendering
+  // the control and re-firing its onChange (the update-depth feedback loop).
+  if (
+    draft.values[field] === value &&
+    (draft.errors[field] ?? undefined) === (message ?? undefined)
+  ) {
+    return draft;
+  }
   const errors = { ...draft.errors };
   if (message) errors[field] = message;
   else delete errors[field];
@@ -303,24 +313,21 @@ export function reducer(draft: WizardDraft, action: WizardAction): WizardDraft {
     case "set":
       switch (action.field) {
         case "platforms":
+          // D-02: ordered element equality — the same selection is a no-op.
+          if (isDeepStrictEqual(action.value, draft.values.platforms)) return draft;
           return { ...draft, values: { ...draft.values, platforms: action.value } };
-        case "branchPreset":
-          return {
-            ...draft,
-            values: {
-              ...draft.values,
-              branchPreset: decodeBranchPreset(action.value, draft.values.branchPreset),
-            },
-          };
-        case "vcsProvider":
-          return {
-            ...draft,
-            values: {
-              ...draft.values,
-              vcsProvider: decodeVcsProvider(action.value, draft.values.vcsProvider),
-            },
-          };
+        case "branchPreset": {
+          const next = decodeBranchPreset(action.value, draft.values.branchPreset);
+          if (next === draft.values.branchPreset) return draft;
+          return { ...draft, values: { ...draft.values, branchPreset: next } };
+        }
+        case "vcsProvider": {
+          const next = decodeVcsProvider(action.value, draft.values.vcsProvider);
+          if (next === draft.values.vcsProvider) return draft;
+          return { ...draft, values: { ...draft.values, vcsProvider: next } };
+        }
         case "applyProject":
+          if (action.value === draft.values.applyProject) return draft;
           return { ...draft, values: { ...draft.values, applyProject: action.value } };
         // CA-06: branch-policy fields hold objects, never setTextValue — the
         // detected proposal and the accepted policy are stored as-is.
@@ -347,6 +354,8 @@ export function reducer(draft: WizardDraft, action: WizardAction): WizardDraft {
           // proposal) so a later edit never silently reverts an earlier one.
           const base = draft.values.branchPolicy ?? draft.values.branchPolicyDetected;
           if (!base) return draft;
+          // D-02: an unchanged integration selection is a no-op.
+          if (action.value === base.integration) return draft;
           return {
             ...draft,
             values: {
@@ -362,11 +371,14 @@ export function reducer(draft: WizardDraft, action: WizardAction): WizardDraft {
         case "branchPolicyDevelop": {
           const base = draft.values.branchPolicy ?? draft.values.branchPolicyDetected;
           if (!base) return draft;
+          const next = action.value || undefined;
+          // D-02: an unchanged develop branch is a no-op.
+          if ((base.developBranch ?? undefined) === next) return draft;
           return {
             ...draft,
             values: {
               ...draft.values,
-              branchPolicy: { ...base, developBranch: action.value || undefined },
+              branchPolicy: { ...base, developBranch: next },
             },
           };
         }
@@ -509,6 +521,14 @@ function workspaceDraftText(
       : value.trim()
         ? null
         : "workspace pattern is required";
+  // D-02: an unchanged value whose validation message is also unchanged is a
+  // no-op (same rationale as setTextValue).
+  if (
+    (draft.workspaceDraft?.[field] ?? "") === value &&
+    (draft.errors[errorKey] ?? undefined) === (message ?? undefined)
+  ) {
+    return draft;
+  }
   const errors = { ...draft.errors };
   if (message) errors[errorKey] = message;
   else delete errors[errorKey];

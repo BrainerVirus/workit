@@ -5,9 +5,11 @@
 // can be overridden for the pack sandbox.
 import { spawnSync } from "node:child_process";
 import {
+  chmodSync,
   cpSync,
   existsSync,
   mkdirSync,
+  readdirSync,
   rmSync,
 } from "node:fs";
 import path from "node:path";
@@ -72,10 +74,13 @@ for (const [entry, out] of entries) {
 }
 
 // Deterministic assets: templates (incl. hygiene) for session-start + bundled core.
+// Only the generated templates/ subtree is wiped; committed static assets such as
+// the Marketplace logo (assets/logo.svg) must survive the build.
 const assets = path.join(target, "assets");
-rmSync(assets, { recursive: true, force: true });
+rmSync(path.join(assets, "templates"), { recursive: true, force: true });
 const templatesSrc = path.join(coreDir, "templates");
 if (existsSync(templatesSrc)) {
+  mkdirSync(assets, { recursive: true });
   cpSync(templatesSrc, path.join(assets, "templates"), { recursive: true });
 }
 
@@ -83,6 +88,16 @@ const vendor = path.join(target, "vendor");
 rmSync(vendor, { recursive: true, force: true });
 const builtSkills = path.join(vendor, "superpowers/skills");
 copySanitizedVendor(vendorSkills, builtSkills);
+// Deterministic tracked tree: normalize modes so the committed vendor is
+// independent of the developer's umask and carries no executable bit (CA-15).
+const normalizeModes = (dir: string): void => {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const p = path.join(dir, entry.name);
+    if (entry.isDirectory()) normalizeModes(p);
+    else chmodSync(p, 0o644);
+  }
+};
+normalizeModes(builtSkills);
 const builtVendorError = validateSkillManifests(
   builtSkills,
   CANONICAL_SKILLS.superpowers,

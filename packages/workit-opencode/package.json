@@ -34,10 +34,12 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@brainervirus/workit-core": "workspace:*",
+    "@brainervirus/workit-core": "workspace:*"
+  },
+  "devDependencies": {
     "@opencode-ai/plugin": "1.17.7"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   }
 }

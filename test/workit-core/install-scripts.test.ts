@@ -166,12 +166,12 @@ function makeCursorStub() {
     ["skills", CANONICAL_SKILLS.workit],
   ] as const) {
     for (const skill of skills) {
-      const dir = path.join(home, ".cursor/plugins/local/workflow-toolkit", root, skill);
+      const dir = path.join(home, ".cursor/plugins/local/workit", root, skill);
       mkdirSync(dir, { recursive: true });
       writeFileSync(path.join(dir, "SKILL.md"), "# skill\n");
     }
   }
-  const installedDist = path.join(home, ".cursor/plugins/local/workflow-toolkit/dist");
+  const installedDist = path.join(home, ".cursor/plugins/local/workit/dist");
   mkdirSync(installedDist, { recursive: true });
   writeFileSync(path.join(installedDist, "mcp-server.js"), "#!/usr/bin/env node\n// bundle\n");
   writeFileSync(
@@ -188,16 +188,26 @@ function makeCursorStub() {
   );
   writeFileSync(
     path.join(stub, "packages/workit-cursor/mcp.json"),
-    JSON.stringify({ mcpServers: { workit: { command: "node", args: ["dist/mcp-server.js"] } } }),
+    JSON.stringify({
+      mcpServers: {
+        workit: {
+          command: "npx",
+          args: [
+            "-y",
+            "--package=@brainervirus/workit-cursor@latest",
+            "workit-cursor-mcp",
+            "${workspaceFolder}",
+          ],
+        },
+      },
+    }),
   );
   writeFileSync(
     path.join(stub, "packages/workit-cursor/marketplace.json"),
     JSON.stringify({ name: "workit", version: "0.4.0" }),
   );
   mkdirSync(path.join(stub, "packages/workit-cursor/mcp"), { recursive: true });
-  writeFileSync(path.join(stub, "packages/workit-cursor/mcp/run-server.sh"), "#!/bin/sh\n");
   mkdirSync(path.join(stub, "packages/workit-cursor/hooks"), { recursive: true });
-  writeFileSync(path.join(stub, "packages/workit-cursor/hooks/session-start"), "#!/bin/sh\n");
   mkdirSync(path.join(home, ".cursor"), { recursive: true });
   return { stub, home };
 }
@@ -303,6 +313,53 @@ test("installers clone from the public HTTPS URL, never SSH (RR-05)", () => {
     const src = readFileSync(path.join(repoRoot, "packages/workit-core/scripts", name), "utf8");
     expect(src, name).not.toMatch(/git@github\.com:/);
     expect(src, name).toMatch(/https:\/\/github\.com\//);
+  }
+});
+
+test("install-cursor-plugin.sh removes the legacy dir after success, carrying user rules forward", () => {
+  if (!bashAvailable()) return;
+  const fixture = makeCursorStub();
+  const legacyDir = path.join(fixture.home, ".cursor", "plugins", "local", "workflow-toolkit");
+  const otherDir = path.join(fixture.home, ".cursor", "plugins", "local", "workflow-toolkit-extra");
+  try {
+    mkdirSync(path.join(legacyDir, "rules"), { recursive: true });
+    writeFileSync(
+      path.join(legacyDir, "rules", "user-managed.mdc"),
+      "---\nalwaysApply: true\n---\n# User rule\n",
+    );
+    mkdirSync(path.join(legacyDir, "skills"), { recursive: true });
+    writeFileSync(path.join(legacyDir, "skills", "stale-skill.md"), "# legacy\n");
+    mkdirSync(otherDir, { recursive: true });
+    writeFileSync(path.join(otherDir, "marker"), "unrelated\n");
+
+    const installed = spawnSync("bash", ["packages/workit-core/scripts/install-cursor-plugin.sh"], {
+      cwd: fixture.stub,
+      env: { ...process.env, HOME: fixture.home, WORKFLOW_TOOLKIT_DEV: fixture.stub },
+      encoding: "utf8",
+    });
+    expect(installed.status, installed.stderr).toBe(0);
+
+    // The legacy identity is removed only after a successful install; the
+    // user-compiled rule is carried forward, unrelated sibling dirs survive.
+    expect(existsSync(legacyDir)).toBe(false);
+    expect(
+      readFileSync(
+        path.join(
+          fixture.home,
+          ".cursor",
+          "plugins",
+          "local",
+          "workit",
+          "rules",
+          "user-managed.mdc",
+        ),
+        "utf8",
+      ),
+    ).toContain("# User rule");
+    expect(readFileSync(path.join(otherDir, "marker"), "utf8")).toBe("unrelated\n");
+  } finally {
+    rmSync(fixture.stub, { recursive: true, force: true });
+    rmSync(fixture.home, { recursive: true, force: true });
   }
 });
 
@@ -504,7 +561,7 @@ test("sync-runtime installs frozen dependencies before rebuilding and replacing 
     expect(r.status, r.stderr).toBe(0);
     expect(readFileSync(log, "utf8")).toBe("install\nbuild\n");
     for (const entry of ["mcp-server.js", "cursor-session-start.js"]) {
-      const installed = path.join(home, ".cursor/plugins/local/workflow-toolkit/dist", entry);
+      const installed = path.join(home, ".cursor/plugins/local/workit/dist", entry);
       expect(existsSync(installed), entry).toBe(true);
       expect(readFileSync(installed, "utf8")).toStartWith("#!/usr/bin/env node");
       expect(readFileSync(installed, "utf8")).not.toBe("stale\n");

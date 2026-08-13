@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -8,6 +8,7 @@ import { SUPPORT_MATRIX } from "../../packages/workit-core/src/core/support-matr
 import {
   installPackedPackage,
   isolatedEnv,
+  npmRegistryReachable,
   packReleaseCandidate,
   packWorkspacePackages,
   REPO_ROOT,
@@ -17,9 +18,19 @@ import {
 // unavailable, the packaged adapters load/boot under plain Node without Bun or a
 // monorepo. Everything must resolve package-locally.
 
+const CORE = "@brainervirus/workit-core";
 const OPENCODE = "@brainervirus/workit-opencode";
 const CURSOR = "@brainervirus/workit-cursor";
 const CLI = "@brainervirus/workit-cli";
+
+// The isolated npm-install gate fetches third-party runtime deps (zod/
+// @modelcontextprotocol/sdk) from the public registry, so an offline/
+// registry-outage CI run skips it cleanly instead of failing. Reachability is
+// probed once; the online path keeps every assertion intact.
+const npmRegistryOk = npmRegistryReachable();
+if (!npmRegistryOk) {
+  console.error("skipping npm-registry install gate: `npm ping` failed — registry unreachable");
+}
 
 const byName = (packs: ReturnType<typeof packWorkspacePackages>, name: string) =>
   packs.find((p) => p.packageName === name)!;
@@ -36,8 +47,9 @@ function startNodeMcp(
   bin: string,
   args: string[],
   env: Record<string, string>,
+  options: { shell?: boolean } = {},
 ): McpClient {
-  const child = spawn(bin, args, { cwd, env, stdio: ["pipe", "pipe", "pipe"] });
+  const child = spawn(bin, args, { cwd, env, stdio: ["pipe", "pipe", "pipe"], ...options });
   let buffer = "";
   const pending = new Map<number, (value: { result?: unknown; error?: unknown }) => void>();
   child.stdout?.setEncoding("utf8");
@@ -82,69 +94,28 @@ function startNodeMcp(
   return { child, request };
 }
 
-// Install a stub @opencode-ai/plugin at the given version with the exact SDK
-// surface the plugin imports, then import the packed entry. Proves the packed
-// plugin loads against both the declared minimum and the pinned current host SDK.
-function writeOpenCodeStub(nm: string, version: string): void {
-  const stubDir = path.join(nm, "@opencode-ai", "plugin");
-  mkdirSync(stubDir, { recursive: true });
-  writeFileSync(
-    path.join(stubDir, "package.json"),
-    JSON.stringify({
-      name: "@opencode-ai/plugin",
-      version,
-      type: "module",
-      main: "index.js",
-    }),
-  );
-  writeFileSync(
-    path.join(stubDir, "index.js"),
-    // The real SDK schemas are chainable (enum(...).optional(), string().optional()).
-    `export const tool = (def) => def;
-const mk = (t) => ({ ...t, optional() { return this; } });
-tool.schema = { string: () => mk({ type: "string" }), number: () => mk({ type: "number" }), boolean: () => mk({ type: "boolean" }), enum: (v) => mk({ type: "string", enum: v }), object: (s) => mk({ type: "object", properties: s }), optional: (s) => s, array: (s) => mk({ type: "array", items: s }) };
-`,
-  );
-}
-
-test("opencode plugin loads from dist/plugin.js with a stub @opencode-ai/plugin", async () => {
+// CA-07: the SDK helper/schema runtime is bundled into dist/plugin.js, so the
+// packed plugin loads standalone — no stub @opencode-ai/plugin is written and
+// no runtime import of it may remain in the bundle.
+test("opencode plugin loads from dist/plugin.js with no runtime @opencode-ai/plugin dependency", async () => {
   const packs = packWorkspacePackages();
   const install = tmp("wk-runtime-opencode-");
-  const home = tmp("wk-runtime-opencode-home-");
   try {
     const nm = path.join(install, "node_modules");
     mkdirSync(nm, { recursive: true });
     installPackedPackage(nm, byName(packs, OPENCODE));
-
-    writeOpenCodeStub(nm, SUPPORT_MATRIX.opencode.current);
 
     const entry = path.join(install, "node_modules", OPENCODE, "dist", "plugin.js");
     expect(existsSync(entry)).toBe(true);
+    const bundle = readFileSync(entry, "utf8");
+    expect(bundle, "dist/plugin.js").not.toMatch(
+      /(?:from\s+|import\s*\(\s*)\s*["']@opencode-ai\/plugin["']/,
+    );
+
     const mod = await import(pathToFileURL(entry).href);
     expect(typeof mod.default).toBe("function");
   } finally {
     rmSync(install, { recursive: true, force: true });
-    rmSync(home, { recursive: true, force: true });
-  }
-});
-
-test("opencode plugin loads against the declared minimum @opencode-ai/plugin version (RR-10)", async () => {
-  const packs = packWorkspacePackages();
-  const install = tmp("wk-runtime-opencode-min-");
-  const home = tmp("wk-runtime-opencode-min-home-");
-  try {
-    const nm = path.join(install, "node_modules");
-    mkdirSync(nm, { recursive: true });
-    installPackedPackage(nm, byName(packs, OPENCODE));
-
-    writeOpenCodeStub(nm, SUPPORT_MATRIX.opencode.minimum);
-
-    const entry = path.join(install, "node_modules", OPENCODE, "dist", "plugin.js");
-    const mod = await import(pathToFileURL(entry).href);
-    expect(typeof mod.default).toBe("function");
-  } finally {
-    rmSync(install, { recursive: true, force: true });
-    rmSync(home, { recursive: true, force: true });
   }
 });
 
@@ -159,7 +130,7 @@ test("cursor MCP server boots over stdio from the extracted package with node (n
     const cursorDir = path.join(nm, CURSOR);
     const env = isolatedEnv(home);
 
-    const { child, request } = startNodeMcp(cursorDir, "bash", ["mcp/run-server.sh"], env);
+    const { child, request } = startNodeMcp(cursorDir, "node", ["dist/mcp-server.js"], env);
     try {
       const init = await request("initialize", {
         protocolVersion: "2024-11-05",
@@ -202,7 +173,7 @@ test("cursor session-start emits the workflow contract payload from the extracte
     const cursorDir = path.join(nm, CURSOR);
     const env = isolatedEnv(home);
 
-    const child = spawn("bash", ["hooks/session-start"], {
+    const child = spawn("node", ["dist/cursor-session-start.js"], {
       cwd: cursorDir,
       env,
       stdio: ["pipe", "pipe", "pipe"],
@@ -223,6 +194,109 @@ test("cursor session-start emits the workflow contract payload from the extracte
     rmSync(home, { recursive: true, force: true });
   }
 });
+
+test.skipIf(!npmRegistryOk)(
+  "cursor npm executables run through npm's package runner from the packed install (CA-16)",
+  async () => {
+    const packs = packWorkspacePackages();
+    const install = tmp("wk-cursor-bin-install-");
+    const home = tmp("wk-cursor-bin-home-");
+    try {
+      // npm resolves the @brainervirus/* workspace deps from the sibling tarballs
+      // (file:), so the candidate installs without a published core. The MCP SDK
+      // and zod resolve from the registry, exactly as a real install would.
+      writeFileSync(
+        path.join(install, "package.json"),
+        JSON.stringify(
+          {
+            name: "wk-cursor-bin-test",
+            private: true,
+            version: "1.0.0",
+            dependencies: {
+              "@brainervirus/workit-cursor": pathToFileURL(byName(packs, CURSOR).tarball).href,
+            },
+            overrides: {
+              "@brainervirus/workit-core": pathToFileURL(byName(packs, CORE).tarball).href,
+            },
+          },
+          null,
+          2,
+        ),
+        "utf8",
+      );
+      const env = isolatedEnv(home);
+      const installRes = spawnSync(
+        "npm",
+        ["install", "--no-audit", "--no-fund", "--no-package-lock", "--ignore-scripts"],
+        {
+          cwd: install,
+          env,
+          encoding: "utf8",
+          timeout: 120_000,
+          shell: process.platform === "win32",
+        },
+      );
+      expect(installRes.status, installRes.stdout + installRes.stderr).toBe(0);
+
+      // Both executables are wired into the installed .bin directory.
+      const binDir = path.join(install, "node_modules", ".bin");
+      const shim = (name: string) => (process.platform === "win32" ? `${name}.cmd` : name);
+      expect(existsSync(path.join(binDir, shim("workit-cursor-mcp")))).toBe(true);
+      expect(existsSync(path.join(binDir, shim("workit-cursor-session-start")))).toBe(true);
+
+      // MCP executable: drive tools/list over the package runner's stdio.
+      const { child, request } = startNodeMcp(
+        install,
+        "npm",
+        ["exec", "--", "workit-cursor-mcp"],
+        env,
+        { shell: process.platform === "win32" },
+      );
+      try {
+        const init = await request("initialize", {
+          protocolVersion: "2024-11-05",
+          capabilities: {},
+          clientInfo: { name: "packed-bin", version: "1.0" },
+        });
+        expect((init.result as { serverInfo?: { name?: string } })?.serverInfo?.name).toBe(
+          "workit",
+        );
+        child.stdin?.write(
+          `${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })}\n`,
+        );
+        const listed = await request("tools/list", {});
+        const names = ((listed.result as { tools?: { name: string }[] })?.tools ?? []).map(
+          (t) => t.name,
+        );
+        expect(names).toContain("workflow_git_context");
+        expect(names).toContain("workflow_toolkit_init_apply");
+      } finally {
+        child.kill();
+        await Promise.race([
+          new Promise((resolve) => child.once("exit", resolve)),
+          new Promise((resolve) => setTimeout(resolve, 5000)),
+        ]);
+      }
+
+      // Session-start executable: emits the protocol JSON contract on stdout.
+      const session = spawnSync("npm", ["exec", "--", "workit-cursor-session-start"], {
+        cwd: install,
+        env,
+        encoding: "utf8",
+        timeout: 60_000,
+        shell: process.platform === "win32",
+      });
+      expect(session.status, session.stderr ?? "").toBe(0);
+      const payload = JSON.parse(session.stdout);
+      expect(payload.additional_context).toContain("HARD-GATE");
+      expect(payload.additional_context).toContain("AskQuestion");
+    } finally {
+      rmSync(install, { recursive: true, force: true });
+      rmSync(home, { recursive: true, force: true });
+    }
+  },
+  180_000,
+);
 
 test("cli --help runs under node from the extracted package and exits 0", async () => {
   const packs = packWorkspacePackages();

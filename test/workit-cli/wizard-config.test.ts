@@ -488,7 +488,7 @@ test("preview plans host registration and adapter copy mutations (AR-09)", () =>
       .map((m) => (m.type === "register-platform" ? `${m.platform}:${m.path}` : `copy:${m.path}`));
     expect(platformPaths).toEqual([
       `opencode:${path.join(home, ".config", "opencode", "opencode.json")}`,
-      `copy:${path.join(home, ".cursor", "plugins", "local", "workflow-toolkit")}`,
+      `copy:${path.join(home, ".cursor", "plugins", "local", "workit")}`,
       `cursor:${path.join(home, ".cursor", "settings.json")}`,
       `cursor:${path.join(home, ".cursor", "mcp.json")}`,
     ]);

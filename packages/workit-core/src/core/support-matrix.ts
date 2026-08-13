@@ -6,7 +6,7 @@
 // host that has no executable artifact/test evidence.
 export const SUPPORT_MATRIX = {
   bun: "1.3.14",
-  node: { minimum: "20", current: "22" },
+  node: { minimum: "22", current: "22" },
   opencode: { minimum: "1.15.0", current: "1.17.7" },
   os: ["ubuntu-latest", "macos-latest", "windows-latest"],
 } as const;

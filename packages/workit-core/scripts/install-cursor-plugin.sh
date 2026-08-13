@@ -51,12 +51,11 @@ if [ -d "$SKILLS_DIR" ]; then
   rm -f "$SKILLS_DIR"/wf-* "$SKILLS_DIR"/wk-*
 fi
 
-PLUGIN_DIR="$HOME/.cursor/plugins/local/workflow-toolkit"
+PLUGIN_DIR="$HOME/.cursor/plugins/local/workit"
 REGISTRATION_TS="$ROOT/packages/workit-core/src/core/registration.ts"
 CURSOR_SETTINGS="$HOME/.cursor/settings.json" CURSOR_MCP="$HOME/.cursor/mcp.json" PLUGIN_DIR="$PLUGIN_DIR" REGISTRATION_TS="$REGISTRATION_TS" bun -e '
 import fs from "node:fs";
-import path from "node:path";
-const { mergeCursorSettings, mergeCursorMcp, mergeCursorHooks, cursorMcpServerEntry } =
+const { mergeCursorSettings, mergeCursorMcp, cursorMcpServerEntry } =
   await import(process.env.REGISTRATION_TS!);
 
 // RR-06: collapse current + legacy identities; never replace unrelated settings.
@@ -67,8 +66,8 @@ const settings = fs.existsSync(settingsPath)
 const merged = mergeCursorSettings(settings, process.env.PLUGIN_DIR!);
 fs.writeFileSync(settingsPath, JSON.stringify(merged.config, null, 2) + "\n");
 
-// RR-06: one portable workit MCP registration (node dist when present, bash
-// shim in a dist-less dev checkout); stale "workflow-toolkit" entries removed.
+// RR-06/CA-17: one portable workit MCP registration via the published npx bin;
+// stale "workflow-toolkit" entries removed.
 const server = cursorMcpServerEntry(process.env.PLUGIN_DIR!);
 const mcpPath = process.env.CURSOR_MCP!;
 const mcp = fs.existsSync(mcpPath)
@@ -76,23 +75,6 @@ const mcp = fs.existsSync(mcpPath)
   : { mcpServers: {} };
 const mergedMcp = mergeCursorMcp(mcp, "workit", server);
 fs.writeFileSync(mcpPath, JSON.stringify(mergedMcp.config, null, 2) + "\n");
-
-// Keep the synced plugin manifests consistent with the current checkout state:
-// only in a dist-less dev checkout, point them at the shims so Cursor still
-// launches MCP/hooks (the shipped manifests already reference dist).
-const distMcp = path.join(process.env.PLUGIN_DIR!, "dist", "mcp-server.js");
-const pluginMcp = path.join(process.env.PLUGIN_DIR!, "mcp.json");
-if (!fs.existsSync(distMcp) && fs.existsSync(pluginMcp)) {
-  const inPkg = JSON.parse(fs.readFileSync(pluginMcp, "utf8"));
-  const patched = mergeCursorMcp(inPkg, "workit", server);
-  fs.writeFileSync(pluginMcp, JSON.stringify(patched.config, null, 2) + "\n");
-}
-const pluginHooks = path.join(process.env.PLUGIN_DIR!, "hooks", "hooks-cursor.json");
-if (!fs.existsSync(path.join(process.env.PLUGIN_DIR!, "dist", "cursor-session-start.js")) && fs.existsSync(pluginHooks)) {
-  const inPkg = JSON.parse(fs.readFileSync(pluginHooks, "utf8"));
-  const patched = mergeCursorHooks(inPkg, { command: "./hooks/session-start" });
-  fs.writeFileSync(pluginHooks, JSON.stringify(patched.config, null, 2) + "\n");
-}
 '
 
 # DG-09: verify the just-written Cursor registration with the shared offline doctor.
@@ -101,6 +83,20 @@ if ! bun "$ROOT/packages/workit-core/scripts/doctor-check.ts" cursor; then
   exit 1
 fi
 
+# CA-08/CA-09: migrate the legacy local plugin identity to `workit` only after
+# the canonical registration succeeded; carry the legacy user rules forward first.
+LEGACY_PLUGIN_DIR="${HOME}/.cursor/plugins/local/workflow-toolkit"
+if [ -d "$LEGACY_PLUGIN_DIR" ] && [ "$LEGACY_PLUGIN_DIR" != "$PLUGIN_DIR" ]; then
+  if [ -d "$LEGACY_PLUGIN_DIR/rules" ]; then
+    mkdir -p "$PLUGIN_DIR/rules"
+    for rule in "$LEGACY_PLUGIN_DIR"/rules/*.mdc; do
+      [ -e "$rule" ] || continue
+      [ -e "$PLUGIN_DIR/rules/$(basename "$rule")" ] || cp "$rule" "$PLUGIN_DIR/rules/"
+    done
+  fi
+  rm -rf "$LEGACY_PLUGIN_DIR"
+fi
+
 echo "Cursor plugin installed + auto-sync enabled (sessionStart)."
 echo "Share: $SHARE"
-ls "$HOME/.cursor/plugins/local/workflow-toolkit/skills" | grep '^wk-' || true
+ls "$HOME/.cursor/plugins/local/workit/skills" | grep '^wk-' || true

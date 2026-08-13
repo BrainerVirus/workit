@@ -1,10 +1,6 @@
 #!/usr/bin/env bash
-# Stable entrypoint for Cursor MCP deeplink / ~/.cursor/mcp.json
-# Prefer the installed plugin copy (has node_modules); fall back to share.
+# Stable entrypoint for Cursor MCP deeplink / ~/.cursor/mcp.json (CA-17).
+# Launch the published package's MCP bin through npx, never a repo-relative
+# dist or share clone; a startup/network failure surfaces via npx's nonzero exit.
 set -euo pipefail
-PLUGIN_MCP="${HOME}/.cursor/plugins/local/workflow-toolkit/mcp/run-server.sh"
-SHARE_MCP="${HOME}/.local/share/workflow-toolkit/packages/workit-cursor/mcp/run-server.sh"
-if [ -x "$PLUGIN_MCP" ]; then
-  exec "$PLUGIN_MCP" "$@"
-fi
-exec "$SHARE_MCP" "$@"
+exec npx -y --package=@brainervirus/workit-cursor@latest workit-cursor-mcp "$@"

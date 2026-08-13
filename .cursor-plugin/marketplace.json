@@ -1,0 +1,12 @@
+{
+  "name": "workit",
+  "owner": {
+    "name": "BrainerVirus"
+  },
+  "plugins": [
+    {
+      "name": "workit",
+      "source": "packages/workit-cursor"
+    }
+  ]
+}

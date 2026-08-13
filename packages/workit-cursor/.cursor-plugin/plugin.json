@@ -3,6 +3,17 @@
   "displayName": "Workit",
   "description": "OpenCode-style verify, PR, changelog, commit, and session handoff for Cursor",
   "version": "0.4.0",
+  "author": {
+    "name": "Cristhofer Pincetti"
+  },
+  "publisher": "BrainerVirus",
+  "homepage": "https://github.com/BrainerVirus/workit",
+  "repository": "https://github.com/BrainerVirus/workit",
+  "license": "MIT",
+  "logo": "assets/logo.svg",
+  "keywords": ["agent", "cursor", "mcp", "workflow", "workit"],
+  "category": "Developer Tools",
+  "tags": ["workflow", "agent", "mcp", "pr", "changelog", "commit", "handoff"],
   "skills": ["skills/", "vendor/superpowers/skills/"],
   "rules": "rules/",
   "mcpServers": "mcp.json",

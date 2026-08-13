@@ -251,6 +251,17 @@ export function isolatedEnv(
   return { ...env, ...extra };
 }
 
+// Probe the npm registry: the isolated npm-install gates fetch third-party
+// runtime deps (ink/react/@inkjs/ui, zod/@modelcontextprotocol/sdk) from the
+// public registry, so an offline/registry-outage CI run must skip those tests
+// cleanly rather than fail. Reachability is independent of HOME (a temp HOME
+// loads no user .npmrc), so the ambient env is a faithful probe. The online
+// path keeps every assertion intact.
+export function npmRegistryReachable(env: NodeJS.ProcessEnv = process.env): boolean {
+  const ping = spawnSync("npm", ["ping"], { encoding: "utf8", timeout: 30_000, env });
+  return ping.status === 0;
+}
+
 // Run a command with cwd inside an isolated install. Returns status/stdout/stderr.
 export function runInIsolation(
   cwd: string,

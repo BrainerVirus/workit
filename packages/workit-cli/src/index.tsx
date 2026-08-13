@@ -15,9 +15,14 @@ import { readSetupState, type SetupState } from "@brainervirus/workit-core/src/c
 import { applyWizardBranchPolicy } from "./logic";
 
 // Secret-safe diagnostic logger (DG-01-DG-03, DG-05, DG-10). Sink injection
-// only: CLI events mirror to stderr, never the Ink-rendered stdout.
+// only: CLI events mirror to stderr, never the Ink-rendered stdout. Routine
+// debug/info events stay out of the terminal (they live in the JSONL journal);
+// only warn/error surface so interactive sessions stay clean.
 export const logger = createLogger({
-  stderr: (event) => process.stderr.write(`${JSON.stringify(event)}\n`),
+  stderr: (event) => {
+    if (event.level === "debug" || event.level === "info") return;
+    process.stderr.write(`${JSON.stringify(event)}\n`);
+  },
 });
 
 const HELP = `workit — workflow rails for agentic coding

@@ -21,7 +21,7 @@ test("rewrite-workspace-deps.ts: workspace:* → ^<core version> in all 3 platfo
       path.join(sandbox, `packages/${pkg}/package.json`),
     );
   }
-  for (const f of [".cursor-plugin/plugin.json", "marketplace.json"]) {
+  for (const f of [".cursor-plugin/plugin.json"]) {
     cpSync(
       path.join(repoRoot, `packages/workit-cursor/${f}`),
       path.join(sandbox, `packages/workit-cursor/${f}`),
@@ -40,17 +40,17 @@ test("rewrite-workspace-deps.ts: workspace:* → ^<core version> in all 3 platfo
     expect(JSON.stringify(data)).not.toContain("workspace:*");
   }
   expect(JSON.stringify(core(sandbox))).not.toContain("workspace:*");
-  for (const f of [".cursor-plugin/plugin.json", "marketplace.json"]) {
+  for (const f of [".cursor-plugin/plugin.json"]) {
     const data = JSON.parse(
       readFileSync(path.join(sandbox, `packages/workit-cursor/${f}`), "utf8"),
     );
     expect(data.version).toBe(version);
   }
-  const marketplace = JSON.parse(
-    readFileSync(path.join(sandbox, "packages/workit-cursor/marketplace.json"), "utf8"),
+  const plugin = JSON.parse(
+    readFileSync(path.join(sandbox, "packages/workit-cursor/.cursor-plugin/plugin.json"), "utf8"),
   );
-  expect(marketplace.homepage).toBe("https://github.com/BrainerVirus/workit");
-  expect(marketplace.repository).toBe("https://github.com/BrainerVirus/workit.git");
+  expect(plugin.homepage).toBe("https://github.com/BrainerVirus/workit");
+  expect(plugin.repository).toBe("https://github.com/BrainerVirus/workit");
 });
 
 test("rewrite-workspace-deps.ts: every prepared adapter dependency equals the prepared core version even when pinned", () => {
@@ -73,7 +73,7 @@ test("rewrite-workspace-deps.ts: every prepared adapter dependency equals the pr
       mkdirSync(path.dirname(file), { recursive: true });
       writeFileSync(file, `${JSON.stringify(data, null, 2)}\n`);
     }
-    for (const f of [".cursor-plugin/plugin.json", "marketplace.json"]) {
+    for (const f of [".cursor-plugin/plugin.json"]) {
       const src = path.join(repoRoot, `packages/workit-cursor/${f}`);
       const dst = path.join(sandbox, `packages/workit-cursor/${f}`);
       mkdirSync(path.dirname(dst), { recursive: true });
@@ -121,7 +121,7 @@ test("rewrite-workspace-deps.ts: pins every internal @brainervirus dependency in
       mkdirSync(path.dirname(file), { recursive: true });
       writeFileSync(file, `${JSON.stringify(data, null, 2)}\n`);
     }
-    for (const f of [".cursor-plugin/plugin.json", "marketplace.json"]) {
+    for (const f of [".cursor-plugin/plugin.json"]) {
       const dst = path.join(sandbox, `packages/workit-cursor/${f}`);
       mkdirSync(path.dirname(dst), { recursive: true });
       cpSync(path.join(repoRoot, `packages/workit-cursor/${f}`), dst);

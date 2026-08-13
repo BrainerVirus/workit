@@ -353,28 +353,35 @@ test("build scripts derive their directory with fileURLToPath, not URL pathname"
 
 test("cursor MCP manifests stay package-relative (mcp.json, marketplace.json, hooks-cursor.json)", () => {
   const mcpJson = JSON.parse(readFileSync(path.join(CURSOR_ROOT, "mcp.json"), "utf8"));
-  const marketplace = JSON.parse(readFileSync(path.join(CURSOR_ROOT, "marketplace.json"), "utf8"));
+  const plugin = JSON.parse(
+    readFileSync(path.join(CURSOR_ROOT, ".cursor-plugin/plugin.json"), "utf8"),
+  );
   const hooks = JSON.parse(readFileSync(path.join(CURSOR_ROOT, "hooks/hooks-cursor.json"), "utf8"));
-  const launcher = readFileSync(path.join(CURSOR_ROOT, "mcp/run-server.sh"), "utf8");
 
   const server = mcpJson.mcpServers.workit;
   const joined = [server.command, ...(server.args ?? [])]
     .join(" ")
     .replace("${workspaceFolder}", "");
-  expect(server.command).toBe("node"); // PT-10: explicit Node for Windows compatibility
+  expect(server.command).toBe("npx"); // CA-17: published package via npx, no repo-relative dist
+  expect(server.args).toEqual([
+    "-y",
+    "--package=@brainervirus/workit-cursor@latest",
+    "workit-cursor-mcp",
+    "${workspaceFolder}",
+  ]);
   expect(joined).not.toMatch(/\$HOME/);
   expect(joined).not.toContain(".local/share");
   expect(joined).not.toContain("Documents/projects");
-  expect(joined).toMatch(/dist\/mcp-server\.js/);
+  expect(joined).not.toContain("dist/");
 
-  expect(marketplace.homepage).toBe("https://github.com/BrainerVirus/workit");
-  expect(marketplace.repository).toBe("https://github.com/BrainerVirus/workit.git");
-  // AR-06: the committed hook entry starts through Node with a package-relative arg.
+  expect(plugin.homepage).toBe("https://github.com/BrainerVirus/workit");
+  expect(plugin.repository).toBe("https://github.com/BrainerVirus/workit");
+  // AR-06/CA-17: the committed hook entry is a single command string, no args.
   expect(hooks.hooks.sessionStart).toEqual([
-    { command: "node", args: ["./dist/cursor-session-start.js"] },
+    {
+      command: "npx -y --package=@brainervirus/workit-cursor@latest workit-cursor-session-start",
+    },
   ]);
-  expect(launcher).not.toMatch(/Documents\/projects/);
-  expect(launcher).not.toMatch(/\$HOME\/\.local\/share\/workflow-toolkit/);
 });
 
 test("root tsconfig includes Cursor MCP source in strict typechecking", () => {

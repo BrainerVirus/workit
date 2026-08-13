@@ -1,8 +1,8 @@
 {
   "mcpServers": {
     "workit": {
-      "command": "node",
-      "args": ["./dist/mcp-server.js", "${workspaceFolder}"]
+      "command": "npx",
+      "args": ["-y", "--package=@brainervirus/workit-cursor@latest", "workit-cursor-mcp", "${workspaceFolder}"]
     }
   }
 }
