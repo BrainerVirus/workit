@@ -23,12 +23,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added an approved reliability-overhaul specification with full requirement, audit, and Ponytail traceability.
 - Added pinned Oxlint and Oxfmt checks for first-party TypeScript and package metadata.
 - Per-workspace branch policy (`workspaces.json` `branchPolicy`) with git-flow-style detection init and `integration: pr|merge` on OpenCode, Cursor, and the CLI wizard.
+- Added a `validate:cursor-marketplace` gate that validates the tracked Cursor Marketplace artifact against the official Cursor JSON schemas and clean-checkout invariants (component paths, skill/rule frontmatter, logo, sanitized vendor parity, no ignored-`dist` runtime references).
+- Added verbatim snapshots of the current official Cursor `plugin.json`/`marketplace.json` schemas with retrieval provenance.
 
 ### Changed
 
 - Repository checks now run lint, format verification, tests, and TypeScript typechecking.
 - Spec/plan approval now needs a single confirmation per document; the self-review validation runs automatically during the transition.
 - The OpenCode package now bundles the `@opencode-ai/plugin` SDK surface into its build and pins the SDK as a build-only dependency, dropping the unused transitive `ini@7` install path.
+- The Cursor README now documents Marketplace and local installation, Node/network requirements, MCP/hook runtime execution, Git/VCS/YouTrack/filesystem interactions, persistent redacted logs, secret handling, `@latest` review drift, update behavior, and troubleshooting; CI runs the Marketplace validator in the Cursor and candidate jobs.
 
 ### Fixed
 

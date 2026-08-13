@@ -111,7 +111,7 @@ Local dev variant (absolute path to this repo):
 }
 ```
 
-A local (non-npm) Cursor install lives at `~/.cursor/plugins/local/workit` and registers `enabled_plugins.workit = true`; the installer migrates exact legacy `workflow-toolkit` entries after the replacement succeeds.
+A local (non-npm) Cursor install lives at `~/.cursor/plugins/local/workit` and registers `enabled_plugins.workit = true`; the installer migrates exact legacy `workflow-toolkit` entries after the replacement succeeds. Marketplace installation, the MCP/hook runtime, and the authenticated submission flow are documented in the [Cursor package README](packages/workit-cursor/README.md#marketplace).
 
 ## Requirements
 
@@ -214,6 +214,7 @@ Published artifacts are built with Bun and run on Node. Build, check, and verify
 bun run build                 # build the OpenCode, Cursor, and CLI bundles
 bun run check                 # build + lint + format:check + bun test + tsc --noEmit
 bun run verify:release-candidate  # pack every package and verify the local tarballs (no publish)
+bun run validate:cursor-marketplace  # validate the Marketplace artifact against official Cursor schemas
 ```
 
 Each package also exposes its own scripts:
@@ -229,7 +230,7 @@ Each package also exposes its own scripts:
 
 GitHub Actions:
 
-- **CI** (`ci.yml`) — on push/PR to `main`: per-package check jobs (`workit-core` on a 3-OS matrix, `workit-opencode`/`workit-cursor`/`workit-cli`/`shared` on ubuntu) run `bun test test/<package>` plus whole-repo typecheck (and lint/format in `shared`). An `artifacts` job runs the packed-artifact, registration, and manifest gates on a 3-OS × Node 20/22 matrix, and a `candidate` job packs and gates the release candidate without publishing. The pinned toolchain and host versions are declared in `packages/workit-core/src/core/support-matrix.ts` and enforced by tests.
+- **CI** (`ci.yml`) — on push/PR to `main`: per-package check jobs (`workit-core` on a 3-OS matrix, `workit-opencode`/`workit-cursor`/`workit-cli`/`shared` on ubuntu) run `bun test test/<package>` plus whole-repo typecheck (and lint/format in `shared`). An `artifacts` job runs the packed-artifact, registration, and manifest gates on a 3-OS × Node 20/22 matrix, and a `candidate` job packs and gates the release candidate without publishing. The Cursor and candidate jobs also run `validate:cursor-marketplace` against the official Cursor schemas. The pinned toolchain and host versions are declared in `packages/workit-core/src/core/support-matrix.ts` and enforced by tests.
 - **Release** (`release.yml`) — on push to `main`: build the adapters, run `verify:release-candidate`, then `npx semantic-release`.
 
 ### Versioning

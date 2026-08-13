@@ -95,6 +95,11 @@ jobs:
       - name: Typecheck (whole repo)
         run: bun run typecheck
 
+      # CA-21: the tracked Marketplace artifact validates against the official
+      # Cursor JSON schemas from a clean checkout (no build/dist reliance).
+      - name: Validate Cursor Marketplace artifact
+        run: bun run validate:cursor-marketplace
+
   cli:
     name: check (workit-cli)
     runs-on: ubuntu-latest
@@ -196,3 +201,8 @@ jobs:
 
       - name: Pack and gate the corrective candidate
         run: bun test test/artifacts/phase-0-candidate.test.ts
+
+      # CA-21: official-schema + clean-checkout Marketplace gate runs after the
+      # pack gate so the candidate and the artifact gate are checked together.
+      - name: Validate Cursor Marketplace artifact
+        run: bun run validate:cursor-marketplace
