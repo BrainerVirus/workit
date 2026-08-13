@@ -17,6 +17,7 @@ import {
   installPackedPackage,
   isolatedEnv,
   listTarball,
+  npmRegistryReachable,
   packReleaseCandidate,
   packWorkspacePackages,
   readTarballFile,
@@ -34,6 +35,15 @@ const CORE = "@brainervirus/workit-core";
 const OPENCODE = "@brainervirus/workit-opencode";
 const CURSOR = "@brainervirus/workit-cursor";
 const CLI = "@brainervirus/workit-cli";
+
+// The isolated npm-install gate fetches third-party runtime deps (ink/react/
+// @inkjs/ui) from the public registry, so an offline/registry-outage CI run
+// skips it cleanly instead of failing. Reachability is probed once; the online
+// path keeps every assertion intact.
+const npmRegistryOk = npmRegistryReachable();
+if (!npmRegistryOk) {
+  console.error("skipping npm-registry install gate: `npm ping` failed — registry unreachable");
+}
 
 const tmp = (prefix: string) => mkdtempSync(path.join(os.tmpdir(), prefix));
 
@@ -407,57 +417,61 @@ test("packed installers fail loudly on a required failure in a temp HOME (RR-05)
   }
 });
 
-test("isolated npm install of the packed CLI emits no EBADENGINE / ini@7 engine warning (CA-06)", () => {
-  const packs = packWorkspacePackages();
-  const install = tmp("wk-npm-cli-");
-  const home = tmp("wk-npm-cli-home-");
-  try {
-    const byName = (name: string) => packs.find((p) => p.packageName === name)!;
-    // npm resolves the @brainervirus/* workspace deps from the sibling tarballs
-    // (file:), so no unpublished package has to exist on the registry. The
-    // third-party runtime deps (ink/react/@inkjs/ui) resolve from the registry,
-    // exactly as a real `npm install @brainervirus/workit-cli` would.
-    writeFileSync(
-      path.join(install, "package.json"),
-      JSON.stringify(
-        {
-          name: "wk-cli-install-test",
-          private: true,
-          version: "1.0.0",
-          dependencies: {
-            "@brainervirus/workit-cli": pathToFileURL(byName(CLI).tarball).href,
+test.skipIf(!npmRegistryOk)(
+  "isolated npm install of the packed CLI emits no EBADENGINE / ini@7 engine warning (CA-06)",
+  () => {
+    const packs = packWorkspacePackages();
+    const install = tmp("wk-npm-cli-");
+    const home = tmp("wk-npm-cli-home-");
+    try {
+      const byName = (name: string) => packs.find((p) => p.packageName === name)!;
+      // npm resolves the @brainervirus/* workspace deps from the sibling tarballs
+      // (file:), so no unpublished package has to exist on the registry. The
+      // third-party runtime deps (ink/react/@inkjs/ui) resolve from the registry,
+      // exactly as a real `npm install @brainervirus/workit-cli` would.
+      writeFileSync(
+        path.join(install, "package.json"),
+        JSON.stringify(
+          {
+            name: "wk-cli-install-test",
+            private: true,
+            version: "1.0.0",
+            dependencies: {
+              "@brainervirus/workit-cli": pathToFileURL(byName(CLI).tarball).href,
+            },
+            overrides: {
+              "@brainervirus/workit-core": pathToFileURL(byName(CORE).tarball).href,
+              "@brainervirus/workit-cursor": pathToFileURL(byName(CURSOR).tarball).href,
+              "@brainervirus/workit-opencode": pathToFileURL(byName(OPENCODE).tarball).href,
+            },
           },
-          overrides: {
-            "@brainervirus/workit-core": pathToFileURL(byName(CORE).tarball).href,
-            "@brainervirus/workit-cursor": pathToFileURL(byName(CURSOR).tarball).href,
-            "@brainervirus/workit-opencode": pathToFileURL(byName(OPENCODE).tarball).href,
-          },
-        },
-        null,
-        2,
-      ),
-      "utf8",
-    );
+          null,
+          2,
+        ),
+        "utf8",
+      );
 
-    // Node 22.19 reports an `ini@7` EBADENGINE warning through the OpenCode ->
-    // effect -> ini@7 path. The packed CLI must not pull that path, so a clean
-    // install is warning-free regardless of Node version.
-    const res = spawnSync(
-      "npm",
-      ["install", "--no-audit", "--no-fund", "--no-package-lock", "--ignore-scripts"],
-      {
-        cwd: install,
-        env: isolatedEnv(home),
-        encoding: "utf8",
-        timeout: 120_000,
-        shell: process.platform === "win32",
-      },
-    );
-    expect(res.status, res.stdout + res.stderr).toBe(0);
-    expect(res.stderr, res.stderr).not.toContain("EBADENGINE");
-    expect(res.stderr, res.stderr).not.toContain("ini@7");
-  } finally {
-    rmSync(install, { recursive: true, force: true });
-    rmSync(home, { recursive: true, force: true });
-  }
-}, 180_000);
+      // Node 22.19 reports an `ini@7` EBADENGINE warning through the OpenCode ->
+      // effect -> ini@7 path. The packed CLI must not pull that path, so a clean
+      // install is warning-free regardless of Node version.
+      const res = spawnSync(
+        "npm",
+        ["install", "--no-audit", "--no-fund", "--no-package-lock", "--ignore-scripts"],
+        {
+          cwd: install,
+          env: isolatedEnv(home),
+          encoding: "utf8",
+          timeout: 120_000,
+          shell: process.platform === "win32",
+        },
+      );
+      expect(res.status, res.stdout + res.stderr).toBe(0);
+      expect(res.stderr, res.stderr).not.toContain("EBADENGINE");
+      expect(res.stderr, res.stderr).not.toContain("ini@7");
+    } finally {
+      rmSync(install, { recursive: true, force: true });
+      rmSync(home, { recursive: true, force: true });
+    }
+  },
+  180_000,
+);

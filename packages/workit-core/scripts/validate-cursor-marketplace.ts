@@ -122,9 +122,19 @@ export const validateMarketplace = (rootArg: string): string[] => {
     }
 
     // 3. Component paths resolve inside the plugin root (no `..`, no absolute).
+    // `skills`/`rules` are path-like (string or string[]). `mcpServers`/`hooks`
+    // may also be inline objects or arrays of objects, which the JSON-schema
+    // check already validates — only string/string[] values get the
+    // path-escape/existence check; non-string forms are skipped gracefully.
     for (const field of ["skills", "rules", "mcpServers", "hooks"] as const) {
       const value = plugin[field];
-      for (const rel of Array.isArray(value) ? (value as string[]) : [value as string]) {
+      const rels: string[] =
+        typeof value === "string"
+          ? [value]
+          : Array.isArray(value)
+            ? value.filter((v): v is string => typeof v === "string")
+            : [];
+      for (const rel of rels) {
         if (rel.includes("..") || rel.startsWith("/")) {
           errors.push(`plugin ${entry.name}: ${field} path escapes root: ${rel}`);
           continue;

@@ -8,6 +8,7 @@ import { SUPPORT_MATRIX } from "../../packages/workit-core/src/core/support-matr
 import {
   installPackedPackage,
   isolatedEnv,
+  npmRegistryReachable,
   packReleaseCandidate,
   packWorkspacePackages,
   REPO_ROOT,
@@ -21,6 +22,15 @@ const CORE = "@brainervirus/workit-core";
 const OPENCODE = "@brainervirus/workit-opencode";
 const CURSOR = "@brainervirus/workit-cursor";
 const CLI = "@brainervirus/workit-cli";
+
+// The isolated npm-install gate fetches third-party runtime deps (zod/
+// @modelcontextprotocol/sdk) from the public registry, so an offline/
+// registry-outage CI run skips it cleanly instead of failing. Reachability is
+// probed once; the online path keeps every assertion intact.
+const npmRegistryOk = npmRegistryReachable();
+if (!npmRegistryOk) {
+  console.error("skipping npm-registry install gate: `npm ping` failed — registry unreachable");
+}
 
 const byName = (packs: ReturnType<typeof packWorkspacePackages>, name: string) =>
   packs.find((p) => p.packageName === name)!;
@@ -185,102 +195,108 @@ test("cursor session-start emits the workflow contract payload from the extracte
   }
 });
 
-test("cursor npm executables run through npm's package runner from the packed install (CA-16)", async () => {
-  const packs = packWorkspacePackages();
-  const install = tmp("wk-cursor-bin-install-");
-  const home = tmp("wk-cursor-bin-home-");
-  try {
-    // npm resolves the @brainervirus/* workspace deps from the sibling tarballs
-    // (file:), so the candidate installs without a published core. The MCP SDK
-    // and zod resolve from the registry, exactly as a real install would.
-    writeFileSync(
-      path.join(install, "package.json"),
-      JSON.stringify(
+test.skipIf(!npmRegistryOk)(
+  "cursor npm executables run through npm's package runner from the packed install (CA-16)",
+  async () => {
+    const packs = packWorkspacePackages();
+    const install = tmp("wk-cursor-bin-install-");
+    const home = tmp("wk-cursor-bin-home-");
+    try {
+      // npm resolves the @brainervirus/* workspace deps from the sibling tarballs
+      // (file:), so the candidate installs without a published core. The MCP SDK
+      // and zod resolve from the registry, exactly as a real install would.
+      writeFileSync(
+        path.join(install, "package.json"),
+        JSON.stringify(
+          {
+            name: "wk-cursor-bin-test",
+            private: true,
+            version: "1.0.0",
+            dependencies: {
+              "@brainervirus/workit-cursor": pathToFileURL(byName(packs, CURSOR).tarball).href,
+            },
+            overrides: {
+              "@brainervirus/workit-core": pathToFileURL(byName(packs, CORE).tarball).href,
+            },
+          },
+          null,
+          2,
+        ),
+        "utf8",
+      );
+      const env = isolatedEnv(home);
+      const installRes = spawnSync(
+        "npm",
+        ["install", "--no-audit", "--no-fund", "--no-package-lock", "--ignore-scripts"],
         {
-          name: "wk-cursor-bin-test",
-          private: true,
-          version: "1.0.0",
-          dependencies: {
-            "@brainervirus/workit-cursor": pathToFileURL(byName(packs, CURSOR).tarball).href,
-          },
-          overrides: {
-            "@brainervirus/workit-core": pathToFileURL(byName(packs, CORE).tarball).href,
-          },
+          cwd: install,
+          env,
+          encoding: "utf8",
+          timeout: 120_000,
+          shell: process.platform === "win32",
         },
-        null,
-        2,
-      ),
-      "utf8",
-    );
-    const env = isolatedEnv(home);
-    const installRes = spawnSync(
-      "npm",
-      ["install", "--no-audit", "--no-fund", "--no-package-lock", "--ignore-scripts"],
-      {
+      );
+      expect(installRes.status, installRes.stdout + installRes.stderr).toBe(0);
+
+      // Both executables are wired into the installed .bin directory.
+      const binDir = path.join(install, "node_modules", ".bin");
+      const shim = (name: string) => (process.platform === "win32" ? `${name}.cmd` : name);
+      expect(existsSync(path.join(binDir, shim("workit-cursor-mcp")))).toBe(true);
+      expect(existsSync(path.join(binDir, shim("workit-cursor-session-start")))).toBe(true);
+
+      // MCP executable: drive tools/list over the package runner's stdio.
+      const { child, request } = startNodeMcp(
+        install,
+        "npm",
+        ["exec", "--", "workit-cursor-mcp"],
+        env,
+        { shell: process.platform === "win32" },
+      );
+      try {
+        const init = await request("initialize", {
+          protocolVersion: "2024-11-05",
+          capabilities: {},
+          clientInfo: { name: "packed-bin", version: "1.0" },
+        });
+        expect((init.result as { serverInfo?: { name?: string } })?.serverInfo?.name).toBe(
+          "workit",
+        );
+        child.stdin?.write(
+          `${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })}\n`,
+        );
+        const listed = await request("tools/list", {});
+        const names = ((listed.result as { tools?: { name: string }[] })?.tools ?? []).map(
+          (t) => t.name,
+        );
+        expect(names).toContain("workflow_git_context");
+        expect(names).toContain("workflow_toolkit_init_apply");
+      } finally {
+        child.kill();
+        await Promise.race([
+          new Promise((resolve) => child.once("exit", resolve)),
+          new Promise((resolve) => setTimeout(resolve, 5000)),
+        ]);
+      }
+
+      // Session-start executable: emits the protocol JSON contract on stdout.
+      const session = spawnSync("npm", ["exec", "--", "workit-cursor-session-start"], {
         cwd: install,
         env,
         encoding: "utf8",
-        timeout: 120_000,
+        timeout: 60_000,
         shell: process.platform === "win32",
-      },
-    );
-    expect(installRes.status, installRes.stdout + installRes.stderr).toBe(0);
-
-    // Both executables are wired into the installed .bin directory.
-    const binDir = path.join(install, "node_modules", ".bin");
-    const shim = (name: string) => (process.platform === "win32" ? `${name}.cmd` : name);
-    expect(existsSync(path.join(binDir, shim("workit-cursor-mcp")))).toBe(true);
-    expect(existsSync(path.join(binDir, shim("workit-cursor-session-start")))).toBe(true);
-
-    // MCP executable: drive tools/list over the package runner's stdio.
-    const { child, request } = startNodeMcp(
-      install,
-      "npm",
-      ["exec", "--", "workit-cursor-mcp"],
-      env,
-      { shell: process.platform === "win32" },
-    );
-    try {
-      const init = await request("initialize", {
-        protocolVersion: "2024-11-05",
-        capabilities: {},
-        clientInfo: { name: "packed-bin", version: "1.0" },
       });
-      expect((init.result as { serverInfo?: { name?: string } })?.serverInfo?.name).toBe("workit");
-      child.stdin?.write(
-        `${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })}\n`,
-      );
-      const listed = await request("tools/list", {});
-      const names = ((listed.result as { tools?: { name: string }[] })?.tools ?? []).map(
-        (t) => t.name,
-      );
-      expect(names).toContain("workflow_git_context");
-      expect(names).toContain("workflow_toolkit_init_apply");
+      expect(session.status, session.stderr ?? "").toBe(0);
+      const payload = JSON.parse(session.stdout);
+      expect(payload.additional_context).toContain("HARD-GATE");
+      expect(payload.additional_context).toContain("AskQuestion");
     } finally {
-      child.kill();
-      await Promise.race([
-        new Promise((resolve) => child.once("exit", resolve)),
-        new Promise((resolve) => setTimeout(resolve, 5000)),
-      ]);
+      rmSync(install, { recursive: true, force: true });
+      rmSync(home, { recursive: true, force: true });
     }
-
-    // Session-start executable: emits the protocol JSON contract on stdout.
-    const session = spawnSync("npm", ["exec", "--", "workit-cursor-session-start"], {
-      cwd: install,
-      env,
-      encoding: "utf8",
-      timeout: 60_000,
-      shell: process.platform === "win32",
-    });
-    expect(session.status, session.stderr ?? "").toBe(0);
-    const payload = JSON.parse(session.stdout);
-    expect(payload.additional_context).toContain("HARD-GATE");
-    expect(payload.additional_context).toContain("AskQuestion");
-  } finally {
-    rmSync(install, { recursive: true, force: true });
-    rmSync(home, { recursive: true, force: true });
-  }
-}, 180_000);
+  },
+  180_000,
+);
 
 test("cli --help runs under node from the extracted package and exits 0", async () => {
   const packs = packWorkspacePackages();

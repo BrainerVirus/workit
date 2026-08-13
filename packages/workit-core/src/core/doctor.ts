@@ -419,9 +419,11 @@ const registeredCursorLauncher = (res: Resolved): CursorLauncher | null | "inval
   // CA-17: the canonical launcher runs the published package through npx; the
   // offline doctor validates its shape (never the registry reachability).
   if (executable === "npx" || executable === "npx.exe" || executable === "npx.cmd") {
-    const joined = args.join(" ");
-    if (!joined.includes("--package=@brainervirus/workit-cursor@latest")) return "invalid";
-    if (!joined.includes("workit-cursor-mcp")) return "invalid";
+    // CA-17: exact positional tokens — a substring match would accept
+    // `@latest-alpha` or `workit-cursor-mcp-foo`.
+    if (args[0] !== "-y") return "invalid";
+    if (args[1] !== "--package=@brainervirus/workit-cursor@latest") return "invalid";
+    if (args[2] !== "workit-cursor-mcp") return "invalid";
     return { kind: "npx" };
   }
   if (executable !== "node" && executable !== "node.exe") return "invalid";

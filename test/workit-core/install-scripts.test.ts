@@ -316,6 +316,53 @@ test("installers clone from the public HTTPS URL, never SSH (RR-05)", () => {
   }
 });
 
+test("install-cursor-plugin.sh removes the legacy dir after success, carrying user rules forward", () => {
+  if (!bashAvailable()) return;
+  const fixture = makeCursorStub();
+  const legacyDir = path.join(fixture.home, ".cursor", "plugins", "local", "workflow-toolkit");
+  const otherDir = path.join(fixture.home, ".cursor", "plugins", "local", "workflow-toolkit-extra");
+  try {
+    mkdirSync(path.join(legacyDir, "rules"), { recursive: true });
+    writeFileSync(
+      path.join(legacyDir, "rules", "user-managed.mdc"),
+      "---\nalwaysApply: true\n---\n# User rule\n",
+    );
+    mkdirSync(path.join(legacyDir, "skills"), { recursive: true });
+    writeFileSync(path.join(legacyDir, "skills", "stale-skill.md"), "# legacy\n");
+    mkdirSync(otherDir, { recursive: true });
+    writeFileSync(path.join(otherDir, "marker"), "unrelated\n");
+
+    const installed = spawnSync("bash", ["packages/workit-core/scripts/install-cursor-plugin.sh"], {
+      cwd: fixture.stub,
+      env: { ...process.env, HOME: fixture.home, WORKFLOW_TOOLKIT_DEV: fixture.stub },
+      encoding: "utf8",
+    });
+    expect(installed.status, installed.stderr).toBe(0);
+
+    // The legacy identity is removed only after a successful install; the
+    // user-compiled rule is carried forward, unrelated sibling dirs survive.
+    expect(existsSync(legacyDir)).toBe(false);
+    expect(
+      readFileSync(
+        path.join(
+          fixture.home,
+          ".cursor",
+          "plugins",
+          "local",
+          "workit",
+          "rules",
+          "user-managed.mdc",
+        ),
+        "utf8",
+      ),
+    ).toContain("# User rule");
+    expect(readFileSync(path.join(otherDir, "marker"), "utf8")).toBe("unrelated\n");
+  } finally {
+    rmSync(fixture.stub, { recursive: true, force: true });
+    rmSync(fixture.home, { recursive: true, force: true });
+  }
+});
+
 test("install-cursor-plugin.sh resolves the local checkout root and never falls back to GitHub", () => {
   if (!bashAvailable()) return;
   const fixture = makeCursorStub();

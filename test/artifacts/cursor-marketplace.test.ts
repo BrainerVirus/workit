@@ -9,6 +9,7 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  writeFileSync,
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -187,6 +188,23 @@ test("validate:cursor-marketplace passes on a clean git ls-files checkout (CA-21
     });
     expect(run.status, run.stderr || run.stdout).toBe(0);
     expect(run.stdout).toContain("marketplace validation passed");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("inline-object hooks/mcpServers never crash the component-path loop (T9)", () => {
+  const dir = cleanCheckoutCopy();
+  try {
+    const manifestPath = path.join(dir, PLUGIN_MANIFEST_REL);
+    const plugin = JSON.parse(readFileSync(manifestPath, "utf8"));
+    plugin.hooks = { "post-tool-use": { command: "npx workit-cursor-session-start" } };
+    plugin.mcpServers = { workit: { command: "npx", args: ["-y", "workit-cursor-mcp"] } };
+    writeFileSync(manifestPath, JSON.stringify(plugin, null, 2));
+    // The validator must not throw on the schema-valid inline-object form; it
+    // either validates cleanly or reports schema errors — never a TypeError.
+    const errors = validateMarketplace(dir);
+    expect(Array.isArray(errors)).toBe(true);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

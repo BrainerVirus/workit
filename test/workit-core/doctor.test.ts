@@ -374,6 +374,56 @@ test("cursor launcher validates the canonical registered MCP target", () => {
   }
 });
 
+test("cursor launcher npx shape matches exact tokens, never substrings (CA-17)", () => {
+  const canonical = JSON.stringify({
+    mcpServers: {
+      workit: {
+        command: "npx",
+        args: [
+          "-y",
+          "--package=@brainervirus/workit-cursor@latest",
+          "workit-cursor-mcp",
+          "${workspaceFolder}",
+        ],
+      },
+    },
+  });
+  const variants: Array<[string, string[]]> = [
+    [
+      "@latest-alpha",
+      [
+        "-y",
+        "--package=@brainervirus/workit-cursor@latest-alpha",
+        "workit-cursor-mcp",
+        "${workspaceFolder}",
+      ],
+    ],
+    [
+      "workit-cursor-mcp-foo",
+      [
+        "-y",
+        "--package=@brainervirus/workit-cursor@latest",
+        "workit-cursor-mcp-foo",
+        "${workspaceFolder}",
+      ],
+    ],
+  ];
+  try {
+    for (const [label, args] of variants) {
+      writeConfig(
+        fixture.cursorMcp,
+        JSON.stringify({ mcpServers: { workit: { command: "npx", args } } }),
+      );
+      const report = run();
+      expect(check(report, "launcher").status, label).toBe("fail");
+      expect(check(report, "launcher").detail, label).toContain("canonical");
+    }
+  } finally {
+    writeConfig(fixture.cursorMcp, canonical);
+  }
+  expect(check(run(), "launcher").status).toBe("pass");
+});
+
 test("detects an unavailable runtime (no node/bun on PATH) and clears with a full PATH", () => {
   const emptyBin = path.join(fixture.root, "empty-bin");
   mkdirSync(emptyBin, { recursive: true });

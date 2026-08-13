@@ -83,6 +83,20 @@ if ! bun "$ROOT/packages/workit-core/scripts/doctor-check.ts" cursor; then
   exit 1
 fi
 
+# CA-08/CA-09: migrate the legacy local plugin identity to `workit` only after
+# the canonical registration succeeded; carry the legacy user rules forward first.
+LEGACY_PLUGIN_DIR="${HOME}/.cursor/plugins/local/workflow-toolkit"
+if [ -d "$LEGACY_PLUGIN_DIR" ] && [ "$LEGACY_PLUGIN_DIR" != "$PLUGIN_DIR" ]; then
+  if [ -d "$LEGACY_PLUGIN_DIR/rules" ]; then
+    mkdir -p "$PLUGIN_DIR/rules"
+    for rule in "$LEGACY_PLUGIN_DIR"/rules/*.mdc; do
+      [ -e "$rule" ] || continue
+      [ -e "$PLUGIN_DIR/rules/$(basename "$rule")" ] || cp "$rule" "$PLUGIN_DIR/rules/"
+    done
+  fi
+  rm -rf "$LEGACY_PLUGIN_DIR"
+fi
+
 echo "Cursor plugin installed + auto-sync enabled (sessionStart)."
 echo "Share: $SHARE"
 ls "$HOME/.cursor/plugins/local/workit/skills" | grep '^wk-' || true
