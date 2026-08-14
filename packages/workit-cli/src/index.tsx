@@ -13,6 +13,7 @@ import {
 } from "@brainervirus/workit-core/src/core/setup.ts";
 import { readSetupState, type SetupState } from "@brainervirus/workit-core/src/core/setup-state";
 import { applyWizardBranchPolicy } from "./logic";
+import { runFlowCommand, runHandoffCommand } from "./flow";
 
 // Secret-safe diagnostic logger (DG-01-DG-03, DG-05, DG-10). Sink injection
 // only: CLI events mirror to stderr, never the Ink-rendered stdout. Routine
@@ -30,6 +31,11 @@ const HELP = `workit — workflow rails for agentic coding
 Usage:
   workit init      Run the interactive setup wizard
   workit doctor    Verify the offline installation health (add --json for a machine-readable report)
+  workit flow status --plan <path>                 Read the effective flow state for a plan
+  workit flow pause --plan <path> [--confirm]      Pause an active plan
+  workit flow resume --plan <path> [--confirm]     Resume a paused plan
+  workit flow complete --plan <path> [--confirm]   Complete a plan (ledger and verification gated)
+  workit handoff --message <text>                  Emit the destination handoff prompt for a plan
   workit           Show this help
 
 Run \`npx workit init\` to configure platforms, YouTrack, VCS and project hygiene.
@@ -169,6 +175,10 @@ if (import.meta.main) {
     await runInit();
   } else if (subcommand === "doctor") {
     runDoctorCommand(args);
+  } else if (subcommand === "flow") {
+    process.exit(await runFlowCommand(args.slice(1)));
+  } else if (subcommand === "handoff") {
+    process.exit(await runHandoffCommand(args.slice(1)));
   } else {
     console.log(HELP);
     process.exit(0);
