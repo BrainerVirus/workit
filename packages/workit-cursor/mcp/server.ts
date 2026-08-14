@@ -809,9 +809,24 @@ registerTool(
       );
     }
 
+    // Parse tasks BEFORE any mutation (CA-07/CA-09): a parse failure returns
+    // without marking the flow as a destination, so "generation failure ⇒ no
+    // mutation" holds for every stage after build. parsePlanTasks only needs
+    // the plan path, which is already resolved.
+    const tasksData = parsePlanTasks(planPath, root);
+    if ("error" in tasksData) {
+      return jsonResult(
+        withWorkspace(workspace_root, {
+          prompt,
+          error: tasksData.error,
+        }),
+      );
+    }
+
     // Build-then-mark (CA-07/CA-09): mark the destination ONLY after the
-    // complete core prompt built successfully. A marked destination rejects a
-    // second handoff (recursive_handoff) and has its menu reset.
+    // complete core prompt built and tasks parsed successfully. A marked
+    // destination rejects a second handoff (recursive_handoff) and has its
+    // menu reset.
     const slug = slugFromPath(planPath);
     const marked = markHandoffDestination(root, slug, planPath);
     if (marked.ok === false) {
@@ -820,16 +835,6 @@ registerTool(
           error: marked.error,
           code: marked.code,
           ...(marked.details ? { details: marked.details } : {}),
-        }),
-      );
-    }
-
-    const tasksData = parsePlanTasks(planPath, root);
-    if ("error" in tasksData) {
-      return jsonResult(
-        withWorkspace(workspace_root, {
-          prompt,
-          error: tasksData.error,
         }),
       );
     }
