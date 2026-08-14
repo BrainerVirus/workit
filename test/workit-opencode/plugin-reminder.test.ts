@@ -11,11 +11,13 @@ import {
 import {
   HostReceiptStore,
   prepareFlowState,
+  markHandoffDestination,
   recordMenuChoice,
   transitionExecution,
   transitionPlan,
   transitionSpec,
 } from "../../packages/workit-core/src/core/flow-state";
+import plugin from "../../packages/workit-opencode/src/plugin";
 import {
   shouldInjectSddReminder,
   SDD_REMINDER_TEXT,
@@ -377,5 +379,97 @@ test("M-3: unreadable flow.json (EACCES) is skipped without throwing", () => {
   } finally {
     chmodSync(path.join(root, "docs", "locked", "sdd", "flow.json"), 0o644);
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+const reminderUserMessage = (text: string) => ({
+  info: { role: "user" as const, id: "u", sessionID: "s", time: { created: 0, updated: 0 } },
+  parts: [
+    {
+      type: "text" as const,
+      text,
+      id: "p",
+      messageID: "u",
+      sessionID: "s",
+      time: { created: 0, updated: 0 },
+    },
+  ],
+});
+
+/** Drive the real OpenCode plugin's chat.messages.transform hook and return the injected turn text. */
+const reminderInjectedText = async (root: string, message = "continue"): Promise<string> => {
+  const hooks = await plugin({
+    directory: root,
+    worktree: root,
+    serverUrl: new URL("http://localhost"),
+  } as never);
+  const output = { messages: [reminderUserMessage(message)] };
+  await hooks["experimental.chat.messages.transform"]?.({} as never, output as never);
+  return output.messages[0].parts
+    .filter((p: any) => p.type === "text")
+    .map((p: any) => p.text)
+    .join("\n");
+};
+
+test("CA-08: a marked-destination flow drives the real plugin to inject the four-choice destination reminder", async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wf-dest-"));
+  try {
+    establishMenuChoice(root, "dest", "handoff");
+    const marked = markHandoffDestination(root, "dest", "docs/dest/plan.md");
+    expect(marked.ok).toBe(true);
+
+    const text = await reminderInjectedText(root);
+    expect(text).toContain(DESTINATION_REMINDER_TEXT);
+    expect(text).not.toContain(REMINDER_TEXT);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("CA-08: ordinary, pending, paused, completed, and active-inline flows keep the five-choice source reminder", async () => {
+  const roots: string[] = [];
+  const buildRoot = (): string => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "wf-src-"));
+    roots.push(root);
+    return root;
+  };
+  const rootInline = buildRoot();
+  const rootPending = buildRoot();
+  const rootPaused = buildRoot();
+  const rootDone = buildRoot();
+  try {
+    // active inline
+    establishMenuChoice(rootInline, "inline", "inline");
+
+    // pending (handoff chosen but destination never marked)
+    establishMenuChoice(rootPending, "pending", "handoff");
+
+    // paused subagent-driven
+    establishMenuChoice(rootPaused, "paused", "subagent-driven");
+    expect(
+      transitionExecution(rootPaused, "paused", "docs/paused/plan.md", "pause", cliEvidence()).ok,
+    ).toBe(true);
+
+    // completed subagent-driven
+    establishMenuChoice(rootDone, "done", "subagent-driven");
+    writeSddLedger(rootDone, "done", ["Task 1: complete"]);
+    const finished = transitionExecution(
+      rootDone,
+      "done",
+      "docs/done/plan.md",
+      "complete",
+      cliEvidence(),
+      undefined,
+      { verifyProject: () => ({ stdout: "", stderr: "", exitCode: 0, cwd: rootDone }) },
+    );
+    expect(finished.ok).toBe(true);
+
+    for (const root of [rootInline, rootPending, rootPaused, rootDone]) {
+      const text = await reminderInjectedText(root);
+      expect(text).toContain(REMINDER_TEXT);
+      expect(text).not.toContain(DESTINATION_REMINDER_TEXT);
+    }
+  } finally {
+    for (const root of roots) rmSync(root, { recursive: true, force: true });
   }
 });
