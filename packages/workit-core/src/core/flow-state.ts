@@ -7,6 +7,7 @@ import {
   readFileSync,
   renameSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { createHash } from "node:crypto";
@@ -505,6 +506,30 @@ export const writeFlowState = (root: string, state: FlowState) => {
 
 const MAX_WRITE_ATTEMPTS = 5;
 
+/**
+ * Age threshold for stale-lock recovery (CA-19): a crash between
+ * `openSync(lock, "wx")` and `rmSync(lock)` leaves `<flow.json>.lock` forever.
+ * A lock file older than this is treated as abandoned and removed before a
+ * fresh acquisition attempt, so a crash never wedges every later operation.
+ * ponytail: the age heuristic can reclaim a lock a very slow writer still
+ * legitimately holds (or drift on clock skew); the reclaimed lock's writer and
+ * the new acquirer still serialize through the next EEXIST/bounded-backoff
+ * path, so no two writers ever hold the lock simultaneously. Upgrade path:
+ * write PID/host-session into the lock and verify liveness, or lease-renew,
+ * when writers that legitimately exceed the threshold matter.
+ */
+const STALE_LOCK_MS = 1000;
+
+// The lock's mtime, or null when it vanished between the EEXIST and the stat
+// (a concurrent writer removed it) — either way the caller retries acquisition.
+const lockMtimeMs = (lock: string): number | null => {
+  try {
+    return statSync(lock).mtimeMs;
+  } catch {
+    return null;
+  }
+};
+
 export type FlowWriteResult =
   | { ok: true }
   | { ok: false; conflict: true }
@@ -672,12 +697,12 @@ type MutateResult = { ok: true; next: FlowState } | FlowError;
 
 /**
  * Per-flow critical section (CA-19): acquire `<flow.json>.lock` exclusively
- * (openSync "wx"); on contention retry with a bounded 10ms backoff; run the
- * critical section; release the lock and best-effort remove it in `finally`.
- * No lock module and no adapter-side lock: every host shares this one core
- * contract. ponytail: a crash while holding the lock leaves a stale `.lock`
- * that the next writer must clear manually — out of scope until a recovery
- * operation exists.
+ * (openSync "wx"); on contention retry with a bounded 10ms backoff; a lock
+ * older than STALE_LOCK_MS (a crashed writer) is removed and acquisition is
+ * retried; run the critical section; release the lock and best-effort remove
+ * it in `finally`. No lock module and no adapter-side lock: every host shares
+ * this one core contract. ponytail: stale recovery is age-based only — see
+ * STALE_LOCK_MS for the ceiling and the liveness upgrade path.
  */
 type Locked<T> = { locked: true; value: T } | { locked: false; error: FlowError };
 
@@ -700,6 +725,20 @@ const withFlowLock = <T>(file: string, fn: () => T): Locked<T> => {
             `flow lock failed for ${file}: ${error instanceof Error ? error.message : String(error)}`,
           ),
         };
+      }
+      // Stale-lock recovery (CA-19): the lock is older than STALE_LOCK_MS, so
+      // its writer crashed after acquiring it. Remove it and retry acquisition
+      // immediately; only a fresh lock that still races through the bounded
+      // retries is reported as flow_concurrent_conflict.
+      const mtime = lockMtimeMs(lock);
+      if (mtime !== null && Date.now() - mtime > STALE_LOCK_MS) {
+        try {
+          rmSync(lock, { force: true });
+        } catch {
+          // best effort: an unremovable stale lock falls through to the
+          // bounded retries and, ultimately, flow_concurrent_conflict
+        }
+        continue;
       }
       if (attempt === MAX_WRITE_ATTEMPTS - 1) {
         return {
@@ -737,11 +776,27 @@ const withFlowLock = <T>(file: string, fn: () => T): Locked<T> => {
  */
 export const readEffectiveFlowState = (root: string, slug: string): FlowReadResult => {
   const file = flowPath(root, slug);
+  const rel = path.posix.join("docs", slug, "sdd", "flow.json");
   const locked = withFlowLock<FlowReadResult>(file, () => {
     const strict = readFlowStrict(root, slug);
     if (!strict.ok) return strict;
     const { state, drift } = reconcileState(root, slug, strict.state);
-    if (drift.length > 0) writeFlowFileAtomic(file, state);
+    if (drift.length > 0) {
+      try {
+        writeFlowFileAtomic(file, state);
+      } catch (error) {
+        // A read-path persist failure (EACCES, ENOSPC, EROFS) must never throw
+        // through the lock: the FlowReadResult contract is structured (CA-04),
+        // and every gate/status read now writes on drift. The original
+        // flow.json bytes are untouched — the atomic write never got far enough
+        // to swap the file.
+        return err(
+          "flow_io_error",
+          `cannot persist reconciled flow state at ${file}: ${error instanceof Error ? error.message : String(error)}`,
+          { path: rel, original_bytes_preserved: true },
+        );
+      }
+    }
     return { ok: true, state, drift };
   });
   if (!locked.locked) return locked.error;

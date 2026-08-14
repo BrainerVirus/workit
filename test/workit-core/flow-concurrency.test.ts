@@ -10,6 +10,7 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import * as nodeFs from "node:fs";
@@ -28,6 +29,7 @@ import {
   transitionPlan,
   transitionSpec,
   writeFlowStateIfCurrent,
+  type FlowReadResult,
   type MutationContext,
 } from "../../packages/workit-core/src/core/flow-state";
 import { findActiveSubagentDrivenPlans } from "../../packages/workit-core/src/core/detector";
@@ -528,6 +530,112 @@ test("CA-19: a held flow.json.lock yields flow_concurrent_conflict, then recover
     const recovered = transitionSpec(root, slug, `docs/${slug}/spec.md`, evidence("Approve spec"));
     expect(recovered.ok).toBe(true);
     expect(existsSync(lock)).toBe(false);
+    const leftovers = readdirSync(path.dirname(flowFile(root, slug))).filter(
+      (f) => f.endsWith(".tmp") || f.endsWith(".lock"),
+    );
+    expect(leftovers).toEqual([]);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("CA-19: a stale flow.json.lock (older than STALE_LOCK_MS) is recovered instead of a permanent conflict", () => {
+  const { root, slug } = fixture();
+  try {
+    writeDocs(root, slug);
+    const prep = prepareFlowState(root, slug, {
+      spec_path: `docs/${slug}/spec.md`,
+      plan_path: `docs/${slug}/plan.md`,
+    });
+    expect(prep.ok).toBe(true);
+    const lock = `${flowFile(root, slug)}.lock`;
+    writeFileSync(lock, "", "utf8");
+    const past = Date.now() - 5_000;
+    utimesSync(lock, new Date(past), new Date(past));
+    const effective = readEffectiveFlowState(root, slug);
+    expect(effective.ok).toBe(true);
+    expect(existsSync(lock)).toBe(false);
+    const leftovers = readdirSync(path.dirname(flowFile(root, slug))).filter(
+      (f) => f.endsWith(".tmp") || f.endsWith(".lock"),
+    );
+    expect(leftovers).toEqual([]);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("CA-19: a fresh flow.json.lock is NOT reclaimed as stale and still yields flow_concurrent_conflict", () => {
+  const { root, slug } = fixture();
+  try {
+    writeDocs(root, slug);
+    const prep = prepareFlowState(root, slug, {
+      spec_path: `docs/${slug}/spec.md`,
+      plan_path: `docs/${slug}/plan.md`,
+    });
+    expect(prep.ok).toBe(true);
+    const lock = `${flowFile(root, slug)}.lock`;
+    const fd = openSync(lock, "wx");
+    try {
+      const effective = readEffectiveFlowState(root, slug);
+      expect(effective.ok).toBe(false);
+      if (!effective.ok) expect(effective.code).toBe("flow_concurrent_conflict");
+      // The fresh lock survives the bounded retries: stale recovery never
+      // deletes a lock a live writer may still hold.
+      expect(existsSync(lock)).toBe(true);
+    } finally {
+      closeSync(fd);
+      rmSync(lock, { force: true });
+    }
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("A4: a read-path reconcile persist failure returns flow_io_error, never throws through the lock", () => {
+  const { root, slug } = fixture();
+  try {
+    writeDocs(root, slug);
+    const plan = `docs/${slug}/plan.md`;
+    const prep = prepareFlowState(root, slug, {
+      spec_path: `docs/${slug}/spec.md`,
+      plan_path: plan,
+    });
+    expect(prep.ok).toBe(true);
+    approveSpecAndPlan(root, slug);
+    // Drift the plan so the effective read must persist a reset.
+    writeFileSync(
+      path.join(root, "docs", slug, "plan.md"),
+      COMPLIANT_PLAN(slug).replace("do it", "do it now"),
+    );
+    let injected = false;
+    mock.module("node:fs", () => ({
+      ...realFs,
+      renameSync: (src: unknown, dest?: unknown) => {
+        if (!injected && typeof src === "string" && src.endsWith(".tmp")) {
+          injected = true;
+          throw new Error("EACCES: permission denied (injected)");
+        }
+        return realFs.renameSync(src as string, dest as string);
+      },
+    }));
+    let result: ReturnType<typeof readEffectiveFlowState> | null = null;
+    expect(() => {
+      result = readEffectiveFlowState(root, slug);
+    }).not.toThrow();
+    expect(injected).toBe(true);
+    expect(result).not.toBeNull();
+    const read = result as unknown as FlowReadResult;
+    if (read.ok) throw new Error("expected flow_io_error");
+    expect(read.code).toBe("flow_io_error");
+    expect(read.error).toContain("EACCES");
+    expect(read.details).toEqual({
+      path: `docs/${slug}/sdd/flow.json`,
+      original_bytes_preserved: true,
+    });
+    // The original flow.json bytes were untouched: the pre-drift approval state.
+    const persisted = JSON.parse(readFileSync(flowFile(root, slug), "utf8"));
+    expect(persisted.plan.status).toBe("approved");
+    expect(persisted.plan.approved_digest).toMatch(/^[0-9a-f]{64}$/);
     const leftovers = readdirSync(path.dirname(flowFile(root, slug))).filter(
       (f) => f.endsWith(".tmp") || f.endsWith(".lock"),
     );
