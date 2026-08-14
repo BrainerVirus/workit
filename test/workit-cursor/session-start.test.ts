@@ -4,7 +4,17 @@ import { mkdirSync, mkdtempSync, existsSync, readFileSync, rmSync, writeFileSync
 import os from "node:os";
 import path from "node:path";
 import { syncRuntime } from "../../packages/workit-core/src/core/sync-runtime";
-import { HANDOFF_DESTINATION_MARKER } from "../../packages/workit-core/src/core/flow-state";
+import {
+  HANDOFF_DESTINATION_MARKER,
+  HostReceiptStore,
+  markHandoffDestination,
+  prepareFlowState,
+  recordMenuChoice,
+  transitionExecution,
+  transitionPlan,
+  transitionSpec,
+} from "../../packages/workit-core/src/core/flow-state";
+import { COMPLIANT_PLAN, COMPLIANT_SPEC, openEvidence } from "../workit-core/flow-fixtures";
 
 const runHook = (env: Record<string, string>, input?: string) =>
   spawnSync(process.execPath, [path.join(CURSOR_ROOT, "hooks", "session-start.ts")], {
@@ -193,5 +203,73 @@ test("session-start selects the four-choice destination reminder for a marked wo
   } finally {
     rmSync(markedRoot, { recursive: true, force: true });
     rmSync(plainRoot, { recursive: true, force: true });
+  }
+});
+
+test("a completed handoff destination classifies as an ordinary five-choice session", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wf-hook-completed-"));
+  try {
+    mkdirSync(path.join(root, "templates"), { recursive: true });
+    writeFileSync(path.join(root, "templates", "superpowers-doc-contract.md"), contractText);
+    const slug = "done-dest";
+    mkdirSync(path.join(root, "docs", slug), { recursive: true });
+    writeFileSync(path.join(root, "docs", slug, "spec.md"), COMPLIANT_SPEC(slug));
+    writeFileSync(path.join(root, "docs", slug, "plan.md"), COMPLIANT_PLAN(slug));
+    const store = new HostReceiptStore();
+    const sessionId = "dest-session";
+    const spec = `docs/${slug}/spec.md`;
+    const plan = `docs/${slug}/plan.md`;
+    expect(prepareFlowState(root, slug, { spec_path: spec, plan_path: plan }).ok).toBe(true);
+    expect(
+      transitionSpec(root, slug, spec, openEvidence(store, sessionId, "Approve spec")).ok,
+    ).toBe(true);
+    expect(
+      transitionPlan(root, slug, plan, openEvidence(store, sessionId, "Approve plan")).ok,
+    ).toBe(true);
+    expect(
+      recordMenuChoice(root, slug, plan, "handoff", openEvidence(store, sessionId, "handoff")).ok,
+    ).toBe(true);
+    expect(markHandoffDestination(root, slug, plan)).toEqual({ ok: true });
+    // The destination session picks an executing choice, completes the ledger,
+    // and passes repository verification.
+    expect(
+      recordMenuChoice(root, slug, plan, "inline", openEvidence(store, sessionId, "inline")).ok,
+    ).toBe(true);
+    mkdirSync(path.join(root, "docs", slug, "sdd"), { recursive: true });
+    writeFileSync(
+      path.join(root, "docs", slug, "sdd", "progress.md"),
+      "Task 1: complete\n",
+      "utf8",
+    );
+    const done = transitionExecution(
+      root,
+      slug,
+      plan,
+      "complete",
+      {
+        host: "cli",
+        attested: false,
+        confirmation: "tty",
+      },
+      undefined,
+      {
+        verifyProject: () => ({ stdout: "", stderr: "", exitCode: 0, cwd: root }),
+      },
+    );
+    expect(done.ok).toBe(true);
+
+    const out = runHook(
+      { ...process.env, WORKFLOW_TOOLKIT_ROOT: root, BUN: process.execPath },
+      JSON.stringify({ workspace_roots: [root] }),
+    );
+    expect(out.status, out.stderr ?? "").toBe(0);
+    const text = JSON.parse(out.stdout).additional_context as string;
+    // The completed destination must not present the four-choice reminder.
+    expect(text).toContain(
+      "Subagent-driven, Inline, Handoff, Review spec first, Review plan first",
+    );
+    expect(text).not.toContain(HANDOFF_DESTINATION_MARKER);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });

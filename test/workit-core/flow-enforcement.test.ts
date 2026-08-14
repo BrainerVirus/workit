@@ -22,6 +22,7 @@ import {
   createCursorConfirmation,
   createOpenCodeEvidence,
   isCoordinatorBashAllowed,
+  markHandoffDestination,
   nextFlowStatus,
   prepareFlowState,
   readEffectiveFlowState,
@@ -35,6 +36,7 @@ import {
   type CliConfirmation,
 } from "../../packages/workit-core/src/core/flow-state";
 import type { VerifyResult } from "../../packages/workit-core/src/core/verify-project";
+import { findMarkedDestinations } from "../../packages/workit-core/src/core/menu";
 import { COMPLIANT_PLAN, COMPLIANT_SPEC, cursorEvidence, openEvidence } from "./flow-fixtures";
 
 const COMPLIANT_SPEC_FN = COMPLIANT_SPEC;
@@ -1717,6 +1719,52 @@ test("CA-11/CA-23: passing repository verification stores completed", () => {
       status: "completed",
       mode: "subagent-driven",
     });
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("CA-07/CA-08: completing a marked handoff destination clears the flag so ordinary sessions keep five choices", () => {
+  const { root, slug } = fixture();
+  try {
+    const store = new HostReceiptStore();
+    const sessionId = "dest-complete-session";
+    const spec = `docs/${slug}/spec.md`;
+    const plan = `docs/${slug}/plan.md`;
+    expect(prepareFlowState(root, slug, { spec_path: spec, plan_path: plan }).ok).toBe(true);
+    expect(
+      transitionSpec(root, slug, spec, openEvidence(store, sessionId, "Approve spec")).ok,
+    ).toBe(true);
+    expect(
+      transitionPlan(root, slug, plan, openEvidence(store, sessionId, "Approve plan")).ok,
+    ).toBe(true);
+    expect(
+      recordMenuChoice(root, slug, plan, "handoff", openEvidence(store, sessionId, "handoff")).ok,
+    ).toBe(true);
+    expect(markHandoffDestination(root, slug, plan)).toEqual({ ok: true });
+    expect(readFlowState(root, slug).handoff_destination).toBe(true);
+    expect(findMarkedDestinations(root)).toEqual([slug]);
+    // The destination session picks an executing choice, completes the ledger,
+    // and passes repository verification.
+    expect(
+      recordMenuChoice(
+        root,
+        slug,
+        plan,
+        "subagent-driven",
+        openEvidence(store, sessionId, "subagent-driven"),
+      ).ok,
+    ).toBe(true);
+    writeSddLedger(root, slug, ["Task 1: complete"]);
+    const done = transitionExecution(root, slug, plan, "complete", cliEvidence(), undefined, {
+      verifyProject: stubVerifier(0),
+    });
+    expect(done.ok).toBe(true);
+    const state = readFlowState(root, slug);
+    expect(state.execution).toMatchObject({ status: "completed", mode: "subagent-driven" });
+    // The destination context must not leak into subsequent ordinary sessions.
+    expect(state.handoff_destination).toBe(false);
+    expect(findMarkedDestinations(root)).toEqual([]);
   } finally {
     cleanup(root);
   }

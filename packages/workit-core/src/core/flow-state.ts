@@ -1739,6 +1739,10 @@ const completeExecution = (
     const next: FlowState = {
       ...reconciled.state,
       execution: { ...exec, status: "completed" },
+      // A completed flow is never a destination: clear the context so the next
+      // ordinary session gets the source five-choice reminder, not the stale
+      // four-choice destination wording (CA-08).
+      handoff_destination: false,
       updated_at: Date.now(),
     };
     const commit = writeFlowStateIfCurrent(root, captured.state, next);
