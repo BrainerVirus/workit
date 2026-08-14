@@ -113,9 +113,9 @@ async function runFlow(
   try {
     const deps: FlowCliDeps = {
       cwd: opts.cwd,
-      stdinIsTTY: opts.stdinIsTTY ?? false,
+      stdinIsTTY: () => opts.stdinIsTTY ?? false,
       confirm: opts.confirm,
-      verifyProject: opts.verifyProject as never,
+      verifyProject: opts.verifyProject,
       out: c.out,
       err: c.err,
     };
@@ -134,7 +134,7 @@ async function runHandoff(args: string[], opts: { cwd: string; stdinIsTTY?: bool
   try {
     const code = await runHandoffCommand(args, {
       cwd: opts.cwd,
-      stdinIsTTY: opts.stdinIsTTY ?? false,
+      stdinIsTTY: () => opts.stdinIsTTY ?? false,
       out: c.out,
       err: c.err,
     });
@@ -235,6 +235,7 @@ test("positive TTY prompt supplies the tty confirmation and the transition succe
       confirm: async () => true,
     });
     expect(r.code, r.stdout + r.stderr).toBe(0);
+    expect(r.stderr).toBe("");
     expect(ev.captured()).toEqual({ host: "cli", attested: false, confirmation: "tty" });
     expect(readFlow().execution.status).toBe("paused");
   } finally {
@@ -253,6 +254,8 @@ test("negative TTY answer exits 2 without mutation", async () => {
       confirm: async () => false,
     });
     expect(r.code).toBe(2);
+    expect(r.stdout).toBe("");
+    expect(r.stderr).toContain("cancelled — no confirmation");
     expect(readFlow().execution.status).toBe("active");
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -362,6 +365,7 @@ test("handoff emits the core prompt with the marker and four-choice allow-list, 
     expect(r.code, r.stdout + r.stderr).toBe(0);
     expect(r.stderr).toBe("");
     expect(r.stdout).toContain(HANDOFF_DESTINATION_MARKER);
+    expect(r.stdout.endsWith("\n")).toBe(true);
     for (const label of DESTINATION_MENU_LABELS) {
       expect(r.stdout, label).toContain(`- ${label}`);
     }
@@ -381,6 +385,8 @@ test("handoff validation failure exits 1 and does not mark the destination", asy
     const r = await runHandoff(["--message", `docs/${slug}/plan.md`], { cwd: root });
     expect(r.code).toBe(1);
     expect(r.stdout).toBe("");
+    const data = JSON.parse(r.stderr);
+    expect(data.code).toBe("handoff_build_failed");
     expect(readFlow().handoff_destination).toBe(false);
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -430,6 +436,9 @@ test("usage errors exit 2 with stderr diagnostics", async () => {
       { args: ["status", "--plan"], run: runFlow },
       { args: ["status", "--plan", `docs/${slug}/plan.md`, "--confirm"], run: runFlow },
       { args: ["pause", "--plan", `docs/${slug}/plan.md`, "--bogus"], run: runFlow },
+      { args: ["pause", "--plan", `docs/${slug}/plan.md`, "--plan", `docs/${slug}/plan.md`], run: runFlow },
+      { args: ["pause", "--plan", `docs/${slug}/plan.md`, "--confirm", "--confirm"], run: runFlow },
+      { args: ["pause", "--plan", "--confirm"], run: runFlow },
       { args: [], run: runHandoff },
       { args: ["--message"], run: runHandoff },
       { args: ["--message", "docs/x/plan.md", "--bogus"], run: runHandoff },

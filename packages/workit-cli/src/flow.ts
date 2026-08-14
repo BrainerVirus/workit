@@ -7,7 +7,7 @@ import {
   type LifecycleEvidence,
 } from "@brainervirus/workit-core/src/core/flow-state";
 import { buildHandoffPrompt } from "@brainervirus/workit-core/src/core/handoff-tools";
-import { markHandoffDestination } from "@brainervirus/workit-core/src/core/flow-state";
+import { markHandoffDestination, slugFromPath } from "@brainervirus/workit-core/src/core/flow-state";
 import { resolveCanonicalLayout } from "@brainervirus/workit-core/src/core/docs-layout";
 import type { runVerifyProject } from "@brainervirus/workit-core/src/core/verify-project";
 
@@ -21,7 +21,7 @@ import type { runVerifyProject } from "@brainervirus/workit-core/src/core/verify
 // missing non-TTY confirmation.
 
 export type FlowCliDeps = {
-  stdinIsTTY?: boolean | (() => boolean);
+  stdinIsTTY?: () => boolean;
   confirm?: () => Promise<boolean>;
   verifyProject?: typeof runVerifyProject;
   cwd?: string;
@@ -33,11 +33,22 @@ const FLOW_ACTIONS = ["status", "pause", "resume", "complete"] as const;
 type FlowAction = (typeof FLOW_ACTIONS)[number];
 type MutationAction = Exclude<FlowAction, "status">;
 
-const FLOW_COMMANDS: Record<FlowAction, string> = {
+// Single source of truth for the command surface: FLOW_COMMANDS (usage errors)
+// and the index.tsx HELP text are both derived from COMMANDS so the exact
+// command strings cannot drift.
+export const COMMANDS = {
   status: "workit flow status --plan <path>",
   pause: "workit flow pause --plan <path> [--confirm]",
   resume: "workit flow resume --plan <path> [--confirm]",
   complete: "workit flow complete --plan <path> [--confirm]",
+  handoff: "workit handoff --message <text>",
+} as const;
+
+const FLOW_COMMANDS: Record<FlowAction, string> = {
+  status: COMMANDS.status,
+  pause: COMMANDS.pause,
+  resume: COMMANDS.resume,
+  complete: COMMANDS.complete,
 };
 
 const CLI_FLAG_EVIDENCE: CliConfirmation = { host: "cli", attested: false, confirmation: "flag" };
@@ -45,8 +56,14 @@ const CLI_TTY_EVIDENCE: CliConfirmation = { host: "cli", attested: false, confir
 
 const defaultIsTTY = (): boolean => process.stdin.isTTY === true;
 
-const defaultConfirm = async (): Promise<boolean> => {
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
+// The confirm prompt is routed through the injected `out` stream (falling back
+// to process.stdout) so injected-confirm tests capture the same TTY prompt a
+// real terminal sees, instead of writing to the process stdout directly.
+const defaultConfirm = async (out?: { write: (chunk: string) => void }): Promise<boolean> => {
+  const rl = createInterface({
+    input: process.stdin,
+    output: (out ?? process.stdout) as NodeJS.WritableStream,
+  });
   try {
     const answer = await rl.question("Proceed? [y/N] ");
     return /^y(es)?$/i.test(answer.trim());
@@ -65,7 +82,7 @@ const writeJSON = (stream: { write: (chunk: string) => void }, value: unknown) =
   write(stream, JSON.stringify(value, null, 2));
 
 const isTTY = (deps: FlowCliDeps): boolean =>
-  typeof deps.stdinIsTTY === "function" ? deps.stdinIsTTY() : (deps.stdinIsTTY ?? defaultIsTTY());
+  deps.stdinIsTTY === undefined ? defaultIsTTY() : deps.stdinIsTTY();
 
 const workspaceRoot = (deps: FlowCliDeps): string =>
   process.env.WORKFLOW_WORKSPACE_ROOT ?? deps.cwd ?? process.cwd();
@@ -99,9 +116,17 @@ function parseFlowFlags(
   for (let i = 0; i < argv.length; i++) {
     const token = argv[i];
     if (token === "--plan") {
+      if (plan !== undefined) {
+        usage(err, `usage: ${FLOW_COMMANDS[action]} — duplicate --plan flag`);
+        return { ok: false };
+      }
       const value = argv[i + 1];
       if (value === undefined || value.trim() === "") {
         usage(err, `usage: ${FLOW_COMMANDS[action]} — --plan requires a non-empty path`);
+        return { ok: false };
+      }
+      if (value.startsWith("--")) {
+        usage(err, `usage: ${FLOW_COMMANDS[action]} — unknown flag: ${value}`);
         return { ok: false };
       }
       plan = value;
@@ -112,6 +137,10 @@ function parseFlowFlags(
           err,
           `usage: ${FLOW_COMMANDS[action]} — status is read-only and accepts no --confirm`,
         );
+        return { ok: false };
+      }
+      if (confirm) {
+        usage(err, `usage: ${FLOW_COMMANDS[action]} — duplicate --confirm flag`);
         return { ok: false };
       }
       confirm = true;
@@ -136,6 +165,7 @@ function parseFlowFlags(
 async function resolveConfirmation(
   deps: FlowCliDeps,
   confirmFlag: boolean,
+  out: { write: (chunk: string) => void },
   err: { write: (chunk: string) => void },
 ): Promise<CliConfirmation | null> {
   if (confirmFlag) return CLI_FLAG_EVIDENCE;
@@ -143,7 +173,7 @@ async function resolveConfirmation(
     usage(err, "--confirm required when stdin is not a TTY");
     return null;
   }
-  const answered = await (deps.confirm ?? defaultConfirm)();
+  const answered = deps.confirm ? await deps.confirm() : await defaultConfirm(out);
   if (!answered) {
     usage(err, "cancelled — no confirmation");
     return null;
@@ -225,7 +255,7 @@ export async function runFlowCommand(argv: string[], deps: FlowCliDeps = {}): Pr
   if (flowAction === "status") {
     return statusCommand(root, parsed.parsed.plan, out, err);
   }
-  const evidence = await resolveConfirmation(deps, parsed.parsed.confirm, err);
+  const evidence = await resolveConfirmation(deps, parsed.parsed.confirm, out, err);
   if (evidence === null) return 2;
   return mutateCommand(root, parsed.parsed.plan, flowAction, evidence, deps, out, err);
 }
@@ -235,7 +265,7 @@ export async function runHandoffCommand(argv: string[], deps: FlowCliDeps = {}):
   const err = errStream(deps);
   const [flag, value, ...rest] = argv;
   if (flag !== "--message" || value === undefined || value.trim() === "" || rest.length > 0) {
-    return usage(err, "usage: workit handoff --message <text>");
+    return usage(err, `usage: ${COMMANDS.handoff}`);
   }
   const root = workspaceRoot(deps);
   // Build the core destination prompt first; a validation failure exits 1
@@ -243,13 +273,17 @@ export async function runHandoffCommand(argv: string[], deps: FlowCliDeps = {}):
   // print the prompt unchanged (CA-07).
   const built = buildHandoffPrompt(root, value.trim());
   if ("error" in built) {
-    writeJSON(err, { ok: false, error: built.error });
+    // Core buildHandoffPrompt returns only { error }; the CLI adds the
+    // structured code so a caller can branch on it without re-deriving it
+    // (consumes core, never re-implements validation).
+    writeJSON(err, { ok: false, error: built.error, code: "handoff_build_failed" });
     return 1;
   }
-  const resolved = resolveCanonicalLayout({ workspace_root: root, plan_path: built.plan });
-  if (!resolved.ok) return domainFail(err, "path_invalid", resolved.error);
-  const marked = markHandoffDestination(root, resolved.layout.slug, built.plan);
+  // buildHandoffPrompt already validated the plan path, so the slug derives
+  // from it directly — no second resolveCanonicalLayout pass (markHandoffDestination
+  // re-validates via resolveDoc anyway).
+  const marked = markHandoffDestination(root, slugFromPath(built.plan), built.plan);
   if (!marked.ok) return domainFail(err, marked.code, marked.error, marked.details);
-  out.write(built.prompt);
+  write(out, built.prompt);
   return 0;
 }
