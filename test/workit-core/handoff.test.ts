@@ -15,6 +15,7 @@ import path from "node:path";
 import {
   adaptPluginHandoffClient,
   createHandoffTools,
+  idempotentMarkDestination,
   type HandoffClient,
 } from "../../packages/workit-opencode/src/tools/handoff";
 import {
@@ -436,6 +437,95 @@ test("native handoff resolves relative paths from the session directory", async 
     } as never);
 
     expect(createdDirectory).toBe(root);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("native handoff pre-flight rejects an already-marked destination without creating or seeding a session", async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wk-handoff-preflight-"));
+  try {
+    const store = new HostReceiptStore();
+    approveHandoffFlow(root, store, "preflight-session");
+    expect(markHandoffDestination(root, "x", "docs/x/plan.md")).toEqual({ ok: true });
+    const calls: string[] = [];
+    const client = {
+      session: {
+        async create() {
+          calls.push("create");
+          return { data: { id: "child-preflight" } };
+        },
+        async promptAsync() {
+          calls.push("seed");
+          return { data: undefined };
+        },
+      },
+      tui: {
+        async selectSession() {
+          calls.push("select");
+          return { data: true };
+        },
+      },
+    };
+    const raw = await createHandoffTools(
+      client as never,
+      new WorkflowStateStore(),
+    ).workflow_handoff_session.execute(
+      { message: "continue" },
+      { directory: root, worktree: root, sessionID: "parent" } as never,
+    );
+    const parsed = JSON.parse(raw as string);
+    expect(parsed.ok).toBe(false);
+    expect(parsed.data.code).toBe("recursive_handoff");
+    expect(calls).toEqual([]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("re-handoff after a selection failure: the idempotent adapter mark skips re-marking and selection succeeds", async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wk-handoff-retry-"));
+  try {
+    const store = new HostReceiptStore();
+    approveHandoffFlow(root, store, "retry-session");
+    // A first handoff reached the select stage and failed: the destination is
+    // already seeded and marked (CA-07). The retry re-seeds a new child, and the
+    // adapter's idempotent mark must skip markHandoffDestination (which would
+    // reject recursive_handoff at stage "mark") and continue to selection.
+    expect(markHandoffDestination(root, "x", "docs/x/plan.md")).toEqual({ ok: true });
+    const calls: string[] = [];
+    const client = {
+      session: {
+        async create() {
+          calls.push("create");
+          return { data: { id: "child-retry" } };
+        },
+        async promptAsync() {
+          calls.push("seed");
+          return { data: undefined };
+        },
+      },
+      tui: {
+        async selectSession() {
+          calls.push("select");
+          return { data: true };
+        },
+      },
+    };
+    const result = await handoffSession(client, {
+      directory: root,
+      title: "Continue x",
+      prompt: "Continue",
+      stay: false,
+      afterSeed: () => idempotentMarkDestination(root, "x", "docs/x/plan.md"),
+    } satisfies HandoffRequest);
+    expect(result).toEqual({
+      ok: true,
+      data: { sessionID: "child-retry", seeded: true, selected: true },
+      error: null,
+    });
+    expect(calls).toEqual(["create", "seed", "select"]);
+    expect(effectiveState(root).handoff_destination).toBe(true);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

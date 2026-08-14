@@ -173,6 +173,29 @@ test("CA-17: a drift-reset active flow is not discovered after the plan changes"
   }
 });
 
+test("E: a clearly-inactive flow skips the full effective read (pre-filter early return)", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wf-reminder-"));
+  try {
+    // An inactive flow whose raw flow.json carries no "subagent-driven" token:
+    // its effective execution can never be active+subagent-driven, so the scan
+    // pre-filter skips it with one cheap read. If the full effective read ran,
+    // the induced plan drift would persist a reset of the plan to draft; the
+    // pre-filter must leave the file byte-identical (the drift is reconciled
+    // only when a status/transition actually reads the flow).
+    establishMenuChoice(root, "inactive", "handoff");
+    const flow = path.join(root, "docs", "inactive", "sdd", "flow.json");
+    const before = readFileSync(flow, "utf8");
+    writeFileSync(
+      path.join(root, "docs", "inactive", "plan.md"),
+      REMINDER_PLAN("inactive").replace("do it", "do it now"),
+    );
+    expect(findActiveSubagentDrivenPlans(root)).toEqual([]);
+    expect(readFileSync(flow, "utf8")).toBe(before);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("CA-03: reminder is injected only when the marker is absent (idempotent)", () => {
   expect(shouldInjectSddReminder("plain user message")).toBe(true);
   expect(shouldInjectSddReminder(SDD_REMINDER_TEXT)).toBe(false);

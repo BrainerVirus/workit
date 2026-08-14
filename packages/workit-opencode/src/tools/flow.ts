@@ -206,13 +206,18 @@ export function createFlowTools(receipts: HostReceiptStore, client?: SessionLook
           createOpenCodeEvidence(consumed.receipt),
           await opencodeMutationContext(context, client),
         );
+        // Echo through the EFFECTIVE read (CA-02): the post-transition status is
+        // reconciled so a drift reset that ran during the transition is
+        // reflected, consistent with workflow_flow_status. Fall back to the
+        // lenient read only if the reconciled read itself fails — never fail a
+        // successful transition over an echo.
+        const effective = readEffectiveFlowState(context.directory, slug);
+        const status = effective.ok
+          ? effective.state.spec.status
+          : readFlowState(context.directory, slug).spec.status;
         return output(
           result.ok
-            ? ok({
-                spec: spec_path,
-                status: readFlowState(context.directory, slug).spec.status,
-                question: consumed.receipt.question,
-              })
+            ? ok({ spec: spec_path, status, question: consumed.receipt.question })
             : fail(result.error, { code: result.code }),
         );
       },
@@ -239,13 +244,15 @@ export function createFlowTools(receipts: HostReceiptStore, client?: SessionLook
           createOpenCodeEvidence(consumed.receipt),
           await opencodeMutationContext(context, client),
         );
+        // Effective echo, same as workflow_spec_approve: reconciled status,
+        // lenient fallback only if the reconciled read fails.
+        const effective = readEffectiveFlowState(context.directory, slug);
+        const status = effective.ok
+          ? effective.state.plan.status
+          : readFlowState(context.directory, slug).plan.status;
         return output(
           result.ok
-            ? ok({
-                plan: plan_path,
-                status: readFlowState(context.directory, slug).plan.status,
-                question: consumed.receipt.question,
-              })
+            ? ok({ plan: plan_path, status, question: consumed.receipt.question })
             : fail(result.error, { code: result.code }),
         );
       },
@@ -294,17 +301,17 @@ export function createFlowTools(receipts: HostReceiptStore, client?: SessionLook
     workflow_plan_pause: lifecycleTool(
       "pause",
       "Pause plan",
-      "Pause a running plan from a host-observed native-question receipt: active -> paused. The receipt label must be exactly `Pause plan`; there is no evidence argument (AR-12).",
+      "Pause a running plan from a host-observed native-question receipt: active -> paused. The receipt label must be exactly `Pause plan`; there is no evidence argument (AR-12). A failed gate (already-paused) spends the receipt — re-answer the native question to retry.",
     ),
     workflow_plan_resume: lifecycleTool(
       "resume",
       "Resume plan",
-      "Resume a paused plan from a host-observed native-question receipt: paused -> active. The receipt label must be exactly `Resume plan`; there is no evidence argument (AR-12).",
+      "Resume a paused plan from a host-observed native-question receipt: paused -> active. The receipt label must be exactly `Resume plan`; there is no evidence argument (AR-12). A failed gate (flow_not_paused) spends the receipt — re-answer the native question to retry.",
     ),
     workflow_plan_complete: lifecycleTool(
       "complete",
       "Complete plan",
-      "Complete a running plan from a host-observed native-question receipt: active/paused -> completed, after the SDD ledger is complete and repository verification passes. The receipt label must be exactly `Complete plan`; there is no evidence argument (AR-12).",
+      "Complete a running plan from a host-observed native-question receipt: active/paused -> completed, after the SDD ledger is complete and repository verification passes. The receipt label must be exactly `Complete plan`; there is no evidence argument (AR-12). A failed gate (execution_incomplete or verification_failed) spends the receipt — re-answer the native question to retry.",
     ),
   };
 }

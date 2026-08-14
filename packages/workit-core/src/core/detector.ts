@@ -1,4 +1,4 @@
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { CONFIG_GAP_MARKER } from "./config-guard";
 import { readEffectiveFlowState, type FlowReadResult } from "./flow-state";
@@ -190,25 +190,47 @@ export const scanActiveSubagentDrivenPlans = (root: string): ActivePlanScan => {
   if (!existsSync(docsDir)) return { slugs: [], read_errors: [] };
   const slugs: string[] = [];
   const readErrors: { slug: string; code: string; error: string }[] = [];
-  for (const slug of readdirSync(docsDir)) {
-    const file = path.join(docsDir, slug, "sdd", "flow.json");
-    if (!existsSync(file)) continue;
+  // The full effective read (lock + digest hashing + possibly writing drift
+  // resets) is the expensive path; it runs per slug on every message/tool call.
+  const classify = (slug: string) => {
     let effective: FlowReadResult;
     try {
       effective = readEffectiveFlowState(root, slug);
     } catch {
       // an unexpected read error (e.g. a non-slug directory name) excludes the
       // entry without touching it
-      continue;
+      return;
     }
     if (!effective.ok) {
       if (effective.code === "flow_concurrent_conflict" || effective.code === "flow_io_error") {
         readErrors.push({ slug, code: effective.code, error: effective.error });
       }
-      continue;
+      return;
     }
     const exec = effective.state.execution;
     if (exec.status === "active" && exec.mode === "subagent-driven") slugs.push(slug);
+  };
+  for (const slug of readdirSync(docsDir)) {
+    const file = path.join(docsDir, slug, "sdd", "flow.json");
+    if (!existsSync(file)) continue;
+    // Raw pre-filter (Task 2 advisory): a flow.json that cannot plausibly hold
+    // an active subagent-driven execution is skipped with ONE cheap read.
+    // Absence of the `subagent-driven` token makes an ACTIVE subagent-driven
+    // execution impossible — an explicit execution requires mode
+    // "subagent-driven" and legacy derivation (CA-16) requires menu.chosen
+    // "subagent-driven", both embedding the literal token. The pre-filter can
+    // only skip and never causes a false negative: an unreadable file or one
+    // containing a backslash-u escape (hand-encoded, never produced by the
+    // toolkit's own writers) is treated as in-doubt and runs the full read.
+    let raw: string;
+    try {
+      raw = readFileSync(file, "utf8");
+    } catch {
+      classify(slug);
+      continue;
+    }
+    if (!raw.includes("subagent-driven") && !raw.includes("\\u")) continue;
+    classify(slug);
   }
   return { slugs, read_errors: readErrors };
 };

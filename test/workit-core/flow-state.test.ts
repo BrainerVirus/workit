@@ -497,6 +497,54 @@ test("CA-04: an unreadable canonical spec file is document_unreadable", () => {
   }
 });
 
+test("CA-04: a missing canonical plan file is plan document_missing and preserves the valid spec", () => {
+  const { root, slug } = fixture();
+  try {
+    establishApprovedFlow(root, slug, new HostReceiptStore(), "s1");
+    const planFile = path.join(root, "docs", slug, "plan.md");
+    rmSync(planFile, { force: true });
+    const missing = readEffectiveFlowState(root, slug);
+    expect(missing.ok).toBe(true);
+    if (!missing.ok) throw new Error(missing.error);
+    expect(missing.drift).toEqual([
+      { document: "plan", code: "document_missing", path: `docs/${slug}/plan.md` },
+    ]);
+    expect(missing.state.spec).toMatchObject({ status: "approved" });
+    expect(missing.state.plan).toMatchObject({
+      status: "draft",
+      approved_digest: null,
+      evidence: null,
+    });
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("CA-04: an unreadable canonical plan file is plan document_unreadable and preserves the valid spec", () => {
+  if (process.platform === "win32") return; // chmod is not advisory on win32
+  const { root, slug } = fixture();
+  try {
+    establishApprovedFlow(root, slug, new HostReceiptStore(), "s1");
+    const planFile = path.join(root, "docs", slug, "plan.md");
+    chmodSync(planFile, 0o000);
+    const effective = readEffectiveFlowState(root, slug);
+    expect(effective.ok).toBe(true);
+    if (!effective.ok) throw new Error(effective.error);
+    expect(effective.drift).toEqual([
+      { document: "plan", code: "document_unreadable", path: `docs/${slug}/plan.md` },
+    ]);
+    expect(effective.state.spec).toMatchObject({ status: "approved" });
+    expect(effective.state.plan).toMatchObject({
+      status: "draft",
+      approved_digest: null,
+      evidence: null,
+    });
+  } finally {
+    chmodSync(path.join(root, "docs", slug, "plan.md"), 0o644);
+    cleanup(root);
+  }
+});
+
 test("CA-03: spec drift resets plan approval, menu evidence, handoff context, and execution", () => {
   const { root, slug } = fixture();
   try {
@@ -712,6 +760,107 @@ test("a never-activated effective read creates no docs/<slug>/sdd/ side effect",
     expect(existsSync(sddDir)).toBe(false);
   } finally {
     cleanup(root);
+  }
+});
+
+test("CA-16: deriveLegacyExecution guards exercised in isolation — plan-approved and subagent-driven-choice preconditions", () => {
+  // A legacy flow.json WITHOUT the execution key (the pre-lifecycle shape) with
+  // valid approved digests so reconciliation introduces no drift. Each row
+  // flips exactly one precondition the fixture always pre-approves elsewhere.
+  const writeLegacy = (
+    root: string,
+    slug: string,
+    overrides: { plan?: { status: string }; menu?: { chosen: string } } = {},
+    ledger?: string[],
+  ) => {
+    const sdd = path.join(root, "docs", slug, "sdd");
+    mkdirSync(sdd, { recursive: true });
+    if (ledger) {
+      writeFileSync(path.join(sdd, "progress.md"), ledger.join("\n") + "\n", "utf8");
+    }
+    const specBytes = readFileSync(path.join(root, "docs", slug, "spec.md"));
+    const planBytes = readFileSync(path.join(root, "docs", slug, "plan.md"));
+    writeFileSync(
+      path.join(sdd, "flow.json"),
+      JSON.stringify(
+        {
+          slug,
+          activated: true,
+          spec: {
+            path: `docs/${slug}/spec.md`,
+            status: "approved",
+            evidence: null,
+            approved_digest: sha256(specBytes),
+          },
+          plan: {
+            path: `docs/${slug}/plan.md`,
+            status: "approved",
+            evidence: null,
+            approved_digest: sha256(planBytes),
+            ...overrides.plan,
+          },
+          menu: {
+            presented: true,
+            chosen: "subagent-driven",
+            evidence: null,
+            ...overrides.menu,
+          },
+          handoff_destination: false,
+          updated_at: Date.now(),
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+  };
+  const cases: {
+    name: string;
+    overrides: { plan?: { status: string }; menu?: { chosen: string } };
+    ledger?: string[];
+    expected: { status: "active" | "pending"; mode: "subagent-driven" | "inline" | null };
+  }[] = [
+    {
+      name: "approved plan but NOT subagent-driven choice derives pending",
+      overrides: { menu: { chosen: "handoff" } },
+      ledger: ["Task 1: in_progress"],
+      expected: { status: "pending", mode: null },
+    },
+    {
+      name: "subagent-driven choice but plan NOT approved derives pending",
+      overrides: { plan: { status: "draft" } },
+      ledger: ["Task 1: in_progress"],
+      expected: { status: "pending", mode: null },
+    },
+    {
+      name: "approved + subagent-driven + ledger NOT started derives pending",
+      overrides: {},
+      ledger: undefined,
+      expected: { status: "pending", mode: null },
+    },
+    {
+      name: "approved + subagent-driven + started incomplete derives active",
+      overrides: {},
+      ledger: ["Task 1: in_progress"],
+      expected: { status: "active", mode: "subagent-driven" },
+    },
+  ];
+  for (const c of cases) {
+    const { root, slug } = fixture();
+    try {
+      writeLegacy(root, slug, c.overrides, c.ledger);
+      const effective = readEffectiveFlowState(root, slug);
+      expect(effective.ok, c.name).toBe(true);
+      if (!effective.ok) throw new Error(effective.error);
+      expect(effective.drift, c.name).toEqual([]);
+      expect(effective.state.execution, c.name).toEqual({
+        status: c.expected.status,
+        mode: c.expected.mode,
+        evidence: null,
+      });
+    } finally {
+      cleanup(root);
+    }
   }
 });
 

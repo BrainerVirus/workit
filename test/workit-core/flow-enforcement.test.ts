@@ -1479,6 +1479,22 @@ test("CA-14: pause from pending and completed fails; resume from active, pending
       cleanup(root);
     }
   }
+  // Pause from an already-paused flow (flow_already_paused — the one pause
+  // failure row the pause-failure test did not cover).
+  {
+    const { root, slug } = fixture();
+    try {
+      establishMenuChoice(root, slug, "subagent-driven");
+      const plan = `docs/${slug}/plan.md`;
+      const first = transitionExecution(root, slug, plan, "pause", cliEvidence("flag"));
+      expect(first.ok).toBe(true);
+      const paused = transitionExecution(root, slug, plan, "pause", cliEvidence("tty"));
+      expect(paused.ok).toBe(false);
+      if (!paused.ok) expect(paused.code).toBe("flow_already_paused");
+    } finally {
+      cleanup(root);
+    }
+  }
   // Pause and resume from completed.
   {
     const { root, slug } = fixture();
