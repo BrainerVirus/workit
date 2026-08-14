@@ -180,6 +180,13 @@ export function mergeCursorHooks(
 }
 
 /**
+ * Canonical reviewed pin for the Cursor npm runtime (README "Update review").
+ * The single source for every source-derived Cursor runtime selector; the
+ * committed manifests keep the literal (static data cannot import TS).
+ */
+export const CURSOR_RUNTIME_PACKAGE = "@brainervirus/workit-cursor@0.8.0";
+
+/**
  * Portable Cursor MCP server entry (CA-16/CA-17): launch the published package
  * through npx against its npm bin, so the Marketplace plugin never depends on a
  * repo-relative or untracked dist file.
@@ -190,12 +197,7 @@ export function cursorMcpServerEntry(_packageDir: string): {
 } {
   return {
     command: "npx",
-    args: [
-      "-y",
-      "--package=@brainervirus/workit-cursor@0.8.0",
-      "workit-cursor-mcp",
-      "${workspaceFolder}",
-    ],
+    args: ["-y", `--package=${CURSOR_RUNTIME_PACKAGE}`, "workit-cursor-mcp", "${workspaceFolder}"],
   };
 }
 
@@ -208,7 +210,7 @@ export function cursorHooksEntry(_packageDir: string): {
   args: string[];
 } {
   return {
-    command: "npx -y --package=@brainervirus/workit-cursor@0.8.0 workit-cursor-session-start",
+    command: `npx -y --package=${CURSOR_RUNTIME_PACKAGE} workit-cursor-session-start`,
     args: [],
   };
 }

@@ -11,7 +11,7 @@ import path from "node:path";
 import { SUPPORT_MATRIX } from "./support-matrix";
 import { EVENT } from "./boundary";
 import { getDiagnosticLogger, isConfigObject } from "./config";
-import { cursorHooksEntry, isWorkitPlugin } from "./registration";
+import { CURSOR_RUNTIME_PACKAGE, cursorHooksEntry, isWorkitPlugin } from "./registration";
 import { resolveWorkspaceFrom } from "./workspaces";
 import { validateCursorSkills } from "./skill-manifests";
 
@@ -422,7 +422,7 @@ const registeredCursorLauncher = (res: Resolved): CursorLauncher | null | "inval
     // CA-17: exact positional tokens — a substring match would accept
     // `@latest-alpha` or `workit-cursor-mcp-foo`.
     if (args[0] !== "-y") return "invalid";
-    if (args[1] !== "--package=@brainervirus/workit-cursor@0.8.0") return "invalid";
+    if (args[1] !== `--package=${CURSOR_RUNTIME_PACKAGE}`) return "invalid";
     if (args[2] !== "workit-cursor-mcp") return "invalid";
     return { kind: "npx" };
   }
@@ -480,7 +480,9 @@ const checkLauncher = (res: Resolved): DoctorCheck => {
     }
     const hook = registeredCursorHook(res);
     if (hook === "invalid") {
-      missing.push(`cursor: canonical session-start hook in ${path.join(res.cursorPluginDir, "hooks", "hooks-cursor.json")}`);
+      missing.push(
+        `cursor: canonical session-start hook in ${path.join(res.cursorPluginDir, "hooks", "hooks-cursor.json")}`,
+      );
     } else if (hook !== null && hook !== canonicalCursorHook) {
       missing.push(
         `cursor: canonical session-start hook in ${path.join(res.cursorPluginDir, "hooks", "hooks-cursor.json")} (registered ${hook})`,

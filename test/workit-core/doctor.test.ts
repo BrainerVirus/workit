@@ -457,35 +457,31 @@ test("cursor session-start hook command matches exact canonical string (CA-17)",
     version: 1,
     hooks: {
       sessionStart: [
-        { command: "npx -y --package=@brainervirus/workit-cursor@0.8.0 workit-cursor-session-start" },
+        {
+          command: "npx -y --package=@brainervirus/workit-cursor@0.8.0 workit-cursor-session-start",
+        },
       ],
     },
   };
   const hookVariants: Array<[string, string]> = [
-    [
-      "@latest",
-      "npx -y --package=@brainervirus/workit-cursor@latest workit-cursor-session-start",
-    ],
+    ["@latest", "npx -y --package=@brainervirus/workit-cursor@latest workit-cursor-session-start"],
     [
       "@latest-alpha",
       "npx -y --package=@brainervirus/workit-cursor@latest-alpha workit-cursor-session-start",
     ],
-    [
-      "@0.8.00",
-      "npx -y --package=@brainervirus/workit-cursor@0.8.00 workit-cursor-session-start",
-    ],
+    ["@0.8.00", "npx -y --package=@brainervirus/workit-cursor@0.8.00 workit-cursor-session-start"],
     [
       "extra-token",
       "npx -y --package=@brainervirus/workit-cursor@0.8.0 workit-cursor-session-start extra",
     ],
-    [
-      "missing-executable",
-      "npx -y --package=@brainervirus/workit-cursor@0.8.0",
-    ],
+    ["missing-executable", "npx -y --package=@brainervirus/workit-cursor@0.8.0"],
   ];
   try {
     for (const [label, command] of hookVariants) {
-      writeConfig(hooksFile, JSON.stringify({ version: 1, hooks: { sessionStart: [{ command }] } }));
+      writeConfig(
+        hooksFile,
+        JSON.stringify({ version: 1, hooks: { sessionStart: [{ command }] } }),
+      );
       const report = run();
       expect(check(report, "launcher").status, label).toBe("fail");
       expect(check(report, "launcher").detail, label).toContain("canonical");

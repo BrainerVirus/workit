@@ -106,7 +106,10 @@ export const makeDoctorFixture = (): DoctorFixture => {
       version: 1,
       hooks: {
         sessionStart: [
-          { command: "npx -y --package=@brainervirus/workit-cursor@0.8.0 workit-cursor-session-start" },
+          {
+            command:
+              "npx -y --package=@brainervirus/workit-cursor@0.8.0 workit-cursor-session-start",
+          },
         ],
       },
     }),

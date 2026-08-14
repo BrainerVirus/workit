@@ -22,6 +22,13 @@ const OPENCODE = "@brainervirus/workit-opencode";
 const read = (rel: string) => readFileSync(path.join(REPO_ROOT, rel), "utf8");
 const json = <T>(rel: string) => JSON.parse(read(rel)) as T;
 
+// Advisory #4 (cursor-npx-runtime-pin): the reviewed pin is a deliberate
+// immutable value; a future bump must fail CI if any selector is missed. Every
+// active Cursor runtime selector is the exact `--package=@0.8.0` pin, and only
+// the doctor's intentional negative-rejection fixture may carry variants.
+const CURSOR_RUNTIME_SELECTOR = /--package=@brainervirus\/workit-cursor@([^\s"'${}`]+)/g;
+const CURSOR_DOCTOR_NEGATIVE_VARIANTS = ["latest", "latest-alpha", "0.8.0-alpha", "0.8.00"];
+
 const byName = (packs: ReturnType<typeof packWorkspacePackages>, name: string) =>
   packs.find((p) => p.packageName === name)!;
 
@@ -74,6 +81,41 @@ test("cursor hooks-cursor.json uses the documented single command string (CA-17)
     expect(JSON.stringify(entry), source).not.toContain("run-server");
     expect(JSON.stringify(entry), source).not.toMatch(/\$HOME/);
     expect(JSON.stringify(entry), source).not.toMatch(/^\//);
+  }
+});
+
+test("active Cursor runtime selectors use only the canonical @0.8.0 pin (except the doctor negative fixture)", () => {
+  const tracked = spawnSync("git", ["ls-files", "--", "packages", "test"], {
+    cwd: REPO_ROOT,
+    encoding: "utf8",
+  });
+  expect(tracked.status).toBe(0);
+  const files = tracked.stdout.trim().split("\n").filter(Boolean);
+
+  const stale: string[] = [];
+  for (const file of files) {
+    const text = read(file);
+    for (const match of text.matchAll(CURSOR_RUNTIME_SELECTOR)) {
+      const selector = match[1];
+      const fixture = file === "test/workit-core/doctor.test.ts";
+      if (selector === "0.8.0") continue;
+      if (fixture && CURSOR_DOCTOR_NEGATIVE_VARIANTS.includes(selector)) continue;
+      stale.push(`${file}: @brainervirus/workit-cursor@${selector}`);
+    }
+  }
+  expect(stale).toEqual([]);
+
+  // The canonical constant itself must stay the exact reviewed pin — a bump to
+  // the shared constant alone would otherwise dodge the --package= scan above.
+  expect(read("packages/workit-core/src/core/registration.ts")).toContain(
+    `CURSOR_RUNTIME_PACKAGE = "@brainervirus/workit-cursor@0.8.0"`,
+  );
+
+  // Removing a negative-rejection variant must break loudly, never silently
+  // narrow the allowlist.
+  const doctor = read("test/workit-core/doctor.test.ts");
+  for (const variant of CURSOR_DOCTOR_NEGATIVE_VARIANTS) {
+    expect(doctor, variant).toContain(`@brainervirus/workit-cursor@${variant}`);
   }
 });
 
