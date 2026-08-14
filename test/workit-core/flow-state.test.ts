@@ -163,6 +163,30 @@ test("menu choice records presented + chosen with exact evidence", () => {
   }
 });
 
+test("recordMenuChoice fixes up a legacy empty plan.path to the canonical path", () => {
+  const { root, slug } = fixture();
+  try {
+    const plan = `docs/${slug}/plan.md`;
+    establishApprovedFlow(root, slug, new HostReceiptStore(), "s1");
+    const base = readFlowState(root, slug);
+    writeFlowState(root, { ...base, plan: { ...base.plan, path: "" } });
+    // The legacy empty path survived up to the menu recording.
+    expect(readFlowState(root, slug).plan.path).toBe("");
+    const store = new HostReceiptStore();
+    const recorded = recordMenuChoice(
+      root,
+      slug,
+      plan,
+      "inline",
+      openEvidence(store, "s1", "inline"),
+    );
+    expect(recorded.ok).toBe(true);
+    expect(readFlowState(root, slug).plan.path).toBe(plan);
+  } finally {
+    cleanup(root);
+  }
+});
+
 import {
   assertFlowGates,
   slugFromPath,
@@ -279,6 +303,10 @@ test("malformed flow.json at the canonical sdd path blocks transitions with flow
     if (result.ok === false) {
       expect(result.error).toContain("invalid flow state");
       expect(result.code).toBe("flow_state_invalid");
+      expect(result.details).toEqual({
+        path: `docs/${slug}/sdd/flow.json`,
+        original_bytes_preserved: true,
+      });
     }
     expect(readFileSync(file, "utf8")).toBe("{not-json");
   } finally {
@@ -633,8 +661,55 @@ test("CA-18: malformed flow.json returns flow_state_invalid and preserves the or
     if (!effective.ok) {
       expect(effective.code).toBe("flow_state_invalid");
       expect(effective.error).toContain("invalid flow state");
+      expect(effective.details).toEqual({
+        path: `docs/${slug}/sdd/flow.json`,
+        original_bytes_preserved: true,
+      });
     }
     expect(readFileSync(file, "utf8")).toBe("{not-json");
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("CA-18: a bogus menu.chosen outside MENU_CHOICES is flow_state_invalid", () => {
+  const { root, slug } = fixture();
+  try {
+    prepareFlowState(root, slug, {
+      spec_path: `docs/${slug}/spec.md`,
+      plan_path: `docs/${slug}/plan.md`,
+    });
+    const file = flowJson(root, slug);
+    const bogus = JSON.stringify({
+      ...JSON.parse(readFileSync(file, "utf8")),
+      menu: { presented: true, chosen: "foo", evidence: null },
+    });
+    writeFileSync(file, bogus, "utf8");
+    const effective = readEffectiveFlowState(root, slug);
+    expect(effective.ok).toBe(false);
+    if (!effective.ok) {
+      expect(effective.code).toBe("flow_state_invalid");
+      expect(effective.error).toContain("menu.chosen");
+      expect(effective.details).toEqual({
+        path: `docs/${slug}/sdd/flow.json`,
+        original_bytes_preserved: true,
+      });
+    }
+    expect(readFileSync(file, "utf8")).toBe(bogus);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("a never-activated effective read creates no docs/<slug>/sdd/ side effect", () => {
+  const { root, slug } = fixture();
+  try {
+    const sddDir = path.join(root, "docs", slug, "sdd");
+    expect(existsSync(sddDir)).toBe(false);
+    const result = readEffectiveFlowState(root, slug);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.code).toBe("flow_not_activated");
+    expect(existsSync(sddDir)).toBe(false);
   } finally {
     cleanup(root);
   }
@@ -665,7 +740,13 @@ test("CA-18: unsupported field values return flow_state_invalid without touching
       writeFileSync(file, raw, "utf8");
       const effective = readEffectiveFlowState(root, slug);
       expect(effective.ok, JSON.stringify(patch)).toBe(false);
-      if (!effective.ok) expect(effective.code).toBe("flow_state_invalid");
+      if (!effective.ok) {
+        expect(effective.code).toBe("flow_state_invalid");
+        expect(effective.details).toEqual({
+          path: `docs/${slug}/sdd/flow.json`,
+          original_bytes_preserved: true,
+        });
+      }
       expect(readFileSync(file, "utf8")).toBe(raw);
     }
   } finally {

@@ -165,12 +165,31 @@ export const detectBacktickDocRefs = (text: string): string[] | null => {
 // The rail is active-plan detection (CA-11/CA-13): only a flow whose effective
 // execution is ACTIVE and subagent-driven is found. The effective read performs
 // the legacy compatibility migration (ledgerCompletion-derived, CA-16) and the
-// approval-digest reconciliation, so a drift-reset or pending/paused/completed
-// flow — and a malformed flow.json — is excluded without ever being rewritten.
-export const findActiveSubagentDrivenPlans = (root: string): string[] => {
+// approval-digest reconciliation and PERSISTS any drift/migration reset, so a
+// drift-reset or pending/paused/completed flow is excluded after its state is
+// rewritten on read; only malformed/unreadable flow.json is excluded without
+// ever being rewritten (readFlowStrict rejects it before any write).
+export type ActivePlanScan = {
+  slugs: string[];
+  /**
+   * Flows whose effective read FAILED with a transient lock/IO error
+   * (flow_concurrent_conflict / flow_io_error) — a held lock or a filesystem
+   * hiccup, NOT "not active". `findActiveSubagentDrivenPlans` still excludes
+   * them (its `string[]` contract cannot express a read failure, so the
+   * plugin rail stays fail-open by design); this signal lets a caller that
+   * wants fail-closed behavior treat a non-empty list as "the plan state is
+   * unknown". The coordinator's authoritative product gate
+   * (assertProductGates) fails closed regardless, so legitimate interception
+   * is never weakened.
+   */
+  read_errors: { slug: string; code: string; error: string }[];
+};
+
+export const scanActiveSubagentDrivenPlans = (root: string): ActivePlanScan => {
   const docsDir = path.join(root, "docs");
-  if (!existsSync(docsDir)) return [];
+  if (!existsSync(docsDir)) return { slugs: [], read_errors: [] };
   const slugs: string[] = [];
+  const readErrors: { slug: string; code: string; error: string }[] = [];
   for (const slug of readdirSync(docsDir)) {
     const file = path.join(docsDir, slug, "sdd", "flow.json");
     if (!existsSync(file)) continue;
@@ -182,9 +201,17 @@ export const findActiveSubagentDrivenPlans = (root: string): string[] => {
       // entry without touching it
       continue;
     }
-    if (!effective.ok) continue;
+    if (!effective.ok) {
+      if (effective.code === "flow_concurrent_conflict" || effective.code === "flow_io_error") {
+        readErrors.push({ slug, code: effective.code, error: effective.error });
+      }
+      continue;
+    }
     const exec = effective.state.execution;
     if (exec.status === "active" && exec.mode === "subagent-driven") slugs.push(slug);
   }
-  return slugs;
+  return { slugs, read_errors: readErrors };
 };
+
+export const findActiveSubagentDrivenPlans = (root: string): string[] =>
+  scanActiveSubagentDrivenPlans(root).slugs;

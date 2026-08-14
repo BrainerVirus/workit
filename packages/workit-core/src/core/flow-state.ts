@@ -389,6 +389,20 @@ const validateState = (
   if (menuRaw?.chosen !== undefined && typeof menuRaw.chosen !== "string") {
     return { ok: false, error: "flow state menu.chosen must be a string" };
   }
+  // The only persisted `chosen` values are the MENU_CHOICES plus the empty
+  // string ("" marks an unpresented/reset menu — markHandoffDestination and the
+  // drift resets persist it). Anything else is a bogus/legacy value and fails
+  // closed (CA-18).
+  if (
+    menuRaw?.chosen !== undefined &&
+    menuRaw.chosen !== "" &&
+    !MENU_CHOICES.includes(menuRaw.chosen as MenuChoice)
+  ) {
+    return {
+      ok: false,
+      error: `flow state menu.chosen must be one of: ${MENU_CHOICES.join(", ")} (or an empty string when the menu is unpresented)`,
+    };
+  }
   if (menuRaw?.evidence !== undefined && !validateEvidenceValue(menuRaw.evidence, false)) {
     return { ok: false, error: "flow state menu.evidence has an unsupported shape" };
   }
@@ -540,12 +554,18 @@ const MAX_WRITE_ATTEMPTS = 5;
  * `openSync(lock, "wx")` and `rmSync(lock)` leaves `<flow.json>.lock` forever.
  * A lock file older than this is treated as abandoned and removed before a
  * fresh acquisition attempt, so a crash never wedges every later operation.
- * ponytail: the age heuristic can reclaim a lock a very slow writer still
- * legitimately holds (or drift on clock skew); the reclaimed lock's writer and
- * the new acquirer still serialize through the next EEXIST/bounded-backoff
- * path, so no two writers ever hold the lock simultaneously. Upgrade path:
- * write PID/host-session into the lock and verify liveness, or lease-renew,
- * when writers that legitimately exceed the threshold matter.
+ *
+ * ponytail: age-based recovery has two documented ceilings. (1) A very slow
+ * writer still legitimately holding the lock (or clock skew) can have its lock
+ * reclaimed; the CAS below still protects data, but that writer's critical
+ * section is no longer mutually exclusive with the new acquirer's. (2)
+ * Recovery renames by PATH, not by inode: two simultaneous reclaimers of the
+ * same stale lock can still move a freshly re-acquired winner's lock (one
+ * reclaimer's rename lands after the other's re-acquisition). No data is lost —
+ * `writeFlowStateIfCurrent`'s CAS is the integrity backstop — but mutual
+ * exclusion is not absolute. Upgrade path: write PID/host-session into the
+ * lock and verify liveness, or lease-renew, when writers that legitimately
+ * exceed the threshold matter.
  */
 const STALE_LOCK_MS = 1000;
 
@@ -561,6 +581,10 @@ const lockMtimeMs = (lock: string): number | null => {
 
 // Whether the lock at `lock` is still the inode `fd` opened (CA-19): release
 // must never unlink a successor's fresh lock, only the file this writer owns.
+// ponytail: this is a stat-then-rmSync window — a successor that replaces the
+// path between the stat and the release rmSync (a concurrent recovery of a
+// >1s-held lock) can still lose its fresh lock. Microsecond window, documented
+// ceiling; the CAS backstops data integrity.
 const lockOwnedBy = (fd: number, lock: string): boolean => {
   try {
     return fstatSync(fd).ino === statSync(lock).ino;
@@ -785,15 +809,35 @@ type MutateResult = { ok: true; next: FlowState } | FlowError;
  * (openSync "wx"); on contention retry with a bounded 10ms backoff; a lock
  * older than STALE_LOCK_MS (a crashed writer) is removed and acquisition is
  * retried; run the critical section; release the lock and best-effort remove
- * it in `finally`. No lock module and no adapter-side lock: every host shares
- * this one core contract. ponytail: stale recovery is age-based only — see
- * STALE_LOCK_MS for the ceiling and the liveness upgrade path.
+ * it in `finally`. A never-activated flow (no `docs/<slug>/sdd/` dir) runs
+ * without a lock: there is no flow.json to serialize and no filesystem side
+ * effect is created — the write helpers create the dir on the first actual
+ * write. No lock module and no adapter-side lock: every host shares this one
+ * core contract. ponytail: stale recovery and release are path-based with
+ * documented TOCTOU ceilings (see STALE_LOCK_MS and lockOwnedBy); data
+ * integrity is guaranteed by the CAS, not by absolute mutual exclusion.
  */
 type Locked<T> = { locked: true; value: T } | { locked: false; error: FlowError };
 
 const withFlowLock = <T>(file: string, fn: () => T): Locked<T> => {
-  mkdirSync(path.dirname(file), { recursive: true });
   const lock = `${file}.lock`;
+  // An activated flow's `docs/<slug>/sdd/` dir always exists (a file implies
+  // its parent dir); a never-activated flow has neither. Skip the lock for the
+  // never-activated case so a failed flow_not_activated gate/status read
+  // leaves no filesystem side effect. The skip window is benign: a concurrent
+  // first activation writes byte-equivalent initial state through unique temp
+  // names + atomic rename, and the CAS serializes every later mutation.
+  if (!existsSync(path.dirname(file))) return { locked: true, value: fn() };
+  // Best-effort cleanup of a leftover `<file>.lock.stale` from a crashed
+  // recovery (a crash between the recovery rename and the unlink strands it).
+  // It is never a live lock path — the live lock is always `<file>.lock` — so
+  // removing it here is safe. ponytail: on-acquisition best-effort only; an
+  // unremovable `.stale` falls through and never blocks the live lock path.
+  try {
+    if (existsSync(`${lock}.stale`)) rmSync(`${lock}.stale`, { force: true });
+  } catch {
+    // best effort: a leftover .stale is harmless and cannot wedge the lock
+  }
   const wait = new Int32Array(new SharedArrayBuffer(4));
   let fd: number | null = null;
   for (let attempt = 0; attempt < MAX_WRITE_ATTEMPTS; attempt++) {
@@ -812,10 +856,16 @@ const withFlowLock = <T>(file: string, fn: () => T): Locked<T> => {
         };
       }
       // Stale-lock recovery (CA-19): the lock is older than STALE_LOCK_MS, so
-      // its writer crashed after acquiring it. Reclaim it via an atomic rename
-      // (never a removal that could hit a successor's fresh lock), unlink the
-      // renamed stale inode, then re-attempt acquisition inline so the final
-      // attempt still acquires instead of falling out of the loop unlocked.
+      // its writer crashed after acquiring it. Reclaim it via a PATH-based
+      // atomic rename to `<file>.lock.stale`, unlink the stale inode, then
+      // re-attempt acquisition inline so the final attempt still acquires
+      // instead of falling out of the loop unlocked. ponytail: the rename is
+      // NOT inode-conditional — a concurrent reclaimer of the same stale lock
+      // can move a freshly re-acquired winner's lock at the same path
+      // (documented TOCTOU ceiling; the CAS backstops integrity). A crash
+      // between the rename and the unlink strands only `<file>.lock.stale`,
+      // which is never a live lock path and is best-effort removed on the next
+      // acquisition.
       const mtime = lockMtimeMs(lock);
       if (mtime !== null && Date.now() - mtime > STALE_LOCK_MS) {
         try {
@@ -1014,6 +1064,11 @@ export const assertCoordinatorBoundary = (
  * The shared transition matrix (FG-09): draft -> approved in one receipt; a
  * legacy self_reviewed state still advances to approved. The self-review
  * validation runs automatically inside the draft transition.
+ *
+ * @deprecated public compat — production transitions (transitionSpec /
+ * transitionPlan) hardcode "approved"; this matrix is retained only as the
+ * documented single-source transition contract for tests and external
+ * consumers of the exported API.
  */
 export const nextFlowStatus = (current: FlowStatus): StatusTransition => {
   if (current === "draft") return { ok: true, next: "approved" };
@@ -1583,6 +1638,10 @@ export const recordMenuChoice = (
       ok: true,
       next: {
         ...state,
+        // Legacy fixup (CA-16): a hand-crafted legacy flow.json with an empty
+        // plan.path keeps it empty through menu recording unless restored to
+        // the canonical path here.
+        plan: { ...state.plan, path: state.plan.path || `docs/${slug}/plan.md` },
         menu: { presented: true, chosen: choice, evidence: recorded.evidence },
         execution: executing
           ? { status: "active", mode: choice as ExecutionMode, evidence: recorded.evidence }
@@ -1741,7 +1800,9 @@ const completeExecution = (
       execution: { ...exec, status: "completed" },
       // A completed flow is never a destination: clear the context so the next
       // ordinary session gets the source five-choice reminder, not the stale
-      // four-choice destination wording (CA-08).
+      // four-choice destination wording (CA-08). Both approval-drift resets
+      // (resetForSpecDrift/resetForPlanDrift) and completion clear
+      // handoff_destination; only a new-flow prepareFlowState initializes it.
       handoff_destination: false,
       updated_at: Date.now(),
     };

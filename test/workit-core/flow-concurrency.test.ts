@@ -34,7 +34,10 @@ import {
   type MutationContext,
 } from "../../packages/workit-core/src/core/flow-state";
 import type { runVerifyProject } from "../../packages/workit-core/src/core/verify-project";
-import { findActiveSubagentDrivenPlans } from "../../packages/workit-core/src/core/detector";
+import {
+  findActiveSubagentDrivenPlans,
+  scanActiveSubagentDrivenPlans,
+} from "../../packages/workit-core/src/core/detector";
 import {
   roleFromParentage,
   subagentDrivenInterception,
@@ -533,7 +536,7 @@ test("CA-19: a held flow.json.lock yields flow_concurrent_conflict, then recover
     expect(recovered.ok).toBe(true);
     expect(existsSync(lock)).toBe(false);
     const leftovers = readdirSync(path.dirname(flowFile(root, slug))).filter(
-      (f) => f.endsWith(".tmp") || f.endsWith(".lock"),
+      (f) => f.endsWith(".tmp") || f.endsWith(".lock") || f.endsWith(".stale"),
     );
     expect(leftovers).toEqual([]);
   } finally {
@@ -558,9 +561,54 @@ test("CA-19: a stale flow.json.lock (older than STALE_LOCK_MS) is recovered inst
     expect(effective.ok).toBe(true);
     expect(existsSync(lock)).toBe(false);
     const leftovers = readdirSync(path.dirname(flowFile(root, slug))).filter(
-      (f) => f.endsWith(".tmp") || f.endsWith(".lock"),
+      (f) => f.endsWith(".tmp") || f.endsWith(".lock") || f.endsWith(".stale"),
     );
     expect(leftovers).toEqual([]);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("CA-19: a leftover .lock.stale from a crashed recovery is removed on the next acquisition", () => {
+  const { root, slug } = fixture();
+  try {
+    writeDocs(root, slug);
+    const prep = prepareFlowState(root, slug, {
+      spec_path: `docs/${slug}/spec.md`,
+      plan_path: `docs/${slug}/plan.md`,
+    });
+    expect(prep.ok).toBe(true);
+    const stale = `${flowFile(root, slug)}.lock.stale`;
+    writeFileSync(stale, "", "utf8");
+    const effective = readEffectiveFlowState(root, slug);
+    expect(effective.ok).toBe(true);
+    expect(existsSync(stale)).toBe(false);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("CA-19: activation is a locked critical section: prepareFlowState under a held lock conflicts", () => {
+  const { root, slug } = fixture();
+  try {
+    writeDocs(root, slug);
+    const spec = `docs/${slug}/spec.md`;
+    const plan = `docs/${slug}/plan.md`;
+    const prep = prepareFlowState(root, slug, { spec_path: spec, plan_path: plan });
+    expect(prep.ok).toBe(true);
+    const lock = `${flowFile(root, slug)}.lock`;
+    const fd = openSync(lock, "wx");
+    try {
+      const result = prepareFlowState(root, slug, { spec_path: spec, plan_path: plan });
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.code).toBe("flow_concurrent_conflict");
+    } finally {
+      closeSync(fd);
+      rmSync(lock, { force: true });
+    }
+    // Once the lock clears, activation runs again without contention.
+    const recovered = prepareFlowState(root, slug, { spec_path: spec, plan_path: plan });
+    expect(recovered.ok).toBe(true);
   } finally {
     cleanup(root);
   }
@@ -739,7 +787,7 @@ test("A4: a read-path reconcile persist failure returns flow_io_error, never thr
     expect(persisted.plan.status).toBe("approved");
     expect(persisted.plan.approved_digest).toMatch(/^[0-9a-f]{64}$/);
     const leftovers = readdirSync(path.dirname(flowFile(root, slug))).filter(
-      (f) => f.endsWith(".tmp") || f.endsWith(".lock"),
+      (f) => f.endsWith(".tmp") || f.endsWith(".lock") || f.endsWith(".stale"),
     );
     expect(leftovers).toEqual([]);
   } finally {
@@ -779,7 +827,7 @@ test("CA-19: reconciliation and a reapproval serialize into one winning state wi
     const persisted = JSON.parse(readFileSync(flowFile(root, slug), "utf8"));
     expect(persisted.plan.status).toBe("approved");
     const leftovers = readdirSync(path.dirname(flowFile(root, slug))).filter(
-      (f) => f.endsWith(".tmp") || f.endsWith(".lock"),
+      (f) => f.endsWith(".tmp") || f.endsWith(".lock") || f.endsWith(".stale"),
     );
     expect(leftovers).toEqual([]);
   } finally {
@@ -787,7 +835,7 @@ test("CA-19: reconciliation and a reapproval serialize into one winning state wi
   }
 });
 
-test("CA-19: a reconcile reset is persisted atomically and never loses a newer field", () => {
+test("CA-19: a reconcile reset persists atomically and a later reapproval wins", () => {
   const { root, slug } = fixture();
   try {
     writeDocs(root, slug);
@@ -839,10 +887,16 @@ test("CA-18/CA-19: malformed flow.json stays byte-identical through effective re
     writeFileSync(flowFile(root, slug), "{not-json", "utf8");
     const effective = readEffectiveFlowState(root, slug);
     expect(effective.ok).toBe(false);
-    if (!effective.ok) expect(effective.code).toBe("flow_state_invalid");
+    if (!effective.ok) {
+      expect(effective.code).toBe("flow_state_invalid");
+      expect(effective.details).toEqual({
+        path: `docs/${slug}/sdd/flow.json`,
+        original_bytes_preserved: true,
+      });
+    }
     expect(readFileSync(flowFile(root, slug), "utf8")).toBe("{not-json");
-    const lockLeftovers = readdirSync(path.dirname(flowFile(root, slug))).filter((f) =>
-      f.endsWith(".lock"),
+    const lockLeftovers = readdirSync(path.dirname(flowFile(root, slug))).filter(
+      (f) => f.endsWith(".lock") || f.endsWith(".stale"),
     );
     expect(lockLeftovers).toEqual([]);
   } finally {
@@ -1016,6 +1070,51 @@ test("CA-18/AR-13: only active subagent-driven flows are discovered and intercep
     if (!blocked.ok) {
       expect(blocked.code).toBe("coordinator_write_denied");
       expect(blocked.error).toContain(COORDINATOR_RECOVERY_TEXT);
+    }
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("fail-closed scan: a locked flow is reported as a read error, not silently inactive", () => {
+  const { root, slug } = fixture();
+  try {
+    establishSubagentDriven(root, slug);
+    expect(findActiveSubagentDrivenPlans(root)).toEqual([slug]);
+    const lock = `${flowFile(root, slug)}.lock`;
+    const fd = openSync(lock, "wx");
+    try {
+      const scan = scanActiveSubagentDrivenPlans(root);
+      expect(scan.slugs).toEqual([]);
+      expect(scan.read_errors).toEqual([
+        {
+          slug,
+          code: "flow_concurrent_conflict",
+          error: expect.stringContaining("concurrent flow"),
+        },
+      ]);
+    } finally {
+      closeSync(fd);
+      rmSync(lock, { force: true });
+    }
+    // Once the lock clears the flow is discovered again — no state was lost.
+    expect(findActiveSubagentDrivenPlans(root)).toEqual([slug]);
+    // The fail-closed signal is scoped: a genuinely inactive flow is excluded
+    // silently with an empty read_errors list.
+    const { root: other, slug: otherSlug } = fixture();
+    try {
+      writeDocs(other, otherSlug);
+      const prep = prepareFlowState(other, otherSlug, {
+        spec_path: `docs/${otherSlug}/spec.md`,
+        plan_path: `docs/${otherSlug}/plan.md`,
+      });
+      expect(prep.ok).toBe(true);
+      expect(scanActiveSubagentDrivenPlans(other)).toEqual({
+        slugs: [],
+        read_errors: [],
+      });
+    } finally {
+      cleanup(other);
     }
   } finally {
     cleanup(root);
