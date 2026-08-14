@@ -4,6 +4,8 @@ import { fileURLToPath } from "node:url";
 import { createLogger } from "@brainervirus/workit-core/src/core/logger";
 import { EVENT, errorDetail } from "@brainervirus/workit-core/src/core/boundary";
 import { setDiagnosticLogger } from "@brainervirus/workit-core/src/core/config";
+import { reminderTextFor } from "@brainervirus/workit-core/src/core/reminder";
+import { findMarkedDestinations } from "@brainervirus/workit-core/src/core/menu";
 
 // Secret-safe diagnostic logger (DG-01-DG-03, DG-05, DG-10). Sink injection
 // only: session-start summaries mirror to stderr; the JSON contract on stdout
@@ -25,7 +27,10 @@ setDiagnosticLogger(logger);
 logger.info(EVENT.initialization, { host: "cursor-hook", hook_dir: hookDir });
 
 const resolveRepoRoot = (): string => {
-  if (process.env.WORKFLOW_TOOLKIT_ROOT && existsSync(path.join(process.env.WORKFLOW_TOOLKIT_ROOT, "templates"))) {
+  if (
+    process.env.WORKFLOW_TOOLKIT_ROOT &&
+    existsSync(path.join(process.env.WORKFLOW_TOOLKIT_ROOT, "templates"))
+  ) {
     return process.env.WORKFLOW_TOOLKIT_ROOT;
   }
   if (existsSync(marker)) {
@@ -58,6 +63,36 @@ if (body === null) {
   process.exit(0);
 }
 
+// The Cursor sessionStart hook input (via stdin JSON) carries the workspace
+// roots. Destination classification is host-neutral (CA-07/CA-08): the persisted
+// `handoff_destination` flag set by markHandoffDestination after a genuine
+// generated destination prompt — never session or parent IDs. A workspace with
+// no marked destination (including a Cursor inline implementer, which never
+// marks flow state) keeps the ordinary five-choice reminder.
+type HookInput = { workspace_roots?: unknown };
+
+const readHookInput = (): HookInput => {
+  if (process.stdin.isTTY) return {};
+  try {
+    const text = readFileSync(0, "utf8").trim();
+    if (!text) return {};
+    const parsed: unknown = JSON.parse(text);
+    return typeof parsed === "object" && parsed !== null ? (parsed as HookInput) : {};
+  } catch {
+    return {};
+  }
+};
+
+const isDestination = (input: HookInput): boolean => {
+  const roots = Array.isArray(input.workspace_roots) ? input.workspace_roots : [];
+  return roots.some((root) => typeof root === "string" && findMarkedDestinations(root).length > 0);
+};
+
+// Select the core five/four reminder wording from the destination flag (CA-08):
+// a marked destination gets the four-choice reminder that never offers Handoff
+// and carries the marker; ordinary sessions keep the source five-choice wording.
+const reminder = reminderTextFor(isDestination(readHookInput()));
+
 const context = `<workflow-toolkit-askquestion-hard-gate>
 HARD-GATE: Any user choice with options → call Cursor AskQuestion directly with workflow-specific copy. NEVER A/B/C in chat. Overrides Superpowers brainstorming conversational options.
 </workflow-toolkit-askquestion-hard-gate>
@@ -83,8 +118,9 @@ ${body}
 </workflow-toolkit-superpowers-doc-contract>
 
 <workflow-toolkit-reminder>
-HARD-GATE: Bounded user choices → call Cursor AskQuestion directly (never A/B/C or 1/2/3 lists in prose). After a plan is approved → AskQuestion menu with: Subagent-driven, Inline, Handoff (new session only), Review spec first, Review plan first. Tools with confirmed → call them; never fabricate results.
-Delivering docs → clickable markdown link (docs/<slug>/spec.md) + 3-5 bullet summary.
+HARD-GATE: Bounded user choices → call Cursor AskQuestion directly (never A/B/C or 1/2/3 lists in prose).
+
+${reminder}
 </workflow-toolkit-reminder>`;
 
 process.stdout.write(JSON.stringify({ additional_context: context }, null, 2) + "\n");

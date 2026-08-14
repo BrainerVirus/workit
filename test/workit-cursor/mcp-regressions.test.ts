@@ -10,6 +10,7 @@ import { postUpdate } from "../../packages/workit-core/src/core/youtrack";
 import { releaseNotesContext } from "../../packages/workit-core/src/core/repo-context";
 import { buildHandoffPrompt } from "../../packages/workit-core/src/core/handoff-tools";
 import { docsValidate } from "../../packages/workit-core/src/core/docs-validate";
+import { HANDOFF_DESTINATION_MARKER } from "../../packages/workit-core/src/core/flow-state";
 
 const REPO_ROOT = path.resolve(import.meta.dir, "..", "..");
 const CURSOR_ROOT = path.join(REPO_ROOT, "packages", "workit-cursor");
@@ -162,6 +163,14 @@ test("handoff includes every parsed task row", () => {
       expect(result.prompt).toContain("- Task 2: Second repair");
       expect(result.prompt).toContain("workflow_docs_validate");
       expect(result.prompt).toContain(WORKSPACE_ROOT_RULE);
+      // CA-07/CA-08: the generated destination contract carries the exact marker
+      // on its own line and the four-choice allow-list, never the source Handoff option.
+      expect(result.prompt).toContain(HANDOFF_DESTINATION_MARKER);
+      expect(result.prompt).toContain("Subagent-driven");
+      expect(result.prompt).toContain("Inline");
+      expect(result.prompt).toContain("Review spec first");
+      expect(result.prompt).toContain("Review plan first");
+      expect(result.prompt).not.toContain("Handoff (new session only)");
     }
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -250,6 +259,17 @@ test("repository-scoped Cursor skill calls pass the active workspace_root", () =
     else expect(source, `${skill}: ${repositoryCalls.join(", ")}`).toContain(WORKSPACE_ROOT_RULE);
   }
   expect(unaffected).toEqual(excluded);
+});
+
+test("wk-implement strips the handoff destination section so inline executors are not misclassified", () => {
+  // CA-07: the canonical execution-contract.md carries the destination block and
+  // marker for generated handoff prompts only. A Cursor inline implementer that
+  // loads the static template verbatim would carry that marker into a source
+  // session, so the inline path must exclude the destination section.
+  const skill = readFileSync(path.join(CURSOR_ROOT, "skills/wk-implement/SKILL.md"), "utf8");
+  expect(skill).toMatch(/Handoff destination/i);
+  expect(skill).toMatch(/\bOMIT\b|\bexclude\b|\bskip\b/i);
+  expect(skill).toMatch(/not a destination|never present itself as one|NOT a destination/i);
 });
 
 test("YouTrack post orchestration accepts injected operations", () => {
@@ -401,6 +421,9 @@ test("cursor MCP server registers the full required tool surface", () => {
     "workflow_spec_approve",
     "workflow_plan_approve",
     "workflow_plan_menu",
+    "workflow_plan_pause",
+    "workflow_plan_resume",
+    "workflow_plan_complete",
     "workflow_handoff_prompt",
     "workflow_youtrack_verify_token",
     "workflow_youtrack_parse_issue",
@@ -413,8 +436,13 @@ test("cursor MCP server registers the full required tool surface", () => {
     "workflow_present_flow",
   ];
   const registered = (server.match(/registerTool\(\s*\n?\s*"([a-z_]+)"/g) ?? []).join("\n");
+  // Lifecycle tools are registered through the shared lifecycleTool closure
+  // (`workflow_plan_${action}`), so their names come from the helper calls.
+  const lifecycle = (server.match(/lifecycleTool\(\s*\n?\s*"([a-z_]+)"/g) ?? [])
+    .map((m) => `"workflow_plan_${m.match(/"([a-z_]+)"/)?.[1]}"`)
+    .join("\n");
   for (const name of required) {
-    expect(registered).toContain(`"${name}"`);
+    expect(`${registered}\n${lifecycle}`).toContain(`"${name}"`);
   }
 });
 

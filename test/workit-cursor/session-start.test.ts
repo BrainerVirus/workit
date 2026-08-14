@@ -4,6 +4,15 @@ import { mkdirSync, mkdtempSync, existsSync, readFileSync, rmSync, writeFileSync
 import os from "node:os";
 import path from "node:path";
 import { syncRuntime } from "../../packages/workit-core/src/core/sync-runtime";
+import { HANDOFF_DESTINATION_MARKER } from "../../packages/workit-core/src/core/flow-state";
+
+const runHook = (env: Record<string, string>, input?: string) =>
+  spawnSync(process.execPath, [path.join(CURSOR_ROOT, "hooks", "session-start.ts")], {
+    cwd: REPO_ROOT,
+    env,
+    input,
+    encoding: "utf8",
+  });
 
 // RL-09/CA-25: session-start performs NO network synchronization. Runtime
 // updates are confined to explicit install/update operations (sync-runtime),
@@ -137,5 +146,52 @@ test("session-start never falls back to an implicit runtime update", () => {
     expect((r.stdout ?? "").trim()).toBe("{}");
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("session-start selects the four-choice destination reminder for a marked workspace and five for ordinary sessions", () => {
+  const markedRoot = mkdtempSync(path.join(os.tmpdir(), "wf-hook-dest-"));
+  const plainRoot = mkdtempSync(path.join(os.tmpdir(), "wf-hook-plain-"));
+  try {
+    for (const root of [markedRoot, plainRoot]) {
+      mkdirSync(path.join(root, "templates"), { recursive: true });
+      writeFileSync(path.join(root, "templates", "superpowers-doc-contract.md"), contractText);
+    }
+    // A marked handoff destination (handoff_destination: true in flow.json).
+    mkdirSync(path.join(markedRoot, "docs", "dest", "sdd"), { recursive: true });
+    writeFileSync(
+      path.join(markedRoot, "docs", "dest", "sdd", "flow.json"),
+      JSON.stringify({ slug: "dest", activated: true, handoff_destination: true }),
+    );
+    // An ordinary flow — not a destination.
+    mkdirSync(path.join(plainRoot, "docs", "plain", "sdd"), { recursive: true });
+    writeFileSync(
+      path.join(plainRoot, "docs", "plain", "sdd", "flow.json"),
+      JSON.stringify({ slug: "plain", activated: true, handoff_destination: false }),
+    );
+
+    const destination = runHook(
+      { ...process.env, WORKFLOW_TOOLKIT_ROOT: markedRoot, BUN: process.execPath },
+      JSON.stringify({ workspace_roots: [markedRoot] }),
+    );
+    expect(destination.status, destination.stderr ?? "").toBe(0);
+    const destText = JSON.parse(destination.stdout).additional_context as string;
+    expect(destText).toContain("Subagent-driven, Inline, Review spec first, Review plan first");
+    expect(destText).not.toContain("Handoff");
+    expect(destText).toContain(HANDOFF_DESTINATION_MARKER);
+
+    const ordinary = runHook(
+      { ...process.env, WORKFLOW_TOOLKIT_ROOT: plainRoot, BUN: process.execPath },
+      JSON.stringify({ workspace_roots: [plainRoot] }),
+    );
+    expect(ordinary.status, ordinary.stderr ?? "").toBe(0);
+    const plainText = JSON.parse(ordinary.stdout).additional_context as string;
+    expect(plainText).toContain(
+      "Subagent-driven, Inline, Handoff, Review spec first, Review plan first",
+    );
+    expect(plainText).not.toContain(HANDOFF_DESTINATION_MARKER);
+  } finally {
+    rmSync(markedRoot, { recursive: true, force: true });
+    rmSync(plainRoot, { recursive: true, force: true });
   }
 });

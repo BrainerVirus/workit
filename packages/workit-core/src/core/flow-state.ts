@@ -193,31 +193,11 @@ export const DESTINATION_MENU_CHOICES = [
 ] as const;
 export type DestinationMenuChoice = (typeof DESTINATION_MENU_CHOICES)[number];
 
-/** Display labels the source menu presents (CA-08). */
-export const SOURCE_MENU_LABELS = [
-  "Subagent-driven",
-  "Inline",
-  "Handoff",
-  "Review spec first",
-  "Review plan first",
-] as const;
-
-/** Display labels a marked destination presents — exactly four, no Handoff (CA-08). */
-export const DESTINATION_MENU_LABELS = [
-  "Subagent-driven",
-  "Inline",
-  "Review spec first",
-  "Review plan first",
-] as const;
-
-/**
- * The exact sentinel every generated destination contract carries on its own
- * line (CA-07). Host-neutral by design (CA-10): OpenCode seeded sessions,
- * Cursor copy/paste prompts, and CLI output all detect a destination by this
- * marker alone — no session IDs, parent IDs, or host metadata.
- */
-export const HANDOFF_DESTINATION_MARKER =
-  "<workflow-handoff-destination>true</workflow-handoff-destination>";
+// The source/destination menu labels and the destination marker live in the
+// import-light menu module (CA-07/CA-08) so session-start hooks select reminder
+// wording without pulling in the full flow-state graph; flow-state re-exports
+// them so every existing consumer keeps the same import site.
+export { DESTINATION_MENU_LABELS, HANDOFF_DESTINATION_MARKER, SOURCE_MENU_LABELS } from "./menu";
 
 const err = (code: string, error: string, details?: Record<string, unknown>): FlowError => ({
   ok: false,

@@ -1,8 +1,4 @@
-import {
-  DESTINATION_MENU_LABELS,
-  HANDOFF_DESTINATION_MARKER,
-  SOURCE_MENU_LABELS,
-} from "./flow-state";
+import { DESTINATION_MENU_LABELS, HANDOFF_DESTINATION_MARKER, SOURCE_MENU_LABELS } from "./menu";
 
 export const REMINDER_TEXT = `<workflow-contract-reminder>
 - Bounded user choices → call the native \`question\` tool (never A/B/C or 1/2/3 lists in prose).

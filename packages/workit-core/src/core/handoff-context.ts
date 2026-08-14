@@ -3,7 +3,7 @@ import path from "node:path";
 import { docsValidate } from "./docs-validate";
 import { resolveBranch } from "./branch";
 import { parseTasksFromPlan } from "./docs-validate";
-import { HANDOFF_DESTINATION_MARKER } from "./flow-state";
+import { HANDOFF_DESTINATION_MARKER } from "./menu";
 
 const DOC_RE = /docs\/([A-Za-z0-9][A-Za-z0-9._-]*)\/(spec|plan)\.md/g;
 

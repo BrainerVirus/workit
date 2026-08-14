@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { HANDOFF_DESTINATION_MARKER } from "../../packages/workit-core/src/core/flow-state";
 
 // Runtime parity for the Cursor launcher + session hook: both execute
 // Node-compatible TS entries, and session start performs NO network sync
@@ -67,6 +68,45 @@ test("session start performs no network sync — network-unavailable behavior is
   } finally {
     rmSync(root, { recursive: true, force: true });
     rmSync(emptyBin, { recursive: true, force: true });
+  }
+});
+
+test("session-start contract: ordinary sessions retain five choices, marked destinations four", () => {
+  const plain = mkdtempSync(path.join(os.tmpdir(), "wf-hook-contract-plain-"));
+  const marked = mkdtempSync(path.join(os.tmpdir(), "wf-hook-contract-dest-"));
+  try {
+    const run = (root: string, input: string) =>
+      spawnSync(process.execPath, [path.join(CURSOR_ROOT, "hooks", "session-start.ts")], {
+        cwd: REPO_ROOT,
+        env: { ...process.env, WORKFLOW_TOOLKIT_ROOT: root, BUN: process.execPath },
+        input,
+        encoding: "utf8",
+      });
+    for (const root of [plain, marked]) {
+      mkdirSync(path.join(root, "templates"), { recursive: true });
+      writeFileSync(path.join(root, "templates", "superpowers-doc-contract.md"), contractText);
+    }
+    mkdirSync(path.join(marked, "docs", "dest", "sdd"), { recursive: true });
+    writeFileSync(
+      path.join(marked, "docs", "dest", "sdd", "flow.json"),
+      JSON.stringify({ slug: "dest", activated: true, handoff_destination: true }),
+    );
+
+    const plainOut = run(plain, JSON.stringify({ workspace_roots: [plain] }));
+    expect(plainOut.status, plainOut.stderr ?? "").toBe(0);
+    expect(JSON.parse(plainOut.stdout).additional_context).toContain(
+      "Subagent-driven, Inline, Handoff, Review spec first, Review plan first",
+    );
+
+    const destOut = run(marked, JSON.stringify({ workspace_roots: [marked] }));
+    expect(destOut.status, destOut.stderr ?? "").toBe(0);
+    const destText = JSON.parse(destOut.stdout).additional_context as string;
+    expect(destText).not.toContain("Handoff");
+    expect(destText).toContain(HANDOFF_DESTINATION_MARKER);
+    expect(destText).toContain("Subagent-driven, Inline, Review spec first, Review plan first");
+  } finally {
+    rmSync(plain, { recursive: true, force: true });
+    rmSync(marked, { recursive: true, force: true });
   }
 });
 
