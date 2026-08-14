@@ -1,9 +1,12 @@
 import { expect, test, mock } from "bun:test";
+import { createHash } from "node:crypto";
 import {
   chmodSync,
+  closeSync,
   existsSync,
   mkdtempSync,
   mkdirSync,
+  openSync,
   readdirSync,
   readFileSync,
   rmSync,
@@ -14,10 +17,12 @@ import os from "node:os";
 import path from "node:path";
 
 const realFs = { ...nodeFs };
+const sha256 = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
 import {
   COORDINATOR_RECOVERY_TEXT,
   assertProductGates,
   prepareFlowState,
+  readEffectiveFlowState,
   readFlowState,
   recordMenuChoice,
   transitionPlan,
@@ -30,7 +35,8 @@ import {
   roleFromParentage,
   subagentDrivenInterception,
 } from "../../packages/workit-core/src/core/flow-state";
-import { COMPLIANT_PLAN, COMPLIANT_SPEC, evidence } from "./flow-fixtures";
+import { COMPLIANT_PLAN, COMPLIANT_SPEC, evidence, openEvidence } from "./flow-fixtures";
+import { HostReceiptStore } from "../../packages/workit-core/src/core/flow-state";
 
 const fixture = () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "wf-concurrency-"));
@@ -312,12 +318,13 @@ test("FG-08: two writers with the same expected text — only one wins", () => {
 
     // Writer B holds the same expected text as writer A. Simulate A committing
     // in the window between B's compare and B's rename: when B stages its temp
-    // buffer, A's content is already on disk, so B must lose the race.
+    // buffer (opened with openSync), A's content is already on disk, so B must
+    // lose the race.
     let injected = false;
     mock.module("node:fs", () => ({
       ...realFs,
-      writeFileSync: (p: unknown, data: unknown, enc?: unknown) => {
-        const result = realFs.writeFileSync(p as string, data as string, enc as BufferEncoding);
+      openSync: (p: unknown, flags?: unknown) => {
+        const fd = realFs.openSync(p as string, flags as string);
         if (!injected && typeof p === "string" && p.endsWith(".tmp")) {
           injected = true;
           realFs.writeFileSync(
@@ -326,7 +333,7 @@ test("FG-08: two writers with the same expected text — only one wins", () => {
             "utf8",
           );
         }
-        return result;
+        return fd;
       },
     }));
 
@@ -486,6 +493,148 @@ test("CA-18/AR-13: root-session interception blocks write tools and mutating she
       active,
     });
     expect(child.ok).toBe(true);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("CA-19: a held flow.json.lock yields flow_concurrent_conflict, then recovers", () => {
+  const { root, slug } = fixture();
+  try {
+    writeDocs(root, slug);
+    const prep = prepareFlowState(root, slug, {
+      spec_path: `docs/${slug}/spec.md`,
+      plan_path: `docs/${slug}/plan.md`,
+    });
+    expect(prep.ok).toBe(true);
+    const lock = `${flowFile(root, slug)}.lock`;
+    const fd = openSync(lock, "wx");
+    try {
+      const effective = readEffectiveFlowState(root, slug);
+      expect(effective.ok).toBe(false);
+      if (!effective.ok) expect(effective.code).toBe("flow_concurrent_conflict");
+      const transition = transitionSpec(
+        root,
+        slug,
+        `docs/${slug}/spec.md`,
+        evidence("Approve spec"),
+      );
+      expect(transition.ok).toBe(false);
+      if (!transition.ok) expect(transition.code).toBe("flow_concurrent_conflict");
+    } finally {
+      closeSync(fd);
+      rmSync(lock, { force: true });
+    }
+    const recovered = transitionSpec(root, slug, `docs/${slug}/spec.md`, evidence("Approve spec"));
+    expect(recovered.ok).toBe(true);
+    expect(existsSync(lock)).toBe(false);
+    const leftovers = readdirSync(path.dirname(flowFile(root, slug))).filter(
+      (f) => f.endsWith(".tmp") || f.endsWith(".lock"),
+    );
+    expect(leftovers).toEqual([]);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("CA-19: reconciliation and a reapproval serialize into one winning state with the new digest", () => {
+  const { root, slug } = fixture();
+  try {
+    writeDocs(root, slug);
+    const plan = `docs/${slug}/plan.md`;
+    const prep = prepareFlowState(root, slug, {
+      spec_path: `docs/${slug}/spec.md`,
+      plan_path: plan,
+    });
+    expect(prep.ok).toBe(true);
+    approveSpecAndPlan(root, slug);
+    // Drift the plan, then reapprove: the transition's reconcile resets first
+    // and the fresh approval binds the new bytes in the same locked mutation.
+    writeFileSync(
+      path.join(root, "docs", slug, "plan.md"),
+      COMPLIANT_PLAN(slug).replace("do it", "do it again"),
+    );
+    const store = new HostReceiptStore();
+    const reapproved = transitionPlan(root, slug, plan, openEvidence(store, "s1", "Approve plan"));
+    expect(reapproved.ok).toBe(true);
+    const effective = readEffectiveFlowState(root, slug);
+    expect(effective.ok).toBe(true);
+    if (!effective.ok) throw new Error(effective.error);
+    expect(effective.drift).toEqual([]);
+    expect(effective.state.spec).toMatchObject({ status: "approved" });
+    expect(effective.state.plan).toMatchObject({ status: "approved" });
+    const planBytes = readFileSync(path.join(root, "docs", slug, "plan.md"));
+    expect(effective.state.plan.approved_digest).toBe(sha256(planBytes));
+    // One winning state: valid JSON, no shared temp, no lock leftover.
+    const persisted = JSON.parse(readFileSync(flowFile(root, slug), "utf8"));
+    expect(persisted.plan.status).toBe("approved");
+    const leftovers = readdirSync(path.dirname(flowFile(root, slug))).filter(
+      (f) => f.endsWith(".tmp") || f.endsWith(".lock"),
+    );
+    expect(leftovers).toEqual([]);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("CA-19: a reconcile reset is persisted atomically and never loses a newer field", () => {
+  const { root, slug } = fixture();
+  try {
+    writeDocs(root, slug);
+    const plan = `docs/${slug}/plan.md`;
+    const prep = prepareFlowState(root, slug, {
+      spec_path: `docs/${slug}/spec.md`,
+      plan_path: plan,
+    });
+    expect(prep.ok).toBe(true);
+    approveSpecAndPlan(root, slug);
+    writeFileSync(
+      path.join(root, "docs", slug, "plan.md"),
+      COMPLIANT_PLAN(slug).replace("do it", "do it differently"),
+    );
+    const effective = readEffectiveFlowState(root, slug);
+    expect(effective.ok).toBe(true);
+    if (!effective.ok) throw new Error(effective.error);
+    expect(effective.state.plan.status).toBe("draft");
+    // The reset was persisted, not just returned.
+    const persisted = readFlowState(root, slug);
+    expect(persisted.plan.status).toBe("draft");
+    expect(persisted.plan.approved_digest).toBe(null);
+    expect(persisted.spec.status).toBe("approved");
+    expect(persisted.spec.approved_digest).toMatch(/^[0-9a-f]{64}$/);
+    // A fresh approval then lands on top without losing the spec approval.
+    const store = new HostReceiptStore();
+    expect(transitionPlan(root, slug, plan, openEvidence(store, "s1", "Approve plan")).ok).toBe(
+      true,
+    );
+    const after = JSON.parse(readFileSync(flowFile(root, slug), "utf8"));
+    expect(after.spec.status).toBe("approved");
+    expect(after.plan.status).toBe("approved");
+    expect(() => JSON.parse(readFileSync(flowFile(root, slug), "utf8"))).not.toThrow();
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("CA-18/CA-19: malformed flow.json stays byte-identical through effective reads", () => {
+  const { root, slug } = fixture();
+  try {
+    writeDocs(root, slug);
+    const plan = `docs/${slug}/plan.md`;
+    const prep = prepareFlowState(root, slug, {
+      spec_path: `docs/${slug}/spec.md`,
+      plan_path: plan,
+    });
+    expect(prep.ok).toBe(true);
+    writeFileSync(flowFile(root, slug), "{not-json", "utf8");
+    const effective = readEffectiveFlowState(root, slug);
+    expect(effective.ok).toBe(false);
+    if (!effective.ok) expect(effective.code).toBe("flow_state_invalid");
+    expect(readFileSync(flowFile(root, slug), "utf8")).toBe("{not-json");
+    const lockLeftovers = readdirSync(path.dirname(flowFile(root, slug))).filter((f) =>
+      f.endsWith(".lock"),
+    );
+    expect(lockLeftovers).toEqual([]);
   } finally {
     cleanup(root);
   }

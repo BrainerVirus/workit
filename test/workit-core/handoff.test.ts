@@ -1,5 +1,14 @@
 import { expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { spawnSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
@@ -14,6 +23,10 @@ import {
 import { WorkflowStateStore } from "../../packages/workit-core/src/state";
 
 const posix = (p: string) => p.split(path.sep).join("/");
+
+// Digest of the exact on-disk bytes, so crafted "approved" fixtures pass the
+// digest-integrity gate (CA-01).
+const sha256 = (abs: string) => createHash("sha256").update(readFileSync(abs)).digest("hex");
 
 const request = {
   directory: "/repo",
@@ -229,8 +242,16 @@ test("native handoff resolves package context, records paths, and seeds from Too
     path.join(root, "docs/x/sdd/flow.json"),
     JSON.stringify({
       slug: "x",
-      spec: { path: "docs/x/spec.md", status: "approved" },
-      plan: { path: "docs/x/plan.md", status: "approved" },
+      spec: {
+        path: "docs/x/spec.md",
+        status: "approved",
+        approved_digest: sha256(path.join(root, "docs/x/spec.md")),
+      },
+      plan: {
+        path: "docs/x/plan.md",
+        status: "approved",
+        approved_digest: sha256(path.join(root, "docs/x/plan.md")),
+      },
       menu: { presented: true, chosen: "handoff" },
       updated_at: Date.now(),
     }),
@@ -295,8 +316,16 @@ test("native handoff ignores a hallucinated stay argument when the message has n
     path.join(root, "docs/x/sdd/flow.json"),
     JSON.stringify({
       slug: "x",
-      spec: { path: "docs/x/spec.md", status: "approved" },
-      plan: { path: "docs/x/plan.md", status: "approved" },
+      spec: {
+        path: "docs/x/spec.md",
+        status: "approved",
+        approved_digest: sha256(path.join(root, "docs/x/spec.md")),
+      },
+      plan: {
+        path: "docs/x/plan.md",
+        status: "approved",
+        approved_digest: sha256(path.join(root, "docs/x/plan.md")),
+      },
       menu: { presented: true, chosen: "handoff" },
       updated_at: Date.now(),
     }),
@@ -350,8 +379,16 @@ test("native handoff resolves relative paths from the session directory", async 
       path.join(root, "docs/x/sdd/flow.json"),
       JSON.stringify({
         slug: "x",
-        spec: { path: "docs/x/spec.md", status: "approved" },
-        plan: { path: "docs/x/plan.md", status: "approved" },
+        spec: {
+          path: "docs/x/spec.md",
+          status: "approved",
+          approved_digest: sha256(path.join(root, "docs/x/spec.md")),
+        },
+        plan: {
+          path: "docs/x/plan.md",
+          status: "approved",
+          approved_digest: sha256(path.join(root, "docs/x/plan.md")),
+        },
         menu: { presented: true, chosen: "inline" },
         updated_at: Date.now(),
       }),
@@ -568,7 +605,9 @@ test("handoff hard-fails when flow gates are not approved", async () => {
     } as never);
     const out = JSON.parse(raw as string);
     expect(out.ok).toBe(false);
-    expect(out.error).toContain("spec not approved");
+    // No activated flow state exists: the gate fails closed with the strict
+    // read (flow_not_activated) rather than a misleading approval error.
+    expect(out.error).toMatch(/not (approved|activated)/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -588,8 +627,16 @@ test("handoff proceeds when flow gates are approved", async () => {
       path.join(root, "docs/x/sdd/flow.json"),
       JSON.stringify({
         slug: "x",
-        spec: { path: "docs/x/spec.md", status: "approved" },
-        plan: { path: "docs/x/plan.md", status: "approved" },
+        spec: {
+          path: "docs/x/spec.md",
+          status: "approved",
+          approved_digest: sha256(path.join(root, "docs/x/spec.md")),
+        },
+        plan: {
+          path: "docs/x/plan.md",
+          status: "approved",
+          approved_digest: sha256(path.join(root, "docs/x/plan.md")),
+        },
         menu: { presented: true, chosen: "handoff" },
         updated_at: Date.now(),
       }),

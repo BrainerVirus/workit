@@ -106,14 +106,12 @@ export const resolveCanonicalLayout = (input: {
     if (path.isAbsolute(candidate)) {
       return { ok: false, error: `absolute path not allowed: ${candidate}` };
     }
-    let abs: string;
-    try {
-      abs = canonicalize(workspace, candidate);
-    } catch (error) {
-      return { ok: false, error: error instanceof Error ? error.message : String(error) };
-    }
-    const rel = posix(path.relative(workspace, abs));
-    const match = rel.match(/^docs\/([^/]+)\/(spec|plan)\.md$/);
+    // Exact-spelling contract (DC-01): the caller path must be written as the
+    // canonical `docs/<slug>/spec.md` / `docs/<slug>/plan.md` — no `./`,
+    // no `..` segments, no repeated or trailing separators. The strict regex
+    // below rejects those spellings before any bytes are read or resolved.
+    const spelling = posix(candidate);
+    const match = spelling.match(/^docs\/([^/]+)\/(spec|plan)\.md$/);
     if (!match) {
       return {
         ok: false,
@@ -140,6 +138,21 @@ export const resolveCanonicalLayout = (input: {
       };
     }
     derived = pathSlug;
+    // Symlink/canonical containment (DC-02): after the exact-spelling match,
+    // resolve the canonical path so a symlinked docs/<slug> or doc file that
+    // escapes the workspace or resolves to a different slug is still rejected.
+    let abs: string;
+    try {
+      abs = canonicalize(workspace, candidate);
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
+    if (posix(path.relative(workspace, abs)) !== spelling) {
+      return {
+        ok: false,
+        error: `path must resolve to ${JSON.stringify(spelling)}: ${candidate}`,
+      };
+    }
   }
 
   let resolvedSlug = slug;

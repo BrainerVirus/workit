@@ -1,4 +1,15 @@
-import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync, existsSync } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  fsyncSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { docsValidate, parseTasksFromPlan, qualitySpec, stripFences } from "./docs-validate";
 import { resolveCanonicalLayout } from "./docs-layout";
@@ -6,6 +17,41 @@ import { resolveCanonicalLayout } from "./docs-layout";
 export type FlowHost = "opencode" | "cursor";
 export type FlowStatus = "draft" | "self_reviewed" | "approved";
 export type FlowRole = "coordinator" | "delegated";
+
+/** The canonical document kinds a flow binds approvals to (CA-01). */
+export type FlowDocument = "spec" | "plan";
+
+/** Structured approval-drift reasons (CA-04). */
+export type FlowDriftCode =
+  | "digest_missing"
+  | "document_missing"
+  | "document_unreadable"
+  | "digest_mismatch";
+
+export type FlowDriftReason = {
+  document: FlowDocument;
+  code: FlowDriftCode;
+  path: string;
+};
+
+/** Execution lifecycle (CA-11): only these four states exist; no cancellation. */
+export type ExecutionStatus = "pending" | "active" | "paused" | "completed";
+export type ExecutionMode = "subagent-driven" | "inline";
+
+/** CLI confirmation evidence (CA-19, CA-21): policy-only, no attestation. */
+export type CliConfirmation = {
+  host: "cli";
+  attested: false;
+  confirmation: "flag" | "tty";
+};
+
+export type LifecycleEvidence = NativeChoiceEvidence | CliConfirmation;
+
+export type FlowExecutionState = {
+  status: ExecutionStatus;
+  mode: ExecutionMode | null;
+  evidence: LifecycleEvidence | null;
+};
 
 /**
  * Host-bound identity for every flow/product mutation (FG-05, CA-20, CA-21):
@@ -74,6 +120,8 @@ export type FlowDocState = {
   path: string;
   status: FlowStatus;
   evidence?: NativeChoiceEvidence | null;
+  /** SHA-256 (lowercase hex) of the canonical document's exact bytes (CA-01). */
+  approved_digest: string | null;
 };
 
 export type FlowMenuState = {
@@ -89,16 +137,32 @@ export type FlowState = {
   spec: FlowDocState;
   plan: FlowDocState;
   menu: FlowMenuState;
+  execution: FlowExecutionState;
+  handoff_destination: boolean;
   updated_at: number;
 };
 
 /** One shared result shape for every flow transition and mutation gate (FG-09). */
-export type FlowError = { ok: false; error: string; code: string };
+export type FlowError = {
+  ok: false;
+  error: string;
+  code: string;
+  details?: Record<string, unknown>;
+};
 export type FlowGateResult = { ok: true } | FlowError;
 export type EvidenceResult =
   | { ok: true; evidence: NativeChoiceEvidence }
   | { ok: false; error: string };
 export type StatusTransition = { ok: true; next: FlowStatus } | FlowError;
+
+/** Persisted state after legacy normalization and approval-integrity reconciliation (CA-02). */
+export type EffectiveFlowState = {
+  state: FlowState;
+  drift: FlowDriftReason[];
+};
+
+/** Structured result of an effective (reconciled) flow-state read (CA-04). */
+export type FlowReadResult = ({ ok: true } & EffectiveFlowState) | FlowError;
 
 export const MENU_CHOICES = [
   "subagent-driven",
@@ -109,7 +173,12 @@ export const MENU_CHOICES = [
 ] as const;
 export type MenuChoice = (typeof MENU_CHOICES)[number];
 
-const err = (code: string, error: string): FlowError => ({ ok: false, code, error });
+const err = (code: string, error: string, details?: Record<string, unknown>): FlowError => ({
+  ok: false,
+  code,
+  error,
+  ...(details ? { details } : {}),
+});
 
 const SLUG_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
@@ -143,6 +212,7 @@ const normalizeState = (parsed: unknown, slug: string): FlowState => {
   const spec = (p.spec ?? {}) as Partial<FlowDocState>;
   const plan = (p.plan ?? {}) as Partial<FlowDocState>;
   const menu = (p.menu ?? {}) as Partial<FlowMenuState>;
+  const execution = (p.execution ?? {}) as Partial<FlowExecutionState>;
   return {
     slug: p.slug ?? slug,
     activated: p.activated ?? true,
@@ -150,17 +220,25 @@ const normalizeState = (parsed: unknown, slug: string): FlowState => {
       path: spec.path ?? "",
       status: spec.status ?? "draft",
       evidence: spec.evidence ?? null,
+      approved_digest: spec.approved_digest ?? null,
     },
     plan: {
       path: plan.path ?? "",
       status: plan.status ?? "draft",
       evidence: plan.evidence ?? null,
+      approved_digest: plan.approved_digest ?? null,
     },
     menu: {
       presented: Boolean(menu.presented),
       chosen: menu.chosen ?? "",
       evidence: menu.evidence ?? null,
     },
+    execution: {
+      status: (execution.status ?? "pending") as ExecutionStatus,
+      mode: (execution.mode ?? null) as ExecutionMode | null,
+      evidence: (execution.evidence ?? null) as LifecycleEvidence | null,
+    },
+    handoff_destination: p.handoff_destination ?? false,
     updated_at: p.updated_at ?? Date.now(),
   };
 };
@@ -168,9 +246,11 @@ const normalizeState = (parsed: unknown, slug: string): FlowState => {
 const emptyState = (slug: string): FlowState => ({
   slug,
   activated: false,
-  spec: { path: "", status: "draft", evidence: null },
-  plan: { path: "", status: "draft", evidence: null },
+  spec: { path: "", status: "draft", evidence: null, approved_digest: null },
+  plan: { path: "", status: "draft", evidence: null, approved_digest: null },
   menu: { presented: false, chosen: "", evidence: null },
+  execution: { status: "pending", mode: null, evidence: null },
+  handoff_destination: false,
   updated_at: Date.now(),
 });
 
@@ -184,26 +264,202 @@ export const readFlowState = (root: string, slug: string): FlowState => {
   }
 };
 
+const HEX64_RE = /^[0-9a-f]{64}$/;
+const FLOW_STATUSES: readonly FlowStatus[] = ["draft", "self_reviewed", "approved"];
+const EXECUTION_STATUSES: readonly ExecutionStatus[] = ["pending", "active", "paused", "completed"];
+
+const isRecord = (v: unknown): v is Record<string, unknown> =>
+  typeof v === "object" && v !== null && !Array.isArray(v);
+
+/**
+ * Structural validation of persisted choice evidence (CA-18). Approved
+ * lifecycle/approval evidence is data, not a host hook: we validate the shape
+ * (host + required fields) but never re-check freshness here — freshness is a
+ * consume-time property of the host receipt store.
+ */
+const validateEvidenceValue = (v: unknown, allowCli: boolean): boolean => {
+  if (v === null) return true;
+  if (!isRecord(v)) return false;
+  if (v.host === "opencode") {
+    return (
+      v.attested === true &&
+      typeof v.callID === "string" &&
+      typeof v.selectedLabel === "string" &&
+      typeof v.recordedAt === "number"
+    );
+  }
+  if (v.host === "cursor") return v.attested === false && v.confirmation === "contract";
+  if (allowCli && v.host === "cli") {
+    return v.attested === false && (v.confirmation === "flag" || v.confirmation === "tty");
+  }
+  return false;
+};
+
+/**
+ * Strict validation + documented normalization of parsed flow.json (CA-18):
+ * unsupported field values are rejected (flow_state_invalid) instead of being
+ * coerced; missing OPTIONAL fields are normalized only by the documented rules.
+ */
+const validateState = (
+  parsed: unknown,
+  slug: string,
+): { ok: true; state: FlowState } | { ok: false; error: string } => {
+  if (!isRecord(parsed)) return { ok: false, error: "flow state must be a JSON object" };
+  if (parsed.slug !== undefined && (typeof parsed.slug !== "string" || parsed.slug !== slug)) {
+    return { ok: false, error: `flow state slug must be ${JSON.stringify(slug)}` };
+  }
+  if (parsed.activated !== undefined && typeof parsed.activated !== "boolean") {
+    return { ok: false, error: "flow state activated must be a boolean" };
+  }
+  if (parsed.handoff_destination !== undefined && typeof parsed.handoff_destination !== "boolean") {
+    return { ok: false, error: "flow state handoff_destination must be a boolean" };
+  }
+  if (
+    parsed.updated_at !== undefined &&
+    (typeof parsed.updated_at !== "number" || !Number.isFinite(parsed.updated_at))
+  ) {
+    return { ok: false, error: "flow state updated_at must be a finite number" };
+  }
+  const doc = (value: unknown, name: FlowDocument): FlowDocState | string => {
+    const p = isRecord(value) ? value : {};
+    if (!isRecord(value) && value !== undefined) {
+      return `flow state ${name} must be an object`;
+    }
+    if (p.status !== undefined && !FLOW_STATUSES.includes(p.status as FlowStatus)) {
+      return `flow state ${name}.status must be draft, self_reviewed, or approved`;
+    }
+    if (p.path !== undefined && typeof p.path !== "string") {
+      return `flow state ${name}.path must be a string`;
+    }
+    if (
+      p.approved_digest !== undefined &&
+      p.approved_digest !== null &&
+      (typeof p.approved_digest !== "string" || !HEX64_RE.test(p.approved_digest))
+    ) {
+      return `flow state ${name}.approved_digest must be 64-char lowercase hex or null`;
+    }
+    if (p.evidence !== undefined && !validateEvidenceValue(p.evidence, false)) {
+      return `flow state ${name}.evidence has an unsupported shape`;
+    }
+    return {
+      path: (p.path as string | undefined) ?? "",
+      status: (p.status as FlowStatus | undefined) ?? "draft",
+      evidence: (p.evidence as NativeChoiceEvidence | null | undefined) ?? null,
+      approved_digest: (p.approved_digest as string | null | undefined) ?? null,
+    };
+  };
+  const spec = doc(parsed.spec, "spec");
+  if (typeof spec === "string") return { ok: false, error: spec };
+  const plan = doc(parsed.plan, "plan");
+  if (typeof plan === "string") return { ok: false, error: plan };
+
+  const menuRaw = isRecord(parsed.menu) ? parsed.menu : undefined;
+  if (parsed.menu !== undefined && !isRecord(parsed.menu)) {
+    return { ok: false, error: "flow state menu must be an object" };
+  }
+  if (menuRaw?.presented !== undefined && typeof menuRaw.presented !== "boolean") {
+    return { ok: false, error: "flow state menu.presented must be a boolean" };
+  }
+  if (menuRaw?.chosen !== undefined && typeof menuRaw.chosen !== "string") {
+    return { ok: false, error: "flow state menu.chosen must be a string" };
+  }
+  if (menuRaw?.evidence !== undefined && !validateEvidenceValue(menuRaw.evidence, false)) {
+    return { ok: false, error: "flow state menu.evidence has an unsupported shape" };
+  }
+
+  const execRaw = isRecord(parsed.execution) ? parsed.execution : undefined;
+  if (parsed.execution !== undefined && !isRecord(parsed.execution)) {
+    return { ok: false, error: "flow state execution must be an object" };
+  }
+  if (
+    execRaw?.status !== undefined &&
+    !EXECUTION_STATUSES.includes(execRaw.status as ExecutionStatus)
+  ) {
+    return {
+      ok: false,
+      error: "flow state execution.status must be pending, active, paused, or completed",
+    };
+  }
+  if (
+    execRaw?.mode !== undefined &&
+    execRaw.mode !== null &&
+    execRaw.mode !== "subagent-driven" &&
+    execRaw.mode !== "inline"
+  ) {
+    return {
+      ok: false,
+      error: "flow state execution.mode must be subagent-driven, inline, or null",
+    };
+  }
+  if (execRaw?.evidence !== undefined && !validateEvidenceValue(execRaw.evidence, true)) {
+    return { ok: false, error: "flow state execution.evidence has an unsupported shape" };
+  }
+
+  return {
+    ok: true,
+    state: {
+      slug,
+      activated: parsed.activated ?? true,
+      spec,
+      plan,
+      menu: {
+        presented: menuRaw?.presented ?? false,
+        chosen: (menuRaw?.chosen as string | undefined) ?? "",
+        evidence: (menuRaw?.evidence as NativeChoiceEvidence | null | undefined) ?? null,
+      },
+      execution: {
+        status: (execRaw?.status as ExecutionStatus | undefined) ?? "pending",
+        mode: (execRaw?.mode as ExecutionMode | null | undefined) ?? null,
+        evidence: (execRaw?.evidence as LifecycleEvidence | null | undefined) ?? null,
+      },
+      handoff_destination: parsed.handoff_destination ?? false,
+      updated_at: parsed.updated_at ?? Date.now(),
+    },
+  };
+};
+
 // Strict read for transitions and guards: missing or corrupt state is a
-// structured error, never a silent draft fallback (CA-18).
+// structured error, never a silent draft fallback (CA-18). The raw readFlowState
+// above stays a lenient compatibility helper for controlled tests and mutation
+// internals; status, gates, and host adapters use the effective path.
 type StrictRead = { ok: true; state: FlowState } | { ok: false; error: string; code: string };
 
 const readFlowStrict = (root: string, slug: string): StrictRead => {
   const file = flowPath(root, slug);
+  const rel = path.posix.join("docs", slug, "sdd", "flow.json");
   if (!existsSync(file)) {
     return err(
       "flow_not_activated",
       `flow not activated for ${slug} — run workflow_flow_status first`,
     );
   }
+  let text: string;
   try {
-    return { ok: true, state: normalizeState(JSON.parse(readFileSync(file, "utf8")), slug) };
+    text = readFileSync(file, "utf8");
   } catch (error) {
     return err(
-      "flow_corrupt",
-      `corrupt flow state at ${file}: ${error instanceof Error ? error.message : String(error)}`,
+      "flow_io_error",
+      `cannot read flow state at ${file}: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch (error) {
+    return err(
+      "flow_state_invalid",
+      `invalid flow state at ${file}: ${error instanceof Error ? error.message : String(error)}`,
+      { path: rel, original_bytes_preserved: true },
+    );
+  }
+  const validated = validateState(parsed, slug);
+  if (!validated.ok) {
+    return err("flow_state_invalid", `invalid flow state at ${file}: ${validated.error}`, {
+      path: rel,
+      original_bytes_preserved: true,
+    });
+  }
+  return { ok: true, state: validated.state };
 };
 
 // Unique per-write temporary buffer so two concurrent writers never share the
@@ -211,12 +467,40 @@ const readFlowStrict = (root: string, slug: string): StrictRead => {
 const uniqueTempPath = (file: string) =>
   `${file}.${process.pid}-${Math.random().toString(36).slice(2)}.tmp`;
 
-export const writeFlowState = (root: string, state: FlowState) => {
-  const file = flowPath(root, state.slug);
-  mkdirSync(path.dirname(file), { recursive: true });
+/**
+ * Same-directory atomic replacement (CA-19): write a unique temp file, fsync its
+ * descriptor, close it, and rename it into place. The temp shares the target's
+ * directory so rename is atomic on the same filesystem; a reader never observes
+ * partial JSON. Best-effort removal of the temp on every exit path.
+ */
+const writeFlowFileAtomic = (file: string, state: FlowState): void => {
+  const text = JSON.stringify(state, null, 2) + "\n";
   const tmp = uniqueTempPath(file);
-  writeFileSync(tmp, JSON.stringify(state, null, 2) + "\n", "utf8");
-  renameSync(tmp, file);
+  mkdirSync(path.dirname(file), { recursive: true });
+  let fd: number | null = null;
+  try {
+    fd = openSync(tmp, "w");
+    writeFileSync(fd, text, "utf8");
+    fsyncSync(fd);
+    closeSync(fd);
+    fd = null;
+    renameSync(tmp, file);
+  } finally {
+    try {
+      if (fd !== null) closeSync(fd);
+    } catch {
+      // best effort
+    }
+    try {
+      if (existsSync(tmp)) rmSync(tmp, { force: true });
+    } catch {
+      // best effort: a leftover temp is preferable to masking the real error
+    }
+  }
+};
+
+export const writeFlowState = (root: string, state: FlowState) => {
+  writeFlowFileAtomic(flowPath(root, state.slug), state);
 };
 
 const MAX_WRITE_ATTEMPTS = 5;
@@ -227,8 +511,8 @@ export type FlowWriteResult =
   | { ok: false; io_error: string };
 
 /**
- * Compare-and-write (FG-08): write `next` only if the on-disk content still
- * equals the version this writer read (`expected`). A stale writer gets
+ * Compare-and-write (FG-08, CA-19): write `next` only if the on-disk content
+ * still equals the version this writer read (`expected`). A stale writer gets
  * `conflict` instead of clobbering a concurrent newer write; the caller re-reads
  * and retries the transition (bounded). Unique per-write temp names keep the
  * write buffer from being shared between writers.
@@ -236,12 +520,10 @@ export type FlowWriteResult =
  * The first compare happens before the buffer is staged; the file is re-read
  * immediately before the rename so a writer that committed between the two
  * points still wins. Without the re-read, two writers holding the same expected
- * text would both pass the compare and both rename — a lost update.
- * ponytail: the re-read shrinks but cannot close the cross-process window (a
- * writer can still commit between this re-read and the rename). Upgrade path:
- * hold an O_EXCL advisory lock on `<file>.lock` across the read-modify-write,
- * or move to renameat2(RENAME_EXCHANGE)/an OS-level CAS when a second
- * concurrent process becomes a supported topology.
+ * text would both pass the compare and both rename — a lost update. This CAS
+ * stays as the second safety net under the per-flow `flow.json.lock` (CA-19):
+ * cooperating writers are serialized by the lock; the CAS catches any writer
+ * that bypasses it.
  *
  * A thrown error here is a real IO/permission failure (EACCES, ENOSPC, ...),
  * not a conflict: it is returned as `io_error` so callers surface it instead of
@@ -259,11 +541,16 @@ export const writeFlowStateIfCurrent = (
   const nextText = JSON.stringify(next, null, 2) + "\n";
   if (expectedText === nextText) return { ok: true };
   const tmp = uniqueTempPath(file);
+  let fd: number | null = null;
   try {
     const currentText = existsSync(file) ? readFileSync(file, "utf8") : null;
     if (currentText !== expectedText) return { ok: false, conflict: true };
     mkdirSync(path.dirname(file), { recursive: true });
-    writeFileSync(tmp, nextText, "utf8");
+    fd = openSync(tmp, "w");
+    writeFileSync(fd, nextText, "utf8");
+    fsyncSync(fd);
+    closeSync(fd);
+    fd = null;
     const reRead = existsSync(file) ? readFileSync(file, "utf8") : null;
     if (reRead !== expectedText) return { ok: false, conflict: true };
     renameSync(tmp, file);
@@ -275,6 +562,11 @@ export const writeFlowStateIfCurrent = (
     // unique temp is orphaned — remove it so crashed writers don't accumulate
     // `<file>.<pid>-<rand>.tmp` buffers.
     try {
+      if (fd !== null) closeSync(fd);
+    } catch {
+      // best effort
+    }
+    try {
       if (existsSync(tmp)) rmSync(tmp, { force: true });
     } catch {
       // best effort: a leftover temp is preferable to masking the real error
@@ -282,32 +574,214 @@ export const writeFlowStateIfCurrent = (
   }
 };
 
+/**
+ * One internal strict-byte helper (CA-01, CA-06): resolve the canonical
+ * document, read it as a Buffer, validate it with a fatal TextDecoder, and
+ * return both the decoded text and the SHA-256 of the exact bytes. Line endings
+ * and Unicode are never normalized — any byte change invalidates the approval.
+ */
+type CanonicalDigestResult =
+  | { ok: true; text: string; digest: string }
+  | { ok: false; code: "document_missing" | "document_unreadable" };
+
+const readCanonicalDigest = (root: string, rel: string): CanonicalDigestResult => {
+  const abs = path.join(root, ...rel.split("/"));
+  let bytes: Buffer;
+  try {
+    bytes = readFileSync(abs);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return { ok: false, code: "document_missing" };
+    }
+    return { ok: false, code: "document_unreadable" };
+  }
+  let text: string;
+  try {
+    text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    return { ok: false, code: "document_unreadable" };
+  }
+  return { ok: true, text, digest: createHash("sha256").update(bytes).digest("hex") };
+};
+
+/**
+ * Approval-integrity reconciliation (CA-02, CA-03): recompute approved
+ * document digests in spec-before-plan order and return the reset state plus
+ * the structured drift reasons. Spec drift resets the whole approval chain;
+ * plan drift (spec valid) preserves the spec approval and digest.
+ */
+const resetForSpecDrift = (state: FlowState): FlowState => ({
+  ...state,
+  spec: { ...state.spec, status: "draft", evidence: null, approved_digest: null },
+  plan: { ...state.plan, status: "draft", evidence: null, approved_digest: null },
+  menu: { presented: false, chosen: "", evidence: null },
+  execution: { status: "pending", mode: null, evidence: null },
+  handoff_destination: false,
+  updated_at: Date.now(),
+});
+
+const resetForPlanDrift = (state: FlowState): FlowState => ({
+  ...state,
+  plan: { ...state.plan, status: "draft", evidence: null, approved_digest: null },
+  menu: { presented: false, chosen: "", evidence: null },
+  execution: { status: "pending", mode: null, evidence: null },
+  handoff_destination: false,
+  updated_at: Date.now(),
+});
+
+const driftCodeFor = (
+  root: string,
+  relPath: string,
+  storedDigest: string | null,
+): FlowDriftCode | null => {
+  if (storedDigest === null) return "digest_missing";
+  const current = readCanonicalDigest(root, relPath);
+  if (!current.ok) return current.code;
+  return current.digest !== storedDigest ? "digest_mismatch" : null;
+};
+
+const reconcileState = (
+  root: string,
+  slug: string,
+  state: FlowState,
+): { state: FlowState; drift: FlowDriftReason[] } => {
+  const specPath = path.posix.join("docs", slug, "spec.md");
+  const planPath = path.posix.join("docs", slug, "plan.md");
+  if (state.spec.status === "approved") {
+    const code = driftCodeFor(root, specPath, state.spec.approved_digest);
+    if (code) {
+      return {
+        state: resetForSpecDrift(state),
+        drift: [{ document: "spec", code, path: specPath }],
+      };
+    }
+  }
+  if (state.plan.status === "approved") {
+    const code = driftCodeFor(root, planPath, state.plan.approved_digest);
+    if (code) {
+      return {
+        state: resetForPlanDrift(state),
+        drift: [{ document: "plan", code, path: planPath }],
+      };
+    }
+  }
+  return { state, drift: [] };
+};
+
 type MutateResult = { ok: true; next: FlowState } | FlowError;
 
-// Unlocked read-modify-write made safe (FG-08): read strict, mutate in memory,
-// then commit only if the on-disk state still matches what was read; otherwise
-// re-read and retry the transition, bounded.
+/**
+ * Per-flow critical section (CA-19): acquire `<flow.json>.lock` exclusively
+ * (openSync "wx"); on contention retry with a bounded 10ms backoff; run the
+ * critical section; release the lock and best-effort remove it in `finally`.
+ * No lock module and no adapter-side lock: every host shares this one core
+ * contract. ponytail: a crash while holding the lock leaves a stale `.lock`
+ * that the next writer must clear manually — out of scope until a recovery
+ * operation exists.
+ */
+type Locked<T> = { locked: true; value: T } | { locked: false; error: FlowError };
+
+const withFlowLock = <T>(file: string, fn: () => T): Locked<T> => {
+  mkdirSync(path.dirname(file), { recursive: true });
+  const lock = `${file}.lock`;
+  const wait = new Int32Array(new SharedArrayBuffer(4));
+  let fd: number | null = null;
+  for (let attempt = 0; attempt < MAX_WRITE_ATTEMPTS; attempt++) {
+    try {
+      fd = openSync(lock, "wx");
+      break;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== "EEXIST") {
+        return {
+          locked: false,
+          error: err(
+            "flow_io_error",
+            `flow lock failed for ${file}: ${error instanceof Error ? error.message : String(error)}`,
+          ),
+        };
+      }
+      if (attempt === MAX_WRITE_ATTEMPTS - 1) {
+        return {
+          locked: false,
+          error: err(
+            "flow_concurrent_conflict",
+            `concurrent flow update detected for ${path.dirname(file)}: re-read the flow state and retry the transition`,
+          ),
+        };
+      }
+      Atomics.wait(wait, 0, 0, 10);
+    }
+  }
+  try {
+    return { locked: true, value: fn() };
+  } finally {
+    try {
+      if (fd !== null) closeSync(fd);
+    } catch {
+      // best effort
+    }
+    try {
+      rmSync(lock, { force: true });
+    } catch {
+      // best effort: a leftover lock is preferable to masking the real error
+    }
+  }
+};
+
+/**
+ * Effective flow-state read (CA-02, CA-04): under the per-flow lock, validate
+ * persisted state, reconcile approval digests in spec-before-plan order, and
+ * persist any reset atomically. Status reads and gates operate ONLY on this
+ * reconciled state; drift is reported structurally.
+ */
+export const readEffectiveFlowState = (root: string, slug: string): FlowReadResult => {
+  const file = flowPath(root, slug);
+  const locked = withFlowLock<FlowReadResult>(file, () => {
+    const strict = readFlowStrict(root, slug);
+    if (!strict.ok) return strict;
+    const { state, drift } = reconcileState(root, slug, strict.state);
+    if (drift.length > 0) writeFlowFileAtomic(file, state);
+    return { ok: true, state, drift };
+  });
+  if (!locked.locked) return locked.error;
+  return locked.value;
+};
+
+/**
+ * Locked read-modify-write (FG-08, CA-19): under the per-flow lock, read strict,
+ * reconcile approval digests first, mutate on the reconciled state, then commit
+ * only if the on-disk state still matches what was read (CAS); otherwise re-read
+ * and retry the transition, bounded. Reconciliation runs inside this same
+ * critical section before every transition (CA-02).
+ */
 const readModifyWrite = (
   root: string,
   slug: string,
   mutate: (state: FlowState) => MutateResult,
 ): FlowGateResult => {
-  for (let attempt = 0; attempt < MAX_WRITE_ATTEMPTS; attempt++) {
-    const strict = readFlowStrict(root, slug);
-    if (!strict.ok) return strict;
-    const result = mutate(strict.state);
-    if (!result.ok) return result;
-    const commit = writeFlowStateIfCurrent(root, strict.state, result.next);
-    if (commit.ok) return { ok: true };
-    if ("io_error" in commit) {
-      return err("flow_io_error", `flow state write failed for ${slug}: ${commit.io_error}`);
+  const file = flowPath(root, slug);
+  const locked = withFlowLock<FlowGateResult>(file, () => {
+    for (let attempt = 0; attempt < MAX_WRITE_ATTEMPTS; attempt++) {
+      const strict = readFlowStrict(root, slug);
+      if (!strict.ok) return strict;
+      const reconciled = reconcileState(root, slug, strict.state);
+      const result = mutate(reconciled.state);
+      if (!result.ok) return result;
+      const commit = writeFlowStateIfCurrent(root, strict.state, result.next);
+      if (commit.ok) return { ok: true };
+      if ("io_error" in commit) {
+        return err("flow_io_error", `flow state write failed for ${slug}: ${commit.io_error}`);
+      }
+      // a non-cooperating writer won the race — re-read and retry the transition
     }
-    // a concurrent writer won the race — re-read and retry the transition
-  }
-  return err(
-    "flow_concurrent_conflict",
-    `concurrent flow update detected for ${slug}: re-read the flow state and retry the transition`,
-  );
+    return err(
+      "flow_concurrent_conflict",
+      `concurrent flow update detected for ${slug}: re-read the flow state and retry the transition`,
+    );
+  });
+  if (!locked.locked) return locked.error;
+  return locked.value;
 };
 
 // The caller-supplied workspace must be the host workspace the context names
@@ -679,6 +1153,9 @@ export const assertHostEvidence = (host: FlowHost, evidence: unknown): FlowGateR
  * Record flow activation and the canonical spec/plan paths when preparation
  * begins. The flow store lives under the canonical docs/<slug>/sdd/ layout
  * (Task 18 contract). Re-runs keep existing statuses while recording paths.
+ * Activation is a locked critical section (CA-19): existing state is validated
+ * and reconciled before being trusted, and malformed state fails closed without
+ * overwriting the original file (CA-18).
  */
 export const prepareFlowState = (
   root: string,
@@ -697,26 +1174,42 @@ export const prepareFlowState = (
   if (!resolved.ok) return err("flow_prepare_failed", resolved.error);
   const specPath = path.posix.join("docs", slug, "spec.md");
   const planPath = path.posix.join("docs", slug, "plan.md");
-  const current = readFlowState(root, slug);
-  const state: FlowState = current.activated
-    ? {
-        ...current,
-        spec: { ...current.spec, path: specPath },
-        plan: { ...current.plan, path: planPath },
-        updated_at: Date.now(),
-      }
-    : {
+  const file = flowPath(root, slug);
+  const locked = withFlowLock<FlowGateResult>(file, () => {
+    if (!existsSync(file)) {
+      writeFlowFileAtomic(file, {
         slug,
         activated: true,
-        spec: { path: specPath, status: "draft", evidence: null },
-        plan: { path: planPath, status: "draft", evidence: null },
+        spec: { path: specPath, status: "draft", evidence: null, approved_digest: null },
+        plan: { path: planPath, status: "draft", evidence: null, approved_digest: null },
         menu: { presented: false, chosen: "", evidence: null },
+        execution: { status: "pending", mode: null, evidence: null },
+        handoff_destination: false,
         updated_at: Date.now(),
-      };
-  writeFlowState(root, state);
-  return { ok: true };
+      });
+      return { ok: true };
+    }
+    const strict = readFlowStrict(root, slug);
+    if (!strict.ok) return strict;
+    const reconciled = reconcileState(root, slug, strict.state);
+    writeFlowFileAtomic(file, {
+      ...reconciled.state,
+      spec: { ...reconciled.state.spec, path: specPath },
+      plan: { ...reconciled.state.plan, path: planPath },
+      updated_at: Date.now(),
+    });
+    return { ok: true };
+  });
+  if (!locked.locked) return locked.error;
+  return locked.value;
 };
 
+/**
+ * Approve the canonical spec (CA-01): under the locked read/reconcile/mutate
+ * critical section, reset any stale approval first, then read the exact bytes,
+ * run the self-review on the decoded text, and atomically store the approval
+ * evidence TOGETHER WITH the SHA-256 digest of those bytes.
+ */
 export const transitionSpec = (
   root: string,
   slug: string,
@@ -730,51 +1223,59 @@ export const transitionSpec = (
   if (!recorded.ok) return err("evidence_invalid", recorded.error);
   const doc = resolveDoc(root, slug, specPath, "spec");
   if (!doc.ok) return err("path_invalid", doc.error);
+  const relPath = path.posix.join("docs", slug, "spec.md");
   return readModifyWrite(root, slug, (state) => {
     if (!existsSync(doc.path)) return err("spec_missing", `spec not found: ${specPath}`);
-    if (state.spec.status === "draft") {
-      let text: string;
-      try {
-        text = readFileSync(doc.path, "utf8");
-      } catch (error) {
+    if (state.spec.status === "draft" || state.spec.status === "self_reviewed") {
+      const digest = readCanonicalDigest(root, relPath);
+      if (!digest.ok) {
         return err(
           "spec_self_review_failed",
-          `spec self-review failed: unreadable spec: ${error instanceof Error ? error.message : String(error)}`,
+          `spec self-review failed: unreadable or invalid UTF-8 canonical spec: ${specPath}`,
         );
       }
-      const hard = qualitySpec(text).filter((f) => f.severity === "hard");
-      const missing: string[] = [];
-      if (!/^\s*\*+Branch:\*+/im.test(stripFences(text)))
-        missing.push("**Branch:** header missing");
-      if (hard.length > 0 || missing.length > 0) {
-        return err(
-          "spec_self_review_failed",
-          "spec self-review failed: " +
-            hard
-              .map((f) => `${f.code} — ${f.message}`)
-              .concat(missing)
-              .join("; ") +
-            " — see templates/spec-template.md for the required structure",
-        );
+      if (state.spec.status === "draft") {
+        const hard = qualitySpec(digest.text).filter((f) => f.severity === "hard");
+        const missing: string[] = [];
+        if (!/^\s*\*+Branch:\*+/im.test(stripFences(digest.text)))
+          missing.push("**Branch:** header missing");
+        if (hard.length > 0 || missing.length > 0) {
+          return err(
+            "spec_self_review_failed",
+            "spec self-review failed: " +
+              hard
+                .map((f) => `${f.code} — ${f.message}`)
+                .concat(missing)
+                .join("; ") +
+              " — see templates/spec-template.md for the required structure",
+          );
+        }
       }
-    }
-    const step = nextFlowStatus(state.spec.status);
-    if (!step.ok) return step;
-    return {
-      ok: true,
-      next: {
-        ...state,
-        spec: {
-          path: path.posix.join("docs", slug, "spec.md"),
-          status: step.next,
-          evidence: recorded.evidence,
+      return {
+        ok: true,
+        next: {
+          ...state,
+          spec: {
+            path: relPath,
+            status: "approved",
+            evidence: recorded.evidence,
+            approved_digest: digest.digest,
+          },
+          updated_at: Date.now(),
         },
-        updated_at: Date.now(),
-      },
-    };
+      };
+    }
+    return err("flow_already_approved", "already approved; no further transitions");
   });
 };
 
+/**
+ * Approve the canonical plan (CA-01): requires a currently valid spec approval;
+ * under the locked read/reconcile/mutate critical section, reset any stale plan
+ * approval first, then read the exact bytes, run the self-review on the decoded
+ * text, and atomically store the approval evidence TOGETHER WITH the SHA-256
+ * digest of those bytes.
+ */
 export const transitionPlan = (
   root: string,
   slug: string,
@@ -788,44 +1289,45 @@ export const transitionPlan = (
   if (!recorded.ok) return err("evidence_invalid", recorded.error);
   const doc = resolveDoc(root, slug, planPath, "plan");
   if (!doc.ok) return err("path_invalid", doc.error);
+  const relPath = path.posix.join("docs", slug, "plan.md");
   return readModifyWrite(root, slug, (state) => {
     if (!existsSync(doc.path)) return err("plan_missing", `plan not found: ${planPath}`);
     if (state.spec.status !== "approved") {
       return err("spec_not_approved", "spec must be approved before the plan can be approved");
     }
-    if (state.plan.status === "draft") {
-      let text: string;
-      try {
-        text = readFileSync(doc.path, "utf8");
-      } catch (error) {
+    if (state.plan.status === "draft" || state.plan.status === "self_reviewed") {
+      const digest = readCanonicalDigest(root, relPath);
+      if (!digest.ok) {
         return err(
           "plan_self_review_failed",
-          `plan self-review failed: unreadable plan: ${error instanceof Error ? error.message : String(error)}`,
+          `plan self-review failed: unreadable or invalid UTF-8 canonical plan: ${planPath}`,
         );
       }
-      const missing: string[] = [];
-      const stripped = stripFences(text);
-      if (parseTasksFromPlan(text).length === 0)
-        missing.push("no ### Task N: sections outside fences");
-      if (!/^\s*\*+Spec:\*+/im.test(stripped)) missing.push("**Spec:** header missing");
-      if (!/^\s*\*+Branch:\*+/im.test(stripped)) missing.push("**Branch:** header missing");
-      if (missing.length > 0)
-        return err("plan_self_review_failed", "plan self-review failed: " + missing.join("; "));
-    }
-    const step = nextFlowStatus(state.plan.status);
-    if (!step.ok) return step;
-    return {
-      ok: true,
-      next: {
-        ...state,
-        plan: {
-          path: path.posix.join("docs", slug, "plan.md"),
-          status: step.next,
-          evidence: recorded.evidence,
+      if (state.plan.status === "draft") {
+        const missing: string[] = [];
+        const stripped = stripFences(digest.text);
+        if (parseTasksFromPlan(digest.text).length === 0)
+          missing.push("no ### Task N: sections outside fences");
+        if (!/^\s*\*+Spec:\*+/im.test(stripped)) missing.push("**Spec:** header missing");
+        if (!/^\s*\*+Branch:\*+/im.test(stripped)) missing.push("**Branch:** header missing");
+        if (missing.length > 0)
+          return err("plan_self_review_failed", "plan self-review failed: " + missing.join("; "));
+      }
+      return {
+        ok: true,
+        next: {
+          ...state,
+          plan: {
+            path: relPath,
+            status: "approved",
+            evidence: recorded.evidence,
+            approved_digest: digest.digest,
+          },
+          updated_at: Date.now(),
         },
-        updated_at: Date.now(),
-      },
-    };
+      };
+    }
+    return err("flow_already_approved", "already approved; no further transitions");
   });
 };
 
@@ -874,7 +1376,6 @@ export const recordMenuChoice = (
       ok: true,
       next: {
         ...state,
-        plan: state.plan.path ? state.plan : { path: planPath, status: state.plan.status },
         menu: { presented: true, chosen: choice, evidence: recorded.evidence },
         updated_at: Date.now(),
       },
@@ -907,7 +1408,11 @@ export const assertFlowGates = (
   const doc = resolveDoc(root, "", planPath, "plan");
   if (!doc.ok) return err("path_invalid", doc.error);
   const slug = slugFromPath(planPath);
-  const state = readFlowState(root, slug);
+  // Effective read (CA-02): digest reconciliation runs before the gate trusts
+  // persisted approvals; drift resets are persisted before gating.
+  const effective = readEffectiveFlowState(root, slug);
+  if (!effective.ok) return effective;
+  const state = effective.state;
   if (state.spec.status !== "approved") {
     return err(
       "spec_not_approved",
@@ -934,6 +1439,8 @@ export const assertFlowGates = (
  * is blocked until the spec is approved, the plan is approved, the execution
  * menu has been recorded (when required), and the canonical docs validate.
  * The optional MutationContext adds the coordinator boundary (FG-05, CA-20).
+ * The gate reconciles approval digests before trusting persisted approvals
+ * (CA-02); drift resets are persisted before gating.
  */
 export const assertProductGates = (
   root: string,
@@ -943,12 +1450,13 @@ export const assertProductGates = (
 ): FlowGateResult => {
   const bound = assertMutationWorkspace(root, ctx);
   if (!bound.ok) return bound;
-  // Strict read (CA-18): missing or corrupt state surfaces flow_not_activated /
-  // flow_corrupt, never a misleading spec_not_approved from a silent draft
-  // fallback. Fail-closed is preserved — no gate ever passes on absent state.
-  const strict = readFlowStrict(root, slug);
-  if (!strict.ok) return strict;
-  const state = strict.state;
+  // Effective strict read (CA-18): missing state surfaces flow_not_activated,
+  // malformed state flow_state_invalid — never a misleading spec_not_approved
+  // from a silent draft fallback. Fail-closed is preserved — no gate ever
+  // passes on absent state.
+  const effective = readEffectiveFlowState(root, slug);
+  if (!effective.ok) return effective;
+  const state = effective.state;
   if (state.spec.status !== "approved") {
     return err(
       "spec_not_approved",

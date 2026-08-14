@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -663,8 +664,20 @@ describe("plugin registration", () => {
         path.join(root, "docs/x/sdd/flow.json"),
         JSON.stringify({
           slug: "x",
-          spec: { path: "docs/x/spec.md", status: "approved" },
-          plan: { path: "docs/x/plan.md", status: "approved" },
+          spec: {
+            path: "docs/x/spec.md",
+            status: "approved",
+            approved_digest: createHash("sha256")
+              .update(readFileSync(path.join(root, "docs/x/spec.md")))
+              .digest("hex"),
+          },
+          plan: {
+            path: "docs/x/plan.md",
+            status: "approved",
+            approved_digest: createHash("sha256")
+              .update(readFileSync(path.join(root, "docs/x/plan.md")))
+              .digest("hex"),
+          },
           menu: { presented: true, chosen: "handoff" },
           updated_at: Date.now(),
         }),

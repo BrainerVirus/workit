@@ -99,9 +99,10 @@ test("transitions reject corrupt flow state with a structured error", () => {
     const result = transitionSpec(root, slug, spec, cursorEvidence());
     expect(result.ok).toBe(false);
     if (result.ok === false) {
-      expect(result.error).toContain("corrupt");
-      expect(result.code).toBe("flow_corrupt");
+      expect(result.error).toContain("invalid flow state");
+      expect(result.code).toBe("flow_state_invalid");
     }
+    expect(readFileSync(flowFile, "utf8")).toBe("{not-json");
   } finally {
     cleanup(root);
   }
@@ -461,12 +462,43 @@ test("product mutation fails docs validation when documents are invalid", () => 
   const { root, slug } = fixture();
   try {
     approveAll(root, slug);
+    // A content change to the plan invalidates its approval BEFORE the docs
+    // validation gate runs (CA-02/CA-03): reconciliation resets the plan to
+    // draft, so the gate reports plan_not_approved, not docs_invalid.
     writeFileSync(path.join(root, "docs", slug, "plan.md"), "# broken");
     const gate = assertProductGates(root, slug, { requireMenu: true, requireDocs: true });
     expect(gate.ok).toBe(false);
-    if (gate.ok === false) expect(gate.code).toBe("docs_invalid");
+    if (gate.ok === false) expect(gate.code).toBe("plan_not_approved");
     const lax = assertProductGates(root, slug, { requireMenu: true, requireDocs: false });
-    expect(lax.ok).toBe(true);
+    expect(lax.ok).toBe(false);
+    if (lax.ok === false) expect(lax.code).toBe("plan_not_approved");
+    // Fresh approval restores the approvals; the drift cascade also reset the
+    // menu, so the menu must be re-presented before the full gate passes.
+    const store = new HostReceiptStore();
+    const sessionId = "s1";
+    writeFileSync(path.join(root, "docs", slug, "plan.md"), COMPLIANT_PLAN_FN(slug));
+    expect(
+      transitionPlan(
+        root,
+        slug,
+        `docs/${slug}/plan.md`,
+        openEvidence(store, sessionId, "Approve plan"),
+      ).ok,
+    ).toBe(true);
+    const noMenu = assertProductGates(root, slug, { requireMenu: true, requireDocs: true });
+    expect(noMenu.ok).toBe(false);
+    if (noMenu.ok === false) expect(noMenu.code).toBe("menu_not_presented");
+    expect(
+      recordMenuChoice(
+        root,
+        slug,
+        `docs/${slug}/plan.md`,
+        "handoff",
+        openEvidence(store, sessionId, "handoff"),
+      ).ok,
+    ).toBe(true);
+    const all = assertProductGates(root, slug, { requireMenu: true, requireDocs: true });
+    expect(all.ok).toBe(true);
   } finally {
     cleanup(root);
   }
@@ -650,7 +682,7 @@ test("product gates use the strict read: missing flow state is flow_not_activate
   }
 });
 
-test("product gates use the strict read: corrupt flow state is flow_corrupt, not a silent draft fallback", () => {
+test("product gates use the strict read: corrupt flow state is flow_state_invalid, not a silent draft fallback", () => {
   const { root, slug } = fixture();
   try {
     const spec = `docs/${slug}/spec.md`;
@@ -660,8 +692,8 @@ test("product gates use the strict read: corrupt flow state is flow_corrupt, not
     const gate = assertProductGates(root, slug, { requireMenu: true, requireDocs: true });
     expect(gate.ok).toBe(false);
     if (gate.ok === false) {
-      expect(gate.code).toBe("flow_corrupt");
-      expect(gate.error).toContain("corrupt");
+      expect(gate.code).toBe("flow_state_invalid");
+      expect(gate.error).toContain("invalid flow state");
     }
   } finally {
     cleanup(root);
