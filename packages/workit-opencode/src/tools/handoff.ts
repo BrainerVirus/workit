@@ -1,7 +1,11 @@
 import path from "node:path";
 import { tool, type PluginInput } from "@opencode-ai/plugin";
 import { fail } from "@brainervirus/workit-core/src/core";
-import { assertFlowGates } from "@brainervirus/workit-core/src/core/flow-state";
+import {
+  assertFlowGates,
+  markHandoffDestination,
+  slugFromPath,
+} from "@brainervirus/workit-core/src/core/flow-state";
 import { WorkflowStateStore } from "@brainervirus/workit-core/src/state";
 import {
   buildHandoffPrompt,
@@ -48,6 +52,12 @@ export function createHandoffTools(client: HandoffClient, state: WorkflowStateSt
               title: `Continue ${path.basename(path.dirname(active.plan))}`,
               prompt: active.prompt,
               stay: /(?:^|\s)--stay(?:\s|$)/.test(userMessage),
+              // CA-07/Task 3: mark the destination ONLY after the child session
+              // is seeded successfully and before any selection. A create/seed
+              // failure leaves the source flow unmarked and retryable; an
+              // already-marked destination rejects with recursive_handoff.
+              afterSeed: () =>
+                markHandoffDestination(context.directory, slugFromPath(active.plan), active.plan),
             }),
           );
         } catch (error) {

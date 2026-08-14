@@ -25,7 +25,13 @@ import {
   DOC_RENDER_TEXT,
   shouldInjectDocRender,
   REMINDER_TEXT,
+  DESTINATION_REMINDER_TEXT,
+  reminderTextFor,
 } from "../../packages/workit-core/src/core/reminder";
+import {
+  DESTINATION_MENU_LABELS,
+  HANDOFF_DESTINATION_MARKER,
+} from "../../packages/workit-core/src/core/flow-state";
 import { openEvidence } from "../workit-core/flow-fixtures";
 
 const REMINDER_SPEC = (slug: string) =>
@@ -179,6 +185,23 @@ test("CA-06: contract reminder carries the superpowers self-review ritual line",
   expect(REMINDER_TEXT).toContain("type consistency");
   expect(REMINDER_TEXT).toContain("workflow_spec_approve");
   expect(REMINDER_TEXT).toContain("workflow_plan_approve");
+});
+
+test("CA-08: the destination reminder carries the marker and never offers Handoff", () => {
+  expect(DESTINATION_REMINDER_TEXT).toContain(HANDOFF_DESTINATION_MARKER);
+  expect(DESTINATION_REMINDER_TEXT).not.toContain("Handoff");
+  for (const label of DESTINATION_MENU_LABELS) {
+    expect(DESTINATION_REMINDER_TEXT).toContain(label);
+  }
+  expect(reminderTextFor(true)).toBe(DESTINATION_REMINDER_TEXT);
+  expect(reminderTextFor(false)).toBe(REMINDER_TEXT);
+  expect(REMINDER_TEXT).toContain("Handoff");
+});
+
+test("CA-13: the SDD rail reminder never mentions the post-plan menu or Handoff", () => {
+  expect(SDD_REMINDER_TEXT).toContain("subagent-driven");
+  expect(SDD_REMINDER_TEXT).not.toContain("Handoff");
+  expect(SDD_REMINDER_TEXT).not.toContain("Inline");
 });
 
 test("CA-03: config-gap marker in assistant text → detector true, guard injects", () => {
