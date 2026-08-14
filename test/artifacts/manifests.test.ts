@@ -39,7 +39,7 @@ test("cursor mcp.json launches the published package via npx (CA-17)", () => {
     expect(server.command, source).toBe("npx");
     expect(server.args, source).toEqual([
       "-y",
-      "--package=@brainervirus/workit-cursor@latest",
+      "--package=@brainervirus/workit-cursor@0.8.0",
       "workit-cursor-mcp",
       "${workspaceFolder}",
     ]);
@@ -67,7 +67,7 @@ test("cursor hooks-cursor.json uses the documented single command string (CA-17)
     expect(hooks.version, source).toBe(1);
     const entry = hooks.hooks.sessionStart[0];
     expect(entry.command, source).toBe(
-      "npx -y --package=@brainervirus/workit-cursor@latest workit-cursor-session-start",
+      "npx -y --package=@brainervirus/workit-cursor@0.8.0 workit-cursor-session-start",
     );
     expect(entry.args, source).toBeUndefined();
     expect(JSON.stringify(entry), source).not.toContain("dist/");

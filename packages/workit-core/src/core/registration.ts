@@ -192,7 +192,7 @@ export function cursorMcpServerEntry(_packageDir: string): {
     command: "npx",
     args: [
       "-y",
-      "--package=@brainervirus/workit-cursor@latest",
+      "--package=@brainervirus/workit-cursor@0.8.0",
       "workit-cursor-mcp",
       "${workspaceFolder}",
     ],
@@ -208,7 +208,7 @@ export function cursorHooksEntry(_packageDir: string): {
   args: string[];
 } {
   return {
-    command: "npx -y --package=@brainervirus/workit-cursor@latest workit-cursor-session-start",
+    command: "npx -y --package=@brainervirus/workit-cursor@0.8.0 workit-cursor-session-start",
     args: [],
   };
 }

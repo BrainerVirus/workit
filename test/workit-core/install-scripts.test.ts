@@ -194,7 +194,7 @@ function makeCursorStub() {
           command: "npx",
           args: [
             "-y",
-            "--package=@brainervirus/workit-cursor@latest",
+            "--package=@brainervirus/workit-cursor@0.8.0",
             "workit-cursor-mcp",
             "${workspaceFolder}",
           ],

@@ -381,7 +381,7 @@ test("cursor launcher npx shape matches exact tokens, never substrings (CA-17)",
         command: "npx",
         args: [
           "-y",
-          "--package=@brainervirus/workit-cursor@latest",
+          "--package=@brainervirus/workit-cursor@0.8.0",
           "workit-cursor-mcp",
           "${workspaceFolder}",
         ],
@@ -390,10 +390,28 @@ test("cursor launcher npx shape matches exact tokens, never substrings (CA-17)",
   });
   const variants: Array<[string, string[]]> = [
     [
-      "@latest-alpha",
+      "@latest",
       [
         "-y",
-        "--package=@brainervirus/workit-cursor@latest-alpha",
+        "--package=@brainervirus/workit-cursor@latest",
+        "workit-cursor-mcp",
+        "${workspaceFolder}",
+      ],
+    ],
+    [
+      "@0.8.0-alpha",
+      [
+        "-y",
+        "--package=@brainervirus/workit-cursor@0.8.0-alpha",
+        "workit-cursor-mcp",
+        "${workspaceFolder}",
+      ],
+    ],
+    [
+      "@0.8.00",
+      [
+        "-y",
+        "--package=@brainervirus/workit-cursor@0.8.00",
         "workit-cursor-mcp",
         "${workspaceFolder}",
       ],
@@ -402,7 +420,7 @@ test("cursor launcher npx shape matches exact tokens, never substrings (CA-17)",
       "workit-cursor-mcp-foo",
       [
         "-y",
-        "--package=@brainervirus/workit-cursor@latest",
+        "--package=@brainervirus/workit-cursor@0.8.0",
         "workit-cursor-mcp-foo",
         "${workspaceFolder}",
       ],
