@@ -40,11 +40,14 @@ export const HANDOFF_DESTINATION_MARKER =
  * `handoff_destination: true` flag that `markHandoffDestination` sets atomically
  * AFTER a genuine generated destination prompt succeeds. Hosts use this at
  * session start to select the destination reminder (four choices, no Handoff)
- * without session or parent IDs. Raw read only: a session-start hook must never
- * reconcile or rewrite flow state, so a stale post-drift flag may read true
- * until the next effective read resets it — safe bias toward destination
- * wording. ponytail: raw flag scan, not readEffectiveFlowState — a hook is
- * read-only; reconcile-on-drift is the mutation path's job.
+ * without session or parent IDs. The flag is cleared by approval-drift resets
+ * AND by completion (a completed flow is never a destination); only a new-flow
+ * `prepareFlowState` initializes it (false), and `markHandoffDestination` is
+ * the sole true-setter. Raw read only: a session-start hook must never
+ * reconcile or rewrite flow state, so a stale flag may read true until the
+ * next effective read resets it — safe bias toward destination wording.
+ * ponytail: raw flag scan, not readEffectiveFlowState — a hook is read-only;
+ * reconcile-on-drift is the mutation path's job.
  */
 export const findMarkedDestinations = (root: string): string[] => {
   const docsDir = path.join(root, "docs");

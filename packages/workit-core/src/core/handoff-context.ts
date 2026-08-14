@@ -3,7 +3,6 @@ import path from "node:path";
 import { docsValidate } from "./docs-validate";
 import { resolveBranch } from "./branch";
 import { parseTasksFromPlan } from "./docs-validate";
-import { HANDOFF_DESTINATION_MARKER } from "./menu";
 
 const DOC_RE = /docs\/([A-Za-z0-9][A-Za-z0-9._-]*)\/(spec|plan)\.md/g;
 
@@ -125,10 +124,11 @@ export const buildHandoffContract = ({
     .replace(/<SDD_DIR>/g, sddDir)
     .replace(/<TASK_LIST>/g, taskList);
 
-  // Every generated destination contract carries the marker on its own line
-  // (CA-07): a canonical template that loses the sentinel is a broken contract,
-  // not a handoff prompt.
-  if (!contract.includes(HANDOFF_DESTINATION_MARKER)) {
+  // Every generated destination contract carries the marker on its OWN LINE
+  // (CA-07): a canonical template that loses the sentinel — or embeds it
+  // mid-line — is a broken contract, not a handoff prompt. Anchored to the
+  // line start/end so a substring mid-line cannot satisfy the guard.
+  if (!/^<workflow-handoff-destination>true<\/workflow-handoff-destination>$/m.test(contract)) {
     return { error: "handoff destination contract missing its destination marker" };
   }
 

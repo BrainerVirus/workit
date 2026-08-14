@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -197,12 +197,55 @@ test("session-start selects the four-choice destination reminder for a marked wo
     expect(ordinary.status, ordinary.stderr ?? "").toBe(0);
     const plainText = JSON.parse(ordinary.stdout).additional_context as string;
     expect(plainText).toContain(
-      "Subagent-driven, Inline, Handoff, Review spec first, Review plan first",
+      "Subagent-driven, Inline, Handoff (new session only), Review spec first, Review plan first",
     );
     expect(plainText).not.toContain(HANDOFF_DESTINATION_MARKER);
   } finally {
     rmSync(markedRoot, { recursive: true, force: true });
     rmSync(plainRoot, { recursive: true, force: true });
+  }
+});
+
+test("session-start bounds the stdin read: a silent pipe exits without hanging", async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wf-hook-silent-"));
+  try {
+    mkdirSync(path.join(root, "templates"), { recursive: true });
+    writeFileSync(path.join(root, "templates", "superpowers-doc-contract.md"), contractText);
+    // A host that opens the sessionStart pipe but writes nothing must not hang
+    // the hook: a short injected timeout treats silence like empty input.
+    const child = spawn(process.execPath, [path.join(CURSOR_ROOT, "hooks", "session-start.ts")], {
+      cwd: REPO_ROOT,
+      env: {
+        ...process.env,
+        WORKFLOW_TOOLKIT_ROOT: root,
+        BUN: process.execPath,
+        WORKFLOW_HOOK_READ_TIMEOUT_MS: "300",
+      },
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    let out = "";
+    let errOut = "";
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => (out += chunk));
+    child.stderr.on("data", (chunk) => (errOut += chunk));
+    const code = await new Promise<number | null>((resolve) => {
+      const guard = setTimeout(() => {
+        child.kill();
+        resolve(child.exitCode);
+      }, 5000);
+      child.on("exit", (exitCode) => {
+        clearTimeout(guard);
+        resolve(exitCode);
+      });
+    });
+    expect(code, errOut).toBe(0);
+    const parsed = JSON.parse(out) as { additional_context?: string };
+    expect(parsed.additional_context).toContain("HARD-GATE");
+    // Empty input classifies as an ordinary session: the five-choice reminder.
+    expect(parsed.additional_context).toContain("Handoff (new session only)");
+    child.stdin.end();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });
 
@@ -266,7 +309,7 @@ test("a completed handoff destination classifies as an ordinary five-choice sess
     const text = JSON.parse(out.stdout).additional_context as string;
     // The completed destination must not present the four-choice reminder.
     expect(text).toContain(
-      "Subagent-driven, Inline, Handoff, Review spec first, Review plan first",
+      "Subagent-driven, Inline, Handoff (new session only), Review spec first, Review plan first",
     );
     expect(text).not.toContain(HANDOFF_DESTINATION_MARKER);
   } finally {

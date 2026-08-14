@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { runFlowCommand, runHandoffCommand } from "../../packages/workit-cli/src/flow";
 import { createFlowTools } from "../../packages/workit-opencode/src/tools/flow";
+import { buildHandoffPrompt } from "../../packages/workit-core/src/core/handoff-tools";
 import {
   DESTINATION_MENU_CHOICES,
   DESTINATION_MENU_LABELS,
@@ -13,6 +14,7 @@ import {
   SOURCE_MENU_CHOICES,
   SOURCE_MENU_LABELS,
   HostReceiptStore,
+  markHandoffDestination,
   readEffectiveFlowState,
   recordMenuChoice,
   transitionExecution,
@@ -28,6 +30,23 @@ const skill = (name: string) =>
     path.join(import.meta.dir, "..", "..", "packages", "workit-core", "skills", name, "SKILL.md"),
     "utf8",
   );
+
+// Destination-block extractors anchored on the sentinel marker rather than a
+// `## ` heading or sentence, so a heading rename cannot make the scan go
+// vacuous (advisory F10). `destinationBlockOf` covers the bullet allow-list
+// (the last `## ` heading before the marker up to the marker); `destinationParaOf`
+// covers the destination paragraph (from the marker onward).
+const destinationBlockOf = (text: string): string => {
+  const marker = text.indexOf(HANDOFF_DESTINATION_MARKER);
+  if (marker < 0) return "";
+  const heading = text.lastIndexOf("\n## ", marker);
+  return text.slice(heading < 0 ? 0 : heading + 1, marker);
+};
+
+const destinationParaOf = (text: string): string => {
+  const marker = text.indexOf(HANDOFF_DESTINATION_MARKER);
+  return marker < 0 ? "" : text.slice(marker);
+};
 
 test("all native skills exist and contain no Cursor runtime vocabulary", () => {
   const root = path.resolve(import.meta.dir, "..", "..", "packages", "workit-core");
@@ -162,6 +181,19 @@ test("post-plan override lists five fixed options and forbids two-option prose",
   expect(surfaces).toContain("workflow_docs_validate");
 });
 
+test("source reminder prose carries the display-only (new session only) qualifier on the Handoff label", () => {
+  // The machine label tuple and choice tuple stay bare `Handoff`/`handoff` so
+  // the receipt label match never weakens (AR-12); the qualifier is display-only
+  // in the source reminder prose, matching bootstrap/session-start/docs surfaces.
+  expect(SOURCE_MENU_LABELS).toContain("Handoff");
+  expect(SOURCE_MENU_CHOICES).toContain("handoff");
+  expect(REMINDER_TEXT).toContain("Handoff (new session only)");
+  expect(REMINDER_TEXT).not.toContain(
+    "Subagent-driven, Inline, Handoff, Review spec first, Review plan first",
+  );
+  expect(DESTINATION_REMINDER_TEXT).not.toContain("Handoff");
+});
+
 test("source contracts/reminders expose five choices and destination contracts exactly four", () => {
   const packages = path.resolve(import.meta.dir, "..", "..", "packages");
   const coreTemplates = path.join(packages, "workit-core", "templates");
@@ -181,9 +213,11 @@ test("source contracts/reminders expose five choices and destination contracts e
   expect(executionContract).toContain(HANDOFF_DESTINATION_MARKER);
   for (const label of DESTINATION_MENU_LABELS) expect(executionContract).toContain(label);
   // The destination allow-list block must not present a fifth Handoff choice.
-  const destinationBlock = executionContract.split("## Handoff destination")[1] ?? "";
-  expect(destinationBlock).not.toMatch(/^\s*[-*] Handoff\s*$/m);
-  expect(destinationBlock).not.toMatch(/1\. Handoff\s*$/m);
+  // Anchor on the marker (not a `## ` heading split) so a heading rename cannot
+  // make the scan go vacuous, and match a strict choice form case-insensitively.
+  const destinationBlock = destinationBlockOf(executionContract);
+  for (const label of DESTINATION_MENU_LABELS) expect(destinationBlock).toContain(label);
+  expect(destinationBlock).not.toMatch(/^\s*(?:[-*]|\d+\.)\s*handoff\s*$/im);
   // Reminders: source reminder lists five, destination reminder lists exactly four.
   expect(REMINDER_TEXT).toContain("Subagent-driven");
   expect(REMINDER_TEXT).toContain("Handoff");
@@ -418,12 +452,15 @@ test("the four template roots are byte-identical with the exact marker, the five
     expect(executionContract, `destination label ${label}`).toContain(label);
   }
   // Destination sections never offer the originating Handoff choice.
-  const destinationBlock = executionContract.split("## Handoff destination")[1] ?? "";
-  expect(destinationBlock).not.toMatch(/^\s*[-*] Handoff\s*$/m);
-  expect(destinationBlock).not.toMatch(/1\. Handoff\s*$/m);
-  const destinationPara = docContract.split("A handoff destination session")[1] ?? "";
+  const destinationBlock = destinationBlockOf(executionContract);
+  for (const label of DESTINATION_MENU_LABELS) expect(destinationBlock).toContain(label);
+  expect(destinationBlock).not.toMatch(/^\s*(?:[-*]|\d+\.)\s*handoff\s*$/im);
+  const destinationPara = destinationParaOf(docContract);
   expect(destinationPara).toContain(HANDOFF_DESTINATION_MARKER);
+  // The destination paragraph names no menu label Handoff in any case form, and
+  // presents no strict choice item named handoff.
   expect(destinationPara).not.toMatch(/Handoff/);
+  expect(destinationPara).not.toMatch(/^\s*(?:[-*]|\d+\.)\s*handoff\s*$/im);
 });
 
 test("user and maintainer documentation reflects the integrity contracts, without weakening the Cursor pin", () => {
@@ -479,6 +516,7 @@ type HostDriver = {
   resume(root: string, slug: string): Promise<NState>;
   complete(root: string, slug: string): Promise<NState>;
   reenterHandoff(root: string, slug: string): Promise<NState>;
+  firstHandoff(root: string, slug: string): Promise<{ prompt: string; state: NState }>;
 };
 
 const MATRIX_SPEC = (slug: string) =>
@@ -525,8 +563,8 @@ const destFromFlow = (root: string, slug: string): boolean | null => {
 };
 
 type SeedOverrides = {
-  execution?: { status: string; mode: string | null };
-  menu?: { presented: boolean; chosen: string };
+  execution?: { status: string; mode: string | null; evidence?: unknown };
+  menu?: { presented: boolean; chosen: string; evidence?: unknown };
   handoff_destination?: boolean;
 };
 
@@ -601,6 +639,13 @@ function coreDriver(): HostDriver {
       if (!r.ok) return normFailure(r.code, r.details);
       return status(root, slug);
     },
+    async firstHandoff(root, slug) {
+      const built = buildHandoffPrompt(root, planFor(slug));
+      if ("error" in built) throw new Error(built.error);
+      const marked = markHandoffDestination(root, slug, planFor(slug));
+      if (!marked.ok) throw new Error(marked.error);
+      return { prompt: built.prompt, state: await status(root, slug) };
+    },
   };
 }
 
@@ -624,6 +669,9 @@ function opencodeDriver(): HostDriver {
   const status = async (root: string, slug: string): Promise<NState> => {
     const out = await run("workflow_flow_status", { plan_path: planFor(slug) }, root);
     if (!out.ok) return normFailure(out.data?.code ?? "flow_status_failed", out.data?.details);
+    // OpenCode's workflow_flow_status does not surface `handoff_destination`, so
+    // the flag keeps the flow.json fallback here (advisory F9); the Cursor and
+    // CLI drivers read it from their host surfaces.
     return normSuccess(out.data, destFromFlow(root, slug));
   };
   const mutate =
@@ -650,6 +698,16 @@ function opencodeDriver(): HostDriver {
       if (!out.ok) return normFailure(out.data?.code, out.data?.details);
       return status(root, slug);
     },
+    async firstHandoff(root, slug) {
+      // OpenCode's host handoff surface is workflow_handoff_session (exercised in
+      // handoff.test.ts); the matrix drives the shared core mutation for OpenCode
+      // as the advisory allows ("or core markHandoffDestination").
+      const built = buildHandoffPrompt(root, planFor(slug));
+      if ("error" in built) throw new Error(built.error);
+      const marked = markHandoffDestination(root, slug, planFor(slug));
+      if (!marked.ok) throw new Error(marked.error);
+      return { prompt: built.prompt, state: await status(root, slug) };
+    },
   };
 }
 
@@ -672,7 +730,15 @@ function cursorDriver(request: CursorRequest): HostDriver {
       workspace_root: root,
     });
     if (r.isError) return normFailure(r.text.code ?? "flow_status_failed", r.text.details);
-    return normSuccess(r.text, destFromFlow(root, slug));
+    // The Cursor MCP workflow_flow_status payload does not surface
+    // `handoff_destination`; read the host surface when a future payload adds it
+    // and fall back to flow.json today. The MCP surface that DOES report the
+    // flag (workflow_handoff_prompt) is asserted directly in firstHandoff.
+    const dest =
+      typeof r.text.handoff_destination === "boolean"
+        ? r.text.handoff_destination
+        : destFromFlow(root, slug);
+    return normSuccess(r.text, dest);
   };
   const mutate =
     (name: string) =>
@@ -695,6 +761,20 @@ function cursorDriver(request: CursorRequest): HostDriver {
       });
       if (r.isError) return normFailure(r.text.code, r.text.details);
       return status(root, slug);
+    },
+    async firstHandoff(root, slug) {
+      // Drive the real MCP handoff surface: workflow_handoff_prompt reports the
+      // destination flag and the reset menu in its own payload (CA-07), so the
+      // matrix reads the flag from the host surface, not flow.json.
+      const r = await call("workflow_handoff_prompt", {
+        message: planFor(slug),
+        workspace_root: root,
+      });
+      if (r.isError) throw new Error(r.text.error ?? "handoff prompt failed");
+      expect(r.text.handoff_destination).toBe(true);
+      expect(r.text.menu).toMatchObject({ presented: false, chosen: "" });
+      const prompt = r.text.prompt as string;
+      return { prompt, state: await status(root, slug) };
     },
   };
 }
@@ -750,7 +830,14 @@ function cliDriver(): HostDriver {
         return normFailure("flow_error");
       }
     }
-    return normSuccess(JSON.parse(r.stdout), destFromFlow(root, slug));
+    const out = JSON.parse(r.stdout) as { handoff_destination?: unknown };
+    // CLI `flow status` exposes `handoff_destination` in its own payload
+    // (advisory F9): read the host surface, never flow.json. If the CLI ever
+    // drops the field, parity fails loudly instead of silently passing.
+    return normSuccess(
+      out,
+      typeof out.handoff_destination === "boolean" ? out.handoff_destination : null,
+    );
   };
   const mutate =
     (action: string) =>
@@ -783,6 +870,13 @@ function cliDriver(): HostDriver {
         }
       }
       return status(root, slug);
+    },
+    async firstHandoff(root, slug) {
+      // `workit handoff` builds the destination prompt and marks the flow, then
+      // prints the prompt to stdout (CA-07).
+      const r = await flowHandoff(root, slug);
+      if (r.code !== 0) throw new Error(r.stderr || "handoff failed");
+      return { prompt: r.stdout, state: await status(root, slug) };
     },
   };
 }
@@ -827,8 +921,16 @@ function startCursorServer() {
     const id = ++nextId.id;
     child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`);
     return new Promise((resolve, reject) => {
-      pending.set(id, resolve);
-      setTimeout(() => reject(new Error(`timeout waiting for ${method}`)), 20000);
+      // Clear the timer and drop the pending entry on BOTH settle paths so a
+      // timeout cannot leak a stale resolver/timer (advisory F11).
+      const timer = setTimeout(() => {
+        pending.delete(id);
+        reject(new Error(`timeout waiting for ${method}`));
+      }, 20000);
+      pending.set(id, (value: unknown) => {
+        clearTimeout(timer);
+        resolve(value);
+      });
     });
   };
   return { child, request };
@@ -915,15 +1017,44 @@ const SCENARIOS: Scenario[] = [
       }),
     run: (driver, root, slug) => driver.reenterHandoff(root, slug),
   },
+  {
+    name: "first handoff mark",
+    seed: (root, slug) =>
+      seedFlow(root, slug, {
+        // Canonical shape (evidence included) so the CAS baseline byte-matches
+        // the on-disk flow.json the way the other matrix seeds do.
+        menu: { presented: true, chosen: "handoff", evidence: null },
+        execution: { status: "pending", mode: null, evidence: null },
+      }),
+    run: async (driver, root, slug) => {
+      const { prompt, state } = await driver.firstHandoff(root, slug);
+      // A successful first mark seeds a real destination contract: the exact
+      // marker and the four-choice allow-list (CA-07/CA-08).
+      expect(prompt).toContain(HANDOFF_DESTINATION_MARKER);
+      for (const label of DESTINATION_MENU_LABELS) expect(prompt).toContain(label);
+      return state;
+    },
+  },
 ];
 
 test("cross-host parity matrix: core/opencode/cursor/cli yield identical normalized outcomes per scenario", async () => {
   const server = startCursorServer();
-  await server.request("initialize", {
+  // Pin the initialize handshake before any scenario request (advisory F12): the
+  // SDK's initialize response confirms the negotiated protocol and tool list.
+  const init = (await server.request("initialize", {
     protocolVersion: "2024-11-05",
     capabilities: {},
     clientInfo: { name: "parity-matrix", version: "1.0" },
-  });
+  })) as {
+    result?: {
+      protocolVersion?: string;
+      capabilities?: { tools?: unknown };
+      serverInfo?: { name?: string };
+    };
+  };
+  expect(init.result?.protocolVersion).toBe("2024-11-05");
+  expect(init.result?.capabilities?.tools).toBeDefined();
+  expect(init.result?.serverInfo?.name).toBe("workit");
   server.child.stdin.write(
     `${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })}\n`,
   );
@@ -975,6 +1106,13 @@ test("cross-host parity matrix: core/opencode/cursor/cli yield identical normali
         expect(core.code).toBeNull();
       } else if (scenario.name === "recursive handoff") {
         expect(core.code).toBe("recursive_handoff");
+      } else if (scenario.name === "first handoff mark") {
+        // The source flow is now a marked destination with the menu reset and
+        // execution still pending for the destination session to choose.
+        expect(core.handoff_destination).toBe(true);
+        expect(core.menu).toEqual({ presented: false, chosen: "" });
+        expect(core.execution).toEqual({ status: "pending", mode: null });
+        expect(core.code).toBeNull();
       }
     }
   } finally {

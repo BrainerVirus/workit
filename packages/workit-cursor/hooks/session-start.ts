@@ -71,16 +71,43 @@ if (body === null) {
 // marks flow state) keeps the ordinary five-choice reminder.
 type HookInput = { workspace_roots?: unknown };
 
-const readHookInput = (): HookInput => {
-  if (process.stdin.isTTY) return {};
-  try {
-    const text = readFileSync(0, "utf8").trim();
-    if (!text) return {};
-    const parsed: unknown = JSON.parse(text);
-    return typeof parsed === "object" && parsed !== null ? (parsed as HookInput) : {};
-  } catch {
-    return {};
-  }
+// Bounded stdin read (advisory D7): a host that opens the sessionStart pipe but
+// writes nothing must not hang the hook. Read with a short timeout and treat
+// silence like empty input (ordinary source wording). Tests inject a short
+// timeout via WORKFLOW_HOOK_READ_TIMEOUT_MS. 2s bounds a broken host below the
+// packed-artifact runtime gate (5s default test timeout) while leaving real
+// hosts — which write the workspace JSON promptly — plenty of time.
+const HOOK_READ_TIMEOUT_MS = Number(process.env.WORKFLOW_HOOK_READ_TIMEOUT_MS ?? "2000");
+
+const readHookInput = (timeoutMs: number): Promise<HookInput> => {
+  if (process.stdin.isTTY) return Promise.resolve({});
+  return new Promise((resolve) => {
+    let buffer = "";
+    let settled = false;
+    const timer = setTimeout(() => settle({}), timeoutMs);
+    const onData = (chunk: string | Buffer) => {
+      buffer += String(chunk);
+      const text = buffer.trim();
+      if (!text) return;
+      try {
+        const parsed: unknown = JSON.parse(text);
+        settle(typeof parsed === "object" && parsed !== null ? (parsed as HookInput) : {});
+      } catch {
+        // Partial chunk — keep waiting for the rest or the timeout.
+      }
+    };
+    const onEnd = () => settle({});
+    function settle(value: HookInput) {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      process.stdin.off("data", onData);
+      process.stdin.off("end", onEnd);
+      resolve(value);
+    }
+    process.stdin.on("data", onData);
+    process.stdin.on("end", onEnd);
+  });
 };
 
 const isDestination = (input: HookInput): boolean => {
@@ -88,12 +115,13 @@ const isDestination = (input: HookInput): boolean => {
   return roots.some((root) => typeof root === "string" && findMarkedDestinations(root).length > 0);
 };
 
-// Select the core five/four reminder wording from the destination flag (CA-08):
-// a marked destination gets the four-choice reminder that never offers Handoff
-// and carries the marker; ordinary sessions keep the source five-choice wording.
-const reminder = reminderTextFor(isDestination(readHookInput()));
+const main = async (): Promise<void> => {
+  // Select the core five/four reminder wording from the destination flag (CA-08):
+  // a marked destination gets the four-choice reminder that never offers Handoff
+  // and carries the marker; ordinary sessions keep the source five-choice wording.
+  const reminder = reminderTextFor(isDestination(await readHookInput(HOOK_READ_TIMEOUT_MS)));
 
-const context = `<workflow-toolkit-askquestion-hard-gate>
+  const context = `<workflow-toolkit-askquestion-hard-gate>
 HARD-GATE: Any user choice with options → call Cursor AskQuestion directly with workflow-specific copy. NEVER A/B/C in chat. Overrides Superpowers brainstorming conversational options.
 </workflow-toolkit-askquestion-hard-gate>
 
@@ -123,5 +151,14 @@ HARD-GATE: Bounded user choices → call Cursor AskQuestion directly (never A/B/
 ${reminder}
 </workflow-toolkit-reminder>`;
 
-process.stdout.write(JSON.stringify({ additional_context: context }, null, 2) + "\n");
-process.exit(0);
+  process.stdout.write(JSON.stringify({ additional_context: context }, null, 2) + "\n");
+  process.exit(0);
+};
+
+void main().catch((err) => {
+  // Fail-open on an unexpected async error: never hang or corrupt the host
+  // protocol (DG-04/DG-05) — report a sanitized event and exit empty.
+  logger.error(EVENT.hooks, { boundary: "session-start", ...errorDetail(err) });
+  process.stdout.write("{}\n");
+  process.exit(0);
+});

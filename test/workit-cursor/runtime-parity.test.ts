@@ -111,7 +111,7 @@ test("session-start contract: ordinary sessions retain five choices, marked dest
     // five-choice reminder for a session with no marked destination.
     expect(plainText).toContain(contractText.trim());
     expect(plainText).toContain(
-      "Subagent-driven, Inline, Handoff, Review spec first, Review plan first",
+      "Subagent-driven, Inline, Handoff (new session only), Review spec first, Review plan first",
     );
     expect(reminderOf(plainText)).toContain("Handoff");
 

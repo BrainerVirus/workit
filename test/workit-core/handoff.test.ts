@@ -22,18 +22,27 @@ import {
   handoffSession,
   type HandoffRequest,
 } from "../../packages/workit-core/src/core/handoff-tools";
+import { buildHandoffContract } from "../../packages/workit-core/src/core/handoff-context";
 import {
   DESTINATION_MENU_CHOICES,
   DESTINATION_MENU_LABELS,
   HANDOFF_DESTINATION_MARKER,
   SOURCE_MENU_CHOICES,
   markHandoffDestination,
+  prepareFlowState,
   readEffectiveFlowState,
   recordMenuChoice,
+  transitionSpec,
   type FlowGateResult,
 } from "../../packages/workit-core/src/core/flow-state";
 import { WorkflowStateStore } from "../../packages/workit-core/src/state";
-import { establishApprovedFlow, menuEvidence } from "./flow-fixtures";
+import {
+  COMPLIANT_PLAN,
+  COMPLIANT_SPEC,
+  establishApprovedFlow,
+  menuEvidence,
+  openEvidence,
+} from "./flow-fixtures";
 import { HostReceiptStore } from "../../packages/workit-core/src/core/flow-state";
 
 const posix = (p: string) => p.split(path.sep).join("/");
@@ -724,10 +733,52 @@ test("every generated handoff prompt contains the destination marker and a four-
       for (const label of DESTINATION_MENU_LABELS) {
         expect(result.prompt).toContain(label);
       }
-      // The destination allow-list never presents Handoff as a choice.
-      const fromMarker = result.prompt.slice(result.prompt.indexOf(HANDOFF_DESTINATION_MARKER));
-      expect(fromMarker).not.toMatch(/^\s*[-*] Handoff\s*$/m);
+      // The destination allow-list never presents Handoff as a choice. Scan
+      // the destination block that CONTAINS the allow-list: from the last
+      // `## ` heading before the marker up to the marker itself (robust to
+      // heading renames). Slicing FROM the marker starts below the four-bullet
+      // list and never scans the block it claims to check (advisory B5).
+      const markerIdx = result.prompt.indexOf(HANDOFF_DESTINATION_MARKER);
+      const headingStart = result.prompt.lastIndexOf("\n## ", markerIdx);
+      const destinationBlock = result.prompt.slice(
+        headingStart < 0 ? 0 : headingStart + 1,
+        markerIdx,
+      );
+      for (const label of DESTINATION_MENU_LABELS) {
+        expect(destinationBlock).toContain(label);
+      }
+      expect(destinationBlock).not.toMatch(/^\s*(?:[-*]|\d+\.)\s*handoff\s*$/im);
     }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("buildHandoffContract rejects a template whose marker is embedded mid-line", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wk-handoff-marker-midline-"));
+  try {
+    mkdirSync(path.join(root, "docs", "x"), { recursive: true });
+    writeFileSync(path.join(root, "docs/x/spec.md"), "# X\n\n**Branch:** `feature/x`\n");
+    writeFileSync(
+      path.join(root, "docs/x/plan.md"),
+      "# X\n\n**Spec:** `docs/x/spec.md`\n**Branch:** `feature/x`\n\n### Task 1: One\n\n- [ ] **Step 1:** Work\n",
+    );
+    const templatePath = path.join(root, "templates", "execution-contract.md");
+    mkdirSync(path.dirname(templatePath), { recursive: true });
+    // The marker must sit on its own line (CA-07). A mid-line marker proves the
+    // guard anchors to the line, not a bare substring scan.
+    writeFileSync(
+      templatePath,
+      `## Handoff destination\n\nInline ${HANDOFF_DESTINATION_MARKER} trailing prose.\n`,
+    );
+    const result = buildHandoffContract({
+      root,
+      spec: "docs/x/spec.md",
+      plan: "docs/x/plan.md",
+      templatePath,
+    });
+    expect("error" in result).toBe(true);
+    if ("error" in result) expect(result.error).toContain("missing its destination marker");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -787,6 +838,46 @@ test("markHandoffDestination requires the source menu choice handoff", () => {
     );
     const result = markHandoffDestination(root, "x", "docs/x/plan.md");
     expect(result).toMatchObject({ ok: false, code: "handoff_not_chosen" });
+    expect(effectiveState(root).handoff_destination).toBe(false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("markHandoffDestination requires an approved spec before marking", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wk-handoff-mark-specdraft-"));
+  try {
+    const slug = "x";
+    mkdirSync(path.join(root, "docs", slug), { recursive: true });
+    writeFileSync(path.join(root, "docs", slug, "spec.md"), COMPLIANT_SPEC(slug));
+    writeFileSync(path.join(root, "docs", slug, "plan.md"), COMPLIANT_PLAN(slug));
+    const spec = `docs/${slug}/spec.md`;
+    const plan = `docs/${slug}/plan.md`;
+    expect(prepareFlowState(root, slug, { spec_path: spec, plan_path: plan }).ok).toBe(true);
+    const result = markHandoffDestination(root, slug, plan);
+    expect(result).toMatchObject({ ok: false, code: "spec_not_approved" });
+    expect(effectiveState(root).handoff_destination).toBe(false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("markHandoffDestination requires an approved plan once the spec is approved", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wk-handoff-mark-plandraft-"));
+  try {
+    const store = new HostReceiptStore();
+    const slug = "x";
+    mkdirSync(path.join(root, "docs", slug), { recursive: true });
+    writeFileSync(path.join(root, "docs", slug, "spec.md"), COMPLIANT_SPEC(slug));
+    writeFileSync(path.join(root, "docs", slug, "plan.md"), COMPLIANT_PLAN(slug));
+    const spec = `docs/${slug}/spec.md`;
+    const plan = `docs/${slug}/plan.md`;
+    expect(prepareFlowState(root, slug, { spec_path: spec, plan_path: plan }).ok).toBe(true);
+    expect(
+      transitionSpec(root, slug, spec, openEvidence(store, "plandraft-session", "Approve spec")).ok,
+    ).toBe(true);
+    const result = markHandoffDestination(root, slug, plan);
+    expect(result).toMatchObject({ ok: false, code: "plan_not_approved" });
     expect(effectiveState(root).handoff_destination).toBe(false);
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -1009,7 +1100,60 @@ test("mark failure reports the mark stage and leaves the flow unmarked", async (
       data: { sessionID: "child-markfail", seeded: true, selected: false, stage: "mark" },
       error: "cannot mark",
     });
-    expect(effectiveState(root).handoff_destination).toBe(false);
+    const state = effectiveState(root);
+    expect(state.handoff_destination).toBe(false);
+    // The source menu choice stays intact so one retry can rebuild/reseed.
+    expect(state.menu).toEqual({
+      presented: true,
+      chosen: "handoff",
+      evidence: expect.anything(),
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("afterSeed throw reports the mark stage and leaves the flow unmarked", async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wk-handoff-afterseed-throw-"));
+  try {
+    const store = new HostReceiptStore();
+    approveHandoffFlow(root, store, "afterseed-throw-session");
+    const client = {
+      session: {
+        async create() {
+          return { data: { id: "child-aset" } };
+        },
+        async promptAsync() {
+          return { data: undefined };
+        },
+      },
+      tui: {
+        async selectSession() {
+          throw new Error("selection must not run after a mark failure");
+        },
+      },
+    };
+    const result = await handoffSession(client, {
+      directory: root,
+      title: "Continue x",
+      prompt: "Continue",
+      stay: false,
+      afterSeed: async () => {
+        throw new Error("mark blew up");
+      },
+    } satisfies HandoffRequest);
+    expect(result).toEqual({
+      ok: false,
+      data: { sessionID: "child-aset", seeded: true, selected: false, stage: "mark" },
+      error: "mark blew up",
+    });
+    const state = effectiveState(root);
+    expect(state.handoff_destination).toBe(false);
+    expect(state.menu).toEqual({
+      presented: true,
+      chosen: "handoff",
+      evidence: expect.anything(),
+    });
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
