@@ -1,10 +1,35 @@
+import {
+  DESTINATION_MENU_LABELS,
+  HANDOFF_DESTINATION_MARKER,
+  SOURCE_MENU_LABELS,
+} from "./flow-state";
+
 export const REMINDER_TEXT = `<workflow-contract-reminder>
 - Bounded user choices → call the native \`question\` tool (never A/B/C or 1/2/3 lists in prose).
-- After a plan is approved → native \`question\` menu with exactly: Subagent-driven, Inline, Handoff (new session only), Review spec first, Review plan first.
+- After a plan is approved → native \`question\` menu with exactly: ${SOURCE_MENU_LABELS.join(", ")}.
 - Tools with \`confirmed\` → call them; never fabricate their result.
 - Before the first \`workflow_spec_approve\`/\`workflow_plan_approve\` (self-review) run the superpowers writing-plans Self-Review checklist: spec coverage (every spec requirement maps to a task), placeholder scan, type consistency; fix findings inline.
 - Delivering docs → clickable markdown link \`[spec.md](docs/<slug>/spec.md)\` + 3-5 bullet summary.
 </workflow-contract-reminder>`;
+
+/**
+ * Destination reminder (CA-07, CA-08): a marked handoff destination carries the
+ * exact marker and the four-label allow-list — never the originating Handoff
+ * choice. Hosts select source vs destination wording via `reminderTextFor`
+ * from `FlowState.handoff_destination`; the strings live here, not in adapters.
+ */
+export const DESTINATION_REMINDER_TEXT = `<workflow-contract-reminder>
+- Bounded user choices → call the native \`question\` tool (never A/B/C or 1/2/3 lists in prose).
+- This session is a handoff destination: present the post-plan menu with exactly: ${DESTINATION_MENU_LABELS.join(", ")}.
+- Tools with \`confirmed\` → call them; never fabricate their result.
+- Before the first \`workflow_spec_approve\`/\`workflow_plan_approve\` (self-review) run the superpowers writing-plans Self-Review checklist: spec coverage (every spec requirement maps to a task), placeholder scan, type consistency; fix findings inline.
+- Delivering docs → clickable markdown link \`[spec.md](docs/<slug>/spec.md)\` + 3-5 bullet summary.
+${HANDOFF_DESTINATION_MARKER}
+</workflow-contract-reminder>`;
+
+/** Select source vs destination reminder wording from the flow's destination flag (CA-08). */
+export const reminderTextFor = (destination: boolean): string =>
+  destination ? DESTINATION_REMINDER_TEXT : REMINDER_TEXT;
 
 export const DETECTION_TEXT = `<workflow-detection>
 Your previous message presented choices as a numbered/bulleted list in prose.

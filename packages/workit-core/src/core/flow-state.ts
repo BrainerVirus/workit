@@ -178,6 +178,47 @@ export const MENU_CHOICES = [
 ] as const;
 export type MenuChoice = (typeof MENU_CHOICES)[number];
 
+/**
+ * The source post-plan menu (CA-08): the full five-way choice set the source
+ * session presents after the plan is approved. `DESTINATION_MENU_CHOICES` is
+ * the same tuple without `handoff` — a marked destination never re-offers the
+ * originating handoff choice.
+ */
+export const SOURCE_MENU_CHOICES = MENU_CHOICES;
+export const DESTINATION_MENU_CHOICES = [
+  "subagent-driven",
+  "inline",
+  "review-spec",
+  "review-plan",
+] as const;
+export type DestinationMenuChoice = (typeof DESTINATION_MENU_CHOICES)[number];
+
+/** Display labels the source menu presents (CA-08). */
+export const SOURCE_MENU_LABELS = [
+  "Subagent-driven",
+  "Inline",
+  "Handoff",
+  "Review spec first",
+  "Review plan first",
+] as const;
+
+/** Display labels a marked destination presents — exactly four, no Handoff (CA-08). */
+export const DESTINATION_MENU_LABELS = [
+  "Subagent-driven",
+  "Inline",
+  "Review spec first",
+  "Review plan first",
+] as const;
+
+/**
+ * The exact sentinel every generated destination contract carries on its own
+ * line (CA-07). Host-neutral by design (CA-10): OpenCode seeded sessions,
+ * Cursor copy/paste prompts, and CLI output all detect a destination by this
+ * marker alone — no session IDs, parent IDs, or host metadata.
+ */
+export const HANDOFF_DESTINATION_MARKER =
+  "<workflow-handoff-destination>true</workflow-handoff-destination>";
+
 const err = (code: string, error: string, details?: Record<string, unknown>): FlowError => ({
   ok: false,
   code,
@@ -1544,6 +1585,15 @@ export const recordMenuChoice = (
       return err("spec_not_approved", "spec must be approved before the execution menu");
     if (state.plan.status !== "approved")
       return err("plan_not_approved", "plan must be approved before the execution menu");
+    // Recursive-handoff rejection (CA-09): a marked destination never re-offers
+    // the originating handoff choice, even when an adapter or CLI caller
+    // bypasses the destination prompt's four-choice wording.
+    if (state.handoff_destination && choice === "handoff") {
+      return err(
+        "recursive_handoff",
+        "this flow is already a handoff destination — a second handoff is rejected",
+      );
+    }
     // Lifecycle is set ATOMICALLY with the menu evidence (CA-11/CA-13): an
     // executing choice starts the plan; a review/handoff choice leaves it
     // pending. The menu evidence IS the lifecycle evidence — the choice the
@@ -1557,6 +1607,50 @@ export const recordMenuChoice = (
         execution: executing
           ? { status: "active", mode: choice as ExecutionMode, evidence: recorded.evidence }
           : { status: "pending", mode: null, evidence: recorded.evidence },
+        updated_at: Date.now(),
+      },
+    };
+  });
+};
+
+/**
+ * Atomically mark a flow as a handoff destination (CA-07, CA-09): one effective
+ * state mutation under the existing lock/CAS writer. Requires approved spec and
+ * plan plus the source menu choice `handoff`; rejects an already marked
+ * destination (recursive_handoff). Sets `handoff_destination: true`, resets the
+ * menu presentation/evidence, and keeps execution pending. Host-neutral
+ * (CA-10): OpenCode, Cursor, and the CLI all reach this single core mutation.
+ */
+export const markHandoffDestination = (
+  root: string,
+  slug: string,
+  planPath: string,
+): FlowGateResult => {
+  const doc = resolveDoc(root, slug, planPath, "plan");
+  if (!doc.ok) return err("path_invalid", doc.error);
+  return readModifyWrite(root, slug, (state) => {
+    if (state.spec.status !== "approved")
+      return err("spec_not_approved", "spec must be approved before marking a handoff destination");
+    if (state.plan.status !== "approved")
+      return err("plan_not_approved", "plan must be approved before marking a handoff destination");
+    if (state.handoff_destination) {
+      return err(
+        "recursive_handoff",
+        "this flow is already a handoff destination — a second handoff is rejected",
+      );
+    }
+    if (state.menu.chosen !== "handoff") {
+      return err(
+        "handoff_not_chosen",
+        `source menu choice must be "handoff" to mark a handoff destination (chosen: ${JSON.stringify(state.menu.chosen)})`,
+      );
+    }
+    return {
+      ok: true,
+      next: {
+        ...state,
+        handoff_destination: true,
+        menu: { presented: false, chosen: "", evidence: null },
         updated_at: Date.now(),
       },
     };

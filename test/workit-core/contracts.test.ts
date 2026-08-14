@@ -1,6 +1,17 @@
 import { expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
+import {
+  DESTINATION_MENU_CHOICES,
+  DESTINATION_MENU_LABELS,
+  HANDOFF_DESTINATION_MARKER,
+  SOURCE_MENU_CHOICES,
+} from "../../packages/workit-core/src/core/flow-state";
+import {
+  DESTINATION_REMINDER_TEXT,
+  REMINDER_TEXT,
+  reminderTextFor,
+} from "../../packages/workit-core/src/core/reminder";
 
 const skill = (name: string) =>
   readFileSync(
@@ -139,6 +150,38 @@ test("post-plan override lists five fixed options and forbids two-option prose",
   expect(stripped).not.toContain("1. Subagent-Driven (recommended)");
   expect(surfaces).toMatch(/no stay|No `--stay` option/i);
   expect(surfaces).toContain("workflow_docs_validate");
+});
+
+test("source contracts/reminders expose five choices and destination contracts exactly four", () => {
+  const packages = path.resolve(import.meta.dir, "..", "..", "packages");
+  const coreTemplates = path.join(packages, "workit-core", "templates");
+  const executionContract = readFileSync(path.join(coreTemplates, "execution-contract.md"), "utf8");
+  const docContract = readFileSync(path.join(coreTemplates, "superpowers-doc-contract.md"), "utf8");
+  // Choice arrays: destination is exactly the source minus handoff.
+  expect(SOURCE_MENU_CHOICES).toHaveLength(5);
+  expect(DESTINATION_MENU_CHOICES).toHaveLength(4);
+  expect(DESTINATION_MENU_CHOICES).not.toContain("handoff");
+  expect(DESTINATION_MENU_LABELS).not.toContain("Handoff");
+  // Source surfaces carry all five labels; the destination wording never lists Handoff.
+  expect(docContract).toContain("Subagent-driven");
+  expect(docContract).toContain("Inline");
+  expect(docContract).toContain("Handoff");
+  expect(docContract).toContain("Review spec first");
+  expect(docContract).toContain("Review plan first");
+  expect(executionContract).toContain(HANDOFF_DESTINATION_MARKER);
+  for (const label of DESTINATION_MENU_LABELS) expect(executionContract).toContain(label);
+  // The destination allow-list block must not present a fifth Handoff choice.
+  const destinationBlock = executionContract.split("## Handoff destination")[1] ?? "";
+  expect(destinationBlock).not.toMatch(/^\s*[-*] Handoff\s*$/m);
+  expect(destinationBlock).not.toMatch(/1\. Handoff\s*$/m);
+  // Reminders: source reminder lists five, destination reminder lists exactly four.
+  expect(REMINDER_TEXT).toContain("Subagent-driven");
+  expect(REMINDER_TEXT).toContain("Handoff");
+  expect(DESTINATION_REMINDER_TEXT).toContain(HANDOFF_DESTINATION_MARKER);
+  expect(DESTINATION_REMINDER_TEXT).not.toContain("Handoff");
+  for (const label of DESTINATION_MENU_LABELS) expect(DESTINATION_REMINDER_TEXT).toContain(label);
+  expect(reminderTextFor(false)).toBe(REMINDER_TEXT);
+  expect(reminderTextFor(true)).toBe(DESTINATION_REMINDER_TEXT);
 });
 
 test("implement review policy caps blockers and defers advisories", () => {
