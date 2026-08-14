@@ -1,5 +1,13 @@
 import { expect, test } from "bun:test";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -16,13 +24,17 @@ import {
   isCoordinatorBashAllowed,
   nextFlowStatus,
   prepareFlowState,
+  readEffectiveFlowState,
   readFlowState,
   recordMenuChoice,
   roleFromParentage,
   subagentDrivenInterception,
+  transitionExecution,
   transitionPlan,
   transitionSpec,
+  type CliConfirmation,
 } from "../../packages/workit-core/src/core/flow-state";
+import type { VerifyResult } from "../../packages/workit-core/src/core/verify-project";
 import { COMPLIANT_PLAN, COMPLIANT_SPEC, cursorEvidence, openEvidence } from "./flow-fixtures";
 
 const COMPLIANT_SPEC_FN = COMPLIANT_SPEC;
@@ -1324,5 +1336,388 @@ test("the coordinator bash allowlist permits bounded read/test/review commands",
       active: true,
     });
     expect(decision.ok, JSON.stringify(command)).toBe(true);
+  }
+});
+
+const lifecycleFlowFile = (root: string, slug: string) =>
+  path.join(root, "docs", slug, "sdd", "flow.json");
+
+const cliEvidence = (confirmation: "flag" | "tty" = "tty"): CliConfirmation => ({
+  host: "cli",
+  attested: false,
+  confirmation,
+});
+
+/** Approve spec+plan and record the given post-plan menu choice (CA-11). */
+const establishMenuChoice = (root: string, slug: string, choice: string) => {
+  const spec = `docs/${slug}/spec.md`;
+  const plan = `docs/${slug}/plan.md`;
+  const store = new HostReceiptStore();
+  const sessionId = "lifecycle-session";
+  const prep = prepareFlowState(root, slug, { spec_path: spec, plan_path: plan });
+  expect(prep.ok).toBe(true);
+  expect(transitionSpec(root, slug, spec, openEvidence(store, sessionId, "Approve spec")).ok).toBe(
+    true,
+  );
+  expect(transitionPlan(root, slug, plan, openEvidence(store, sessionId, "Approve plan")).ok).toBe(
+    true,
+  );
+  const menu = recordMenuChoice(root, slug, plan, choice, openEvidence(store, sessionId, choice));
+  expect(menu.ok).toBe(true);
+};
+
+const writeSddLedger = (root: string, slug: string, lines: string[]) => {
+  const dir = path.join(root, "docs", slug, "sdd");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(path.join(dir, "progress.md"), lines.join("\n") + "\n", "utf8");
+};
+
+/** Legacy fixture: remove the execution key from the persisted flow.json bytes. */
+const stripExecution = (root: string, slug: string) => {
+  const file = lifecycleFlowFile(root, slug);
+  const parsed = JSON.parse(readFileSync(file, "utf8")) as Record<string, unknown>;
+  delete parsed.execution;
+  writeFileSync(file, JSON.stringify(parsed, null, 2), "utf8");
+};
+
+const stubVerifier =
+  (exitCode: number, onRun?: (root: string) => void) =>
+  (root: string): VerifyResult => {
+    onRun?.(root);
+    return { stdout: "", stderr: "", exitCode, cwd: root };
+  };
+
+test("CA-11/CA-13: the post-plan menu sets the execution lifecycle atomically with menu evidence", () => {
+  const cases: [
+    string,
+    { status: "active" | "pending"; mode: "subagent-driven" | "inline" | null },
+  ][] = [
+    ["subagent-driven", { status: "active", mode: "subagent-driven" }],
+    ["inline", { status: "active", mode: "inline" }],
+    ["handoff", { status: "pending", mode: null }],
+    ["review-spec", { status: "pending", mode: null }],
+    ["review-plan", { status: "pending", mode: null }],
+  ];
+  for (const [choice, expected] of cases) {
+    const { root, slug } = fixture();
+    try {
+      establishMenuChoice(root, slug, choice);
+      const state = readFlowState(root, slug);
+      expect(state.execution.status, choice).toBe(expected.status);
+      expect(state.execution.mode, choice).toBe(expected.mode);
+      expect(state.execution.evidence, choice).not.toBeNull();
+      if (state.execution.evidence?.host === "opencode") {
+        expect(state.execution.evidence.selectedLabel, choice).toBe(choice);
+      }
+    } finally {
+      cleanup(root);
+    }
+  }
+});
+
+test("CA-14: pause/resume cycles active -> paused -> active and preserves mode, evidence, and SDD progress", () => {
+  const { root, slug } = fixture();
+  try {
+    establishMenuChoice(root, slug, "subagent-driven");
+    const plan = `docs/${slug}/plan.md`;
+    const sddDir = path.join(root, "docs", slug, "sdd");
+    writeFileSync(path.join(sddDir, "task-1-brief.md"), "# Task 1 brief\n\n- [ ] Work\n", "utf8");
+    writeSddLedger(root, slug, ["Task 1: complete"]);
+    const briefBefore = readFileSync(path.join(sddDir, "task-1-brief.md"), "utf8");
+    const progressBefore = readFileSync(path.join(sddDir, "progress.md"), "utf8");
+    const menuEvidence = readFlowState(root, slug).execution.evidence;
+
+    const paused = transitionExecution(root, slug, plan, "pause", cliEvidence("flag"));
+    expect(paused.ok).toBe(true);
+    let state = readFlowState(root, slug);
+    expect(state.execution).toMatchObject({ status: "paused", mode: "subagent-driven" });
+    expect(state.execution.evidence).toEqual(menuEvidence);
+    expect(readFileSync(path.join(sddDir, "task-1-brief.md"), "utf8")).toBe(briefBefore);
+    expect(readFileSync(path.join(sddDir, "progress.md"), "utf8")).toBe(progressBefore);
+
+    const resumed = transitionExecution(root, slug, plan, "resume", cliEvidence("tty"));
+    expect(resumed.ok).toBe(true);
+    state = readFlowState(root, slug);
+    expect(state.execution).toMatchObject({ status: "active", mode: "subagent-driven" });
+    expect(state.execution.evidence).toEqual(menuEvidence);
+    expect(readFileSync(path.join(sddDir, "task-1-brief.md"), "utf8")).toBe(briefBefore);
+    expect(readFileSync(path.join(sddDir, "progress.md"), "utf8")).toBe(progressBefore);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("CA-14: pause from pending and completed fails; resume from active, pending, and completed fails", () => {
+  // Pause from a pending (handoff) flow.
+  {
+    const { root, slug } = fixture();
+    try {
+      establishMenuChoice(root, slug, "handoff");
+      const plan = `docs/${slug}/plan.md`;
+      const paused = transitionExecution(root, slug, plan, "pause", cliEvidence());
+      expect(paused.ok).toBe(false);
+      if (!paused.ok) expect(paused.code).toBe("flow_not_active");
+      const resumed = transitionExecution(root, slug, plan, "resume", cliEvidence());
+      expect(resumed.ok).toBe(false);
+      if (!resumed.ok) expect(resumed.code).toBe("flow_not_paused");
+    } finally {
+      cleanup(root);
+    }
+  }
+  // Resume from active.
+  {
+    const { root, slug } = fixture();
+    try {
+      establishMenuChoice(root, slug, "subagent-driven");
+      const plan = `docs/${slug}/plan.md`;
+      const resumed = transitionExecution(root, slug, plan, "resume", cliEvidence());
+      expect(resumed.ok).toBe(false);
+      if (!resumed.ok) expect(resumed.code).toBe("flow_not_paused");
+    } finally {
+      cleanup(root);
+    }
+  }
+  // Pause and resume from completed.
+  {
+    const { root, slug } = fixture();
+    try {
+      establishMenuChoice(root, slug, "subagent-driven");
+      writeSddLedger(root, slug, ["Task 1: complete"]);
+      const plan = `docs/${slug}/plan.md`;
+      const done = transitionExecution(root, slug, plan, "complete", cliEvidence(), undefined, {
+        verifyProject: stubVerifier(0),
+      });
+      expect(done.ok).toBe(true);
+      const paused = transitionExecution(root, slug, plan, "pause", cliEvidence());
+      expect(paused.ok).toBe(false);
+      if (!paused.ok) expect(paused.code).toBe("flow_already_completed");
+      const resumed = transitionExecution(root, slug, plan, "resume", cliEvidence());
+      expect(resumed.ok).toBe(false);
+      if (!resumed.ok) expect(resumed.code).toBe("flow_already_completed");
+    } finally {
+      cleanup(root);
+    }
+  }
+});
+
+test("CA-19/CA-21: lifecycle evidence must be native choice evidence or the exact CliConfirmation shape", () => {
+  const { root, slug } = fixture();
+  try {
+    establishMenuChoice(root, slug, "subagent-driven");
+    const plan = `docs/${slug}/plan.md`;
+    const forged: unknown[] = [
+      { host: "cli", attested: false, confirmation: "flag", extra: true },
+      { host: "cli", attested: true, confirmation: "flag" },
+      { host: "cli", attested: false, confirmation: "contract" },
+      { host: "cli", confirmation: "flag" },
+      { host: "cli", attested: false },
+      true,
+      "flag",
+      { host: "opencode", attested: true, callID: "", selectedLabel: "x", recordedAt: Date.now() },
+    ];
+    for (const bad of forged) {
+      const result = transitionExecution(root, slug, plan, "pause", bad as never);
+      expect(result.ok, JSON.stringify(bad)).toBe(false);
+      if (!result.ok) expect(result.code, JSON.stringify(bad)).toBe("evidence_invalid");
+    }
+    const paused = transitionExecution(root, slug, plan, "pause", cliEvidence("flag"));
+    expect(paused.ok).toBe(true);
+    const opencodeResume = transitionExecution(
+      root,
+      slug,
+      plan,
+      "resume",
+      openEvidence(new HostReceiptStore(), "resume-session", "resume"),
+    );
+    expect(opencodeResume.ok).toBe(true);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("CA-15: pause after approval drift fails closed — reconciliation resets execution to pending", () => {
+  const { root, slug } = fixture();
+  try {
+    establishMenuChoice(root, slug, "subagent-driven");
+    const plan = `docs/${slug}/plan.md`;
+    writeFileSync(
+      path.join(root, "docs", slug, "plan.md"),
+      COMPLIANT_PLAN_FN(slug).replace("do it", "do it now"),
+    );
+    const paused = transitionExecution(root, slug, plan, "pause", cliEvidence());
+    expect(paused.ok).toBe(false);
+    if (!paused.ok) expect(paused.code).toBe("flow_not_active");
+    // The effective read reconciles the drift and exposes the reset execution.
+    const effective = readEffectiveFlowState(root, slug);
+    expect(effective.ok).toBe(true);
+    if (!effective.ok) throw new Error(effective.error);
+    expect(effective.state.execution).toEqual({ status: "pending", mode: null, evidence: null });
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("CA-15: pause with unreadable canonical docs fails closed", () => {
+  if (process.platform === "win32") return; // chmod is not advisory on win32
+  const { root, slug } = fixture();
+  try {
+    establishMenuChoice(root, slug, "subagent-driven");
+    const plan = `docs/${slug}/plan.md`;
+    const planFile = path.join(root, "docs", slug, "plan.md");
+    chmodSync(planFile, 0o000);
+    let unreadable = true;
+    try {
+      readFileSync(planFile, "utf8");
+      unreadable = false;
+    } catch {
+      // unreadable
+    }
+    if (unreadable) {
+      const paused = transitionExecution(root, slug, plan, "pause", cliEvidence());
+      expect(paused.ok).toBe(false);
+      if (!paused.ok) expect(paused.code).toBe("flow_not_active");
+    }
+  } finally {
+    chmodSync(path.join(root, "docs", slug, "plan.md"), 0o644);
+    cleanup(root);
+  }
+});
+
+test("CA-16: a legacy flow without execution, approved + subagent-driven + started incomplete ledger normalizes to active", () => {
+  const { root, slug } = fixture();
+  try {
+    establishMenuChoice(root, slug, "subagent-driven");
+    writeSddLedger(root, slug, ["Task 1: in_progress"]);
+    stripExecution(root, slug);
+    const effective = readEffectiveFlowState(root, slug);
+    expect(effective.ok).toBe(true);
+    if (!effective.ok) throw new Error(effective.error);
+    expect(effective.drift).toEqual([]);
+    expect(effective.state.execution).toEqual({
+      status: "active",
+      mode: "subagent-driven",
+      evidence: null,
+    });
+    // The migration is persisted, not just returned.
+    expect(readFlowState(root, slug).execution).toMatchObject({ status: "active" });
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("CA-16: missing/empty ledgers and every other legacy combination normalize to pending", () => {
+  const cases: { choice: string; ledger: string[] | null }[] = [
+    { choice: "subagent-driven", ledger: null },
+    { choice: "subagent-driven", ledger: ["Task 1: complete"] },
+    { choice: "inline", ledger: ["Task 1: in_progress"] },
+    { choice: "handoff", ledger: ["Task 1: in_progress"] },
+  ];
+  for (const c of cases) {
+    const { root, slug } = fixture();
+    try {
+      establishMenuChoice(root, slug, c.choice);
+      if (c.ledger) writeSddLedger(root, slug, c.ledger);
+      stripExecution(root, slug);
+      const effective = readEffectiveFlowState(root, slug);
+      expect(effective.ok, c.choice).toBe(true);
+      if (!effective.ok) throw new Error(effective.error);
+      expect(effective.state.execution, c.choice).toEqual({
+        status: "pending",
+        mode: null,
+        evidence: null,
+      });
+    } finally {
+      cleanup(root);
+    }
+  }
+});
+
+test("CA-17: compatibility normalization runs first, then reconciliation resets execution to pending on digest_missing", () => {
+  const { root, slug } = fixture();
+  try {
+    establishMenuChoice(root, slug, "subagent-driven");
+    writeSddLedger(root, slug, ["Task 1: in_progress"]);
+    // Omit approval digests as a pre-digest-binding legacy flow would.
+    const file = lifecycleFlowFile(root, slug);
+    const parsed = JSON.parse(readFileSync(file, "utf8")) as {
+      execution?: unknown;
+      spec: { approved_digest: string | null };
+      plan: { approved_digest: string | null };
+    };
+    delete parsed.execution;
+    parsed.spec.approved_digest = null;
+    parsed.plan.approved_digest = null;
+    writeFileSync(file, JSON.stringify(parsed, null, 2), "utf8");
+    const effective = readEffectiveFlowState(root, slug);
+    expect(effective.ok).toBe(true);
+    if (!effective.ok) throw new Error(effective.error);
+    expect(effective.drift).toEqual([
+      { document: "spec", code: "digest_missing", path: `docs/${slug}/spec.md` },
+    ]);
+    expect(effective.state.execution).toEqual({ status: "pending", mode: null, evidence: null });
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("CA-23: completion with an incomplete ledger returns execution_incomplete details and never runs verification", () => {
+  const { root, slug } = fixture();
+  try {
+    establishMenuChoice(root, slug, "subagent-driven");
+    const plan = `docs/${slug}/plan.md`;
+    let called = false;
+    const result = transitionExecution(root, slug, plan, "complete", cliEvidence(), undefined, {
+      verifyProject: stubVerifier(0, () => {
+        called = true;
+      }),
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe("execution_incomplete");
+      expect(result.details).toEqual({ required: [1], completed: [], missing: [1] });
+    }
+    expect(called).toBe(false);
+    expect(readFlowState(root, slug).execution.status).toBe("active");
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("CA-23: failed repository verification returns verification_failed with exitCode and preserves active", () => {
+  const { root, slug } = fixture();
+  try {
+    establishMenuChoice(root, slug, "subagent-driven");
+    writeSddLedger(root, slug, ["Task 1: complete"]);
+    const plan = `docs/${slug}/plan.md`;
+    const result = transitionExecution(root, slug, plan, "complete", cliEvidence(), undefined, {
+      verifyProject: stubVerifier(7),
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe("verification_failed");
+      expect(result.details).toEqual({ exitCode: 7 });
+    }
+    expect(readFlowState(root, slug).execution.status).toBe("active");
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("CA-11/CA-23: passing repository verification stores completed", () => {
+  const { root, slug } = fixture();
+  try {
+    establishMenuChoice(root, slug, "subagent-driven");
+    writeSddLedger(root, slug, ["Task 1: complete"]);
+    const plan = `docs/${slug}/plan.md`;
+    const result = transitionExecution(root, slug, plan, "complete", cliEvidence(), undefined, {
+      verifyProject: stubVerifier(0),
+    });
+    expect(result.ok).toBe(true);
+    expect(readFlowState(root, slug).execution).toMatchObject({
+      status: "completed",
+      mode: "subagent-driven",
+    });
+  } finally {
+    cleanup(root);
   }
 });

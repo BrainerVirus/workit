@@ -34,6 +34,63 @@ export function todosFromTasks(
   return todos;
 }
 
+/** SDD ledger completeness facts shared by lifecycle migration, completion,
+ *  and active-plan detection (Task 2). */
+export type LedgerCompletion = {
+  /** True only when progress.md contains at least one `Task N:` record. */
+  started: boolean;
+  /** True only when every canonical plan task id appears completed. */
+  complete: boolean;
+  required: number[];
+  completed: number[];
+  missing: number[];
+};
+
+/**
+ * Read the canonical `docs/<slug>/sdd/progress.md` ledger and the plan's
+ * `### Task N:` headings. Fail-closed: a missing or unreadable ledger yields
+ * `started: false`, and a missing/unreadable plan yields an empty `required`
+ * set (never a partial trust of a stale ledger). `complete` requires a
+ * non-empty required set fully covered by completed task ids, so an empty plan
+ * can never read as "done".
+ */
+export function ledgerCompletion(root: string, slug: string): LedgerCompletion {
+  let started = false;
+  const completed: number[] = [];
+  const absProgress = path.join(root, "docs", slug, "sdd", "progress.md");
+  if (existsSync(absProgress)) {
+    try {
+      for (const line of readFileSync(absProgress, "utf8").split("\n")) {
+        const match = /^Task\s+(\d+):/i.exec(line);
+        if (match) {
+          started = true;
+          if (/^Task\s+\d+:\s*complete\b/i.test(line)) completed.push(Number(match[1]));
+        }
+      }
+    } catch {
+      // unreadable ledger: started stays false (fail-closed)
+    }
+  }
+  const required: number[] = [];
+  try {
+    const absPlan = path.join(root, "docs", slug, "plan.md");
+    if (existsSync(absPlan)) {
+      for (const task of parseTasksFromPlan(readFileSync(absPlan, "utf8"))) required.push(task.id);
+    }
+  } catch {
+    // unreadable/missing plan: required stays empty (fail-closed)
+  }
+  const completedSet = new Set(completed);
+  const missing = required.filter((id) => !completedSet.has(id));
+  return {
+    started,
+    complete: required.length > 0 && missing.length === 0,
+    required,
+    completed,
+    missing,
+  };
+}
+
 export function sddContext({
   slug,
   plan_path,

@@ -16,6 +16,8 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 import { docsValidate, parseTasksFromPlan, qualitySpec, stripFences } from "./docs-validate";
 import { resolveCanonicalLayout } from "./docs-layout";
+import { ledgerCompletion } from "./sdd";
+import { runVerifyProject } from "./verify-project";
 
 export type FlowHost = "opencode" | "cursor";
 export type FlowStatus = "draft" | "self_reviewed" | "approved";
@@ -424,8 +426,12 @@ const validateState = (
 // Strict read for transitions and guards: missing or corrupt state is a
 // structured error, never a silent draft fallback (CA-18). The raw readFlowState
 // above stays a lenient compatibility helper for controlled tests and mutation
-// internals; status, gates, and host adapters use the effective path.
-type StrictRead = { ok: true; state: FlowState } | { ok: false; error: string; code: string };
+// internals; status, gates, and host adapters use the effective path. The raw
+// parsed JSON is carried so compatibility normalization can distinguish a
+// genuinely missing `execution` key from an explicit persisted state (CA-16).
+type StrictRead =
+  | { ok: true; state: FlowState; raw: unknown }
+  | { ok: false; error: string; code: string };
 
 const readFlowStrict = (root: string, slug: string): StrictRead => {
   const file = flowPath(root, slug);
@@ -462,7 +468,7 @@ const readFlowStrict = (root: string, slug: string): StrictRead => {
       original_bytes_preserved: true,
     });
   }
-  return { ok: true, state: validated.state };
+  return { ok: true, state: validated.state, raw: parsed };
 };
 
 // Unique per-write temporary buffer so two concurrent writers never share the
@@ -705,6 +711,52 @@ const reconcileState = (
   return { state, drift: [] };
 };
 
+/**
+ * Compatibility normalization for legacy persisted shapes (CA-16): a flow.json
+ * written before the execution lifecycle has NO `execution` key. Only then is
+ * execution derived — active exactly when the persisted plan approval, a
+ * subagent-driven menu choice, and an in-progress SDD ledger prove a legacy
+ * execution is running; every other combination (and any explicit persisted
+ * execution) stays pending/fail-closed. Runs BEFORE digest reconciliation
+ * (CA-17) so a drift reset can still pull a derived active state back to
+ * pending. Migration evidence is null by design: a legacy flow has no
+ * host-observed lifecycle receipt to cite.
+ */
+const deriveLegacyExecution = (
+  root: string,
+  slug: string,
+  state: FlowState,
+): FlowExecutionState => {
+  const ledger = ledgerCompletion(root, slug);
+  if (
+    state.plan.status === "approved" &&
+    state.menu.chosen === "subagent-driven" &&
+    ledger.started &&
+    !ledger.complete
+  ) {
+    return { status: "active", mode: "subagent-driven", evidence: null };
+  }
+  return { status: "pending", mode: null, evidence: null };
+};
+
+type CompatibilityResult = { state: FlowState; changed: boolean };
+
+const normalizeCompatibility = (
+  root: string,
+  slug: string,
+  parsed: unknown,
+  state: FlowState,
+): CompatibilityResult => {
+  if (!isRecord(parsed) || !("execution" in parsed)) {
+    const derived = deriveLegacyExecution(root, slug, state);
+    const current = state.execution;
+    if (derived.status !== current.status || derived.mode !== current.mode) {
+      return { state: { ...state, execution: derived, updated_at: Date.now() }, changed: true };
+    }
+  }
+  return { state, changed: false };
+};
+
 type MutateResult = { ok: true; next: FlowState } | FlowError;
 
 /**
@@ -811,8 +863,9 @@ const withFlowLock = <T>(file: string, fn: () => T): Locked<T> => {
 
 /**
  * Effective flow-state read (CA-02, CA-04): under the per-flow lock, validate
- * persisted state, reconcile approval digests in spec-before-plan order, and
- * persist any reset atomically. Status reads and gates operate ONLY on this
+ * persisted state, normalize legacy compatibility (missing execution) first,
+ * reconcile approval digests in spec-before-plan order, and persist any reset
+ * or migration atomically. Status reads and gates operate ONLY on this
  * reconciled state; drift is reported structurally.
  */
 export const readEffectiveFlowState = (root: string, slug: string): FlowReadResult => {
@@ -821,8 +874,9 @@ export const readEffectiveFlowState = (root: string, slug: string): FlowReadResu
   const locked = withFlowLock<FlowReadResult>(file, () => {
     const strict = readFlowStrict(root, slug);
     if (!strict.ok) return strict;
-    const { state, drift } = reconcileState(root, slug, strict.state);
-    if (drift.length > 0) {
+    const normalized = normalizeCompatibility(root, slug, strict.raw, strict.state);
+    const { state, drift } = reconcileState(root, slug, normalized.state);
+    if (normalized.changed || drift.length > 0) {
       try {
         writeFlowFileAtomic(file, state);
       } catch (error) {
@@ -846,9 +900,11 @@ export const readEffectiveFlowState = (root: string, slug: string): FlowReadResu
 
 /**
  * Locked read-modify-write (FG-08, CA-19): under the per-flow lock, read strict,
- * reconcile approval digests first, mutate on the reconciled state, then commit
- * only if the on-disk state still matches what was read (CAS); otherwise re-read
- * and retry the transition, bounded. Reconciliation runs inside this same
+ * normalize legacy compatibility, reconcile approval digests first, mutate on
+ * the reconciled state, then commit only if the on-disk state still matches
+ * what was read (CAS); otherwise re-read and retry the transition, bounded.
+ * A compatibility migration is persisted under the lock first so the CAS
+ * baseline matches the on-disk bytes. Reconciliation runs inside this same
  * critical section before every transition (CA-02).
  */
 const readModifyWrite = (
@@ -861,10 +917,23 @@ const readModifyWrite = (
     for (let attempt = 0; attempt < MAX_WRITE_ATTEMPTS; attempt++) {
       const strict = readFlowStrict(root, slug);
       if (!strict.ok) return strict;
-      const reconciled = reconcileState(root, slug, strict.state);
+      const normalized = normalizeCompatibility(root, slug, strict.raw, strict.state);
+      const reconciled = reconcileState(root, slug, normalized.state);
       const result = mutate(reconciled.state);
       if (!result.ok) return result;
-      const commit = writeFlowStateIfCurrent(root, strict.state, result.next);
+      let baseline = strict.state;
+      if (normalized.changed) {
+        try {
+          writeFlowFileAtomic(file, normalized.state);
+        } catch (error) {
+          return err(
+            "flow_io_error",
+            `cannot persist normalized flow state at ${file}: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+        baseline = normalized.state;
+      }
+      const commit = writeFlowStateIfCurrent(root, baseline, result.next);
       if (commit.ok) return { ok: true };
       if ("io_error" in commit) {
         return err("flow_io_error", `flow state write failed for ${slug}: ${commit.io_error}`);
@@ -893,15 +962,22 @@ const assertMutationWorkspace = (root: string, ctx?: MutationContext): FlowGateR
 };
 
 /**
- * Coordinator boundary (FG-05, CA-20): once a plan is subagent-driven, the
- * coordinator session cannot mutate product state — only authenticated
- * delegated workers can. A delegated worker without a task identity is blocked.
+ * Coordinator boundary (FG-05, CA-20): while a plan's execution is ACTIVE and
+ * subagent-driven, the coordinator session cannot mutate product state — only
+ * authenticated delegated workers can. A historical subagent-driven menu choice
+ * alone is not a boundary: a pending/paused/completed/inline execution leaves
+ * the coordinator unblocked. A delegated worker without a task identity is
+ * blocked.
  */
 export const assertCoordinatorBoundary = (
   ctx: MutationContext | undefined,
-  menu: FlowMenuState,
+  state: FlowState,
 ): FlowGateResult => {
-  if (ctx?.role === "coordinator" && menu.chosen === "subagent-driven") {
+  if (
+    ctx?.role === "coordinator" &&
+    state.execution.status === "active" &&
+    state.execution.mode === "subagent-driven"
+  ) {
     return err("coordinator_blocked", COORDINATOR_RECOVERY_TEXT);
   }
   if (ctx?.role === "delegated" && !ctx.taskIdentity) {
@@ -1468,13 +1544,195 @@ export const recordMenuChoice = (
       return err("spec_not_approved", "spec must be approved before the execution menu");
     if (state.plan.status !== "approved")
       return err("plan_not_approved", "plan must be approved before the execution menu");
+    // Lifecycle is set ATOMICALLY with the menu evidence (CA-11/CA-13): an
+    // executing choice starts the plan; a review/handoff choice leaves it
+    // pending. The menu evidence IS the lifecycle evidence — the choice the
+    // user selected on the native question.
+    const executing = choice === "subagent-driven" || choice === "inline";
     return {
       ok: true,
       next: {
         ...state,
         menu: { presented: true, chosen: choice, evidence: recorded.evidence },
+        execution: executing
+          ? { status: "active", mode: choice as ExecutionMode, evidence: recorded.evidence }
+          : { status: "pending", mode: null, evidence: recorded.evidence },
         updated_at: Date.now(),
       },
+    };
+  });
+};
+
+const CLI_CONFIRMATION_KEYS = ["attested", "confirmation", "host"];
+
+/**
+ * Strict shape validation for lifecycle evidence (CA-19, CA-21): OpenCode and
+ * Cursor use the existing native-choice validation; CLI evidence accepts ONLY
+ * the exact `{ host: "cli", attested: false, confirmation: "flag" | "tty" }`
+ * constant — no caller data, no attestation.
+ */
+const validateLifecycleEvidence = (
+  input: unknown,
+): { ok: true; evidence: LifecycleEvidence } | { ok: false; error: string } => {
+  if (typeof input !== "object" || input === null) {
+    return {
+      ok: false,
+      error: "lifecycle evidence required — native choice evidence or an exact CLI confirmation",
+    };
+  }
+  const record = input as Record<string, unknown>;
+  if (record.host === "cli") {
+    const validValue =
+      record.attested === false &&
+      (record.confirmation === "flag" || record.confirmation === "tty");
+    const keys = Object.keys(record).sort();
+    const exactShape =
+      keys.length === CLI_CONFIRMATION_KEYS.length &&
+      CLI_CONFIRMATION_KEYS.every((key) => keys.includes(key));
+    if (validValue && exactShape) {
+      return {
+        ok: true,
+        evidence: {
+          host: "cli",
+          attested: false,
+          confirmation: record.confirmation as "flag" | "tty",
+        },
+      };
+    }
+    return {
+      ok: false,
+      error:
+        'cli confirmations accept only the exact { host: "cli", attested: false, confirmation: "flag" | "tty" } shape',
+    };
+  }
+  return assertEvidenceShape(input);
+};
+
+const errPendingFlow = (action: string): FlowError =>
+  err("flow_not_active", `cannot ${action} a pending flow — the execution menu has not started it`);
+
+const errCompletedFlow = (action: string): FlowError =>
+  err("flow_already_completed", `cannot ${action} a completed flow`);
+
+/**
+ * Completion (CA-23): acquire/read/reconcile/validate and capture the exact
+ * effective state plus the ledger result; RELEASE the lock; run repository
+ * verification outside the lock (no expensive command ever runs while a flow
+ * lock is held); stop on nonzero verification; reacquire and compare-and-swap
+ * the completed state against the captured state — a concurrent mutation during
+ * verification returns flow_concurrent_conflict rather than rerunning
+ * verification or overwriting the newer state.
+ */
+const completeExecution = (
+  root: string,
+  slug: string,
+  deps?: { verifyProject?: typeof runVerifyProject },
+): FlowGateResult => {
+  const file = flowPath(root, slug);
+  const captured = readEffectiveFlowState(root, slug);
+  if (!captured.ok) return captured;
+  const exec = captured.state.execution;
+  if (exec.status === "pending") return errPendingFlow("complete");
+  if (exec.status === "completed") return errCompletedFlow("complete");
+  const ledger = ledgerCompletion(root, slug);
+  if (!ledger.complete) {
+    return err(
+      "execution_incomplete",
+      `execution ledger incomplete for ${slug}: missing tasks ${ledger.missing.join(", ")}`,
+      { required: ledger.required, completed: ledger.completed, missing: ledger.missing },
+    );
+  }
+  const verifier = deps?.verifyProject ?? runVerifyProject;
+  const verify = verifier(root, false);
+  if (verify.exitCode !== 0) {
+    return err(
+      "verification_failed",
+      `repository verification failed for ${slug} (exit ${verify.exitCode}) — see the verification output`,
+      { exitCode: verify.exitCode },
+    );
+  }
+  const locked = withFlowLock<FlowGateResult>(file, () => {
+    const strict = readFlowStrict(root, slug);
+    if (!strict.ok) return strict;
+    const reconciled = reconcileState(root, slug, strict.state);
+    const currentExec = reconciled.state.execution;
+    if (currentExec.status !== exec.status || currentExec.mode !== exec.mode) {
+      return err(
+        "flow_concurrent_conflict",
+        `concurrent execution state change detected for ${slug}: re-read the flow state and retry completion`,
+      );
+    }
+    const next: FlowState = {
+      ...reconciled.state,
+      execution: { ...exec, status: "completed" },
+      updated_at: Date.now(),
+    };
+    const commit = writeFlowStateIfCurrent(root, captured.state, next);
+    if (commit.ok) return { ok: true };
+    if ("io_error" in commit) {
+      return err("flow_io_error", `flow state write failed for ${slug}: ${commit.io_error}`);
+    }
+    return err(
+      "flow_concurrent_conflict",
+      `concurrent flow update detected for ${slug}: re-read the flow state and retry completion`,
+    );
+  });
+  if (!locked.locked) return locked.error;
+  return locked.value;
+};
+
+/**
+ * Execution lifecycle transitions (CA-11, CA-14, CA-23): pause, resume, and
+ * complete move the plan between the only four states — pending, active,
+ * paused, completed. Pause/resume run under the per-flow critical section and
+ * preserve the retained mode and original lifecycle evidence; every SDD
+ * artifact (briefs, reviews, ledger) is untouched. Completion is orchestrated
+ * by completeExecution (ledger check -> verification outside the lock -> CAS).
+ */
+export const transitionExecution = (
+  root: string,
+  slug: string,
+  planPath: string,
+  action: "pause" | "resume" | "complete",
+  evidence: LifecycleEvidence,
+  ctx?: MutationContext,
+  deps?: { verifyProject?: typeof runVerifyProject },
+): FlowGateResult => {
+  const bound = assertMutationWorkspace(root, ctx);
+  if (!bound.ok) return bound;
+  const validated = validateLifecycleEvidence(evidence);
+  if (!validated.ok) return err("evidence_invalid", validated.error);
+  const doc = resolveDoc(root, slug, planPath, "plan");
+  if (!doc.ok) return err("path_invalid", doc.error);
+
+  if (action === "complete") return completeExecution(root, slug, deps);
+
+  if (action === "pause") {
+    return readModifyWrite(root, slug, (state) => {
+      const exec = state.execution;
+      if (exec.status === "pending") return errPendingFlow("pause");
+      if (exec.status === "completed") return errCompletedFlow("pause");
+      if (exec.status === "paused") return err("flow_already_paused", "flow is already paused");
+      return {
+        ok: true,
+        next: { ...state, execution: { ...exec, status: "paused" }, updated_at: Date.now() },
+      };
+    });
+  }
+  return readModifyWrite(root, slug, (state) => {
+    const exec = state.execution;
+    if (exec.status === "completed") return errCompletedFlow("resume");
+    if (exec.status !== "paused") {
+      return err(
+        "flow_not_paused",
+        exec.status === "active"
+          ? "flow is already active — cannot resume"
+          : "cannot resume a pending flow — the execution menu has not started it",
+      );
+    }
+    return {
+      ok: true,
+      next: { ...state, execution: { ...exec, status: "active" }, updated_at: Date.now() },
     };
   });
 };
@@ -1581,7 +1839,7 @@ export const assertProductGates = (
     });
     if (validated.ok === false) return err("docs_invalid", validated.error);
   }
-  return assertCoordinatorBoundary(ctx, state.menu);
+  return assertCoordinatorBoundary(ctx, state);
 };
 
 /**

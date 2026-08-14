@@ -26,12 +26,14 @@ import {
   readEffectiveFlowState,
   readFlowState,
   recordMenuChoice,
+  transitionExecution,
   transitionPlan,
   transitionSpec,
   writeFlowStateIfCurrent,
   type FlowReadResult,
   type MutationContext,
 } from "../../packages/workit-core/src/core/flow-state";
+import type { runVerifyProject } from "../../packages/workit-core/src/core/verify-project";
 import { findActiveSubagentDrivenPlans } from "../../packages/workit-core/src/core/detector";
 import {
   roleFromParentage,
@@ -843,6 +845,178 @@ test("CA-18/CA-19: malformed flow.json stays byte-identical through effective re
       f.endsWith(".lock"),
     );
     expect(lockLeftovers).toEqual([]);
+  } finally {
+    cleanup(root);
+  }
+});
+
+const writeConcurrentLedger = (root: string, slug: string) => {
+  const dir = path.join(root, "docs", slug, "sdd");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(path.join(dir, "progress.md"), "Task 1: complete\n", "utf8");
+};
+
+test("CA-19/CA-23: completion runs the verifier outside the lock and rejects a concurrent state change", () => {
+  const { root, slug } = fixture();
+  try {
+    establishSubagentDriven(root, slug);
+    writeConcurrentLedger(root, slug);
+    const plan = `docs/${slug}/plan.md`;
+    let lockFreeRead = false;
+    const verifier: typeof runVerifyProject = (r) => {
+      // The effective read must succeed while the verifier runs: if the flow
+      // lock were still held this same-process read would return
+      // flow_concurrent_conflict. Succeeding here proves the verifier runs
+      // OUTSIDE the locked phase-1 critical section.
+      const current = readEffectiveFlowState(r, slug);
+      lockFreeRead = current.ok === true;
+      if (current.ok) {
+        const newer = {
+          ...current.state,
+          execution: { ...current.state.execution, status: "paused" as const },
+          updated_at: Date.now(),
+        };
+        const commit = writeFlowStateIfCurrent(r, current.state, newer);
+        expect(commit.ok).toBe(true);
+      }
+      return { stdout: "", stderr: "", exitCode: 0, cwd: r };
+    };
+    const result = transitionExecution(
+      root,
+      slug,
+      plan,
+      "complete",
+      evidence("complete"),
+      undefined,
+      { verifyProject: verifier },
+    );
+    expect(lockFreeRead).toBe(true);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.code).toBe("flow_concurrent_conflict");
+    // The newer concurrent state is preserved — completion never overwrites it.
+    expect(readFlowState(root, slug).execution.status).toBe("paused");
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("CA-18/AR-13: only active subagent-driven flows are discovered and intercepted", () => {
+  // Non-active lifecycle/malformed/drift-reset states: nothing is found and
+  // the root-session write tools are never blocked.
+  const builders: { name: string; build: (root: string, slug: string) => void }[] = [
+    {
+      name: "pending-handoff",
+      build: (r, slug) => {
+        writeDocs(r, slug);
+        const plan = `docs/${slug}/plan.md`;
+        const prep = prepareFlowState(r, slug, {
+          spec_path: `docs/${slug}/spec.md`,
+          plan_path: plan,
+        });
+        expect(prep.ok).toBe(true);
+        approveSpecAndPlan(r, slug);
+        const recorded = recordMenuChoice(r, slug, plan, "handoff", evidence("handoff"));
+        expect(recorded.ok).toBe(true);
+      },
+    },
+    {
+      name: "paused",
+      build: (r, slug) => {
+        establishSubagentDriven(r, slug);
+        const paused = transitionExecution(
+          r,
+          slug,
+          `docs/${slug}/plan.md`,
+          "pause",
+          evidence("pause"),
+        );
+        expect(paused.ok).toBe(true);
+      },
+    },
+    {
+      name: "completed",
+      build: (r, slug) => {
+        establishSubagentDriven(r, slug);
+        writeConcurrentLedger(r, slug);
+        const done = transitionExecution(
+          r,
+          slug,
+          `docs/${slug}/plan.md`,
+          "complete",
+          evidence("complete"),
+          undefined,
+          {
+            verifyProject: () => ({ stdout: "", stderr: "", exitCode: 0, cwd: r }),
+          },
+        );
+        expect(done.ok).toBe(true);
+      },
+    },
+    {
+      name: "inline",
+      build: (r, slug) => {
+        writeDocs(r, slug);
+        const plan = `docs/${slug}/plan.md`;
+        const prep = prepareFlowState(r, slug, {
+          spec_path: `docs/${slug}/spec.md`,
+          plan_path: plan,
+        });
+        expect(prep.ok).toBe(true);
+        approveSpecAndPlan(r, slug);
+        const recorded = recordMenuChoice(r, slug, plan, "inline", evidence("inline"));
+        expect(recorded.ok).toBe(true);
+      },
+    },
+    {
+      name: "drift-reset",
+      build: (r, slug) => {
+        establishSubagentDriven(r, slug);
+        writeFileSync(
+          path.join(r, "docs", slug, "plan.md"),
+          COMPLIANT_PLAN(slug).replace("do it", "do it now"),
+        );
+      },
+    },
+    {
+      name: "malformed",
+      build: (r, slug) => {
+        const dir = path.join(r, "docs", slug, "sdd");
+        mkdirSync(dir, { recursive: true });
+        writeFileSync(path.join(dir, "flow.json"), "{ not json");
+      },
+    },
+  ];
+  for (const { name, build } of builders) {
+    const { root, slug } = fixture();
+    try {
+      build(root, slug);
+      expect(findActiveSubagentDrivenPlans(root), name).toEqual([]);
+      const decision = subagentDrivenInterception({
+        tool: "write",
+        parentID: undefined,
+        active: false,
+      });
+      expect(decision.ok, name).toBe(true);
+    } finally {
+      cleanup(root);
+    }
+  }
+  // Positive control: a real active subagent-driven flow IS discovered and its
+  // root-session coordinator writes ARE blocked.
+  const { root, slug } = fixture();
+  try {
+    establishSubagentDriven(root, slug);
+    expect(findActiveSubagentDrivenPlans(root)).toEqual([slug]);
+    const blocked = subagentDrivenInterception({
+      tool: "write",
+      parentID: undefined,
+      active: true,
+    });
+    expect(blocked.ok).toBe(false);
+    if (!blocked.ok) {
+      expect(blocked.code).toBe("coordinator_write_denied");
+      expect(blocked.error).toContain(COORDINATOR_RECOVERY_TEXT);
+    }
   } finally {
     cleanup(root);
   }

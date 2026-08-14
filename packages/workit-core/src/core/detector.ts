@@ -1,7 +1,7 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { CONFIG_GAP_MARKER } from "./config-guard";
-import { parseTasksFromPlan } from "./docs-validate";
+import { readEffectiveFlowState, type FlowReadResult } from "./flow-state";
 
 export type Detection = { choices: string[]; pattern: "alpha" | "numeric" } | null;
 
@@ -162,57 +162,29 @@ export const detectBacktickDocRefs = (text: string): string[] | null => {
   return refs;
 };
 
-// The rail has no terminal FlowStatus — a fully completed SDD ledger is done,
-// but only if its complete set covers every task id in the plan (the last
-// task's append may have been skipped, leaving an all-complete partial ledger).
-const isPlanComplete = (slugDir: string): boolean => {
-  const ledger = path.join(slugDir, "sdd", "progress.md");
-  if (!existsSync(ledger)) return false; // no ledger yet — not provably complete
-  let taskLines: string[];
-  try {
-    taskLines = readFileSync(ledger, "utf8")
-      .split("\n")
-      .map((l) => l.trim())
-      .filter((l) => /^Task \s*\d+:/i.test(l));
-  } catch {
-    return true; // unreadable ledger → exclude the slug
-  }
-  if (taskLines.length === 0 || !taskLines.every((l) => /^Task \s*\d+:\s*complete\b/i.test(l))) {
-    return false;
-  }
-  try {
-    const planTasks = parseTasksFromPlan(readFileSync(path.join(slugDir, "plan.md"), "utf8"));
-    if (planTasks.length === 0) return true;
-    const completeIds = new Set(
-      taskLines.map((l) => Number(/^Task\s*(\d+):/i.exec(l)?.[1])).filter(Number.isFinite),
-    );
-    return planTasks.every((t) => completeIds.has(t.id));
-  } catch {
-    return false; // unreadable/missing plan.md — not provably complete, rail stays on
-  }
-};
-
+// The rail is active-plan detection (CA-11/CA-13): only a flow whose effective
+// execution is ACTIVE and subagent-driven is found. The effective read performs
+// the legacy compatibility migration (ledgerCompletion-derived, CA-16) and the
+// approval-digest reconciliation, so a drift-reset or pending/paused/completed
+// flow — and a malformed flow.json — is excluded without ever being rewritten.
 export const findActiveSubagentDrivenPlans = (root: string): string[] => {
   const docsDir = path.join(root, "docs");
   if (!existsSync(docsDir)) return [];
   const slugs: string[] = [];
   for (const slug of readdirSync(docsDir)) {
     const file = path.join(docsDir, slug, "sdd", "flow.json");
+    if (!existsSync(file)) continue;
+    let effective: FlowReadResult;
     try {
-      const flow = JSON.parse(readFileSync(file, "utf8")) as {
-        menu?: { chosen?: string };
-        plan?: { status?: string };
-      };
-      if (
-        flow.menu?.chosen === "subagent-driven" &&
-        flow.plan?.status === "approved" &&
-        !isPlanComplete(path.join(docsDir, slug))
-      ) {
-        slugs.push(slug);
-      }
+      effective = readEffectiveFlowState(root, slug);
     } catch {
-      // skip unreadable or malformed flow.json
+      // an unexpected read error (e.g. a non-slug directory name) excludes the
+      // entry without touching it
+      continue;
     }
+    if (!effective.ok) continue;
+    const exec = effective.state.execution;
+    if (exec.status === "active" && exec.mode === "subagent-driven") slugs.push(slug);
   }
   return slugs;
 };
