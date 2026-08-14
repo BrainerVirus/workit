@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import path from "node:path";
 import {
+  CURSOR_RUNTIME_PACKAGE,
   cursorHooksEntry,
   cursorMcpServerEntry,
   isWorkitPlugin,
@@ -320,7 +321,7 @@ test("mergeCursorHooks swaps the sessionStart command and keeps unrelated hook c
     },
   };
   const { config, changed } = mergeCursorHooks(input, {
-    command: "npx -y --package=@brainervirus/workit-cursor@latest workit-cursor-session-start",
+    command: `npx -y --package=${CURSOR_RUNTIME_PACKAGE} workit-cursor-session-start`,
   });
   const hooks = config.hooks as {
     sessionStart?: { command: string; args?: string[] }[];
@@ -328,7 +329,7 @@ test("mergeCursorHooks swaps the sessionStart command and keeps unrelated hook c
   };
   expect(hooks.sessionStart).toEqual([
     {
-      command: "npx -y --package=@brainervirus/workit-cursor@latest workit-cursor-session-start",
+      command: `npx -y --package=${CURSOR_RUNTIME_PACKAGE} workit-cursor-session-start`,
     },
   ]);
   expect(hooks.otherHook).toEqual([{ command: "echo hi" }]);
@@ -340,7 +341,7 @@ test("cursorMcpServerEntry launches the published package via npx", () => {
   expect(entry.command).toBe("npx");
   expect(entry.args).toEqual([
     "-y",
-    "--package=@brainervirus/workit-cursor@latest",
+    `--package=${CURSOR_RUNTIME_PACKAGE}`,
     "workit-cursor-mcp",
     "${workspaceFolder}",
   ]);
@@ -349,7 +350,7 @@ test("cursorMcpServerEntry launches the published package via npx", () => {
 test("cursorHooksEntry uses the documented single command string with no args", () => {
   const entry = cursorHooksEntry("/any/pkg/dir");
   expect(entry.command).toBe(
-    "npx -y --package=@brainervirus/workit-cursor@latest workit-cursor-session-start",
+    `npx -y --package=${CURSOR_RUNTIME_PACKAGE} workit-cursor-session-start`,
   );
   expect(entry.args).toEqual([]);
 });

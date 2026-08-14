@@ -99,6 +99,21 @@ export const makeDoctorFixture = (): DoctorFixture => {
     path.join(pluginDir, "dist", "cursor-session-start.js"),
     "#!/usr/bin/env node\n// installed hook bundle\n",
   );
+  mkdirSync(path.join(pluginDir, "hooks"), { recursive: true });
+  writeFileSync(
+    path.join(pluginDir, "hooks", "hooks-cursor.json"),
+    JSON.stringify({
+      version: 1,
+      hooks: {
+        sessionStart: [
+          {
+            command:
+              "npx -y --package=@brainervirus/workit-cursor@0.8.0 workit-cursor-session-start",
+          },
+        ],
+      },
+    }),
+  );
   const adapter = (name: string, extra: Record<string, string> = {}) =>
     JSON.stringify({
       name,
@@ -168,7 +183,7 @@ export const makeDoctorFixture = (): DoctorFixture => {
           command: "npx",
           args: [
             "-y",
-            "--package=@brainervirus/workit-cursor@latest",
+            "--package=@brainervirus/workit-cursor@0.8.0",
             "workit-cursor-mcp",
             "${workspaceFolder}",
           ],
@@ -210,7 +225,7 @@ export const makeDoctorFixture = (): DoctorFixture => {
           command: "npx",
           args: [
             "-y",
-            "--package=@brainervirus/workit-cursor@latest",
+            "--package=@brainervirus/workit-cursor@0.8.0",
             "workit-cursor-mcp",
             "${workspaceFolder}",
           ],

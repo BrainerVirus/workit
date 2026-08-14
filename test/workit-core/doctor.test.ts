@@ -381,7 +381,7 @@ test("cursor launcher npx shape matches exact tokens, never substrings (CA-17)",
         command: "npx",
         args: [
           "-y",
-          "--package=@brainervirus/workit-cursor@latest",
+          "--package=@brainervirus/workit-cursor@0.8.0",
           "workit-cursor-mcp",
           "${workspaceFolder}",
         ],
@@ -389,6 +389,15 @@ test("cursor launcher npx shape matches exact tokens, never substrings (CA-17)",
     },
   });
   const variants: Array<[string, string[]]> = [
+    [
+      "@latest",
+      [
+        "-y",
+        "--package=@brainervirus/workit-cursor@latest",
+        "workit-cursor-mcp",
+        "${workspaceFolder}",
+      ],
+    ],
     [
       "@latest-alpha",
       [
@@ -399,10 +408,28 @@ test("cursor launcher npx shape matches exact tokens, never substrings (CA-17)",
       ],
     ],
     [
+      "@0.8.0-alpha",
+      [
+        "-y",
+        "--package=@brainervirus/workit-cursor@0.8.0-alpha",
+        "workit-cursor-mcp",
+        "${workspaceFolder}",
+      ],
+    ],
+    [
+      "@0.8.00",
+      [
+        "-y",
+        "--package=@brainervirus/workit-cursor@0.8.00",
+        "workit-cursor-mcp",
+        "${workspaceFolder}",
+      ],
+    ],
+    [
       "workit-cursor-mcp-foo",
       [
         "-y",
-        "--package=@brainervirus/workit-cursor@latest",
+        "--package=@brainervirus/workit-cursor@0.8.0",
         "workit-cursor-mcp-foo",
         "${workspaceFolder}",
       ],
@@ -420,6 +447,48 @@ test("cursor launcher npx shape matches exact tokens, never substrings (CA-17)",
     }
   } finally {
     writeConfig(fixture.cursorMcp, canonical);
+  }
+  expect(check(run(), "launcher").status).toBe("pass");
+});
+
+test("cursor session-start hook command matches exact canonical string (CA-17)", () => {
+  const hooksFile = path.join(fixture.pluginDir, "hooks", "hooks-cursor.json");
+  const canonical = {
+    version: 1,
+    hooks: {
+      sessionStart: [
+        {
+          command: "npx -y --package=@brainervirus/workit-cursor@0.8.0 workit-cursor-session-start",
+        },
+      ],
+    },
+  };
+  const hookVariants: Array<[string, string]> = [
+    ["@latest", "npx -y --package=@brainervirus/workit-cursor@latest workit-cursor-session-start"],
+    [
+      "@latest-alpha",
+      "npx -y --package=@brainervirus/workit-cursor@latest-alpha workit-cursor-session-start",
+    ],
+    ["@0.8.00", "npx -y --package=@brainervirus/workit-cursor@0.8.00 workit-cursor-session-start"],
+    [
+      "extra-token",
+      "npx -y --package=@brainervirus/workit-cursor@0.8.0 workit-cursor-session-start extra",
+    ],
+    ["missing-executable", "npx -y --package=@brainervirus/workit-cursor@0.8.0"],
+  ];
+  try {
+    for (const [label, command] of hookVariants) {
+      writeConfig(
+        hooksFile,
+        JSON.stringify({ version: 1, hooks: { sessionStart: [{ command }] } }),
+      );
+      const report = run();
+      expect(check(report, "launcher").status, label).toBe("fail");
+      expect(check(report, "launcher").detail, label).toContain("canonical");
+      expect(check(report, "launcher").detail, label).toContain("hooks-cursor.json");
+    }
+  } finally {
+    writeConfig(hooksFile, JSON.stringify(canonical));
   }
   expect(check(run(), "launcher").status).toBe("pass");
 });

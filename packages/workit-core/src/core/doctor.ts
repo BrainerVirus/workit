@@ -11,7 +11,7 @@ import path from "node:path";
 import { SUPPORT_MATRIX } from "./support-matrix";
 import { EVENT } from "./boundary";
 import { getDiagnosticLogger, isConfigObject } from "./config";
-import { isWorkitPlugin } from "./registration";
+import { CURSOR_RUNTIME_PACKAGE, cursorHooksEntry, isWorkitPlugin } from "./registration";
 import { resolveWorkspaceFrom } from "./workspaces";
 import { validateCursorSkills } from "./skill-manifests";
 
@@ -422,7 +422,7 @@ const registeredCursorLauncher = (res: Resolved): CursorLauncher | null | "inval
     // CA-17: exact positional tokens — a substring match would accept
     // `@latest-alpha` or `workit-cursor-mcp-foo`.
     if (args[0] !== "-y") return "invalid";
-    if (args[1] !== "--package=@brainervirus/workit-cursor@latest") return "invalid";
+    if (args[1] !== `--package=${CURSOR_RUNTIME_PACKAGE}`) return "invalid";
     if (args[2] !== "workit-cursor-mcp") return "invalid";
     return { kind: "npx" };
   }
@@ -432,6 +432,26 @@ const registeredCursorLauncher = (res: Resolved): CursorLauncher | null | "inval
     runtime: command,
     entry: path.isAbsolute(args[0]) ? args[0] : path.resolve(path.dirname(res.cursorMcp), args[0]),
   };
+};
+
+// CA-17: the canonical session-start hook runs the published package through
+// npx as a single command string (Cursor's documented hook format). The doctor
+// validates its shape exactly like the MCP launcher — no substring matching,
+// no version abstraction.
+const canonicalCursorHook = cursorHooksEntry("").command;
+
+const registeredCursorHook = (res: Resolved): string | null | "invalid" => {
+  const hooksFile = path.join(res.cursorPluginDir, "hooks", "hooks-cursor.json");
+  if (!existsSync(hooksFile)) return "invalid";
+  const config = readJson(hooksFile);
+  // Unlike mcp.json, the hook file is not covered by checkMalformedConfig, so
+  // an unparseable hook must fail the launcher check rather than slip through.
+  if (!config) return "invalid";
+  const sessionStart = config.hooks?.sessionStart;
+  if (!Array.isArray(sessionStart) || sessionStart.length !== 1) return "invalid";
+  const entry = sessionStart[0];
+  if (typeof entry !== "object" || entry === null || Array.isArray(entry)) return "invalid";
+  return typeof entry.command === "string" ? entry.command : "invalid";
 };
 
 const checkLauncher = (res: Resolved): DoctorCheck => {
@@ -457,6 +477,16 @@ const checkLauncher = (res: Resolved): DoctorCheck => {
       !validNodeEntry(registered.entry, registered.runtime, res.env)
     ) {
       missing.push(`cursor: registered ${registered.entry}`);
+    }
+    const hook = registeredCursorHook(res);
+    if (hook === "invalid") {
+      missing.push(
+        `cursor: canonical session-start hook in ${path.join(res.cursorPluginDir, "hooks", "hooks-cursor.json")}`,
+      );
+    } else if (hook !== null && hook !== canonicalCursorHook) {
+      missing.push(
+        `cursor: canonical session-start hook in ${path.join(res.cursorPluginDir, "hooks", "hooks-cursor.json")} (registered ${hook})`,
+      );
     }
   }
   if (dev) {

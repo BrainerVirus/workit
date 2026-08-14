@@ -178,6 +178,22 @@ function makeCursorStub() {
     path.join(installedDist, "cursor-session-start.js"),
     "#!/usr/bin/env node\n// hook bundle\n",
   );
+  const installedHooks = path.join(home, ".cursor/plugins/local/workit/hooks");
+  mkdirSync(installedHooks, { recursive: true });
+  writeFileSync(
+    path.join(installedHooks, "hooks-cursor.json"),
+    JSON.stringify({
+      version: 1,
+      hooks: {
+        sessionStart: [
+          {
+            command:
+              "npx -y --package=@brainervirus/workit-cursor@0.8.0 workit-cursor-session-start",
+          },
+        ],
+      },
+    }),
+  );
   // A real sync-runtime copies the cursor package (assets, mcp shims, hooks)
   // into the checkout; the stub sync is a no-op, so mirror the synced layout
   // (AR-11 requires the selected-host surfaces present).
@@ -194,7 +210,7 @@ function makeCursorStub() {
           command: "npx",
           args: [
             "-y",
-            "--package=@brainervirus/workit-cursor@latest",
+            "--package=@brainervirus/workit-cursor@0.8.0",
             "workit-cursor-mcp",
             "${workspaceFolder}",
           ],
