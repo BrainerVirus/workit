@@ -591,6 +591,106 @@ test("CA-19: a fresh flow.json.lock is NOT reclaimed as stale and still yields f
   }
 });
 
+test("CA-19: an unremovable stale lock returns flow_concurrent_conflict and never runs the critical section", () => {
+  const { root, slug } = fixture();
+  try {
+    writeDocs(root, slug);
+    const plan = `docs/${slug}/plan.md`;
+    const prep = prepareFlowState(root, slug, {
+      spec_path: `docs/${slug}/spec.md`,
+      plan_path: plan,
+    });
+    expect(prep.ok).toBe(true);
+    approveSpecAndPlan(root, slug);
+    // Drift the plan so the critical section WOULD persist a reset if it ran.
+    writeFileSync(
+      path.join(root, "docs", slug, "plan.md"),
+      COMPLIANT_PLAN(slug).replace("do it", "do it now"),
+    );
+    const before = readFileSync(flowFile(root, slug), "utf8");
+    const lock = `${flowFile(root, slug)}.lock`;
+    writeFileSync(lock, "", "utf8");
+    const past = Date.now() - 5_000;
+    utimesSync(lock, new Date(past), new Date(past));
+    // The stale lock cannot be reclaimed: recovery's rename is injected to fail
+    // on every attempt (mirrors an unremovable lock), so each acquisition
+    // attempt hits EEXIST and the critical section must never run.
+    let rejections = 0;
+    mock.module("node:fs", () => ({
+      ...realFs,
+      renameSync: (src: unknown, dest?: unknown) => {
+        if (typeof src === "string" && src.endsWith(".lock")) {
+          rejections += 1;
+          throw new Error("EACCES: stale lock is not reclaimable (injected)");
+        }
+        return realFs.renameSync(src as string, dest as string);
+      },
+    }));
+    const effective = readEffectiveFlowState(root, slug);
+    expect(rejections).toBeGreaterThan(0);
+    expect(effective.ok).toBe(false);
+    if (!effective.ok) expect(effective.code).toBe("flow_concurrent_conflict");
+    // The critical section never ran: no drift reset was persisted and the
+    // unreclaimed lock is left in place for the next writer.
+    expect(readFileSync(flowFile(root, slug), "utf8")).toBe(before);
+    expect(existsSync(lock)).toBe(true);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("CA-19: releasing a lock never deletes a successor's lock at the same path", () => {
+  const { root, slug } = fixture();
+  let successor: number | null = null;
+  try {
+    writeDocs(root, slug);
+    const plan = `docs/${slug}/plan.md`;
+    const prep = prepareFlowState(root, slug, {
+      spec_path: `docs/${slug}/spec.md`,
+      plan_path: plan,
+    });
+    expect(prep.ok).toBe(true);
+    const lock = `${flowFile(root, slug)}.lock`;
+    // A stale crashed-writer lock: recovery below reclaims it and opens a fresh
+    // lock while a successor replaces it at the same path mid-critical-section.
+    writeFileSync(lock, "", "utf8");
+    const past = Date.now() - 5_000;
+    utimesSync(lock, new Date(past), new Date(past));
+    let injected = false;
+    mock.module("node:fs", () => ({
+      ...realFs,
+      openSync: (p: unknown, flags?: unknown) => {
+        const fd = realFs.openSync(p as string, flags as string);
+        if (!injected && typeof p === "string" && p.endsWith(".lock") && flags === "wx") {
+          injected = true;
+          // A successor unlinks our fresh lock and creates its own at the same
+          // path while we still hold our descriptor (now an orphaned inode).
+          // Release must NOT unlink the successor's lock. The original fd is
+          // intentionally left open so it is not reused by the successor open.
+          realFs.rmSync(p, { force: true });
+          successor = realFs.openSync(p, "wx");
+        }
+        return fd;
+      },
+    }));
+    const effective = readEffectiveFlowState(root, slug);
+    expect(injected).toBe(true);
+    expect(effective.ok).toBe(true);
+    // The successor's lock survives the original writer's release.
+    expect(successor).not.toBeNull();
+    expect(existsSync(lock)).toBe(true);
+  } finally {
+    if (successor !== null) {
+      try {
+        closeSync(successor);
+      } catch {
+        // already closed
+      }
+    }
+    cleanup(root);
+  }
+});
+
 test("A4: a read-path reconcile persist failure returns flow_io_error, never throws through the lock", () => {
   const { root, slug } = fixture();
   try {

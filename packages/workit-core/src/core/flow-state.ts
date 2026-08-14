@@ -1,6 +1,7 @@
 import {
   closeSync,
   existsSync,
+  fstatSync,
   fsyncSync,
   mkdirSync,
   openSync,
@@ -8,6 +9,7 @@ import {
   renameSync,
   rmSync,
   statSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { createHash } from "node:crypto";
@@ -530,6 +532,16 @@ const lockMtimeMs = (lock: string): number | null => {
   }
 };
 
+// Whether the lock at `lock` is still the inode `fd` opened (CA-19): release
+// must never unlink a successor's fresh lock, only the file this writer owns.
+const lockOwnedBy = (fd: number, lock: string): boolean => {
+  try {
+    return fstatSync(fd).ino === statSync(lock).ino;
+  } catch {
+    return false;
+  }
+};
+
 export type FlowWriteResult =
   | { ok: true }
   | { ok: false; conflict: true }
@@ -727,18 +739,36 @@ const withFlowLock = <T>(file: string, fn: () => T): Locked<T> => {
         };
       }
       // Stale-lock recovery (CA-19): the lock is older than STALE_LOCK_MS, so
-      // its writer crashed after acquiring it. Remove it and retry acquisition
-      // immediately; only a fresh lock that still races through the bounded
-      // retries is reported as flow_concurrent_conflict.
+      // its writer crashed after acquiring it. Reclaim it via an atomic rename
+      // (never a removal that could hit a successor's fresh lock), unlink the
+      // renamed stale inode, then re-attempt acquisition inline so the final
+      // attempt still acquires instead of falling out of the loop unlocked.
       const mtime = lockMtimeMs(lock);
       if (mtime !== null && Date.now() - mtime > STALE_LOCK_MS) {
         try {
-          rmSync(lock, { force: true });
+          renameSync(lock, `${lock}.stale`);
+          unlinkSync(`${lock}.stale`);
         } catch {
-          // best effort: an unremovable stale lock falls through to the
-          // bounded retries and, ultimately, flow_concurrent_conflict
+          // best effort: an unremovable or concurrently-reclaimed stale lock
+          // falls through to the bounded retries and, ultimately,
+          // flow_concurrent_conflict — never past the lock
         }
-        continue;
+        try {
+          fd = openSync(lock, "wx");
+          break;
+        } catch (innerError) {
+          const innerCode = (innerError as NodeJS.ErrnoException).code;
+          if (innerCode !== "EEXIST") {
+            return {
+              locked: false,
+              error: err(
+                "flow_io_error",
+                `flow lock failed for ${file}: ${innerError instanceof Error ? innerError.message : String(innerError)}`,
+              ),
+            };
+          }
+          // another writer won the reclaimed lock — fall through to backoff
+        }
       }
       if (attempt === MAX_WRITE_ATTEMPTS - 1) {
         return {
@@ -752,18 +782,29 @@ const withFlowLock = <T>(file: string, fn: () => T): Locked<T> => {
       Atomics.wait(wait, 0, 0, 10);
     }
   }
+  if (fd === null) {
+    // Every acquisition attempt failed without granting the lock: never run the
+    // critical section unlocked.
+    return {
+      locked: false,
+      error: err(
+        "flow_concurrent_conflict",
+        `concurrent flow update detected for ${path.dirname(file)}: re-read the flow state and retry the transition`,
+      ),
+    };
+  }
   try {
     return { locked: true, value: fn() };
   } finally {
     try {
+      if (fd !== null && lockOwnedBy(fd, lock)) rmSync(lock, { force: true });
+    } catch {
+      // best effort: a leftover lock is preferable to masking the real error
+    }
+    try {
       if (fd !== null) closeSync(fd);
     } catch {
       // best effort
-    }
-    try {
-      rmSync(lock, { force: true });
-    } catch {
-      // best effort: a leftover lock is preferable to masking the real error
     }
   }
 };
