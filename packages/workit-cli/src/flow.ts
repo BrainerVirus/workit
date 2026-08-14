@@ -7,7 +7,10 @@ import {
   type LifecycleEvidence,
 } from "@brainervirus/workit-core/src/core/flow-state";
 import { buildHandoffPrompt } from "@brainervirus/workit-core/src/core/handoff-tools";
-import { markHandoffDestination, slugFromPath } from "@brainervirus/workit-core/src/core/flow-state";
+import {
+  markHandoffDestination,
+  slugFromPath,
+} from "@brainervirus/workit-core/src/core/flow-state";
 import { resolveCanonicalLayout } from "@brainervirus/workit-core/src/core/docs-layout";
 import type { runVerifyProject } from "@brainervirus/workit-core/src/core/verify-project";
 

@@ -436,7 +436,10 @@ test("usage errors exit 2 with stderr diagnostics", async () => {
       { args: ["status", "--plan"], run: runFlow },
       { args: ["status", "--plan", `docs/${slug}/plan.md`, "--confirm"], run: runFlow },
       { args: ["pause", "--plan", `docs/${slug}/plan.md`, "--bogus"], run: runFlow },
-      { args: ["pause", "--plan", `docs/${slug}/plan.md`, "--plan", `docs/${slug}/plan.md`], run: runFlow },
+      {
+        args: ["pause", "--plan", `docs/${slug}/plan.md`, "--plan", `docs/${slug}/plan.md`],
+        run: runFlow,
+      },
       { args: ["pause", "--plan", `docs/${slug}/plan.md`, "--confirm", "--confirm"], run: runFlow },
       { args: ["pause", "--plan", "--confirm"], run: runFlow },
       { args: [], run: runHandoff },

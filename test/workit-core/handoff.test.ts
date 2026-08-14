@@ -470,10 +470,11 @@ test("native handoff pre-flight rejects an already-marked destination without cr
     const raw = await createHandoffTools(
       client as never,
       new WorkflowStateStore(),
-    ).workflow_handoff_session.execute(
-      { message: "continue" },
-      { directory: root, worktree: root, sessionID: "parent" } as never,
-    );
+    ).workflow_handoff_session.execute({ message: "continue" }, {
+      directory: root,
+      worktree: root,
+      sessionID: "parent",
+    } as never);
     const parsed = JSON.parse(raw as string);
     expect(parsed.ok).toBe(false);
     expect(parsed.data.code).toBe("recursive_handoff");

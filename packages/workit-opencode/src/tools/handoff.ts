@@ -79,10 +79,9 @@ export function createHandoffTools(client: HandoffClient, state: WorkflowStateSt
           if (!preflight.ok) return output(fail(preflight.error, { code: preflight.code }));
           if (preflight.state.handoff_destination) {
             return output(
-              fail(
-                "this flow is already a handoff destination — a second handoff is rejected",
-                { code: "recursive_handoff" },
-              ),
+              fail("this flow is already a handoff destination — a second handoff is rejected", {
+                code: "recursive_handoff",
+              }),
             );
           }
           state.set(context.sessionID, { spec: active.spec, plan: active.plan, sdd: active.sdd });
