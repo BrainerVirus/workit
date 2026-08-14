@@ -561,7 +561,12 @@ test("lifecycle tool schemas expose only plan_path and no caller evidence/role f
 test("workflow_flow_status returns execution and drift alongside spec/plan/menu", async () => {
   const { root, tools, ctx } = fixture();
   try {
-    const out = await run(tools, "workflow_flow_status", { plan_path: "docs/oc-flow/plan.md" }, ctx);
+    const out = await run(
+      tools,
+      "workflow_flow_status",
+      { plan_path: "docs/oc-flow/plan.md" },
+      ctx,
+    );
     expect(out.ok).toBe(true);
     expect(out.data.execution).toEqual({ status: "pending", mode: null, evidence: null });
     expect(out.data.drift).toEqual([]);
@@ -579,7 +584,12 @@ test("workflow_flow_status reports digest drift and the pending reset after the 
       path.join(root, "docs", slug, "plan.md"),
       COMPLIANT_PLAN(slug).replace("do it", "do it now"),
     );
-    const out = await run(tools, "workflow_flow_status", { plan_path: "docs/oc-flow/plan.md" }, ctx);
+    const out = await run(
+      tools,
+      "workflow_flow_status",
+      { plan_path: "docs/oc-flow/plan.md" },
+      ctx,
+    );
     expect(out.ok).toBe(true);
     expect(out.data.drift).toEqual([
       { document: "plan", code: "digest_mismatch", path: "docs/oc-flow/plan.md" },
@@ -660,11 +670,21 @@ test("a wrong lifecycle label does not transition and the receipt stays queued f
     await run(tools, "workflow_flow_status", { plan_path: "docs/oc-flow/plan.md" }, ctx);
     await establishSubagentDriven(root, slug, receipts);
     recordQuestion(receipts, "Pause plan");
-    const wrong = await run(tools, "workflow_plan_resume", { plan_path: "docs/oc-flow/plan.md" }, ctx);
+    const wrong = await run(
+      tools,
+      "workflow_plan_resume",
+      { plan_path: "docs/oc-flow/plan.md" },
+      ctx,
+    );
     expect(wrong.ok).toBe(false);
     if (wrong.ok === false) expect(wrong.error).toMatch(/mismatch|label/i);
     expect(receipts.count("oc")).toBe(1);
-    const right = await run(tools, "workflow_plan_pause", { plan_path: "docs/oc-flow/plan.md" }, ctx);
+    const right = await run(
+      tools,
+      "workflow_plan_pause",
+      { plan_path: "docs/oc-flow/plan.md" },
+      ctx,
+    );
     expect(right.ok).toBe(true);
     expect(right.data.execution.status).toBe("paused");
     expect(receipts.count("oc")).toBe(0);
@@ -679,10 +699,20 @@ test("a negative lifecycle answer cannot be laundered into a pause", async () =>
     await run(tools, "workflow_flow_status", { plan_path: "docs/oc-flow/plan.md" }, ctx);
     await establishSubagentDriven(root, slug, receipts);
     receipts.record("oc", "call-cancel", "No");
-    const denied = await run(tools, "workflow_plan_pause", { plan_path: "docs/oc-flow/plan.md" }, ctx);
+    const denied = await run(
+      tools,
+      "workflow_plan_pause",
+      { plan_path: "docs/oc-flow/plan.md" },
+      ctx,
+    );
     expect(denied.ok).toBe(false);
     if (denied.ok === false) expect(denied.data?.code).toBe("receipt_rejected");
-    const status = await run(tools, "workflow_flow_status", { plan_path: "docs/oc-flow/plan.md" }, ctx);
+    const status = await run(
+      tools,
+      "workflow_flow_status",
+      { plan_path: "docs/oc-flow/plan.md" },
+      ctx,
+    );
     expect(status.data.execution.status).toBe("active");
   } finally {
     cleanup(root);
@@ -695,10 +725,20 @@ test("a stale lifecycle receipt cannot pause a flow", async () => {
     await run(tools, "workflow_flow_status", { plan_path: "docs/oc-flow/plan.md" }, ctx);
     await establishSubagentDriven(root, slug, receipts);
     receipts.record("oc", "call-stale", "Pause plan", Date.now() - 11 * 60 * 1000);
-    const denied = await run(tools, "workflow_plan_pause", { plan_path: "docs/oc-flow/plan.md" }, ctx);
+    const denied = await run(
+      tools,
+      "workflow_plan_pause",
+      { plan_path: "docs/oc-flow/plan.md" },
+      ctx,
+    );
     expect(denied.ok).toBe(false);
     if (denied.ok === false) expect(denied.error).toMatch(/stale|too old/i);
-    const status = await run(tools, "workflow_flow_status", { plan_path: "docs/oc-flow/plan.md" }, ctx);
+    const status = await run(
+      tools,
+      "workflow_flow_status",
+      { plan_path: "docs/oc-flow/plan.md" },
+      ctx,
+    );
     expect(status.data.execution.status).toBe("active");
   } finally {
     cleanup(root);

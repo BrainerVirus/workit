@@ -398,10 +398,7 @@ test("native handoff resolves relative paths from the session directory", async 
       path.join(root, "docs/x/plan.md"),
       "# X\n\n**Spec:** `docs/x/spec.md`\n**Branch:** `feature/x`\n\n### Task 1: One\n\n- [ ] **Step 1:** Work\n",
     );
-    writeFileSync(
-      path.join(root, "docs/x/sdd/flow.json"),
-      approvedFlowJson(root),
-    );
+    writeFileSync(path.join(root, "docs/x/sdd/flow.json"), approvedFlowJson(root));
     let createdDirectory = "";
     const client = {
       session: {
@@ -627,19 +624,19 @@ test("handoff proceeds when flow gates are approved", async () => {
   try {
     mkdirSync(path.join(root, "docs", "x"), { recursive: true });
     mkdirSync(path.join(root, "docs", "x", "sdd"), { recursive: true });
-  writeFileSync(path.join(root, "docs/x/spec.md"), "# X\n\n**Branch:** `feature/x`\n");
-  writeFileSync(
-    path.join(root, "docs/x/plan.md"),
-    "# X\n\n**Spec:** `docs/x/spec.md`\n**Branch:** `feature/x`\n\n### Task 1: One\n\n- [ ] **Step 1:** Work\n",
-  );
-  writeFileSync(path.join(root, "docs/x/sdd/flow.json"), approvedFlowJson(root));
-  const calls: string[] = [];
-  const client = {
-    session: {
-      async create() {
-        calls.push("create");
-        return { data: { id: "child-gate" } };
-      },
+    writeFileSync(path.join(root, "docs/x/spec.md"), "# X\n\n**Branch:** `feature/x`\n");
+    writeFileSync(
+      path.join(root, "docs/x/plan.md"),
+      "# X\n\n**Spec:** `docs/x/spec.md`\n**Branch:** `feature/x`\n\n### Task 1: One\n\n- [ ] **Step 1:** Work\n",
+    );
+    writeFileSync(path.join(root, "docs/x/sdd/flow.json"), approvedFlowJson(root));
+    const calls: string[] = [];
+    const client = {
+      session: {
+        async create() {
+          calls.push("create");
+          return { data: { id: "child-gate" } };
+        },
         async promptAsync() {
           calls.push("seed");
           return { data: undefined };
@@ -1116,10 +1113,14 @@ test("OpenCode handoff marks the destination only after a successful seed", asyn
         },
       },
     });
-    const raw = await createHandoffTools(client, new WorkflowStateStore()).workflow_handoff_session.execute(
-      { message: "continue" },
-      { directory: root, worktree: root, sessionID: "parent" } as never,
-    );
+    const raw = await createHandoffTools(
+      client,
+      new WorkflowStateStore(),
+    ).workflow_handoff_session.execute({ message: "continue" }, {
+      directory: root,
+      worktree: root,
+      sessionID: "parent",
+    } as never);
     expect(JSON.parse(raw as string)).toEqual({
       ok: true,
       data: { sessionID: "child-adapter", seeded: true, selected: true },
@@ -1148,10 +1149,14 @@ test("OpenCode handoff seed failure leaves the source flow unmarked and retryabl
         },
       },
     });
-    const raw = await createHandoffTools(client, new WorkflowStateStore()).workflow_handoff_session.execute(
-      { message: "continue" },
-      { directory: root, worktree: root, sessionID: "parent" } as never,
-    );
+    const raw = await createHandoffTools(
+      client,
+      new WorkflowStateStore(),
+    ).workflow_handoff_session.execute({ message: "continue" }, {
+      directory: root,
+      worktree: root,
+      sessionID: "parent",
+    } as never);
     expect(JSON.parse(raw as string)).toEqual({
       ok: false,
       data: { sessionID: "child-seedfail", seeded: false, selected: false, stage: "seed" },
@@ -1181,10 +1186,14 @@ test("OpenCode handoff create failure leaves the source flow unmarked and retrya
         },
       },
     });
-    const raw = await createHandoffTools(client, new WorkflowStateStore()).workflow_handoff_session.execute(
-      { message: "continue" },
-      { directory: root, worktree: root, sessionID: "parent" } as never,
-    );
+    const raw = await createHandoffTools(
+      client,
+      new WorkflowStateStore(),
+    ).workflow_handoff_session.execute({ message: "continue" }, {
+      directory: root,
+      worktree: root,
+      sessionID: "parent",
+    } as never);
     expect(JSON.parse(raw as string)).toEqual({
       ok: false,
       data: { stage: "create" },

@@ -315,7 +315,8 @@ test("tool.execute.before leaves the root session alone when no subagent-driven 
   }
 });
 
-const cliLifecycleEvidence = () => ({ host: "cli", attested: false, confirmation: "flag" }) as const;
+const cliLifecycleEvidence = () =>
+  ({ host: "cli", attested: false, confirmation: "flag" }) as const;
 
 test("tool.execute.before leaves the root session usable once the plan is paused", async () => {
   const { root, slug } = flowFixture();
@@ -892,7 +893,10 @@ describe("plugin registration", () => {
         handoff_destination: false,
         updated_at: Date.now(),
       };
-      writeFileSync(path.join(root, "docs/x/sdd/flow.json"), JSON.stringify(flowJson, null, 2) + "\n");
+      writeFileSync(
+        path.join(root, "docs/x/sdd/flow.json"),
+        JSON.stringify(flowJson, null, 2) + "\n",
+      );
       const client = {
         session: {
           async create() {

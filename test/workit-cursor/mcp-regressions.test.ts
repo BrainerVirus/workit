@@ -171,6 +171,10 @@ test("handoff includes every parsed task row", () => {
       expect(result.prompt).toContain("Review spec first");
       expect(result.prompt).toContain("Review plan first");
       expect(result.prompt).not.toContain("Handoff (new session only)");
+      // The destination allow-list block never offers the originating Handoff
+      // choice on its own line.
+      expect(result.prompt).not.toMatch(/^\s*[-*] Handoff\s*$/m);
+      expect(result.prompt).not.toMatch(/1\. Handoff\s*$/m);
     }
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -402,6 +406,18 @@ test("cursor MCP manifests stay package-relative (mcp.json, marketplace.json, ho
       command: "npx -y --package=@brainervirus/workit-cursor@0.8.0 workit-cursor-session-start",
     },
   ]);
+
+  // The Cursor asset roots carry the canonical contract templates byte-for-byte
+  // (CA-08), so the tracked Marketplace artifact serves exactly the core
+  // contracts that the byte-parity assertions in contracts.test.ts pin.
+  for (const name of ["execution-contract.md", "superpowers-doc-contract.md"]) {
+    const canonical = readFileSync(
+      path.join(REPO_ROOT, "packages", "workit-core", "templates", name),
+      "utf8",
+    );
+    const asset = readFileSync(path.join(CURSOR_ROOT, "assets", "templates", name), "utf8");
+    expect(asset, `cursor asset ${name}`).toBe(canonical);
+  }
 });
 
 test("root tsconfig includes Cursor MCP source in strict typechecking", () => {

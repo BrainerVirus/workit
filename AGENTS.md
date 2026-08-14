@@ -7,7 +7,8 @@ Multi-platform workit: OpenCode, Cursor, and the CLI share one core. Every featu
 | Feature | OpenCode | Cursor | CLI |
 | --- | --- | --- | --- |
 | Approval | native `question` tool receipts | AskQuestion policy-only (`attested: false`) | `--confirm` flags / TTY prompts |
-| Handoff | spawns a native OpenCode session | seeds a handoff prompt for the next agent | prints a handoff summary |
+| Lifecycle | `workflow_plan_pause`/`resume`/`complete` (receipts) | `workflow_plan_pause`/`resume`/`complete` (policy-only) | `workit flow pause\|resume\|complete` |
+| Handoff | spawns a native OpenCode session | seeds a handoff prompt for the next agent | `workit handoff` (prints the destination prompt) |
 | Tools | native plugin tools | MCP server (`workflow_*`) | `workit` commands |
 | Skills | `skills.paths` + vendored dirs | plugin `skills/` dirs | n/a |
 | Branch policy init | `workflow_toolkit_init_apply action=branch_policy` | same MCP tool | wizard screen |
@@ -24,5 +25,8 @@ Multi-platform workit: OpenCode, Cursor, and the CLI share one core. Every featu
 ## Workflow contract
 
 - Specs/plans live in `docs/<slug>/`; spec+plan are committed, `sdd/` is gitignored.
+- Approvals bind to the exact SHA-256 digest of the approved document bytes; editing an approved spec/plan invalidates the approval and forces a fresh reapproval (drift resets the whole approval chain in spec-before-plan order).
+- Execution lifecycle is exactly `pending` → `active` → `paused`/`active` → `completed`; completion requires a complete SDD ledger and passing repository verification. Subagent-driven product edits are intercepted while the plan is active.
+- An ordinary post-plan session presents five choices; a handoff-destination session presents exactly four (never the originating Handoff option) and carries the handoff-destination marker.
 - Approval evidence: OpenCode records native-question receipts; Cursor is policy-only by design (never fabricate delegated identity).
 - Never use worktrees; use guarded in-place branch setup.

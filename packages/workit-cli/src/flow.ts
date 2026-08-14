@@ -169,6 +169,7 @@ function statusCommand(
     plan: state.plan,
     menu: state.menu,
     execution: state.execution,
+    handoff_destination: state.handoff_destination,
     drift,
     flow_path: path.posix.join("docs", state.slug, "sdd", "flow.json"),
   });

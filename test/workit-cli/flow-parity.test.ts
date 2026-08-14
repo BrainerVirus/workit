@@ -172,6 +172,7 @@ test("flow status prints effective flow JSON with slug/spec/plan/menu/execution/
     expect(data.plan.path).toBe(`docs/${slug}/plan.md`);
     expect(data.menu).toMatchObject({ presented: true, chosen: "subagent-driven" });
     expect(data.execution).toMatchObject({ status: "active", mode: "subagent-driven" });
+    expect(data.handoff_destination).toBe(false);
     expect(data.drift).toEqual([]);
     expect(data.flow_path).toBe(`docs/${slug}/sdd/flow.json`);
   } finally {
@@ -381,6 +382,39 @@ test("handoff validation failure exits 1 and does not mark the destination", asy
     expect(r.code).toBe(1);
     expect(r.stdout).toBe("");
     expect(readFlow().handoff_destination).toBe(false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a second handoff on an already-marked destination exits 1 with recursive_handoff", async () => {
+  const { root, slug, writeFlow } = fixture();
+  writeFlow({
+    menu: { presented: true, chosen: "handoff", evidence: null },
+    handoff_destination: true,
+  });
+  try {
+    const r = await runHandoff(["--message", `docs/${slug}/plan.md`], { cwd: root });
+    expect(r.code, r.stdout + r.stderr).toBe(1);
+    expect(r.stdout).toBe("");
+    const data = JSON.parse(r.stderr);
+    expect(data.code).toBe("recursive_handoff");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("flow status reports handoff_destination after the destination is marked", async () => {
+  const { root, slug, writeFlow } = fixture();
+  writeFlow({
+    menu: { presented: true, chosen: "handoff", evidence: null },
+    handoff_destination: true,
+  });
+  try {
+    const r = await runFlow(["status", "--plan", `docs/${slug}/plan.md`], { cwd: root });
+    expect(r.code, r.stdout + r.stderr).toBe(0);
+    const data = JSON.parse(r.stdout);
+    expect(data.handoff_destination).toBe(true);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

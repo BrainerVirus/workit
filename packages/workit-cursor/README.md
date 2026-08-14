@@ -39,13 +39,13 @@ npx @brainervirus/workit-cli init
 
 ## What it provides
 
-- MCP server exposing the `workflow_*` tools (branch setup, PR create/context, docs validate/promote, YouTrack post/log/time, templates, rules, presentation, doctor, handoff).
+- MCP server exposing the `workflow_*` tools (branch setup, PR create/context, docs validate/promote, YouTrack post/log/time, templates, rules, presentation, doctor, handoff, and plan lifecycle `workflow_plan_pause`/`resume`/`complete`).
 - Session-start contract hook.
 - 4 rules and 12 `wk-*` skills (plus 14 sanitized Superpowers skills).
 
 ## Host limitations
 
-Cursor adapts workit through policy-only confirmation: approvals and commits are recorded as policy decisions (`attested: false`) rather than fabricated delegated identity, and subagent-driven plan execution is not supported on this host. OpenCode records native `question` receipts and runs delegated tasks; see the root [README](../../README.md#host-capabilities) for the full host-capability matrix.
+Cursor adapts workit through policy-only confirmation: approvals and lifecycle transitions are recorded as policy decisions (`attested: false`) rather than fabricated delegated identity, and subagent-driven plan execution is not supported on this host. Approvals bind to the document's exact SHA-256 digest — editing an approved spec/plan invalidates the approval and forces a fresh reapproval. OpenCode records native `question` receipts and runs delegated tasks; see the root [README](../../README.md#host-capabilities) for the full host-capability matrix.
 
 ## Configuration
 

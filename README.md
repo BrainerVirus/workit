@@ -41,8 +41,11 @@ bun i
 ## Features
 
 - **Document-driven development** — write `docs/<slug>/spec.md` + `plan.md`, gate approvals with native question receipts, execute plans task-by-task with delegated subagent implementation, review, and SDD progress tracking.
-- **12 `wk-*` skills** on OpenCode and Cursor (`wk-init`, `wk-status`, `wk-verify`, `wk-commit`, `wk-pr`, `wk-changelog`, `wk-release-notes`, `wk-docs-refresh`, `wk-handoff`, `wk-implement`, `wk-meetings`, `wk-issue-update`); the CLI exposes `workit init` and `workit doctor`.
-- **`workflow_*` tools** — branch setup, PR create/context, docs validate/promote, YouTrack post/log/time, templates, rules, presentation (ASCII/mermaid), doctor, and handoff (native plugin tools on OpenCode, an MCP server on Cursor).
+- **Approval integrity** — approvals bind to the document's exact bytes via a SHA-256 digest; editing an approved spec or plan after approval invalidates it and forces a fresh reapproval before execution can resume.
+- **Execution lifecycle** — every approved plan moves through exactly four states (`pending` → `active` → `paused`/`active` → `completed`) with verified completion (SDD ledger complete + repository verification passing) and active-only subagent interception.
+- **12 `wk-*` skills** on OpenCode and Cursor (`wk-init`, `wk-status`, `wk-verify`, `wk-commit`, `wk-pr`, `wk-changelog`, `wk-release-notes`, `wk-docs-refresh`, `wk-handoff`, `wk-implement`, `wk-meetings`, `wk-issue-update`); the CLI exposes `workit init`, `workit doctor`, `workit flow`, and `workit handoff`.
+- **`workflow_*` tools** — branch setup, PR create/context, docs validate/promote, YouTrack post/log/time, templates, rules, presentation (ASCII/mermaid), doctor, handoff, and plan lifecycle (`workflow_plan_pause`/`resume`/`complete`) (native plugin tools on OpenCode, an MCP server on Cursor).
+- **Post-plan menus** — after the plan is approved an ordinary session presents five choices (Subagent-driven, Inline, Handoff, Review spec first, Review plan first); a handoff-destination session presents exactly four (never Handoff again).
 - **Per-turn contract rails** — brainstorming-before-code, TDD, verification-before-completion, systematic-debugging, receiving-code-review, doc-delivery, config-guard, and issue-rail reminders plus post-hoc detectors.
 - **Secret-safe diagnostics** — structured JSONL logger with redaction and an offline doctor for truthful readiness.
 - **Vendored Superpowers skills** (14) + optional Ponytail mode — lazy-engineer ruleset as a shared skill.
@@ -56,8 +59,9 @@ Feature parity across hosts, implemented the best way each host allows. Core log
 | -------------- | ------------------------------------------------- | ------------------------------------------------------------- | ---------------------------------- |
 | Approval       | native `question` tool receipts (`attested: true`) | AskQuestion, policy-only (`attested: false`)                   | `--confirm` flags / TTY prompts    |
 | Implementation | subagent-driven task delegation (native `task`)    | not supported (no delegated identity)                          | n/a                                |
+| Lifecycle      | `workflow_plan_pause`/`resume`/`complete` (receipts) | `workflow_plan_pause`/`resume`/`complete` (policy-only)         | `workit flow pause\|resume\|complete` (`--confirm`) |
 | Commit         | `wk-commit` + native `question` confirmation       | `wk-commit`, policy-only                                       | n/a                                |
-| Handoff        | spawns a native OpenCode session                   | seeds a handoff prompt for the next agent                      | prints a handoff summary           |
+| Handoff        | spawns a native OpenCode session                   | seeds a handoff prompt for the next agent                      | `workit handoff` (prints the destination prompt) |
 | Tools          | native plugin tools                                | MCP server (`workflow_*`)                                      | `workit` commands                  |
 | Skills         | `skills.paths` + vendored dirs                     | plugin `skills/` dirs                                          | n/a                                |
 | Diagnostics    | JSONL journal + native `client.app.log()`          | redacted stderr (stdout stays protocol-only)                   | `warn`/`error` on stderr           |
@@ -65,13 +69,14 @@ Feature parity across hosts, implemented the best way each host allows. Core log
 ## Flows
 
 1. **Init** — `/wk-init` (or `npx @brainervirus/workit-cli init`) scaffolds config, tokens, gitignore, and hygiene files; `/wk-status` verifies everything (config, tokens, YouTrack + VCS APIs).
-2. **Build a feature** — brainstorming writes the spec, writing-plans writes the plan, `/wk-implement` executes approved plans with per-task reviews; flow gates (`workflow_spec_approve` / `workflow_plan_approve` / `workflow_plan_menu`) require native-question approval evidence.
-3. **Verify** — `/wk-verify` discovers and runs the repo's validation (lint, format, tests, build, changelog format) and reports each check's exit status.
-4. **Commit & PR** — `/wk-commit` previews a Conventional Commit on an allowed branch; `/wk-pr` gathers branch-exclusive context, links issues (GitHub issues or YouTrack), and creates the PR/MR with your provider CLI (`gh` for GitHub, `glab` for GitLab).
-5. **Changelog & release notes** — `/wk-changelog` applies Keep a Changelog entries; `/wk-release-notes` drafts notes for a release range.
-6. **Handoff** — `/wk-handoff` seeds a new session with spec/plan state, active branch, and context.
-7. **YouTrack** — `/wk-issue-update` drafts (es-CL) and posts reviewed task updates with time; `/wk-meetings` logs meeting time only.
-8. **Docs** — `/wk-docs-refresh` updates documentation affected by changes; `workflow_docs_validate` hard-fails invalid spec/plan pairs before execution.
+2. **Build a feature** — brainstorming writes the spec, writing-plans writes the plan, `/wk-implement` executes approved plans with per-task reviews; flow gates (`workflow_spec_approve` / `workflow_plan_approve` / `workflow_plan_menu`) require native-question approval evidence, and approvals bind to the exact SHA-256 digest of the approved document.
+3. **Execute & lifecycle** — `workflow_plan_pause` / `workflow_plan_resume` / `workflow_plan_complete` (OpenCode receipts, Cursor policy-only, CLI `workit flow … --confirm`) move the plan through `pending`/`active`/`paused`/`completed`; completion requires a complete SDD ledger and passing repository verification.
+4. **Verify** — `/wk-verify` discovers and runs the repo's validation (lint, format, tests, build, changelog format) and reports each check's exit status.
+5. **Commit & PR** — `/wk-commit` previews a Conventional Commit on an allowed branch; `/wk-pr` gathers branch-exclusive context, links issues (GitHub issues or YouTrack), and creates the PR/MR with your provider CLI (`gh` for GitHub, `glab` for GitLab).
+6. **Changelog & release notes** — `/wk-changelog` applies Keep a Changelog entries; `/wk-release-notes` drafts notes for a release range.
+7. **Handoff** — `/wk-handoff` seeds a new session with spec/plan state, active branch, and context; the destination session presents a four-choice menu (never the originating Handoff option) and carries the handoff-destination marker.
+8. **YouTrack** — `/wk-issue-update` drafts (es-CL) and posts reviewed task updates with time; `/wk-meetings` logs meeting time only.
+9. **Docs** — `/wk-docs-refresh` updates documentation affected by changes; `workflow_docs_validate` hard-fails invalid spec/plan pairs before execution.
 
 ## Usage
 
@@ -269,6 +274,7 @@ Features live in `docs/<slug>/`:
 Consequences:
 
 - A fresh clone starts every workflow at `draft` — the flow gates (`workflow_spec_approve` / `workflow_plan_approve` / `workflow_plan_menu`) must be re-run after checkout.
+- Approvals are bound to the exact SHA-256 digest of the approved document bytes: editing a spec or plan after approval invalidates the approval and the digest must be re-approved before execution continues.
 - The SDD state does not travel with the branch; spec/plan do.
 
 ## Contributing
