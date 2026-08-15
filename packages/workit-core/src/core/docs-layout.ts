@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, realpathSync, statSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 
 // One canonical document path contract (DC-01, DC-02, DC-04, DC-14): workspace
@@ -49,7 +49,22 @@ const canonicalize = (base: string, candidate: string): string => {
   const abs = path.resolve(base, candidate);
   let ancestor = abs;
   while (!existsSync(ancestor)) ancestor = path.dirname(ancestor);
-  const real = realpathSync(ancestor);
+  let real: string;
+  try {
+    real = realpathSync(ancestor);
+  } catch (error) {
+    // macOS realpath fails with EACCES on a mode-000 file while Linux succeeds;
+    // an existing non-symlink file cannot escape the workspace, so resolve the
+    // nearest existing directory instead (symlinks keep the strict path).
+    if (
+      (error as NodeJS.ErrnoException).code === "EACCES" &&
+      !lstatSync(ancestor).isSymbolicLink()
+    ) {
+      real = path.join(realpathSync(path.dirname(ancestor)), path.basename(ancestor));
+    } else {
+      throw error;
+    }
+  }
   if (real !== base && !real.startsWith(base + path.sep)) {
     throw new Error(`path must stay inside repository root: ${candidate}`);
   }

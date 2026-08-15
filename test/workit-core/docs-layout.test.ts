@@ -1,5 +1,13 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync, symlinkSync } from "node:fs";
+import {
+  chmodSync,
+  mkdtempSync,
+  mkdirSync,
+  rmSync,
+  writeFileSync,
+  existsSync,
+  symlinkSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createSddTools } from "../../packages/workit-opencode/src/tools/sdd";
@@ -247,6 +255,19 @@ test("DC-02: resolveCanonicalLayout rejects symlink escapes outside the workspac
     if (!res.ok) expect(res.error).toMatch(/inside repository root/i);
   } finally {
     rmSync(outside, { recursive: true, force: true });
+    cleanup(root);
+  }
+});
+
+test("DC-02: resolveCanonicalLayout accepts an unreadable canonical doc (macOS realpath EACCES)", () => {
+  if (process.platform === "win32") return; // chmod is not advisory on win32
+  const { root, slug } = fixture();
+  try {
+    chmodSync(path.join(root, "docs", slug, "spec.md"), 0o000);
+    const res = resolveCanonicalLayout({ workspace_root: root, spec_path: `docs/${slug}/spec.md` });
+    expect(res.ok).toBe(true);
+  } finally {
+    chmodSync(path.join(root, "docs", slug, "spec.md"), 0o644);
     cleanup(root);
   }
 });
