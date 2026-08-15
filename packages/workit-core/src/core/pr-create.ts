@@ -147,9 +147,15 @@ export function prCreate(env: NodeJS.ProcessEnv, cwd: string): Record<string, an
   // target is validated against the resolved branch policy so a PR can never
   // be aimed at a protected or disallowed branch.
   const targetOverride = env.WF_PR_TARGET;
-  const target =
-    targetOverride || String(cfg.defaultTargetBranch ?? policy.defaultTargetBranch ?? "develop");
-  if (targetOverride) {
+  const resolvedDefault = String(
+    cfg.defaultTargetBranch ?? policy.defaultTargetBranch ?? "develop",
+  );
+  const target = targetOverride || resolvedDefault;
+  // CA-06: an explicit override equal to the resolved default (e.g. WF_PR_TARGET
+  // "main" under github-flow) is authoritative — the same value flows
+  // unvalidated from config, so it must not be rejected as a protected
+  // override. Genuine differing overrides keep the strict validation.
+  if (targetOverride && targetOverride !== resolvedDefault) {
     const { allowed, protected: protectedTargets } = policy;
     if (protectedTargets.has(targetOverride.toLowerCase()))
       return {

@@ -170,6 +170,152 @@ test("B1: no override still flows the configured default target (unvalidated)", 
   expect(result.targetBranch).toBe("trunk");
 });
 
+// CA-06: a caller-supplied WF_PR_TARGET equal to the resolved workspace default
+// (main under github-flow, develop under gitflow) is authoritative — the same
+// value flows unvalidated from config, so an explicit equal value must not be
+// rejected as a protected override.
+
+const setupMainRepo = () => {
+  git(root, ["init", "-q", "-b", "main"]);
+  git(root, ["config", "user.name", "Workflow Test"]);
+  git(root, ["config", "user.email", "workflow@example.test"]);
+  writeFileSync(path.join(root, "README.md"), "base\n");
+  git(root, ["add", "README.md"]);
+  git(root, ["commit", "-q", "-m", "base"]);
+  git(root, ["remote", "add", "origin", bareRemote]);
+  git(root, ["push", "-q", "-u", "origin", "main"]);
+};
+
+test("CA-06: default-equal WF_PR_TARGET is accepted under github-flow (main)", () => {
+  setupMainRepo();
+  git(root, ["checkout", "-q", "-b", "feature/ca06"]);
+  const result = withEnv({ WORKFLOW_TOOLKIT_CONFIG: cfgDir, PATH: stubPath() }, () => {
+    writeConfig({ preset: "github-flow" }, "main");
+    return prCreate({ WF_PR_CONFIRMED: "true", WF_PR_TITLE: "T", WF_PR_TARGET: "main" }, root);
+  });
+  expect(result.ok, `create failed: ${JSON.stringify(result)}`).toBe(true);
+  expect(result.targetBranch).toBe("main");
+  expect(readFileSync(logFile, "utf8")).toContain("--base main");
+});
+
+test("CA-06: default-equal WF_PR_TARGET is accepted under gitflow (develop)", () => {
+  setupRepoWithOrigin();
+  git(root, ["checkout", "-q", "-b", "feature/ca06"]);
+  const result = withEnv({ WORKFLOW_TOOLKIT_CONFIG: cfgDir, PATH: stubPath() }, () => {
+    writeConfig({ preset: "gitflow" }, "develop");
+    return prCreate({ WF_PR_CONFIRMED: "true", WF_PR_TITLE: "T", WF_PR_TARGET: "develop" }, root);
+  });
+  expect(result.ok, `create failed: ${JSON.stringify(result)}`).toBe(true);
+  expect(result.targetBranch).toBe("develop");
+});
+
+test("CA-06: genuine overrides are still rejected when they differ from the default", () => {
+  setupRepoWithOrigin();
+  git(root, ["checkout", "-q", "-b", "feature/ca06"]);
+  const run = (target: string) =>
+    withEnv({ WORKFLOW_TOOLKIT_CONFIG: cfgDir, PATH: stubPath() }, () => {
+      writeConfig({ preset: "gitflow" }, "develop");
+      return prCreate({ WF_PR_CONFIRMED: "true", WF_PR_TITLE: "T", WF_PR_TARGET: target }, root);
+    });
+  const protectedTarget = run("main");
+  expect(protectedTarget.ok).not.toBe(true);
+  expect(protectedTarget.error).toContain("protected branch");
+  const disallowed = run("random/x");
+  expect(disallowed.ok).not.toBe(true);
+  expect(disallowed.error).toContain("not allowed by the branch policy");
+});
+
+const withWrapperConfig = <T>(fn: () => Promise<T>): Promise<T> => {
+  const previousConfig = process.env.WORKFLOW_TOOLKIT_CONFIG;
+  const previousPath = process.env.PATH;
+  process.env.WORKFLOW_TOOLKIT_CONFIG = cfgDir;
+  process.env.PATH = stubPath();
+  return fn().finally(() => {
+    if (previousConfig === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+    else process.env.WORKFLOW_TOOLKIT_CONFIG = previousConfig;
+    if (previousPath === undefined) delete process.env.PATH;
+    else process.env.PATH = previousPath;
+  });
+};
+
+test("CA-06: OpenCode wrapper accepts a default-equal target_branch", async () => {
+  setupRepoWithOrigin();
+  git(root, ["checkout", "-q", "-b", "feature/ca06"]);
+  const raw = await withWrapperConfig(() => {
+    writeConfig({ preset: "gitflow" }, "develop");
+    return createRepoTools().workflow_pr_create.execute(
+      { confirmed: true, title: "T", target_branch: "develop" },
+      { directory: root, worktree: root } as never,
+    );
+  });
+  const result = JSON.parse(raw as string);
+  expect(result.ok, JSON.stringify(result)).toBe(true);
+  expect(result.data.targetBranch).toBe("develop");
+});
+
+test("CA-06: OpenCode wrapper still rejects a genuine protected target_branch", async () => {
+  setupRepoWithOrigin();
+  git(root, ["checkout", "-q", "-b", "feature/ca06"]);
+  const raw = await withWrapperConfig(() => {
+    writeConfig({ preset: "gitflow" }, "develop");
+    return createRepoTools().workflow_pr_create.execute(
+      { confirmed: true, title: "T", target_branch: "main" },
+      { directory: root, worktree: root } as never,
+    );
+  });
+  const result = JSON.parse(raw as string);
+  expect(result.ok).not.toBe(true);
+  expect(JSON.stringify(result)).toContain("protected branch");
+});
+
+// CA-06 parity through the CLI port: the port reads WF_PR_TARGET and delegates
+// to prCreate(process.env, process.cwd()), so accept/reject outcomes must match
+// the core exactly.
+
+const cliPortPath = path.resolve(
+  import.meta.dir,
+  "..",
+  "..",
+  "packages",
+  "workit-core",
+  "src",
+  "core",
+  "ports",
+  "pr-create.ts",
+);
+
+const runCliPort = (target: string) =>
+  withEnv({ WORKFLOW_TOOLKIT_CONFIG: cfgDir, PATH: stubPath() }, () => {
+    const spawned = spawnSync(process.execPath, [cliPortPath], {
+      cwd: root,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        WORKFLOW_TOOLKIT_CONFIG: cfgDir,
+        PATH: stubPath(),
+        WF_PR_CONFIRMED: "true",
+        WF_PR_TITLE: "T",
+        WF_PR_TARGET: target,
+      },
+    });
+    return { status: spawned.status, stdout: (spawned.stdout ?? "").trim() };
+  });
+
+test("CA-06: CLI port accepts a default-equal target and rejects a genuine override", () => {
+  setupRepoWithOrigin();
+  git(root, ["checkout", "-q", "-b", "feature/ca06"]);
+  writeConfig({ preset: "gitflow" }, "develop");
+  const accepted = runCliPort("develop");
+  expect(accepted.status).toBe(0);
+  const acceptedResult = JSON.parse(accepted.stdout);
+  expect(acceptedResult.ok, accepted.stdout).toBe(true);
+  expect(acceptedResult.targetBranch).toBe("develop");
+  const rejected = runCliPort("main");
+  expect(rejected.status).toBe(1);
+  const rejectedResult = JSON.parse(rejected.stdout);
+  expect(rejectedResult.error).toContain("protected branch");
+});
+
 test("B2: day-first date segments never derive a numeric issue id", () => {
   // the year-first cases are covered in workspaces-scripts.test.ts; these are
   // the day-first cases the advisory called out (15-01-2024 -> not Closes #15).
