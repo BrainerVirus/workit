@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { HANDOFF_DESTINATION_MARKER } from "../../packages/workit-core/src/core/flow-state";
 
 // Runtime parity for the Cursor launcher + session hook: both execute
 // Node-compatible TS entries, and session start performs NO network sync
@@ -11,11 +12,23 @@ import path from "node:path";
 const REPO_ROOT = path.resolve(import.meta.dir, "..", "..");
 const CURSOR_ROOT = path.join(REPO_ROOT, "packages", "workit-cursor");
 
-const contractText = `# Superpowers doc contract
+// The session-start hook injects the SHIPPED canonical contract verbatim
+// (CA-08): byte-parity across the four template roots is asserted in
+// contracts.test.ts, and this runtime test proves the hook serves those exact
+// bytes instead of a stale copy.
+const contractText = readFileSync(
+  path.join(REPO_ROOT, "packages", "workit-core", "templates", "superpowers-doc-contract.md"),
+  "utf8",
+);
 
-- Deliver docs as clickable markdown links.
-- [spec.md](docs/<slug>/spec.md) + 3-5 bullet summary.
-`;
+// The injected reminder block: the hook embeds reminderTextFor inside
+// <workflow-toolkit-reminder>…</workflow-toolkit-reminder>.
+const reminderOf = (additionalContext: string): string => {
+  const start = additionalContext.indexOf("<workflow-toolkit-reminder>");
+  const end = additionalContext.indexOf("</workflow-toolkit-reminder>", start);
+  if (start < 0 || end < 0) return "";
+  return additionalContext.slice(start, end);
+};
 
 function runEntry(args: string[], env: Record<string, string>): { status: number; stdout: string } {
   const r = spawnSync(process.execPath, args, { cwd: REPO_ROOT, env, encoding: "utf8" });
@@ -67,6 +80,55 @@ test("session start performs no network sync — network-unavailable behavior is
   } finally {
     rmSync(root, { recursive: true, force: true });
     rmSync(emptyBin, { recursive: true, force: true });
+  }
+});
+
+test("session-start contract: ordinary sessions retain five choices, marked destinations four", () => {
+  const plain = mkdtempSync(path.join(os.tmpdir(), "wf-hook-contract-plain-"));
+  const marked = mkdtempSync(path.join(os.tmpdir(), "wf-hook-contract-dest-"));
+  try {
+    const run = (root: string, input: string) =>
+      spawnSync(process.execPath, [path.join(CURSOR_ROOT, "hooks", "session-start.ts")], {
+        cwd: REPO_ROOT,
+        env: { ...process.env, WORKFLOW_TOOLKIT_ROOT: root, BUN: process.execPath },
+        input,
+        encoding: "utf8",
+      });
+    for (const root of [plain, marked]) {
+      mkdirSync(path.join(root, "templates"), { recursive: true });
+      writeFileSync(path.join(root, "templates", "superpowers-doc-contract.md"), contractText);
+    }
+    mkdirSync(path.join(marked, "docs", "dest", "sdd"), { recursive: true });
+    writeFileSync(
+      path.join(marked, "docs", "dest", "sdd", "flow.json"),
+      JSON.stringify({ slug: "dest", activated: true, handoff_destination: true }),
+    );
+
+    const plainOut = run(plain, JSON.stringify({ workspace_roots: [plain] }));
+    expect(plainOut.status, plainOut.stderr ?? "").toBe(0);
+    const plainText = JSON.parse(plainOut.stdout).additional_context as string;
+    // The hook serves the exact canonical contract bytes and the ordinary
+    // five-choice reminder for a session with no marked destination.
+    expect(plainText).toContain(contractText.trim());
+    expect(plainText).toContain(
+      "Subagent-driven, Inline, Handoff (new session only), Review spec first, Review plan first",
+    );
+    expect(reminderOf(plainText)).toContain("Handoff");
+
+    const destOut = run(marked, JSON.stringify({ workspace_roots: [marked] }));
+    expect(destOut.status, destOut.stderr ?? "").toBe(0);
+    const destText = JSON.parse(destOut.stdout).additional_context as string;
+    expect(destText).toContain(contractText.trim());
+    // The marked-session reminder carries the marker and the four-choice
+    // allow-list, and never offers the originating Handoff option.
+    const destReminder = reminderOf(destText);
+    expect(destReminder).toContain(HANDOFF_DESTINATION_MARKER);
+    expect(destReminder).not.toContain("Handoff");
+    expect(destReminder).toContain("Subagent-driven, Inline, Review spec first, Review plan first");
+    expect(destText).toContain("Subagent-driven, Inline, Review spec first, Review plan first");
+  } finally {
+    rmSync(plain, { recursive: true, force: true });
+    rmSync(marked, { recursive: true, force: true });
   }
 });
 

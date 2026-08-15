@@ -4,11 +4,13 @@ import {
   HostReceiptStore,
   createOpenCodeEvidence,
   prepareFlowState,
+  readEffectiveFlowState,
   readFlowState,
   roleFromParentage,
   transitionSpec,
   transitionPlan,
   recordMenuChoice,
+  transitionExecution,
   type MutationContext,
 } from "@brainervirus/workit-core/src/core/flow-state";
 import { resolveCanonicalLayout } from "@brainervirus/workit-core/src/core/docs-layout";
@@ -76,6 +78,61 @@ export const opencodeMutationContext = async (
 };
 
 export function createFlowTools(receipts: HostReceiptStore, client?: SessionLookup) {
+  // Execution lifecycle tools (CA-11, CA-14, CA-23): each transitions the plan's
+  // execution between pending/active/paused/completed through core
+  // `transitionExecution`, gated by a ONE-USE host-observed native-question
+  // receipt with the exact lifecycle label (AR-12, FINDING 5). The schema exposes
+  // only `plan_path` — no `confirmed`, evidence, role, or task identity fields.
+  // Identity is derived from host session parentage via `opencodeMutationContext`
+  // (fail-closed: an unverifiable session is the root coordinator). The result
+  // reports the post-transition effective execution state and any approval drift,
+  // and failed transitions surface structured `details` (e.g. incomplete ledger
+  // or verification failure facts) for the next action.
+  const lifecycleTool = (
+    action: "pause" | "resume" | "complete",
+    label: "Pause plan" | "Resume plan" | "Complete plan",
+    description: string,
+  ) =>
+    tool({
+      description,
+      args: {
+        plan_path: tool.schema.string(),
+      },
+      execute: async ({ plan_path }, context) => {
+        const slugged = resolveSlug(context.directory, { plan_path });
+        if ("error" in slugged) return output(fail(slugged.error));
+        const slug = slugged.slug;
+        const consumed = receipts.consume(context.sessionID, { label });
+        if (!consumed.ok) return output(fail(consumed.error, { code: consumed.code }));
+        const result = transitionExecution(
+          context.directory,
+          slug,
+          plan_path,
+          action,
+          createOpenCodeEvidence(consumed.receipt),
+          await opencodeMutationContext(context, client),
+        );
+        if (!result.ok) {
+          return output(
+            fail(result.error, {
+              code: result.code,
+              ...(result.details ? { details: result.details } : {}),
+            }),
+          );
+        }
+        const effective = readEffectiveFlowState(context.directory, slug);
+        if (!effective.ok) return output(fail(effective.error, { code: effective.code }));
+        return output(
+          ok({
+            plan: plan_path,
+            execution: effective.state.execution,
+            drift: effective.drift,
+            question: consumed.receipt.question,
+          }),
+        );
+      },
+    });
+
   return {
     workflow_flow_status: tool({
       description:
@@ -90,8 +147,11 @@ export function createFlowTools(receipts: HostReceiptStore, client?: SessionLook
           const slugged = resolveSlug(context.directory, { plan_path, spec_path });
           if ("error" in slugged) return output(fail(slugged.error));
           const slug = slugged.slug;
-          let state = readFlowState(context.directory, slug);
-          if (!state.activated) {
+          // Effective read (CA-02/CA-04): digest reconciliation and legacy
+          // compatibility run under the per-flow lock before status trusts
+          // persisted approvals; drift is reported structurally.
+          let effective = readEffectiveFlowState(context.directory, slug);
+          if (!effective.ok && effective.code === "flow_not_activated") {
             const prepared = prepareFlowState(
               context.directory,
               slug,
@@ -99,14 +159,18 @@ export function createFlowTools(receipts: HostReceiptStore, client?: SessionLook
               await opencodeMutationContext(context, client),
             );
             if (!prepared.ok) return output(fail(prepared.error, { code: prepared.code }));
-            state = readFlowState(context.directory, slug);
+            effective = readEffectiveFlowState(context.directory, slug);
           }
+          if (!effective.ok) return output(fail(effective.error, { code: effective.code }));
+          const { state, drift } = effective;
           return output(
             ok({
               slug,
               spec: state.spec,
               plan: state.plan,
               menu: state.menu,
+              execution: state.execution,
+              drift,
               flow_path: flowPathFor(slug),
             }),
           );
@@ -142,13 +206,18 @@ export function createFlowTools(receipts: HostReceiptStore, client?: SessionLook
           createOpenCodeEvidence(consumed.receipt),
           await opencodeMutationContext(context, client),
         );
+        // Echo through the EFFECTIVE read (CA-02): the post-transition status is
+        // reconciled so a drift reset that ran during the transition is
+        // reflected, consistent with workflow_flow_status. Fall back to the
+        // lenient read only if the reconciled read itself fails — never fail a
+        // successful transition over an echo.
+        const effective = readEffectiveFlowState(context.directory, slug);
+        const status = effective.ok
+          ? effective.state.spec.status
+          : readFlowState(context.directory, slug).spec.status;
         return output(
           result.ok
-            ? ok({
-                spec: spec_path,
-                status: readFlowState(context.directory, slug).spec.status,
-                question: consumed.receipt.question,
-              })
+            ? ok({ spec: spec_path, status, question: consumed.receipt.question })
             : fail(result.error, { code: result.code }),
         );
       },
@@ -175,13 +244,15 @@ export function createFlowTools(receipts: HostReceiptStore, client?: SessionLook
           createOpenCodeEvidence(consumed.receipt),
           await opencodeMutationContext(context, client),
         );
+        // Effective echo, same as workflow_spec_approve: reconciled status,
+        // lenient fallback only if the reconciled read fails.
+        const effective = readEffectiveFlowState(context.directory, slug);
+        const status = effective.ok
+          ? effective.state.plan.status
+          : readFlowState(context.directory, slug).plan.status;
         return output(
           result.ok
-            ? ok({
-                plan: plan_path,
-                status: readFlowState(context.directory, slug).plan.status,
-                question: consumed.receipt.question,
-              })
+            ? ok({ plan: plan_path, status, question: consumed.receipt.question })
             : fail(result.error, { code: result.code }),
         );
       },
@@ -227,5 +298,20 @@ export function createFlowTools(receipts: HostReceiptStore, client?: SessionLook
         );
       },
     }),
+    workflow_plan_pause: lifecycleTool(
+      "pause",
+      "Pause plan",
+      "Pause a running plan from a host-observed native-question receipt: active -> paused. The receipt label must be exactly `Pause plan`; there is no evidence argument (AR-12). A failed gate (already-paused) spends the receipt — re-answer the native question to retry.",
+    ),
+    workflow_plan_resume: lifecycleTool(
+      "resume",
+      "Resume plan",
+      "Resume a paused plan from a host-observed native-question receipt: paused -> active. The receipt label must be exactly `Resume plan`; there is no evidence argument (AR-12). A failed gate (flow_not_paused) spends the receipt — re-answer the native question to retry.",
+    ),
+    workflow_plan_complete: lifecycleTool(
+      "complete",
+      "Complete plan",
+      "Complete a running plan from a host-observed native-question receipt: active/paused -> completed, after the SDD ledger is complete and repository verification passes. The receipt label must be exactly `Complete plan`; there is no evidence argument (AR-12). A failed gate (execution_incomplete or verification_failed) spends the receipt — re-answer the native question to retry.",
+    ),
   };
 }

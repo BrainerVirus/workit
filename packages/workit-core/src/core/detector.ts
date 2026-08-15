@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { CONFIG_GAP_MARKER } from "./config-guard";
-import { parseTasksFromPlan } from "./docs-validate";
+import { readEffectiveFlowState, type FlowReadResult } from "./flow-state";
 
 export type Detection = { choices: string[]; pattern: "alpha" | "numeric" } | null;
 
@@ -162,57 +162,78 @@ export const detectBacktickDocRefs = (text: string): string[] | null => {
   return refs;
 };
 
-// The rail has no terminal FlowStatus — a fully completed SDD ledger is done,
-// but only if its complete set covers every task id in the plan (the last
-// task's append may have been skipped, leaving an all-complete partial ledger).
-const isPlanComplete = (slugDir: string): boolean => {
-  const ledger = path.join(slugDir, "sdd", "progress.md");
-  if (!existsSync(ledger)) return false; // no ledger yet — not provably complete
-  let taskLines: string[];
-  try {
-    taskLines = readFileSync(ledger, "utf8")
-      .split("\n")
-      .map((l) => l.trim())
-      .filter((l) => /^Task \s*\d+:/i.test(l));
-  } catch {
-    return true; // unreadable ledger → exclude the slug
-  }
-  if (taskLines.length === 0 || !taskLines.every((l) => /^Task \s*\d+:\s*complete\b/i.test(l))) {
-    return false;
-  }
-  try {
-    const planTasks = parseTasksFromPlan(readFileSync(path.join(slugDir, "plan.md"), "utf8"));
-    if (planTasks.length === 0) return true;
-    const completeIds = new Set(
-      taskLines.map((l) => Number(/^Task\s*(\d+):/i.exec(l)?.[1])).filter(Number.isFinite),
-    );
-    return planTasks.every((t) => completeIds.has(t.id));
-  } catch {
-    return false; // unreadable/missing plan.md — not provably complete, rail stays on
-  }
+// The rail is active-plan detection (CA-11/CA-13): only a flow whose effective
+// execution is ACTIVE and subagent-driven is found. The effective read performs
+// the legacy compatibility migration (ledgerCompletion-derived, CA-16) and the
+// approval-digest reconciliation and PERSISTS any drift/migration reset, so a
+// drift-reset or pending/paused/completed flow is excluded after its state is
+// rewritten on read; only malformed/unreadable flow.json is excluded without
+// ever being rewritten (readFlowStrict rejects it before any write).
+export type ActivePlanScan = {
+  slugs: string[];
+  /**
+   * Flows whose effective read FAILED with a transient lock/IO error
+   * (flow_concurrent_conflict / flow_io_error) — a held lock or a filesystem
+   * hiccup, NOT "not active". `findActiveSubagentDrivenPlans` still excludes
+   * them (its `string[]` contract cannot express a read failure, so the
+   * plugin rail stays fail-open by design); this signal lets a caller that
+   * wants fail-closed behavior treat a non-empty list as "the plan state is
+   * unknown". The coordinator's authoritative product gate
+   * (assertProductGates) fails closed regardless, so legitimate interception
+   * is never weakened.
+   */
+  read_errors: { slug: string; code: string; error: string }[];
 };
 
-export const findActiveSubagentDrivenPlans = (root: string): string[] => {
+export const scanActiveSubagentDrivenPlans = (root: string): ActivePlanScan => {
   const docsDir = path.join(root, "docs");
-  if (!existsSync(docsDir)) return [];
+  if (!existsSync(docsDir)) return { slugs: [], read_errors: [] };
   const slugs: string[] = [];
+  const readErrors: { slug: string; code: string; error: string }[] = [];
+  // The full effective read (lock + digest hashing + possibly writing drift
+  // resets) is the expensive path; it runs per slug on every message/tool call.
+  const classify = (slug: string) => {
+    let effective: FlowReadResult;
+    try {
+      effective = readEffectiveFlowState(root, slug);
+    } catch {
+      // an unexpected read error (e.g. a non-slug directory name) excludes the
+      // entry without touching it
+      return;
+    }
+    if (!effective.ok) {
+      if (effective.code === "flow_concurrent_conflict" || effective.code === "flow_io_error") {
+        readErrors.push({ slug, code: effective.code, error: effective.error });
+      }
+      return;
+    }
+    const exec = effective.state.execution;
+    if (exec.status === "active" && exec.mode === "subagent-driven") slugs.push(slug);
+  };
   for (const slug of readdirSync(docsDir)) {
     const file = path.join(docsDir, slug, "sdd", "flow.json");
+    if (!existsSync(file)) continue;
+    // Raw pre-filter (Task 2 advisory): a flow.json that cannot plausibly hold
+    // an active subagent-driven execution is skipped with ONE cheap read.
+    // Absence of the `subagent-driven` token makes an ACTIVE subagent-driven
+    // execution impossible — an explicit execution requires mode
+    // "subagent-driven" and legacy derivation (CA-16) requires menu.chosen
+    // "subagent-driven", both embedding the literal token. The pre-filter can
+    // only skip and never causes a false negative: an unreadable file or one
+    // containing a backslash-u escape (hand-encoded, never produced by the
+    // toolkit's own writers) is treated as in-doubt and runs the full read.
+    let raw: string;
     try {
-      const flow = JSON.parse(readFileSync(file, "utf8")) as {
-        menu?: { chosen?: string };
-        plan?: { status?: string };
-      };
-      if (
-        flow.menu?.chosen === "subagent-driven" &&
-        flow.plan?.status === "approved" &&
-        !isPlanComplete(path.join(docsDir, slug))
-      ) {
-        slugs.push(slug);
-      }
+      raw = readFileSync(file, "utf8");
     } catch {
-      // skip unreadable or malformed flow.json
+      classify(slug);
+      continue;
     }
+    if (!raw.includes("subagent-driven") && !raw.includes("\\u")) continue;
+    classify(slug);
   }
-  return slugs;
+  return { slugs, read_errors: readErrors };
 };
+
+export const findActiveSubagentDrivenPlans = (root: string): string[] =>
+  scanActiveSubagentDrivenPlans(root).slugs;

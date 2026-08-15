@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, realpathSync, statSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 
 // One canonical document path contract (DC-01, DC-02, DC-04, DC-14): workspace
@@ -49,7 +49,22 @@ const canonicalize = (base: string, candidate: string): string => {
   const abs = path.resolve(base, candidate);
   let ancestor = abs;
   while (!existsSync(ancestor)) ancestor = path.dirname(ancestor);
-  const real = realpathSync(ancestor);
+  let real: string;
+  try {
+    real = realpathSync(ancestor);
+  } catch (error) {
+    // macOS realpath fails with EACCES on a mode-000 file while Linux succeeds;
+    // an existing non-symlink file cannot escape the workspace, so resolve the
+    // nearest existing directory instead (symlinks keep the strict path).
+    if (
+      (error as NodeJS.ErrnoException).code === "EACCES" &&
+      !lstatSync(ancestor).isSymbolicLink()
+    ) {
+      real = path.join(realpathSync(path.dirname(ancestor)), path.basename(ancestor));
+    } else {
+      throw error;
+    }
+  }
   if (real !== base && !real.startsWith(base + path.sep)) {
     throw new Error(`path must stay inside repository root: ${candidate}`);
   }
@@ -106,14 +121,12 @@ export const resolveCanonicalLayout = (input: {
     if (path.isAbsolute(candidate)) {
       return { ok: false, error: `absolute path not allowed: ${candidate}` };
     }
-    let abs: string;
-    try {
-      abs = canonicalize(workspace, candidate);
-    } catch (error) {
-      return { ok: false, error: error instanceof Error ? error.message : String(error) };
-    }
-    const rel = posix(path.relative(workspace, abs));
-    const match = rel.match(/^docs\/([^/]+)\/(spec|plan)\.md$/);
+    // Exact-spelling contract (DC-01): the caller path must be written as the
+    // canonical `docs/<slug>/spec.md` / `docs/<slug>/plan.md` — no `./`,
+    // no `..` segments, no repeated or trailing separators. The strict regex
+    // below rejects those spellings before any bytes are read or resolved.
+    const spelling = posix(candidate);
+    const match = spelling.match(/^docs\/([^/]+)\/(spec|plan)\.md$/);
     if (!match) {
       return {
         ok: false,
@@ -140,6 +153,21 @@ export const resolveCanonicalLayout = (input: {
       };
     }
     derived = pathSlug;
+    // Symlink/canonical containment (DC-02): after the exact-spelling match,
+    // resolve the canonical path so a symlinked docs/<slug> or doc file that
+    // escapes the workspace or resolves to a different slug is still rejected.
+    let abs: string;
+    try {
+      abs = canonicalize(workspace, candidate);
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
+    if (posix(path.relative(workspace, abs)) !== spelling) {
+      return {
+        ok: false,
+        error: `path must resolve to ${JSON.stringify(spelling)}: ${candidate}`,
+      };
+    }
   }
 
   let resolvedSlug = slug;

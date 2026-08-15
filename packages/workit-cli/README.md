@@ -20,12 +20,19 @@ npx @brainervirus/workit-cli init
 workit init              # interactive setup wizard
 workit doctor            # offline installation health report
 workit doctor --json     # machine-readable report
+workit flow status --plan docs/<slug>/plan.md        # read the effective flow state
+workit flow pause --plan docs/<slug>/plan.md [--confirm]     # active -> paused
+workit flow resume --plan docs/<slug>/plan.md [--confirm]    # paused -> active
+workit flow complete --plan docs/<slug>/plan.md [--confirm]  # complete (ledger + verification gated)
+workit handoff --message "docs/<slug>/plan.md"      # print the destination handoff prompt
 workit                   # help
 ```
 
 `workit init` guides you through: platform selection (OpenCode/Cursor), global config (locale, timezone, branch policy), YouTrack, VCS, workspaces (path globs → provider), and project hygiene files. The wizard is a TTY application — `workit init` requires an interactive terminal and prints guidance (exiting nonzero) when stdin is not a TTY.
 
 `workit doctor` checks the offline installation health and exits nonzero when problems are found; `--json` prints the full report as JSON instead of the human-readable table.
+
+`workit flow` maps the shared-core execution lifecycle (`pending`/`active`/`paused`/`completed`) to the CLI: `status` reads the effective flow state (approval digests, drift, execution, handoff-destination flag); `pause`/`resume`/`complete` mutate it with `--confirm` (or a TTY prompt when stdin is a TTY, exit 2 when neither applies). `workit handoff` prints the core destination handoff prompt (four-choice menu, never the originating Handoff option) and marks the flow as a handoff destination; a second handoff on an already-marked destination is rejected. Domain/verification failures exit 1 with structured JSON on stderr; usage errors exit 2.
 
 ## Behavior
 

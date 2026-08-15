@@ -63,6 +63,8 @@ On success, use native `question` / Cursor `AskQuestion` with exactly these opti
 
 Never emit Superpowers text beginning “Two execution options”.
 
+A handoff destination session (the seeded contract carries `<workflow-handoff-destination>true</workflow-handoff-destination>`) presents exactly four choices — Subagent-driven, Inline, Review spec first, Review plan first — and never re-offers the originating handoff option.
+
 - Specs/plans must follow `templates/spec-template.md` / `templates/plan-template.md` (mandated diagrams, tables, CA-XX).
 
 ## Doc delivery

@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Expose plan lifecycle controls (`workflow_plan_pause`/`resume`/`complete`) and CLI flow/handoff commands (`workit flow status|pause|resume|complete`, `workit handoff`), including a four-choice handoff-destination contract.
 - Added an approved reliability-overhaul specification with full requirement, audit, and Ponytail traceability.
 - Added pinned Oxlint and Oxfmt checks for first-party TypeScript and package metadata.
 - Per-workspace branch policy (`workspaces.json` `branchPolicy`) with git-flow-style detection init and `integration: pr|merge` on OpenCode, Cursor, and the CLI wizard.
@@ -36,6 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Bind spec/plan approvals to exact-byte SHA-256 digests so edited documents invalidate stale approvals and require fresh reapproval; reject recursive handoffs; and restrict subagent-driven reminders and interception to active execution.
 - OpenCode development installation now pins the active checkout and removes stale Workit plugin identities.
 - The CLI initialization wizard no longer enters an unbounded render loop after an input change — unchanged controlled values now preserve state identity instead of constructing new drafts.
 - Routine structured `info` logs no longer leak into the CLI or OpenCode terminal UI — the CLI sinks only `warn`/`error` to stderr and OpenCode uses native app logging, while durable JSONL diagnostics are preserved.

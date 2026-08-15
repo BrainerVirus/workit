@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -32,7 +33,9 @@ import {
   COORDINATOR_SHELL_DENIED_TEXT,
   HostReceiptStore,
   prepareFlowState,
+  readEffectiveFlowState,
   recordMenuChoice,
+  transitionExecution,
   transitionPlan,
   transitionSpec,
   createOpenCodeEvidence,
@@ -312,6 +315,210 @@ test("tool.execute.before leaves the root session alone when no subagent-driven 
   }
 });
 
+const cliLifecycleEvidence = () =>
+  ({ host: "cli", attested: false, confirmation: "flag" }) as const;
+
+test("tool.execute.before leaves the root session usable once the plan is paused", async () => {
+  const { root, slug } = flowFixture();
+  try {
+    establishSubagentDriven(root, slug);
+    expect(
+      transitionExecution(root, slug, `docs/${slug}/plan.md`, "pause", cliLifecycleEvidence()).ok,
+    ).toBe(true);
+    const client = {
+      session: { get: async () => ({ data: { directory: root } }) },
+    };
+    const hooks = await plugin({
+      client,
+      directory: root,
+      worktree: root,
+      serverUrl: new URL("http://localhost"),
+    } as never);
+    const write = { args: {} };
+    await expect(
+      hooks["tool.execute.before"]?.(
+        { tool: "write", sessionID: "root-session", callID: "c-paused" },
+        write,
+      ),
+    ).resolves.toBeUndefined();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("tool.execute.before leaves the root session usable once the plan is completed", async () => {
+  const { root, slug } = flowFixture();
+  try {
+    establishSubagentDriven(root, slug);
+    mkdirSync(path.join(root, "docs", slug, "sdd"), { recursive: true });
+    writeFileSync(path.join(root, "docs", slug, "sdd", "progress.md"), "Task 1: complete\n");
+    writeFileSync(path.join(root, "CHANGELOG.md"), "## [Unreleased]\n\n- fixture\n");
+    expect(
+      transitionExecution(
+        root,
+        slug,
+        `docs/${slug}/plan.md`,
+        "complete",
+        cliLifecycleEvidence(),
+        undefined,
+        { verifyProject: () => ({ stdout: "", stderr: "", exitCode: 0, cwd: root }) },
+      ).ok,
+    ).toBe(true);
+    const client = {
+      session: { get: async () => ({ data: { directory: root } }) },
+    };
+    const hooks = await plugin({
+      client,
+      directory: root,
+      worktree: root,
+      serverUrl: new URL("http://localhost"),
+    } as never);
+    const write = { args: {} };
+    await expect(
+      hooks["tool.execute.before"]?.(
+        { tool: "write", sessionID: "root-session", callID: "c-completed" },
+        write,
+      ),
+    ).resolves.toBeUndefined();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("tool.execute.before leaves the root session usable for an active inline flow", async () => {
+  const { root, slug } = flowFixture();
+  try {
+    establishSubagentDriven(root, slug);
+    // Record an active INLINE menu choice instead of the subagent-driven one.
+    const store = new HostReceiptStore();
+    const menu = recordMenuChoice(
+      root,
+      slug,
+      `docs/${slug}/plan.md`,
+      "inline",
+      createOpenCodeEvidence(
+        (() => {
+          store.record("root", "call-inline", "inline");
+          const consumed = store.consume("root");
+          if (!consumed.ok) throw new Error(consumed.error);
+          return consumed.receipt;
+        })(),
+      ),
+    );
+    expect(menu.ok).toBe(true);
+    const client = {
+      session: { get: async () => ({ data: { directory: root } }) },
+    };
+    const hooks = await plugin({
+      client,
+      directory: root,
+      worktree: root,
+      serverUrl: new URL("http://localhost"),
+    } as never);
+    const write = { args: {} };
+    await expect(
+      hooks["tool.execute.before"]?.(
+        { tool: "write", sessionID: "root-session", callID: "c-inline" },
+        write,
+      ),
+    ).resolves.toBeUndefined();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("tool.execute.before leaves the root session usable for a stale (drift-reset) subagent-driven flow", async () => {
+  const { root, slug } = flowFixture();
+  try {
+    establishSubagentDriven(root, slug);
+    // Editing the approved plan introduces approval drift: the effective read
+    // reconciles it and resets execution to pending, so the rail is off.
+    writeFileSync(
+      path.join(root, "docs", slug, "plan.md"),
+      PLUGIN_PLAN(slug).replace("do it", "do it now"),
+    );
+    const client = {
+      session: { get: async () => ({ data: { directory: root } }) },
+    };
+    const hooks = await plugin({
+      client,
+      directory: root,
+      worktree: root,
+      serverUrl: new URL("http://localhost"),
+    } as never);
+    const write = { args: {} };
+    await expect(
+      hooks["tool.execute.before"]?.(
+        { tool: "write", sessionID: "root-session", callID: "c-stale" },
+        write,
+      ),
+    ).resolves.toBeUndefined();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("the plugin records lifecycle answers as one-use receipts consumed by the lifecycle tools", async () => {
+  const { root, slug } = flowFixture();
+  try {
+    establishSubagentDriven(root, slug);
+    const client = {
+      session: { get: async () => ({ data: { directory: root } }) },
+    };
+    const hooks = await plugin({
+      client,
+      directory: root,
+      worktree: root,
+      serverUrl: new URL("http://localhost"),
+    } as never);
+    const plan = `docs/${slug}/plan.md`;
+
+    await hooks["tool.execute.after"]?.(
+      { tool: "question", sessionID: "root", callID: "call-pause", args: {} },
+      {
+        title: "Pause the plan?",
+        output: "User has answered your questions",
+        metadata: { answers: [["Pause plan"]] },
+      },
+    );
+    const paused = await hooks.tool?.workflow_plan_pause.execute({ plan_path: plan }, {
+      directory: root,
+      worktree: root,
+      sessionID: "root",
+    } as never);
+    const pausedResult = JSON.parse(paused as string);
+    expect(pausedResult.ok).toBe(true);
+    expect(pausedResult.data.execution.status).toBe("paused");
+
+    // Replay fails: the pause receipt was spent exactly once.
+    const replay = await hooks.tool?.workflow_plan_pause.execute({ plan_path: plan }, {
+      directory: root,
+      worktree: root,
+      sessionID: "root",
+    } as never);
+    expect(JSON.parse(replay as string).ok).toBe(false);
+
+    await hooks["tool.execute.after"]?.(
+      { tool: "question", sessionID: "root", callID: "call-resume", args: {} },
+      {
+        title: "Resume the plan?",
+        output: "User has answered your questions",
+        metadata: { answers: [["Resume plan"]] },
+      },
+    );
+    const resumed = await hooks.tool?.workflow_plan_resume.execute({ plan_path: plan }, {
+      directory: root,
+      worktree: root,
+      sessionID: "root",
+    } as never);
+    const resumedResult = JSON.parse(resumed as string);
+    expect(resumedResult.ok).toBe(true);
+    expect(resumedResult.data.execution.status).toBe("active");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 describe("plugin registration", () => {
   test("registers exactly the twelve wk commands and one skill path", async () => {
     const hooks = await plugin({
@@ -568,6 +775,9 @@ describe("plugin registration", () => {
             plan_path: "missing-plan.md",
             choice: "inline",
           },
+          workflow_plan_pause: { plan_path: "missing-plan.md" },
+          workflow_plan_resume: { plan_path: "missing-plan.md" },
+          workflow_plan_complete: { plan_path: "missing-plan.md" },
           workflow_sdd_context: { plan_path: "missing-plan.md" },
           workflow_sdd_task_brief: {
             confirmed: false,
@@ -659,15 +869,33 @@ describe("plugin registration", () => {
         "# X\n\n**Spec:** `docs/x/spec.md`\n**Branch:** `feature/x`\n\n### Task 1: One\n\n- [ ] **Step 1:** Work\n",
       );
       mkdirSync(path.join(root, "docs", "x", "sdd"), { recursive: true });
+      const flowJson = {
+        slug: "x",
+        activated: true,
+        spec: {
+          path: "docs/x/spec.md",
+          status: "approved",
+          evidence: null,
+          approved_digest: createHash("sha256")
+            .update(readFileSync(path.join(root, "docs/x/spec.md")))
+            .digest("hex"),
+        },
+        plan: {
+          path: "docs/x/plan.md",
+          status: "approved",
+          evidence: null,
+          approved_digest: createHash("sha256")
+            .update(readFileSync(path.join(root, "docs/x/plan.md")))
+            .digest("hex"),
+        },
+        menu: { presented: true, chosen: "handoff", evidence: null },
+        execution: { status: "pending", mode: null, evidence: null },
+        handoff_destination: false,
+        updated_at: Date.now(),
+      };
       writeFileSync(
         path.join(root, "docs/x/sdd/flow.json"),
-        JSON.stringify({
-          slug: "x",
-          spec: { path: "docs/x/spec.md", status: "approved" },
-          plan: { path: "docs/x/plan.md", status: "approved" },
-          menu: { presented: true, chosen: "handoff" },
-          updated_at: Date.now(),
-        }),
+        JSON.stringify(flowJson, null, 2) + "\n",
       );
       const client = {
         session: {
@@ -706,6 +934,14 @@ describe("plugin registration", () => {
         error: null,
       });
       expect(calls).toEqual(["create", "seed"]);
+      // Destination marking happens after a successful seed: the flow is now
+      // a marked handoff destination with the source menu choice reset.
+      const effective = readEffectiveFlowState(root, "x");
+      expect(effective.ok).toBe(true);
+      if (effective.ok) {
+        expect(effective.state.handoff_destination).toBe(true);
+        expect(effective.state.menu).toEqual({ presented: false, chosen: "", evidence: null });
+      }
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

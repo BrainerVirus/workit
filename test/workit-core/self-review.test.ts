@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
+  readEffectiveFlowState,
   readFlowState,
   transitionSpec,
   transitionPlan,
@@ -102,7 +103,7 @@ test("warning-only spec transitions fine", () => {
   }
 });
 
-test("second transition is not gated by spec quality", () => {
+test("a content edit after approval invalidates the approval and re-gates the next receipt", () => {
   const { root, slug } = fixture();
   try {
     const specPath = `docs/${slug}/spec.md`;
@@ -110,13 +111,22 @@ test("second transition is not gated by spec quality", () => {
     activate(root, slug);
     const first = transitionSpec(root, slug, specPath, evidence());
     expect(first.ok).toBe(true);
+    // Any byte change invalidates the stored approval digest (CA-06): the next
+    // transition reconciles the drift first and re-runs the self-review on the
+    // changed bytes, so a broken spec can no longer be approved.
     writeFileSync(path.join(root, specPath), "# broken");
-    // A legacy re-approval attempt is not gated by spec quality — but the
-    // one-receipt matrix is already approved, so it errors.
     const second = transitionSpec(root, slug, specPath, evidence());
     expect(second.ok).toBe(false);
-    if (second.ok === false) expect(second.code).toBe("flow_already_approved");
-    expect(readFlowState(root, slug).spec.status).toBe("approved");
+    if (second.ok === false) expect(second.code).toBe("spec_self_review_failed");
+    // The effective (reconciled) state is draft: the failed reapproval left the
+    // stale digest behind, so any effective read reports drift and resets.
+    const effective = readEffectiveFlowState(root, slug);
+    expect(effective.ok).toBe(true);
+    if (!effective.ok) throw new Error(effective.error);
+    expect(effective.drift).toEqual([
+      { document: "spec", code: "digest_mismatch", path: `docs/${slug}/spec.md` },
+    ]);
+    expect(effective.state.spec.status).toBe("draft");
   } finally {
     cleanup(root);
   }

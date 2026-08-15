@@ -13,6 +13,7 @@ import {
 } from "@brainervirus/workit-core/src/core/setup.ts";
 import { readSetupState, type SetupState } from "@brainervirus/workit-core/src/core/setup-state";
 import { applyWizardBranchPolicy } from "./logic";
+import { COMMANDS, runFlowCommand, runHandoffCommand } from "./flow";
 
 // Secret-safe diagnostic logger (DG-01-DG-03, DG-05, DG-10). Sink injection
 // only: CLI events mirror to stderr, never the Ink-rendered stdout. Routine
@@ -25,11 +26,24 @@ export const logger = createLogger({
   },
 });
 
+// Help derives the flow/handoff command surface from the same COMMANDS table
+// the CLI's usage errors use, so the exact command strings cannot drift
+// (packed-cli asserts each string appears verbatim). Descriptions line up in
+// the 49-char command column (2-space indent => description at column 51).
+const COMMAND_DESCRIPTIONS: readonly (readonly [string, string])[] = [
+  [COMMANDS.status, "Read the effective flow state for a plan"],
+  [COMMANDS.pause, "Pause an active plan"],
+  [COMMANDS.resume, "Resume a paused plan"],
+  [COMMANDS.complete, "Complete a plan (ledger and verification gated)"],
+  [COMMANDS.handoff, "Emit the destination handoff prompt for a plan"],
+];
+
 const HELP = `workit — workflow rails for agentic coding
 
 Usage:
   workit init      Run the interactive setup wizard
   workit doctor    Verify the offline installation health (add --json for a machine-readable report)
+${COMMAND_DESCRIPTIONS.map(([cmd, desc]) => `  ${cmd.padEnd(49)}${desc}`).join("\n")}
   workit           Show this help
 
 Run \`npx workit init\` to configure platforms, YouTrack, VCS and project hygiene.
@@ -169,6 +183,10 @@ if (import.meta.main) {
     await runInit();
   } else if (subcommand === "doctor") {
     runDoctorCommand(args);
+  } else if (subcommand === "flow") {
+    process.exit(await runFlowCommand(args.slice(1)));
+  } else if (subcommand === "handoff") {
+    process.exit(await runHandoffCommand(args.slice(1)));
   } else {
     console.log(HELP);
     process.exit(0);

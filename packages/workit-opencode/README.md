@@ -31,10 +31,11 @@ Requirements: OpenCode ≥ 1.15.0, Node ≥ 22 (the published plugin is a self-c
 
 ## Host-native behavior
 
-- **Approvals** — flow gates (`workflow_spec_approve` / `workflow_plan_approve` / `workflow_plan_menu`) record native `question` receipts; the self-review validation runs automatically during the transition.
-- **Delegation** — approved plans execute through subagent-driven task delegation (native `task`).
+- **Approvals** — flow gates (`workflow_spec_approve` / `workflow_plan_approve` / `workflow_plan_menu`) record native `question` receipts; the self-review validation runs automatically during the transition. Approvals bind to the document's exact SHA-256 digest: editing an approved spec/plan invalidates the approval and forces a fresh reapproval.
+- **Lifecycle** — `workflow_plan_pause` / `workflow_plan_resume` / `workflow_plan_complete` move a plan through `pending`/`active`/`paused`/`completed`, each gated by a one-use native-question receipt; completion requires a complete SDD ledger and passing repository verification.
+- **Delegation** — approved plans execute through subagent-driven task delegation (native `task`); while a subagent-driven plan is active, coordinator product edits are intercepted.
 - **Commit** — `wk-commit` previews a Conventional Commit and confirms through a native `question`.
-- **Handoff** — `wk-handoff` seeds and spawns a native OpenCode continuation session.
+- **Handoff** — `wk-handoff` seeds and spawns a native OpenCode continuation session; a destination session presents a four-choice menu (never the originating Handoff option) and carries the handoff-destination marker.
 - **Diagnostics** — durable JSONL journal plus native `client.app.log()`; nothing is mirrored to `process.stderr` or the agent conversation.
 
 ## Bundle / runtime model

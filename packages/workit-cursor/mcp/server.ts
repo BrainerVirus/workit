@@ -63,13 +63,17 @@ import {
 } from "@brainervirus/workit-core/src/core/plan-tasks";
 import { buildHandoffPrompt } from "@brainervirus/workit-core/src/core/handoff-tools";
 import {
-  readFlowState,
-  transitionSpec,
-  transitionPlan,
-  recordMenuChoice,
-  assertProductGates,
+  markHandoffDestination,
   prepareFlowState,
+  readEffectiveFlowState,
+  readFlowState,
+  recordMenuChoice,
+  slugFromPath,
   slugFromSddPath,
+  transitionExecution,
+  transitionPlan,
+  transitionSpec,
+  assertProductGates,
   type NativeChoiceEvidence,
 } from "@brainervirus/workit-core/src/core/flow-state";
 import { cursorMutationContext, cursorQuestionEvidence } from "./flow-evidence";
@@ -791,49 +795,78 @@ registerTool(
     const root = workspace_root;
     const built = buildHandoffPrompt(root, message ?? "");
     if ("error" in built) {
+      // CA-07: generation (including docs validation) failed — return WITHOUT
+      // marking the flow as a destination; one retry can rebuild and mark.
       return jsonResult(withWorkspace(workspace_root, { error: built.error }));
     }
     const { prompt, spec: specPath, plan: planPath } = built;
 
-    if (planPath) {
-      const tasksData = parsePlanTasks(planPath, root);
-      if ("error" in tasksData) {
-        return jsonResult(
-          withWorkspace(workspace_root, {
-            prompt,
-            error: tasksData.error,
-          }),
-        );
-      }
-      const payload: Record<string, unknown> = {
-        prompt,
-        tasks: tasksData.tasks,
-        task_count: tasksData.task_count,
-        workspace_root: root,
-      };
-      if (specPath) {
-        const branchData = resolveHandoffBranch(specPath, planPath, root);
-        if (!("error" in branchData)) {
-          payload.branch = branchData.branch;
-        }
-      }
-      const sdd = sddContext({ plan_path: planPath, workspace_root: root });
-      if (!sdd.error) {
-        payload.slug = sdd.slug;
-        payload.sdd_dir = sdd.sdd_dir;
-        payload.progress_path = sdd.progress_path;
-        payload.completed_task_ids = sdd.completed_task_ids;
-        payload.todos = sdd.todos;
-        payload.todo_write_required = true;
-      }
-      return jsonResult(withWorkspace(workspace_root, payload));
+    if (!planPath) {
+      return jsonResult(
+        withWorkspace(workspace_root, {
+          error: "Could not resolve spec and plan for handoff",
+        }),
+      );
     }
 
-    return jsonResult(
-      withWorkspace(workspace_root, {
-        error: "Could not resolve spec and plan for handoff",
-      }),
-    );
+    // Parse tasks BEFORE any mutation (CA-07/CA-09): a parse failure returns
+    // without marking the flow as a destination, so "generation failure ⇒ no
+    // mutation" holds for every stage after build. parsePlanTasks only needs
+    // the plan path, which is already resolved.
+    const tasksData = parsePlanTasks(planPath, root);
+    if ("error" in tasksData) {
+      return jsonResult(
+        withWorkspace(workspace_root, {
+          prompt,
+          error: tasksData.error,
+        }),
+      );
+    }
+
+    // Build-then-mark (CA-07/CA-09): mark the destination ONLY after the
+    // complete core prompt built and tasks parsed successfully. A marked
+    // destination rejects a second handoff (recursive_handoff) and has its
+    // menu reset.
+    const slug = slugFromPath(planPath);
+    const marked = markHandoffDestination(root, slug, planPath);
+    if (marked.ok === false) {
+      return jsonResult(
+        withWorkspace(workspace_root, {
+          error: marked.error,
+          code: marked.code,
+          ...(marked.details ? { details: marked.details } : {}),
+        }),
+      );
+    }
+    const payload: Record<string, unknown> = {
+      prompt,
+      tasks: tasksData.tasks,
+      task_count: tasksData.task_count,
+      workspace_root: root,
+    };
+    if (specPath) {
+      const branchData = resolveHandoffBranch(specPath, planPath, root);
+      if (!("error" in branchData)) {
+        payload.branch = branchData.branch;
+      }
+    }
+    const sdd = sddContext({ plan_path: planPath, workspace_root: root });
+    if (!sdd.error) {
+      payload.slug = sdd.slug;
+      payload.sdd_dir = sdd.sdd_dir;
+      payload.progress_path = sdd.progress_path;
+      payload.completed_task_ids = sdd.completed_task_ids;
+      payload.todos = sdd.todos;
+      payload.todo_write_required = true;
+    }
+    // Effective destination state (CA-07): handoff_destination true plus the
+    // reset menu — the source post-plan menu evidence is consumed by the mark.
+    const effective = readEffectiveFlowState(root, slug);
+    if (effective.ok) {
+      payload.handoff_destination = effective.state.handoff_destination;
+      payload.menu = effective.state.menu;
+    }
+    return jsonResult(withWorkspace(workspace_root, payload));
   },
 );
 
@@ -1188,8 +1221,11 @@ registerTool(
     });
     if (!resolved.ok) return jsonResult(withWorkspace(workspace_root, { error: resolved.error }));
     const { workspace, slug } = resolved.layout;
-    let state = readFlowState(workspace, slug);
-    if (!state.activated) {
+    // Effective read (CA-02/CA-04): digest reconciliation and legacy
+    // compatibility run under the per-flow lock before status trusts persisted
+    // approvals; drift is reported structurally alongside the execution state.
+    let effective = readEffectiveFlowState(workspace, slug);
+    if (!effective.ok && effective.code === "flow_not_activated") {
       const prepared = prepareFlowState(
         workspace,
         slug,
@@ -1197,13 +1233,17 @@ registerTool(
         cursorMutationContext(workspace),
       );
       if (!prepared.ok) return jsonResult({ error: prepared.error, code: prepared.code });
-      state = readFlowState(workspace, slug);
+      effective = readEffectiveFlowState(workspace, slug);
     }
+    if (!effective.ok) return jsonResult({ error: effective.error, code: effective.code });
+    const { state, drift } = effective;
     return jsonResult({
       slug,
       spec: state.spec,
       plan: state.plan,
       menu: state.menu,
+      execution: state.execution,
+      drift,
       flow_path: `docs/${slug}/sdd/flow.json`,
     });
   },
@@ -1287,6 +1327,78 @@ registerTool(
     if (result.ok === false) return jsonResult({ error: result.error, code: result.code });
     return jsonResult({ menu: { presented: true, chosen: choice } });
   },
+);
+
+// Execution lifecycle tools (CA-11, CA-14, CA-23): each transitions the plan's
+// execution between pending/active/paused/completed through core
+// `transitionExecution` with the Cursor policy-only confirmation and the
+// deterministic cursor MutationContext (CA-42, CA-20/21). Thin mappings only:
+// no ledger parsing, no verification, no transition rules are reproduced here.
+// Results report the post-transition effective execution state and any approval
+// drift; failures surface structured `details` (e.g. incomplete ledger or
+// verification failure facts). Every call resolves against the explicit
+// `workspace_root`; there is no evidence/role argument.
+const lifecycleTool = (action: "pause" | "resume" | "complete", description: string) => {
+  registerTool(
+    `workflow_plan_${action}`,
+    {
+      description,
+      inputSchema: {
+        plan_path: z.string(),
+        workspace_root: workspaceRootSchema,
+      },
+    },
+    async ({ plan_path, workspace_root }) => {
+      const resolved = resolveCanonicalLayout({ workspace_root, plan_path });
+      if (!resolved.ok) {
+        return jsonResult(withWorkspace(workspace_root, { error: resolved.error }));
+      }
+      const { workspace, slug } = resolved.layout;
+      const result = transitionExecution(
+        workspace,
+        slug,
+        plan_path,
+        action,
+        cursorConfirmation(),
+        cursorMutationContext(workspace),
+      );
+      if (result.ok === false) {
+        return jsonResult(
+          withWorkspace(workspace_root, {
+            error: result.error,
+            code: result.code,
+            ...(result.details ? { details: result.details } : {}),
+          }),
+        );
+      }
+      const effective = readEffectiveFlowState(workspace, slug);
+      if (!effective.ok) {
+        return jsonResult(
+          withWorkspace(workspace_root, { error: effective.error, code: effective.code }),
+        );
+      }
+      return jsonResult(
+        withWorkspace(workspace_root, {
+          plan: plan_path,
+          execution: effective.state.execution,
+          drift: effective.drift,
+        }),
+      );
+    },
+  );
+};
+
+lifecycleTool(
+  "pause",
+  "Pause a running plan with the Cursor policy-only confirmation: active -> paused. The MCP cannot observe AskQuestion results, so it records attested: false; there is no evidence argument (CA-42). Requires plan_path and workspace_root.",
+);
+lifecycleTool(
+  "resume",
+  "Resume a paused plan with the Cursor policy-only confirmation: paused -> active. The MCP cannot observe AskQuestion results, so it records attested: false; there is no evidence argument (CA-42). Requires plan_path and workspace_root.",
+);
+lifecycleTool(
+  "complete",
+  "Complete a running plan with the Cursor policy-only confirmation: active/paused -> completed, after the SDD ledger is complete and repository verification passes. The MCP cannot observe AskQuestion results, so it records attested: false; there is no evidence argument (CA-42). Requires plan_path and workspace_root.",
 );
 
 registerTool(

@@ -9,6 +9,16 @@ import {
   detectRawDocDelivery,
 } from "../../packages/workit-core/src/core/detector";
 import {
+  HostReceiptStore,
+  prepareFlowState,
+  markHandoffDestination,
+  recordMenuChoice,
+  transitionExecution,
+  transitionPlan,
+  transitionSpec,
+} from "../../packages/workit-core/src/core/flow-state";
+import plugin from "../../packages/workit-opencode/src/plugin";
+import {
   shouldInjectSddReminder,
   SDD_REMINDER_TEXT,
   CONFIG_GUARD_TEXT,
@@ -17,39 +27,86 @@ import {
   DOC_RENDER_TEXT,
   shouldInjectDocRender,
   REMINDER_TEXT,
+  DESTINATION_REMINDER_TEXT,
+  reminderTextFor,
 } from "../../packages/workit-core/src/core/reminder";
+import {
+  DESTINATION_MENU_LABELS,
+  HANDOFF_DESTINATION_MARKER,
+} from "../../packages/workit-core/src/core/flow-state";
+import { openEvidence } from "../workit-core/flow-fixtures";
 
-const writeFlow = (root: string, slug: string, flow: unknown) => {
-  const dir = path.join(root, "docs", slug, "sdd");
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(path.join(dir, "flow.json"), JSON.stringify(flow));
+const REMINDER_SPEC = (slug: string) =>
+  `# ${slug}\n\n**Branch:** \`feature/${slug}\`\n\n## Context\n\n## Goals\n\n## Non-goals\n\n## Architecture\n\n## Acceptance criteria\n\n- CA-01: test\n`;
+
+const REMINDER_PLAN = (slug: string) =>
+  `# ${slug}\n\n**Spec:** \`docs/${slug}/spec.md\`\n**Branch:** \`feature/${slug}\`\n\n## Context\n\n### Task 1: Do the thing\n\n- [ ] **Step 1:** do it\n`;
+
+const writeDocs = (root: string, slug: string) => {
+  mkdirSync(path.join(root, "docs", slug), { recursive: true });
+  writeFileSync(path.join(root, "docs", slug, "spec.md"), REMINDER_SPEC(slug));
+  writeFileSync(path.join(root, "docs", slug, "plan.md"), REMINDER_PLAN(slug));
 };
 
-test("CA-02: returns slug when menu.chosen is subagent-driven and plan is approved", () => {
+const writeSddLedger = (root: string, slug: string, lines: string[]) => {
+  const dir = path.join(root, "docs", slug, "sdd");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(path.join(dir, "progress.md"), lines.join("\n") + "\n", "utf8");
+};
+
+/** Approve spec+plan and record the given post-plan menu choice. */
+const establishMenuChoice = (root: string, slug: string, choice: string) => {
+  writeDocs(root, slug);
+  const spec = `docs/${slug}/spec.md`;
+  const plan = `docs/${slug}/plan.md`;
+  const store = new HostReceiptStore();
+  const sessionId = "reminder-session";
+  const prep = prepareFlowState(root, slug, { spec_path: spec, plan_path: plan });
+  if (!prep.ok) throw new Error(prep.error);
+  for (const step of [
+    transitionSpec(root, slug, spec, openEvidence(store, sessionId, "Approve spec")),
+    transitionPlan(root, slug, plan, openEvidence(store, sessionId, "Approve plan")),
+  ])
+    if (!step.ok) throw new Error(step.error);
+  const menu = recordMenuChoice(root, slug, plan, choice, openEvidence(store, sessionId, choice));
+  if (!menu.ok) throw new Error(menu.error);
+};
+
+const cliEvidence = () => ({ host: "cli", attested: false, confirmation: "flag" }) as const;
+
+test("CA-11: a real active subagent-driven flow is discovered", () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "wf-reminder-"));
   try {
-    writeFlow(root, "foo", {
-      menu: { chosen: "subagent-driven" },
-      plan: { status: "approved" },
-    });
+    establishMenuChoice(root, "foo", "subagent-driven");
     expect(findActiveSubagentDrivenPlans(root)).toEqual(["foo"]);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });
 
-test("CA-02b: excludes plans not chosen subagent-driven or not approved", () => {
+test("CA-11/CA-13: pending, paused, completed, and active inline flows are never discovered", () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "wf-reminder-"));
   try {
-    writeFlow(root, "a", { menu: { chosen: "inline" }, plan: { status: "approved" } });
-    writeFlow(root, "b", {
-      menu: { chosen: "subagent-driven" },
-      plan: { status: "self_reviewed" },
-    });
-    writeFlow(root, "c", {
-      menu: { chosen: "review-spec" },
-      plan: { status: "approved" },
-    });
+    establishMenuChoice(root, "pending", "handoff");
+    establishMenuChoice(root, "inline", "inline");
+    establishMenuChoice(root, "paused", "subagent-driven");
+    expect(
+      transitionExecution(root, "paused", "docs/paused/plan.md", "pause", cliEvidence()).ok,
+    ).toBe(true);
+    establishMenuChoice(root, "done", "subagent-driven");
+    writeSddLedger(root, "done", ["Task 1: complete"]);
+    const finished = transitionExecution(
+      root,
+      "done",
+      "docs/done/plan.md",
+      "complete",
+      cliEvidence(),
+      undefined,
+      { verifyProject: () => ({ stdout: "", stderr: "", exitCode: 0, cwd: root }) },
+    );
+    expect(finished.ok).toBe(true);
+    // Only the real active subagent-driven flow appears — a completed ledger
+    // does not end an active execution; only the completed STATE does.
     expect(findActiveSubagentDrivenPlans(root)).toEqual([]);
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -59,14 +116,8 @@ test("CA-02b: excludes plans not chosen subagent-driven or not approved", () => 
 test("returns only the active slug among mixed plans", () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "wf-reminder-"));
   try {
-    writeFlow(root, "active", {
-      menu: { chosen: "subagent-driven" },
-      plan: { status: "approved" },
-    });
-    writeFlow(root, "inactive", {
-      menu: { chosen: "handoff" },
-      plan: { status: "approved" },
-    });
+    establishMenuChoice(root, "active", "subagent-driven");
+    establishMenuChoice(root, "inactive", "handoff");
     expect(findActiveSubagentDrivenPlans(root)).toEqual(["active"]);
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -106,6 +157,45 @@ test("CA-04: empty flow.json is skipped without throwing", () => {
   }
 });
 
+test("CA-17: a drift-reset active flow is not discovered after the plan changes", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wf-reminder-"));
+  try {
+    establishMenuChoice(root, "drift", "subagent-driven");
+    expect(findActiveSubagentDrivenPlans(root)).toEqual(["drift"]);
+    writeFileSync(
+      path.join(root, "docs", "drift", "plan.md"),
+      REMINDER_PLAN("drift").replace("do it", "do it now"),
+    );
+    // The effective read reconciles the drift and resets execution to pending.
+    expect(findActiveSubagentDrivenPlans(root)).toEqual([]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("E: a clearly-inactive flow skips the full effective read (pre-filter early return)", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wf-reminder-"));
+  try {
+    // An inactive flow whose raw flow.json carries no "subagent-driven" token:
+    // its effective execution can never be active+subagent-driven, so the scan
+    // pre-filter skips it with one cheap read. If the full effective read ran,
+    // the induced plan drift would persist a reset of the plan to draft; the
+    // pre-filter must leave the file byte-identical (the drift is reconciled
+    // only when a status/transition actually reads the flow).
+    establishMenuChoice(root, "inactive", "handoff");
+    const flow = path.join(root, "docs", "inactive", "sdd", "flow.json");
+    const before = readFileSync(flow, "utf8");
+    writeFileSync(
+      path.join(root, "docs", "inactive", "plan.md"),
+      REMINDER_PLAN("inactive").replace("do it", "do it now"),
+    );
+    expect(findActiveSubagentDrivenPlans(root)).toEqual([]);
+    expect(readFileSync(flow, "utf8")).toBe(before);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("CA-03: reminder is injected only when the marker is absent (idempotent)", () => {
   expect(shouldInjectSddReminder("plain user message")).toBe(true);
   expect(shouldInjectSddReminder(SDD_REMINDER_TEXT)).toBe(false);
@@ -120,6 +210,23 @@ test("CA-06: contract reminder carries the superpowers self-review ritual line",
   expect(REMINDER_TEXT).toContain("type consistency");
   expect(REMINDER_TEXT).toContain("workflow_spec_approve");
   expect(REMINDER_TEXT).toContain("workflow_plan_approve");
+});
+
+test("CA-08: the destination reminder carries the marker and never offers Handoff", () => {
+  expect(DESTINATION_REMINDER_TEXT).toContain(HANDOFF_DESTINATION_MARKER);
+  expect(DESTINATION_REMINDER_TEXT).not.toContain("Handoff");
+  for (const label of DESTINATION_MENU_LABELS) {
+    expect(DESTINATION_REMINDER_TEXT).toContain(label);
+  }
+  expect(reminderTextFor(true)).toBe(DESTINATION_REMINDER_TEXT);
+  expect(reminderTextFor(false)).toBe(REMINDER_TEXT);
+  expect(REMINDER_TEXT).toContain("Handoff");
+});
+
+test("CA-13: the SDD rail reminder never mentions the post-plan menu or Handoff", () => {
+  expect(SDD_REMINDER_TEXT).toContain("subagent-driven");
+  expect(SDD_REMINDER_TEXT).not.toContain("Handoff");
+  expect(SDD_REMINDER_TEXT).not.toContain("Inline");
 });
 
 test("CA-03: config-gap marker in assistant text → detector true, guard injects", () => {
@@ -198,129 +305,80 @@ test("CA-03: composition — backtick doc ref and raw fenced spec can both fire"
   expect(`${DOC_DELIVERY_TEXT}\n${DOC_RENDER_TEXT}`).toContain("workflow-doc-render");
 });
 
-test("I-1: fully complete progress.md ledger turns the rail off", () => {
+test("I-1: only a completed EXECUTION turns the rail off; a full ledger on an active flow does not", () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "wf-reminder-"));
   try {
-    writeFlow(root, "done", {
-      menu: { chosen: "subagent-driven" },
-      plan: { status: "approved" },
-    });
-    const dir = path.join(root, "docs", "done", "sdd");
-    writeFileSync(path.join(dir, "progress.md"), "Task 1: complete\nTask 2: COMPLETE\n");
-    writeFileSync(path.join(root, "docs", "done", "plan.md"), "### Task 1: A\n### Task 2: B\n");
-    expect(findActiveSubagentDrivenPlans(root)).toEqual([]);
+    // An active subagent-driven flow stays discovered even with a complete
+    // ledger — completion is an explicit execution transition, not a ledger scan.
+    establishMenuChoice(root, "active-full", "subagent-driven");
+    writeSddLedger(root, "active-full", ["Task 1: complete"]);
+    expect(findActiveSubagentDrivenPlans(root)).toEqual(["active-full"]);
+
+    // A completed execution is gone regardless of the ledger.
+    establishMenuChoice(root, "executed", "subagent-driven");
+    writeSddLedger(root, "executed", ["Task 1: complete"]);
+    const finished = transitionExecution(
+      root,
+      "executed",
+      "docs/executed/plan.md",
+      "complete",
+      cliEvidence(),
+      undefined,
+      { verifyProject: () => ({ stdout: "", stderr: "", exitCode: 0, cwd: root }) },
+    );
+    expect(finished.ok).toBe(true);
+    expect(findActiveSubagentDrivenPlans(root)).toEqual(["active-full"]);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });
 
-test("I-1: missing or incomplete progress.md keeps the slug active", () => {
+test("I-1: a missing or incomplete ledger keeps an active execution discovered", () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "wf-reminder-"));
   try {
-    writeFlow(root, "no-ledger", {
-      menu: { chosen: "subagent-driven" },
-      plan: { status: "approved" },
-    });
-    writeFlow(root, "partial", {
-      menu: { chosen: "subagent-driven" },
-      plan: { status: "approved" },
-    });
-    const dir = path.join(root, "docs", "partial", "sdd");
-    writeFileSync(path.join(dir, "progress.md"), "Task 1: complete\nTask 2: in_progress\n");
+    establishMenuChoice(root, "no-ledger", "subagent-driven");
+    establishMenuChoice(root, "partial", "subagent-driven");
+    writeSddLedger(root, "partial", ["Task 1: complete", "Task 2: in_progress"]);
     expect(findActiveSubagentDrivenPlans(root).sort()).toEqual(["no-ledger", "partial"]);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });
 
-test("I-2a: last task present but not complete keeps the rail on", () => {
+test("I-2: active execution is discovered regardless of last-task ledger coverage", () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "wf-reminder-"));
   try {
-    writeFlow(root, "p", {
-      menu: { chosen: "subagent-driven" },
-      plan: { status: "approved" },
-    });
-    const dir = path.join(root, "docs", "p", "sdd");
-    writeFileSync(
-      path.join(root, "docs", "p", "plan.md"),
-      "### Task 1: A\n### Task 2: B\n### Task 3: C\n",
-    );
-    writeFileSync(
-      path.join(dir, "progress.md"),
-      "Task 1: complete\nTask 2: complete\nTask 3: in_progress\n",
-    );
+    establishMenuChoice(root, "p", "subagent-driven");
+    writeSddLedger(root, "p", ["Task 1: complete", "Task 2: complete"]);
+    expect(findActiveSubagentDrivenPlans(root)).toEqual(["p"]);
+    writeSddLedger(root, "p", ["Task 1: complete", "Task 2: complete", "Task 3: complete"]);
+    // Ledger coverage alone never ends an active execution.
     expect(findActiveSubagentDrivenPlans(root)).toEqual(["p"]);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });
 
-test("I-2b: last task missing from the ledger keeps the rail on", () => {
+test("I-2d: an unreadable plan.md on an active flow fails closed (excluded via drift reset)", () => {
+  if (process.platform === "win32") return; // chmod is not advisory on win32
   const root = mkdtempSync(path.join(os.tmpdir(), "wf-reminder-"));
   try {
-    writeFlow(root, "p", {
-      menu: { chosen: "subagent-driven" },
-      plan: { status: "approved" },
-    });
-    const dir = path.join(root, "docs", "p", "sdd");
-    writeFileSync(
-      path.join(root, "docs", "p", "plan.md"),
-      "### Task 1: A\n### Task 2: B\n### Task 3: C\n",
-    );
-    writeFileSync(path.join(dir, "progress.md"), "Task 1: complete\nTask 2: complete\n");
+    establishMenuChoice(root, "p", "subagent-driven");
     expect(findActiveSubagentDrivenPlans(root)).toEqual(["p"]);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test("I-2c: ledger covering all plan tasks turns the rail off", () => {
-  const root = mkdtempSync(path.join(os.tmpdir(), "wf-reminder-"));
-  try {
-    writeFlow(root, "p", {
-      menu: { chosen: "subagent-driven" },
-      plan: { status: "approved" },
-    });
-    const dir = path.join(root, "docs", "p", "sdd");
-    writeFileSync(
-      path.join(root, "docs", "p", "plan.md"),
-      "### Task 1: A\n### Task 2: B\n### Task 3: C\n",
-    );
-    writeFileSync(
-      path.join(dir, "progress.md"),
-      "Task 1: complete\nTask 2: complete\nTask 3: complete\n",
-    );
-    expect(findActiveSubagentDrivenPlans(root)).toEqual([]);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test("I-2d: unreadable plan.md keeps the rail on", () => {
-  const root = mkdtempSync(path.join(os.tmpdir(), "wf-reminder-"));
-  try {
-    writeFlow(root, "p", {
-      menu: { chosen: "subagent-driven" },
-      plan: { status: "approved" },
-    });
-    const dir = path.join(root, "docs", "p", "sdd");
     const plan = path.join(root, "docs", "p", "plan.md");
-    writeFileSync(plan, "### Task 1: A\n### Task 2: B\n### Task 3: C\n");
-    writeFileSync(
-      path.join(dir, "progress.md"),
-      "Task 1: complete\nTask 2: complete\nTask 3: complete\n",
-    );
     chmodSync(plan, 0o000);
-    let stillReadable = true;
+    let unreadable = true;
     try {
       readFileSync(plan, "utf8");
+      unreadable = false;
     } catch {
-      stillReadable = false;
+      // unreadable
     }
-    if (!stillReadable) {
-      expect(findActiveSubagentDrivenPlans(root)).toEqual(["p"]);
+    if (unreadable) {
+      expect(findActiveSubagentDrivenPlans(root)).toEqual([]);
     }
   } finally {
+    chmodSync(path.join(root, "docs", "p", "plan.md"), 0o644);
     rmSync(root, { recursive: true, force: true });
   }
 });
@@ -328,13 +386,9 @@ test("I-2d: unreadable plan.md keeps the rail on", () => {
 test("M-3: unreadable flow.json (EACCES) is skipped without throwing", () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "wf-reminder-"));
   try {
+    establishMenuChoice(root, "locked", "subagent-driven");
     const dir = path.join(root, "docs", "locked", "sdd");
-    mkdirSync(dir, { recursive: true });
     const flow = path.join(dir, "flow.json");
-    writeFileSync(
-      flow,
-      JSON.stringify({ menu: { chosen: "subagent-driven" }, plan: { status: "approved" } }),
-    );
     chmodSync(flow, 0o000);
     let stillReadable = true;
     try {
@@ -346,6 +400,99 @@ test("M-3: unreadable flow.json (EACCES) is skipped without throwing", () => {
       expect(findActiveSubagentDrivenPlans(root)).toEqual([]);
     }
   } finally {
+    chmodSync(path.join(root, "docs", "locked", "sdd", "flow.json"), 0o644);
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+const reminderUserMessage = (text: string) => ({
+  info: { role: "user" as const, id: "u", sessionID: "s", time: { created: 0, updated: 0 } },
+  parts: [
+    {
+      type: "text" as const,
+      text,
+      id: "p",
+      messageID: "u",
+      sessionID: "s",
+      time: { created: 0, updated: 0 },
+    },
+  ],
+});
+
+/** Drive the real OpenCode plugin's chat.messages.transform hook and return the injected turn text. */
+const reminderInjectedText = async (root: string, message = "continue"): Promise<string> => {
+  const hooks = await plugin({
+    directory: root,
+    worktree: root,
+    serverUrl: new URL("http://localhost"),
+  } as never);
+  const output = { messages: [reminderUserMessage(message)] };
+  await hooks["experimental.chat.messages.transform"]?.({} as never, output as never);
+  return output.messages[0].parts
+    .filter((p: any) => p.type === "text")
+    .map((p: any) => p.text)
+    .join("\n");
+};
+
+test("CA-08: a marked-destination flow drives the real plugin to inject the four-choice destination reminder", async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wf-dest-"));
+  try {
+    establishMenuChoice(root, "dest", "handoff");
+    const marked = markHandoffDestination(root, "dest", "docs/dest/plan.md");
+    expect(marked.ok).toBe(true);
+
+    const text = await reminderInjectedText(root);
+    expect(text).toContain(DESTINATION_REMINDER_TEXT);
+    expect(text).not.toContain(REMINDER_TEXT);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("CA-08: ordinary, pending, paused, completed, and active-inline flows keep the five-choice source reminder", async () => {
+  const roots: string[] = [];
+  const buildRoot = (): string => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "wf-src-"));
+    roots.push(root);
+    return root;
+  };
+  const rootInline = buildRoot();
+  const rootPending = buildRoot();
+  const rootPaused = buildRoot();
+  const rootDone = buildRoot();
+  try {
+    // active inline
+    establishMenuChoice(rootInline, "inline", "inline");
+
+    // pending (handoff chosen but destination never marked)
+    establishMenuChoice(rootPending, "pending", "handoff");
+
+    // paused subagent-driven
+    establishMenuChoice(rootPaused, "paused", "subagent-driven");
+    expect(
+      transitionExecution(rootPaused, "paused", "docs/paused/plan.md", "pause", cliEvidence()).ok,
+    ).toBe(true);
+
+    // completed subagent-driven
+    establishMenuChoice(rootDone, "done", "subagent-driven");
+    writeSddLedger(rootDone, "done", ["Task 1: complete"]);
+    const finished = transitionExecution(
+      rootDone,
+      "done",
+      "docs/done/plan.md",
+      "complete",
+      cliEvidence(),
+      undefined,
+      { verifyProject: () => ({ stdout: "", stderr: "", exitCode: 0, cwd: rootDone }) },
+    );
+    expect(finished.ok).toBe(true);
+
+    for (const root of [rootInline, rootPending, rootPaused, rootDone]) {
+      const text = await reminderInjectedText(root);
+      expect(text).toContain(REMINDER_TEXT);
+      expect(text).not.toContain(DESTINATION_REMINDER_TEXT);
+    }
+  } finally {
+    for (const root of roots) rmSync(root, { recursive: true, force: true });
   }
 });

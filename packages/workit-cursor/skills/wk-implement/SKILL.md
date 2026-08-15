@@ -20,7 +20,7 @@ Use the returned `tasks[]` as ground truth. Cache each `section_text` for subage
 
 Resolve plugin root: `WORKFLOW_TOOLKIT_ROOT` env or `~/.cursor/plugins/local/workit/`.
 
-Load `templates/execution-contract.md`. Substitute `<SPEC_PATH>`, `<PLAN_PATH>`, `<BRANCH>`, `<SDD_DIR>`, `<TASK_LIST>` from MCP. If template missing, stop with error.
+Load `templates/execution-contract.md`. Substitute `<SPEC_PATH>`, `<PLAN_PATH>`, `<BRANCH>`, `<SDD_DIR>`, `<TASK_LIST>` from MCP. OMIT the `## Handoff destination` section and its `<workflow-handoff-destination>` marker line — that section is only for sessions started from a `workflow_handoff_prompt` destination prompt. This inline executor is NOT a destination and must never present itself as one (five-choice source menu, Handoff still available). If template missing, stop with error.
 
 ## Step 3 — Follow contract
 

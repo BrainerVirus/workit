@@ -1,7 +1,13 @@
 import path from "node:path";
 import { tool, type PluginInput } from "@opencode-ai/plugin";
 import { fail } from "@brainervirus/workit-core/src/core";
-import { assertFlowGates } from "@brainervirus/workit-core/src/core/flow-state";
+import {
+  assertFlowGates,
+  markHandoffDestination,
+  readEffectiveFlowState,
+  slugFromPath,
+  type FlowGateResult,
+} from "@brainervirus/workit-core/src/core/flow-state";
 import { WorkflowStateStore } from "@brainervirus/workit-core/src/state";
 import {
   buildHandoffPrompt,
@@ -28,6 +34,27 @@ export const adaptPluginHandoffClient = (client: PluginInput["client"]): Handoff
 
 const output = (value: unknown) => JSON.stringify(value, null, 2);
 
+/**
+ * Idempotent adapter-level destination marking (designed edge, Task 3 advisory):
+ * core `markHandoffDestination` REJECTS an already-marked flow with
+ * `recursive_handoff`, so a re-seed after a selection failure would fail at
+ * stage "mark" and leave the retry stuck. If the effective state is already a
+ * handoff destination the mark is a no-op success and the retry continues to
+ * selection. Core `recursive_handoff` stays authoritative for a genuinely new
+ * double-mark attempt: a fresh menu choice is rejected by `recordMenuChoice`
+ * (CA-09) and the tool's pre-flight below rejects a fresh handoff on a marked
+ * destination before any session is created.
+ */
+export const idempotentMarkDestination = (
+  root: string,
+  slug: string,
+  planPath: string,
+): FlowGateResult => {
+  const effective = readEffectiveFlowState(root, slug);
+  if (effective.ok && effective.state.handoff_destination) return { ok: true };
+  return markHandoffDestination(root, slug, planPath);
+};
+
 export function createHandoffTools(client: HandoffClient, state: WorkflowStateStore) {
   return {
     workflow_handoff_session: tool({
@@ -38,9 +65,25 @@ export function createHandoffTools(client: HandoffClient, state: WorkflowStateSt
         const built = buildHandoffPrompt(context.directory, userMessage);
         if ("error" in built) return output(fail(built.error));
         const active = built;
+        const slug = slugFromPath(active.plan);
         try {
           const gate = assertFlowGates(context.directory, active.plan);
           if (!gate.ok) return output(fail(gate.error));
+          // Pre-flight destination check (Task 4 advisory): a second handoff on
+          // an already-marked destination returns recursive_handoff immediately
+          // instead of creating and seeding a child session that is doomed to
+          // fail at the mark stage — no wasted session. The core
+          // recursive_handoff rejection stays intact for the genuine
+          // double-mark attempt.
+          const preflight = readEffectiveFlowState(context.directory, slug);
+          if (!preflight.ok) return output(fail(preflight.error, { code: preflight.code }));
+          if (preflight.state.handoff_destination) {
+            return output(
+              fail("this flow is already a handoff destination — a second handoff is rejected", {
+                code: "recursive_handoff",
+              }),
+            );
+          }
           state.set(context.sessionID, { spec: active.spec, plan: active.plan, sdd: active.sdd });
           return output(
             await handoffSession(client, {
@@ -48,6 +91,12 @@ export function createHandoffTools(client: HandoffClient, state: WorkflowStateSt
               title: `Continue ${path.basename(path.dirname(active.plan))}`,
               prompt: active.prompt,
               stay: /(?:^|\s)--stay(?:\s|$)/.test(userMessage),
+              // CA-07/Task 3: mark the destination ONLY after the child session
+              // is seeded successfully and before any selection. A create/seed
+              // failure leaves the source flow unmarked and retryable; an
+              // already-marked destination is treated idempotently so a retry
+              // after a selection failure succeeds instead of dying at the mark.
+              afterSeed: () => idempotentMarkDestination(context.directory, slug, active.plan),
             }),
           );
         } catch (error) {

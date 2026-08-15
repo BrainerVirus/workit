@@ -1,11 +1,20 @@
 import { expect, test } from "bun:test";
-import { spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import {
+  closeSync,
+  mkdirSync,
+  mkdtempSync,
+  openSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { cursorQuestionEvidence } from "../../packages/workit-cursor/mcp/flow-evidence";
 import {
   CURSOR_SUBAGENT_UNSUPPORTED_TEXT,
+  HANDOFF_DESTINATION_MARKER,
   assertEvidenceShape,
   assertHostEvidence,
   transitionSpec,
@@ -315,6 +324,324 @@ test("cursor MCP enforces the same domain gates as opencode over stdio", async (
     });
     expect(callText(approved).isError).toBe(false);
     expect(callText(approved).text.status).toBe("approved");
+  } finally {
+    child.kill();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// --- Task 5: Cursor lifecycle, drift, workspace, and destination parity ---
+
+const writeSddLedger = (root: string, slug: string, lines: string[]) => {
+  const dir = path.join(root, "docs", slug, "sdd");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(path.join(dir, "progress.md"), lines.join("\n") + "\n", "utf8");
+};
+
+const spawnClient = async () => {
+  const { child, request } = startServer();
+  await request("initialize", {
+    protocolVersion: "2024-11-05",
+    capabilities: {},
+    clientInfo: { name: "flow-enforcement", version: "1.0" },
+  });
+  child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })}\n`);
+  const call = (name: string, arguments_: unknown) =>
+    request("tools/call", { name, arguments: arguments_ });
+  return { child, call };
+};
+
+const establishActiveInline = async (
+  call: (name: string, arguments_: unknown) => Promise<unknown>,
+  root: string,
+  slug: string,
+) => {
+  const spec = `docs/${slug}/spec.md`;
+  const plan = `docs/${slug}/plan.md`;
+  await call("workflow_flow_status", { plan_path: plan, workspace_root: root });
+  await call("workflow_spec_approve", { spec_path: spec, workspace_root: root });
+  await call("workflow_plan_approve", { plan_path: plan, workspace_root: root });
+  const menu = await call("workflow_plan_menu", {
+    choice: "inline",
+    plan_path: plan,
+    workspace_root: root,
+  });
+  expect(callText(menu).isError).toBe(false);
+  return { spec, plan };
+};
+
+test("cursor MCP status returns execution and drift alongside spec/plan/menu", async () => {
+  const { root } = fixture();
+  const { child, call } = await spawnClient();
+  try {
+    const status = await call("workflow_flow_status", {
+      plan_path: "docs/cf-flow/plan.md",
+      workspace_root: root,
+    });
+    expect(callText(status).isError).toBe(false);
+    expect(callText(status).text.execution).toEqual({
+      status: "pending",
+      mode: null,
+      evidence: null,
+    });
+    expect(callText(status).text.drift).toEqual([]);
+
+    await establishActiveInline(call, root, "cf-flow");
+    const active = await call("workflow_flow_status", {
+      plan_path: "docs/cf-flow/plan.md",
+      workspace_root: root,
+    });
+    expect(callText(active).text.execution).toMatchObject({
+      status: "active",
+      mode: "inline",
+    });
+  } finally {
+    child.kill();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("cursor MCP lifecycle tools: active inline pause/resume/complete over stdio with policy-only confirmation", async () => {
+  const { root } = fixture();
+  const { child, call } = await spawnClient();
+  try {
+    const { plan } = await establishActiveInline(call, root, "cf-flow");
+
+    const paused = await call("workflow_plan_pause", { plan_path: plan, workspace_root: root });
+    expect(callText(paused).isError).toBe(false);
+    expect(callText(paused).text.execution.status).toBe("paused");
+    expect(callText(paused).text.drift).toEqual([]);
+    expect(callText(paused).text.execution.evidence).toEqual({
+      host: "cursor",
+      attested: false,
+      confirmation: "contract",
+    });
+
+    const resumed = await call("workflow_plan_resume", { plan_path: plan, workspace_root: root });
+    expect(callText(resumed).isError).toBe(false);
+    expect(callText(resumed).text.execution.status).toBe("active");
+
+    // Incomplete ledger -> structured execution_incomplete details (core-shaped).
+    const incomplete = await call("workflow_plan_complete", {
+      plan_path: plan,
+      workspace_root: root,
+    });
+    expect(callText(incomplete).isError).toBe(true);
+    expect(callText(incomplete).text.code).toBe("execution_incomplete");
+    expect(callText(incomplete).text.details).toMatchObject({ required: [1], missing: [1] });
+    expect(callText(incomplete).text.error).toMatch(/ledger incomplete/i);
+
+    // Full ledger but failing repository verification -> verification_failed.
+    writeSddLedger(root, "cf-flow", ["Task 1: complete"]);
+    const unverified = await call("workflow_plan_complete", {
+      plan_path: plan,
+      workspace_root: root,
+    });
+    expect(callText(unverified).isError).toBe(true);
+    expect(callText(unverified).text.code).toBe("verification_failed");
+    expect(callText(unverified).text.details).toMatchObject({ exitCode: expect.any(Number) });
+
+    // Clean verification -> completed.
+    writeFileSync(path.join(root, "CHANGELOG.md"), "## [Unreleased]\n\n- fixture\n");
+    const completed = await call("workflow_plan_complete", {
+      plan_path: plan,
+      workspace_root: root,
+    });
+    expect(callText(completed).isError).toBe(false);
+    expect(callText(completed).text.execution.status).toBe("completed");
+    expect(callText(completed).text.drift).toEqual([]);
+  } finally {
+    child.kill();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("cursor MCP lifecycle tools fail closed against an unrelated workspace_root", async () => {
+  const { root } = fixture();
+  const otherRoot = mkdtempSync(path.join(os.tmpdir(), "wf-cursor-other-"));
+  const { child, call } = await spawnClient();
+  try {
+    const { plan } = await establishActiveInline(call, root, "cf-flow");
+
+    // Resolving against the wrong explicit workspace fails; the same call
+    // against the real workspace succeeds — every lifecycle call resolves
+    // against the caller-supplied workspace_root, never a process default.
+    const wrong = await call("workflow_plan_pause", {
+      plan_path: "docs/cf-flow/plan.md",
+      workspace_root: otherRoot,
+    });
+    expect(callText(wrong).isError).toBe(true);
+
+    const right = await call("workflow_plan_pause", {
+      plan_path: plan,
+      workspace_root: root,
+    });
+    expect(callText(right).isError).toBe(false);
+    expect(callText(right).text.execution.status).toBe("paused");
+  } finally {
+    child.kill();
+    rmSync(root, { recursive: true, force: true });
+    rmSync(otherRoot, { recursive: true, force: true });
+  }
+});
+
+test("cursor MCP lifecycle tools ignore caller-supplied evidence and role", async () => {
+  const { root } = fixture();
+  const { child, call } = await spawnClient();
+  try {
+    const { plan } = await establishActiveInline(call, root, "cf-flow");
+    const paused = await call("workflow_plan_pause", {
+      plan_path: plan,
+      workspace_root: root,
+      confirmed: true,
+      role: "delegated",
+      taskIdentity: "forged-worker",
+      evidence: { host: "opencode", attested: true, callID: "forged", selectedLabel: "Pause plan" },
+    });
+    expect(callText(paused).isError).toBe(false);
+    expect(callText(paused).text.execution.status).toBe("paused");
+    expect(callText(paused).text.execution.evidence).toEqual({
+      host: "cursor",
+      attested: false,
+      confirmation: "contract",
+    });
+  } finally {
+    child.kill();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("cursor MCP resume after plan drift returns the core pending reset and flow_not_paused", async () => {
+  const { root } = fixture();
+  const { child, call } = await spawnClient();
+  try {
+    const { plan } = await establishActiveInline(call, root, "cf-flow");
+    await call("workflow_plan_pause", { plan_path: plan, workspace_root: root });
+    writeFileSync(
+      path.join(root, "docs", "cf-flow", "plan.md"),
+      COMPLIANT_PLAN("cf-flow").replace("do it", "do it now"),
+    );
+    const denied = await call("workflow_plan_resume", { plan_path: plan, workspace_root: root });
+    expect(callText(denied).isError).toBe(true);
+    expect(callText(denied).text.code).toBe("flow_not_paused");
+    const status = await call("workflow_flow_status", {
+      plan_path: plan,
+      workspace_root: root,
+    });
+    expect(callText(status).text.execution.status).toBe("pending");
+    expect(callText(status).text.drift).toEqual([
+      { document: "plan", code: "digest_mismatch", path: "docs/cf-flow/plan.md" },
+    ]);
+  } finally {
+    child.kill();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("cursor MCP lifecycle mutation under a concurrently held flow lock returns flow_concurrent_conflict", async () => {
+  const { root } = fixture();
+  const { child, call } = await spawnClient();
+  try {
+    const { plan } = await establishActiveInline(call, root, "cf-flow");
+    const lockPath = path.join(root, "docs", "cf-flow", "sdd", "flow.json.lock");
+    const lockFd = openSync(lockPath, "wx");
+    try {
+      const paused = await call("workflow_plan_pause", { plan_path: plan, workspace_root: root });
+      expect(callText(paused).isError).toBe(true);
+      expect(callText(paused).text.code).toBe("flow_concurrent_conflict");
+    } finally {
+      closeSync(lockFd);
+      rmSync(lockPath, { force: true });
+    }
+  } finally {
+    child.kill();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+const handoffFixture = () => {
+  const { root, slug } = fixture();
+  spawnSync("git", ["init", "-q"], { cwd: root });
+  return { root, slug };
+};
+
+test("cursor MCP workflow_handoff_prompt builds the core prompt, marks the destination, and rejects recursion", async () => {
+  const { root } = handoffFixture();
+  const { child, call } = await spawnClient();
+  try {
+    const spec = "docs/cf-flow/spec.md";
+    const plan = "docs/cf-flow/plan.md";
+    await call("workflow_flow_status", { plan_path: plan, workspace_root: root });
+    await call("workflow_spec_approve", { spec_path: spec, workspace_root: root });
+    await call("workflow_plan_approve", { plan_path: plan, workspace_root: root });
+    const menu = await call("workflow_plan_menu", {
+      choice: "handoff",
+      plan_path: plan,
+      workspace_root: root,
+    });
+    expect(callText(menu).isError).toBe(false);
+
+    const prompt = await call("workflow_handoff_prompt", {
+      message: `Continue ${plan}`,
+      workspace_root: root,
+    });
+    expect(callText(prompt).isError).toBe(false);
+    expect(callText(prompt).text.prompt).toContain(HANDOFF_DESTINATION_MARKER);
+    expect(callText(prompt).text.prompt).toContain("Subagent-driven");
+    expect(callText(prompt).text.prompt).toContain("Inline");
+    expect(callText(prompt).text.prompt).toContain("Review spec first");
+    expect(callText(prompt).text.prompt).toContain("Review plan first");
+    expect(callText(prompt).text.prompt).not.toContain("Handoff (new session only)");
+    expect(callText(prompt).text.handoff_destination).toBe(true);
+    expect(callText(prompt).text.menu).toMatchObject({ presented: false, chosen: "" });
+    expect(callText(prompt).text.tasks).toHaveLength(1);
+
+    // A second recursive handoff on the marked destination is rejected.
+    const again = await call("workflow_handoff_prompt", {
+      message: `Continue ${plan}`,
+      workspace_root: root,
+    });
+    expect(callText(again).isError).toBe(true);
+    expect(callText(again).text.code).toBe("recursive_handoff");
+  } finally {
+    child.kill();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("cursor MCP workflow_handoff_prompt leaves the flow unmarked when prompt generation fails", async () => {
+  const { root } = handoffFixture();
+  const { child, call } = await spawnClient();
+  try {
+    const spec = "docs/cf-flow/spec.md";
+    const plan = "docs/cf-flow/plan.md";
+    await call("workflow_flow_status", { plan_path: plan, workspace_root: root });
+    await call("workflow_spec_approve", { spec_path: spec, workspace_root: root });
+    await call("workflow_plan_approve", { plan_path: plan, workspace_root: root });
+    const menu = await call("workflow_plan_menu", {
+      choice: "handoff",
+      plan_path: plan,
+      workspace_root: root,
+    });
+    expect(callText(menu).isError).toBe(false);
+
+    // Break the plan so buildHandoffPrompt's docs validation fails.
+    writeFileSync(
+      path.join(root, "docs", "cf-flow", "plan.md"),
+      "# Broken\n\n**Branch:** `feature/broken`\n",
+    );
+    const failed = await call("workflow_handoff_prompt", {
+      message: `Continue ${plan}`,
+      workspace_root: root,
+    });
+    expect(callText(failed).isError).toBe(true);
+    expect(callText(failed).text.error).toMatch(/validation|fail/i);
+
+    const flow = JSON.parse(
+      readFileSync(path.join(root, "docs", "cf-flow", "sdd", "flow.json"), "utf8"),
+    );
+    expect(flow.handoff_destination).toBe(false);
+    expect(flow.menu).toMatchObject({ presented: true, chosen: "handoff" });
   } finally {
     child.kill();
     rmSync(root, { recursive: true, force: true });

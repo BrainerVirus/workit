@@ -4,6 +4,8 @@ import { fileURLToPath } from "node:url";
 import { createLogger } from "@brainervirus/workit-core/src/core/logger";
 import { EVENT, errorDetail } from "@brainervirus/workit-core/src/core/boundary";
 import { setDiagnosticLogger } from "@brainervirus/workit-core/src/core/config";
+import { reminderTextFor } from "@brainervirus/workit-core/src/core/reminder";
+import { findMarkedDestinations } from "@brainervirus/workit-core/src/core/menu";
 
 // Secret-safe diagnostic logger (DG-01-DG-03, DG-05, DG-10). Sink injection
 // only: session-start summaries mirror to stderr; the JSON contract on stdout
@@ -25,7 +27,10 @@ setDiagnosticLogger(logger);
 logger.info(EVENT.initialization, { host: "cursor-hook", hook_dir: hookDir });
 
 const resolveRepoRoot = (): string => {
-  if (process.env.WORKFLOW_TOOLKIT_ROOT && existsSync(path.join(process.env.WORKFLOW_TOOLKIT_ROOT, "templates"))) {
+  if (
+    process.env.WORKFLOW_TOOLKIT_ROOT &&
+    existsSync(path.join(process.env.WORKFLOW_TOOLKIT_ROOT, "templates"))
+  ) {
     return process.env.WORKFLOW_TOOLKIT_ROOT;
   }
   if (existsSync(marker)) {
@@ -58,7 +63,65 @@ if (body === null) {
   process.exit(0);
 }
 
-const context = `<workflow-toolkit-askquestion-hard-gate>
+// The Cursor sessionStart hook input (via stdin JSON) carries the workspace
+// roots. Destination classification is host-neutral (CA-07/CA-08): the persisted
+// `handoff_destination` flag set by markHandoffDestination after a genuine
+// generated destination prompt — never session or parent IDs. A workspace with
+// no marked destination (including a Cursor inline implementer, which never
+// marks flow state) keeps the ordinary five-choice reminder.
+type HookInput = { workspace_roots?: unknown };
+
+// Bounded stdin read (advisory D7): a host that opens the sessionStart pipe but
+// writes nothing must not hang the hook. Read with a short timeout and treat
+// silence like empty input (ordinary source wording). Tests inject a short
+// timeout via WORKFLOW_HOOK_READ_TIMEOUT_MS. 2s bounds a broken host below the
+// packed-artifact runtime gate (5s default test timeout) while leaving real
+// hosts — which write the workspace JSON promptly — plenty of time.
+const HOOK_READ_TIMEOUT_MS = Number(process.env.WORKFLOW_HOOK_READ_TIMEOUT_MS ?? "2000");
+
+const readHookInput = (timeoutMs: number): Promise<HookInput> => {
+  if (process.stdin.isTTY) return Promise.resolve({});
+  return new Promise((resolve) => {
+    let buffer = "";
+    let settled = false;
+    const timer = setTimeout(() => settle({}), timeoutMs);
+    const onData = (chunk: string | Buffer) => {
+      buffer += String(chunk);
+      const text = buffer.trim();
+      if (!text) return;
+      try {
+        const parsed: unknown = JSON.parse(text);
+        settle(typeof parsed === "object" && parsed !== null ? (parsed as HookInput) : {});
+      } catch {
+        // Partial chunk — keep waiting for the rest or the timeout.
+      }
+    };
+    const onEnd = () => settle({});
+    function settle(value: HookInput) {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      process.stdin.off("data", onData);
+      process.stdin.off("end", onEnd);
+      resolve(value);
+    }
+    process.stdin.on("data", onData);
+    process.stdin.on("end", onEnd);
+  });
+};
+
+const isDestination = (input: HookInput): boolean => {
+  const roots = Array.isArray(input.workspace_roots) ? input.workspace_roots : [];
+  return roots.some((root) => typeof root === "string" && findMarkedDestinations(root).length > 0);
+};
+
+const main = async (): Promise<void> => {
+  // Select the core five/four reminder wording from the destination flag (CA-08):
+  // a marked destination gets the four-choice reminder that never offers Handoff
+  // and carries the marker; ordinary sessions keep the source five-choice wording.
+  const reminder = reminderTextFor(isDestination(await readHookInput(HOOK_READ_TIMEOUT_MS)));
+
+  const context = `<workflow-toolkit-askquestion-hard-gate>
 HARD-GATE: Any user choice with options → call Cursor AskQuestion directly with workflow-specific copy. NEVER A/B/C in chat. Overrides Superpowers brainstorming conversational options.
 </workflow-toolkit-askquestion-hard-gate>
 
@@ -83,9 +146,19 @@ ${body}
 </workflow-toolkit-superpowers-doc-contract>
 
 <workflow-toolkit-reminder>
-HARD-GATE: Bounded user choices → call Cursor AskQuestion directly (never A/B/C or 1/2/3 lists in prose). After a plan is approved → AskQuestion menu with: Subagent-driven, Inline, Handoff (new session only), Review spec first, Review plan first. Tools with confirmed → call them; never fabricate results.
-Delivering docs → clickable markdown link (docs/<slug>/spec.md) + 3-5 bullet summary.
+HARD-GATE: Bounded user choices → call Cursor AskQuestion directly (never A/B/C or 1/2/3 lists in prose).
+
+${reminder}
 </workflow-toolkit-reminder>`;
 
-process.stdout.write(JSON.stringify({ additional_context: context }, null, 2) + "\n");
-process.exit(0);
+  process.stdout.write(JSON.stringify({ additional_context: context }, null, 2) + "\n");
+  process.exit(0);
+};
+
+void main().catch((err) => {
+  // Fail-open on an unexpected async error: never hang or corrupt the host
+  // protocol (DG-04/DG-05) — report a sanitized event and exit empty.
+  logger.error(EVENT.hooks, { boundary: "session-start", ...errorDetail(err) });
+  process.stdout.write("{}\n");
+  process.exit(0);
+});

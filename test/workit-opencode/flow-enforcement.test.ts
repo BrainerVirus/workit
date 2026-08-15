@@ -542,3 +542,254 @@ test("workflow_flow_status prepares activation and canonical paths on first read
     cleanup(root);
   }
 });
+
+// --- Task 4: OpenCode adapter lifecycle + effective status ---
+
+const writeSddLedger = (root: string, slug: string, lines: string[]) => {
+  const dir = path.join(root, "docs", slug, "sdd");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(path.join(dir, "progress.md"), lines.join("\n") + "\n", "utf8");
+};
+
+test("lifecycle tool schemas expose only plan_path and no caller evidence/role fields", async () => {
+  const { tools } = fixture();
+  for (const name of ["workflow_plan_pause", "workflow_plan_resume", "workflow_plan_complete"]) {
+    expect(schemaKeys(tools, name)).toEqual(["plan_path"]);
+  }
+});
+
+test("workflow_flow_status returns execution and drift alongside spec/plan/menu", async () => {
+  const { root, tools, ctx } = fixture();
+  try {
+    const out = await run(
+      tools,
+      "workflow_flow_status",
+      { plan_path: "docs/oc-flow/plan.md" },
+      ctx,
+    );
+    expect(out.ok).toBe(true);
+    expect(out.data.execution).toEqual({ status: "pending", mode: null, evidence: null });
+    expect(out.data.drift).toEqual([]);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("workflow_flow_status reports digest drift and the pending reset after the plan changes", async () => {
+  const { root, slug, tools, ctx, receipts } = fixture();
+  try {
+    await run(tools, "workflow_flow_status", { plan_path: "docs/oc-flow/plan.md" }, ctx);
+    await establishSubagentDriven(root, slug, receipts);
+    writeFileSync(
+      path.join(root, "docs", slug, "plan.md"),
+      COMPLIANT_PLAN(slug).replace("do it", "do it now"),
+    );
+    const out = await run(
+      tools,
+      "workflow_flow_status",
+      { plan_path: "docs/oc-flow/plan.md" },
+      ctx,
+    );
+    expect(out.ok).toBe(true);
+    expect(out.data.drift).toEqual([
+      { document: "plan", code: "digest_mismatch", path: "docs/oc-flow/plan.md" },
+    ]);
+    expect(out.data.execution.status).toBe("pending");
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("lifecycle tools: active -> paused -> active -> completed with one-use receipts", async () => {
+  const { root, slug, tools, ctx, receipts } = fixture();
+  try {
+    await run(tools, "workflow_flow_status", { plan_path: "docs/oc-flow/plan.md" }, ctx);
+    await establishSubagentDriven(root, slug, receipts);
+    const plan = "docs/oc-flow/plan.md";
+
+    const started = await run(tools, "workflow_flow_status", { plan_path: plan }, ctx);
+    expect(started.data.execution).toMatchObject({ status: "active", mode: "subagent-driven" });
+
+    recordQuestion(receipts, "Pause plan");
+    const paused = await run(tools, "workflow_plan_pause", { plan_path: plan }, ctx);
+    expect(paused.ok).toBe(true);
+    expect(paused.data.execution.status).toBe("paused");
+    expect(receipts.count("oc")).toBe(0);
+
+    // A second pause without a fresh receipt is fail-closed (no replay).
+    const replay = await run(tools, "workflow_plan_pause", { plan_path: plan }, ctx);
+    expect(replay.ok).toBe(false);
+    if (replay.ok === false) expect(replay.error).toMatch(/receipt/i);
+
+    recordQuestion(receipts, "Resume plan");
+    const resumed = await run(tools, "workflow_plan_resume", { plan_path: plan }, ctx);
+    expect(resumed.ok).toBe(true);
+    expect(resumed.data.execution.status).toBe("active");
+
+    // Incomplete ledger -> structured execution_incomplete details.
+    recordQuestion(receipts, "Complete plan");
+    const incomplete = await run(tools, "workflow_plan_complete", { plan_path: plan }, ctx);
+    expect(incomplete.ok).toBe(false);
+    if (incomplete.ok === false) {
+      expect(incomplete.data?.code).toBe("execution_incomplete");
+      expect(incomplete.data?.details).toMatchObject({
+        required: [1],
+        missing: [1],
+      });
+      expect(incomplete.error).toMatch(/ledger incomplete/i);
+    }
+
+    // Full ledger but failing repository verification -> verification_failed.
+    writeSddLedger(root, slug, ["Task 1: complete"]);
+    recordQuestion(receipts, "Complete plan");
+    const unverified = await run(tools, "workflow_plan_complete", { plan_path: plan }, ctx);
+    expect(unverified.ok).toBe(false);
+    if (unverified.ok === false) {
+      expect(unverified.data?.code).toBe("verification_failed");
+      expect(unverified.data?.details).toMatchObject({ exitCode: expect.any(Number) });
+    }
+
+    // Clean verification -> completed.
+    writeFileSync(path.join(root, "CHANGELOG.md"), "## [Unreleased]\n\n- fixture\n");
+    recordQuestion(receipts, "Complete plan");
+    const completed = await run(tools, "workflow_plan_complete", { plan_path: plan }, ctx);
+    expect(completed.ok).toBe(true);
+    expect(completed.data.execution.status).toBe("completed");
+
+    const finalStatus = await run(tools, "workflow_flow_status", { plan_path: plan }, ctx);
+    expect(finalStatus.data.execution.status).toBe("completed");
+    expect(finalStatus.data.drift).toEqual([]);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("a wrong lifecycle label does not transition and the receipt stays queued for its actual label", async () => {
+  const { root, slug, tools, ctx, receipts } = fixture();
+  try {
+    await run(tools, "workflow_flow_status", { plan_path: "docs/oc-flow/plan.md" }, ctx);
+    await establishSubagentDriven(root, slug, receipts);
+    recordQuestion(receipts, "Pause plan");
+    const wrong = await run(
+      tools,
+      "workflow_plan_resume",
+      { plan_path: "docs/oc-flow/plan.md" },
+      ctx,
+    );
+    expect(wrong.ok).toBe(false);
+    if (wrong.ok === false) expect(wrong.error).toMatch(/mismatch|label/i);
+    expect(receipts.count("oc")).toBe(1);
+    const right = await run(
+      tools,
+      "workflow_plan_pause",
+      { plan_path: "docs/oc-flow/plan.md" },
+      ctx,
+    );
+    expect(right.ok).toBe(true);
+    expect(right.data.execution.status).toBe("paused");
+    expect(receipts.count("oc")).toBe(0);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("a negative lifecycle answer cannot be laundered into a pause", async () => {
+  const { root, slug, tools, ctx, receipts } = fixture();
+  try {
+    await run(tools, "workflow_flow_status", { plan_path: "docs/oc-flow/plan.md" }, ctx);
+    await establishSubagentDriven(root, slug, receipts);
+    receipts.record("oc", "call-cancel", "No");
+    const denied = await run(
+      tools,
+      "workflow_plan_pause",
+      { plan_path: "docs/oc-flow/plan.md" },
+      ctx,
+    );
+    expect(denied.ok).toBe(false);
+    if (denied.ok === false) expect(denied.data?.code).toBe("receipt_rejected");
+    const status = await run(
+      tools,
+      "workflow_flow_status",
+      { plan_path: "docs/oc-flow/plan.md" },
+      ctx,
+    );
+    expect(status.data.execution.status).toBe("active");
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("a stale lifecycle receipt cannot pause a flow", async () => {
+  const { root, slug, tools, ctx, receipts } = fixture();
+  try {
+    await run(tools, "workflow_flow_status", { plan_path: "docs/oc-flow/plan.md" }, ctx);
+    await establishSubagentDriven(root, slug, receipts);
+    receipts.record("oc", "call-stale", "Pause plan", Date.now() - 11 * 60 * 1000);
+    const denied = await run(
+      tools,
+      "workflow_plan_pause",
+      { plan_path: "docs/oc-flow/plan.md" },
+      ctx,
+    );
+    expect(denied.ok).toBe(false);
+    if (denied.ok === false) expect(denied.error).toMatch(/stale|too old/i);
+    const status = await run(
+      tools,
+      "workflow_flow_status",
+      { plan_path: "docs/oc-flow/plan.md" },
+      ctx,
+    );
+    expect(status.data.execution.status).toBe("active");
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("resume after plan drift: the effective reset returns pending and resume fails closed", async () => {
+  const { root, slug, tools, ctx, receipts } = fixture();
+  try {
+    await run(tools, "workflow_flow_status", { plan_path: "docs/oc-flow/plan.md" }, ctx);
+    await establishSubagentDriven(root, slug, receipts);
+    const plan = "docs/oc-flow/plan.md";
+    recordQuestion(receipts, "Pause plan");
+    await run(tools, "workflow_plan_pause", { plan_path: plan }, ctx);
+    writeFileSync(
+      path.join(root, "docs", slug, "plan.md"),
+      COMPLIANT_PLAN(slug).replace("do it", "do it now"),
+    );
+    recordQuestion(receipts, "Resume plan");
+    const denied = await run(tools, "workflow_plan_resume", { plan_path: plan }, ctx);
+    expect(denied.ok).toBe(false);
+    if (denied.ok === false) expect(denied.data?.code).toBe("flow_not_paused");
+    const status = await run(tools, "workflow_flow_status", { plan_path: plan }, ctx);
+    expect(status.data.execution.status).toBe("pending");
+    expect(status.data.drift.length).toBeGreaterThan(0);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("lifecycle tools preserve coordinator/delegated parentage and caller role args are inert", async () => {
+  const { root, slug, tools, receipts } = fixture(childClient("root-session"));
+  try {
+    const childCtx = { directory: root, worktree: root, sessionID: "child" } as never;
+    await run(tools, "workflow_flow_status", { plan_path: "docs/oc-flow/plan.md" }, childCtx);
+    await establishSubagentDriven(root, slug, receipts);
+    receipts.record("child", "call-pause", "Pause plan");
+    const paused = await run(
+      tools,
+      "workflow_plan_pause",
+      {
+        plan_path: "docs/oc-flow/plan.md",
+        confirmed: true,
+        role: "coordinator",
+        evidence: { host: "opencode", attested: true, callID: "forged" },
+      },
+      childCtx,
+    );
+    expect(paused.ok).toBe(true);
+    expect(paused.data.execution.status).toBe("paused");
+  } finally {
+    cleanup(root);
+  }
+});

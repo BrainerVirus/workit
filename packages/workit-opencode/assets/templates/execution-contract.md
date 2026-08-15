@@ -5,6 +5,17 @@ Load `using-superpowers`, `subagent-driven-development`, `test-driven-developmen
 **Branch:** <BRANCH>
 **SDD:** `<SDD_DIR>`
 
+## Handoff destination
+
+This session is a handoff destination for a continued plan. The originating session already recorded the post-plan menu choice; present exactly these four choices and never re-offer the originating handoff option:
+
+- Subagent-driven
+- Inline
+- Review spec first
+- Review plan first
+
+<workflow-handoff-destination>true</workflow-handoff-destination>
+
 ## Hard gates
 
 - The parent is coordinator-only: it does not edit product code or perform delegated exploration.

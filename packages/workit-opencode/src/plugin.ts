@@ -1,11 +1,10 @@
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Plugin } from "@opencode-ai/plugin";
 
 import { getWorkflowBootstrap } from "./bootstrap";
 import {
-  REMINDER_TEXT,
   DETECTION_TEXT,
   DOC_DELIVERY_TEXT,
   DOC_RENDER_TEXT,
@@ -26,6 +25,7 @@ import {
   shouldInjectReviewReception,
   ISSUE_RAIL_TEXT,
   shouldInjectIssueRail,
+  reminderTextFor,
 } from "@brainervirus/workit-core/src/core/reminder";
 import {
   detectProseChoices,
@@ -43,6 +43,7 @@ import {
 import {
   COORDINATOR_WRITE_TOOLS,
   HostReceiptStore,
+  readEffectiveFlowState,
   subagentDrivenInterception,
 } from "@brainervirus/workit-core/src/core/flow-state";
 import { createTools } from "./tools";
@@ -126,6 +127,31 @@ type MutablePermission = Record<string, unknown> & {
 const worktreeDenials = {
   "*git *worktree*": "deny",
 } as const;
+
+/**
+ * Marked handoff destination in the workspace (CA-07/CA-08): the effective
+ * flow read of any `docs/<slug>/` flow that carries `handoff_destination: true`
+ * (set atomically by `markHandoffDestination` after a genuine generated
+ * destination prompt). Fail closed: an unreadable or non-destination flow never
+ * selects destination wording, so ordinary sessions keep the source reminder.
+ * Mirrors the Cursor session-start hook's workspace-level destination scan.
+ */
+const hasMarkedDestination = (root: string): boolean => {
+  const docsDir = path.join(root, "docs");
+  if (!existsSync(docsDir)) return false;
+  let slugs: string[];
+  try {
+    slugs = readdirSync(docsDir);
+  } catch {
+    return false;
+  }
+  for (const slug of slugs) {
+    if (!existsSync(path.join(docsDir, slug, "sdd", "flow.json"))) continue;
+    const effective = readEffectiveFlowState(root, slug);
+    if (effective.ok && effective.state.handoff_destination) return true;
+  }
+  return false;
+};
 
 const withWorktreeDenials = (configuredPermission: unknown): MutablePermission => {
   const permission: MutablePermission =
@@ -284,7 +310,7 @@ const plugin: Plugin = async ({ client, directory }) => {
           }
         }
 
-        // Every turn: compact reminder anchored to the CURRENT user message (idempotent)
+        // Every turn: compact reminder anchored to the CURRENT user message (idempotent).
         const anchor =
           currentUser.parts.find((part) => part.type === "text") ?? currentUser.parts[0];
         const makePart = (text: string, tag = "r") => ({
@@ -298,8 +324,12 @@ const plugin: Plugin = async ({ client, directory }) => {
           .filter((part) => part.type === "text")
           .map((part) => (part as { text?: string }).text ?? "")
           .join("\n");
-        if (!currentText.includes(REMINDER_TEXT)) {
-          currentUser.parts.unshift(makePart(REMINDER_TEXT));
+        // CA-08: a marked-destination session gets the four-choice destination
+        // reminder (never the originating Handoff choice); everything else keeps
+        // the ordinary five-choice source reminder.
+        const reminder = reminderTextFor(hasMarkedDestination(directory));
+        if (!currentText.includes(reminder)) {
+          currentUser.parts.unshift(makePart(reminder));
         }
 
         // Post-hoc detection: last assistant message (before current user turn) used prose choices?

@@ -4,7 +4,10 @@ import os from "node:os";
 import path from "node:path";
 
 import { resolveWorkspaceRoot } from "../../packages/workit-core/src/core/scripts";
-import { readFlowState, slugFromPath } from "../../packages/workit-core/src/core/flow-state";
+import {
+  readEffectiveFlowState,
+  slugFromPath,
+} from "../../packages/workit-core/src/core/flow-state";
 const REPO_ROOT = path.resolve(import.meta.dir, "..", "..");
 const CORE_SRC = path.join(REPO_ROOT, "packages", "workit-core", "src");
 const CURSOR_SERVER = path.join(REPO_ROOT, "packages", "workit-cursor", "mcp", "server.ts");
@@ -109,14 +112,24 @@ test("opencode and cursor flow registrations share the same pure core functions"
     const result = JSON.parse(raw as string);
     expect(result.ok).toBe(true);
     const slug = slugFromPath("docs/x/plan.md");
-    const state = readFlowState(root, slug);
-    expect(result.data).toEqual({
-      slug,
-      spec: state.spec,
-      plan: state.plan,
-      menu: state.menu,
-      flow_path: `docs/${slug}/sdd/flow.json`,
-    });
+    // The status tool reads the EFFECTIVE (reconciled) state: the fixture's
+    // undigested approvals surface as digest_missing drift, the drift reset is
+    // persisted, and the execution lifecycle is reported alongside spec/plan/menu.
+    // Drift is reported on the reconciling read only — after the reset is
+    // persisted, a fresh read is clean.
+    const effective = readEffectiveFlowState(root, slug);
+    expect(effective.ok).toBe(true);
+    if (effective.ok) {
+      expect(result.data).toEqual({
+        slug,
+        spec: effective.state.spec,
+        plan: effective.state.plan,
+        menu: effective.state.menu,
+        execution: effective.state.execution,
+        drift: [{ document: "spec", code: "digest_missing", path: "docs/x/spec.md" }],
+        flow_path: `docs/${slug}/sdd/flow.json`,
+      });
+    }
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
