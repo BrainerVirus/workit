@@ -747,8 +747,9 @@ test("CA-05: defaultTargetBranch is preset-aware when unset", async () => {
 test("CA-02: a matched workspace's branchPolicy default beats a global vcs defaultTargetBranch", async () => {
   // PR #43 regression: a global vcs.json defaultTargetBranch ("develop")
   // shadowed the personal github-flow workspace's policy-derived "main".
-  // Spec'd order — workspace branchPolicy > workspace vcs > global vcs.json
-  // > preset — must hold; unmatched repos keep the global vcs.json fallback.
+  // Spec'd order — workspace tier (explicit vcs default, then branchPolicy
+  // default) > global vcs.json > preset — must hold; unmatched repos keep the
+  // global vcs.json fallback.
   const githubFlow = repoWithDevelop();
   const gitflow = repoWithDevelop();
   const unmatched = repoWithDevelop();
@@ -774,26 +775,54 @@ test("CA-02: a matched workspace's branchPolicy default beats a global vcs defau
     );
     writeFileSync(
       path.join(isolatedConfig, "workit", "vcs.json"),
-      JSON.stringify({ provider: "gitlab", defaultTargetBranch: "develop" }),
+      JSON.stringify({ provider: "gitlab", defaultTargetBranch: "staging" }),
     );
 
-    // global "develop" must NOT shadow the github-flow policy default "main"
+    // the global "staging" must NOT shadow the github-flow policy default "main"
     expect(resolveWorkspace(githubFlow.root)?.name).toBe("personal");
     expect(resolveBranchPolicyFor(githubFlow.root).defaultTargetBranch).toBe("main");
     expect(vcsConfig("resolve", githubFlow.root).defaultTargetBranch).toBe("main");
 
-    // explicit workspace vcs.defaultTargetBranch stays authoritative (develop)
+    // explicit workspace vcs.defaultTargetBranch stays authoritative: develop,
+    // not the genuinely-different global "staging"
     expect(resolveWorkspace(gitflow.root)?.name).toBe("work");
     expect(vcsConfig("resolve", gitflow.root).defaultTargetBranch).toBe("develop");
 
     // unmatched repo keeps the global vcs.json default as a fallback
     expect(resolveWorkspace(unmatched.root)).toBeNull();
-    expect(vcsConfig("resolve", unmatched.root).defaultTargetBranch).toBe("develop");
+    expect(vcsConfig("resolve", unmatched.root).defaultTargetBranch).toBe("staging");
   } finally {
     for (const r of [githubFlow, gitflow, unmatched]) {
       rmSync(r.root, { recursive: true, force: true });
       rmSync(r.remote, { recursive: true, force: true });
     }
+  }
+});
+
+test("explicit workspace vcs.defaultTargetBranch beats the workspace branchPolicy default", async () => {
+  // A workspace declaring BOTH an explicit vcs.defaultTargetBranch and a
+  // branchPolicy whose preset default differs must resolve the explicit value
+  // — the tier that the CA-02 test leaves coincident (its work workspace's
+  // explicit "develop" equals the gitflow preset default).
+  const { root, remote } = repoWithDevelop();
+  try {
+    writeFileSync(
+      path.join(isolatedConfig, "workit", "workspaces.json"),
+      JSON.stringify({
+        workspaces: [
+          {
+            name: "w",
+            glob: `${root}/**`,
+            vcs: { provider: "github", defaultTargetBranch: "release" },
+            branchPolicy: { preset: "github-flow" },
+          },
+        ],
+      }),
+    );
+    expect(vcsConfig("resolve", root).defaultTargetBranch).toBe("release");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(remote, { recursive: true, force: true });
   }
 });
 

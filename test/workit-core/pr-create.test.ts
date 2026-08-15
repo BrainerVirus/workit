@@ -207,6 +207,7 @@ test("CA-06: default-equal WF_PR_TARGET is accepted under gitflow (develop)", ()
   });
   expect(result.ok, `create failed: ${JSON.stringify(result)}`).toBe(true);
   expect(result.targetBranch).toBe("develop");
+  expect(readFileSync(logFile, "utf8")).toContain("--base develop");
 });
 
 test("CA-06: genuine overrides are still rejected when they differ from the default", () => {
@@ -488,6 +489,25 @@ test("T2: github push failure returns a structured push failed result without gh
   expect(result.error).toBe("push failed");
   expect(result.stderr).toBeTruthy();
   expect(git(root, ["rev-parse", "--verify", "origin/feature/t2"]).status).not.toBe(0);
+  expect(existsSync(logFile)).toBe(false); // gh never ran
+});
+
+test("T2: github pushBranch with an unborn HEAD (empty branch) fails closed without gh", () => {
+  // a repo with no commits has no current branch: `git push -u origin ""`
+  // would fail with git's raw refspec error, so the guard must return a
+  // readable push-failed result and gh must never run.
+  git(root, ["init", "-q", "-b", "develop"]);
+  git(root, ["config", "user.name", "Workflow Test"]);
+  git(root, ["config", "user.email", "workflow@example.test"]);
+  git(root, ["remote", "add", "origin", bareRemote]);
+  const result = withEnv({ WORKFLOW_TOOLKIT_CONFIG: cfgDir, PATH: stubPath() }, () => {
+    writeConfig(customPolicy, "trunk", { pushBranch: true });
+    return prCreate({ WF_PR_CONFIRMED: "true", WF_PR_TITLE: "T" }, root);
+  });
+  expect(result.ok).not.toBe(true);
+  expect(result.error).toBe("push failed");
+  expect(result.mode).toBe("push");
+  expect(result.stderr).toContain("empty current branch");
   expect(existsSync(logFile)).toBe(false); // gh never ran
 });
 

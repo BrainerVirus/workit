@@ -292,6 +292,15 @@ export function prCreate(env: NodeJS.ProcessEnv, cwd: string): Record<string, an
     // T2: GitHub has no --push flag — push the branch first so `gh pr create`
     // never runs against an unpushed branch when pushBranch is enabled.
     if (push) {
+      if (!branch) {
+        return {
+          error: "push failed",
+          provider,
+          mode: "push",
+          targetBranch: target,
+          stderr: "empty current branch (detached HEAD or unborn HEAD)",
+        };
+      }
       const pushRes = spawnSync("git", ["push", "-u", "origin", branch], {
         cwd: root,
         encoding: "utf8",
