@@ -643,9 +643,9 @@ test("recordMenuChoice accepts qualifier-decorated selected labels on a marked h
     expect(transitionPlan(root, slug, plan, openEvidence(store, "src", "Approve plan")).ok).toBe(
       true,
     );
-    expect(recordMenuChoice(root, slug, plan, "handoff", menuEvidence(store, "src", "handoff")).ok).toBe(
-      true,
-    );
+    expect(
+      recordMenuChoice(root, slug, plan, "handoff", menuEvidence(store, "src", "handoff")).ok,
+    ).toBe(true);
     expect(markHandoffDestination(root, slug, plan)).toEqual({ ok: true });
     expect(readFlowState(root, slug).handoff_destination).toBe(true);
 

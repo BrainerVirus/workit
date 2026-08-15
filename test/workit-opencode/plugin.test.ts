@@ -626,10 +626,11 @@ test("the plugin hook records the display-only handoff qualifier and workflow_pl
 
     await answerQuestion(hooks, "s2", "call-menu", "Handoff (new session only)");
     const menu = JSON.parse(
-      (await hooks.tool?.workflow_plan_menu.execute(
-        { plan_path: plan, choice: "handoff" },
-        { directory: root, worktree: root, sessionID: "s2" } as never,
-      )) as string,
+      (await hooks.tool?.workflow_plan_menu.execute({ plan_path: plan, choice: "handoff" }, {
+        directory: root,
+        worktree: root,
+        sessionID: "s2",
+      } as never)) as string,
     );
     expect(menu.ok).toBe(true);
     expect(menu.data.menu.chosen).toBe("handoff");

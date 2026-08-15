@@ -1276,8 +1276,7 @@ export class HostReceiptStore {
  *  not carry, so we strip them, trim, collapse whitespace, and lowercase both
  *  sides before comparing. Only the comparison normalizes — the stored label
  *  and evidence bytes are preserved verbatim. */
-const sameChoiceLabel = (a: string, b: string): boolean =>
-  normalizeLabel(a) === normalizeLabel(b);
+const sameChoiceLabel = (a: string, b: string): boolean => normalizeLabel(a) === normalizeLabel(b);
 
 const normalizeLabel = (s: string): string =>
   s
