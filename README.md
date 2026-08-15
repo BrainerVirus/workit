@@ -9,7 +9,7 @@ Multi-platform Superpowers workflow plugin for **Cursor**, **OpenCode**, and the
 | **Shared core** | `packages/workit-core/` — shared logic, skills, commands, scripts, templates |
 | **CLI**         | `packages/workit-cli/` — Ink setup wizard + doctor (bin `workit`)           |
 
-Config directory (both platforms): `~/.config/workit/` — legacy `~/.config/workflow-toolkit/` is auto-migrated on first run and kept as a fallback.
+Config directory (both platforms): `~/.config/workit/` — legacy `~/.config/workflow-toolkit/` is auto-migrated on first run, then its non-secret files are removed once the active config passes status checks; the runtime reads only the active config dir.
 
 [![npm version](https://img.shields.io/npm/v/@brainervirus/workit-opencode)](https://www.npmjs.com/package/@brainervirus/workit-opencode)
 [![CI](https://img.shields.io/github/actions/workflow/status/BrainerVirus/workit/ci.yml?branch=main&label=CI)](https://github.com/BrainerVirus/workit/actions)
@@ -72,7 +72,7 @@ Feature parity across hosts, implemented the best way each host allows. Core log
 2. **Build a feature** — brainstorming writes the spec, writing-plans writes the plan, `/wk-implement` executes approved plans with per-task reviews; flow gates (`workflow_spec_approve` / `workflow_plan_approve` / `workflow_plan_menu`) require native-question approval evidence, and approvals bind to the exact SHA-256 digest of the approved document.
 3. **Execute & lifecycle** — `workflow_plan_pause` / `workflow_plan_resume` / `workflow_plan_complete` (OpenCode receipts, Cursor policy-only, CLI `workit flow … --confirm`) move the plan through `pending`/`active`/`paused`/`completed`; completion requires a complete SDD ledger and passing repository verification.
 4. **Verify** — `/wk-verify` discovers and runs the repo's validation (lint, format, tests, build, changelog format) and reports each check's exit status.
-5. **Commit & PR** — `/wk-commit` previews a Conventional Commit on an allowed branch; `/wk-pr` gathers branch-exclusive context, links issues (GitHub issues or YouTrack), and creates the PR/MR with your provider CLI (`gh` for GitHub, `glab` for GitLab).
+5. **Commit & PR** — `/wk-commit` previews a Conventional Commit on an allowed branch; `/wk-pr` gathers branch-exclusive context, links issues (GitHub issues or YouTrack), and creates the PR/MR with your provider CLI (`gh` for GitHub, `glab` for GitLab). On GitHub the branch is pushed first (`git push -u origin <branch>` when `pr.pushBranch` is enabled) so `gh pr create` never runs against an unpushed branch.
 6. **Changelog & release notes** — `/wk-changelog` applies Keep a Changelog entries; `/wk-release-notes` drafts notes for a release range.
 7. **Handoff** — `/wk-handoff` seeds a new session with spec/plan state, active branch, and context; the destination session presents a four-choice menu (never the originating Handoff option) and carries the handoff-destination marker.
 8. **YouTrack** — `/wk-issue-update` drafts (es-CL) and posts reviewed task updates with time; `/wk-meetings` logs meeting time only.
@@ -139,17 +139,17 @@ export PATH="$HOME/.bun/bin:$PATH"
   - **`gh`** (GitHub CLI) for GitHub-hosted repos: `gh auth login`
   - **`glab`** (GitLab CLI) for GitLab-hosted repos: `glab auth login`
 
-  The provider is resolved per repository: an explicit workspace `vcs.provider` wins, otherwise the origin remote decides (`github.com` → `gh`, `gitlab.com` → `glab`), otherwise the configured `vcs.json` provider. `workflow_pr_create` fails with an install/auth hint when the needed CLI is missing or unauthenticated.
+  Provider and default target are resolved per repository in the order: workspace `branchPolicy` → workspace `vcs` fields → global `vcs.json` → preset defaults (gitflow → `develop`, github-flow → `main`, trunk-based → `master`, custom → `develop`). An explicit workspace `vcs.provider` wins over the origin remote, which decides (`github.com` → `gh`, `gitlab.com` → `glab`) only when the workspace does not specify one. A matched workspace's branchPolicy-derived default is authoritative — a global `vcs.json` `defaultTargetBranch` can no longer shadow it. For GitHub, `prCreate` pushes the branch (`git push -u origin <branch>`) before `gh pr create` when `pr.pushBranch` is enabled (default) and returns a structured `push failed` result when the push fails; `pr.pushBranch: false` disables the push (GitLab uses `glab mr create --push`). A caller-supplied `target_branch`/`WF_PR_TARGET` equal to the resolved default (`main` under github-flow, `develop` under gitflow) is accepted even though protected; genuine differing overrides to protected or disallowed branches are rejected. `workflow_pr_create` fails with an install/auth hint when the needed CLI is missing or unauthenticated.
 
 ## Per-install configuration
 
-Everything lives in `~/.config/workit/` (legacy `~/.config/workflow-toolkit/` auto-migrates). Tokens are never printed by tools; you edit token files locally.
+Everything lives in `~/.config/workit/`; legacy `~/.config/workflow-toolkit/` auto-migrates on first run and its non-secret files (config.json, vcs.json, youtrack.json, workspaces.json, templates/) are removed once the active config passes status checks — the runtime reads only the active config dir. Tokens are never printed by tools; you edit token files locally.
 
 | File                                               | Purpose                | Key fields                                                                                                                                                                                                                                              |
 | -------------------------------------------------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `config.json`                                      | Global preferences     | `locale`, `timezone`, `branchPolicy: { preset: gitflow \| github-flow \| trunk-based \| custom, allowed, protected }`                                                                                                                                   |
 | `youtrack.json`                                    | YouTrack integration   | `baseUrl`, `tokenFile`, `timezone`, `locale`, `defaultMention`, `meetingIssue`/`meetingIssues`, `greetings`, `commentHeader`, `tokenDefaults`                                                                                                           |
-| `vcs.json`                                         | VCS defaults           | `provider: gitlab \| github`, `defaultTargetBranch`, per-provider `{ host, apiUrl, tokenFile }`, `pr: { squashOnMerge, removeSourceBranch, pushBranch, confirmSkip }`                                                                                   |
+| `vcs.json`                                         | VCS defaults           | `provider: gitlab \| github`, per-provider `{ host, apiUrl, tokenFile }`, `pr: { squashOnMerge, removeSourceBranch, pushBranch, confirmSkip }`. A global `defaultTargetBranch` is optional and applies only to unmatched repos — a matched workspace's `branchPolicy` or explicit `vcs.defaultTargetBranch` is authoritative. |
 | `workspaces.json`                                  | **Per-repo contexts**  | `workspaces: [{ name, glob, branchPolicy: { preset, developBranch, prefixes, allowed, protected, integration: pr \| merge }, vcs: { provider, defaultTargetBranch }, youtrack: { baseUrl, link_issues }, issues: { provider: "github", link_on_pr } }]` |
 | `youtrack.token` / `gitlab.token` / `github.token` | Credentials (mode 600) | created as placeholders by `/wk-init`; replace `YOUR_TOKEN_HERE` locally                                                                                                                                                                                |
 
@@ -175,7 +175,7 @@ Everything lives in `~/.config/workit/` (legacy `~/.config/workflow-toolkit/` au
 }
 ```
 
-Note: `branchPolicy` is now per-workspace (workspace > global `config.json` > preset defaults); the YouTrack meeting/comment configuration remains global. Per-workspace `vcs.provider`/`defaultTargetBranch`/issue linking are the other workspace-scoped knobs.
+Note: `branchPolicy` is per-workspace, resolved in the order workspace `branchPolicy` → workspace `vcs` fields → global `vcs.json` → preset defaults; a matched workspace's branchPolicy default (gitflow → `develop`, github-flow → `main`) is authoritative over any global `vcs.json` default. The YouTrack meeting/comment configuration remains global. Per-workspace `vcs.provider`/`defaultTargetBranch`/issue linking are the other workspace-scoped knobs.
 
 Run the init action (`workflow_toolkit_init_apply action=branch_policy` on OpenCode/Cursor, or the CLI wizard's branch-policy screen) to detect and pin a repo's convention: `develop` present → gitflow/merge; only `main` → github-flow/pr; only `master` → trunk-based/pr. Re-running updates the entry (already-configured when unchanged).
 
