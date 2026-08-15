@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -38,6 +38,36 @@ test("partial config reports only youtrack_token when scoped, plus vcs ids unsco
     for (const id of ["youtrack_token", "vcs_json", "gitlab_token", "github_token"]) {
       expect(unscoped.missing).toContain(id);
     }
+  });
+});
+
+test("active dir alone is authoritative: no legacy dir, every guard item resolves ok", async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "wf-guard-active-only-"));
+  const workit = path.join(dir, "workit");
+  mkdirSync(workit, { recursive: true });
+  writeFileSync(
+    path.join(workit, "youtrack.json"),
+    JSON.stringify({ baseUrl: "https://yt.example.test" }, null, 2),
+    "utf8",
+  );
+  writeFileSync(
+    path.join(workit, "vcs.json"),
+    JSON.stringify({ provider: "gitlab" }, null, 2),
+    "utf8",
+  );
+  writeFileSync(path.join(workit, "youtrack.token"), "yt-active-token\n", { mode: 0o600 });
+  writeFileSync(path.join(workit, "gitlab.token"), "gl-active-token\n", { mode: 0o600 });
+  writeFileSync(path.join(workit, "github.token"), "gh-active-token\n", { mode: 0o600 });
+  expect(existsSync(path.join(dir, "workflow-toolkit"))).toBe(false);
+  await withIsolatedXDG(dir, () => {
+    const status = initStatus();
+    for (const id of ALL_ITEM_IDS) {
+      const item = status.items.find((i: { id: string }) => i.id === id);
+      expect(item.ok, `item ${id} should be ok from the active dir alone`).toBe(true);
+    }
+    const gaps = describeConfigGaps();
+    expect(gaps.ok).toBe(true);
+    expect(gaps.missing).toEqual([]);
   });
 });
 

@@ -103,6 +103,42 @@ test("matched workspace carries vcs.provider, vcs.defaultTargetBranch, youtrack.
   });
 });
 
+test("CA-01: resolveWorkspace maps work/personal globs to vcs + branchPolicy presets", () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "wf-ws-ca01-"));
+  const cfg = {
+    workspaces: [
+      {
+        name: "work",
+        glob: "/home/*/Documents/projects/work/**",
+        vcs: { provider: "gitlab", defaultTargetBranch: "develop" },
+        youtrack: { link_issues: true },
+        branchPolicy: { preset: "gitflow" },
+      },
+      {
+        name: "personal",
+        glob: "/home/*/Documents/projects/personal/**",
+        vcs: { provider: "github", defaultTargetBranch: "main" },
+        issues: { provider: "github", link_on_pr: true },
+        branchPolicy: { preset: "github-flow" },
+      },
+    ],
+  };
+  writeWorkspaces(dir, JSON.stringify(cfg, null, 2));
+  withIsolatedConfig(dir, () => {
+    const work = resolveWorkspace("/home/u/Documents/projects/work/sixbell/repo");
+    expect(work?.name).toBe("work");
+    expect(work?.vcs?.provider).toBe("gitlab");
+    expect(work?.vcs?.defaultTargetBranch).toBe("develop");
+    expect(work?.branchPolicy?.preset).toBe("gitflow");
+    const personal = resolveWorkspace("/home/u/Documents/projects/personal/some-app");
+    expect(personal?.name).toBe("personal");
+    expect(personal?.vcs?.provider).toBe("github");
+    expect(personal?.vcs?.defaultTargetBranch).toBe("main");
+    expect(personal?.branchPolicy?.preset).toBe("github-flow");
+    expect(personal?.issues?.link_on_pr).toBe(true);
+  });
+});
+
 test("initStatus reports workspaces.resolved and path for the temp config", () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "wf-ws-status-"));
   writeWorkspaces(

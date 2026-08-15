@@ -147,9 +147,15 @@ export function prCreate(env: NodeJS.ProcessEnv, cwd: string): Record<string, an
   // target is validated against the resolved branch policy so a PR can never
   // be aimed at a protected or disallowed branch.
   const targetOverride = env.WF_PR_TARGET;
-  const target =
-    targetOverride || String(cfg.defaultTargetBranch ?? policy.defaultTargetBranch ?? "develop");
-  if (targetOverride) {
+  const resolvedDefault = String(
+    cfg.defaultTargetBranch ?? policy.defaultTargetBranch ?? "develop",
+  );
+  const target = targetOverride || resolvedDefault;
+  // CA-06: an explicit override equal to the resolved default (e.g. WF_PR_TARGET
+  // "main" under github-flow) is authoritative — the same value flows
+  // unvalidated from config, so it must not be rejected as a protected
+  // override. Genuine differing overrides keep the strict validation.
+  if (targetOverride && targetOverride !== resolvedDefault) {
     const { allowed, protected: protectedTargets } = policy;
     if (protectedTargets.has(targetOverride.toLowerCase()))
       return {
@@ -283,6 +289,31 @@ export function prCreate(env: NodeJS.ProcessEnv, cwd: string): Record<string, an
     // uv_spawn fails with ENOENT even though the CLI is on PATH.
     cmdEnv = { ...process.env, PATH: process.env.PATH ?? "", GITLAB_TOKEN: token };
   } else {
+    // T2: GitHub has no --push flag — push the branch first so `gh pr create`
+    // never runs against an unpushed branch when pushBranch is enabled.
+    if (push) {
+      if (!branch) {
+        return {
+          error: "push failed",
+          provider,
+          mode: "push",
+          targetBranch: target,
+          stderr: "empty current branch (detached HEAD or unborn HEAD)",
+        };
+      }
+      const pushRes = spawnSync("git", ["push", "-u", "origin", branch], {
+        cwd: root,
+        encoding: "utf8",
+      });
+      if (pushRes.status !== 0) {
+        return {
+          error: "push failed",
+          provider,
+          targetBranch: target,
+          stderr: (pushRes.stderr ?? "").slice(0, 800),
+        };
+      }
+    }
     cmd = ["gh", "pr", "create", "--title", title, "--base", target];
     if (finalBody) cmd.push("--body", finalBody);
     if (draft) cmd.push("--draft");
