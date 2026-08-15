@@ -12,6 +12,7 @@ import {
   resolveBranchPolicyFor,
 } from "../../packages/workit-core/src/core/branch";
 import { vcsConfig } from "../../packages/workit-core/src/core/vcs-config";
+import { resolveWorkspace } from "../../packages/workit-core/src/core/workspaces";
 import { resolvePrBranchContext } from "../../packages/workit-core/src/core/repo-context";
 import { prCreate } from "../../packages/workit-core/src/core/pr-create";
 import { writeConfig } from "../../packages/workit-core/src/core/config";
@@ -735,6 +736,59 @@ test("CA-05: defaultTargetBranch is preset-aware when unset", async () => {
     if (prevPath === undefined) delete process.env.PATH;
     else process.env.PATH = prevPath;
     rmSync(stubBin, { recursive: true, force: true });
+  }
+});
+
+test("CA-02: a matched workspace's branchPolicy default beats a global vcs defaultTargetBranch", async () => {
+  // PR #43 regression: a global vcs.json defaultTargetBranch ("develop")
+  // shadowed the personal github-flow workspace's policy-derived "main".
+  // Spec'd order — workspace branchPolicy > workspace vcs > global vcs.json
+  // > preset — must hold; unmatched repos keep the global vcs.json fallback.
+  const githubFlow = repoWithDevelop();
+  const gitflow = repoWithDevelop();
+  const unmatched = repoWithDevelop();
+  try {
+    writeFileSync(
+      path.join(isolatedConfig, "workit", "workspaces.json"),
+      JSON.stringify({
+        workspaces: [
+          {
+            name: "personal",
+            glob: `${githubFlow.root}/**`,
+            vcs: { provider: "github" },
+            branchPolicy: { preset: "github-flow" },
+          },
+          {
+            name: "work",
+            glob: `${gitflow.root}/**`,
+            vcs: { provider: "gitlab", defaultTargetBranch: "develop" },
+            branchPolicy: { preset: "gitflow" },
+          },
+        ],
+      }),
+    );
+    writeFileSync(
+      path.join(isolatedConfig, "workit", "vcs.json"),
+      JSON.stringify({ provider: "gitlab", defaultTargetBranch: "develop" }),
+    );
+
+    // global "develop" must NOT shadow the github-flow policy default "main"
+    expect(resolveWorkspace(githubFlow.root)?.name).toBe("personal");
+    expect(resolveBranchPolicyFor(githubFlow.root).defaultTargetBranch).toBe("main");
+    expect(vcsConfig("resolve", githubFlow.root).defaultTargetBranch).toBe("main");
+
+    // explicit workspace vcs.defaultTargetBranch stays authoritative (develop)
+    expect(resolveWorkspace(gitflow.root)?.name).toBe("work");
+    expect(vcsConfig("resolve", gitflow.root).defaultTargetBranch).toBe("develop");
+
+    // unmatched repo keeps the global vcs.json default as a fallback
+    expect(resolveWorkspace(unmatched.root)).toBeNull();
+    expect(vcsConfig("resolve", unmatched.root).defaultTargetBranch).toBe("develop");
+  } finally {
+    for (const r of [githubFlow, gitflow, unmatched]) {
+      rmSync(r.root, { recursive: true, force: true });
+      rmSync(r.remote, { recursive: true, force: true });
+    }
   }
 });
 

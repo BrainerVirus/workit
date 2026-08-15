@@ -393,6 +393,30 @@ test.skipIf(process.platform === "win32")("bundled YouTrack scripts honor XDG_CO
   });
 });
 
+test("CA-03: youtrack config read resolves the token file inside the active config dir only", () => {
+  const xdg = mkdtempSync(path.join(os.tmpdir(), "wf-yt-active-dir-"));
+  const workit = path.join(xdg, "workit");
+  const legacy = path.join(xdg, "workflow-toolkit");
+  mkdirSync(workit, { recursive: true });
+  mkdirSync(legacy, { recursive: true });
+  const activeToken = path.join(workit, "youtrack.token");
+  writeFileSync(activeToken, "dummy-token\n", { mode: 0o600 });
+  writeFileSync(path.join(legacy, "youtrack.token"), "legacy-decoy\n", { mode: 0o600 });
+  writeFileSync(
+    path.join(workit, "youtrack.json"),
+    JSON.stringify({ baseUrl: "https://youtrack.example.test", tokenFile: activeToken }),
+  );
+  withNeutralXdg(xdg, () => {
+    const out = youTrackConfigLoad();
+    expect("data" in out).toBe(true);
+    if ("data" in out) {
+      expect(out.data.configPath).toBe(path.resolve(path.join(workit, "youtrack.json")));
+      expect(out.data.tokenPath).toBe(path.resolve(activeToken));
+    }
+  });
+  rmSync(xdg, { recursive: true, force: true });
+});
+
 test("AR-07: non-object youtrack.json shapes fail closed with the exact path", () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "wf-yt-shapes-"));
   const workit = path.join(dir, "workit");

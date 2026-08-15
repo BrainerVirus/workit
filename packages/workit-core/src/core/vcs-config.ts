@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { configDir } from "./config";
+import { configDir, PRESETS } from "./config";
 import { resolveWorkspace } from "./workspaces";
 import { resolveBranchPolicyFor } from "./branch";
 // Ports of scripts/vcs/config.sh + verify-token.sh + token-create-urls.sh + merged-style.sh.
@@ -90,10 +90,17 @@ export function vcsConfig(mode: "load" | "summary" | "resolve", cwd?: string): R
   // and resolve so both surfaces stay consistent.
   // CA-09: the one resolver wrapper — same policy resolution every consumer
   // uses, so the tightened gate in branch-policy-resolver.test.ts stays green.
+  // CA-02: a matched workspace's OWN branchPolicy default beats any global
+  // vcs.json default (PR #43: global develop shadowed the personal github-flow
+  // main). Explicit workspace vcs.defaultTargetBranch stays authoritative; a
+  // workspace without a branchPolicy still falls back to the global vcs.json
+  // default, and unmatched repos keep it too.
+  const wp = (ws?.branchPolicy ?? {}) as Record<string, any>;
+  const hasWorkspacePolicy = typeof wp.preset === "string" && Object.hasOwn(PRESETS, wp.preset);
+  const policyDefault = resolveBranchPolicyFor(root).defaultTargetBranch;
   const defaultTarget = String(
     wsVcs.defaultTargetBranch ??
-      cfg.defaultTargetBranch ??
-      resolveBranchPolicyFor(root).defaultTargetBranch ??
+      (hasWorkspacePolicy ? policyDefault : (cfg.defaultTargetBranch ?? policyDefault)) ??
       "develop",
   );
   const linkIssues = typeof wsYt.link_issues === "boolean" ? wsYt.link_issues : null;
