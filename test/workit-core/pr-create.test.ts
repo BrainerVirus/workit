@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -46,12 +46,15 @@ let cfgDir: string;
 let root: string;
 let stubBin: string;
 let logFile: string;
+let bareRemote: string;
 
 beforeEach(() => {
   cfgDir = mkdtempSync(path.join(os.tmpdir(), "wf-pr-create-cfg-"));
   root = mkdtempSync(path.join(os.tmpdir(), "wf-pr-create-repo-"));
   stubBin = mkdtempSync(path.join(os.tmpdir(), "wf-pr-create-bin-"));
   logFile = path.join(stubBin, "gh-args.txt");
+  bareRemote = mkdtempSync(path.join(os.tmpdir(), "wf-pr-create-remote-"));
+  git(bareRemote, ["init", "-q", "--bare"]);
   stubCli(stubBin, "gh", logFile, "https://github.com/o/r/pull/1");
 });
 
@@ -59,6 +62,7 @@ afterEach(() => {
   rmSync(cfgDir, { recursive: true, force: true });
   rmSync(root, { recursive: true, force: true });
   rmSync(stubBin, { recursive: true, force: true });
+  rmSync(bareRemote, { recursive: true, force: true });
 });
 
 // Stub gh/glab are prepended to PATH so they win; the rest of PATH (including
@@ -74,7 +78,20 @@ const setupRepo = () => {
   git(root, ["commit", "-q", "-m", "base"]);
 };
 
-const writeConfig = (branchPolicy: Record<string, unknown>, defaultTargetBranch: string) => {
+// push-before-create (Task 2) needs a real pushable origin: a bare remote that
+// already carries develop, so `git push -u origin <feature>` succeeds.
+const setupRepoWithOrigin = () => {
+  setupRepo();
+  git(root, ["remote", "add", "origin", bareRemote]);
+  git(root, ["push", "-q", "-u", "origin", "develop"]);
+};
+
+const writeConfig = (
+  branchPolicy: Record<string, unknown>,
+  defaultTargetBranch: string,
+  pr?: Record<string, unknown>,
+  provider: "github" | "gitlab" = "github",
+) => {
   writeFileSync(
     path.join(cfgDir, "config.json"),
     JSON.stringify({ branchPolicy }, null, 2),
@@ -82,7 +99,7 @@ const writeConfig = (branchPolicy: Record<string, unknown>, defaultTargetBranch:
   );
   writeFileSync(
     path.join(cfgDir, "vcs.json"),
-    JSON.stringify({ provider: "github", defaultTargetBranch }),
+    JSON.stringify({ provider, defaultTargetBranch, ...(pr ? { pr } : {}) }),
     "utf8",
   );
   writeFileSync(
@@ -92,14 +109,14 @@ const writeConfig = (branchPolicy: Record<string, unknown>, defaultTargetBranch:
         {
           name: "t",
           glob: `${root}/**`,
-          vcs: { provider: "github" },
-          issues: { provider: "github", link_on_pr: true },
+          vcs: { provider },
+          issues: { provider, link_on_pr: true },
         },
       ],
     }),
     "utf8",
   );
-  writeFileSync(path.join(cfgDir, "github.token"), "test-token\n", "utf8");
+  writeFileSync(path.join(cfgDir, `${provider}.token`), "test-token\n", "utf8");
 };
 
 const customPolicy = {
@@ -109,7 +126,7 @@ const customPolicy = {
 };
 
 test("B1: caller-supplied WF_PR_TARGET is validated against the branch policy", () => {
-  setupRepo();
+  setupRepoWithOrigin();
   git(root, ["checkout", "-q", "-b", "feature/b1"]);
   const result = withEnv({ WORKFLOW_TOOLKIT_CONFIG: cfgDir, PATH: stubPath() }, () => {
     writeConfig(customPolicy, "trunk");
@@ -121,7 +138,7 @@ test("B1: caller-supplied WF_PR_TARGET is validated against the branch policy", 
 });
 
 test("B1: invalid WF_PR_TARGET override is rejected (protected + disallowed)", () => {
-  setupRepo();
+  setupRepoWithOrigin();
   git(root, ["checkout", "-q", "-b", "feature/b1"]);
   const run = (target: string) =>
     withEnv(
@@ -143,7 +160,7 @@ test("B1: invalid WF_PR_TARGET override is rejected (protected + disallowed)", (
 });
 
 test("B1: no override still flows the configured default target (unvalidated)", () => {
-  setupRepo();
+  setupRepoWithOrigin();
   git(root, ["checkout", "-q", "-b", "feature/b1"]);
   const result = withEnv({ WORKFLOW_TOOLKIT_CONFIG: cfgDir, PATH: stubPath() }, () => {
     writeConfig(customPolicy, "trunk");
@@ -241,7 +258,7 @@ test("CA-04: merge integration finishes the feature into the target without a PR
 });
 
 test("B6: env-driven WORKFLOW_GH_ISSUE reaches prCreate through the OpenCode wrapper", async () => {
-  setupRepo();
+  setupRepoWithOrigin();
   git(root, ["checkout", "-q", "-b", "feature/b6"]);
   const previous = process.env.WORKFLOW_GH_ISSUE;
   const previousConfig = process.env.WORKFLOW_TOOLKIT_CONFIG;
@@ -271,4 +288,120 @@ test("B6: env-driven WORKFLOW_GH_ISSUE reaches prCreate through the OpenCode wra
     if (previousPath === undefined) delete process.env.PATH;
     else process.env.PATH = previousPath;
   }
+});
+
+// Task 2 — GitHub push-before-create honoring pr.pushBranch.
+
+const branchOn = () => {
+  git(root, ["checkout", "-q", "-b", "feature/t2"]);
+  writeFileSync(path.join(root, "feature.txt"), "work\n");
+  git(root, ["add", "feature.txt"]);
+  git(root, ["commit", "-q", "-m", "feature work"]);
+};
+
+test("T2: github pushBranch enabled pushes the branch before gh pr create", () => {
+  setupRepoWithOrigin();
+  branchOn();
+  const result = withEnv({ WORKFLOW_TOOLKIT_CONFIG: cfgDir, PATH: stubPath() }, () => {
+    writeConfig(customPolicy, "trunk", { pushBranch: true });
+    return prCreate({ WF_PR_CONFIRMED: "true", WF_PR_TITLE: "T" }, root);
+  });
+  expect(result.ok, `create failed: ${JSON.stringify(result)}`).toBe(true);
+  // the branch reached origin before gh ran (git push -u created it)
+  expect(git(root, ["rev-parse", "--verify", "origin/feature/t2"]).status).toBe(0);
+  expect(readFileSync(logFile, "utf8")).toContain("pr create");
+});
+
+test("T2: github pushBranch false skips the push and still creates via gh", () => {
+  setupRepoWithOrigin();
+  branchOn();
+  const result = withEnv({ WORKFLOW_TOOLKIT_CONFIG: cfgDir, PATH: stubPath() }, () => {
+    writeConfig(customPolicy, "trunk", { pushBranch: false });
+    return prCreate({ WF_PR_CONFIRMED: "true", WF_PR_TITLE: "T" }, root);
+  });
+  expect(result.ok, `create failed: ${JSON.stringify(result)}`).toBe(true);
+  // no push: the branch must not exist on origin
+  expect(git(root, ["rev-parse", "--verify", "origin/feature/t2"]).status).not.toBe(0);
+  expect(readFileSync(logFile, "utf8")).toContain("pr create");
+});
+
+test("T2: github push failure returns a structured push failed result without gh", () => {
+  setupRepo();
+  git(root, ["remote", "add", "origin", bareRemote]);
+  git(root, ["push", "-q", "-u", "origin", "develop"]);
+  // reject every subsequent push deterministically
+  writeFileSync(path.join(bareRemote, "hooks", "pre-receive"), "#!/bin/sh\nexit 1\n", {
+    mode: 0o755,
+  });
+  branchOn();
+  const result = withEnv({ WORKFLOW_TOOLKIT_CONFIG: cfgDir, PATH: stubPath() }, () => {
+    writeConfig(customPolicy, "trunk", { pushBranch: true });
+    return prCreate({ WF_PR_CONFIRMED: "true", WF_PR_TITLE: "T" }, root);
+  });
+  expect(result.ok).not.toBe(true);
+  expect(result.error).toBe("push failed");
+  expect(result.stderr).toBeTruthy();
+  expect(git(root, ["rev-parse", "--verify", "origin/feature/t2"]).status).not.toBe(0);
+  expect(existsSync(logFile)).toBe(false); // gh never ran
+});
+
+test("T2: github push-before-create flows through the OpenCode wrapper", async () => {
+  setupRepoWithOrigin();
+  branchOn();
+  const previousConfig = process.env.WORKFLOW_TOOLKIT_CONFIG;
+  const previousPath = process.env.PATH;
+  process.env.WORKFLOW_TOOLKIT_CONFIG = cfgDir;
+  process.env.PATH = stubPath();
+  try {
+    writeConfig(customPolicy, "trunk", { pushBranch: true });
+    const raw = await createRepoTools().workflow_pr_create.execute(
+      { confirmed: true, title: "T" },
+      { directory: root, worktree: root } as never,
+    );
+    const result = JSON.parse(raw as string);
+    expect(result.ok, JSON.stringify(result)).toBe(true);
+    expect(git(root, ["rev-parse", "--verify", "origin/feature/t2"]).status).toBe(0);
+    expect(readFileSync(logFile, "utf8")).toContain("pr create");
+  } finally {
+    if (previousConfig === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+    else process.env.WORKFLOW_TOOLKIT_CONFIG = previousConfig;
+    if (previousPath === undefined) delete process.env.PATH;
+    else process.env.PATH = previousPath;
+  }
+});
+
+test("T2: gitlab parity — single glab invocation carries --push, no git push by prCreate", () => {
+  const glabLog = path.join(stubBin, "glab-args.txt");
+  stubCli(stubBin, "glab", glabLog, "https://gitlab.com/o/r/-/merge_requests/1");
+  setupRepoWithOrigin();
+  branchOn();
+  const result = withEnv({ WORKFLOW_TOOLKIT_CONFIG: cfgDir, PATH: stubPath() }, () => {
+    writeConfig(customPolicy, "trunk", { pushBranch: true }, "gitlab");
+    return prCreate({ WF_PR_CONFIRMED: "true", WF_PR_TITLE: "T" }, root);
+  });
+  expect(result.ok, `create failed: ${JSON.stringify(result)}`).toBe(true);
+  const lines = readFileSync(glabLog, "utf8").trim().split("\n").filter(Boolean);
+  expect(lines).toHaveLength(1);
+  expect(lines[0]).toContain("--push");
+  // glab owns the push (stubbed here): prCreate itself never ran git push
+  expect(git(root, ["rev-parse", "--verify", "origin/feature/t2"]).status).not.toBe(0);
+});
+
+test("T2: CLI port delegates to core prCreate without interception", () => {
+  const port = readFileSync(
+    path.resolve(
+      import.meta.dir,
+      "..",
+      "..",
+      "packages",
+      "workit-core",
+      "src",
+      "core",
+      "ports",
+      "pr-create.ts",
+    ),
+    "utf8",
+  );
+  expect(port).toContain('import { prBuildBody, prCreate } from "../pr-create"');
+  expect(port).toContain("prCreate(process.env, process.cwd())");
 });

@@ -674,13 +674,17 @@ test("CA-05: defaultTargetBranch is preset-aware when unset", async () => {
   const prevPath = process.env.PATH;
   const mainOnlyRepo = () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), "wf-ca05-main-"));
+    const remote = mkdtempSync(path.join(os.tmpdir(), "wf-ca05-main-remote-"));
+    git(remote, ["init", "-q", "--bare"]);
     git(dir, ["init", "-q", "-b", "main"]);
     git(dir, ["config", "user.name", "Workflow Test"]);
     git(dir, ["config", "user.email", "workflow@example.test"]);
     writeFileSync(path.join(dir, "README.md"), "base\n");
     git(dir, ["add", "README.md"]);
     git(dir, ["commit", "-q", "-m", "base"]);
-    return dir;
+    git(dir, ["remote", "add", "origin", remote]);
+    git(dir, ["push", "-q", "-u", "origin", "main"]);
+    return { dir, remote };
   };
   try {
     process.env.PATH = stubPath(stubBin);
@@ -690,7 +694,7 @@ test("CA-05: defaultTargetBranch is preset-aware when unset", async () => {
         path.join(isolatedConfig, "workit", "workspaces.json"),
         JSON.stringify({
           workspaces: [
-            { name: "w", glob: `${mainOnly}/**`, branchPolicy: { preset: "github-flow" } },
+            { name: "w", glob: `${mainOnly.dir}/**`, branchPolicy: { preset: "github-flow" } },
           ],
         }),
       );
@@ -699,17 +703,18 @@ test("CA-05: defaultTargetBranch is preset-aware when unset", async () => {
         JSON.stringify({ provider: "github" }),
       );
       writeFileSync(path.join(isolatedConfig, "workit", "github.token"), "test-token\n");
-      mkdirSync(path.join(mainOnly, "docs", "x"), { recursive: true });
-      writeFileSync(path.join(mainOnly, "docs/x/plan.md"), "# Plan\n");
-      expect(vcsConfig("resolve", mainOnly).defaultTargetBranch).toBe("main");
-      const db = docsBranch({ plan_path: "docs/x/plan.md", workspace_root: mainOnly });
+      mkdirSync(path.join(mainOnly.dir, "docs", "x"), { recursive: true });
+      writeFileSync(path.join(mainOnly.dir, "docs/x/plan.md"), "# Plan\n");
+      expect(vcsConfig("resolve", mainOnly.dir).defaultTargetBranch).toBe("main");
+      const db = docsBranch({ plan_path: "docs/x/plan.md", workspace_root: mainOnly.dir });
       expect("error" in db).toBe(false);
       if (!("error" in db)) expect(db.base).toBe("main");
-      const p = prCreate({ WF_PR_CONFIRMED: "true", WF_PR_TITLE: "T" }, mainOnly);
+      const p = prCreate({ WF_PR_CONFIRMED: "true", WF_PR_TITLE: "T" }, mainOnly.dir);
       expect(p.ok, JSON.stringify(p)).toBe(true);
       expect(p.targetBranch).toBe("main");
     } finally {
-      rmSync(mainOnly, { recursive: true, force: true });
+      rmSync(mainOnly.dir, { recursive: true, force: true });
+      rmSync(mainOnly.remote, { recursive: true, force: true });
     }
     const { root, remote } = repoWithDevelop();
     try {
@@ -826,9 +831,12 @@ test("RL-03b: provider reconciles with the actual origin remote across PR surfac
   const prevConfig = process.env.WORKFLOW_TOOLKIT_CONFIG;
   const prevPath = process.env.PATH;
   const writeCfg = (provider: string) => {
+    // pushBranch: false — this test exercises provider reconciliation from the
+    // origin remote URL, not push behavior; the remote is a github.com/gitlab.com
+    // URL with no real endpoint, so no push may be attempted.
     writeFileSync(
       path.join(cfgDir, "vcs.json"),
-      JSON.stringify({ provider, defaultTargetBranch: "main" }),
+      JSON.stringify({ provider, defaultTargetBranch: "main", pr: { pushBranch: false } }),
     );
     writeFileSync(path.join(cfgDir, "gitlab.token"), "gitlab-token\n", { mode: 0o600 });
     writeFileSync(path.join(cfgDir, "github.token"), "github-token\n", { mode: 0o600 });

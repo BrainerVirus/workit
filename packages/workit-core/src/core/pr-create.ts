@@ -283,6 +283,22 @@ export function prCreate(env: NodeJS.ProcessEnv, cwd: string): Record<string, an
     // uv_spawn fails with ENOENT even though the CLI is on PATH.
     cmdEnv = { ...process.env, PATH: process.env.PATH ?? "", GITLAB_TOKEN: token };
   } else {
+    // T2: GitHub has no --push flag — push the branch first so `gh pr create`
+    // never runs against an unpushed branch when pushBranch is enabled.
+    if (push) {
+      const pushRes = spawnSync("git", ["push", "-u", "origin", branch], {
+        cwd: root,
+        encoding: "utf8",
+      });
+      if (pushRes.status !== 0) {
+        return {
+          error: "push failed",
+          provider,
+          targetBranch: target,
+          stderr: (pushRes.stderr ?? "").slice(0, 800),
+        };
+      }
+    }
     cmd = ["gh", "pr", "create", "--title", title, "--base", target];
     if (finalBody) cmd.push("--body", finalBody);
     if (draft) cmd.push("--draft");

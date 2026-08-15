@@ -615,13 +615,35 @@ test("pr-create.sh create: cfg-driven wiring emits Closes #N into the real gh in
     (d) => d && !["gh", "gh.exe", "glab", "glab.exe"].some((n) => existsSync(path.join(d, n))),
   );
 
+  let bareDir: string;
   try {
+    bareDir = realpathSync(mkdtempSync(path.join(os.tmpdir(), "wf-gh-remote-")));
+    expect(
+      spawnSync("git", ["init", "-q", "--bare"], { cwd: bareDir, encoding: "utf8" }).status,
+    ).toBe(0);
     for (const [cmd, args] of [
-      ["git", ["init", "-q"]],
-      ["git", ["remote", "add", "origin", "git@github.com:o/r.git"]],
+      ["git", ["init", "-q", "-b", "develop"]],
+      ["git", ["config", "user.name", "Workflow Test"]],
+      ["git", ["config", "user.email", "workflow@example.test"]],
+      ["git", ["remote", "add", "origin", bareDir]],
     ] as const) {
       expect(spawnSync(cmd, args, { cwd: repoDir, encoding: "utf8" }).status).toBe(0);
     }
+    writeFileSync(path.join(repoDir, "README.md"), "base\n");
+    expect(spawnSync("git", ["add", "README.md"], { cwd: repoDir, encoding: "utf8" }).status).toBe(
+      0,
+    );
+    expect(
+      spawnSync("git", ["commit", "-q", "-m", "base"], { cwd: repoDir, encoding: "utf8" }).status,
+    ).toBe(0);
+    // push-before-create (Task 2) pushes the current branch first, so develop
+    // must already exist on origin.
+    expect(
+      spawnSync("git", ["push", "-q", "-u", "origin", "develop"], {
+        cwd: repoDir,
+        encoding: "utf8",
+      }).status,
+    ).toBe(0);
     const r = withConfigFiles(
       {
         "vcs.json": JSON.stringify({ provider: "github", defaultTargetBranch: "main" }),
@@ -659,6 +681,7 @@ test("pr-create.sh create: cfg-driven wiring emits Closes #N into the real gh in
   } finally {
     rmSync(stubBin, { recursive: true, force: true });
     rmSync(repoDir, { recursive: true, force: true });
+    rmSync(bareDir!, { recursive: true, force: true });
   }
 });
 
@@ -679,6 +702,7 @@ test("pr-create.sh create: target branch flows from config for every preset (RL-
       (d) => d && !existsSync(path.join(d, "gh")) && !existsSync(path.join(d, "glab")),
     );
     const repo = realpathSync(mkdtempSync(path.join(os.tmpdir(), "wf-pr-target-repo-")));
+    const bare = realpathSync(mkdtempSync(path.join(os.tmpdir(), "wf-pr-target-remote-")));
     const git = (args: string[]) => spawnSync("git", args, { cwd: repo, encoding: "utf8" });
     git(["init", "-q", "-b", "develop"]);
     git(["config", "user.name", "Workflow Test"]);
@@ -686,6 +710,12 @@ test("pr-create.sh create: target branch flows from config for every preset (RL-
     writeFileSync(path.join(repo, "README.md"), "base\n");
     git(["add", "README.md"]);
     git(["commit", "-q", "-m", "base"]);
+    // push-before-create (Task 2) needs a real origin carrying the current branch.
+    expect(spawnSync("git", ["init", "-q", "--bare"], { cwd: bare, encoding: "utf8" }).status).toBe(
+      0,
+    );
+    git(["remote", "add", "origin", bare]);
+    git(["push", "-q", "-u", "origin", "develop"]);
     try {
       const r = withConfigFiles(
         {
@@ -710,6 +740,7 @@ test("pr-create.sh create: target branch flows from config for every preset (RL-
     } finally {
       rmSync(stubBin, { recursive: true, force: true });
       rmSync(repo, { recursive: true, force: true });
+      rmSync(bare, { recursive: true, force: true });
     }
   }
 });
