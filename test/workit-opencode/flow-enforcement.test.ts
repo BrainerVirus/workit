@@ -394,6 +394,39 @@ test("menu consumption accepts the capitalized label exactly as the user answers
   }
 });
 
+test("menu consumption accepts host-decorated receipt labels for every source choice", async () => {
+  // Task 3 (label-matching parity): hosts decorate choices with parenthesized
+  // qualifiers ("Subagent-driven (Recommended)", "Handoff (new session only)")
+  // that the bare machine enum does not carry. The shared matcher must still
+  // bind the decorated receipt to the bare choice through the tool wrapper.
+  const cases: Array<[string, string]> = [
+    ["Subagent-driven (Recommended)", "subagent-driven"],
+    ["Inline (Recommended)", "inline"],
+    ["Handoff (new session only)", "handoff"],
+    ["Review spec first", "review-spec"],
+    ["Review plan first", "review-plan"],
+  ];
+  for (const [label, choice] of cases) {
+    const { root, slug, tools, ctx, receipts } = fixture();
+    try {
+      await run(tools, "workflow_flow_status", { plan_path: `docs/${slug}/plan.md` }, ctx);
+      const spec = `docs/${slug}/spec.md`;
+      const plan = `docs/${slug}/plan.md`;
+      for (const step of [
+        transitionSpec(root, slug, spec, receiptEvidence(receipts, "Approve spec")),
+        transitionPlan(root, slug, plan, receiptEvidence(receipts, "Approve plan")),
+      ])
+        if (!step.ok) throw new Error(step.error);
+      recordQuestion(receipts, label);
+      const menu = await run(tools, "workflow_plan_menu", { choice, plan_path: plan }, ctx);
+      expect(menu.ok, `${label} -> ${choice}`).toBe(true);
+      if (menu.ok) expect(menu.data.menu.chosen).toBe(choice);
+    } finally {
+      cleanup(root);
+    }
+  }
+});
+
 test("a real child session (host parentage) is delegated and passes product gates", async () => {
   const { root, tools, receipts } = fixture(childClient("root-session"));
   try {

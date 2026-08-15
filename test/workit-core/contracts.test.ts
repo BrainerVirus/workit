@@ -228,6 +228,40 @@ test("source contracts/reminders expose five choices and destination contracts e
   expect(reminderTextFor(true)).toBe(DESTINATION_REMINDER_TEXT);
 });
 
+test("documented display labels match their base menu choices through the receipt matcher", () => {
+  // Task 3 (label-matching parity): every label the hosts actually render — the
+  // qualifier-decorated display forms in the reminder prose and the OpenCode
+  // bootstrap question — must still match the bare machine enum through the
+  // shared sameChoiceLabel matcher. A reworded display form that breaks the
+  // match fails here instead of surfacing as a runtime evidence_mismatch.
+  const sourceDisplay = SOURCE_MENU_LABELS.map((label) =>
+    label === "Handoff" ? "Handoff (new session only)" : label,
+  );
+  expect(REMINDER_TEXT).toContain(`exactly: ${sourceDisplay.join(", ")}.`);
+  expect(DESTINATION_REMINDER_TEXT).toContain(`exactly: ${DESTINATION_MENU_LABELS.join(", ")}.`);
+  const bootstrap = readFileSync(
+    path.resolve(import.meta.dir, "..", "..", "packages", "workit-opencode", "src", "bootstrap.ts"),
+    "utf8",
+  );
+  expect(bootstrap).toContain(`exactly: ${sourceDisplay.join(", ")}.`);
+
+  const displayToChoice: Array<[string, string]> = [
+    ["Subagent-driven", "subagent-driven"],
+    ["Inline", "inline"],
+    ["Handoff (new session only)", "handoff"],
+    ["Review spec first", "review-spec"],
+    ["Review plan first", "review-plan"],
+  ];
+  for (const [display, choice] of displayToChoice) {
+    const store = new HostReceiptStore();
+    store.record("s1", `call-menu-${choice}`, display);
+    const matched = store.consume("s1", { label: choice });
+    expect(matched.ok, `${display} matches ${choice}`).toBe(true);
+    if (matched.ok) expect(matched.receipt.selectedLabel).toBe(display);
+    expect(store.count("s1")).toBe(0);
+  }
+});
+
 test("implement review policy caps blockers and defers advisories", () => {
   const text = skill("wk-implement");
   const contract = readFileSync(
