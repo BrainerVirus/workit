@@ -41,3 +41,5 @@ Never redispatch completed task IDs. Pass task briefs and review diffs to agents
 ## Final gate
 
 After all remaining tasks, dispatch a final full-branch code review, run `workflow_verify`, and report exact per-check results. Present the full `<SDD_DIR>/advisories.md` roll-up once, then use native `question` so the user can choose which advisory items to fix, discuss, or discard. Only then may advisory fixes run. Use `workflow_git_context` for the final commit preview and the `wk-commit` skill for any approved commit. If a tracked stash reference exists, preview reapplication with `question`, then call `workflow_branch_setup` with `confirmed: true` only after approval.
+
+**Mandatory:** end the run by calling `workflow_plan_complete` (OpenCode/Cursor) or the CLI `workit flow complete` (CLI host) after the final task once the SDD ledger is complete (all task IDs appended) and `workflow_verify` passes — a complete ledger and green verification are the tool's gates. Never finish the run while the plan is still `active`.

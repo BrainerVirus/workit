@@ -485,6 +485,46 @@ test("templates and skills codify one contiguous non-empty commit range per task
   expect(joined).not.toContain("do not create per-task commits");
 });
 
+test("execution contracts mandate plan completion: workflow_plan_complete after a complete ledger and green verification (CA-01/CA-07)", () => {
+  const read = (rel: string) => readFileSync(path.join(import.meta.dir, "..", "..", rel), "utf8");
+  const surfaces = [
+    "packages/workit-core/skills/wk-implement/SKILL.md",
+    "packages/workit-opencode/assets/skills/wk-implement/SKILL.md",
+    "packages/workit-cursor/skills/wk-implement/SKILL.md",
+    "packages/workit-core/skills/wk-handoff/SKILL.md",
+    "packages/workit-opencode/assets/skills/wk-handoff/SKILL.md",
+    "packages/workit-cursor/skills/wk-handoff/SKILL.md",
+    "packages/workit-core/vendor/superpowers/skills/subagent-driven-development/SKILL.md",
+    "packages/workit-opencode/assets/vendor/superpowers/skills/subagent-driven-development/SKILL.md",
+    "packages/workit-cursor/vendor/superpowers/skills/subagent-driven-development/SKILL.md",
+    "packages/workit-core/templates/execution-contract.md",
+    "packages/workit-opencode/assets/templates/execution-contract.md",
+    "packages/workit-cursor/assets/templates/execution-contract.md",
+    "packages/workit-cli/assets/templates/execution-contract.md",
+    "packages/workit-core/templates/plan-template.md",
+    "packages/workit-opencode/assets/templates/plan-template.md",
+    "packages/workit-cursor/assets/templates/plan-template.md",
+    "packages/workit-cli/assets/templates/plan-template.md",
+  ];
+  // Every surface must mandate ending the run with the completion tool and
+  // name its precondition — the tool's own gates: a complete SDD ledger and
+  // green repository verification. A single missing copy fails the test.
+  for (const rel of surfaces) {
+    const surface = read(rel);
+    expect(surface, rel).toContain("workflow_plan_complete");
+    expect(surface, rel).toMatch(/ledger[\s\S]{0,80}complete|complete[\s\S]{0,80}ledger/i);
+    expect(surface, rel).toContain("verification");
+  }
+  // The CLI host can complete the plan from the CLI-facing surfaces.
+  const cliFacing = [
+    "packages/workit-cli/assets/templates/execution-contract.md",
+    "packages/workit-cli/assets/templates/plan-template.md",
+  ]
+    .map(read)
+    .join("\n");
+  expect(cliFacing).toContain("workit flow complete");
+});
+
 test("the four template roots are byte-identical with the exact marker, the five-choice source list, and the four-choice destination list", () => {
   const read = (rel: string) => readFileSync(path.join(import.meta.dir, "..", "..", rel), "utf8");
   const roots = [

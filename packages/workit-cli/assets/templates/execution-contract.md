@@ -59,6 +59,8 @@ For each top-level task absent from `completed_task_ids`:
 
 Run a separate full-branch code review, then `workflow_verify`. Present the full `<SDD_DIR>/advisories.md` roll-up once, then use native `question` so the user can choose which advisory items to fix, discuss, or discard. Report exact check results and never infer success. Use `workflow_git_context` for a commit preview and load `wk-commit` through `skill` for an approved commit. If working state contains a stash reference, preview reapplication through `question`, then call `workflow_branch_setup` with `confirmed: true` after approval.
 
+**Mandatory:** end the run by calling `workflow_plan_complete` (OpenCode/Cursor) or the CLI `workit flow complete` (CLI host) after the final task once the SDD ledger is complete (all task IDs appended) and `workflow_verify` passes — a complete ledger and green verification are the tool's gates. Never finish the run while the plan is still `active`.
+
 ## Task order
 
 <TASK_LIST>
