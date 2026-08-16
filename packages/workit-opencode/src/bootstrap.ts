@@ -6,7 +6,7 @@ import { compiledOpenCodeSections } from "@brainervirus/workit-core/src/core/rul
 
 // templates/ ships package-locally under assets/ (same layout as plugin.ts).
 const root = fileURLToPath(new URL("../assets/", import.meta.url));
-const marker = "<workflow-toolkit-contract>";
+const marker = "<workit-contract>";
 
 let cached: string | null | undefined;
 
@@ -56,7 +56,7 @@ On success, use native \`question\` with exactly: Subagent-driven, Inline, Hando
 ## Library documentation
 
 When the user asks about a library, framework, or API reference, prefer live docs (e.g. Context7 MCP \`resolve-library-id\` + \`query-docs\`) over training-data guesses.
-${userSections ? `\n${userSections}\n` : ""}</workflow-toolkit-contract>`;
+${userSections ? `\n${userSections}\n` : ""}</workit-contract>`;
 
   return cached;
 };

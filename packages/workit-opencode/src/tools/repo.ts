@@ -225,13 +225,13 @@ export function createRepoTools(runtime: RepoRuntime = defaultRuntime) {
   };
 
   return {
-    workflow_toolkit_init_status: tool({
+    workit_init_status: tool({
       description: "Inspect toolkit initialization",
       args: {},
       execute: async (_input, context) =>
         output(scriptResult(await runtime.initStatus(context.directory), json)),
     }),
-    workflow_toolkit_status: tool({
+    workit_status: tool({
       description: "Inspect toolkit and repository state",
       args: {},
       execute: async (_input, context) =>
@@ -419,7 +419,7 @@ export function createRepoTools(runtime: RepoRuntime = defaultRuntime) {
         );
       },
     }),
-    workflow_toolkit_init_apply: tool({
+    workit_init_apply: tool({
       description: "Apply a confirmed toolkit initialization action",
       args: {
         confirmed: tool.schema.boolean(),

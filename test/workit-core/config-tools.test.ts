@@ -12,7 +12,7 @@ test("init_apply writes config.json with guided values", async () => {
     process.env.WORKFLOW_TOOLKIT_CONFIG_DIR = dir;
     delete process.env.WORKFLOW_TOOLKIT_CONFIG;
     const tools = createRepoTools();
-    const raw = await tools.workflow_toolkit_init_apply.execute(
+    const raw = await tools.workit_init_apply.execute(
       {
         confirmed: true,
         action: "config",

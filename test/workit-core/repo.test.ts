@@ -170,14 +170,14 @@ test("repo tools expose native names without workspace override", () => {
       "workflow_git_context",
       "workflow_pr_context",
       "workflow_release_notes_context",
-      "workflow_toolkit_init_status",
-      "workflow_toolkit_status",
+      "workit_init_status",
+      "workit_status",
       "workflow_verify",
       "workflow_changelog_apply",
       "workflow_branch_setup",
       "workflow_commit",
       "workflow_pr_create",
-      "workflow_toolkit_init_apply",
+      "workit_init_apply",
     ].sort(),
   );
   for (const definition of Object.values(tools)) {
@@ -294,12 +294,12 @@ test("repository context scripts return named fields", async () => {
 });
 
 test("status scripts decode JSON into the Result data field", async () => {
-  expect((await execute("workflow_toolkit_init_status")).data).toEqual({
+  expect((await execute("workit_init_status")).data).toEqual({
     ready: false,
     items: [{ id: "config", ok: true }],
     exitCode: 0,
   });
-  expect((await execute("workflow_toolkit_status")).data).toEqual({
+  expect((await execute("workit_status")).data).toEqual({
     ready: true,
     next_step: "All checks passed",
     exitCode: 0,
@@ -335,7 +335,7 @@ test("mutations reject missing confirmation", async () => {
     "workflow_branch_setup",
     "workflow_commit",
     "workflow_pr_create",
-    "workflow_toolkit_init_apply",
+    "workit_init_apply",
   ] as const) {
     const raw = await tools[name].execute(
       { confirmed: false } as never,
@@ -569,7 +569,7 @@ test("confirmed script mutations use package scripts, argument arrays, and scope
     error: null,
   });
   expect(
-    await execute("workflow_toolkit_init_apply", {
+    await execute("workit_init_apply", {
       confirmed: true,
       action: "youtrack_json",
       base_url: "https://youtrack.example.test",
@@ -639,7 +639,7 @@ test("legacy ok false values normalize to failures", async () => {
         stderr: "",
         cwd,
       }),
-    }).workflow_toolkit_init_apply.execute({ confirmed: true, action: "youtrack_scaffold" }, {
+    }).workit_init_apply.execute({ confirmed: true, action: "youtrack_scaffold" }, {
       directory: root,
       worktree: root,
     } as never);
@@ -807,7 +807,7 @@ test("changelog apply accepts a symlink-spelled ToolContext directory", async ()
 });
 
 test("OpenCode init omits obsolete MCP dependency installation", () => {
-  const action = createRepoTools(runtime).workflow_toolkit_init_apply.args.action;
+  const action = createRepoTools(runtime).workit_init_apply.args.action;
   expect(action.safeParse("npm_install").success).toBe(false);
 
   const config = mkdtempSync(path.join(os.tmpdir(), "workflow-toolkit-init-"));

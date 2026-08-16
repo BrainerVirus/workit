@@ -146,7 +146,7 @@ test("cursor MCP server boots over stdio from the extracted package with node (n
         (t) => t.name,
       );
       expect(names).toContain("workflow_git_context");
-      expect(names).toContain("workflow_toolkit_init_apply");
+      expect(names).toContain("workit_init_apply");
     } finally {
       // win32 keeps deleted files/dirs locked until the child fully exits, so
       // wait for the kill to land before the outer finally rmSync's the tree.
@@ -269,7 +269,7 @@ test.skipIf(!npmRegistryOk)(
           (t) => t.name,
         );
         expect(names).toContain("workflow_git_context");
-        expect(names).toContain("workflow_toolkit_init_apply");
+        expect(names).toContain("workit_init_apply");
       } finally {
         child.kill();
         await Promise.race([

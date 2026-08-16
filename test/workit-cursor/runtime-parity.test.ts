@@ -22,10 +22,10 @@ const contractText = readFileSync(
 );
 
 // The injected reminder block: the hook embeds reminderTextFor inside
-// <workflow-toolkit-reminder>…</workflow-toolkit-reminder>.
+// <workit-reminder>…</workit-reminder>.
 const reminderOf = (additionalContext: string): string => {
-  const start = additionalContext.indexOf("<workflow-toolkit-reminder>");
-  const end = additionalContext.indexOf("</workflow-toolkit-reminder>", start);
+  const start = additionalContext.indexOf("<workit-reminder>");
+  const end = additionalContext.indexOf("</workit-reminder>", start);
   if (start < 0 || end < 0) return "";
   return additionalContext.slice(start, end);
 };

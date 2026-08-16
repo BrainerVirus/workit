@@ -6,7 +6,7 @@ set -euo pipefail
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 . "$SCRIPT_DIR/lib/config-dir.sh"
 
-SHARE="${HOME}/.local/share/workflow-toolkit"
+SHARE="${HOME}/.local/share/workit"
 PLUGIN_DIR="${HOME}/.cursor/plugins/local/workit"
 OPENCODE_PLUGINS="${HOME}/.config/opencode/plugins"
 DEV_DEFAULT="${HOME}/Documents/projects/personal/workflow-toolkit"
@@ -126,7 +126,7 @@ if [ -d "$CONFIG_RULES_DIR" ]; then
     });
   " >/dev/null 2>&1 || true
 fi
-printf '%s\n' "$SHARE/packages/workit-core" >"$PLUGIN_DIR/.workflow-toolkit-root"
+printf '%s\n' "$SHARE/packages/workit-core" >"$PLUGIN_DIR/.workit-root"
 
 # CA-08/CA-09: migrate the legacy local plugin identity to `workit` only after
 # the canonical sync succeeded; carry the legacy user rules forward first.

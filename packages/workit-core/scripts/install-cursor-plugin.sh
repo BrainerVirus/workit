@@ -3,7 +3,7 @@
 set -euo pipefail
 
 REPO_SLUG="${WORKFLOW_TOOLKIT_REPO:-BrainerVirus/workit}"
-SHARE="${HOME}/.local/share/workflow-toolkit"
+SHARE="${HOME}/.local/share/workit"
 SKILLS_DIR="${HOME}/.cursor/skills"
 
 FROM_GITHUB=0

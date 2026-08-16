@@ -133,7 +133,7 @@ test("issue update names both safe retries and bounds each retry to one attempt"
 
 test("status uses only the aggregate toolkit status tool", () => {
   const text = skill("wk-status");
-  expect(text).toContain("Use only `workflow_toolkit_status`");
+  expect(text).toContain("Use only `workit_status`");
   expect(text).not.toContain("workflow_youtrack_verify_token");
 });
 

@@ -258,7 +258,7 @@ The repository's package manifests carry a fixed source version; semantic-releas
 | Session contract | `messages.transform`    | `sessionStart` hook                                   |
 | Handoff          | spawns OpenCode session | handoff prompt                                        |
 | Shared logic     | `scripts/`              | `scripts/` via `WORKFLOW_TOOLKIT_ROOT`                |
-| Install root     | GitHub plugin pin       | `~/.local/share/workflow-toolkit` + local plugin copy |
+| Install root     | GitHub plugin pin       | `~/.local/share/workit` + local plugin copy |
 
 ## Future: Codex CLI
 

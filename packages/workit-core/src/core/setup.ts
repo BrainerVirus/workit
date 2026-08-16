@@ -710,7 +710,7 @@ function applyMutation(m: CoreMutation): SetupResultEntry {
 // Package-native adapter resolution: the packaged CLI/core resolve the adapter
 // packages from the same install (node_modules sibling), a dev checkout
 // (WORKFLOW_TOOLKIT_DEV / packages/workit-<host> walking up from cwd), or the
-// share clone (~/.local/share/workflow-toolkit) — mirroring the install scripts.
+// share clone (~/.local/share/workit) — mirroring the install scripts.
 const isAdapter = (root: string, platform: Platform): boolean => {
   try {
     const pkg = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")) as {
@@ -742,7 +742,7 @@ function adapterRoot(platform: Platform, res: ResolvedApply): string | null {
     }
   }
   candidates.push(
-    path.join(res.home, ".local", "share", "workflow-toolkit", "packages", `workit-${platform}`),
+    path.join(res.home, ".local", "share", "workit", "packages", `workit-${platform}`),
   );
   for (const candidate of candidates) {
     if (isAdapter(candidate, platform)) return candidate;
@@ -805,7 +805,7 @@ function applyOpenCode(root: string, res: ResolvedApply): SetupResultEntry {
 }
 
 // Mirror the sync-runtime plugin mirror: copy the package (minus node_modules)
-// and write the same `.workflow-toolkit-root` marker so a re-sync from the same
+// and write the same `.workit-root` marker so a re-sync from the same
 // source is a truthful Skipped. The shipped mcp.json is the Marketplace-safe
 // npx command (CA-17), so it is copied verbatim — no absolute dist derivation.
 const samePluginContent = (src: string, dest: string, relative = ""): boolean => {
@@ -827,7 +827,7 @@ const samePluginContent = (src: string, dest: string, relative = ""): boolean =>
     for (const entry of readdirSync(dest, { withFileTypes: true })) {
       if (existsSync(path.join(src, entry.name))) continue;
       const rel = path.join(relative, entry.name);
-      if (rel === ".workflow-toolkit-root") continue;
+      if (rel === ".workit-root") continue;
       if (relative === "rules" && entry.isFile() && entry.name.endsWith(".mdc")) continue;
       return false;
     }
@@ -854,7 +854,7 @@ const preservedCursorRules = (src: string, dest: string): Map<string, Buffer> =>
 };
 
 function copyPluginDir(src: string, dest: string): SetupResultStatus {
-  const marker = path.join(dest, ".workflow-toolkit-root");
+  const marker = path.join(dest, ".workit-root");
   const synced = readFileSafe(marker)?.trim() === src && samePluginContent(src, dest);
   if (synced) return "Skipped";
   const hadDir = existsSync(dest);
@@ -873,7 +873,7 @@ function copyPluginDir(src: string, dest: string): SetupResultStatus {
       mkdirSync(path.join(stage, "rules"), { recursive: true });
       writeFileSync(path.join(stage, "rules", name), content);
     }
-    writeFileSync(path.join(stage, ".workflow-toolkit-root"), src + "\n", "utf8");
+    writeFileSync(path.join(stage, ".workit-root"), src + "\n", "utf8");
     if (!samePluginContent(src, stage)) throw new Error("staged adapter content is incomplete");
     if (hadDir) renameSync(dest, backup);
     try {
@@ -892,7 +892,7 @@ function copyPluginDir(src: string, dest: string): SetupResultStatus {
 // CA-08/CA-09: remove the exact legacy local plugin identity only AFTER the
 // canonical `workit` copy and registration succeeded. The legacy dir's own
 // user-compiled rules are carried forward first so no user data is lost; the
-// `.workflow-toolkit-root` marker, share path, and unrelated sibling dirs are
+// `.workit-root` marker, share path, and unrelated sibling dirs are
 // left untouched.
 const removeLegacyCursorDir = (res: ResolvedApply): void => {
   const legacy = path.join(res.home, ".cursor", "plugins", "local", "workflow-toolkit");

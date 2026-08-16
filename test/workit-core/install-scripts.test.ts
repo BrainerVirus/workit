@@ -288,7 +288,7 @@ test("install-opencode-plugin.sh uses the monorepo root and prioritizes one dev 
 test("install-opencode-plugin.sh defaults to the checkout containing the script", () => {
   if (!bashAvailable()) return;
   const fixture = makeStub("export default {};\n");
-  const share = path.join(fixture.home, ".local/share/workflow-toolkit");
+  const share = path.join(fixture.home, ".local/share/workit");
   try {
     mkdirSync(path.join(share, ".git"), { recursive: true });
     mkdirSync(path.join(share, "packages/workit-opencode/src"), { recursive: true });
@@ -387,7 +387,7 @@ test("install-cursor-plugin.sh resolves the local checkout root and never falls 
     // deterministically fail offline (no network). A green run therefore proves
     // the installer used the local checkout tree, and sync-dev records which
     // ROOT it synced from.
-    const share = path.join(fixture.home, ".local/share/workflow-toolkit");
+    const share = path.join(fixture.home, ".local/share/workit");
     mkdirSync(path.join(share, ".git"), { recursive: true });
     spawnSync("git", ["init", "-q"], { cwd: share });
     spawnSync("git", ["remote", "add", "origin", "https://127.0.0.1:1/workflow-toolkit.git"], {
@@ -540,7 +540,7 @@ test("sync-runtime fails loudly when updating an existing share clone cannot fet
   if (!bashAvailable() || !flockAvailable()) return;
   const home = mkdtempSync(path.join(os.tmpdir(), "wk-sync-home-"));
   const runtimeDir = mkdtempSync(path.join(os.tmpdir(), "wk-sync-xdg-"));
-  const share = path.join(home, ".local/share/workflow-toolkit");
+  const share = path.join(home, ".local/share/workit");
   try {
     mkdirSync(path.join(share, ".git"), { recursive: true });
     spawnSync("git", ["init", "-q"], { cwd: share });

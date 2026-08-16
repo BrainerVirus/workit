@@ -78,7 +78,7 @@ test("a throwing MCP tool handler returns isError:true structured content", asyn
   try {
     await initialize(server);
     const response = await server.request("tools/call", {
-      name: "workflow_toolkit_init_apply",
+      name: "workit_init_apply",
       arguments: { action: "config", confirmed: false },
     });
     const result = (response as any).result;
@@ -116,7 +116,7 @@ test("a domain error return is marked isError:true, not a successful-looking res
 
     // a healthy tool still succeeds
     const status = await server.request("tools/call", {
-      name: "workflow_toolkit_init_status",
+      name: "workit_init_status",
       arguments: {},
     });
     expect((status as any).result.isError).not.toBe(true);
@@ -129,10 +129,10 @@ test("a domain error string containing a secret is redacted before reaching the 
   const server = startServer();
   try {
     await initialize(server);
-    // workflow_toolkit_init_apply echoes the invalid locale into the domain
+    // workit_init_apply echoes the invalid locale into the domain
     // error; hide a value-pattern secret inside it so redact() must strip it.
     const response = await server.request("tools/call", {
-      name: "workflow_toolkit_init_apply",
+      name: "workit_init_apply",
       arguments: {
         action: "config",
         confirmed: false,

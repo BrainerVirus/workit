@@ -9,7 +9,7 @@ test("init_apply hygiene action creates missing files", async () => {
   try {
     const tools = createRepoTools();
     const no = JSON.parse(
-      (await tools.workflow_toolkit_init_apply.execute(
+      (await tools.workit_init_apply.execute(
         {
           confirmed: false,
           action: "hygiene",
@@ -20,7 +20,7 @@ test("init_apply hygiene action creates missing files", async () => {
     expect(no.ok).toBe(false);
 
     const yes = JSON.parse(
-      (await tools.workflow_toolkit_init_apply.execute(
+      (await tools.workit_init_apply.execute(
         {
           confirmed: true,
           action: "hygiene",

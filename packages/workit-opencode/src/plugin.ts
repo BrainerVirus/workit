@@ -299,7 +299,7 @@ const plugin: Plugin = async ({ client, directory }) => {
             .map((part) => (part as { text?: string }).text ?? "")
             .join("\n");
           const bootstrap = getWorkflowBootstrap();
-          if (bootstrap && !firstText.includes("<workflow-toolkit-contract>")) {
+          if (bootstrap && !firstText.includes("<workit-contract>")) {
             firstUser.parts.unshift({
               id: firstAnchor.id,
               sessionID: firstAnchor.sessionID,

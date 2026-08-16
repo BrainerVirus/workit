@@ -18,7 +18,7 @@ Post a Spanish comment and log time on a **task** issue (not the meeting issue).
 
 ## Step 0 — Toolkit ready
 
-If unsure, call `workflow_toolkit_status`. Stop if `ready: false`.
+If unsure, call `workit_status`. Stop if `ready: false`.
 
 ## Step 1 — Issue (required)
 

@@ -256,7 +256,7 @@ test("repository-scoped Cursor skill calls pass the active workspace_root", () =
   expect(skills).toHaveLength(12);
   for (const skill of skills) {
     const source = readFileSync(path.join(CURSOR_ROOT, "skills", skill, "SKILL.md"), "utf8");
-    const calls = [...source.matchAll(/\bworkflow_[a-z_]+\b/g)].map(([call]) => call);
+    const calls = [...source.matchAll(/\b(?:workflow_|workit_)[a-z_]+\b/g)].map(([call]) => call);
     expect(calls.length, `${skill} workflow calls`).toBeGreaterThan(0);
     const repositoryCalls = calls.filter((call) => repositoryTools.has(call));
     if (repositoryCalls.length === 0) unaffected.push(skill);
@@ -429,9 +429,9 @@ test("root tsconfig includes Cursor MCP source in strict typechecking", () => {
 test("cursor MCP server registers the full required tool surface", () => {
   const server = readFileSync(path.join(CURSOR_ROOT, "mcp/server.ts"), "utf8");
   const required = [
-    "workflow_toolkit_init_status",
-    "workflow_toolkit_status",
-    "workflow_toolkit_init_apply",
+    "workit_init_status",
+    "workit_status",
+    "workit_init_apply",
     "workflow_docs_validate",
     "workflow_flow_status",
     "workflow_spec_approve",

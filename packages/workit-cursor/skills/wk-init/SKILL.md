@@ -12,7 +12,7 @@ Scaffold config via MCP. **Never paste API tokens in chat.**
 
 ## Step 1 — Status (required)
 
-Call MCP `workflow_toolkit_init_status`. Show `items[]` in English.
+Call MCP `workit_init_status`. Show `items[]` in English.
 
 ### YouTrack settings (when `youtrack_config` present)
 
@@ -42,11 +42,11 @@ Call MCP `workflow_toolkit_init_status`. Show `items[]` in English.
 
 ### mcp_deps
 
-Native `AskQuestion` asks whether to install MCP dependencies → on yes: `workflow_toolkit_init_apply` action=`npm_install` confirmed=`true`
+Native `AskQuestion` asks whether to install MCP dependencies → on yes: `workit_init_apply` action=`npm_install` confirmed=`true`
 
 ### YouTrack scaffold
 
-Native `AskQuestion` asks whether to create the YouTrack scaffold → on yes: `workflow_toolkit_init_apply` action=`youtrack_scaffold` confirmed=`true`
+Native `AskQuestion` asks whether to create the YouTrack scaffold → on yes: `workit_init_apply` action=`youtrack_scaffold` confirmed=`true`
 
 ### VCS scaffold (GitLab + GitHub token files)
 
@@ -54,7 +54,7 @@ Only when `items[vcs_json].ok` is **false**:
 
 1. Native `AskQuestion` asks for GitLab or GitHub → remember `provider` (`gitlab` | `github`).
 2. Native `AskQuestion` asks `Create vcs.json and token placeholders for <provider>?`
-   → on yes: `workflow_toolkit_init_apply` action=`vcs_scaffold` confirmed=`true` **`vcs_provider=<chosen provider>`**
+   → on yes: `workit_init_apply` action=`vcs_scaffold` confirmed=`true` **`vcs_provider=<chosen provider>`**
 
 Both `gitlab.token` and `github.token` are always created (switch later by editing `provider` in `vcs.json`). Tell the user which token file is **active** for `/wk-pr` based on the chosen provider.
 
@@ -103,5 +103,5 @@ For the **active** provider (`vcs_config.provider`), show from `vcs_config.token
 ## Rules
 
 - Never ask for or accept tokens in chat.
-- Mutations only via `workflow_toolkit_init_apply` with `confirmed: true`.
+- Mutations only via `workit_init_apply` with `confirmed: true`.
 - Verification is **`/wk-status`** only — not part of init.
