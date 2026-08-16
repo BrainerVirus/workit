@@ -257,6 +257,10 @@ a ledger file, not only in todos.
 - When a task's review comes back clean, append one line to the ledger in
   the same message as your other bookkeeping:
   `Task N: complete (commits <base7>..<head7>, review clean)`.
+- Each task produces exactly one contiguous non-empty commit range: fix
+  rounds append commits to it, never amend or rewrite an active review
+  range, and the ledger progress line records the task's real base..head
+  shas.
 - The ledger is your recovery map: the commits it names exist in git even
   when your context no longer remembers creating them. After compaction,
   trust the ledger and `git log` over your own recollection.

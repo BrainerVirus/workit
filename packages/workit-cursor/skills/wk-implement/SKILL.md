@@ -37,4 +37,6 @@ Announce: "Using implement + inline."
 
 Follow the contract verbatim. Keep TodoWrite `in_progress`/`completed` in sync each task. At verify/commit phase use `workflow_verify` and `workflow_git_context` MCP tools.
 
+Each task lands exactly one contiguous non-empty commit range (`base..head`): fix rounds append commits to that range and never rewrite/amend an active review range; each progress line records the task's real base..head shas.
+
 Do not emit a handoff fence — this is in-session execution.

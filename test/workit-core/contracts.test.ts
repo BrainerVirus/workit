@@ -460,6 +460,31 @@ test("flow contracts state the host-capability boundary: OpenCode receipts + par
   }
 });
 
+test("templates and skills codify one contiguous non-empty commit range per task with real base..head shas (CA-02)", () => {
+  const read = (rel: string) => readFileSync(path.join(import.meta.dir, "..", "..", rel), "utf8");
+  const surfaces = [
+    "packages/workit-core/templates/plan-template.md",
+    "packages/workit-opencode/assets/templates/plan-template.md",
+    "packages/workit-cursor/assets/templates/plan-template.md",
+    "packages/workit-cli/assets/templates/plan-template.md",
+    "packages/workit-core/skills/wk-implement/SKILL.md",
+    "packages/workit-opencode/assets/skills/wk-implement/SKILL.md",
+    "packages/workit-cursor/skills/wk-implement/SKILL.md",
+    "packages/workit-core/vendor/superpowers/skills/subagent-driven-development/SKILL.md",
+    "packages/workit-opencode/assets/vendor/superpowers/skills/subagent-driven-development/SKILL.md",
+    "packages/workit-cursor/vendor/superpowers/skills/subagent-driven-development/SKILL.md",
+  ];
+  // Every surface must carry the per-task commit-range rule and record the
+  // task's real base..head shas, so a single missing copy fails the test.
+  for (const rel of surfaces) {
+    expect(read(rel)).toContain("one contiguous non-empty commit range");
+    expect(read(rel)).toContain("real base..head");
+  }
+  // No stale "do not create per-task commits" wording survives on any copy.
+  const joined = surfaces.map(read).join("\n");
+  expect(joined).not.toContain("do not create per-task commits");
+});
+
 test("the four template roots are byte-identical with the exact marker, the five-choice source list, and the four-choice destination list", () => {
   const read = (rel: string) => readFileSync(path.join(import.meta.dir, "..", "..", rel), "utf8");
   const roots = [
