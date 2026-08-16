@@ -1281,7 +1281,7 @@ const sameChoiceLabel = (a: string, b: string): boolean => normalizeLabel(a) ===
 const normalizeLabel = (s: string): string =>
   s
     .replace(/\s*\([^)]*\)/g, " ")
-    .replace(/\bfirst\b/gi, " ")
+    .replace(/\s*\bfirst\b\s*$/i, " ")
     .replace(/[^a-z0-9]+/gi, " ")
     .trim()
     .toLowerCase();

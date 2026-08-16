@@ -22,6 +22,7 @@ import {
 import {
   DESTINATION_REMINDER_TEXT,
   REMINDER_TEXT,
+  SOURCE_MENU_LABELS_DISPLAY,
   reminderTextFor,
 } from "../../packages/workit-core/src/core/reminder";
 
@@ -234,24 +235,21 @@ test("documented display labels match their base menu choices through the receip
   // bootstrap question — must still match the bare machine enum through the
   // shared sameChoiceLabel matcher. A reworded display form that breaks the
   // match fails here instead of surfacing as a runtime evidence_mismatch.
-  const sourceDisplay = SOURCE_MENU_LABELS.map((label) =>
-    label === "Handoff" ? "Handoff (new session only)" : label,
-  );
-  expect(REMINDER_TEXT).toContain(`exactly: ${sourceDisplay.join(", ")}.`);
+  // The display forms come from reminder.ts's exported SOURCE_MENU_LABELS_DISPLAY
+  // (single source of truth, advisory #5), never a re-derivation in the test.
+  expect(REMINDER_TEXT).toContain(`exactly: ${SOURCE_MENU_LABELS_DISPLAY.join(", ")}.`);
   expect(DESTINATION_REMINDER_TEXT).toContain(`exactly: ${DESTINATION_MENU_LABELS.join(", ")}.`);
   const bootstrap = readFileSync(
     path.resolve(import.meta.dir, "..", "..", "packages", "workit-opencode", "src", "bootstrap.ts"),
     "utf8",
   );
-  expect(bootstrap).toContain(`exactly: ${sourceDisplay.join(", ")}.`);
+  expect(bootstrap).toContain(`exactly: ${SOURCE_MENU_LABELS_DISPLAY.join(", ")}.`);
 
-  const displayToChoice: Array<[string, string]> = [
-    ["Subagent-driven", "subagent-driven"],
-    ["Inline", "inline"],
-    ["Handoff (new session only)", "handoff"],
-    ["Review spec first", "review-spec"],
-    ["Review plan first", "review-plan"],
-  ];
+  // Same positional order as the choice enum (advisory #5): a reworded label or
+  // reordered tuple breaks the pair mapping instead of drifting in silence.
+  const displayToChoice = SOURCE_MENU_LABELS_DISPLAY.map(
+    (display, i) => [display, SOURCE_MENU_CHOICES[i]] as [string, string],
+  );
   for (const [display, choice] of displayToChoice) {
     const store = new HostReceiptStore();
     store.record("s1", `call-menu-${choice}`, display);
