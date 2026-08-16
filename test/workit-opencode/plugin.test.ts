@@ -519,6 +519,90 @@ test("the plugin records lifecycle answers as one-use receipts consumed by the l
   }
 });
 
+// Task 3 (label-matching parity): the real host path end-to-end. The after-hook
+// records the ANSWERED label verbatim — including a qualifier-decorated menu
+// choice the host rendered ("(Recommended)" / "(new session only)") — and
+// workflow_plan_menu consumes it against the bare enum via the shared matcher.
+const answerQuestion = (
+  hooks: Record<string, any>,
+  sessionID: string,
+  callID: string,
+  label: string,
+) =>
+  hooks["tool.execute.after"]?.(
+    { tool: "question", sessionID, callID, args: {} },
+    {
+      title: "Question",
+      output: "User has answered your questions",
+      metadata: { answers: [[label]] },
+    },
+  );
+
+test.each([
+  [
+    "a (Recommended)-decorated menu answer",
+    "s1",
+    "Subagent-driven (Recommended)",
+    "subagent-driven",
+  ],
+  ["the display-only handoff qualifier", "s2", "Handoff (new session only)", "handoff"],
+])(
+  "the plugin hook records %s and workflow_plan_menu consumes it",
+  async (_name, sessionID, label, choice) => {
+    const { root, slug } = flowFixture();
+    try {
+      const client = {
+        session: { get: async () => ({ data: {} }) },
+      };
+      const hooks = await plugin({
+        client,
+        directory: root,
+        worktree: root,
+        serverUrl: new URL("http://localhost"),
+      } as never);
+      const spec = `docs/${slug}/spec.md`;
+      const plan = `docs/${slug}/plan.md`;
+      await hooks.tool?.workflow_flow_status.execute({ plan_path: plan }, {
+        directory: root,
+        worktree: root,
+        sessionID,
+      } as never);
+
+      await answerQuestion(hooks, sessionID, "call-spec", "Approve spec");
+      const specR = JSON.parse(
+        (await hooks.tool?.workflow_spec_approve.execute({ spec_path: spec }, {
+          directory: root,
+          worktree: root,
+          sessionID,
+        } as never)) as string,
+      );
+      expect(specR.ok).toBe(true);
+      await answerQuestion(hooks, sessionID, "call-plan", "Approve plan");
+      const planR = JSON.parse(
+        (await hooks.tool?.workflow_plan_approve.execute({ plan_path: plan }, {
+          directory: root,
+          worktree: root,
+          sessionID,
+        } as never)) as string,
+      );
+      expect(planR.ok).toBe(true);
+
+      await answerQuestion(hooks, sessionID, "call-menu", label);
+      const menu = JSON.parse(
+        (await hooks.tool?.workflow_plan_menu.execute({ plan_path: plan, choice }, {
+          directory: root,
+          worktree: root,
+          sessionID,
+        } as never)) as string,
+      );
+      expect(menu.ok).toBe(true);
+      expect(menu.data.menu.chosen).toBe(choice);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
+
 describe("plugin registration", () => {
   test("registers exactly the twelve wk commands and one skill path", async () => {
     const hooks = await plugin({

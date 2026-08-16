@@ -37,7 +37,13 @@ import {
 } from "../../packages/workit-core/src/core/flow-state";
 import type { VerifyResult } from "../../packages/workit-core/src/core/verify-project";
 import { findMarkedDestinations } from "../../packages/workit-core/src/core/menu";
-import { COMPLIANT_PLAN, COMPLIANT_SPEC, cursorEvidence, openEvidence } from "./flow-fixtures";
+import {
+  COMPLIANT_PLAN,
+  COMPLIANT_SPEC,
+  cursorEvidence,
+  menuEvidence,
+  openEvidence,
+} from "./flow-fixtures";
 
 const COMPLIANT_SPEC_FN = COMPLIANT_SPEC;
 const COMPLIANT_PLAN_FN = COMPLIANT_PLAN;
@@ -303,6 +309,15 @@ test("menu label comparison is case-insensitive: a user answering 'Inline' autho
   const matched = store.consume("s1", { label: "inline" });
   expect(matched.ok).toBe(true);
   if (matched.ok) expect(matched.receipt.selectedLabel).toBe("Inline");
+});
+
+test("consume with a label filter accepts a qualifier-decorated handoff label", () => {
+  const store = new HostReceiptStore();
+  store.record("s1", "call-menu", "Handoff (new session only)");
+  const matched = store.consume("s1", { label: "handoff" });
+  expect(matched.ok).toBe(true);
+  if (matched.ok) expect(matched.receipt.selectedLabel).toBe("Handoff (new session only)");
+  expect(store.count("s1")).toBe(0);
 });
 
 test("negative answers are rejected and SPENT: no consent laundering via 'No'/'Reject' answers", () => {
@@ -573,6 +588,161 @@ test("menu records only the exact selected label as evidence (OpenCode receipts)
     if (state.menu.evidence?.host === "opencode") {
       expect(state.menu.evidence.selectedLabel).toBe("inline");
     }
+  } finally {
+    cleanup(root);
+  }
+});
+
+test.each([
+  ["Subagent-driven (Recommended)", "subagent-driven"],
+  ["Handoff (new session only)", "handoff"],
+  ["Inline (Recommended)", "inline"],
+  ["Review spec first", "review-spec"],
+  ["Review plan first", "review-plan"],
+])(
+  "recordMenuChoice accepts qualifier-decorated selected labels on the source flow: %s",
+  (selectedLabel, choice) => {
+    const { root, slug } = fixture();
+    try {
+      const store = new HostReceiptStore();
+      const sessionId = `source-${choice}`;
+      const spec = `docs/${slug}/spec.md`;
+      const plan = `docs/${slug}/plan.md`;
+      prepareFlowState(root, slug, { spec_path: spec, plan_path: plan });
+      expect(
+        transitionSpec(root, slug, spec, openEvidence(store, sessionId, "Approve spec")).ok,
+      ).toBe(true);
+      expect(
+        transitionPlan(root, slug, plan, openEvidence(store, sessionId, "Approve plan")).ok,
+      ).toBe(true);
+      const result = recordMenuChoice(
+        root,
+        slug,
+        plan,
+        choice,
+        menuEvidence(store, sessionId, selectedLabel),
+      );
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(readFlowState(root, slug).menu.presented).toBe(true);
+        expect(readFlowState(root, slug).menu.chosen).toBe(choice);
+      }
+    } finally {
+      cleanup(root);
+    }
+  },
+);
+
+test.each([
+  ["Subagent-driven (Recommended)", "subagent-driven"],
+  ["Inline (Recommended)", "inline"],
+  ["Review spec first", "review-spec"],
+  ["Review plan first", "review-plan"],
+])(
+  "recordMenuChoice accepts qualifier-decorated selected labels on a marked handoff destination: %s",
+  (selectedLabel, choice) => {
+    const { root, slug } = fixture();
+    try {
+      const store = new HostReceiptStore();
+      const spec = `docs/${slug}/spec.md`;
+      const plan = `docs/${slug}/plan.md`;
+      prepareFlowState(root, slug, { spec_path: spec, plan_path: plan });
+      expect(transitionSpec(root, slug, spec, openEvidence(store, "src", "Approve spec")).ok).toBe(
+        true,
+      );
+      expect(transitionPlan(root, slug, plan, openEvidence(store, "src", "Approve plan")).ok).toBe(
+        true,
+      );
+      expect(
+        recordMenuChoice(root, slug, plan, "handoff", menuEvidence(store, "src", "handoff")).ok,
+      ).toBe(true);
+      expect(markHandoffDestination(root, slug, plan)).toEqual({ ok: true });
+      expect(readFlowState(root, slug).handoff_destination).toBe(true);
+
+      const result = recordMenuChoice(
+        root,
+        slug,
+        plan,
+        choice,
+        menuEvidence(store, `dest-${choice}`, selectedLabel),
+      );
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(readFlowState(root, slug).menu.presented).toBe(true);
+        expect(readFlowState(root, slug).menu.chosen).toBe(choice);
+      }
+    } finally {
+      cleanup(root);
+    }
+  },
+);
+
+test("menu still rejects a genuinely mismatched base label as evidence_mismatch", () => {
+  const cases: Array<[string, string]> = [
+    ["Implement", "inline"],
+    ["Handoff", "review-spec"],
+  ];
+  for (const [selectedLabel, choice] of cases) {
+    const { root, slug } = fixture();
+    try {
+      const store = new HostReceiptStore();
+      const sessionId = `mismatch-${choice}`;
+      const spec = `docs/${slug}/spec.md`;
+      const plan = `docs/${slug}/plan.md`;
+      prepareFlowState(root, slug, { spec_path: spec, plan_path: plan });
+      expect(
+        transitionSpec(root, slug, spec, openEvidence(store, sessionId, "Approve spec")).ok,
+      ).toBe(true);
+      expect(
+        transitionPlan(root, slug, plan, openEvidence(store, sessionId, "Approve plan")).ok,
+      ).toBe(true);
+      const result = recordMenuChoice(
+        root,
+        slug,
+        plan,
+        choice,
+        menuEvidence(store, sessionId, selectedLabel),
+      );
+      expect(result.ok, `${selectedLabel} -> ${choice}`).toBe(false);
+      if (result.ok === false) {
+        expect(result.code, `${selectedLabel} -> ${choice}`).toBe("evidence_mismatch");
+      }
+      expect(readFlowState(root, slug).menu.presented).toBe(false);
+    } finally {
+      cleanup(root);
+    }
+  }
+});
+
+test("recordMenuChoice rejects a leading 'First' qualifier that the base label never renders", () => {
+  // Advisory #3: the matcher must strip only a TRAILING "first" qualifier
+  // ("Review spec first" -> review-spec), never a leading one — "First review
+  // spec" is not the same choice as "review spec" and must be rejected.
+  const { root, slug } = fixture();
+  try {
+    const store = new HostReceiptStore();
+    const sessionId = "first-mismatch";
+    const spec = `docs/${slug}/spec.md`;
+    const plan = `docs/${slug}/plan.md`;
+    prepareFlowState(root, slug, { spec_path: spec, plan_path: plan });
+    expect(
+      transitionSpec(root, slug, spec, openEvidence(store, sessionId, "Approve spec")).ok,
+    ).toBe(true);
+    expect(
+      transitionPlan(root, slug, plan, openEvidence(store, sessionId, "Approve plan")).ok,
+    ).toBe(true);
+    const rejected = recordMenuChoice(
+      root,
+      slug,
+      plan,
+      "review-spec",
+      menuEvidence(store, sessionId, "First review spec"),
+    );
+    expect(rejected.ok, "a leading qualifier must not over-match").toBe(false);
+    if (rejected.ok === false) {
+      expect(rejected.code, "a leading qualifier must not over-match").toBe("evidence_mismatch");
+    }
+    expect(readFlowState(root, slug).menu.presented).toBe(false);
   } finally {
     cleanup(root);
   }

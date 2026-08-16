@@ -224,6 +224,32 @@ test("--confirm supplies the exact CLI flag evidence and the transition succeeds
   }
 });
 
+test("CLI evidence is label-free: the opencode-only menu label gate cannot apply to the policy-only confirmation", async () => {
+  const { root, slug, writeFlow, readFlow } = fixture();
+  writeFlow();
+  const ev = spyEvidence();
+  try {
+    const r = await runFlow(["pause", "--plan", `docs/${slug}/plan.md`, "--confirm"], {
+      cwd: root,
+    });
+    expect(r.code, r.stdout + r.stderr).toBe(0);
+    // The CLI confirmation carries no selected label (and no slot to attach a
+    // host-observed one), so qualifier decoration never reaches this path and
+    // the sameChoiceLabel gate — scoped to opencode receipts — cannot change
+    // the outcome here (CA-42 parity).
+    expect(ev.captured()).toEqual({ host: "cli", attested: false, confirmation: "flag" });
+    expect(Object.keys(ev.captured() as object).sort()).toEqual([
+      "attested",
+      "confirmation",
+      "host",
+    ]);
+    expect(readFlow().execution.status).toBe("paused");
+  } finally {
+    ev.restore();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("positive TTY prompt supplies the tty confirmation and the transition succeeds", async () => {
   const { root, slug, writeFlow, readFlow } = fixture();
   writeFlow();

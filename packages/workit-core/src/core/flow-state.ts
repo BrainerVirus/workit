@@ -1271,9 +1271,20 @@ export class HostReceiptStore {
   }
 }
 
-/** Menu labels compare case-insensitively: the host presents "Inline", the
- *  enum stores "inline" (FINDING 3). */
-const sameChoiceLabel = (a: string, b: string): boolean => a.toLowerCase() === b.toLowerCase();
+/** Menu labels compare semantically: hosts decorate choices with
+ *  parenthesized qualifiers ("Handoff (new session only)") that the enum does
+ *  not carry, so we strip them, trim, collapse whitespace, and lowercase both
+ *  sides before comparing. Only the comparison normalizes — the stored label
+ *  and evidence bytes are preserved verbatim. */
+const sameChoiceLabel = (a: string, b: string): boolean => normalizeLabel(a) === normalizeLabel(b);
+
+const normalizeLabel = (s: string): string =>
+  s
+    .replace(/\s*\([^)]*\)/g, " ")
+    .replace(/\s*\bfirst\b\s*$/i, " ")
+    .replace(/[^a-z0-9]+/gi, " ")
+    .trim()
+    .toLowerCase();
 
 /** Derive the evidence record from a consumed host receipt (AR-12). */
 export const createOpenCodeEvidence = (receipt: HostReceipt): OpenCodeChoiceEvidence => ({

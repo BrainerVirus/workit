@@ -4,8 +4,10 @@ import { DESTINATION_MENU_LABELS, HANDOFF_DESTINATION_MARKER, SOURCE_MENU_LABELS
 // the reminder PROSE like the other source surfaces (bootstrap.ts, session-start,
 // superpowers-doc-contract.md, ask-question-only.mdc), never in the machine
 // label tuple `SOURCE_MENU_LABELS` — the receipt label must stay exactly
-// `Handoff` for the native-question match (AR-12).
-const SOURCE_MENU_LABELS_DISPLAY = SOURCE_MENU_LABELS.map((label) =>
+// `Handoff` for the native-question match (AR-12). Exported so contract tests
+// assert the rendered reminder against this single source of truth instead of
+// re-deriving the mapping.
+export const SOURCE_MENU_LABELS_DISPLAY = SOURCE_MENU_LABELS.map((label) =>
   label === "Handoff" ? "Handoff (new session only)" : label,
 );
 

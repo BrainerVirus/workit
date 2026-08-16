@@ -249,6 +249,57 @@ test("cursor MCP: subagent-driven menu is rejected as unsupported with recovery 
   }
 });
 
+test("cursor policy-only menu is label-blind: decorated labels cannot alter outcomes on the path where the label gate never runs", async () => {
+  const { root } = fixture();
+  const { child, request } = startServer();
+  try {
+    await request("initialize", {
+      protocolVersion: "2024-11-05",
+      capabilities: {},
+      clientInfo: { name: "flow-enforcement", version: "1.0" },
+    });
+    child.stdin.write(
+      `${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })}\n`,
+    );
+    const call = (name: string, arguments_: unknown) =>
+      request("tools/call", { name, arguments: arguments_ });
+
+    await call("workflow_flow_status", {
+      plan_path: "docs/cf-flow/plan.md",
+      workspace_root: root,
+    });
+    const spec = "docs/cf-flow/spec.md";
+    const plan = "docs/cf-flow/plan.md";
+    await call("workflow_spec_approve", { spec_path: spec, workspace_root: root });
+    await call("workflow_plan_approve", { plan_path: plan, workspace_root: root });
+
+    // A decorated label has no schema slot on the policy-only path: the menu
+    // records identically, and the stored evidence carries no label to compare
+    // — the opencode-scoped sameChoiceLabel gate cannot run here.
+    const menu = await call("workflow_plan_menu", {
+      choice: "inline",
+      plan_path: plan,
+      workspace_root: root,
+      selectedLabel: "Inline (Recommended)",
+    });
+    expect(callText(menu).isError).toBe(false);
+    expect(callText(menu).text.menu).toEqual({ presented: true, chosen: "inline" });
+
+    const flow = JSON.parse(
+      readFileSync(path.join(root, "docs", "cf-flow", "sdd", "flow.json"), "utf8"),
+    );
+    expect(flow.menu.evidence).toEqual({
+      host: "cursor",
+      attested: false,
+      confirmation: "contract",
+    });
+    expect(Object.keys(flow.menu.evidence).sort()).toEqual(["attested", "confirmation", "host"]);
+  } finally {
+    child.kill();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("cursor MCP: no delegated role input exists — a client-supplied role is inert", async () => {
   const { root } = fixture();
   const { child, request } = startServer();
