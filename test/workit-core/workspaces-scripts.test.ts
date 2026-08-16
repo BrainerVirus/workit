@@ -685,65 +685,69 @@ test("pr-create.sh create: cfg-driven wiring emits Closes #N into the real gh in
   }
 });
 
-test("pr-create.sh create: target branch flows from config for every preset (RL-03)", () => {
-  const CASES = [
-    { preset: "gitflow", provider: "gitlab", target: "develop" },
-    { preset: "github-flow", provider: "github", target: "main" },
-    { preset: "trunk-based", provider: "github", target: "main" },
-    { preset: "custom", provider: "gitlab", target: "trunk" },
-  ] as const;
-  for (const c of CASES) {
-    const stubBin = mkdtempSync(path.join(os.tmpdir(), "wf-pr-target-"));
-    const stub = c.provider === "gitlab" ? "glab" : "gh";
-    const logFile = path.join(stubBin, `${stub}-args.txt`);
-    stubCli(stubBin, stub, logFile, "https://example.com/ok");
-    const pathDirs = (process.env.PATH ?? "").split(path.delimiter);
-    const cleanPath = pathDirs.filter(
-      (d) => d && !existsSync(path.join(d, "gh")) && !existsSync(path.join(d, "glab")),
-    );
-    const repo = realpathSync(mkdtempSync(path.join(os.tmpdir(), "wf-pr-target-repo-")));
-    const bare = realpathSync(mkdtempSync(path.join(os.tmpdir(), "wf-pr-target-remote-")));
-    const git = (args: string[]) => spawnSync("git", args, { cwd: repo, encoding: "utf8" });
-    git(["init", "-q", "-b", "develop"]);
-    git(["config", "user.name", "Workflow Test"]);
-    git(["config", "user.email", "workflow@example.test"]);
-    writeFileSync(path.join(repo, "README.md"), "base\n");
-    git(["add", "README.md"]);
-    git(["commit", "-q", "-m", "base"]);
-    // push-before-create (Task 2) needs a real origin carrying the current branch.
-    expect(spawnSync("git", ["init", "-q", "--bare"], { cwd: bare, encoding: "utf8" }).status).toBe(
-      0,
-    );
-    git(["remote", "add", "origin", bare]);
-    git(["push", "-q", "-u", "origin", "develop"]);
-    try {
-      const r = withConfigFiles(
-        {
-          "vcs.json": JSON.stringify({ provider: c.provider, defaultTargetBranch: c.target }),
-          "workspaces.json": workspacesJson(`${repo}/**`, c.provider, {
-            vcs: { defaultTargetBranch: c.target },
-          }),
-          [`${c.provider}.token`]: "test-token-123",
-        },
-        {
-          PATH: `${stubBin}${path.delimiter}${cleanPath.join(path.delimiter)}`,
-          WF_PR_CONFIRMED: "true",
-          WF_PR_TITLE: "T",
-        },
-        () => prCreate({ ...process.env, WF_PR_CONFIRMED: "true", WF_PR_TITLE: "T" }, repo),
+test(
+  "pr-create.sh create: target branch flows from config for every preset (RL-03)",
+  () => {
+    const CASES = [
+      { preset: "gitflow", provider: "gitlab", target: "develop" },
+      { preset: "github-flow", provider: "github", target: "main" },
+      { preset: "trunk-based", provider: "github", target: "main" },
+      { preset: "custom", provider: "gitlab", target: "trunk" },
+    ] as const;
+    for (const c of CASES) {
+      const stubBin = mkdtempSync(path.join(os.tmpdir(), "wf-pr-target-"));
+      const stub = c.provider === "gitlab" ? "glab" : "gh";
+      const logFile = path.join(stubBin, `${stub}-args.txt`);
+      stubCli(stubBin, stub, logFile, "https://example.com/ok");
+      const pathDirs = (process.env.PATH ?? "").split(path.delimiter);
+      const cleanPath = pathDirs.filter(
+        (d) => d && !existsSync(path.join(d, "gh")) && !existsSync(path.join(d, "glab")),
       );
-      expect(r.ok, `${c.preset}: ${JSON.stringify(r)}`).toBe(true);
-      expect(r.targetBranch).toBe(c.target);
-      const logged = readFileSync(logFile, "utf8");
-      if (c.provider === "gitlab") expect(logged).toContain(`-b ${c.target}`);
-      else expect(logged).toContain(`--base ${c.target}`);
-    } finally {
-      rmSync(stubBin, { recursive: true, force: true });
-      rmSync(repo, { recursive: true, force: true });
-      rmSync(bare, { recursive: true, force: true });
+      const repo = realpathSync(mkdtempSync(path.join(os.tmpdir(), "wf-pr-target-repo-")));
+      const bare = realpathSync(mkdtempSync(path.join(os.tmpdir(), "wf-pr-target-remote-")));
+      const git = (args: string[]) => spawnSync("git", args, { cwd: repo, encoding: "utf8" });
+      git(["init", "-q", "-b", "develop"]);
+      git(["config", "user.name", "Workflow Test"]);
+      git(["config", "user.email", "workflow@example.test"]);
+      writeFileSync(path.join(repo, "README.md"), "base\n");
+      git(["add", "README.md"]);
+      git(["commit", "-q", "-m", "base"]);
+      // push-before-create (Task 2) needs a real origin carrying the current branch.
+      expect(
+        spawnSync("git", ["init", "-q", "--bare"], { cwd: bare, encoding: "utf8" }).status,
+      ).toBe(0);
+      git(["remote", "add", "origin", bare]);
+      git(["push", "-q", "-u", "origin", "develop"]);
+      try {
+        const r = withConfigFiles(
+          {
+            "vcs.json": JSON.stringify({ provider: c.provider, defaultTargetBranch: c.target }),
+            "workspaces.json": workspacesJson(`${repo}/**`, c.provider, {
+              vcs: { defaultTargetBranch: c.target },
+            }),
+            [`${c.provider}.token`]: "test-token-123",
+          },
+          {
+            PATH: `${stubBin}${path.delimiter}${cleanPath.join(path.delimiter)}`,
+            WF_PR_CONFIRMED: "true",
+            WF_PR_TITLE: "T",
+          },
+          () => prCreate({ ...process.env, WF_PR_CONFIRMED: "true", WF_PR_TITLE: "T" }, repo),
+        );
+        expect(r.ok, `${c.preset}: ${JSON.stringify(r)}`).toBe(true);
+        expect(r.targetBranch).toBe(c.target);
+        const logged = readFileSync(logFile, "utf8");
+        if (c.provider === "gitlab") expect(logged).toContain(`-b ${c.target}`);
+        else expect(logged).toContain(`--base ${c.target}`);
+      } finally {
+        rmSync(stubBin, { recursive: true, force: true });
+        rmSync(repo, { recursive: true, force: true });
+        rmSync(bare, { recursive: true, force: true });
+      }
     }
-  }
-});
+  },
+  { timeout: 60_000 },
+);
 
 test("RL-08: writeWorkspaces rejects unsupported glob grammar at write time", () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "wf-ws-write-"));
