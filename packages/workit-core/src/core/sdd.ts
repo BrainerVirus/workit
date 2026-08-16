@@ -221,6 +221,16 @@ export function sddReviewPackage({
 }) {
   const contained = resolveDocsPath({ workspace_root, path: sdd_dir });
   if (!contained.ok) return { error: contained.error };
+  // Empty-range guard (Phase 2): a review package over `base..head` where the
+  // endpoints collapse to nothing is a contract error, not an artifact. Reject
+  // BEFORE any diff file is created or written (Task 1's RED evidence watches
+  // the guard, and the adapters only surface this core error — never a copy).
+  if (base_sha === head_sha) {
+    return {
+      error: `empty commit range (base_sha ${base_sha} === head_sha ${head_sha}): nothing to review`,
+      code: "empty_commit_range",
+    };
+  }
   const dir = contained.path;
   mkdirSync(dir, { recursive: true });
   const base7 = base_sha.slice(0, 7);
@@ -234,6 +244,14 @@ export function sddReviewPackage({
       // captured error, never in the suite output.
       stdio: ["pipe", "pipe", "pipe"],
     });
+    // Distinct shas that still diff to nothing are an empty range too (the
+    // "or a diff that is empty" clause): no artifact is written for it.
+    if (diff.trim() === "") {
+      return {
+        error: `empty commit range (${base_sha}..${head_sha}): diff is empty, nothing to review`,
+        code: "empty_commit_range",
+      };
+    }
     writeFileSync(diffPath, diff, "utf8");
     const rel = posix(path.relative(contained.base, diffPath));
     return { diff_path: rel, base_sha, head_sha, base7, head7 };
@@ -242,7 +260,7 @@ export function sddReviewPackage({
   }
 }
 
-const PROGRESS_RE = /^Task\s+\d+:\s+complete\s+\(commits\s+[0-9a-f]{7,40}\.\.[0-9a-f]{7,40},/i;
+const PROGRESS_RE = /^Task\s+\d+:\s+complete\s+\(commits\s+([0-9a-f]{7,40})\.\.([0-9a-f]{7,40}),/i;
 
 export function sddAppendProgress({
   progress_path,
@@ -257,7 +275,11 @@ export function sddAppendProgress({
   if (!contained.ok) return { error: contained.error };
   const path_ = contained.path;
   const trimmed = line.trim();
-  if (!PROGRESS_RE.test(trimmed)) {
+  const match = PROGRESS_RE.exec(trimmed);
+  // A regex alone cannot compare two groups: reject identical base/head shas
+  // after the format matches so `5db04ae..bd0a810` still passes while
+  // `abcdef0123456789..abcdef0123456789` is rejected (Phase 2).
+  if (!match || match[1].toLowerCase() === match[2].toLowerCase()) {
     return { error: "invalid progress line format" };
   }
   if (existsSync(path_) && statSync(path_).isDirectory()) {

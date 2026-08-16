@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { spawn, spawnSync } from "node:child_process";
 import {
   closeSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   openSync,
@@ -375,6 +376,72 @@ test("cursor MCP enforces the same domain gates as opencode over stdio", async (
     });
     expect(callText(approved).isError).toBe(false);
     expect(callText(approved).text.status).toBe("approved");
+  } finally {
+    child.kill();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("cursor MCP: workflow_sdd_review_package rejects an empty base..head range", async () => {
+  const { root } = fixture();
+  const { child, request } = startServer();
+  const git = (args: string[]) => spawnSync("git", args, { cwd: root, encoding: "utf8" });
+  try {
+    await request("initialize", {
+      protocolVersion: "2024-11-05",
+      capabilities: {},
+      clientInfo: { name: "flow-enforcement", version: "1.0" },
+    });
+    child.stdin.write(
+      `${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })}\n`,
+    );
+    const call = (name: string, arguments_: unknown) =>
+      request("tools/call", { name, arguments: arguments_ });
+
+    await call("workflow_flow_status", {
+      plan_path: "docs/cf-flow/plan.md",
+      workspace_root: root,
+    });
+    const spec = "docs/cf-flow/spec.md";
+    const plan = "docs/cf-flow/plan.md";
+    await call("workflow_spec_approve", { spec_path: spec, workspace_root: root });
+    await call("workflow_plan_approve", { plan_path: plan, workspace_root: root });
+    await call("workflow_plan_menu", { choice: "inline", plan_path: plan, workspace_root: root });
+
+    expect(git(["init", "-q", "-b", "feature/cf-flow"]).status).toBe(0);
+    git(["config", "user.name", "Workflow Test"]);
+    git(["config", "user.email", "workflow@example.test"]);
+    writeFileSync(path.join(root, "file.txt"), "one\n");
+    git(["add", "file.txt"]);
+    git(["commit", "-q", "-m", "base"]);
+    const base = git(["rev-parse", "HEAD"]).stdout.trim();
+
+    const same = await call("workflow_sdd_review_package", {
+      sdd_dir: "docs/cf-flow/sdd",
+      base_sha: base,
+      head_sha: base,
+      workspace_root: root,
+    });
+    expect(callText(same).isError).toBe(true);
+    expect(JSON.stringify(callText(same).text)).toContain("empty commit range");
+    const base7 = base.slice(0, 7);
+    expect(existsSync(path.join(root, `docs/cf-flow/sdd/review-${base7}..${base7}.diff`))).toBe(
+      false,
+    );
+
+    writeFileSync(path.join(root, "file.txt"), "one\ntwo\n");
+    git(["commit", "-q", "-am", "head"]);
+    const head = git(["rev-parse", "HEAD"]).stdout.trim();
+    const real = await call("workflow_sdd_review_package", {
+      sdd_dir: "docs/cf-flow/sdd",
+      base_sha: base,
+      head_sha: head,
+      workspace_root: root,
+    });
+    expect(callText(real).isError).toBe(false);
+    expect(callText(real).text.diff_path).toBe(
+      `docs/cf-flow/sdd/review-${base.slice(0, 7)}..${head.slice(0, 7)}.diff`,
+    );
   } finally {
     child.kill();
     rmSync(root, { recursive: true, force: true });

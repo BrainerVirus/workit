@@ -442,6 +442,7 @@ test("packed CLI: help lists every flow and handoff command", () => {
       "workit flow pause --plan <path> [--confirm]",
       "workit flow resume --plan <path> [--confirm]",
       "workit flow complete --plan <path> [--confirm]",
+      "workit flow review-package --plan <path> --base <sha> --head <sha> [--confirm]",
       "workit handoff --message <text>",
     ]) {
       expect(help.stdout, command).toContain(command);

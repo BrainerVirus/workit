@@ -403,7 +403,9 @@ test("sddReviewPackage rejects an empty base..head range instead of writing an e
     });
     expect(result.error).toBeTruthy();
     const base7 = base.slice(0, 7);
-    expect(existsSync(path.join(root, `docs/review/sdd/review-${base7}..${base7}.diff`))).toBe(false);
+    expect(existsSync(path.join(root, `docs/review/sdd/review-${base7}..${base7}.diff`))).toBe(
+      false,
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -444,7 +446,9 @@ test("sddReviewPackage rejects an empty base..head range through the OpenCode to
     const result = JSON.parse(raw as string);
     expect(result.error).toBeTruthy();
     const base7 = base.slice(0, 7);
-    expect(existsSync(path.join(root, `docs/review/sdd/review-${base7}..${base7}.diff`))).toBe(false);
+    expect(existsSync(path.join(root, `docs/review/sdd/review-${base7}..${base7}.diff`))).toBe(
+      false,
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

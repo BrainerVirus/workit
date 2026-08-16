@@ -12,6 +12,7 @@ import {
   slugFromPath,
 } from "@brainervirus/workit-core/src/core/flow-state";
 import { resolveCanonicalLayout } from "@brainervirus/workit-core/src/core/docs-layout";
+import { sddReviewPackage } from "@brainervirus/workit-core/src/core/sdd";
 import type { runVerifyProject } from "@brainervirus/workit-core/src/core/verify-project";
 
 // Task 6 (CA-19/CA-21): the CLI flow/handoff surface. index.tsx stays a thin
@@ -32,9 +33,9 @@ export type FlowCliDeps = {
   err?: { write: (chunk: string) => void };
 };
 
-const FLOW_ACTIONS = ["status", "pause", "resume", "complete"] as const;
+const FLOW_ACTIONS = ["status", "pause", "resume", "complete", "review-package"] as const;
 type FlowAction = (typeof FLOW_ACTIONS)[number];
-type MutationAction = Exclude<FlowAction, "status">;
+type MutationAction = "pause" | "resume" | "complete";
 
 // Single source of truth for the command surface: FLOW_COMMANDS (usage errors)
 // and the index.tsx HELP text are both derived from COMMANDS so the exact
@@ -44,6 +45,8 @@ export const COMMANDS = {
   pause: "workit flow pause --plan <path> [--confirm]",
   resume: "workit flow resume --plan <path> [--confirm]",
   complete: "workit flow complete --plan <path> [--confirm]",
+  "review-package":
+    "workit flow review-package --plan <path> --base <sha> --head <sha> [--confirm]",
   handoff: "workit handoff --message <text>",
 } as const;
 
@@ -52,6 +55,7 @@ const FLOW_COMMANDS: Record<FlowAction, string> = {
   pause: COMMANDS.pause,
   resume: COMMANDS.resume,
   complete: COMMANDS.complete,
+  "review-package": COMMANDS["review-package"],
 };
 
 const CLI_FLAG_EVIDENCE: CliConfirmation = { host: "cli", attested: false, confirmation: "flag" };
@@ -107,32 +111,43 @@ const usage = (err: { write: (chunk: string) => void }, text: string): number =>
   return 2;
 };
 
-type ParsedFlow = { plan: string; confirm: boolean };
+type ParsedFlow = { plan: string; confirm: boolean; base?: string; head?: string };
+
+const VALUE_FLAGS = ["--plan", "--base", "--head"] as const;
 
 function parseFlowFlags(
   action: FlowAction,
   argv: string[],
   err: { write: (chunk: string) => void },
 ): { ok: true; parsed: ParsedFlow } | { ok: false } {
-  let plan: string | undefined;
+  const parsed: Partial<ParsedFlow> = {};
   let confirm = false;
   for (let i = 0; i < argv.length; i++) {
     const token = argv[i];
-    if (token === "--plan") {
-      if (plan !== undefined) {
-        usage(err, `usage: ${FLOW_COMMANDS[action]} — duplicate --plan flag`);
+    if ((VALUE_FLAGS as readonly string[]).includes(token)) {
+      if (token !== "--plan" && action !== "review-package") {
+        usage(err, `usage: ${FLOW_COMMANDS[action]} — unknown flag: ${token}`);
         return { ok: false };
       }
       const value = argv[i + 1];
       if (value === undefined || value.trim() === "") {
-        usage(err, `usage: ${FLOW_COMMANDS[action]} — --plan requires a non-empty path`);
+        const label = token === "--plan" ? "path" : "value";
+        usage(err, `usage: ${FLOW_COMMANDS[action]} — ${token} requires a non-empty ${label}`);
         return { ok: false };
       }
       if (value.startsWith("--")) {
         usage(err, `usage: ${FLOW_COMMANDS[action]} — unknown flag: ${value}`);
         return { ok: false };
       }
-      plan = value;
+      const existing =
+        token === "--plan" ? parsed.plan : token === "--base" ? parsed.base : parsed.head;
+      if (existing !== undefined) {
+        usage(err, `usage: ${FLOW_COMMANDS[action]} — duplicate ${token} flag`);
+        return { ok: false };
+      }
+      if (token === "--plan") parsed.plan = value;
+      else if (token === "--base") parsed.base = value;
+      else parsed.head = value;
       i += 1;
     } else if (token === "--confirm") {
       if (action === "status") {
@@ -152,11 +167,21 @@ function parseFlowFlags(
       return { ok: false };
     }
   }
-  if (plan === undefined) {
+  if (parsed.plan === undefined) {
     usage(err, `usage: ${FLOW_COMMANDS[action]} — --plan <path> required`);
     return { ok: false };
   }
-  return { ok: true, parsed: { plan, confirm } };
+  if (action === "review-package") {
+    if (parsed.base === undefined) {
+      usage(err, `usage: ${FLOW_COMMANDS[action]} — --base <sha> required`);
+      return { ok: false };
+    }
+    if (parsed.head === undefined) {
+      usage(err, `usage: ${FLOW_COMMANDS[action]} — --head <sha> required`);
+      return { ok: false };
+    }
+  }
+  return { ok: true, parsed: { plan: parsed.plan, confirm, base: parsed.base, head: parsed.head } };
 }
 
 /**
@@ -241,6 +266,34 @@ function mutateCommand(
   return 0;
 }
 
+function reviewPackageCommand(
+  root: string,
+  parsed: ParsedFlow,
+  out: { write: (chunk: string) => void },
+  err: { write: (chunk: string) => void },
+): number {
+  const resolved = resolveCanonicalLayout({ workspace_root: root, plan_path: parsed.plan });
+  if (!resolved.ok) return domainFail(err, "path_invalid", resolved.error);
+  // CLI port wrapper: call the shared core guard, never a re-implementation of
+  // the empty-range check (parity with OpenCode/Cursor adapters).
+  const result = sddReviewPackage({
+    sdd_dir: path.posix.join("docs", resolved.layout.slug, "sdd"),
+    base_sha: parsed.base as string,
+    head_sha: parsed.head as string,
+    workspace_root: root,
+  });
+  if ("diff_path" in result) {
+    writeJSON(out, {
+      ok: true,
+      diff_path: result.diff_path,
+      base_sha: result.base_sha,
+      head_sha: result.head_sha,
+    });
+    return 0;
+  }
+  return domainFail(err, result.code ?? "review_package_failed", result.error);
+}
+
 export async function runFlowCommand(argv: string[], deps: FlowCliDeps = {}): Promise<number> {
   const out = outStream(deps);
   const err = errStream(deps);
@@ -248,7 +301,7 @@ export async function runFlowCommand(argv: string[], deps: FlowCliDeps = {}): Pr
   if (!action || !(FLOW_ACTIONS as readonly string[]).includes(action)) {
     return usage(
       err,
-      "usage: workit flow <status|pause|resume|complete> --plan <path> [--confirm]",
+      "usage: workit flow <status|pause|resume|complete|review-package> --plan <path> [--confirm]",
     );
   }
   const flowAction = action as FlowAction;
@@ -260,6 +313,9 @@ export async function runFlowCommand(argv: string[], deps: FlowCliDeps = {}): Pr
   }
   const evidence = await resolveConfirmation(deps, parsed.parsed.confirm, out, err);
   if (evidence === null) return 2;
+  if (flowAction === "review-package") {
+    return reviewPackageCommand(root, parsed.parsed, out, err);
+  }
   return mutateCommand(root, parsed.parsed.plan, flowAction, evidence, deps, out, err);
 }
 
