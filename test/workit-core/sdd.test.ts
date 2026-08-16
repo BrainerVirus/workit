@@ -7,6 +7,7 @@ import { createSddTools } from "../../packages/workit-opencode/src/tools/sdd";
 import { WorkflowStateStore } from "../../packages/workit-core/src/state";
 import { establishApprovedFlow } from "./flow-fixtures";
 import { HostReceiptStore } from "../../packages/workit-core/src/core/flow-state";
+import { sddAppendProgress, sddReviewPackage } from "../../packages/workit-core/src/core/sdd";
 
 // Isolate from the developer's global config: tests assume gitflow semantics
 // (PRESETS.gitflow in src/core/config.ts), like CI with no global config.
@@ -378,6 +379,100 @@ test("review package safely writes to a quote-bearing contained path", async () 
     const result = JSON.parse(raw as string);
     expect(result.ok).toBe(true);
     expect(existsSync(path.join(root, result.data.diff_path))).toBe(true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("sddReviewPackage rejects an empty base..head range instead of writing an empty diff", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wf-sdd-emptyrange-"));
+  const git = (args: string[]) => spawnSync("git", args, { cwd: root, encoding: "utf8" });
+  try {
+    expect(git(["init", "-q", "-b", "feature/review"]).status).toBe(0);
+    git(["config", "user.name", "Workflow Test"]);
+    git(["config", "user.email", "workflow@example.test"]);
+    writeFileSync(path.join(root, "file.txt"), "one\n");
+    git(["add", "file.txt"]);
+    git(["commit", "-q", "-m", "base"]);
+    const base = git(["rev-parse", "HEAD"]).stdout.trim();
+    const result = sddReviewPackage({
+      sdd_dir: "docs/review/sdd",
+      base_sha: base,
+      head_sha: base,
+      workspace_root: root,
+    });
+    expect(result.error).toBeTruthy();
+    const base7 = base.slice(0, 7);
+    expect(existsSync(path.join(root, `docs/review/sdd/review-${base7}..${base7}.diff`))).toBe(false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("sddAppendProgress rejects a progress line with identical commit shas", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wf-sdd-samesha-"));
+  const result = sddAppendProgress({
+    progress_path: "docs/x/sdd/progress.md",
+    line: "Task 1: complete (commits abcdef0123456789..abcdef0123456789, tests pass)",
+    workspace_root: root,
+  });
+  expect(result.error).toBeTruthy();
+  expect(existsSync(path.join(root, "docs/x/sdd/progress.md"))).toBe(false);
+});
+
+test("sddReviewPackage rejects an empty base..head range through the OpenCode tool wrapper", async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wf-sdd-emptyrange-parity-"));
+  const git = (args: string[]) => spawnSync("git", args, { cwd: root, encoding: "utf8" });
+  try {
+    establishApprovedFlow(root, "review", new HostReceiptStore(), "s1");
+    expect(git(["init", "-q", "-b", "feature/review"]).status).toBe(0);
+    git(["config", "user.name", "Workflow Test"]);
+    git(["config", "user.email", "workflow@example.test"]);
+    writeFileSync(path.join(root, "file.txt"), "one\n");
+    git(["add", "file.txt"]);
+    git(["commit", "-q", "-m", "base"]);
+    const base = git(["rev-parse", "HEAD"]).stdout.trim();
+    const raw = await createSddTools(new WorkflowStateStore()).workflow_sdd_review_package.execute(
+      {
+        confirmed: true,
+        sdd_dir: "docs/review/sdd",
+        base_sha: base,
+        head_sha: base,
+      },
+      { directory: root, worktree: root } as never,
+    );
+    const result = JSON.parse(raw as string);
+    expect(result.error).toBeTruthy();
+    const base7 = base.slice(0, 7);
+    expect(existsSync(path.join(root, `docs/review/sdd/review-${base7}..${base7}.diff`))).toBe(false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("sddReviewPackage still writes the diff for a real base..head range", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wf-sdd-realrange-"));
+  const git = (args: string[]) => spawnSync("git", args, { cwd: root, encoding: "utf8" });
+  try {
+    expect(git(["init", "-q", "-b", "feature/review"]).status).toBe(0);
+    git(["config", "user.name", "Workflow Test"]);
+    git(["config", "user.email", "workflow@example.test"]);
+    writeFileSync(path.join(root, "file.txt"), "one\n");
+    git(["add", "file.txt"]);
+    git(["commit", "-q", "-m", "base"]);
+    const base = git(["rev-parse", "HEAD"]).stdout.trim();
+    writeFileSync(path.join(root, "file.txt"), "one\ntwo\n");
+    git(["commit", "-q", "-am", "head"]);
+    const head = git(["rev-parse", "HEAD"]).stdout.trim();
+    const result = sddReviewPackage({
+      sdd_dir: "docs/review/sdd",
+      base_sha: base,
+      head_sha: head,
+      workspace_root: root,
+    });
+    expect(result.error).toBeFalsy();
+    const diff = result as { diff_path: string };
+    expect(readFileSync(path.join(root, diff.diff_path), "utf8")).toContain("+two");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
