@@ -133,7 +133,7 @@ test("issue update names both safe retries and bounds each retry to one attempt"
 
 test("status uses only the aggregate toolkit status tool", () => {
   const text = skill("wk-status");
-  expect(text).toContain("Use only `workflow_toolkit_status`");
+  expect(text).toContain("Use only `workit_status`");
   expect(text).not.toContain("workflow_youtrack_verify_token");
 });
 
@@ -460,6 +460,90 @@ test("flow contracts state the host-capability boundary: OpenCode receipts + par
   }
 });
 
+test("templates and skills codify one contiguous non-empty commit range per task with real base..head shas (CA-02)", () => {
+  const read = (rel: string) => readFileSync(path.join(import.meta.dir, "..", "..", rel), "utf8");
+  const surfaces = [
+    "packages/workit-core/templates/plan-template.md",
+    "packages/workit-opencode/assets/templates/plan-template.md",
+    "packages/workit-cursor/assets/templates/plan-template.md",
+    "packages/workit-cli/assets/templates/plan-template.md",
+    "packages/workit-core/skills/wk-implement/SKILL.md",
+    "packages/workit-opencode/assets/skills/wk-implement/SKILL.md",
+    "packages/workit-cursor/skills/wk-implement/SKILL.md",
+    "packages/workit-core/vendor/superpowers/skills/subagent-driven-development/SKILL.md",
+    "packages/workit-opencode/assets/vendor/superpowers/skills/subagent-driven-development/SKILL.md",
+    "packages/workit-cursor/vendor/superpowers/skills/subagent-driven-development/SKILL.md",
+  ];
+  // Every surface must carry the per-task commit-range rule and record the
+  // task's real base..head shas, so a single missing copy fails the test.
+  for (const rel of surfaces) {
+    expect(read(rel)).toContain("one contiguous non-empty commit range");
+    expect(read(rel)).toContain("real base..head");
+  }
+  // No stale "do not create per-task commits" wording survives on any copy.
+  const joined = surfaces.map(read).join("\n");
+  expect(joined).not.toContain("do not create per-task commits");
+  // The vendor sync script's own RULE must carry both asserted phrases so a
+  // re-sync re-applies the full rule verbatim (advisory 8).
+  const script = readFileSync(
+    path.resolve(
+      import.meta.dir,
+      "..",
+      "..",
+      "packages",
+      "workit-core",
+      "scripts",
+      "update-superpowers.sh",
+    ),
+    "utf8",
+  );
+  expect(script).toMatch(/RULE=.*one contiguous non-empty commit range/s);
+  expect(script).toMatch(/RULE=.*real base\.\.head/s);
+});
+
+test("execution contracts mandate plan completion: workflow_plan_complete after a complete ledger and green verification (CA-01/CA-07)", () => {
+  const read = (rel: string) => readFileSync(path.join(import.meta.dir, "..", "..", rel), "utf8");
+  const surfaces = [
+    "packages/workit-core/skills/wk-implement/SKILL.md",
+    "packages/workit-opencode/assets/skills/wk-implement/SKILL.md",
+    "packages/workit-cursor/skills/wk-implement/SKILL.md",
+    "packages/workit-core/skills/wk-handoff/SKILL.md",
+    "packages/workit-opencode/assets/skills/wk-handoff/SKILL.md",
+    "packages/workit-cursor/skills/wk-handoff/SKILL.md",
+    "packages/workit-core/vendor/superpowers/skills/subagent-driven-development/SKILL.md",
+    "packages/workit-opencode/assets/vendor/superpowers/skills/subagent-driven-development/SKILL.md",
+    "packages/workit-cursor/vendor/superpowers/skills/subagent-driven-development/SKILL.md",
+    "packages/workit-core/templates/execution-contract.md",
+    "packages/workit-opencode/assets/templates/execution-contract.md",
+    "packages/workit-cursor/assets/templates/execution-contract.md",
+    "packages/workit-cli/assets/templates/execution-contract.md",
+    "packages/workit-core/templates/plan-template.md",
+    "packages/workit-opencode/assets/templates/plan-template.md",
+    "packages/workit-cursor/assets/templates/plan-template.md",
+    "packages/workit-cli/assets/templates/plan-template.md",
+  ];
+  // Every surface must mandate ending the run with the completion tool and
+  // name its precondition — the tool's own gates: a complete SDD ledger and
+  // green repository verification. A single missing copy fails the test.
+  for (const rel of surfaces) {
+    const surface = read(rel);
+    expect(surface, rel).toContain("workflow_plan_complete");
+    expect(surface, rel).toContain("ledger is complete");
+    expect(surface, rel).toContain("verification");
+    // CA-01: no run may finish while the plan is `active` — every surface
+    // states the clause (wording varies by surface, so match tolerantly).
+    expect(surface, rel).toMatch(/never finish|while the plan is (?:still )?`?active`?/i);
+  }
+  // The CLI host can complete the plan from the CLI-facing surfaces.
+  const cliFacing = [
+    "packages/workit-cli/assets/templates/execution-contract.md",
+    "packages/workit-cli/assets/templates/plan-template.md",
+  ]
+    .map(read)
+    .join("\n");
+  expect(cliFacing).toContain("workit flow complete");
+});
+
 test("the four template roots are byte-identical with the exact marker, the five-choice source list, and the four-choice destination list", () => {
   const read = (rel: string) => readFileSync(path.join(import.meta.dir, "..", "..", rel), "utf8");
   const roots = [
@@ -521,7 +605,7 @@ test("user and maintainer documentation reflects the integrity contracts, withou
   // Host capability table documents lifecycle on every host, and the Cursor
   // runtime pin is never weakened (CA-17).
   expect(agents).toMatch(/pending\/active\/paused\/completed|Lifecycle/i);
-  expect(agents).toContain("@brainervirus/workit-cursor@0.8.0");
+  expect(agents).toContain("@brainervirus/workit-cursor@0.8.5");
   expect(agents).not.toMatch(/workit-cursor@latest/);
   // Host READMEs map lifecycle surfaces where the host behavior changed.
   expect(ocReadme).toMatch(/workflow_plan_pause|lifecycle|digest/i);

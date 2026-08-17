@@ -40,11 +40,12 @@ bun i
 
 ## Features
 
-- **Document-driven development** — write `docs/<slug>/spec.md` + `plan.md`, gate approvals with native question receipts, execute plans task-by-task with delegated subagent implementation, review, and SDD progress tracking.
+- **Document-driven development** — write `docs/<slug>/spec.md` + `plan.md`, gate approvals with native question receipts, execute plans task-by-task with delegated subagent implementation, review, and SDD progress tracking. Each SDD task lands exactly one contiguous non-empty commit range (`base..head`); fix rounds append to that range and never rewrite an active review range, each progress line records the task's real `base..head` shas, and empty ranges (`base == head` or an empty diff) are rejected by the review guard.
 - **Approval integrity** — approvals bind to the document's exact bytes via a SHA-256 digest; editing an approved spec or plan after approval invalidates it and forces a fresh reapproval before execution can resume.
 - **Execution lifecycle** — every approved plan moves through exactly four states (`pending` → `active` → `paused`/`active` → `completed`) with verified completion (SDD ledger complete + repository verification passing) and active-only subagent interception.
 - **12 `wk-*` skills** on OpenCode and Cursor (`wk-init`, `wk-status`, `wk-verify`, `wk-commit`, `wk-pr`, `wk-changelog`, `wk-release-notes`, `wk-docs-refresh`, `wk-handoff`, `wk-implement`, `wk-meetings`, `wk-issue-update`); the CLI exposes `workit init`, `workit doctor`, `workit flow`, and `workit handoff`.
 - **`workflow_*` tools** — branch setup, PR create/context, docs validate/promote, YouTrack post/log/time, templates, rules, presentation (ASCII/mermaid), doctor, handoff, and plan lifecycle (`workflow_plan_pause`/`resume`/`complete`) (native plugin tools on OpenCode, an MCP server on Cursor).
+- **`workit` user-facing surface** — the session-contract marker is `<workit-contract>`, the init/status tools are `workit_init_apply` / `workit_init_status` / `workit_status`, the share path is `~/.local/share/workit`, and the Cursor install root is marked by `.workit-root` (legacy `~/.config/workflow-toolkit/` migration behavior is unchanged).
 - **Post-plan menus** — after the plan is approved an ordinary session presents five choices (Subagent-driven, Inline, Handoff, Review spec first, Review plan first); a handoff-destination session presents exactly four (never Handoff again).
 - **Per-turn contract rails** — brainstorming-before-code, TDD, verification-before-completion, systematic-debugging, receiving-code-review, doc-delivery, config-guard, and issue-rail reminders plus post-hoc detectors.
 - **Secret-safe diagnostics** — structured JSONL logger with redaction and an offline doctor for truthful readiness.
@@ -59,7 +60,7 @@ Feature parity across hosts, implemented the best way each host allows. Core log
 | -------------- | ------------------------------------------------- | ------------------------------------------------------------- | ---------------------------------- |
 | Approval       | native `question` tool receipts (`attested: true`) | AskQuestion, policy-only (`attested: false`)                   | `--confirm` flags / TTY prompts    |
 | Implementation | subagent-driven task delegation (native `task`)    | not supported (no delegated identity)                          | n/a                                |
-| Lifecycle      | `workflow_plan_pause`/`resume`/`complete` (receipts) | `workflow_plan_pause`/`resume`/`complete` (policy-only)         | `workit flow pause\|resume\|complete` (`--confirm`) |
+| Lifecycle      | `workflow_plan_pause`/`resume`/`complete` (receipts) | `workflow_plan_pause`/`resume`/`complete` (policy-only)         | `workit flow pause\|resume\|complete\|review-package` (`--confirm`) |
 | Commit         | `wk-commit` + native `question` confirmation       | `wk-commit`, policy-only                                       | n/a                                |
 | Handoff        | spawns a native OpenCode session                   | seeds a handoff prompt for the next agent                      | `workit handoff` (prints the destination prompt) |
 | Tools          | native plugin tools                                | MCP server (`workflow_*`)                                      | `workit` commands                  |
@@ -70,7 +71,7 @@ Feature parity across hosts, implemented the best way each host allows. Core log
 
 1. **Init** — `/wk-init` (or `npx @brainervirus/workit-cli init`) scaffolds config, tokens, gitignore, and hygiene files; `/wk-status` verifies everything (config, tokens, YouTrack + VCS APIs).
 2. **Build a feature** — brainstorming writes the spec, writing-plans writes the plan, `/wk-implement` executes approved plans with per-task reviews; flow gates (`workflow_spec_approve` / `workflow_plan_approve` / `workflow_plan_menu`) require native-question approval evidence, and approvals bind to the exact SHA-256 digest of the approved document. Receipt and menu labels are compared semantically: host qualifiers such as `(Recommended)` and `(new session only)` are normalized at comparison time, and the original label bytes are preserved.
-3. **Execute & lifecycle** — `workflow_plan_pause` / `workflow_plan_resume` / `workflow_plan_complete` (OpenCode receipts, Cursor policy-only, CLI `workit flow … --confirm`) move the plan through `pending`/`active`/`paused`/`completed`; completion requires a complete SDD ledger and passing repository verification.
+3. **Execute & lifecycle** — `workflow_plan_pause` / `workflow_plan_resume` / `workflow_plan_complete` (OpenCode receipts, Cursor policy-only, CLI `workit flow … --confirm`) move the plan through `pending`/`active`/`paused`/`completed`. Completion is a **mandated** step of the execution contract: the run ends by calling `workflow_plan_complete` (or the CLI `workit flow complete`) after the final task, once the SDD ledger is complete and repository verification passes — a run never finishes while the plan is still `active`. `workit flow review-package --plan <path> --base <sha> --head <sha> [--confirm]` writes a task review diff through the shared-core guard, which rejects empty ranges.
 4. **Verify** — `/wk-verify` discovers and runs the repo's validation (lint, format, tests, build, changelog format) and reports each check's exit status.
 5. **Commit & PR** — `/wk-commit` previews a Conventional Commit on an allowed branch; `/wk-pr` gathers branch-exclusive context, links issues (GitHub issues or YouTrack), and creates the PR/MR with your provider CLI (`gh` for GitHub, `glab` for GitLab). On GitHub the branch is pushed first (`git push -u origin <branch>` when `pr.pushBranch` is enabled) so `gh pr create` never runs against an unpushed branch.
 6. **Changelog & release notes** — `/wk-changelog` applies Keep a Changelog entries; `/wk-release-notes` drafts notes for a release range.
@@ -116,7 +117,7 @@ Local dev variant (absolute path to this repo):
 }
 ```
 
-A local (non-npm) Cursor install lives at `~/.cursor/plugins/local/workit` and registers `enabled_plugins.workit = true`; the installer migrates exact legacy `workflow-toolkit` entries after the replacement succeeds. Marketplace installation, the MCP/hook runtime, and the authenticated submission flow are documented in the [Cursor package README](packages/workit-cursor/README.md#marketplace). The Cursor runtime runs from the exact reviewed pin `@brainervirus/workit-cursor@0.8.0` — runtime pins are deliberate reviewed updates made only after the target npm version is public, never a mutable `latest` dist-tag.
+A local (non-npm) Cursor install lives at `~/.cursor/plugins/local/workit` and registers `enabled_plugins.workit = true`; the installer migrates exact legacy `workflow-toolkit` entries after the replacement succeeds. Marketplace installation, the MCP/hook runtime, and the authenticated submission flow are documented in the [Cursor package README](packages/workit-cursor/README.md#marketplace). The Cursor runtime runs from the exact reviewed pin `@brainervirus/workit-cursor@0.8.5` — runtime pins are deliberate reviewed updates made only after the target npm version is public, never a mutable `latest` dist-tag.
 
 ## Requirements
 
@@ -177,7 +178,7 @@ Everything lives in `~/.config/workit/`; legacy `~/.config/workflow-toolkit/` wa
 
 Note: `branchPolicy` is per-workspace, with target default precedence: explicit workspace `vcs.defaultTargetBranch` → workspace branchPolicy default → global `vcs.json` → preset defaults; a matched workspace's branchPolicy default (gitflow → `develop`, github-flow → `main`) is authoritative over any global `vcs.json` default. The YouTrack meeting/comment configuration remains global. Per-workspace `vcs.provider`/`defaultTargetBranch`/issue linking are the other workspace-scoped knobs.
 
-Run the init action (`workflow_toolkit_init_apply action=branch_policy` on OpenCode/Cursor, or the CLI wizard's branch-policy screen) to detect and pin a repo's convention: `develop` present → gitflow/merge; only `main` → github-flow/pr; only `master` → trunk-based/pr. Re-running updates the entry (already-configured when unchanged).
+Run the init action (`workit_init_apply action=branch_policy` on OpenCode/Cursor, or the CLI wizard's branch-policy screen) to detect and pin a repo's convention: `develop` present → gitflow/merge; only `main` → github-flow/pr; only `master` → trunk-based/pr. Re-running updates the entry (already-configured when unchanged).
 
 Environment overrides: `WORKFLOW_TOOLKIT_CONFIG`, `WORKFLOW_TOOLKIT_STATE`, `WORKFLOW_WORKSPACE_ROOT`, `WORKFLOW_VCS_PROVIDER`, `WORKFLOW_VCS_TARGET_BRANCH`, `WORKFLOW_YT_BASE_URL`, `WORKFLOW_YT_MENTION`, `WORKFLOW_YT_MEETING_ISSUE`, `WORKFLOW_YT_TIMEZONE`, `WORKFLOW_GH_ISSUE` (+ `WORKFLOW_GH_ISSUE_RELATION`).
 
@@ -258,7 +259,7 @@ The repository's package manifests carry a fixed source version; semantic-releas
 | Session contract | `messages.transform`    | `sessionStart` hook                                   |
 | Handoff          | spawns OpenCode session | handoff prompt                                        |
 | Shared logic     | `scripts/`              | `scripts/` via `WORKFLOW_TOOLKIT_ROOT`                |
-| Install root     | GitHub plugin pin       | `~/.local/share/workflow-toolkit` + local plugin copy |
+| Install root     | GitHub plugin pin       | `~/.local/share/workit` (`.workit-root` marker) + local plugin copy |
 
 ## Future: Codex CLI
 

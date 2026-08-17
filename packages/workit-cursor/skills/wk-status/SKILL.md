@@ -12,7 +12,7 @@ Deterministic health check. **Tools only — no manual git/curl.**
 
 ## Step 1 — Full status (required)
 
-Call MCP `workflow_toolkit_status` once.
+Call MCP `workit_status` once.
 
 Use the return value as ground truth. Do not infer state yourself.
 
@@ -80,6 +80,6 @@ Use `items[youtrack_token].token_create_url` / `token_edit_path`, or top-level `
 
 ## Rules
 
-- Do not call YouTrack HTTP directly — `workflow_toolkit_status` includes verify.
+- Do not call YouTrack HTTP directly — `workit_status` includes verify.
 - Do not ask user to paste token — point them to edit the token file if `placeholder: true`.
 - Optional: `workflow_youtrack_verify_token` only if user asks to re-test API alone.

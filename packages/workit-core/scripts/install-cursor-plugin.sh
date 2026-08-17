@@ -3,10 +3,11 @@
 set -euo pipefail
 
 REPO_SLUG="${WORKFLOW_TOOLKIT_REPO:-BrainerVirus/workit}"
-SHARE="${HOME}/.local/share/workflow-toolkit"
+SHARE="${HOME}/.local/share/workit"
 SKILLS_DIR="${HOME}/.cursor/skills"
 
 FROM_GITHUB=0
+LOCAL_DIST=0
 LOCAL_ROOT=""
 if [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "${BASH_SOURCE[0]}" ]; then
   SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -19,6 +20,7 @@ fi
 for arg in "$@"; do
   case "$arg" in
     --github|--from-github) FROM_GITHUB=1 ;;
+    --local-dist) LOCAL_DIST=1 ;;
   esac
 done
 
@@ -53,10 +55,18 @@ fi
 
 PLUGIN_DIR="$HOME/.cursor/plugins/local/workit"
 REGISTRATION_TS="$ROOT/packages/workit-core/src/core/registration.ts"
-CURSOR_SETTINGS="$HOME/.cursor/settings.json" CURSOR_MCP="$HOME/.cursor/mcp.json" PLUGIN_DIR="$PLUGIN_DIR" REGISTRATION_TS="$REGISTRATION_TS" bun -e '
+CURSOR_SETTINGS="$HOME/.cursor/settings.json" CURSOR_MCP="$HOME/.cursor/mcp.json" PLUGIN_DIR="$PLUGIN_DIR" REGISTRATION_TS="$REGISTRATION_TS" LOCAL_DIST="$LOCAL_DIST" bun -e '
 import fs from "node:fs";
-const { mergeCursorSettings, mergeCursorMcp, cursorMcpServerEntry } =
-  await import(process.env.REGISTRATION_TS!);
+import path from "node:path";
+const {
+  mergeCursorSettings,
+  mergeCursorMcp,
+  mergeCursorHooks,
+  cursorMcpServerEntry,
+  cursorHooksEntry,
+  cursorMcpLocalDistEntry,
+  cursorHookLocalDistEntry,
+} = await import(process.env.REGISTRATION_TS!);
 
 // RR-06: collapse current + legacy identities; never replace unrelated settings.
 const settingsPath = process.env.CURSOR_SETTINGS!;
@@ -66,15 +76,31 @@ const settings = fs.existsSync(settingsPath)
 const merged = mergeCursorSettings(settings, process.env.PLUGIN_DIR!);
 fs.writeFileSync(settingsPath, JSON.stringify(merged.config, null, 2) + "\n");
 
-// RR-06/CA-17: one portable workit MCP registration via the published npx bin;
-// stale "workflow-toolkit" entries removed.
-const server = cursorMcpServerEntry(process.env.PLUGIN_DIR!);
+// RR-06/CA-17: one portable workit MCP registration. Default is the published
+// npx pin (Marketplace-safe); --local-dist runs the installed plugin'"'"'s own
+// built dist through node so a checkout install carries the current code.
+const pluginDir = process.env.PLUGIN_DIR!;
+const localDist = process.env.LOCAL_DIST === "1";
+const server = localDist
+  ? cursorMcpLocalDistEntry(pluginDir)
+  : cursorMcpServerEntry(pluginDir);
 const mcpPath = process.env.CURSOR_MCP!;
 const mcp = fs.existsSync(mcpPath)
   ? JSON.parse(fs.readFileSync(mcpPath, "utf8"))
   : { mcpServers: {} };
 const mergedMcp = mergeCursorMcp(mcp, "workit", server);
 fs.writeFileSync(mcpPath, JSON.stringify(mergedMcp.config, null, 2) + "\n");
+
+// The plugin'"'"'s own hooks-cursor.json ships the npx pin; the local-dist
+// install swaps its sessionStart entry to node against the installed dist.
+if (localDist) {
+  const hooksPath = path.join(pluginDir, "hooks", "hooks-cursor.json");
+  const hooks = fs.existsSync(hooksPath)
+    ? JSON.parse(fs.readFileSync(hooksPath, "utf8"))
+    : { version: 1, hooks: {} };
+  const mergedHooks = mergeCursorHooks(hooks, cursorHookLocalDistEntry(pluginDir));
+  fs.writeFileSync(hooksPath, JSON.stringify(mergedHooks.config, null, 2) + "\n");
+}
 '
 
 # DG-09: verify the just-written Cursor registration with the shared offline doctor.

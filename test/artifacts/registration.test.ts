@@ -2,7 +2,9 @@ import { expect, test } from "bun:test";
 import path from "node:path";
 import {
   CURSOR_RUNTIME_PACKAGE,
+  cursorHookLocalDistEntry,
   cursorHooksEntry,
+  cursorMcpLocalDistEntry,
   cursorMcpServerEntry,
   isWorkitPlugin,
   mergeCursorEnabledPlugins,
@@ -352,5 +354,17 @@ test("cursorHooksEntry uses the documented single command string with no args", 
   expect(entry.command).toBe(
     `npx -y --package=${CURSOR_RUNTIME_PACKAGE} workit-cursor-session-start`,
   );
+  expect(entry.args).toEqual([]);
+});
+
+test("cursorMcpLocalDistEntry launches the installed dist through node", () => {
+  const entry = cursorMcpLocalDistEntry("/pkg");
+  expect(entry.command).toBe("node");
+  expect(entry.args).toEqual([path.join("/pkg", "dist", "mcp-server.js"), "${workspaceFolder}"]);
+});
+
+test("cursorHookLocalDistEntry uses the node dist single command string with no args", () => {
+  const entry = cursorHookLocalDistEntry("/pkg");
+  expect(entry.command).toBe(`node ${path.join("/pkg", "dist", "cursor-session-start.js")}`);
   expect(entry.args).toEqual([]);
 });

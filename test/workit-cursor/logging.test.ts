@@ -119,7 +119,7 @@ test("MCP tool failure emits a sanitized stderr event; no stdout contamination",
   try {
     await initialize(server);
     const response = await server.request("tools/call", {
-      name: "workflow_toolkit_init_apply",
+      name: "workit_init_apply",
       arguments: { action: "config", confirmed: false },
     });
     expect((response as any).result.isError).toBe(true);
@@ -127,7 +127,7 @@ test("MCP tool failure emits a sanitized stderr event; no stdout contamination",
     const events = stderrEvents(server);
     const failed = events.find((e) => e.message === "tools_failed");
     expect(failed).toBeDefined();
-    expect(failed!.context.tool).toBe("workflow_toolkit_init_apply");
+    expect(failed!.context.tool).toBe("workit_init_apply");
     const rawStderr = server.stderr.join("\n");
     expect(rawStderr).not.toContain("sk-live-2");
     expect(rawStderr.toLowerCase()).toContain("[redacted]");

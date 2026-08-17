@@ -188,7 +188,7 @@ function makeCursorStub() {
         sessionStart: [
           {
             command:
-              "npx -y --package=@brainervirus/workit-cursor@0.8.0 workit-cursor-session-start",
+              "npx -y --package=@brainervirus/workit-cursor@0.8.5 workit-cursor-session-start",
           },
         ],
       },
@@ -210,7 +210,7 @@ function makeCursorStub() {
           command: "npx",
           args: [
             "-y",
-            "--package=@brainervirus/workit-cursor@0.8.0",
+            "--package=@brainervirus/workit-cursor@0.8.5",
             "workit-cursor-mcp",
             "${workspaceFolder}",
           ],
@@ -288,7 +288,7 @@ test("install-opencode-plugin.sh uses the monorepo root and prioritizes one dev 
 test("install-opencode-plugin.sh defaults to the checkout containing the script", () => {
   if (!bashAvailable()) return;
   const fixture = makeStub("export default {};\n");
-  const share = path.join(fixture.home, ".local/share/workflow-toolkit");
+  const share = path.join(fixture.home, ".local/share/workit");
   try {
     mkdirSync(path.join(share, ".git"), { recursive: true });
     mkdirSync(path.join(share, "packages/workit-opencode/src"), { recursive: true });
@@ -387,7 +387,7 @@ test("install-cursor-plugin.sh resolves the local checkout root and never falls 
     // deterministically fail offline (no network). A green run therefore proves
     // the installer used the local checkout tree, and sync-dev records which
     // ROOT it synced from.
-    const share = path.join(fixture.home, ".local/share/workflow-toolkit");
+    const share = path.join(fixture.home, ".local/share/workit");
     mkdirSync(path.join(share, ".git"), { recursive: true });
     spawnSync("git", ["init", "-q"], { cwd: share });
     spawnSync("git", ["remote", "add", "origin", "https://127.0.0.1:1/workflow-toolkit.git"], {
@@ -402,6 +402,41 @@ test("install-cursor-plugin.sh resolves the local checkout root and never falls 
     expect(installed.status, installed.stderr).toBe(0);
     expect(readFileSync(path.join(fixture.home, "sync-dev"), "utf8")).toBe(
       realpathSync(fixture.stub),
+    );
+  } finally {
+    rmSync(fixture.stub, { recursive: true, force: true });
+    rmSync(fixture.home, { recursive: true, force: true });
+  }
+});
+
+test("install-cursor-plugin.sh --local-dist registers node-form launchers against the installed dist", () => {
+  if (!bashAvailable()) return;
+  const fixture = makeCursorStub();
+  try {
+    const installed = spawnSync(
+      "bash",
+      ["packages/workit-core/scripts/install-cursor-plugin.sh", "--local-dist"],
+      {
+        cwd: fixture.stub,
+        env: { ...process.env, HOME: fixture.home, WORKFLOW_TOOLKIT_DEV: fixture.stub },
+        encoding: "utf8",
+      },
+    );
+    expect(installed.status, installed.stderr).toBe(0);
+
+    const pluginDir = path.join(fixture.home, ".cursor", "plugins", "local", "workit");
+    const mcp = JSON.parse(readFileSync(path.join(fixture.home, ".cursor", "mcp.json"), "utf8"));
+    const server = mcp.mcpServers.workit;
+    expect(server.command).toBe("node");
+    expect(server.args[0]).toBe(path.join(pluginDir, "dist", "mcp-server.js"));
+    expect(server.args[1]).toBe("${workspaceFolder}");
+    expect(JSON.stringify(mcp)).not.toContain("@brainervirus/workit-cursor@0.8.5");
+
+    const hooks = JSON.parse(
+      readFileSync(path.join(pluginDir, "hooks", "hooks-cursor.json"), "utf8"),
+    );
+    expect(hooks.hooks.sessionStart[0].command).toBe(
+      `node ${path.join(pluginDir, "dist", "cursor-session-start.js")}`,
     );
   } finally {
     rmSync(fixture.stub, { recursive: true, force: true });
@@ -540,7 +575,7 @@ test("sync-runtime fails loudly when updating an existing share clone cannot fet
   if (!bashAvailable() || !flockAvailable()) return;
   const home = mkdtempSync(path.join(os.tmpdir(), "wk-sync-home-"));
   const runtimeDir = mkdtempSync(path.join(os.tmpdir(), "wk-sync-xdg-"));
-  const share = path.join(home, ".local/share/workflow-toolkit");
+  const share = path.join(home, ".local/share/workit");
   try {
     mkdirSync(path.join(share, ".git"), { recursive: true });
     spawnSync("git", ["init", "-q"], { cwd: share });

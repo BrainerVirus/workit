@@ -107,7 +107,7 @@ export async function syncRuntime(options: SyncRuntimeOptions = {}): Promise<Syn
     env.WORKFLOW_TOOLKIT_DEV ??
     path.join(home, "Documents/projects/personal/workflow-toolkit");
   const repoSlug = options.repoSlug ?? env.WORKFLOW_TOOLKIT_REPO ?? "BrainerVirus/workit";
-  const share = path.join(home, ".local/share/workflow-toolkit");
+  const share = path.join(home, ".local/share/workit");
   const pluginDir = path.join(home, ".cursor/plugins/local/workit");
   const opencodePlugins = path.join(home, ".config/opencode/plugins");
   const lock = path.join(
@@ -271,10 +271,7 @@ export async function syncRuntime(options: SyncRuntimeOptions = {}): Promise<Syn
         );
       }
     }
-    writeFileSync(
-      path.join(pluginDir, ".workflow-toolkit-root"),
-      `${share}/packages/workit-core\n`,
-    );
+    writeFileSync(path.join(pluginDir, ".workit-root"), `${share}/packages/workit-core\n`);
 
     // CA-08/CA-09: migrate the legacy local plugin identity to `workit` only
     // after the canonical sync succeeded; carry the legacy user rules forward

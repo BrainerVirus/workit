@@ -33,9 +33,9 @@ const REQUIRED_TOOLS = [
   "workflow_docs_validate",
   "workflow_plan_tasks",
   "workflow_handoff_prompt",
-  "workflow_toolkit_init_status",
-  "workflow_toolkit_status",
-  "workflow_toolkit_init_apply",
+  "workit_init_status",
+  "workit_status",
+  "workit_init_apply",
   "workflow_youtrack_verify_token",
   "workflow_youtrack_parse_issue",
   "workflow_youtrack_context",
@@ -160,7 +160,7 @@ test("cursor MCP representative handlers run without workspace_root faults", asy
     expect((git as any).result.content?.[0]?.text).toBeDefined();
 
     const initApply = await request("tools/call", {
-      name: "workflow_toolkit_init_apply",
+      name: "workit_init_apply",
       arguments: { action: "gitignore", confirmed: false, workspace_root: tmp },
     });
     const text = (initApply as any).result.content?.[0]?.text ?? "";
@@ -269,7 +269,7 @@ test("marketplace npx command shape resolves to a working npm bin (local install
   expect(mcp.mcpServers.workit.command).toBe("npx");
   expect(mcp.mcpServers.workit.args).toEqual([
     "-y",
-    "--package=@brainervirus/workit-cursor@0.8.0",
+    "--package=@brainervirus/workit-cursor@0.8.5",
     "workit-cursor-mcp",
     "${workspaceFolder}",
   ]);
@@ -278,7 +278,7 @@ test("marketplace npx command shape resolves to a working npm bin (local install
   );
   expect(hooks.hooks.sessionStart).toEqual([
     {
-      command: "npx -y --package=@brainervirus/workit-cursor@0.8.0 workit-cursor-session-start",
+      command: "npx -y --package=@brainervirus/workit-cursor@0.8.5 workit-cursor-session-start",
     },
   ]);
 

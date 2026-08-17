@@ -34,8 +34,12 @@ For every plan task whose ID is absent from `completed_task_ids`:
 6. Dispatch separate `general` agents for spec-compliance review and code-quality review. **Blocking findings** (Critical, Important, or spec-compliance) may trigger at most **two** fix+re-review rounds per task. **Advisory** findings (Minor, style, YAGNI, taste) never pause the loop — append them to `<SDD_DIR>/advisories.md` with the task id.
 7. Append the validated ledger line with `workflow_sdd_append_progress` using `confirmed: true`, then mark the task completed with `todowrite`.
 
+Each task lands exactly one contiguous non-empty commit range (`base..head`): fix rounds append commits to that range and never rewrite/amend an active review range; each progress line records the task's real base..head shas.
+
 Never redispatch completed task IDs. Pass task briefs and review diffs to agents; do not make them reparse the plan. Keep commits on the in-place feature/bugfix branch.
 
 ## Final gate
 
 After all remaining tasks, dispatch a final full-branch code review, run `workflow_verify`, and report exact per-check results. Present the full `<SDD_DIR>/advisories.md` roll-up once, then use native `question` so the user can choose which advisory items to fix, discuss, or discard. Only then may advisory fixes run. Use `workflow_git_context` for the final commit preview and the `wk-commit` skill for any approved commit. If a tracked stash reference exists, preview reapplication with `question`, then call `workflow_branch_setup` with `confirmed: true` only after approval.
+
+**Mandatory:** end the run by calling `workflow_plan_complete` (OpenCode/Cursor) or the CLI `workit flow complete` (CLI host) after the final task once the SDD ledger is complete (all task IDs appended) and `workflow_verify` passes — a complete ledger and green verification are the tool's gates. Never finish the run while the plan is still `active`.

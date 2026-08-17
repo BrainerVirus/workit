@@ -6,11 +6,11 @@ import { compiledOpenCodeSections } from "@brainervirus/workit-core/src/core/rul
 
 // templates/ ships package-locally under assets/ (same layout as plugin.ts).
 const root = fileURLToPath(new URL("../assets/", import.meta.url));
-const marker = "<workflow-toolkit-contract>";
+const marker = "<workit-contract>";
 
 let cached: string | null | undefined;
 
-export const loadWorkflowBootstrap = (rootDir: string): string | null => {
+export const loadWorkitBootstrap = (rootDir: string): string | null => {
   const contractPath = path.join(rootDir, "templates", "superpowers-doc-contract.md");
   try {
     return readFileSync(contractPath, "utf8");
@@ -19,10 +19,10 @@ export const loadWorkflowBootstrap = (rootDir: string): string | null => {
   }
 };
 
-export const getWorkflowBootstrap = (): string | null => {
+export const getWorkitBootstrap = (): string | null => {
   if (cached !== undefined) return cached;
 
-  const contract = loadWorkflowBootstrap(root);
+  const contract = loadWorkitBootstrap(root);
   if (contract === null) {
     cached = null;
     return null;
@@ -56,9 +56,9 @@ On success, use native \`question\` with exactly: Subagent-driven, Inline, Hando
 ## Library documentation
 
 When the user asks about a library, framework, or API reference, prefer live docs (e.g. Context7 MCP \`resolve-library-id\` + \`query-docs\`) over training-data guesses.
-${userSections ? `\n${userSections}\n` : ""}</workflow-toolkit-contract>`;
+${userSections ? `\n${userSections}\n` : ""}</workit-contract>`;
 
   return cached;
 };
 
-export const isWorkflowBootstrap = (text: string) => text.includes(marker);
+export const isWorkitBootstrap = (text: string) => text.includes(marker);

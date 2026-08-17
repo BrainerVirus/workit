@@ -108,7 +108,7 @@ export const makeDoctorFixture = (): DoctorFixture => {
         sessionStart: [
           {
             command:
-              "npx -y --package=@brainervirus/workit-cursor@0.8.0 workit-cursor-session-start",
+              "npx -y --package=@brainervirus/workit-cursor@0.8.5 workit-cursor-session-start",
           },
         ],
       },
@@ -183,7 +183,7 @@ export const makeDoctorFixture = (): DoctorFixture => {
           command: "npx",
           args: [
             "-y",
-            "--package=@brainervirus/workit-cursor@0.8.0",
+            "--package=@brainervirus/workit-cursor@0.8.5",
             "workit-cursor-mcp",
             "${workspaceFolder}",
           ],
@@ -225,7 +225,7 @@ export const makeDoctorFixture = (): DoctorFixture => {
           command: "npx",
           args: [
             "-y",
-            "--package=@brainervirus/workit-cursor@0.8.0",
+            "--package=@brainervirus/workit-cursor@0.8.5",
             "workit-cursor-mcp",
             "${workspaceFolder}",
           ],

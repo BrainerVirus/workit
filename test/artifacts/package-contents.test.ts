@@ -153,7 +153,7 @@ test("packed runtime JS imports no core source subpaths and no checkout paths", 
       // bun bakes relative `// packages/...` source comments (harmless), but no
       // absolute checkout or share paths may leak into packaged runtime JS.
       expect(js, `${pack.packageName}/${entry}`).not.toContain(normalized);
-      expect(js, `${pack.packageName}/${entry}`).not.toContain(".local/share/workflow-toolkit");
+      expect(js, `${pack.packageName}/${entry}`).not.toContain(".local/share/workit");
     }
   }
 });

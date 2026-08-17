@@ -2032,7 +2032,7 @@ export const COORDINATOR_WRITE_TOOLS: readonly string[] = [
   "workflow_template_edit",
   "workflow_changelog_apply",
   "workflow_branch_setup",
-  "workflow_toolkit_init_apply",
+  "workit_init_apply",
   "workflow_docs_promote",
   "workflow_docs_layout",
   "workflow_docs_repo_link",

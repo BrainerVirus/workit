@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 
 const mcpDir = path.dirname(fileURLToPath(import.meta.url));
 const pluginDir = path.resolve(mcpDir, "..");
-const marker = path.join(pluginDir, ".workflow-toolkit-root");
+const marker = path.join(pluginDir, ".workit-root");
 
 const resolveRoot = (): string => {
   if (

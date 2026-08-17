@@ -51,6 +51,32 @@ find "$VENDOR/skills" -type f \( -name '*.md' -o -name '*.ts' \) -print0 | while
     "$f"
 done
 
+# Re-apply the per-task commit-range rule (CA-02) to the vendored
+# subagent-driven-development skill after every re-sync: upstream does not
+# carry it, and the hand-edit is current truth. Idempotent — when the rule is
+# already present the block is a no-op, so re-running leaves one copy. The awk
+# temp file lives in $STAGE (already trap-cleaned), so a failed awk leaves no
+# .tmp behind in the vendor dir, and if the marker headings were renamed or
+# reordered upstream the rule is appended at end-of-file instead of silently
+# no-oping.
+SDD_SKILL="$VENDOR/skills/subagent-driven-development/SKILL.md"
+RULE="- Each task produces exactly one contiguous non-empty commit range: fix rounds append commits to it, never amend or rewrite an active review range, and the ledger progress line records the task's real base..head shas."
+if [ -f "$SDD_SKILL" ] && ! grep -qF "one contiguous non-empty commit range" "$SDD_SKILL"; then
+  TMP="$STAGE/sdd-skill.tmp"
+  awk -v rule="$RULE" '
+    /^## Durable Progress$/ { in_section=1 }
+    in_section && !inserted && /^## Prompt Templates$/ {
+      print rule;
+      inserted=1;
+    }
+    { print }
+  ' "$SDD_SKILL" > "$TMP"
+  if ! grep -qF "one contiguous non-empty commit range" "$TMP"; then
+    printf '%s\n' "$RULE" >> "$TMP"
+  fi
+  mv "$TMP" "$SDD_SKILL"
+fi
+
 printf '%s\n' "$VERSION" > "$VENDOR/VERSION"
 echo "Vendored superpowers $VERSION -> $VENDOR (patched to docs/<slug>/ layout)"
 echo "Review with: git status && git diff --stat"

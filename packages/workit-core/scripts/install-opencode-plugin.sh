@@ -5,7 +5,7 @@ set -euo pipefail
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 ROOT="$(CDPATH= cd -- "$SCRIPT_DIR/../../.." && pwd)"
 CORE_SCRIPTS="$ROOT/packages/workit-core/scripts"
-SHARE="${HOME}/.local/share/workflow-toolkit"
+SHARE="${HOME}/.local/share/workit"
 DEV="${WORKFLOW_TOOLKIT_DEV:-$ROOT}"
 CONFIG="${HOME}/.config/opencode/opencode.json"
 

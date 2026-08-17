@@ -28,22 +28,26 @@ export const logger = createLogger({
 
 // Help derives the flow/handoff command surface from the same COMMANDS table
 // the CLI's usage errors use, so the exact command strings cannot drift
-// (packed-cli asserts each string appears verbatim). Descriptions line up in
-// the 49-char command column (2-space indent => description at column 51).
+// (packed-cli asserts each string appears verbatim). Descriptions line up in a
+// command column sized to the longest command (2-space indent), so a command
+// longer than a fixed 49 chars does not overflow its description.
 const COMMAND_DESCRIPTIONS: readonly (readonly [string, string])[] = [
   [COMMANDS.status, "Read the effective flow state for a plan"],
   [COMMANDS.pause, "Pause an active plan"],
   [COMMANDS.resume, "Resume a paused plan"],
   [COMMANDS.complete, "Complete a plan (ledger and verification gated)"],
+  [COMMANDS["review-package"], "Write a review diff for a base..head range"],
   [COMMANDS.handoff, "Emit the destination handoff prompt for a plan"],
 ];
+
+const helpColumn = Math.max(...COMMAND_DESCRIPTIONS.map(([cmd]) => cmd.length)) + 2;
 
 const HELP = `workit — workflow rails for agentic coding
 
 Usage:
   workit init      Run the interactive setup wizard
   workit doctor    Verify the offline installation health (add --json for a machine-readable report)
-${COMMAND_DESCRIPTIONS.map(([cmd, desc]) => `  ${cmd.padEnd(49)}${desc}`).join("\n")}
+${COMMAND_DESCRIPTIONS.map(([cmd, desc]) => `  ${cmd.padEnd(helpColumn)}${desc}`).join("\n")}
   workit           Show this help
 
 Run \`npx workit init\` to configure platforms, YouTrack, VCS and project hygiene.

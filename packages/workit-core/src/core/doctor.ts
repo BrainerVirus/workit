@@ -454,6 +454,24 @@ const registeredCursorHook = (res: Resolved): string | null | "invalid" => {
   return typeof entry.command === "string" ? entry.command : "invalid";
 };
 
+// The local-dist install points the session-start hook at the plugin's own
+// built dist (`node <pluginDir>/dist/cursor-session-start.js`) so Cursor runs
+// the checkout's code. Accept that form — validated against the real dist entry
+// — alongside the canonical npx pin, mirroring the MCP launcher's node form.
+const validLocalDistHook = (command: string, res: Resolved): boolean => {
+  const m = /^node\s+(.+)$/.exec(command.trim());
+  if (!m) return false;
+  const entry = m[1].trim();
+  if (!path.isAbsolute(entry)) return false;
+  if (
+    path.resolve(entry) !==
+    path.resolve(path.join(res.cursorPluginDir, "dist", "cursor-session-start.js"))
+  ) {
+    return false;
+  }
+  return validNodeEntry(entry, "node", res.env);
+};
+
 const checkLauncher = (res: Resolved): DoctorCheck => {
   const dev = res.dev;
   const hosts = hostsFor(res.host);
@@ -483,7 +501,7 @@ const checkLauncher = (res: Resolved): DoctorCheck => {
       missing.push(
         `cursor: canonical session-start hook in ${path.join(res.cursorPluginDir, "hooks", "hooks-cursor.json")}`,
       );
-    } else if (hook !== null && hook !== canonicalCursorHook) {
+    } else if (hook !== null && hook !== canonicalCursorHook && !validLocalDistHook(hook, res)) {
       missing.push(
         `cursor: canonical session-start hook in ${path.join(res.cursorPluginDir, "hooks", "hooks-cursor.json")} (registered ${hook})`,
       );

@@ -3,7 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Plugin } from "@opencode-ai/plugin";
 
-import { getWorkflowBootstrap } from "./bootstrap";
+import { getWorkitBootstrap } from "./bootstrap";
 import {
   DETECTION_TEXT,
   DOC_DELIVERY_TEXT,
@@ -298,8 +298,8 @@ const plugin: Plugin = async ({ client, directory }) => {
             .filter((part) => part.type === "text")
             .map((part) => (part as { text?: string }).text ?? "")
             .join("\n");
-          const bootstrap = getWorkflowBootstrap();
-          if (bootstrap && !firstText.includes("<workflow-toolkit-contract>")) {
+          const bootstrap = getWorkitBootstrap();
+          if (bootstrap && !firstText.includes("<workit-contract>")) {
             firstUser.parts.unshift({
               id: firstAnchor.id,
               sessionID: firstAnchor.sessionID,

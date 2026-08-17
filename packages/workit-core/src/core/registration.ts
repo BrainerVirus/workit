@@ -184,7 +184,7 @@ export function mergeCursorHooks(
  * The single source for every source-derived Cursor runtime selector; the
  * committed manifests keep the literal (static data cannot import TS).
  */
-export const CURSOR_RUNTIME_PACKAGE = "@brainervirus/workit-cursor@0.8.0";
+export const CURSOR_RUNTIME_PACKAGE = "@brainervirus/workit-cursor@0.8.5";
 
 /**
  * Portable Cursor MCP server entry (CA-16/CA-17): launch the published package
@@ -211,6 +211,37 @@ export function cursorHooksEntry(_packageDir: string): {
 } {
   return {
     command: `npx -y --package=${CURSOR_RUNTIME_PACKAGE} workit-cursor-session-start`,
+    args: [],
+  };
+}
+
+/**
+ * Local-dev Cursor MCP server entry: run the installed plugin's own built dist
+ * through node instead of the published npx pin, so a checkout install runs the
+ * branch's code (rename included) without waiting for a release. The committed
+ * Marketplace manifests keep the reviewed pin; this form is written by the
+ * local install path only.
+ */
+export function cursorMcpLocalDistEntry(packageDir: string): {
+  command: string;
+  args: string[];
+} {
+  return {
+    command: "node",
+    args: [path.join(packageDir, "dist", "mcp-server.js"), "${workspaceFolder}"],
+  };
+}
+
+/**
+ * Local-dev Cursor sessionStart hook entry: node against the installed dist, in
+ * Cursor's documented single-command-string hook format (no args array).
+ */
+export function cursorHookLocalDistEntry(packageDir: string): {
+  command: string;
+  args: string[];
+} {
+  return {
+    command: `node ${path.join(packageDir, "dist", "cursor-session-start.js")}`,
     args: [],
   };
 }

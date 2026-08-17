@@ -12,7 +12,7 @@ Log meeting time to a **meeting issue** from config. **Never post a comment.**
 
 ## Step 0 — Toolkit ready
 
-If unsure, call `workflow_toolkit_status`. Stop if `ready: false`.
+If unsure, call `workit_status`. Stop if `ready: false`.
 
 ## Step 1 — Context (required)
 

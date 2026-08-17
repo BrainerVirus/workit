@@ -246,7 +246,7 @@ test("Cursor MCP launcher starts the server from the extracted package, repo-fre
     expect(server.command).toBe("npx");
     expect(server.args).toEqual([
       "-y",
-      "--package=@brainervirus/workit-cursor@0.8.0",
+      "--package=@brainervirus/workit-cursor@0.8.5",
       "workit-cursor-mcp",
       "${workspaceFolder}",
     ]);
@@ -271,7 +271,7 @@ test("Cursor MCP launcher starts the server from the extracted package, repo-fre
         (t) => t.name,
       );
       expect(names).toContain("workflow_git_context");
-      expect(names).toContain("workflow_toolkit_init_apply");
+      expect(names).toContain("workit_init_apply");
     } finally {
       // win32 keeps deleted files/dirs locked until the child fully exits, so
       // wait for the kill to land before the outer finally rmSync's the tree.

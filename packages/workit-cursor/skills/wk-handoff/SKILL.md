@@ -23,6 +23,8 @@ The pasted prompt includes instructions to call `workflow_sdd_context`, **Cursor
 
 `workflow_handoff_prompt` also returns `tasks[]`, `branch`, `sdd_dir`, `completed_task_ids`, and `todos` for same-session MCP use — not copy-paste transport.
 
+A destination run that executes the plan must still end with `workflow_plan_complete` once the SDD ledger is complete and repository verification passes, and never finish the run while the plan is still `active`.
+
 ## Output (success)
 
 When the tool returns `{ prompt }`, output **only** one fenced code block containing `prompt` verbatim. No preamble, no explanation outside the fence.

@@ -122,7 +122,7 @@ export function initStatusData(configDirPath = configDir()): Record<string, any>
     ok: fs.existsSync(ytJson) && youtrackConfig !== null && !("error" in youtrackConfig),
     path: fs.existsSync(ytJson) ? resolvePath(ytJson) : path.resolve(ytJson),
     config_edit_path: resolvePath(ytJson),
-    fix: "workflow_toolkit_init_apply action=youtrack_scaffold",
+    fix: "workit_init_apply action=youtrack_scaffold",
   });
 
   const ytTokenPath = youtrackConfig?.tokenFile ?? path.join(configDirPath, "youtrack.token");
@@ -192,7 +192,7 @@ export function initStatusData(configDirPath = configDir()): Record<string, any>
     ok: fs.existsSync(vcsJson) && vcsCfg !== null && !("error" in vcsCfg),
     path: fs.existsSync(vcsJson) ? resolvePath(vcsJson) : path.resolve(vcsJson),
     config_edit_path: resolvePath(vcsJson),
-    fix: "workflow_toolkit_init_apply action=vcs_scaffold",
+    fix: "workit_init_apply action=vcs_scaffold",
   });
 
   const provActive = vcsCfg && !("error" in vcsCfg) ? vcsCfg.provider : null;

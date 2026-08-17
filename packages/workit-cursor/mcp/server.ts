@@ -871,7 +871,7 @@ registerTool(
 );
 
 registerTool(
-  "workflow_toolkit_init_status",
+  "workit_init_status",
   {
     description: "Check workit setup (MCP deps, YouTrack config, token)",
     inputSchema: {},
@@ -884,7 +884,7 @@ registerTool(
 );
 
 registerTool(
-  "workflow_toolkit_status",
+  "workit_status",
   {
     description:
       "Full health check: MCP deps, config files, YouTrack API verify. Use after editing token file.",
@@ -898,7 +898,7 @@ registerTool(
 );
 
 registerTool(
-  "workflow_toolkit_init_apply",
+  "workit_init_apply",
   {
     description:
       "Apply init action. Requires confirmed: true. Token is NOT accepted here — user edits token file locally.",

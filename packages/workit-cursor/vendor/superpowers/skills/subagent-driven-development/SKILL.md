@@ -63,6 +63,7 @@ digraph process {
     "Read plan, note context and global constraints, create todos" [shape=box];
     "More tasks remain?" [shape=diamond];
     "Dispatch final code reviewer subagent (../requesting-code-review/code-reviewer.md)" [shape=box];
+    "Run verification, then workflow_plan_complete once the ledger is complete and verification passes" [shape=box];
     "Use superpowers:finishing-a-development-branch" [shape=box style=filled fillcolor=lightgreen];
 
     "Read plan, note context and global constraints, create todos" -> "Dispatch implementer subagent (./implementer-prompt.md)";
@@ -78,9 +79,12 @@ digraph process {
     "Mark task complete in todo list and progress ledger" -> "More tasks remain?";
     "More tasks remain?" -> "Dispatch implementer subagent (./implementer-prompt.md)" [label="yes"];
     "More tasks remain?" -> "Dispatch final code reviewer subagent (../requesting-code-review/code-reviewer.md)" [label="no"];
-    "Dispatch final code reviewer subagent (../requesting-code-review/code-reviewer.md)" -> "Use superpowers:finishing-a-development-branch";
+    "Dispatch final code reviewer subagent (../requesting-code-review/code-reviewer.md)" -> "Run verification, then workflow_plan_complete once the ledger is complete and verification passes";
+    "Run verification, then workflow_plan_complete once the ledger is complete and verification passes" -> "Use superpowers:finishing-a-development-branch";
 }
 ```
+
+**Mandatory completion:** after the final whole-branch review, run repository verification. Once the SDD ledger is complete and verification passes, end the run by calling `workflow_plan_complete` (or the CLI `workit flow complete`) — a complete ledger and green verification are the tool's gates. Never finish while the plan is still `active`.
 
 ## Pre-Flight Plan Review
 
@@ -257,6 +261,10 @@ a ledger file, not only in todos.
 - When a task's review comes back clean, append one line to the ledger in
   the same message as your other bookkeeping:
   `Task N: complete (commits <base7>..<head7>, review clean)`.
+- Each task produces exactly one contiguous non-empty commit range: fix
+  rounds append commits to it, never amend or rewrite an active review
+  range, and the ledger progress line records the task's real base..head
+  shas.
 - The ledger is your recovery map: the commits it names exist in git even
   when your context no longer remembers creating them. After compaction,
   trust the ledger and `git log` over your own recollection.

@@ -1910,6 +1910,31 @@ test("CA-11/CA-23: passing repository verification stores completed", () => {
   }
 });
 
+test("CA-07: a run that finishes all tasks without calling workflow_plan_complete leaves the plan active; the tool completes it", () => {
+  const { root, slug } = fixture();
+  try {
+    establishMenuChoice(root, slug, "subagent-driven");
+    writeSddLedger(root, slug, ["Task 1: complete"]);
+    const plan = `docs/${slug}/plan.md`;
+    // Every task finished (complete ledger) but nothing called the completion
+    // tool: the lifecycle stays active until workflow_plan_complete runs.
+    expect(readFlowState(root, slug).execution).toMatchObject({
+      status: "active",
+      mode: "subagent-driven",
+    });
+    const result = transitionExecution(root, slug, plan, "complete", cliEvidence(), undefined, {
+      verifyProject: stubVerifier(0),
+    });
+    expect(result.ok).toBe(true);
+    expect(readFlowState(root, slug).execution).toMatchObject({
+      status: "completed",
+      mode: "subagent-driven",
+    });
+  } finally {
+    cleanup(root);
+  }
+});
+
 test("CA-07/CA-08: completing a marked handoff destination clears the flag so ordinary sessions keep five choices", () => {
   const { root, slug } = fixture();
   try {

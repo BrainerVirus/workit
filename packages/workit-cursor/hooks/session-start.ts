@@ -21,7 +21,7 @@ export const logger = createLogger({
 
 const hookDir = path.dirname(fileURLToPath(import.meta.url));
 const pluginDir = path.resolve(hookDir, "..");
-const marker = path.join(pluginDir, ".workflow-toolkit-root");
+const marker = path.join(pluginDir, ".workit-root");
 
 setDiagnosticLogger(logger);
 logger.info(EVENT.initialization, { host: "cursor-hook", hook_dir: hookDir });
@@ -121,35 +121,35 @@ const main = async (): Promise<void> => {
   // and carries the marker; ordinary sessions keep the source five-choice wording.
   const reminder = reminderTextFor(isDestination(await readHookInput(HOOK_READ_TIMEOUT_MS)));
 
-  const context = `<workflow-toolkit-askquestion-hard-gate>
+  const context = `<workit-askquestion-hard-gate>
 HARD-GATE: Any user choice with options → call Cursor AskQuestion directly with workflow-specific copy. NEVER A/B/C in chat. Overrides Superpowers brainstorming conversational options.
-</workflow-toolkit-askquestion-hard-gate>
+</workit-askquestion-hard-gate>
 
-<workflow-toolkit-visual-companion>
+<workit-visual-companion>
 HARD-GATE: NEVER offer Superpowers visual companion or open a browser tab. For UI wireframes use workflow_present_ascii; for flows use workflow_present_flow. Overrides Superpowers brainstorming visual companion offer.
-</workflow-toolkit-visual-companion>
+</workit-visual-companion>
 
-<workflow-toolkit-no-worktrees>
+<workit-no-worktrees>
 HARD-GATE: NEVER using-git-worktrees or git worktree. In-place feature/* or bugfix/* checkout only via workflow_resolve_branch + workflow_branch_setup. Dirty tree → native AskQuestion before checkout.
-</workflow-toolkit-no-worktrees>
+</workit-no-worktrees>
 
-<workflow-toolkit-sdd-path>
+<workit-sdd-path>
 HARD-GATE: NEVER .superpowers/sdd. ALWAYS workflow_sdd_context with plan_path first — resolves canonical docs/<slug>/sdd/ and creates nothing (no empty ledger; progress.md appears only on the first confirmed append). workflow_sdd_task_brief, workflow_sdd_review_package, workflow_sdd_append_progress only.
-</workflow-toolkit-sdd-path>
+</workit-sdd-path>
 
-<workflow-toolkit-todowrite>
+<workit-todowrite>
 HARD-GATE: After workflow_sdd_context, call Cursor TodoWrite with returned todos (merge: false). SDD ledger is persistence — TodoWrite is the native task list UI. Keep in_progress/completed in sync each task.
-</workflow-toolkit-todowrite>
+</workit-todowrite>
 
-<workflow-toolkit-superpowers-doc-contract>
+<workit-superpowers-doc-contract>
 ${body}
-</workflow-toolkit-superpowers-doc-contract>
+</workit-superpowers-doc-contract>
 
-<workflow-toolkit-reminder>
+<workit-reminder>
 HARD-GATE: Bounded user choices → call Cursor AskQuestion directly (never A/B/C or 1/2/3 lists in prose).
 
 ${reminder}
-</workflow-toolkit-reminder>`;
+</workit-reminder>`;
 
   process.stdout.write(JSON.stringify({ additional_context: context }, null, 2) + "\n");
   process.exit(0);

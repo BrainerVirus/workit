@@ -804,9 +804,9 @@ describe("plugin registration", () => {
           serverUrl: new URL("http://localhost"),
         } as never);
         const fixtures: Record<string, Record<string, unknown>> = {
-          workflow_toolkit_init_status: {},
+          workit_init_status: {},
           workflow_doctor: {},
-          workflow_toolkit_status: {},
+          workit_status: {},
           workflow_git_context: { paths: [] },
           workflow_verify: { dry_run: true },
           workflow_pr_context: {},
@@ -823,7 +823,7 @@ describe("plugin registration", () => {
           workflow_branch_setup: { confirmed: false },
           workflow_commit: { confirmed: false, message: "test: fixture" },
           workflow_pr_create: { confirmed: false, title: "Fixture" },
-          workflow_toolkit_init_apply: {
+          workit_init_apply: {
             confirmed: false,
             action: "youtrack_scaffold",
           },

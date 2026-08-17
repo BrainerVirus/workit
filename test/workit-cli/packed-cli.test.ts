@@ -159,7 +159,7 @@ test("packed CLI setup flow configures OpenCode + Cursor and doctor verifies it"
     expect(mcp.mcpServers?.workit?.command).toBe("npx");
     expect(mcp.mcpServers?.workit?.args).toEqual([
       "-y",
-      "--package=@brainervirus/workit-cursor@0.8.0",
+      "--package=@brainervirus/workit-cursor@0.8.5",
       "workit-cursor-mcp",
       "${workspaceFolder}",
     ]);
@@ -442,6 +442,7 @@ test("packed CLI: help lists every flow and handoff command", () => {
       "workit flow pause --plan <path> [--confirm]",
       "workit flow resume --plan <path> [--confirm]",
       "workit flow complete --plan <path> [--confirm]",
+      "workit flow review-package --plan <path> --base <sha> --head <sha> [--confirm]",
       "workit handoff --message <text>",
     ]) {
       expect(help.stdout, command).toContain(command);

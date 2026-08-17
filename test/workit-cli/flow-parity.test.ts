@@ -1,6 +1,7 @@
 import { expect, test, spyOn } from "bun:test";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -452,6 +453,92 @@ test("flow status reports handoff_destination after the destination is marked", 
   }
 });
 
+test("flow review-package parity: same-sha range rejected, real range writes the diff", async () => {
+  const { root, slug } = fixture();
+  const git = (args: string[]) => spawnSync("git", args, { cwd: root, encoding: "utf8" });
+  try {
+    expect(git(["init", "-q", "-b", `feature/${slug}`]).status).toBe(0);
+    git(["config", "user.name", "Workflow Test"]);
+    git(["config", "user.email", "workflow@example.test"]);
+    writeFileSync(path.join(root, "file.txt"), "one\n");
+    git(["add", "file.txt"]);
+    git(["commit", "-q", "-m", "base"]);
+    const base = git(["rev-parse", "HEAD"]).stdout.trim();
+
+    const same = await runFlow(
+      [
+        "review-package",
+        "--plan",
+        `docs/${slug}/plan.md`,
+        "--base",
+        base,
+        "--head",
+        base,
+        "--confirm",
+      ],
+      { cwd: root },
+    );
+    expect(same.code, same.stdout + same.stderr).toBe(1);
+    expect(same.stdout).toBe("");
+    const sameData = JSON.parse(same.stderr);
+    expect(sameData.ok).toBe(false);
+    expect(sameData.code).toBe("empty_commit_range");
+    expect(JSON.stringify(sameData)).toContain("empty commit range");
+    const base7 = base.slice(0, 7);
+    expect(existsSync(path.join(root, `docs/${slug}/sdd/review-${base7}..${base7}.diff`))).toBe(
+      false,
+    );
+
+    writeFileSync(path.join(root, "file.txt"), "one\ntwo\n");
+    git(["commit", "-q", "-am", "head"]);
+    const head = git(["rev-parse", "HEAD"]).stdout.trim();
+    const ok = await runFlow(
+      [
+        "review-package",
+        "--plan",
+        `docs/${slug}/plan.md`,
+        "--base",
+        base,
+        "--head",
+        head,
+        "--confirm",
+      ],
+      { cwd: root },
+    );
+    expect(ok.code, ok.stdout + ok.stderr).toBe(0);
+    expect(ok.stderr).toBe("");
+    const okData = JSON.parse(ok.stdout);
+    expect(okData.ok).toBe(true);
+    expect(okData.diff_path).toBe(`docs/${slug}/sdd/review-${base7}..${head.slice(0, 7)}.diff`);
+    expect(readFileSync(path.join(root, okData.diff_path), "utf8")).toContain("+two");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("flow review-package in non-TTY mode without --confirm exits 2 and writes nothing", async () => {
+  const { root, slug } = fixture();
+  try {
+    const r = await runFlow(
+      [
+        "review-package",
+        "--plan",
+        `docs/${slug}/plan.md`,
+        "--base",
+        "abc1234",
+        "--head",
+        "def5678",
+      ],
+      { cwd: root },
+    );
+    expect(r.code, r.stdout + r.stderr).toBe(2);
+    expect(r.stdout).toBe("");
+    expect(r.stderr).toContain("--confirm required when stdin is not a TTY");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("usage errors exit 2 with stderr diagnostics", async () => {
   const { root, slug } = fixture();
   try {
@@ -468,6 +555,15 @@ test("usage errors exit 2 with stderr diagnostics", async () => {
       },
       { args: ["pause", "--plan", `docs/${slug}/plan.md`, "--confirm", "--confirm"], run: runFlow },
       { args: ["pause", "--plan", "--confirm"], run: runFlow },
+      { args: ["review-package", "--plan", `docs/${slug}/plan.md`], run: runFlow },
+      {
+        args: ["review-package", "--plan", `docs/${slug}/plan.md`, "--base", "abc1234"],
+        run: runFlow,
+      },
+      {
+        args: ["review-package", "--base", "abc1234", "--head", "abc1235", "--confirm"],
+        run: runFlow,
+      },
       { args: [], run: runHandoff },
       { args: ["--message"], run: runHandoff },
       { args: ["--message", "docs/x/plan.md", "--bogus"], run: runHandoff },
