@@ -13,7 +13,6 @@ disable-model-invocation: true
 5. Pass only `message`; the tool itself recognizes an exact `--stay` flag and otherwise selects the new session.
 6. Report the structured success, failure stage, or partial result; never infer success.
 7. After any `workflow_handoff_session` result—success, partial, or failure—end the originating turn immediately after one status message. Never create todos, execute the plan inline, modify files, retry handoff, or call another tool.
+8. A destination run that executes the plan must still end with `workflow_plan_complete` (or the CLI `workit flow complete`) once the SDD ledger is complete and repository verification passes, and never finish the run while the plan is still `active`.
 
 Never emit a continuation prompt, use the clipboard, or ask the user to copy text. If selected, report the session ID only if the current session remains visible. If staying, report the seeded session ID. On failure, report `stage` and `error`; preserve any returned session for the session picker and never recreate it automatically. `todowrite` and `task` are unnecessary here.
-
-A destination run that executes the plan must still end with `workflow_plan_complete` (or the CLI `workit flow complete`) once the SDD ledger is complete and repository verification passes.

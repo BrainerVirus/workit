@@ -516,6 +516,29 @@ test("flow review-package parity: same-sha range rejected, real range writes the
   }
 });
 
+test("flow review-package in non-TTY mode without --confirm exits 2 and writes nothing", async () => {
+  const { root, slug } = fixture();
+  try {
+    const r = await runFlow(
+      [
+        "review-package",
+        "--plan",
+        `docs/${slug}/plan.md`,
+        "--base",
+        "abc1234",
+        "--head",
+        "def5678",
+      ],
+      { cwd: root },
+    );
+    expect(r.code, r.stdout + r.stderr).toBe(2);
+    expect(r.stdout).toBe("");
+    expect(r.stderr).toContain("--confirm required when stdin is not a TTY");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("usage errors exit 2 with stderr diagnostics", async () => {
   const { root, slug } = fixture();
   try {

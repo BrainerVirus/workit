@@ -10,7 +10,7 @@ const marker = "<workit-contract>";
 
 let cached: string | null | undefined;
 
-export const loadWorkflowBootstrap = (rootDir: string): string | null => {
+export const loadWorkitBootstrap = (rootDir: string): string | null => {
   const contractPath = path.join(rootDir, "templates", "superpowers-doc-contract.md");
   try {
     return readFileSync(contractPath, "utf8");
@@ -19,10 +19,10 @@ export const loadWorkflowBootstrap = (rootDir: string): string | null => {
   }
 };
 
-export const getWorkflowBootstrap = (): string | null => {
+export const getWorkitBootstrap = (): string | null => {
   if (cached !== undefined) return cached;
 
-  const contract = loadWorkflowBootstrap(root);
+  const contract = loadWorkitBootstrap(root);
   if (contract === null) {
     cached = null;
     return null;
@@ -61,4 +61,4 @@ ${userSections ? `\n${userSections}\n` : ""}</workit-contract>`;
   return cached;
 };
 
-export const isWorkflowBootstrap = (text: string) => text.includes(marker);
+export const isWorkitBootstrap = (text: string) => text.includes(marker);

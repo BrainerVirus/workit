@@ -483,6 +483,22 @@ test("templates and skills codify one contiguous non-empty commit range per task
   // No stale "do not create per-task commits" wording survives on any copy.
   const joined = surfaces.map(read).join("\n");
   expect(joined).not.toContain("do not create per-task commits");
+  // The vendor sync script's own RULE must carry both asserted phrases so a
+  // re-sync re-applies the full rule verbatim (advisory 8).
+  const script = readFileSync(
+    path.resolve(
+      import.meta.dir,
+      "..",
+      "..",
+      "packages",
+      "workit-core",
+      "scripts",
+      "update-superpowers.sh",
+    ),
+    "utf8",
+  );
+  expect(script).toMatch(/RULE=.*one contiguous non-empty commit range/s);
+  expect(script).toMatch(/RULE=.*real base\.\.head/s);
 });
 
 test("execution contracts mandate plan completion: workflow_plan_complete after a complete ledger and green verification (CA-01/CA-07)", () => {
@@ -512,8 +528,11 @@ test("execution contracts mandate plan completion: workflow_plan_complete after 
   for (const rel of surfaces) {
     const surface = read(rel);
     expect(surface, rel).toContain("workflow_plan_complete");
-    expect(surface, rel).toMatch(/ledger[\s\S]{0,80}complete|complete[\s\S]{0,80}ledger/i);
+    expect(surface, rel).toContain("ledger is complete");
     expect(surface, rel).toContain("verification");
+    // CA-01: no run may finish while the plan is `active` — every surface
+    // states the clause (wording varies by surface, so match tolerantly).
+    expect(surface, rel).toMatch(/never finish|while the plan is (?:still )?`?active`?/i);
   }
   // The CLI host can complete the plan from the CLI-facing surfaces.
   const cliFacing = [

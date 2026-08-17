@@ -145,7 +145,7 @@ test("bootstrap appends compiled opencode rule sections", async () => {
       true,
     );
     const fresh = await import(`../../packages/workit-opencode/src/bootstrap?rules=${Date.now()}`);
-    const bootstrap = fresh.getWorkflowBootstrap();
+    const bootstrap = fresh.getWorkitBootstrap();
     expect(bootstrap).toContain("## zeta");
   } finally {
     cleanupEnv();

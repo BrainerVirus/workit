@@ -232,7 +232,6 @@ export function sddReviewPackage({
     };
   }
   const dir = contained.path;
-  mkdirSync(dir, { recursive: true });
   const base7 = base_sha.slice(0, 7);
   const head7 = head_sha.slice(0, 7);
   const diffPath = path.join(dir, `review-${base7}..${head7}.diff`);
@@ -245,13 +244,16 @@ export function sddReviewPackage({
       stdio: ["pipe", "pipe", "pipe"],
     });
     // Distinct shas that still diff to nothing are an empty range too (the
-    // "or a diff that is empty" clause): no artifact is written for it.
+    // "or a diff that is empty" clause): no artifact is written for it, and
+    // the sdd/ dir is created only once a real diff survives (an empty-range
+    // rejection must leave no directory behind).
     if (diff.trim() === "") {
       return {
         error: `empty commit range (${base_sha}..${head_sha}): diff is empty, nothing to review`,
         code: "empty_commit_range",
       };
     }
+    mkdirSync(dir, { recursive: true });
     writeFileSync(diffPath, diff, "utf8");
     const rel = posix(path.relative(contained.base, diffPath));
     return { diff_path: rel, base_sha, head_sha, base7, head7 };
