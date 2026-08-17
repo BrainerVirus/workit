@@ -269,7 +269,7 @@ test("marketplace npx command shape resolves to a working npm bin (local install
   expect(mcp.mcpServers.workit.command).toBe("npx");
   expect(mcp.mcpServers.workit.args).toEqual([
     "-y",
-    "--package=@brainervirus/workit-cursor@0.8.0",
+    "--package=@brainervirus/workit-cursor@0.8.5",
     "workit-cursor-mcp",
     "${workspaceFolder}",
   ]);
@@ -278,7 +278,7 @@ test("marketplace npx command shape resolves to a working npm bin (local install
   );
   expect(hooks.hooks.sessionStart).toEqual([
     {
-      command: "npx -y --package=@brainervirus/workit-cursor@0.8.0 workit-cursor-session-start",
+      command: "npx -y --package=@brainervirus/workit-cursor@0.8.5 workit-cursor-session-start",
     },
   ]);
 

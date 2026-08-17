@@ -184,7 +184,7 @@ export function mergeCursorHooks(
  * The single source for every source-derived Cursor runtime selector; the
  * committed manifests keep the literal (static data cannot import TS).
  */
-export const CURSOR_RUNTIME_PACKAGE = "@brainervirus/workit-cursor@0.8.0";
+export const CURSOR_RUNTIME_PACKAGE = "@brainervirus/workit-cursor@0.8.5";
 
 /**
  * Portable Cursor MCP server entry (CA-16/CA-17): launch the published package

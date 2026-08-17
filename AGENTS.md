@@ -20,7 +20,7 @@ Multi-platform workit: OpenCode, Cursor, and the CLI share one core. Every featu
 2. A new feature adds: the core module, both host adapters, and the CLI surface (command or wizard screen), plus tests proving identical outcomes (parity test).
 3. Docs (README), this file, and the CHANGELOG Unreleased section are updated in the same change.
 4. Marketplace distribution is host-native: Cursor discovers the plugin from Git (`.cursor-plugin/plugin.json` + tracked skills/rules/assets), OpenCode installs the npm plugin entry, and the CLI ships as an npm bin. The tracked Marketplace artifact is validated in CI by `validate:cursor-marketplace` against the pinned official Cursor JSON schema snapshots (`test/fixtures/cursor-schemas/`). `marketplace.json` `plugins[].source` is repo-root-relative (the directory containing `.cursor-plugin/`), not `.cursor-plugin/`-relative. Never claim Marketplace publication or acceptance; keep the repository submission-ready but not submitted.
-5. Cursor runtime execution uses the exact reviewed pin `@brainervirus/workit-cursor@0.8.0`; each Marketplace release bumps that pin deliberately after the npm artifact is public — never fall back to a mutable `latest` dist-tag.
+5. Cursor runtime execution uses the exact reviewed pin `@brainervirus/workit-cursor@0.8.5`; each Marketplace release bumps that pin deliberately after the npm artifact is public — never fall back to a mutable `latest` dist-tag.
 
 ## Workflow contract
 

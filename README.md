@@ -117,7 +117,7 @@ Local dev variant (absolute path to this repo):
 }
 ```
 
-A local (non-npm) Cursor install lives at `~/.cursor/plugins/local/workit` and registers `enabled_plugins.workit = true`; the installer migrates exact legacy `workflow-toolkit` entries after the replacement succeeds. Marketplace installation, the MCP/hook runtime, and the authenticated submission flow are documented in the [Cursor package README](packages/workit-cursor/README.md#marketplace). The Cursor runtime runs from the exact reviewed pin `@brainervirus/workit-cursor@0.8.0` — runtime pins are deliberate reviewed updates made only after the target npm version is public, never a mutable `latest` dist-tag.
+A local (non-npm) Cursor install lives at `~/.cursor/plugins/local/workit` and registers `enabled_plugins.workit = true`; the installer migrates exact legacy `workflow-toolkit` entries after the replacement succeeds. Marketplace installation, the MCP/hook runtime, and the authenticated submission flow are documented in the [Cursor package README](packages/workit-cursor/README.md#marketplace). The Cursor runtime runs from the exact reviewed pin `@brainervirus/workit-cursor@0.8.5` — runtime pins are deliberate reviewed updates made only after the target npm version is public, never a mutable `latest` dist-tag.
 
 ## Requirements
 

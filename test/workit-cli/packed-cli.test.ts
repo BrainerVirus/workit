@@ -159,7 +159,7 @@ test("packed CLI setup flow configures OpenCode + Cursor and doctor verifies it"
     expect(mcp.mcpServers?.workit?.command).toBe("npx");
     expect(mcp.mcpServers?.workit?.args).toEqual([
       "-y",
-      "--package=@brainervirus/workit-cursor@0.8.0",
+      "--package=@brainervirus/workit-cursor@0.8.5",
       "workit-cursor-mcp",
       "${workspaceFolder}",
     ]);

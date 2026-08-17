@@ -188,7 +188,7 @@ function makeCursorStub() {
         sessionStart: [
           {
             command:
-              "npx -y --package=@brainervirus/workit-cursor@0.8.0 workit-cursor-session-start",
+              "npx -y --package=@brainervirus/workit-cursor@0.8.5 workit-cursor-session-start",
           },
         ],
       },
@@ -210,7 +210,7 @@ function makeCursorStub() {
           command: "npx",
           args: [
             "-y",
-            "--package=@brainervirus/workit-cursor@0.8.0",
+            "--package=@brainervirus/workit-cursor@0.8.5",
             "workit-cursor-mcp",
             "${workspaceFolder}",
           ],
@@ -430,7 +430,7 @@ test("install-cursor-plugin.sh --local-dist registers node-form launchers agains
     expect(server.command).toBe("node");
     expect(server.args[0]).toBe(path.join(pluginDir, "dist", "mcp-server.js"));
     expect(server.args[1]).toBe("${workspaceFolder}");
-    expect(JSON.stringify(mcp)).not.toContain("@brainervirus/workit-cursor@0.8.0");
+    expect(JSON.stringify(mcp)).not.toContain("@brainervirus/workit-cursor@0.8.5");
 
     const hooks = JSON.parse(
       readFileSync(path.join(pluginDir, "hooks", "hooks-cursor.json"), "utf8"),

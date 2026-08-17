@@ -605,7 +605,7 @@ test("user and maintainer documentation reflects the integrity contracts, withou
   // Host capability table documents lifecycle on every host, and the Cursor
   // runtime pin is never weakened (CA-17).
   expect(agents).toMatch(/pending\/active\/paused\/completed|Lifecycle/i);
-  expect(agents).toContain("@brainervirus/workit-cursor@0.8.0");
+  expect(agents).toContain("@brainervirus/workit-cursor@0.8.5");
   expect(agents).not.toMatch(/workit-cursor@latest/);
   // Host READMEs map lifecycle surfaces where the host behavior changed.
   expect(ocReadme).toMatch(/workflow_plan_pause|lifecycle|digest/i);
