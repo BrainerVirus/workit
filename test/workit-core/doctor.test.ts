@@ -493,6 +493,40 @@ test("cursor session-start hook command matches exact canonical string (CA-17)",
   expect(check(run(), "launcher").status).toBe("pass");
 });
 
+test("accepts a local-dist node session-start hook pointing at the installed dist (CA-17)", () => {
+  const hooksFile = path.join(fixture.pluginDir, "hooks", "hooks-cursor.json");
+  const distHook = `node ${path.join(fixture.pluginDir, "dist", "cursor-session-start.js")}`;
+  const write = (command: string) =>
+    writeConfig(hooksFile, JSON.stringify({ version: 1, hooks: { sessionStart: [{ command }] } }));
+  try {
+    write(distHook);
+    expect(check(run(), "launcher").status, "local dist").toBe("pass");
+    // The node form must point at the plugin's own valid dist entry: an
+    // unrelated node command or a missing dist file stays a failure.
+    write("node /elsewhere/cursor-session-start.js");
+    expect(check(run(), "launcher").status).toBe("fail");
+    write(`node ${path.join(fixture.pluginDir, "dist", "missing.js")}`);
+    expect(check(run(), "launcher").status).toBe("fail");
+    write("npx -y --package=@brainervirus/workit-cursor@0.8.0 workit-cursor-session-start");
+    expect(check(run(), "launcher").status).toBe("pass");
+  } finally {
+    writeConfig(
+      hooksFile,
+      JSON.stringify({
+        version: 1,
+        hooks: {
+          sessionStart: [
+            {
+              command:
+                "npx -y --package=@brainervirus/workit-cursor@0.8.0 workit-cursor-session-start",
+            },
+          ],
+        },
+      }),
+    );
+  }
+});
+
 test("detects an unavailable runtime (no node/bun on PATH) and clears with a full PATH", () => {
   const emptyBin = path.join(fixture.root, "empty-bin");
   mkdirSync(emptyBin, { recursive: true });

@@ -409,6 +409,41 @@ test("install-cursor-plugin.sh resolves the local checkout root and never falls 
   }
 });
 
+test("install-cursor-plugin.sh --local-dist registers node-form launchers against the installed dist", () => {
+  if (!bashAvailable()) return;
+  const fixture = makeCursorStub();
+  try {
+    const installed = spawnSync(
+      "bash",
+      ["packages/workit-core/scripts/install-cursor-plugin.sh", "--local-dist"],
+      {
+        cwd: fixture.stub,
+        env: { ...process.env, HOME: fixture.home, WORKFLOW_TOOLKIT_DEV: fixture.stub },
+        encoding: "utf8",
+      },
+    );
+    expect(installed.status, installed.stderr).toBe(0);
+
+    const pluginDir = path.join(fixture.home, ".cursor", "plugins", "local", "workit");
+    const mcp = JSON.parse(readFileSync(path.join(fixture.home, ".cursor", "mcp.json"), "utf8"));
+    const server = mcp.mcpServers.workit;
+    expect(server.command).toBe("node");
+    expect(server.args[0]).toBe(path.join(pluginDir, "dist", "mcp-server.js"));
+    expect(server.args[1]).toBe("${workspaceFolder}");
+    expect(JSON.stringify(mcp)).not.toContain("@brainervirus/workit-cursor@0.8.0");
+
+    const hooks = JSON.parse(
+      readFileSync(path.join(pluginDir, "hooks", "hooks-cursor.json"), "utf8"),
+    );
+    expect(hooks.hooks.sessionStart[0].command).toBe(
+      `node ${path.join(pluginDir, "dist", "cursor-session-start.js")}`,
+    );
+  } finally {
+    rmSync(fixture.stub, { recursive: true, force: true });
+    rmSync(fixture.home, { recursive: true, force: true });
+  }
+});
+
 function syncEnv(
   home: string,
   runtimeDir: string,

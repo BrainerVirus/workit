@@ -214,3 +214,34 @@ export function cursorHooksEntry(_packageDir: string): {
     args: [],
   };
 }
+
+/**
+ * Local-dev Cursor MCP server entry: run the installed plugin's own built dist
+ * through node instead of the published npx pin, so a checkout install runs the
+ * branch's code (rename included) without waiting for a release. The committed
+ * Marketplace manifests keep the reviewed pin; this form is written by the
+ * local install path only.
+ */
+export function cursorMcpLocalDistEntry(packageDir: string): {
+  command: string;
+  args: string[];
+} {
+  return {
+    command: "node",
+    args: [path.join(packageDir, "dist", "mcp-server.js"), "${workspaceFolder}"],
+  };
+}
+
+/**
+ * Local-dev Cursor sessionStart hook entry: node against the installed dist, in
+ * Cursor's documented single-command-string hook format (no args array).
+ */
+export function cursorHookLocalDistEntry(packageDir: string): {
+  command: string;
+  args: string[];
+} {
+  return {
+    command: `node ${path.join(packageDir, "dist", "cursor-session-start.js")}`,
+    args: [],
+  };
+}

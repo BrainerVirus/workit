@@ -42,6 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `sddReviewPackage` and the SDD progress-line validator now reject empty commit ranges (`base == head` or a diff that is empty) with a structured `empty_commit_range` error instead of writing empty review artifacts.
 - User-facing surfaces were renamed from `workflow-toolkit`/`workflow_toolkit_*` to `workit`/`workit_*`: the bootstrap contract marker is now `<workit-contract>`, `workflow_toolkit_status`/`workflow_toolkit_init_status`/`workflow_toolkit_init_apply` became `workit_status`/`workit_init_status`/`workit_init_apply`, the share path is `~/.local/share/workit`, and the install-root marker is `.workit-root`; legacy-identity detection and migration from the old config directory are unchanged.
 - Installs made before the rename carry a stale `.workflow-toolkit-root` install-root marker that the runtime no longer reads (it falls back to environment/dev paths until then); the next sync rewrites the marker to `.workit-root`, so the transition resolves on re-sync.
+- `install-cursor-plugin.sh` gained a `--local-dist` mode that registers node-form MCP/hook launchers against the installed plugin's own built `dist/` (instead of the published npx pin), so a checkout install runs the current branch's code — rename included — without waiting for a release; the doctor accepts this local-dist hook alongside the canonical pin.
 
 ### Fixed
 
