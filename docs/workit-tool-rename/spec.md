@@ -22,8 +22,8 @@ Two names are host-specific and must be renamed independently, not unified: Open
 - No behavioral change to any tool; this is a pure mechanical rename of exposed identifiers.
 - No unifying `handoff_prompt`/`handoff_session`/`commit` across hosts (behavior differs; names stay per-host).
 - No change to legacy-identity detection or migration paths.
-- No change to the CLI command surface (it already uses `workit`/`workit flow`; only the CLI-package asset templates carry `workflow_*` names and must be renamed).
-- No change to historical specs under `docs/` beyond updating current tool-name references where those specs describe live tool behavior.
+- No change to the CLI command surface (it already uses `workit`/`workit flow`); the CLI adapter receives an unchanged-behavior parity test while its asset templates are renamed.
+- No change to legacy brand strings in any tracked document; tracked `docs/**/*.md` tool-name references are updated too, including older specs that describe live tool behavior.
 
 ## Architecture
 
@@ -67,9 +67,9 @@ Every `workflow_` tool identifier becomes `workit_` (prefix substitution on the 
 - CA-01: No `workflow_` tool identifier remains in any source file (`packages/*/src`, `packages/*/mcp`, `packages/workit-core/src/core`), except the intentionally-kept legacy brand strings (`workflow-toolkit`, `workflow_toolkit`, `workflow-toolkit-contract`). Verified by a grep for tool-name usage that excludes legacy brand strings.
 - CA-02: Every OpenCode tool and Cursor MCP tool exposes the `workit_`-prefixed name; host-specific names stay per-host (`workit_commit`, `workit_handoff_session` on OpenCode; `workit_handoff_prompt` on Cursor).
 - CA-03: The shared-core mutation-tool allowlist, error/retry strings, and verification-claim detection reference `workit_*` names and behave identically.
-- CA-04: Tests across `test/artifacts`, `test/workit-core`, `test/workit-cursor`, `test/workit-opencode` assert `workit_*` names and pass; the parity tests prove the OpenCode tool, Cursor MCP, and CLI surfaces expose the same renamed identifiers (except the documented host-specific set).
-- CA-05: Skills, assets, and templates under `packages/*/skills`, `packages/*/assets` reference `workit_*` tool names and are updated in lockstep; the vendored subagent-driven-development skill references `workit_*` too.
-- CA-06: README, AGENTS.md, Cursor/OpenCode package READMEs, and CHANGELOG Unreleased reference `workit_*` tool names; legacy brand strings remain for detection.
+- CA-04: Tests across `test/artifacts`, `test/workit-core`, `test/workit-cursor`, `test/workit-opencode`, and `test/workit-cli/flow-parity.test.ts` assert `workit_*` names and pass; an explicit parity assertion compares the OpenCode and Cursor common tool set to the CLI's unchanged command contract, allowing only `commit`, `handoff_session`, and `handoff_prompt` host differences.
+- CA-05: Every tracked skill, asset, template, and vendored skill under `packages/workit-core`, `packages/workit-opencode`, `packages/workit-cursor`, and `packages/workit-cli` references `workit_*` tool names; this includes `packages/workit-core/templates/**`, both Cursor/Core vendor Superpowers trees, and the OpenCode vendor tree.
+- CA-06: README, AGENTS.md, package READMEs, CHANGELOG Unreleased, and every tracked `docs/**/*.md` file that contains a live `workflow_*` tool identifier reference `workit_*`; exact legacy brand strings remain for detection.
 - CA-07: Full repository verification passes: lint, format:check, tests, build, changelog (`bun run check` / `workflow_verify`), plus `bun run validate:cursor-marketplace`.
 
 ## Decisions
@@ -78,6 +78,7 @@ Every `workflow_` tool identifier becomes `workit_` (prefix substitution on the 
 - D-02: Keep host-specific names host-specific (`workit_commit`, `workit_handoff_session` OpenCode-only; `workit_handoff_prompt` Cursor-only) because the underlying behavior genuinely differs; renaming does not change that.
 - D-03: Keep legacy brand strings (`workflow-toolkit`, `workflow_toolkit`, `workflow-toolkit-contract`) untouched for legacy-identity detection.
 - D-04: Treat this as a single mechanical rename PR; the parity tests are the guard that all hosts stayed consistent.
+- D-05: Update all tracked documentation tool references, including existing specs/plans, because leaving stale live identifiers in documentation would recreate the user-facing split this spec removes.
 
 ## Future work
 
