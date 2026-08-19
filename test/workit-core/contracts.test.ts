@@ -603,10 +603,12 @@ test("user and maintainer documentation reflects the integrity contracts, withou
   expect(cliReadme).toContain("workit handoff");
   expect(cliReadme).toMatch(/--confirm/);
   // Host capability table documents lifecycle on every host, and the Cursor
-  // runtime pin is never weakened (CA-17).
+  // runtime runs from @latest with a mandatory --prefer-online flag so the
+  // registry is re-resolved on every execution (CA-17).
   expect(agents).toMatch(/pending\/active\/paused\/completed|Lifecycle/i);
-  expect(agents).toContain("@brainervirus/workit-cursor@0.8.5");
-  expect(agents).not.toMatch(/workit-cursor@latest/);
+  expect(agents).toMatch(/workit-cursor@latest/);
+  expect(agents).toMatch(/--prefer-online/);
+  expect(agents).not.toMatch(/never (a )?mutable latest|never fall back to a mutable/);
   // Host READMEs map lifecycle surfaces where the host behavior changed.
   expect(ocReadme).toMatch(/workflow_plan_pause|lifecycle|digest/i);
   expect(cursorReadme).toMatch(/workflow_plan_pause|lifecycle|digest/i);
