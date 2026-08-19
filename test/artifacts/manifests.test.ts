@@ -101,6 +101,16 @@ test("active Cursor runtime selectors use the canonical @latest + --prefer-onlin
   expect(tracked.status).toBe(0);
   const files = tracked.stdout.trim().split("\n").filter(Boolean);
 
+  // Per-selector flag scoping (advisory): --prefer-online must appear in the
+  // same selector context as every active @latest selector, not merely once
+  // anywhere in the file — a bare `--package=...@latest` next to a correctly
+  // flagged selector would otherwise slip through a file-level includes().
+  const flagNear = (text: string, m: RegExpExecArray) => {
+    const start = Math.max(0, m.index - 80);
+    const end = Math.min(text.length, m.index + m[0].length + 80);
+    return text.slice(start, end).includes(CURSOR_RUNTIME_FLAG);
+  };
+
   const stale: string[] = [];
   for (const file of files) {
     const text = read(file);
@@ -108,8 +118,8 @@ test("active Cursor runtime selectors use the canonical @latest + --prefer-onlin
     for (const match of text.matchAll(CURSOR_RUNTIME_SELECTOR)) {
       const selector = match[1];
       if (selector === "latest") {
-        // --prefer-online is mandatory next to every active selector.
-        if (!text.includes(CURSOR_RUNTIME_FLAG)) stale.push(`${file}: missing --prefer-online`);
+        if (!flagNear(text, match))
+          stale.push(`${file}: missing --prefer-online near @latest selector`);
         continue;
       }
       if (fixture && CURSOR_DOCTOR_NEGATIVE_VARIANTS.includes(selector)) continue;
@@ -117,6 +127,26 @@ test("active Cursor runtime selectors use the canonical @latest + --prefer-onlin
     }
   }
   expect(stale).toEqual([]);
+
+  // Regression (advisory): a file with one correct selector and one bare
+  // @latest selector must fail the per-match scan. The bare selector is
+  // assembled at runtime so the fixture bytes never trip the scan of this
+  // file itself.
+  const bare = ["npx -y --package=@brainervirus/workit-cursor@", "latest"].join("");
+  const mixed =
+    "npx -y --prefer-online --package=@brainervirus/workit-cursor@latest workit-cursor-mcp\n" +
+    bare +
+    " workit-cursor-session-start\n";
+  const scan = (text: string) => {
+    const found: string[] = [];
+    for (const m of text.matchAll(CURSOR_RUNTIME_SELECTOR)) {
+      if (m[1] !== "latest") continue;
+      if (!flagNear(text, m)) found.push("missing --prefer-online near @latest selector");
+    }
+    return found;
+  };
+  expect(scan(mixed)).toHaveLength(1);
+  expect(scan("npx -y --prefer-online --package=@brainervirus/workit-cursor@latest x")).toEqual([]);
 
   // The canonical constant itself must stay the exact reviewed selector — a
   // bump to the shared constant alone would otherwise dodge the --package= scan

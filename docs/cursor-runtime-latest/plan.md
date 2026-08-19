@@ -49,13 +49,13 @@
 - Modify: `test/artifacts/manifests.test.ts`
 - Modify: `test/artifacts/phase-0-candidate.test.ts`
 - Modify: `test/workit-cli/packed-cli.test.ts`
-- Modify: `test/workit-core/install-scripts.test.ts`
-- Modify: `test/workit-core/cursor-install-mcp.test.ts`
 - Modify: `test/workit-cursor/mcp-process.test.ts`
 - Modify: `test/workit-cursor/mcp-regressions.test.ts`
 - Modify: `packages/workit-cursor/mcp.json`
 - Modify: `packages/workit-cursor/hooks/hooks-cursor.json`
 - Modify: `packages/workit-core/scripts/run-cursor-mcp.sh`
+
+> Note: `test/workit-core/install-scripts.test.ts` and `test/workit-core/cursor-install-mcp.test.ts` were already updated in Task 1 (fix round `52145ae..d88e104`) and are not touched again here.
 
 - [ ] **Step 1: Write the failing tests.** Update manifest and installer expectations to require `--prefer-online` plus `@latest`; make negative fixtures reject `@0.8.5`, `@latest-alpha`, `@0.8.5-alpha`, `@0.8.50`, bare latest, and any selector lacking `--prefer-online`. Do not update `test/workit-core/contracts.test.ts` here because it also asserts the policy text changed in Task 3. Run `bun test test/artifacts/manifests.test.ts test/artifacts/phase-0-candidate.test.ts test/workit-core/install-scripts.test.ts test/workit-core/cursor-install-mcp.test.ts test/workit-cursor/mcp-process.test.ts test/workit-cursor/mcp-regressions.test.ts`; expected result is FAIL.
 - [ ] **Step 2: Update static launchers.** Change `packages/workit-cursor/mcp.json` to the exact five MCP args from Task 1, change `packages/workit-cursor/hooks/hooks-cursor.json` to `npx -y --prefer-online --package=@brainervirus/workit-cursor@latest workit-cursor-session-start`, and change `packages/workit-core/scripts/run-cursor-mcp.sh` to `exec npx -y --prefer-online --package=@brainervirus/workit-cursor@latest workit-cursor-mcp "$@"`.
