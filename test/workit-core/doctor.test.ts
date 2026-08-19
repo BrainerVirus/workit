@@ -381,7 +381,8 @@ test("cursor launcher npx shape matches exact tokens, never substrings (CA-17)",
         command: "npx",
         args: [
           "-y",
-          "--package=@brainervirus/workit-cursor@0.8.5",
+          "--prefer-online",
+          "--package=@brainervirus/workit-cursor@latest",
           "workit-cursor-mcp",
           "${workspaceFolder}",
         ],
@@ -390,7 +391,17 @@ test("cursor launcher npx shape matches exact tokens, never substrings (CA-17)",
   });
   const variants: Array<[string, string[]]> = [
     [
-      "@latest",
+      "exact pin @0.8.5",
+      [
+        "-y",
+        "--prefer-online",
+        "--package=@brainervirus/workit-cursor@0.8.5",
+        "workit-cursor-mcp",
+        "${workspaceFolder}",
+      ],
+    ],
+    [
+      "bare @latest without --prefer-online",
       [
         "-y",
         "--package=@brainervirus/workit-cursor@latest",
@@ -402,6 +413,7 @@ test("cursor launcher npx shape matches exact tokens, never substrings (CA-17)",
       "@latest-alpha",
       [
         "-y",
+        "--prefer-online",
         "--package=@brainervirus/workit-cursor@latest-alpha",
         "workit-cursor-mcp",
         "${workspaceFolder}",
@@ -411,6 +423,7 @@ test("cursor launcher npx shape matches exact tokens, never substrings (CA-17)",
       "@0.8.5-alpha",
       [
         "-y",
+        "--prefer-online",
         "--package=@brainervirus/workit-cursor@0.8.5-alpha",
         "workit-cursor-mcp",
         "${workspaceFolder}",
@@ -420,16 +433,38 @@ test("cursor launcher npx shape matches exact tokens, never substrings (CA-17)",
       "@0.8.50",
       [
         "-y",
+        "--prefer-online",
         "--package=@brainervirus/workit-cursor@0.8.50",
         "workit-cursor-mcp",
         "${workspaceFolder}",
       ],
     ],
     [
-      "workit-cursor-mcp-foo",
+      "missing ${workspaceFolder}",
       [
         "-y",
-        "--package=@brainervirus/workit-cursor@0.8.5",
+        "--prefer-online",
+        "--package=@brainervirus/workit-cursor@latest",
+        "workit-cursor-mcp",
+      ],
+    ],
+    [
+      "extra args",
+      [
+        "-y",
+        "--prefer-online",
+        "--package=@brainervirus/workit-cursor@latest",
+        "workit-cursor-mcp",
+        "${workspaceFolder}",
+        "extra",
+      ],
+    ],
+    [
+      "executable lookalike",
+      [
+        "-y",
+        "--prefer-online",
+        "--package=@brainervirus/workit-cursor@latest",
         "workit-cursor-mcp-foo",
         "${workspaceFolder}",
       ],
@@ -458,23 +493,34 @@ test("cursor session-start hook command matches exact canonical string (CA-17)",
     hooks: {
       sessionStart: [
         {
-          command: "npx -y --package=@brainervirus/workit-cursor@0.8.5 workit-cursor-session-start",
+          command:
+            "npx -y --prefer-online --package=@brainervirus/workit-cursor@latest workit-cursor-session-start",
         },
       ],
     },
   };
   const hookVariants: Array<[string, string]> = [
-    ["@latest", "npx -y --package=@brainervirus/workit-cursor@latest workit-cursor-session-start"],
+    [
+      "exact pin @0.8.5",
+      "npx -y --prefer-online --package=@brainervirus/workit-cursor@0.8.5 workit-cursor-session-start",
+    ],
+    [
+      "bare @latest without --prefer-online",
+      "npx -y --package=@brainervirus/workit-cursor@latest workit-cursor-session-start",
+    ],
     [
       "@latest-alpha",
-      "npx -y --package=@brainervirus/workit-cursor@latest-alpha workit-cursor-session-start",
+      "npx -y --prefer-online --package=@brainervirus/workit-cursor@latest-alpha workit-cursor-session-start",
     ],
-    ["@0.8.50", "npx -y --package=@brainervirus/workit-cursor@0.8.50 workit-cursor-session-start"],
+    [
+      "@0.8.50",
+      "npx -y --prefer-online --package=@brainervirus/workit-cursor@0.8.50 workit-cursor-session-start",
+    ],
     [
       "extra-token",
-      "npx -y --package=@brainervirus/workit-cursor@0.8.5 workit-cursor-session-start extra",
+      "npx -y --prefer-online --package=@brainervirus/workit-cursor@latest workit-cursor-session-start extra",
     ],
-    ["missing-executable", "npx -y --package=@brainervirus/workit-cursor@0.8.5"],
+    ["missing-executable", "npx -y --prefer-online --package=@brainervirus/workit-cursor@latest"],
   ];
   try {
     for (const [label, command] of hookVariants) {
@@ -507,7 +553,9 @@ test("accepts a local-dist node session-start hook pointing at the installed dis
     expect(check(run(), "launcher").status).toBe("fail");
     write(`node ${path.join(fixture.pluginDir, "dist", "missing.js")}`);
     expect(check(run(), "launcher").status).toBe("fail");
-    write("npx -y --package=@brainervirus/workit-cursor@0.8.5 workit-cursor-session-start");
+    write(
+      "npx -y --prefer-online --package=@brainervirus/workit-cursor@latest workit-cursor-session-start",
+    );
     expect(check(run(), "launcher").status).toBe("pass");
   } finally {
     writeConfig(
@@ -518,7 +566,7 @@ test("accepts a local-dist node session-start hook pointing at the installed dis
           sessionStart: [
             {
               command:
-                "npx -y --package=@brainervirus/workit-cursor@0.8.5 workit-cursor-session-start",
+                "npx -y --prefer-online --package=@brainervirus/workit-cursor@latest workit-cursor-session-start",
             },
           ],
         },

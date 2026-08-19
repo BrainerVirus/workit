@@ -188,7 +188,7 @@ function makeCursorStub() {
         sessionStart: [
           {
             command:
-              "npx -y --package=@brainervirus/workit-cursor@0.8.5 workit-cursor-session-start",
+              "npx -y --prefer-online --package=@brainervirus/workit-cursor@latest workit-cursor-session-start",
           },
         ],
       },
@@ -210,7 +210,8 @@ function makeCursorStub() {
           command: "npx",
           args: [
             "-y",
-            "--package=@brainervirus/workit-cursor@0.8.5",
+            "--prefer-online",
+            "--package=@brainervirus/workit-cursor@latest",
             "workit-cursor-mcp",
             "${workspaceFolder}",
           ],

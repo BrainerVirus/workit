@@ -180,11 +180,13 @@ export function mergeCursorHooks(
 }
 
 /**
- * Canonical reviewed pin for the Cursor npm runtime (README "Update review").
- * The single source for every source-derived Cursor runtime selector; the
- * committed manifests keep the literal (static data cannot import TS).
+ * Canonical selector for the Cursor npm runtime: `@latest` with `--prefer-online`
+ * (README "Update review"). The single source for every source-derived Cursor
+ * runtime selector; the committed manifests keep the literal (static data
+ * cannot import TS). `--prefer-online` is mandatory — it forces npx to check
+ * the registry so a stale cached `latest` resolution is never reused.
  */
-export const CURSOR_RUNTIME_PACKAGE = "@brainervirus/workit-cursor@0.8.5";
+export const CURSOR_RUNTIME_PACKAGE = "@brainervirus/workit-cursor@latest";
 
 /**
  * Portable Cursor MCP server entry (CA-16/CA-17): launch the published package
@@ -197,7 +199,13 @@ export function cursorMcpServerEntry(_packageDir: string): {
 } {
   return {
     command: "npx",
-    args: ["-y", `--package=${CURSOR_RUNTIME_PACKAGE}`, "workit-cursor-mcp", "${workspaceFolder}"],
+    args: [
+      "-y",
+      "--prefer-online",
+      `--package=${CURSOR_RUNTIME_PACKAGE}`,
+      "workit-cursor-mcp",
+      "${workspaceFolder}",
+    ],
   };
 }
 
@@ -210,7 +218,7 @@ export function cursorHooksEntry(_packageDir: string): {
   args: string[];
 } {
   return {
-    command: `npx -y --package=${CURSOR_RUNTIME_PACKAGE} workit-cursor-session-start`,
+    command: `npx -y --prefer-online --package=${CURSOR_RUNTIME_PACKAGE} workit-cursor-session-start`,
     args: [],
   };
 }

@@ -420,10 +420,14 @@ const registeredCursorLauncher = (res: Resolved): CursorLauncher | null | "inval
   // offline doctor validates its shape (never the registry reachability).
   if (executable === "npx" || executable === "npx.exe" || executable === "npx.cmd") {
     // CA-17: exact positional tokens — a substring match would accept
-    // `@latest-alpha` or `workit-cursor-mcp-foo`.
+    // `@latest-alpha` or `workit-cursor-mcp-foo`, and any extra/missing token
+    // would weaken the freshness guarantee (`--prefer-online` is mandatory).
+    if (args.length !== 5) return "invalid";
     if (args[0] !== "-y") return "invalid";
-    if (args[1] !== `--package=${CURSOR_RUNTIME_PACKAGE}`) return "invalid";
-    if (args[2] !== "workit-cursor-mcp") return "invalid";
+    if (args[1] !== "--prefer-online") return "invalid";
+    if (args[2] !== `--package=${CURSOR_RUNTIME_PACKAGE}`) return "invalid";
+    if (args[3] !== "workit-cursor-mcp") return "invalid";
+    if (args[4] !== "${workspaceFolder}") return "invalid";
     return { kind: "npx" };
   }
   if (executable !== "node" && executable !== "node.exe") return "invalid";
