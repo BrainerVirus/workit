@@ -469,6 +469,16 @@ test("cursor launcher npx shape matches exact tokens, never substrings (CA-17)",
         "${workspaceFolder}",
       ],
     ],
+    [
+      "wrong position: --prefer-online after --package",
+      [
+        "-y",
+        "--package=@brainervirus/workit-cursor@latest",
+        "--prefer-online",
+        "workit-cursor-mcp",
+        "${workspaceFolder}",
+      ],
+    ],
   ];
   try {
     for (const [label, args] of variants) {
@@ -511,6 +521,10 @@ test("cursor session-start hook command matches exact canonical string (CA-17)",
     [
       "@latest-alpha",
       "npx -y --prefer-online --package=@brainervirus/workit-cursor@latest-alpha workit-cursor-session-start",
+    ],
+    [
+      "@0.8.5-alpha",
+      "npx -y --prefer-online --package=@brainervirus/workit-cursor@0.8.5-alpha workit-cursor-session-start",
     ],
     [
       "@0.8.50",
