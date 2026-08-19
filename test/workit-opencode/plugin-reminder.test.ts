@@ -157,7 +157,7 @@ test("CA-04: empty flow.json is skipped without throwing", () => {
   }
 });
 
-test("CA-17: a drift-reset active flow is not discovered after the plan changes", () => {
+test("CA-17: an active flow stays discovered after a plan edit (lifecycle survives plan drift)", () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "wf-reminder-"));
   try {
     establishMenuChoice(root, "drift", "subagent-driven");
@@ -166,8 +166,9 @@ test("CA-17: a drift-reset active flow is not discovered after the plan changes"
       path.join(root, "docs", "drift", "plan.md"),
       REMINDER_PLAN("drift").replace("do it", "do it now"),
     );
-    // The effective read reconciles the drift and resets execution to pending.
-    expect(findActiveSubagentDrivenPlans(root)).toEqual([]);
+    // Plan drift resets only the plan approval digest; the active execution
+    // lifecycle survives, so the flow is still discovered and intercepted.
+    expect(findActiveSubagentDrivenPlans(root)).toEqual(["drift"]);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -359,7 +360,7 @@ test("I-2: active execution is discovered regardless of last-task ledger coverag
   }
 });
 
-test("I-2d: an unreadable plan.md on an active flow fails closed (excluded via drift reset)", () => {
+test("I-2d: an unreadable plan.md on an active flow stays discovered (lifecycle survives plan-doc drift)", () => {
   if (process.platform === "win32") return; // chmod is not advisory on win32
   const root = mkdtempSync(path.join(os.tmpdir(), "wf-reminder-"));
   try {
@@ -375,7 +376,7 @@ test("I-2d: an unreadable plan.md on an active flow fails closed (excluded via d
       // unreadable
     }
     if (unreadable) {
-      expect(findActiveSubagentDrivenPlans(root)).toEqual([]);
+      expect(findActiveSubagentDrivenPlans(root)).toEqual(["p"]);
     }
   } finally {
     chmodSync(path.join(root, "docs", "p", "plan.md"), 0o644);

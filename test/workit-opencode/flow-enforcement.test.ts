@@ -608,7 +608,7 @@ test("workflow_flow_status returns execution and drift alongside spec/plan/menu"
   }
 });
 
-test("workflow_flow_status reports digest drift and the pending reset after the plan changes", async () => {
+test("workflow_flow_status reports digest drift while preserving the execution lifecycle after the plan changes", async () => {
   const { root, slug, tools, ctx, receipts } = fixture();
   try {
     await run(tools, "workflow_flow_status", { plan_path: "docs/oc-flow/plan.md" }, ctx);
@@ -627,7 +627,9 @@ test("workflow_flow_status reports digest drift and the pending reset after the 
     expect(out.data.drift).toEqual([
       { document: "plan", code: "digest_mismatch", path: "docs/oc-flow/plan.md" },
     ]);
-    expect(out.data.execution.status).toBe("pending");
+    // Plan drift resets only the plan approval digest; the active execution
+    // lifecycle survives the edit.
+    expect(out.data.execution).toMatchObject({ status: "active", mode: "subagent-driven" });
   } finally {
     cleanup(root);
   }
@@ -778,7 +780,7 @@ test("a stale lifecycle receipt cannot pause a flow", async () => {
   }
 });
 
-test("resume after plan drift: the effective reset returns pending and resume fails closed", async () => {
+test("resume after plan drift still works — lifecycle survives plan-doc drift", async () => {
   const { root, slug, tools, ctx, receipts } = fixture();
   try {
     await run(tools, "workflow_flow_status", { plan_path: "docs/oc-flow/plan.md" }, ctx);
@@ -791,12 +793,10 @@ test("resume after plan drift: the effective reset returns pending and resume fa
       COMPLIANT_PLAN(slug).replace("do it", "do it now"),
     );
     recordQuestion(receipts, "Resume plan");
-    const denied = await run(tools, "workflow_plan_resume", { plan_path: plan }, ctx);
-    expect(denied.ok).toBe(false);
-    if (denied.ok === false) expect(denied.data?.code).toBe("flow_not_paused");
+    const resumed = await run(tools, "workflow_plan_resume", { plan_path: plan }, ctx);
+    expect(resumed.ok).toBe(true);
     const status = await run(tools, "workflow_flow_status", { plan_path: plan }, ctx);
-    expect(status.data.execution.status).toBe("pending");
-    expect(status.data.drift.length).toBeGreaterThan(0);
+    expect(status.data.execution).toMatchObject({ status: "active", mode: "subagent-driven" });
   } finally {
     cleanup(root);
   }

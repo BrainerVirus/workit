@@ -696,7 +696,8 @@ const readCanonicalDigest = (root: string, rel: string): CanonicalDigestResult =
  * Approval-integrity reconciliation (CA-02, CA-03): recompute approved
  * document digests in spec-before-plan order and return the reset state plus
  * the structured drift reasons. Spec drift resets the whole approval chain;
- * plan drift (spec valid) preserves the spec approval and digest.
+ * plan drift (spec valid) preserves the spec approval/digest and the execution
+ * lifecycle, resetting only the plan's approval digest.
  */
 const resetForSpecDrift = (state: FlowState): FlowState => ({
   ...state,
@@ -711,9 +712,11 @@ const resetForSpecDrift = (state: FlowState): FlowState => ({
 const resetForPlanDrift = (state: FlowState): FlowState => ({
   ...state,
   plan: { ...state.plan, status: "draft", evidence: null, approved_digest: null },
-  menu: { presented: false, chosen: "", evidence: null },
-  execution: { status: "pending", mode: null, evidence: null },
-  handoff_destination: false,
+  // A plan edit resets only the plan's approval digest (fresh re-approval is
+  // required before any plan-gated transition). The execution lifecycle, the
+  // recorded menu choice, and the handoff context are lifecycle facts, not
+  // plan-approval facts: an in-progress or completed run must not be rewound
+  // to pending by a doc edit made during or after implementation.
   updated_at: Date.now(),
 });
 

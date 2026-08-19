@@ -1022,16 +1022,6 @@ test("CA-18/AR-13: only active subagent-driven flows are discovered and intercep
       },
     },
     {
-      name: "drift-reset",
-      build: (r, slug) => {
-        establishSubagentDriven(r, slug);
-        writeFileSync(
-          path.join(r, "docs", slug, "plan.md"),
-          COMPLIANT_PLAN(slug).replace("do it", "do it now"),
-        );
-      },
-    },
-    {
       name: "malformed",
       build: (r, slug) => {
         const dir = path.join(r, "docs", slug, "sdd");
@@ -1073,6 +1063,27 @@ test("CA-18/AR-13: only active subagent-driven flows are discovered and intercep
     }
   } finally {
     cleanup(root);
+  }
+  // A plan-doc edit during execution resets only the plan approval digest; the
+  // active lifecycle survives, so the flow is still discovered and the
+  // coordinator is still blocked (regression: drift used to reset execution).
+  const { root: driftRoot, slug: driftSlug } = fixture();
+  try {
+    establishSubagentDriven(driftRoot, driftSlug);
+    writeFileSync(
+      path.join(driftRoot, "docs", driftSlug, "plan.md"),
+      COMPLIANT_PLAN(driftSlug).replace("do it", "do it now"),
+    );
+    expect(findActiveSubagentDrivenPlans(driftRoot)).toEqual([driftSlug]);
+    const decision = subagentDrivenInterception({
+      tool: "write",
+      parentID: undefined,
+      active: true,
+    });
+    expect(decision.ok).toBe(false);
+    if (!decision.ok) expect(decision.code).toBe("coordinator_write_denied");
+  } finally {
+    cleanup(driftRoot);
   }
 });
 
