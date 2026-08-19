@@ -389,7 +389,8 @@ test("cursor MCP manifests stay package-relative (mcp.json, marketplace.json, ho
   expect(server.command).toBe("npx"); // CA-17: published package via npx, no repo-relative dist
   expect(server.args).toEqual([
     "-y",
-    "--package=@brainervirus/workit-cursor@0.8.5",
+    "--prefer-online",
+    "--package=@brainervirus/workit-cursor@latest",
     "workit-cursor-mcp",
     "${workspaceFolder}",
   ]);
@@ -403,7 +404,8 @@ test("cursor MCP manifests stay package-relative (mcp.json, marketplace.json, ho
   // AR-06/CA-17: the committed hook entry is a single command string, no args.
   expect(hooks.hooks.sessionStart).toEqual([
     {
-      command: "npx -y --package=@brainervirus/workit-cursor@0.8.5 workit-cursor-session-start",
+      command:
+        "npx -y --prefer-online --package=@brainervirus/workit-cursor@latest workit-cursor-session-start",
     },
   ]);
 

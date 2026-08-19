@@ -2,7 +2,7 @@
   "mcpServers": {
     "workit": {
       "command": "npx",
-      "args": ["-y", "--package=@brainervirus/workit-cursor@0.8.5", "workit-cursor-mcp", "${workspaceFolder}"]
+      "args": ["-y", "--prefer-online", "--package=@brainervirus/workit-cursor@latest", "workit-cursor-mcp", "${workspaceFolder}"]
     }
   }
 }

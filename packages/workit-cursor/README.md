@@ -23,7 +23,8 @@ npx @brainervirus/workit-cli init
       "command": "npx",
       "args": [
         "-y",
-        "--package=@brainervirus/workit-cursor@0.8.5",
+        "--prefer-online",
+        "--package=@brainervirus/workit-cursor@latest",
         "workit-cursor-mcp",
         "${workspaceFolder}"
       ]
@@ -35,7 +36,7 @@ npx @brainervirus/workit-cli init
 ### Requirements
 
 - **Node.js ≥ 22** — the MCP server and session-start hook are self-contained Node bundles invoked through `npx`.
-- **Network** — `npx -y …@0.8.5` resolves and downloads the package on first run in each environment; a machine that cannot reach the npm registry cannot start the MCP server or hook (see [Runtime](#runtime)).
+- **Network** — `npx -y --prefer-online …@latest` resolves and downloads the package on first run in each environment; a machine that cannot reach the npm registry cannot start the MCP server or hook (see [Runtime](#runtime)).
 
 ## What it provides
 
@@ -59,11 +60,11 @@ Cursor adapts workit through policy-only confirmation: approvals and lifecycle t
 
 Cursor launches the MCP server and session-start hook through `npx`, so the shipped manifests contain no repository-relative `dist` paths:
 
-- **MCP server** — `npx -y --package=@brainervirus/workit-cursor@0.8.5 workit-cursor-mcp ${workspaceFolder}`. It speaks the MCP stdio protocol; `stdout` is reserved for protocol messages and diagnostics go to `stderr`.
-- **Session-start hook** — `npx -y --package=@brainervirus/workit-cursor@0.8.5 workit-cursor-session-start`. It emits valid hook output and a diagnostic on runtime failure, and remains fail-open where Cursor's hook contract requires startup continuity.
+- **MCP server** — `npx -y --prefer-online --package=@brainervirus/workit-cursor@latest workit-cursor-mcp ${workspaceFolder}`. It speaks the MCP stdio protocol; `stdout` is reserved for protocol messages and diagnostics go to `stderr`.
+- **Session-start hook** — `npx -y --prefer-online --package=@brainervirus/workit-cursor@latest workit-cursor-session-start`. It emits valid hook output and a diagnostic on runtime failure, and remains fail-open where Cursor's hook contract requires startup continuity.
 - `npx` startup or network failure is surfaced by Cursor as an MCP/hook startup failure; Workit never silently substitutes stale local runtime code.
 
-The runtime runs from the exact reviewed pin `@0.8.5`: Cursor reviews plugin metadata from Git, while npm serves the pinned runtime. Bumping the pin is a deliberate reviewed update, made only after the target npm version is public — never a mutable `latest` dist-tag. See [Update review](#update-review).
+The runtime runs from `@latest` with the mandatory `--prefer-online` flag: Cursor reviews plugin metadata from Git, while npm serves the runtime. `--prefer-online` forces npx to check the registry so a stale cached `latest` resolution is never reused. See [Update review](#update-review).
 
 ## Security and data handling
 
@@ -96,7 +97,7 @@ The repository root carries `.cursor-plugin/marketplace.json`, indexing `package
 
 - **Installing from Marketplace** — a Marketplace admin adds the repository URL through Cursor's authenticated publisher flow; end users then install the plugin from the Cursor Marketplace UI, which reads `.cursor-plugin/plugin.json` and the tracked components directly from Git.
 - **Submission** — Marketplace submission is a separate, later authenticated action at `https://cursor.com/marketplace/publish`. It is **not** performed here and no publication or acceptance is claimed; the repository is kept validated and submission-ready.
-- **Update review** — Git plugin metadata (manifest, rules, skills, assets) is reviewed by Cursor on Marketplace updates, while the npm runtime is pinned to the exact reviewed `@0.8.5`. Bumping that pin in `mcp.json` / `hooks-cursor.json` is a deliberate reviewed change: only after the target npm version is public, never a mutable `latest` dist-tag.
+- **Update review** — Git plugin metadata (manifest, rules, skills, assets) is reviewed by Cursor on Marketplace updates, while the npm runtime runs from `@latest` with `--prefer-online`. The selector is shared across `mcp.json`, `hooks-cursor.json`, and `run-cursor-mcp.sh`, and a stale `latest` resolution is prevented by the mandatory `--prefer-online` flag.
 - **Troubleshooting** — `workit doctor` (or the `workflow_doctor` tool) reports installation health including runtime, token, VCS/YouTrack, and log-writability checks; it exits nonzero on failure. An MCP/hook startup failure with no network is an `npx`/registry reachability issue, not a Workit defect.
 
 ## Docs
