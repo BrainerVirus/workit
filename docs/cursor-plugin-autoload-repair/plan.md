@@ -48,7 +48,7 @@
 - Modify: `test/workit-core/cursor-install-mcp.test.ts`
 
 - [ ] **Step 1: Write the failing tests.** Add installer tests asserting: (a) running the installer against a stale plugin dir (old version + legacy pin) refreshes the plugin dir and rewrites the workit MCP/hook entries to the canonical current selector, preserving unrelated MCP servers; (b) the stale → repaired transition ends with a healthy doctor; (c) a healthy install is left untouched. Run `bun test test/workit-core/install-scripts.test.ts test/workit-core/cursor-install-mcp.test.ts`; expected result is FAIL.
-- [ ] **Step 2: Implement self-heal.** In `packages/workit-core/scripts/install-cursor-plugin.sh`, before registering, run the stale check; when stale, refresh the plugin directory from the share/dev root and rewrite the workit MCP/hook entries (default npx `@latest` + `--prefer-online`, or the current local-dist launcher), preserving unrelated settings. Re-run the doctor after repair.
+- [ ] **Step 2: Implement self-heal.** In `packages/workit-core/scripts/install-cursor-plugin.sh`, before registering, run the stale check; when stale, refresh the plugin directory from the share/dev root and rewrite the workit MCP/hook entries (default npx `@latest` + `--prefer-online`, or the current local-dist launcher), preserving unrelated settings. A registry-unreachable staleness comparison fails open as `registry_unreachable` — no false `stale_install` and no install failure. Re-run the doctor after repair.
 - [ ] **Step 3: Confirm GREEN.** Run the focused installer tests; expected result is PASS.
 
 **Criteria:** Installer self-heals a stale install (refresh + canonical re-registration), preserves unrelated settings, and verifies healthy after repair.
