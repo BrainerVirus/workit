@@ -11,7 +11,7 @@ import path from "node:path";
 import { SUPPORT_MATRIX } from "./support-matrix";
 import { EVENT } from "./boundary";
 import { getDiagnosticLogger, isConfigObject } from "./config";
-import { CURSOR_RUNTIME_PACKAGE, cursorHooksEntry, isWorkitPlugin } from "./registration";
+import { cursorHooksEntry, cursorMcpServerEntry, isWorkitPlugin } from "./registration";
 import { resolveWorkspaceFrom } from "./workspaces";
 import { validateCursorSkills } from "./skill-manifests";
 
@@ -418,12 +418,13 @@ const registeredCursorLauncher = (res: Resolved): CursorLauncher | null | "inval
   const executable = path.basename(command).toLowerCase();
   // CA-17: the canonical launcher runs the published package through npx; the
   // offline doctor validates its shape (never the registry reachability).
+  // Exact positional tokens — a substring match would accept `@latest-alpha`
+  // or `workit-cursor-mcp-foo`, and any extra/missing token would weaken the
+  // freshness guarantee (`--prefer-online` is mandatory).
+  const canonical = cursorMcpServerEntry("").args;
   if (executable === "npx" || executable === "npx.exe" || executable === "npx.cmd") {
-    // CA-17: exact positional tokens — a substring match would accept
-    // `@latest-alpha` or `workit-cursor-mcp-foo`.
-    if (args[0] !== "-y") return "invalid";
-    if (args[1] !== `--package=${CURSOR_RUNTIME_PACKAGE}`) return "invalid";
-    if (args[2] !== "workit-cursor-mcp") return "invalid";
+    if (args.length !== canonical.length || args.some((a, i) => a !== canonical[i]))
+      return "invalid";
     return { kind: "npx" };
   }
   if (executable !== "node" && executable !== "node.exe") return "invalid";

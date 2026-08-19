@@ -629,7 +629,7 @@ test("cursor MCP lifecycle tools ignore caller-supplied evidence and role", asyn
   }
 });
 
-test("cursor MCP resume after plan drift returns the core pending reset and flow_not_paused", async () => {
+test("cursor MCP resume after plan drift still works — lifecycle survives plan-doc drift", async () => {
   const { root } = fixture();
   const { child, call } = await spawnClient();
   try {
@@ -639,17 +639,15 @@ test("cursor MCP resume after plan drift returns the core pending reset and flow
       path.join(root, "docs", "cf-flow", "plan.md"),
       COMPLIANT_PLAN("cf-flow").replace("do it", "do it now"),
     );
-    const denied = await call("workflow_plan_resume", { plan_path: plan, workspace_root: root });
-    expect(callText(denied).isError).toBe(true);
-    expect(callText(denied).text.code).toBe("flow_not_paused");
+    // Plan drift resets only the plan approval digest; the paused lifecycle
+    // survives, so resume keeps working.
+    const resumed = await call("workflow_plan_resume", { plan_path: plan, workspace_root: root });
+    expect(callText(resumed).isError).toBe(false);
     const status = await call("workflow_flow_status", {
       plan_path: plan,
       workspace_root: root,
     });
-    expect(callText(status).text.execution.status).toBe("pending");
-    expect(callText(status).text.drift).toEqual([
-      { document: "plan", code: "digest_mismatch", path: "docs/cf-flow/plan.md" },
-    ]);
+    expect(callText(status).text.execution.status).toBe("active");
   } finally {
     child.kill();
     rmSync(root, { recursive: true, force: true });

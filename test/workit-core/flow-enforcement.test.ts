@@ -501,8 +501,9 @@ test("product mutation fails docs validation when documents are invalid", () => 
     const lax = assertProductGates(root, slug, { requireMenu: true, requireDocs: false });
     expect(lax.ok).toBe(false);
     if (lax.ok === false) expect(lax.code).toBe("plan_not_approved");
-    // Fresh approval restores the approvals; the drift cascade also reset the
-    // menu, so the menu must be re-presented before the full gate passes.
+    // Fresh approval restores the plan approval. The lifecycle facts (menu,
+    // execution) survive plan drift, so the full gate passes without
+    // re-presenting the menu.
     const store = new HostReceiptStore();
     const sessionId = "s1";
     writeFileSync(path.join(root, "docs", slug, "plan.md"), COMPLIANT_PLAN_FN(slug));
@@ -512,18 +513,6 @@ test("product mutation fails docs validation when documents are invalid", () => 
         slug,
         `docs/${slug}/plan.md`,
         openEvidence(store, sessionId, "Approve plan"),
-      ).ok,
-    ).toBe(true);
-    const noMenu = assertProductGates(root, slug, { requireMenu: true, requireDocs: true });
-    expect(noMenu.ok).toBe(false);
-    if (noMenu.ok === false) expect(noMenu.code).toBe("menu_not_presented");
-    expect(
-      recordMenuChoice(
-        root,
-        slug,
-        `docs/${slug}/plan.md`,
-        "handoff",
-        openEvidence(store, sessionId, "handoff"),
       ).ok,
     ).toBe(true);
     const all = assertProductGates(root, slug, { requireMenu: true, requireDocs: true });
@@ -1723,7 +1712,7 @@ test("CA-19/CA-21: lifecycle evidence must be native choice evidence or the exac
   }
 });
 
-test("CA-15: pause after approval drift fails closed — reconciliation resets execution to pending", () => {
+test("CA-15: pause after plan drift still works — lifecycle survives, plan approval resets", () => {
   const { root, slug } = fixture();
   try {
     establishMenuChoice(root, slug, "subagent-driven");
@@ -1732,20 +1721,24 @@ test("CA-15: pause after approval drift fails closed — reconciliation resets e
       path.join(root, "docs", slug, "plan.md"),
       COMPLIANT_PLAN_FN(slug).replace("do it", "do it now"),
     );
+    // Plan drift resets only the plan approval digest; the active execution
+    // lifecycle and menu survive, so pausing still succeeds.
     const paused = transitionExecution(root, slug, plan, "pause", cliEvidence());
-    expect(paused.ok).toBe(false);
-    if (!paused.ok) expect(paused.code).toBe("flow_not_active");
-    // The effective read reconciles the drift and exposes the reset execution.
+    expect(paused.ok).toBe(true);
     const effective = readEffectiveFlowState(root, slug);
     expect(effective.ok).toBe(true);
     if (!effective.ok) throw new Error(effective.error);
-    expect(effective.state.execution).toEqual({ status: "pending", mode: null, evidence: null });
+    expect(effective.state.execution).toMatchObject({
+      status: "paused",
+      mode: "subagent-driven",
+    });
+    expect(effective.state.plan).toMatchObject({ status: "draft", approved_digest: null });
   } finally {
     cleanup(root);
   }
 });
 
-test("CA-15: pause with unreadable canonical docs fails closed", () => {
+test("CA-15: pause with unreadable canonical plan doc still works — lifecycle survives plan-doc drift", () => {
   if (process.platform === "win32") return; // chmod is not advisory on win32
   const { root, slug } = fixture();
   try {
@@ -1761,9 +1754,10 @@ test("CA-15: pause with unreadable canonical docs fails closed", () => {
       // unreadable
     }
     if (unreadable) {
+      // Plan-doc drift (here unreadable -> document_unreadable) never rewinds
+      // the execution lifecycle; pausing an active run keeps working.
       const paused = transitionExecution(root, slug, plan, "pause", cliEvidence());
-      expect(paused.ok).toBe(false);
-      if (!paused.ok) expect(paused.code).toBe("flow_not_active");
+      expect(paused.ok).toBe(true);
     }
   } finally {
     chmodSync(path.join(root, "docs", slug, "plan.md"), 0o644);

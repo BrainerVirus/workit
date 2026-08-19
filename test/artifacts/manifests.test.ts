@@ -22,12 +22,20 @@ const OPENCODE = "@brainervirus/workit-opencode";
 const read = (rel: string) => readFileSync(path.join(REPO_ROOT, rel), "utf8");
 const json = <T>(rel: string) => JSON.parse(read(rel)) as T;
 
-// Advisory #4 (cursor-npx-runtime-pin): the reviewed pin is a deliberate
-// immutable value; a future bump must fail CI if any selector is missed. Every
-// active Cursor runtime selector is the exact `--package=@0.8.5` pin, and only
-// the doctor's intentional negative-rejection fixture may carry variants.
+// Advisory #4 (cursor-npx-runtime-latest): the canonical selector is `@latest`
+// with the mandatory `--prefer-online` flag; a future change must fail CI if
+// any selector is missed. Every active Cursor runtime selector carries both,
+// and only the doctor's intentional negative-rejection fixture may carry
+// variants.
 const CURSOR_RUNTIME_SELECTOR = /--package=@brainervirus\/workit-cursor@([^\s"'${}`]+)/g;
-const CURSOR_DOCTOR_NEGATIVE_VARIANTS = ["latest", "latest-alpha", "0.8.5-alpha", "0.8.50"];
+const CURSOR_RUNTIME_FLAG = "--prefer-online";
+const CURSOR_DOCTOR_NEGATIVE_VARIANTS = [
+  "latest",
+  "latest-alpha",
+  "0.8.5-alpha",
+  "0.8.50",
+  "0.8.5",
+];
 
 const byName = (packs: ReturnType<typeof packWorkspacePackages>, name: string) =>
   packs.find((p) => p.packageName === name)!;
@@ -46,7 +54,8 @@ test("cursor mcp.json launches the published package via npx (CA-17)", () => {
     expect(server.command, source).toBe("npx");
     expect(server.args, source).toEqual([
       "-y",
-      "--package=@brainervirus/workit-cursor@0.8.5",
+      "--prefer-online",
+      "--package=@brainervirus/workit-cursor@latest",
       "workit-cursor-mcp",
       "${workspaceFolder}",
     ]);
@@ -74,7 +83,7 @@ test("cursor hooks-cursor.json uses the documented single command string (CA-17)
     expect(hooks.version, source).toBe(1);
     const entry = hooks.hooks.sessionStart[0];
     expect(entry.command, source).toBe(
-      "npx -y --package=@brainervirus/workit-cursor@0.8.5 workit-cursor-session-start",
+      "npx -y --prefer-online --package=@brainervirus/workit-cursor@latest workit-cursor-session-start",
     );
     expect(entry.args, source).toBeUndefined();
     expect(JSON.stringify(entry), source).not.toContain("dist/");
@@ -84,7 +93,7 @@ test("cursor hooks-cursor.json uses the documented single command string (CA-17)
   }
 });
 
-test("active Cursor runtime selectors use only the canonical @0.8.5 pin (except the doctor negative fixture)", () => {
+test("active Cursor runtime selectors use the canonical @latest + --prefer-online (except the doctor negative fixture)", () => {
   const tracked = spawnSync("git", ["ls-files", "--", "packages", "test"], {
     cwd: REPO_ROOT,
     encoding: "utf8",
@@ -92,23 +101,58 @@ test("active Cursor runtime selectors use only the canonical @0.8.5 pin (except 
   expect(tracked.status).toBe(0);
   const files = tracked.stdout.trim().split("\n").filter(Boolean);
 
+  // Per-selector flag scoping (advisory): --prefer-online must appear in the
+  // same selector context as every active @latest selector, not merely once
+  // anywhere in the file — a bare `--package=...@latest` next to a correctly
+  // flagged selector would otherwise slip through a file-level includes().
+  const flagNear = (text: string, m: RegExpExecArray) => {
+    const start = Math.max(0, m.index - 80);
+    const end = Math.min(text.length, m.index + m[0].length + 80);
+    return text.slice(start, end).includes(CURSOR_RUNTIME_FLAG);
+  };
+
   const stale: string[] = [];
   for (const file of files) {
     const text = read(file);
+    const fixture = file === "test/workit-core/doctor.test.ts";
     for (const match of text.matchAll(CURSOR_RUNTIME_SELECTOR)) {
       const selector = match[1];
-      const fixture = file === "test/workit-core/doctor.test.ts";
-      if (selector === "0.8.5") continue;
+      if (selector === "latest") {
+        if (!flagNear(text, match))
+          stale.push(`${file}: missing --prefer-online near @latest selector`);
+        continue;
+      }
       if (fixture && CURSOR_DOCTOR_NEGATIVE_VARIANTS.includes(selector)) continue;
       stale.push(`${file}: @brainervirus/workit-cursor@${selector}`);
     }
   }
   expect(stale).toEqual([]);
 
-  // The canonical constant itself must stay the exact reviewed pin — a bump to
-  // the shared constant alone would otherwise dodge the --package= scan above.
+  // Regression (advisory): a file with one correct selector and one bare
+  // @latest selector must fail the per-match scan. The bare selector is
+  // assembled at runtime so the fixture bytes never trip the scan of this
+  // file itself.
+  const bare = ["npx -y --package=@brainervirus/workit-cursor@", "latest"].join("");
+  const mixed =
+    "npx -y --prefer-online --package=@brainervirus/workit-cursor@latest workit-cursor-mcp\n" +
+    bare +
+    " workit-cursor-session-start\n";
+  const scan = (text: string) => {
+    const found: string[] = [];
+    for (const m of text.matchAll(CURSOR_RUNTIME_SELECTOR)) {
+      if (m[1] !== "latest") continue;
+      if (!flagNear(text, m)) found.push("missing --prefer-online near @latest selector");
+    }
+    return found;
+  };
+  expect(scan(mixed)).toHaveLength(1);
+  expect(scan("npx -y --prefer-online --package=@brainervirus/workit-cursor@latest x")).toEqual([]);
+
+  // The canonical constant itself must stay the exact reviewed selector — a
+  // bump to the shared constant alone would otherwise dodge the --package= scan
+  // above.
   expect(read("packages/workit-core/src/core/registration.ts")).toContain(
-    `CURSOR_RUNTIME_PACKAGE = "@brainervirus/workit-cursor@0.8.5"`,
+    `CURSOR_RUNTIME_PACKAGE = "@brainervirus/workit-cursor@latest"`,
   );
 
   // Removing a negative-rejection variant must break loudly, never silently

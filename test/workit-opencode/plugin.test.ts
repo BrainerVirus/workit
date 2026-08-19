@@ -427,12 +427,13 @@ test("tool.execute.before leaves the root session usable for an active inline fl
   }
 });
 
-test("tool.execute.before leaves the root session usable for a stale (drift-reset) subagent-driven flow", async () => {
+test("tool.execute.before keeps blocking the root session after a plan edit (lifecycle survives plan drift)", async () => {
   const { root, slug } = flowFixture();
   try {
     establishSubagentDriven(root, slug);
-    // Editing the approved plan introduces approval drift: the effective read
-    // reconciles it and resets execution to pending, so the rail is off.
+    // Editing the approved plan introduces approval drift, which resets only
+    // the plan approval digest; the active execution lifecycle survives, so
+    // the coordinator write rail stays ON.
     writeFileSync(
       path.join(root, "docs", slug, "plan.md"),
       PLUGIN_PLAN(slug).replace("do it", "do it now"),
@@ -452,7 +453,7 @@ test("tool.execute.before leaves the root session usable for a stale (drift-rese
         { tool: "write", sessionID: "root-session", callID: "c-stale" },
         write,
       ),
-    ).resolves.toBeUndefined();
+    ).rejects.toThrow(/coordinator/i);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

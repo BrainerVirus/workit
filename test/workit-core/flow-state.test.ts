@@ -580,7 +580,50 @@ test("CA-03: spec drift resets plan approval, menu evidence, handoff context, an
   }
 });
 
-test("CA-03: plan drift preserves the valid spec approval and digest while resetting plan-dependent state", () => {
+test("CA-03: plan drift after execution started preserves menu and execution lifecycle", () => {
+  const { root, slug } = fixture();
+  try {
+    establishApprovedFlow(root, slug, new HostReceiptStore(), "s1");
+    const advanced = readFlowState(root, slug);
+    writeFlowState(root, {
+      ...advanced,
+      menu: { presented: true, chosen: "subagent-driven", evidence: null },
+      execution: { status: "active", mode: "subagent-driven", evidence: null },
+    });
+    writeFileSync(
+      path.join(root, "docs", slug, "plan.md"),
+      COMPLIANT_PLAN(slug).replace("do it", "do it differently"),
+    );
+    const effective = readEffectiveFlowState(root, slug);
+    expect(effective.ok).toBe(true);
+    if (!effective.ok) throw new Error(effective.error);
+    expect(effective.drift).toEqual([
+      { document: "plan", code: "digest_mismatch", path: `docs/${slug}/plan.md` },
+    ]);
+    expect(effective.state.spec).toMatchObject({ status: "approved" });
+    expect(effective.state.plan).toMatchObject({
+      status: "draft",
+      approved_digest: null,
+      evidence: null,
+    });
+    // Lifecycle facts are preserved: a plan edit does not rewind an
+    // in-progress/completed execution, its menu, or its handoff context.
+    expect(effective.state.menu).toEqual({
+      presented: true,
+      chosen: "subagent-driven",
+      evidence: null,
+    });
+    expect(effective.state.execution).toEqual({
+      status: "active",
+      mode: "subagent-driven",
+      evidence: null,
+    });
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("CA-03: plan drift preserves the valid spec approval/digest and the execution lifecycle, resetting only the plan approval", () => {
   const { root, slug } = fixture();
   try {
     establishApprovedFlow(root, slug, new HostReceiptStore(), "s1");
@@ -602,8 +645,14 @@ test("CA-03: plan drift preserves the valid spec approval and digest while reset
       approved_digest: null,
       evidence: null,
     });
-    expect(effective.state.menu).toEqual({ presented: false, chosen: "", evidence: null });
-    expect(effective.state.execution).toEqual({ status: "pending", mode: null, evidence: null });
+    expect(effective.state.menu).toMatchObject({
+      presented: true,
+      chosen: "handoff",
+    });
+    expect(effective.state.execution).toMatchObject({
+      status: "pending",
+      mode: null,
+    });
     expect(effective.state.handoff_destination).toBe(false);
   } finally {
     cleanup(root);
