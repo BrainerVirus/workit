@@ -653,9 +653,11 @@ const checkStalePin = (res: Resolved): DoctorCheck => {
 //     checkout's workit-cursor version (or the doctor's own package version)
 //     is the release train the doctor ships with.
 //  3. Local-dist installs behind the published runtime (needs the registry):
-//     the probe is the sole network read in the doctor and fails open (CA-04)
-//     — an unreachable registry yields a `registry_unreachable` warning, never
-//     a false `stale_install` and never a hard doctor failure. Canonical
+//     the probe is the sole network read in the doctor. A SUCCEEDED probe with
+//     the installed version genuinely behind the published runtime is a hard
+//     `stale_install` fail (the installer self-heals on it); an unreachable
+//     registry fails open (CA-04) as a `registry_unreachable` warning, never a
+//     false `stale_install` and never a hard doctor failure. Canonical
 //     `@latest` installs skip the probe entirely: the selector resolves fresh
 //     at launch, so the installed package.json version is metadata, not a
 //     freshness signal.
@@ -771,9 +773,12 @@ const checkStaleInstall = (res: Resolved): DoctorCheck & { registryProbed?: bool
       };
     }
     if (!semverAtLeast(installed, expected)) {
+      // The probe SUCCEEDED and the installed version is genuinely behind the
+      // published runtime: report a hard fail so `doctor-check.ts cursor --stale`
+      // exits 2 and the installer self-heals the local-dist install.
       return {
         id: "stale_install",
-        status: "warn",
+        status: "fail",
         registryProbed: true,
         detail: `stale_install: local-dist workit-cursor ${installed} is behind the published runtime ${expected}`,
         fix: "Re-run install-cursor-plugin.sh — it refreshes the plugin directory with the current build",

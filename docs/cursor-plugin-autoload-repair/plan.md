@@ -35,7 +35,7 @@
 
 | Status | Task |
 | --- | --- |
-| pending | 1: Doctor stale-install detection (TDD) |
+| completed | 1: Doctor stale-install detection (TDD) |
 
 ---
 
@@ -55,7 +55,7 @@
 
 | Status | Task |
 | --- | --- |
-| pending | 2: Installer self-heal (TDD) |
+| completed | 2: Installer self-heal (TDD) |
 
 ---
 
@@ -72,7 +72,7 @@
 
 | Status | Task |
 | --- | --- |
-| pending | 3: Real-machine repair + auto-load verification |
+| completed | 3: Real-machine repair + auto-load verification |
 
 ---
 
@@ -92,4 +92,4 @@
 
 | Status | Task |
 | --- | --- |
-| pending | 4: Docs, verification, and completion |
+| completed | 4: Docs, verification, and completion |

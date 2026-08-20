@@ -80,9 +80,9 @@ test("installer self-heals a stale plugin dir: refresh + canonical re-registrati
   const pluginDir = path.join(fixture.home, ".cursor", "plugins", "local", "workit");
   try {
     makeStaleCursorHome(fixture.home, pluginDir);
-    // Make the refresh observable: the stub sync writes the stale flag with a
-    // non-empty value and the installer keeps it — a rewritten stale mcp.json
-    // inside the refreshed dir would let a legacy pin survive.
+    // Make the refresh observable: a stale flag inside the refreshed dir would
+    // survive only if the sync skipped files; the refresh is a full rsync
+    // --delete, so the flag must be gone after the installer runs.
     const flags = path.join(pluginDir, "flags");
     mkdirSync(flags, { recursive: true });
     writeFileSync(path.join(flags, "stale"), "yes");
@@ -98,8 +98,10 @@ test("installer self-heals a stale plugin dir: refresh + canonical re-registrati
     });
     expect(installed.status, installed.stderr).toBe(0);
 
-    // The plugin dir is refreshed from the checkout root (stub sync re-ran)
-    // and the legacy pin is gone — canonical @latest + --prefer-online.
+    // The plugin dir is refreshed from the checkout root (stub sync re-ran) and
+    // the legacy pin is gone — canonical @latest + --prefer-online. The stale
+    // flag written before install is wiped by the refresh (rsync --delete).
+    expect(existsSync(path.join(flags, "stale"))).toBe(false);
     expect(readFileSync(path.join(fixture.home, "sync-dev"), "utf8")).toBe(
       realpathSync(fixture.stub),
     );

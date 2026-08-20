@@ -210,6 +210,50 @@ test("offline flag reflects the registry probe: false for local-dist installs, t
   expect(run().offline).toBe(true);
 });
 
+test("local-dist install behind the published runtime is stale_install fail when the probe succeeds", () => {
+  const pluginPkg = path.join(fixture.pluginDir, "package.json");
+  const hooksFile = path.join(fixture.pluginDir, "hooks", "hooks-cursor.json");
+  const originalHooks = readFileSync(hooksFile, "utf8");
+  writeConfig(pluginPkg, JSON.stringify({ name: "@brainervirus/workit-cursor", version: "0.4.0" }));
+  // A local-dist install (node hook, no mcp.json selector) is the only shape
+  // that consults the registry; the version seam keeps the probe spawn-free.
+  rmSync(path.join(fixture.pluginDir, "mcp.json"), { force: true });
+  writeConfig(
+    hooksFile,
+    JSON.stringify({
+      version: 1,
+      hooks: {
+        sessionStart: [
+          {
+            command: `node ${path.join(fixture.pluginDir, "dist", "cursor-session-start.js")}`,
+          },
+        ],
+      },
+    }),
+  );
+  try {
+    const report = runDoctor({
+      host: "cli",
+      home: fixture.home,
+      configDir: fixture.configDir,
+      stateDir: fixture.stateDir,
+      dev: fixture.dev,
+      cwd: fixture.cwd,
+      env: { ...process.env, WORKIT_DOCTOR_STALE_REGISTRY_VERSION: "0.5.0" },
+    });
+    expect(report.exitCode).not.toBe(0);
+    const stale = check(report, "stale_install");
+    expect(stale.status).toBe("fail");
+    expect(stale.detail).toContain("0.4.0");
+    expect(stale.detail).toContain("0.5.0");
+    expect(stale.fix).toBeTruthy();
+  } finally {
+    rmSync(pluginPkg, { force: true });
+    writeConfig(hooksFile, originalHooks);
+  }
+  expect(check(run(), "stale_install").status).toBe("pass");
+});
+
 test("registry-unreachable staleness comparison yields registry_unreachable, not stale_install", () => {
   const pluginPkg = path.join(fixture.pluginDir, "package.json");
   const hooksFile = path.join(fixture.pluginDir, "hooks", "hooks-cursor.json");
@@ -248,6 +292,8 @@ test("registry-unreachable staleness comparison yields registry_unreachable, not
     expect(stale.status).toBe("warn");
     expect(stale.detail).toContain("registry_unreachable");
     expect(stale.fix).toBeTruthy();
+    expect(report.exitCode).toBe(0);
+    expect(report.ok).toBe(true);
     expect(report.checks.some((c) => c.id === "stale_install" && c.status === "fail")).toBe(false);
   } finally {
     rmSync(pluginPkg, { force: true });
