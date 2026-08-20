@@ -100,6 +100,14 @@ The repository root carries `.cursor-plugin/marketplace.json`, indexing `package
 - **Update review** — Git plugin metadata (manifest, rules, skills, assets) is reviewed by Cursor on Marketplace updates, while the npm runtime runs from `@latest` with `--prefer-online`. The selector is shared across `mcp.json`, `hooks-cursor.json`, and `run-cursor-mcp.sh`, and a stale `latest` resolution is prevented by the mandatory `--prefer-online` flag.
 - **Troubleshooting** — `workit doctor` (or the `workflow_doctor` tool) reports installation health including runtime, token, VCS/YouTrack, and log-writability checks; it exits nonzero on failure. An MCP/hook startup failure with no network is an `npx`/registry reachability issue, not a Workit defect.
 
+## Auto-load repair
+
+Workit self-heals stale Cursor plugin installs so the workflow features never silently drop out of auto-load (CA-01/CA-04):
+
+- **Detection** — the doctor's `stale_install` finding reads the installed `~/.cursor/plugins/local/workit` directory and fails on a legacy `--package=` pin in the plugin's own `mcp.json`, a sessionStart hook running a legacy selector, or a local-dist install behind the current/published runtime; each finding carries the exact repair step.
+- **Self-heal** — `install-cursor-plugin.sh` runs `doctor-check.ts cursor --stale` as a pre-check: exit 2 (stale) triggers a refresh of the plugin directory plus a rewrite of the workit MCP/hook entries to the canonical `@latest` + `--prefer-online` selector, preserving unrelated MCP servers; a healthy install is byte-untouched.
+- **Fail-open** — the one network probe (the npm registry version comparison for local-dist installs) never blocks an install: an unreachable registry warns as `registry_unreachable`, never `stale_install` and never a failure. Canonical `@latest` installs skip the probe entirely — the selector resolves fresh at launch, so the installed `package.json` version is metadata, not a freshness signal.
+
 ## Docs
 
 Full usage: https://github.com/BrainerVirus/workit#readme
