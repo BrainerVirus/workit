@@ -46,6 +46,7 @@ function copyCoreSources(stub: string) {
     "workspaces.ts",
     "support-matrix.ts",
     "skill-manifests.ts",
+    "package-root.ts",
   ]) {
     const src =
       name === "doctor-check.ts"

@@ -71,6 +71,113 @@ test("doctor is offline and a healthy fixture is fully green with exitCode 0", (
   expect(report.fixes).toEqual([]);
 });
 
+test("reports stale_install when the installed plugin version is behind the current runtime", () => {
+  const pluginPkg = path.join(fixture.pluginDir, "package.json");
+  writeConfig(
+    pluginPkg,
+    JSON.stringify({
+      name: "@brainervirus/workit-cursor",
+      version: "0.3.0",
+      dependencies: { "@brainervirus/workit-core": "workspace:*" },
+    }),
+  );
+  try {
+    const report = run();
+    expect(report.exitCode).not.toBe(0);
+    const stale = check(report, "stale_install");
+    expect(stale.status).toBe("fail");
+    expect(stale.detail).toContain("0.3.0");
+    expect(stale.fix).toBeTruthy();
+  } finally {
+    rmSync(pluginPkg, { force: true });
+  }
+  expect(check(run(), "stale_install").status).toBe("pass");
+});
+
+test("reports stale_install for a legacy exact npx pin in the plugin mcp.json", () => {
+  const legacyMcp = path.join(fixture.pluginDir, "mcp.json");
+  writeConfig(
+    legacyMcp,
+    JSON.stringify({
+      mcpServers: {
+        workit: {
+          command: "npx",
+          args: [
+            "-y",
+            "--prefer-online",
+            "--package=@brainervirus/workit-cursor@0.8.5",
+            "workit-cursor-mcp",
+            "${workspaceFolder}",
+          ],
+        },
+      },
+    }),
+  );
+  try {
+    const report = run();
+    expect(report.exitCode).not.toBe(0);
+    const stale = check(report, "stale_install");
+    expect(stale.status).toBe("fail");
+    expect(stale.detail).toContain("0.8.5");
+    expect(stale.fix).toBeTruthy();
+  } finally {
+    rmSync(legacyMcp, { force: true });
+  }
+  expect(check(run(), "stale_install").status).toBe("pass");
+});
+
+test("healthy fixture: canonical install yields no stale_install finding", () => {
+  const report = run();
+  const stale = check(report, "stale_install");
+  expect(stale.status).toBe("pass");
+  expect(stale.detail).not.toMatch(/stale/i);
+});
+
+test("registry-unreachable staleness comparison yields registry_unreachable, not stale_install", () => {
+  const pluginPkg = path.join(fixture.pluginDir, "package.json");
+  const hooksFile = path.join(fixture.pluginDir, "hooks", "hooks-cursor.json");
+  const originalHooks = readFileSync(hooksFile, "utf8");
+  writeConfig(pluginPkg, JSON.stringify({ name: "@brainervirus/workit-cursor", version: "0.4.0" }));
+  // A local-dist install (node hook, no mcp.json selector) is the only path
+  // that consults the registry; a canonical @latest install never probes.
+  rmSync(path.join(fixture.pluginDir, "mcp.json"), { force: true });
+  writeConfig(
+    hooksFile,
+    JSON.stringify({
+      version: 1,
+      hooks: {
+        sessionStart: [
+          {
+            command: `node ${path.join(fixture.pluginDir, "dist", "cursor-session-start.js")}`,
+          },
+        ],
+      },
+    }),
+  );
+  const report = runDoctor({
+    host: "cli",
+    home: fixture.home,
+    configDir: fixture.configDir,
+    stateDir: fixture.stateDir,
+    dev: fixture.dev,
+    cwd: fixture.cwd,
+    env: {
+      ...process.env,
+      WORKIT_DOCTOR_STALE_REGISTRY_CMD: path.join(fixture.root, "no-registry-bin", "npm-fail"),
+    },
+  });
+  try {
+    const stale = check(report, "registry_unreachable");
+    expect(stale.status).toBe("warn");
+    expect(stale.detail).toContain("registry_unreachable");
+    expect(stale.fix).toBeTruthy();
+    expect(report.checks.some((c) => c.id === "stale_install" && c.status === "fail")).toBe(false);
+  } finally {
+    rmSync(pluginPkg, { force: true });
+    writeConfig(hooksFile, originalHooks);
+  }
+});
+
 test("detects a stale opencode pin and clears once re-pinned", () => {
   writeConfig(
     fixture.opencodeConfig,
