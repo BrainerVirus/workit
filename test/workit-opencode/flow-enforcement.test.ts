@@ -174,10 +174,9 @@ test("an intervening unrelated question cannot mask menu evidence (CA-02 purpose
   try {
     await run(tools, "workflow_flow_status", { plan_path: "docs/oc-flow/plan.md" }, ctx);
     const spec = "docs/oc-flow/spec.md";
-    const plan = "docs/oc-flow/plan.md";
-    // A stale unrelated answer (no workflow purpose) + a fresh spec-approval: only the spec purpose matters.
-    receipts.record("oc", "call-unrelated", "yes, proceed");
-    receipts.record("oc", "call-spec", "Approve spec");
+    // An unrelated execution-menu receipt + a fresh spec-approval: only the spec purpose matters.
+    receipts.record("oc", "call-menu", "Inline", Date.now(), "", "execution-menu");
+    receipts.record("oc", "call-spec", "Approve spec", Date.now(), "", "spec-approval");
     const accepted = await run(tools, "workflow_spec_approve", { spec_path: spec }, ctx);
     expect(accepted.ok).toBe(true);
     expect(accepted.data.status).toBe("approved");
@@ -187,6 +186,8 @@ test("an intervening unrelated question cannot mask menu evidence (CA-02 purpose
 });
 
 test("a negative answer cannot be laundered into an approval (FINDING 3)", async () => {
+  // Purposeless negatives (bare "No") are not recorded as flow receipts;
+  // a spec-approval request with no typed receipt is receipt_missing (CA-02).
   const { root, tools, ctx, receipts } = fixture();
   try {
     await run(tools, "workflow_flow_status", { plan_path: "docs/oc-flow/plan.md" }, ctx);
@@ -198,11 +199,7 @@ test("a negative answer cannot be laundered into an approval (FINDING 3)", async
       ctx,
     );
     expect(denied.ok).toBe(false);
-    if (denied.ok === false) {
-      expect(denied.data?.code).toBe("receipt_rejected");
-      expect(denied.error).toMatch(/negative answer/i);
-    }
-    // Consumed-and-rejected: the negative answer is spent, never authorizing.
+    if (denied.ok === false) expect(denied.data?.code).toBe("receipt_missing");
     expect(receipts.count("oc")).toBe(0);
     const status = await run(
       tools,
@@ -211,7 +208,6 @@ test("a negative answer cannot be laundered into an approval (FINDING 3)", async
       ctx,
     );
     expect(status.data.spec.status).toBe("draft");
-    // Retrying without a fresh answer still fails: the negative receipt is gone.
     const retry = await run(
       tools,
       "workflow_spec_approve",
@@ -226,6 +222,8 @@ test("a negative answer cannot be laundered into an approval (FINDING 3)", async
 });
 
 test("a negative answer cannot be laundered into a menu choice (FINDING 3)", async () => {
+  // Purposeless negatives are not recorded; an execution-menu request with
+  // no typed receipt is receipt_missing, not receipt_rejected.
   const { root, slug, tools, ctx, receipts } = fixture();
   try {
     await run(tools, "workflow_flow_status", { plan_path: "docs/oc-flow/plan.md" }, ctx);
@@ -244,11 +242,7 @@ test("a negative answer cannot be laundered into a menu choice (FINDING 3)", asy
       ctx,
     );
     expect(denied.ok).toBe(false);
-    if (denied.ok === false) {
-      expect(denied.data?.code).toBe("receipt_rejected");
-      expect(denied.error).toMatch(/negative answer/i);
-    }
-    expect(receipts.count("oc")).toBe(0);
+    if (denied.ok === false) expect(denied.data?.code).toBe("receipt_missing");
     const status = await run(tools, "workflow_flow_status", { plan_path: plan }, ctx);
     expect(status.data.menu.presented).toBe(false);
   } finally {
@@ -334,9 +328,9 @@ test("menu consumption binds the exact selected label: a mismatched receipt labe
     await run(tools, "workflow_flow_status", { plan_path: "docs/oc-flow/plan.md" }, ctx);
     const spec = "docs/oc-flow/spec.md";
     const plan = "docs/oc-flow/plan.md";
-    recordQuestion(receipts, "Approve");
+    recordQuestion(receipts, "Approve spec");
     await run(tools, "workflow_spec_approve", { spec_path: spec }, ctx);
-    recordQuestion(receipts, "Approve");
+    recordQuestion(receipts, "Approve plan");
     await run(tools, "workflow_plan_approve", { plan_path: plan }, ctx);
 
     recordQuestion(receipts, "Inline");
@@ -718,6 +712,8 @@ test("a wrong lifecycle purpose does not consume the receipt (purpose isolation:
 });
 
 test("a negative lifecycle answer cannot be laundered into a pause", async () => {
+  // Purposeless negatives produce no flow receipt; a plan-pause request with
+  // no typed receipt is receipt_missing (CA-02 strict purpose binding).
   const { root, slug, tools, ctx, receipts } = fixture();
   try {
     await run(tools, "workflow_flow_status", { plan_path: "docs/oc-flow/plan.md" }, ctx);
@@ -730,7 +726,7 @@ test("a negative lifecycle answer cannot be laundered into a pause", async () =>
       ctx,
     );
     expect(denied.ok).toBe(false);
-    if (denied.ok === false) expect(denied.data?.code).toBe("receipt_rejected");
+    if (denied.ok === false) expect(denied.data?.code).toBe("receipt_missing");
     const status = await run(
       tools,
       "workflow_flow_status",

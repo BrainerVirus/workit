@@ -1160,9 +1160,6 @@ export const receiptPurposeForLabel = (label: string): ReceiptPurpose | undefine
   // Decorated execution labels: "(Recommended)" is stripped by normalizeLabel,
   // so "Subagent-driven (Recommended)" normalizes to "subagent driven".
   if (exec.has(n)) return "execution-menu";
-  // Allow decorated approval labels with parenthesized qualifiers
-  if (n.startsWith("approve spec")) return "spec-approval";
-  if (n.startsWith("approve plan")) return "plan-approval";
   return undefined;
 };
 
@@ -1182,8 +1179,8 @@ export type HostReceipt = {
   /** The question text the user answered (plugin-observed, best effort), so
    *  the consuming tool can report WHICH question authorized a transition
    *  (FINDING 2). */
-  question?: string;
-  purpose?: ReceiptPurpose;
+  question: string;
+  purpose: ReceiptPurpose;
 };
 
 export type ReceiptConsumeResult = { ok: true; receipt: HostReceipt } | FlowError;
@@ -1221,20 +1218,18 @@ export class HostReceiptStore {
     callID: string,
     selectedLabel: string,
     recordedAt: number = Date.now(),
-    question?: string,
+    question: string = "",
     purpose?: ReceiptPurpose,
   ): void {
-    const label = selectedLabel.trim();
-    if (!label) return;
+    const trimmed = selectedLabel.trim();
+    if (!trimmed) return;
     if (recordedAt > Date.now() + MAX_CLOCK_SKEW_MS) return; // forged future receipt
-    let derived = purpose ?? receiptPurposeForLabel(label);
-    // Bare "Approve" has no workflow purpose — treat it as a purposeless
-    // receipt that can authorize any approval (legacy compat for direct tests).
-    // The purpose-bound tools will still enforce exact label where needed.
-    if (derived === undefined && normalizeLabel(label) === "approve") derived = undefined;
+    const derived = purpose ?? receiptPurposeForLabel(selectedLabel);
+    if (derived === undefined) return; // unrelated question produces no flow receipt (CA-01)
+    const q = question ?? "";
     const queue = this.#bySession.get(sessionId) ?? [];
     if (queue.length >= MAX_RECEIPTS_PER_SESSION) queue.shift();
-    queue.push({ sessionId, callID, selectedLabel: label, recordedAt, question, purpose: derived });
+    queue.push({ sessionId, callID, selectedLabel, recordedAt, question: q, purpose: derived });
     this.#bySession.set(sessionId, queue);
   }
 
@@ -1288,57 +1283,36 @@ export class HostReceiptStore {
     }
     let index = -1;
     if (opts.purpose !== undefined) {
-      // A negative answer that has no workflow purpose (bare "No", "Cancel", etc.)
-      // is always treated as a negative for the requested purpose: the user's
-      // most recent intent is negative, regardless of purpose classification.
+      // A top negative blocks only its own purpose; an unrelated purpose's
+      // typed receipt is untouched (CA-02 per-purpose revocation). Purposeless
+      // negatives no longer exist: `record` drops unclassified questions, so
+      // branch/stash/No/Cancel never block typed purposes globally.
       const top = queue[queue.length - 1];
-      if (top && isNegativeLabel(top.selectedLabel)) {
-        if (top.purpose === undefined || top.purpose === opts.purpose) {
-          if (top.purpose === undefined) {
-            // Purposeless negative stays reachable globally; spec tests inject
-            // "No" via manual record and expect purpose-bound rejection.
-            // Scope revocation to just the top negative so other purpose queues survive.
-            if (remove) {
-              queue.pop();
-              if (queue.length === 0) this.#bySession.delete(sessionId);
-            }
-          } else {
-            const filtered = queue.filter((r) => r.purpose !== opts.purpose);
-            if (filtered.length === 0) this.#bySession.delete(sessionId);
-            else this.#bySession.set(sessionId, filtered);
-          }
-          return err(
-            "receipt_rejected",
-            `the user's most recent answer (${JSON.stringify(top.selectedLabel)}) is a ` +
-              "negative answer — it cannot authorize an approval; ask the native question again",
-          );
-        }
+      if (
+        top &&
+        top.purpose === opts.purpose &&
+        isNegativeLabel(top.selectedLabel)
+      ) {
+        const filtered = queue.filter((r) => r.purpose !== opts.purpose);
+        if (filtered.length === 0) this.#bySession.delete(sessionId);
+        else this.#bySession.set(sessionId, filtered);
+        return err(
+          "receipt_rejected",
+          `the user's most recent answer (${JSON.stringify(top.selectedLabel)}) is a ` +
+            "negative answer — it cannot authorize an approval; ask the native question again",
+        );
       }
-      // Purposeless positive receipts (bare "Approve" legacy) can satisfy any
-      // purpose when no typed receipt exists — compat for direct-record tests.
-      let typedIdx = -1;
       for (let i = queue.length - 1; i >= 0; i--) {
         if (queue[i].purpose === opts.purpose) {
-          typedIdx = i;
+          index = i;
           break;
         }
       }
-      if (typedIdx !== -1) {
-        index = typedIdx;
-      } else {
-        // Fall back to the newest purposeless positive (bare "Approve")
-        for (let i = queue.length - 1; i >= 0; i--) {
-          if (queue[i].purpose === undefined && !isNegativeLabel(queue[i].selectedLabel)) {
-            index = i;
-            break;
-          }
-        }
-        if (index === -1) {
-          return err(
-            "receipt_missing",
-            `no host-observed receipt for purpose ${JSON.stringify(opts.purpose)} — ask the native question for that purpose`,
-          );
-        }
+      if (index === -1) {
+        return err(
+          "receipt_missing",
+          `no host-observed receipt for purpose ${JSON.stringify(opts.purpose)} — ask the native question for that purpose`,
+        );
       }
     } else {
       index = queue.length - 1;

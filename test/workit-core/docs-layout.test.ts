@@ -46,7 +46,7 @@ test("flow state lives at docs/<slug>/sdd/flow.json", async () => {
     const ctx = { directory: root, sessionID: "s1" } as any;
     const spec = `docs/${slug}/spec.md`;
     await tools.workflow_flow_status.execute({ plan_path: `docs/${slug}/plan.md` }, ctx);
-    receipts.record("s1", "call-approve", "Approve");
+    receipts.record("s1", "call-approve", "Approve spec", Date.now(), "", "spec-approval");
     const raw = await tools.workflow_spec_approve.execute({ spec_path: spec }, ctx);
     const out = JSON.parse(raw as string);
     expect(out.ok).toBe(true);

@@ -43,7 +43,6 @@ import {
 import {
   COORDINATOR_WRITE_TOOLS,
   HostReceiptStore,
-  isNegativeLabel,
   readEffectiveFlowState,
   receiptPurposeForLabel,
   subagentDrivenInterception,
@@ -216,13 +215,13 @@ const classifyQuestion = (
     return { purpose, questionText: typeof q.question === "string" ? q.question : undefined };
   }
   // No structured questions (legacy/test or non-question input): still
-  // classify by label purpose; unknown labels are ignored except negatives
-  // which are recorded as purposeless negatives so the store can reject them
-  // globally for any pending purpose (FINDING 3 negative latching).
+  // classify by label purpose; unknown/near-miss labels are ignored (CA-01).
+  // Purposeless negatives (bare "No", "Cancel", stash questions) are NOT
+  // recorded as flow receipts — a stash "No" must never block a typed
+  // spec-approval or execution-menu receipt (CA-02 per-purpose isolation).
   const purpose = receiptPurposeForLabel(label);
   if (purpose !== undefined) return { purpose, questionText: undefined };
-  if (!isNegativeLabel(label)) return null;
-  return { purpose: undefined, questionText: undefined };
+  return null;
 };
 
 // AR-12: observe the answered native `question` and store a one-use

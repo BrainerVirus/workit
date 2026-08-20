@@ -31,8 +31,13 @@ const cleanup = (root: string) => rmSync(root, { recursive: true, force: true })
 const run = (tools: any, name: string, args: any, ctx: any) =>
   tools[name].execute(args, ctx).then((raw: string) => JSON.parse(raw));
 
-const question = (receipts: HostReceiptStore, label = "Approve") => {
-  receipts.record("s1", `call-${label}`, label);
+const question = (receipts: HostReceiptStore, label = "Approve spec") => {
+  const { receiptPurposeForLabel } = require("../../packages/workit-core/src/core/flow-state");
+  const canonical: Record<string, string> = { approve: "Approve spec" };
+  const resolved = canonical[label.trim().toLowerCase()] ?? label;
+  const purpose = receiptPurposeForLabel(resolved);
+  if (!purpose) throw new Error(`no purpose for ${JSON.stringify(label)}`);
+  receipts.record("s1", `call-${label}`, resolved, Date.now(), resolved, purpose);
 };
 
 test("flow_status activates the flow and returns draft when no state exists", async () => {
@@ -81,10 +86,10 @@ test("full flow: activate + spec approve -> plan approve -> menu", async () => {
     const spec = "docs/x/spec.md";
     const plan = "docs/x/plan.md";
     await run(tools, "workflow_flow_status", { plan_path: plan }, ctx);
-    question(receipts);
+    question(receipts, "Approve spec");
     const specOut = await run(tools, "workflow_spec_approve", { spec_path: spec }, ctx);
     expect(specOut.ok).toBe(true);
-    question(receipts, "Approve");
+    question(receipts, "Approve plan");
     const planFirst = await run(tools, "workflow_plan_approve", { plan_path: plan }, ctx);
     expect(planFirst.ok).toBe(true);
     question(receipts, "handoff");
@@ -111,7 +116,7 @@ test("plan_approve hard-fails while spec is draft; the attempted receipt IS spen
     const plan = "docs/x/plan.md";
     await run(tools, "workflow_flow_status", { plan_path: plan }, ctx);
     // The user answered the plan-approval question, but the spec is still draft.
-    question(receipts, "Approve");
+    question(receipts, "Approve plan");
     const out = await run(tools, "workflow_plan_approve", { plan_path: plan }, ctx);
     expect(out.ok).toBe(false);
     expect(out.error).toContain("spec");
@@ -123,9 +128,9 @@ test("plan_approve hard-fails while spec is draft; the attempted receipt IS spen
     if (retry.ok === false) expect(retry.error).toMatch(/receipt/i);
     // Approve the spec with its own receipt, then ask the plan question
     // AGAIN: the fresh answer authorizes (re-answer UX).
-    question(receipts);
+    question(receipts, "Approve spec");
     await run(tools, "workflow_spec_approve", { spec_path: spec }, ctx);
-    question(receipts, "Approve");
+    question(receipts, "Approve plan");
     const planOut = await run(tools, "workflow_plan_approve", { plan_path: plan }, ctx);
     expect(planOut.ok).toBe(true);
   } finally {
