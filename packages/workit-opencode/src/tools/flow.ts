@@ -88,6 +88,11 @@ export function createFlowTools(receipts: HostReceiptStore, client?: SessionLook
   // reports the post-transition effective execution state and any approval drift,
   // and failed transitions surface structured `details` (e.g. incomplete ledger
   // or verification failure facts) for the next action.
+  const purposeForLifecycle: Record<string, "plan-pause" | "plan-resume" | "plan-complete"> = {
+    "Pause plan": "plan-pause",
+    "Resume plan": "plan-resume",
+    "Complete plan": "plan-complete",
+  };
   const lifecycleTool = (
     action: "pause" | "resume" | "complete",
     label: "Pause plan" | "Resume plan" | "Complete plan",
@@ -102,7 +107,10 @@ export function createFlowTools(receipts: HostReceiptStore, client?: SessionLook
         const slugged = resolveSlug(context.directory, { plan_path });
         if ("error" in slugged) return output(fail(slugged.error));
         const slug = slugged.slug;
-        const consumed = receipts.consume(context.sessionID, { label });
+        const consumed = receipts.consume(context.sessionID, {
+          purpose: purposeForLifecycle[label],
+          label,
+        });
         if (!consumed.ok) return output(fail(consumed.error, { code: consumed.code }));
         const result = transitionExecution(
           context.directory,
@@ -196,8 +204,8 @@ export function createFlowTools(receipts: HostReceiptStore, client?: SessionLook
         // (draft spec, invalid docs, already-approved) spends the user's
         // answer; the model must ask the native question again. Stricter and
         // race-free; correlation: session + one-use + freshness + non-negative
-        // label (FINDING 2/3).
-        const consumed = receipts.consume(context.sessionID);
+        // label + purpose (FINDING 2/3).
+        const consumed = receipts.consume(context.sessionID, { purpose: "spec-approval" });
         if (!consumed.ok) return output(fail(consumed.error, { code: consumed.code }));
         const result = transitionSpec(
           context.directory,
@@ -234,8 +242,8 @@ export function createFlowTools(receipts: HostReceiptStore, client?: SessionLook
         const slug = slugged.slug;
         // FINDING 5 (round 3): consume-before-transition, same as
         // workflow_spec_approve — the atomic one-use take gates the transition
-        // and is spent on any attempt.
-        const consumed = receipts.consume(context.sessionID);
+        // and is spent on any attempt. Purpose-bound.
+        const consumed = receipts.consume(context.sessionID, { purpose: "plan-approval" });
         if (!consumed.ok) return output(fail(consumed.error, { code: consumed.code }));
         const result = transitionPlan(
           context.directory,
@@ -278,7 +286,11 @@ export function createFlowTools(receipts: HostReceiptStore, client?: SessionLook
         // label pin. A label MISMATCH does not spend the receipt (it stays
         // queued for the choice it actually matched); a failed menu gate
         // (plan not approved, unsupported mode) spends it like the approvals.
-        const consumed = receipts.consume(context.sessionID, { label: choice });
+        // Purpose-bound: execution-menu only.
+        const consumed = receipts.consume(context.sessionID, {
+          purpose: "execution-menu",
+          label: choice,
+        });
         if (!consumed.ok) return output(fail(consumed.error, { code: consumed.code }));
         const result = recordMenuChoice(
           context.directory,

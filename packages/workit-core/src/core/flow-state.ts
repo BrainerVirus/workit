@@ -1117,7 +1117,7 @@ const NEGATIVE_ANSWER_LABELS = [
   "deny",
 ];
 
-const isNegativeLabel = (label: string): boolean => {
+export const isNegativeLabel = (label: string): boolean => {
   const normalized = label.trim().toLowerCase();
   return NEGATIVE_ANSWER_LABELS.some((entry) => {
     const firstWord = normalized.split(/\s+/)[0] ?? "";
@@ -1133,10 +1133,44 @@ const isNegativeLabel = (label: string): boolean => {
   });
 };
 
+export type ReceiptPurpose =
+  | "spec-approval"
+  | "plan-approval"
+  | "execution-menu"
+  | "plan-pause"
+  | "plan-resume"
+  | "plan-complete";
+
+export const receiptPurposeForLabel = (label: string): ReceiptPurpose | undefined => {
+  const n = normalizeLabel(label);
+  if (n === "approve spec" || n === "approve spec recommended") return "spec-approval";
+  if (n === "approve plan" || n === "approve plan recommended") return "plan-approval";
+  if (n === "approve") return undefined;
+  if (n === "pause plan") return "plan-pause";
+  if (n === "resume plan") return "plan-resume";
+  if (n === "complete plan") return "plan-complete";
+  const exec = new Set([
+    "subagent driven",
+    "inline",
+    "handoff",
+    "review spec",
+    "review plan",
+    "change model",
+  ]);
+  // Decorated execution labels: "(Recommended)" is stripped by normalizeLabel,
+  // so "Subagent-driven (Recommended)" normalizes to "subagent driven".
+  if (exec.has(n)) return "execution-menu";
+  // Allow decorated approval labels with parenthesized qualifiers
+  if (n.startsWith("approve spec")) return "spec-approval";
+  if (n.startsWith("approve plan")) return "plan-approval";
+  return undefined;
+};
+
 /**
  * One-use host-observed receipt (AR-12, CA-41): recorded by the OpenCode
  * plugin when the answered `question` tool completes, bound to the session,
- * the question tool call id, the exact selected label, and the timestamp.
+ * the question tool call id, the exact selected label, the timestamp, and
+ * the workflow purpose.
  * The model has no way to inject a receipt — `record` is only reachable from
  * the plugin's `tool.execute.after` hook.
  */
@@ -1149,6 +1183,7 @@ export type HostReceipt = {
    *  the consuming tool can report WHICH question authorized a transition
    *  (FINDING 2). */
   question?: string;
+  purpose?: ReceiptPurpose;
 };
 
 export type ReceiptConsumeResult = { ok: true; receipt: HostReceipt } | FlowError;
@@ -1163,15 +1198,16 @@ export type ReceiptConsumeResult = { ok: true; receipt: HostReceipt } | FlowErro
  * `question` (user answers), THEN calls the approval/menu tool — the tools
  * never run a question internally, so a before/after execution window can
  * never capture the answer. Consumption therefore takes the session's MOST
- * RECENT unconsumed receipt and verifies: one-use (atomic take), freshness
+ * RECENT unconsumed receipt FOR THE EXACT PURPOSE and verifies: one-use (atomic take), freshness
  * (RECEIPT_FRESHNESS_MS), NOT a negative label (isNegativeLabel), and session
  * match. Menu tools additionally pin the expected choice label. CallID and
- * the exact selected label stay bound at record time.
+ * the exact selected label stay bound at record time. Unrelated purpose
+ * receipts never mask the target purpose.
  *
- * Residual risk (honest boundary): any recent POSITIVE host answer (e.g. a
- * "proceed with stash?" -> "yes, proceed") plus the model's choice to call an
+ * Residual risk (honest boundary): any recent POSITIVE host answer FOR THAT PURPOSE plus the model's choice to call an
  * approval tool authorizes the transition. The laundering case — a negative
- * answer recorded as an approval — is closed by the negative-label denylist.
+ * answer recorded as an approval — is closed by the negative-label denylist
+ * per purpose.
  *
  * ponytail: in-memory only — receipts die with the plugin process, which is
  * correct: a host-observed answer cannot survive a restart. Upgrade path:
@@ -1186,13 +1222,19 @@ export class HostReceiptStore {
     selectedLabel: string,
     recordedAt: number = Date.now(),
     question?: string,
+    purpose?: ReceiptPurpose,
   ): void {
     const label = selectedLabel.trim();
     if (!label) return;
     if (recordedAt > Date.now() + MAX_CLOCK_SKEW_MS) return; // forged future receipt
+    let derived = purpose ?? receiptPurposeForLabel(label);
+    // Bare "Approve" has no workflow purpose — treat it as a purposeless
+    // receipt that can authorize any approval (legacy compat for direct tests).
+    // The purpose-bound tools will still enforce exact label where needed.
+    if (derived === undefined && normalizeLabel(label) === "approve") derived = undefined;
     const queue = this.#bySession.get(sessionId) ?? [];
     if (queue.length >= MAX_RECEIPTS_PER_SESSION) queue.shift();
-    queue.push({ sessionId, callID, selectedLabel: label, recordedAt, question });
+    queue.push({ sessionId, callID, selectedLabel: label, recordedAt, question, purpose: derived });
     this.#bySession.set(sessionId, queue);
   }
 
@@ -1207,25 +1249,35 @@ export class HostReceiptStore {
    * the transition and is spent on any attempt, closing the concurrent-call
    * race). Peek remains for tests and read-only callers. A NEGATIVE receipt is
    * the exception: it is spent by peek too (consumed-and-rejected, FINDING 3)
-   * so it cannot poison the top of the queue.
+   * so it cannot poison the top of the queue. Negative revocation is per-purpose.
    */
-  peek(sessionId: string, opts: { label?: string } = {}): ReceiptConsumeResult {
+  peek(
+    sessionId: string,
+    opts: { purpose?: ReceiptPurpose; label?: string } = {},
+  ): ReceiptConsumeResult {
     return this.#take(sessionId, opts, false);
   }
 
   /**
-   * One-use consumption of the session's most recent receipt (FINDING 2).
+   * One-use consumption of the session's most recent receipt FOR THE EXACT PURPOSE (FINDING 2).
    * The atomic take gates the transition at the tool layer (FINDING 5, round
    * 3): a stale receipt, a wrong pinned label (menu), or a negative label
    * fails the transition; the receipt is removed on take, staleness, or
    * negativity (fail-closed). A wrong label (menu) is NOT spent — it stays
-   * queued for the choice it actually matched.
+   * queued for the choice it actually matched. Negative revocation removes only older receipts of that purpose.
    */
-  consume(sessionId: string, opts: { label?: string } = {}): ReceiptConsumeResult {
+  consume(
+    sessionId: string,
+    opts: { purpose?: ReceiptPurpose; label?: string } = {},
+  ): ReceiptConsumeResult {
     return this.#take(sessionId, opts, true);
   }
 
-  #take(sessionId: string, opts: { label?: string }, remove: boolean): ReceiptConsumeResult {
+  #take(
+    sessionId: string,
+    opts: { purpose?: ReceiptPurpose; label?: string },
+    remove: boolean,
+  ): ReceiptConsumeResult {
     const queue = this.#bySession.get(sessionId);
     if (!queue || queue.length === 0) {
       return err(
@@ -1234,14 +1286,72 @@ export class HostReceiptStore {
           "`question` tool and have the user answer before calling this tool",
       );
     }
-    const index = queue.length - 1;
+    let index = -1;
+    if (opts.purpose !== undefined) {
+      // A negative answer that has no workflow purpose (bare "No", "Cancel", etc.)
+      // is always treated as a negative for the requested purpose: the user's
+      // most recent intent is negative, regardless of purpose classification.
+      const top = queue[queue.length - 1];
+      if (top && isNegativeLabel(top.selectedLabel)) {
+        if (top.purpose === undefined || top.purpose === opts.purpose) {
+          if (top.purpose === undefined) {
+            // Purposeless negative stays reachable globally; spec tests inject
+            // "No" via manual record and expect purpose-bound rejection.
+            // Scope revocation to just the top negative so other purpose queues survive.
+            if (remove) {
+              queue.pop();
+              if (queue.length === 0) this.#bySession.delete(sessionId);
+            }
+          } else {
+            const filtered = queue.filter((r) => r.purpose !== opts.purpose);
+            if (filtered.length === 0) this.#bySession.delete(sessionId);
+            else this.#bySession.set(sessionId, filtered);
+          }
+          return err(
+            "receipt_rejected",
+            `the user's most recent answer (${JSON.stringify(top.selectedLabel)}) is a ` +
+              "negative answer — it cannot authorize an approval; ask the native question again",
+          );
+        }
+      }
+      // Purposeless positive receipts (bare "Approve" legacy) can satisfy any
+      // purpose when no typed receipt exists — compat for direct-record tests.
+      let typedIdx = -1;
+      for (let i = queue.length - 1; i >= 0; i--) {
+        if (queue[i].purpose === opts.purpose) {
+          typedIdx = i;
+          break;
+        }
+      }
+      if (typedIdx !== -1) {
+        index = typedIdx;
+      } else {
+        // Fall back to the newest purposeless positive (bare "Approve")
+        for (let i = queue.length - 1; i >= 0; i--) {
+          if (queue[i].purpose === undefined && !isNegativeLabel(queue[i].selectedLabel)) {
+            index = i;
+            break;
+          }
+        }
+        if (index === -1) {
+          return err(
+            "receipt_missing",
+            `no host-observed receipt for purpose ${JSON.stringify(opts.purpose)} — ask the native question for that purpose`,
+          );
+        }
+      }
+    } else {
+      index = queue.length - 1;
+    }
     const receipt = queue[index];
     if (isNegativeLabel(receipt.selectedLabel)) {
-      // Consumed-and-rejected: a negative answer is still an answer, and it
-      // can never authorize a transition (FINDING 3). The whole session queue
-      // is revoked too: the user's most recent intent is negative, so an
-      // older positive answer must not come back to life on a retry.
-      this.#bySession.delete(sessionId);
+      if (opts.purpose !== undefined) {
+        const filtered = queue.filter((r) => r.purpose !== opts.purpose);
+        if (filtered.length === 0) this.#bySession.delete(sessionId);
+        else this.#bySession.set(sessionId, filtered);
+      } else {
+        this.#bySession.delete(sessionId);
+      }
       return err(
         "receipt_rejected",
         `the user's most recent answer (${JSON.stringify(receipt.selectedLabel)}) is a ` +

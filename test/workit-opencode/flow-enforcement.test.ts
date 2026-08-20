@@ -169,29 +169,18 @@ test("a host-issued question receipt is consumed by the approval tool without ev
   }
 });
 
-test("a recent positive answer to any question authorizes the approval (documented residual)", async () => {
+test("an intervening unrelated question cannot mask menu evidence (CA-02 purpose binding)", async () => {
   const { root, tools, ctx, receipts } = fixture();
   try {
     await run(tools, "workflow_flow_status", { plan_path: "docs/oc-flow/plan.md" }, ctx);
-    // A "proceed with stash?" answer is a positive label: the correlation
-    // boundary is any recent positive host answer + the model's choice to
-    // proceed. The laundering case (negative answer -> approval) is closed.
-    receipts.record("oc", "call-stash", "yes, proceed");
-    const accepted = await run(
-      tools,
-      "workflow_spec_approve",
-      { spec_path: "docs/oc-flow/spec.md" },
-      ctx,
-    );
+    const spec = "docs/oc-flow/spec.md";
+    const plan = "docs/oc-flow/plan.md";
+    // A stale unrelated answer (no workflow purpose) + a fresh spec-approval: only the spec purpose matters.
+    receipts.record("oc", "call-unrelated", "yes, proceed");
+    receipts.record("oc", "call-spec", "Approve spec");
+    const accepted = await run(tools, "workflow_spec_approve", { spec_path: spec }, ctx);
     expect(accepted.ok).toBe(true);
     expect(accepted.data.status).toBe("approved");
-    const status = await run(
-      tools,
-      "workflow_flow_status",
-      { plan_path: "docs/oc-flow/plan.md" },
-      ctx,
-    );
-    expect(status.data.spec.status).toBe("approved");
   } finally {
     cleanup(root);
   }
@@ -699,7 +688,7 @@ test("lifecycle tools: active -> paused -> active -> completed with one-use rece
   }
 });
 
-test("a wrong lifecycle label does not transition and the receipt stays queued for its actual label", async () => {
+test("a wrong lifecycle purpose does not consume the receipt (purpose isolation: pause vs resume)", async () => {
   const { root, slug, tools, ctx, receipts } = fixture();
   try {
     await run(tools, "workflow_flow_status", { plan_path: "docs/oc-flow/plan.md" }, ctx);
@@ -712,7 +701,7 @@ test("a wrong lifecycle label does not transition and the receipt stays queued f
       ctx,
     );
     expect(wrong.ok).toBe(false);
-    if (wrong.ok === false) expect(wrong.error).toMatch(/mismatch|label/i);
+    if (wrong.ok === false) expect(wrong.code ?? wrong.error).toMatch(/receipt|purpose/i);
     expect(receipts.count("oc")).toBe(1);
     const right = await run(
       tools,

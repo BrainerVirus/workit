@@ -7,12 +7,13 @@ Load `using-superpowers`, `subagent-driven-development`, `test-driven-developmen
 
 ## Handoff destination
 
-This session is a handoff destination for a continued plan. The originating session already recorded the post-plan menu choice; present exactly these four choices and never re-offer the originating handoff option:
+This session is a handoff destination for a continued plan. The originating session already recorded the post-plan menu choice; present exactly these four choices plus model deferral and never re-offer the originating handoff option:
 
 - Subagent-driven
 - Inline
 - Review spec first
 - Review plan first
+- Change model first
 
 <workflow-handoff-destination>true</workflow-handoff-destination>
 

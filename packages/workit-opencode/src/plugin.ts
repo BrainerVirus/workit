@@ -43,7 +43,9 @@ import {
 import {
   COORDINATOR_WRITE_TOOLS,
   HostReceiptStore,
+  isNegativeLabel,
   readEffectiveFlowState,
+  receiptPurposeForLabel,
   subagentDrivenInterception,
 } from "@brainervirus/workit-core/src/core/flow-state";
 import { createTools } from "./tools";
@@ -172,6 +174,7 @@ const withWorktreeDenials = (configuredPermission: unknown): MutablePermission =
  * (one per question); flow questions are single-select, so only a
  * one-element first answer yields a receipt. Multi-select or unanswered
  * questions produce no receipt and the approval tool then fails closed.
+ * Also extracts the single question text for audit evidence.
  */
 const questionAnswerLabel = (result: { metadata?: unknown }): string | undefined => {
   const answers = (result.metadata as { answers?: unknown } | undefined)?.answers;
@@ -182,9 +185,49 @@ const questionAnswerLabel = (result: { metadata?: unknown }): string | undefined
   return typeof label === "string" ? label : undefined;
 };
 
+type QuestionInput = {
+  questions?: Array<{
+    question?: string;
+    header?: string;
+    options?: unknown;
+    multiple?: boolean;
+    custom?: boolean;
+  }>;
+};
+
+const classifyQuestion = (
+  input: unknown,
+  label: string,
+): { purpose: ReturnType<typeof import("@brainervirus/workit-core/src/core/flow-state").receiptPurposeForLabel>; questionText?: string } | null => {
+  const args = input as QuestionInput | undefined;
+  const qs = args?.questions;
+  // When the host supplies the structured questions array, enforce strict
+  // single-question single-select classification
+  if (Array.isArray(qs)) {
+    if (qs.length !== 1) return null;
+    const q = qs[0];
+    if (!q || typeof q !== "object") return null;
+    if (q.multiple === true) return null;
+    const opts = q.options as unknown[] | undefined;
+    if (Array.isArray(opts) && opts.length === 0 && q.custom === true) return null;
+    if (!Array.isArray(opts) || opts.length === 0) return null;
+    const purpose = receiptPurposeForLabel(label);
+    if (purpose === undefined) return null;
+    return { purpose, questionText: typeof q.question === "string" ? q.question : undefined };
+  }
+  // No structured questions (legacy/test or non-question input): still
+  // classify by label purpose; unknown labels are ignored except negatives
+  // which are recorded as purposeless negatives so the store can reject them
+  // globally for any pending purpose (FINDING 3 negative latching).
+  const purpose = receiptPurposeForLabel(label);
+  if (purpose !== undefined) return { purpose, questionText: undefined };
+  if (!isNegativeLabel(label)) return null;
+  return { purpose: undefined, questionText: undefined };
+};
+
 // AR-12: observe the answered native `question` and store a one-use
-// receipt bound to sessionID + callID + exact selected label + timestamp.
-// Correlation is by session + freshness + one-use + negative-label rejection
+// receipt bound to sessionID + callID + exact selected label + timestamp + purpose.
+// Correlation is by session + freshness + one-use + negative-label rejection + purpose
 // (see HostReceiptStore in flow-state.ts, FINDING 2) — no execution window
 // exists, because on a real host the model first calls the native `question`
 // (user answers), then calls the approval tool.
@@ -212,9 +255,10 @@ const plugin: Plugin = async ({ client, directory }) => {
       if (input.tool !== "question") return;
       const label = questionAnswerLabel(output);
       if (label === undefined) return; // multi-select/unanswered → no receipt
-      const args = input.args as { question?: string; title?: string } | undefined;
-      const questionText = args?.question ?? args?.title;
-      receipts.record(input.sessionID, input.callID, label, Date.now(), questionText);
+      const classified = classifyQuestion(input.args, label);
+      if (!classified) return; // unrelated/unknown/multi-question/multi-select/branch/stash/free-text
+      const questionText = classified.questionText ?? (input.args as { question?: string; title?: string } | undefined)?.question ?? (input.args as { question?: string; title?: string } | undefined)?.title;
+      receipts.record(input.sessionID, input.callID, label, Date.now(), questionText, classified.purpose);
     },
     // CA-18/AR-13: while a subagent-driven plan is active, the root
     // (coordinator) session is denied known write tools and any shell command
