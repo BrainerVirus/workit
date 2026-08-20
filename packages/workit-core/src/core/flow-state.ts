@@ -1991,6 +1991,47 @@ export const slugFromSddPath = (p: string): string => {
   return match?.[1] ?? "";
 };
 
+/**
+ * Handoff readiness (CA-06..CA-08): the source flow must be approved, valid,
+ * not already a destination, and have menu.presented === true with
+ * menu.chosen === "handoff" before ANY session is created. A logical preflight
+ * failure creates no session (orphan-free). Uses the effective reconciled
+ * state so digest drift is observed.
+ */
+export const assertHandoffReady = (root: string, planPath: string): FlowGateResult => {
+  const doc = resolveDoc(root, "", planPath, "plan");
+  if (!doc.ok) return err("path_invalid", doc.error);
+  const slug = slugFromPath(planPath);
+  const effective = readEffectiveFlowState(root, slug);
+  if (!effective.ok) return effective;
+  const state = effective.state;
+  if (state.spec.status !== "approved") {
+    return err(
+      "spec_not_approved",
+      `spec not approved (status: ${state.spec.status}). Run workflow_spec_approve after the user's approval.`,
+    );
+  }
+  if (state.plan.status !== "approved") {
+    return err(
+      "plan_not_approved",
+      `plan not approved (status: ${state.plan.status}). Run workflow_plan_approve after the user's approval.`,
+    );
+  }
+  if (state.handoff_destination) {
+    return err(
+      "recursive_handoff",
+      "this flow is already a handoff destination — a second handoff is rejected",
+    );
+  }
+  if (!state.menu.presented || state.menu.chosen !== "handoff") {
+    return err(
+      "handoff_not_chosen",
+      `handoff requires the execution menu choice "handoff" (chosen: ${JSON.stringify(state.menu.chosen)}, presented: ${state.menu.presented})`,
+    );
+  }
+  return { ok: true };
+};
+
 export const assertFlowGates = (
   root: string,
   planPath: string,

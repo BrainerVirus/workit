@@ -33,6 +33,7 @@ import {
   prepareFlowState,
   readEffectiveFlowState,
   recordMenuChoice,
+  transitionPlan,
   transitionSpec,
   type FlowGateResult,
 } from "../../packages/workit-core/src/core/flow-state";
@@ -326,7 +327,7 @@ test("native handoff resolves package context, records paths, and seeds from Too
     data: { sessionID: "child-5", seeded: true, selected: false },
     error: null,
   });
-  expect(calls[0]).toBe("create:Continue x");
+  expect(calls[0]).toBe("create:Workit: x");
   expect(posix(calls[1])).toContain("**Spec:** docs/x/spec.md");
   expect(posix(calls[1])).toContain("**Plan:** docs/x/plan.md");
   expect(posix(calls[1])).toContain("**SDD:** `docs/x/sdd`");
@@ -1437,6 +1438,206 @@ test("OpenCode handoff create failure leaves the source flow unmarked and retrya
     const state = effectiveState(root);
     expect(state.handoff_destination).toBe(false);
     expect(state.menu).toMatchObject({ presented: true, chosen: "handoff" });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// --- Task 2 Step 1: handoff preflight and title (CA-06..CA-09) ---
+
+const handoffPreflightClient = (): {
+  client: HandoffClient;
+  calls: { create: number; seed: number; select: number; mark: number };
+} => {
+  const counts = { create: 0, seed: 0, select: 0, mark: 0 };
+  const client: HandoffClient = {
+    session: {
+      async create() {
+        counts.create++;
+        return { data: { id: "child-preflight" } };
+      },
+      async promptAsync() {
+        counts.seed++;
+        return { data: undefined };
+      },
+    },
+    tui: {
+      async selectSession() {
+        counts.select++;
+        return { data: true };
+      },
+    },
+  };
+  // Instrument mark via afterSeed wrapper counting in test itself
+  return { client, calls: counts };
+};
+
+test("handoff preflight rejects missing flow state before session.create", async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wk-handoff-preflight-missing-"));
+  try {
+    mkdirSync(path.join(root, "docs", "x"), { recursive: true });
+    writeFileSync(path.join(root, "docs/x/spec.md"), "# X\n\n**Branch:** `feature/x`\n");
+    writeFileSync(
+      path.join(root, "docs/x/plan.md"),
+      "# X\n\n**Spec:** `docs/x/spec.md`\n**Branch:** `feature/x`\n\n### Task 1: One\n\n- [ ] **Step 1:** Work\n",
+    );
+    const { client, calls } = handoffPreflightClient();
+    const raw = await createHandoffTools(
+      client,
+      new WorkflowStateStore(),
+    ).workflow_handoff_session.execute({ message: "continue" }, {
+      directory: root,
+      worktree: root,
+      sessionID: "parent",
+    } as never);
+    const parsed = JSON.parse(raw as string);
+    expect(parsed.ok).toBe(false);
+    expect(calls.create).toBe(0);
+    expect(calls.seed).toBe(0);
+    expect(calls.select).toBe(0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("handoff preflight rejects when menu not recorded before session.create", async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wk-handoff-preflight-nomenu-"));
+  try {
+    const slug = "x";
+    mkdirSync(path.join(root, "docs", slug), { recursive: true });
+    writeFileSync(path.join(root, "docs", slug, "spec.md"), COMPLIANT_SPEC(slug));
+    writeFileSync(path.join(root, "docs", slug, "plan.md"), COMPLIANT_PLAN(slug));
+    const spec = `docs/${slug}/spec.md`;
+    const plan = `docs/${slug}/plan.md`;
+    const store = new HostReceiptStore();
+    expect(prepareFlowState(root, slug, { spec_path: spec, plan_path: plan }).ok).toBe(true);
+    expect(transitionSpec(root, slug, spec, openEvidence(store, "nomenu-session", "Approve spec")).ok).toBe(true);
+    expect(transitionPlan(root, slug, plan, openEvidence(store, "nomenu-session", "Approve plan")).ok).toBe(true);
+    // No menu choice recorded — presented false.
+    const { client, calls } = handoffPreflightClient();
+    const raw = await createHandoffTools(
+      client,
+      new WorkflowStateStore(),
+    ).workflow_handoff_session.execute({ message: "continue" }, {
+      directory: root,
+      worktree: root,
+      sessionID: "parent",
+    } as never);
+    const parsed = JSON.parse(raw as string);
+    expect(parsed.ok).toBe(false);
+    expect(calls.create).toBe(0);
+    expect(calls.seed).toBe(0);
+    expect(calls.select).toBe(0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("handoff preflight rejects non-handoff menu choice before session.create", async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wk-handoff-preflight-nonhandoff-"));
+  try {
+    const slug = "x";
+    mkdirSync(path.join(root, "docs", slug), { recursive: true });
+    writeFileSync(path.join(root, "docs", slug, "spec.md"), COMPLIANT_SPEC(slug));
+    writeFileSync(path.join(root, "docs", slug, "plan.md"), COMPLIANT_PLAN(slug));
+    const spec = `docs/${slug}/spec.md`;
+    const plan = `docs/${slug}/plan.md`;
+    const store = new HostReceiptStore();
+    expect(prepareFlowState(root, slug, { spec_path: spec, plan_path: plan }).ok).toBe(true);
+    expect(transitionSpec(root, slug, spec, openEvidence(store, "nonhandoff-session", "Approve spec")).ok).toBe(true);
+    expect(transitionPlan(root, slug, plan, openEvidence(store, "nonhandoff-session", "Approve plan")).ok).toBe(true);
+    expect(
+      recordMenuChoice(root, slug, plan, "inline", menuEvidence(store, "nonhandoff-session", "inline")).ok,
+    ).toBe(true);
+    const { client, calls } = handoffPreflightClient();
+    const raw = await createHandoffTools(
+      client,
+      new WorkflowStateStore(),
+    ).workflow_handoff_session.execute({ message: "continue" }, {
+      directory: root,
+      worktree: root,
+      sessionID: "parent",
+    } as never);
+    const parsed = JSON.parse(raw as string);
+    expect(parsed.ok).toBe(false);
+    expect(parsed.data?.code ?? parsed.code).toBeDefined();
+    expect(calls.create).toBe(0);
+    expect(calls.seed).toBe(0);
+    expect(calls.select).toBe(0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("handoff preflight rejects already-marked destination before session.create", async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wk-handoff-preflight-recursive-2-"));
+  try {
+    const slug = "x";
+    mkdirSync(path.join(root, "docs", slug), { recursive: true });
+    mkdirSync(path.join(root, "docs", slug, "sdd"), { recursive: true });
+    writeFileSync(path.join(root, "docs/x/spec.md"), "# X\n\n**Branch:** `feature/x`\n");
+    writeFileSync(
+      path.join(root, "docs/x/plan.md"),
+      "# X\n\n**Spec:** `docs/x/spec.md`\n**Branch:** `feature/x`\n\n### Task 1: One\n\n- [ ] **Step 1:** Work\n",
+    );
+    writeFileSync(path.join(root, "docs/x/sdd/flow.json"), approvedFlowJson(root, { handoff_destination: true }));
+    const { client, calls } = handoffPreflightClient();
+    const raw = await createHandoffTools(
+      client,
+      new WorkflowStateStore(),
+    ).workflow_handoff_session.execute({ message: "continue" }, {
+      directory: root,
+      worktree: root,
+      sessionID: "parent",
+    } as never);
+    const parsed = JSON.parse(raw as string);
+    expect(parsed.ok).toBe(false);
+    expect(calls.create).toBe(0);
+    expect(calls.seed).toBe(0);
+    expect(calls.select).toBe(0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("valid non---stay handoff publishes selection and titles Workit: <slug>", async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wk-handoff-title-"));
+  try {
+    seededPrompt(root);
+    let titleSeen = "";
+    let selected = false;
+    const client: HandoffClient = {
+      session: {
+        async create(input: { body: { title: string }; query: { directory: string } }) {
+          titleSeen = input.body.title;
+          return { data: { id: "child-title" } };
+        },
+        async promptAsync() {
+          return { data: undefined };
+        },
+      },
+      tui: {
+        async selectSession(input: { body: { sessionID: string }; query: { directory: string } }) {
+          selected = true;
+          expect(input.body.sessionID).toBe("child-title");
+          return { data: true };
+        },
+      },
+    };
+    const raw = await createHandoffTools(
+      client,
+      new WorkflowStateStore(),
+    ).workflow_handoff_session.execute({ message: "continue" }, {
+      directory: root,
+      worktree: root,
+      sessionID: "parent",
+    } as never);
+    const parsed = JSON.parse(raw as string);
+    expect(parsed.ok).toBe(true);
+    expect(parsed.data.selected).toBe(true);
+    expect(selected).toBe(true);
+    expect(titleSeen).toBe("Workit: x");
+    expect(titleSeen).not.toMatch(/^Continue\b/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

@@ -2,7 +2,7 @@ import path from "node:path";
 import { tool, type PluginInput } from "@opencode-ai/plugin";
 import { fail } from "@brainervirus/workit-core/src/core";
 import {
-  assertFlowGates,
+  assertHandoffReady,
   markHandoffDestination,
   readEffectiveFlowState,
   slugFromPath,
@@ -67,28 +67,16 @@ export function createHandoffTools(client: HandoffClient, state: WorkflowStateSt
         const active = built;
         const slug = slugFromPath(active.plan);
         try {
-          const gate = assertFlowGates(context.directory, active.plan);
-          if (!gate.ok) return output(fail(gate.error));
-          // Pre-flight destination check (Task 4 advisory): a second handoff on
-          // an already-marked destination returns recursive_handoff immediately
-          // instead of creating and seeding a child session that is doomed to
-          // fail at the mark stage — no wasted session. The core
-          // recursive_handoff rejection stays intact for the genuine
-          // double-mark attempt.
-          const preflight = readEffectiveFlowState(context.directory, slug);
-          if (!preflight.ok) return output(fail(preflight.error, { code: preflight.code }));
-          if (preflight.state.handoff_destination) {
-            return output(
-              fail("this flow is already a handoff destination — a second handoff is rejected", {
-                code: "recursive_handoff",
-              }),
-            );
-          }
+          // CA-06/CA-07: shared preflight before ANY session creation — approved
+          // docs, menu.presented && chosen === "handoff", not already a
+          // destination. Logical failures create no session.
+          const ready = assertHandoffReady(context.directory, active.plan);
+          if (!ready.ok) return output(fail(ready.error, { code: (ready as FlowGateResult & { code?: string }).code }));
           state.set(context.sessionID, { spec: active.spec, plan: active.plan, sdd: active.sdd });
           return output(
             await handoffSession(client, {
               directory: context.directory,
-              title: `Continue ${path.basename(path.dirname(active.plan))}`,
+              title: `Workit: ${path.basename(path.dirname(active.plan))}`,
               prompt: active.prompt,
               stay: /(?:^|\s)--stay(?:\s|$)/.test(userMessage),
               // CA-07/Task 3: mark the destination ONLY after the child session
