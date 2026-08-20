@@ -18,6 +18,187 @@ import { CANONICAL_SKILLS } from "../../packages/workit-core/src/core/skill-mani
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
+const writeJson = (p: string, value: unknown) =>
+  writeFileSync(p, JSON.stringify(value, null, 2) + "\n");
+
+// A stale plugin dir mirrors the CA-01 failure shape: old package.json version,
+// legacy exact npx pin in the plugin's own mcp.json, and a local-dist hook.
+// The legacy pin is assembled at runtime so the tracked-file selector scan
+// (test/artifacts/manifests.test.ts) never trips on the fixture bytes.
+const LEGACY_PIN = ["@brainervirus/workit-cursor@", "0.8.0"].join("");
+function makeStaleCursorHome(home: string, pluginDir: string) {
+  mkdirSync(path.join(pluginDir, "dist"), { recursive: true });
+  mkdirSync(path.join(pluginDir, "hooks"), { recursive: true });
+  writeJson(path.join(pluginDir, "package.json"), {
+    name: "@brainervirus/workit-cursor",
+    version: "0.4.0",
+  });
+  writeJson(path.join(pluginDir, "mcp.json"), {
+    mcpServers: {
+      workit: {
+        command: "npx",
+        args: [
+          "-y",
+          "--prefer-online",
+          `--package=${LEGACY_PIN}`,
+          "workit-cursor-mcp",
+          "${workspaceFolder}",
+        ],
+      },
+    },
+  });
+  writeJson(path.join(pluginDir, "hooks", "hooks-cursor.json"), {
+    version: 1,
+    hooks: {
+      sessionStart: [{ command: `node ${pluginDir}/dist/cursor-session-start.js` }],
+    },
+  });
+  writeFileSync(path.join(pluginDir, "dist", "mcp-server.js"), "#!/usr/bin/env node\n// stale\n");
+  writeFileSync(
+    path.join(pluginDir, "dist", "cursor-session-start.js"),
+    "#!/usr/bin/env node\n// stale hook\n",
+  );
+  mkdirSync(path.join(home, ".cursor"), { recursive: true });
+  writeJson(path.join(home, ".cursor", "mcp.json"), {
+    mcpServers: {
+      "unrelated-mcp": { command: "echo", args: ["keep-me"] },
+      workit: {
+        command: "node",
+        args: [`${pluginDir}/dist/mcp-server.js`, "${workspaceFolder}"],
+      },
+    },
+  });
+  writeJson(path.join(home, ".cursor", "settings.json"), {
+    enabled_plugins: { workit: true },
+    plugin_dirs: [pluginDir],
+  });
+}
+
+test("installer self-heals a stale plugin dir: refresh + canonical re-registration, unrelated MCP preserved", () => {
+  if (!bashAvailable()) return;
+  const fixture = makeCursorStub();
+  const pluginDir = path.join(fixture.home, ".cursor", "plugins", "local", "workit");
+  try {
+    makeStaleCursorHome(fixture.home, pluginDir);
+    // Make the refresh observable: a stale flag inside the refreshed dir would
+    // survive only if the sync skipped files; the refresh is a full rsync
+    // --delete, so the flag must be gone after the installer runs.
+    const flags = path.join(pluginDir, "flags");
+    mkdirSync(flags, { recursive: true });
+    writeFileSync(path.join(flags, "stale"), "yes");
+
+    const installed = spawnSync("bash", ["packages/workit-core/scripts/install-cursor-plugin.sh"], {
+      cwd: fixture.stub,
+      env: {
+        ...process.env,
+        HOME: fixture.home,
+        WORKFLOW_TOOLKIT_DEV: fixture.stub,
+      },
+      encoding: "utf8",
+    });
+    expect(installed.status, installed.stderr).toBe(0);
+
+    // The plugin dir is refreshed from the checkout root (stub sync re-ran) and
+    // the legacy pin is gone — canonical @latest + --prefer-online. The stale
+    // flag written before install is wiped by the refresh (rsync --delete).
+    expect(existsSync(path.join(flags, "stale"))).toBe(false);
+    expect(readFileSync(path.join(fixture.home, "sync-dev"), "utf8")).toBe(
+      realpathSync(fixture.stub),
+    );
+    const pluginMcp = JSON.parse(readFileSync(path.join(pluginDir, "mcp.json"), "utf8"));
+    expect(pluginMcp.mcpServers.workit).toEqual({
+      command: "npx",
+      args: [
+        "-y",
+        "--prefer-online",
+        "--package=@brainervirus/workit-cursor@latest",
+        "workit-cursor-mcp",
+        "${workspaceFolder}",
+      ],
+    });
+    const userMcp = JSON.parse(
+      readFileSync(path.join(fixture.home, ".cursor", "mcp.json"), "utf8"),
+    );
+    expect(userMcp.mcpServers.workit).toEqual({
+      command: "npx",
+      args: [
+        "-y",
+        "--prefer-online",
+        "--package=@brainervirus/workit-cursor@latest",
+        "workit-cursor-mcp",
+        "${workspaceFolder}",
+      ],
+    });
+    // Unrelated MCP servers survive byte-identical.
+    expect(userMcp.mcpServers["unrelated-mcp"]).toEqual({
+      command: "echo",
+      args: ["keep-me"],
+    });
+
+    // The stale→repaired transition ends with a healthy doctor.
+    const doctor = spawnSync(
+      "bash",
+      [
+        "-c",
+        `bun "${path.join(fixture.stub, "packages/workit-core/scripts/doctor-check.ts")}" cursor`,
+      ],
+      {
+        env: {
+          ...process.env,
+          HOME: fixture.home,
+          WORKFLOW_TOOLKIT_DEV: fixture.stub,
+        },
+        encoding: "utf8",
+      },
+    );
+    expect(doctor.status, doctor.stderr).toBe(0);
+  } finally {
+    rmSync(fixture.stub, { recursive: true, force: true });
+    rmSync(fixture.home, { recursive: true, force: true });
+  }
+});
+
+test("installer leaves a healthy canonical install untouched (no rewrite, doctor healthy)", () => {
+  if (!bashAvailable()) return;
+  const fixture = makeCursorStub();
+  const pluginDir = path.join(fixture.home, ".cursor", "plugins", "local", "workit");
+  try {
+    // makeCursorStub already mirrors a synced canonical install; capture the
+    // pre-run bytes to prove the installer never rewrites them.
+    const hookBytes = readFileSync(path.join(pluginDir, "hooks", "hooks-cursor.json"));
+    const installed = spawnSync("bash", ["packages/workit-core/scripts/install-cursor-plugin.sh"], {
+      cwd: fixture.stub,
+      env: {
+        ...process.env,
+        HOME: fixture.home,
+        WORKFLOW_TOOLKIT_DEV: fixture.stub,
+      },
+      encoding: "utf8",
+    });
+    expect(installed.status, installed.stderr).toBe(0);
+    expect(readFileSync(path.join(pluginDir, "hooks", "hooks-cursor.json"))).toEqual(hookBytes);
+    const doctor = spawnSync(
+      "bash",
+      [
+        "-c",
+        `bun "${path.join(fixture.stub, "packages/workit-core/scripts/doctor-check.ts")}" cursor`,
+      ],
+      {
+        env: {
+          ...process.env,
+          HOME: fixture.home,
+          WORKFLOW_TOOLKIT_DEV: fixture.stub,
+        },
+        encoding: "utf8",
+      },
+    );
+    expect(doctor.status, doctor.stderr).toBe(0);
+  } finally {
+    rmSync(fixture.stub, { recursive: true, force: true });
+    rmSync(fixture.home, { recursive: true, force: true });
+  }
+});
+
 function bashAvailable(): boolean {
   if (process.platform === "win32") return false;
   return spawnSync("bash", ["--version"], { encoding: "utf8" }).status === 0;
@@ -46,6 +227,7 @@ function copyCoreSources(stub: string) {
     "workspaces.ts",
     "support-matrix.ts",
     "skill-manifests.ts",
+    "package-root.ts",
   ]) {
     const src =
       name === "doctor-check.ts"
@@ -63,9 +245,15 @@ function makeStub(pluginTs: string) {
   const stub = mkdtempSync(path.join(os.tmpdir(), "wk-install-stub-"));
   const home = mkdtempSync(path.join(os.tmpdir(), "wk-install-home-"));
   spawnSync("git", ["init", "-q"], { cwd: stub });
-  mkdirSync(path.join(stub, "packages/workit-core/scripts/lib"), { recursive: true });
-  mkdirSync(path.join(stub, "packages/workit-core/src/core"), { recursive: true });
-  mkdirSync(path.join(stub, "packages/workit-opencode/src"), { recursive: true });
+  mkdirSync(path.join(stub, "packages/workit-core/scripts/lib"), {
+    recursive: true,
+  });
+  mkdirSync(path.join(stub, "packages/workit-core/src/core"), {
+    recursive: true,
+  });
+  mkdirSync(path.join(stub, "packages/workit-opencode/src"), {
+    recursive: true,
+  });
   cpSync(
     path.join(repoRoot, "packages/workit-core/scripts/install-opencode-plugin.sh"),
     path.join(stub, "packages/workit-core/scripts/install-opencode-plugin.sh"),
@@ -111,9 +299,15 @@ function makeNestedStub() {
   const stub = mkdtempSync(path.join(os.tmpdir(), "wk-install-nested-stub-"));
   const home = mkdtempSync(path.join(os.tmpdir(), "wk-install-nested-home-"));
   spawnSync("git", ["init", "-q"], { cwd: stub });
-  mkdirSync(path.join(stub, "packages/workit-core/scripts/lib"), { recursive: true });
-  mkdirSync(path.join(stub, "packages/workit-core/src/core"), { recursive: true });
-  mkdirSync(path.join(stub, "packages/workit-opencode/src"), { recursive: true });
+  mkdirSync(path.join(stub, "packages/workit-core/scripts/lib"), {
+    recursive: true,
+  });
+  mkdirSync(path.join(stub, "packages/workit-core/src/core"), {
+    recursive: true,
+  });
+  mkdirSync(path.join(stub, "packages/workit-opencode/src"), {
+    recursive: true,
+  });
   cpSync(
     path.join(repoRoot, "packages/workit-core/scripts/install-opencode-plugin.sh"),
     path.join(stub, "packages/workit-core/scripts/install-opencode-plugin.sh"),
@@ -141,16 +335,23 @@ function makeNestedStub() {
 }
 
 // Stub checkout for the cursor installer: needs a .cursor-plugin dir (the
-// LOCAL_ROOT guard on line 25), a stub sync-runtime.sh that records the ROOT it
-// was run against, and a .cursor home so the registration merge has a writable
-// target.
+// LOCAL_ROOT guard on line 25), a stub sync-runtime.sh that mirrors the real
+// plugin-dir refresh (rsync --delete of the cursor package into
+// ~/.cursor/plugins/local/workit) and records the ROOT it was run against, and
+// a .cursor home so the registration merge has a writable target.
 function makeCursorStub() {
   const stub = mkdtempSync(path.join(os.tmpdir(), "wk-install-cursor-stub-"));
   const home = mkdtempSync(path.join(os.tmpdir(), "wk-install-cursor-home-"));
   spawnSync("git", ["init", "-q"], { cwd: stub });
-  mkdirSync(path.join(stub, "packages/workit-core/scripts/lib"), { recursive: true });
-  mkdirSync(path.join(stub, "packages/workit-core/src/core"), { recursive: true });
-  mkdirSync(path.join(stub, "packages/workit-cursor/.cursor-plugin"), { recursive: true });
+  mkdirSync(path.join(stub, "packages/workit-core/scripts/lib"), {
+    recursive: true,
+  });
+  mkdirSync(path.join(stub, "packages/workit-core/src/core"), {
+    recursive: true,
+  });
+  mkdirSync(path.join(stub, "packages/workit-cursor/.cursor-plugin"), {
+    recursive: true,
+  });
   cpSync(
     path.join(repoRoot, "packages/workit-core/scripts/install-cursor-plugin.sh"),
     path.join(stub, "packages/workit-core/scripts/install-cursor-plugin.sh"),
@@ -158,52 +359,20 @@ function makeCursorStub() {
   copyCoreSources(stub);
   writeFileSync(
     path.join(stub, "packages/workit-core/scripts/sync-runtime.sh"),
-    '#!/usr/bin/env bash\nprintf "%s" "$WORKFLOW_TOOLKIT_DEV" > "$HOME/sync-dev"\n',
+    `#!/usr/bin/env bash
+printf "%s" "$WORKFLOW_TOOLKIT_DEV" > "$HOME/sync-dev"
+mkdir -p "$HOME/.cursor/plugins/local/workit"
+rsync -a --delete "$WORKFLOW_TOOLKIT_DEV/packages/workit-cursor/" "$HOME/.cursor/plugins/local/workit/"
+`,
     { mode: 0o755 },
   );
-  for (const [root, skills] of [
-    ["vendor/superpowers/skills", CANONICAL_SKILLS.superpowers],
-    ["skills", CANONICAL_SKILLS.workit],
-  ] as const) {
-    for (const skill of skills) {
-      const dir = path.join(home, ".cursor/plugins/local/workit", root, skill);
-      mkdirSync(dir, { recursive: true });
-      writeFileSync(path.join(dir, "SKILL.md"), "# skill\n");
-    }
-  }
-  const installedDist = path.join(home, ".cursor/plugins/local/workit/dist");
-  mkdirSync(installedDist, { recursive: true });
-  writeFileSync(path.join(installedDist, "mcp-server.js"), "#!/usr/bin/env node\n// bundle\n");
+  // Mirror the synced cursor package layout (what a real sync-runtime copies
+  // into the plugin dir: assets, manifests, hooks, dist, skills, vendor).
+  const cursorPkg = path.join(stub, "packages/workit-cursor");
+  mkdirSync(path.join(cursorPkg, "assets/templates"), { recursive: true });
+  writeFileSync(path.join(cursorPkg, "assets/templates/spec-template.md"), "# spec\n");
   writeFileSync(
-    path.join(installedDist, "cursor-session-start.js"),
-    "#!/usr/bin/env node\n// hook bundle\n",
-  );
-  const installedHooks = path.join(home, ".cursor/plugins/local/workit/hooks");
-  mkdirSync(installedHooks, { recursive: true });
-  writeFileSync(
-    path.join(installedHooks, "hooks-cursor.json"),
-    JSON.stringify({
-      version: 1,
-      hooks: {
-        sessionStart: [
-          {
-            command:
-              "npx -y --prefer-online --package=@brainervirus/workit-cursor@latest workit-cursor-session-start",
-          },
-        ],
-      },
-    }),
-  );
-  // A real sync-runtime copies the cursor package (assets, mcp shims, hooks)
-  // into the checkout; the stub sync is a no-op, so mirror the synced layout
-  // (AR-11 requires the selected-host surfaces present).
-  mkdirSync(path.join(stub, "packages/workit-cursor/assets/templates"), { recursive: true });
-  writeFileSync(
-    path.join(stub, "packages/workit-cursor/assets/templates/spec-template.md"),
-    "# spec\n",
-  );
-  writeFileSync(
-    path.join(stub, "packages/workit-cursor/mcp.json"),
+    path.join(cursorPkg, "mcp.json"),
     JSON.stringify({
       mcpServers: {
         workit: {
@@ -220,11 +389,74 @@ function makeCursorStub() {
     }),
   );
   writeFileSync(
-    path.join(stub, "packages/workit-cursor/marketplace.json"),
+    path.join(cursorPkg, "marketplace.json"),
     JSON.stringify({ name: "workit", version: "0.4.0" }),
   );
-  mkdirSync(path.join(stub, "packages/workit-cursor/mcp"), { recursive: true });
-  mkdirSync(path.join(stub, "packages/workit-cursor/hooks"), { recursive: true });
+  writeFileSync(
+    path.join(cursorPkg, "package.json"),
+    JSON.stringify({ name: "@brainervirus/workit-cursor", version: "0.4.0" }),
+  );
+  mkdirSync(path.join(cursorPkg, "mcp"), { recursive: true });
+  mkdirSync(path.join(cursorPkg, "hooks"), { recursive: true });
+  writeFileSync(
+    path.join(cursorPkg, "hooks/hooks-cursor.json"),
+    JSON.stringify({
+      version: 1,
+      hooks: {
+        sessionStart: [
+          {
+            command:
+              "npx -y --prefer-online --package=@brainervirus/workit-cursor@latest workit-cursor-session-start",
+          },
+        ],
+      },
+    }),
+  );
+  mkdirSync(path.join(cursorPkg, "dist"), { recursive: true });
+  writeFileSync(path.join(cursorPkg, "dist/mcp-server.js"), "#!/usr/bin/env node\n// bundle\n");
+  writeFileSync(
+    path.join(cursorPkg, "dist/cursor-session-start.js"),
+    "#!/usr/bin/env node\n// hook bundle\n",
+  );
+  for (const [root, skills] of [
+    ["vendor/superpowers/skills", CANONICAL_SKILLS.superpowers],
+    ["skills", CANONICAL_SKILLS.workit],
+  ] as const) {
+    for (const skill of skills) {
+      const dir = path.join(cursorPkg, root, skill);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(path.join(dir, "SKILL.md"), "# skill\n");
+    }
+  }
+  // Pre-seed a synced healthy install in HOME (what a real sync-runtime leaves
+  // behind), byte-identical to the stub package so a re-sync changes nothing.
+  const pluginDir = path.join(home, ".cursor/plugins/local/workit");
+  for (const [root, skills] of [
+    ["vendor/superpowers/skills", CANONICAL_SKILLS.superpowers],
+    ["skills", CANONICAL_SKILLS.workit],
+  ] as const) {
+    for (const skill of skills) {
+      const dir = path.join(pluginDir, root, skill);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(path.join(dir, "SKILL.md"), "# skill\n");
+    }
+  }
+  mkdirSync(path.join(pluginDir, "dist"), { recursive: true });
+  mkdirSync(path.join(pluginDir, "hooks"), { recursive: true });
+  cpSync(
+    path.join(cursorPkg, "dist", "mcp-server.js"),
+    path.join(pluginDir, "dist", "mcp-server.js"),
+  );
+  cpSync(
+    path.join(cursorPkg, "dist", "cursor-session-start.js"),
+    path.join(pluginDir, "dist", "cursor-session-start.js"),
+  );
+  cpSync(
+    path.join(cursorPkg, "hooks", "hooks-cursor.json"),
+    path.join(pluginDir, "hooks", "hooks-cursor.json"),
+  );
+  cpSync(path.join(cursorPkg, "mcp.json"), path.join(pluginDir, "mcp.json"));
+  cpSync(path.join(cursorPkg, "package.json"), path.join(pluginDir, "package.json"));
   mkdirSync(path.join(home, ".cursor"), { recursive: true });
   return { stub, home };
 }
@@ -292,7 +524,9 @@ test("install-opencode-plugin.sh defaults to the checkout containing the script"
   const share = path.join(fixture.home, ".local/share/workit");
   try {
     mkdirSync(path.join(share, ".git"), { recursive: true });
-    mkdirSync(path.join(share, "packages/workit-opencode/src"), { recursive: true });
+    mkdirSync(path.join(share, "packages/workit-opencode/src"), {
+      recursive: true,
+    });
     writeFileSync(
       path.join(share, "packages/workit-opencode/src/plugin.ts"),
       "export default {};\n",
@@ -351,7 +585,11 @@ test("install-cursor-plugin.sh removes the legacy dir after success, carrying us
 
     const installed = spawnSync("bash", ["packages/workit-core/scripts/install-cursor-plugin.sh"], {
       cwd: fixture.stub,
-      env: { ...process.env, HOME: fixture.home, WORKFLOW_TOOLKIT_DEV: fixture.stub },
+      env: {
+        ...process.env,
+        HOME: fixture.home,
+        WORKFLOW_TOOLKIT_DEV: fixture.stub,
+      },
       encoding: "utf8",
     });
     expect(installed.status, installed.stderr).toBe(0);
@@ -397,7 +635,11 @@ test("install-cursor-plugin.sh resolves the local checkout root and never falls 
 
     const installed = spawnSync("bash", ["packages/workit-core/scripts/install-cursor-plugin.sh"], {
       cwd: fixture.stub,
-      env: { ...process.env, HOME: fixture.home, WORKFLOW_TOOLKIT_DEV: fixture.stub },
+      env: {
+        ...process.env,
+        HOME: fixture.home,
+        WORKFLOW_TOOLKIT_DEV: fixture.stub,
+      },
       encoding: "utf8",
     });
     expect(installed.status, installed.stderr).toBe(0);
@@ -419,7 +661,11 @@ test("install-cursor-plugin.sh --local-dist registers node-form launchers agains
       ["packages/workit-core/scripts/install-cursor-plugin.sh", "--local-dist"],
       {
         cwd: fixture.stub,
-        env: { ...process.env, HOME: fixture.home, WORKFLOW_TOOLKIT_DEV: fixture.stub },
+        env: {
+          ...process.env,
+          HOME: fixture.home,
+          WORKFLOW_TOOLKIT_DEV: fixture.stub,
+        },
         encoding: "utf8",
       },
     );
@@ -439,6 +685,51 @@ test("install-cursor-plugin.sh --local-dist registers node-form launchers agains
     expect(hooks.hooks.sessionStart[0].command).toBe(
       `node ${path.join(pluginDir, "dist", "cursor-session-start.js")}`,
     );
+  } finally {
+    rmSync(fixture.stub, { recursive: true, force: true });
+    rmSync(fixture.home, { recursive: true, force: true });
+  }
+});
+
+test("installer fails open when the registry is unreachable: no stale repair, install succeeds (CA-04)", () => {
+  if (!bashAvailable()) return;
+  const fixture = makeCursorStub();
+  const pluginDir = path.join(fixture.home, ".cursor", "plugins", "local", "workit");
+  try {
+    // A local-dist install (node hook, no mcp.json selector) is the only shape
+    // that consults the registry; a canonical @latest install never probes.
+    makeStaleCursorHome(fixture.home, pluginDir);
+    rmSync(path.join(pluginDir, "mcp.json"), { force: true });
+    writeJson(path.join(pluginDir, "hooks", "hooks-cursor.json"), {
+      version: 1,
+      hooks: { sessionStart: [{ command: `node ${pluginDir}/dist/cursor-session-start.js` }] },
+    });
+
+    const installed = spawnSync("bash", ["packages/workit-core/scripts/install-cursor-plugin.sh"], {
+      cwd: fixture.stub,
+      env: {
+        ...process.env,
+        HOME: fixture.home,
+        WORKFLOW_TOOLKIT_DEV: fixture.stub,
+        WORKIT_DOCTOR_STALE_REGISTRY_CMD: path.join(fixture.stub, "no-registry-bin", "npm-fail"),
+      },
+      encoding: "utf8",
+    });
+    expect(installed.status, installed.stderr).toBe(0);
+    const userMcp = JSON.parse(
+      readFileSync(path.join(fixture.home, ".cursor", "mcp.json"), "utf8"),
+    );
+    expect(userMcp.mcpServers["unrelated-mcp"]).toEqual({ command: "echo", args: ["keep-me"] });
+    expect(userMcp.mcpServers.workit).toEqual({
+      command: "npx",
+      args: [
+        "-y",
+        "--prefer-online",
+        "--package=@brainervirus/workit-cursor@latest",
+        "workit-cursor-mcp",
+        "${workspaceFolder}",
+      ],
+    });
   } finally {
     rmSync(fixture.stub, { recursive: true, force: true });
     rmSync(fixture.home, { recursive: true, force: true });
@@ -467,7 +758,11 @@ function runSyncScript(env: Record<string, string>) {
     [path.join(repoRoot, "packages/workit-core/scripts/sync-runtime.sh")],
     { env, encoding: "utf8" },
   );
-  return { status: res.status, stdout: res.stdout ?? "", stderr: res.stderr ?? "" };
+  return {
+    status: res.status,
+    stdout: res.stdout ?? "",
+    stderr: res.stderr ?? "",
+  };
 }
 
 function makeDependencyFreeCheckout() {
@@ -635,13 +930,21 @@ test("sync-runtime fails loudly when a dist-less Cursor adapter cannot find Bun"
   try {
     for (const tool of ["bash", "chmod", "dirname", "flock", "mkdir", "rm", "rsync"]) {
       symlinkSync(
-        spawnSync("bash", ["-c", `command -v ${tool}`], { encoding: "utf8" }).stdout.trim(),
+        spawnSync("bash", ["-c", `command -v ${tool}`], {
+          encoding: "utf8",
+        }).stdout.trim(),
         path.join(binDir, tool),
       );
     }
-    mkdirSync(path.join(dev, "packages/workit-opencode/src"), { recursive: true });
-    mkdirSync(path.join(dev, "packages/workit-cursor/.cursor-plugin"), { recursive: true });
-    mkdirSync(path.join(dev, "packages/workit-cursor/scripts"), { recursive: true });
+    mkdirSync(path.join(dev, "packages/workit-opencode/src"), {
+      recursive: true,
+    });
+    mkdirSync(path.join(dev, "packages/workit-cursor/.cursor-plugin"), {
+      recursive: true,
+    });
+    mkdirSync(path.join(dev, "packages/workit-cursor/scripts"), {
+      recursive: true,
+    });
     writeFileSync(path.join(dev, "packages/workit-opencode/src/plugin.ts"), "export default {};\n");
     writeFileSync(path.join(dev, "packages/workit-cursor/scripts/build.ts"), "// build entry\n");
 

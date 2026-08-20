@@ -32,10 +32,10 @@ test("default report aggregates the deterministic candidate and an isolated doct
   // exactly the utility check fails (D11/D13).
   expect(report.doctor).toEqual({
     ok: false,
-    passed: 10,
+    passed: 11,
     warned: 0,
     failed: 1,
-    total: 11,
+    total: 12,
     fixes: 1,
   });
   expect(report.logs).toEqual({ files: 0, events: 0 });
@@ -63,10 +63,10 @@ test("report doctor counts are exact against a controlled isolated fixture", () 
     // node+bun on PATH but no git: exactly the utility check fails.
     expect(report.doctor).toEqual({
       ok: false,
-      passed: 10,
+      passed: 11,
       warned: 0,
       failed: 1,
-      total: 11,
+      total: 12,
       fixes: 1,
     });
   } finally {

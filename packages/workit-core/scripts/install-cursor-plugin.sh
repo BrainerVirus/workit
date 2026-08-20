@@ -43,6 +43,22 @@ else
   ROOT="$LOCAL_ROOT"
 fi
 
+# CA-02: self-heal pre-check. The doctor's stale_install check runs against the
+# INSTALLED plugin dir (version/selectors vs the current runtime). Exit 2 means
+# stale: the refresh below syncs the plugin dir from ROOT and the registration
+# pass rewrites the workit MCP/hook entries to the canonical current selector.
+# The check reads only workit-owned files, so a healthy install is byte-untouched;
+# a registry-unreachable comparison reports registry_unreachable, never stale
+# (CA-04) — no false stale_install and no install failure.
+if bun "$ROOT/packages/workit-core/scripts/doctor-check.ts" cursor --stale; then
+  :
+elif [ $? -eq 2 ]; then
+  echo "workit: stale Cursor plugin install detected — self-healing (refresh + canonical re-registration)" >&2
+else
+  echo "FATAL: pre-install doctor probe failed" >&2
+  exit 1
+fi
+
 chmod +x "$ROOT/packages/workit-core/scripts/sync-runtime.sh" "$ROOT/packages/workit-core/scripts/"*.sh
 # Prefer syncing from this ROOT (dev or freshly cloned share)
 export WORKFLOW_TOOLKIT_DEV="$ROOT"

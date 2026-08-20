@@ -1,9 +1,10 @@
 // Shared offline doctor (DG-07/DG-08, CA-09). One host-neutral engine checks the
 // installed Workit surfaces — pins, versions, assets, launchers, runtimes,
 // utilities, registrations, config, workspace match, credential metadata, and
-// log writability — with no network access. Never reads credential values: only
-// existence, mode, and a placeholder flag are evaluated; token bytes never enter
-// the report or any log event.
+// log writability — with no network access except the optional registry probe
+// behind the stale-install comparison (CA-04), which fails open. Never reads
+// credential values: only existence, mode, and a placeholder flag are evaluated;
+// token bytes never enter the report or any log event.
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
@@ -11,7 +12,13 @@ import path from "node:path";
 import { SUPPORT_MATRIX } from "./support-matrix";
 import { EVENT } from "./boundary";
 import { getDiagnosticLogger, isConfigObject } from "./config";
-import { cursorHooksEntry, cursorMcpServerEntry, isWorkitPlugin } from "./registration";
+import { packageRoot } from "./package-root";
+import {
+  CURSOR_RUNTIME_PACKAGE,
+  cursorHooksEntry,
+  cursorMcpServerEntry,
+  isWorkitPlugin,
+} from "./registration";
 import { resolveWorkspaceFrom } from "./workspaces";
 import { validateCursorSkills } from "./skill-manifests";
 
@@ -28,6 +35,8 @@ export type DoctorCheckId =
   | "launcher"
   | "utility"
   | "stale_pin"
+  | "stale_install"
+  | "registry_unreachable"
   | "duplicate_registration"
   | "malformed_config"
   | "workspace_mismatch"
@@ -46,12 +55,18 @@ export type DoctorCheck = {
 
 export type DoctorFix = { id: DoctorCheckId; fix: string };
 
-export type DoctorSummary = { passed: number; warned: number; failed: number; total: number };
+export type DoctorSummary = {
+  passed: number;
+  warned: number;
+  failed: number;
+  total: number;
+};
 
 export type DoctorReport = {
   ok: boolean;
   exitCode: number;
-  offline: true;
+  /** False when the doctor consulted the npm registry (local-dist version probe). */
+  offline: boolean;
   host: DoctorHost;
   checked_at: string;
   summary: DoctorSummary;
@@ -534,7 +549,11 @@ const checkLauncher = (res: Resolved): DoctorCheck => {
       detail: "no dev checkout found (WORKFLOW_TOOLKIT_DEV) — skipping non-Cursor launcher checks",
     };
   }
-  return { id: "launcher", status: "pass", detail: `${res.host} launcher/hook entries present` };
+  return {
+    id: "launcher",
+    status: "pass",
+    detail: `${res.host} launcher/hook entries present`,
+  };
 };
 
 const checkUtility = (res: Resolved): DoctorCheck => {
@@ -555,7 +574,11 @@ const checkUtility = (res: Resolved): DoctorCheck => {
       fix: "Install util-linux (flock)",
     };
   }
-  return { id: "utility", status: "pass", detail: "git (and flock where required) on PATH" };
+  return {
+    id: "utility",
+    status: "pass",
+    detail: "git (and flock where required) on PATH",
+  };
 };
 
 const staleEntry = (entry: string): "ok" | "stale" | "missing-file" => {
@@ -579,7 +602,11 @@ const checkStalePin = (res: Resolved): DoctorCheck => {
     };
   }
   if (!existsSync(res.opencodeConfig)) {
-    return { id: "stale_pin", status: "pass", detail: "no opencode config — not registered" };
+    return {
+      id: "stale_pin",
+      status: "pass",
+      detail: "no opencode config — not registered",
+    };
   }
   const cfg = readJson(res.opencodeConfig);
   const entries = pluginEntries(cfg);
@@ -609,6 +636,169 @@ const checkStalePin = (res: Resolved): DoctorCheck => {
     };
   }
   return { id: "stale_pin", status: "pass", detail: "opencode pin resolves" };
+};
+
+// Cursor plugin stale-install detection (CA-01/CA-04). Compares the installed
+// `~/.cursor/plugins/local/workit` against the current runtime source of truth
+// (`CURSOR_RUNTIME_PACKAGE` + the canonical entry builders from registration.ts,
+// D-02) and surfaces a structured `stale_install` finding with the exact repair
+// step. A stale install means the plugin's sessionStart hook and MCP entry run
+// an ancient runtime that no longer auto-registers the workflow features.
+//
+// Three independent staleness signals are read from the installed plugin dir:
+//  1. Legacy selectors (offline evidence, checked first): the plugin's own
+//     mcp.json (`--package=...workit-cursor@<exact>` pins other than the
+//     canonical `@latest`) and hooks-cursor.json sessionStart command.
+//  2. Installed version behind the current source release (offline): the dev
+//     checkout's workit-cursor version (or the doctor's own package version)
+//     is the release train the doctor ships with.
+//  3. Local-dist installs behind the published runtime (needs the registry):
+//     the probe is the sole network read in the doctor. A SUCCEEDED probe with
+//     the installed version genuinely behind the published runtime is a hard
+//     `stale_install` fail (the installer self-heals on it); an unreachable
+//     registry fails open (CA-04) as a `registry_unreachable` warning, never a
+//     false `stale_install` and never a hard doctor failure. Canonical
+//     `@latest` installs skip the probe entirely: the selector resolves fresh
+//     at launch, so the installed package.json version is metadata, not a
+//     freshness signal.
+// Test seams (no spawns on the canonical path): WORKIT_DOCTOR_STALE_REGISTRY_VERSION
+// short-circuits the probe with the resolved latest version; the optional
+// WORKIT_DOCTOR_STALE_REGISTRY_CMD replaces the `npm view` binary (a
+// nonexistent path deterministically exercises the fail-open path).
+const pluginMcpSelectors = (res: Resolved): string[] | null => {
+  const p = path.join(res.cursorPluginDir, "mcp.json");
+  if (!existsSync(p)) return null;
+  const cfg = readJson(p);
+  const server = cfg?.mcpServers?.workit;
+  if (!server || typeof server !== "object" || Array.isArray(server)) return null;
+  const args = server.args;
+  if (!Array.isArray(args)) return null;
+  return args.map(String).filter((a) => a.startsWith("--package="));
+};
+
+const registryLatestVersion = (res: Resolved): string | null => {
+  const seam = res.env.WORKIT_DOCTOR_STALE_REGISTRY_VERSION;
+  if (typeof seam === "string" && seam) {
+    return /^\d+(?:\.\d+){1,2}$/.test(seam) ? seam : null;
+  }
+  const cmd =
+    res.env.WORKIT_DOCTOR_STALE_REGISTRY_CMD ?? (commandOnPath("npm", res.env) ? "npm" : null);
+  if (!cmd) return null;
+  try {
+    const r = spawnSync(cmd, ["view", CURSOR_RUNTIME_PACKAGE, "version"], {
+      encoding: "utf8",
+      timeout: 20_000,
+      env: res.env,
+    });
+    const v = (r.stdout ?? "").trim().split(/\s+/)[0];
+    return r.status === 0 && /^\d+(?:\.\d+){1,2}$/.test(v) ? v : null;
+  } catch {
+    return null;
+  }
+};
+
+const installedPluginVersion = (res: Resolved): string | null => {
+  const pkg = readJson(path.join(res.cursorPluginDir, "package.json"));
+  return typeof pkg?.version === "string" && pkg.version ? pkg.version : null;
+};
+
+const checkStaleInstall = (res: Resolved): DoctorCheck & { registryProbed?: boolean } => {
+  if (res.host !== "cursor" && res.host !== "cli") {
+    return {
+      id: "stale_install",
+      status: "pass",
+      detail: "cursor plugin not inspected on the opencode host",
+    };
+  }
+  const canonicalMcp = cursorMcpServerEntry("").args.find((a) => a.startsWith("--package="));
+  const mcpSelectors = pluginMcpSelectors(res);
+  const legacyPin = (mcpSelectors ?? []).find(
+    (s) => s !== canonicalMcp && s.includes("@brainervirus/workit-cursor@"),
+  );
+  if (legacyPin) {
+    return {
+      id: "stale_install",
+      status: "fail",
+      detail: `stale_install: plugin mcp.json pins a legacy selector ${legacyPin} (canonical: ${canonicalMcp})`,
+      fix: "Re-run install-cursor-plugin.sh — it rewrites the workit MCP entry to the canonical @latest selector",
+    };
+  }
+  const hooksFile = path.join(res.cursorPluginDir, "hooks", "hooks-cursor.json");
+  const hookCmd =
+    (readJson(hooksFile)?.hooks?.sessionStart?.[0]?.command as string | undefined) ?? null;
+  const canonicalHook = canonicalCursorHook;
+  const staleHook =
+    hookCmd !== null &&
+    hookCmd !== canonicalHook &&
+    !hookCmd.startsWith("node ") &&
+    hookCmd.includes("@brainervirus/workit-cursor@");
+  if (staleHook) {
+    return {
+      id: "stale_install",
+      status: "fail",
+      detail: `stale_install: sessionStart hook runs a legacy selector (canonical: ${canonicalHook})`,
+      fix: "Re-run install-cursor-plugin.sh — it rewrites the sessionStart hook to the canonical @latest selector",
+    };
+  }
+  const installed = installedPluginVersion(res);
+  const source = res.dev
+    ? ((readJson(path.join(res.dev, "packages/workit-cursor/package.json"))?.version as
+        | string
+        | undefined) ?? null)
+    : ((readJson(path.join(packageRoot(), "package.json"))?.version as string | undefined) ?? null);
+  // A local-dist install (node entry) runs the installed dir's own dist, so its
+  // version is comparable against the current runtime (and the published one
+  // below). Canonical @latest installs resolve fresh at launch — the installed
+  // package.json version is metadata, not a freshness signal (CA-04), so they
+  // skip both version comparisons and never fail stale_install on metadata.
+  const localDist = mcpSelectors === null && hookCmd !== null && hookCmd.startsWith("node ");
+  if (localDist && installed !== null && source !== null && !semverAtLeast(installed, source)) {
+    return {
+      id: "stale_install",
+      status: "fail",
+      detail: `stale_install: installed workit-cursor ${installed} is behind the current runtime ${source}`,
+      fix: "Re-run install-cursor-plugin.sh — it refreshes the plugin directory and rewrites the workit MCP/hook entries",
+    };
+  }
+  if (installed !== null && localDist) {
+    const expected = registryLatestVersion(res);
+    if (expected === null) {
+      return {
+        id: "registry_unreachable",
+        status: "warn",
+        registryProbed: true,
+        detail:
+          "registry_unreachable: cannot compare installed workit-cursor against the published runtime",
+        fix: "Retry when the npm registry is reachable, or re-run install-cursor-plugin.sh to refresh the install",
+      };
+    }
+    if (!semverAtLeast(installed, expected)) {
+      // The probe SUCCEEDED and the installed version is genuinely behind the
+      // published runtime: report a hard fail so `doctor-check.ts cursor --stale`
+      // exits 2 and the installer self-heals the local-dist install.
+      return {
+        id: "stale_install",
+        status: "fail",
+        registryProbed: true,
+        detail: `stale_install: local-dist workit-cursor ${installed} is behind the published runtime ${expected}`,
+        fix: "Re-run install-cursor-plugin.sh — it refreshes the plugin directory with the current build",
+      };
+    }
+    return {
+      id: "stale_install",
+      status: "pass",
+      registryProbed: true,
+      detail: `installed local-dist workit-cursor ${installed} matches the published runtime ${expected}`,
+    };
+  }
+  return {
+    id: "stale_install",
+    status: "pass",
+    detail:
+      installed === null
+        ? "installed workit-cursor selectors are canonical"
+        : `installed workit-cursor ${installed} is metadata on the canonical @latest install (fresh at launch)`,
+  };
 };
 
 const checkDuplicateRegistration = (res: Resolved): DoctorCheck => {
@@ -659,7 +849,11 @@ const checkDuplicateRegistration = (res: Resolved): DoctorCheck => {
     }
   }
   if (problems.length === 0) {
-    return { id: "duplicate_registration", status: "pass", detail: "no duplicate registrations" };
+    return {
+      id: "duplicate_registration",
+      status: "pass",
+      detail: "no duplicate registrations",
+    };
   }
   return {
     id: "duplicate_registration",
@@ -682,7 +876,11 @@ const checkMalformedConfig = (res: Resolved): DoctorCheck => {
   if (cursorHost && existsSync(res.cursorMcp)) files.push(res.cursorMcp);
   const bad = files.filter((p) => !parsesAsConfigObject(p));
   if (bad.length === 0)
-    return { id: "malformed_config", status: "pass", detail: "config files parse" };
+    return {
+      id: "malformed_config",
+      status: "pass",
+      detail: "config files parse",
+    };
   return {
     id: "malformed_config",
     status: "fail",
@@ -694,10 +892,18 @@ const checkMalformedConfig = (res: Resolved): DoctorCheck => {
 const checkWorkspaceMismatch = (res: Resolved): DoctorCheck => {
   const file = path.join(res.configDir, "workspaces.json");
   if (!existsSync(file))
-    return { id: "workspace_mismatch", status: "pass", detail: "no workspaces configured" };
+    return {
+      id: "workspace_mismatch",
+      status: "pass",
+      detail: "no workspaces configured",
+    };
   const ws = readJson(file);
   if (!Array.isArray(ws?.workspaces)) {
-    return { id: "workspace_mismatch", status: "pass", detail: "no workspaces configured" };
+    return {
+      id: "workspace_mismatch",
+      status: "pass",
+      detail: "no workspaces configured",
+    };
   }
   const match = resolveWorkspaceFrom(res.cwd, res.configDir);
   if (match)
@@ -748,7 +954,11 @@ const checkCredentialMetadata = (res: Resolved): DoctorCheck => {
   }
 
   if (tokenPaths.length === 0) {
-    return { id: "credential_metadata", status: "pass", detail: "no credentials configured" };
+    return {
+      id: "credential_metadata",
+      status: "pass",
+      detail: "no credentials configured",
+    };
   }
   const problems: string[] = [];
   for (const raw of tokenPaths) {
@@ -786,7 +996,11 @@ const checkLogWritable = (res: Resolved): DoctorCheck => {
   try {
     mkdirSync(logsDir, { recursive: true, mode: 0o700 });
     writeFileSync(probe, '{"probe":true}\n', { mode: 0o600 });
-    return { id: "log_writable", status: "pass", detail: "log directory writable" };
+    return {
+      id: "log_writable",
+      status: "pass",
+      detail: "log directory writable",
+    };
   } catch (err) {
     return {
       id: "log_writable",
@@ -810,6 +1024,7 @@ const RUN_CHECKS: Array<(res: Resolved) => DoctorCheck> = [
   checkLauncher,
   checkUtility,
   checkStalePin,
+  checkStaleInstall,
   checkDuplicateRegistration,
   checkMalformedConfig,
   checkWorkspaceMismatch,
@@ -827,6 +1042,7 @@ const INSTALLER_REQUIRED = new Set<DoctorCheckId>([
   "launcher",
   "utility",
   "stale_pin",
+  "stale_install",
   "duplicate_registration",
   "malformed_config",
 ]);
@@ -837,7 +1053,11 @@ export const runDoctor = (options: DoctorOptions = {}): DoctorReport => {
   const checks = res.installer
     ? raw.map((c) =>
         c.status === "fail" && !INSTALLER_REQUIRED.has(c.id)
-          ? { ...c, status: "warn" as const, detail: `${c.detail} (not enforced by installer)` }
+          ? {
+              ...c,
+              status: "warn" as const,
+              detail: `${c.detail} (not enforced by installer)`,
+            }
           : c,
       )
     : raw;
@@ -846,10 +1066,11 @@ export const runDoctor = (options: DoctorOptions = {}): DoctorReport => {
   const warned = checks.filter((c) => c.status === "warn").length;
   const passed = checks.filter((c) => c.status === "pass").length;
   const exitCode = failed > 0 ? 1 : 0;
+  const offline = !raw.some((c) => "registryProbed" in c && c.registryProbed);
   const report: DoctorReport = {
     ok: failed === 0,
     exitCode,
-    offline: true,
+    offline,
     host: res.host,
     checked_at: new Date().toISOString(),
     summary: { passed, warned, failed, total: checks.length },
@@ -862,7 +1083,7 @@ export const runDoctor = (options: DoctorOptions = {}): DoctorReport => {
   getDiagnosticLogger()?.info(EVENT.doctor, {
     host: res.host,
     exit_code: exitCode,
-    offline: true,
+    offline,
     failed: checks.filter((c) => c.status === "fail").map((c) => c.id),
     total: checks.length,
   });

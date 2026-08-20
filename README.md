@@ -117,7 +117,7 @@ Local dev variant (absolute path to this repo):
 }
 ```
 
-A local (non-npm) Cursor install lives at `~/.cursor/plugins/local/workit` and registers `enabled_plugins.workit = true`; the installer migrates exact legacy `workflow-toolkit` entries after the replacement succeeds. Marketplace installation, the MCP/hook runtime, and the authenticated submission flow are documented in the [Cursor package README](packages/workit-cursor/README.md#marketplace). The Cursor runtime runs from `@latest` with the mandatory `--prefer-online` flag — `--prefer-online` forces fresh registry re-resolution so a stale `latest` in the `_npx` cache is never reused, and no per-release manual pin bump is required.
+A local (non-npm) Cursor install lives at `~/.cursor/plugins/local/workit` and registers `enabled_plugins.workit = true`; the installer migrates exact legacy `workflow-toolkit` entries after the replacement succeeds. Marketplace installation, the MCP/hook runtime, and the authenticated submission flow are documented in the [Cursor package README](packages/workit-cursor/README.md#marketplace). The Cursor runtime runs from `@latest` with the mandatory `--prefer-online` flag — `--prefer-online` forces fresh registry re-resolution so a stale `latest` in the `_npx` cache is never reused, and no per-release manual pin bump is required. Auto-load repair is automatic: the doctor's `stale_install` finding (legacy `mcp.json`/hook selectors, or a local-dist install behind the current/published runtime) is enforced by `install-cursor-plugin.sh` through a `doctor-check.ts cursor --stale` pre-check — exit 2 triggers a refresh + canonical re-registration, healthy installs are byte-untouched, and a registry-unreachable comparison warns as `registry_unreachable` (fail-open, never an install failure).
 
 ## Requirements
 
@@ -191,7 +191,7 @@ npx @brainervirus/workit-cli doctor          # human-readable report
 npx @brainervirus/workit-cli doctor --json   # machine-readable report
 ```
 
-Checks cover the runtime, toolchain versions, assets, launchers/hooks, stale plugin pins, duplicate registrations, malformed config, workspace mismatches, credential metadata, and log writability.
+Checks cover the runtime, toolchain versions, assets, launchers/hooks, stale plugin pins, duplicate registrations, malformed config, workspace mismatches, credential metadata, and log writability. On the Cursor/CLI hosts a `stale_install` finding additionally catches legacy `mcp.json`/hook selectors and local-dist installs behind the current/published runtime — re-running `install-cursor-plugin.sh` self-heals them (a `doctor-check.ts cursor --stale` exit 2 triggers refresh + canonical re-registration; a registry-unreachable comparison fails open as `registry_unreachable`).
 
 ## Repo layout
 

@@ -156,7 +156,9 @@ function runDoctorCommand(args: string[]) {
   if (args.includes("--json")) {
     console.log(JSON.stringify(report, null, 2));
   } else {
-    console.log(`workit doctor — ${report.ok ? "healthy" : "problems found"} (offline)`);
+    console.log(
+      `workit doctor — ${report.ok ? "healthy" : "problems found"} (${report.offline ? "offline" : "online"})`,
+    );
     for (const check of report.checks) {
       const mark = check.status === "fail" ? "FAIL" : check.status === "warn" ? "WARN" : "ok  ";
       console.log(`${mark} ${check.id} — ${check.detail}`);
