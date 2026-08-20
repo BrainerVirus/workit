@@ -65,7 +65,8 @@ export type DoctorSummary = {
 export type DoctorReport = {
   ok: boolean;
   exitCode: number;
-  offline: true;
+  /** False when the doctor consulted the npm registry (local-dist version probe). */
+  offline: boolean;
   host: DoctorHost;
   checked_at: string;
   summary: DoctorSummary;
@@ -699,7 +700,7 @@ const installedPluginVersion = (res: Resolved): string | null => {
   return typeof pkg?.version === "string" && pkg.version ? pkg.version : null;
 };
 
-const checkStaleInstall = (res: Resolved): DoctorCheck => {
+const checkStaleInstall = (res: Resolved): DoctorCheck & { registryProbed?: boolean } => {
   if (res.host !== "cursor" && res.host !== "cli") {
     return {
       id: "stale_install",
@@ -743,7 +744,13 @@ const checkStaleInstall = (res: Resolved): DoctorCheck => {
         | string
         | undefined) ?? null)
     : ((readJson(path.join(packageRoot(), "package.json"))?.version as string | undefined) ?? null);
-  if (installed !== null && source !== null && !semverAtLeast(installed, source)) {
+  // A local-dist install (node entry) runs the installed dir's own dist, so its
+  // version is comparable against the current runtime (and the published one
+  // below). Canonical @latest installs resolve fresh at launch — the installed
+  // package.json version is metadata, not a freshness signal (CA-04), so they
+  // skip both version comparisons and never fail stale_install on metadata.
+  const localDist = mcpSelectors === null && hookCmd !== null && hookCmd.startsWith("node ");
+  if (localDist && installed !== null && source !== null && !semverAtLeast(installed, source)) {
     return {
       id: "stale_install",
       status: "fail",
@@ -751,16 +758,13 @@ const checkStaleInstall = (res: Resolved): DoctorCheck => {
       fix: "Re-run install-cursor-plugin.sh — it refreshes the plugin directory and rewrites the workit MCP/hook entries",
     };
   }
-  // A local-dist install (node entry) runs the installed dir's own dist, so the
-  // published runtime is the meaningful comparison. Canonical @latest installs
-  // resolve at launch — the probe is skipped and the install is current.
-  const localDist = mcpSelectors === null && hookCmd !== null && hookCmd.startsWith("node ");
   if (installed !== null && localDist) {
     const expected = registryLatestVersion(res);
     if (expected === null) {
       return {
         id: "registry_unreachable",
         status: "warn",
+        registryProbed: true,
         detail:
           "registry_unreachable: cannot compare installed workit-cursor against the published runtime",
         fix: "Retry when the npm registry is reachable, or re-run install-cursor-plugin.sh to refresh the install",
@@ -770,10 +774,17 @@ const checkStaleInstall = (res: Resolved): DoctorCheck => {
       return {
         id: "stale_install",
         status: "warn",
+        registryProbed: true,
         detail: `stale_install: local-dist workit-cursor ${installed} is behind the published runtime ${expected}`,
         fix: "Re-run install-cursor-plugin.sh — it refreshes the plugin directory with the current build",
       };
     }
+    return {
+      id: "stale_install",
+      status: "pass",
+      registryProbed: true,
+      detail: `installed local-dist workit-cursor ${installed} matches the published runtime ${expected}`,
+    };
   }
   return {
     id: "stale_install",
@@ -781,7 +792,7 @@ const checkStaleInstall = (res: Resolved): DoctorCheck => {
     detail:
       installed === null
         ? "installed workit-cursor selectors are canonical"
-        : `installed workit-cursor ${installed} matches the current runtime (${CURSOR_RUNTIME_PACKAGE})`,
+        : `installed workit-cursor ${installed} is metadata on the canonical @latest install (fresh at launch)`,
   };
 };
 
@@ -1050,10 +1061,11 @@ export const runDoctor = (options: DoctorOptions = {}): DoctorReport => {
   const warned = checks.filter((c) => c.status === "warn").length;
   const passed = checks.filter((c) => c.status === "pass").length;
   const exitCode = failed > 0 ? 1 : 0;
+  const offline = !raw.some((c) => "registryProbed" in c && c.registryProbed);
   const report: DoctorReport = {
     ok: failed === 0,
     exitCode,
-    offline: true,
+    offline,
     host: res.host,
     checked_at: new Date().toISOString(),
     summary: { passed, warned, failed, total: checks.length },
@@ -1066,7 +1078,7 @@ export const runDoctor = (options: DoctorOptions = {}): DoctorReport => {
   getDiagnosticLogger()?.info(EVENT.doctor, {
     host: res.host,
     exit_code: exitCode,
-    offline: true,
+    offline,
     failed: checks.filter((c) => c.status === "fail").map((c) => c.id),
     total: checks.length,
   });

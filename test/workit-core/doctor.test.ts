@@ -71,14 +71,32 @@ test("doctor is offline and a healthy fixture is fully green with exitCode 0", (
   expect(report.fixes).toEqual([]);
 });
 
-test("reports stale_install when the installed plugin version is behind the current runtime", () => {
+test("reports stale_install when a local-dist install is behind the current runtime", () => {
   const pluginPkg = path.join(fixture.pluginDir, "package.json");
+  const hooksFile = path.join(fixture.pluginDir, "hooks", "hooks-cursor.json");
+  const originalHooks = readFileSync(hooksFile, "utf8");
   writeConfig(
     pluginPkg,
     JSON.stringify({
       name: "@brainervirus/workit-cursor",
       version: "0.3.0",
       dependencies: { "@brainervirus/workit-core": "workspace:*" },
+    }),
+  );
+  // A local-dist install (node hook, no mcp.json selector) runs the installed
+  // dir's own dist, so its version is compared against the current runtime.
+  rmSync(path.join(fixture.pluginDir, "mcp.json"), { force: true });
+  writeConfig(
+    hooksFile,
+    JSON.stringify({
+      version: 1,
+      hooks: {
+        sessionStart: [
+          {
+            command: `node ${path.join(fixture.pluginDir, "dist", "cursor-session-start.js")}`,
+          },
+        ],
+      },
     }),
   );
   try {
@@ -90,6 +108,7 @@ test("reports stale_install when the installed plugin version is behind the curr
     expect(stale.fix).toBeTruthy();
   } finally {
     rmSync(pluginPkg, { force: true });
+    writeConfig(hooksFile, originalHooks);
   }
   expect(check(run(), "stale_install").status).toBe("pass");
 });
@@ -131,6 +150,64 @@ test("healthy fixture: canonical install yields no stale_install finding", () =>
   const stale = check(report, "stale_install");
   expect(stale.status).toBe("pass");
   expect(stale.detail).not.toMatch(/stale/i);
+});
+
+test("canonical @latest install with an old plugin package.json version is not stale", () => {
+  // CA-01/CA-04: a canonical `@latest` install resolves fresh at launch, so the
+  // installed package.json version is metadata — never a `stale_install` fail.
+  const pluginPkg = path.join(fixture.pluginDir, "package.json");
+  writeConfig(pluginPkg, JSON.stringify({ name: "@brainervirus/workit-cursor", version: "0.0.1" }));
+  try {
+    const report = run();
+    expect(report.exitCode).toBe(0);
+    expect(report.ok).toBe(true);
+    const stale = check(report, "stale_install");
+    expect(stale.status).toBe("pass");
+    expect(stale.detail).not.toMatch(/stale/i);
+  } finally {
+    rmSync(pluginPkg, { force: true });
+  }
+  expect(check(run(), "stale_install").status).toBe("pass");
+});
+
+test("offline flag reflects the registry probe: false for local-dist installs, true otherwise", () => {
+  const pluginPkg = path.join(fixture.pluginDir, "package.json");
+  const hooksFile = path.join(fixture.pluginDir, "hooks", "hooks-cursor.json");
+  const originalHooks = readFileSync(hooksFile, "utf8");
+  writeConfig(pluginPkg, JSON.stringify({ name: "@brainervirus/workit-cursor", version: "0.4.0" }));
+  // A local-dist install (node hook, no mcp.json selector) is the only shape
+  // that consults the registry; the version seam keeps the probe spawn-free.
+  rmSync(path.join(fixture.pluginDir, "mcp.json"), { force: true });
+  writeConfig(
+    hooksFile,
+    JSON.stringify({
+      version: 1,
+      hooks: {
+        sessionStart: [
+          {
+            command: `node ${path.join(fixture.pluginDir, "dist", "cursor-session-start.js")}`,
+          },
+        ],
+      },
+    }),
+  );
+  try {
+    const report = runDoctor({
+      host: "cli",
+      home: fixture.home,
+      configDir: fixture.configDir,
+      stateDir: fixture.stateDir,
+      dev: fixture.dev,
+      cwd: fixture.cwd,
+      env: { ...process.env, WORKIT_DOCTOR_STALE_REGISTRY_VERSION: "0.4.0" },
+    });
+    expect(report.offline).toBe(false);
+    expect(check(report, "stale_install").status).toBe("pass");
+  } finally {
+    rmSync(pluginPkg, { force: true });
+    writeConfig(hooksFile, originalHooks);
+  }
+  expect(run().offline).toBe(true);
 });
 
 test("registry-unreachable staleness comparison yields registry_unreachable, not stale_install", () => {
@@ -181,7 +258,9 @@ test("registry-unreachable staleness comparison yields registry_unreachable, not
 test("detects a stale opencode pin and clears once re-pinned", () => {
   writeConfig(
     fixture.opencodeConfig,
-    JSON.stringify({ plugin: ["workit-opencode@git+file:///nonexistent/stale"] }),
+    JSON.stringify({
+      plugin: ["workit-opencode@git+file:///nonexistent/stale"],
+    }),
   );
   const report = run();
   expect(report.exitCode).not.toBe(0);
@@ -190,7 +269,9 @@ test("detects a stale opencode pin and clears once re-pinned", () => {
 
   writeConfig(
     fixture.opencodeConfig,
-    JSON.stringify({ plugin: [`file://${fixture.dev}/packages/workit-opencode/src/plugin.ts`] }),
+    JSON.stringify({
+      plugin: [`file://${fixture.dev}/packages/workit-opencode/src/plugin.ts`],
+    }),
   );
   expect(check(run(), "stale_pin").status).toBe("pass");
 });
@@ -198,7 +279,9 @@ test("detects a stale opencode pin and clears once re-pinned", () => {
 test("detects a stale git+file workit pin and clears once re-pinned", () => {
   writeConfig(
     fixture.opencodeConfig,
-    JSON.stringify({ plugin: ["workflow-toolkit-opencode@git+file:///legacy"] }),
+    JSON.stringify({
+      plugin: ["workflow-toolkit-opencode@git+file:///legacy"],
+    }),
   );
   const report = run();
   expect(report.exitCode).not.toBe(0);
@@ -209,7 +292,9 @@ test("detects a stale git+file workit pin and clears once re-pinned", () => {
 
   writeConfig(
     fixture.opencodeConfig,
-    JSON.stringify({ plugin: [`file://${fixture.dev}/packages/workit-opencode/src/plugin.ts`] }),
+    JSON.stringify({
+      plugin: [`file://${fixture.dev}/packages/workit-opencode/src/plugin.ts`],
+    }),
   );
   expect(check(run(), "stale_pin").status).toBe("pass");
 });
@@ -234,14 +319,18 @@ test("detects a workit pin pointing at a deleted file and clears once restored",
 test("accepts a string plugin entry (not just an array) when checking the pin", () => {
   writeConfig(
     fixture.opencodeConfig,
-    JSON.stringify({ plugin: `file://${fixture.dev}/packages/workit-opencode/src/plugin.ts` }),
+    JSON.stringify({
+      plugin: `file://${fixture.dev}/packages/workit-opencode/src/plugin.ts`,
+    }),
   );
   try {
     expect(check(run(), "stale_pin").status).toBe("pass");
   } finally {
     writeConfig(
       fixture.opencodeConfig,
-      JSON.stringify({ plugin: [`file://${fixture.dev}/packages/workit-opencode/src/plugin.ts`] }),
+      JSON.stringify({
+        plugin: [`file://${fixture.dev}/packages/workit-opencode/src/plugin.ts`],
+      }),
     );
   }
 });
@@ -249,7 +338,9 @@ test("accepts a string plugin entry (not just an array) when checking the pin", 
 test("cursor host never inspects the opencode config for stale pins", () => {
   writeConfig(
     fixture.opencodeConfig,
-    JSON.stringify({ plugin: ["workflow-toolkit-opencode@git+file:///legacy"] }),
+    JSON.stringify({
+      plugin: ["workflow-toolkit-opencode@git+file:///legacy"],
+    }),
   );
   try {
     const report = runDoctor({
@@ -265,7 +356,9 @@ test("cursor host never inspects the opencode config for stale pins", () => {
   } finally {
     writeConfig(
       fixture.opencodeConfig,
-      JSON.stringify({ plugin: [`file://${fixture.dev}/packages/workit-opencode/src/plugin.ts`] }),
+      JSON.stringify({
+        plugin: [`file://${fixture.dev}/packages/workit-opencode/src/plugin.ts`],
+      }),
     );
   }
 });
@@ -279,7 +372,10 @@ test("detects mixed core versions across adapters and clears once aligned", () =
       good,
       JSON.stringify({
         ...original,
-        dependencies: { ...original.dependencies, "@brainervirus/workit-core": "^0.3.0" },
+        dependencies: {
+          ...original.dependencies,
+          "@brainervirus/workit-core": "^0.3.0",
+        },
       }),
     );
     const report = run();
@@ -300,7 +396,10 @@ test("detects an out-of-matrix opencode SDK pin as mixed versions", () => {
       opencodePkg,
       JSON.stringify({
         ...original,
-        dependencies: { ...original.dependencies, "@opencode-ai/plugin": "0.9.0" },
+        dependencies: {
+          ...original.dependencies,
+          "@opencode-ai/plugin": "0.9.0",
+        },
       }),
     );
     const report = run();
@@ -450,7 +549,9 @@ test("cursor launcher validates the canonical registered MCP target", () => {
   writeConfig(registered, "#!/usr/bin/env node\nconst broken = ;\n");
   writeConfig(
     fixture.cursorMcp,
-    JSON.stringify({ mcpServers: { workit: { command: "node", args: [registered] } } }),
+    JSON.stringify({
+      mcpServers: { workit: { command: "node", args: [registered] } },
+    }),
   );
   try {
     for (const host of ["cursor", "cli"] as const) {
@@ -741,7 +842,9 @@ test("detects duplicate opencode registration and clears once deduplicated", () 
 
   writeConfig(
     fixture.opencodeConfig,
-    JSON.stringify({ plugin: [`file://${fixture.dev}/packages/workit-opencode/src/plugin.ts`] }),
+    JSON.stringify({
+      plugin: [`file://${fixture.dev}/packages/workit-opencode/src/plugin.ts`],
+    }),
   );
   expect(check(run(), "duplicate_registration").status).toBe("pass");
 });
@@ -761,7 +864,10 @@ test("detects duplicate cursor registration in settings and mcp and clears once 
     fixture.cursorMcp,
     JSON.stringify({
       mcpServers: {
-        workit: { command: "node", args: [path.join(fixture.pluginDir, "dist/mcp-server.js")] },
+        workit: {
+          command: "node",
+          args: [path.join(fixture.pluginDir, "dist/mcp-server.js")],
+        },
         "workflow-toolkit": { command: "node", args: ["legacy.js"] },
       },
     }),
@@ -782,7 +888,10 @@ test("detects duplicate cursor registration in settings and mcp and clears once 
     fixture.cursorMcp,
     JSON.stringify({
       mcpServers: {
-        workit: { command: "node", args: [path.join(fixture.pluginDir, "dist/mcp-server.js")] },
+        workit: {
+          command: "node",
+          args: [path.join(fixture.pluginDir, "dist/mcp-server.js")],
+        },
       },
     }),
   );
@@ -861,7 +970,9 @@ test("detects a workspace mismatch and clears once the glob matches", () => {
   const workspacesFile = path.join(fixture.configDir, "workspaces.json");
   writeConfig(
     workspacesFile,
-    JSON.stringify({ workspaces: [{ name: "other", glob: `${fixture.root}/elsewhere/**` }] }),
+    JSON.stringify({
+      workspaces: [{ name: "other", glob: `${fixture.root}/elsewhere/**` }],
+    }),
   );
   const report = run();
   expect(report.exitCode).not.toBe(0);
@@ -870,7 +981,9 @@ test("detects a workspace mismatch and clears once the glob matches", () => {
 
   writeConfig(
     workspacesFile,
-    JSON.stringify({ workspaces: [{ name: "current", glob: `${fixture.cwd}/**` }] }),
+    JSON.stringify({
+      workspaces: [{ name: "current", glob: `${fixture.cwd}/**` }],
+    }),
   );
   expect(check(run(), "workspace_mismatch").status).toBe("pass");
 });
@@ -1009,14 +1122,18 @@ test(
 test("installer fails on a broken selected-host registration", () => {
   writeConfig(
     fixture.opencodeConfig,
-    JSON.stringify({ plugin: ["workit-opencode@git+file:///nonexistent/stale"] }),
+    JSON.stringify({
+      plugin: ["workit-opencode@git+file:///nonexistent/stale"],
+    }),
   );
   try {
     expectInstallerFailure("stale_pin", "install-opencode-plugin.sh");
   } finally {
     writeConfig(
       fixture.opencodeConfig,
-      JSON.stringify({ plugin: [`file://${fixture.dev}/packages/workit-opencode/src/plugin.ts`] }),
+      JSON.stringify({
+        plugin: [`file://${fixture.dev}/packages/workit-opencode/src/plugin.ts`],
+      }),
     );
   }
   expect(check(runInstaller(), "stale_pin").status).toBe("pass");
@@ -1041,7 +1158,10 @@ test("installer downgrades optional parity checks to warnings, not failures", ()
       opencodePkg,
       JSON.stringify({
         ...original,
-        dependencies: { ...original.dependencies, "@brainervirus/workit-core": "^0.3.0" },
+        dependencies: {
+          ...original.dependencies,
+          "@brainervirus/workit-core": "^0.3.0",
+        },
       }),
     );
     const report = runInstaller();
