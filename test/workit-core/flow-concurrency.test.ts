@@ -1,5 +1,6 @@
 import { expect, test, mock } from "bun:test";
 import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import {
   chmodSync,
   closeSync,
@@ -35,7 +36,11 @@ import {
   type MutationContext,
 } from "../../packages/workit-core/src/core/flow-state";
 import { resolveBranch } from "../../packages/workit-core/src/core/branch";
-import { sddAppendProgress, sddTaskBrief } from "../../packages/workit-core/src/core/sdd";
+import {
+  sddAppendProgress,
+  sddReviewPackage,
+  sddTaskBrief,
+} from "../../packages/workit-core/src/core/sdd";
 import type { runVerifyProject } from "../../packages/workit-core/src/core/verify-project";
 import {
   findActiveSubagentDrivenPlans,
@@ -1234,6 +1239,79 @@ test("CA-12..CA-17: literal clean-start contract — menu record -> branch setup
     expect(progress.error).toBeUndefined();
     expect(readFileSync(path.join(root, "docs", slug, "sdd", "progress.md"), "utf8")).toContain(
       "Task 1: complete",
+    );
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("CA-16: composed opencode-path clean start — receipts to review package with zero failed calls", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wf-concurrency-"));
+  const slug = "conc-flow";
+  const plan = `docs/${slug}/plan.md`;
+  const git = (...args: string[]) =>
+    execFileSync("git", args, { cwd: root, encoding: "utf8" }).trim();
+  try {
+    // Real git repo so sddReviewPackage can diff a non-empty base..head range.
+    git("init");
+    git("config", "user.email", "t@t");
+    git("config", "user.name", "t");
+    execFileSync("git", ["commit", "--allow-empty", "-m", "base"], { cwd: root });
+    const baseSha = git("rev-parse", "HEAD");
+
+    // Receipts -> approve spec+plan -> workflow_plan_menu(subagent-driven).
+    establishSubagentDriven(root, slug);
+    expect(readFlowState(root, slug).execution.coordinator_session_id).toBe(COORDINATOR_SESSION);
+
+    // Commit docs+flow state so base..HEAD diffs non-empty.
+    execFileSync("git", ["add", "-A"], { cwd: root });
+    execFileSync("git", ["commit", "-m", "docs+flow"], { cwd: root });
+    const headSha = git("rev-parse", "HEAD");
+
+    // Branch setup resolves from spec/plan metadata without error.
+    const branch = resolveBranch({
+      spec_path: `docs/${slug}/spec.md`,
+      plan_path: plan,
+      workspace_root: root,
+    });
+    expect("error" in branch).toBe(false);
+
+    // Coordinator task brief: control gates pass for the activating session.
+    const coordCtx = coordinator(root, COORDINATOR_SESSION);
+    expect(assertSddControlGates(root, slug, { requireMenu: true }, coordCtx).ok).toBe(true);
+    const brief = sddTaskBrief({
+      sdd_dir: `docs/${slug}/sdd`,
+      task_id: 1,
+      section_text: "Task 1: do the thing",
+      workspace_root: root,
+    });
+    expect(brief.error).toBeUndefined();
+    expect(existsSync(path.join(root, "docs", slug, "sdd", "task-1-brief.md"))).toBe(true);
+
+    // Authorized direct-child product write passes product gates.
+    expect(assertProductGates(root, slug, { requireMenu: true }, delegated(root)).ok).toBe(true);
+
+    // Coordinator review package over the real commit range.
+    const review = sddReviewPackage({
+      sdd_dir: `docs/${slug}/sdd`,
+      base_sha: baseSha,
+      head_sha: headSha,
+      workspace_root: root,
+    });
+    if ("error" in review) throw new Error(review.error);
+    expect(review.diff_path).toContain(
+      `review-${baseSha.slice(0, 7)}..${headSha.slice(0, 7)}.diff`,
+    );
+
+    // Validated ledger line appends.
+    const progress = sddAppendProgress({
+      progress_path: `docs/${slug}/sdd/progress.md`,
+      line: `Task 1: complete (commits ${baseSha.slice(0, 7)}..${headSha.slice(0, 7)}, review clean)`,
+      workspace_root: root,
+    });
+    expect(progress.error).toBeUndefined();
+    expect(readFileSync(path.join(root, "docs", slug, "sdd", "progress.md"), "utf8")).toContain(
+      `${baseSha.slice(0, 7)}..${headSha.slice(0, 7)}`,
     );
   } finally {
     cleanup(root);
