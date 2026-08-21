@@ -469,7 +469,9 @@ test("CA-18/AR-13: root-session interception blocks write tools and mutating she
     establishSubagentDriven(root, slug);
     const active = findActiveSubagentDrivenPlans(root).length > 0;
     expect(active).toBe(true);
-    for (const tool of ["write", "edit", "apply_patch", "patch", "workflow_sdd_task_brief"]) {
+    // SDD control tools are coordinator-owned via assertSddControlGates
+    // (Task 3) and are no longer product-write interceptions.
+    for (const tool of ["write", "edit", "apply_patch", "patch", "workflow_commit"]) {
       const decision = subagentDrivenInterception({
         tool,
         parentID: undefined,

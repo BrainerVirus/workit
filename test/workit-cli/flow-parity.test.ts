@@ -539,6 +539,85 @@ test("flow review-package in non-TTY mode without --confirm exits 2 and writes n
   }
 });
 
+test("flow append-advisory parity: valid appends normalize, invalid input exits 1 with core codes", async () => {
+  const { root, slug, writeFlow } = fixture();
+  const advisories = path.join(root, "docs", slug, "sdd", "advisories.md");
+  try {
+    writeFlow();
+    // Valid append: tabs/repeated spaces collapse to one space.
+    const ok = await runFlow(
+      [
+        "append-advisory",
+        "--plan",
+        `docs/${slug}/plan.md`,
+        "--task",
+        "3",
+        "--text",
+        "  minor\tstyle   nit  ",
+        "--confirm",
+      ],
+      { cwd: root },
+    );
+    expect(ok.code, ok.stdout + ok.stderr).toBe(0);
+    expect(ok.stderr).toBe("");
+    expect(JSON.parse(ok.stdout)).toEqual({
+      ok: true,
+      advisories_path: `docs/${slug}/sdd/advisories.md`,
+      advisory: "minor style nit",
+    });
+    expect(readFileSync(advisories, "utf8")).toBe("- Task 3: minor style nit\n");
+
+    // Core validation codes surface with exit 1; failures write nothing.
+    for (const [flag, value, code] of [
+      ["--task", "0", "advisory_task_invalid"],
+      ["--task", "-2", "advisory_task_invalid"],
+      ["--task", "1.5", "advisory_task_invalid"],
+      ["--task", "abc", "advisory_task_invalid"],
+      ["--task", `${Number.MAX_SAFE_INTEGER + 1}`, "advisory_task_invalid"],
+      // An empty --text value is a CLI usage error (exit 2), so the
+      // empty-text advisory_text_invalid case lives in the core tests.
+      ["--text", "line1\nline2", "advisory_text_invalid"],
+      ["--text", "a".repeat(1001), "advisory_text_invalid"],
+    ] as const) {
+      const r = await runFlow(
+        [
+          "append-advisory",
+          "--plan",
+          `docs/${slug}/plan.md`,
+          "--task",
+          flag === "--task" ? value : "1",
+          "--text",
+          flag === "--text" ? value : "ok",
+          "--confirm",
+        ],
+        { cwd: root },
+      );
+      expect(r.code, `${flag} ${JSON.stringify(value)} -> ${r.stdout}${r.stderr}`).toBe(1);
+      expect(r.stdout).toBe("");
+      expect(JSON.parse(r.stderr).code).toBe(code);
+    }
+    expect(readFileSync(advisories, "utf8")).toBe("- Task 3: minor style nit\n");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("flow append-advisory in non-TTY mode without --confirm exits 2 and writes nothing", async () => {
+  const { root, slug } = fixture();
+  try {
+    const r = await runFlow(
+      ["append-advisory", "--plan", `docs/${slug}/plan.md`, "--task", "1", "--text", "ok"],
+      { cwd: root },
+    );
+    expect(r.code, r.stdout + r.stderr).toBe(2);
+    expect(r.stdout).toBe("");
+    expect(r.stderr).toContain("--confirm required when stdin is not a TTY");
+    expect(existsSync(path.join(root, "docs", slug, "sdd", "advisories.md"))).toBe(false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("usage errors exit 2 with stderr diagnostics", async () => {
   const { root, slug } = fixture();
   try {
@@ -562,6 +641,29 @@ test("usage errors exit 2 with stderr diagnostics", async () => {
       },
       {
         args: ["review-package", "--base", "abc1234", "--head", "abc1235", "--confirm"],
+        run: runFlow,
+      },
+      {
+        args: ["append-advisory", "--plan", `docs/${slug}/plan.md`, "--text", "ok", "--confirm"],
+        run: runFlow,
+      },
+      {
+        args: ["append-advisory", "--plan", `docs/${slug}/plan.md`, "--task", "1", "--confirm"],
+        run: runFlow,
+      },
+      {
+        args: [
+          "append-advisory",
+          "--plan",
+          `docs/${slug}/plan.md`,
+          "--task",
+          "1",
+          "--text",
+          "ok",
+          "--base",
+          "abc1234",
+          "--confirm",
+        ],
         run: runFlow,
       },
       { args: [], run: runHandoff },

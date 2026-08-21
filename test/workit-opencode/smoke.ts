@@ -182,7 +182,7 @@ test("plugin registers without a Cursor runtime path", async () => {
         "../../packages/workit-opencode/assets/vendor/superpowers/skills",
       ),
     ]);
-    expect(Object.keys(hooks.tool ?? {})).toHaveLength(47);
+    expect(Object.keys(hooks.tool ?? {})).toHaveLength(48);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

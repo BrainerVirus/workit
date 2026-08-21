@@ -900,6 +900,12 @@ describe("plugin registration", () => {
             progress_path: "docs/fixture/sdd/progress.md",
             line: "Task 1: complete",
           },
+          workflow_sdd_append_advisory: {
+            confirmed: false,
+            advisories_path: "docs/fixture/sdd/advisories.md",
+            task_id: 1,
+            text: "Fixture",
+          },
           workflow_handoff_session: { message: "safe fixture --stay" },
           workflow_youtrack_verify_token: {},
           workflow_youtrack_parse_issue: { issue_ref: "TEST-1" },

@@ -31,7 +31,7 @@ For every plan task whose ID is absent from `completed_task_ids`:
 3. Use `task` with the built-in `explore` agent for read-only discovery when needed, then a fresh built-in `general` agent to implement from the brief. The parent remains coordinator-only.
 4. Require product changes to follow TDD: failing check first, minimal implementation, passing focused check.
 5. Create the review package with `workflow_sdd_review_package` using `confirmed: true`.
-6. Dispatch separate `general` agents for spec-compliance review and code-quality review. **Blocking findings** (Critical, Important, or spec-compliance) may trigger at most **two** fix+re-review rounds per task. **Advisory** findings (Minor, style, YAGNI, taste) never pause the loop — append them to `<SDD_DIR>/advisories.md` with the task id.
+6. Dispatch separate `general` agents for spec-compliance review and code-quality review. **Blocking findings** (Critical, Important, or spec-compliance) may trigger at most **two** fix+re-review rounds per task. **Advisory** findings (Minor, style, YAGNI, taste) never pause the loop — append them with `workflow_sdd_append_advisory` (`--task <id> --text <text>`) using `confirmed: true`.
 7. Append the validated ledger line with `workflow_sdd_append_progress` using `confirmed: true`, then mark the task completed with `todowrite`.
 
 Each task lands exactly one contiguous non-empty commit range (`base..head`): fix rounds append commits to that range and never rewrite/amend an active review range; each progress line records the task's real base..head shas.

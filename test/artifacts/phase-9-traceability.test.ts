@@ -327,7 +327,7 @@ const ROWS: Row[] = [
       "forged evidence, replayed receipts, mismatched sessions/labels, and caller-supplied delegated roles fail; a real host question plus child session succeeds",
     evidence: [
       "test/workit-opencode/flow-enforcement.test.ts::receipt replay fails: one receipt approves exactly once",
-      "test/workit-opencode/flow-enforcement.test.ts::a real child session (host parentage) is delegated and passes product gates",
+      "test/workit-opencode/flow-enforcement.test.ts::a real child session (host parentage) is delegated and denied control metadata",
     ],
   },
   {

@@ -1,6 +1,7 @@
 import { createInterface } from "node:readline/promises";
 import path from "node:path";
 import {
+  assertSddControlGates,
   readEffectiveFlowState,
   transitionExecution,
   type CliConfirmation,
@@ -12,7 +13,7 @@ import {
   slugFromPath,
 } from "@brainervirus/workit-core/src/core/flow-state";
 import { resolveCanonicalLayout } from "@brainervirus/workit-core/src/core/docs-layout";
-import { sddReviewPackage } from "@brainervirus/workit-core/src/core/sdd";
+import { sddAppendAdvisory, sddReviewPackage } from "@brainervirus/workit-core/src/core/sdd";
 import type { runVerifyProject } from "@brainervirus/workit-core/src/core/verify-project";
 
 // Task 6 (CA-19/CA-21): the CLI flow/handoff surface. index.tsx stays a thin
@@ -33,7 +34,7 @@ export type FlowCliDeps = {
   err?: { write: (chunk: string) => void };
 };
 
-const FLOW_ACTIONS = ["status", "pause", "resume", "complete", "review-package"] as const;
+const FLOW_ACTIONS = ["status", "pause", "resume", "complete", "review-package", "append-advisory"] as const;
 type FlowAction = (typeof FLOW_ACTIONS)[number];
 type MutationAction = "pause" | "resume" | "complete";
 
@@ -47,6 +48,8 @@ export const COMMANDS = {
   complete: "workit flow complete --plan <path> [--confirm]",
   "review-package":
     "workit flow review-package --plan <path> --base <sha> --head <sha> [--confirm]",
+  "append-advisory":
+    "workit flow append-advisory --plan <path> --task <id> --text <text> [--confirm]",
   handoff: "workit handoff --message <text>",
 } as const;
 
@@ -56,6 +59,7 @@ const FLOW_COMMANDS: Record<FlowAction, string> = {
   resume: COMMANDS.resume,
   complete: COMMANDS.complete,
   "review-package": COMMANDS["review-package"],
+  "append-advisory": COMMANDS["append-advisory"],
 };
 
 const CLI_FLAG_EVIDENCE: CliConfirmation = { host: "cli", attested: false, confirmation: "flag" };
@@ -111,9 +115,9 @@ const usage = (err: { write: (chunk: string) => void }, text: string): number =>
   return 2;
 };
 
-type ParsedFlow = { plan: string; confirm: boolean; base?: string; head?: string };
+type ParsedFlow = { plan: string; confirm: boolean; base?: string; head?: string; task?: string; text?: string };
 
-const VALUE_FLAGS = ["--plan", "--base", "--head"] as const;
+const VALUE_FLAGS = ["--plan", "--base", "--head", "--task", "--text"] as const;
 
 function parseFlowFlags(
   action: FlowAction,
@@ -125,7 +129,15 @@ function parseFlowFlags(
   for (let i = 0; i < argv.length; i++) {
     const token = argv[i];
     if ((VALUE_FLAGS as readonly string[]).includes(token)) {
-      if (token !== "--plan" && action !== "review-package") {
+      if (token !== "--plan" && action !== "review-package" && action !== "append-advisory") {
+        usage(err, `usage: ${FLOW_COMMANDS[action]} — unknown flag: ${token}`);
+        return { ok: false };
+      }
+      if ((token === "--base" || token === "--head") && action !== "review-package") {
+        usage(err, `usage: ${FLOW_COMMANDS[action]} — unknown flag: ${token}`);
+        return { ok: false };
+      }
+      if ((token === "--task" || token === "--text") && action !== "append-advisory") {
         usage(err, `usage: ${FLOW_COMMANDS[action]} — unknown flag: ${token}`);
         return { ok: false };
       }
@@ -140,14 +152,24 @@ function parseFlowFlags(
         return { ok: false };
       }
       const existing =
-        token === "--plan" ? parsed.plan : token === "--base" ? parsed.base : parsed.head;
+        token === "--plan"
+          ? parsed.plan
+          : token === "--base"
+            ? parsed.base
+            : token === "--head"
+              ? parsed.head
+              : token === "--task"
+                ? parsed.task
+                : parsed.text;
       if (existing !== undefined) {
         usage(err, `usage: ${FLOW_COMMANDS[action]} — duplicate ${token} flag`);
         return { ok: false };
       }
       if (token === "--plan") parsed.plan = value;
       else if (token === "--base") parsed.base = value;
-      else parsed.head = value;
+      else if (token === "--head") parsed.head = value;
+      else if (token === "--task") parsed.task = value;
+      else parsed.text = value;
       i += 1;
     } else if (token === "--confirm") {
       if (action === "status") {
@@ -181,7 +203,17 @@ function parseFlowFlags(
       return { ok: false };
     }
   }
-  return { ok: true, parsed: { plan: parsed.plan, confirm, base: parsed.base, head: parsed.head } };
+  if (action === "append-advisory") {
+    if (parsed.task === undefined) {
+      usage(err, `usage: ${FLOW_COMMANDS[action]} — --task <id> required`);
+      return { ok: false };
+    }
+    if (parsed.text === undefined) {
+      usage(err, `usage: ${FLOW_COMMANDS[action]} — --text <text> required`);
+      return { ok: false };
+    }
+  }
+  return { ok: true, parsed: { plan: parsed.plan, confirm, base: parsed.base, head: parsed.head, task: parsed.task, text: parsed.text } };
 }
 
 /**
@@ -294,6 +326,34 @@ function reviewPackageCommand(
   return domainFail(err, result.code ?? "review_package_failed", result.error);
 }
 
+function appendAdvisoryCommand(
+  root: string,
+  parsed: ParsedFlow,
+  out: { write: (chunk: string) => void },
+  err: { write: (chunk: string) => void },
+): number {
+  const resolved = resolveCanonicalLayout({ workspace_root: root, plan_path: parsed.plan });
+  if (!resolved.ok) return domainFail(err, "path_invalid", resolved.error);
+  const slug = resolved.layout.slug;
+  const controlGate = assertSddControlGates(root, slug, { requireMenu: true, requireDocs: true });
+  if (!controlGate.ok) return domainFail(err, controlGate.code, controlGate.error);
+  // Numeric-looking argv becomes a number so core validates safe-integer and
+  // fractional cases; anything else stays a string and fails advisory_task_invalid.
+  const trimmed = (parsed.task as string).trim();
+  const taskId: unknown = /^-?\d+(\.\d+)?$/.test(trimmed) ? Number(trimmed) : trimmed;
+  const result = sddAppendAdvisory({
+    advisories_path: path.posix.join("docs", slug, "sdd", "advisories.md"),
+    task_id: taskId,
+    text: parsed.text as string,
+    workspace_root: root,
+  });
+  if ("error" in result) {
+    return domainFail(err, result.code ?? "advisory_failed", result.error);
+  }
+  writeJSON(out, { ok: true, advisories_path: result.advisories_path, advisory: result.advisory });
+  return 0;
+}
+
 export async function runFlowCommand(argv: string[], deps: FlowCliDeps = {}): Promise<number> {
   const out = outStream(deps);
   const err = errStream(deps);
@@ -301,7 +361,7 @@ export async function runFlowCommand(argv: string[], deps: FlowCliDeps = {}): Pr
   if (!action || !(FLOW_ACTIONS as readonly string[]).includes(action)) {
     return usage(
       err,
-      "usage: workit flow <status|pause|resume|complete|review-package> --plan <path> [--confirm]",
+      "usage: workit flow <status|pause|resume|complete|review-package|append-advisory> --plan <path> [--confirm]",
     );
   }
   const flowAction = action as FlowAction;
@@ -316,7 +376,10 @@ export async function runFlowCommand(argv: string[], deps: FlowCliDeps = {}): Pr
   if (flowAction === "review-package") {
     return reviewPackageCommand(root, parsed.parsed, out, err);
   }
-  return mutateCommand(root, parsed.parsed.plan, flowAction, evidence, deps, out, err);
+  if (flowAction === "append-advisory") {
+    return appendAdvisoryCommand(root, parsed.parsed, out, err);
+  }
+  return mutateCommand(root, parsed.parsed.plan, flowAction as MutationAction, evidence, deps, out, err);
 }
 
 export async function runHandoffCommand(argv: string[], deps: FlowCliDeps = {}): Promise<number> {

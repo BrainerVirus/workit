@@ -19,6 +19,7 @@ import {
   assertEvidenceShape,
   assertHostEvidence,
   assertProductGates,
+  assertSddControlGates,
   createCursorConfirmation,
   createOpenCodeEvidence,
   isCoordinatorBashAllowed,
@@ -34,6 +35,7 @@ import {
   transitionPlan,
   transitionSpec,
   type CliConfirmation,
+  type MutationContext,
 } from "../../packages/workit-core/src/core/flow-state";
 import type { VerifyResult } from "../../packages/workit-core/src/core/verify-project";
 import { findMarkedDestinations } from "../../packages/workit-core/src/core/menu";
@@ -862,6 +864,105 @@ test("product gates use the strict read: corrupt flow state is flow_state_invali
     }
   } finally {
     cleanup(root);
+  }
+});
+
+test("CA-10: control gates deny a delegated worker on active subagent-driven metadata but allow the coordinator", () => {
+  const { root, slug } = fixture();
+  try {
+    establishMenuChoice(root, slug, "subagent-driven");
+    const coordinator: MutationContext = {
+      hostWorkspace: root,
+      role: "coordinator",
+      sessionId: "root-session",
+    };
+    const delegated: MutationContext = {
+      hostWorkspace: root,
+      role: "delegated",
+      sessionId: "child-session",
+      taskIdentity: "child-session",
+    };
+    const denied = assertSddControlGates(root, slug, { requireMenu: true, requireDocs: true }, delegated);
+    expect(denied.ok).toBe(false);
+    if (denied.ok === false) {
+      expect(denied.code).toBe("sdd_control_denied");
+      expect(denied.error).toContain("coordinator-owned");
+    }
+    const allowed = assertSddControlGates(root, slug, { requireMenu: true, requireDocs: true }, coordinator);
+    expect(allowed.ok).toBe(true);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("CA-10: control gates are role-neutral when execution is not active subagent-driven", () => {
+  const { root, slug } = fixture();
+  try {
+    establishMenuChoice(root, slug, "handoff");
+    const delegated: MutationContext = {
+      hostWorkspace: root,
+      role: "delegated",
+      sessionId: "child-session",
+      taskIdentity: "child-session",
+    };
+    const allowed = assertSddControlGates(root, slug, { requireMenu: true, requireDocs: true }, delegated);
+    expect(allowed.ok).toBe(true);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("CA-10: control gates retain the workspace, approval, menu, and strict-read gates", () => {
+  const { root, slug } = fixture();
+  try {
+    // Strict read before activation.
+    const unactivated = assertSddControlGates(root, slug, {}, undefined);
+    expect(unactivated.ok).toBe(false);
+    if (unactivated.ok === false) expect(unactivated.code).toBe("flow_not_activated");
+
+    prepareFlowState(root, slug, { spec_path: `docs/${slug}/spec.md`, plan_path: `docs/${slug}/plan.md` });
+    // Workspace binding still applies.
+    const mismatched = assertSddControlGates(root, slug, {}, {
+      hostWorkspace: "/somewhere/else",
+      role: "coordinator",
+      sessionId: "s",
+    });
+    expect(mismatched.ok).toBe(false);
+    if (mismatched.ok === false) expect(mismatched.code).toBe("workspace_mismatch");
+    // Draft spec blocks before plan/menu checks.
+    const draft = assertSddControlGates(root, slug, { requireMenu: true }, undefined);
+    expect(draft.ok).toBe(false);
+    if (draft.ok === false) expect(draft.code).toBe("spec_not_approved");
+
+    establishMenuChoice(root, slug, "subagent-driven");
+    // Menu gate retained when required.
+    const noMenuOpt = assertSddControlGates(root, slug, { requireMenu: false }, undefined);
+    expect(noMenuOpt.ok).toBe(true);
+    // Approved + presented passes for an undefined (CLI) context.
+    const all = assertSddControlGates(root, slug, { requireMenu: true, requireDocs: true }, undefined);
+    expect(all.ok).toBe(true);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("CA-10: SDD control tools left COORDINATOR_WRITE_TOOLS; product and external tools stay denied", () => {
+  for (const controlTool of [
+    "workflow_sdd_task_brief",
+    "workflow_sdd_review_package",
+    "workflow_sdd_append_progress",
+    "workflow_sdd_append_advisory",
+  ]) {
+    expect(COORDINATOR_WRITE_TOOLS, controlTool).not.toContain(controlTool);
+    // Control tools are not intercepted as product writes; they carry their
+    // own coordinator-only gate in the adapter.
+    const decision = subagentDrivenInterception({ tool: controlTool, parentID: undefined, active: true });
+    expect(decision.ok, controlTool).toBe(true);
+  }
+  for (const productTool of ["write", "edit", "apply_patch", "workflow_commit", "workflow_youtrack_post"]) {
+    expect(COORDINATOR_WRITE_TOOLS, productTool).toContain(productTool);
+    const decision = subagentDrivenInterception({ tool: productTool, parentID: undefined, active: true });
+    expect(decision.ok, productTool).toBe(false);
   }
 });
 

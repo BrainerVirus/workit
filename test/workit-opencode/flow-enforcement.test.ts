@@ -1,12 +1,11 @@
 import { expect, test } from "bun:test";
-import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createFlowTools, type SessionLookup } from "../../packages/workit-opencode/src/tools/flow";
 import { createSddTools } from "../../packages/workit-opencode/src/tools/sdd";
 import { WorkflowStateStore } from "../../packages/workit-core/src/state";
 import {
-  COORDINATOR_RECOVERY_TEXT,
   HostReceiptStore,
   createOpenCodeEvidence,
   transitionPlan,
@@ -114,6 +113,12 @@ test("approval and menu tool schemas expose no evidence, role, or taskIdentity f
     "sdd_dir",
     "task_id",
     "section_text",
+  ]);
+  expect(schemaKeys(tools, "workflow_sdd_append_advisory")).toEqual([
+    "confirmed",
+    "advisories_path",
+    "task_id",
+    "text",
   ]);
 });
 
@@ -410,59 +415,92 @@ test("menu consumption accepts host-decorated receipt labels for every source ch
   }
 });
 
-test("a real child session (host parentage) is delegated and passes product gates", async () => {
+test("a real child session (host parentage) is delegated and denied control metadata", async () => {
   const { root, tools, receipts } = fixture(childClient("root-session"));
   try {
     await establishSubagentDriven(root, "oc-flow", receipts);
     const childCtx = { directory: root, worktree: root, sessionID: "child-session" } as never;
-    const brief = await run(
-      tools,
-      "workflow_sdd_task_brief",
-      {
-        confirmed: true,
-        sdd_dir: "docs/oc-flow/sdd",
-        task_id: 1,
-        section_text: "- [ ] Work\n",
-      },
-      childCtx,
-    );
-    expect(brief.ok).toBe(true);
+    for (const [name, args] of [
+      [
+        "workflow_sdd_task_brief",
+        { confirmed: true, sdd_dir: "docs/oc-flow/sdd", task_id: 1, section_text: "- [ ] Work\n" },
+      ],
+      [
+        "workflow_sdd_append_progress",
+        {
+          confirmed: true,
+          progress_path: "docs/oc-flow/sdd/progress.md",
+          line: "Task 1: complete (commits abcdef0..1234567, tests pass)",
+        },
+      ],
+      [
+        "workflow_sdd_append_advisory",
+        {
+          confirmed: true,
+          advisories_path: "docs/oc-flow/sdd/advisories.md",
+          task_id: 1,
+          text: "nit",
+        },
+      ],
+    ] as const) {
+      const denied = await run(tools, name, args, childCtx);
+      expect(denied.ok, name).toBe(false);
+      if (denied.ok === false) expect(denied.data?.code, name).toBe("sdd_control_denied");
+    }
+    expect(existsSync(path.join(root, "docs/oc-flow/sdd/task-1-brief.md"))).toBe(false);
+    expect(existsSync(path.join(root, "docs/oc-flow/sdd/progress.md"))).toBe(false);
+    expect(existsSync(path.join(root, "docs/oc-flow/sdd/advisories.md"))).toBe(false);
   } finally {
     cleanup(root);
   }
 });
 
-test("the root session is blocked after subagent-driven; caller role args are inert", async () => {
+test("the root session owns control metadata after subagent-driven; caller role args are inert", async () => {
   const { root, tools, ctx, receipts } = fixture(rootClient());
   try {
     await establishSubagentDriven(root, "oc-flow", receipts);
-    const blocked = await run(
+    const progress = await run(
       tools,
       "workflow_sdd_append_progress",
       {
         confirmed: true,
         progress_path: "docs/oc-flow/sdd/progress.md",
-        line: "Task 1: work (commits abcdef0..1234567, tests pass)",
+        line: "Task 1: complete (commits abcdef0..1234567, tests pass)",
         role: "delegated",
         taskIdentity: "forged-worker",
       },
       ctx,
     );
-    expect(blocked.ok).toBe(false);
-    if (blocked.ok === false) {
-      expect(blocked.data?.code).toBe("coordinator_blocked");
-      expect(blocked.error).toContain(COORDINATOR_RECOVERY_TEXT);
-    }
+    expect(progress.ok).toBe(true);
+
+    const advisory = await run(
+      tools,
+      "workflow_sdd_append_advisory",
+      {
+        confirmed: true,
+        advisories_path: "docs/oc-flow/sdd/advisories.md",
+        task_id: 1,
+        text: "root-owned",
+      },
+      ctx,
+    );
+    expect(advisory.ok).toBe(true);
+    expect(readFileSync(path.join(root, "docs/oc-flow/sdd/advisories.md"), "utf8")).toBe(
+      "- Task 1: root-owned\n",
+    );
   } finally {
     cleanup(root);
   }
 });
 
-test("a failing session lookup fails closed: the session is treated as the root coordinator", async () => {
+test("a failing session lookup fails closed to the coordinator: control writes stay root-owned", async () => {
   const { root, tools, receipts } = fixture(failingClient());
   try {
     await establishSubagentDriven(root, "oc-flow", receipts);
-    const blocked = await run(
+    // An unverifiable session is the root coordinator (never a delegated
+    // worker), so coordinator-owned control metadata stays writable — but a
+    // forged delegated identity is impossible: there is no parentID at all.
+    const brief = await run(
       tools,
       "workflow_sdd_task_brief",
       {
@@ -473,8 +511,7 @@ test("a failing session lookup fails closed: the session is treated as the root 
       },
       { directory: root, worktree: root, sessionID: "unverifiable" } as never,
     );
-    expect(blocked.ok).toBe(false);
-    if (blocked.ok === false) expect(blocked.data?.code).toBe("coordinator_blocked");
+    expect(brief.ok).toBe(true);
   } finally {
     cleanup(root);
   }

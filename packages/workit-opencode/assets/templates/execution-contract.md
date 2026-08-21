@@ -53,7 +53,7 @@ For each top-level task absent from `completed_task_ids`:
 3. Delegate read-only discovery, when needed, to an `explore` agent. Delegate implementation to a fresh `general` agent. Product changes follow TDD.
 4. Create a working-state diff with `workflow_sdd_review_package` and `confirmed: true`.
 5. Delegate spec-compliance review and code-quality review to separate `general` agents.
-6. **Blocking** findings (Critical, Important, or spec-compliance) may trigger at most **two** fix+re-review rounds per task. **Advisory** findings (Minor, style, YAGNI, taste) never pause the loop — append them to `<SDD_DIR>/advisories.md`.
+6. **Blocking** findings (Critical, Important, or spec-compliance) may trigger at most **two** fix+re-review rounds per task. **Advisory** findings (Minor, style, YAGNI, taste) never pause the loop — append them with `workflow_sdd_append_advisory` (`--task <id> --text <text>`, `confirmed: true`) instead of an unrestricted file edit.
 7. Append the validated ledger entry with `workflow_sdd_append_progress` and `confirmed: true`; mark the todo completed.
 
 ## Final gate

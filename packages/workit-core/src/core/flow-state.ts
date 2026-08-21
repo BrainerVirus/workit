@@ -76,8 +76,7 @@ export type MutationContext = {
 /** Recovery guidance surfaced on a blocked coordinator mutation (FG-07). */
 export const COORDINATOR_RECOVERY_TEXT =
   "A subagent-driven plan is active: coordinator product edits are blocked. " +
-  "Delegate product mutations (task briefs, progress, review packages) to an " +
-  "authenticated delegated worker via `task` / `wk-implement` instead of " +
+  "Delegate product mutations to an authenticated delegated worker via `task` / `wk-implement` instead of " +
   "editing in the coordinator session.";
 
 /**
@@ -2121,6 +2120,64 @@ export const assertProductGates = (
 };
 
 /**
+ * Coordinator-only SDD control gate (CA-10): validated gitignored control
+ * metadata under docs/<slug>/sdd/ — task briefs, review packages, progress,
+ * and advisories. Requirements match assertProductGates' workspace/approval/
+ * menu/docs/path checks, but when execution is active subagent-driven the
+ * call must be the coordinator (root session); a delegated worker cannot
+ * mutate coordinator bookkeeping. Inactive flows are not gated on role.
+ */
+export const assertSddControlGates = (
+  root: string,
+  slug: string,
+  opts: { requireMenu?: boolean; requireDocs?: boolean } = {},
+  ctx?: MutationContext,
+): FlowGateResult => {
+  const bound = assertMutationWorkspace(root, ctx);
+  if (!bound.ok) return bound;
+  const effective = readEffectiveFlowState(root, slug);
+  if (!effective.ok) return effective;
+  const state = effective.state;
+  if (state.spec.status !== "approved") {
+    return err(
+      "spec_not_approved",
+      `spec not approved (status: ${state.spec.status}). Run workflow_spec_approve after the user's approval.`,
+    );
+  }
+  if (state.plan.status !== "approved") {
+    return err(
+      "plan_not_approved",
+      `plan not approved (status: ${state.plan.status}). Run workflow_plan_approve after the user's approval.`,
+    );
+  }
+  if (opts.requireMenu && !state.menu.presented) {
+    return err(
+      "menu_not_presented",
+      "post-plan menu not presented. Record the native question answer with workflow_plan_menu.",
+    );
+  }
+  if (opts.requireDocs) {
+    const validated = docsValidate({
+      spec_path: path.posix.join("docs", slug, "spec.md"),
+      plan_path: path.posix.join("docs", slug, "plan.md"),
+      workspace_root: root,
+    });
+    if (validated.ok === false) return err("docs_invalid", validated.error);
+  }
+  if (
+    state.execution.status === "active" &&
+    state.execution.mode === "subagent-driven" &&
+    ctx?.role === "delegated"
+  ) {
+    return err(
+      "sdd_control_denied",
+      "SDD control metadata is coordinator-owned while a subagent-driven plan is active — delegated workers cannot mutate task briefs, review packages, progress, or advisories",
+    );
+  }
+  return { ok: true };
+};
+
+/**
  * Delegated status derives from host session parentage (AR-12, CA-20): a
  * session whose host record has a parent is a child (delegated worker); a root
  * session (no parent) is the coordinator. Caller-supplied role fields are
@@ -2153,7 +2210,8 @@ export const COORDINATOR_WRITE_TOOLS: readonly string[] = [
   "touch",
   "chmod",
   "chown",
-  // workit product/config/external mutation tools
+  // workit product/config/external mutation tools (SDD control tools are
+  // coordinator-owned and routed through assertSddControlGates, not this set)
   "workflow_commit",
   "workflow_pr_create",
   "workflow_rule_edit",
@@ -2164,9 +2222,6 @@ export const COORDINATOR_WRITE_TOOLS: readonly string[] = [
   "workflow_docs_promote",
   "workflow_docs_layout",
   "workflow_docs_repo_link",
-  "workflow_sdd_task_brief",
-  "workflow_sdd_review_package",
-  "workflow_sdd_append_progress",
   "workflow_youtrack_post",
   "workflow_youtrack_log_time",
 ];

@@ -8,7 +8,7 @@ import { createSddTools } from "../../packages/workit-opencode/src/tools/sdd";
 import { WorkflowStateStore } from "../../packages/workit-core/src/state";
 import { establishApprovedFlow } from "./flow-fixtures";
 import { HostReceiptStore } from "../../packages/workit-core/src/core/flow-state";
-import { sddAppendProgress, sddReviewPackage } from "../../packages/workit-core/src/core/sdd";
+import { sddAppendAdvisory, sddAppendProgress, sddReviewPackage } from "../../packages/workit-core/src/core/sdd";
 
 // The tools only read sessionID/directory/worktree from the context; the rest
 // of ToolContext is stubbed so tests get a real typed object instead of `as never`.
@@ -227,6 +227,7 @@ test("SDD tools expose standard schemas and guard writes", async () => {
       "workflow_sdd_task_brief",
       "workflow_sdd_review_package",
       "workflow_sdd_append_progress",
+      "workflow_sdd_append_advisory",
     ].sort(),
   );
   for (const definition of Object.values(tools)) {
@@ -236,6 +237,7 @@ test("SDD tools expose standard schemas and guard writes", async () => {
     "workflow_sdd_task_brief",
     "workflow_sdd_review_package",
     "workflow_sdd_append_progress",
+    "workflow_sdd_append_advisory",
   ] as const) {
     const raw = await tools[name].execute(
       { confirmed: false } as never,
@@ -559,6 +561,151 @@ test("sddReviewPackage still writes the diff for a real base..head range", () =>
     expect(result.error).toBeFalsy();
     const diff = result as { diff_path: string };
     expect(readFileSync(path.join(root, diff.diff_path), "utf8")).toContain("+two");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// --- Task 3: advisory persistence (CA-10/CA-11) ---
+
+test("sddAppendAdvisory rejects invalid task ids with advisory_task_invalid and writes nothing", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wf-sdd-adv-task-"));
+  try {
+    const base = { advisories_path: "docs/x/sdd/advisories.md", text: "ok", workspace_root: root };
+    for (const task_id of [0, -1, -3, 1.5, Number.MAX_SAFE_INTEGER + 1, NaN, "1", null, undefined]) {
+      const result = sddAppendAdvisory({ ...base, task_id });
+      expect((result as { code?: string }).code, String(task_id)).toBe("advisory_task_invalid");
+    }
+    expect(existsSync(path.join(root, "docs"))).toBe(false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("sddAppendAdvisory rejects invalid text with advisory_text_invalid and writes nothing", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wf-sdd-adv-text-"));
+  try {
+    const base = { advisories_path: "docs/x/sdd/advisories.md", task_id: 1, workspace_root: root };
+    for (const text of ["", "   ", "\t", "a".repeat(1001), "line1\nline2", "carriage\rreturn"]) {
+      const result = sddAppendAdvisory({ ...base, text });
+      expect((result as { code?: string }).code, JSON.stringify(text).slice(0, 20)).toBe(
+        "advisory_text_invalid",
+      );
+    }
+    expect(existsSync(path.join(root, "docs"))).toBe(false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("sddAppendAdvisory rejects noncanonical paths and directory targets", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wf-sdd-adv-path-"));
+  try {
+    mkdirSync(path.join(root, "docs", "x", "sdd"), { recursive: true });
+    mkdirSync(path.join(root, "docs", "x", "sdd", "advisories.md"), { recursive: true });
+    for (const advisories_path of [
+      "docs/x/sdd/notes.md",
+      "docs/x/advisories.md",
+      "../outside/advisories.md",
+      "/etc/advisories.md",
+      "docs/x/sdd/advisories.md/extra",
+    ]) {
+      const result = sddAppendAdvisory({
+        advisories_path,
+        task_id: 1,
+        text: "ok",
+        workspace_root: root,
+      });
+      expect((result as { code?: string }).code, advisories_path).toBe("advisory_path_invalid");
+    }
+    // A directory at the canonical target is a target error, not a path error.
+    const dir = sddAppendAdvisory({
+      advisories_path: "docs/x/sdd/advisories.md",
+      task_id: 1,
+      text: "ok",
+      workspace_root: root,
+    });
+    expect((dir as { code?: string }).code).toBe("advisory_target_invalid");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("sddAppendAdvisory appends exactly '- Task N: <normalized>' and collapses horizontal space", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wf-sdd-adv-write-"));
+  try {
+    const advisories = "docs/x/sdd/advisories.md";
+    const first = sddAppendAdvisory({
+      advisories_path: advisories,
+      task_id: 3,
+      text: "  minor\tstyle   nit  ",
+      workspace_root: root,
+    });
+    expect(first).toEqual({ ok: true, advisory: "minor style nit", advisories_path: advisories });
+    const second = sddAppendAdvisory({
+      advisories_path: advisories,
+      task_id: 4,
+      text: "next",
+      workspace_root: root,
+    });
+    expect(second).toEqual({ ok: true, advisory: "next", advisories_path: advisories });
+    expect(readFileSync(path.join(root, advisories), "utf8")).toBe(
+      "- Task 3: minor style nit\n- Task 4: next\n",
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("the OpenCode advisory wrapper preserves the core payload and validation codes", async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wf-sdd-adv-wrap-"));
+  try {
+    establishApprovedFlow(root, "x", new HostReceiptStore(), "s1");
+    const tools = createSddTools(new WorkflowStateStore());
+    const ok = JSON.parse(
+      (await tools.workflow_sdd_append_advisory.execute(
+        {
+          confirmed: true,
+          advisories_path: "docs/x/sdd/advisories.md",
+          task_id: 2,
+          text: "wrapped\t value",
+        },
+        { directory: root, worktree: root } as never,
+      )) as string,
+    );
+    expect(ok).toEqual({
+      ok: true,
+      data: { advisory: "wrapped value", advisories_path: "docs/x/sdd/advisories.md" },
+      error: null,
+    });
+    expect(readFileSync(path.join(root, "docs/x/sdd/advisories.md"), "utf8")).toBe(
+      "- Task 2: wrapped value\n",
+    );
+
+    const badTask = JSON.parse(
+      (await tools.workflow_sdd_append_advisory.execute(
+        {
+          confirmed: true,
+          advisories_path: "docs/x/sdd/advisories.md",
+          task_id: 1.5,
+          text: "ok",
+        },
+        { directory: root, worktree: root } as never,
+      )) as string,
+    );
+    expect(badTask.ok).toBe(false);
+    expect(badTask.error).toContain("positive safe integer");
+
+    const unconfirmed = JSON.parse(
+      (await tools.workflow_sdd_append_advisory.execute(
+        { confirmed: false, advisories_path: "docs/x/sdd/advisories.md", task_id: 1, text: "ok" },
+        { directory: root, worktree: root } as never,
+      )) as string,
+    );
+    expect(unconfirmed.error).toBe("confirmed: true required");
+    expect(readFileSync(path.join(root, "docs/x/sdd/advisories.md"), "utf8")).toBe(
+      "- Task 2: wrapped value\n",
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
