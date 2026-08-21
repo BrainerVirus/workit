@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -451,6 +452,30 @@ test("a real child session (host parentage) is delegated and denied control meta
       expect(denied.ok, name).toBe(false);
       if (denied.ok === false) expect(denied.data?.code, name).toBe("sdd_control_denied");
     }
+    // Review-package denial is explicit too: a real base..head range still
+    // fails closed for the delegated child (coordinator-owned metadata).
+    const git = (...args: string[]) => execFileSync("git", args, { cwd: root }).toString();
+    git("init");
+    git("config", "user.email", "t@t");
+    git("config", "user.name", "t");
+    git("add", "-A");
+    git("commit", "--allow-empty", "-m", "base");
+    writeFileSync(path.join(root, "docs/oc-flow/sdd/.keep"), "\n");
+    git("add", "-A");
+    git("commit", "-m", "work");
+    const reviewDenied = await run(
+      tools,
+      "workflow_sdd_review_package",
+      {
+        confirmed: true,
+        sdd_dir: "docs/oc-flow/sdd",
+        base_sha: git("rev-parse", "HEAD~1").trim(),
+        head_sha: git("rev-parse", "HEAD").trim(),
+      },
+      childCtx,
+    );
+    expect(reviewDenied.ok).toBe(false);
+    if (reviewDenied.ok === false) expect(reviewDenied.data?.code).toBe("sdd_control_denied");
     expect(existsSync(path.join(root, "docs/oc-flow/sdd/task-1-brief.md"))).toBe(false);
     expect(existsSync(path.join(root, "docs/oc-flow/sdd/progress.md"))).toBe(false);
     expect(existsSync(path.join(root, "docs/oc-flow/sdd/advisories.md"))).toBe(false);

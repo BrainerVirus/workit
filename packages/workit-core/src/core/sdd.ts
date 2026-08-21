@@ -308,12 +308,7 @@ export function sddAppendAdvisory({
   text: unknown;
   workspace_root: string;
 }): AdvisoryResult {
-  if (
-    typeof task_id !== "number" ||
-    !Number.isInteger(task_id) ||
-    !Number.isSafeInteger(task_id) ||
-    task_id <= 0
-  ) {
+  if (typeof task_id !== "number" || !Number.isSafeInteger(task_id) || task_id <= 0) {
     return { error: "task_id must be a positive safe integer", code: "advisory_task_invalid" };
   }
   if (typeof text !== "string") {
@@ -335,14 +330,7 @@ export function sddAppendAdvisory({
       code: "advisory_text_invalid",
     };
   }
-  const advisoriesNorm = advisories_path.split(path.sep).join("/");
-  if (advisoriesNorm !== posix(advisories_path)) {
-    return {
-      error: `advisories_path must be canonical docs/<slug>/sdd/advisories.md: ${advisories_path}`,
-      code: "advisory_path_invalid",
-    };
-  }
-  if (!/^docs\/[^/]+\/sdd\/advisories\.md$/.test(advisoriesNorm)) {
+  if (!/^docs\/[^/]+\/sdd\/advisories\.md$/.test(advisories_path)) {
     return {
       error: `advisories_path must be docs/<slug>/sdd/advisories.md: ${advisories_path}`,
       code: "advisory_path_invalid",
