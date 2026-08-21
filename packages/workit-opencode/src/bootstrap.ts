@@ -3,7 +3,6 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { readConfig } from "@brainervirus/workit-core/src/core/config";
 import { compiledOpenCodeSections } from "@brainervirus/workit-core/src/core/rules";
-import { SOURCE_MENU_LABELS_DISPLAY } from "@brainervirus/workit-core/src/core/reminder";
 
 // templates/ ships package-locally under assets/ (same layout as plugin.ts).
 const root = fileURLToPath(new URL("../assets/", import.meta.url));

@@ -467,9 +467,19 @@ test("cursor MCP: workflow_sdd_append_advisory preserves core payload and valida
       plan_path: "docs/cf-flow/plan.md",
       workspace_root: root,
     });
-    await call("workflow_spec_approve", { spec_path: "docs/cf-flow/spec.md", workspace_root: root });
-    await call("workflow_plan_approve", { plan_path: "docs/cf-flow/plan.md", workspace_root: root });
-    await call("workflow_plan_menu", { choice: "inline", plan_path: "docs/cf-flow/plan.md", workspace_root: root });
+    await call("workflow_spec_approve", {
+      spec_path: "docs/cf-flow/spec.md",
+      workspace_root: root,
+    });
+    await call("workflow_plan_approve", {
+      plan_path: "docs/cf-flow/plan.md",
+      workspace_root: root,
+    });
+    await call("workflow_plan_menu", {
+      choice: "inline",
+      plan_path: "docs/cf-flow/plan.md",
+      workspace_root: root,
+    });
 
     // Cursor is always the coordinator session, so the control write passes.
     const ok = await call("workflow_sdd_append_advisory", {

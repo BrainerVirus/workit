@@ -3,7 +3,6 @@ import path from "node:path";
 import {
   createOpenCodeEvidence,
   prepareFlowState,
-  receiptPurposeForLabel,
   recordMenuChoice,
   transitionPlan,
   transitionSpec,
@@ -39,7 +38,10 @@ export const openEvidence = (
   let purpose = receiptPurposeForLabel(canonical);
   // Legacy bare "Approve" shorthand preserved for core spec/plan helpers.
   if (!purpose && label.trim().toLowerCase() === "approve") purpose = "spec-approval" as const;
-  if (!purpose) throw new Error(`no purpose for label ${JSON.stringify(label)} (canonical ${JSON.stringify(canonical)})`);
+  if (!purpose)
+    throw new Error(
+      `no purpose for label ${JSON.stringify(label)} (canonical ${JSON.stringify(canonical)})`,
+    );
   store.record(sessionId, `call-${label}`, canonical, Date.now(), canonical, purpose);
   // For lifecycle shorthand, the receipt label is the canonical form; evidence
   // preserves the canonical bytes (CA-01).
@@ -49,7 +51,10 @@ export const openEvidence = (
   // from canonical (e.g. "pause" vs "Pause plan") — evidence keeps the call's
   // original intent, not the canonical expansion.
   if (label !== canonical) {
-    return { ...createOpenCodeEvidence(consumed.receipt), selectedLabel: label } as NativeChoiceEvidence;
+    return {
+      ...createOpenCodeEvidence(consumed.receipt),
+      selectedLabel: label,
+    } as NativeChoiceEvidence;
   }
   return createOpenCodeEvidence(consumed.receipt);
 };

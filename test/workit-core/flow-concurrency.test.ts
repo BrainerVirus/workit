@@ -179,7 +179,12 @@ test("CA-20: authenticated delegated workers are allowed; unauthenticated ones a
       root,
       slug,
       { requireMenu: true, requireDocs: true },
-      { hostWorkspace: root, role: "delegated", sessionId: "w2", parentSessionId: COORDINATOR_SESSION },
+      {
+        hostWorkspace: root,
+        role: "delegated",
+        sessionId: "w2",
+        parentSessionId: COORDINATOR_SESSION,
+      },
     );
     expect(lineagedNoIdentity.ok).toBe(false);
     if (!lineagedNoIdentity.ok) expect(lineagedNoIdentity.code).toBe("delegated_unauthenticated");
@@ -1209,12 +1214,7 @@ test("CA-12..CA-17: literal clean-start contract — menu record -> branch setup
     expect(existsSync(path.join(root, "docs", slug, "sdd", "task-1-brief.md"))).toBe(true);
 
     // 4. Direct worker: the exact direct child passes product gates.
-    const workerGate = assertProductGates(
-      root,
-      slug,
-      { requireMenu: true },
-      delegated(root),
-    );
+    const workerGate = assertProductGates(root, slug, { requireMenu: true }, delegated(root));
     expect(workerGate.ok).toBe(true);
 
     // 4b. The same worker is denied coordinator bookkeeping (fail-closed).

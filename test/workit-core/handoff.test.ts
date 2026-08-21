@@ -1517,8 +1517,12 @@ test("handoff preflight rejects when menu not recorded before session.create", a
     const plan = `docs/${slug}/plan.md`;
     const store = new HostReceiptStore();
     expect(prepareFlowState(root, slug, { spec_path: spec, plan_path: plan }).ok).toBe(true);
-    expect(transitionSpec(root, slug, spec, openEvidence(store, "nomenu-session", "Approve spec")).ok).toBe(true);
-    expect(transitionPlan(root, slug, plan, openEvidence(store, "nomenu-session", "Approve plan")).ok).toBe(true);
+    expect(
+      transitionSpec(root, slug, spec, openEvidence(store, "nomenu-session", "Approve spec")).ok,
+    ).toBe(true);
+    expect(
+      transitionPlan(root, slug, plan, openEvidence(store, "nomenu-session", "Approve plan")).ok,
+    ).toBe(true);
     // No menu choice recorded — presented false.
     const { client, calls } = handoffPreflightClient();
     const raw = await createHandoffTools(
@@ -1550,10 +1554,22 @@ test("handoff preflight rejects non-handoff menu choice before session.create", 
     const plan = `docs/${slug}/plan.md`;
     const store = new HostReceiptStore();
     expect(prepareFlowState(root, slug, { spec_path: spec, plan_path: plan }).ok).toBe(true);
-    expect(transitionSpec(root, slug, spec, openEvidence(store, "nonhandoff-session", "Approve spec")).ok).toBe(true);
-    expect(transitionPlan(root, slug, plan, openEvidence(store, "nonhandoff-session", "Approve plan")).ok).toBe(true);
     expect(
-      recordMenuChoice(root, slug, plan, "inline", menuEvidence(store, "nonhandoff-session", "inline")).ok,
+      transitionSpec(root, slug, spec, openEvidence(store, "nonhandoff-session", "Approve spec"))
+        .ok,
+    ).toBe(true);
+    expect(
+      transitionPlan(root, slug, plan, openEvidence(store, "nonhandoff-session", "Approve plan"))
+        .ok,
+    ).toBe(true);
+    expect(
+      recordMenuChoice(
+        root,
+        slug,
+        plan,
+        "inline",
+        menuEvidence(store, "nonhandoff-session", "inline"),
+      ).ok,
     ).toBe(true);
     const { client, calls } = handoffPreflightClient();
     const raw = await createHandoffTools(
@@ -1586,7 +1602,10 @@ test("handoff preflight rejects already-marked destination before session.create
       path.join(root, "docs/x/plan.md"),
       "# X\n\n**Spec:** `docs/x/spec.md`\n**Branch:** `feature/x`\n\n### Task 1: One\n\n- [ ] **Step 1:** Work\n",
     );
-    writeFileSync(path.join(root, "docs/x/sdd/flow.json"), approvedFlowJson(root, { handoff_destination: true }));
+    writeFileSync(
+      path.join(root, "docs/x/sdd/flow.json"),
+      approvedFlowJson(root, { handoff_destination: true }),
+    );
     const { client, calls } = handoffPreflightClient();
     const raw = await createHandoffTools(
       client,

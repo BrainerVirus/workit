@@ -38,10 +38,10 @@ const setupApprovedFlow = (root: string, slug: string, store: HostReceiptStore) 
   return plan;
 };
 
-const cliEvidence = () =>
-  ({ host: "cli", attested: false, confirmation: "flag" }) as const;
+const cliEvidence = () => ({ host: "cli", attested: false, confirmation: "flag" }) as const;
 
-describe("cross-host execution transition parity", () => {  test("opencode subagent-driven activates with coordinator session", () => {
+describe("cross-host execution transition parity", () => {
+  test("opencode subagent-driven activates with coordinator session", () => {
     const { root, slug } = fixture();
     try {
       const store = new HostReceiptStore();
@@ -131,11 +131,18 @@ describe("cross-host execution transition parity", () => {  test("opencode subag
     try {
       const store = new HostReceiptStore();
       const plan = setupApprovedFlow(root, slug, store);
-      const recorded = recordMenuChoice(root, slug, plan, "handoff", openEvidence(store, "s", "handoff"), {
-        hostWorkspace: root,
-        role: "coordinator",
-        sessionId: "coord-1",
-      });
+      const recorded = recordMenuChoice(
+        root,
+        slug,
+        plan,
+        "handoff",
+        openEvidence(store, "s", "handoff"),
+        {
+          hostWorkspace: root,
+          role: "coordinator",
+          sessionId: "coord-1",
+        },
+      );
       expect(recorded.ok).toBe(true);
       let effective = readEffectiveFlowState(root, slug);
       expect(effective.ok).toBe(true);
@@ -228,9 +235,17 @@ describe("cross-host execution transition parity", () => {  test("opencode subag
         path.join(root, "docs", slug, "sdd", "progress.md"),
         "Task 1: complete (commits abc1234..def5678, review clean)\n",
       );
-      const completed = transitionExecution(root, slug, plan, "complete", cliEvidence(), undefined, {
-        verifyProject: () => ({ stdout: "", stderr: "", exitCode: 0, cwd: root }),
-      });
+      const completed = transitionExecution(
+        root,
+        slug,
+        plan,
+        "complete",
+        cliEvidence(),
+        undefined,
+        {
+          verifyProject: () => ({ stdout: "", stderr: "", exitCode: 0, cwd: root }),
+        },
+      );
       expect(completed.ok).toBe(true);
       const effective = readEffectiveFlowState(root, slug);
       expect(effective.ok).toBe(true);

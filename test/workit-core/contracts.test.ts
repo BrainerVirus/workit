@@ -636,7 +636,9 @@ test("execution-reliability contract phrases are present across canonical and ho
     "packages/workit-cursor/assets/templates/superpowers-doc-contract.md",
     "packages/workit-cli/assets/templates/superpowers-doc-contract.md",
   ];
-  const joined = [...contractRels, ...handoffRels, ...implementRels, ...docContractRels].map(read).join("\n");
+  const joined = [...contractRels, ...handoffRels, ...implementRels, ...docContractRels]
+    .map(read)
+    .join("\n");
   // Model deferral is present.
   expect(joined).toContain("Change model first");
   // Direct-child authority.
@@ -648,7 +650,9 @@ test("execution-reliability contract phrases are present across canonical and ho
   // Native recovery phrase.
   expect(joined).toContain("Continue opencode -s <session-id>");
   // Immediate menu recording.
-  expect(joined).toMatch(/immediately before any skill|workflow_plan_menu immediately|call `?workflow_plan_menu`? immediately/i);
+  expect(joined).toMatch(
+    /immediately before any skill|workflow_plan_menu immediately|call `?workflow_plan_menu`? immediately/i,
+  );
   for (const rel of contractRels) {
     const text = read(rel);
     expect(text, `${rel} Change model first`).toContain("Change model first");
@@ -657,7 +661,9 @@ test("execution-reliability contract phrases are present across canonical and ho
   for (const rel of handoffRels) {
     const text = read(rel);
     expect(text, `${rel} Workit: <slug>`).toContain("Workit: <slug>");
-    expect(text, `${rel} Continue opencode -s <session-id>`).toContain("Continue opencode -s <session-id>");
+    expect(text, `${rel} Continue opencode -s <session-id>`).toContain(
+      "Continue opencode -s <session-id>",
+    );
   }
   for (const rel of implementRels) {
     expect(read(rel), `${rel} compact worker contract`).toContain("compact worker contract");
@@ -665,7 +671,9 @@ test("execution-reliability contract phrases are present across canonical and ho
   for (const rel of docContractRels) {
     const text = read(rel);
     expect(text, `${rel} Change model first`).toContain("Change model first");
-    expect(text, `${rel} workflow_plan_menu immediately`).toMatch(/workflow_plan_menu.{0,40}immediately/i);
+    expect(text, `${rel} workflow_plan_menu immediately`).toMatch(
+      /workflow_plan_menu.{0,40}immediately/i,
+    );
   }
 });
 

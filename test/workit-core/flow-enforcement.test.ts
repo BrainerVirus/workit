@@ -530,12 +530,12 @@ test("menu records only the exact selected label as evidence (OpenCode receipts)
     const spec = `docs/${slug}/spec.md`;
     const plan = `docs/${slug}/plan.md`;
     prepareFlowState(root, slug, { spec_path: spec, plan_path: plan });
-    expect(transitionSpec(root, slug, spec, openEvidence(store, sessionId, "Approve spec")).ok).toBe(
-      true,
-    );
-    expect(transitionPlan(root, slug, plan, openEvidence(store, sessionId, "Approve plan")).ok).toBe(
-      true,
-    );
+    expect(
+      transitionSpec(root, slug, spec, openEvidence(store, sessionId, "Approve spec")).ok,
+    ).toBe(true);
+    expect(
+      transitionPlan(root, slug, plan, openEvidence(store, sessionId, "Approve plan")).ok,
+    ).toBe(true);
 
     store.record(sessionId, "call-menu", "handoff", Date.now(), "handoff", "execution-menu");
     const mismatch = recordMenuChoice(
@@ -883,13 +883,23 @@ test("CA-10: control gates deny a delegated worker on active subagent-driven met
       parentSessionId: "lifecycle-session",
       taskIdentity: "child-session",
     };
-    const denied = assertSddControlGates(root, slug, { requireMenu: true, requireDocs: true }, delegated);
+    const denied = assertSddControlGates(
+      root,
+      slug,
+      { requireMenu: true, requireDocs: true },
+      delegated,
+    );
     expect(denied.ok).toBe(false);
     if (denied.ok === false) {
       expect(denied.code).toBe("sdd_control_denied");
       expect(denied.error).toContain("coordinator-owned");
     }
-    const allowed = assertSddControlGates(root, slug, { requireMenu: true, requireDocs: true }, coordinator);
+    const allowed = assertSddControlGates(
+      root,
+      slug,
+      { requireMenu: true, requireDocs: true },
+      coordinator,
+    );
     expect(allowed.ok).toBe(true);
   } finally {
     cleanup(root);
@@ -906,7 +916,12 @@ test("CA-10: control gates are role-neutral when execution is not active subagen
       sessionId: "child-session",
       taskIdentity: "child-session",
     };
-    const allowed = assertSddControlGates(root, slug, { requireMenu: true, requireDocs: true }, delegated);
+    const allowed = assertSddControlGates(
+      root,
+      slug,
+      { requireMenu: true, requireDocs: true },
+      delegated,
+    );
     expect(allowed.ok).toBe(true);
   } finally {
     cleanup(root);
@@ -921,13 +936,21 @@ test("CA-10: control gates retain the workspace, approval, menu, and strict-read
     expect(unactivated.ok).toBe(false);
     if (unactivated.ok === false) expect(unactivated.code).toBe("flow_not_activated");
 
-    prepareFlowState(root, slug, { spec_path: `docs/${slug}/spec.md`, plan_path: `docs/${slug}/plan.md` });
-    // Workspace binding still applies.
-    const mismatched = assertSddControlGates(root, slug, {}, {
-      hostWorkspace: "/somewhere/else",
-      role: "coordinator",
-      sessionId: "s",
+    prepareFlowState(root, slug, {
+      spec_path: `docs/${slug}/spec.md`,
+      plan_path: `docs/${slug}/plan.md`,
     });
+    // Workspace binding still applies.
+    const mismatched = assertSddControlGates(
+      root,
+      slug,
+      {},
+      {
+        hostWorkspace: "/somewhere/else",
+        role: "coordinator",
+        sessionId: "s",
+      },
+    );
     expect(mismatched.ok).toBe(false);
     if (mismatched.ok === false) expect(mismatched.code).toBe("workspace_mismatch");
     // Draft spec blocks before plan/menu checks.
@@ -940,7 +963,12 @@ test("CA-10: control gates retain the workspace, approval, menu, and strict-read
     const noMenuOpt = assertSddControlGates(root, slug, { requireMenu: false }, undefined);
     expect(noMenuOpt.ok).toBe(true);
     // Approved + presented passes for an undefined (CLI) context.
-    const all = assertSddControlGates(root, slug, { requireMenu: true, requireDocs: true }, undefined);
+    const all = assertSddControlGates(
+      root,
+      slug,
+      { requireMenu: true, requireDocs: true },
+      undefined,
+    );
     expect(all.ok).toBe(true);
   } finally {
     cleanup(root);
@@ -957,12 +985,26 @@ test("CA-10: SDD control tools left COORDINATOR_WRITE_TOOLS; product and externa
     expect(COORDINATOR_WRITE_TOOLS, controlTool).not.toContain(controlTool);
     // Control tools are not intercepted as product writes; they carry their
     // own coordinator-only gate in the adapter.
-    const decision = subagentDrivenInterception({ tool: controlTool, parentID: undefined, activeCoordinatorIds: ["coord-session"] });
+    const decision = subagentDrivenInterception({
+      tool: controlTool,
+      parentID: undefined,
+      activeCoordinatorIds: ["coord-session"],
+    });
     expect(decision.ok, controlTool).toBe(true);
   }
-  for (const productTool of ["write", "edit", "apply_patch", "workflow_commit", "workflow_youtrack_post"]) {
+  for (const productTool of [
+    "write",
+    "edit",
+    "apply_patch",
+    "workflow_commit",
+    "workflow_youtrack_post",
+  ]) {
     expect(COORDINATOR_WRITE_TOOLS, productTool).toContain(productTool);
-    const decision = subagentDrivenInterception({ tool: productTool, parentID: undefined, activeCoordinatorIds: ["coord-session"] });
+    const decision = subagentDrivenInterception({
+      tool: productTool,
+      parentID: undefined,
+      activeCoordinatorIds: ["coord-session"],
+    });
     expect(decision.ok, productTool).toBe(false);
   }
 });
@@ -1069,7 +1111,11 @@ test("CA-13: mixed owners fail closed; a single shared owner still authorizes it
 
 test("subagent-driven interception: root-session write tools are denied when active", () => {
   for (const tool of COORDINATOR_WRITE_TOOLS) {
-    const decision = subagentDrivenInterception({ tool, parentID: undefined, activeCoordinatorIds: ["coord-session"] });
+    const decision = subagentDrivenInterception({
+      tool,
+      parentID: undefined,
+      activeCoordinatorIds: ["coord-session"],
+    });
     expect(decision.ok, tool).toBe(false);
     if (!decision.ok) {
       expect(decision.code, tool).toBe("coordinator_write_denied");
@@ -1098,7 +1144,11 @@ test("subagent-driven interception: non-write tools stay allowed for the root se
     "workflow_verify",
     "workflow_git_context",
   ]) {
-    const decision = subagentDrivenInterception({ tool, parentID: undefined, activeCoordinatorIds: ["coord-session"] });
+    const decision = subagentDrivenInterception({
+      tool,
+      parentID: undefined,
+      activeCoordinatorIds: ["coord-session"],
+    });
     expect(decision.ok, tool).toBe(true);
   }
 });
@@ -2148,19 +2198,8 @@ test("CA-07/CA-08: completing a marked handoff destination clears the flag so or
 
 // --- Task 4: persisted coordinator identity (CA-12) ---
 
-const coordinatorCtx = (sessionId: string): MutationContext => ({
-  hostWorkspace: "unused",
-  role: "coordinator",
-  sessionId,
-});
-
 /** Approve spec+plan and record `choice` from the given coordinator session. */
-const establishMenuChoiceFrom = (
-  root: string,
-  slug: string,
-  choice: string,
-  sessionId: string,
-) => {
+const establishMenuChoiceFrom = (root: string, slug: string, choice: string, sessionId: string) => {
   const spec = `docs/${slug}/spec.md`;
   const plan = `docs/${slug}/plan.md`;
   const store = new HostReceiptStore();
@@ -2209,9 +2248,17 @@ test("CA-12: completion clears the recorded coordinator id", () => {
   try {
     establishMenuChoiceFrom(root, slug, "subagent-driven", "coord-root-1");
     writeSddLedger(root, slug, ["Task 1: complete"]);
-    const done = transitionExecution(root, slug, `docs/${slug}/plan.md`, "complete", cliEvidence(), undefined, {
-      verifyProject: stubVerifier(0),
-    });
+    const done = transitionExecution(
+      root,
+      slug,
+      `docs/${slug}/plan.md`,
+      "complete",
+      cliEvidence(),
+      undefined,
+      {
+        verifyProject: stubVerifier(0),
+      },
+    );
     expect(done.ok).toBe(true);
     expect(readFlowState(root, slug).execution.coordinator_session_id).toBeNull();
   } finally {
@@ -2224,7 +2271,10 @@ test("CA-12: approval drift clears the id; a valid reactivation records the new 
   try {
     establishMenuChoiceFrom(root, slug, "subagent-driven", "coord-root-1");
     // Spec drift resets the whole chain (execution included) -> identity gone.
-    writeFileSync(path.join(root, "docs", slug, "spec.md"), COMPLIANT_SPEC_FN(slug) + "\n<!-- edited -->\n");
+    writeFileSync(
+      path.join(root, "docs", slug, "spec.md"),
+      COMPLIANT_SPEC_FN(slug) + "\n<!-- edited -->\n",
+    );
     const effective = readEffectiveFlowState(root, slug);
     expect(effective.ok).toBe(true);
     if (effective.ok) {
@@ -2237,14 +2287,25 @@ test("CA-12: approval drift clears the id; a valid reactivation records the new 
     const sessionId = "dest-coordinator";
     const spec = `docs/${slug}/spec.md`;
     const plan = `docs/${slug}/plan.md`;
-    expect(transitionSpec(root, slug, spec, openEvidence(store, sessionId, "Approve spec")).ok).toBe(true);
-    expect(transitionPlan(root, slug, plan, openEvidence(store, sessionId, "Approve plan")).ok).toBe(true);
     expect(
-      recordMenuChoice(root, slug, plan, "subagent-driven", openEvidence(store, sessionId, "subagent-driven"), {
-        hostWorkspace: root,
-        role: "coordinator",
-        sessionId,
-      }).ok,
+      transitionSpec(root, slug, spec, openEvidence(store, sessionId, "Approve spec")).ok,
+    ).toBe(true);
+    expect(
+      transitionPlan(root, slug, plan, openEvidence(store, sessionId, "Approve plan")).ok,
+    ).toBe(true);
+    expect(
+      recordMenuChoice(
+        root,
+        slug,
+        plan,
+        "subagent-driven",
+        openEvidence(store, sessionId, "subagent-driven"),
+        {
+          hostWorkspace: root,
+          role: "coordinator",
+          sessionId,
+        },
+      ).ok,
     ).toBe(true);
     expect(readFlowState(root, slug).execution.coordinator_session_id).toBe(sessionId);
   } finally {
@@ -2266,7 +2327,6 @@ test("CA-12: non-subagent choices never set the id; Cursor's rejected subagent c
   try {
     const spec = `docs/${slug}/spec.md`;
     const plan = `docs/${slug}/plan.md`;
-    const store = new HostReceiptStore();
     expect(prepareFlowState(root, slug, { spec_path: spec, plan_path: plan }).ok).toBe(true);
     expect(transitionSpec(root, slug, spec, cursorEvidence()).ok).toBe(true);
     expect(transitionPlan(root, slug, plan, cursorEvidence()).ok).toBe(true);
@@ -2309,18 +2369,31 @@ test("CA-12: a handoff destination activation records the destination session as
     const spec = `docs/${slug}/spec.md`;
     const plan = `docs/${slug}/plan.md`;
     expect(prepareFlowState(root, slug, { spec_path: spec, plan_path: plan }).ok).toBe(true);
-    expect(transitionSpec(root, slug, spec, openEvidence(store, sourceId, "Approve spec")).ok).toBe(true);
-    expect(transitionPlan(root, slug, plan, openEvidence(store, sourceId, "Approve plan")).ok).toBe(true);
-    expect(recordMenuChoice(root, slug, plan, "handoff", openEvidence(store, sourceId, "handoff")).ok).toBe(true);
+    expect(transitionSpec(root, slug, spec, openEvidence(store, sourceId, "Approve spec")).ok).toBe(
+      true,
+    );
+    expect(transitionPlan(root, slug, plan, openEvidence(store, sourceId, "Approve plan")).ok).toBe(
+      true,
+    );
+    expect(
+      recordMenuChoice(root, slug, plan, "handoff", openEvidence(store, sourceId, "handoff")).ok,
+    ).toBe(true);
     expect(markHandoffDestination(root, slug, plan)).toEqual({ ok: true });
     // The destination session activates subagent-driven execution.
     const destId = "destination-coordinator";
     expect(
-      recordMenuChoice(root, slug, plan, "subagent-driven", openEvidence(store, destId, "subagent-driven"), {
-        hostWorkspace: root,
-        role: "coordinator",
-        sessionId: destId,
-      }).ok,
+      recordMenuChoice(
+        root,
+        slug,
+        plan,
+        "subagent-driven",
+        openEvidence(store, destId, "subagent-driven"),
+        {
+          hostWorkspace: root,
+          role: "coordinator",
+          sessionId: destId,
+        },
+      ).ok,
     ).toBe(true);
     expect(readFlowState(root, slug).execution.coordinator_session_id).toBe(destId);
   } finally {
@@ -2332,7 +2405,10 @@ test("CA-12: plan drift preserves the active lifecycle AND the recorded coordina
   const { root, slug } = fixture();
   try {
     establishMenuChoiceFrom(root, slug, "subagent-driven", "coord-root-1");
-    writeFileSync(path.join(root, "docs", slug, "plan.md"), COMPLIANT_PLAN_FN(slug) + "\n<!-- edited -->\n");
+    writeFileSync(
+      path.join(root, "docs", slug, "plan.md"),
+      COMPLIANT_PLAN_FN(slug) + "\n<!-- edited -->\n",
+    );
     const effective = readEffectiveFlowState(root, slug);
     expect(effective.ok).toBe(true);
     if (effective.ok) {

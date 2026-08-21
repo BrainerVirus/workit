@@ -308,31 +308,54 @@ export function sddAppendAdvisory({
   text: unknown;
   workspace_root: string;
 }): AdvisoryResult {
-  if (typeof task_id !== "number" || !Number.isInteger(task_id) || !Number.isSafeInteger(task_id) || task_id <= 0) {
+  if (
+    typeof task_id !== "number" ||
+    !Number.isInteger(task_id) ||
+    !Number.isSafeInteger(task_id) ||
+    task_id <= 0
+  ) {
     return { error: "task_id must be a positive safe integer", code: "advisory_task_invalid" };
   }
   if (typeof text !== "string") {
-    return { error: "advisory text must be a string of 1-1000 characters after normalization", code: "advisory_text_invalid" };
+    return {
+      error: "advisory text must be a string of 1-1000 characters after normalization",
+      code: "advisory_text_invalid",
+    };
   }
   if (text.includes("\r") || text.includes("\n")) {
-    return { error: "advisory text must be a single line (no CR/LF)", code: "advisory_text_invalid" };
+    return {
+      error: "advisory text must be a single line (no CR/LF)",
+      code: "advisory_text_invalid",
+    };
   }
   const collapsed = text.trim().replace(/[ \t]+/g, " ");
   if (collapsed.length === 0 || collapsed.length > 1000) {
-    return { error: "advisory text must be 1-1000 characters after trim and horizontal-space collapse", code: "advisory_text_invalid" };
+    return {
+      error: "advisory text must be 1-1000 characters after trim and horizontal-space collapse",
+      code: "advisory_text_invalid",
+    };
   }
   const advisoriesNorm = advisories_path.split(path.sep).join("/");
   if (advisoriesNorm !== posix(advisories_path)) {
-    return { error: `advisories_path must be canonical docs/<slug>/sdd/advisories.md: ${advisories_path}`, code: "advisory_path_invalid" };
+    return {
+      error: `advisories_path must be canonical docs/<slug>/sdd/advisories.md: ${advisories_path}`,
+      code: "advisory_path_invalid",
+    };
   }
   if (!/^docs\/[^/]+\/sdd\/advisories\.md$/.test(advisoriesNorm)) {
-    return { error: `advisories_path must be docs/<slug>/sdd/advisories.md: ${advisories_path}`, code: "advisory_path_invalid" };
+    return {
+      error: `advisories_path must be docs/<slug>/sdd/advisories.md: ${advisories_path}`,
+      code: "advisory_path_invalid",
+    };
   }
   const contained = resolveDocsPath({ workspace_root, path: advisories_path });
   if (!contained.ok) return { error: contained.error, code: "advisory_path_invalid" };
   const abs = contained.path;
   if (existsSync(abs) && statSync(abs).isDirectory()) {
-    return { error: `advisory target is a directory: ${advisories_path}`, code: "advisory_target_invalid" };
+    return {
+      error: `advisory target is a directory: ${advisories_path}`,
+      code: "advisory_target_invalid",
+    };
   }
   mkdirSync(path.dirname(abs), { recursive: true });
   const line = `- Task ${task_id}: ${collapsed}\n`;

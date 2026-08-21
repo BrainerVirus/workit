@@ -34,7 +34,14 @@ export type FlowCliDeps = {
   err?: { write: (chunk: string) => void };
 };
 
-const FLOW_ACTIONS = ["status", "pause", "resume", "complete", "review-package", "append-advisory"] as const;
+const FLOW_ACTIONS = [
+  "status",
+  "pause",
+  "resume",
+  "complete",
+  "review-package",
+  "append-advisory",
+] as const;
 type FlowAction = (typeof FLOW_ACTIONS)[number];
 type MutationAction = "pause" | "resume" | "complete";
 
@@ -115,7 +122,14 @@ const usage = (err: { write: (chunk: string) => void }, text: string): number =>
   return 2;
 };
 
-type ParsedFlow = { plan: string; confirm: boolean; base?: string; head?: string; task?: string; text?: string };
+type ParsedFlow = {
+  plan: string;
+  confirm: boolean;
+  base?: string;
+  head?: string;
+  task?: string;
+  text?: string;
+};
 
 const VALUE_FLAGS = ["--plan", "--base", "--head", "--task", "--text"] as const;
 
@@ -213,7 +227,17 @@ function parseFlowFlags(
       return { ok: false };
     }
   }
-  return { ok: true, parsed: { plan: parsed.plan, confirm, base: parsed.base, head: parsed.head, task: parsed.task, text: parsed.text } };
+  return {
+    ok: true,
+    parsed: {
+      plan: parsed.plan,
+      confirm,
+      base: parsed.base,
+      head: parsed.head,
+      task: parsed.task,
+      text: parsed.text,
+    },
+  };
 }
 
 /**
@@ -379,7 +403,15 @@ export async function runFlowCommand(argv: string[], deps: FlowCliDeps = {}): Pr
   if (flowAction === "append-advisory") {
     return appendAdvisoryCommand(root, parsed.parsed, out, err);
   }
-  return mutateCommand(root, parsed.parsed.plan, flowAction as MutationAction, evidence, deps, out, err);
+  return mutateCommand(
+    root,
+    parsed.parsed.plan,
+    flowAction as MutationAction,
+    evidence,
+    deps,
+    out,
+    err,
+  );
 }
 
 export async function runHandoffCommand(argv: string[], deps: FlowCliDeps = {}): Promise<number> {

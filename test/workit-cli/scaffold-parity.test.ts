@@ -119,7 +119,11 @@ test("CLI scaffold ships the execution-reliability contract surface", () => {
   );
   const flow = readFileSync(path.join(repoRoot, "packages/workit-cli/src/flow.ts"), "utf8");
 
-  for (const phrase of ["Change model first", "delegation_lineage_denied", "workflow_sdd_append_advisory"]) {
+  for (const phrase of [
+    "Change model first",
+    "delegation_lineage_denied",
+    "workflow_sdd_append_advisory",
+  ]) {
     expect(template).toContain(phrase);
   }
   expect(flow).toContain("append-advisory");

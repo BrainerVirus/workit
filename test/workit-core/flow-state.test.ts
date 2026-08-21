@@ -563,7 +563,12 @@ test("CA-03: spec drift resets plan approval, menu evidence, handoff context, an
     writeFlowState(root, {
       ...advanced,
       handoff_destination: true,
-      execution: { status: "active", mode: "subagent-driven", evidence: null, coordinator_session_id: null },
+      execution: {
+        status: "active",
+        mode: "subagent-driven",
+        evidence: null,
+        coordinator_session_id: null,
+      },
     });
     writeFileSync(path.join(root, "docs", slug, "spec.md"), COMPLIANT_SPEC(slug) + "\n");
     const effective = readEffectiveFlowState(root, slug);
@@ -603,7 +608,12 @@ test("CA-03: plan drift after execution started preserves menu and execution lif
     writeFlowState(root, {
       ...advanced,
       menu: { presented: true, chosen: "subagent-driven", evidence: null },
-      execution: { status: "active", mode: "subagent-driven", evidence: null, coordinator_session_id: null },
+      execution: {
+        status: "active",
+        mode: "subagent-driven",
+        evidence: null,
+        coordinator_session_id: null,
+      },
     });
     writeFileSync(
       path.join(root, "docs", slug, "plan.md"),

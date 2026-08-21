@@ -71,7 +71,10 @@ export function createHandoffTools(client: HandoffClient, state: WorkflowStateSt
           // docs, menu.presented && chosen === "handoff", not already a
           // destination. Logical failures create no session.
           const ready = assertHandoffReady(context.directory, active.plan);
-          if (!ready.ok) return output(fail(ready.error, { code: (ready as FlowGateResult & { code?: string }).code }));
+          if (!ready.ok)
+            return output(
+              fail(ready.error, { code: (ready as FlowGateResult & { code?: string }).code }),
+            );
           state.set(context.sessionID, { spec: active.spec, plan: active.plan, sdd: active.sdd });
           return output(
             await handoffSession(client, {

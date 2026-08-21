@@ -198,7 +198,12 @@ type QuestionInput = {
 const classifyQuestion = (
   input: unknown,
   label: string,
-): { purpose: ReturnType<typeof import("@brainervirus/workit-core/src/core/flow-state").receiptPurposeForLabel>; questionText?: string } | null => {
+): {
+  purpose: ReturnType<
+    typeof import("@brainervirus/workit-core/src/core/flow-state").receiptPurposeForLabel
+  >;
+  questionText?: string;
+} | null => {
   const args = input as QuestionInput | undefined;
   const qs = args?.questions;
   // When the host supplies the structured questions array, enforce strict
@@ -272,8 +277,18 @@ const plugin: Plugin = async ({ client, directory }) => {
       if (label === undefined) return; // multi-select/unanswered → no receipt
       const classified = classifyQuestion(input.args, label);
       if (!classified) return; // unrelated/unknown/multi-question/multi-select/branch/stash/free-text
-      const questionText = classified.questionText ?? (input.args as { question?: string; title?: string } | undefined)?.question ?? (input.args as { question?: string; title?: string } | undefined)?.title;
-      receipts.record(input.sessionID, input.callID, label, Date.now(), questionText, classified.purpose);
+      const questionText =
+        classified.questionText ??
+        (input.args as { question?: string; title?: string } | undefined)?.question ??
+        (input.args as { question?: string; title?: string } | undefined)?.title;
+      receipts.record(
+        input.sessionID,
+        input.callID,
+        label,
+        Date.now(),
+        questionText,
+        classified.purpose,
+      );
     },
     // CA-18/AR-13: while a subagent-driven plan is active, the root
     // (coordinator) session is denied known write tools and any shell command
@@ -298,9 +313,7 @@ const plugin: Plugin = async ({ client, directory }) => {
       // CA-13: interception is lineage-bound — only the exact direct child of
       // a recorded activating coordinator escapes; flows with no recorded
       // coordinator id (legacy/rejected) leave ids empty and fail closed.
-      const activeCoordinatorIds = findActiveSubagentDrivenContexts(
-        sessionDirectory ?? directory,
-      )
+      const activeCoordinatorIds = findActiveSubagentDrivenContexts(sessionDirectory ?? directory)
         .map((c) => c.coordinator_session_id)
         .filter((id): id is string => typeof id === "string" && id !== "");
       const decision = subagentDrivenInterception({

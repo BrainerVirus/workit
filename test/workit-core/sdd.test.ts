@@ -8,7 +8,11 @@ import { createSddTools } from "../../packages/workit-opencode/src/tools/sdd";
 import { WorkflowStateStore } from "../../packages/workit-core/src/state";
 import { establishApprovedFlow } from "./flow-fixtures";
 import { HostReceiptStore } from "../../packages/workit-core/src/core/flow-state";
-import { sddAppendAdvisory, sddAppendProgress, sddReviewPackage } from "../../packages/workit-core/src/core/sdd";
+import {
+  sddAppendAdvisory,
+  sddAppendProgress,
+  sddReviewPackage,
+} from "../../packages/workit-core/src/core/sdd";
 
 // The tools only read sessionID/directory/worktree from the context; the rest
 // of ToolContext is stubbed so tests get a real typed object instead of `as never`.
@@ -572,7 +576,17 @@ test("sddAppendAdvisory rejects invalid task ids with advisory_task_invalid and 
   const root = mkdtempSync(path.join(os.tmpdir(), "wf-sdd-adv-task-"));
   try {
     const base = { advisories_path: "docs/x/sdd/advisories.md", text: "ok", workspace_root: root };
-    for (const task_id of [0, -1, -3, 1.5, Number.MAX_SAFE_INTEGER + 1, NaN, "1", null, undefined]) {
+    for (const task_id of [
+      0,
+      -1,
+      -3,
+      1.5,
+      Number.MAX_SAFE_INTEGER + 1,
+      NaN,
+      "1",
+      null,
+      undefined,
+    ]) {
       const result = sddAppendAdvisory({ ...base, task_id });
       expect((result as { code?: string }).code, String(task_id)).toBe("advisory_task_invalid");
     }

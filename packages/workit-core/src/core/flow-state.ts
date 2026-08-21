@@ -741,13 +741,13 @@ const resetForPlanDrift = (state: FlowState): FlowState => ({
   plan: { ...state.plan, status: "draft", evidence: null, approved_digest: null },
   // A plan edit resets only the plan's approval digest (fresh re-approval is
   // required before any plan-gated transition). The execution lifecycle, the
-   // recorded menu choice, and the handoff context are lifecycle facts, not
-   // plan-approval facts: an in-progress or completed run must not be rewound
-   // to pending by a doc edit made during or after implementation. The
-   // coordinator identity is likewise a lifecycle fact (CA-12): plan drift
-   // preserves it alongside the active status; only completion and spec
-   // approval drift clear it.
-   updated_at: Date.now(),
+  // recorded menu choice, and the handoff context are lifecycle facts, not
+  // plan-approval facts: an in-progress or completed run must not be rewound
+  // to pending by a doc edit made during or after implementation. The
+  // coordinator identity is likewise a lifecycle fact (CA-12): plan drift
+  // preserves it alongside the active status; only completion and spec
+  // approval drift clear it.
+  updated_at: Date.now(),
 });
 
 const driftCodeFor = (
@@ -814,7 +814,12 @@ const deriveLegacyExecution = (
   ) {
     // A legacy flow has no persisted coordinator identity: the field stays
     // null and every lineage check fails closed (CA-12/CA-13).
-    return { status: "active", mode: "subagent-driven", evidence: null, coordinator_session_id: null };
+    return {
+      status: "active",
+      mode: "subagent-driven",
+      evidence: null,
+      coordinator_session_id: null,
+    };
   }
   return { status: "pending", mode: null, evidence: null, coordinator_session_id: null };
 };
@@ -1363,11 +1368,7 @@ export class HostReceiptStore {
       // negatives no longer exist: `record` drops unclassified questions, so
       // branch/stash/No/Cancel never block typed purposes globally.
       const top = queue[queue.length - 1];
-      if (
-        top &&
-        top.purpose === opts.purpose &&
-        isNegativeLabel(top.selectedLabel)
-      ) {
+      if (top && top.purpose === opts.purpose && isNegativeLabel(top.selectedLabel)) {
         const filtered = queue.filter((r) => r.purpose !== opts.purpose);
         if (filtered.length === 0) this.#bySession.delete(sessionId);
         else this.#bySession.set(sessionId, filtered);
@@ -1830,7 +1831,12 @@ export const recordMenuChoice = (
               evidence: recorded.evidence,
               coordinator_session_id: coordinatorSessionId,
             }
-          : { status: "pending", mode: null, evidence: recorded.evidence, coordinator_session_id: null },
+          : {
+              status: "pending",
+              mode: null,
+              evidence: recorded.evidence,
+              coordinator_session_id: null,
+            },
         updated_at: Date.now(),
       },
     };
@@ -2282,9 +2288,7 @@ export const roleFromParentage = (
   parentID?: string | null,
   coordinatorSessionId?: string | null,
 ): FlowRole =>
-  typeof parentID === "string" &&
-  parentID !== "" &&
-  parentID === coordinatorSessionId
+  typeof parentID === "string" && parentID !== "" && parentID === coordinatorSessionId
     ? "delegated"
     : "coordinator";
 
@@ -2955,11 +2959,10 @@ export const subagentDrivenInterception = (input: {
   // Distinct owners only: the same coordinator recorded on several active
   // plans is still ONE owner (CA-13 denies multiple DISTINCT owners).
   const ids = Array.from(
-    new Set(
-      (input.activeCoordinatorIds ?? []).filter((id) => typeof id === "string" && id !== ""),
-    ),
+    new Set((input.activeCoordinatorIds ?? []).filter((id) => typeof id === "string" && id !== "")),
   );
-  const parent = typeof input.parentID === "string" && input.parentID !== "" ? input.parentID : null;
+  const parent =
+    typeof input.parentID === "string" && input.parentID !== "" ? input.parentID : null;
   const legacyActive = input.active === true;
   if (!legacyActive && ids.length === 0) return { ok: true };
   // Authorized direct child: exactly one recorded coordinator and this session

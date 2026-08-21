@@ -265,7 +265,8 @@ export function createSddTools(state: WorkflowStateStore, client?: SessionLookup
       },
     }),
     workflow_sdd_append_advisory: tool({
-      description: "Append a validated advisory line to docs/<slug>/sdd/advisories.md (coordinator-owned).",
+      description:
+        "Append a validated advisory line to docs/<slug>/sdd/advisories.md (coordinator-owned).",
       args: {
         confirmed: tool.schema.boolean(),
         advisories_path: tool.schema.string(),

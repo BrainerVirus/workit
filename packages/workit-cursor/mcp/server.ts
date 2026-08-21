@@ -656,7 +656,8 @@ registerTool(
 registerTool(
   "workflow_sdd_append_advisory",
   {
-    description: "Append a validated advisory line to docs/<slug>/sdd/advisories.md (coordinator-owned)",
+    description:
+      "Append a validated advisory line to docs/<slug>/sdd/advisories.md (coordinator-owned)",
     inputSchema: {
       advisories_path: z.string(),
       task_id: z.number(),
