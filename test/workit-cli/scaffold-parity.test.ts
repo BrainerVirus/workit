@@ -122,7 +122,7 @@ test("CLI scaffold ships the execution-reliability contract surface", () => {
   for (const phrase of [
     "Change model first",
     "delegation_lineage_denied",
-    "workflow_sdd_append_advisory",
+    "workit_sdd_append_advisory",
   ]) {
     expect(template).toContain(phrase);
   }
