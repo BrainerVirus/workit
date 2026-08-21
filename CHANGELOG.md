@@ -28,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added verbatim snapshots of the current official Cursor `plugin.json`/`marketplace.json` schemas with retrieval provenance.
 - Added a `workit flow review-package` CLI command that writes the review diff for a `--base..--head` range through the shared-core guard, which rejects empty ranges (`base == head` or a diff that is empty) with a structured error.
 - Codified atomic per-task commit ranges in the plan template and execution skills: each SDD task lands exactly one contiguous non-empty commit range, fix rounds append to that range without rewriting an active review range, and each progress line records the task's real `base..head` shas.
+- SDD control metadata (flow state, briefs, ledgers, advisories) is coordinator-owned under the gitignored `docs/<slug>/sdd/`; a new `workflow_sdd_append_advisory` tool and CLI `workit flow append-advisory --plan <path> --task <id> --text <text> [--confirm]` record advisory review findings in `advisories.md` without an unrestricted file edit.
 - The doctor gained a `stale_install` finding on the Cursor/CLI hosts that detects plugin auto-load rot before it breaks features: legacy `--package=` pins in the plugin's own `mcp.json`, a sessionStart hook running a legacy selector, or a local-dist install behind the current/published runtime all surface with the exact repair step; canonical `@latest` installs never fail on version metadata (the selector resolves fresh at launch), and the sole network probe (the npm registry) fails open as a `registry_unreachable` warning — never a false `stale_install` and never a hard doctor failure.
 
 ### Changed
@@ -46,6 +47,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `install-cursor-plugin.sh` gained a `--local-dist` mode that registers node-form MCP/hook launchers against the installed plugin's own built `dist/` (instead of the published npx pin), so a checkout install runs the current branch's code — rename included — without waiting for a release; the doctor accepts this local-dist hook alongside the canonical pin.
 - The Cursor runtime selector evolved in one step from an exact reviewed pin (`@brainervirus/workit-cursor@0.8.5`, the latest public at the time) to the `@latest` dist-tag with a mandatory `--prefer-online` flag (`npx -y --prefer-online --package=@brainervirus/workit-cursor@latest …`): `--prefer-online` forces fresh registry re-resolution so a stale `latest` in the `_npx` cache is never reused, the doctor enforces this exact launcher shape, the doctor's negative-rejection fixtures cover near-miss variants, and no per-release manual pin bump is required.
 - `install-cursor-plugin.sh` now self-heals stale plugin installs: a `doctor-check.ts cursor --stale` pre-check exits 2 on a `stale_install` failure and the installer then refreshes the plugin directory and rewrites the workit MCP/hook entries to the canonical `@latest` + `--prefer-online` selector, preserving unrelated MCP servers; a registry-unreachable comparison stays fail-open (warn, never stale, never install failure), and a healthy install is byte-untouched.
+- Native-question receipts are purpose-bound: each flow gate consumes the newest unconsumed fresh receipt for exactly its purpose (`spec-approval`, `plan-approval`, `execution-menu`, `plan-pause`, `plan-resume`, `plan-complete`), so unrelated questions never authorize a gate or mask the matching receipt.
+- The OpenCode/Cursor post-plan execution menus gained a display-only `Change model first` deferral that ends the turn without recording a menu choice and re-presents the menu next turn.
+- Delegated authority is direct-child-only: a worker's host `parentID` must equal the activating coordinator's recorded `coordinator_session_id`; mismatched or multi-owner lineage fails closed with `delegation_lineage_denied`, nested `opencode` launches are denied during active delegated work, and authorized children receive only compact worker-only context.
 
 ### Fixed
 
@@ -68,6 +72,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A caller-supplied PR target equal to the resolved workspace default (`main` under github-flow, `develop` under gitflow) is accepted even though protected; genuine differing overrides to protected or disallowed branches are still rejected.
 - Menu receipt label matching now tolerates host qualifiers such as `(Recommended)` and `(new session only)`; original label bytes are preserved.
 - Windows CI flake: the RL-03 pr-create target test now gets the 60s per-test budget already used by sibling heavy-git tests (Windows git cold starts).
+- Handoff runs a preflight before creating the continuation session, so a logical failure creates no session; sessions are titled `Workit: <slug>` and selected automatically in the TUI, with native `Continue opencode -s <session-id>` as manual recovery only when selection fails.
 
 ## [0.6.0] - 2026-08-10
 

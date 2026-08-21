@@ -112,6 +112,19 @@ test("wizard writes nothing before Apply; index exits nonzero until configuratio
   expect(indexSource).toMatch(/process\.exit\(exit !== undefined && exit\.complete \? 0 : 1\)/);
 });
 
+test("CLI scaffold ships the execution-reliability contract surface", () => {
+  const template = readFileSync(
+    path.join(repoRoot, "packages/workit-cli/assets/templates/execution-contract.md"),
+    "utf8",
+  );
+  const flow = readFileSync(path.join(repoRoot, "packages/workit-cli/src/flow.ts"), "utf8");
+
+  for (const phrase of ["Change model first", "delegation_lineage_denied", "workflow_sdd_append_advisory"]) {
+    expect(template).toContain(phrase);
+  }
+  expect(flow).toContain("append-advisory");
+});
+
 // Task 14 Step 7 (CA-13): initApplyData token writes must use the same wx +
 // EEXIST-as-preserved semantics as the wizard's ensureToken — an existing real
 // token is never clobbered by a scaffold/placeholder write.

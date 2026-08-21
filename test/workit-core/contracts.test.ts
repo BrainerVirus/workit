@@ -614,6 +614,61 @@ test("user and maintainer documentation reflects the integrity contracts, withou
   expect(cursorReadme).toMatch(/workflow_plan_pause|lifecycle|digest/i);
 });
 
+test("execution-reliability contract phrases are present across canonical and host asset surfaces (CA-01..CA-20)", () => {
+  const read = (rel: string) => readFileSync(path.join(import.meta.dir, "..", "..", rel), "utf8");
+  const contractRels = [
+    "packages/workit-core/templates/execution-contract.md",
+    "packages/workit-opencode/assets/templates/execution-contract.md",
+    "packages/workit-cursor/assets/templates/execution-contract.md",
+    "packages/workit-cli/assets/templates/execution-contract.md",
+  ];
+  const handoffRels = [
+    "packages/workit-core/skills/wk-handoff/SKILL.md",
+    "packages/workit-opencode/assets/skills/wk-handoff/SKILL.md",
+  ];
+  const implementRels = [
+    "packages/workit-core/skills/wk-implement/SKILL.md",
+    "packages/workit-opencode/assets/skills/wk-implement/SKILL.md",
+  ];
+  const docContractRels = [
+    "packages/workit-core/templates/superpowers-doc-contract.md",
+    "packages/workit-opencode/assets/templates/superpowers-doc-contract.md",
+    "packages/workit-cursor/assets/templates/superpowers-doc-contract.md",
+    "packages/workit-cli/assets/templates/superpowers-doc-contract.md",
+  ];
+  const joined = [...contractRels, ...handoffRels, ...implementRels, ...docContractRels].map(read).join("\n");
+  // Model deferral is present.
+  expect(joined).toContain("Change model first");
+  // Direct-child authority.
+  expect(joined).toContain("delegation_lineage_denied");
+  // Persisted activating coordinator.
+  expect(joined).toContain("coordinator_session_id");
+  // Coordinator-owned advisories.
+  expect(joined).toContain("workflow_sdd_append_advisory");
+  // Native recovery phrase.
+  expect(joined).toContain("Continue opencode -s <session-id>");
+  // Immediate menu recording.
+  expect(joined).toMatch(/immediately before any skill|workflow_plan_menu immediately|call `?workflow_plan_menu`? immediately/i);
+  for (const rel of contractRels) {
+    const text = read(rel);
+    expect(text, `${rel} Change model first`).toContain("Change model first");
+    expect(text, `${rel} delegation_lineage_denied`).toContain("delegation_lineage_denied");
+  }
+  for (const rel of handoffRels) {
+    const text = read(rel);
+    expect(text, `${rel} Workit: <slug>`).toContain("Workit: <slug>");
+    expect(text, `${rel} Continue opencode -s <session-id>`).toContain("Continue opencode -s <session-id>");
+  }
+  for (const rel of implementRels) {
+    expect(read(rel), `${rel} compact worker contract`).toContain("compact worker contract");
+  }
+  for (const rel of docContractRels) {
+    const text = read(rel);
+    expect(text, `${rel} Change model first`).toContain("Change model first");
+    expect(text, `${rel} workflow_plan_menu immediately`).toMatch(/workflow_plan_menu.{0,40}immediately/i);
+  }
+});
+
 // --- Cross-host parity matrix (CA-08/CA-10/CA-20/CA-21/CA-22/CA-23) ---
 
 type NState = {

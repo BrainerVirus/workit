@@ -25,6 +25,7 @@ workit flow pause --plan docs/<slug>/plan.md [--confirm]     # active -> paused
 workit flow resume --plan docs/<slug>/plan.md [--confirm]    # paused -> active
 workit flow complete --plan docs/<slug>/plan.md [--confirm]  # complete (ledger + verification gated)
 workit flow review-package --plan docs/<slug>/plan.md --base <sha> --head <sha> [--confirm]  # write a review diff
+workit flow append-advisory --plan docs/<slug>/plan.md --task <id> --text <text> [--confirm]  # record an advisory review finding
 workit handoff --message "docs/<slug>/plan.md"      # print the destination handoff prompt
 workit                   # help
 ```
