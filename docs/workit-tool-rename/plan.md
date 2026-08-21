@@ -50,7 +50,7 @@
 - [ ] **Step 3: Run the focused tests.** Run `bun test test/workit-opencode test/artifacts/registration.test.ts`; expected result is PASS.
 - [ ] **Step 4: Commit the task.** Commit the OpenCode identifier rename and tests as one non-empty task range.
 
-**Criteria:** All 43 OpenCode tool declarations expose `workit_*`; OpenCode-only `workit_commit` and `workit_handoff_session` remain present; focused tests pass.
+**Criteria:** All 45 OpenCode tool declarations expose `workit_*`; OpenCode-only `workit_commit` and `workit_handoff_session` remain present; focused tests pass.
 
 | Status | Task |
 | --- | --- |
@@ -75,7 +75,7 @@
 - [ ] **Step 3: Run the focused tests.** Run `bun test test/workit-cursor test/artifacts/packed-runtime.test.ts`; expected result is PASS.
 - [ ] **Step 4: Commit the task.** Commit the Cursor MCP identifier rename and tests as one non-empty task range.
 
-**Criteria:** All 40 Cursor MCP registrations expose `workit_*`; `workit_handoff_prompt` remains Cursor-only; focused tests pass.
+**Criteria:** All 45 Cursor MCP registrations (42 literal + 3 template-generated lifecycle) expose `workit_*`; `workit_handoff_prompt` remains Cursor-only; focused tests pass.
 
 | Status | Task |
 | --- | --- |
@@ -135,8 +135,8 @@
 ### Task 4: Rename skills, assets, templates, and vendored contracts
 
 **Files:**
-- Modify: all 10 `packages/workit-core/skills/wk-*/SKILL.md` files and YouTrack reference
-- Modify: the corresponding 11 files under `packages/workit-opencode/assets/skills/`
+- Modify: all 12 `packages/workit-core/skills/*/SKILL.md` files and YouTrack reference
+- Modify: the corresponding 12 files under `packages/workit-opencode/assets/skills/`
 - Modify: the corresponding 12 files under `packages/workit-cursor/skills/`
 - Modify: `packages/workit-core/templates/**`
 - Modify: `packages/workit-opencode/assets/templates/**`

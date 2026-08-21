@@ -8,7 +8,7 @@ The rename to `workit` covered only the three `workflow_toolkit_*` status/init t
 
 There is no single source of truth: the OpenCode plugin declares each tool name as a literal object key (`workflow_foo: tool({...})`), the Cursor MCP server declares each as a literal first argument to `registerTool("workflow_foo", ...)`, and the shared core references these names as standalone strings (error messages, retry fields, and the mutation-tool allowlist). The rename must therefore update every literal in both adapters, the shared core, tests, skills/assets/templates, and user docs.
 
-Two names are host-specific and must be renamed independently, not unified: OpenCode has `workflow_commit` (Cursor has no commit tool) and `workflow_handoff_session` (spawns a native session), while Cursor has `workflow_handoff_prompt` (builds a copy-paste prompt). Each maps to its own `workit_` equivalent. Legacy brand strings (`workflow-toolkit`, `workflow_toolkit`, `workflow-toolkit-contract`) are intentionally kept for legacy-identity detection and are out of scope.
+Two names are host-specific and must be renamed independently, not unified: OpenCode has `workflow_commit` (Cursor has no commit tool) and `workflow_handoff_session` (spawns a native session), while Cursor has `workflow_handoff_prompt` (builds a copy-paste prompt). Each maps to its own `workit_` equivalent. Legacy brand strings (`workflow-toolkit`, `workflow_toolkit`, `workflow-toolkit-contract`) are intentionally kept for legacy-identity detection and are out of scope. Counts refreshed after the merged OpenCode execution-reliability repair (PR #58), which added the advisory surface: 45 distinct `workflow_*` identifiers in the OpenCode plugin, 42 literal Cursor MCP registrations plus 3 template-generated lifecycle names, 39 test files, and 41 shipped skill/asset/template/vendor Markdown files referencing live `workflow_*` names.
 
 ## Goals
 
@@ -30,11 +30,11 @@ Two names are host-specific and must be renamed independently, not unified: Open
 ```mermaid
 flowchart LR
   %% workflow_* -> workit_* tool rename
-  opencode["OpenCode plugin (43 workflow_* tools)"]
-  cursor["Cursor MCP server (40 workflow_* tools)"]
+  opencode["OpenCode plugin (45 workflow_* tools)"]
+  cursor["Cursor MCP server (45 workflow_* tools: 42 literal + 3 lifecycle)"]
   core["Shared core (flow-state, sdd, youtrack, reminder, ...)"]
-  tests["Tests (38 files)"]
-  skills["Skills/assets/templates (47 files)"]
+  tests["Tests (39 files)"]
+  skills["Skills/assets/templates (41 files)"]
   docs["README / AGENTS / CHANGELOG"]
   target["workit_* (all hosts agree)"]
   opencode -->|rename| target
@@ -58,8 +58,8 @@ Every `workflow_` tool identifier becomes `workit_` (prefix substitution on the 
 
 | Surface | Before | After |
 | --- | --- | --- |
-| OpenCode tools | `workflow_verify`, `workflow_flow_status`, `workflow_commit`, `workflow_handoff_session`, … (43) | `workit_verify`, `workit_flow_status`, `workit_commit`, `workit_handoff_session`, … |
-| Cursor MCP tools | `workflow_verify`, `workflow_flow_status`, `workflow_handoff_prompt`, … (40) | `workit_verify`, `workit_flow_status`, `workit_handoff_prompt`, … |
+| OpenCode tools | `workflow_verify`, `workflow_flow_status`, `workflow_commit`, `workflow_handoff_session`, … (45) | `workit_verify`, `workit_flow_status`, `workit_commit`, `workit_handoff_session`, … |
+| Cursor MCP tools | `workflow_verify`, `workflow_flow_status`, `workflow_handoff_prompt`, … (42 literal + 3 lifecycle) | `workit_verify`, `workit_flow_status`, `workit_handoff_prompt`, … |
 | Core strings / allowlist | `workflow_spec_approve`, `workflow_verify`, `workflow_commit`, `workflow_youtrack_post`, … | `workit_*` equivalents |
 
 ## Acceptance criteria
