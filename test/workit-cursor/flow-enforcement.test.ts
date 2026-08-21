@@ -448,6 +448,81 @@ test("cursor MCP: workflow_sdd_review_package rejects an empty base..head range"
   }
 });
 
+test("cursor MCP: workflow_sdd_append_advisory preserves core payload and validation codes", async () => {
+  const { root } = fixture();
+  const { child, request } = startServer();
+  try {
+    await request("initialize", {
+      protocolVersion: "2024-11-05",
+      capabilities: {},
+      clientInfo: { name: "flow-enforcement", version: "1.0" },
+    });
+    child.stdin.write(
+      `${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })}\n`,
+    );
+    const call = (name: string, arguments_: unknown) =>
+      request("tools/call", { name, arguments: arguments_ });
+
+    await call("workflow_flow_status", {
+      plan_path: "docs/cf-flow/plan.md",
+      workspace_root: root,
+    });
+    await call("workflow_spec_approve", {
+      spec_path: "docs/cf-flow/spec.md",
+      workspace_root: root,
+    });
+    await call("workflow_plan_approve", {
+      plan_path: "docs/cf-flow/plan.md",
+      workspace_root: root,
+    });
+    await call("workflow_plan_menu", {
+      choice: "inline",
+      plan_path: "docs/cf-flow/plan.md",
+      workspace_root: root,
+    });
+
+    // Cursor is always the coordinator session, so the control write passes.
+    const ok = await call("workflow_sdd_append_advisory", {
+      advisories_path: "docs/cf-flow/sdd/advisories.md",
+      task_id: 1,
+      text: "cursor\t owned",
+      workspace_root: root,
+    });
+    expect(callText(ok).isError).toBe(false);
+    expect(callText(ok).text).toEqual({
+      ok: true,
+      advisory: "cursor owned",
+      advisories_path: "docs/cf-flow/sdd/advisories.md",
+      workspace_root: root,
+    });
+    expect(readFileSync(path.join(root, "docs/cf-flow/sdd/advisories.md"), "utf8")).toBe(
+      "- Task 1: cursor owned\n",
+    );
+
+    // The same core validation codes surface through the MCP wrapper.
+    const badTask = await call("workflow_sdd_append_advisory", {
+      advisories_path: "docs/cf-flow/sdd/advisories.md",
+      task_id: 0,
+      text: "ok",
+      workspace_root: root,
+    });
+    expect(JSON.stringify(callText(badTask).text)).toContain("advisory_task_invalid");
+    const badText = await call("workflow_sdd_append_advisory", {
+      advisories_path: "docs/cf-flow/sdd/advisories.md",
+      task_id: 1,
+      text: "line1\nline2",
+      workspace_root: root,
+    });
+    expect(JSON.stringify(callText(badText).text)).toContain("advisory_text_invalid");
+    expect(readFileSync(path.join(root, "docs/cf-flow/sdd/advisories.md"), "utf8")).toBe(
+      "- Task 1: cursor owned\n",
+    );
+  } finally {
+    child.kill();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 // --- Task 5: Cursor lifecycle, drift, workspace, and destination parity ---
 
 const writeSddLedger = (root: string, slug: string, lines: string[]) => {
@@ -501,6 +576,7 @@ test("cursor MCP status returns execution and drift alongside spec/plan/menu", a
       status: "pending",
       mode: null,
       evidence: null,
+      coordinator_session_id: null,
     });
     expect(callText(status).text.drift).toEqual([]);
 

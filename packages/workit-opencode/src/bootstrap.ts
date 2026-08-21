@@ -51,7 +51,7 @@ ${contract}
 
 After saving a plan, call \`workflow_docs_validate\` on the spec/plan pair. On failure, stop — do not offer execution.
 
-On success, use native \`question\` with exactly: Subagent-driven, Inline, Handoff (new session only), Review spec first, Review plan first. Never emit Superpowers “Two execution options” prose. No \`--stay\` in this menu.
+On success, use native \`question\` with exactly: Subagent-driven, Inline, Handoff (new session only), Review spec first, Review plan first, Change model first. Change model first is display-only: ends turn without workflow_plan_menu, re-presents menu next turn; real choices call workflow_plan_menu immediately before any skill/branch/mutation/handoff. Never emit Superpowers “Two execution options” prose. No \`--stay\` in this menu.
 
 ## Library documentation
 

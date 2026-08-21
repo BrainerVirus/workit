@@ -46,7 +46,7 @@ npx @brainervirus/workit-cli init
 
 ## Host limitations
 
-Cursor adapts workit through policy-only confirmation: approvals and lifecycle transitions are recorded as policy decisions (`attested: false`) rather than fabricated delegated identity, and subagent-driven plan execution is not supported on this host. Approvals bind to the document's exact SHA-256 digest — editing an approved spec/plan invalidates the approval and forces a fresh reapproval. OpenCode records native `question` receipts and runs delegated tasks; see the root [README](../../README.md#host-capabilities) for the full host-capability matrix.
+Cursor adapts workit through policy-only confirmation: approvals and lifecycle transitions are recorded as policy decisions (`attested: false`) rather than fabricated delegated identity, and subagent-driven plan execution is not supported on this host. Cursor consumes the same core outcomes but stays inline-only (the subagent-driven menu choice returns `unsupported_mode`); model selection remains a host-native action. Approvals bind to the document's exact SHA-256 digest — editing an approved spec/plan invalidates the approval and forces a fresh reapproval. OpenCode records native `question` receipts and runs delegated tasks; see the root [README](../../README.md#host-capabilities) for the full host-capability matrix.
 
 ## Configuration
 

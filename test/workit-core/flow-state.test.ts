@@ -90,7 +90,7 @@ test("a legacy self_reviewed state advances to approved on the next receipt", ()
       spec: { path: spec, status: "self_reviewed", evidence: null, approved_digest: null },
       plan: { path: plan, status: "self_reviewed", evidence: null, approved_digest: null },
       menu: { presented: false, chosen: "", evidence: null },
-      execution: { status: "pending", mode: null, evidence: null },
+      execution: { status: "pending", mode: null, evidence: null, coordinator_session_id: null },
       handoff_destination: false,
       updated_at: Date.now(),
     });
@@ -392,7 +392,12 @@ test("CA-06: an LF -> CRLF line-ending edit invalidates the spec approval (diges
       evidence: null,
     });
     expect(effective.state.menu).toEqual({ presented: false, chosen: "", evidence: null });
-    expect(effective.state.execution).toEqual({ status: "pending", mode: null, evidence: null });
+    expect(effective.state.execution).toEqual({
+      status: "pending",
+      mode: null,
+      evidence: null,
+      coordinator_session_id: null,
+    });
     expect(effective.state.handoff_destination).toBe(false);
   } finally {
     cleanup(root);
@@ -430,7 +435,12 @@ test("CA-06: canonically equivalent but byte-different Unicode edits cause diges
       evidence: null,
     });
     expect(effective.state.menu).toEqual({ presented: false, chosen: "", evidence: null });
-    expect(effective.state.execution).toEqual({ status: "pending", mode: null, evidence: null });
+    expect(effective.state.execution).toEqual({
+      status: "pending",
+      mode: null,
+      evidence: null,
+      coordinator_session_id: null,
+    });
   } finally {
     cleanup(root);
   }
@@ -553,7 +563,12 @@ test("CA-03: spec drift resets plan approval, menu evidence, handoff context, an
     writeFlowState(root, {
       ...advanced,
       handoff_destination: true,
-      execution: { status: "active", mode: "subagent-driven", evidence: null },
+      execution: {
+        status: "active",
+        mode: "subagent-driven",
+        evidence: null,
+        coordinator_session_id: null,
+      },
     });
     writeFileSync(path.join(root, "docs", slug, "spec.md"), COMPLIANT_SPEC(slug) + "\n");
     const effective = readEffectiveFlowState(root, slug);
@@ -573,7 +588,12 @@ test("CA-03: spec drift resets plan approval, menu evidence, handoff context, an
       evidence: null,
     });
     expect(effective.state.menu).toEqual({ presented: false, chosen: "", evidence: null });
-    expect(effective.state.execution).toEqual({ status: "pending", mode: null, evidence: null });
+    expect(effective.state.execution).toEqual({
+      status: "pending",
+      mode: null,
+      evidence: null,
+      coordinator_session_id: null,
+    });
     expect(effective.state.handoff_destination).toBe(false);
   } finally {
     cleanup(root);
@@ -588,7 +608,12 @@ test("CA-03: plan drift after execution started preserves menu and execution lif
     writeFlowState(root, {
       ...advanced,
       menu: { presented: true, chosen: "subagent-driven", evidence: null },
-      execution: { status: "active", mode: "subagent-driven", evidence: null },
+      execution: {
+        status: "active",
+        mode: "subagent-driven",
+        evidence: null,
+        coordinator_session_id: null,
+      },
     });
     writeFileSync(
       path.join(root, "docs", slug, "plan.md"),
@@ -617,6 +642,7 @@ test("CA-03: plan drift after execution started preserves menu and execution lif
       status: "active",
       mode: "subagent-driven",
       evidence: null,
+      coordinator_session_id: null,
     });
   } finally {
     cleanup(root);
@@ -906,6 +932,7 @@ test("CA-16: deriveLegacyExecution guards exercised in isolation — plan-approv
         status: c.expected.status,
         mode: c.expected.mode,
         evidence: null,
+        coordinator_session_id: null,
       });
     } finally {
       cleanup(root);

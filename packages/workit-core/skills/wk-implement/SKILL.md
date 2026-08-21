@@ -31,12 +31,14 @@ For every plan task whose ID is absent from `completed_task_ids`:
 3. Use `task` with the built-in `explore` agent for read-only discovery when needed, then a fresh built-in `general` agent to implement from the brief. The parent remains coordinator-only.
 4. Require product changes to follow TDD: failing check first, minimal implementation, passing focused check.
 5. Create the review package with `workflow_sdd_review_package` using `confirmed: true`.
-6. Dispatch separate `general` agents for spec-compliance review and code-quality review. **Blocking findings** (Critical, Important, or spec-compliance) may trigger at most **two** fix+re-review rounds per task. **Advisory** findings (Minor, style, YAGNI, taste) never pause the loop — append them to `<SDD_DIR>/advisories.md` with the task id.
+6. Dispatch separate `general` agents for spec-compliance review and code-quality review. **Blocking findings** (Critical, Important, or spec-compliance) may trigger at most **two** fix+re-review rounds per task. **Advisory** findings (Minor, style, YAGNI, taste) never pause the loop — append them with `workflow_sdd_append_advisory` (`--task <id> --text <text>`) using `confirmed: true`.
 7. Append the validated ledger line with `workflow_sdd_append_progress` using `confirmed: true`, then mark the task completed with `todowrite`.
 
 Each task lands exactly one contiguous non-empty commit range (`base..head`): fix rounds append commits to that range and never rewrite/amend an active review range; each progress line records the task's real base..head shas.
 
 Never redispatch completed task IDs. Pass task briefs and review diffs to agents; do not make them reparse the plan. Keep commits on the in-place feature/bugfix branch.
+
+Delegated authority is direct-child-only: a worker is the session whose host `parentID` exactly equals the activating coordinator's recorded `coordinator_session_id`; missing, mismatched, or multi-owner lineage fails closed with `delegation_lineage_denied`, and nested `opencode` launches are denied during active delegated work. An authorized child receives only the compact worker contract — execute the supplied brief, follow TDD, land one contiguous non-empty commit range, report results — never coordinator guidance, `wk-implement`, or ledger management. Coordinator bookkeeping (briefs, review packages, progress, advisories via `workflow_sdd_*`) stays with the coordinator session.
 
 ## Final gate
 

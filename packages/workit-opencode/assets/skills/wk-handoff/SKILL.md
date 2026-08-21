@@ -15,4 +15,6 @@ disable-model-invocation: true
 7. After any `workflow_handoff_session` result—success, partial, or failure—end the originating turn immediately after one status message. Never create todos, execute the plan inline, modify files, retry handoff, or call another tool.
 8. A destination run that executes the plan must still end with `workflow_plan_complete` (or the CLI `workit flow complete`) once the SDD ledger is complete and repository verification passes, and never finish the run while the plan is still `active`.
 
+Handoff titles continuation sessions `Workit: <slug>` (never `Continue <slug>`). OpenCode's native `Continue opencode -s <session-id>` epilogue is the valid manual recovery command when host selection is unavailable (`stage: "select"`): `selected: false` with a `sessionID` is a partial success — use `opencode -s <session-id>` to resume, not a Workit bug.
+
 Never emit a continuation prompt, use the clipboard, or ask the user to copy text. If selected, report the session ID only if the current session remains visible. If staying, report the seeded session ID. On failure, report `stage` and `error`; preserve any returned session for the session picker and never recreate it automatically. `todowrite` and `task` are unnecessary here.

@@ -1,12 +1,12 @@
 import { expect, test } from "bun:test";
-import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createFlowTools, type SessionLookup } from "../../packages/workit-opencode/src/tools/flow";
 import { createSddTools } from "../../packages/workit-opencode/src/tools/sdd";
 import { WorkflowStateStore } from "../../packages/workit-core/src/state";
 import {
-  COORDINATOR_RECOVERY_TEXT,
   HostReceiptStore,
   createOpenCodeEvidence,
   transitionPlan,
@@ -99,7 +99,11 @@ const establishSubagentDriven = async (root: string, slug: string, receipts: Hos
     transitionPlan(root, slug, plan, ev("Approve plan")),
   ])
     if (!step.ok) throw new Error(step.error);
-  const menu = recordMenuChoice(root, slug, plan, "subagent-driven", ev("subagent-driven"));
+  const menu = recordMenuChoice(root, slug, plan, "subagent-driven", ev("subagent-driven"), {
+    hostWorkspace: root,
+    role: "coordinator",
+    sessionId: "root-session",
+  });
   if (!menu.ok) throw new Error(menu.error);
 };
 
@@ -114,6 +118,12 @@ test("approval and menu tool schemas expose no evidence, role, or taskIdentity f
     "sdd_dir",
     "task_id",
     "section_text",
+  ]);
+  expect(schemaKeys(tools, "workflow_sdd_append_advisory")).toEqual([
+    "confirmed",
+    "advisories_path",
+    "task_id",
+    "text",
   ]);
 });
 
@@ -169,35 +179,25 @@ test("a host-issued question receipt is consumed by the approval tool without ev
   }
 });
 
-test("a recent positive answer to any question authorizes the approval (documented residual)", async () => {
+test("an intervening unrelated question cannot mask menu evidence (CA-02 purpose binding)", async () => {
   const { root, tools, ctx, receipts } = fixture();
   try {
     await run(tools, "workflow_flow_status", { plan_path: "docs/oc-flow/plan.md" }, ctx);
-    // A "proceed with stash?" answer is a positive label: the correlation
-    // boundary is any recent positive host answer + the model's choice to
-    // proceed. The laundering case (negative answer -> approval) is closed.
-    receipts.record("oc", "call-stash", "yes, proceed");
-    const accepted = await run(
-      tools,
-      "workflow_spec_approve",
-      { spec_path: "docs/oc-flow/spec.md" },
-      ctx,
-    );
+    const spec = "docs/oc-flow/spec.md";
+    // An unrelated execution-menu receipt + a fresh spec-approval: only the spec purpose matters.
+    receipts.record("oc", "call-menu", "Inline", Date.now(), "", "execution-menu");
+    receipts.record("oc", "call-spec", "Approve spec", Date.now(), "", "spec-approval");
+    const accepted = await run(tools, "workflow_spec_approve", { spec_path: spec }, ctx);
     expect(accepted.ok).toBe(true);
     expect(accepted.data.status).toBe("approved");
-    const status = await run(
-      tools,
-      "workflow_flow_status",
-      { plan_path: "docs/oc-flow/plan.md" },
-      ctx,
-    );
-    expect(status.data.spec.status).toBe("approved");
   } finally {
     cleanup(root);
   }
 });
 
 test("a negative answer cannot be laundered into an approval (FINDING 3)", async () => {
+  // Purposeless negatives (bare "No") are not recorded as flow receipts;
+  // a spec-approval request with no typed receipt is receipt_missing (CA-02).
   const { root, tools, ctx, receipts } = fixture();
   try {
     await run(tools, "workflow_flow_status", { plan_path: "docs/oc-flow/plan.md" }, ctx);
@@ -209,11 +209,7 @@ test("a negative answer cannot be laundered into an approval (FINDING 3)", async
       ctx,
     );
     expect(denied.ok).toBe(false);
-    if (denied.ok === false) {
-      expect(denied.data?.code).toBe("receipt_rejected");
-      expect(denied.error).toMatch(/negative answer/i);
-    }
-    // Consumed-and-rejected: the negative answer is spent, never authorizing.
+    if (denied.ok === false) expect(denied.data?.code).toBe("receipt_missing");
     expect(receipts.count("oc")).toBe(0);
     const status = await run(
       tools,
@@ -222,7 +218,6 @@ test("a negative answer cannot be laundered into an approval (FINDING 3)", async
       ctx,
     );
     expect(status.data.spec.status).toBe("draft");
-    // Retrying without a fresh answer still fails: the negative receipt is gone.
     const retry = await run(
       tools,
       "workflow_spec_approve",
@@ -237,6 +232,8 @@ test("a negative answer cannot be laundered into an approval (FINDING 3)", async
 });
 
 test("a negative answer cannot be laundered into a menu choice (FINDING 3)", async () => {
+  // Purposeless negatives are not recorded; an execution-menu request with
+  // no typed receipt is receipt_missing, not receipt_rejected.
   const { root, slug, tools, ctx, receipts } = fixture();
   try {
     await run(tools, "workflow_flow_status", { plan_path: "docs/oc-flow/plan.md" }, ctx);
@@ -255,11 +252,7 @@ test("a negative answer cannot be laundered into a menu choice (FINDING 3)", asy
       ctx,
     );
     expect(denied.ok).toBe(false);
-    if (denied.ok === false) {
-      expect(denied.data?.code).toBe("receipt_rejected");
-      expect(denied.error).toMatch(/negative answer/i);
-    }
-    expect(receipts.count("oc")).toBe(0);
+    if (denied.ok === false) expect(denied.data?.code).toBe("receipt_missing");
     const status = await run(tools, "workflow_flow_status", { plan_path: plan }, ctx);
     expect(status.data.menu.presented).toBe(false);
   } finally {
@@ -345,9 +338,9 @@ test("menu consumption binds the exact selected label: a mismatched receipt labe
     await run(tools, "workflow_flow_status", { plan_path: "docs/oc-flow/plan.md" }, ctx);
     const spec = "docs/oc-flow/spec.md";
     const plan = "docs/oc-flow/plan.md";
-    recordQuestion(receipts, "Approve");
+    recordQuestion(receipts, "Approve spec");
     await run(tools, "workflow_spec_approve", { spec_path: spec }, ctx);
-    recordQuestion(receipts, "Approve");
+    recordQuestion(receipts, "Approve plan");
     await run(tools, "workflow_plan_approve", { plan_path: plan }, ctx);
 
     recordQuestion(receipts, "Inline");
@@ -427,59 +420,116 @@ test("menu consumption accepts host-decorated receipt labels for every source ch
   }
 });
 
-test("a real child session (host parentage) is delegated and passes product gates", async () => {
+test("a real child session (host parentage) is delegated and denied control metadata", async () => {
   const { root, tools, receipts } = fixture(childClient("root-session"));
   try {
     await establishSubagentDriven(root, "oc-flow", receipts);
     const childCtx = { directory: root, worktree: root, sessionID: "child-session" } as never;
-    const brief = await run(
+    for (const [name, args] of [
+      [
+        "workflow_sdd_task_brief",
+        { confirmed: true, sdd_dir: "docs/oc-flow/sdd", task_id: 1, section_text: "- [ ] Work\n" },
+      ],
+      [
+        "workflow_sdd_append_progress",
+        {
+          confirmed: true,
+          progress_path: "docs/oc-flow/sdd/progress.md",
+          line: "Task 1: complete (commits abcdef0..1234567, tests pass)",
+        },
+      ],
+      [
+        "workflow_sdd_append_advisory",
+        {
+          confirmed: true,
+          advisories_path: "docs/oc-flow/sdd/advisories.md",
+          task_id: 1,
+          text: "nit",
+        },
+      ],
+    ] as const) {
+      const denied = await run(tools, name, args, childCtx);
+      expect(denied.ok, name).toBe(false);
+      if (denied.ok === false) expect(denied.data?.code, name).toBe("sdd_control_denied");
+    }
+    // Review-package denial is explicit too: a real base..head range still
+    // fails closed for the delegated child (coordinator-owned metadata).
+    const git = (...args: string[]) => execFileSync("git", args, { cwd: root }).toString();
+    git("init");
+    git("config", "user.email", "t@t");
+    git("config", "user.name", "t");
+    git("add", "-A");
+    git("commit", "--allow-empty", "-m", "base");
+    writeFileSync(path.join(root, "docs/oc-flow/sdd/.keep"), "\n");
+    git("add", "-A");
+    git("commit", "-m", "work");
+    const reviewDenied = await run(
       tools,
-      "workflow_sdd_task_brief",
+      "workflow_sdd_review_package",
       {
         confirmed: true,
         sdd_dir: "docs/oc-flow/sdd",
-        task_id: 1,
-        section_text: "- [ ] Work\n",
+        base_sha: git("rev-parse", "HEAD~1").trim(),
+        head_sha: git("rev-parse", "HEAD").trim(),
       },
       childCtx,
     );
-    expect(brief.ok).toBe(true);
+    expect(reviewDenied.ok).toBe(false);
+    if (reviewDenied.ok === false) expect(reviewDenied.data?.code).toBe("sdd_control_denied");
+    expect(existsSync(path.join(root, "docs/oc-flow/sdd/task-1-brief.md"))).toBe(false);
+    expect(existsSync(path.join(root, "docs/oc-flow/sdd/progress.md"))).toBe(false);
+    expect(existsSync(path.join(root, "docs/oc-flow/sdd/advisories.md"))).toBe(false);
   } finally {
     cleanup(root);
   }
 });
 
-test("the root session is blocked after subagent-driven; caller role args are inert", async () => {
+test("the root session owns control metadata after subagent-driven; caller role args are inert", async () => {
   const { root, tools, ctx, receipts } = fixture(rootClient());
   try {
     await establishSubagentDriven(root, "oc-flow", receipts);
-    const blocked = await run(
+    const progress = await run(
       tools,
       "workflow_sdd_append_progress",
       {
         confirmed: true,
         progress_path: "docs/oc-flow/sdd/progress.md",
-        line: "Task 1: work (commits abcdef0..1234567, tests pass)",
+        line: "Task 1: complete (commits abcdef0..1234567, tests pass)",
         role: "delegated",
         taskIdentity: "forged-worker",
       },
       ctx,
     );
-    expect(blocked.ok).toBe(false);
-    if (blocked.ok === false) {
-      expect(blocked.data?.code).toBe("coordinator_blocked");
-      expect(blocked.error).toContain(COORDINATOR_RECOVERY_TEXT);
-    }
+    expect(progress.ok).toBe(true);
+
+    const advisory = await run(
+      tools,
+      "workflow_sdd_append_advisory",
+      {
+        confirmed: true,
+        advisories_path: "docs/oc-flow/sdd/advisories.md",
+        task_id: 1,
+        text: "root-owned",
+      },
+      ctx,
+    );
+    expect(advisory.ok).toBe(true);
+    expect(readFileSync(path.join(root, "docs/oc-flow/sdd/advisories.md"), "utf8")).toBe(
+      "- Task 1: root-owned\n",
+    );
   } finally {
     cleanup(root);
   }
 });
 
-test("a failing session lookup fails closed: the session is treated as the root coordinator", async () => {
+test("a failing session lookup fails closed to the coordinator: control writes stay root-owned", async () => {
   const { root, tools, receipts } = fixture(failingClient());
   try {
     await establishSubagentDriven(root, "oc-flow", receipts);
-    const blocked = await run(
+    // An unverifiable session is the root coordinator (never a delegated
+    // worker), so coordinator-owned control metadata stays writable — but a
+    // forged delegated identity is impossible: there is no parentID at all.
+    const brief = await run(
       tools,
       "workflow_sdd_task_brief",
       {
@@ -490,8 +540,7 @@ test("a failing session lookup fails closed: the session is treated as the root 
       },
       { directory: root, worktree: root, sessionID: "unverifiable" } as never,
     );
-    expect(blocked.ok).toBe(false);
-    if (blocked.ok === false) expect(blocked.data?.code).toBe("coordinator_blocked");
+    expect(brief.ok).toBe(true);
   } finally {
     cleanup(root);
   }
@@ -601,7 +650,12 @@ test("workflow_flow_status returns execution and drift alongside spec/plan/menu"
       ctx,
     );
     expect(out.ok).toBe(true);
-    expect(out.data.execution).toEqual({ status: "pending", mode: null, evidence: null });
+    expect(out.data.execution).toEqual({
+      status: "pending",
+      mode: null,
+      evidence: null,
+      coordinator_session_id: null,
+    });
     expect(out.data.drift).toEqual([]);
   } finally {
     cleanup(root);
@@ -699,7 +753,7 @@ test("lifecycle tools: active -> paused -> active -> completed with one-use rece
   }
 });
 
-test("a wrong lifecycle label does not transition and the receipt stays queued for its actual label", async () => {
+test("a wrong lifecycle purpose does not consume the receipt (purpose isolation: pause vs resume)", async () => {
   const { root, slug, tools, ctx, receipts } = fixture();
   try {
     await run(tools, "workflow_flow_status", { plan_path: "docs/oc-flow/plan.md" }, ctx);
@@ -712,7 +766,7 @@ test("a wrong lifecycle label does not transition and the receipt stays queued f
       ctx,
     );
     expect(wrong.ok).toBe(false);
-    if (wrong.ok === false) expect(wrong.error).toMatch(/mismatch|label/i);
+    if (wrong.ok === false) expect(wrong.code ?? wrong.error).toMatch(/receipt|purpose/i);
     expect(receipts.count("oc")).toBe(1);
     const right = await run(
       tools,
@@ -729,6 +783,8 @@ test("a wrong lifecycle label does not transition and the receipt stays queued f
 });
 
 test("a negative lifecycle answer cannot be laundered into a pause", async () => {
+  // Purposeless negatives produce no flow receipt; a plan-pause request with
+  // no typed receipt is receipt_missing (CA-02 strict purpose binding).
   const { root, slug, tools, ctx, receipts } = fixture();
   try {
     await run(tools, "workflow_flow_status", { plan_path: "docs/oc-flow/plan.md" }, ctx);
@@ -741,7 +797,7 @@ test("a negative lifecycle answer cannot be laundered into a pause", async () =>
       ctx,
     );
     expect(denied.ok).toBe(false);
-    if (denied.ok === false) expect(denied.data?.code).toBe("receipt_rejected");
+    if (denied.ok === false) expect(denied.data?.code).toBe("receipt_missing");
     const status = await run(
       tools,
       "workflow_flow_status",

@@ -7,12 +7,13 @@ Load `using-superpowers`, `subagent-driven-development`, `test-driven-developmen
 
 ## Handoff destination
 
-This session is a handoff destination for a continued plan. The originating session already recorded the post-plan menu choice; present exactly these four choices and never re-offer the originating handoff option:
+This session is a handoff destination for a continued plan. The originating session already recorded the post-plan menu choice; present exactly these four choices plus model deferral and never re-offer the originating handoff option:
 
 - Subagent-driven
 - Inline
 - Review spec first
 - Review plan first
+- Change model first
 
 <workflow-handoff-destination>true</workflow-handoff-destination>
 
@@ -24,6 +25,7 @@ This session is a handoff destination for a continued plan. The originating sess
 - Use native `todowrite` for visible task state as well as the gitignored ledger.
 - Use native `question` for branch/stash choices and guarded external mutations; call mutation tools only after approval with `confirmed: true` (grounded in the recorded NativeChoiceEvidence).
 - Flow-tool confirmations are never agent-typed booleans and never caller-supplied evidence objects: on OpenCode the plugin records the user's native-`question` answer as a host-observed one-use receipt (`attested: true`, `callID`, `selectedLabel`, `recordedAt`) consumed by `workflow_spec_approve` / `workflow_plan_approve` / `workflow_plan_menu` — no evidence argument exists, and delegated worker status comes from host session parentage (`parentID`), never a caller `role` field. On Cursor, confirmations are policy-only (`attested: false`) and subagent-driven execution is rejected as unsupported.
+- Delegated authority is direct-child-only: a worker is the session whose host `parentID` exactly equals the activating coordinator's recorded `coordinator_session_id`; missing, mismatched, or multi-owner lineage fails closed with `delegation_lineage_denied`, and nested `opencode` launches are denied during active delegated work. An authorized child receives only the compact worker contract (execute the supplied brief, follow TDD, land one contiguous non-empty commit range, report results) — never coordinator guidance, `wk-implement`, or ledger management; coordinator bookkeeping via `workflow_sdd_*` stays with the coordinator session.
 - On Cursor, for every repository-scoped `workflow_*` call, pass the active Cursor workspace as `workspace_root`; never rely on the MCP process default.
 - Use native `task` with only the built-in `explore` and `general` agents.
 
@@ -52,7 +54,7 @@ For each top-level task absent from `completed_task_ids`:
 3. Delegate read-only discovery, when needed, to an `explore` agent. Delegate implementation to a fresh `general` agent. Product changes follow TDD.
 4. Create a working-state diff with `workflow_sdd_review_package` and `confirmed: true`.
 5. Delegate spec-compliance review and code-quality review to separate `general` agents.
-6. **Blocking** findings (Critical, Important, or spec-compliance) may trigger at most **two** fix+re-review rounds per task. **Advisory** findings (Minor, style, YAGNI, taste) never pause the loop — append them to `<SDD_DIR>/advisories.md`.
+6. **Blocking** findings (Critical, Important, or spec-compliance) may trigger at most **two** fix+re-review rounds per task. **Advisory** findings (Minor, style, YAGNI, taste) never pause the loop — append them with `workflow_sdd_append_advisory` (`--task <id> --text <text>`, `confirmed: true`) instead of an unrestricted file edit.
 7. Append the validated ledger entry with `workflow_sdd_append_progress` and `confirmed: true`; mark the todo completed.
 
 ## Final gate

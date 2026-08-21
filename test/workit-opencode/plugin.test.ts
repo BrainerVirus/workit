@@ -151,8 +151,9 @@ test("the plugin records a real question result as a one-use receipt and the app
     } as never);
     expect(JSON.parse(noReceipt as string).ok).toBe(false);
 
-    // A negative answer can never be laundered into an approval: it is
-    // rejected and spent (FINDING 3).
+    // A bare "No" has no workflow purpose and is not recorded as a flow
+    // receipt (CA-02); a spec-approval request with no typed receipt is
+    // receipt_missing, not receipt_rejected.
     await hooks["tool.execute.after"]?.(
       { tool: "question", sessionID: "s1", callID: "call-4", args: {} },
       {
@@ -168,7 +169,7 @@ test("the plugin records a real question result as a one-use receipt and the app
     } as never);
     const negativeResult = JSON.parse(negative as string);
     expect(negativeResult.ok).toBe(false);
-    expect(negativeResult.data?.code).toBe("receipt_rejected");
+    expect(negativeResult.data?.code).toBe("receipt_missing");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -178,20 +179,42 @@ const establishSubagentDriven = (root: string, slug: string) => {
   const spec = `docs/${slug}/spec.md`;
   const plan = `docs/${slug}/plan.md`;
   const store = new HostReceiptStore();
-  const ev = (label: string) => {
-    store.record("root", `call-${label}`, label);
-    const consumed = store.consume("root");
-    if (!consumed.ok) throw new Error(consumed.error);
-    return createOpenCodeEvidence(consumed.receipt);
-  };
+  store.record("root", "call-spec", "Approve spec", Date.now(), "", "spec-approval");
+  const specEv = createOpenCodeEvidence(
+    (() => {
+      const c = store.consume("root", { purpose: "spec-approval" });
+      if (!c.ok) throw new Error(c.error);
+      return c.receipt;
+    })(),
+  );
+  store.record("root", "call-plan", "Approve plan", Date.now(), "", "plan-approval");
+  const planEv = createOpenCodeEvidence(
+    (() => {
+      const c = store.consume("root", { purpose: "plan-approval" });
+      if (!c.ok) throw new Error(c.error);
+      return c.receipt;
+    })(),
+  );
+  store.record("root", "call-menu", "subagent-driven", Date.now(), "", "execution-menu");
+  const menuEv = createOpenCodeEvidence(
+    (() => {
+      const c = store.consume("root", { purpose: "execution-menu", label: "subagent-driven" });
+      if (!c.ok) throw new Error(c.error);
+      return c.receipt;
+    })(),
+  );
   const prep = prepareFlowState(root, slug, { spec_path: spec, plan_path: plan });
   if (!prep.ok) throw new Error(prep.error);
   for (const step of [
-    transitionSpec(root, slug, spec, ev("Approve")),
-    transitionPlan(root, slug, plan, ev("Approve")),
+    transitionSpec(root, slug, spec, specEv),
+    transitionPlan(root, slug, plan, planEv),
   ])
     if (!step.ok) throw new Error(step.error);
-  const menu = recordMenuChoice(root, slug, plan, "subagent-driven", ev("subagent-driven"));
+  const menu = recordMenuChoice(root, slug, plan, "subagent-driven", menuEv, {
+    hostWorkspace: root,
+    role: "coordinator",
+    sessionId: "root-session",
+  });
   if (!menu.ok) throw new Error(menu.error);
 };
 
@@ -391,6 +414,7 @@ test("tool.execute.before leaves the root session usable for an active inline fl
     establishSubagentDriven(root, slug);
     // Record an active INLINE menu choice instead of the subagent-driven one.
     const store = new HostReceiptStore();
+    store.record("root", "call-inline", "inline", Date.now(), "", "execution-menu");
     const menu = recordMenuChoice(
       root,
       slug,
@@ -398,8 +422,7 @@ test("tool.execute.before leaves the root session usable for an active inline fl
       "inline",
       createOpenCodeEvidence(
         (() => {
-          store.record("root", "call-inline", "inline");
-          const consumed = store.consume("root");
+          const consumed = store.consume("root", { purpose: "execution-menu", label: "inline" });
           if (!consumed.ok) throw new Error(consumed.error);
           return consumed.receipt;
         })(),
@@ -880,6 +903,12 @@ describe("plugin registration", () => {
             confirmed: false,
             progress_path: "docs/fixture/sdd/progress.md",
             line: "Task 1: complete",
+          },
+          workflow_sdd_append_advisory: {
+            confirmed: false,
+            advisories_path: "docs/fixture/sdd/advisories.md",
+            task_id: 1,
+            text: "Fixture",
           },
           workflow_handoff_session: { message: "safe fixture --stay" },
           workflow_youtrack_verify_token: {},

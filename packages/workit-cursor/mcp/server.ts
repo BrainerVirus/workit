@@ -63,6 +63,7 @@ import {
 } from "@brainervirus/workit-core/src/core/plan-tasks";
 import { buildHandoffPrompt } from "@brainervirus/workit-core/src/core/handoff-tools";
 import {
+  assertSddControlGates,
   markHandoffDestination,
   prepareFlowState,
   readEffectiveFlowState,
@@ -73,7 +74,6 @@ import {
   transitionExecution,
   transitionPlan,
   transitionSpec,
-  assertProductGates,
   type NativeChoiceEvidence,
 } from "@brainervirus/workit-core/src/core/flow-state";
 import { cursorMutationContext, cursorQuestionEvidence } from "./flow-evidence";
@@ -110,10 +110,11 @@ import { resolveBranch, branchSetup } from "@brainervirus/workit-core/src/core/b
 import { docsValidate } from "@brainervirus/workit-core/src/core/docs-validate";
 import { docsBranch } from "@brainervirus/workit-core/src/core/branch";
 import {
-  sddContext,
-  sddTaskBrief,
-  sddReviewPackage,
+  sddAppendAdvisory,
   sddAppendProgress,
+  sddContext,
+  sddReviewPackage,
+  sddTaskBrief,
 } from "@brainervirus/workit-core/src/core/sdd";
 import {
   verifyYouTrackToken,
@@ -577,7 +578,7 @@ registerTool(
   async ({ sdd_dir, task_id, section_text, workspace_root }) => {
     const slug = slugFromSddPath(sdd_dir);
     if (!slug) return jsonResult({ error: "could not derive slug — expected docs/<slug>/sdd/..." });
-    const gate = assertProductGates(
+    const gate = assertSddControlGates(
       workspace_root,
       slug,
       { requireMenu: true, requireDocs: true },
@@ -608,7 +609,7 @@ registerTool(
   async ({ sdd_dir, base_sha, head_sha, workspace_root }) => {
     const slug = slugFromSddPath(sdd_dir);
     if (!slug) return jsonResult({ error: "could not derive slug — expected docs/<slug>/sdd/..." });
-    const gate = assertProductGates(
+    const gate = assertSddControlGates(
       workspace_root,
       slug,
       { requireMenu: true, requireDocs: true },
@@ -639,7 +640,7 @@ registerTool(
   async ({ progress_path, line, workspace_root }) => {
     const slug = slugFromSddPath(progress_path);
     if (!slug) return jsonResult({ error: "could not derive slug — expected docs/<slug>/sdd/..." });
-    const gate = assertProductGates(
+    const gate = assertSddControlGates(
       workspace_root,
       slug,
       { requireMenu: true, requireDocs: true },
@@ -648,6 +649,34 @@ registerTool(
     if (!gate.ok) return jsonResult({ error: gate.error, code: gate.code });
     const data = sddAppendProgress({ progress_path, line, workspace_root });
     if (data.error) return jsonResult({ error: data.error });
+    return jsonResult(withWorkspace(workspace_root, data));
+  },
+);
+
+registerTool(
+  "workflow_sdd_append_advisory",
+  {
+    description:
+      "Append a validated advisory line to docs/<slug>/sdd/advisories.md (coordinator-owned)",
+    inputSchema: {
+      advisories_path: z.string(),
+      task_id: z.number(),
+      text: z.string(),
+      workspace_root: workspaceRootSchema,
+    },
+  },
+  async ({ advisories_path, task_id, text, workspace_root }) => {
+    const slug = slugFromSddPath(advisories_path);
+    if (!slug) return jsonResult({ error: "could not derive slug — expected docs/<slug>/sdd/..." });
+    const gate = assertSddControlGates(
+      workspace_root,
+      slug,
+      { requireMenu: true, requireDocs: true },
+      cursorMutationContext(workspace_root),
+    );
+    if (!gate.ok) return jsonResult({ error: gate.error, code: gate.code });
+    const data = sddAppendAdvisory({ advisories_path, task_id, text, workspace_root });
+    if ("error" in data) return jsonResult({ error: data.error, code: data.code });
     return jsonResult(withWorkspace(workspace_root, data));
   },
 );

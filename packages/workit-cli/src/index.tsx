@@ -37,6 +37,7 @@ const COMMAND_DESCRIPTIONS: readonly (readonly [string, string])[] = [
   [COMMANDS.resume, "Resume a paused plan"],
   [COMMANDS.complete, "Complete a plan (ledger and verification gated)"],
   [COMMANDS["review-package"], "Write a review diff for a base..head range"],
+  [COMMANDS["append-advisory"], "Append an advisory line to docs/<slug>/sdd/advisories.md"],
   [COMMANDS.handoff, "Emit the destination handoff prompt for a plan"],
 ];
 

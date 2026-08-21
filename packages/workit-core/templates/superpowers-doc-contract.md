@@ -60,10 +60,13 @@ On success, use native `question` / Cursor `AskQuestion` with exactly these opti
 3. Handoff → load `wk-handoff` (new session only)
 4. Review spec first
 5. Review plan first
+6. Change model first
+
+`Change model first` is display-only deferral: it ends the turn without calling `workflow_plan_menu` and re-presents the menu on the next turn. Every other choice must call `workflow_plan_menu` immediately after the answer and before any skill, branch question, mutation, or handoff.
 
 Never emit Superpowers text beginning “Two execution options”.
 
-A handoff destination session (the seeded contract carries `<workflow-handoff-destination>true</workflow-handoff-destination>`) presents exactly four choices — Subagent-driven, Inline, Review spec first, Review plan first — and never re-offers the originating handoff option.
+A handoff destination session (the seeded contract carries `<workflow-handoff-destination>true</workflow-handoff-destination>`) presents exactly five choices — Subagent-driven, Inline, Review spec first, Review plan first, Change model first — and never re-offers the originating handoff option.
 
 - Specs/plans must follow `templates/spec-template.md` / `templates/plan-template.md` (mandated diagrams, tables, CA-XX).
 

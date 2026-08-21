@@ -5,6 +5,7 @@ import {
   fsyncSync,
   mkdirSync,
   openSync,
+  readdirSync,
   readFileSync,
   renameSync,
   rmSync,
@@ -56,6 +57,13 @@ export type FlowExecutionState = {
   status: ExecutionStatus;
   mode: ExecutionMode | null;
   evidence: LifecycleEvidence | null;
+  /**
+   * The activating OpenCode coordinator session (CA-12): recorded when an
+   * accepted `subagent-driven` menu choice starts the execution; preserved
+   * across pause/resume; cleared on completion and approval drift; null for
+   * every non-subagent-driven path and for legacy states without the field.
+   */
+  coordinator_session_id: string | null;
 };
 
 /**
@@ -70,14 +78,20 @@ export type MutationContext = {
   hostWorkspace: string;
   role: FlowRole;
   sessionId: string;
+  /**
+   * The host-attested parent session id (OpenCode only): present exactly when
+   * the host reports a parent for this session, i.e. the session is a child.
+   * Delegated authority requires this to equal the persisted
+   * `execution.coordinator_session_id` (CA-13) — fail closed otherwise.
+   */
+  parentSessionId?: string;
   taskIdentity?: string;
 };
 
 /** Recovery guidance surfaced on a blocked coordinator mutation (FG-07). */
 export const COORDINATOR_RECOVERY_TEXT =
   "A subagent-driven plan is active: coordinator product edits are blocked. " +
-  "Delegate product mutations (task briefs, progress, review packages) to an " +
-  "authenticated delegated worker via `task` / `wk-implement` instead of " +
+  "Delegate product mutations to an authenticated delegated worker via `task` / `wk-implement` instead of " +
   "editing in the coordinator session.";
 
 /**
@@ -263,6 +277,7 @@ const normalizeState = (parsed: unknown, slug: string): FlowState => {
       status: (execution.status ?? "pending") as ExecutionStatus,
       mode: (execution.mode ?? null) as ExecutionMode | null,
       evidence: (execution.evidence ?? null) as LifecycleEvidence | null,
+      coordinator_session_id: execution.coordinator_session_id ?? null,
     },
     handoff_destination: p.handoff_destination ?? false,
     updated_at: p.updated_at ?? Date.now(),
@@ -275,7 +290,7 @@ const emptyState = (slug: string): FlowState => ({
   spec: { path: "", status: "draft", evidence: null, approved_digest: null },
   plan: { path: "", status: "draft", evidence: null, approved_digest: null },
   menu: { presented: false, chosen: "", evidence: null },
-  execution: { status: "pending", mode: null, evidence: null },
+  execution: { status: "pending", mode: null, evidence: null, coordinator_session_id: null },
   handoff_destination: false,
   updated_at: Date.now(),
 });
@@ -434,6 +449,16 @@ const validateState = (
   if (execRaw?.evidence !== undefined && !validateEvidenceValue(execRaw.evidence, true)) {
     return { ok: false, error: "flow state execution.evidence has an unsupported shape" };
   }
+  if (
+    execRaw?.coordinator_session_id !== undefined &&
+    execRaw.coordinator_session_id !== null &&
+    typeof execRaw.coordinator_session_id !== "string"
+  ) {
+    return {
+      ok: false,
+      error: "flow state execution.coordinator_session_id must be a string or null",
+    };
+  }
 
   return {
     ok: true,
@@ -451,6 +476,8 @@ const validateState = (
         status: (execRaw?.status as ExecutionStatus | undefined) ?? "pending",
         mode: (execRaw?.mode as ExecutionMode | null | undefined) ?? null,
         evidence: (execRaw?.evidence as LifecycleEvidence | null | undefined) ?? null,
+        coordinator_session_id:
+          (execRaw?.coordinator_session_id as string | null | undefined) ?? null,
       },
       handoff_destination: parsed.handoff_destination ?? false,
       updated_at: parsed.updated_at ?? Date.now(),
@@ -704,7 +731,7 @@ const resetForSpecDrift = (state: FlowState): FlowState => ({
   spec: { ...state.spec, status: "draft", evidence: null, approved_digest: null },
   plan: { ...state.plan, status: "draft", evidence: null, approved_digest: null },
   menu: { presented: false, chosen: "", evidence: null },
-  execution: { status: "pending", mode: null, evidence: null },
+  execution: { status: "pending", mode: null, evidence: null, coordinator_session_id: null },
   handoff_destination: false,
   updated_at: Date.now(),
 });
@@ -716,7 +743,10 @@ const resetForPlanDrift = (state: FlowState): FlowState => ({
   // required before any plan-gated transition). The execution lifecycle, the
   // recorded menu choice, and the handoff context are lifecycle facts, not
   // plan-approval facts: an in-progress or completed run must not be rewound
-  // to pending by a doc edit made during or after implementation.
+  // to pending by a doc edit made during or after implementation. The
+  // coordinator identity is likewise a lifecycle fact (CA-12): plan drift
+  // preserves it alongside the active status; only completion and spec
+  // approval drift clear it.
   updated_at: Date.now(),
 });
 
@@ -782,9 +812,16 @@ const deriveLegacyExecution = (
     ledger.started &&
     !ledger.complete
   ) {
-    return { status: "active", mode: "subagent-driven", evidence: null };
+    // A legacy flow has no persisted coordinator identity: the field stays
+    // null and every lineage check fails closed (CA-12/CA-13).
+    return {
+      status: "active",
+      mode: "subagent-driven",
+      evidence: null,
+      coordinator_session_id: null,
+    };
   }
-  return { status: "pending", mode: null, evidence: null };
+  return { status: "pending", mode: null, evidence: null, coordinator_session_id: null };
 };
 
 type CompatibilityResult = { state: FlowState; changed: boolean };
@@ -801,6 +838,15 @@ const normalizeCompatibility = (
     if (derived.status !== current.status || derived.mode !== current.mode) {
       return { state: { ...state, execution: derived, updated_at: Date.now() }, changed: true };
     }
+    return { state, changed: false };
+  }
+  // Legacy states written before coordinator_session_id (CA-12) carry an
+  // execution object without the key; validation defaults it to null, so the
+  // migration must be persisted under the lock or every read-modify-write
+  // would CAS-conflict forever (baseline bytes would never match disk).
+  const execRaw = isRecord(parsed.execution) ? parsed.execution : undefined;
+  if (execRaw && !("coordinator_session_id" in execRaw)) {
+    return { state: { ...state, updated_at: Date.now() }, changed: true };
   }
   return { state, changed: false };
 };
@@ -1040,7 +1086,8 @@ const assertMutationWorkspace = (root: string, ctx?: MutationContext): FlowGateR
  * subagent-driven, the coordinator session cannot mutate product state — only
  * authenticated delegated workers can. A historical subagent-driven menu choice
  * alone is not a boundary: a pending/paused/completed/inline execution leaves
- * the coordinator unblocked. A delegated worker without a task identity is
+ * the coordinator unblocked. A delegated worker is bound to the recorded
+ * activating coordinator lineage (CA-13) and without a task identity is
  * blocked.
  */
 export const assertCoordinatorBoundary = (
@@ -1054,11 +1101,44 @@ export const assertCoordinatorBoundary = (
   ) {
     return err("coordinator_blocked", COORDINATOR_RECOVERY_TEXT);
   }
-  if (ctx?.role === "delegated" && !ctx.taskIdentity) {
-    return err(
-      "delegated_unauthenticated",
-      "delegated mutations require an authenticated task identity (taskIdentity) — re-run inside the delegated worker session",
-    );
+  if (ctx?.role === "delegated") {
+    const activeSubagent =
+      state.execution.status === "active" && state.execution.mode === "subagent-driven";
+    if (activeSubagent) {
+      const parent =
+        typeof ctx.parentSessionId === "string" && ctx.parentSessionId !== ""
+          ? ctx.parentSessionId
+          : null;
+      const recorded = state.execution.coordinator_session_id;
+      // A present-but-mismatched lineage fails closed (CA-13): re-rooted
+      // lineage laundering denied.
+      if (parent !== null && recorded !== null && parent !== recorded) {
+        return err(
+          "delegation_lineage_denied",
+          "delegated mutations require an exact direct-parent match to the activating coordinator session",
+        );
+      }
+      if (!ctx.taskIdentity) {
+        // Unverifiable lineage (no parent reported, or no recorded coordinator
+        // id — CA-12/CA-13) fails closed; a verified lineage without a task
+        // identity stays unauthenticated.
+        if (parent === null || recorded === null) {
+          return err(
+            "delegation_lineage_denied",
+            "delegated mutations require an exact direct-parent match to the activating coordinator session",
+          );
+        }
+        return err(
+          "delegated_unauthenticated",
+          "delegated mutations require an authenticated task identity (taskIdentity) — re-run inside the delegated worker session",
+        );
+      }
+    } else if (!ctx.taskIdentity) {
+      return err(
+        "delegated_unauthenticated",
+        "delegated mutations require an authenticated task identity (taskIdentity) — re-run inside the delegated worker session",
+      );
+    }
   }
   return { ok: true };
 };
@@ -1117,7 +1197,7 @@ const NEGATIVE_ANSWER_LABELS = [
   "deny",
 ];
 
-const isNegativeLabel = (label: string): boolean => {
+export const isNegativeLabel = (label: string): boolean => {
   const normalized = label.trim().toLowerCase();
   return NEGATIVE_ANSWER_LABELS.some((entry) => {
     const firstWord = normalized.split(/\s+/)[0] ?? "";
@@ -1133,10 +1213,41 @@ const isNegativeLabel = (label: string): boolean => {
   });
 };
 
+export type ReceiptPurpose =
+  | "spec-approval"
+  | "plan-approval"
+  | "execution-menu"
+  | "plan-pause"
+  | "plan-resume"
+  | "plan-complete";
+
+export const receiptPurposeForLabel = (label: string): ReceiptPurpose | undefined => {
+  const n = normalizeLabel(label);
+  if (n === "approve spec" || n === "approve spec recommended") return "spec-approval";
+  if (n === "approve plan" || n === "approve plan recommended") return "plan-approval";
+  if (n === "approve") return undefined;
+  if (n === "pause plan") return "plan-pause";
+  if (n === "resume plan") return "plan-resume";
+  if (n === "complete plan") return "plan-complete";
+  const exec = new Set([
+    "subagent driven",
+    "inline",
+    "handoff",
+    "review spec",
+    "review plan",
+    "change model",
+  ]);
+  // Decorated execution labels: "(Recommended)" is stripped by normalizeLabel,
+  // so "Subagent-driven (Recommended)" normalizes to "subagent driven".
+  if (exec.has(n)) return "execution-menu";
+  return undefined;
+};
+
 /**
  * One-use host-observed receipt (AR-12, CA-41): recorded by the OpenCode
  * plugin when the answered `question` tool completes, bound to the session,
- * the question tool call id, the exact selected label, and the timestamp.
+ * the question tool call id, the exact selected label, the timestamp, and
+ * the workflow purpose.
  * The model has no way to inject a receipt — `record` is only reachable from
  * the plugin's `tool.execute.after` hook.
  */
@@ -1148,7 +1259,8 @@ export type HostReceipt = {
   /** The question text the user answered (plugin-observed, best effort), so
    *  the consuming tool can report WHICH question authorized a transition
    *  (FINDING 2). */
-  question?: string;
+  question: string;
+  purpose: ReceiptPurpose;
 };
 
 export type ReceiptConsumeResult = { ok: true; receipt: HostReceipt } | FlowError;
@@ -1163,15 +1275,16 @@ export type ReceiptConsumeResult = { ok: true; receipt: HostReceipt } | FlowErro
  * `question` (user answers), THEN calls the approval/menu tool — the tools
  * never run a question internally, so a before/after execution window can
  * never capture the answer. Consumption therefore takes the session's MOST
- * RECENT unconsumed receipt and verifies: one-use (atomic take), freshness
+ * RECENT unconsumed receipt FOR THE EXACT PURPOSE and verifies: one-use (atomic take), freshness
  * (RECEIPT_FRESHNESS_MS), NOT a negative label (isNegativeLabel), and session
  * match. Menu tools additionally pin the expected choice label. CallID and
- * the exact selected label stay bound at record time.
+ * the exact selected label stay bound at record time. Unrelated purpose
+ * receipts never mask the target purpose.
  *
- * Residual risk (honest boundary): any recent POSITIVE host answer (e.g. a
- * "proceed with stash?" -> "yes, proceed") plus the model's choice to call an
+ * Residual risk (honest boundary): any recent POSITIVE host answer FOR THAT PURPOSE plus the model's choice to call an
  * approval tool authorizes the transition. The laundering case — a negative
- * answer recorded as an approval — is closed by the negative-label denylist.
+ * answer recorded as an approval — is closed by the negative-label denylist
+ * per purpose.
  *
  * ponytail: in-memory only — receipts die with the plugin process, which is
  * correct: a host-observed answer cannot survive a restart. Upgrade path:
@@ -1185,14 +1298,18 @@ export class HostReceiptStore {
     callID: string,
     selectedLabel: string,
     recordedAt: number = Date.now(),
-    question?: string,
+    question: string = "",
+    purpose?: ReceiptPurpose,
   ): void {
-    const label = selectedLabel.trim();
-    if (!label) return;
+    const trimmed = selectedLabel.trim();
+    if (!trimmed) return;
     if (recordedAt > Date.now() + MAX_CLOCK_SKEW_MS) return; // forged future receipt
+    const derived = purpose ?? receiptPurposeForLabel(selectedLabel);
+    if (derived === undefined) return; // unrelated question produces no flow receipt (CA-01)
+    const q = question ?? "";
     const queue = this.#bySession.get(sessionId) ?? [];
     if (queue.length >= MAX_RECEIPTS_PER_SESSION) queue.shift();
-    queue.push({ sessionId, callID, selectedLabel: label, recordedAt, question });
+    queue.push({ sessionId, callID, selectedLabel, recordedAt, question: q, purpose: derived });
     this.#bySession.set(sessionId, queue);
   }
 
@@ -1207,25 +1324,35 @@ export class HostReceiptStore {
    * the transition and is spent on any attempt, closing the concurrent-call
    * race). Peek remains for tests and read-only callers. A NEGATIVE receipt is
    * the exception: it is spent by peek too (consumed-and-rejected, FINDING 3)
-   * so it cannot poison the top of the queue.
+   * so it cannot poison the top of the queue. Negative revocation is per-purpose.
    */
-  peek(sessionId: string, opts: { label?: string } = {}): ReceiptConsumeResult {
+  peek(
+    sessionId: string,
+    opts: { purpose?: ReceiptPurpose; label?: string } = {},
+  ): ReceiptConsumeResult {
     return this.#take(sessionId, opts, false);
   }
 
   /**
-   * One-use consumption of the session's most recent receipt (FINDING 2).
+   * One-use consumption of the session's most recent receipt FOR THE EXACT PURPOSE (FINDING 2).
    * The atomic take gates the transition at the tool layer (FINDING 5, round
    * 3): a stale receipt, a wrong pinned label (menu), or a negative label
    * fails the transition; the receipt is removed on take, staleness, or
    * negativity (fail-closed). A wrong label (menu) is NOT spent — it stays
-   * queued for the choice it actually matched.
+   * queued for the choice it actually matched. Negative revocation removes only older receipts of that purpose.
    */
-  consume(sessionId: string, opts: { label?: string } = {}): ReceiptConsumeResult {
+  consume(
+    sessionId: string,
+    opts: { purpose?: ReceiptPurpose; label?: string } = {},
+  ): ReceiptConsumeResult {
     return this.#take(sessionId, opts, true);
   }
 
-  #take(sessionId: string, opts: { label?: string }, remove: boolean): ReceiptConsumeResult {
+  #take(
+    sessionId: string,
+    opts: { purpose?: ReceiptPurpose; label?: string },
+    remove: boolean,
+  ): ReceiptConsumeResult {
     const queue = this.#bySession.get(sessionId);
     if (!queue || queue.length === 0) {
       return err(
@@ -1234,14 +1361,47 @@ export class HostReceiptStore {
           "`question` tool and have the user answer before calling this tool",
       );
     }
-    const index = queue.length - 1;
+    let index = -1;
+    if (opts.purpose !== undefined) {
+      // A top negative blocks only its own purpose; an unrelated purpose's
+      // typed receipt is untouched (CA-02 per-purpose revocation). Purposeless
+      // negatives no longer exist: `record` drops unclassified questions, so
+      // branch/stash/No/Cancel never block typed purposes globally.
+      const top = queue[queue.length - 1];
+      if (top && top.purpose === opts.purpose && isNegativeLabel(top.selectedLabel)) {
+        const filtered = queue.filter((r) => r.purpose !== opts.purpose);
+        if (filtered.length === 0) this.#bySession.delete(sessionId);
+        else this.#bySession.set(sessionId, filtered);
+        return err(
+          "receipt_rejected",
+          `the user's most recent answer (${JSON.stringify(top.selectedLabel)}) is a ` +
+            "negative answer — it cannot authorize an approval; ask the native question again",
+        );
+      }
+      for (let i = queue.length - 1; i >= 0; i--) {
+        if (queue[i].purpose === opts.purpose) {
+          index = i;
+          break;
+        }
+      }
+      if (index === -1) {
+        return err(
+          "receipt_missing",
+          `no host-observed receipt for purpose ${JSON.stringify(opts.purpose)} — ask the native question for that purpose`,
+        );
+      }
+    } else {
+      index = queue.length - 1;
+    }
     const receipt = queue[index];
     if (isNegativeLabel(receipt.selectedLabel)) {
-      // Consumed-and-rejected: a negative answer is still an answer, and it
-      // can never authorize a transition (FINDING 3). The whole session queue
-      // is revoked too: the user's most recent intent is negative, so an
-      // older positive answer must not come back to life on a retry.
-      this.#bySession.delete(sessionId);
+      if (opts.purpose !== undefined) {
+        const filtered = queue.filter((r) => r.purpose !== opts.purpose);
+        if (filtered.length === 0) this.#bySession.delete(sessionId);
+        else this.#bySession.set(sessionId, filtered);
+      } else {
+        this.#bySession.delete(sessionId);
+      }
       return err(
         "receipt_rejected",
         `the user's most recent answer (${JSON.stringify(receipt.selectedLabel)}) is a ` +
@@ -1445,7 +1605,7 @@ export const prepareFlowState = (
         spec: { path: specPath, status: "draft", evidence: null, approved_digest: null },
         plan: { path: planPath, status: "draft", evidence: null, approved_digest: null },
         menu: { presented: false, chosen: "", evidence: null },
-        execution: { status: "pending", mode: null, evidence: null },
+        execution: { status: "pending", mode: null, evidence: null, coordinator_session_id: null },
         handoff_destination: false,
         updated_at: Date.now(),
       });
@@ -1646,8 +1806,15 @@ export const recordMenuChoice = (
     // Lifecycle is set ATOMICALLY with the menu evidence (CA-11/CA-13): an
     // executing choice starts the plan; a review/handoff choice leaves it
     // pending. The menu evidence IS the lifecycle evidence — the choice the
-    // user selected on the native question.
+    // user selected on the native question. The activating OpenCode
+    // coordinator session (CA-12) is persisted ONLY for an accepted
+    // subagent-driven activation; inline/handoff/review choices and Cursor's
+    // rejected subagent path keep it null.
     const executing = choice === "subagent-driven" || choice === "inline";
+    const coordinatorSessionId =
+      choice === "subagent-driven" && recorded.evidence.host === "opencode"
+        ? (ctx?.sessionId ?? null)
+        : null;
     return {
       ok: true,
       next: {
@@ -1658,8 +1825,18 @@ export const recordMenuChoice = (
         plan: { ...state.plan, path: state.plan.path || `docs/${slug}/plan.md` },
         menu: { presented: true, chosen: choice, evidence: recorded.evidence },
         execution: executing
-          ? { status: "active", mode: choice as ExecutionMode, evidence: recorded.evidence }
-          : { status: "pending", mode: null, evidence: recorded.evidence },
+          ? {
+              status: "active",
+              mode: choice as ExecutionMode,
+              evidence: recorded.evidence,
+              coordinator_session_id: coordinatorSessionId,
+            }
+          : {
+              status: "pending",
+              mode: null,
+              evidence: recorded.evidence,
+              coordinator_session_id: null,
+            },
         updated_at: Date.now(),
       },
     };
@@ -1811,7 +1988,9 @@ const completeExecution = (
     }
     const next: FlowState = {
       ...reconciled.state,
-      execution: { ...exec, status: "completed" },
+      // Completion clears the activating coordinator identity (CA-12): a
+      // completed flow has no delegated workers left to authorize.
+      execution: { ...exec, status: "completed", coordinator_session_id: null },
       // A completed flow is never a destination: clear the context so the next
       // ordinary session gets the source five-choice reminder, not the stale
       // four-choice destination wording (CA-08). Both approval-drift resets
@@ -1907,6 +2086,47 @@ export const slugFromSddPath = (p: string): string => {
   return match?.[1] ?? "";
 };
 
+/**
+ * Handoff readiness (CA-06..CA-08): the source flow must be approved, valid,
+ * not already a destination, and have menu.presented === true with
+ * menu.chosen === "handoff" before ANY session is created. A logical preflight
+ * failure creates no session (orphan-free). Uses the effective reconciled
+ * state so digest drift is observed.
+ */
+export const assertHandoffReady = (root: string, planPath: string): FlowGateResult => {
+  const doc = resolveDoc(root, "", planPath, "plan");
+  if (!doc.ok) return err("path_invalid", doc.error);
+  const slug = slugFromPath(planPath);
+  const effective = readEffectiveFlowState(root, slug);
+  if (!effective.ok) return effective;
+  const state = effective.state;
+  if (state.spec.status !== "approved") {
+    return err(
+      "spec_not_approved",
+      `spec not approved (status: ${state.spec.status}). Run workflow_spec_approve after the user's approval.`,
+    );
+  }
+  if (state.plan.status !== "approved") {
+    return err(
+      "plan_not_approved",
+      `plan not approved (status: ${state.plan.status}). Run workflow_plan_approve after the user's approval.`,
+    );
+  }
+  if (state.handoff_destination) {
+    return err(
+      "recursive_handoff",
+      "this flow is already a handoff destination — a second handoff is rejected",
+    );
+  }
+  if (!state.menu.presented || state.menu.chosen !== "handoff") {
+    return err(
+      "handoff_not_chosen",
+      `handoff requires the execution menu choice "handoff" (chosen: ${JSON.stringify(state.menu.chosen)}, presented: ${state.menu.presented})`,
+    );
+  }
+  return { ok: true };
+};
+
 export const assertFlowGates = (
   root: string,
   planPath: string,
@@ -1996,13 +2216,81 @@ export const assertProductGates = (
 };
 
 /**
- * Delegated status derives from host session parentage (AR-12, CA-20): a
- * session whose host record has a parent is a child (delegated worker); a root
- * session (no parent) is the coordinator. Caller-supplied role fields are
- * removed from every tool schema — this pure function is the only source.
+ * Coordinator-only SDD control gate (CA-10): validated gitignored control
+ * metadata under docs/<slug>/sdd/ — task briefs, review packages, progress,
+ * and advisories. Requirements match assertProductGates' workspace/approval/
+ * menu/docs/path checks, but when execution is active subagent-driven the
+ * call must be the coordinator (root session); a delegated worker cannot
+ * mutate coordinator bookkeeping. Inactive flows are not gated on role.
  */
-export const roleFromParentage = (parentID?: string | null): FlowRole =>
-  parentID ? "delegated" : "coordinator";
+export const assertSddControlGates = (
+  root: string,
+  slug: string,
+  opts: { requireMenu?: boolean; requireDocs?: boolean } = {},
+  ctx?: MutationContext,
+): FlowGateResult => {
+  const bound = assertMutationWorkspace(root, ctx);
+  if (!bound.ok) return bound;
+  const effective = readEffectiveFlowState(root, slug);
+  if (!effective.ok) return effective;
+  const state = effective.state;
+  if (state.spec.status !== "approved") {
+    return err(
+      "spec_not_approved",
+      `spec not approved (status: ${state.spec.status}). Run workflow_spec_approve after the user's approval.`,
+    );
+  }
+  if (state.plan.status !== "approved") {
+    return err(
+      "plan_not_approved",
+      `plan not approved (status: ${state.plan.status}). Run workflow_plan_approve after the user's approval.`,
+    );
+  }
+  if (opts.requireMenu && !state.menu.presented) {
+    return err(
+      "menu_not_presented",
+      "post-plan menu not presented. Record the native question answer with workflow_plan_menu.",
+    );
+  }
+  if (opts.requireDocs) {
+    const validated = docsValidate({
+      spec_path: path.posix.join("docs", slug, "spec.md"),
+      plan_path: path.posix.join("docs", slug, "plan.md"),
+      workspace_root: root,
+    });
+    if (validated.ok === false) return err("docs_invalid", validated.error);
+  }
+  if (
+    state.execution.status === "active" &&
+    state.execution.mode === "subagent-driven" &&
+    // Lineage binding (CA-13): the adapter derives the role before the slug
+    // resolves, so delegation is re-derived here from the host-attested parent
+    // against the persisted activating coordinator id.
+    roleFromParentage(ctx?.parentSessionId, state.execution.coordinator_session_id) === "delegated"
+  ) {
+    return err(
+      "sdd_control_denied",
+      "SDD control metadata is coordinator-owned while a subagent-driven plan is active — delegated workers cannot mutate task briefs, review packages, progress, or advisories",
+    );
+  }
+  return { ok: true };
+};
+
+/**
+ * Delegated status derives from host session parentage bound to the persisted
+ * coordinator identity (AR-12, CA-13): a session with a parent is delegated
+ * ONLY when that parent id equals the flow's recorded activating coordinator
+ * session; any other parentage (or a missing/null coordinator id) is a
+ * coordinator. Caller-supplied role fields are removed from every tool schema
+ * — this pure function is the only source.
+ */
+export const roleFromParentage = (
+  parentID?: string | null,
+  coordinatorSessionId?: string | null,
+): FlowRole =>
+  typeof parentID === "string" && parentID !== "" && parentID === coordinatorSessionId
+    ? "delegated"
+    : "coordinator";
 
 /**
  * Root-session write interception while a subagent-driven plan is active
@@ -2028,7 +2316,8 @@ export const COORDINATOR_WRITE_TOOLS: readonly string[] = [
   "touch",
   "chmod",
   "chown",
-  // workit product/config/external mutation tools
+  // workit product/config/external mutation tools (SDD control tools are
+  // coordinator-owned and routed through assertSddControlGates, not this set)
   "workflow_commit",
   "workflow_pr_create",
   "workflow_rule_edit",
@@ -2039,9 +2328,6 @@ export const COORDINATOR_WRITE_TOOLS: readonly string[] = [
   "workflow_docs_promote",
   "workflow_docs_layout",
   "workflow_docs_repo_link",
-  "workflow_sdd_task_brief",
-  "workflow_sdd_review_package",
-  "workflow_sdd_append_progress",
   "workflow_youtrack_post",
   "workflow_youtrack_log_time",
 ];
@@ -2657,19 +2943,74 @@ export const COORDINATOR_SHELL_DENIED_TEXT =
   COORDINATOR_RECOVERY_TEXT;
 
 /**
- * The plugin hook's decision function (AR-13): a delegated child session
- * (host parentage) is never intercepted; the root session is intercepted only
- * while at least one subagent-driven plan is active in its workspace. Returns
- * the denial error to throw from `tool.execute.before`, or `{ ok: true }`.
+ * The plugin hook's decision function (AR-13): only the exact direct child of
+ * the single recorded activating coordinator escapes interception while a
+ * subagent-driven plan is active; a re-rooted lineage, an unrelated child, or
+ * the root coordinator itself is intercepted. Returns the denial error to
+ * throw from `tool.execute.before`, or `{ ok: true }`.
  */
 export const subagentDrivenInterception = (input: {
   tool: string;
   command?: string;
   parentID?: string | null;
-  active: boolean;
+  activeCoordinatorIds?: string[];
+  active?: boolean;
 }): FlowGateResult => {
-  if (input.parentID) return { ok: true }; // delegated child — the worker
-  if (!input.active) return { ok: true };
+  // Distinct owners only: the same coordinator recorded on several active
+  // plans is still ONE owner (CA-13 denies multiple DISTINCT owners).
+  const ids = Array.from(
+    new Set((input.activeCoordinatorIds ?? []).filter((id) => typeof id === "string" && id !== "")),
+  );
+  const parent =
+    typeof input.parentID === "string" && input.parentID !== "" ? input.parentID : null;
+  const legacyActive = input.active === true;
+  if (!legacyActive && ids.length === 0) return { ok: true };
+  // Authorized direct child: exactly one recorded coordinator and this session
+  // is its exact direct child.
+  if (parent !== null && ids.length === 1 && ids[0] === parent) {
+    if (input.tool === "bash") {
+      // Nested-launch denial (CA-14): an authorized worker cannot launch
+      // opencode recursively while the plan is active. Any token whose
+      // basename is exactly `opencode` denies — head, path-suffixed
+      // (`./node_modules/.bin/opencode`), or runner-carried
+      // (`bun x opencode`). ponytail: argument text containing the bare word
+      // (`grep opencode file`) is over-denied — a documented ceiling; a
+      // parser that distinguishes argument positions is the upgrade path.
+      const tokens = (input.command ?? "").split(/[\s'"]+/).filter(Boolean);
+      const launchesOpencode = tokens.some((t) => t.split("/").pop() === "opencode");
+      if (launchesOpencode) {
+        return err(
+          "delegation_lineage_denied",
+          "nested opencode launch is denied while a subagent-driven plan is active",
+        );
+      }
+    }
+    if (
+      [
+        "workflow_sdd_task_brief",
+        "workflow_sdd_review_package",
+        "workflow_sdd_append_progress",
+        "workflow_sdd_append_advisory",
+      ].includes(input.tool)
+    ) {
+      return err(
+        "delegation_lineage_denied",
+        "SDD control metadata is coordinator-owned — workers execute briefs, not bookkeeping",
+      );
+    }
+    return { ok: true };
+  }
+  if (parent !== null) {
+    // A non-empty parentID that does not exactly match the single recorded
+    // coordinator fails closed (CA-13): re-rooted lineage laundering denied.
+    if (!legacyActive || ids.length > 0) {
+      return err(
+        "delegation_lineage_denied",
+        "delegated writes require an exact direct-parent match to the activating coordinator",
+      );
+    }
+  }
+  // Coordinator (root) path: existing restrictions while active.
   if (COORDINATOR_WRITE_TOOLS.includes(input.tool)) {
     return err("coordinator_write_denied", COORDINATOR_RECOVERY_TEXT);
   }
@@ -2679,4 +3020,29 @@ export const subagentDrivenInterception = (input: {
     }
   }
   return { ok: true };
+};
+
+export const findActiveSubagentDrivenContexts = (
+  root: string,
+): Array<{ slug: string; coordinator_session_id: string | null }> => {
+  let entries: string[] = [];
+  try {
+    entries = readdirSync(path.join(root, "docs"), { withFileTypes: true })
+      .filter((e) => e.isDirectory())
+      .map((e) => e.name);
+  } catch {
+    return [];
+  }
+  const out: Array<{ slug: string; coordinator_session_id: string | null }> = [];
+  for (const slug of entries) {
+    try {
+      const state = readFlowState(root, slug);
+      if (state.execution.status === "active" && state.execution.mode === "subagent-driven") {
+        out.push({ slug, coordinator_session_id: state.execution.coordinator_session_id });
+      }
+    } catch {
+      // unreadable flow state: skip, never throw from discovery
+    }
+  }
+  return out;
 };

@@ -9,12 +9,16 @@ import {
   resolveHandoffBranch,
 } from "@brainervirus/workit-core/src/core/plan-tasks";
 import {
+  sddAppendAdvisory,
   sddAppendProgress,
   sddContext,
   sddReviewPackage,
   sddTaskBrief,
 } from "@brainervirus/workit-core/src/core/sdd";
-import { assertProductGates, slugFromSddPath } from "@brainervirus/workit-core/src/core/flow-state";
+import {
+  assertSddControlGates,
+  slugFromSddPath,
+} from "@brainervirus/workit-core/src/core/flow-state";
 import { opencodeMutationContext, type SessionLookup } from "./flow";
 import { WorkflowStateStore } from "@brainervirus/workit-core/src/state";
 
@@ -22,12 +26,11 @@ const output = (value: unknown) => JSON.stringify(value, null, 2);
 const requireConfirmed = (confirmed: boolean) =>
   confirmed === true ? null : output(fail("confirmed: true required"));
 
-// FG-03/CA-18: non-document product writes are blocked until the spec, plan,
-// docs, and execution-menu gates all pass, and the coordinator boundary holds
-// (FG-05/CA-20). Delegated status is host-derived from session parentage
-// (AR-12): a child session is the authenticated worker; the root session is
-// the coordinator (blocked). Returns a rendered failure or null.
-const gateProductWrite = async (
+// CA-10: SDD control writes (brief, review package, progress, advisories)
+// are coordinator-owned under active subagent-driven execution. Delegated
+// workers are denied; root writes pass through the shared control gate that
+// reuses workspace/approval/menu/docs checks but flips the boundary role.
+const gateSddControl = async (
   root: string,
   sddPath: string,
   context: ToolContext,
@@ -35,7 +38,7 @@ const gateProductWrite = async (
 ) => {
   const slug = slugFromSddPath(sddPath);
   if (!slug) return output(fail("could not derive slug — expected docs/<slug>/sdd/..."));
-  const gate = assertProductGates(
+  const gate = assertSddControlGates(
     root,
     slug,
     { requireMenu: true, requireDocs: true },
@@ -198,7 +201,7 @@ export function createSddTools(state: WorkflowStateStore, client?: SessionLookup
       execute: async ({ confirmed, sdd_dir, task_id, section_text }, context) => {
         const rejected = requireConfirmed(confirmed);
         if (rejected) return rejected;
-        const gated = await gateProductWrite(context.directory, sdd_dir, context, client);
+        const gated = await gateSddControl(context.directory, sdd_dir, context, client);
         if (gated) return gated;
         return invoke(() => {
           relativePath(context.directory, sdd_dir);
@@ -230,7 +233,7 @@ export function createSddTools(state: WorkflowStateStore, client?: SessionLookup
         } catch (error) {
           return output(fail(error instanceof Error ? error.message : "workflow operation failed"));
         }
-        const gated = await gateProductWrite(context.directory, sdd_dir, context, client);
+        const gated = await gateSddControl(context.directory, sdd_dir, context, client);
         if (gated) return gated;
         return invoke(() =>
           sddReviewPackage({
@@ -253,11 +256,36 @@ export function createSddTools(state: WorkflowStateStore, client?: SessionLookup
       execute: async ({ confirmed, progress_path, line }, context) => {
         const rejected = requireConfirmed(confirmed);
         if (rejected) return rejected;
-        const gated = await gateProductWrite(context.directory, progress_path, context, client);
+        const gated = await gateSddControl(context.directory, progress_path, context, client);
         if (gated) return gated;
         return invoke(() => {
           relativePath(context.directory, progress_path);
           return sddAppendProgress({ progress_path, line, workspace_root: context.directory });
+        });
+      },
+    }),
+    workflow_sdd_append_advisory: tool({
+      description:
+        "Append a validated advisory line to docs/<slug>/sdd/advisories.md (coordinator-owned).",
+      args: {
+        confirmed: tool.schema.boolean(),
+        advisories_path: tool.schema.string(),
+        task_id: tool.schema.number(),
+        text: tool.schema.string(),
+      },
+      execute: async ({ confirmed, advisories_path, task_id, text }, context) => {
+        const rejected = requireConfirmed(confirmed);
+        if (rejected) return rejected;
+        const gated = await gateSddControl(context.directory, advisories_path, context, client);
+        if (gated) return gated;
+        return invoke(() => {
+          relativePath(context.directory, advisories_path);
+          return sddAppendAdvisory({
+            advisories_path,
+            task_id,
+            text,
+            workspace_root: context.directory,
+          });
         });
       },
     }),
