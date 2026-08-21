@@ -434,34 +434,39 @@ test("cursor MCP server registers the full required tool surface", () => {
     "workit_init_status",
     "workit_status",
     "workit_init_apply",
-    "workflow_docs_validate",
-    "workflow_flow_status",
-    "workflow_spec_approve",
-    "workflow_plan_approve",
-    "workflow_plan_menu",
-    "workflow_plan_pause",
-    "workflow_plan_resume",
-    "workflow_plan_complete",
-    "workflow_handoff_prompt",
-    "workflow_youtrack_verify_token",
-    "workflow_youtrack_parse_issue",
-    "workflow_youtrack_context",
-    "workflow_youtrack_parse_duration",
-    "workflow_youtrack_log_time",
-    "workflow_youtrack_draft",
-    "workflow_youtrack_post",
-    "workflow_present_ascii",
-    "workflow_present_flow",
+    "workit_docs_validate",
+    "workit_flow_status",
+    "workit_spec_approve",
+    "workit_plan_approve",
+    "workit_plan_menu",
+    "workit_plan_pause",
+    "workit_plan_resume",
+    "workit_plan_complete",
+    "workit_handoff_prompt",
+    "workit_youtrack_verify_token",
+    "workit_youtrack_parse_issue",
+    "workit_youtrack_context",
+    "workit_youtrack_parse_duration",
+    "workit_youtrack_log_time",
+    "workit_youtrack_draft",
+    "workit_youtrack_post",
+    "workit_present_ascii",
+    "workit_present_flow",
   ];
   const registered = (server.match(/registerTool\(\s*\n?\s*"([a-z_]+)"/g) ?? []).join("\n");
   // Lifecycle tools are registered through the shared lifecycleTool closure
-  // (`workflow_plan_${action}`), so their names come from the helper calls.
+  // (`workit_plan_${action}`), so their names come from the helper calls.
   const lifecycle = (server.match(/lifecycleTool\(\s*\n?\s*"([a-z_]+)"/g) ?? [])
-    .map((m) => `"workflow_plan_${m.match(/"([a-z_]+)"/)?.[1]}"`)
+    .map((m) => `"workit_plan_${m.match(/"([a-z_]+)"/)?.[1]}"`)
     .join("\n");
   for (const name of required) {
     expect(`${registered}\n${lifecycle}`).toContain(`"${name}"`);
   }
+  // No Cursor registration may expose a legacy `workflow_*` name: neither a
+  // literal registerTool first argument nor the lifecycle name template.
+  expect(registered).not.toMatch(/"workflow_[a-z_]+"/);
+  expect(lifecycle).not.toMatch(/workflow_plan_/);
+  expect(server).not.toMatch(/`workflow_plan_\$\{action\}`/);
 });
 
 test("docs validate accepts the new docs/<slug> layout", () => {

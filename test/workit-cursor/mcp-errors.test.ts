@@ -92,7 +92,7 @@ test("a throwing MCP tool handler returns isError:true structured content", asyn
 
     // host stays usable afterward
     const git = await server.request("tools/call", {
-      name: "workflow_git_context",
+      name: "workit_git_context",
       arguments: { workspace_root: process.cwd() },
     });
     expect((git as any).result.isError).not.toBe(true);
@@ -107,7 +107,7 @@ test("a domain error return is marked isError:true, not a successful-looking res
   try {
     await initialize(server);
     const response = await server.request("tools/call", {
-      name: "workflow_changelog_apply",
+      name: "workit_changelog_apply",
       arguments: {},
     });
     const result = (response as any).result;

@@ -5,7 +5,7 @@ import path from "node:path";
 import { runDoctor, type DoctorReport } from "../../packages/workit-core/src/core/doctor";
 import { makeDoctorFixture } from "../shared/helpers/doctor-fixture";
 
-// workflow_doctor on the Cursor host (DG-07): same report shape, consistent
+// workit_doctor on the Cursor host (DG-07): same report shape, consistent
 // nonzero on broken fixtures, host stays usable, no canary reaches stderr logs.
 
 const REPO_ROOT = path.resolve(import.meta.dir, "..", "..");
@@ -94,12 +94,12 @@ const direct = () =>
     dev: fixture.dev,
   });
 
-test("workflow_doctor returns the same report shape and reflects health", async () => {
+test("workit_doctor returns the same report shape and reflects health", async () => {
   const server = startServer();
   try {
     await initialize(server);
     const response = await server.request("tools/call", {
-      name: "workflow_doctor",
+      name: "workit_doctor",
       arguments: { workspace_root: fixture.cwd },
     });
     const result = (response as any).result;
@@ -136,7 +136,7 @@ test("forced broken fixture yields consistent nonzero and the host stays usable"
   try {
     await initialize(server);
     const response = await server.request("tools/call", {
-      name: "workflow_doctor",
+      name: "workit_doctor",
       arguments: { workspace_root: fixture.cwd },
     });
     const result = (response as any).result;
@@ -152,7 +152,7 @@ test("forced broken fixture yields consistent nonzero and the host stays usable"
 
     // host remains usable: a sibling tool still executes
     const git = await server.request("tools/call", {
-      name: "workflow_git_context",
+      name: "workit_git_context",
       arguments: { workspace_root: fixture.cwd },
     });
     expect((git as any).result.isError).not.toBe(true);
@@ -180,7 +180,7 @@ test("no canary reaches stderr logs or the report", async () => {
   try {
     await initialize(server);
     const response = await server.request("tools/call", {
-      name: "workflow_doctor",
+      name: "workit_doctor",
       arguments: { workspace_root: fixture.cwd },
     });
     const raw = JSON.stringify((response as any).result);

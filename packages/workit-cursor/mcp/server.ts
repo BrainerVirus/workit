@@ -186,7 +186,7 @@ const registerTool = (
 };
 
 registerTool(
-  "workflow_verify",
+  "workit_verify",
   {
     description:
       "Run project validation scripts (verify-project.sh). Defaults to Cursor workspace; pass workspace_root when the target repo differs.",
@@ -211,7 +211,7 @@ registerTool(
 );
 
 registerTool(
-  "workflow_doctor",
+  "workit_doctor",
   {
     description:
       "Run the offline workit doctor and report installation health. Defaults to Cursor workspace; pass workspace_root when the target repo differs.",
@@ -226,7 +226,7 @@ registerTool(
 );
 
 registerTool(
-  "workflow_pr_context",
+  "workit_pr_context",
   {
     description:
       "Gather PR-ready repository context. On feature/* or bugfix/*, fetches and fast-forwards develop + current branch before diffing against develop.",
@@ -303,7 +303,7 @@ registerTool(
 );
 
 registerTool(
-  "workflow_pr_create",
+  "workit_pr_create",
   {
     description:
       "Create GitLab MR or GitHub PR via glab/gh using vcs.json — requires confirmed: true",
@@ -341,7 +341,7 @@ registerTool(
 );
 
 registerTool(
-  "workflow_changelog_context",
+  "workit_changelog_context",
   {
     description:
       "Gather changelog update context. Defaults to Cursor workspace; pass workspace_root when the target repo differs.",
@@ -363,7 +363,7 @@ registerTool(
         files: sections["Changed Files"] ?? "",
         unreleased,
         apply_hint:
-          "ALWAYS merge via workflow_changelog_apply — never hand-edit ### Added/Changed/… under [Unreleased].",
+          "ALWAYS merge via workit_changelog_apply — never hand-edit ### Added/Changed/… under [Unreleased].",
         workspace_root: cwd,
         stdout,
         exitCode,
@@ -383,7 +383,7 @@ const changelogCategorySchema = z.enum([
 ]);
 
 registerTool(
-  "workflow_changelog_apply",
+  "workit_changelog_apply",
   {
     description:
       "Merge Keep a Changelog bullets into ## [Unreleased] under the correct ### category. Collapses duplicate category headings. NEVER append a second ### Added block.",
@@ -427,7 +427,7 @@ registerTool(
 );
 
 registerTool(
-  "workflow_release_notes_context",
+  "workit_release_notes_context",
   {
     description:
       "Gather release notes context. Defaults to Cursor workspace; pass workspace_root when the target repo differs.",
@@ -459,7 +459,7 @@ registerTool(
 );
 
 registerTool(
-  "workflow_docs_context",
+  "workit_docs_context",
   {
     description:
       "Gather docs refresh context. Defaults to Cursor workspace; pass workspace_root when the target repo differs.",
@@ -487,7 +487,7 @@ registerTool(
 );
 
 registerTool(
-  "workflow_git_context",
+  "workit_git_context",
   {
     description:
       "Gather git status for commit skill. Defaults to Cursor workspace; pass workspace_root when the target repo differs.",
@@ -503,7 +503,7 @@ registerTool(
 );
 
 registerTool(
-  "workflow_resolve_branch",
+  "workit_resolve_branch",
   {
     description:
       "Resolve feature/* or bugfix/* branch from spec/plan. Returns current_branch, dirty, needs_checkout. No worktrees.",
@@ -521,7 +521,7 @@ registerTool(
 );
 
 registerTool(
-  "workflow_branch_setup",
+  "workit_branch_setup",
   {
     description:
       "In-place checkout of feature/* or bugfix/* branch. Stash required when dirty. NEVER uses worktrees.",
@@ -547,7 +547,7 @@ registerTool(
 );
 
 registerTool(
-  "workflow_sdd_context",
+  "workit_sdd_context",
   {
     description:
       "Resolve canonical docs/<slug>/sdd/ paths; creates nothing (progress.md appears only on the first confirmed append). NEVER use .superpowers/sdd.",
@@ -565,7 +565,7 @@ registerTool(
 );
 
 registerTool(
-  "workflow_sdd_task_brief",
+  "workit_sdd_task_brief",
   {
     description: "Write task-N-brief.md under docs/<slug>/sdd/",
     inputSchema: {
@@ -596,7 +596,7 @@ registerTool(
 );
 
 registerTool(
-  "workflow_sdd_review_package",
+  "workit_sdd_review_package",
   {
     description: "Write review diff under SDD dir between base and head SHAs",
     inputSchema: {
@@ -628,7 +628,7 @@ registerTool(
 );
 
 registerTool(
-  "workflow_sdd_append_progress",
+  "workit_sdd_append_progress",
   {
     description: "Append one validated line to docs/<slug>/sdd/progress.md",
     inputSchema: {
@@ -654,7 +654,7 @@ registerTool(
 );
 
 registerTool(
-  "workflow_sdd_append_advisory",
+  "workit_sdd_append_advisory",
   {
     description:
       "Append a validated advisory line to docs/<slug>/sdd/advisories.md (coordinator-owned)",
@@ -682,7 +682,7 @@ registerTool(
 );
 
 registerTool(
-  "workflow_docs_branch",
+  "workit_docs_branch",
   {
     description:
       "Resolve branch for spec/plan authors: keep current feature|bugfix or create from the configured base.",
@@ -700,7 +700,7 @@ registerTool(
 );
 
 registerTool(
-  "workflow_docs_layout",
+  "workit_docs_layout",
   {
     description:
       "Canonical docs layout: prepare creates missing docs/ and docs/<slug>/; migrate detects legacy docs/superpowers/ and copies safe pairs after a native Migrate safely / Not now question",
@@ -757,7 +757,7 @@ registerTool(
 );
 
 registerTool(
-  "workflow_docs_validate",
+  "workit_docs_validate",
   {
     description:
       "Hard-fail validate spec/plan headers, link, branch, task order; returns quality findings (hard/warning). Defaults to Cursor workspace; pass workspace_root when paths are relative to another repo.",
@@ -779,7 +779,7 @@ registerTool(
 );
 
 registerTool(
-  "workflow_plan_tasks",
+  "workit_plan_tasks",
   {
     description:
       "Parse plan ### Task N sections into structured tasks with section_text. Defaults to Cursor workspace; pass workspace_root when paths are relative to another repo.",
@@ -811,7 +811,7 @@ registerTool(
 );
 
 registerTool(
-  "workflow_handoff_prompt",
+  "workit_handoff_prompt",
   {
     description:
       "Build copy-paste handoff prompt for next session. Defaults to Cursor workspace; pass workspace_root when spec/plan paths are relative to another repo.",
@@ -1033,7 +1033,7 @@ registerTool(
 );
 
 registerTool(
-  "workflow_youtrack_verify_token",
+  "workit_youtrack_verify_token",
   {
     description: "Read-only YouTrack token test (GET /api/users/me). No work items created.",
     inputSchema: {},
@@ -1048,7 +1048,7 @@ registerTool(
 );
 
 registerTool(
-  "workflow_youtrack_parse_issue",
+  "workit_youtrack_parse_issue",
   {
     description: "Parse YouTrack issue URL or bare id (e.g. NSR-40) into issueId",
     inputSchema: {
@@ -1065,7 +1065,7 @@ registerTool(
 );
 
 registerTool(
-  "workflow_youtrack_context",
+  "workit_youtrack_context",
   {
     description: "YouTrack config, greeting, issue resolution (from issue_url/id or meetings)",
     inputSchema: {
@@ -1099,7 +1099,7 @@ registerTool(
 );
 
 registerTool(
-  "workflow_youtrack_parse_duration",
+  "workit_youtrack_parse_duration",
   {
     description: "Parse duration text (e.g. 1h 30m) to integer minutes",
     inputSchema: {
@@ -1115,7 +1115,7 @@ registerTool(
 );
 
 registerTool(
-  "workflow_youtrack_log_time",
+  "workit_youtrack_log_time",
   {
     description: "POST YouTrack work item (time only, no comment)",
     inputSchema: {
@@ -1143,7 +1143,7 @@ registerTool(
 );
 
 registerTool(
-  "workflow_youtrack_draft",
+  "workit_youtrack_draft",
   {
     description: "Build ES-CL comment markdown without posting (envelope only by default)",
     inputSchema: {
@@ -1160,7 +1160,7 @@ registerTool(
 );
 
 registerTool(
-  "workflow_youtrack_post",
+  "workit_youtrack_post",
   {
     description: "Post YouTrack comment and optional time — requires confirmed: true",
     inputSchema: {
@@ -1185,7 +1185,7 @@ registerTool(
 );
 
 registerTool(
-  "workflow_present_ascii",
+  "workit_present_ascii",
   {
     description: "Render deterministic ASCII UI wireframe from JSON spec",
     inputSchema: {
@@ -1202,7 +1202,7 @@ registerTool(
 );
 
 registerTool(
-  "workflow_present_flow",
+  "workit_present_flow",
   {
     description: "Render mermaid flowchart from JSON nodes/edges",
     inputSchema: {
@@ -1232,7 +1232,7 @@ registerTool(
 );
 
 registerTool(
-  "workflow_flow_status",
+  "workit_flow_status",
   {
     description:
       "Read the spec/plan approval flow state for a workflow; on first read it records flow activation and canonical document paths (FG-01)",
@@ -1279,7 +1279,7 @@ registerTool(
 );
 
 registerTool(
-  "workflow_spec_approve",
+  "workit_spec_approve",
   {
     description:
       "Advance spec status with the Cursor policy-only confirmation: draft -> approved in a single call. The self-review validation runs automatically inside the transition; only the final approval asks for your confirmation. Cursor records attested: false (the MCP cannot observe AskQuestion results); there is no evidence argument (CA-42).",
@@ -1305,7 +1305,7 @@ registerTool(
 );
 
 registerTool(
-  "workflow_plan_approve",
+  "workit_plan_approve",
   {
     description:
       "Advance plan status with the Cursor policy-only confirmation: draft -> approved in a single call. The self-review validation runs automatically inside the transition; only the final approval asks for your confirmation. Requires approved spec. Cursor records attested: false; there is no evidence argument (CA-42).",
@@ -1331,7 +1331,7 @@ registerTool(
 );
 
 registerTool(
-  "workflow_plan_menu",
+  "workit_plan_menu",
   {
     description:
       "Record the answered post-plan choice menu with the Cursor policy-only confirmation. subagent-driven is rejected as unsupported on Cursor (CA-42); there is no evidence argument.",
@@ -1369,7 +1369,7 @@ registerTool(
 // `workspace_root`; there is no evidence/role argument.
 const lifecycleTool = (action: "pause" | "resume" | "complete", description: string) => {
   registerTool(
-    `workflow_plan_${action}`,
+    `workit_plan_${action}`,
     {
       description,
       inputSchema: {
@@ -1431,7 +1431,7 @@ lifecycleTool(
 );
 
 registerTool(
-  "workflow_docs_repo_link",
+  "workit_docs_repo_link",
   {
     description: "Link the component docs repo in the toolkit config",
     inputSchema: {
@@ -1447,7 +1447,7 @@ registerTool(
 );
 
 registerTool(
-  "workflow_docs_list",
+  "workit_docs_list",
   {
     description: "List local specs with docs-repo promotion status",
     inputSchema: { workspace_root: workspaceRootSchema },
@@ -1456,7 +1456,7 @@ registerTool(
 );
 
 registerTool(
-  "workflow_docs_promote",
+  "workit_docs_promote",
   {
     description: "Promote a spec (+plan) to the linked docs repo with quality gate",
     inputSchema: {
@@ -1478,7 +1478,7 @@ registerTool(
 );
 
 registerTool(
-  "workflow_template_list",
+  "workit_template_list",
   {
     description: "List editable templates with their source",
     inputSchema: { workspace_root: workspaceRootSchema },
@@ -1487,7 +1487,7 @@ registerTool(
 );
 
 registerTool(
-  "workflow_template_edit",
+  "workit_template_edit",
   {
     description: "Write an edited template to the toolkit config dir",
     inputSchema: {
@@ -1504,7 +1504,7 @@ registerTool(
 );
 
 registerTool(
-  "workflow_rule_list",
+  "workit_rule_list",
   {
     description: "List canonical rules (config) with platforms",
     inputSchema: { workspace_root: workspaceRootSchema },
@@ -1513,7 +1513,7 @@ registerTool(
 );
 
 registerTool(
-  "workflow_rule_edit",
+  "workit_rule_edit",
   {
     description: "Write a canonical rule to the toolkit config dir",
     inputSchema: {
