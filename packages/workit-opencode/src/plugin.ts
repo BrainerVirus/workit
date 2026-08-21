@@ -9,7 +9,7 @@ import {
   DOC_DELIVERY_TEXT,
   DOC_RENDER_TEXT,
   SDD_REMINDER_TEXT,
-  shouldInjectSddReminder,
+  SDD_WORKER_REMINDER_TEXT,
   CONFIG_GUARD_TEXT,
   shouldInjectConfigGuard,
   shouldInjectDocRender,
@@ -46,6 +46,7 @@ import {
   readEffectiveFlowState,
   receiptPurposeForLabel,
   subagentDrivenInterception,
+  findActiveSubagentDrivenContexts,
 } from "@brainervirus/workit-core/src/core/flow-state";
 import { createTools } from "./tools";
 import { adaptPluginHandoffClient } from "./tools/handoff";
@@ -243,6 +244,21 @@ const plugin: Plugin = async ({ client, directory }) => {
   setDiagnosticLogger(logger);
   const state = new WorkflowStateStore();
   const receipts = new HostReceiptStore();
+  // CA-15/CA-16: a session is an authorized worker only when exactly one
+  // active subagent-driven flow has a recorded coordinator id and this
+  // session's host parentID is that exact id. Fail-closed on lookup errors.
+  const authorizedWorkerFor = async (sessionID: string): Promise<boolean> => {
+    const ids = findActiveSubagentDrivenContexts(directory)
+      .map((c) => c.coordinator_session_id)
+      .filter((id): id is string => typeof id === "string" && id !== "");
+    if (ids.length !== 1) return false;
+    try {
+      const session = await client.session.get({ path: { id: sessionID } });
+      return session?.data?.parentID === ids[0];
+    } catch {
+      return false;
+    }
+  };
   return {
     tool: createTools(adaptPluginHandoffClient(client), state, client, receipts),
     // AR-12: observe the answered native `question` and store a one-use
@@ -279,12 +295,19 @@ const plugin: Plugin = async ({ client, directory }) => {
       } catch {
         // fail closed: treated as the root coordinator
       }
-      const active = findActiveSubagentDrivenPlans(sessionDirectory ?? directory).length > 0;
+      // CA-13: interception is lineage-bound — only the exact direct child of
+      // a recorded activating coordinator escapes; flows with no recorded
+      // coordinator id (legacy/rejected) leave ids empty and fail closed.
+      const activeCoordinatorIds = findActiveSubagentDrivenContexts(
+        sessionDirectory ?? directory,
+      )
+        .map((c) => c.coordinator_session_id)
+        .filter((id): id is string => typeof id === "string" && id !== "");
       const decision = subagentDrivenInterception({
         tool: input.tool,
         command: (output.args as { command?: string } | undefined)?.command,
         parentID,
-        active,
+        activeCoordinatorIds,
       });
       if (!decision.ok) throw new Error(decision.error);
     },
@@ -341,7 +364,11 @@ const plugin: Plugin = async ({ client, directory }) => {
             .filter((part) => part.type === "text")
             .map((part) => (part as { text?: string }).text ?? "")
             .join("\n");
-          const bootstrap = getWorkitBootstrap();
+          // CA-16: resolve host parentage BEFORE first-turn injection — an
+          // authorized direct child receives only the compact worker contract,
+          // never the coordinator bootstrap.
+          const workerAuthorized = await authorizedWorkerFor(firstAnchor.sessionID);
+          const bootstrap = workerAuthorized ? null : getWorkitBootstrap();
           if (bootstrap && !firstText.includes("<workit-contract>")) {
             firstUser.parts.unshift({
               id: firstAnchor.id,
@@ -349,6 +376,14 @@ const plugin: Plugin = async ({ client, directory }) => {
               messageID: firstAnchor.messageID,
               type: "text" as const,
               text: bootstrap,
+            });
+          } else if (workerAuthorized && !firstText.includes("workflow-sdd-worker")) {
+            firstUser.parts.unshift({
+              id: firstAnchor.id,
+              sessionID: firstAnchor.sessionID,
+              messageID: firstAnchor.messageID,
+              type: "text" as const,
+              text: SDD_WORKER_REMINDER_TEXT,
             });
           }
         }
@@ -406,9 +441,15 @@ const plugin: Plugin = async ({ client, directory }) => {
 
         // Every turn: subagent-driven rail — active approved plans get one reminder (idempotent)
         // FG-06/CA-21: discovery scans the host session workspace, never process.cwd()
+        // CA-15/CA-16: an authorized direct child gets the compact worker
+        // contract; every other session keeps the coordinator reminder.
         const activePlans = findActiveSubagentDrivenPlans(directory);
-        if (activePlans.length > 0 && shouldInjectSddReminder(currentText)) {
-          currentUser.parts.unshift(makePart(SDD_REMINDER_TEXT, "sdd"));
+        if (activePlans.length > 0) {
+          const workerAuthorized = await authorizedWorkerFor(anchor.sessionID);
+          const sddText = workerAuthorized ? SDD_WORKER_REMINDER_TEXT : SDD_REMINDER_TEXT;
+          if (!currentText.includes(sddText)) {
+            currentUser.parts.unshift(makePart(sddText, "sdd"));
+          }
         }
 
         // Every turn: config-gap rail — structured config errors get a three-option question (idempotent)

@@ -210,7 +210,11 @@ const establishSubagentDriven = (root: string, slug: string) => {
     transitionPlan(root, slug, plan, planEv),
   ])
     if (!step.ok) throw new Error(step.error);
-  const menu = recordMenuChoice(root, slug, plan, "subagent-driven", menuEv);
+  const menu = recordMenuChoice(root, slug, plan, "subagent-driven", menuEv, {
+    hostWorkspace: root,
+    role: "coordinator",
+    sessionId: "root-session",
+  });
   if (!menu.ok) throw new Error(menu.error);
 };
 

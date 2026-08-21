@@ -5,6 +5,7 @@ import {
   fsyncSync,
   mkdirSync,
   openSync,
+  readdirSync,
   readFileSync,
   renameSync,
   rmSync,
@@ -56,6 +57,13 @@ export type FlowExecutionState = {
   status: ExecutionStatus;
   mode: ExecutionMode | null;
   evidence: LifecycleEvidence | null;
+  /**
+   * The activating OpenCode coordinator session (CA-12): recorded when an
+   * accepted `subagent-driven` menu choice starts the execution; preserved
+   * across pause/resume; cleared on completion and approval drift; null for
+   * every non-subagent-driven path and for legacy states without the field.
+   */
+  coordinator_session_id: string | null;
 };
 
 /**
@@ -70,6 +78,13 @@ export type MutationContext = {
   hostWorkspace: string;
   role: FlowRole;
   sessionId: string;
+  /**
+   * The host-attested parent session id (OpenCode only): present exactly when
+   * the host reports a parent for this session, i.e. the session is a child.
+   * Delegated authority requires this to equal the persisted
+   * `execution.coordinator_session_id` (CA-13) — fail closed otherwise.
+   */
+  parentSessionId?: string;
   taskIdentity?: string;
 };
 
@@ -262,6 +277,7 @@ const normalizeState = (parsed: unknown, slug: string): FlowState => {
       status: (execution.status ?? "pending") as ExecutionStatus,
       mode: (execution.mode ?? null) as ExecutionMode | null,
       evidence: (execution.evidence ?? null) as LifecycleEvidence | null,
+      coordinator_session_id: execution.coordinator_session_id ?? null,
     },
     handoff_destination: p.handoff_destination ?? false,
     updated_at: p.updated_at ?? Date.now(),
@@ -274,7 +290,7 @@ const emptyState = (slug: string): FlowState => ({
   spec: { path: "", status: "draft", evidence: null, approved_digest: null },
   plan: { path: "", status: "draft", evidence: null, approved_digest: null },
   menu: { presented: false, chosen: "", evidence: null },
-  execution: { status: "pending", mode: null, evidence: null },
+  execution: { status: "pending", mode: null, evidence: null, coordinator_session_id: null },
   handoff_destination: false,
   updated_at: Date.now(),
 });
@@ -433,6 +449,16 @@ const validateState = (
   if (execRaw?.evidence !== undefined && !validateEvidenceValue(execRaw.evidence, true)) {
     return { ok: false, error: "flow state execution.evidence has an unsupported shape" };
   }
+  if (
+    execRaw?.coordinator_session_id !== undefined &&
+    execRaw.coordinator_session_id !== null &&
+    typeof execRaw.coordinator_session_id !== "string"
+  ) {
+    return {
+      ok: false,
+      error: "flow state execution.coordinator_session_id must be a string or null",
+    };
+  }
 
   return {
     ok: true,
@@ -450,6 +476,8 @@ const validateState = (
         status: (execRaw?.status as ExecutionStatus | undefined) ?? "pending",
         mode: (execRaw?.mode as ExecutionMode | null | undefined) ?? null,
         evidence: (execRaw?.evidence as LifecycleEvidence | null | undefined) ?? null,
+        coordinator_session_id:
+          (execRaw?.coordinator_session_id as string | null | undefined) ?? null,
       },
       handoff_destination: parsed.handoff_destination ?? false,
       updated_at: parsed.updated_at ?? Date.now(),
@@ -703,7 +731,7 @@ const resetForSpecDrift = (state: FlowState): FlowState => ({
   spec: { ...state.spec, status: "draft", evidence: null, approved_digest: null },
   plan: { ...state.plan, status: "draft", evidence: null, approved_digest: null },
   menu: { presented: false, chosen: "", evidence: null },
-  execution: { status: "pending", mode: null, evidence: null },
+  execution: { status: "pending", mode: null, evidence: null, coordinator_session_id: null },
   handoff_destination: false,
   updated_at: Date.now(),
 });
@@ -713,10 +741,13 @@ const resetForPlanDrift = (state: FlowState): FlowState => ({
   plan: { ...state.plan, status: "draft", evidence: null, approved_digest: null },
   // A plan edit resets only the plan's approval digest (fresh re-approval is
   // required before any plan-gated transition). The execution lifecycle, the
-  // recorded menu choice, and the handoff context are lifecycle facts, not
-  // plan-approval facts: an in-progress or completed run must not be rewound
-  // to pending by a doc edit made during or after implementation.
-  updated_at: Date.now(),
+   // recorded menu choice, and the handoff context are lifecycle facts, not
+   // plan-approval facts: an in-progress or completed run must not be rewound
+   // to pending by a doc edit made during or after implementation. The
+   // coordinator identity is likewise a lifecycle fact (CA-12): plan drift
+   // preserves it alongside the active status; only completion and spec
+   // approval drift clear it.
+   updated_at: Date.now(),
 });
 
 const driftCodeFor = (
@@ -781,9 +812,11 @@ const deriveLegacyExecution = (
     ledger.started &&
     !ledger.complete
   ) {
-    return { status: "active", mode: "subagent-driven", evidence: null };
+    // A legacy flow has no persisted coordinator identity: the field stays
+    // null and every lineage check fails closed (CA-12/CA-13).
+    return { status: "active", mode: "subagent-driven", evidence: null, coordinator_session_id: null };
   }
-  return { status: "pending", mode: null, evidence: null };
+  return { status: "pending", mode: null, evidence: null, coordinator_session_id: null };
 };
 
 type CompatibilityResult = { state: FlowState; changed: boolean };
@@ -800,6 +833,15 @@ const normalizeCompatibility = (
     if (derived.status !== current.status || derived.mode !== current.mode) {
       return { state: { ...state, execution: derived, updated_at: Date.now() }, changed: true };
     }
+    return { state, changed: false };
+  }
+  // Legacy states written before coordinator_session_id (CA-12) carry an
+  // execution object without the key; validation defaults it to null, so the
+  // migration must be persisted under the lock or every read-modify-write
+  // would CAS-conflict forever (baseline bytes would never match disk).
+  const execRaw = isRecord(parsed.execution) ? parsed.execution : undefined;
+  if (execRaw && !("coordinator_session_id" in execRaw)) {
+    return { state: { ...state, updated_at: Date.now() }, changed: true };
   }
   return { state, changed: false };
 };
@@ -1039,7 +1081,8 @@ const assertMutationWorkspace = (root: string, ctx?: MutationContext): FlowGateR
  * subagent-driven, the coordinator session cannot mutate product state — only
  * authenticated delegated workers can. A historical subagent-driven menu choice
  * alone is not a boundary: a pending/paused/completed/inline execution leaves
- * the coordinator unblocked. A delegated worker without a task identity is
+ * the coordinator unblocked. A delegated worker is bound to the recorded
+ * activating coordinator lineage (CA-13) and without a task identity is
  * blocked.
  */
 export const assertCoordinatorBoundary = (
@@ -1053,11 +1096,44 @@ export const assertCoordinatorBoundary = (
   ) {
     return err("coordinator_blocked", COORDINATOR_RECOVERY_TEXT);
   }
-  if (ctx?.role === "delegated" && !ctx.taskIdentity) {
-    return err(
-      "delegated_unauthenticated",
-      "delegated mutations require an authenticated task identity (taskIdentity) — re-run inside the delegated worker session",
-    );
+  if (ctx?.role === "delegated") {
+    const activeSubagent =
+      state.execution.status === "active" && state.execution.mode === "subagent-driven";
+    if (activeSubagent) {
+      const parent =
+        typeof ctx.parentSessionId === "string" && ctx.parentSessionId !== ""
+          ? ctx.parentSessionId
+          : null;
+      const recorded = state.execution.coordinator_session_id;
+      // A present-but-mismatched lineage fails closed (CA-13): re-rooted
+      // lineage laundering denied.
+      if (parent !== null && recorded !== null && parent !== recorded) {
+        return err(
+          "delegation_lineage_denied",
+          "delegated mutations require an exact direct-parent match to the activating coordinator session",
+        );
+      }
+      if (!ctx.taskIdentity) {
+        // Unverifiable lineage (no parent reported, or no recorded coordinator
+        // id — CA-12/CA-13) fails closed; a verified lineage without a task
+        // identity stays unauthenticated.
+        if (parent === null || recorded === null) {
+          return err(
+            "delegation_lineage_denied",
+            "delegated mutations require an exact direct-parent match to the activating coordinator session",
+          );
+        }
+        return err(
+          "delegated_unauthenticated",
+          "delegated mutations require an authenticated task identity (taskIdentity) — re-run inside the delegated worker session",
+        );
+      }
+    } else if (!ctx.taskIdentity) {
+      return err(
+        "delegated_unauthenticated",
+        "delegated mutations require an authenticated task identity (taskIdentity) — re-run inside the delegated worker session",
+      );
+    }
   }
   return { ok: true };
 };
@@ -1528,7 +1604,7 @@ export const prepareFlowState = (
         spec: { path: specPath, status: "draft", evidence: null, approved_digest: null },
         plan: { path: planPath, status: "draft", evidence: null, approved_digest: null },
         menu: { presented: false, chosen: "", evidence: null },
-        execution: { status: "pending", mode: null, evidence: null },
+        execution: { status: "pending", mode: null, evidence: null, coordinator_session_id: null },
         handoff_destination: false,
         updated_at: Date.now(),
       });
@@ -1729,8 +1805,15 @@ export const recordMenuChoice = (
     // Lifecycle is set ATOMICALLY with the menu evidence (CA-11/CA-13): an
     // executing choice starts the plan; a review/handoff choice leaves it
     // pending. The menu evidence IS the lifecycle evidence — the choice the
-    // user selected on the native question.
+    // user selected on the native question. The activating OpenCode
+    // coordinator session (CA-12) is persisted ONLY for an accepted
+    // subagent-driven activation; inline/handoff/review choices and Cursor's
+    // rejected subagent path keep it null.
     const executing = choice === "subagent-driven" || choice === "inline";
+    const coordinatorSessionId =
+      choice === "subagent-driven" && recorded.evidence.host === "opencode"
+        ? (ctx?.sessionId ?? null)
+        : null;
     return {
       ok: true,
       next: {
@@ -1741,8 +1824,13 @@ export const recordMenuChoice = (
         plan: { ...state.plan, path: state.plan.path || `docs/${slug}/plan.md` },
         menu: { presented: true, chosen: choice, evidence: recorded.evidence },
         execution: executing
-          ? { status: "active", mode: choice as ExecutionMode, evidence: recorded.evidence }
-          : { status: "pending", mode: null, evidence: recorded.evidence },
+          ? {
+              status: "active",
+              mode: choice as ExecutionMode,
+              evidence: recorded.evidence,
+              coordinator_session_id: coordinatorSessionId,
+            }
+          : { status: "pending", mode: null, evidence: recorded.evidence, coordinator_session_id: null },
         updated_at: Date.now(),
       },
     };
@@ -1894,7 +1982,9 @@ const completeExecution = (
     }
     const next: FlowState = {
       ...reconciled.state,
-      execution: { ...exec, status: "completed" },
+      // Completion clears the activating coordinator identity (CA-12): a
+      // completed flow has no delegated workers left to authorize.
+      execution: { ...exec, status: "completed", coordinator_session_id: null },
       // A completed flow is never a destination: clear the context so the next
       // ordinary session gets the source five-choice reminder, not the stale
       // four-choice destination wording (CA-08). Both approval-drift resets
@@ -2167,7 +2257,10 @@ export const assertSddControlGates = (
   if (
     state.execution.status === "active" &&
     state.execution.mode === "subagent-driven" &&
-    ctx?.role === "delegated"
+    // Lineage binding (CA-13): the adapter derives the role before the slug
+    // resolves, so delegation is re-derived here from the host-attested parent
+    // against the persisted activating coordinator id.
+    roleFromParentage(ctx?.parentSessionId, state.execution.coordinator_session_id) === "delegated"
   ) {
     return err(
       "sdd_control_denied",
@@ -2178,13 +2271,22 @@ export const assertSddControlGates = (
 };
 
 /**
- * Delegated status derives from host session parentage (AR-12, CA-20): a
- * session whose host record has a parent is a child (delegated worker); a root
- * session (no parent) is the coordinator. Caller-supplied role fields are
- * removed from every tool schema — this pure function is the only source.
+ * Delegated status derives from host session parentage bound to the persisted
+ * coordinator identity (AR-12, CA-13): a session with a parent is delegated
+ * ONLY when that parent id equals the flow's recorded activating coordinator
+ * session; any other parentage (or a missing/null coordinator id) is a
+ * coordinator. Caller-supplied role fields are removed from every tool schema
+ * — this pure function is the only source.
  */
-export const roleFromParentage = (parentID?: string | null): FlowRole =>
-  parentID ? "delegated" : "coordinator";
+export const roleFromParentage = (
+  parentID?: string | null,
+  coordinatorSessionId?: string | null,
+): FlowRole =>
+  typeof parentID === "string" &&
+  parentID !== "" &&
+  parentID === coordinatorSessionId
+    ? "delegated"
+    : "coordinator";
 
 /**
  * Root-session write interception while a subagent-driven plan is active
@@ -2837,19 +2939,65 @@ export const COORDINATOR_SHELL_DENIED_TEXT =
   COORDINATOR_RECOVERY_TEXT;
 
 /**
- * The plugin hook's decision function (AR-13): a delegated child session
- * (host parentage) is never intercepted; the root session is intercepted only
- * while at least one subagent-driven plan is active in its workspace. Returns
- * the denial error to throw from `tool.execute.before`, or `{ ok: true }`.
+ * The plugin hook's decision function (AR-13): only the exact direct child of
+ * the single recorded activating coordinator escapes interception while a
+ * subagent-driven plan is active; a re-rooted lineage, an unrelated child, or
+ * the root coordinator itself is intercepted. Returns the denial error to
+ * throw from `tool.execute.before`, or `{ ok: true }`.
  */
 export const subagentDrivenInterception = (input: {
   tool: string;
   command?: string;
   parentID?: string | null;
-  active: boolean;
+  activeCoordinatorIds?: string[];
+  active?: boolean;
 }): FlowGateResult => {
-  if (input.parentID) return { ok: true }; // delegated child — the worker
-  if (!input.active) return { ok: true };
+  const ids = (input.activeCoordinatorIds ?? []).filter(
+    (id) => typeof id === "string" && id !== "",
+  );
+  const parent = typeof input.parentID === "string" && input.parentID !== "" ? input.parentID : null;
+  const legacyActive = input.active === true;
+  if (!legacyActive && ids.length === 0) return { ok: true };
+  // Authorized direct child: exactly one recorded coordinator and this session
+  // is its exact direct child.
+  if (parent !== null && ids.length === 1 && ids[0] === parent) {
+    if (input.tool === "bash") {
+      // Nested-launch denial (CA-14): an authorized worker cannot launch
+      // opencode recursively while the plan is active.
+      const tokens = (input.command ?? "").split(/[\s'"]+/).filter(Boolean);
+      if (tokens.includes("opencode")) {
+        return err(
+          "delegation_lineage_denied",
+          "nested opencode launch is denied while a subagent-driven plan is active",
+        );
+      }
+    }
+    if (
+      [
+        "workflow_sdd_task_brief",
+        "workflow_sdd_review_package",
+        "workflow_sdd_append_progress",
+        "workflow_sdd_append_advisory",
+      ].includes(input.tool)
+    ) {
+      return err(
+        "delegation_lineage_denied",
+        "SDD control metadata is coordinator-owned — workers execute briefs, not bookkeeping",
+      );
+    }
+    return { ok: true };
+  }
+  if (parent !== null) {
+    // A non-empty parentID that does not exactly match the single recorded
+    // coordinator fails closed (CA-13): re-rooted lineage laundering denied.
+    if (!legacyActive || ids.length > 0) {
+      return err(
+        "delegation_lineage_denied",
+        "delegated writes require an exact direct-parent match to the activating coordinator",
+      );
+    }
+  }
+  // Coordinator (root) path: existing restrictions while active.
   if (COORDINATOR_WRITE_TOOLS.includes(input.tool)) {
     return err("coordinator_write_denied", COORDINATOR_RECOVERY_TEXT);
   }
@@ -2859,4 +3007,29 @@ export const subagentDrivenInterception = (input: {
     }
   }
   return { ok: true };
+};
+
+export const findActiveSubagentDrivenContexts = (
+  root: string,
+): Array<{ slug: string; coordinator_session_id: string | null }> => {
+  let entries: string[] = [];
+  try {
+    entries = readdirSync(path.join(root, "docs"), { withFileTypes: true })
+      .filter((e) => e.isDirectory())
+      .map((e) => e.name);
+  } catch {
+    return [];
+  }
+  const out: Array<{ slug: string; coordinator_session_id: string | null }> = [];
+  for (const slug of entries) {
+    try {
+      const state = readFlowState(root, slug);
+      if (state.execution.status === "active" && state.execution.mode === "subagent-driven") {
+        out.push({ slug, coordinator_session_id: state.execution.coordinator_session_id });
+      }
+    } catch {
+      // unreadable flow state: skip, never throw from discovery
+    }
+  }
+  return out;
 };

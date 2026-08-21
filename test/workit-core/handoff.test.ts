@@ -77,7 +77,7 @@ const approvedFlowJson = (root: string, overrides: Record<string, unknown> = {})
         approved_digest: sha256(path.join(root, "docs/x/plan.md")),
       },
       menu: { presented: true, chosen: "handoff", evidence: null },
-      execution: { status: "pending", mode: null, evidence: null },
+      execution: { status: "pending", mode: null, evidence: null, coordinator_session_id: null },
       handoff_destination: false,
       updated_at: Date.now(),
       ...overrides,
@@ -897,7 +897,12 @@ test("markHandoffDestination sets the flag, resets the menu, and leaves executio
     const state = effectiveState(root);
     expect(state.handoff_destination).toBe(true);
     expect(state.menu).toEqual({ presented: false, chosen: "", evidence: null });
-    expect(state.execution).toEqual({ status: "pending", mode: null, evidence: expect.anything() });
+    expect(state.execution).toEqual({
+      status: "pending",
+      mode: null,
+      evidence: expect.anything(),
+      coordinator_session_id: null,
+    });
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -1015,6 +1020,7 @@ test("recordMenuChoice still allows destination choices on a marked flow", () =>
       status: "active",
       mode: "subagent-driven",
       evidence: expect.anything(),
+      coordinator_session_id: null,
     });
   } finally {
     rmSync(root, { recursive: true, force: true });

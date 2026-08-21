@@ -22,6 +22,7 @@ const sha256 = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest(
 import {
   COORDINATOR_RECOVERY_TEXT,
   assertProductGates,
+  assertSddControlGates,
   prepareFlowState,
   readEffectiveFlowState,
   readFlowState,
@@ -33,6 +34,8 @@ import {
   type FlowReadResult,
   type MutationContext,
 } from "../../packages/workit-core/src/core/flow-state";
+import { resolveBranch } from "../../packages/workit-core/src/core/branch";
+import { sddAppendProgress, sddTaskBrief } from "../../packages/workit-core/src/core/sdd";
 import type { runVerifyProject } from "../../packages/workit-core/src/core/verify-project";
 import {
   findActiveSubagentDrivenPlans,
@@ -63,6 +66,7 @@ const delegated = (root: string, taskIdentity = "workit-worker"): MutationContex
   hostWorkspace: root,
   role: "delegated",
   sessionId: `task-${taskIdentity}`,
+  parentSessionId: COORDINATOR_SESSION,
   taskIdentity,
 });
 
@@ -82,6 +86,8 @@ const approveSpecAndPlan = (root: string, slug: string) => {
     if (!step.ok) throw new Error(step.error);
 };
 
+const COORDINATOR_SESSION = "coord-root";
+
 const establishSubagentDriven = (root: string, slug: string) => {
   writeDocs(root, slug);
   const plan = `docs/${slug}/plan.md`;
@@ -97,6 +103,7 @@ const establishSubagentDriven = (root: string, slug: string) => {
     plan,
     "subagent-driven",
     evidence("subagent-driven"),
+    { hostWorkspace: root, role: "coordinator", sessionId: COORDINATOR_SESSION },
   );
   if (!recorded.ok) throw new Error(recorded.error);
 };
@@ -166,7 +173,16 @@ test("CA-20: authenticated delegated workers are allowed; unauthenticated ones a
       { hostWorkspace: root, role: "delegated", sessionId: "worker-without-identity" },
     );
     expect(unauthenticated.ok).toBe(false);
-    if (!unauthenticated.ok) expect(unauthenticated.code).toBe("delegated_unauthenticated");
+    if (!unauthenticated.ok) expect(unauthenticated.code).toBe("delegation_lineage_denied");
+    // A properly-lineaged child lacking a task identity stays unauthenticated.
+    const lineagedNoIdentity = assertProductGates(
+      root,
+      slug,
+      { requireMenu: true, requireDocs: true },
+      { hostWorkspace: root, role: "delegated", sessionId: "w2", parentSessionId: COORDINATOR_SESSION },
+    );
+    expect(lineagedNoIdentity.ok).toBe(false);
+    if (!lineagedNoIdentity.ok) expect(lineagedNoIdentity.code).toBe("delegated_unauthenticated");
   } finally {
     cleanup(root);
   }
@@ -434,7 +450,7 @@ test("CA-20/AR-12: delegation derives from host parentage, and delegated context
   const { root, slug } = fixture();
   try {
     establishSubagentDriven(root, slug);
-    const child = roleFromParentage("coordinator-session");
+    const child = roleFromParentage("coordinator-session", "coordinator-session");
     expect(child).toBe("delegated");
     const allowed = assertProductGates(
       root,
@@ -475,7 +491,7 @@ test("CA-18/AR-13: root-session interception blocks write tools and mutating she
       const decision = subagentDrivenInterception({
         tool,
         parentID: undefined,
-        active,
+        activeCoordinatorIds: [COORDINATOR_SESSION],
       });
       expect(decision.ok, tool).toBe(false);
     }
@@ -483,7 +499,7 @@ test("CA-18/AR-13: root-session interception blocks write tools and mutating she
       tool: "bash",
       command: "git push origin main",
       parentID: undefined,
-      active,
+      activeCoordinatorIds: [COORDINATOR_SESSION],
     });
     expect(shell.ok).toBe(false);
     if (!shell.ok) expect(shell.code).toBe("coordinator_shell_denied");
@@ -491,17 +507,26 @@ test("CA-18/AR-13: root-session interception blocks write tools and mutating she
       tool: "bash",
       command: "bun run check",
       parentID: undefined,
-      active,
+      activeCoordinatorIds: [COORDINATOR_SESSION],
     });
     expect(read.ok).toBe(true);
-    // A delegated child session is never intercepted, even with plans active.
+    // The authorized direct child of the recorded coordinator is not intercepted.
     const child = subagentDrivenInterception({
       tool: "write",
       command: undefined,
-      parentID: "root-session",
-      active,
+      parentID: COORDINATOR_SESSION,
+      activeCoordinatorIds: [COORDINATOR_SESSION],
     });
     expect(child.ok).toBe(true);
+    // An unrelated child fails closed with the structured lineage error.
+    const unrelated = subagentDrivenInterception({
+      tool: "write",
+      command: undefined,
+      parentID: "unrelated-root",
+      activeCoordinatorIds: [COORDINATOR_SESSION],
+    });
+    expect(unrelated.ok).toBe(false);
+    if (!unrelated.ok) expect(unrelated.code).toBe("delegation_lineage_denied");
   } finally {
     cleanup(root);
   }
@@ -1040,7 +1065,7 @@ test("CA-18/AR-13: only active subagent-driven flows are discovered and intercep
       const decision = subagentDrivenInterception({
         tool: "write",
         parentID: undefined,
-        active: false,
+        activeCoordinatorIds: [],
       });
       expect(decision.ok, name).toBe(true);
     } finally {
@@ -1056,7 +1081,7 @@ test("CA-18/AR-13: only active subagent-driven flows are discovered and intercep
     const blocked = subagentDrivenInterception({
       tool: "write",
       parentID: undefined,
-      active: true,
+      activeCoordinatorIds: [COORDINATOR_SESSION],
     });
     expect(blocked.ok).toBe(false);
     if (!blocked.ok) {
@@ -1080,7 +1105,7 @@ test("CA-18/AR-13: only active subagent-driven flows are discovered and intercep
     const decision = subagentDrivenInterception({
       tool: "write",
       parentID: undefined,
-      active: true,
+      activeCoordinatorIds: [COORDINATOR_SESSION],
     });
     expect(decision.ok).toBe(false);
     if (!decision.ok) expect(decision.code).toBe("coordinator_write_denied");
@@ -1129,6 +1154,87 @@ test("fail-closed scan: a locked flow is reported as a read error, not silently 
     } finally {
       cleanup(other);
     }
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("CA-12: subagent-driven activation persists the activating coordinator session id", () => {
+  const { root, slug } = fixture();
+  try {
+    establishSubagentDriven(root, slug);
+    expect(readFlowState(root, slug).execution.coordinator_session_id).toBe(COORDINATOR_SESSION);
+    // Pause/resume preserve it.
+    expect(
+      transitionExecution(root, slug, `docs/${slug}/plan.md`, "pause", {
+        host: "cli",
+        attested: false,
+        confirmation: "flag",
+      }).ok,
+    ).toBe(true);
+    expect(readFlowState(root, slug).execution.coordinator_session_id).toBe(COORDINATOR_SESSION);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("CA-12..CA-17: literal clean-start contract — menu record -> branch setup -> coordinator brief -> direct worker -> coordinator review/progress with no error result", () => {
+  const { root, slug } = fixture();
+  const plan = `docs/${slug}/plan.md`;
+  try {
+    // 1. Menu record: the activating coordinator records subagent-driven.
+    establishSubagentDriven(root, slug);
+    expect(readFlowState(root, slug).execution.coordinator_session_id).toBe(COORDINATOR_SESSION);
+
+    // 2. Branch setup: the declared branch resolves from spec/plan metadata.
+    const branch = resolveBranch({
+      spec_path: `docs/${slug}/spec.md`,
+      plan_path: plan,
+      workspace_root: root,
+    });
+    expect("error" in branch).toBe(false);
+
+    // 3. Coordinator brief: control gates pass for the root session and the
+    // brief lands under gitignored docs/<slug>/sdd/.
+    const coordCtx = coordinator(root, COORDINATOR_SESSION);
+    const briefGate = assertSddControlGates(root, slug, { requireMenu: true }, coordCtx);
+    expect(briefGate.ok).toBe(true);
+    const brief = sddTaskBrief({
+      sdd_dir: `docs/${slug}/sdd`,
+      task_id: 1,
+      section_text: "Task 1: do the thing",
+      workspace_root: root,
+    });
+    expect(brief.error).toBeUndefined();
+    expect(existsSync(path.join(root, "docs", slug, "sdd", "task-1-brief.md"))).toBe(true);
+
+    // 4. Direct worker: the exact direct child passes product gates.
+    const workerGate = assertProductGates(
+      root,
+      slug,
+      { requireMenu: true },
+      delegated(root),
+    );
+    expect(workerGate.ok).toBe(true);
+
+    // 4b. The same worker is denied coordinator bookkeeping (fail-closed).
+    const workerControl = assertSddControlGates(root, slug, { requireMenu: true }, delegated(root));
+    expect(workerControl.ok).toBe(false);
+    if (!workerControl.ok) expect(workerControl.code).toBe("sdd_control_denied");
+
+    // 5. Coordinator review/progress: control gates pass again and the
+    // validated ledger line appends.
+    const reviewGate = assertSddControlGates(root, slug, { requireMenu: true }, coordCtx);
+    expect(reviewGate.ok).toBe(true);
+    const progress = sddAppendProgress({
+      progress_path: `docs/${slug}/sdd/progress.md`,
+      line: "Task 1: complete (commits abc1234..def5678, review clean)",
+      workspace_root: root,
+    });
+    expect(progress.error).toBeUndefined();
+    expect(readFileSync(path.join(root, "docs", slug, "sdd", "progress.md"), "utf8")).toContain(
+      "Task 1: complete",
+    );
   } finally {
     cleanup(root);
   }

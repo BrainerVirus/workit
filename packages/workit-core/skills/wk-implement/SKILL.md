@@ -38,6 +38,8 @@ Each task lands exactly one contiguous non-empty commit range (`base..head`): fi
 
 Never redispatch completed task IDs. Pass task briefs and review diffs to agents; do not make them reparse the plan. Keep commits on the in-place feature/bugfix branch.
 
+Delegated authority is direct-child-only: a worker is the session whose host `parentID` exactly equals the activating coordinator's recorded `coordinator_session_id`; missing, mismatched, or multi-owner lineage fails closed with `delegation_lineage_denied`, and nested `opencode` launches are denied during active delegated work. An authorized child receives only the compact worker contract — execute the supplied brief, follow TDD, land one contiguous non-empty commit range, report results — never coordinator guidance, `wk-implement`, or ledger management. Coordinator bookkeeping (briefs, review packages, progress, advisories via `workflow_sdd_*`) stays with the coordinator session.
+
 ## Final gate
 
 After all remaining tasks, dispatch a final full-branch code review, run `workflow_verify`, and report exact per-check results. Present the full `<SDD_DIR>/advisories.md` roll-up once, then use native `question` so the user can choose which advisory items to fix, discuss, or discard. Only then may advisory fixes run. Use `workflow_git_context` for the final commit preview and the `wk-commit` skill for any approved commit. If a tracked stash reference exists, preview reapplication with `question`, then call `workflow_branch_setup` with `confirmed: true` only after approval.

@@ -874,12 +874,13 @@ test("CA-10: control gates deny a delegated worker on active subagent-driven met
     const coordinator: MutationContext = {
       hostWorkspace: root,
       role: "coordinator",
-      sessionId: "root-session",
+      sessionId: "lifecycle-session",
     };
     const delegated: MutationContext = {
       hostWorkspace: root,
       role: "delegated",
       sessionId: "child-session",
+      parentSessionId: "lifecycle-session",
       taskIdentity: "child-session",
     };
     const denied = assertSddControlGates(root, slug, { requireMenu: true, requireDocs: true }, delegated);
@@ -956,48 +957,73 @@ test("CA-10: SDD control tools left COORDINATOR_WRITE_TOOLS; product and externa
     expect(COORDINATOR_WRITE_TOOLS, controlTool).not.toContain(controlTool);
     // Control tools are not intercepted as product writes; they carry their
     // own coordinator-only gate in the adapter.
-    const decision = subagentDrivenInterception({ tool: controlTool, parentID: undefined, active: true });
+    const decision = subagentDrivenInterception({ tool: controlTool, parentID: undefined, activeCoordinatorIds: ["coord-session"] });
     expect(decision.ok, controlTool).toBe(true);
   }
   for (const productTool of ["write", "edit", "apply_patch", "workflow_commit", "workflow_youtrack_post"]) {
     expect(COORDINATOR_WRITE_TOOLS, productTool).toContain(productTool);
-    const decision = subagentDrivenInterception({ tool: productTool, parentID: undefined, active: true });
+    const decision = subagentDrivenInterception({ tool: productTool, parentID: undefined, activeCoordinatorIds: ["coord-session"] });
     expect(decision.ok, productTool).toBe(false);
   }
 });
 
-test("delegation comes from host parentage, never from caller fields", () => {
-  expect(roleFromParentage(undefined)).toBe("coordinator");
-  expect(roleFromParentage(null)).toBe("coordinator");
-  expect(roleFromParentage("")).toBe("coordinator");
-  expect(roleFromParentage("root-session")).toBe("delegated");
-  expect(roleFromParentage("child-of-root")).toBe("delegated");
+test("delegation comes from exact host parentage against the recorded coordinator (CA-13)", () => {
+  expect(roleFromParentage(undefined, "coord-session")).toBe("coordinator");
+  expect(roleFromParentage(null, "coord-session")).toBe("coordinator");
+  expect(roleFromParentage("", "coord-session")).toBe("coordinator");
+  expect(roleFromParentage("root-session", "coord-session")).toBe("coordinator");
+  expect(roleFromParentage("child-of-root", "coord-session")).toBe("coordinator");
+  // Missing or null persisted identity fails closed.
+  expect(roleFromParentage("coord-session", undefined)).toBe("coordinator");
+  expect(roleFromParentage("coord-session", null)).toBe("coordinator");
+  expect(roleFromParentage("coord-session", "")).toBe("coordinator");
+  // Only the exact non-empty match is a delegated worker.
+  expect(roleFromParentage("coord-session", "coord-session")).toBe("delegated");
 });
 
-test("subagent-driven interception: delegated child sessions are never blocked", () => {
-  const blocked = subagentDrivenInterception({
+test("subagent-driven interception: only the authorized direct child is not blocked", () => {
+  const allowed = subagentDrivenInterception({
     tool: "write",
-    parentID: "root-session",
-    active: true,
+    parentID: "coord-session",
+    activeCoordinatorIds: ["coord-session"],
   });
-  expect(blocked.ok).toBe(true);
+  expect(allowed.ok).toBe(true);
   const bash = subagentDrivenInterception({
     tool: "bash",
     command: "rm -rf /",
-    parentID: "root-session",
-    active: true,
+    parentID: "coord-session",
+    activeCoordinatorIds: ["coord-session"],
   });
   expect(bash.ok).toBe(true);
+  // A mismatched child fails closed with the structured lineage error.
+  const mismatched = subagentDrivenInterception({
+    tool: "write",
+    parentID: "other-root",
+    activeCoordinatorIds: ["coord-session"],
+  });
+  expect(mismatched.ok).toBe(false);
+  if (!mismatched.ok) expect(mismatched.code).toBe("delegation_lineage_denied");
 });
 
-test("subagent-driven interception: inactive plans never block the root session", () => {
-  const blocked = subagentDrivenInterception({ tool: "write", parentID: undefined, active: false });
+test("subagent-driven interception: inactive plans never block any session", () => {
+  const blocked = subagentDrivenInterception({
+    tool: "write",
+    parentID: undefined,
+    activeCoordinatorIds: [],
+  });
   expect(blocked.ok).toBe(true);
+  const child = subagentDrivenInterception({
+    tool: "bash",
+    command: "opencode run --prompt x",
+    parentID: "any-child",
+    activeCoordinatorIds: [],
+  });
+  expect(child.ok).toBe(true);
 });
 
 test("subagent-driven interception: root-session write tools are denied when active", () => {
   for (const tool of COORDINATOR_WRITE_TOOLS) {
-    const decision = subagentDrivenInterception({ tool, parentID: undefined, active: true });
+    const decision = subagentDrivenInterception({ tool, parentID: undefined, activeCoordinatorIds: ["coord-session"] });
     expect(decision.ok, tool).toBe(false);
     if (!decision.ok) {
       expect(decision.code, tool).toBe("coordinator_write_denied");
@@ -1026,7 +1052,7 @@ test("subagent-driven interception: non-write tools stay allowed for the root se
     "workflow_verify",
     "workflow_git_context",
   ]) {
-    const decision = subagentDrivenInterception({ tool, parentID: undefined, active: true });
+    const decision = subagentDrivenInterception({ tool, parentID: undefined, activeCoordinatorIds: ["coord-session"] });
     expect(decision.ok, tool).toBe(true);
   }
 });
@@ -1068,7 +1094,7 @@ test("subagent-driven interception: coordinator shell mutations are denied with 
       tool: "bash",
       command,
       parentID: undefined,
-      active: true,
+      activeCoordinatorIds: ["coord-session"],
     });
     expect(decision.ok, JSON.stringify(command)).toBe(false);
     if (!decision.ok) {
@@ -1413,7 +1439,7 @@ test("adversarial allowlist matrix: every documented coordinator-shell bypass is
       tool: "bash",
       command,
       parentID: undefined,
-      active: true,
+      activeCoordinatorIds: ["coord-session"],
     });
     expect(decision.ok, `${vector}: ${command}`).toBe(false);
     if (!decision.ok) {
@@ -1587,7 +1613,7 @@ test("the coordinator bash allowlist permits bounded read/test/review commands",
       tool: "bash",
       command,
       parentID: undefined,
-      active: true,
+      activeCoordinatorIds: ["coord-session"],
     });
     expect(decision.ok, JSON.stringify(command)).toBe(true);
   }
@@ -1616,7 +1642,11 @@ const establishMenuChoice = (root: string, slug: string, choice: string) => {
   expect(transitionPlan(root, slug, plan, openEvidence(store, sessionId, "Approve plan")).ok).toBe(
     true,
   );
-  const menu = recordMenuChoice(root, slug, plan, choice, openEvidence(store, sessionId, choice));
+  const menu = recordMenuChoice(root, slug, plan, choice, openEvidence(store, sessionId, choice), {
+    hostWorkspace: root,
+    role: "coordinator",
+    sessionId,
+  });
   expect(menu.ok).toBe(true);
 };
 
@@ -1867,6 +1897,7 @@ test("CA-16: a legacy flow without execution, approved + subagent-driven + start
       status: "active",
       mode: "subagent-driven",
       evidence: null,
+      coordinator_session_id: null,
     });
     // The migration is persisted, not just returned.
     expect(readFlowState(root, slug).execution).toMatchObject({ status: "active" });
@@ -1895,6 +1926,7 @@ test("CA-16: missing/empty ledgers and every other legacy combination normalize 
         status: "pending",
         mode: null,
         evidence: null,
+        coordinator_session_id: null,
       });
     } finally {
       cleanup(root);
@@ -1924,7 +1956,12 @@ test("CA-17: compatibility normalization runs first, then reconciliation resets 
     expect(effective.drift).toEqual([
       { document: "spec", code: "digest_missing", path: `docs/${slug}/spec.md` },
     ]);
-    expect(effective.state.execution).toEqual({ status: "pending", mode: null, evidence: null });
+    expect(effective.state.execution).toEqual({
+      status: "pending",
+      mode: null,
+      evidence: null,
+      coordinator_session_id: null,
+    });
   } finally {
     cleanup(root);
   }
@@ -2058,6 +2095,204 @@ test("CA-07/CA-08: completing a marked handoff destination clears the flag so or
     // The destination context must not leak into subsequent ordinary sessions.
     expect(state.handoff_destination).toBe(false);
     expect(findMarkedDestinations(root)).toEqual([]);
+  } finally {
+    cleanup(root);
+  }
+});
+
+// --- Task 4: persisted coordinator identity (CA-12) ---
+
+const coordinatorCtx = (sessionId: string): MutationContext => ({
+  hostWorkspace: "unused",
+  role: "coordinator",
+  sessionId,
+});
+
+/** Approve spec+plan and record `choice` from the given coordinator session. */
+const establishMenuChoiceFrom = (
+  root: string,
+  slug: string,
+  choice: string,
+  sessionId: string,
+) => {
+  const spec = `docs/${slug}/spec.md`;
+  const plan = `docs/${slug}/plan.md`;
+  const store = new HostReceiptStore();
+  const prep = prepareFlowState(root, slug, { spec_path: spec, plan_path: plan });
+  expect(prep.ok).toBe(true);
+  expect(transitionSpec(root, slug, spec, openEvidence(store, sessionId, "Approve spec")).ok).toBe(
+    true,
+  );
+  expect(transitionPlan(root, slug, plan, openEvidence(store, sessionId, "Approve plan")).ok).toBe(
+    true,
+  );
+  const menu = recordMenuChoice(root, slug, plan, choice, openEvidence(store, sessionId, choice), {
+    hostWorkspace: root,
+    role: "coordinator",
+    sessionId,
+  });
+  expect(menu.ok).toBe(true);
+};
+
+test("CA-12: an accepted OpenCode subagent-driven activation records the activating session id", () => {
+  const { root, slug } = fixture();
+  try {
+    establishMenuChoiceFrom(root, slug, "subagent-driven", "coord-root-1");
+    expect(readFlowState(root, slug).execution.coordinator_session_id).toBe("coord-root-1");
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("CA-12: pause/resume preserve the recorded coordinator id", () => {
+  const { root, slug } = fixture();
+  try {
+    establishMenuChoiceFrom(root, slug, "subagent-driven", "coord-root-1");
+    const plan = `docs/${slug}/plan.md`;
+    expect(transitionExecution(root, slug, plan, "pause", cliEvidence()).ok).toBe(true);
+    expect(readFlowState(root, slug).execution.coordinator_session_id).toBe("coord-root-1");
+    expect(transitionExecution(root, slug, plan, "resume", cliEvidence()).ok).toBe(true);
+    expect(readFlowState(root, slug).execution.coordinator_session_id).toBe("coord-root-1");
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("CA-12: completion clears the recorded coordinator id", () => {
+  const { root, slug } = fixture();
+  try {
+    establishMenuChoiceFrom(root, slug, "subagent-driven", "coord-root-1");
+    writeSddLedger(root, slug, ["Task 1: complete"]);
+    const done = transitionExecution(root, slug, `docs/${slug}/plan.md`, "complete", cliEvidence(), undefined, {
+      verifyProject: stubVerifier(0),
+    });
+    expect(done.ok).toBe(true);
+    expect(readFlowState(root, slug).execution.coordinator_session_id).toBeNull();
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("CA-12: approval drift clears the id; a valid reactivation records the new coordinator id", () => {
+  const { root, slug } = fixture();
+  try {
+    establishMenuChoiceFrom(root, slug, "subagent-driven", "coord-root-1");
+    // Spec drift resets the whole chain (execution included) -> identity gone.
+    writeFileSync(path.join(root, "docs", slug, "spec.md"), COMPLIANT_SPEC_FN(slug) + "\n<!-- edited -->\n");
+    const effective = readEffectiveFlowState(root, slug);
+    expect(effective.ok).toBe(true);
+    if (effective.ok) {
+      expect(effective.state.execution.status).toBe("pending");
+      expect(effective.state.execution.coordinator_session_id).toBeNull();
+    }
+    // Re-approve everything and activate again from a DIFFERENT session
+    // (e.g. a handoff destination): the new coordinator id is recorded.
+    const store = new HostReceiptStore();
+    const sessionId = "dest-coordinator";
+    const spec = `docs/${slug}/spec.md`;
+    const plan = `docs/${slug}/plan.md`;
+    expect(transitionSpec(root, slug, spec, openEvidence(store, sessionId, "Approve spec")).ok).toBe(true);
+    expect(transitionPlan(root, slug, plan, openEvidence(store, sessionId, "Approve plan")).ok).toBe(true);
+    expect(
+      recordMenuChoice(root, slug, plan, "subagent-driven", openEvidence(store, sessionId, "subagent-driven"), {
+        hostWorkspace: root,
+        role: "coordinator",
+        sessionId,
+      }).ok,
+    ).toBe(true);
+    expect(readFlowState(root, slug).execution.coordinator_session_id).toBe(sessionId);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("CA-12: non-subagent choices never set the id; Cursor's rejected subagent choice keeps it null", () => {
+  for (const choice of ["inline", "handoff", "review-spec", "review-plan"] as const) {
+    const { root, slug } = fixture();
+    try {
+      establishMenuChoiceFrom(root, slug, choice, "coord-root-1");
+      expect(readFlowState(root, slug).execution.coordinator_session_id, choice).toBeNull();
+    } finally {
+      cleanup(root);
+    }
+  }
+  const { root, slug } = fixture();
+  try {
+    const spec = `docs/${slug}/spec.md`;
+    const plan = `docs/${slug}/plan.md`;
+    const store = new HostReceiptStore();
+    expect(prepareFlowState(root, slug, { spec_path: spec, plan_path: plan }).ok).toBe(true);
+    expect(transitionSpec(root, slug, spec, cursorEvidence()).ok).toBe(true);
+    expect(transitionPlan(root, slug, plan, cursorEvidence()).ok).toBe(true);
+    const rejected = recordMenuChoice(root, slug, plan, "subagent-driven", cursorEvidence(), {
+      hostWorkspace: root,
+      role: "coordinator",
+      sessionId: "cursor-session",
+    });
+    expect(rejected.ok).toBe(false);
+    if (!rejected.ok) expect(rejected.code).toBe("unsupported_mode");
+    expect(readFlowState(root, slug).execution.coordinator_session_id).toBeNull();
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("CA-12: legacy state without the field normalizes to null", () => {
+  const { root, slug } = fixture();
+  try {
+    establishMenuChoiceFrom(root, slug, "subagent-driven", "coord-root-1");
+    const file = path.join(root, "docs", slug, "sdd", "flow.json");
+    const parsed = JSON.parse(readFileSync(file, "utf8")) as Record<string, unknown>;
+    const execution = parsed.execution as Record<string, unknown>;
+    delete execution.coordinator_session_id;
+    writeFileSync(file, JSON.stringify(parsed, null, 2), "utf8");
+    expect(readFlowState(root, slug).execution.coordinator_session_id).toBeNull();
+    const effective = readEffectiveFlowState(root, slug);
+    expect(effective.ok).toBe(true);
+    if (effective.ok) expect(effective.state.execution.coordinator_session_id).toBeNull();
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("CA-12: a handoff destination activation records the destination session as the new coordinator", () => {
+  const { root, slug } = fixture();
+  try {
+    const store = new HostReceiptStore();
+    const sourceId = "source-coordinator";
+    const spec = `docs/${slug}/spec.md`;
+    const plan = `docs/${slug}/plan.md`;
+    expect(prepareFlowState(root, slug, { spec_path: spec, plan_path: plan }).ok).toBe(true);
+    expect(transitionSpec(root, slug, spec, openEvidence(store, sourceId, "Approve spec")).ok).toBe(true);
+    expect(transitionPlan(root, slug, plan, openEvidence(store, sourceId, "Approve plan")).ok).toBe(true);
+    expect(recordMenuChoice(root, slug, plan, "handoff", openEvidence(store, sourceId, "handoff")).ok).toBe(true);
+    expect(markHandoffDestination(root, slug, plan)).toEqual({ ok: true });
+    // The destination session activates subagent-driven execution.
+    const destId = "destination-coordinator";
+    expect(
+      recordMenuChoice(root, slug, plan, "subagent-driven", openEvidence(store, destId, "subagent-driven"), {
+        hostWorkspace: root,
+        role: "coordinator",
+        sessionId: destId,
+      }).ok,
+    ).toBe(true);
+    expect(readFlowState(root, slug).execution.coordinator_session_id).toBe(destId);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("CA-12: plan drift preserves the active lifecycle AND the recorded coordinator id", () => {
+  const { root, slug } = fixture();
+  try {
+    establishMenuChoiceFrom(root, slug, "subagent-driven", "coord-root-1");
+    writeFileSync(path.join(root, "docs", slug, "plan.md"), COMPLIANT_PLAN_FN(slug) + "\n<!-- edited -->\n");
+    const effective = readEffectiveFlowState(root, slug);
+    expect(effective.ok).toBe(true);
+    if (effective.ok) {
+      expect(effective.state.execution.status).toBe("active");
+      expect(effective.state.execution.coordinator_session_id).toBe("coord-root-1");
+    }
   } finally {
     cleanup(root);
   }

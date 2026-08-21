@@ -98,7 +98,11 @@ const establishSubagentDriven = async (root: string, slug: string, receipts: Hos
     transitionPlan(root, slug, plan, ev("Approve plan")),
   ])
     if (!step.ok) throw new Error(step.error);
-  const menu = recordMenuChoice(root, slug, plan, "subagent-driven", ev("subagent-driven"));
+  const menu = recordMenuChoice(root, slug, plan, "subagent-driven", ev("subagent-driven"), {
+    hostWorkspace: root,
+    role: "coordinator",
+    sessionId: "root-session",
+  });
   if (!menu.ok) throw new Error(menu.error);
 };
 
@@ -621,7 +625,12 @@ test("workflow_flow_status returns execution and drift alongside spec/plan/menu"
       ctx,
     );
     expect(out.ok).toBe(true);
-    expect(out.data.execution).toEqual({ status: "pending", mode: null, evidence: null });
+    expect(out.data.execution).toEqual({
+      status: "pending",
+      mode: null,
+      evidence: null,
+      coordinator_session_id: null,
+    });
     expect(out.data.drift).toEqual([]);
   } finally {
     cleanup(root);

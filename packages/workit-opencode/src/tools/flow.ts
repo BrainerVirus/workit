@@ -68,11 +68,17 @@ export const opencodeMutationContext = async (
   } catch {
     // fail closed: an unverifiable session is the root coordinator
   }
-  const role = roleFromParentage(parentID);
+  // No flow-state access here (identity is built before the slug resolves):
+  // the coordinator id is unknown at derivation time, so lineage binding
+  // happens later against the persisted execution.coordinator_session_id.
+  const role = roleFromParentage(parentID, undefined);
   return {
     hostWorkspace: context.directory,
     role,
     sessionId: context.sessionID,
+    // Host-attested parentage (CA-13): gates bind lineage later against the
+    // persisted execution.coordinator_session_id.
+    parentSessionId: parentID,
     taskIdentity: role === "delegated" ? context.sessionID : undefined,
   };
 };

@@ -51,6 +51,17 @@ export const SDD_REMINDER_TEXT = `<workflow-sdd-reminder>
 An approved plan is subagent-driven — execute it via \`wk-implement\` / \`task\` delegation. Never implement the approved plan inline in the main session.
 </workflow-sdd-reminder>`;
 
+/**
+ * Worker-only context (CA-16): an authorized direct child of the activating
+ * coordinator receives ONLY this compact contract — never the coordinator
+ * bootstrap or SDD_REMINDER_TEXT. It carries the worker duties (brief, TDD,
+ * commit range, report) and no coordination instructions.
+ */
+export const SDD_WORKER_REMINDER_TEXT = `<workflow-sdd-worker>
+You are an authorized delegated worker for an active subagent-driven plan.
+Execute only the supplied task brief: follow TDD (failing test first), land exactly one contiguous non-empty commit range for your task, then report status, commits, and test results to the coordinator. Do not manage coordinator bookkeeping or launch another agent harness.
+</workflow-sdd-worker>`;
+
 export const DOC_RENDER_TEXT = `<workflow-doc-render>
 When delivering a spec or plan, by default render the full markdown content of the doc in chat (headings, tables, mermaid fences preserved) — NOT a backtick-wrapped raw block.
 If the doc exceeds the render threshold (more than 150 lines, over 8KB, or more than 3 mermaid diagrams), deliver only the clickable link \`[spec.md](docs/<slug>/spec.md)\` + a 3-5 bullet summary.

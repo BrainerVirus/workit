@@ -566,6 +566,7 @@ test("cursor MCP status returns execution and drift alongside spec/plan/menu", a
       status: "pending",
       mode: null,
       evidence: null,
+      coordinator_session_id: null,
     });
     expect(callText(status).text.drift).toEqual([]);
 

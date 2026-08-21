@@ -21,6 +21,7 @@ import plugin from "../../packages/workit-opencode/src/plugin";
 import {
   shouldInjectSddReminder,
   SDD_REMINDER_TEXT,
+  SDD_WORKER_REMINDER_TEXT,
   CONFIG_GUARD_TEXT,
   shouldInjectConfigGuard,
   DOC_DELIVERY_TEXT,
@@ -421,11 +422,16 @@ const reminderUserMessage = (text: string) => ({
 });
 
 /** Drive the real OpenCode plugin's chat.messages.transform hook and return the injected turn text. */
-const reminderInjectedText = async (root: string, message = "continue"): Promise<string> => {
+const reminderInjectedText = async (
+  root: string,
+  message = "continue",
+  client?: unknown,
+): Promise<string> => {
   const hooks = await plugin({
     directory: root,
     worktree: root,
     serverUrl: new URL("http://localhost"),
+    ...(client ? { client } : {}),
   } as never);
   const output = { messages: [reminderUserMessage(message)] };
   await hooks["experimental.chat.messages.transform"]?.({} as never, output as never);
@@ -495,5 +501,82 @@ test("CA-08: ordinary, pending, paused, completed, and active-inline flows keep 
     }
   } finally {
     for (const root of roots) rmSync(root, { recursive: true, force: true });
+  }
+});
+
+/** Establish an active subagent-driven flow recording `coordinator` as the activating session. */
+const establishCoordinatedFlow = (root: string, slug: string, coordinator: string) => {
+  writeDocs(root, slug);
+  const spec = `docs/${slug}/spec.md`;
+  const plan = `docs/${slug}/plan.md`;
+  const store = new HostReceiptStore();
+  const sessionId = "reminder-session";
+  const ctx = { hostWorkspace: root, role: "coordinator" as const, sessionId: coordinator };
+  const prep = prepareFlowState(root, slug, { spec_path: spec, plan_path: plan }, ctx);
+  if (!prep.ok) throw new Error(prep.error);
+  for (const step of [
+    transitionSpec(root, slug, spec, openEvidence(store, sessionId, "Approve spec"), ctx),
+    transitionPlan(root, slug, plan, openEvidence(store, sessionId, "Approve plan"), ctx),
+  ])
+    if (!step.ok) throw new Error(step.error);
+  const menu = recordMenuChoice(
+    root,
+    slug,
+    plan,
+    "subagent-driven",
+    openEvidence(store, sessionId, "subagent-driven"),
+    ctx,
+  );
+  if (!menu.ok) throw new Error(menu.error);
+};
+
+const workerClient = (parentID?: string) => ({
+  session: {
+    get: async () => ({ data: { parentID } }),
+  },
+});
+
+test("CA-15/CA-16: an authorized direct child receives only the compact worker contract", async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wf-worker-"));
+  try {
+    establishCoordinatedFlow(root, "wfoo", "coord-session");
+    const client = workerClient("coord-session");
+    const text = await reminderInjectedText(root, "continue", client);
+    expect(text).toContain(SDD_WORKER_REMINDER_TEXT);
+    expect(text).not.toContain(SDD_REMINDER_TEXT);
+    // Worker-only context: no coordinator bootstrap on the first turn.
+    expect(text).not.toContain("<workit-contract>");
+    // Worker duties present; coordination instructions absent.
+    expect(SDD_WORKER_REMINDER_TEXT).toContain("task brief");
+    expect(SDD_WORKER_REMINDER_TEXT).toContain("TDD");
+    expect(SDD_WORKER_REMINDER_TEXT).not.toContain("wk-implement");
+    expect(SDD_WORKER_REMINDER_TEXT).not.toContain(".superpowers/sdd");
+    expect(SDD_WORKER_REMINDER_TEXT).not.toContain("worktree");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("CA-15/CA-16: the coordinator session keeps the coordinator reminder and bootstrap", async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wf-coord-"));
+  try {
+    establishCoordinatedFlow(root, "cfoo", "coord-session");
+    const text = await reminderInjectedText(root, "continue", workerClient(undefined));
+    expect(text).toContain(SDD_REMINDER_TEXT);
+    expect(text).not.toContain(SDD_WORKER_REMINDER_TEXT);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("CA-15/CA-16: a mismatched parentID is never authorized as a worker", async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wf-mismatch-"));
+  try {
+    establishCoordinatedFlow(root, "mfoo", "coord-session");
+    const text = await reminderInjectedText(root, "continue", workerClient("other-root"));
+    expect(text).toContain(SDD_REMINDER_TEXT);
+    expect(text).not.toContain(SDD_WORKER_REMINDER_TEXT);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });
