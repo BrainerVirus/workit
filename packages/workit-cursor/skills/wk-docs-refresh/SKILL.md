@@ -11,7 +11,7 @@ Inspect current changes and refresh stale documentation.
 
 Call MCP tool `workit_docs_context` with arguments from the user's message (range, version, paths, etc.).
 
-**Repository calls:** For every repository-scoped `workflow_*` call, pass the active Cursor workspace as `workspace_root`; never rely on the MCP process default.
+**Repository calls:** For every repository-scoped `workit_*` call, pass the active Cursor workspace as `workspace_root`; never rely on the MCP process default.
 
 Use the tool return value as ground truth. Do not read git, run npm, or infer repo state yourself.
 If the tool errors, report the error and stop.

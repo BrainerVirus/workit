@@ -14,7 +14,7 @@ Post a Spanish comment and log time on a **task** issue (not the meeting issue).
 
 **Audience:** @Alejandra.Flores — not a developer. Clarify technical terms in plain language when they appear.
 
-**Repository calls:** For every repository-scoped `workflow_*` call, pass the active Cursor workspace as `workspace_root`; never rely on the MCP process default.
+**Repository calls:** For every repository-scoped `workit_*` call, pass the active Cursor workspace as `workspace_root`; never rely on the MCP process default.
 
 ## Step 0 — Toolkit ready
 

@@ -12,7 +12,7 @@ Emit a copy-paste prompt for a **new** implementation chat.
 
 Call MCP tool `workit_handoff_prompt` with the **full** user message as `message`.
 
-**Repository calls:** For every repository-scoped `workflow_*` call, pass the active Cursor workspace as `workspace_root`; never rely on the MCP process default.
+**Repository calls:** For every repository-scoped `workit_*` call, pass the active Cursor workspace as `workspace_root`; never rely on the MCP process default.
 
 **Thread context:** If this thread has a known spec/plan pair (from brainstorming, writing-plans, or open files), append both paths to `message` even when the user only typed `/wk-handoff`. Without explicit paths, the tool picks the **most recently touched** linked pair under `docs/<slug>/` (plan `**Spec:**` link + file mtimes) — not “only one file in the folder.”
 
