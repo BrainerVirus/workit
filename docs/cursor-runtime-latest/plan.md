@@ -14,9 +14,9 @@
 ## Global Constraints
 
 - Each task lands exactly one contiguous non-empty commit range (`base..head`): fix rounds append commits to that range and never rewrite/amend an active review range; each progress line records the task's real base..head shas.
-- The final task ends execution with plan completion (the current host tool is `workit_plan_complete`; after the tool rename it is `workit_plan_complete`, or use CLI `workit flow complete`) once the SDD ledger is complete and repository verification passes.
+- The final task ends execution with plan completion (the current host tool is `workflow_plan_complete`; after the tool rename it is `workit_plan_complete`, or use CLI `workit flow complete`) once the SDD ledger is complete and repository verification passes.
 - TDD rail: write the failing test first, run it and observe failure, then write the minimum production change and run the focused test again.
-- Verification rail: run the exact commands listed below; `workit_verify` is the current repository verification tool name before the sibling rename spec lands.
+- Verification rail: run the exact commands listed below; `workflow_verify` is the current repository verification tool name before the sibling rename spec lands.
 - Do not add comments unless the existing style requires them; preserve the existing doc-comment style in edited files.
 
 ---

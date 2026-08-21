@@ -20,7 +20,7 @@ The failures were reproduced in the session trail rooted at `ses_fe00da1c4ffeL4Y
 ## Non-goals
 
 - No Pi host adapter, Pi companion profile, MCP/LSP curation, or Pi subagent identity work.
-- No broad `workit_*` to `workit_*` tool rename.
+- No broad `workflow_*` to `workit_*` tool rename.
 - No Cursor delegated-subagent implementation; Cursor remains inline-only until it exposes trustworthy child identity.
 - No signed task leases or caller-supplied delegation tokens.
 - No automatic opening of OpenCode's model picker; model selection remains a user-controlled host action.
@@ -131,6 +131,6 @@ The source menu has the five execution/review choices plus model deferral. A han
 ## Future work
 
 - Build the Pi host adapter with a curated MCP/LSP/subagent profile and a provider-integrated child-attestation seam before enabling Pi subagent-driven execution.
-- Refresh and execute the broad `workit_*` to `workit_*` tool namespace rename before adding Pi so the new adapter starts on the final public names.
+- Refresh and execute the broad `workflow_*` to `workit_*` tool namespace rename before adding Pi so the new adapter starts on the final public names.
 - Replace the stale Cursor delegated-subagent proposal with a narrow Cursor inline-contract repair until Cursor exposes trustworthy child identity.
 - Consider upstreaming a generic attested-parent interface to host SDKs if direct-child identity becomes available outside OpenCode.

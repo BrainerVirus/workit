@@ -14,7 +14,7 @@
 ## Global Constraints
 
 - Each task lands exactly one contiguous non-empty commit range (`base..head`): fix rounds append commits to that range and never rewrite/amend an active review range; each progress line records the task's real base..head shas.
-- The final task ends execution with plan completion (current host tool `workit_plan_complete`; after the rename spec lands, `workit_plan_complete`, or CLI `workit flow complete`) once the SDD ledger is complete and repository verification passes.
+- The final task ends execution with plan completion (current host tool `workflow_plan_complete`; after the rename spec lands, `workit_plan_complete`, or CLI `workit flow complete`) once the SDD ledger is complete and repository verification passes.
 - TDD rail: write the failing test first, run it and observe failure, then write the minimum production change and run the focused test again.
 - Repair only workit-owned Cursor entries; never touch unrelated MCP servers/settings.
 - Preserve the `@latest` + `--prefer-online` selector policy from the merged runtime spec.
