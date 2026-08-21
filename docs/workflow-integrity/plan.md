@@ -306,7 +306,7 @@ Expected: PASS with portable destination marker, exact four-choice allow-list, r
 
 **Interfaces:**
 - Consumes: `readEffectiveFlowState`, `transitionExecution`, `markHandoffDestination`, lifecycle/drift result fields, exact lifecycle labels, and active-only `findActiveSubagentDrivenPlans`.
-- Produces native tools: `workflow_plan_pause`, `workflow_plan_resume`, and `workflow_plan_complete`, each with only `plan_path` in its schema and no caller evidence/role field.
+- Produces native tools: `workit_plan_pause`, `workit_plan_resume`, and `workit_plan_complete`, each with only `plan_path` in its schema and no caller evidence/role field.
 - Consumes one-use question receipts with exact labels `Pause plan`, `Resume plan`, and `Complete plan` before invoking core.
 
 - [ ] **Step 1: Write RED OpenCode tool, receipt, status, and interception cases**
@@ -350,8 +350,8 @@ Expected: PASS with one-use lifecycle receipts, status drift/execution data, act
 
 **Interfaces:**
 - Consumes: the same `readEffectiveFlowState`, `transitionExecution`, `markHandoffDestination`, destination marker/choices, and `cursorMutationContext` used by OpenCode/core tests.
-- Produces MCP tools: `workflow_plan_pause`, `workflow_plan_resume`, `workflow_plan_complete`, each requiring `plan_path` and `workspace_root`; confirmation remains the existing exact Cursor policy constant `{ host: "cursor", attested: false, confirmation: "contract" }`.
-- Preserves: `workflow_plan_menu` rejection of `subagent-driven` with `CURSOR_SUBAGENT_UNSUPPORTED_TEXT`.
+- Produces MCP tools: `workit_plan_pause`, `workit_plan_resume`, `workit_plan_complete`, each requiring `plan_path` and `workspace_root`; confirmation remains the existing exact Cursor policy constant `{ host: "cursor", attested: false, confirmation: "contract" }`.
+- Preserves: `workit_plan_menu` rejection of `subagent-driven` with `CURSOR_SUBAGENT_UNSUPPORTED_TEXT`.
 
 - [ ] **Step 1: Write RED Cursor lifecycle, drift, workspace, and destination cases**
 
@@ -359,7 +359,7 @@ Extend stdio tests to register/call all three lifecycle tools and assert active 
 
 Assert every lifecycle/handoff call fails or resolves against its explicit `workspace_root`, and caller-supplied evidence/role remains inert. Keep the existing unsupported subagent-driven assertion.
 
-For `workflow_handoff_prompt`, first record source choice `handoff`, then assert successful prompt generation contains the exact marker/four-choice allow-list, atomically marks destination, resets menu, and rejects a second recursive handoff. Assert build/validation failure leaves state unmarked. Update session-start/runtime contract assertions so a marked destination receives four choices and ordinary sessions retain five.
+For `workit_handoff_prompt`, first record source choice `handoff`, then assert successful prompt generation contains the exact marker/four-choice allow-list, atomically marks destination, resets menu, and rejects a second recursive handoff. Assert build/validation failure leaves state unmarked. Update session-start/runtime contract assertions so a marked destination receives four choices and ordinary sessions retain five.
 
 - [ ] **Step 2: Run the focused Cursor tests and verify RED**
 
@@ -371,7 +371,7 @@ Expected: FAIL because lifecycle MCP tools, structured status fields, post-gener
 
 Add the three MCP registrations with explicit `workspace_root`, canonical plan resolution, `cursorConfirmation()`, `cursorMutationContext(workspace)`, and direct core result serialization. Do not parse ledgers, run verification, or reproduce transition rules in `server.ts`.
 
-Change `workflow_handoff_prompt` to build the complete core prompt first, then call `markHandoffDestination`; if generation fails, return without mutation. Return prompt/tasks/SDD metadata plus effective destination state. Have the session-start contract select the core five/four wording from the exact marker in the incoming handoff prompt, without relying on session or parent IDs; retain policy-only evidence and unsupported subagent mode. Add all three tools to `REQUIRED_TOOLS` in `mcp-process.test.ts`.
+Change `workit_handoff_prompt` to build the complete core prompt first, then call `markHandoffDestination`; if generation fails, return without mutation. Return prompt/tasks/SDD metadata plus effective destination state. Have the session-start contract select the core five/four wording from the exact marker in the incoming handoff prompt, without relying on session or parent IDs; retain policy-only evidence and unsupported subagent mode. Add all three tools to `REQUIRED_TOOLS` in `mcp-process.test.ts`.
 
 - [ ] **Step 4: Run the focused Cursor tests and verify GREEN**
 
@@ -492,7 +492,7 @@ Expected: exit 0 with tracked Cursor skills/rules/assets matching pinned officia
 
 - [ ] **Step 7: Review and create final commit(s) through the guarded workflow**
 
-Use `workflow_git_context` to review only the intended implementation, tests, generated assets, README files, `AGENTS.md`, and CHANGELOG entries. Then load `wk-commit`, present its preview, ask the native confirmation question, and create final commit(s) only after confirmation. Do not create per-task commits and do not amend unless explicitly requested.
+Use `workit_git_context` to review only the intended implementation, tests, generated assets, README files, `AGENTS.md`, and CHANGELOG entries. Then load `wk-commit`, present its preview, ask the native confirmation question, and create final commit(s) only after confirmation. Do not create per-task commits and do not amend unless explicitly requested.
 
 **Criteria:** CA-08, CA-10, CA-20, CA-21, CA-22, and CA-23 are demonstrated by byte-parity tests, cross-host outcome tests, updated documentation, full checks, packed release-candidate verification, and tracked Cursor asset validation. Together Tasks 1-7 cover CA-01 through CA-23.
 

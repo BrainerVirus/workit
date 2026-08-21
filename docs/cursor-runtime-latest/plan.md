@@ -14,9 +14,9 @@
 ## Global Constraints
 
 - Each task lands exactly one contiguous non-empty commit range (`base..head`): fix rounds append commits to that range and never rewrite/amend an active review range; each progress line records the task's real base..head shas.
-- The final task ends execution with plan completion (the current host tool is `workflow_plan_complete`; after the tool rename it is `workit_plan_complete`, or use CLI `workit flow complete`) once the SDD ledger is complete and repository verification passes.
+- The final task ends execution with plan completion (the current host tool is `workit_plan_complete`; after the tool rename it is `workit_plan_complete`, or use CLI `workit flow complete`) once the SDD ledger is complete and repository verification passes.
 - TDD rail: write the failing test first, run it and observe failure, then write the minimum production change and run the focused test again.
-- Verification rail: run the exact commands listed below; `workflow_verify` is the current repository verification tool name before the sibling rename spec lands.
+- Verification rail: run the exact commands listed below; `workit_verify` is the current repository verification tool name before the sibling rename spec lands.
 - Do not add comments unless the existing style requires them; preserve the existing doc-comment style in edited files.
 
 ---
@@ -101,9 +101,9 @@
 - Verify: real Cursor settings under `~/.cursor/` (no repository changes)
 
 - [ ] **Step 1: Verify the real reinstall.** Run `packages/workit-core/scripts/install-cursor-plugin.sh` in default npx mode against a temporary copy of Cursor settings, then verify unrelated MCP servers/settings survive, the generated `mcp.json` and `hooks-cursor.json` use the canonical selector, and `bun packages/workit-core/scripts/doctor-check.ts cursor` exits 0. Keep the existing `--local-dist` path unchanged and verify it still passes its doctor test.
-- [ ] **Step 2: Run all repository verification.** Run `bun run check`, `bun run verify:release-candidate`, `bun run validate:cursor-marketplace`, and `workflow_docs_validate` for `docs/cursor-runtime-latest/spec.md` + `plan.md`; expected result is exit 0 for every command.
-- [ ] **Step 3: Complete the SDD ledger.** Use `workflow_sdd_context` to confirm the task list, append one validated progress line for each task with its real non-empty `base..head` range, and run the final branch review before completion.
-- [ ] **Step 4: Complete the plan.** After the ledger and verification are green, call the current host's `workflow_plan_complete` (or CLI `workit flow complete`); after the sibling rename spec lands, the equivalent runtime identifier is `workit_plan_complete`. Confirm the state is `completed`, not `active`.
+- [ ] **Step 2: Run all repository verification.** Run `bun run check`, `bun run verify:release-candidate`, `bun run validate:cursor-marketplace`, and `workit_docs_validate` for `docs/cursor-runtime-latest/spec.md` + `plan.md`; expected result is exit 0 for every command.
+- [ ] **Step 3: Complete the SDD ledger.** Use `workit_sdd_context` to confirm the task list, append one validated progress line for each task with its real non-empty `base..head` range, and run the final branch review before completion.
+- [ ] **Step 4: Complete the plan.** After the ledger and verification are green, call the current host's `workit_plan_complete` (or CLI `workit flow complete`); after the sibling rename spec lands, the equivalent runtime identifier is `workit_plan_complete`. Confirm the state is `completed`, not `active`.
 - [ ] **Step 5: Commit the task.** Commit any final verification-only documentation or ledger-related tracked changes as one non-empty task range; keep `docs/<slug>/sdd/` gitignored.
 
 **Criteria:** Live reinstall/doctor, release-candidate verification, Marketplace validation, document validation, full repository gates, complete SDD ledger, and completed plan state all pass.

@@ -345,6 +345,7 @@ const CONTENT_TREES = [
   "skills/",
   "templates/",
   "vendor/",
+  "rules/",
   "assets/skills/",
   "assets/templates/",
   "assets/vendor/",
@@ -356,7 +357,7 @@ test("shipped skill/template/vendor markdown uses workit_ tool identifiers with 
     const offenders: string[] = [];
     let sawWorkitTool = false;
     for (const entry of listTarball(pack.tarball)) {
-      if (!entry.endsWith(".md")) continue;
+      if (!entry.endsWith(".md") && !entry.endsWith(".mdc")) continue;
       if (!CONTENT_TREES.some((tree) => entry.startsWith(tree))) continue;
       const md = readTarballFile(pack.tarball, entry);
       const stale = LIVE_WORKFLOW_TOOL.exec(md);

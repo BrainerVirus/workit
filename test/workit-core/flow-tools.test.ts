@@ -93,12 +93,7 @@ test("full flow: activate + spec approve -> plan approve -> menu", async () => {
     const planFirst = await run(tools, "workit_plan_approve", { plan_path: plan }, ctx);
     expect(planFirst.ok).toBe(true);
     question(receipts, "handoff");
-    const menu = await run(
-      tools,
-      "workit_plan_menu",
-      { plan_path: plan, choice: "handoff" },
-      ctx,
-    );
+    const menu = await run(tools, "workit_plan_menu", { plan_path: plan, choice: "handoff" }, ctx);
     expect(menu.ok).toBe(true);
     const status = await run(tools, "workit_flow_status", { plan_path: plan }, ctx);
     expect(status.data.spec.status).toBe("approved");

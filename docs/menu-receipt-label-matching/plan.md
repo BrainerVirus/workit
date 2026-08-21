@@ -46,7 +46,7 @@
 
 ### Task 3: Parity across adapters
 
-- [ ] **Step 1:** Add parity tests through the OpenCode `workflow_plan_menu` tool wrapper (`test/workit-core/flow-enforcement.test.ts` or the opencode adapter suite) with `(Recommended)`-decorated receipts for each choice.
+- [ ] **Step 1:** Add parity tests through the OpenCode `workit_plan_menu` tool wrapper (`test/workit-core/flow-enforcement.test.ts` or the opencode adapter suite) with `(Recommended)`-decorated receipts for each choice.
 - [ ] **Step 2:** Add Cursor MCP/CLI parity assertions (policy-only confirmation path) that decorated labels on host-observed receipts do not change outcomes where the label check applies.
 - [ ] **Step 3:** Add a contract test asserting the plugin question labels match the documented display forms (`SOURCE_MENU_LABELS`/`DESTINATION_MENU_LABELS`) so future rewording surfaces a test failure.
 
@@ -61,7 +61,7 @@
 - [ ] **Step 1:** Update README/`AGENTS.md` where receipt label matching is described (approval/menu evidence sections) to state that host qualifiers are normalized at comparison time and original labels are preserved.
 - [ ] **Step 2:** Update CHANGELOG.md Unreleased with a `### Fixed` entry: menu receipt label matching now tolerates host qualifiers such as `(Recommended)` and `(new session only)`.
 
-**Criteria:** `workflow_verify` changelog check passes; docs match verified behavior.
+**Criteria:** `workit_verify` changelog check passes; docs match verified behavior.
 
 | Status | Task |
 | --- | --- |
@@ -69,10 +69,10 @@
 
 ### Task 5: Full verification
 
-- [ ] **Step 1:** Run `workflow_verify` (lint, format:check, tests, build, changelog) and fix any failures introduced by this feature.
+- [ ] **Step 1:** Run `workit_verify` (lint, format:check, tests, build, changelog) and fix any failures introduced by this feature.
 - [ ] **Step 2:** Re-run the focused suites (`flow-enforcement.test.ts`, `flow-state.test.ts`, opencode/cursor flow suites) and confirm all pass.
 
-**Criteria:** `workflow_verify` passes (the known intermittent TTY flake `Back preserves the draft values entered so far`, when it occurs, is pre-existing and passes in isolation).
+**Criteria:** `workit_verify` passes (the known intermittent TTY flake `Back preserves the draft values entered so far`, when it occurs, is pre-existing and passes in isolation).
 
 | Status | Task |
 | --- | --- |

@@ -581,12 +581,7 @@ test("full flow through the opencode tools with host receipts: approvals + menu 
     if (progressBlocked.ok === false) expect(progressBlocked.error).toMatch(/menu/i);
 
     recordQuestion(receipts, "handoff");
-    const menu = await run(
-      tools,
-      "workit_plan_menu",
-      { choice: "handoff", plan_path: plan },
-      ctx,
-    );
+    const menu = await run(tools, "workit_plan_menu", { choice: "handoff", plan_path: plan }, ctx);
     expect(menu.ok).toBe(true);
 
     const brief = await run(
@@ -610,12 +605,7 @@ test("full flow through the opencode tools with host receipts: approvals + menu 
 test("workit_flow_status prepares activation and canonical paths on first read", async () => {
   const { root, tools, ctx } = fixture();
   try {
-    const out = await run(
-      tools,
-      "workit_flow_status",
-      { plan_path: "docs/oc-flow/plan.md" },
-      ctx,
-    );
+    const out = await run(tools, "workit_flow_status", { plan_path: "docs/oc-flow/plan.md" }, ctx);
     expect(out.ok).toBe(true);
     expect(out.data.spec.path).toBe("docs/oc-flow/spec.md");
     expect(out.data.plan.path).toBe("docs/oc-flow/plan.md");
@@ -643,12 +633,7 @@ test("lifecycle tool schemas expose only plan_path and no caller evidence/role f
 test("workit_flow_status returns execution and drift alongside spec/plan/menu", async () => {
   const { root, tools, ctx } = fixture();
   try {
-    const out = await run(
-      tools,
-      "workit_flow_status",
-      { plan_path: "docs/oc-flow/plan.md" },
-      ctx,
-    );
+    const out = await run(tools, "workit_flow_status", { plan_path: "docs/oc-flow/plan.md" }, ctx);
     expect(out.ok).toBe(true);
     expect(out.data.execution).toEqual({
       status: "pending",
@@ -671,12 +656,7 @@ test("workit_flow_status reports digest drift while preserving the execution lif
       path.join(root, "docs", slug, "plan.md"),
       COMPLIANT_PLAN(slug).replace("do it", "do it now"),
     );
-    const out = await run(
-      tools,
-      "workit_flow_status",
-      { plan_path: "docs/oc-flow/plan.md" },
-      ctx,
-    );
+    const out = await run(tools, "workit_flow_status", { plan_path: "docs/oc-flow/plan.md" }, ctx);
     expect(out.ok).toBe(true);
     expect(out.data.drift).toEqual([
       { document: "plan", code: "digest_mismatch", path: "docs/oc-flow/plan.md" },
@@ -768,12 +748,7 @@ test("a wrong lifecycle purpose does not consume the receipt (purpose isolation:
     expect(wrong.ok).toBe(false);
     if (wrong.ok === false) expect(wrong.code ?? wrong.error).toMatch(/receipt|purpose/i);
     expect(receipts.count("oc")).toBe(1);
-    const right = await run(
-      tools,
-      "workit_plan_pause",
-      { plan_path: "docs/oc-flow/plan.md" },
-      ctx,
-    );
+    const right = await run(tools, "workit_plan_pause", { plan_path: "docs/oc-flow/plan.md" }, ctx);
     expect(right.ok).toBe(true);
     expect(right.data.execution.status).toBe("paused");
     expect(receipts.count("oc")).toBe(0);

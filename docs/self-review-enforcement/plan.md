@@ -31,7 +31,7 @@
 ### Task 2: transitionPlan gate + superpowers ritual in the reminder
 
 - [ ] **Step 1:** In `src/core/flow-state.ts` `transitionPlan`: when the current plan status is `draft` and `confirmed` is true — read the plan text; validate (a) `parseTasksFromPlan` returns ≥1 task, (b) the text contains `**Spec:**`, `**Branch:**`, and at least one `### Task N:` heading (outside fences — use the same stripFences approach qualitySpec uses, or reuse the plan-task scanner); failure → `{ ok: false, error: "plan self-review failed: <detail>" }` without writing (stays draft).
-- [ ] **Step 2:** `src/core/reminder.ts` `REMINDER_TEXT`: add the superpowers self-review ritual line — before the first `workflow_spec_approve`/`workflow_plan_approve`, run the writing-plans Self-Review checklist: spec coverage (every requirement maps to a task), placeholder scan, type consistency; fix findings inline.
+- [ ] **Step 2:** `src/core/reminder.ts` `REMINDER_TEXT`: add the superpowers self-review ritual line — before the first `workit_spec_approve`/`workit_plan_approve`, run the writing-plans Self-Review checklist: spec coverage (every requirement maps to a task), placeholder scan, type consistency; fix findings inline.
 - [ ] **Step 3:** Tests: plan with no `### Task N:` → rejected; plan missing `**Spec:**` → rejected; compliant plan (with approved spec) → self_reviewed then approved; plan with only warning-ish issues → passes; reminder-text test asserts the ritual line (CA-06).
 
 **Criteria:** CA-04, CA-06.

@@ -6,6 +6,7 @@ import { spawnSync } from "node:child_process";
 import plugin from "../../packages/workit-opencode/src/plugin";
 import { createRepoTools } from "../../packages/workit-opencode/src/tools/repo";
 import { createSddTools } from "../../packages/workit-opencode/src/tools/sdd";
+import { createTools } from "../../packages/workit-opencode/src/tools";
 import { WorkflowStateStore } from "../../packages/workit-core/src/state";
 
 const repository = (branch: string) => {
@@ -161,6 +162,17 @@ test("SDD context reports completed and pending tasks from the ledger", async ()
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("native tools expose the common workit_* namespace with OpenCode-only commit/handoff_session", () => {
+  const names = Object.keys(createTools({} as never, new WorkflowStateStore()));
+  expect(names.length).toBeGreaterThan(0);
+  for (const name of names) {
+    expect(name).toMatch(/^workit_[a-z0-9_]+$/);
+  }
+  expect(names).toContain("workit_commit");
+  expect(names).toContain("workit_handoff_session");
+  expect(names).not.toContain("workit_handoff_prompt");
 });
 
 test("plugin registers without a Cursor runtime path", async () => {

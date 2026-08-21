@@ -7,7 +7,7 @@
 
 **Goal:** Make spec/plan formatting add-ons always-on — quality templates that mandate ASCII wireframes (UI), mermaid diagrams (flows/architecture), and tables (glossary/contracts/scope), plus a validation quality pass that reports findings (advisory for drafts, hard gate at promote/implement).
 
-**Architecture:** Two new templates (`templates/spec-template.md`, `templates/plan-template.md`) define the mandated structure with inline formatting rules. `src/core/docs-validate.ts` gains an opt-in quality pass (`qualitySpec(text)`) with heuristic findings (missing sections, missing CA-XX, missing ASCII for UI, missing mermaid for flow, missing table). The `workflow_docs_validate` tool returns `quality: { passed, findings }` in its success envelope. The wf-implement skill and execution contract reference the templates and surface findings.
+**Architecture:** Two new templates (`templates/spec-template.md`, `templates/plan-template.md`) define the mandated structure with inline formatting rules. `src/core/docs-validate.ts` gains an opt-in quality pass (`qualitySpec(text)`) with heuristic findings (missing sections, missing CA-XX, missing ASCII for UI, missing mermaid for flow, missing table). The `workit_docs_validate` tool returns `quality: { passed, findings }` in its success envelope. The wf-implement skill and execution contract reference the templates and surface findings.
 
 **Tech Stack:** TypeScript + zod (existing), `bun test`, existing `src/core` patterns. No new dependencies.
 
@@ -19,7 +19,7 @@
 - Required sections (spec): `## Context`, `## Goals`, `## Non-goals`, `## Architecture`, `## Acceptance criteria` (or `## Criterios` only in user-provided docs — keep English per user requirement).
 - Acceptance criteria enumerable: lines matching `CA-\d+` or `- CA-` bullets.
 - Fences: ASCII block = fenced `text` (or `ascii`) code block; mermaid = fenced `mermaid` code block; table = markdown table row with `|`.
-- `workflow_docs_validate` keeps current structural behavior; `quality` field added to the success response (empty findings when quality not requested or template missing).
+- `workit_docs_validate` keeps current structural behavior; `quality` field added to the success response (empty findings when quality not requested or template missing).
 - Templates live at `templates/spec-template.md` and `templates/plan-template.md`.
 - `bun run check` green after every task. Version stays `0.4.0`.
 
@@ -102,13 +102,13 @@ Expected: FAIL — templates do not exist.
 
 ## Architecture
 
-<!-- REQUIRED if this spec has flows or architecture: render a mermaid diagram (workflow_present_flow). -->
+<!-- REQUIRED if this spec has flows or architecture: render a mermaid diagram (workit_present_flow). -->
 ```mermaid
 flowchart TD
   A[Start] --> B[Step]
 ```
 
-<!-- REQUIRED if this spec touches UI: render an ASCII wireframe (workflow_present_ascii). -->
+<!-- REQUIRED if this spec touches UI: render an ASCII wireframe (workit_present_ascii). -->
 ```text
 ┌──────────────┐
 │ Header       │
@@ -384,13 +384,13 @@ git commit -m "feat(validate): quality pass with structured findings for spec fo
 ### Task 3: Surface quality in the validate tool + MCP server
 
 **Files:**
-- Modify: `src/tools/sdd.ts` (`workflow_docs_validate` passes through `quality`)
+- Modify: `src/tools/sdd.ts` (`workit_docs_validate` passes through `quality`)
 - Modify: `cursor/mcp/server.ts` (same passthrough)
 - Test: `test/quality-tools.test.ts`
 
 **Interfaces:**
 - Consumes: `docsValidate` success with `quality`
-- Produces: `workflow_docs_validate` response includes `quality: QualityFinding[]`; MCP server `workflow_docs_validate` includes it too
+- Produces: `workit_docs_validate` response includes `quality: QualityFinding[]`; MCP server `workit_docs_validate` includes it too
 
 - [ ] **Step 1: Write the failing test**
 
@@ -404,7 +404,7 @@ import path from "node:path";
 import { createSddTools } from "../src/tools/sdd";
 import { WorkflowStateStore } from "../src/state";
 
-test("workflow_docs_validate includes quality findings", async () => {
+test("workit_docs_validate includes quality findings", async () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "wf-quality-"));
   try {
     mkdirSync(path.join(root, "docs", "x"), { recursive: true });
@@ -413,7 +413,7 @@ test("workflow_docs_validate includes quality findings", async () => {
       path.join(root, "docs/x/plan.md"),
       "# Plan\n\n**Spec:** `docs/x/spec.md`\n**Branch:** `feature/x`\n\n### Task 1: One\n\n- [ ] **Step 1:** Work\n",
     );
-    const raw = await createSddTools(new WorkflowStateStore()).workflow_docs_validate.execute(
+    const raw = await createSddTools(new WorkflowStateStore()).workit_docs_validate.execute(
       { spec_path: "docs/x/spec.md", plan_path: "docs/x/plan.md" },
       { directory: root, worktree: root, sessionID: "s" } as never,
     );
@@ -433,7 +433,7 @@ Expected: FAIL — `quality` missing from response.
 
 - [ ] **Step 3: Passthrough in `src/tools/sdd.ts`**
 
-The `workflow_docs_validate` execute already returns `result` from `docsValidate` — since the core now includes `quality` in the success object, the tool passthrough is automatic. Verify the tool returns it by re-running the test. If `normalize()` in `invoke` strips it, adjust `normalize` to keep `quality`:
+The `workit_docs_validate` execute already returns `result` from `docsValidate` — since the core now includes `quality` in the success object, the tool passthrough is automatic. Verify the tool returns it by re-running the test. If `normalize()` in `invoke` strips it, adjust `normalize` to keep `quality`:
 
 ```typescript
 const normalize = (value: Record<string, unknown>) => {
@@ -448,7 +448,7 @@ const normalize = (value: Record<string, unknown>) => {
 
 - [ ] **Step 4: Passthrough in `cursor/mcp/server.ts`**
 
-Find the `workflow_docs_validate` registration in the MCP server; the handler already returns `docsValidate(...)` data. Verify `quality` is included in `jsonResult`. If the handler spreads only known fields, add `quality: data.quality` to the returned object.
+Find the `workit_docs_validate` registration in the MCP server; the handler already returns `docsValidate(...)` data. Verify `quality` is included in `jsonResult`. If the handler spreads only known fields, add `quality: data.quality` to the returned object.
 
 - [ ] **Step 5: Run tests**
 
@@ -459,7 +459,7 @@ Expected: PASS.
 
 ```bash
 git add src/tools/sdd.ts cursor/mcp/server.ts test/quality-tools.test.ts
-git commit -m "feat(validate): surface quality findings in workflow_docs_validate (opencode + cursor)"
+git commit -m "feat(validate): surface quality findings in workit_docs_validate (opencode + cursor)"
 ```
 
 ---
@@ -502,7 +502,7 @@ Expected: FAIL.
 Add to the native setup section (after step 3, the flow-gates step):
 
 ```markdown
-9. Fill specs/plans from the quality templates: `templates/spec-template.md` for specs, `templates/plan-template.md` for plans. After `workflow_docs_validate`, surface the returned `quality` findings: hard findings (missing section, missing CA-XX) block task start unless the user explicitly waives them; warnings are advisory.
+9. Fill specs/plans from the quality templates: `templates/spec-template.md` for specs, `templates/plan-template.md` for plans. After `workit_docs_validate`, surface the returned `quality` findings: hard findings (missing section, missing CA-XX) block task start unless the user explicitly waives them; warnings are advisory.
 ```
 
 - [ ] **Step 4: Update `templates/execution-contract.md`**
@@ -513,7 +513,7 @@ Add after the flow-gates block:
 ## Quality gate (HARD)
 
 - Specs/plans are written from `templates/spec-template.md` / `templates/plan-template.md`.
-- After `workflow_docs_validate`, surface `quality` findings. Hard findings (missing required section, missing CA-XX) block task start unless the user explicitly waives them. Warnings are advisory.
+- After `workit_docs_validate`, surface `quality` findings. Hard findings (missing required section, missing CA-XX) block task start unless the user explicitly waives them. Warnings are advisory.
 ```
 
 - [ ] **Step 5: Update `templates/superpowers-doc-contract.md`**
@@ -543,6 +543,6 @@ git commit -m "feat(flow): wire quality templates and findings into implement fl
 - [ ] `bun run check` green after each task.
 - [ ] `templates/spec-template.md` + `templates/plan-template.md` exist with mandated sections/fences/tables.
 - [ ] `qualitySpec` exported from `src/core/docs-validate.ts`; heuristics per spec (UI/flow/glossary keywords, CA-XX, fences, tables).
-- [ ] `workflow_docs_validate` returns `quality` in both OpenCode plugin and Cursor MCP server.
+- [ ] `workit_docs_validate` returns `quality` in both OpenCode plugin and Cursor MCP server.
 - [ ] wf-implement skill + contracts reference templates and quality findings.
 - [ ] Existing structural validation unchanged (regression green).

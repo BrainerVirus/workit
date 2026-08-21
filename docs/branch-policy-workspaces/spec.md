@@ -4,7 +4,7 @@
 
 ## Context
 
-Branch policy (`branchPolicy.preset`, allowed, protected) is global today, so multi-context users — personal repos on GitHub (github-flow, PRs) and work repos on GitLab (gitflow, merge to develop) — cannot express per-repo conventions, and a stale global provider already caused a failed `workflow_pr_create`. Like `git flow init`, branching is per repository: the convention must be detected from the actual repo (main/master/develop presence), proposed with editable defaults, and persisted idempotently per workspace so it can be re-run and updated.
+Branch policy (`branchPolicy.preset`, allowed, protected) is global today, so multi-context users — personal repos on GitHub (github-flow, PRs) and work repos on GitLab (gitflow, merge to develop) — cannot express per-repo conventions, and a stale global provider already caused a failed `workit_pr_create`. Like `git flow init`, branching is per repository: the convention must be detected from the actual repo (main/master/develop presence), proposed with editable defaults, and persisted idempotently per workspace so it can be re-run and updated.
 
 ## Goals
 
@@ -59,7 +59,7 @@ flowchart TD
 | Detection rules | `develop` present → gitflow; only `main` → github-flow; only `master` → trunk-based |
 | Resolution order | workspace `branchPolicy` > global `config.json` `branchPolicy` > preset defaults |
 | `resolveBranchPolicy(workspace_root)` | The single shared resolver every policy consumer calls |
-| Init action | `workflow_toolkit_init_apply action="branch_policy"` + wizard screen with the same proposal/write path |
+| Init action | `workit_init_apply action="branch_policy"` + wizard screen with the same proposal/write path |
 
 | Detection input | Proposed preset | Proposed developBranch | Proposed integration | Proposed protected |
 | --- | --- | --- | --- | --- |
@@ -86,7 +86,7 @@ flowchart TD
 - D-03: `integration` field with `"pr"` default; gitflow proposes `"merge"` — matches the user's git-flow-to-develop workflow while defaulting to the safer PR path.
 - D-04: Resolution order workspace > global > preset defaults; global remains the fallback for unmatched repos.
 - D-05: git-flow release start/finish/tags deferred to a follow-up.
-- D-06: This feature rides `feature/workit-reliability-overhaul` (PR #39) via `workflow_docs_branch` keep.
+- D-06: This feature rides `feature/workit-reliability-overhaul` (PR #39) via `workit_docs_branch` keep.
 
 ## Future work
 

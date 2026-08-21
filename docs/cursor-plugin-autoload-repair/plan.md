@@ -14,7 +14,7 @@
 ## Global Constraints
 
 - Each task lands exactly one contiguous non-empty commit range (`base..head`): fix rounds append commits to that range and never rewrite/amend an active review range; each progress line records the task's real base..head shas.
-- The final task ends execution with plan completion (current host tool `workflow_plan_complete`; after the rename spec lands, `workit_plan_complete`, or CLI `workit flow complete`) once the SDD ledger is complete and repository verification passes.
+- The final task ends execution with plan completion (current host tool `workit_plan_complete`; after the rename spec lands, `workit_plan_complete`, or CLI `workit flow complete`) once the SDD ledger is complete and repository verification passes.
 - TDD rail: write the failing test first, run it and observe failure, then write the minimum production change and run the focused test again.
 - Repair only workit-owned Cursor entries; never touch unrelated MCP servers/settings.
 - Preserve the `@latest` + `--prefer-online` selector policy from the merged runtime spec.
@@ -85,10 +85,10 @@
 - Modify: `CHANGELOG.md`
 
 - [ ] **Step 1: Update docs.** Add a CHANGELOG Unreleased entry describing stale-install detection + installer self-heal; update README/AGENTS/Cursor README with the auto-load repair behavior (doctor `stale_install` finding, installer self-heal, fail-open on registry unreachable).
-- [ ] **Step 2: Run full verification.** Run `bun run check` (lint, format:check, test, build, changelog), `bun run verify:release-candidate`, `bun run validate:cursor-marketplace`, and `workflow_docs_validate` for the spec/plan pair; all must exit 0.
+- [ ] **Step 2: Run full verification.** Run `bun run check` (lint, format:check, test, build, changelog), `bun run verify:release-candidate`, `bun run validate:cursor-marketplace`, and `workit_docs_validate` for the spec/plan pair; all must exit 0.
 - [ ] **Step 3: Complete the SDD ledger and plan.** Confirm the task list, append one validated progress line per task with real non-empty ranges, then call plan completion after verification passes; the plan must not remain `active`.
 
-**Criteria:** `workflow_verify` / `bun run check` all gates pass (exit 0); plan transitions to `completed`.
+**Criteria:** `workit_verify` / `bun run check` all gates pass (exit 0); plan transitions to `completed`.
 
 | Status | Task |
 | --- | --- |

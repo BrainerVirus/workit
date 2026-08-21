@@ -20,7 +20,7 @@
 ### Task 1: workspaces resolution core
 
 - [ ] **Step 1:** New `src/core/workspaces.ts`: `resolveWorkspace(cwd: string): { name: string; vcs?: { provider: "gitlab"|"github"; defaultTargetBranch?: string }; youtrack?: { baseUrl?: string; link_issues?: boolean } } | null` — reads `configDir()/workspaces.json` (`{ workspaces: [{ glob, vcs?, youtrack? }] }`), matches cwd against each `glob` in order (use a tiny glob matcher — minimatch-style on `*`/`**`, or reuse any existing matcher in the repo — check first), returns the first match; malformed/missing file or no match → null (never throws). Export the workspaces path helper.
-- [ ] **Step 2:** TS surface: `workflow_toolkit_status`/`initStatus` (or a new read-only `workflow_vcs_status` if cheap) reports the resolved workspace for the current directory (name + provider) and the workspaces.json path. Minimal: extend the existing status output, don't add a new tool unless the tests demand it.
+- [ ] **Step 2:** TS surface: `workit_status`/`initStatus` (or a new read-only `workit_vcs_status` if cheap) reports the resolved workspace for the current directory (name + provider) and the workspaces.json path. Minimal: extend the existing status output, don't add a new tool unless the tests demand it.
 - [ ] **Step 3:** Tests `test/workspaces.test.ts`: glob match first-wins; no match → null; malformed/missing file → null no throw; `**` deep match on a nested path; provider/defaultTargetBranch/link_issues from the matched workspace.
 
 **Criteria:** CA-01.

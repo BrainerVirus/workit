@@ -13,7 +13,7 @@
 - Keep local dev working via `file:` install (the repo's own opencode plugin config must not break).
 - `bun run check` must stay green; CI gate is the same command.
 - Follow repo conventions: TypeScript/bun, no code comments unless asked, conventional commits.
-- The repo itself is the consumer: after packaging, `workflow_docs_validate` hygiene findings for LICENSE/CONTRIBUTING/README must turn green.
+- The repo itself is the consumer: after packaging, `workit_docs_validate` hygiene findings for LICENSE/CONTRIBUTING/README must turn green.
 
 ---
 
@@ -45,7 +45,7 @@
 
 - [ ] **Step 1:** Add `.github/ISSUE_TEMPLATE/bug_report.md` and `.github/ISSUE_TEMPLATE/feature_request.md` (with the toolkit's context: which platform — OpenCode/Cursor, which tool, expected vs actual) and `.github/PULL_REQUEST_TEMPLATE.md` (what it does, quality gates: `bun run check`, docs validate).
 - [ ] **Step 2:** Add `cursor/marketplace.json` manifest (name: flowkit, description, publisher, version from package.json, assets list) + extend README with a "Cursor marketplace" subsection documenting how a consumer would add it (manual submission note).
-- [ ] **Step 3:** Run `bun run check` (typecheck must include marketplace.json if wired, else manual JSON validity check via `bun -e JSON.parse`), run `workflow_docs_validate` equivalent, commit.
+- [ ] **Step 3:** Run `bun run check` (typecheck must include marketplace.json if wired, else manual JSON validity check via `bun -e JSON.parse`), run `workit_docs_validate` equivalent, commit.
 
 **Criteria:** CA-04/CA-06 (templates exist; manifest valid JSON with correct metadata).
 

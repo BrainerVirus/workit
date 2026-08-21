@@ -11,7 +11,7 @@
 
 - No production code without a failing test first (TDD rail).
 - Core logic stays in `packages/workit-core/src/core/`; adapters (OpenCode tool, CLI port) only map surfaces to it.
-- Parity: identical outcomes through core, the OpenCode `workflow_pr_create` wrapper, and the CLI port, proven by tests.
+- Parity: identical outcomes through core, the OpenCode `workit_pr_create` wrapper, and the CLI port, proven by tests.
 - No worktrees; in-place branch `feature/workspace-routing-config-repair` (already created).
 - Local user config files under `~/.config/workit/` are touched only via the workflow init/config tools or documented edits; never commit them.
 - Docs, AGENTS.md, and CHANGELOG Unreleased updated in the same change (parity rule 3).
@@ -36,7 +36,7 @@
 
 - [ ] **Step 1:** Write a failing test in `test/workit-core/pr-create.test.ts` (core path, stubbed `gh` + real local git repo): with `pushBranch` enabled, `prCreate` runs `git push -u origin <branch>` before `gh pr create` and the invoked `gh` args show the pushed branch; with `pushBranch: false` no push runs.
 - [ ] **Step 2:** In `packages/workit-core/src/core/pr-create.ts`, before the GitHub `gh pr create` invocation, when `provider === "github"` and `push` is true, spawn `git push -u origin <branch>`; on nonzero exit return a structured `push failed` result without invoking `gh`. Keep the GitLab `--push` path unchanged.
-- [ ] **Step 3:** Add parity assertions that both providers push exactly once before create when enabled, through core and the OpenCode wrapper (`createRepoTools().workflow_pr_create.execute`).
+- [ ] **Step 3:** Add parity assertions that both providers push exactly once before create when enabled, through core and the OpenCode wrapper (`createRepoTools().workit_pr_create.execute`).
 - [ ] **Step 4:** Assert the CLI port (`packages/workit-core/src/core/ports/pr-create.ts`) reaches the same core behavior.
 
 **Criteria:** The failing push tests pass; GitLab tests unchanged; no `gh pr create` runs for an unpushed branch when `pushBranch` is enabled.
@@ -59,9 +59,9 @@
 
 ### Task 4: Legacy config cleanup after verification
 
-- [ ] **Step 1:** Run `workflow_toolkit_status` and the config-guard checks; confirm every active item (youtrack config+token, vcs config, gitlab/github tokens) is `ok` from the active dir alone.
+- [ ] **Step 1:** Run `workit_status` and the config-guard checks; confirm every active item (youtrack config+token, vcs config, gitlab/github tokens) is `ok` from the active dir alone.
 - [ ] **Step 2:** Confirm no active config file references a legacy path, then delete the legacy `~/.config/workflow-toolkit/` non-secret config files: `config.json`, `vcs.json`, `youtrack.json`, `workspaces.json`, and the `templates/` dir (tokens were already removed in the PR #43 session).
-- [ ] **Step 3:** Re-run `workflow_toolkit_status` to prove health is unaffected with only the active config present; add/keep a regression note in the doctor tests that the active dir alone is authoritative (extend `test/workit-core/config-guard.test.ts` if needed).
+- [ ] **Step 3:** Re-run `workit_status` to prove health is unaffected with only the active config present; add/keep a regression note in the doctor tests that the active dir alone is authoritative (extend `test/workit-core/config-guard.test.ts` if needed).
 
 **Criteria:** Cleanup runs only after status is fully green; status stays green after deletion; no doctor/config test depends on the legacy dir.
 
@@ -74,7 +74,7 @@
 - [ ] **Step 1:** Update README and `AGENTS.md`: two-workspace routing (work → GitLab/develop/gitflow, personal → GitHub/main/github-flow), the removed global default, GitHub push-before-create, default-equal target acceptance, and legacy cleanup.
 - [ ] **Step 2:** Update CHANGELOG.md Unreleased with a `### Changed`/`### Fixed` entry covering routing, push-before-create, target equality, and legacy cleanup.
 
-**Criteria:** `workflow_verify` changelog check passes; docs state the behavior without claiming Marketplace publication.
+**Criteria:** `workit_verify` changelog check passes; docs state the behavior without claiming Marketplace publication.
 
 | Status | Task |
 | --- | --- |
@@ -82,10 +82,10 @@
 
 ### Task 6: Full verification
 
-- [ ] **Step 1:** Run `workflow_verify` (lint, format:check, tests, build, changelog) and fix any failures introduced by this feature.
+- [ ] **Step 1:** Run `workit_verify` (lint, format:check, tests, build, changelog) and fix any failures introduced by this feature.
 - [ ] **Step 2:** Re-run the focused parity suites (`pr-create.test.ts`, `workspaces.test.ts`, `branch-policy.test.ts`, `config-guard.test.ts`) and confirm all pass.
 
-**Criteria:** `workflow_verify` passes (the known intermittent TTY flake `Back preserves the draft values entered so far`, when it occurs, is pre-existing and passes in isolation).
+**Criteria:** `workit_verify` passes (the known intermittent TTY flake `Back preserves the draft values entered so far`, when it occurs, is pre-existing and passes in isolation).
 
 | Status | Task |
 | --- | --- |

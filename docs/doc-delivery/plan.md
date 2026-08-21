@@ -7,7 +7,7 @@
 
 **Goal:** Make doc delivery clickable (markdown links + summary) with post-hoc detection, and enforce `docs/<slug>/sdd/` gitignore in projects via validation gates and a wf-init gitignore ensure step.
 
-**Architecture:** Extend `src/core/detector.ts` with `detectBacktickDocRefs`; extend the Spec 7 hook to inject a doc-delivery correction; add `sdd_not_ignored` to `docsValidate` and the promote gate; add a `gitignore` ensure action to `workflow_toolkit_init_apply`.
+**Architecture:** Extend `src/core/detector.ts` with `detectBacktickDocRefs`; extend the Spec 7 hook to inject a doc-delivery correction; add `sdd_not_ignored` to `docsValidate` and the promote gate; add a `gitignore` ensure action to `workit_init_apply`.
 
 **Tech Stack:** TypeScript (existing), `bun test`, node:fs + child_process (existing patterns). No new dependencies.
 
@@ -253,7 +253,7 @@ test("sdd_not_ignored when sdd dir exists and is not gitignored", async () => {
     writeFileSync(path.join(root, "docs/x/plan.md"), "# Plan\n\n**Spec:** `docs/x/spec.md`\n**Branch:** `feature/x`\n\n### Task 1: One\n\n- [ ] **Step 1:** Work\n");
     writeFileSync(path.join(root, "docs/x/sdd/progress.md"), "Task 1: complete\n");
 
-    const raw = await createSddTools(new WorkflowStateStore()).workflow_docs_validate.execute(
+    const raw = await createSddTools(new WorkflowStateStore()).workit_docs_validate.execute(
       { spec_path: "docs/x/spec.md", plan_path: "docs/x/plan.md" },
       { directory: root, worktree: root, sessionID: "s" } as never,
     );
@@ -277,7 +277,7 @@ test("no sdd_not_ignored when sdd is gitignored", async () => {
     writeFileSync(path.join(root, "docs/x/plan.md"), "# Plan\n\n**Spec:** `docs/x/spec.md`\n**Branch:** `feature/x`\n\n### Task 1: One\n\n- [ ] **Step 1:** Work\n");
     writeFileSync(path.join(root, "docs/x/sdd/progress.md"), "Task 1: complete\n");
 
-    const raw = await createSddTools(new WorkflowStateStore()).workflow_docs_validate.execute(
+    const raw = await createSddTools(new WorkflowStateStore()).workit_docs_validate.execute(
       { spec_path: "docs/x/spec.md", plan_path: "docs/x/plan.md" },
       { directory: root, worktree: root, sessionID: "s" } as never,
     );
@@ -470,13 +470,13 @@ export const ensureProjectGitignore = (
 };
 ```
 
-- [ ] **Step 4: Wire into `workflow_toolkit_init_apply`**
+- [ ] **Step 4: Wire into `workit_init_apply`**
 
 In `src/tools/repo.ts`, add `ensureProjectGitignore` handling: extend the `config` action (or add a `gitignore` action) — when the action is `gitignore` (or config with `ensure_gitignore: true`), call `ensureProjectGitignore(context.directory, confirmed)` after writing config and merge the result. Mirror in `cursor/mcp/server.ts`.
 
 - [ ] **Step 5: Update `skills/wf-init/SKILL.md`**
 
-Add to the guided-config section: "After writing config, call `workflow_toolkit_init_apply` with `action: "gitignore"` and `confirmed: true` to ensure the project `.gitignore` covers `docs/*/sdd/` and common OS/editor entries."
+Add to the guided-config section: "After writing config, call `workit_init_apply` with `action: "gitignore"` and `confirmed: true` to ensure the project `.gitignore` covers `docs/*/sdd/` and common OS/editor entries."
 
 - [ ] **Step 6: Run tests**
 

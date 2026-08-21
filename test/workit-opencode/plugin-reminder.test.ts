@@ -210,8 +210,8 @@ test("CA-06: contract reminder carries the superpowers self-review ritual line",
   expect(REMINDER_TEXT).toContain("spec coverage (every spec requirement maps to a task)");
   expect(REMINDER_TEXT).toContain("placeholder scan");
   expect(REMINDER_TEXT).toContain("type consistency");
-  expect(REMINDER_TEXT).toContain("workflow_spec_approve");
-  expect(REMINDER_TEXT).toContain("workflow_plan_approve");
+  expect(REMINDER_TEXT).toContain("workit_spec_approve");
+  expect(REMINDER_TEXT).toContain("workit_plan_approve");
 });
 
 test("CA-08: the destination reminder carries the marker and never offers Handoff", () => {

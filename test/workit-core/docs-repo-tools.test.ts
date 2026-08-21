@@ -21,10 +21,7 @@ test("repo_link requires confirmed and persists", async () => {
     const tools = createDocsRepoTools();
     const ctx = { directory: repo, worktree: repo } as never;
     const no = JSON.parse(
-      (await tools.workit_docs_repo_link.execute(
-        { path: repo, confirmed: false },
-        ctx,
-      )) as string,
+      (await tools.workit_docs_repo_link.execute({ path: repo, confirmed: false }, ctx)) as string,
     );
     expect(no.ok).toBe(false);
     const yes = JSON.parse(

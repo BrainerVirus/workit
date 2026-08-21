@@ -11,9 +11,7 @@ test("template_list reports repo sources by default; template_edit writes config
     process.env.WORKFLOW_TOOLKIT_CONFIG_DIR = dir;
     delete process.env.WORKFLOW_TOOLKIT_CONFIG;
     const tools = createTemplateTools();
-    const list = JSON.parse(
-      (await tools.workit_template_list.execute({}, {} as never)) as string,
-    );
+    const list = JSON.parse((await tools.workit_template_list.execute({}, {} as never)) as string);
     expect(list.ok).toBe(true);
     expect(
       list.data.templates.some((t: any) => t.name === "issue-update" && t.source === "repo"),

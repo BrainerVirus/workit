@@ -142,7 +142,7 @@ No change. `src/bootstrap.ts` already injects the toolkit contract on the first 
 - New test: VERSION file exists and matches the upstream version copied.
 - Manual smoke (post-merge, user-side): `opencode` shows brainstorming/writing-plans in `/skills`; Cursor agent CLI shows the same; `openCode` still injects the toolkit contract first.
 - `scripts/update-superpowers.sh` dry check: runs against upstream clone in temp; asserts VERSION written and skills copied; does not touch git state beyond the vendor dir.
-- Docs-layout tests: fixtures create `docs/<slug>/{spec.md,plan.md,sdd/}`; `workflow_docs_validate`, `workflow_flow_status`, `workflow_sdd_context`, and handoff resolution all pass against the new layout; old `docs/superpowers/` paths are absent from all sources (grep check).
+- Docs-layout tests: fixtures create `docs/<slug>/{spec.md,plan.md,sdd/}`; `workit_docs_validate`, `workit_flow_status`, `workit_sdd_context`, and handoff resolution all pass against the new layout; old `docs/superpowers/` paths are absent from all sources (grep check).
 
 ## Compatibility
 

@@ -5,9 +5,9 @@
 **Spec:** `docs/hygiene/spec.md`
 **Branch:** `feature/hygiene`
 
-**Goal:** Detect and create project hygiene files (CHANGELOG.md Keep-a-Changelog, README.md, .editorconfig, .gitattributes, and open-source LICENSE/CONTRIBUTING.md) via `workflow_docs_validate` findings, `workflow_verify`, and a `wf-init` `hygiene` action — never overwriting existing files.
+**Goal:** Detect and create project hygiene files (CHANGELOG.md Keep-a-Changelog, README.md, .editorconfig, .gitattributes, and open-source LICENSE/CONTRIBUTING.md) via `workit_docs_validate` findings, `workit_verify`, and a `wf-init` `hygiene` action — never overwriting existing files.
 
-**Architecture:** New `src/core/hygiene.ts` (state detection + ensure from `templates/hygiene/`). `docsValidate` appends hygiene warnings (reusing `changelogUnreleasedStats` for the changelog format). `verify-project.sh` gains a changelog check. `workflow_toolkit_init_apply` gains `action: "hygiene"` on both platforms.
+**Architecture:** New `src/core/hygiene.ts` (state detection + ensure from `templates/hygiene/`). `docsValidate` appends hygiene warnings (reusing `changelogUnreleasedStats` for the changelog format). `verify-project.sh` gains a changelog check. `workit_init_apply` gains `action: "hygiene"` on both platforms.
 
 **Tech Stack:** TypeScript (existing), `bun test`, node:fs (existing patterns), shell for verify. No new dependencies.
 
@@ -301,7 +301,7 @@ test("docsValidate reports hygiene warnings", async () => {
     writeFileSync(path.join(root, "docs/x/spec.md"), "# Spec\n\n**Branch:** `feature/x`\n");
     writeFileSync(path.join(root, "docs/x/plan.md"), "# Plan\n\n**Spec:** `docs/x/spec.md`\n**Branch:** `feature/x`\n\n### Task 1: One\n\n- [ ] **Step 1:** Work\n");
 
-    const raw = await createSddTools(new WorkflowStateStore()).workflow_docs_validate.execute(
+    const raw = await createSddTools(new WorkflowStateStore()).workit_docs_validate.execute(
       { spec_path: "docs/x/spec.md", plan_path: "docs/x/plan.md" },
       { directory: root, worktree: root, sessionID: "s" } as never,
     );
@@ -347,12 +347,12 @@ Expected: PASS.
 
 ```bash
 git add src/core/docs-validate.ts test/docs-validate.test.ts
-git commit -m "feat(validate): hygiene findings in workflow_docs_validate"
+git commit -m "feat(validate): hygiene findings in workit_docs_validate"
 ```
 
 ---
 
-### Task 3: `workflow_verify` changelog check
+### Task 3: `workit_verify` changelog check
 
 **Files:**
 - Modify: `scripts/verify-project.sh`
@@ -430,7 +430,7 @@ git commit -m "feat(verify): CHANGELOG.md format check"
 
 ---
 
-### Task 4: `hygiene` action in `workflow_toolkit_init_apply` + wf-init skill
+### Task 4: `hygiene` action in `workit_init_apply` + wf-init skill
 
 **Files:**
 - Modify: `src/tools/repo.ts`
@@ -440,7 +440,7 @@ git commit -m "feat(verify): CHANGELOG.md format check"
 
 **Interfaces:**
 - Consumes: `ensureHygieneFiles` (Task 1)
-- Produces: `workflow_toolkit_init_apply` accepts `action: "hygiene"` (+ optional `include_open_source`) on both platforms
+- Produces: `workit_init_apply` accepts `action: "hygiene"` (+ optional `include_open_source`) on both platforms
 
 - [ ] **Step 1: Write the failing test**
 
@@ -457,12 +457,12 @@ test("init_apply hygiene action creates missing files", async () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "wf-hygiene-tools-"));
   try {
     const tools = createRepoTools();
-    const no = JSON.parse(await tools.workflow_toolkit_init_apply.execute({
+    const no = JSON.parse(await tools.workit_init_apply.execute({
       confirmed: false, action: "hygiene",
     }, { directory: dir, worktree: dir } as never) as string);
     expect(no.ok).toBe(false);
 
-    const yes = JSON.parse(await tools.workflow_toolkit_init_apply.execute({
+    const yes = JSON.parse(await tools.workit_init_apply.execute({
       confirmed: true, action: "hygiene", include_open_source: true,
     }, { directory: dir, worktree: dir } as never) as string);
     expect(yes.ok).toBe(true);
@@ -476,7 +476,7 @@ test("init_apply hygiene action creates missing files", async () => {
 Run: `bun test test/hygiene-tools.test.ts`
 Expected: FAIL — action not supported.
 
-- [ ] **Step 3: Extend `workflow_toolkit_init_apply` in `src/tools/repo.ts`**
+- [ ] **Step 3: Extend `workit_init_apply` in `src/tools/repo.ts`**
 
 Add `"hygiene"` to the action enum and `include_open_source` arg; add the branch before the script dispatch:
 
@@ -498,7 +498,7 @@ Same enum addition, `include_open_source` optional boolean, branch calling `ensu
 Add after the gitignore step:
 
 ```markdown
-After gitignore, call `workflow_toolkit_init_apply` with `action: "hygiene"`, `confirmed: true`, and `include_open_source: true` for open-source repos — creates CHANGELOG.md (Keep a Changelog), README.md, .editorconfig, .gitattributes, and optionally LICENSE + CONTRIBUTING.md. Never overwrites existing files.
+After gitignore, call `workit_init_apply` with `action: "hygiene"`, `confirmed: true`, and `include_open_source: true` for open-source repos — creates CHANGELOG.md (Keep a Changelog), README.md, .editorconfig, .gitattributes, and optionally LICENSE + CONTRIBUTING.md. Never overwrites existing files.
 ```
 
 - [ ] **Step 6: Run tests**

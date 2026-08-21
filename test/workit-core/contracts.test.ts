@@ -610,8 +610,8 @@ test("user and maintainer documentation reflects the integrity contracts, withou
   expect(agents).toMatch(/--prefer-online/);
   expect(agents).not.toMatch(/never (a )?mutable latest|never fall back to a mutable/);
   // Host READMEs map lifecycle surfaces where the host behavior changed.
-  expect(ocReadme).toMatch(/workflow_plan_pause|lifecycle|digest/i);
-  expect(cursorReadme).toMatch(/workflow_plan_pause|lifecycle|digest/i);
+  expect(ocReadme).toMatch(/workit_plan_pause|lifecycle|digest/i);
+  expect(cursorReadme).toMatch(/workit_plan_pause|lifecycle|digest/i);
 });
 
 test("execution-reliability contract phrases are present across canonical and host asset surfaces (CA-01..CA-20)", () => {
