@@ -1,6 +1,6 @@
 # YouTrack update style (Cristhofer / es-CL)
 
-Use when writing or polishing the comment body before `workflow_youtrack_draft`. **Preserve the author's voice** — like the ChatGPT revision thread: grammar, flow, and light structure, not a changelog.
+Use when writing or polishing the comment body before `workit_youtrack_draft`. **Preserve the author's voice** — like the ChatGPT revision thread: grammar, flow, and light structure, not a changelog.
 
 ## Audience
 

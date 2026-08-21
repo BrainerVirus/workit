@@ -1,6 +1,6 @@
 ---
 name: wk-release-notes
-description: Draft release notes via workflow_release_notes_context. Use for /wk-release-notes or "draft release notes".
+description: Draft release notes via workit_release_notes_context. Use for /wk-release-notes or "draft release notes".
 ---
 
 # Release Notes — User-Facing Release Notes
@@ -11,7 +11,7 @@ Draft release notes for a given release, version, tag, or commit range.
 
 If the user did not provide an exact tag, version, or commit range, ask for it before calling the tool.
 
-Call MCP tool `workflow_release_notes_context` with arguments from the user's message (range, version, paths, etc.).
+Call MCP tool `workit_release_notes_context` with arguments from the user's message (range, version, paths, etc.).
 
 **Repository calls:** For every repository-scoped `workflow_*` call, pass the active Cursor workspace as `workspace_root`; never rely on the MCP process default.
 

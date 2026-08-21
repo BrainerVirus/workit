@@ -161,7 +161,7 @@ test("handoff includes every parsed task row", () => {
     if (!("error" in result)) {
       expect(result.prompt).toContain("- Task 1: First repair");
       expect(result.prompt).toContain("- Task 2: Second repair");
-      expect(result.prompt).toContain("workflow_docs_validate");
+      expect(result.prompt).toContain("workit_docs_validate");
       expect(result.prompt).toContain(WORKSPACE_ROOT_RULE);
       // CA-07/CA-08: the generated destination contract carries the exact marker
       // on its own line and the four-choice allow-list, never the source Handoff option.
@@ -235,20 +235,20 @@ test("question choices use Cursor AskQuestion without an MCP adapter", () => {
 test("repository-scoped Cursor skill calls pass the active workspace_root", () => {
   const excluded = ["wk-init", "wk-meetings", "wk-status"];
   const repositoryTools = new Set([
-    "workflow_branch_setup",
-    "workflow_changelog_apply",
-    "workflow_changelog_context",
-    "workflow_docs_context",
-    "workflow_docs_validate",
-    "workflow_git_context",
-    "workflow_handoff_prompt",
-    "workflow_plan_tasks",
-    "workflow_pr_context",
-    "workflow_pr_create",
-    "workflow_release_notes_context",
-    "workflow_resolve_branch",
-    "workflow_sdd_context",
-    "workflow_verify",
+    "workit_branch_setup",
+    "workit_changelog_apply",
+    "workit_changelog_context",
+    "workit_docs_context",
+    "workit_docs_validate",
+    "workit_git_context",
+    "workit_handoff_prompt",
+    "workit_plan_tasks",
+    "workit_pr_context",
+    "workit_pr_create",
+    "workit_release_notes_context",
+    "workit_resolve_branch",
+    "workit_sdd_context",
+    "workit_verify",
   ]);
   const skills = readdirSync(path.join(CURSOR_ROOT, "skills")).sort();
   const unaffected: string[] = [];

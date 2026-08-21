@@ -1,6 +1,6 @@
 ---
 name: wk-docs-refresh
-description: Refresh stale README and docs via workflow_docs_context. Use for /wk-docs-refresh or "refresh readme/docs".
+description: Refresh stale README and docs via workit_docs_context. Use for /wk-docs-refresh or "refresh readme/docs".
 ---
 
 # Docs Refresh — Documentation Refresh
@@ -9,7 +9,7 @@ Inspect current changes and refresh stale documentation.
 
 ## Step 1 — Gather facts (required)
 
-Call MCP tool `workflow_docs_context` with arguments from the user's message (range, version, paths, etc.).
+Call MCP tool `workit_docs_context` with arguments from the user's message (range, version, paths, etc.).
 
 **Repository calls:** For every repository-scoped `workflow_*` call, pass the active Cursor workspace as `workspace_root`; never rely on the MCP process default.
 

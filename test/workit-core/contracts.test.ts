@@ -72,8 +72,8 @@ test("all native skills exist and contain no Cursor runtime vocabulary", () => {
     "question",
     "todowrite",
     "task",
-    "workflow_handoff_session",
-    "workflow_verify",
+    "workit_handoff_session",
+    "workit_verify",
   ]) {
     expect(source).toContain(required);
   }
@@ -116,15 +116,15 @@ test("implement confirms every branch setup after previewing branch and stash be
     expect(source).toContain("stash behavior");
     expect(source).toContain("clean tree");
     expect(source).toContain("proceed or cancel");
-    expect(source).toContain("workflow_branch_setup");
+    expect(source).toContain("workit_branch_setup");
     expect(source).toContain("confirmed: true");
   }
 });
 
 test("issue update names both safe retries and bounds each retry to one attempt", () => {
   const text = skill("wk-issue-update");
-  expect(text).toContain('result.data.retry === "workflow_youtrack_post"');
-  expect(text).toContain('result.data.retry === "workflow_youtrack_log_time"');
+  expect(text).toContain('result.data.retry === "workit_youtrack_post"');
+  expect(text).toContain('result.data.retry === "workit_youtrack_log_time"');
   expect(text).toContain("unchanged reviewed `issueId`, `markdown`, and `minutes`");
   expect(text).toContain("same `issueId` and `minutes`");
   expect(text).toContain("at most once");
@@ -134,13 +134,13 @@ test("issue update names both safe retries and bounds each retry to one attempt"
 test("status uses only the aggregate toolkit status tool", () => {
   const text = skill("wk-status");
   expect(text).toContain("Use only `workit_status`");
-  expect(text).not.toContain("workflow_youtrack_verify_token");
+  expect(text).not.toContain("workit_youtrack_verify_token");
 });
 
 test("handoff always ends the originating turn and never falls back inline", () => {
   const text = skill("wk-handoff");
   expect(text).toContain(
-    "After any `workflow_handoff_session` result—success, partial, or failure—end the originating turn immediately",
+    "After any `workit_handoff_session` result—success, partial, or failure—end the originating turn immediately",
   );
   expect(text).toContain(
     "Never create todos, execute the plan inline, modify files, retry handoff, or call another tool",
@@ -179,7 +179,7 @@ test("post-plan override lists five fixed options and forbids two-option prose",
   expect(stripped).not.toMatch(/Two execution options:\s*\n/);
   expect(stripped).not.toContain("1. Subagent-Driven (recommended)");
   expect(surfaces).toMatch(/no stay|No `--stay` option/i);
-  expect(surfaces).toContain("workflow_docs_validate");
+  expect(surfaces).toContain("workit_docs_validate");
 });
 
 test("source reminder prose carries the display-only (new session only) qualifier on the Handoff label", () => {
@@ -292,7 +292,7 @@ test("PR skills show title and body before create confirmation", () => {
     const createQ = body.search(
       /Create the reviewed|create this MR\/PR|Create MR\/PR now|before creation/i,
     );
-    const createTool = body.indexOf("workflow_pr_create");
+    const createTool = body.indexOf("workit_pr_create");
     expect(showIdx).toBeGreaterThanOrEqual(0);
     expect(createQ).toBeGreaterThan(showIdx);
     expect(createTool).toBeGreaterThan(createQ);
@@ -501,7 +501,7 @@ test("templates and skills codify one contiguous non-empty commit range per task
   expect(script).toMatch(/RULE=.*real base\.\.head/s);
 });
 
-test("execution contracts mandate plan completion: workflow_plan_complete after a complete ledger and green verification (CA-01/CA-07)", () => {
+test("execution contracts mandate plan completion: workit_plan_complete after a complete ledger and green verification (CA-01/CA-07)", () => {
   const read = (rel: string) => readFileSync(path.join(import.meta.dir, "..", "..", rel), "utf8");
   const surfaces = [
     "packages/workit-core/skills/wk-implement/SKILL.md",
@@ -527,7 +527,7 @@ test("execution contracts mandate plan completion: workflow_plan_complete after 
   // green repository verification. A single missing copy fails the test.
   for (const rel of surfaces) {
     const surface = read(rel);
-    expect(surface, rel).toContain("workflow_plan_complete");
+    expect(surface, rel).toContain("workit_plan_complete");
     expect(surface, rel).toContain("ledger is complete");
     expect(surface, rel).toContain("verification");
     // CA-01: no run may finish while the plan is `active` — every surface
@@ -646,12 +646,12 @@ test("execution-reliability contract phrases are present across canonical and ho
   // Persisted activating coordinator.
   expect(joined).toContain("coordinator_session_id");
   // Coordinator-owned advisories.
-  expect(joined).toContain("workflow_sdd_append_advisory");
+  expect(joined).toContain("workit_sdd_append_advisory");
   // Native recovery phrase.
   expect(joined).toContain("Continue opencode -s <session-id>");
   // Immediate menu recording.
   expect(joined).toMatch(
-    /immediately before any skill|workflow_plan_menu immediately|call `?workflow_plan_menu`? immediately/i,
+    /immediately before any skill|workit_plan_menu immediately|call `?workit_plan_menu`? immediately/i,
   );
   for (const rel of contractRels) {
     const text = read(rel);
@@ -671,8 +671,8 @@ test("execution-reliability contract phrases are present across canonical and ho
   for (const rel of docContractRels) {
     const text = read(rel);
     expect(text, `${rel} Change model first`).toContain("Change model first");
-    expect(text, `${rel} workflow_plan_menu immediately`).toMatch(
-      /workflow_plan_menu.{0,40}immediately/i,
+    expect(text, `${rel} workit_plan_menu immediately`).toMatch(
+      /workit_plan_menu.{0,40}immediately/i,
     );
   }
 });

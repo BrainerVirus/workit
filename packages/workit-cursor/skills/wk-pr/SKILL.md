@@ -1,6 +1,6 @@
 ---
 name: wk-pr
-description: Draft or create PR/MR via workflow_pr_context + glab/gh. Squash on merge + delete source branch. Use /wk-pr.
+description: Draft or create PR/MR via workit_pr_context + glab/gh. Squash on merge + delete source branch. Use /wk-pr.
 ---
 
 # PR — Draft or Create
@@ -9,11 +9,11 @@ Draft a merge request / pull request body, or create it on GitLab (`glab`) / Git
 
 **Setup:** `/wk-init` → pick provider → VCS scaffold → edit active token file.
 
-**Active provider:** read `vcs_config.provider` from `workflow_pr_context` (or `provider` in `~/.config/workit/vcs.json`). That decides `glab` vs `gh`.
+**Active provider:** read `vcs_config.provider` from `workit_pr_context` (or `provider` in `~/.config/workit/vcs.json`). That decides `glab` vs `gh`.
 
 ## Step 1 — Gather facts (required)
 
-Call MCP `workflow_pr_context` with **no `range` argument** unless the user supplied an explicit git range string.
+Call MCP `workit_pr_context` with **no `range` argument** unless the user supplied an explicit git range string.
 
 **Repository calls:** For every repository-scoped `workflow_*` call, pass the active Cursor workspace as `workspace_root`; never rely on the MCP process default.
 
@@ -62,9 +62,9 @@ Body:
 
 Use native `AskQuestion`: title `Create MR/PR`; prompt `Create the reviewed MR/PR now?`; options `Create` and `Cancel`. On `Create`:
 
-`workflow_pr_create` with `confirmed: true`, `title`, `body`, optional `target_branch` (defaults from vcs.json).
+`workit_pr_create` with `confirmed: true`, `title`, `body`, optional `target_branch` (defaults from vcs.json).
 
-**On failure:** show the tool `error` / `stderr` / `hint` and stop. **Never** fall back to running `glab` or `gh` in the shell — creation must go through `workflow_pr_create` only.
+**On failure:** show the tool `error` / `stderr` / `hint` and stop. **Never** fall back to running `glab` or `gh` in the shell — creation must go through `workit_pr_create` only.
 
 Creation uses vcs.json flags (both default `true`):
 
@@ -86,5 +86,5 @@ GitHub: use **Squash and merge** + **Delete branch** in the UI (or `gh pr merge 
 
 - Do not edit product files in this skill (except user asks to fix PR template).
 - Never paste VCS tokens in chat.
-- **Never run `glab` or `gh` directly** — only `workflow_pr_create`.
+- **Never run `glab` or `gh` directly** — only `workit_pr_create`.
 - Do not claim validation passed unless evidence exists.
