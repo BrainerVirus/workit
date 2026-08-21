@@ -109,17 +109,17 @@ const establishSubagentDriven = async (root: string, slug: string, receipts: Hos
 
 test("approval and menu tool schemas expose no evidence, role, or taskIdentity fields", async () => {
   const { tools } = fixture();
-  expect(schemaKeys(tools, "workflow_spec_approve")).toEqual(["spec_path"]);
-  expect(schemaKeys(tools, "workflow_plan_approve")).toEqual(["plan_path"]);
-  expect(schemaKeys(tools, "workflow_plan_menu")).toEqual(["plan_path", "choice"]);
-  expect(schemaKeys(tools, "workflow_flow_status")).toEqual(["plan_path", "spec_path"]);
-  expect(schemaKeys(tools, "workflow_sdd_task_brief")).toEqual([
+  expect(schemaKeys(tools, "workit_spec_approve")).toEqual(["spec_path"]);
+  expect(schemaKeys(tools, "workit_plan_approve")).toEqual(["plan_path"]);
+  expect(schemaKeys(tools, "workit_plan_menu")).toEqual(["plan_path", "choice"]);
+  expect(schemaKeys(tools, "workit_flow_status")).toEqual(["plan_path", "spec_path"]);
+  expect(schemaKeys(tools, "workit_sdd_task_brief")).toEqual([
     "confirmed",
     "sdd_dir",
     "task_id",
     "section_text",
   ]);
-  expect(schemaKeys(tools, "workflow_sdd_append_advisory")).toEqual([
+  expect(schemaKeys(tools, "workit_sdd_append_advisory")).toEqual([
     "confirmed",
     "advisories_path",
     "task_id",
@@ -130,10 +130,10 @@ test("approval and menu tool schemas expose no evidence, role, or taskIdentity f
 test("a caller-supplied evidence object is inert: no receipt means approval fails", async () => {
   const { root, tools, ctx } = fixture();
   try {
-    await run(tools, "workflow_flow_status", { plan_path: "docs/oc-flow/plan.md" }, ctx);
+    await run(tools, "workit_flow_status", { plan_path: "docs/oc-flow/plan.md" }, ctx);
     const forged = await run(
       tools,
-      "workflow_spec_approve",
+      "workit_spec_approve",
       {
         spec_path: "docs/oc-flow/spec.md",
         evidence: {
@@ -150,7 +150,7 @@ test("a caller-supplied evidence object is inert: no receipt means approval fail
     if (forged.ok === false) expect(forged.error).toMatch(/receipt/i);
     const status = await run(
       tools,
-      "workflow_flow_status",
+      "workit_flow_status",
       { plan_path: "docs/oc-flow/plan.md" },
       ctx,
     );
@@ -163,11 +163,11 @@ test("a caller-supplied evidence object is inert: no receipt means approval fail
 test("a host-issued question receipt is consumed by the approval tool without evidence args", async () => {
   const { root, tools, ctx, receipts } = fixture();
   try {
-    await run(tools, "workflow_flow_status", { plan_path: "docs/oc-flow/plan.md" }, ctx);
+    await run(tools, "workit_flow_status", { plan_path: "docs/oc-flow/plan.md" }, ctx);
     recordQuestion(receipts, "Approve spec");
     const accepted = await run(
       tools,
-      "workflow_spec_approve",
+      "workit_spec_approve",
       { spec_path: "docs/oc-flow/spec.md" },
       ctx,
     );
@@ -182,12 +182,12 @@ test("a host-issued question receipt is consumed by the approval tool without ev
 test("an intervening unrelated question cannot mask menu evidence (CA-02 purpose binding)", async () => {
   const { root, tools, ctx, receipts } = fixture();
   try {
-    await run(tools, "workflow_flow_status", { plan_path: "docs/oc-flow/plan.md" }, ctx);
+    await run(tools, "workit_flow_status", { plan_path: "docs/oc-flow/plan.md" }, ctx);
     const spec = "docs/oc-flow/spec.md";
     // An unrelated execution-menu receipt + a fresh spec-approval: only the spec purpose matters.
     receipts.record("oc", "call-menu", "Inline", Date.now(), "", "execution-menu");
     receipts.record("oc", "call-spec", "Approve spec", Date.now(), "", "spec-approval");
-    const accepted = await run(tools, "workflow_spec_approve", { spec_path: spec }, ctx);
+    const accepted = await run(tools, "workit_spec_approve", { spec_path: spec }, ctx);
     expect(accepted.ok).toBe(true);
     expect(accepted.data.status).toBe("approved");
   } finally {
@@ -200,11 +200,11 @@ test("a negative answer cannot be laundered into an approval (FINDING 3)", async
   // a spec-approval request with no typed receipt is receipt_missing (CA-02).
   const { root, tools, ctx, receipts } = fixture();
   try {
-    await run(tools, "workflow_flow_status", { plan_path: "docs/oc-flow/plan.md" }, ctx);
+    await run(tools, "workit_flow_status", { plan_path: "docs/oc-flow/plan.md" }, ctx);
     receipts.record("oc", "call-no", "No");
     const denied = await run(
       tools,
-      "workflow_spec_approve",
+      "workit_spec_approve",
       { spec_path: "docs/oc-flow/spec.md" },
       ctx,
     );
@@ -213,14 +213,14 @@ test("a negative answer cannot be laundered into an approval (FINDING 3)", async
     expect(receipts.count("oc")).toBe(0);
     const status = await run(
       tools,
-      "workflow_flow_status",
+      "workit_flow_status",
       { plan_path: "docs/oc-flow/plan.md" },
       ctx,
     );
     expect(status.data.spec.status).toBe("draft");
     const retry = await run(
       tools,
-      "workflow_spec_approve",
+      "workit_spec_approve",
       { spec_path: "docs/oc-flow/spec.md" },
       ctx,
     );
@@ -236,7 +236,7 @@ test("a negative answer cannot be laundered into a menu choice (FINDING 3)", asy
   // no typed receipt is receipt_missing, not receipt_rejected.
   const { root, slug, tools, ctx, receipts } = fixture();
   try {
-    await run(tools, "workflow_flow_status", { plan_path: "docs/oc-flow/plan.md" }, ctx);
+    await run(tools, "workit_flow_status", { plan_path: "docs/oc-flow/plan.md" }, ctx);
     const spec = "docs/oc-flow/spec.md";
     const plan = "docs/oc-flow/plan.md";
     for (const step of [
@@ -247,13 +247,13 @@ test("a negative answer cannot be laundered into a menu choice (FINDING 3)", asy
     receipts.record("oc", "call-cancel", "Cancel");
     const denied = await run(
       tools,
-      "workflow_plan_menu",
+      "workit_plan_menu",
       { choice: "subagent-driven", plan_path: plan },
       ctx,
     );
     expect(denied.ok).toBe(false);
     if (denied.ok === false) expect(denied.data?.code).toBe("receipt_missing");
-    const status = await run(tools, "workflow_flow_status", { plan_path: plan }, ctx);
+    const status = await run(tools, "workit_flow_status", { plan_path: plan }, ctx);
     expect(status.data.menu.presented).toBe(false);
   } finally {
     cleanup(root);
@@ -263,18 +263,18 @@ test("a negative answer cannot be laundered into a menu choice (FINDING 3)", asy
 test("receipt replay fails: one receipt approves exactly once", async () => {
   const { root, tools, ctx, receipts } = fixture();
   try {
-    await run(tools, "workflow_flow_status", { plan_path: "docs/oc-flow/plan.md" }, ctx);
+    await run(tools, "workit_flow_status", { plan_path: "docs/oc-flow/plan.md" }, ctx);
     recordQuestion(receipts, "Approve spec");
     const first = await run(
       tools,
-      "workflow_spec_approve",
+      "workit_spec_approve",
       { spec_path: "docs/oc-flow/spec.md" },
       ctx,
     );
     expect(first.ok).toBe(true);
     const replay = await run(
       tools,
-      "workflow_spec_approve",
+      "workit_spec_approve",
       { spec_path: "docs/oc-flow/spec.md" },
       ctx,
     );
@@ -288,13 +288,13 @@ test("receipt replay fails: one receipt approves exactly once", async () => {
 test("FINDING 5: two concurrent approve calls with ONE receipt — exactly one succeeds", async () => {
   const { root, tools, ctx, receipts } = fixture();
   try {
-    await run(tools, "workflow_flow_status", { plan_path: "docs/oc-flow/plan.md" }, ctx);
+    await run(tools, "workit_flow_status", { plan_path: "docs/oc-flow/plan.md" }, ctx);
     recordQuestion(receipts, "Approve spec");
     // Both approval calls race in the same message; the atomic consume
     // (consume-before-transition) lets exactly one take the receipt.
     const [a, b] = await Promise.all([
-      run(tools, "workflow_spec_approve", { spec_path: "docs/oc-flow/spec.md" }, ctx),
-      run(tools, "workflow_spec_approve", { spec_path: "docs/oc-flow/spec.md" }, ctx),
+      run(tools, "workit_spec_approve", { spec_path: "docs/oc-flow/spec.md" }, ctx),
+      run(tools, "workit_spec_approve", { spec_path: "docs/oc-flow/spec.md" }, ctx),
     ]);
     const winners = [a, b].filter((r) => r.ok === true);
     expect(winners.length).toBe(1);
@@ -303,7 +303,7 @@ test("FINDING 5: two concurrent approve calls with ONE receipt — exactly one s
     // One answer drove exactly one transition: draft -> approved on a single call.
     const status = await run(
       tools,
-      "workflow_flow_status",
+      "workit_flow_status",
       { plan_path: "docs/oc-flow/plan.md" },
       ctx,
     );
@@ -317,11 +317,11 @@ test("FINDING 5: two concurrent approve calls with ONE receipt — exactly one s
 test("a receipt recorded for another session cannot be consumed", async () => {
   const { root, tools, ctx, receipts } = fixture();
   try {
-    await run(tools, "workflow_flow_status", { plan_path: "docs/oc-flow/plan.md" }, ctx);
+    await run(tools, "workit_flow_status", { plan_path: "docs/oc-flow/plan.md" }, ctx);
     recordQuestion(receipts, "Approve spec", "other-session");
     const denied = await run(
       tools,
-      "workflow_spec_approve",
+      "workit_spec_approve",
       { spec_path: "docs/oc-flow/spec.md" },
       ctx,
     );
@@ -335,18 +335,18 @@ test("a receipt recorded for another session cannot be consumed", async () => {
 test("menu consumption binds the exact selected label: a mismatched receipt label fails", async () => {
   const { root, tools, ctx, receipts } = fixture();
   try {
-    await run(tools, "workflow_flow_status", { plan_path: "docs/oc-flow/plan.md" }, ctx);
+    await run(tools, "workit_flow_status", { plan_path: "docs/oc-flow/plan.md" }, ctx);
     const spec = "docs/oc-flow/spec.md";
     const plan = "docs/oc-flow/plan.md";
     recordQuestion(receipts, "Approve spec");
-    await run(tools, "workflow_spec_approve", { spec_path: spec }, ctx);
+    await run(tools, "workit_spec_approve", { spec_path: spec }, ctx);
     recordQuestion(receipts, "Approve plan");
-    await run(tools, "workflow_plan_approve", { plan_path: plan }, ctx);
+    await run(tools, "workit_plan_approve", { plan_path: plan }, ctx);
 
     recordQuestion(receipts, "Inline");
     const mismatch = await run(
       tools,
-      "workflow_plan_menu",
+      "workit_plan_menu",
       { choice: "subagent-driven", plan_path: plan },
       ctx,
     );
@@ -356,7 +356,7 @@ test("menu consumption binds the exact selected label: a mismatched receipt labe
     recordQuestion(receipts, "subagent-driven");
     const recorded = await run(
       tools,
-      "workflow_plan_menu",
+      "workit_plan_menu",
       { choice: "subagent-driven", plan_path: plan },
       ctx,
     );
@@ -369,7 +369,7 @@ test("menu consumption binds the exact selected label: a mismatched receipt labe
 test("menu consumption accepts the capitalized label exactly as the user answers it", async () => {
   const { root, slug, tools, ctx, receipts } = fixture();
   try {
-    await run(tools, "workflow_flow_status", { plan_path: "docs/oc-flow/plan.md" }, ctx);
+    await run(tools, "workit_flow_status", { plan_path: "docs/oc-flow/plan.md" }, ctx);
     const spec = `docs/${slug}/spec.md`;
     const plan = `docs/${slug}/plan.md`;
     for (const step of [
@@ -379,7 +379,7 @@ test("menu consumption accepts the capitalized label exactly as the user answers
       if (!step.ok) throw new Error(step.error);
     // The host presents "Inline" (capitalized); the user answers exactly that.
     recordQuestion(receipts, "Inline");
-    const menu = await run(tools, "workflow_plan_menu", { choice: "inline", plan_path: plan }, ctx);
+    const menu = await run(tools, "workit_plan_menu", { choice: "inline", plan_path: plan }, ctx);
     expect(menu.ok).toBe(true);
     if (menu.ok === true) expect(menu.data.menu.chosen).toBe("inline");
   } finally {
@@ -402,7 +402,7 @@ test("menu consumption accepts host-decorated receipt labels for every source ch
   for (const [label, choice] of cases) {
     const { root, slug, tools, ctx, receipts } = fixture();
     try {
-      await run(tools, "workflow_flow_status", { plan_path: `docs/${slug}/plan.md` }, ctx);
+      await run(tools, "workit_flow_status", { plan_path: `docs/${slug}/plan.md` }, ctx);
       const spec = `docs/${slug}/spec.md`;
       const plan = `docs/${slug}/plan.md`;
       for (const step of [
@@ -411,7 +411,7 @@ test("menu consumption accepts host-decorated receipt labels for every source ch
       ])
         if (!step.ok) throw new Error(step.error);
       recordQuestion(receipts, label);
-      const menu = await run(tools, "workflow_plan_menu", { choice, plan_path: plan }, ctx);
+      const menu = await run(tools, "workit_plan_menu", { choice, plan_path: plan }, ctx);
       expect(menu.ok, `${label} -> ${choice}`).toBe(true);
       if (menu.ok) expect(menu.data.menu.chosen).toBe(choice);
     } finally {
@@ -427,11 +427,11 @@ test("a real child session (host parentage) is delegated and denied control meta
     const childCtx = { directory: root, worktree: root, sessionID: "child-session" } as never;
     for (const [name, args] of [
       [
-        "workflow_sdd_task_brief",
+        "workit_sdd_task_brief",
         { confirmed: true, sdd_dir: "docs/oc-flow/sdd", task_id: 1, section_text: "- [ ] Work\n" },
       ],
       [
-        "workflow_sdd_append_progress",
+        "workit_sdd_append_progress",
         {
           confirmed: true,
           progress_path: "docs/oc-flow/sdd/progress.md",
@@ -439,7 +439,7 @@ test("a real child session (host parentage) is delegated and denied control meta
         },
       ],
       [
-        "workflow_sdd_append_advisory",
+        "workit_sdd_append_advisory",
         {
           confirmed: true,
           advisories_path: "docs/oc-flow/sdd/advisories.md",
@@ -465,7 +465,7 @@ test("a real child session (host parentage) is delegated and denied control meta
     git("commit", "-m", "work");
     const reviewDenied = await run(
       tools,
-      "workflow_sdd_review_package",
+      "workit_sdd_review_package",
       {
         confirmed: true,
         sdd_dir: "docs/oc-flow/sdd",
@@ -490,7 +490,7 @@ test("the root session owns control metadata after subagent-driven; caller role 
     await establishSubagentDriven(root, "oc-flow", receipts);
     const progress = await run(
       tools,
-      "workflow_sdd_append_progress",
+      "workit_sdd_append_progress",
       {
         confirmed: true,
         progress_path: "docs/oc-flow/sdd/progress.md",
@@ -504,7 +504,7 @@ test("the root session owns control metadata after subagent-driven; caller role 
 
     const advisory = await run(
       tools,
-      "workflow_sdd_append_advisory",
+      "workit_sdd_append_advisory",
       {
         confirmed: true,
         advisories_path: "docs/oc-flow/sdd/advisories.md",
@@ -531,7 +531,7 @@ test("a failing session lookup fails closed to the coordinator: control writes s
     // forged delegated identity is impossible: there is no parentID at all.
     const brief = await run(
       tools,
-      "workflow_sdd_task_brief",
+      "workit_sdd_task_brief",
       {
         confirmed: true,
         sdd_dir: "docs/oc-flow/sdd",
@@ -549,13 +549,13 @@ test("a failing session lookup fails closed to the coordinator: control writes s
 test("full flow through the opencode tools with host receipts: approvals + menu + gated SDD writes", async () => {
   const { root, tools, ctx, receipts } = fixture();
   try {
-    await run(tools, "workflow_flow_status", { plan_path: "docs/oc-flow/plan.md" }, ctx);
+    await run(tools, "workit_flow_status", { plan_path: "docs/oc-flow/plan.md" }, ctx);
     const spec = "docs/oc-flow/spec.md";
     const plan = "docs/oc-flow/plan.md";
 
     const briefBlocked = await run(
       tools,
-      "workflow_sdd_task_brief",
+      "workit_sdd_task_brief",
       { confirmed: true, sdd_dir: "docs/oc-flow/sdd", task_id: 1, section_text: "- [ ] Work\n" },
       ctx,
     );
@@ -563,13 +563,13 @@ test("full flow through the opencode tools with host receipts: approvals + menu 
     expect(briefBlocked.error).toMatch(/approved|spec/i);
 
     recordQuestion(receipts, "Approve spec");
-    await run(tools, "workflow_spec_approve", { spec_path: spec }, ctx);
+    await run(tools, "workit_spec_approve", { spec_path: spec }, ctx);
     recordQuestion(receipts, "Approve plan");
-    await run(tools, "workflow_plan_approve", { plan_path: plan }, ctx);
+    await run(tools, "workit_plan_approve", { plan_path: plan }, ctx);
 
     const progressBlocked = await run(
       tools,
-      "workflow_sdd_append_progress",
+      "workit_sdd_append_progress",
       {
         confirmed: true,
         progress_path: "docs/oc-flow/sdd/progress.md",
@@ -583,7 +583,7 @@ test("full flow through the opencode tools with host receipts: approvals + menu 
     recordQuestion(receipts, "handoff");
     const menu = await run(
       tools,
-      "workflow_plan_menu",
+      "workit_plan_menu",
       { choice: "handoff", plan_path: plan },
       ctx,
     );
@@ -591,13 +591,13 @@ test("full flow through the opencode tools with host receipts: approvals + menu 
 
     const brief = await run(
       tools,
-      "workflow_sdd_task_brief",
+      "workit_sdd_task_brief",
       { confirmed: true, sdd_dir: "docs/oc-flow/sdd", task_id: 1, section_text: "- [ ] Work\n" },
       ctx,
     );
     expect(brief.ok).toBe(true);
 
-    const status = await run(tools, "workflow_flow_status", { plan_path: plan }, ctx);
+    const status = await run(tools, "workit_flow_status", { plan_path: plan }, ctx);
     expect(status.data.spec.status).toBe("approved");
     expect(status.data.plan.status).toBe("approved");
     expect(status.data.menu).toMatchObject({ presented: true, chosen: "handoff" });
@@ -607,12 +607,12 @@ test("full flow through the opencode tools with host receipts: approvals + menu 
   }
 });
 
-test("workflow_flow_status prepares activation and canonical paths on first read", async () => {
+test("workit_flow_status prepares activation and canonical paths on first read", async () => {
   const { root, tools, ctx } = fixture();
   try {
     const out = await run(
       tools,
-      "workflow_flow_status",
+      "workit_flow_status",
       { plan_path: "docs/oc-flow/plan.md" },
       ctx,
     );
@@ -635,17 +635,17 @@ const writeSddLedger = (root: string, slug: string, lines: string[]) => {
 
 test("lifecycle tool schemas expose only plan_path and no caller evidence/role fields", async () => {
   const { tools } = fixture();
-  for (const name of ["workflow_plan_pause", "workflow_plan_resume", "workflow_plan_complete"]) {
+  for (const name of ["workit_plan_pause", "workit_plan_resume", "workit_plan_complete"]) {
     expect(schemaKeys(tools, name)).toEqual(["plan_path"]);
   }
 });
 
-test("workflow_flow_status returns execution and drift alongside spec/plan/menu", async () => {
+test("workit_flow_status returns execution and drift alongside spec/plan/menu", async () => {
   const { root, tools, ctx } = fixture();
   try {
     const out = await run(
       tools,
-      "workflow_flow_status",
+      "workit_flow_status",
       { plan_path: "docs/oc-flow/plan.md" },
       ctx,
     );
@@ -662,10 +662,10 @@ test("workflow_flow_status returns execution and drift alongside spec/plan/menu"
   }
 });
 
-test("workflow_flow_status reports digest drift while preserving the execution lifecycle after the plan changes", async () => {
+test("workit_flow_status reports digest drift while preserving the execution lifecycle after the plan changes", async () => {
   const { root, slug, tools, ctx, receipts } = fixture();
   try {
-    await run(tools, "workflow_flow_status", { plan_path: "docs/oc-flow/plan.md" }, ctx);
+    await run(tools, "workit_flow_status", { plan_path: "docs/oc-flow/plan.md" }, ctx);
     await establishSubagentDriven(root, slug, receipts);
     writeFileSync(
       path.join(root, "docs", slug, "plan.md"),
@@ -673,7 +673,7 @@ test("workflow_flow_status reports digest drift while preserving the execution l
     );
     const out = await run(
       tools,
-      "workflow_flow_status",
+      "workit_flow_status",
       { plan_path: "docs/oc-flow/plan.md" },
       ctx,
     );
@@ -692,32 +692,32 @@ test("workflow_flow_status reports digest drift while preserving the execution l
 test("lifecycle tools: active -> paused -> active -> completed with one-use receipts", async () => {
   const { root, slug, tools, ctx, receipts } = fixture();
   try {
-    await run(tools, "workflow_flow_status", { plan_path: "docs/oc-flow/plan.md" }, ctx);
+    await run(tools, "workit_flow_status", { plan_path: "docs/oc-flow/plan.md" }, ctx);
     await establishSubagentDriven(root, slug, receipts);
     const plan = "docs/oc-flow/plan.md";
 
-    const started = await run(tools, "workflow_flow_status", { plan_path: plan }, ctx);
+    const started = await run(tools, "workit_flow_status", { plan_path: plan }, ctx);
     expect(started.data.execution).toMatchObject({ status: "active", mode: "subagent-driven" });
 
     recordQuestion(receipts, "Pause plan");
-    const paused = await run(tools, "workflow_plan_pause", { plan_path: plan }, ctx);
+    const paused = await run(tools, "workit_plan_pause", { plan_path: plan }, ctx);
     expect(paused.ok).toBe(true);
     expect(paused.data.execution.status).toBe("paused");
     expect(receipts.count("oc")).toBe(0);
 
     // A second pause without a fresh receipt is fail-closed (no replay).
-    const replay = await run(tools, "workflow_plan_pause", { plan_path: plan }, ctx);
+    const replay = await run(tools, "workit_plan_pause", { plan_path: plan }, ctx);
     expect(replay.ok).toBe(false);
     if (replay.ok === false) expect(replay.error).toMatch(/receipt/i);
 
     recordQuestion(receipts, "Resume plan");
-    const resumed = await run(tools, "workflow_plan_resume", { plan_path: plan }, ctx);
+    const resumed = await run(tools, "workit_plan_resume", { plan_path: plan }, ctx);
     expect(resumed.ok).toBe(true);
     expect(resumed.data.execution.status).toBe("active");
 
     // Incomplete ledger -> structured execution_incomplete details.
     recordQuestion(receipts, "Complete plan");
-    const incomplete = await run(tools, "workflow_plan_complete", { plan_path: plan }, ctx);
+    const incomplete = await run(tools, "workit_plan_complete", { plan_path: plan }, ctx);
     expect(incomplete.ok).toBe(false);
     if (incomplete.ok === false) {
       expect(incomplete.data?.code).toBe("execution_incomplete");
@@ -731,7 +731,7 @@ test("lifecycle tools: active -> paused -> active -> completed with one-use rece
     // Full ledger but failing repository verification -> verification_failed.
     writeSddLedger(root, slug, ["Task 1: complete"]);
     recordQuestion(receipts, "Complete plan");
-    const unverified = await run(tools, "workflow_plan_complete", { plan_path: plan }, ctx);
+    const unverified = await run(tools, "workit_plan_complete", { plan_path: plan }, ctx);
     expect(unverified.ok).toBe(false);
     if (unverified.ok === false) {
       expect(unverified.data?.code).toBe("verification_failed");
@@ -741,11 +741,11 @@ test("lifecycle tools: active -> paused -> active -> completed with one-use rece
     // Clean verification -> completed.
     writeFileSync(path.join(root, "CHANGELOG.md"), "## [Unreleased]\n\n- fixture\n");
     recordQuestion(receipts, "Complete plan");
-    const completed = await run(tools, "workflow_plan_complete", { plan_path: plan }, ctx);
+    const completed = await run(tools, "workit_plan_complete", { plan_path: plan }, ctx);
     expect(completed.ok).toBe(true);
     expect(completed.data.execution.status).toBe("completed");
 
-    const finalStatus = await run(tools, "workflow_flow_status", { plan_path: plan }, ctx);
+    const finalStatus = await run(tools, "workit_flow_status", { plan_path: plan }, ctx);
     expect(finalStatus.data.execution.status).toBe("completed");
     expect(finalStatus.data.drift).toEqual([]);
   } finally {
@@ -756,12 +756,12 @@ test("lifecycle tools: active -> paused -> active -> completed with one-use rece
 test("a wrong lifecycle purpose does not consume the receipt (purpose isolation: pause vs resume)", async () => {
   const { root, slug, tools, ctx, receipts } = fixture();
   try {
-    await run(tools, "workflow_flow_status", { plan_path: "docs/oc-flow/plan.md" }, ctx);
+    await run(tools, "workit_flow_status", { plan_path: "docs/oc-flow/plan.md" }, ctx);
     await establishSubagentDriven(root, slug, receipts);
     recordQuestion(receipts, "Pause plan");
     const wrong = await run(
       tools,
-      "workflow_plan_resume",
+      "workit_plan_resume",
       { plan_path: "docs/oc-flow/plan.md" },
       ctx,
     );
@@ -770,7 +770,7 @@ test("a wrong lifecycle purpose does not consume the receipt (purpose isolation:
     expect(receipts.count("oc")).toBe(1);
     const right = await run(
       tools,
-      "workflow_plan_pause",
+      "workit_plan_pause",
       { plan_path: "docs/oc-flow/plan.md" },
       ctx,
     );
@@ -787,12 +787,12 @@ test("a negative lifecycle answer cannot be laundered into a pause", async () =>
   // no typed receipt is receipt_missing (CA-02 strict purpose binding).
   const { root, slug, tools, ctx, receipts } = fixture();
   try {
-    await run(tools, "workflow_flow_status", { plan_path: "docs/oc-flow/plan.md" }, ctx);
+    await run(tools, "workit_flow_status", { plan_path: "docs/oc-flow/plan.md" }, ctx);
     await establishSubagentDriven(root, slug, receipts);
     receipts.record("oc", "call-cancel", "No");
     const denied = await run(
       tools,
-      "workflow_plan_pause",
+      "workit_plan_pause",
       { plan_path: "docs/oc-flow/plan.md" },
       ctx,
     );
@@ -800,7 +800,7 @@ test("a negative lifecycle answer cannot be laundered into a pause", async () =>
     if (denied.ok === false) expect(denied.data?.code).toBe("receipt_missing");
     const status = await run(
       tools,
-      "workflow_flow_status",
+      "workit_flow_status",
       { plan_path: "docs/oc-flow/plan.md" },
       ctx,
     );
@@ -813,12 +813,12 @@ test("a negative lifecycle answer cannot be laundered into a pause", async () =>
 test("a stale lifecycle receipt cannot pause a flow", async () => {
   const { root, slug, tools, ctx, receipts } = fixture();
   try {
-    await run(tools, "workflow_flow_status", { plan_path: "docs/oc-flow/plan.md" }, ctx);
+    await run(tools, "workit_flow_status", { plan_path: "docs/oc-flow/plan.md" }, ctx);
     await establishSubagentDriven(root, slug, receipts);
     receipts.record("oc", "call-stale", "Pause plan", Date.now() - 11 * 60 * 1000);
     const denied = await run(
       tools,
-      "workflow_plan_pause",
+      "workit_plan_pause",
       { plan_path: "docs/oc-flow/plan.md" },
       ctx,
     );
@@ -826,7 +826,7 @@ test("a stale lifecycle receipt cannot pause a flow", async () => {
     if (denied.ok === false) expect(denied.error).toMatch(/stale|too old/i);
     const status = await run(
       tools,
-      "workflow_flow_status",
+      "workit_flow_status",
       { plan_path: "docs/oc-flow/plan.md" },
       ctx,
     );
@@ -839,19 +839,19 @@ test("a stale lifecycle receipt cannot pause a flow", async () => {
 test("resume after plan drift still works — lifecycle survives plan-doc drift", async () => {
   const { root, slug, tools, ctx, receipts } = fixture();
   try {
-    await run(tools, "workflow_flow_status", { plan_path: "docs/oc-flow/plan.md" }, ctx);
+    await run(tools, "workit_flow_status", { plan_path: "docs/oc-flow/plan.md" }, ctx);
     await establishSubagentDriven(root, slug, receipts);
     const plan = "docs/oc-flow/plan.md";
     recordQuestion(receipts, "Pause plan");
-    await run(tools, "workflow_plan_pause", { plan_path: plan }, ctx);
+    await run(tools, "workit_plan_pause", { plan_path: plan }, ctx);
     writeFileSync(
       path.join(root, "docs", slug, "plan.md"),
       COMPLIANT_PLAN(slug).replace("do it", "do it now"),
     );
     recordQuestion(receipts, "Resume plan");
-    const resumed = await run(tools, "workflow_plan_resume", { plan_path: plan }, ctx);
+    const resumed = await run(tools, "workit_plan_resume", { plan_path: plan }, ctx);
     expect(resumed.ok).toBe(true);
-    const status = await run(tools, "workflow_flow_status", { plan_path: plan }, ctx);
+    const status = await run(tools, "workit_flow_status", { plan_path: plan }, ctx);
     expect(status.data.execution).toMatchObject({ status: "active", mode: "subagent-driven" });
   } finally {
     cleanup(root);
@@ -862,12 +862,12 @@ test("lifecycle tools preserve coordinator/delegated parentage and caller role a
   const { root, slug, tools, receipts } = fixture(childClient("root-session"));
   try {
     const childCtx = { directory: root, worktree: root, sessionID: "child" } as never;
-    await run(tools, "workflow_flow_status", { plan_path: "docs/oc-flow/plan.md" }, childCtx);
+    await run(tools, "workit_flow_status", { plan_path: "docs/oc-flow/plan.md" }, childCtx);
     await establishSubagentDriven(root, slug, receipts);
     receipts.record("child", "call-pause", "Pause plan");
     const paused = await run(
       tools,
-      "workflow_plan_pause",
+      "workit_plan_pause",
       {
         plan_path: "docs/oc-flow/plan.md",
         confirmed: true,

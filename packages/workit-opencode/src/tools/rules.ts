@@ -6,12 +6,12 @@ const output = (value: unknown) => JSON.stringify(value, null, 2);
 
 export function createRuleTools() {
   return {
-    workflow_rule_list: tool({
+    workit_rule_list: tool({
       description: "List canonical rules (config) with platforms and source",
       args: {},
       execute: async () => output(ok({ rules: listRules() })),
     }),
-    workflow_rule_edit: tool({
+    workit_rule_edit: tool({
       description: "Write a canonical rule to the toolkit config dir (agent-assisted)",
       args: {
         name: tool.schema.string(),

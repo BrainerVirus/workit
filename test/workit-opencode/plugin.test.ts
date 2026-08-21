@@ -57,7 +57,7 @@ const flowFixture = () => {
 };
 
 // Real host-observed receipt path: the plugin's tool.execute.after hook records
-// the answered native question for the session, and workflow_spec_approve
+// the answered native question for the session, and workit_spec_approve
 // consumes the session's MOST RECENT receipt (no evidence argument exists
 // anywhere in the tool schema). Correlation is by session + freshness + one-use
 // + negative-answer rejection, not by an execution window (FINDING 2).
@@ -74,14 +74,14 @@ test("the plugin records a real question result as a one-use receipt and the app
       serverUrl: new URL("http://localhost"),
     } as never);
     const spec = `docs/${slug}/spec.md`;
-    await hooks.tool?.workflow_flow_status.execute({ plan_path: `docs/${slug}/plan.md` }, {
+    await hooks.tool?.workit_flow_status.execute({ plan_path: `docs/${slug}/plan.md` }, {
       directory: root,
       worktree: root,
       sessionID: "s1",
     } as never);
 
     // No receipt yet: approval fails with the host-observed-receipt error.
-    const before = await hooks.tool?.workflow_spec_approve.execute({ spec_path: spec }, {
+    const before = await hooks.tool?.workit_spec_approve.execute({ spec_path: spec }, {
       directory: root,
       worktree: root,
       sessionID: "s1",
@@ -98,7 +98,7 @@ test("the plugin records a real question result as a one-use receipt and the app
         metadata: { answers: [["Approve spec"]] },
       },
     );
-    const after = await hooks.tool?.workflow_spec_approve.execute({ spec_path: spec }, {
+    const after = await hooks.tool?.workit_spec_approve.execute({ spec_path: spec }, {
       directory: root,
       worktree: root,
       sessionID: "s1",
@@ -108,7 +108,7 @@ test("the plugin records a real question result as a one-use receipt and the app
     expect(result.data.status).toBe("approved");
 
     // Replay fails: the receipt was consumed exactly once.
-    const replay = await hooks.tool?.workflow_spec_approve.execute({ spec_path: spec }, {
+    const replay = await hooks.tool?.workit_spec_approve.execute({ spec_path: spec }, {
       directory: root,
       worktree: root,
       sessionID: "s1",
@@ -126,7 +126,7 @@ test("the plugin records a real question result as a one-use receipt and the app
         metadata: { answers: [["Approve spec"]] },
       },
     );
-    const second = await hooks.tool?.workflow_spec_approve.execute({ spec_path: spec }, {
+    const second = await hooks.tool?.workit_spec_approve.execute({ spec_path: spec }, {
       directory: root,
       worktree: root,
       sessionID: "s1",
@@ -144,7 +144,7 @@ test("the plugin records a real question result as a one-use receipt and the app
         metadata: { answers: [["A", "B"]] },
       },
     );
-    const noReceipt = await hooks.tool?.workflow_spec_approve.execute({ spec_path: spec }, {
+    const noReceipt = await hooks.tool?.workit_spec_approve.execute({ spec_path: spec }, {
       directory: root,
       worktree: root,
       sessionID: "s1",
@@ -162,7 +162,7 @@ test("the plugin records a real question result as a one-use receipt and the app
         metadata: { answers: [["No"]] },
       },
     );
-    const negative = await hooks.tool?.workflow_spec_approve.execute({ spec_path: spec }, {
+    const negative = await hooks.tool?.workit_spec_approve.execute({ spec_path: spec }, {
       directory: root,
       worktree: root,
       sessionID: "s1",
@@ -232,7 +232,7 @@ test("tool.execute.before denies root-session write tools and mutating shell whi
       serverUrl: new URL("http://localhost"),
     } as never);
 
-    for (const tool of ["write", "edit", "apply_patch", "patch", "workflow_commit"]) {
+    for (const tool of ["write", "edit", "apply_patch", "patch", "workit_commit"]) {
       const output = { args: {} };
       let thrown: Error | undefined;
       try {
@@ -505,7 +505,7 @@ test("the plugin records lifecycle answers as one-use receipts consumed by the l
         metadata: { answers: [["Pause plan"]] },
       },
     );
-    const paused = await hooks.tool?.workflow_plan_pause.execute({ plan_path: plan }, {
+    const paused = await hooks.tool?.workit_plan_pause.execute({ plan_path: plan }, {
       directory: root,
       worktree: root,
       sessionID: "root",
@@ -515,7 +515,7 @@ test("the plugin records lifecycle answers as one-use receipts consumed by the l
     expect(pausedResult.data.execution.status).toBe("paused");
 
     // Replay fails: the pause receipt was spent exactly once.
-    const replay = await hooks.tool?.workflow_plan_pause.execute({ plan_path: plan }, {
+    const replay = await hooks.tool?.workit_plan_pause.execute({ plan_path: plan }, {
       directory: root,
       worktree: root,
       sessionID: "root",
@@ -530,7 +530,7 @@ test("the plugin records lifecycle answers as one-use receipts consumed by the l
         metadata: { answers: [["Resume plan"]] },
       },
     );
-    const resumed = await hooks.tool?.workflow_plan_resume.execute({ plan_path: plan }, {
+    const resumed = await hooks.tool?.workit_plan_resume.execute({ plan_path: plan }, {
       directory: root,
       worktree: root,
       sessionID: "root",
@@ -546,7 +546,7 @@ test("the plugin records lifecycle answers as one-use receipts consumed by the l
 // Task 3 (label-matching parity): the real host path end-to-end. The after-hook
 // records the ANSWERED label verbatim — including a qualifier-decorated menu
 // choice the host rendered ("(Recommended)" / "(new session only)") — and
-// workflow_plan_menu consumes it against the bare enum via the shared matcher.
+// workit_plan_menu consumes it against the bare enum via the shared matcher.
 const answerQuestion = (
   hooks: Record<string, any>,
   sessionID: string,
@@ -571,7 +571,7 @@ test.each([
   ],
   ["the display-only handoff qualifier", "s2", "Handoff (new session only)", "handoff"],
 ])(
-  "the plugin hook records %s and workflow_plan_menu consumes it",
+  "the plugin hook records %s and workit_plan_menu consumes it",
   async (_name, sessionID, label, choice) => {
     const { root, slug } = flowFixture();
     try {
@@ -586,7 +586,7 @@ test.each([
       } as never);
       const spec = `docs/${slug}/spec.md`;
       const plan = `docs/${slug}/plan.md`;
-      await hooks.tool?.workflow_flow_status.execute({ plan_path: plan }, {
+      await hooks.tool?.workit_flow_status.execute({ plan_path: plan }, {
         directory: root,
         worktree: root,
         sessionID,
@@ -594,7 +594,7 @@ test.each([
 
       await answerQuestion(hooks, sessionID, "call-spec", "Approve spec");
       const specR = JSON.parse(
-        (await hooks.tool?.workflow_spec_approve.execute({ spec_path: spec }, {
+        (await hooks.tool?.workit_spec_approve.execute({ spec_path: spec }, {
           directory: root,
           worktree: root,
           sessionID,
@@ -603,7 +603,7 @@ test.each([
       expect(specR.ok).toBe(true);
       await answerQuestion(hooks, sessionID, "call-plan", "Approve plan");
       const planR = JSON.parse(
-        (await hooks.tool?.workflow_plan_approve.execute({ plan_path: plan }, {
+        (await hooks.tool?.workit_plan_approve.execute({ plan_path: plan }, {
           directory: root,
           worktree: root,
           sessionID,
@@ -613,7 +613,7 @@ test.each([
 
       await answerQuestion(hooks, sessionID, "call-menu", label);
       const menu = JSON.parse(
-        (await hooks.tool?.workflow_plan_menu.execute({ plan_path: plan, choice }, {
+        (await hooks.tool?.workit_plan_menu.execute({ plan_path: plan, choice }, {
           directory: root,
           worktree: root,
           sessionID,
@@ -829,108 +829,108 @@ describe("plugin registration", () => {
         } as never);
         const fixtures: Record<string, Record<string, unknown>> = {
           workit_init_status: {},
-          workflow_doctor: {},
+          workit_doctor: {},
           workit_status: {},
-          workflow_git_context: { paths: [] },
-          workflow_verify: { dry_run: true },
-          workflow_pr_context: {},
-          workflow_changelog_context: {},
-          workflow_release_notes_context: { range_or_tag: "HEAD" },
-          workflow_docs_context: {},
-          workflow_docs_validate: {
+          workit_git_context: { paths: [] },
+          workit_verify: { dry_run: true },
+          workit_pr_context: {},
+          workit_changelog_context: {},
+          workit_release_notes_context: { range_or_tag: "HEAD" },
+          workit_docs_context: {},
+          workit_docs_validate: {
             spec_path: "missing-spec.md",
             plan_path: "missing-plan.md",
           },
-          workflow_docs_branch: {},
-          workflow_docs_layout: { slug: "fixture-layout" },
-          workflow_changelog_apply: { confirmed: false },
-          workflow_branch_setup: { confirmed: false },
-          workflow_commit: { confirmed: false, message: "test: fixture" },
-          workflow_pr_create: { confirmed: false, title: "Fixture" },
+          workit_docs_branch: {},
+          workit_docs_layout: { slug: "fixture-layout" },
+          workit_changelog_apply: { confirmed: false },
+          workit_branch_setup: { confirmed: false },
+          workit_commit: { confirmed: false, message: "test: fixture" },
+          workit_pr_create: { confirmed: false, title: "Fixture" },
           workit_init_apply: {
             confirmed: false,
             action: "youtrack_scaffold",
           },
-          workflow_plan_tasks: { plan_path: "missing-plan.md" },
-          workflow_resolve_branch: {
+          workit_plan_tasks: { plan_path: "missing-plan.md" },
+          workit_resolve_branch: {
             spec_path: "missing-spec.md",
             plan_path: "missing-plan.md",
           },
-          workflow_flow_status: { plan_path: "missing-plan.md" },
-          workflow_docs_repo_link: { path: "missing", confirmed: false },
-          workflow_docs_list: {},
-          workflow_docs_promote: { slug: "x", confirmed: false },
-          workflow_template_list: {},
-          workflow_template_edit: { name: "issue-update", content: "x", confirmed: false },
-          workflow_rule_list: {},
-          workflow_rule_edit: {
+          workit_flow_status: { plan_path: "missing-plan.md" },
+          workit_docs_repo_link: { path: "missing", confirmed: false },
+          workit_docs_list: {},
+          workit_docs_promote: { slug: "x", confirmed: false },
+          workit_template_list: {},
+          workit_template_edit: { name: "issue-update", content: "x", confirmed: false },
+          workit_rule_list: {},
+          workit_rule_edit: {
             name: "x",
             description: "x",
             platforms: ["cursor"],
             body: "# X\\n",
             confirmed: false,
           },
-          workflow_spec_approve: {
+          workit_spec_approve: {
             confirmed: false,
             spec_path: "missing-spec.md",
           },
-          workflow_plan_approve: {
+          workit_plan_approve: {
             confirmed: false,
             plan_path: "missing-plan.md",
           },
-          workflow_plan_menu: {
+          workit_plan_menu: {
             confirmed: false,
             plan_path: "missing-plan.md",
             choice: "inline",
           },
-          workflow_plan_pause: { plan_path: "missing-plan.md" },
-          workflow_plan_resume: { plan_path: "missing-plan.md" },
-          workflow_plan_complete: { plan_path: "missing-plan.md" },
-          workflow_sdd_context: { plan_path: "missing-plan.md" },
-          workflow_sdd_task_brief: {
+          workit_plan_pause: { plan_path: "missing-plan.md" },
+          workit_plan_resume: { plan_path: "missing-plan.md" },
+          workit_plan_complete: { plan_path: "missing-plan.md" },
+          workit_sdd_context: { plan_path: "missing-plan.md" },
+          workit_sdd_task_brief: {
             confirmed: false,
             sdd_dir: "docs/fixture/sdd",
             task_id: 1,
             section_text: "Task",
           },
-          workflow_sdd_review_package: {
+          workit_sdd_review_package: {
             confirmed: false,
             sdd_dir: "docs/fixture/sdd",
             base_sha: "HEAD",
             head_sha: "HEAD",
           },
-          workflow_sdd_append_progress: {
+          workit_sdd_append_progress: {
             confirmed: false,
             progress_path: "docs/fixture/sdd/progress.md",
             line: "Task 1: complete",
           },
-          workflow_sdd_append_advisory: {
+          workit_sdd_append_advisory: {
             confirmed: false,
             advisories_path: "docs/fixture/sdd/advisories.md",
             task_id: 1,
             text: "Fixture",
           },
-          workflow_handoff_session: { message: "safe fixture --stay" },
-          workflow_youtrack_verify_token: {},
-          workflow_youtrack_parse_issue: { issue_ref: "TEST-1" },
-          workflow_youtrack_context: { mode: "task", issue_id: "TEST-1" },
-          workflow_youtrack_parse_duration: { text: "30m" },
-          workflow_youtrack_draft: { issueId: "TEST-1", userNotes: "Fixture" },
-          workflow_youtrack_log_time: {
+          workit_handoff_session: { message: "safe fixture --stay" },
+          workit_youtrack_verify_token: {},
+          workit_youtrack_parse_issue: { issue_ref: "TEST-1" },
+          workit_youtrack_context: { mode: "task", issue_id: "TEST-1" },
+          workit_youtrack_parse_duration: { text: "30m" },
+          workit_youtrack_draft: { issueId: "TEST-1", userNotes: "Fixture" },
+          workit_youtrack_log_time: {
             confirmed: false,
             issueId: "TEST-1",
             minutes: 30,
           },
-          workflow_youtrack_post: {
+          workit_youtrack_post: {
             confirmed: false,
             issueId: "TEST-1",
             markdown: "Fixture",
           },
-          workflow_present_ascii: {
+          workit_present_ascii: {
             title: "Fixture",
             rows: [{ type: "header", label: "Title" }],
           },
-          workflow_present_flow: {
+          workit_present_flow: {
             nodes: [{ id: "a", label: "Start" }],
             edges: [],
           },
@@ -951,7 +951,7 @@ describe("plugin registration", () => {
           results[name] = result;
           expect(Object.keys(result).sort(), name).toEqual(["data", "error", "ok"]);
         }
-        expect(results.workflow_youtrack_verify_token).toEqual({
+        expect(results.workit_youtrack_verify_token).toEqual({
           ok: false,
           data: null,
           error:
@@ -1035,7 +1035,7 @@ describe("plugin registration", () => {
         worktree: root,
         serverUrl: new URL("http://unreachable.invalid"),
       } as never);
-      const raw = await hooks.tool?.workflow_handoff_session.execute(
+      const raw = await hooks.tool?.workit_handoff_session.execute(
         {
           message: "docs/x/spec.md docs/x/plan.md --stay",
         },
@@ -1075,7 +1075,7 @@ describe("plugin registration", () => {
       worktree: root,
       serverUrl: new URL("http://localhost"),
     } as never);
-    await hooks.tool?.workflow_plan_tasks.execute({ plan_path: "docs/x/plan.md" }, {
+    await hooks.tool?.workit_plan_tasks.execute({ plan_path: "docs/x/plan.md" }, {
       directory: root,
       worktree: root,
       sessionID: "s1",

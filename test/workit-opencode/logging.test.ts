@@ -134,7 +134,7 @@ test("startup boundaries emit initialization, provenance, configuration_source, 
   expect(typeof cfg.context.config_dir).toBe("string");
 
   // host usability preserved: tools register and the config hook still works
-  expect(hooks!.tool?.workflow_verify).toBeDefined();
+  expect(hooks!.tool?.workit_verify).toBeDefined();
 });
 
 test("configuration_source event reports a malformed config file", async () => {
@@ -202,7 +202,7 @@ test("hooks boundary failure is logged and the session survives", async () => {
     client: makeClient().client,
     ...clientArgs,
   } as never);
-  expect(reloaded.tool?.workflow_verify).toBeDefined();
+  expect(reloaded.tool?.workit_verify).toBeDefined();
 });
 
 test("uncaught failure boundary is bounded and sanitized", async () => {

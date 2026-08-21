@@ -237,12 +237,12 @@ export function createRepoTools(runtime: RepoRuntime = defaultRuntime) {
       execute: async (_input, context) =>
         output(scriptResult(await runtime.toolkitStatus(context.directory), json)),
     }),
-    workflow_git_context: tool({
+    workit_git_context: tool({
       description: "Read Git branch and change context",
       args: { paths: tool.schema.array(tool.schema.string()).optional() },
       execute: async ({ paths }, context) => output(ok(gitContext(context.directory, paths ?? []))),
     }),
-    workflow_verify: tool({
+    workit_verify: tool({
       description: "Discover and run repository verification",
       args: { dry_run: tool.schema.boolean().optional() },
       execute: async ({ dry_run }, context) =>
@@ -253,19 +253,19 @@ export function createRepoTools(runtime: RepoRuntime = defaultRuntime) {
           ),
         ),
     }),
-    workflow_pr_context: tool({
+    workit_pr_context: tool({
       description: "Gather branch-exclusive PR context",
       args: { range: tool.schema.string().optional() },
       execute: async ({ range }, context) =>
         contextWithRange(context.directory, runtime.prContext, range, parsePr),
     }),
-    workflow_changelog_context: tool({
+    workit_changelog_context: tool({
       description: "Gather changelog context",
       args: { range: tool.schema.string().optional() },
       execute: async ({ range }, context) =>
         contextWithRange(context.directory, runtime.changelogContext, range, parseChangelog),
     }),
-    workflow_release_notes_context: tool({
+    workit_release_notes_context: tool({
       description: "Gather release notes for an explicit range",
       args: { range_or_tag: tool.schema.string() },
       execute: async ({ range_or_tag }, context) =>
@@ -278,13 +278,13 @@ export function createRepoTools(runtime: RepoRuntime = defaultRuntime) {
               parseRelease,
             ),
     }),
-    workflow_docs_context: tool({
+    workit_docs_context: tool({
       description: "Gather documentation refresh context",
       args: { range: tool.schema.string().optional() },
       execute: async ({ range }, context) =>
         output(scriptResult(runtime.docsContext(context.directory, range), parseDocs)),
     }),
-    workflow_changelog_apply: tool({
+    workit_changelog_apply: tool({
       description: "Apply confirmed Keep a Changelog entries to Unreleased",
       args: {
         confirmed: tool.schema.boolean(),
@@ -319,7 +319,7 @@ export function createRepoTools(runtime: RepoRuntime = defaultRuntime) {
         );
       },
     }),
-    workflow_branch_setup: tool({
+    workit_branch_setup: tool({
       description: "Apply a confirmed in-place feature or bugfix branch setup",
       args: {
         confirmed: tool.schema.boolean(),
@@ -354,7 +354,7 @@ export function createRepoTools(runtime: RepoRuntime = defaultRuntime) {
         );
       },
     }),
-    workflow_commit: tool({
+    workit_commit: tool({
       description: "Commit the current index on a feature or bugfix branch without staging files",
       args: { confirmed: tool.schema.boolean(), message: tool.schema.string() },
       execute: async ({ confirmed, message }, context) => {
@@ -381,7 +381,7 @@ export function createRepoTools(runtime: RepoRuntime = defaultRuntime) {
         );
       },
     }),
-    workflow_pr_create: tool({
+    workit_pr_create: tool({
       description: "Create a confirmed pull or merge request",
       args: {
         confirmed: tool.schema.boolean(),

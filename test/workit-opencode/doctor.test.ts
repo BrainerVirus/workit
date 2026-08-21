@@ -5,7 +5,7 @@ import type { DoctorReport } from "../../packages/workit-core/src/core/doctor";
 import { runDoctor } from "../../packages/workit-core/src/core/doctor";
 import { makeDoctorFixture } from "../shared/helpers/doctor-fixture";
 
-// workflow_doctor on the OpenCode host (DG-07): returns the same report shape as
+// workit_doctor on the OpenCode host (DG-07): returns the same report shape as
 // runDoctor, forced broken fixtures yield consistent nonzero, the host stays
 // usable, and no canary reaches logs.
 
@@ -77,10 +77,10 @@ const reportOf = (raw: string): DoctorReport => (JSON.parse(raw) as { data: Doct
 
 const direct = () => runDoctor({ host: "opencode", cwd: fixture.cwd });
 
-test("workflow_doctor returns the runDoctor report shape on a healthy install", async () => {
+test("workit_doctor returns the runDoctor report shape on a healthy install", async () => {
   const { client } = makeClient();
   const hooks = await plugin({ client, ...clientArgs } as never);
-  const raw = (await hooks.tool!.workflow_doctor.execute({}, clientArgs as never)) as string;
+  const raw = (await hooks.tool!.workit_doctor.execute({}, clientArgs as never)) as string;
   const report = reportOf(raw);
   expect(report.ok).toBe(true);
   expect(report.exitCode).toBe(0);
@@ -97,7 +97,7 @@ test("workflow_doctor returns the runDoctor report shape on a healthy install", 
   expect(Object.keys(config.command).length).toBeGreaterThan(0);
 });
 
-test("forced broken fixture yields consistent nonzero via workflow_doctor", async () => {
+test("forced broken fixture yields consistent nonzero via workit_doctor", async () => {
   writeFileSync(
     fixture.opencodeConfig,
     JSON.stringify({
@@ -110,7 +110,7 @@ test("forced broken fixture yields consistent nonzero via workflow_doctor", asyn
   try {
     const { client } = makeClient();
     const hooks = await plugin({ client, ...clientArgs } as never);
-    const raw = (await hooks.tool!.workflow_doctor.execute({}, clientArgs as never)) as string;
+    const raw = (await hooks.tool!.workit_doctor.execute({}, clientArgs as never)) as string;
     const report = reportOf(raw);
     expect(report.ok).toBe(false);
     expect(report.exitCode).toBe(1);
@@ -122,7 +122,7 @@ test("forced broken fixture yields consistent nonzero via workflow_doctor", asyn
       runDoctor({ host: "opencode", cwd: fixture.cwd }).checks.map((c) => [c.id, c.status]),
     );
     // host remains usable: a sibling tool still executes
-    const verify = (await hooks.tool!.workflow_verify.execute(
+    const verify = (await hooks.tool!.workit_verify.execute(
       { dry_run: true },
       clientArgs as never,
     )) as string;
@@ -144,7 +144,7 @@ test("no canary reaches logs or the tool result", async () => {
   const { client, events } = makeClient();
   const hooks = await plugin({ client, ...clientArgs } as never);
   events.length = 0;
-  const raw = (await hooks.tool!.workflow_doctor.execute({}, clientArgs as never)) as string;
+  const raw = (await hooks.tool!.workit_doctor.execute({}, clientArgs as never)) as string;
   expect(JSON.stringify(raw)).not.toContain("sk-live-77");
   // the doctor boundary event lands on the app log with summary only
   const doctorEvents = events.filter((e) => e.message === "doctor");

@@ -75,8 +75,8 @@ const rejectedTimeInput = (issueId: string, minutes: number) => {
           issueId,
           loggedMinutes: 0,
           outcome: "not_applied",
-          retry: "workflow_youtrack_log_time",
-          instructions: "Correct the invalid input, then retry workflow_youtrack_log_time once.",
+          retry: "workit_youtrack_log_time",
+          instructions: "Correct the invalid input, then retry workit_youtrack_log_time once.",
         }),
       )
     : null;
@@ -84,7 +84,7 @@ const rejectedTimeInput = (issueId: string, minutes: number) => {
 
 export function createYouTrackTools(operations: YouTrackOperations = defaultOperations) {
   return {
-    workflow_youtrack_verify_token: tool({
+    workit_youtrack_verify_token: tool({
       description: "Verify the configured YouTrack token with a read-only request",
       args: {},
       execute: async () => {
@@ -99,12 +99,12 @@ export function createYouTrackTools(operations: YouTrackOperations = defaultOper
         return invoke(() => operations.verifyToken(), token);
       },
     }),
-    workflow_youtrack_parse_issue: tool({
+    workit_youtrack_parse_issue: tool({
       description: "Parse an existing YouTrack issue URL or id",
       args: { issue_ref: tool.schema.string() },
       execute: async ({ issue_ref }) => invoke(() => parseIssueRef(issue_ref)),
     }),
-    workflow_youtrack_context: tool({
+    workit_youtrack_context: tool({
       description:
         "Load YouTrack context for the configured meeting issue or an existing task issue",
       args: {
@@ -149,13 +149,13 @@ export function createYouTrackTools(operations: YouTrackOperations = defaultOper
         );
       },
     }),
-    workflow_youtrack_parse_duration: tool({
+    workit_youtrack_parse_duration: tool({
       description: "Parse duration text into integer minutes",
       args: { text: tool.schema.string() },
       execute: async ({ text }, context) =>
         invoke(() => operations.parseDuration(text, context.directory)),
     }),
-    workflow_youtrack_draft: tool({
+    workit_youtrack_draft: tool({
       description: "Build an es-CL update comment without posting it",
       args: {
         issueId: tool.schema.string(),
@@ -173,7 +173,7 @@ export function createYouTrackTools(operations: YouTrackOperations = defaultOper
       },
       execute: async (input) => invoke(() => legacyBuildDraft(input as never)),
     }),
-    workflow_youtrack_log_time: tool({
+    workit_youtrack_log_time: tool({
       description: "Log confirmed time on an existing YouTrack issue without posting a comment",
       args: {
         confirmed: tool.schema.boolean(),
@@ -201,7 +201,7 @@ export function createYouTrackTools(operations: YouTrackOperations = defaultOper
         return output(result.ok ? result : { ...result, error: redact(result.error, token) });
       },
     }),
-    workflow_youtrack_post: tool({
+    workit_youtrack_post: tool({
       description: "Post a confirmed es-CL comment, then optionally log time",
       args: {
         confirmed: tool.schema.boolean(),

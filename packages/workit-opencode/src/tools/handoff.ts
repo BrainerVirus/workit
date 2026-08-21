@@ -57,7 +57,7 @@ export const idempotentMarkDestination = (
 
 export function createHandoffTools(client: HandoffClient, state: WorkflowStateStore) {
   return {
-    workflow_handoff_session: tool({
+    workit_handoff_session: tool({
       description:
         "Create, seed, and select a continuation session; --stay in the message skips selection",
       args: { message: tool.schema.string() },

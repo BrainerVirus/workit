@@ -13,8 +13,8 @@ describe("session bootstrap", () => {
   test("bootstrap contract includes visual companion override", () => {
     const bootstrap = getWorkitBootstrap();
     expect(bootstrap).toContain("NEVER offer Superpowers visual companion");
-    expect(bootstrap).toContain("workflow_present_ascii");
-    expect(bootstrap).toContain("workflow_present_flow");
+    expect(bootstrap).toContain("workit_present_ascii");
+    expect(bootstrap).toContain("workit_present_flow");
   });
 
   test("messages.transform injects bootstrap once on first user turn", async () => {
