@@ -1021,6 +1021,52 @@ test("subagent-driven interception: inactive plans never block any session", () 
   expect(child.ok).toBe(true);
 });
 
+test("CA-14: an authorized worker cannot launch nested opencode while the plan is active", () => {
+  for (const command of [
+    "opencode run --prompt x",
+    "./node_modules/.bin/opencode --version",
+    "bun x opencode run",
+    "echo hi && opencode run --prompt x",
+  ]) {
+    const denied = subagentDrivenInterception({
+      tool: "bash",
+      command,
+      parentID: "coord-session",
+      activeCoordinatorIds: ["coord-session"],
+    });
+    expect(denied.ok, command).toBe(false);
+    if (!denied.ok) expect(denied.code, command).toBe("delegation_lineage_denied");
+  }
+  // The denial is token-based: a bare word inside another command's arguments
+  // is over-denied (documented ceiling), while unrelated commands pass.
+  const read = subagentDrivenInterception({
+    tool: "bash",
+    command: "cat README.md",
+    parentID: "coord-session",
+    activeCoordinatorIds: ["coord-session"],
+  });
+  expect(read.ok).toBe(true);
+});
+
+test("CA-13: mixed owners fail closed; a single shared owner still authorizes its child", () => {
+  // Two active plans owned by DIFFERENT coordinators: no unique owner exists,
+  // so even an exact match to one of them is denied (fail-closed).
+  const mixed = subagentDrivenInterception({
+    tool: "write",
+    parentID: "coord-a",
+    activeCoordinatorIds: ["coord-a", "coord-b"],
+  });
+  expect(mixed.ok).toBe(false);
+  if (!mixed.ok) expect(mixed.code).toBe("delegation_lineage_denied");
+  // Two active plans owned by the SAME coordinator: its direct child works.
+  const shared = subagentDrivenInterception({
+    tool: "write",
+    parentID: "coord-a",
+    activeCoordinatorIds: ["coord-a", "coord-a"],
+  });
+  expect(shared.ok).toBe(true);
+});
+
 test("subagent-driven interception: root-session write tools are denied when active", () => {
   for (const tool of COORDINATOR_WRITE_TOOLS) {
     const decision = subagentDrivenInterception({ tool, parentID: undefined, activeCoordinatorIds: ["coord-session"] });

@@ -2952,8 +2952,12 @@ export const subagentDrivenInterception = (input: {
   activeCoordinatorIds?: string[];
   active?: boolean;
 }): FlowGateResult => {
-  const ids = (input.activeCoordinatorIds ?? []).filter(
-    (id) => typeof id === "string" && id !== "",
+  // Distinct owners only: the same coordinator recorded on several active
+  // plans is still ONE owner (CA-13 denies multiple DISTINCT owners).
+  const ids = Array.from(
+    new Set(
+      (input.activeCoordinatorIds ?? []).filter((id) => typeof id === "string" && id !== ""),
+    ),
   );
   const parent = typeof input.parentID === "string" && input.parentID !== "" ? input.parentID : null;
   const legacyActive = input.active === true;
@@ -2963,9 +2967,15 @@ export const subagentDrivenInterception = (input: {
   if (parent !== null && ids.length === 1 && ids[0] === parent) {
     if (input.tool === "bash") {
       // Nested-launch denial (CA-14): an authorized worker cannot launch
-      // opencode recursively while the plan is active.
+      // opencode recursively while the plan is active. Any token whose
+      // basename is exactly `opencode` denies — head, path-suffixed
+      // (`./node_modules/.bin/opencode`), or runner-carried
+      // (`bun x opencode`). ponytail: argument text containing the bare word
+      // (`grep opencode file`) is over-denied — a documented ceiling; a
+      // parser that distinguishes argument positions is the upgrade path.
       const tokens = (input.command ?? "").split(/[\s'"]+/).filter(Boolean);
-      if (tokens.includes("opencode")) {
+      const launchesOpencode = tokens.some((t) => t.split("/").pop() === "opencode");
+      if (launchesOpencode) {
         return err(
           "delegation_lineage_denied",
           "nested opencode launch is denied while a subagent-driven plan is active",
