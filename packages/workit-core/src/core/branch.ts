@@ -303,7 +303,7 @@ export const branchSetup = ({
       if (stash !== "yes") {
         return {
           error:
-            "dirty working tree — ask with native question, then call workflow_branch_setup with stash=yes",
+            "dirty working tree — ask with native question, then call workit_branch_setup with stash=yes",
         };
       }
       try {

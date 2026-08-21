@@ -12,7 +12,7 @@ test("template_list reports repo sources by default; template_edit writes config
     delete process.env.WORKFLOW_TOOLKIT_CONFIG;
     const tools = createTemplateTools();
     const list = JSON.parse(
-      (await tools.workflow_template_list.execute({}, {} as never)) as string,
+      (await tools.workit_template_list.execute({}, {} as never)) as string,
     );
     expect(list.ok).toBe(true);
     expect(
@@ -20,7 +20,7 @@ test("template_list reports repo sources by default; template_edit writes config
     ).toBe(true);
 
     const edit = JSON.parse(
-      (await tools.workflow_template_edit.execute(
+      (await tools.workit_template_edit.execute(
         {
           name: "issue-update",
           content: "# Custom\n",
@@ -33,7 +33,7 @@ test("template_list reports repo sources by default; template_edit writes config
     expect(edit.data.path).toContain(dir);
 
     const no = JSON.parse(
-      (await tools.workflow_template_edit.execute(
+      (await tools.workit_template_edit.execute(
         {
           name: "issue-update",
           content: "# X\n",

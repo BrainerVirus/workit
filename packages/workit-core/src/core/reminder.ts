@@ -15,7 +15,7 @@ export const REMINDER_TEXT = `<workflow-contract-reminder>
 - Bounded user choices → call the native \`question\` tool (never A/B/C or 1/2/3 lists in prose).
 - After a plan is approved → native \`question\` menu with exactly: ${SOURCE_MENU_LABELS_DISPLAY.join(", ")}.
 - Tools with \`confirmed\` → call them; never fabricate their result.
-- Before the first \`workflow_spec_approve\`/\`workflow_plan_approve\` (self-review) run the superpowers writing-plans Self-Review checklist: spec coverage (every spec requirement maps to a task), placeholder scan, type consistency; fix findings inline.
+- Before the first \`workit_spec_approve\`/\`workit_plan_approve\` (self-review) run the superpowers writing-plans Self-Review checklist: spec coverage (every spec requirement maps to a task), placeholder scan, type consistency; fix findings inline.
 - Delivering docs → clickable markdown link \`[spec.md](docs/<slug>/spec.md)\` + 3-5 bullet summary.
 </workflow-contract-reminder>`;
 
@@ -29,7 +29,7 @@ export const DESTINATION_REMINDER_TEXT = `<workflow-contract-reminder>
 - Bounded user choices → call the native \`question\` tool (never A/B/C or 1/2/3 lists in prose).
 - This session is a handoff destination: present the post-plan menu with exactly: ${DESTINATION_MENU_LABELS.join(", ")}.
 - Tools with \`confirmed\` → call them; never fabricate their result.
-- Before the first \`workflow_spec_approve\`/\`workflow_plan_approve\` (self-review) run the superpowers writing-plans Self-Review checklist: spec coverage (every spec requirement maps to a task), placeholder scan, type consistency; fix findings inline.
+- Before the first \`workit_spec_approve\`/\`workit_plan_approve\` (self-review) run the superpowers writing-plans Self-Review checklist: spec coverage (every spec requirement maps to a task), placeholder scan, type consistency; fix findings inline.
 - Delivering docs → clickable markdown link \`[spec.md](docs/<slug>/spec.md)\` + 3-5 bullet summary.
 ${HANDOFF_DESTINATION_MARKER}
 </workflow-contract-reminder>`;
@@ -78,7 +78,7 @@ A tool failed with a config-gap error (\`workflow config missing\`). Never confi
 </workflow-config-guard>`;
 
 export const VERIFICATION_TEXT = `<workflow-verification-rail>
-Skill: verification-before-completion. NO completion claims without fresh verification evidence — run the check command (e.g. \`bun run check\` / \`workflow_verify\`) and show its output before claiming done/fixed/passing. If you haven't run the verification command in this message, you cannot claim it passes.
+Skill: verification-before-completion. NO completion claims without fresh verification evidence — run the check command (e.g. \`bun run check\` / \`workit_verify\`) and show its output before claiming done/fixed/passing. If you haven't run the verification command in this message, you cannot claim it passes.
 </workflow-verification-rail>`;
 
 export const TDD_TEXT = `<workflow-tdd-rail>

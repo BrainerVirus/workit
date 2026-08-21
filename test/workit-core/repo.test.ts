@@ -165,18 +165,18 @@ test("repo tools expose native names without workspace override", () => {
   const tools = createRepoTools(runtime);
   expect(Object.keys(tools).sort()).toEqual(
     [
-      "workflow_changelog_context",
-      "workflow_docs_context",
-      "workflow_git_context",
-      "workflow_pr_context",
-      "workflow_release_notes_context",
+      "workit_changelog_context",
+      "workit_docs_context",
+      "workit_git_context",
+      "workit_pr_context",
+      "workit_release_notes_context",
       "workit_init_status",
       "workit_status",
-      "workflow_verify",
-      "workflow_changelog_apply",
-      "workflow_branch_setup",
-      "workflow_commit",
-      "workflow_pr_create",
+      "workit_verify",
+      "workit_changelog_apply",
+      "workit_branch_setup",
+      "workit_commit",
+      "workit_pr_create",
       "workit_init_apply",
     ].sort(),
   );
@@ -187,7 +187,7 @@ test("repo tools expose native names without workspace override", () => {
 
 test("release notes rejects a missing range before running a script", async () => {
   resetCalls();
-  expect(await execute("workflow_release_notes_context", { range_or_tag: "" })).toEqual({
+  expect(await execute("workit_release_notes_context", { range_or_tag: "" })).toEqual({
     ok: false,
     data: null,
     error: "release tag or range required",
@@ -198,9 +198,9 @@ test("release notes rejects a missing range before running a script", async () =
 test("revision context rejects option-like inputs before scripts run", async () => {
   resetCalls();
   for (const [name, args] of [
-    ["workflow_pr_context", { range: "--output=/tmp/owned" }],
-    ["workflow_changelog_context", { range: "-p" }],
-    ["workflow_release_notes_context", { range_or_tag: "--help" }],
+    ["workit_pr_context", { range: "--output=/tmp/owned" }],
+    ["workit_changelog_context", { range: "-p" }],
+    ["workit_release_notes_context", { range_or_tag: "--help" }],
   ] as const) {
     const result = await execute(name, args);
     expect(result.error).toContain("invalid Git revision");
@@ -213,13 +213,13 @@ test("revision context resolves revisions and cannot create option-selected file
   const outside = path.join(path.dirname(root), `wf-owned-${path.basename(root)}`);
   try {
     spawnSync("git", ["init", "-q", "-b", "feature/range"], { cwd: root });
-    const raw = await createRepoTools().workflow_changelog_context.execute(
+    const raw = await createRepoTools().workit_changelog_context.execute(
       { range: `--output=${outside}` },
       { directory: root, worktree: root } as never,
     );
     expect(JSON.parse(raw as string).error).toContain("invalid Git revision");
     expect(existsSync(outside)).toBe(false);
-    const missing = await createRepoTools().workflow_changelog_context.execute(
+    const missing = await createRepoTools().workit_changelog_context.execute(
       { range: "does-not-exist" },
       { directory: root, worktree: root } as never,
     );
@@ -232,12 +232,12 @@ test("revision context resolves revisions and cannot create option-selected file
 
 test("script tools use ToolContext.directory", async () => {
   resetCalls();
-  await execute("workflow_verify", { dry_run: true });
+  await execute("workit_verify", { dry_run: true });
   expect(calls.verifyProject).toEqual([{ root: "/repo", dryRun: true }]);
 });
 
 test("verification output is structured", async () => {
-  expect(await execute("workflow_verify")).toEqual({
+  expect(await execute("workit_verify")).toEqual({
     ok: true,
     data: {
       passed: 1,
@@ -251,7 +251,7 @@ test("verification output is structured", async () => {
 });
 
 test("repository context scripts return named fields", async () => {
-  const pr = await execute("workflow_pr_context");
+  const pr = await execute("workit_pr_context");
   expect(pr.data).toMatchObject({
     branch: "feature/native-tools",
     range: "develop..HEAD",
@@ -262,7 +262,7 @@ test("repository context scripts return named fields", async () => {
     merged_pr_style: { titles: ["feat: example"] },
   });
 
-  const changelog = await execute("workflow_changelog_context");
+  const changelog = await execute("workit_changelog_context");
   expect(changelog.data).toMatchObject({
     branch: "feature/native-tools",
     range: "HEAD~1..HEAD",
@@ -272,7 +272,7 @@ test("repository context scripts return named fields", async () => {
     files: "src/tools/repo.ts",
   });
 
-  const release = await execute("workflow_release_notes_context", { range_or_tag: "v1.0.0" });
+  const release = await execute("workit_release_notes_context", { range_or_tag: "v1.0.0" });
   expect(release.data).toMatchObject({
     requested: "v1.0.0",
     range: "v1.0.0..HEAD",
@@ -282,7 +282,7 @@ test("repository context scripts return named fields", async () => {
     release_files: "CHANGELOG.md",
   });
 
-  const docs = await execute("workflow_docs_context");
+  const docs = await execute("workit_docs_context");
   expect(docs.data).toMatchObject({
     branch: "feature/native-tools",
     range: "HEAD~1..HEAD",
@@ -316,7 +316,7 @@ test("script failures keep diagnostics in a failed Result", async () => {
       cwd: root,
     }),
   });
-  const raw = await failing.workflow_docs_context.execute({}, {
+  const raw = await failing.workit_docs_context.execute({}, {
     directory: "/repo",
     worktree: "/repo",
   } as never);
@@ -331,10 +331,10 @@ test("mutations reject missing confirmation", async () => {
   resetCalls();
   const tools = createRepoTools(runtime);
   for (const name of [
-    "workflow_changelog_apply",
-    "workflow_branch_setup",
-    "workflow_commit",
-    "workflow_pr_create",
+    "workit_changelog_apply",
+    "workit_branch_setup",
+    "workit_commit",
+    "workit_pr_create",
     "workit_init_apply",
   ] as const) {
     const raw = await tools[name].execute(
@@ -354,7 +354,7 @@ test("commit blocks protected branches", async () => {
         ? { exitCode: 0, stdout: "main\n", stderr: "", cwd: "/repo" }
         : { exitCode: 0, stdout: "", stderr: "", cwd: "/repo" },
   };
-  const raw = await createRepoTools(protectedRuntime).workflow_commit.execute(
+  const raw = await createRepoTools(protectedRuntime).workit_commit.execute(
     { confirmed: true, message: "fix: no" },
     { directory: "/repo", worktree: "/repo" } as never,
   );
@@ -363,7 +363,7 @@ test("commit blocks protected branches", async () => {
 
 test("commit accepts only feature or bugfix branches and never stages files", async () => {
   calls.git.length = 0;
-  const result = await execute("workflow_commit", {
+  const result = await execute("workit_commit", {
     confirmed: true,
     message: "feat: native mutation",
   });
@@ -385,7 +385,7 @@ test("commit accepts only feature or bugfix branches and never stages files", as
       stderr: "",
       cwd: root,
     }),
-  }).workflow_commit.execute({ confirmed: true, message: "chore: no" }, {
+  }).workit_commit.execute({ confirmed: true, message: "chore: no" }, {
     directory: "/repo",
     worktree: "/repo",
   } as never);
@@ -401,7 +401,7 @@ test("commit accepts only feature or bugfix branches and never stages files", as
       stderr: "",
       cwd: root,
     }),
-  }).workflow_commit.execute({ confirmed: true, message: "fix: no empty suffix" }, {
+  }).workit_commit.execute({ confirmed: true, message: "fix: no empty suffix" }, {
     directory: "/repo",
     worktree: "/repo",
   } as never);
@@ -424,7 +424,7 @@ test("PR creation rejects protected and unsupported branches before external wor
         return { exitCode: 0, stdout: "{}", stderr: "", cwd: root };
       },
     });
-    const raw = await guarded.workflow_pr_create.execute({ confirmed: true, title: "No" }, {
+    const raw = await guarded.workit_pr_create.execute({ confirmed: true, title: "No" }, {
       directory: "/repo",
       worktree: "/repo",
     } as never);
@@ -468,7 +468,7 @@ test("PR context is read-only even with a remote and upstream", async () => {
       untracked: readFileSync(path.join(root, "untracked.txt"), "utf8"),
     });
     const before = snapshot();
-    const raw = await createRepoTools().workflow_pr_context.execute({}, {
+    const raw = await createRepoTools().workit_pr_context.execute({}, {
       directory: root,
       worktree: root,
     } as never);
@@ -497,7 +497,7 @@ test("branch setup requires develop remote before creating from main", async () 
     git(root, ["push", "-q", "-u", "origin", "develop"]);
     git(root, ["branch", "main"]);
     git(root, ["checkout", "-q", "main"]);
-    const raw = await createRepoTools().workflow_branch_setup.execute(
+    const raw = await createRepoTools().workit_branch_setup.execute(
       {
         confirmed: true,
         target_branch: "feature/x",
@@ -517,7 +517,7 @@ test("reapply stash dispatches without a target branch", async () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "workflow-toolkit-reapply-"));
   try {
     spawnSync("git", ["init", "-q", "-b", "feature/x"], { cwd: root });
-    const raw = await createRepoTools().workflow_branch_setup.execute(
+    const raw = await createRepoTools().workit_branch_setup.execute(
       {
         confirmed: true,
         action: "reapply_stash",
@@ -537,7 +537,7 @@ test("branch setup treats quote-bearing manifest paths as data", async () => {
   try {
     spawnSync("git", ["init", "-q", "-b", "feature/x"], { cwd: root });
     const injected = "docs/sdd/x'); __import__('pathlib').Path('sentinel').write_text('owned'); #";
-    const raw = await createRepoTools().workflow_branch_setup.execute(
+    const raw = await createRepoTools().workit_branch_setup.execute(
       {
         confirmed: true,
         action: "reapply_stash",
@@ -556,7 +556,7 @@ test("confirmed script mutations use package scripts, argument arrays, and scope
   resetCalls();
   const root = mkdtempSync(path.join(os.tmpdir(), "workflow-toolkit-scripts-"));
   expect(
-    await execute("workflow_pr_create", {
+    await execute("workit_pr_create", {
       confirmed: true,
       title: "Native tools",
       body: "Ready",
@@ -611,7 +611,7 @@ test("mutation scripts normalize legacy errors into a failed Result", async () =
       stderr: "",
       cwd: root,
     }),
-  }).workflow_pr_create.execute({ confirmed: true, title: "Broken" }, {
+  }).workit_pr_create.execute({ confirmed: true, title: "Broken" }, {
     directory: root,
     worktree: root,
   } as never);
@@ -661,7 +661,7 @@ test("mutation paths cannot escape ToolContext.directory", async () => {
     const outside = path.join(parent, "outside");
     mkdirSync(root);
     mkdirSync(outside);
-    const branchRaw = await createRepoTools(runtime).workflow_branch_setup.execute(
+    const branchRaw = await createRepoTools(runtime).workit_branch_setup.execute(
       {
         confirmed: true,
         target_branch: "feature/native-tools",
@@ -674,7 +674,7 @@ test("mutation paths cannot escape ToolContext.directory", async () => {
 
     writeFileSync(path.join(outside, "CHANGELOG.md"), "# Outside\n");
     symlinkSync(path.join(outside, "CHANGELOG.md"), path.join(root, "CHANGELOG.md"));
-    const changelogRaw = await createRepoTools(runtime).workflow_changelog_apply.execute(
+    const changelogRaw = await createRepoTools(runtime).workit_changelog_apply.execute(
       {
         confirmed: true,
         entries: { Fixed: ["must stay inside"] },
@@ -732,7 +732,7 @@ Keep this custom section.
 - Historical feature
 `,
     );
-    const raw = await createRepoTools(runtime).workflow_changelog_apply.execute(
+    const raw = await createRepoTools(runtime).workit_changelog_apply.execute(
       {
         confirmed: true,
         entries: { Added: ["New feature", "Existing feature"] },
@@ -767,7 +767,7 @@ test("confirmed changelog apply without entries fails without editing", async ()
     const changelog = path.join(root, "CHANGELOG.md");
     const before = "# Changelog\n\n## [Unreleased]\n";
     writeFileSync(changelog, before);
-    const raw = await createRepoTools(runtime).workflow_changelog_apply.execute(
+    const raw = await createRepoTools(runtime).workit_changelog_apply.execute(
       {
         confirmed: true,
       },
@@ -792,7 +792,7 @@ test("changelog apply accepts a symlink-spelled ToolContext directory", async ()
     mkdirSync(root);
     symlinkSync(root, linkedRoot);
     writeFileSync(path.join(root, "CHANGELOG.md"), "# Changelog\n\n## [Unreleased]\n");
-    const raw = await createRepoTools(runtime).workflow_changelog_apply.execute(
+    const raw = await createRepoTools(runtime).workit_changelog_apply.execute(
       {
         confirmed: true,
         entries: { Fixed: ["Canonical root"] },

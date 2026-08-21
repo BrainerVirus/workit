@@ -501,7 +501,7 @@ const readFlowStrict = (root: string, slug: string): StrictRead => {
   if (!existsSync(file)) {
     return err(
       "flow_not_activated",
-      `flow not activated for ${slug} — run workflow_flow_status first`,
+      `flow not activated for ${slug} — run workit_flow_status first`,
     );
   }
   let text: string;
@@ -2103,13 +2103,13 @@ export const assertHandoffReady = (root: string, planPath: string): FlowGateResu
   if (state.spec.status !== "approved") {
     return err(
       "spec_not_approved",
-      `spec not approved (status: ${state.spec.status}). Run workflow_spec_approve after the user's approval.`,
+      `spec not approved (status: ${state.spec.status}). Run workit_spec_approve after the user's approval.`,
     );
   }
   if (state.plan.status !== "approved") {
     return err(
       "plan_not_approved",
-      `plan not approved (status: ${state.plan.status}). Run workflow_plan_approve after the user's approval.`,
+      `plan not approved (status: ${state.plan.status}). Run workit_plan_approve after the user's approval.`,
     );
   }
   if (state.handoff_destination) {
@@ -2143,19 +2143,19 @@ export const assertFlowGates = (
   if (state.spec.status !== "approved") {
     return err(
       "spec_not_approved",
-      `spec not approved (status: ${state.spec.status}). Run workflow_spec_approve after the user's approval.`,
+      `spec not approved (status: ${state.spec.status}). Run workit_spec_approve after the user's approval.`,
     );
   }
   if (state.plan.status !== "approved") {
     return err(
       "plan_not_approved",
-      `plan not approved (status: ${state.plan.status}). Run workflow_plan_approve after the user's approval.`,
+      `plan not approved (status: ${state.plan.status}). Run workit_plan_approve after the user's approval.`,
     );
   }
   if (opts.requireMenu && !state.menu.presented) {
     return err(
       "menu_not_presented",
-      "post-plan menu not presented. Ask the native question menu (Subagent-driven/Inline/Handoff/Review spec/Review plan) and record the answer with workflow_plan_menu.",
+      "post-plan menu not presented. Ask the native question menu (Subagent-driven/Inline/Handoff/Review spec/Review plan) and record the answer with workit_plan_menu.",
     );
   }
   return { ok: true };
@@ -2187,19 +2187,19 @@ export const assertProductGates = (
   if (state.spec.status !== "approved") {
     return err(
       "spec_not_approved",
-      `spec not approved (status: ${state.spec.status}). Run workflow_spec_approve after the user's approval.`,
+      `spec not approved (status: ${state.spec.status}). Run workit_spec_approve after the user's approval.`,
     );
   }
   if (state.plan.status !== "approved") {
     return err(
       "plan_not_approved",
-      `plan not approved (status: ${state.plan.status}). Run workflow_plan_approve after the user's approval.`,
+      `plan not approved (status: ${state.plan.status}). Run workit_plan_approve after the user's approval.`,
     );
   }
   if (opts.requireMenu && !state.menu.presented) {
     return err(
       "menu_not_presented",
-      "post-plan menu not presented. Record the native question answer with workflow_plan_menu.",
+      "post-plan menu not presented. Record the native question answer with workit_plan_menu.",
     );
   }
   if (opts.requireDocs) {
@@ -2237,19 +2237,19 @@ export const assertSddControlGates = (
   if (state.spec.status !== "approved") {
     return err(
       "spec_not_approved",
-      `spec not approved (status: ${state.spec.status}). Run workflow_spec_approve after the user's approval.`,
+      `spec not approved (status: ${state.spec.status}). Run workit_spec_approve after the user's approval.`,
     );
   }
   if (state.plan.status !== "approved") {
     return err(
       "plan_not_approved",
-      `plan not approved (status: ${state.plan.status}). Run workflow_plan_approve after the user's approval.`,
+      `plan not approved (status: ${state.plan.status}). Run workit_plan_approve after the user's approval.`,
     );
   }
   if (opts.requireMenu && !state.menu.presented) {
     return err(
       "menu_not_presented",
-      "post-plan menu not presented. Record the native question answer with workflow_plan_menu.",
+      "post-plan menu not presented. Record the native question answer with workit_plan_menu.",
     );
   }
   if (opts.requireDocs) {
@@ -2318,18 +2318,18 @@ export const COORDINATOR_WRITE_TOOLS: readonly string[] = [
   "chown",
   // workit product/config/external mutation tools (SDD control tools are
   // coordinator-owned and routed through assertSddControlGates, not this set)
-  "workflow_commit",
-  "workflow_pr_create",
-  "workflow_rule_edit",
-  "workflow_template_edit",
-  "workflow_changelog_apply",
-  "workflow_branch_setup",
+  "workit_commit",
+  "workit_pr_create",
+  "workit_rule_edit",
+  "workit_template_edit",
+  "workit_changelog_apply",
+  "workit_branch_setup",
   "workit_init_apply",
-  "workflow_docs_promote",
-  "workflow_docs_layout",
-  "workflow_docs_repo_link",
-  "workflow_youtrack_post",
-  "workflow_youtrack_log_time",
+  "workit_docs_promote",
+  "workit_docs_layout",
+  "workit_docs_repo_link",
+  "workit_youtrack_post",
+  "workit_youtrack_log_time",
 ];
 
 /**
@@ -2987,10 +2987,10 @@ export const subagentDrivenInterception = (input: {
     }
     if (
       [
-        "workflow_sdd_task_brief",
-        "workflow_sdd_review_package",
-        "workflow_sdd_append_progress",
-        "workflow_sdd_append_advisory",
+        "workit_sdd_task_brief",
+        "workit_sdd_review_package",
+        "workit_sdd_append_progress",
+        "workit_sdd_append_advisory",
       ].includes(input.tool)
     ) {
       return err(

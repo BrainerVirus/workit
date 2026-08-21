@@ -68,11 +68,11 @@ const repoWithDevelop = () => {
   return { root, remote };
 };
 
-test("workflow_docs_branch keeps current feature branch", async () => {
+test("workit_docs_branch keeps current feature branch", async () => {
   const { root, remote } = repoWithDevelop();
   git(root, ["checkout", "-q", "-b", "feature/current"]);
   try {
-    const raw = await createSddTools(new WorkflowStateStore()).workflow_docs_branch.execute({}, {
+    const raw = await createSddTools(new WorkflowStateStore()).workit_docs_branch.execute({}, {
       directory: root,
       worktree: root,
       sessionID: "t",
@@ -87,13 +87,13 @@ test("workflow_docs_branch keeps current feature branch", async () => {
   }
 });
 
-test("workflow_docs_branch proposes create_from_develop on main", async () => {
+test("workit_docs_branch proposes create_from_develop on main", async () => {
   const { root, remote } = repoWithDevelop();
   mkdirSync(path.join(root, "docs", "2026-08-04-gates"), { recursive: true });
   const plan = "docs/2026-08-04-gates/plan.md";
   writeFileSync(path.join(root, plan), "# Plan\n");
   try {
-    const raw = await createSddTools(new WorkflowStateStore()).workflow_docs_branch.execute(
+    const raw = await createSddTools(new WorkflowStateStore()).workit_docs_branch.execute(
       { plan_path: plan },
       { directory: root, worktree: root, sessionID: "t" } as never,
     );
@@ -111,7 +111,7 @@ test("workflow_docs_branch proposes create_from_develop on main", async () => {
 test("branch setup creates feature branch from develop when starting on main", async () => {
   const { root, remote } = repoWithDevelop();
   try {
-    const raw = await createRepoTools().workflow_branch_setup.execute(
+    const raw = await createRepoTools().workit_branch_setup.execute(
       {
         confirmed: true,
         target_branch: "feature/x",
@@ -161,7 +161,7 @@ test("workspace target branch drives docs branch and branch setup", async () => 
     expect(resolved.action).toBe("create_from_base");
     expect(resolved.base).toBe("main");
 
-    const raw = await createRepoTools().workflow_branch_setup.execute(
+    const raw = await createRepoTools().workit_branch_setup.execute(
       {
         confirmed: true,
         target_branch: "feature/github-flow",
@@ -230,7 +230,7 @@ test("branch setup errors when origin develop is missing", async () => {
     writeFileSync(path.join(root, "README.md"), "base\n");
     git(root, ["add", "README.md"]);
     git(root, ["commit", "-q", "-m", "base"]);
-    const raw = await createRepoTools().workflow_branch_setup.execute(
+    const raw = await createRepoTools().workit_branch_setup.execute(
       {
         confirmed: true,
         target_branch: "feature/x",
@@ -331,18 +331,18 @@ test("branch setup guards protected targets, missing targets, and dirty stash fl
     const tools = createRepoTools();
     const ctx = { directory: dir, worktree: dir } as never;
     const noTarget = JSON.parse(
-      (await tools.workflow_branch_setup.execute({ confirmed: true }, ctx)) as string,
+      (await tools.workit_branch_setup.execute({ confirmed: true }, ctx)) as string,
     );
     expect(noTarget.error).toContain("target branch required");
     const protected_ = JSON.parse(
-      (await tools.workflow_branch_setup.execute(
+      (await tools.workit_branch_setup.execute(
         { confirmed: true, target_branch: "main" },
         ctx,
       )) as string,
     );
     expect(protected_.error).toContain("protected branch");
     const badKind = JSON.parse(
-      (await tools.workflow_branch_setup.execute(
+      (await tools.workit_branch_setup.execute(
         { confirmed: true, target_branch: "random/x" },
         ctx,
       )) as string,
@@ -352,7 +352,7 @@ test("branch setup guards protected targets, missing targets, and dirty stash fl
     run(["checkout", "-q", "-b", "feature/dirty"]);
     writeFileSync(path.join(dir, "dirty.txt"), "uncommitted");
     const dirty = JSON.parse(
-      (await tools.workflow_branch_setup.execute(
+      (await tools.workit_branch_setup.execute(
         { confirmed: true, target_branch: "feature/next", stash: "no" },
         ctx,
       )) as string,
@@ -377,7 +377,7 @@ test("branch setup reapply_stash requires a recorded stash ref", async () => {
     const tools = createRepoTools();
     const ctx = { directory: dir, worktree: dir } as never;
     const noRef = JSON.parse(
-      (await tools.workflow_branch_setup.execute(
+      (await tools.workit_branch_setup.execute(
         { confirmed: true, action: "reapply_stash" },
         ctx,
       )) as string,
@@ -406,7 +406,7 @@ test("branch setup stash + reapply round trip restores changes", async () => {
     const tools = createRepoTools();
     const ctx = { directory: dir, worktree: dir } as never;
     const setup = JSON.parse(
-      (await tools.workflow_branch_setup.execute(
+      (await tools.workit_branch_setup.execute(
         {
           confirmed: true,
           target_branch: "feature/next",
@@ -419,7 +419,7 @@ test("branch setup stash + reapply round trip restores changes", async () => {
     expect(existsSync(path.join(dir, "dirty.txt"))).toBe(false);
 
     const reapply = JSON.parse(
-      (await tools.workflow_branch_setup.execute(
+      (await tools.workit_branch_setup.execute(
         {
           confirmed: true,
           action: "reapply_stash",
@@ -449,7 +449,7 @@ test("branch setup fails from a feature branch when origin develop is missing", 
     const tools = createRepoTools();
     const ctx = { directory: dir, worktree: dir } as never;
     const raw = JSON.parse(
-      (await tools.workflow_branch_setup.execute(
+      (await tools.workit_branch_setup.execute(
         {
           confirmed: true,
           target_branch: "feature/new",
@@ -564,8 +564,8 @@ test(
           expect("error" in db).toBe(false);
           if (!("error" in db)) expect(db.base).toBe(c.target);
 
-          // surface 4 — OpenCode workflow_pr_create
-          const raw = await createRepoTools().workflow_pr_create.execute(
+          // surface 4 — OpenCode workit_pr_create
+          const raw = await createRepoTools().workit_pr_create.execute(
             { confirmed: true, title: "T" },
             { directory: root, worktree: root } as never,
           );
@@ -573,9 +573,9 @@ test(
           expect(toolResult.ok, `${c.preset}: ${JSON.stringify(toolResult)}`).toBe(true);
           expect(toolResult.data.targetBranch).toBe(c.target);
 
-          // surface 5 — Cursor workflow_pr_create. This calls core prCreate
+          // surface 5 — Cursor workit_pr_create. This calls core prCreate
           // directly rather than packages/workit-cursor/mcp/server.ts: the MCP
-          // adapter's workflow_pr_create handler is a thin passthrough — it
+          // adapter's workit_pr_create handler is a thin passthrough — it
           // registers the tool, requires confirmed:true, then calls prCreate
           // with the same 5 WF_PR_* keys (mcp/server.ts) — and exercising it
           // needs a full stdio MCP client. The adapter wiring is asserted by

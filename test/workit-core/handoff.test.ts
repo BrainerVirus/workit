@@ -317,7 +317,7 @@ test("native handoff resolves package context, records paths, and seeds from Too
   };
   const state = new WorkflowStateStore();
 
-  const raw = await createHandoffTools(client, state).workflow_handoff_session.execute(
+  const raw = await createHandoffTools(client, state).workit_handoff_session.execute(
     { message: "please continue --stay" },
     { directory: root, worktree: root, sessionID: "parent" } as never,
   );
@@ -385,7 +385,7 @@ test("native handoff ignores a hallucinated stay argument when the message has n
   const raw = await createHandoffTools(
     client,
     new WorkflowStateStore(),
-  ).workflow_handoff_session.execute(
+  ).workit_handoff_session.execute(
     { message: "Load the wk-handoff skill and follow it.", stay: true } as never,
     { directory: root, worktree: root, sessionID: "parent" } as never,
   );
@@ -431,7 +431,7 @@ test("native handoff resolves relative paths from the session directory", async 
     await createHandoffTools(
       client as never,
       new WorkflowStateStore(),
-    ).workflow_handoff_session.execute({ message: "continue" }, {
+    ).workit_handoff_session.execute({ message: "continue" }, {
       directory: root,
       worktree: root,
       sessionID: "parent",
@@ -471,7 +471,7 @@ test("native handoff pre-flight rejects an already-marked destination without cr
     const raw = await createHandoffTools(
       client as never,
       new WorkflowStateStore(),
-    ).workflow_handoff_session.execute({ message: "continue" }, {
+    ).workit_handoff_session.execute({ message: "continue" }, {
       directory: root,
       worktree: root,
       sessionID: "parent",
@@ -706,7 +706,7 @@ test("handoff hard-fails when flow gates are not approved", async () => {
     const raw = await createHandoffTools(
       {} as never,
       new WorkflowStateStore(),
-    ).workflow_handoff_session.execute({ message: "continue" }, {
+    ).workit_handoff_session.execute({ message: "continue" }, {
       directory: root,
       sessionID: "parent",
     } as never);
@@ -753,7 +753,7 @@ test("handoff proceeds when flow gates are approved", async () => {
     const raw = await createHandoffTools(
       client as never,
       new WorkflowStateStore(),
-    ).workflow_handoff_session.execute({ message: "continue" }, {
+    ).workit_handoff_session.execute({ message: "continue" }, {
       directory: root,
       sessionID: "parent",
     } as never);
@@ -1358,7 +1358,7 @@ test("OpenCode handoff marks the destination only after a successful seed", asyn
     const raw = await createHandoffTools(
       client,
       new WorkflowStateStore(),
-    ).workflow_handoff_session.execute({ message: "continue" }, {
+    ).workit_handoff_session.execute({ message: "continue" }, {
       directory: root,
       worktree: root,
       sessionID: "parent",
@@ -1394,7 +1394,7 @@ test("OpenCode handoff seed failure leaves the source flow unmarked and retryabl
     const raw = await createHandoffTools(
       client,
       new WorkflowStateStore(),
-    ).workflow_handoff_session.execute({ message: "continue" }, {
+    ).workit_handoff_session.execute({ message: "continue" }, {
       directory: root,
       worktree: root,
       sessionID: "parent",
@@ -1431,7 +1431,7 @@ test("OpenCode handoff create failure leaves the source flow unmarked and retrya
     const raw = await createHandoffTools(
       client,
       new WorkflowStateStore(),
-    ).workflow_handoff_session.execute({ message: "continue" }, {
+    ).workit_handoff_session.execute({ message: "continue" }, {
       directory: root,
       worktree: root,
       sessionID: "parent",
@@ -1491,7 +1491,7 @@ test("handoff preflight rejects missing flow state before session.create", async
     const raw = await createHandoffTools(
       client,
       new WorkflowStateStore(),
-    ).workflow_handoff_session.execute({ message: "continue" }, {
+    ).workit_handoff_session.execute({ message: "continue" }, {
       directory: root,
       worktree: root,
       sessionID: "parent",
@@ -1528,7 +1528,7 @@ test("handoff preflight rejects when menu not recorded before session.create", a
     const raw = await createHandoffTools(
       client,
       new WorkflowStateStore(),
-    ).workflow_handoff_session.execute({ message: "continue" }, {
+    ).workit_handoff_session.execute({ message: "continue" }, {
       directory: root,
       worktree: root,
       sessionID: "parent",
@@ -1575,7 +1575,7 @@ test("handoff preflight rejects non-handoff menu choice before session.create", 
     const raw = await createHandoffTools(
       client,
       new WorkflowStateStore(),
-    ).workflow_handoff_session.execute({ message: "continue" }, {
+    ).workit_handoff_session.execute({ message: "continue" }, {
       directory: root,
       worktree: root,
       sessionID: "parent",
@@ -1610,7 +1610,7 @@ test("handoff preflight rejects already-marked destination before session.create
     const raw = await createHandoffTools(
       client,
       new WorkflowStateStore(),
-    ).workflow_handoff_session.execute({ message: "continue" }, {
+    ).workit_handoff_session.execute({ message: "continue" }, {
       directory: root,
       worktree: root,
       sessionID: "parent",
@@ -1652,7 +1652,7 @@ test("valid non---stay handoff publishes selection and titles Workit: <slug>", a
     const raw = await createHandoffTools(
       client,
       new WorkflowStateStore(),
-    ).workflow_handoff_session.execute({ message: "continue" }, {
+    ).workit_handoff_session.execute({ message: "continue" }, {
       directory: root,
       worktree: root,
       sessionID: "parent",

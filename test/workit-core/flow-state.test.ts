@@ -208,13 +208,13 @@ test("slugFromSddPath requires a real sdd segment and rejects sdd-prefixed looka
   expect(slugFromSddPath("docs/x/sdd'attack/flow.json")).toBe("x");
 });
 
-test("missing flow state hint names only workflow_flow_status as the activation path", () => {
+test("missing flow state hint names only workit_flow_status as the activation path", () => {
   const { root, slug } = fixture();
   try {
     const result = transitionSpec(root, slug, `docs/${slug}/spec.md`, evidence());
     expect(result.ok).toBe(false);
     if (result.ok === false) {
-      expect(result.error).toContain("workflow_flow_status");
+      expect(result.error).toContain("workit_flow_status");
       expect(result.error).not.toContain("docs_layout");
     }
   } finally {

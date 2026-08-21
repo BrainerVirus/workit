@@ -271,7 +271,7 @@ test("Cursor MCP launcher starts the server from the extracted package, repo-fre
       const names = ((listed.result as { tools?: { name: string }[] })?.tools ?? []).map(
         (t) => t.name,
       );
-      expect(names).toContain("workflow_git_context");
+      expect(names).toContain("workit_git_context");
       expect(names).toContain("workit_init_apply");
     } finally {
       // win32 keeps deleted files/dirs locked until the child fully exits, so

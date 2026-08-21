@@ -13,7 +13,7 @@ export const detectConfigGapError = (text: string): boolean => text.includes(CON
 
 const COMPLETION_CLAIMS = /\b(?:done|fixed|passing|green|complete|all set)\b/i;
 const VERIFICATION_EVIDENCE =
-  /\bbun run check\b|\bworkflow_verify\b|\bbun test\b|\bchecks?\s+pass(?:es|ing)?\b|\btests?\s+pass(?:es|ing)?\b/i;
+  /\bbun run check\b|\bworkit_verify\b|\bbun test\b|\bchecks?\s+pass(?:es|ing)?\b|\btests?\s+pass(?:es|ing)?\b/i;
 
 // Claims completion without verification-command evidence in the same text.
 export const detectVerificationClaim = (text: string): boolean =>

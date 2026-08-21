@@ -108,7 +108,7 @@ test("opencode and cursor flow registrations share the same pure core functions"
 
     const raw = await createFlowTools(new HostReceiptStore(), {
       session: { get: async () => ({ data: {} }) },
-    }).workflow_flow_status.execute({ plan_path: "docs/x/plan.md" }, { directory: root } as never);
+    }).workit_flow_status.execute({ plan_path: "docs/x/plan.md" }, { directory: root } as never);
     const result = JSON.parse(raw as string);
     expect(result.ok).toBe(true);
     const slug = slugFromPath("docs/x/plan.md");
@@ -135,13 +135,13 @@ test("opencode and cursor flow registrations share the same pure core functions"
   }
 });
 
-test("both hosts register workflow_docs_layout prepare", async () => {
+test("both hosts register workit_docs_layout prepare", async () => {
   const server = readFileSync(CURSOR_SERVER, "utf8");
-  expect(server).toMatch(/"workflow_docs_layout"/);
+  expect(server).toMatch(/"workit_docs_layout"/);
   expect(server).toMatch(/prepareDocsLayout\(\{ workspace_root, slug, spec_path, plan_path \}\)/);
 
   const { createDocsRepoTools } =
     await import("../../packages/workit-opencode/src/tools/docs-repo");
   const tools = createDocsRepoTools();
-  expect(typeof tools.workflow_docs_layout).toBe("object");
+  expect(typeof tools.workit_docs_layout).toBe("object");
 });

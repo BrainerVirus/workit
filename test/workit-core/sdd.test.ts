@@ -69,7 +69,7 @@ test("plan parser returns only top-level Task sections and records state", async
   );
   const state = new WorkflowStateStore();
   const tools = createSddTools(state);
-  const raw = await tools.workflow_plan_tasks.execute({ plan_path: "docs/x/plan.md" }, {
+  const raw = await tools.workit_plan_tasks.execute({ plan_path: "docs/x/plan.md" }, {
     directory: root,
     worktree: root,
     sessionID: "s1",
@@ -96,7 +96,7 @@ test("plan parser honors an explicit contained spec path and returns its branch"
   );
   const state = new WorkflowStateStore();
   const tools = createSddTools(state);
-  const raw = await tools.workflow_plan_tasks.execute(
+  const raw = await tools.workit_plan_tasks.execute(
     {
       plan_path: "docs/x/plan.md",
       spec_path: "docs/exact/spec.md",
@@ -106,7 +106,7 @@ test("plan parser honors an explicit contained spec path and returns its branch"
   expect(JSON.parse(raw as string).data.branch).toBe("feature/exact");
   expect(state.get("spec")?.spec).toBe("docs/exact/spec.md");
 
-  const outside = await createSddTools(new WorkflowStateStore()).workflow_plan_tasks.execute(
+  const outside = await createSddTools(new WorkflowStateStore()).workit_plan_tasks.execute(
     {
       plan_path: "docs/x/plan.md",
       spec_path: "../outside.md",
@@ -117,7 +117,7 @@ test("plan parser honors an explicit contained spec path and returns its branch"
 });
 
 test("SDD paths outside the repository are rejected", async () => {
-  const raw = await createSddTools(new WorkflowStateStore()).workflow_sdd_context.execute(
+  const raw = await createSddTools(new WorkflowStateStore()).workit_sdd_context.execute(
     { plan_path: "../outside.md" },
     { directory: os.tmpdir(), worktree: os.tmpdir(), sessionID: "s1" } as never,
   );
@@ -134,7 +134,7 @@ test("SDD context computes absent paths without creating repository files", asyn
       path.join(root, "docs/x/plan.md"),
       "# X\n\n**Spec:** `docs/x/spec.md`\n**Branch:** `feature/x`\n\n### Task 1: One\n\n- [ ] Step\n",
     );
-    const raw = await createSddTools(new WorkflowStateStore()).workflow_sdd_context.execute(
+    const raw = await createSddTools(new WorkflowStateStore()).workit_sdd_context.execute(
       { plan_path: "docs/x/plan.md" },
       { directory: root, worktree: root, sessionID: "readonly" } as never,
     );
@@ -154,7 +154,7 @@ test("SDD context returns canonical paths and creates no nested slug level or em
       path.join(root, "docs/x/plan.md"),
       "# X\n\n**Spec:** `docs/x/spec.md`\n**Branch:** `feature/x`\n\n### Task 1: One\n\n- [ ] Step\n",
     );
-    const raw = await createSddTools(new WorkflowStateStore()).workflow_sdd_context.execute(
+    const raw = await createSddTools(new WorkflowStateStore()).workit_sdd_context.execute(
       { plan_path: "docs/x/plan.md" },
       { directory: root, worktree: root, sessionID: "canonical" } as never,
     );
@@ -176,14 +176,14 @@ test("progress.md appears only on the first confirmed append, never on context",
   const tools = createSddTools(new WorkflowStateStore());
   try {
     establishApprovedFlow(root, "x", new HostReceiptStore(), "s1");
-    await tools.workflow_sdd_context.execute({ plan_path: "docs/x/plan.md" }, {
+    await tools.workit_sdd_context.execute({ plan_path: "docs/x/plan.md" }, {
       directory: root,
       worktree: root,
       sessionID: "lazy",
     } as never);
     expect(existsSync(path.join(root, "docs/x/sdd/progress.md"))).toBe(false);
     const result = JSON.parse(
-      (await tools.workflow_sdd_append_progress.execute(
+      (await tools.workit_sdd_append_progress.execute(
         {
           confirmed: true,
           progress_path: "docs/x/sdd/progress.md",
@@ -205,7 +205,7 @@ test("sdd context accepts a bare slug like the cursor host and returns canonical
   try {
     mkdirSync(path.join(root, "docs", "x"), { recursive: true });
     writeFileSync(path.join(root, "docs/x/spec.md"), "# X\n**Branch:** `feature/x`\n");
-    const raw = await createSddTools(new WorkflowStateStore()).workflow_sdd_context.execute(
+    const raw = await createSddTools(new WorkflowStateStore()).workit_sdd_context.execute(
       { slug: "x" },
       { directory: root, worktree: root, sessionID: "slug" } as never,
     );
@@ -223,25 +223,25 @@ test("SDD tools expose standard schemas and guard writes", async () => {
   const tools = createSddTools(new WorkflowStateStore());
   expect(Object.keys(tools).sort()).toEqual(
     [
-      "workflow_docs_branch",
-      "workflow_docs_validate",
-      "workflow_plan_tasks",
-      "workflow_resolve_branch",
-      "workflow_sdd_context",
-      "workflow_sdd_task_brief",
-      "workflow_sdd_review_package",
-      "workflow_sdd_append_progress",
-      "workflow_sdd_append_advisory",
+      "workit_docs_branch",
+      "workit_docs_validate",
+      "workit_plan_tasks",
+      "workit_resolve_branch",
+      "workit_sdd_context",
+      "workit_sdd_task_brief",
+      "workit_sdd_review_package",
+      "workit_sdd_append_progress",
+      "workit_sdd_append_advisory",
     ].sort(),
   );
   for (const definition of Object.values(tools)) {
     expect("workspace_root" in definition.args).toBe(false);
   }
   for (const name of [
-    "workflow_sdd_task_brief",
-    "workflow_sdd_review_package",
-    "workflow_sdd_append_progress",
-    "workflow_sdd_append_advisory",
+    "workit_sdd_task_brief",
+    "workit_sdd_review_package",
+    "workit_sdd_append_progress",
+    "workit_sdd_append_advisory",
   ] as const) {
     const raw = await tools[name].execute(
       { confirmed: false } as never,
@@ -256,7 +256,7 @@ test("confirmed SDD writes use repository-relative paths and standard results", 
   const tools = createSddTools(new WorkflowStateStore());
   establishApprovedFlow(root, "x", new HostReceiptStore(), "s1");
   const brief = JSON.parse(
-    (await tools.workflow_sdd_task_brief.execute(
+    (await tools.workit_sdd_task_brief.execute(
       {
         confirmed: true,
         sdd_dir: "docs/x/sdd",
@@ -270,7 +270,7 @@ test("confirmed SDD writes use repository-relative paths and standard results", 
   expect(readFileSync(path.join(root, brief.data.brief_path), "utf8")).toContain("Implement it");
 
   const progress = JSON.parse(
-    (await tools.workflow_sdd_append_progress.execute(
+    (await tools.workit_sdd_append_progress.execute(
       {
         confirmed: true,
         progress_path: "docs/x/sdd/progress.md",
@@ -299,7 +299,7 @@ test("branch resolution returns repository and plan facts", async () => {
   spawnSync("git", ["config", "user.email", "workflow@example.test"], { cwd: root });
   spawnSync("git", ["add", "docs"], { cwd: root });
   spawnSync("git", ["commit", "-q", "-m", "fixture"], { cwd: root });
-  const raw = await createSddTools(new WorkflowStateStore()).workflow_resolve_branch.execute(
+  const raw = await createSddTools(new WorkflowStateStore()).workit_resolve_branch.execute(
     {
       spec_path: "docs/spec.md",
       plan_path: "docs/plan.md",
@@ -333,7 +333,7 @@ test("confirmed review package writes its diff inside the repository", async () 
   writeFileSync(path.join(root, "file.txt"), "one\ntwo\n");
   git(["commit", "-q", "-am", "head"]);
   const head = git(["rev-parse", "HEAD"]).stdout.trim();
-  const raw = await createSddTools(new WorkflowStateStore()).workflow_sdd_review_package.execute(
+  const raw = await createSddTools(new WorkflowStateStore()).workit_sdd_review_package.execute(
     {
       confirmed: true,
       sdd_dir: "docs/review/sdd",
@@ -355,7 +355,7 @@ test("review package rejects unsafe revisions and quote-bearing paths cannot exe
   const sentinel = path.join(root, "sentinel");
   try {
     const tools = createSddTools(new WorkflowStateStore());
-    const raw = await tools.workflow_sdd_review_package.execute(
+    const raw = await tools.workit_sdd_review_package.execute(
       {
         confirmed: true,
         sdd_dir: "docs/quote/sdd'$(touch sentinel)",
@@ -387,7 +387,7 @@ test("review package safely writes to a quote-bearing contained path", async () 
     writeFileSync(path.join(root, "file.txt"), "two\n");
     git(["commit", "-q", "-am", "head"]);
     const head = git(["rev-parse", "HEAD"]).stdout.trim();
-    const raw = await createSddTools(new WorkflowStateStore()).workflow_sdd_review_package.execute(
+    const raw = await createSddTools(new WorkflowStateStore()).workit_sdd_review_package.execute(
       {
         confirmed: true,
         sdd_dir: "docs/review/sdd'quoted",
@@ -455,7 +455,7 @@ test("sddReviewPackage rejects an empty base..head range through the OpenCode to
     git(["add", "file.txt"]);
     git(["commit", "-q", "-m", "base"]);
     const base = git(["rev-parse", "HEAD"]).stdout.trim();
-    const raw = await createSddTools(new WorkflowStateStore()).workflow_sdd_review_package.execute(
+    const raw = await createSddTools(new WorkflowStateStore()).workit_sdd_review_package.execute(
       {
         confirmed: true,
         sdd_dir: "docs/review/sdd",
@@ -523,7 +523,7 @@ test("sddReviewPackage rejects an empty diff through the OpenCode tool wrapper",
     const base = git(["rev-parse", "HEAD"]).stdout.trim();
     git(["commit", "-q", "--allow-empty", "-m", "empty"]);
     const head = git(["rev-parse", "HEAD"]).stdout.trim();
-    const raw = await createSddTools(new WorkflowStateStore()).workflow_sdd_review_package.execute(
+    const raw = await createSddTools(new WorkflowStateStore()).workit_sdd_review_package.execute(
       {
         confirmed: true,
         sdd_dir: "docs/review/sdd",
@@ -677,7 +677,7 @@ test("the OpenCode advisory wrapper preserves the core payload and validation co
     establishApprovedFlow(root, "x", new HostReceiptStore(), "s1");
     const tools = createSddTools(new WorkflowStateStore());
     const ok = JSON.parse(
-      (await tools.workflow_sdd_append_advisory.execute(
+      (await tools.workit_sdd_append_advisory.execute(
         {
           confirmed: true,
           advisories_path: "docs/x/sdd/advisories.md",
@@ -697,7 +697,7 @@ test("the OpenCode advisory wrapper preserves the core payload and validation co
     );
 
     const badTask = JSON.parse(
-      (await tools.workflow_sdd_append_advisory.execute(
+      (await tools.workit_sdd_append_advisory.execute(
         {
           confirmed: true,
           advisories_path: "docs/x/sdd/advisories.md",
@@ -711,7 +711,7 @@ test("the OpenCode advisory wrapper preserves the core payload and validation co
     expect(badTask.error).toContain("positive safe integer");
 
     const unconfirmed = JSON.parse(
-      (await tools.workflow_sdd_append_advisory.execute(
+      (await tools.workit_sdd_append_advisory.execute(
         { confirmed: false, advisories_path: "docs/x/sdd/advisories.md", task_id: 1, text: "ok" },
         { directory: root, worktree: root } as never,
       )) as string,

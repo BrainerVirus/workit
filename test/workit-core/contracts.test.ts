@@ -838,7 +838,7 @@ function opencodeDriver(): HostDriver {
     JSON.parse(
       await (
         tools as unknown as Record<string, { execute: (a: never, c: never) => Promise<string> }>
-      )[name as "workflow_flow_status"].execute(
+      )[name as "workit_flow_status"].execute(
         args as never,
         {
           directory: root,
@@ -848,9 +848,9 @@ function opencodeDriver(): HostDriver {
       ),
     ) as { ok: boolean; data?: any; error?: string };
   const status = async (root: string, slug: string): Promise<NState> => {
-    const out = await run("workflow_flow_status", { plan_path: planFor(slug) }, root);
+    const out = await run("workit_flow_status", { plan_path: planFor(slug) }, root);
     if (!out.ok) return normFailure(out.data?.code ?? "flow_status_failed", out.data?.details);
-    // OpenCode's workflow_flow_status does not surface `handoff_destination`, so
+    // OpenCode's workit_flow_status does not surface `handoff_destination`, so
     // the flag keeps the flow.json fallback here (advisory F9); the Cursor and
     // CLI drivers read it from their host surfaces.
     return normSuccess(out.data, destFromFlow(root, slug));
@@ -866,13 +866,13 @@ function opencodeDriver(): HostDriver {
   return {
     name: "opencode",
     status,
-    pause: mutate("workflow_plan_pause", "Pause plan"),
-    resume: mutate("workflow_plan_resume", "Resume plan"),
-    complete: mutate("workflow_plan_complete", "Complete plan"),
+    pause: mutate("workit_plan_pause", "Pause plan"),
+    resume: mutate("workit_plan_resume", "Resume plan"),
+    complete: mutate("workit_plan_complete", "Complete plan"),
     async reenterHandoff(root, slug) {
       receipts.record("oc", "call-handoff", "handoff");
       const out = await run(
-        "workflow_plan_menu",
+        "workit_plan_menu",
         { plan_path: planFor(slug), choice: "handoff" },
         root,
       );
@@ -880,7 +880,7 @@ function opencodeDriver(): HostDriver {
       return status(root, slug);
     },
     async firstHandoff(root, slug) {
-      // OpenCode's host handoff surface is workflow_handoff_session (exercised in
+      // OpenCode's host handoff surface is workit_handoff_session (exercised in
       // handoff.test.ts); the matrix drives the shared core mutation for OpenCode
       // as the advisory allows ("or core markHandoffDestination").
       const built = buildHandoffPrompt(root, planFor(slug));
@@ -906,15 +906,15 @@ function cursorDriver(request: CursorRequest): HostDriver {
     };
   };
   const status = async (root: string, slug: string): Promise<NState> => {
-    const r = await call("workflow_flow_status", {
+    const r = await call("workit_flow_status", {
       plan_path: planFor(slug),
       workspace_root: root,
     });
     if (r.isError) return normFailure(r.text.code ?? "flow_status_failed", r.text.details);
-    // The Cursor MCP workflow_flow_status payload does not surface
+    // The Cursor MCP workit_flow_status payload does not surface
     // `handoff_destination`; read the host surface when a future payload adds it
     // and fall back to flow.json today. The MCP surface that DOES report the
-    // flag (workflow_handoff_prompt) is asserted directly in firstHandoff.
+    // flag (workit_handoff_prompt) is asserted directly in firstHandoff.
     const dest =
       typeof r.text.handoff_destination === "boolean"
         ? r.text.handoff_destination
@@ -931,11 +931,11 @@ function cursorDriver(request: CursorRequest): HostDriver {
   return {
     name: "cursor",
     status,
-    pause: mutate("workflow_plan_pause"),
-    resume: mutate("workflow_plan_resume"),
-    complete: mutate("workflow_plan_complete"),
+    pause: mutate("workit_plan_pause"),
+    resume: mutate("workit_plan_resume"),
+    complete: mutate("workit_plan_complete"),
     async reenterHandoff(root, slug) {
-      const r = await call("workflow_plan_menu", {
+      const r = await call("workit_plan_menu", {
         plan_path: planFor(slug),
         choice: "handoff",
         workspace_root: root,
@@ -944,10 +944,10 @@ function cursorDriver(request: CursorRequest): HostDriver {
       return status(root, slug);
     },
     async firstHandoff(root, slug) {
-      // Drive the real MCP handoff surface: workflow_handoff_prompt reports the
+      // Drive the real MCP handoff surface: workit_handoff_prompt reports the
       // destination flag and the reset menu in its own payload (CA-07), so the
       // matrix reads the flag from the host surface, not flow.json.
-      const r = await call("workflow_handoff_prompt", {
+      const r = await call("workit_handoff_prompt", {
         message: planFor(slug),
         workspace_root: root,
       });

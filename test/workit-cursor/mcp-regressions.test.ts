@@ -311,7 +311,7 @@ test("YouTrack partial time failure never hides a posted comment", async () => {
     postedComment: true,
     loggedMinutes: 0,
     error: "time failed",
-    retry: "workflow_youtrack_log_time",
+    retry: "workit_youtrack_log_time",
   });
 });
 
