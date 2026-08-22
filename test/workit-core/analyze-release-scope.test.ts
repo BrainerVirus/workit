@@ -8,7 +8,12 @@ import {
   latestTag,
 } from "../../packages/workit-core/scripts/analyze-release-scope";
 
-type Repo = { root: string; cleanup(): void; commit(msg: string, files: Record<string, string>): void; tag(name: string): void };
+type Repo = {
+  root: string;
+  cleanup(): void;
+  commit(msg: string, files: Record<string, string>): void;
+  tag(name: string): void;
+};
 
 function repo(): Repo {
   const root = mkdtempSync(path.join(os.tmpdir(), "wf-relscope-"));
@@ -38,69 +43,97 @@ function repo(): Repo {
 describe("latestTag", () => {
   test("returns null when no v* tag exists", () => {
     const r = repo();
-    try { expect(latestTag(r.root)).toBeNull(); } finally { r.cleanup(); }
+    try {
+      expect(latestTag(r.root)).toBeNull();
+    } finally {
+      r.cleanup();
+    }
   });
   test("returns the newest semver-sorted v* tag", () => {
     const r = repo();
     try {
-      r.commit("chore: a", { "x.txt": "a" }); r.tag("v0.8.9");
-      r.commit("chore: b", { "x.txt": "b" }); r.tag("v0.8.10");
+      r.commit("chore: a", { "x.txt": "a" });
+      r.tag("v0.8.9");
+      r.commit("chore: b", { "x.txt": "b" });
+      r.tag("v0.8.10");
       expect(latestTag(r.root)).toBe("v0.8.10");
-    } finally { r.cleanup(); }
+    } finally {
+      r.cleanup();
+    }
   });
 });
 
 describe("analyzeReleaseScope", () => {
   test("tooling-only commits yield no release", () => {
-    const r = repo(); r.tag("v0.8.11");
+    const r = repo();
+    r.tag("v0.8.11");
     try {
       r.commit("fix(ci): workflow tweak", { ".github/workflows/x.yml": "on: push\n" });
       expect(analyzeReleaseScope(r.root)).toEqual({ level: null, productPkgs: [] });
-    } finally { r.cleanup(); }
+    } finally {
+      r.cleanup();
+    }
   });
 
   test("product fix yields patch scoped to its package", () => {
-    const r = repo(); r.tag("v0.8.11");
+    const r = repo();
+    r.tag("v0.8.11");
     try {
       r.commit("fix(cli): flag parsing", { "packages/workit-cli/src/index.tsx": "export {};\n" });
       expect(analyzeReleaseScope(r.root)).toEqual({ level: "patch", productPkgs: ["workit-cli"] });
-    } finally { r.cleanup(); }
+    } finally {
+      r.cleanup();
+    }
   });
 
   test("feat beats fix; BREAKING beats feat", () => {
-    const r = repo(); r.tag("v0.8.11");
+    const r = repo();
+    r.tag("v0.8.11");
     try {
       r.commit("fix(core): bug", { "packages/workit-core/src/a.ts": "a\n" });
       r.commit("feat(cursor): thing", { "packages/workit-cursor/hooks/h.ts": "h\n" });
       expect(analyzeReleaseScope(r.root).level).toBe("minor");
-      r.commit("fix(opencode): boom\n\nBREAKING CHANGE: dropped flag", { "packages/workit-opencode/src/b.ts": "b\n" });
+      r.commit("fix(opencode): boom\n\nBREAKING CHANGE: dropped flag", {
+        "packages/workit-opencode/src/b.ts": "b\n",
+      });
       expect(analyzeReleaseScope(r.root).level).toBe("major");
-    } finally { r.cleanup(); }
+    } finally {
+      r.cleanup();
+    }
   });
 
   test("conventional !: breaking syntax yields major", () => {
-    const r = repo(); r.tag("v0.8.11");
+    const r = repo();
+    r.tag("v0.8.11");
     try {
       r.commit("feat(cli)!: drop flag", { "packages/workit-cli/src/f.ts": "f\n" });
       expect(analyzeReleaseScope(r.root).level).toBe("major");
-    } finally { r.cleanup(); }
+    } finally {
+      r.cleanup();
+    }
   });
 
   test("!: inside subject body does not imply breaking", () => {
-    const r = repo(); r.tag("v0.8.11");
+    const r = repo();
+    r.tag("v0.8.11");
     try {
       r.commit("fix(cli): parse a!: b", { "packages/workit-cli/src/f.ts": "f\n" });
       expect(analyzeReleaseScope(r.root).level).toBe("patch");
-    } finally { r.cleanup(); }
+    } finally {
+      r.cleanup();
+    }
   });
 
   test("mixed tooling+product counts; squash subjects parse", () => {
-    const r = repo(); r.tag("v0.8.11");
+    const r = repo();
+    r.tag("v0.8.11");
     try {
       r.commit("docs: readme", { "README.md": "# x\n" });
       r.commit("fix(workit-cli): title (#42)", { "packages/workit-cli/src/main.ts": "m\n" });
       expect(analyzeReleaseScope(r.root)).toEqual({ level: "patch", productPkgs: ["workit-cli"] });
-    } finally { r.cleanup(); }
+    } finally {
+      r.cleanup();
+    }
   });
 
   test("first-ever release defaults to minor across all packages", () => {
@@ -111,6 +144,8 @@ describe("analyzeReleaseScope", () => {
         level: "minor",
         productPkgs: ["workit-core", "workit-opencode", "workit-cursor", "workit-cli"],
       });
-    } finally { r.cleanup(); }
+    } finally {
+      r.cleanup();
+    }
   });
 });

@@ -101,10 +101,10 @@ test("rewrite runs before npm package verification and after version assignment 
   // the semantic-release version bumps and rewrites to the released version.
   expect(prepare).toBeGreaterThan(npmLast);
   expect(config.match(/rewrite-workspace-deps\.ts/g) ?? []).toHaveLength(2);
-  const analyze = config.indexOf('analyzeCmd');
+  const analyze = config.indexOf("analyzeCmd");
   const npmEntries = config.split("@semantic-release/npm").length - 1;
   const npmPublishFalse = config.match(/npmPublish:\s*false/g)?.length ?? 0;
-  const publishCmd = config.indexOf('publishCmd');
+  const publishCmd = config.indexOf("publishCmd");
   const githubIdx = config.indexOf('"@semantic-release/github"');
   expect(analyze).toBeGreaterThanOrEqual(0);
   expect(npmEntries).toBe(4);
