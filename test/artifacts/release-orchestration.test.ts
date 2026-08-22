@@ -70,8 +70,12 @@ test("release job order is install → build → candidate gate → semantic-rel
   expect(afterRelease, "no gate may run between Release and the manifest sync").toBe("");
   expect(wf.jobs.release.steps[idx[1]].run).toContain("bun run build");
   expect(wf.jobs.release.steps[idx[2]].run).toContain("bun run verify:release-candidate");
-  // AR-15: the sync commit never re-triggers CI.
-  expect(wf.jobs.release.steps[idx[4]].run).toContain("[skip ci]");
+  // AR-15: main is protected — the sync lands via an auto-merged PR, and any
+  // pre-sync dirtiness (the transient workspace-dep rewrite) is discarded.
+  const syncRun = wf.jobs.release.steps[idx[4]].run;
+  expect(syncRun).toContain("git checkout --");
+  expect(syncRun).toContain("gh pr create");
+  expect(syncRun).toContain("--auto --squash");
 });
 
 test("rewrite runs before npm package verification and after version assignment (AR-02)", () => {
