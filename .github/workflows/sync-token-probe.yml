@@ -16,7 +16,13 @@ jobs:
   probe:
     runs-on: ubuntu-latest
     steps:
+      # persist-credentials: false — otherwise checkout installs the workflow
+      # GITHUB_TOKEN as an http.extraheader and the push below would
+      # authenticate as github-actions[bot], silently testing the wrong
+      # credential (the false PASS seen on the first run).
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Probe push + PR creation with RELEASE_SYNC_TOKEN
         env:
