@@ -62,7 +62,14 @@ jobs:
       - name: Sync release manifests to main
         if: success()
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # A GITHUB_TOKEN-opened PR never triggers workflow runs, so the
+          # required status checks would stay pending and auto-merge would
+          # hang forever (GitHub's actions/events limitation). The sync PR is
+          # therefore opened with a dedicated PAT when one exists — PAT events
+          # run CI normally. Falls back to GITHUB_TOKEN (create the PR; a
+          # human or the Actions "allow creating pull requests" policy plus a
+          # checks-triggering runner must then finish it).
+          GH_TOKEN: ${{ secrets.RELEASE_SYNC_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
           MANIFESTS=(package.json 'packages/*/package.json' 'packages/workit-cursor/.cursor-plugin/plugin.json')
           git checkout -- "${MANIFESTS[@]}" 2>/dev/null || true
