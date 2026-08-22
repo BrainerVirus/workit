@@ -102,7 +102,7 @@ type PostData = {
   loggedMinutes: number;
   outcome?: "unknown" | "not_applied";
   instructions?: string;
-  retry?: "workflow_youtrack_post" | "workflow_youtrack_log_time";
+  retry?: "workit_youtrack_post" | "workit_youtrack_log_time";
 };
 
 const notApplied = (value: LegacyValue): value is NotApplied =>
@@ -129,7 +129,7 @@ export async function postUpdate(
         postedComment: false,
         loggedMinutes: 0,
         outcome: "not_applied",
-        retry: "workflow_youtrack_post",
+        retry: "workit_youtrack_post",
       });
     unwrap(comment);
   } catch (error) {
@@ -156,7 +156,7 @@ export async function postUpdate(
           postedComment: true,
           loggedMinutes: 0,
           outcome: "not_applied",
-          retry: "workflow_youtrack_log_time",
+          retry: "workit_youtrack_log_time",
         });
       unwrap(time);
     } catch (error) {
@@ -189,7 +189,7 @@ export async function logTimeUpdate(
         issueId: input.issueId,
         loggedMinutes: 0,
         outcome: "not_applied",
-        retry: "workflow_youtrack_log_time",
+        retry: "workit_youtrack_log_time",
       });
     return ok(unwrap(value));
   } catch (error) {

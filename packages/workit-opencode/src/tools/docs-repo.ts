@@ -12,7 +12,7 @@ const output = (value: unknown) => JSON.stringify(value, null, 2);
 
 export function createDocsRepoTools() {
   return {
-    workflow_docs_layout: tool({
+    workit_docs_layout: tool({
       description:
         "Canonical docs layout: prepare creates missing docs/ and docs/<slug>/; migrate detects legacy docs/superpowers/ and copies safe pairs after a native Migrate safely / Not now question",
       args: {
@@ -70,7 +70,7 @@ export function createDocsRepoTools() {
         );
       },
     }),
-    workflow_docs_repo_link: tool({
+    workit_docs_repo_link: tool({
       description:
         "Link the component docs repo in the toolkit config (validates git repo + features/)",
       args: {
@@ -82,7 +82,7 @@ export function createDocsRepoTools() {
         return output(result.ok ? ok({ path: result.path }) : fail(result.error));
       },
     }),
-    workflow_docs_list: tool({
+    workit_docs_list: tool({
       description: "List local specs (docs/<slug>/spec.md) with docs-repo promotion status",
       args: {},
       execute: async (_input, context) => {
@@ -90,7 +90,7 @@ export function createDocsRepoTools() {
         return output(ok(result));
       },
     }),
-    workflow_docs_promote: tool({
+    workit_docs_promote: tool({
       description:
         "Promote a spec (+plan) to the linked docs repo features/YYYY-MM-<slug>/ with quality gate",
       args: {

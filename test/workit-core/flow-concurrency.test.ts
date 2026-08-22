@@ -497,7 +497,7 @@ test("CA-18/AR-13: root-session interception blocks write tools and mutating she
     expect(active).toBe(true);
     // SDD control tools are coordinator-owned via assertSddControlGates
     // (Task 3) and are no longer product-write interceptions.
-    for (const tool of ["write", "edit", "apply_patch", "patch", "workflow_commit"]) {
+    for (const tool of ["write", "edit", "apply_patch", "patch", "workit_commit"]) {
       const decision = subagentDrivenInterception({
         tool,
         parentID: undefined,
@@ -1259,7 +1259,7 @@ test("CA-16: composed opencode-path clean start — receipts to review package w
     execFileSync("git", ["commit", "--allow-empty", "-m", "base"], { cwd: root });
     const baseSha = git("rev-parse", "HEAD");
 
-    // Receipts -> approve spec+plan -> workflow_plan_menu(subagent-driven).
+    // Receipts -> approve spec+plan -> workit_plan_menu(subagent-driven).
     establishSubagentDriven(root, slug);
     expect(readFlowState(root, slug).execution.coordinator_session_id).toBe(COORDINATOR_SESSION);
 

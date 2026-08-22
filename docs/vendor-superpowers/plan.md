@@ -310,7 +310,7 @@ test("flow state lives at docs/<slug>/sdd/flow.json", () => {
     const tools = createFlowTools();
     const ctx = { directory: root } as any;
     const spec = `docs/${slug}/spec.md`;
-    const raw = await tools.workflow_spec_approve.execute(
+    const raw = await tools.workit_spec_approve.execute(
       { confirmed: true, spec_path: spec }, ctx);
     const out = JSON.parse(raw as string);
     expect(out.ok).toBe(true);
@@ -322,7 +322,7 @@ test("flow state lives at docs/<slug>/sdd/flow.json", () => {
 test("sdd context resolves docs/<slug>/sdd", () => {
   const { root, slug } = fixture();
   try {
-    const raw = await createSddTools(new WorkflowStateStore()).workflow_sdd_context.execute(
+    const raw = await createSddTools(new WorkflowStateStore()).workit_sdd_context.execute(
       { plan_path: `docs/${slug}/plan.md` },
       { directory: root, worktree: root, sessionID: "s" } as never,
     );
@@ -348,7 +348,7 @@ test("handoff resolves docs/<slug>/plan.md and spec.md", () => {
 test("docs validate passes on the new layout", async () => {
   const { root, slug } = fixture();
   try {
-    const raw = await createSddTools(new WorkflowStateStore()).workflow_docs_validate.execute(
+    const raw = await createSddTools(new WorkflowStateStore()).workit_docs_validate.execute(
       { spec_path: `docs/${slug}/spec.md`, plan_path: `docs/${slug}/plan.md` },
       { directory: root, worktree: root, sessionID: "s" } as never,
     );
@@ -569,7 +569,7 @@ Replace the example block (currently uses `docs/superpowers/specs/...`):
 Update the SDD sentence:
 
 ```markdown
-- Keep all SDD state tracked under `docs/<slug>/sdd/`; use `workflow_sdd_context` and the registered `workflow_sdd_*` tools.
+- Keep all SDD state tracked under `docs/<slug>/sdd/`; use `workit_sdd_context` and the registered `workit_sdd_*` tools.
 ```
 
 - [ ] **Step 2: Update `templates/execution-contract.md`**
@@ -577,13 +577,13 @@ Update the SDD sentence:
 Replace:
 
 ```markdown
-- Tracked state, briefs, ledgers, and review diffs live only under `<SDD_DIR>` in `docs/superpowers/sdd/<slug>/` and use `workflow_sdd_*` tools.
+- Tracked state, briefs, ledgers, and review diffs live only under `<SDD_DIR>` in `docs/superpowers/sdd/<slug>/` and use `workit_sdd_*` tools.
 ```
 
 with:
 
 ```markdown
-- Tracked state, briefs, ledgers, and review diffs live only under `<SDD_DIR>` in `docs/<slug>/sdd/` and use `workflow_sdd_*` tools.
+- Tracked state, briefs, ledgers, and review diffs live only under `<SDD_DIR>` in `docs/<slug>/sdd/` and use `workit_sdd_*` tools.
 ```
 
 - [ ] **Step 3: Update `.gitignore`**

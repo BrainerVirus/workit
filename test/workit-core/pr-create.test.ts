@@ -244,7 +244,7 @@ test("CA-06: OpenCode wrapper accepts a default-equal target_branch", async () =
   git(root, ["checkout", "-q", "-b", "feature/ca06"]);
   const raw = await withWrapperConfig(() => {
     writeConfig({ preset: "gitflow" }, "develop");
-    return createRepoTools().workflow_pr_create.execute(
+    return createRepoTools().workit_pr_create.execute(
       { confirmed: true, title: "T", target_branch: "develop" },
       { directory: root, worktree: root } as never,
     );
@@ -259,7 +259,7 @@ test("CA-06: OpenCode wrapper still rejects a genuine protected target_branch", 
   git(root, ["checkout", "-q", "-b", "feature/ca06"]);
   const raw = await withWrapperConfig(() => {
     writeConfig({ preset: "gitflow" }, "develop");
-    return createRepoTools().workflow_pr_create.execute(
+    return createRepoTools().workit_pr_create.execute(
       { confirmed: true, title: "T", target_branch: "main" },
       { directory: root, worktree: root } as never,
     );
@@ -418,10 +418,10 @@ test("B6: env-driven WORKFLOW_GH_ISSUE reaches prCreate through the OpenCode wra
       { preset: "gitflow", allowed: ["feature/*", "bugfix/*"], protected: ["main", "develop"] },
       "develop",
     );
-    const raw = await createRepoTools().workflow_pr_create.execute(
-      { confirmed: true, title: "T" },
-      { directory: root, worktree: root } as never,
-    );
+    const raw = await createRepoTools().workit_pr_create.execute({ confirmed: true, title: "T" }, {
+      directory: root,
+      worktree: root,
+    } as never);
     const result = JSON.parse(raw as string);
     expect(result.ok, JSON.stringify(result)).toBe(true);
     // only the 5 explicit WF_PR_* keys are passed by the tool; the env-driven
@@ -520,10 +520,10 @@ test("T2: github push-before-create flows through the OpenCode wrapper", async (
   process.env.PATH = stubPath();
   try {
     writeConfig(customPolicy, "trunk", { pushBranch: true });
-    const raw = await createRepoTools().workflow_pr_create.execute(
-      { confirmed: true, title: "T" },
-      { directory: root, worktree: root } as never,
-    );
+    const raw = await createRepoTools().workit_pr_create.execute({ confirmed: true, title: "T" }, {
+      directory: root,
+      worktree: root,
+    } as never);
     const result = JSON.parse(raw as string);
     expect(result.ok, JSON.stringify(result)).toBe(true);
     expect(git(root, ["rev-parse", "--verify", "origin/feature/t2"]).status).toBe(0);

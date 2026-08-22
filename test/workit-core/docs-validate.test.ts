@@ -20,10 +20,10 @@ const fixture = () => {
   return { root, spec, plan };
 };
 
-test("workflow_docs_validate accepts a contiguous linked pair", async () => {
+test("workit_docs_validate accepts a contiguous linked pair", async () => {
   const { root, spec, plan } = fixture();
   try {
-    const raw = await createSddTools(new WorkflowStateStore()).workflow_docs_validate.execute(
+    const raw = await createSddTools(new WorkflowStateStore()).workit_docs_validate.execute(
       { spec_path: spec, plan_path: plan },
       { directory: root, worktree: root, sessionID: "t" } as never,
     );
@@ -36,14 +36,14 @@ test("workflow_docs_validate accepts a contiguous linked pair", async () => {
   }
 });
 
-test("workflow_docs_validate hard-fails on task number gap", async () => {
+test("workit_docs_validate hard-fails on task number gap", async () => {
   const { root, spec, plan } = fixture();
   writeFileSync(
     path.join(root, plan),
     `# Gates Plan\n\n**Spec:** \`${spec}\`\n**Branch:** \`feature/gates\`\n\n### Task 1: One\n\n- [ ] **Step 1: x**\n\n### Task 3: Skip\n\n- [ ] **Step 1: x**\n`,
   );
   try {
-    const raw = await createSddTools(new WorkflowStateStore()).workflow_docs_validate.execute(
+    const raw = await createSddTools(new WorkflowStateStore()).workit_docs_validate.execute(
       { spec_path: spec, plan_path: plan },
       { directory: root, worktree: root, sessionID: "t" } as never,
     );
@@ -55,14 +55,14 @@ test("workflow_docs_validate hard-fails on task number gap", async () => {
   }
 });
 
-test("workflow_docs_validate hard-fails on Spec link or branch mismatch", async () => {
+test("workit_docs_validate hard-fails on Spec link or branch mismatch", async () => {
   const { root, spec, plan } = fixture();
   writeFileSync(
     path.join(root, plan),
     `# Gates Plan\n\n**Spec:** \`docs/other/spec.md\`\n**Branch:** \`feature/other\`\n\n### Task 1: One\n\n- [ ] **Step 1: x**\n`,
   );
   try {
-    const raw = await createSddTools(new WorkflowStateStore()).workflow_docs_validate.execute(
+    const raw = await createSddTools(new WorkflowStateStore()).workit_docs_validate.execute(
       { spec_path: spec, plan_path: plan },
       { directory: root, worktree: root, sessionID: "t" } as never,
     );
@@ -88,7 +88,7 @@ test("sdd_not_ignored when sdd dir exists and is not gitignored", async () => {
     );
     writeFileSync(path.join(root, "docs/x/sdd/progress.md"), "Task 1: complete\n");
 
-    const raw = await createSddTools(new WorkflowStateStore()).workflow_docs_validate.execute(
+    const raw = await createSddTools(new WorkflowStateStore()).workit_docs_validate.execute(
       { spec_path: "docs/x/spec.md", plan_path: "docs/x/plan.md" },
       { directory: root, worktree: root, sessionID: "s" } as never,
     );
@@ -117,7 +117,7 @@ test("no sdd_not_ignored when sdd is gitignored", async () => {
     );
     writeFileSync(path.join(root, "docs/x/sdd/progress.md"), "Task 1: complete\n");
 
-    const raw = await createSddTools(new WorkflowStateStore()).workflow_docs_validate.execute(
+    const raw = await createSddTools(new WorkflowStateStore()).workit_docs_validate.execute(
       { spec_path: "docs/x/spec.md", plan_path: "docs/x/plan.md" },
       { directory: root, worktree: root, sessionID: "s" } as never,
     );
@@ -203,7 +203,7 @@ test("docsValidate reports hygiene warnings", async () => {
       "# Plan\n\n**Spec:** `docs/x/spec.md`\n**Branch:** `feature/x`\n\n### Task 1: One\n\n- [ ] **Step 1:** Work\n",
     );
 
-    const raw = await createSddTools(new WorkflowStateStore()).workflow_docs_validate.execute(
+    const raw = await createSddTools(new WorkflowStateStore()).workit_docs_validate.execute(
       { spec_path: "docs/x/spec.md", plan_path: "docs/x/plan.md" },
       { directory: root, worktree: root, sessionID: "s" } as never,
     );

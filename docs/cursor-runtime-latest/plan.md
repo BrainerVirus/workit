@@ -101,8 +101,8 @@
 - Verify: real Cursor settings under `~/.cursor/` (no repository changes)
 
 - [ ] **Step 1: Verify the real reinstall.** Run `packages/workit-core/scripts/install-cursor-plugin.sh` in default npx mode against a temporary copy of Cursor settings, then verify unrelated MCP servers/settings survive, the generated `mcp.json` and `hooks-cursor.json` use the canonical selector, and `bun packages/workit-core/scripts/doctor-check.ts cursor` exits 0. Keep the existing `--local-dist` path unchanged and verify it still passes its doctor test.
-- [ ] **Step 2: Run all repository verification.** Run `bun run check`, `bun run verify:release-candidate`, `bun run validate:cursor-marketplace`, and `workflow_docs_validate` for `docs/cursor-runtime-latest/spec.md` + `plan.md`; expected result is exit 0 for every command.
-- [ ] **Step 3: Complete the SDD ledger.** Use `workflow_sdd_context` to confirm the task list, append one validated progress line for each task with its real non-empty `base..head` range, and run the final branch review before completion.
+- [ ] **Step 2: Run all repository verification.** Run `bun run check`, `bun run verify:release-candidate`, `bun run validate:cursor-marketplace`, and `workit_docs_validate` for `docs/cursor-runtime-latest/spec.md` + `plan.md`; expected result is exit 0 for every command.
+- [ ] **Step 3: Complete the SDD ledger.** Use `workit_sdd_context` to confirm the task list, append one validated progress line for each task with its real non-empty `base..head` range, and run the final branch review before completion.
 - [ ] **Step 4: Complete the plan.** After the ledger and verification are green, call the current host's `workflow_plan_complete` (or CLI `workit flow complete`); after the sibling rename spec lands, the equivalent runtime identifier is `workit_plan_complete`. Confirm the state is `completed`, not `active`.
 - [ ] **Step 5: Commit the task.** Commit any final verification-only documentation or ledger-related tracked changes as one non-empty task range; keep `docs/<slug>/sdd/` gitignored.
 

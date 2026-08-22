@@ -444,7 +444,7 @@ Expected: PASS. Copy the tracked plugin into `~/.cursor/plugins/local/workit`, r
 
 - [ ] **Step 7: Validate workflow documents and implementation traceability**
 
-Run the registered `workflow_docs_validate` tool for the spec/plan pair, then confirm every CA-01 through CA-22 has test or documentation evidence in the implementation review package.
+Run the registered `workit_docs_validate` tool for the spec/plan pair, then confirm every CA-01 through CA-22 has test or documentation evidence in the implementation review package.
 
 **Criteria:** CA-18 through CA-22 pass and the repository is ready, but not submitted, at `https://cursor.com/marketplace/publish`.
 

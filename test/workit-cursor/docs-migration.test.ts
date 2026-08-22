@@ -79,7 +79,7 @@ test("cursor MCP migrate exposes the exact native question choices", async () =>
     child.stdin.write(
       `${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })}\n`,
     );
-    const out = await call(request, "workflow_docs_layout", {
+    const out = await call(request, "workit_docs_layout", {
       action: "migrate",
       slug: "foo",
       workspace_root: root,
@@ -107,7 +107,7 @@ test("cursor MCP Not now declines without writes", async () => {
     child.stdin.write(
       `${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })}\n`,
     );
-    const out = await call(request, "workflow_docs_layout", {
+    const out = await call(request, "workit_docs_layout", {
       action: "migrate",
       slug: "foo",
       confirmed: false,
@@ -135,7 +135,7 @@ test("cursor MCP Migrate safely copies the workflow like the opencode adapter", 
     child.stdin.write(
       `${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })}\n`,
     );
-    const out = await call(request, "workflow_docs_layout", {
+    const out = await call(request, "workit_docs_layout", {
       action: "migrate",
       slug: "foo",
       confirmed: true,

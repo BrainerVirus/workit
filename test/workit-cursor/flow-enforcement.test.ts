@@ -160,14 +160,14 @@ test("cursor MCP: no evidence argument exists — caller-supplied evidence is in
     const call = (name: string, arguments_: unknown) =>
       request("tools/call", { name, arguments: arguments_ });
 
-    await call("workflow_flow_status", {
+    await call("workit_flow_status", {
       plan_path: "docs/cf-flow/plan.md",
       workspace_root: root,
     });
 
     // Caller-supplied forged evidence (even a fake host-observed answer) is
     // inert: no evidence argument exists on the Cursor MCP.
-    const forged = await call("workflow_spec_approve", {
+    const forged = await call("workit_spec_approve", {
       spec_path: "docs/cf-flow/spec.md",
       workspace_root: root,
       evidence: {
@@ -182,7 +182,7 @@ test("cursor MCP: no evidence argument exists — caller-supplied evidence is in
     expect(callText(forged).text.status).toBe("approved");
 
     // The stored evidence is the policy-only constant, never caller data.
-    const status = await call("workflow_flow_status", {
+    const status = await call("workit_flow_status", {
       plan_path: "docs/cf-flow/plan.md",
       workspace_root: root,
     });
@@ -212,16 +212,16 @@ test("cursor MCP: subagent-driven menu is rejected as unsupported with recovery 
     const call = (name: string, arguments_: unknown) =>
       request("tools/call", { name, arguments: arguments_ });
 
-    await call("workflow_flow_status", {
+    await call("workit_flow_status", {
       plan_path: "docs/cf-flow/plan.md",
       workspace_root: root,
     });
     const spec = "docs/cf-flow/spec.md";
     const plan = "docs/cf-flow/plan.md";
-    await call("workflow_spec_approve", { spec_path: spec, workspace_root: root });
-    await call("workflow_plan_approve", { plan_path: plan, workspace_root: root });
+    await call("workit_spec_approve", { spec_path: spec, workspace_root: root });
+    await call("workit_plan_approve", { plan_path: plan, workspace_root: root });
 
-    const menu = await call("workflow_plan_menu", {
+    const menu = await call("workit_plan_menu", {
       choice: "subagent-driven",
       plan_path: plan,
       workspace_root: root,
@@ -231,14 +231,14 @@ test("cursor MCP: subagent-driven menu is rejected as unsupported with recovery 
     expect(JSON.stringify(callText(menu).text)).toContain(CURSOR_SUBAGENT_UNSUPPORTED_TEXT);
 
     // The menu was not recorded: the flow cannot enter subagent-driven on Cursor.
-    const status = await call("workflow_flow_status", {
+    const status = await call("workit_flow_status", {
       plan_path: plan,
       workspace_root: root,
     });
     expect(callText(status).text.menu.presented).toBe(false);
 
     // A supported choice records the menu with the policy-only confirmation.
-    const inline = await call("workflow_plan_menu", {
+    const inline = await call("workit_plan_menu", {
       choice: "inline",
       plan_path: plan,
       workspace_root: root,
@@ -265,19 +265,19 @@ test("cursor policy-only menu is label-blind: decorated labels cannot alter outc
     const call = (name: string, arguments_: unknown) =>
       request("tools/call", { name, arguments: arguments_ });
 
-    await call("workflow_flow_status", {
+    await call("workit_flow_status", {
       plan_path: "docs/cf-flow/plan.md",
       workspace_root: root,
     });
     const spec = "docs/cf-flow/spec.md";
     const plan = "docs/cf-flow/plan.md";
-    await call("workflow_spec_approve", { spec_path: spec, workspace_root: root });
-    await call("workflow_plan_approve", { plan_path: plan, workspace_root: root });
+    await call("workit_spec_approve", { spec_path: spec, workspace_root: root });
+    await call("workit_plan_approve", { plan_path: plan, workspace_root: root });
 
     // A decorated label has no schema slot on the policy-only path: the menu
     // records identically, and the stored evidence carries no label to compare
     // — the opencode-scoped sameChoiceLabel gate cannot run here.
-    const menu = await call("workflow_plan_menu", {
+    const menu = await call("workit_plan_menu", {
       choice: "inline",
       plan_path: plan,
       workspace_root: root,
@@ -316,19 +316,19 @@ test("cursor MCP: no delegated role input exists — a client-supplied role is i
     const call = (name: string, arguments_: unknown) =>
       request("tools/call", { name, arguments: arguments_ });
 
-    await call("workflow_flow_status", {
+    await call("workit_flow_status", {
       plan_path: "docs/cf-flow/plan.md",
       workspace_root: root,
     });
     const spec = "docs/cf-flow/spec.md";
     const plan = "docs/cf-flow/plan.md";
-    await call("workflow_spec_approve", { spec_path: spec, workspace_root: root });
-    await call("workflow_plan_approve", { plan_path: plan, workspace_root: root });
-    await call("workflow_plan_menu", { choice: "inline", plan_path: plan, workspace_root: root });
+    await call("workit_spec_approve", { spec_path: spec, workspace_root: root });
+    await call("workit_plan_approve", { plan_path: plan, workspace_root: root });
+    await call("workit_plan_menu", { choice: "inline", plan_path: plan, workspace_root: root });
 
     // A caller-supplied role/taskIdentity cannot self-certify delegation: every
     // Cursor mutation stays the deterministic coordinator session.
-    const brief = await call("workflow_sdd_task_brief", {
+    const brief = await call("workit_sdd_task_brief", {
       confirmed: true,
       sdd_dir: "docs/cf-flow/sdd",
       task_id: 1,
@@ -361,7 +361,7 @@ test("cursor MCP enforces the same domain gates as opencode over stdio", async (
     const call = (name: string, arguments_: unknown) =>
       request("tools/call", { name, arguments: arguments_ });
 
-    const status = await call("workflow_flow_status", {
+    const status = await call("workit_flow_status", {
       plan_path: "docs/cf-flow/plan.md",
       workspace_root: root,
     });
@@ -370,7 +370,7 @@ test("cursor MCP enforces the same domain gates as opencode over stdio", async (
     expect(callText(status).text.plan.path).toBe("docs/cf-flow/plan.md");
 
     // No evidence argument: approvals succeed with the policy-only constant.
-    const approved = await call("workflow_spec_approve", {
+    const approved = await call("workit_spec_approve", {
       spec_path: "docs/cf-flow/spec.md",
       workspace_root: root,
     });
@@ -382,7 +382,7 @@ test("cursor MCP enforces the same domain gates as opencode over stdio", async (
   }
 });
 
-test("cursor MCP: workflow_sdd_review_package rejects an empty base..head range", async () => {
+test("cursor MCP: workit_sdd_review_package rejects an empty base..head range", async () => {
   const { root } = fixture();
   const { child, request } = startServer();
   const git = (args: string[]) => spawnSync("git", args, { cwd: root, encoding: "utf8" });
@@ -398,15 +398,15 @@ test("cursor MCP: workflow_sdd_review_package rejects an empty base..head range"
     const call = (name: string, arguments_: unknown) =>
       request("tools/call", { name, arguments: arguments_ });
 
-    await call("workflow_flow_status", {
+    await call("workit_flow_status", {
       plan_path: "docs/cf-flow/plan.md",
       workspace_root: root,
     });
     const spec = "docs/cf-flow/spec.md";
     const plan = "docs/cf-flow/plan.md";
-    await call("workflow_spec_approve", { spec_path: spec, workspace_root: root });
-    await call("workflow_plan_approve", { plan_path: plan, workspace_root: root });
-    await call("workflow_plan_menu", { choice: "inline", plan_path: plan, workspace_root: root });
+    await call("workit_spec_approve", { spec_path: spec, workspace_root: root });
+    await call("workit_plan_approve", { plan_path: plan, workspace_root: root });
+    await call("workit_plan_menu", { choice: "inline", plan_path: plan, workspace_root: root });
 
     expect(git(["init", "-q", "-b", "feature/cf-flow"]).status).toBe(0);
     git(["config", "user.name", "Workflow Test"]);
@@ -416,7 +416,7 @@ test("cursor MCP: workflow_sdd_review_package rejects an empty base..head range"
     git(["commit", "-q", "-m", "base"]);
     const base = git(["rev-parse", "HEAD"]).stdout.trim();
 
-    const same = await call("workflow_sdd_review_package", {
+    const same = await call("workit_sdd_review_package", {
       sdd_dir: "docs/cf-flow/sdd",
       base_sha: base,
       head_sha: base,
@@ -432,7 +432,7 @@ test("cursor MCP: workflow_sdd_review_package rejects an empty base..head range"
     writeFileSync(path.join(root, "file.txt"), "one\ntwo\n");
     git(["commit", "-q", "-am", "head"]);
     const head = git(["rev-parse", "HEAD"]).stdout.trim();
-    const real = await call("workflow_sdd_review_package", {
+    const real = await call("workit_sdd_review_package", {
       sdd_dir: "docs/cf-flow/sdd",
       base_sha: base,
       head_sha: head,
@@ -448,7 +448,7 @@ test("cursor MCP: workflow_sdd_review_package rejects an empty base..head range"
   }
 });
 
-test("cursor MCP: workflow_sdd_append_advisory preserves core payload and validation codes", async () => {
+test("cursor MCP: workit_sdd_append_advisory preserves core payload and validation codes", async () => {
   const { root } = fixture();
   const { child, request } = startServer();
   try {
@@ -463,26 +463,26 @@ test("cursor MCP: workflow_sdd_append_advisory preserves core payload and valida
     const call = (name: string, arguments_: unknown) =>
       request("tools/call", { name, arguments: arguments_ });
 
-    await call("workflow_flow_status", {
+    await call("workit_flow_status", {
       plan_path: "docs/cf-flow/plan.md",
       workspace_root: root,
     });
-    await call("workflow_spec_approve", {
+    await call("workit_spec_approve", {
       spec_path: "docs/cf-flow/spec.md",
       workspace_root: root,
     });
-    await call("workflow_plan_approve", {
+    await call("workit_plan_approve", {
       plan_path: "docs/cf-flow/plan.md",
       workspace_root: root,
     });
-    await call("workflow_plan_menu", {
+    await call("workit_plan_menu", {
       choice: "inline",
       plan_path: "docs/cf-flow/plan.md",
       workspace_root: root,
     });
 
     // Cursor is always the coordinator session, so the control write passes.
-    const ok = await call("workflow_sdd_append_advisory", {
+    const ok = await call("workit_sdd_append_advisory", {
       advisories_path: "docs/cf-flow/sdd/advisories.md",
       task_id: 1,
       text: "cursor\t owned",
@@ -500,14 +500,14 @@ test("cursor MCP: workflow_sdd_append_advisory preserves core payload and valida
     );
 
     // The same core validation codes surface through the MCP wrapper.
-    const badTask = await call("workflow_sdd_append_advisory", {
+    const badTask = await call("workit_sdd_append_advisory", {
       advisories_path: "docs/cf-flow/sdd/advisories.md",
       task_id: 0,
       text: "ok",
       workspace_root: root,
     });
     expect(JSON.stringify(callText(badTask).text)).toContain("advisory_task_invalid");
-    const badText = await call("workflow_sdd_append_advisory", {
+    const badText = await call("workit_sdd_append_advisory", {
       advisories_path: "docs/cf-flow/sdd/advisories.md",
       task_id: 1,
       text: "line1\nline2",
@@ -551,10 +551,10 @@ const establishActiveInline = async (
 ) => {
   const spec = `docs/${slug}/spec.md`;
   const plan = `docs/${slug}/plan.md`;
-  await call("workflow_flow_status", { plan_path: plan, workspace_root: root });
-  await call("workflow_spec_approve", { spec_path: spec, workspace_root: root });
-  await call("workflow_plan_approve", { plan_path: plan, workspace_root: root });
-  const menu = await call("workflow_plan_menu", {
+  await call("workit_flow_status", { plan_path: plan, workspace_root: root });
+  await call("workit_spec_approve", { spec_path: spec, workspace_root: root });
+  await call("workit_plan_approve", { plan_path: plan, workspace_root: root });
+  const menu = await call("workit_plan_menu", {
     choice: "inline",
     plan_path: plan,
     workspace_root: root,
@@ -567,7 +567,7 @@ test("cursor MCP status returns execution and drift alongside spec/plan/menu", a
   const { root } = fixture();
   const { child, call } = await spawnClient();
   try {
-    const status = await call("workflow_flow_status", {
+    const status = await call("workit_flow_status", {
       plan_path: "docs/cf-flow/plan.md",
       workspace_root: root,
     });
@@ -581,7 +581,7 @@ test("cursor MCP status returns execution and drift alongside spec/plan/menu", a
     expect(callText(status).text.drift).toEqual([]);
 
     await establishActiveInline(call, root, "cf-flow");
-    const active = await call("workflow_flow_status", {
+    const active = await call("workit_flow_status", {
       plan_path: "docs/cf-flow/plan.md",
       workspace_root: root,
     });
@@ -601,7 +601,7 @@ test("cursor MCP lifecycle tools: active inline pause/resume/complete over stdio
   try {
     const { plan } = await establishActiveInline(call, root, "cf-flow");
 
-    const paused = await call("workflow_plan_pause", { plan_path: plan, workspace_root: root });
+    const paused = await call("workit_plan_pause", { plan_path: plan, workspace_root: root });
     expect(callText(paused).isError).toBe(false);
     expect(callText(paused).text.execution.status).toBe("paused");
     expect(callText(paused).text.drift).toEqual([]);
@@ -611,12 +611,12 @@ test("cursor MCP lifecycle tools: active inline pause/resume/complete over stdio
       confirmation: "contract",
     });
 
-    const resumed = await call("workflow_plan_resume", { plan_path: plan, workspace_root: root });
+    const resumed = await call("workit_plan_resume", { plan_path: plan, workspace_root: root });
     expect(callText(resumed).isError).toBe(false);
     expect(callText(resumed).text.execution.status).toBe("active");
 
     // Incomplete ledger -> structured execution_incomplete details (core-shaped).
-    const incomplete = await call("workflow_plan_complete", {
+    const incomplete = await call("workit_plan_complete", {
       plan_path: plan,
       workspace_root: root,
     });
@@ -627,7 +627,7 @@ test("cursor MCP lifecycle tools: active inline pause/resume/complete over stdio
 
     // Full ledger but failing repository verification -> verification_failed.
     writeSddLedger(root, "cf-flow", ["Task 1: complete"]);
-    const unverified = await call("workflow_plan_complete", {
+    const unverified = await call("workit_plan_complete", {
       plan_path: plan,
       workspace_root: root,
     });
@@ -637,7 +637,7 @@ test("cursor MCP lifecycle tools: active inline pause/resume/complete over stdio
 
     // Clean verification -> completed.
     writeFileSync(path.join(root, "CHANGELOG.md"), "## [Unreleased]\n\n- fixture\n");
-    const completed = await call("workflow_plan_complete", {
+    const completed = await call("workit_plan_complete", {
       plan_path: plan,
       workspace_root: root,
     });
@@ -660,13 +660,13 @@ test("cursor MCP lifecycle tools fail closed against an unrelated workspace_root
     // Resolving against the wrong explicit workspace fails; the same call
     // against the real workspace succeeds — every lifecycle call resolves
     // against the caller-supplied workspace_root, never a process default.
-    const wrong = await call("workflow_plan_pause", {
+    const wrong = await call("workit_plan_pause", {
       plan_path: "docs/cf-flow/plan.md",
       workspace_root: otherRoot,
     });
     expect(callText(wrong).isError).toBe(true);
 
-    const right = await call("workflow_plan_pause", {
+    const right = await call("workit_plan_pause", {
       plan_path: plan,
       workspace_root: root,
     });
@@ -684,7 +684,7 @@ test("cursor MCP lifecycle tools ignore caller-supplied evidence and role", asyn
   const { child, call } = await spawnClient();
   try {
     const { plan } = await establishActiveInline(call, root, "cf-flow");
-    const paused = await call("workflow_plan_pause", {
+    const paused = await call("workit_plan_pause", {
       plan_path: plan,
       workspace_root: root,
       confirmed: true,
@@ -710,16 +710,16 @@ test("cursor MCP resume after plan drift still works — lifecycle survives plan
   const { child, call } = await spawnClient();
   try {
     const { plan } = await establishActiveInline(call, root, "cf-flow");
-    await call("workflow_plan_pause", { plan_path: plan, workspace_root: root });
+    await call("workit_plan_pause", { plan_path: plan, workspace_root: root });
     writeFileSync(
       path.join(root, "docs", "cf-flow", "plan.md"),
       COMPLIANT_PLAN("cf-flow").replace("do it", "do it now"),
     );
     // Plan drift resets only the plan approval digest; the paused lifecycle
     // survives, so resume keeps working.
-    const resumed = await call("workflow_plan_resume", { plan_path: plan, workspace_root: root });
+    const resumed = await call("workit_plan_resume", { plan_path: plan, workspace_root: root });
     expect(callText(resumed).isError).toBe(false);
-    const status = await call("workflow_flow_status", {
+    const status = await call("workit_flow_status", {
       plan_path: plan,
       workspace_root: root,
     });
@@ -738,7 +738,7 @@ test("cursor MCP lifecycle mutation under a concurrently held flow lock returns 
     const lockPath = path.join(root, "docs", "cf-flow", "sdd", "flow.json.lock");
     const lockFd = openSync(lockPath, "wx");
     try {
-      const paused = await call("workflow_plan_pause", { plan_path: plan, workspace_root: root });
+      const paused = await call("workit_plan_pause", { plan_path: plan, workspace_root: root });
       expect(callText(paused).isError).toBe(true);
       expect(callText(paused).text.code).toBe("flow_concurrent_conflict");
     } finally {
@@ -757,23 +757,23 @@ const handoffFixture = () => {
   return { root, slug };
 };
 
-test("cursor MCP workflow_handoff_prompt builds the core prompt, marks the destination, and rejects recursion", async () => {
+test("cursor MCP workit_handoff_prompt builds the core prompt, marks the destination, and rejects recursion", async () => {
   const { root } = handoffFixture();
   const { child, call } = await spawnClient();
   try {
     const spec = "docs/cf-flow/spec.md";
     const plan = "docs/cf-flow/plan.md";
-    await call("workflow_flow_status", { plan_path: plan, workspace_root: root });
-    await call("workflow_spec_approve", { spec_path: spec, workspace_root: root });
-    await call("workflow_plan_approve", { plan_path: plan, workspace_root: root });
-    const menu = await call("workflow_plan_menu", {
+    await call("workit_flow_status", { plan_path: plan, workspace_root: root });
+    await call("workit_spec_approve", { spec_path: spec, workspace_root: root });
+    await call("workit_plan_approve", { plan_path: plan, workspace_root: root });
+    const menu = await call("workit_plan_menu", {
       choice: "handoff",
       plan_path: plan,
       workspace_root: root,
     });
     expect(callText(menu).isError).toBe(false);
 
-    const prompt = await call("workflow_handoff_prompt", {
+    const prompt = await call("workit_handoff_prompt", {
       message: `Continue ${plan}`,
       workspace_root: root,
     });
@@ -789,7 +789,7 @@ test("cursor MCP workflow_handoff_prompt builds the core prompt, marks the desti
     expect(callText(prompt).text.tasks).toHaveLength(1);
 
     // A second recursive handoff on the marked destination is rejected.
-    const again = await call("workflow_handoff_prompt", {
+    const again = await call("workit_handoff_prompt", {
       message: `Continue ${plan}`,
       workspace_root: root,
     });
@@ -801,16 +801,16 @@ test("cursor MCP workflow_handoff_prompt builds the core prompt, marks the desti
   }
 });
 
-test("cursor MCP workflow_handoff_prompt leaves the flow unmarked when prompt generation fails", async () => {
+test("cursor MCP workit_handoff_prompt leaves the flow unmarked when prompt generation fails", async () => {
   const { root } = handoffFixture();
   const { child, call } = await spawnClient();
   try {
     const spec = "docs/cf-flow/spec.md";
     const plan = "docs/cf-flow/plan.md";
-    await call("workflow_flow_status", { plan_path: plan, workspace_root: root });
-    await call("workflow_spec_approve", { spec_path: spec, workspace_root: root });
-    await call("workflow_plan_approve", { plan_path: plan, workspace_root: root });
-    const menu = await call("workflow_plan_menu", {
+    await call("workit_flow_status", { plan_path: plan, workspace_root: root });
+    await call("workit_spec_approve", { spec_path: spec, workspace_root: root });
+    await call("workit_plan_approve", { plan_path: plan, workspace_root: root });
+    const menu = await call("workit_plan_menu", {
       choice: "handoff",
       plan_path: plan,
       workspace_root: root,
@@ -822,7 +822,7 @@ test("cursor MCP workflow_handoff_prompt leaves the flow unmarked when prompt ge
       path.join(root, "docs", "cf-flow", "plan.md"),
       "# Broken\n\n**Branch:** `feature/broken`\n",
     );
-    const failed = await call("workflow_handoff_prompt", {
+    const failed = await call("workit_handoff_prompt", {
       message: `Continue ${plan}`,
       workspace_root: root,
     });

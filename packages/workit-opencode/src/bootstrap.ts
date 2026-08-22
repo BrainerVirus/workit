@@ -42,16 +42,16 @@ ${contract}
 ## Presentation and visual companion overrides
 
 - NEVER offer Superpowers visual companion or open a browser tab for layout comparisons.
-- For UI wireframes and layout options use \`workflow_present_ascii\` with a JSON spec; show the tool output in a fenced \`text\` block.
-- For process or architecture flows use \`workflow_present_flow\`; show the tool output in a fenced \`mermaid\` block.
+- For UI wireframes and layout options use \`workit_present_ascii\` with a JSON spec; show the tool output in a fenced \`text\` block.
+- For process or architecture flows use \`workit_present_flow\`; show the tool output in a fenced \`mermaid\` block.
 - NEVER hand-draw ASCII wireframes or mermaid in chat without calling the tool first.
 - For bounded user choices use OpenCode native \`question\`; never A/B/C option lists in chat prose.
 
 ## Post-plan execution choice
 
-After saving a plan, call \`workflow_docs_validate\` on the spec/plan pair. On failure, stop — do not offer execution.
+After saving a plan, call \`workit_docs_validate\` on the spec/plan pair. On failure, stop — do not offer execution.
 
-On success, use native \`question\` with exactly: Subagent-driven, Inline, Handoff (new session only), Review spec first, Review plan first, Change model first. Change model first is display-only: ends turn without workflow_plan_menu, re-presents menu next turn; real choices call workflow_plan_menu immediately before any skill/branch/mutation/handoff. Never emit Superpowers “Two execution options” prose. No \`--stay\` in this menu.
+On success, use native \`question\` with exactly: Subagent-driven, Inline, Handoff (new session only), Review spec first, Review plan first, Change model first. Change model first is display-only: ends turn without workit_plan_menu, re-presents menu next turn; real choices call workit_plan_menu immediately before any skill/branch/mutation/handoff. Never emit Superpowers “Two execution options” prose. No \`--stay\` in this menu.
 
 ## Library documentation
 

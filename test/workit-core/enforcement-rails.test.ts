@@ -30,7 +30,7 @@ test("CA-02: verification detector does NOT fire when a check command is present
   expect(detectVerificationClaim("All fixed — bun run check passes: 380 pass / 0 fail")).toBe(
     false,
   );
-  expect(detectVerificationClaim("Done after workflow_verify confirmed the build.")).toBe(false);
+  expect(detectVerificationClaim("Done after workit_verify confirmed the build.")).toBe(false);
   expect(detectVerificationClaim("Complete — bun test shows all green.")).toBe(false);
 });
 

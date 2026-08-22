@@ -19,7 +19,7 @@ const putLegacy = (root: string, name: string) => {
 
 const run = async (args: any, directory: string) => {
   const tools = createDocsRepoTools();
-  const raw = await tools.workflow_docs_layout.execute(args, { directory } as never);
+  const raw = await tools.workit_docs_layout.execute(args, { directory } as never);
   return JSON.parse(raw as string);
 };
 

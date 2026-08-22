@@ -1,6 +1,6 @@
 ---
 name: wk-changelog
-description: Update CHANGELOG.md via workflow_changelog_context + workflow_changelog_apply. Use for /wk-changelog or "update the changelog".
+description: Update CHANGELOG.md via workit_changelog_context + workit_changelog_apply. Use for /wk-changelog or "update the changelog".
 ---
 
 # Changelog — Keep a Changelog Update
@@ -9,14 +9,14 @@ Update `CHANGELOG.md` for the current repository.
 
 ## Step 1 — Gather facts (required)
 
-Call MCP tool `workflow_changelog_context` with arguments from the user's message (range, version, paths, etc.).
+Call MCP tool `workit_changelog_context` with arguments from the user's message (range, version, paths, etc.).
 
-**Repository calls:** For every repository-scoped `workflow_*` call, pass the active Cursor workspace as `workspace_root`; never rely on the MCP process default.
+**Repository calls:** For every repository-scoped `workit_*` call, pass the active Cursor workspace as `workspace_root`; never rely on the MCP process default.
 
 Use the tool return value as ground truth. Do not read git, run npm, or infer repo state yourself.
 If the tool errors, report the error and stop.
 
-If `unreleased.needs_normalize` is true, call `workflow_changelog_apply` with `normalize_only: true` before merging new bullets.
+If `unreleased.needs_normalize` is true, call `workit_changelog_apply` with `normalize_only: true` before merging new bullets.
 
 ## Step 2 — Decide entries (do not edit the file yet)
 
@@ -31,7 +31,7 @@ Follow Keep a Changelog 1.1.0:
 
 ## Step 3 — Apply via tool (required)
 
-Call MCP `workflow_changelog_apply` with the new bullets. Examples:
+Call MCP `workit_changelog_apply` with the new bullets. Examples:
 
 ```json
 {

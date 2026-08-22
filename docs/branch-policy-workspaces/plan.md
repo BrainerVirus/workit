@@ -340,7 +340,7 @@ git commit -m "feat(branch-policy): detect repo convention from branch presence"
 **Files:**
 - Modify: `packages/workit-core/src/core/init.ts` (`initApplyData` gains `branch_policy`)
 - Modify: `packages/workit-core/src/core/setup.ts` (shared workspace write helper, reused by Task 5)
-- Modify: `packages/workit-opencode/src/tools/repo.ts` and `packages/workit-cursor/mcp/server.ts` (`workflow_toolkit_init_apply` args + action enum)
+- Modify: `packages/workit-opencode/src/tools/repo.ts` and `packages/workit-cursor/mcp/server.ts` (`workit_init_apply` args + action enum)
 - Create: `test/workit-core/branch-policy-init.test.ts`
 
 **Interfaces:**
@@ -472,7 +472,7 @@ case "branch_policy": {
 }
 ```
 
-In `packages/workit-opencode/src/tools/repo.ts` and `packages/workit-cursor/mcp/server.ts`, add `"branch_policy"` to the `action` enum of `workflow_toolkit_init_apply` and pass `WORKFLOW_WORKSPACE_ROOT` + `WORKFLOW_BP_*` env (OpenCode passes `context.directory`; Cursor passes `workspace_root`).
+In `packages/workit-opencode/src/tools/repo.ts` and `packages/workit-cursor/mcp/server.ts`, add `"branch_policy"` to the `action` enum of `workit_init_apply` and pass `WORKFLOW_WORKSPACE_ROOT` + `WORKFLOW_BP_*` env (OpenCode passes `context.directory`; Cursor passes `workspace_root`).
 
 - [ ] **Step 4: Run GREEN**
 
@@ -674,9 +674,9 @@ Multi-platform workit: OpenCode, Cursor, and the CLI share one core. Every featu
 | --- | --- | --- | --- |
 | Approval | native `question` tool receipts | AskQuestion policy-only (`attested: false`) | `--confirm` flags / TTY prompts |
 | Handoff | spawns a native OpenCode session | seeds a handoff prompt for the next agent | prints a handoff summary |
-| Tools | native plugin tools | MCP server (`workflow_*`) | `workit` commands |
+| Tools | native plugin tools | MCP server (`workit_*`) | `workit` commands |
 | Skills | `skills.paths` + vendored dirs | plugin `skills/` dirs | n/a |
-| Branch policy init | `workflow_toolkit_init_apply action=branch_policy` | same MCP tool | wizard screen |
+| Branch policy init | `workit_init_apply action=branch_policy` | same MCP tool | wizard screen |
 
 ## Parity rules
 

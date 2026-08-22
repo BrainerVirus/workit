@@ -10,12 +10,12 @@ const output = (value: unknown) => JSON.stringify(value, null, 2);
 
 export function createTemplateTools() {
   return {
-    workflow_template_list: tool({
+    workit_template_list: tool({
       description: "List editable templates (issue-update, greeting, headers) with their source",
       args: {},
       execute: async () => output(ok({ templates: listTemplates() })),
     }),
-    workflow_template_edit: tool({
+    workit_template_edit: tool({
       description: "Write an edited template to the toolkit config dir (agent-assisted)",
       args: {
         name: tool.schema.enum(["issue-update", "greeting", "headers"]),

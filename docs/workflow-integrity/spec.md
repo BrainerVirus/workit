@@ -89,7 +89,7 @@ Existing persisted `flow.json` is compatibility data. A missing lifecycle field 
 ## Acceptance criteria
 
 - CA-01: Spec and plan approval store SHA-256 of the canonical document's exact valid UTF-8 bytes together with approval evidence; invalid UTF-8, missing/unreadable files, non-canonical paths, aliases, traversal, and symlink escapes fail closed with structured errors.
-- CA-02: `workflow_flow_status` and every approval, menu, lifecycle, implementation, review, handoff, and completion gate reconcile document digests before using persisted approvals.
+- CA-02: `workit_flow_status` and every approval, menu, lifecycle, implementation, review, handoff, and completion gate reconcile document digests before using persisted approvals.
 - CA-03: Spec drift resets spec and plan approval, both digests, menu evidence, handoff-destination context, and execution lifecycle to `pending`; plan drift preserves valid spec approval while resetting plan approval, its digest, menu evidence, handoff context, and execution to `pending`.
 - CA-04: Effective flow status exposes structured drift reasons that identify the affected document, canonical path, and one of `digest_missing`, `document_missing`, `document_unreadable`, or `digest_mismatch`.
 - CA-05: Approved legacy state without the corresponding digest is stale and fails closed, and the reset state accepts a fresh approval sequence without manual state-file deletion.

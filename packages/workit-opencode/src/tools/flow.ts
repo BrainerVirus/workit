@@ -148,7 +148,7 @@ export function createFlowTools(receipts: HostReceiptStore, client?: SessionLook
     });
 
   return {
-    workflow_flow_status: tool({
+    workit_flow_status: tool({
       description:
         "Read the spec/plan approval flow state for a workflow; on first read it records flow activation and canonical document paths (FG-01)",
       args: {
@@ -193,7 +193,7 @@ export function createFlowTools(receipts: HostReceiptStore, client?: SessionLook
         }
       },
     }),
-    workflow_spec_approve: tool({
+    workit_spec_approve: tool({
       description:
         "Advance spec status from a host-observed native-question receipt: draft -> approved in a single call. The self-review validation runs automatically inside the transition; only the final approval asks for your confirmation. The receipt is recorded automatically when the user answers the `question` tool; there is no evidence argument (AR-12).",
       args: {
@@ -222,7 +222,7 @@ export function createFlowTools(receipts: HostReceiptStore, client?: SessionLook
         );
         // Echo through the EFFECTIVE read (CA-02): the post-transition status is
         // reconciled so a drift reset that ran during the transition is
-        // reflected, consistent with workflow_flow_status. Fall back to the
+        // reflected, consistent with workit_flow_status. Fall back to the
         // lenient read only if the reconciled read itself fails — never fail a
         // successful transition over an echo.
         const effective = readEffectiveFlowState(context.directory, slug);
@@ -236,7 +236,7 @@ export function createFlowTools(receipts: HostReceiptStore, client?: SessionLook
         );
       },
     }),
-    workflow_plan_approve: tool({
+    workit_plan_approve: tool({
       description:
         "Advance plan status from a host-observed native-question receipt: draft -> approved in a single call. The self-review validation runs automatically inside the transition; only the final approval asks for your confirmation. Requires approved spec. There is no evidence argument (AR-12).",
       args: {
@@ -247,7 +247,7 @@ export function createFlowTools(receipts: HostReceiptStore, client?: SessionLook
         if ("error" in slugged) return output(fail(slugged.error));
         const slug = slugged.slug;
         // FINDING 5 (round 3): consume-before-transition, same as
-        // workflow_spec_approve — the atomic one-use take gates the transition
+        // workit_spec_approve — the atomic one-use take gates the transition
         // and is spent on any attempt. Purpose-bound.
         const consumed = receipts.consume(context.sessionID, { purpose: "plan-approval" });
         if (!consumed.ok) return output(fail(consumed.error, { code: consumed.code }));
@@ -258,7 +258,7 @@ export function createFlowTools(receipts: HostReceiptStore, client?: SessionLook
           createOpenCodeEvidence(consumed.receipt),
           await opencodeMutationContext(context, client),
         );
-        // Effective echo, same as workflow_spec_approve: reconciled status,
+        // Effective echo, same as workit_spec_approve: reconciled status,
         // lenient fallback only if the reconciled read fails.
         const effective = readEffectiveFlowState(context.directory, slug);
         const status = effective.ok
@@ -271,7 +271,7 @@ export function createFlowTools(receipts: HostReceiptStore, client?: SessionLook
         );
       },
     }),
-    workflow_plan_menu: tool({
+    workit_plan_menu: tool({
       description:
         "Record the answered post-plan choice menu (called after the native question). The receipt label must match the choice exactly; there is no evidence argument (AR-12).",
       args: {
@@ -316,17 +316,17 @@ export function createFlowTools(receipts: HostReceiptStore, client?: SessionLook
         );
       },
     }),
-    workflow_plan_pause: lifecycleTool(
+    workit_plan_pause: lifecycleTool(
       "pause",
       "Pause plan",
       "Pause a running plan from a host-observed native-question receipt: active -> paused. The receipt label must be exactly `Pause plan`; there is no evidence argument (AR-12). A failed gate (already-paused) spends the receipt — re-answer the native question to retry.",
     ),
-    workflow_plan_resume: lifecycleTool(
+    workit_plan_resume: lifecycleTool(
       "resume",
       "Resume plan",
       "Resume a paused plan from a host-observed native-question receipt: paused -> active. The receipt label must be exactly `Resume plan`; there is no evidence argument (AR-12). A failed gate (flow_not_paused) spends the receipt — re-answer the native question to retry.",
     ),
-    workflow_plan_complete: lifecycleTool(
+    workit_plan_complete: lifecycleTool(
       "complete",
       "Complete plan",
       "Complete a running plan from a host-observed native-question receipt: active/paused -> completed, after the SDD ledger is complete and repository verification passes. The receipt label must be exactly `Complete plan`; there is no evidence argument (AR-12). A failed gate (execution_incomplete or verification_failed) spends the receipt — re-answer the native question to retry.",

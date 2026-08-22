@@ -77,7 +77,7 @@ The doctor gains a stale-install check: read the installed plugin's `package.jso
 - CA-04: A registry-unreachable staleness comparison fails open with `registry_unreachable` (no false `stale_install`, no install failure).
 - CA-05: The real machine state is repaired: re-running the installer against the current stale 0.4.0 install produces a healthy registration whose sessionStart hook + MCP run a current runtime, and the doctor passes.
 - CA-06: Auto-load is restored: after repair, Cursor's sessionStart hook fires and the workit MCP server registers per workspace without a manual trigger (verified on the real install).
-- CA-07: Full repository verification passes: lint, format:check, tests, build, changelog (`bun run check` / `workflow_verify`), plus `bun run validate:cursor-marketplace`.
+- CA-07: Full repository verification passes: lint, format:check, tests, build, changelog (`bun run check` / `workit_verify`), plus `bun run validate:cursor-marketplace`.
 
 ## Decisions
 

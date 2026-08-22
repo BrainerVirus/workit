@@ -14,6 +14,7 @@ import {
   DESTINATION_MENU_LABELS,
   HANDOFF_DESTINATION_MARKER,
 } from "../../packages/workit-core/src/core/menu";
+import { assertOpencodeWorkitNamespace } from "../shared/helpers/opencode-namespace";
 
 // Task 6 (CA-19, CA-21): the CLI flow/handoff surface maps argv + a
 // TTY/--confirm confirmation seam to the shared core. These tests drive the
@@ -678,5 +679,41 @@ test("usage errors exit 2 with stderr diagnostics", async () => {
     }
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// Tool-rename parity (workit-tool-rename Task 5): both hosts expose one common
+// workit_* namespace and the documented host-only tools stay host-only —
+// OpenCode has workit_commit/workit_handoff_session; Cursor has
+// workit_handoff_prompt.
+test("host tool surfaces share the common workit_* namespace with documented host-only tools", () => {
+  const opencode = assertOpencodeWorkitNamespace();
+
+  const repoRoot = path.resolve(import.meta.dir, "..", "..");
+  const server = readFileSync(path.join(repoRoot, "packages/workit-cursor/mcp/server.ts"), "utf8");
+  const registered = [...server.matchAll(/registerTool\(\s*\n?\s*"([a-z0-9_]+)"/g)].map(
+    (m) => m[1],
+  );
+  const lifecycle = [...server.matchAll(/lifecycleTool\(\s*\n?\s*"([a-z]+)"/g)].map(
+    (m) => `workit_plan_${m[1]}`,
+  );
+  const cursor = [...registered, ...lifecycle].sort();
+  expect(cursor.length).toBeGreaterThan(0);
+  for (const name of cursor) {
+    expect(name).toMatch(/^workit_[a-z0-9_]+$/);
+  }
+  expect(cursor).toContain("workit_handoff_prompt");
+  expect(cursor).not.toContain("workit_commit");
+  expect(cursor).not.toContain("workit_handoff_session");
+
+  for (const shared of [
+    "workit_verify",
+    "workit_spec_approve",
+    "workit_plan_approve",
+    "workit_plan_complete",
+    "workit_sdd_context",
+  ]) {
+    expect(opencode, shared).toContain(shared);
+    expect(cursor, shared).toContain(shared);
   }
 });

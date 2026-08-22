@@ -21,7 +21,7 @@
 
 - [ ] **Step 1:** `src/core/reminder.ts`: add `VERIFICATION_TEXT`, `TDD_TEXT`, `BRAINSTORM_TEXT`, `DEBUG_TEXT`, `REVIEW_RECEPTION_TEXT` (block style like the existing rails; each names the skill and carries its core rule — verification: no completion claim without fresh check evidence; TDD: write the test first, watch it fail; brainstorm: no implementation until a design is presented and approved; debugging: no fix without root-cause investigation; receiving: verify review feedback before implementing). Add `shouldInject*` helpers (marker-based idempotency).
 - [ ] **Step 2:** `src/core/detector.ts`: five `detect*` fns on assistant text:
-  - `detectVerificationClaim(text)`: claims done/fixed/passing/green/complete WITHOUT a check-command output in the same text (conservative: if the text contains "bun run check" or "workflow_verify" or a command output block, do NOT fire).
+  - `detectVerificationClaim(text)`: claims done/fixed/passing/green/complete WITHOUT a check-command output in the same text (conservative: if the text contains "bun run check" or "workit_verify" or a command output block, do NOT fire).
   - `detectUntestedImplementation(text)`: implementation signals (edits/commits/diff) without a preceding failing-test mention ("failing test", "test failed", "watch it fail", "TDD").
   - `detectImplementationWithoutDesign(text)`: implementation signals without a design presentation ("design", "spec", "brainstorm", "approved").
   - `detectFixWithoutRootCause(text)`: fix proposal ("fixed", "fix", "patch") without root-cause evidence ("root cause", "caused by", "reproduced", "trace").

@@ -1,11 +1,20 @@
 import { expect, test } from "bun:test";
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { SUPPORT_MATRIX } from "../../packages/workit-core/src/core/support-matrix";
 import {
+  extractTarball,
   installPackedPackage,
   isolatedEnv,
   npmRegistryReachable,
@@ -145,7 +154,7 @@ test("cursor MCP server boots over stdio from the extracted package with node (n
       const names = ((listed.result as { tools?: { name: string }[] })?.tools ?? []).map(
         (t) => t.name,
       );
-      expect(names).toContain("workflow_git_context");
+      expect(names).toContain("workit_git_context");
       expect(names).toContain("workit_init_apply");
     } finally {
       // win32 keeps deleted files/dirs locked until the child fully exits, so
@@ -268,7 +277,7 @@ test.skipIf(!npmRegistryOk)(
         const names = ((listed.result as { tools?: { name: string }[] })?.tools ?? []).map(
           (t) => t.name,
         );
-        expect(names).toContain("workflow_git_context");
+        expect(names).toContain("workit_git_context");
         expect(names).toContain("workit_init_apply");
       } finally {
         child.kill();
@@ -328,6 +337,38 @@ test("packed tarball locations never reference the repository checkout", () => {
   const normalized = REPO_ROOT.split(path.sep).join("/");
   for (const pack of packs) {
     expect(pack.tarball, pack.packageName).not.toContain(normalized);
+  }
+});
+
+// Tool-rename runtime gate: the EXTRACTED installed package (what a host actually
+// reads) ships only renamed workit_* tool identifiers in its skill/template/
+// vendor markdown. Uppercase WORKFLOW_* env names are out of scope and stay.
+test("extracted adapter packages ship no live workflow_ tool references in skills/templates/vendor", () => {
+  const live = /\bworkflow_[a-z0-9_]+\b/;
+  const contentTrees = ["skills/", "templates/", "vendor/"];
+  const walkMd = (dir: string, visit: (file: string) => void): void => {
+    if (!existsSync(dir)) return;
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, entry.name);
+      if (entry.isDirectory()) walkMd(p, visit);
+      else if (entry.name.endsWith(".md")) visit(p);
+    }
+  };
+  const packs = packWorkspacePackages();
+  for (const name of [CORE, OPENCODE, CURSOR, CLI]) {
+    const { root, packageDir } = extractTarball(byName(packs, name).tarball);
+    try {
+      const offenders: string[] = [];
+      for (const tree of contentTrees) {
+        walkMd(path.join(packageDir, tree), (file) => {
+          const m = live.exec(readFileSync(file, "utf8"));
+          if (m) offenders.push(`${path.relative(packageDir, file)}: ${m[0]}`);
+        });
+      }
+      expect(offenders, `${name} installed tree`).toEqual([]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   }
 });
 

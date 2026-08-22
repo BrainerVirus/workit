@@ -7,6 +7,7 @@ import plugin from "../../packages/workit-opencode/src/plugin";
 import { createRepoTools } from "../../packages/workit-opencode/src/tools/repo";
 import { createSddTools } from "../../packages/workit-opencode/src/tools/sdd";
 import { WorkflowStateStore } from "../../packages/workit-core/src/state";
+import { assertOpencodeWorkitNamespace } from "../shared/helpers/opencode-namespace";
 
 const repository = (branch: string) => {
   const root = mkdtempSync(path.join(os.tmpdir(), "wf-smoke-"));
@@ -27,7 +28,7 @@ test("feature branch staged file exposes context and can be committed", async ()
     git(["add", "staged.txt"]);
     const tools = createRepoTools();
     const context = JSON.parse(
-      (await tools.workflow_git_context.execute({}, {
+      (await tools.workit_git_context.execute({}, {
         directory: root,
         worktree: root,
       } as never)) as string,
@@ -37,7 +38,7 @@ test("feature branch staged file exposes context and can be committed", async ()
     expect(context.data.staged).toContain("staged.txt");
 
     const committed = JSON.parse(
-      (await tools.workflow_commit.execute({ confirmed: true, message: "test: staged fixture" }, {
+      (await tools.workit_commit.execute({ confirmed: true, message: "test: staged fixture" }, {
         directory: root,
         worktree: root,
       } as never)) as string,
@@ -54,7 +55,7 @@ test("main branch rejects workflow commits", async () => {
   try {
     writeFileSync(path.join(root, "staged.txt"), "staged\n");
     git(["add", "staged.txt"]);
-    const raw = await createRepoTools().workflow_commit.execute(
+    const raw = await createRepoTools().workit_commit.execute(
       { confirmed: true, message: "test: must reject" },
       { directory: root, worktree: root } as never,
     );
@@ -92,7 +93,7 @@ Keep custom heading.
 - Historical fix
 `,
     );
-    const raw = await createRepoTools().workflow_changelog_apply.execute(
+    const raw = await createRepoTools().workit_changelog_apply.execute(
       {
         confirmed: true,
         entries: { Added: ["New item"] },
@@ -147,7 +148,7 @@ test("SDD context reports completed and pending tasks from the ledger", async ()
       path.join(root, "docs/smoke/sdd/progress.md"),
       "Task 1: complete (commits abcdef0..1234567, tests pass)\n",
     );
-    const raw = await createSddTools(new WorkflowStateStore()).workflow_sdd_context.execute(
+    const raw = await createSddTools(new WorkflowStateStore()).workit_sdd_context.execute(
       { plan_path: "docs/smoke/plan.md" },
       { directory: root, worktree: root, sessionID: "smoke" } as never,
     );
@@ -161,6 +162,10 @@ test("SDD context reports completed and pending tasks from the ledger", async ()
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("native tools expose the common workit_* namespace with OpenCode-only commit/handoff_session", () => {
+  assertOpencodeWorkitNamespace();
 });
 
 test("plugin registers without a Cursor runtime path", async () => {

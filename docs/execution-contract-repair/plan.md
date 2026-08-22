@@ -58,9 +58,9 @@
 
 ### Task 4: Mandate plan completion in the execution contract (Phase 1)
 
-- [ ] **Step 1:** Add a failing contract test asserting wk-implement, wk-handoff, and subagent-driven skill text require ending execution with `workflow_plan_complete` (or CLI equivalent) after the final task once the ledger is complete and verification passes.
+- [ ] **Step 1:** Add a failing contract test asserting wk-implement, wk-handoff, and subagent-driven skill text require ending execution with `workit_plan_complete` (or CLI equivalent) after the final task once the ledger is complete and verification passes.
 - [ ] **Step 2:** Update the skill texts (and the plan template's final-task guidance) to mandate the completion step, including the exact tool name and its precondition (complete ledger + green verification).
-- [ ] **Step 3:** Add a completion-contract test in `test/workit-core/` (or the opencode flow suite) proving a run that finishes tasks without `workflow_plan_complete` leaves the plan `active`, and that calling the tool completes it.
+- [ ] **Step 3:** Add a completion-contract test in `test/workit-core/` (or the opencode flow suite) proving a run that finishes tasks without `workit_plan_complete` leaves the plan `active`, and that calling the tool completes it.
 
 **Criteria:** Contract test passes; skill text mandates completion; the flow test proves active -> completed via the tool.
 
@@ -83,10 +83,10 @@
 ### Task 6: Documentation, changelog, and full verification (all phases)
 
 - [ ] **Step 1:** Update README, AGENTS.md, and CHANGELOG.md Unreleased: completion step in the execution contract, atomic per-task commit ranges, empty-range rejection, and the naming change.
-- [ ] **Step 2:** Run `workflow_verify` (lint, format:check, tests, build, changelog) and fix any failures introduced by this feature.
+- [ ] **Step 2:** Run `workit_verify` (lint, format:check, tests, build, changelog) and fix any failures introduced by this feature.
 - [ ] **Step 3:** Re-run the focused suites (sdd, flow-enforcement, contracts, doctor, migration, packed-cli, cursor flow) and confirm all pass; run the completion-contract test end-to-end (finish a task run and complete the plan).
 
-**Criteria:** `workflow_verify` passes; docs/changelog reflect all three phases; the completion-contract test proves a real plan run reaches `completed`.
+**Criteria:** `workit_verify` passes; docs/changelog reflect all three phases; the completion-contract test proves a real plan run reaches `completed`.
 
 | Status | Task |
 | --- | --- |

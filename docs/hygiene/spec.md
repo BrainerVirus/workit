@@ -6,16 +6,16 @@
 
 The toolkit validates workflow docs (`docs/<slug>/`) and enforces `docs/*/sdd/` gitignore, but project hygiene files are unvalidated and uncreated: CHANGELOG.md (Keep a Changelog format, the defined standard), README.md, .editorconfig, .gitattributes, and (for open-source repos) LICENSE + CONTRIBUTING.md. The toolkit's own repo lacks a CHANGELOG.md — the rule is not self-enforced.
 
-Goal: detect hygiene file state in `workflow_docs_validate` and `workflow_verify`, and let `wf-init` create missing files with sensible templates (never overwriting existing ones).
+Goal: detect hygiene file state in `workit_docs_validate` and `workit_verify`, and let `wf-init` create missing files with sensible templates (never overwriting existing ones).
 
 ## Goals
 
 1. **`src/core/hygiene.ts`**: `hygieneFiles(workspaceRoot)` returns per-file state (`missing | invalid | ok`) for `CHANGELOG.md`, `README.md`, `.editorconfig`, `.gitattributes`, plus optional `LICENSE`/`CONTRIBUTING.md` flagged `openSourceOnly`.
 2. **CHANGELOG format check**: reuse `changelogUnreleasedStats` — a valid Keep a Changelog file has `## [Unreleased]` and at least one category section (Added/Changed/Fixed/Removed/Security/Deprecated). Missing file → `changelog_missing`; bad format → `changelog_invalid_format`.
 3. **Validation findings** (warnings, not hard): `changelog_missing`, `changelog_invalid_format`, `readme_missing`, `editorconfig_missing`, `gitattributes_missing`, and open-source-only `license_missing`, `contributing_missing` (heuristic: repo has a LICENSE file, or `package.json` with `private: false`, or is the toolkit repo).
-4. **`workflow_verify`**: adds a `CHANGELOG.md` format check (reuses `changelogUnreleasedStats`).
+4. **`workit_verify`**: adds a `CHANGELOG.md` format check (reuses `changelogUnreleasedStats`).
 5. **`ensureHygieneFiles(workspaceRoot, { confirmed, includeOpenSource })`**: creates missing files from `templates/hygiene/` templates; never overwrites existing; requires `confirmed`.
-6. **`workflow_toolkit_init_apply`** gains `action: "hygiene"` (or extends `gitignore`) on both platforms; `wf-init` skill documents it.
+6. **`workit_init_apply`** gains `action: "hygiene"` (or extends `gitignore`) on both platforms; `wf-init` skill documents it.
 
 ## Non-goals
 
@@ -64,28 +64,28 @@ if (hygiene.openSource && hygiene.LICENSE === "missing") quality.push({ code: "l
 if (hygiene.openSource && hygiene["CONTRIBUTING.md"] === "missing") quality.push({ code: "contributing_missing", ... });
 ```
 
-### 4. `workflow_verify`
+### 4. `workit_verify`
 
 Add a check in `scripts/verify-project.sh`: CHANGELOG.md exists and parses (`changelogUnreleasedStats`-style python check or the TS core via a small script). Simplest: a shell check that CHANGELOG.md exists and contains `## [Unreleased]`.
 
-### 5. `workflow_toolkit_init_apply` `hygiene` action
+### 5. `workit_init_apply` `hygiene` action
 
 Both platforms: `action: "hygiene"` (plus optional `include_open_source: boolean`) → `ensureHygieneFiles(context.directory, { confirmed, includeOpenSource })`.
 
 ## Data flow
 
 1. User runs `wf-init` → config + gitignore + hygiene (creates missing files).
-2. `workflow_docs_validate` on any feature → hygiene findings listed (warnings).
-3. `workflow_verify` → CHANGELOG format check.
+2. `workit_docs_validate` on any feature → hygiene findings listed (warnings).
+3. `workit_verify` → CHANGELOG format check.
 4. Open-source repos → LICENSE/CONTRIBUTING flagged/created when opted in.
 
 ## Acceptance criteria
 
 - CA-01: `hygieneFiles` returns per-file state (`missing | invalid | ok | skip`) for CHANGELOG.md, README.md, .editorconfig, .gitattributes, plus openSource-only LICENSE/CONTRIBUTING.md.
 - CA-02: A valid Keep a Changelog file reports `ok`; missing → `changelog_missing`; bad format → `changelog_invalid_format` (reusing `changelogUnreleasedStats`).
-- CA-03: `workflow_docs_validate` and `workflow_verify` surface the hygiene findings as warnings — never hard.
+- CA-03: `workit_docs_validate` and `workit_verify` surface the hygiene findings as warnings — never hard.
 - CA-04: `ensureHygieneFiles` creates missing files from `templates/hygiene/`, never overwrites existing ones, and requires `confirmed`.
-- CA-05: `workflow_toolkit_init_apply` gains the `hygiene` action on both platforms (OpenCode + Cursor).
+- CA-05: `workit_init_apply` gains the `hygiene` action on both platforms (OpenCode + Cursor).
 - CA-06: Warnings never block validation; only hard findings do.
 
 ## Error handling

@@ -15,7 +15,7 @@
 
 - Flow state lives in `docs/superpowers/sdd/<slug>/flow.json`; missing file = `draft` = gates fail closed.
 - Status transitions only: `draft → self_reviewed → approved`. No backward transitions.
-- `workflow_plan_approve` hard-fails unless spec is `approved`.
+- `workit_plan_approve` hard-fails unless spec is `approved`.
 - `wf-implement` refuses unless plan `approved` AND `menu.presented === true`. `wf-handoff` refuses unless spec AND plan `approved`.
 - Post-plan menu options exactly: Subagent-driven, Inline, Handoff (new session only), Review spec first, Review plan first — no stay.
 - All tool args validated with zod; write tools keep the `confirmed: true` pattern.
@@ -301,10 +301,10 @@ git commit -m "feat(core): flow state store with spec/plan approval transitions"
 **Interfaces:**
 - Consumes: `readFlowState`, `transitionSpec`, `transitionPlan`, `recordMenuChoice` from `src/core/flow-state.ts`
 - Produces (registered tools, all returning the toolkit `{ ok, data, error }` envelope):
-  - `workflow_flow_status({ spec_path?, plan_path? })` — resolves slug from plan basename (or spec basename); returns `{ spec, plan, menu, flow_path }`
-  - `workflow_spec_approve({ confirmed, spec_path })` — slug from spec basename; `transitionSpec`
-  - `workflow_plan_approve({ confirmed, plan_path })` — slug from plan basename; `transitionPlan`
-  - `workflow_plan_menu({ confirmed, plan_path, choice })` — `choice` enum `["subagent-driven","inline","handoff","review-spec","review-plan"]`; `recordMenuChoice`
+  - `workit_flow_status({ spec_path?, plan_path? })` — resolves slug from plan basename (or spec basename); returns `{ spec, plan, menu, flow_path }`
+  - `workit_spec_approve({ confirmed, spec_path })` — slug from spec basename; `transitionSpec`
+  - `workit_plan_approve({ confirmed, plan_path })` — slug from plan basename; `transitionPlan`
+  - `workit_plan_menu({ confirmed, plan_path, choice })` — `choice` enum `["subagent-driven","inline","handoff","review-spec","review-plan"]`; `recordMenuChoice`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -333,7 +333,7 @@ const run = (tools: any, name: string, args: any, ctx: any) =>
 test("flow_status returns draft when no state exists", async () => {
   const { root, tools, ctx } = fixture();
   try {
-    const out = await run(tools, "workflow_flow_status", {
+    const out = await run(tools, "workit_flow_status", {
       plan_path: "docs/superpowers/plans/2026-08-06-x.md",
     }, ctx);
     expect(out.ok).toBe(true);
@@ -348,7 +348,7 @@ test("flow_status returns draft when no state exists", async () => {
 test("spec_approve without confirmed fails", async () => {
   const { root, tools, ctx } = fixture();
   try {
-    const out = await run(tools, "workflow_spec_approve", {
+    const out = await run(tools, "workit_spec_approve", {
       confirmed: false,
       spec_path: "docs/superpowers/specs/2026-08-06-x-design.md",
     }, ctx);
@@ -363,17 +363,17 @@ test("full flow: spec approve x2 -> plan approve x2 -> menu", async () => {
   try {
     const spec = "docs/superpowers/specs/2026-08-06-x-design.md";
     const plan = "docs/superpowers/plans/2026-08-06-x.md";
-    await run(tools, "workflow_spec_approve", { confirmed: true, spec_path: spec }, ctx);
-    await run(tools, "workflow_spec_approve", { confirmed: true, spec_path: spec }, ctx);
-    const planFirst = await run(tools, "workflow_plan_approve", { confirmed: true, plan_path: plan }, ctx);
+    await run(tools, "workit_spec_approve", { confirmed: true, spec_path: spec }, ctx);
+    await run(tools, "workit_spec_approve", { confirmed: true, spec_path: spec }, ctx);
+    const planFirst = await run(tools, "workit_plan_approve", { confirmed: true, plan_path: plan }, ctx);
     expect(planFirst.ok).toBe(true);
-    const planSecond = await run(tools, "workflow_plan_approve", { confirmed: true, plan_path: plan }, ctx);
+    const planSecond = await run(tools, "workit_plan_approve", { confirmed: true, plan_path: plan }, ctx);
     expect(planSecond.ok).toBe(true);
-    const menu = await run(tools, "workflow_plan_menu", {
+    const menu = await run(tools, "workit_plan_menu", {
       confirmed: true, plan_path: plan, choice: "handoff",
     }, ctx);
     expect(menu.ok).toBe(true);
-    const status = await run(tools, "workflow_flow_status", { plan_path: plan }, ctx);
+    const status = await run(tools, "workit_flow_status", { plan_path: plan }, ctx);
     expect(status.data.spec.status).toBe("approved");
     expect(status.data.plan.status).toBe("approved");
     expect(status.data.menu).toEqual({ presented: true, chosen: "handoff" });
@@ -386,7 +386,7 @@ test("plan_approve hard-fails while spec is draft", async () => {
   const { root, tools, ctx } = fixture();
   try {
     const plan = "docs/superpowers/plans/2026-08-06-x.md";
-    const out = await run(tools, "workflow_plan_approve", { confirmed: true, plan_path: plan }, ctx);
+    const out = await run(tools, "workit_plan_approve", { confirmed: true, plan_path: plan }, ctx);
     expect(out.ok).toBe(false);
     expect(out.error).toContain("spec");
   } finally {
@@ -421,7 +421,7 @@ const slugFrom = (p: string) => path.basename(p, ".md").replace(/-design$/, "");
 
 export function createFlowTools() {
   return {
-    workflow_flow_status: tool({
+    workit_flow_status: tool({
       description: "Read the spec/plan approval flow state for a workflow",
       args: {
         plan_path: tool.schema.string().optional(),
@@ -444,7 +444,7 @@ export function createFlowTools() {
         }
       },
     }),
-    workflow_spec_approve: tool({
+    workit_spec_approve: tool({
       description: "Advance spec status: first call self_reviewed, second call approved (after user approval)",
       args: {
         confirmed: tool.schema.boolean(),
@@ -456,7 +456,7 @@ export function createFlowTools() {
         return output(result.ok ? ok({ spec: spec_path, status: readFlowState(context.directory, slug).spec.status }) : fail(result.error));
       },
     }),
-    workflow_plan_approve: tool({
+    workit_plan_approve: tool({
       description: "Advance plan status: first call self_reviewed, second call approved. Requires approved spec.",
       args: {
         confirmed: tool.schema.boolean(),
@@ -468,7 +468,7 @@ export function createFlowTools() {
         return output(result.ok ? ok({ plan: plan_path, status: readFlowState(context.directory, slug).plan.status }) : fail(result.error));
       },
     }),
-    workflow_plan_menu: tool({
+    workit_plan_menu: tool({
       description: "Record the answered post-plan choice menu (called after native question)",
       args: {
         confirmed: tool.schema.boolean(),
@@ -507,7 +507,7 @@ Expected: PASS (4 tests).
 
 ```bash
 git add src/tools/flow.ts src/tools/index.ts test/flow-tools.test.ts
-git commit -m "feat(plugin): register workflow_flow_status/spec_approve/plan_approve/plan_menu"
+git commit -m "feat(plugin): register workit_flow_status/spec_approve/plan_approve/plan_menu"
 ```
 
 ---
@@ -539,13 +539,13 @@ export const assertFlowGates = (
   const slug = slugFromPath(planPath);
   const state = readFlowState(root, slug);
   if (state.spec.status !== "approved") {
-    return { ok: false, error: `spec not approved (status: ${state.spec.status}). Run workflow_spec_approve after the user's approval.` };
+    return { ok: false, error: `spec not approved (status: ${state.spec.status}). Run workit_spec_approve after the user's approval.` };
   }
   if (state.plan.status !== "approved") {
-    return { ok: false, error: `plan not approved (status: ${state.plan.status}). Run workflow_plan_approve after the user's approval.` };
+    return { ok: false, error: `plan not approved (status: ${state.plan.status}). Run workit_plan_approve after the user's approval.` };
   }
   if (opts.requireMenu && !state.menu.presented) {
-    return { ok: false, error: "post-plan menu not presented. Ask the native question menu (Subagent-driven/Inline/Handoff/Review spec/Review plan) and record the answer with workflow_plan_menu." };
+    return { ok: false, error: "post-plan menu not presented. Ask the native question menu (Subagent-driven/Inline/Handoff/Review spec/Review plan) and record the answer with workit_plan_menu." };
   }
   return { ok: true };
 };
@@ -596,7 +596,7 @@ Expected: FAIL — `assertFlowGates` / `slugFromPath` not exported.
 
 - [ ] **Step 3: Wire the gate into `src/tools/handoff.ts`**
 
-Read `src/tools/handoff.ts`. In the `workflow_handoff_session` execute path (before creating the session), add:
+Read `src/tools/handoff.ts`. In the `workit_handoff_session` execute path (before creating the session), add:
 
 ```typescript
 import { assertFlowGates } from "../core/flow-state";
@@ -617,7 +617,7 @@ Read the file. Add after the existing contract text:
 
 - `wf-implement` refuses to run unless the plan is `approved` (flow.json) and the post-plan menu was presented.
 - `wf-handoff` refuses to run unless both spec and plan are `approved`.
-- Sequence is enforced by tools: `workflow_spec_approve` (×2), `workflow_plan_approve` (×2), `workflow_plan_menu` — never skip a step.
+- Sequence is enforced by tools: `workit_spec_approve` (×2), `workit_plan_approve` (×2), `workit_plan_menu` — never skip a step.
 ```
 
 - [ ] **Step 5: Run full suite**
@@ -795,7 +795,7 @@ with:
 import { docsValidate } from "../core/docs-validate";
 ```
 
-(The `workflow_docs_validate` tool keeps its exact args/behavior — the envelope logic in `invoke()` is unchanged.)
+(The `workit_docs_validate` tool keeps its exact args/behavior — the envelope logic in `invoke()` is unchanged.)
 
 - [ ] **Step 3: Run existing docs-validate tests**
 
@@ -982,7 +982,7 @@ export const branchSetup = ({
     const dirty = Boolean(gitContext(cwd).status_short.trim());
     if (dirty) {
       if (stash !== "yes") {
-        return { error: "dirty working tree — ask with native question, then call workflow_branch_setup with stash=yes" };
+        return { error: "dirty working tree — ask with native question, then call workit_branch_setup with stash=yes" };
       }
       try { exec(["stash", "push", "-u", "-m", `workflow-toolkit: pre-checkout ${target}`]); } catch (error) {
         return { error: error instanceof Error ? error.message : "stash push failed" };
@@ -1215,7 +1215,7 @@ import { readFlowState, transitionSpec, transitionPlan, recordMenuChoice } from 
 // ... remaining imports from ../../src/core/*
 ```
 
-Add the four flow tools to the MCP server registration (`workflow_flow_status`, `workflow_spec_approve`, `workflow_plan_approve`, `workflow_plan_menu`) with the same zod schemas as Task 2, and wire the hard-fail gate into `workflow_handoff_session`/implement paths using `assertFlowGates`. Bump the `version` string to `0.4.0`.
+Add the four flow tools to the MCP server registration (`workit_flow_status`, `workit_spec_approve`, `workit_plan_approve`, `workit_plan_menu`) with the same zod schemas as Task 2, and wire the hard-fail gate into `workit_handoff_session`/implement paths using `assertFlowGates`. Bump the `version` string to `0.4.0`.
 
 - [ ] **Step 2: Update `run-server.sh`**
 
@@ -1340,5 +1340,5 @@ git commit -m "chore: gitignore workflow docs, untrack legacy docs, bump to 0.4.
 - [ ] `bun run check` green after each task.
 - [ ] No imports of `src/legacy`, `cursor/mcp/lib`, `scripts/lib`, `scripts/sdd` remain (`grep -rn "legacy\|scripts/lib\|scripts/sdd" src cursor test` returns nothing).
 - [ ] `docs/superpowers/` untracked and present on disk.
-- [ ] Both platform tool surfaces expose `workflow_flow_status`, `workflow_spec_approve`, `workflow_plan_approve`, `workflow_plan_menu`.
+- [ ] Both platform tool surfaces expose `workit_flow_status`, `workit_spec_approve`, `workit_plan_approve`, `workit_plan_menu`.
 - [ ] `wf-implement` / `wf-handoff` refuse without approved state (verified by tests in Task 3).

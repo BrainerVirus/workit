@@ -83,7 +83,7 @@ test("youtrack tools return structured config-gap error instead of raw ENOENT", 
   const tools = createYouTrackTools();
   const ctx = { directory: "/repo", worktree: "/repo" } as never;
   await withIsolatedXDG(dir, async () => {
-    const raw = await tools.workflow_youtrack_log_time.execute(
+    const raw = await tools.workit_youtrack_log_time.execute(
       { confirmed: true, issueId: "NSR-1", minutes: 30 },
       ctx,
     );

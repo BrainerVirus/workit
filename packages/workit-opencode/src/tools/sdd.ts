@@ -90,7 +90,7 @@ export function createSddTools(state: WorkflowStateStore, client?: SessionLookup
     });
 
   return {
-    workflow_docs_branch: tool({
+    workit_docs_branch: tool({
       description:
         "Resolve branch for spec/plan authors: keep current feature|bugfix or create from the configured base",
       args: {
@@ -107,7 +107,7 @@ export function createSddTools(state: WorkflowStateStore, client?: SessionLookup
           }) as Record<string, unknown>;
         }),
     }),
-    workflow_docs_validate: tool({
+    workit_docs_validate: tool({
       description:
         "Hard-fail validate spec/plan headers, link, branch, task order; returns quality findings (hard/warning)",
       args: {
@@ -128,7 +128,7 @@ export function createSddTools(state: WorkflowStateStore, client?: SessionLookup
           return result;
         }),
     }),
-    workflow_plan_tasks: tool({
+    workit_plan_tasks: tool({
       description: "Parse top-level tasks from a workflow plan",
       args: { plan_path: tool.schema.string(), spec_path: tool.schema.string().optional() },
       execute: async ({ plan_path, spec_path }, context) =>
@@ -149,7 +149,7 @@ export function createSddTools(state: WorkflowStateStore, client?: SessionLookup
           return data;
         }),
     }),
-    workflow_resolve_branch: tool({
+    workit_resolve_branch: tool({
       description: "Resolve a branch from repository spec and plan metadata",
       args: { spec_path: tool.schema.string(), plan_path: tool.schema.string() },
       execute: async ({ spec_path, plan_path }, context) =>
@@ -159,7 +159,7 @@ export function createSddTools(state: WorkflowStateStore, client?: SessionLookup
           return resolveBranch({ spec_path, plan_path, workspace_root: context.directory });
         }),
     }),
-    workflow_sdd_context: tool({
+    workit_sdd_context: tool({
       description: "Resolve the SDD workspace and progress ledger",
       args: {
         plan_path: tool.schema.string().optional(),
@@ -189,7 +189,7 @@ export function createSddTools(state: WorkflowStateStore, client?: SessionLookup
           return data;
         }),
     }),
-    workflow_sdd_task_brief: tool({
+    workit_sdd_task_brief: tool({
       description:
         "Write a confirmed task brief. Delegated status is host-derived from session parentage (child session = worker; root = coordinator, blocked for subagent-driven product edits).",
       args: {
@@ -214,7 +214,7 @@ export function createSddTools(state: WorkflowStateStore, client?: SessionLookup
         });
       },
     }),
-    workflow_sdd_review_package: tool({
+    workit_sdd_review_package: tool({
       description:
         "Write a confirmed task review diff. Delegated status is host-derived from session parentage (child session = worker; root = coordinator, blocked for subagent-driven product edits).",
       args: {
@@ -245,7 +245,7 @@ export function createSddTools(state: WorkflowStateStore, client?: SessionLookup
         );
       },
     }),
-    workflow_sdd_append_progress: tool({
+    workit_sdd_append_progress: tool({
       description:
         "Append one confirmed validated SDD progress line. Delegated status is host-derived from session parentage (child session = worker; root = coordinator, blocked for subagent-driven product edits).",
       args: {
@@ -264,7 +264,7 @@ export function createSddTools(state: WorkflowStateStore, client?: SessionLookup
         });
       },
     }),
-    workflow_sdd_append_advisory: tool({
+    workit_sdd_append_advisory: tool({
       description:
         "Append a validated advisory line to docs/<slug>/sdd/advisories.md (coordinator-owned).",
       args: {

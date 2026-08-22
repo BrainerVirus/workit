@@ -21,14 +21,11 @@ test("repo_link requires confirmed and persists", async () => {
     const tools = createDocsRepoTools();
     const ctx = { directory: repo, worktree: repo } as never;
     const no = JSON.parse(
-      (await tools.workflow_docs_repo_link.execute(
-        { path: repo, confirmed: false },
-        ctx,
-      )) as string,
+      (await tools.workit_docs_repo_link.execute({ path: repo, confirmed: false }, ctx)) as string,
     );
     expect(no.ok).toBe(false);
     const yes = JSON.parse(
-      (await tools.workflow_docs_repo_link.execute({ path: repo, confirmed: true }, ctx)) as string,
+      (await tools.workit_docs_repo_link.execute({ path: repo, confirmed: true }, ctx)) as string,
     );
     expect(yes.ok).toBe(true);
   } finally {
@@ -51,13 +48,13 @@ test("docs_list reports specs; promote copies files", async () => {
 
     const tools = createDocsRepoTools();
     const ctx = { directory: work, worktree: work } as never;
-    const list = JSON.parse((await tools.workflow_docs_list.execute({}, ctx)) as string);
+    const list = JSON.parse((await tools.workit_docs_list.execute({}, ctx)) as string);
     expect(list.ok).toBe(true);
     expect(list.data.specs[0].slug).toBe("zeta");
     expect(list.data.specs[0].promoted).toBe(false);
 
     const promote = JSON.parse(
-      (await tools.workflow_docs_promote.execute({ slug: "zeta", confirmed: true }, ctx)) as string,
+      (await tools.workit_docs_promote.execute({ slug: "zeta", confirmed: true }, ctx)) as string,
     );
     expect(promote.ok).toBe(true);
   } finally {

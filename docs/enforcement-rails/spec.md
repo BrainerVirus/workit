@@ -11,7 +11,7 @@ The audit of vendored superpowers skills vs the toolkit's enforcement found 5 ga
 - G1: Five per-turn rail constants in `src/core/reminder.ts` — `VERIFICATION_TEXT`, `TDD_TEXT`, `BRAINSTORM_TEXT`, `DEBUG_TEXT`, `REVIEW_RECEPTION_TEXT` — each carrying the skill's core rule (mirroring the vendored skill wording, trimmed to one instruction).
 - G2: One detector each in `src/core/detector.ts` — signal-based, conservative (prefer no-op over noise): verification (assistant claims done/fixed/passing/green without a check command output in the same message), TDD (implementation commit/diff without a preceding failing test), brainstorm (implementation action without a presented design), debugging (fix proposal without root-cause evidence), receiving (accepting review feedback without verification).
 - G3: Hook injections in `src/plugin.ts` (distinct tags `"vf"`, `"tdd"`, `"br"`, `"db"`, `"rc"`), idempotent, fail-closed, composed with existing rails.
-- G4: `workflow_verify`/`bun run check` stay the completion gate (the verification rail is a reminder; the real gate already exists in wf-implement's final gate).
+- G4: `workit_verify`/`bun run check` stay the completion gate (the verification rail is a reminder; the real gate already exists in wf-implement's final gate).
 
 ## Non-goals
 

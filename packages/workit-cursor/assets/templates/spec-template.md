@@ -16,13 +16,13 @@
 
 ## Architecture
 
-<!-- REQUIRED if this spec has flows or architecture: render a mermaid diagram (workflow_present_flow). -->
+<!-- REQUIRED if this spec has flows or architecture: render a mermaid diagram (workit_present_flow). -->
 ```mermaid
 flowchart TD
   A[Start] --> B[Step]
 ```
 
-<!-- REQUIRED if this spec touches UI: render an ASCII wireframe (workflow_present_ascii). -->
+<!-- REQUIRED if this spec touches UI: render an ASCII wireframe (workit_present_ascii). -->
 ```text
 ┌──────────────┐
 │ Header       │

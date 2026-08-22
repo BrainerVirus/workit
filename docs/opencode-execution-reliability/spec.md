@@ -84,11 +84,11 @@ The source menu has the five execution/review choices plus model deferral. A han
 | Boundary | Required behavior |
 | --- | --- |
 | Receipt correlation | A transition consumes the newest unconsumed, fresh receipt for its exact purpose. The newest same-purpose negative answer rejects the transition; questions for another purpose neither replace nor authorize it. Original labels and question bytes remain audit evidence. |
-| Menu recording | `workflow_plan_menu` is called immediately after a real execution/review choice and before implementation skills, branch questions, or handoff. `Change model first` never calls it. |
+| Menu recording | `workit_plan_menu` is called immediately after a real execution/review choice and before implementation skills, branch questions, or handoff. `Change model first` never calls it. |
 | Model deferral | The current turn stops after the deferral answer. On the next turn, the source six-choice menu or destination five-choice menu is presented again. |
 | Handoff preflight | The source flow must be approved, valid, not already a destination, and have `menu.chosen === "handoff"` before session creation. A logical preflight failure creates no session. |
 | Handoff sequence | A valid handoff creates, seeds, marks the destination, and, unless the exact `--stay` flag is present, publishes the TUI session-selection event. A successful host selection reports `selected: true`; an unavailable or failed host selection reports a `select` partial failure and preserves the session ID for manual recovery. |
-| SDD ownership | The coordinator may call `workflow_sdd_task_brief`, `workflow_sdd_review_package`, `workflow_sdd_append_progress`, and a dedicated advisory append operation; these writes remain approval-, menu-, docs-, path-, and content-gated. Workers do not own coordinator bookkeeping. |
+| SDD ownership | The coordinator may call `workit_sdd_task_brief`, `workit_sdd_review_package`, `workit_sdd_append_progress`, and a dedicated advisory append operation; these writes remain approval-, menu-, docs-, path-, and content-gated. Workers do not own coordinator bookkeeping. |
 | Product ownership | The coordinator remains blocked from product edits, task commits, unbounded shell commands, and external mutations during subagent-driven execution. |
 | Delegation identity | Subagent activation persists the coordinator session ID. OpenCode derives the current session and parent from host records; only an exact direct-parent match grants worker authority. Pause/resume preserves the ID; completion or approval drift clears it; non-subagent choices never set it. Missing or mismatched identity fails closed. |
 | Nested harnesses | An authorized worker cannot launch `opencode` recursively while the plan is active. Review and fix workers are dispatched directly by the coordinator instead. |
@@ -101,8 +101,8 @@ The source menu has the five execution/review choices plus model deferral. A han
 - CA-02: Each approval, menu, and lifecycle consumer uses the newest fresh, unconsumed receipt for its exact purpose; an intervening unrelated question cannot cause `evidence_mismatch`, while the newest same-purpose negative answer and mismatched, stale, reused, or fabricated evidence remain rejected.
 - CA-03: The ordinary post-plan menu contains exactly `Subagent-driven`, `Inline`, `Handoff (new session only)`, `Review spec first`, `Review plan first`, and `Change model first`; a handoff destination contains the same set without Handoff.
 - CA-04: Selecting `Change model first` records no execution/review mode, leaves execution pending, ends the turn, and causes the appropriate menu to be presented again on the next turn after the user changes models.
-- CA-05: A real execution/review answer is recorded with `workflow_plan_menu` before loading an execution skill, asking a branch/stash question, mutating branch state, or invoking handoff.
-- CA-06: `workflow_handoff_session` rejects missing or non-handoff menu state before calling session creation, and tests assert zero create/seed/select calls on that path.
+- CA-05: A real execution/review answer is recorded with `workit_plan_menu` before loading an execution skill, asking a branch/stash question, mutating branch state, or invoking handoff.
+- CA-06: `workit_handoff_session` rejects missing or non-handoff menu state before calling session creation, and tests assert zero create/seed/select calls on that path.
 - CA-07: A valid non-`--stay` handoff follows create -> seed -> mark -> select and reports `selected: true` when the host selection API succeeds; an exact `--stay` handoff follows create -> seed -> mark and reports `selected: false` without publishing selection.
 - CA-08: Handoff failures report `create`, `seed`, `mark`, or `select` stage with any available session ID; logical preflight failures cannot leave orphaned sessions.
 - CA-09: Handoff session titles no longer start with `Continue`; user-facing guidance identifies OpenCode's native `Continue opencode -s <session-id>` epilogue as a valid manual recovery command when host selection is unavailable.
@@ -116,7 +116,7 @@ The source menu has the five execution/review choices plus model deferral. A han
 - CA-17: An adversarial test reproduces `authorized child -> nested opencode root -> new child` and proves both the nested launch and non-direct lineage are rejected.
 - CA-18: Core, OpenCode, Cursor, and CLI parity tests prove identical state outcomes for supported menu and lifecycle operations, with documented host-native differences for model selection and delegated identity; Cursor selecting Subagent-driven returns `unsupported_mode` and leaves the flow pending.
 - CA-19: README, AGENTS, OpenCode/Cursor contracts and skills, the canonical templates, and CHANGELOG Unreleased describe the new menus, SDD ownership, handoff behavior, direct-child boundary, and native recovery command consistently.
-- CA-20: Full repository verification passes, including lint, format check, unit/integration tests, build, Cursor Marketplace validation, and package/doctor checks discovered by `workflow_verify`.
+- CA-20: Full repository verification passes, including lint, format check, unit/integration tests, build, Cursor Marketplace validation, and package/doctor checks discovered by `workit_verify`.
 
 ## Decisions
 

@@ -62,7 +62,7 @@ flowchart TD
 - CA-04: `.github/ISSUE_TEMPLATE/` (bug + feature) and `.github/PULL_REQUEST_TEMPLATE.md` exist.
 - CA-05: README has badges (npm version, CI matrix, license) and a kudos section crediting superpowers + ponytail.
 - CA-06: `cursor/marketplace.json` manifest exists with valid metadata (validate via `bun run check` if wired, else manual review).
-- CA-07: `workflow_docs_validate` on this spec/plan pair passes; hygiene findings for LICENSE/CONTRIBUTING/README turn green (no longer warnings) for this repo.
+- CA-07: `workit_docs_validate` on this spec/plan pair passes; hygiene findings for LICENSE/CONTRIBUTING/README turn green (no longer warnings) for this repo.
 
 ## Decisions
 

@@ -40,7 +40,7 @@ npx @brainervirus/workit-cli init
 
 ## What it provides
 
-- MCP server exposing the `workflow_*` tools (branch setup, PR create/context, docs validate/promote, YouTrack post/log/time, templates, rules, presentation, doctor, handoff, and plan lifecycle `workflow_plan_pause`/`resume`/`complete`).
+- MCP server exposing the `workit_*` tools (branch setup, PR create/context, docs validate/promote, YouTrack post/log/time, templates, rules, presentation, doctor, handoff, and plan lifecycle `workit_plan_pause`/`resume`/`complete`).
 - Session-start contract hook.
 - 4 rules and 12 `wk-*` skills (plus 14 sanitized Superpowers skills).
 
@@ -98,7 +98,7 @@ The repository root carries `.cursor-plugin/marketplace.json`, indexing `package
 - **Installing from Marketplace** — a Marketplace admin adds the repository URL through Cursor's authenticated publisher flow; end users then install the plugin from the Cursor Marketplace UI, which reads `.cursor-plugin/plugin.json` and the tracked components directly from Git.
 - **Submission** — Marketplace submission is a separate, later authenticated action at `https://cursor.com/marketplace/publish`. It is **not** performed here and no publication or acceptance is claimed; the repository is kept validated and submission-ready.
 - **Update review** — Git plugin metadata (manifest, rules, skills, assets) is reviewed by Cursor on Marketplace updates, while the npm runtime runs from `@latest` with `--prefer-online`. The selector is shared across `mcp.json`, `hooks-cursor.json`, and `run-cursor-mcp.sh`, and a stale `latest` resolution is prevented by the mandatory `--prefer-online` flag.
-- **Troubleshooting** — `workit doctor` (or the `workflow_doctor` tool) reports installation health including runtime, token, VCS/YouTrack, and log-writability checks; it exits nonzero on failure. An MCP/hook startup failure with no network is an `npx`/registry reachability issue, not a Workit defect.
+- **Troubleshooting** — `workit doctor` (or the `workit_doctor` tool) reports installation health including runtime, token, VCS/YouTrack, and log-writability checks; it exits nonzero on failure. An MCP/hook startup failure with no network is an `npx`/registry reachability issue, not a Workit defect.
 
 ## Auto-load repair
 

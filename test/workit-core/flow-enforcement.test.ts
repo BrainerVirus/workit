@@ -977,10 +977,10 @@ test("CA-10: control gates retain the workspace, approval, menu, and strict-read
 
 test("CA-10: SDD control tools left COORDINATOR_WRITE_TOOLS; product and external tools stay denied", () => {
   for (const controlTool of [
-    "workflow_sdd_task_brief",
-    "workflow_sdd_review_package",
-    "workflow_sdd_append_progress",
-    "workflow_sdd_append_advisory",
+    "workit_sdd_task_brief",
+    "workit_sdd_review_package",
+    "workit_sdd_append_progress",
+    "workit_sdd_append_advisory",
   ]) {
     expect(COORDINATOR_WRITE_TOOLS, controlTool).not.toContain(controlTool);
     // Control tools are not intercepted as product writes; they carry their
@@ -996,8 +996,8 @@ test("CA-10: SDD control tools left COORDINATOR_WRITE_TOOLS; product and externa
     "write",
     "edit",
     "apply_patch",
-    "workflow_commit",
-    "workflow_youtrack_post",
+    "workit_commit",
+    "workit_youtrack_post",
   ]) {
     expect(COORDINATOR_WRITE_TOOLS, productTool).toContain(productTool);
     const decision = subagentDrivenInterception({
@@ -1137,12 +1137,12 @@ test("subagent-driven interception: non-write tools stay allowed for the root se
     "task",
     "todowrite",
     "webfetch",
-    "workflow_flow_status",
-    "workflow_spec_approve",
-    "workflow_plan_menu",
-    "workflow_handoff_session",
-    "workflow_verify",
-    "workflow_git_context",
+    "workit_flow_status",
+    "workit_spec_approve",
+    "workit_plan_menu",
+    "workit_handoff_session",
+    "workit_verify",
+    "workit_git_context",
   ]) {
     const decision = subagentDrivenInterception({
       tool,
@@ -2125,14 +2125,14 @@ test("CA-11/CA-23: passing repository verification stores completed", () => {
   }
 });
 
-test("CA-07: a run that finishes all tasks without calling workflow_plan_complete leaves the plan active; the tool completes it", () => {
+test("CA-07: a run that finishes all tasks without calling workit_plan_complete leaves the plan active; the tool completes it", () => {
   const { root, slug } = fixture();
   try {
     establishMenuChoice(root, slug, "subagent-driven");
     writeSddLedger(root, slug, ["Task 1: complete"]);
     const plan = `docs/${slug}/plan.md`;
     // Every task finished (complete ledger) but nothing called the completion
-    // tool: the lifecycle stays active until workflow_plan_complete runs.
+    // tool: the lifecycle stays active until workit_plan_complete runs.
     expect(readFlowState(root, slug).execution).toMatchObject({
       status: "active",
       mode: "subagent-driven",

@@ -126,7 +126,7 @@ export const promoteSpec = (
   if (!resolved.ok) return { ok: false, error: resolved.error };
   const workspaceRootCanonical = resolved.layout.workspace;
   const repoPath = docsRepoPath();
-  if (!repoPath) return { ok: false, error: "docs repo not linked — run workflow_docs_repo_link" };
+  if (!repoPath) return { ok: false, error: "docs repo not linked — run workit_docs_repo_link" };
   const repoValid = validateDocsRepo(repoPath);
   if (!repoValid.ok) return { ok: false, error: repoValid.error };
   const specRel = path.posix.join("docs", slug, "spec.md");

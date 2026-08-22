@@ -183,7 +183,7 @@ export function sddContext({
     flow: { spec: flow.spec, plan: flow.plan, menu: flow.menu },
     todowrite_required: true,
     todowrite_hint:
-      "REQUIRED: Call OpenCode todowrite with todos from this result so the native task list shows progress. Before each task set status in_progress; after workflow_sdd_append_progress set it completed.",
+      "REQUIRED: Call OpenCode todowrite with todos from this result so the native task list shows progress. Before each task set status in_progress; after workit_sdd_append_progress set it completed.",
   };
 }
 

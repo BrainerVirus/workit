@@ -7,9 +7,9 @@ Multi-platform workit: OpenCode, Cursor, and the CLI share one core. Every featu
 | Feature | OpenCode | Cursor | CLI |
 | --- | --- | --- | --- |
 | Approval | native `question` tool receipts | AskQuestion policy-only (`attested: false`) | `--confirm` flags / TTY prompts |
-| Lifecycle | `workflow_plan_pause`/`resume`/`complete` (receipts) | `workflow_plan_pause`/`resume`/`complete` (policy-only) | `workit flow pause\|resume\|complete` |
+| Lifecycle | `workit_plan_pause`/`resume`/`complete` (receipts) | `workit_plan_pause`/`resume`/`complete` (policy-only) | `workit flow pause\|resume\|complete` |
 | Handoff | spawns a native OpenCode session | seeds a handoff prompt for the next agent | `workit handoff` (prints the destination prompt) |
-| Tools | native plugin tools | MCP server (`workflow_*`) | `workit` commands |
+| Tools | native plugin tools | MCP server (`workit_*`) | `workit` commands |
 | Skills | `skills.paths` + vendored dirs | plugin `skills/` dirs | n/a |
 | Branch policy init | `workit_init_apply action=branch_policy` | same MCP tool | wizard screen |
 | Distribution | npm plugin entry (`opencode.json`) | Cursor Marketplace (git-discovered `.cursor-plugin/plugin.json`) | npm bin (`npx`) |
@@ -28,7 +28,7 @@ Multi-platform workit: OpenCode, Cursor, and the CLI share one core. Every featu
 - Specs/plans live in `docs/<slug>/`; spec+plan are committed, `sdd/` is gitignored.
 - Approvals bind to the exact SHA-256 digest of the approved document bytes; editing an approved spec/plan invalidates the approval and forces a fresh reapproval (drift resets the whole approval chain in spec-before-plan order).
 - Execution lifecycle is exactly `pending` → `active` → `paused`/`active` → `completed`; completion requires a complete SDD ledger and passing repository verification. Subagent-driven product edits are intercepted while the plan is active.
-- The execution contract mandates ending each run with `workflow_plan_complete` (or the CLI `workit flow complete`) after the final task once the SDD ledger is complete (all task IDs appended) and repository verification passes; a run never finishes while the plan is still `active`.
+- The execution contract mandates ending each run with `workit_plan_complete` (or the CLI `workit flow complete`) after the final task once the SDD ledger is complete (all task IDs appended) and repository verification passes; a run never finishes while the plan is still `active`.
 - Each SDD task lands exactly one contiguous non-empty commit range (`base..head`): fix rounds append commits to that range and never rewrite an active review range, and each progress line records the task's real `base..head` shas. `sddReviewPackage` and the progress-line validator reject empty (`base == head` or empty-diff) ranges with a structured error; the CLI exposes the review path as `workit flow review-package --plan <path> --base <sha> --head <sha> [--confirm]`.
 - An ordinary post-plan session presents five choices; a handoff-destination session presents exactly four (never the originating Handoff option) and carries the handoff-destination marker.
 - Approval evidence: OpenCode records native-question receipts; Cursor is policy-only by design (never fabricate delegated identity). Receipt and menu labels are compared semantically: host qualifiers such as `(Recommended)` and `(new session only)` are normalized at comparison time, and the original label bytes are preserved. Receipts are purpose-bound: each gate consumes the newest unconsumed fresh receipt for exactly its purpose (`spec-approval`, `plan-approval`, `execution-menu`, `plan-pause`, `plan-resume`, `plan-complete`); unrelated questions never authorize or mask a gate.

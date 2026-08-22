@@ -16,10 +16,10 @@ alwaysApply: true
 
 ## Required flow (before Task 1)
 
-1. MCP `workflow_resolve_branch` with spec + plan paths
+1. MCP `workit_resolve_branch` with spec + plan paths
 2. If `needs_checkout` and `dirty` → native **AskQuestion** asks whether to stash before checkout
-3. MCP `workflow_branch_setup` with `target_branch` and `stash: yes|no`
-4. After all tasks, if manifest has `stash_ref` → AskQuestion → `workflow_branch_setup` action=`reapply_stash`
+3. MCP `workit_branch_setup` with `target_branch` and `stash: yes|no`
+4. After all tasks, if manifest has `stash_ref` → AskQuestion → `workit_branch_setup` action=`reapply_stash`
 
 ## Tools only
 
