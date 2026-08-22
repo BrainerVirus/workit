@@ -1,6 +1,6 @@
 {
   "name": "@brainervirus/workit-cursor",
-  "version": "0.8.10",
+  "version": "0.8.12",
   "private": false,
   "description": "Workit Cursor plugin: MCP server, hooks, rules, marketplace manifest (thin over @brainervirus/workit-core)",
   "keywords": [
