@@ -109,7 +109,8 @@ test("rewrite runs before npm package verification and after version assignment 
     Array.isArray(p) && p.length > 1 && typeof p[1] === "object" && p[1] !== null
       ? (p[1] as Record<string, unknown>)
       : {};
-  const nameOf = (p: unknown): string => (typeof p === "string" ? p : Array.isArray(p) ? String(p[0]) : "");
+  const nameOf = (p: unknown): string =>
+    typeof p === "string" ? p : Array.isArray(p) ? String(p[0]) : "";
   const isNpm = (p: unknown) => nameOf(p) === "@semantic-release/npm";
 
   // analyze gate runs first: the leading plugin is the exec entry carrying
