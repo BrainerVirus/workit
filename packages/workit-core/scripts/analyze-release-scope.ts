@@ -15,11 +15,13 @@ export const RELEASE_PACKAGES = [
 const g = (root: string, args: string[]): string =>
   execFileSync("git", args, { cwd: root, encoding: "utf8" }).trim();
 
+const SEMVER_TAG = /^v\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/;
+
 export function latestTag(root = process.cwd()): string | null {
   const out = g(root, ["tag", "--list", "v*", "--sort=-v:refname"])
     .split("\n")
     .map((l) => l.trim())
-    .filter(Boolean);
+    .filter((l) => SEMVER_TAG.test(l));
   return out[0] ?? null;
 }
 
@@ -33,23 +35,28 @@ const subjectLevel = (commit: string): Level | null => {
   if (!m) return null;
   if (m[0].includes("!")) return "major";
   const body = commit.split("\n").slice(1).join("\n");
-  return /BREAKING CHANGE:/.test(body) ? "major" : TYPE_LEVEL[m[0].split("(")[0].replace("!", "")];
+  return /BREAKING[- ]CHANGE:/.test(body)
+    ? "major"
+    : TYPE_LEVEL[m[0].split("(")[0].replace("!", "")];
 };
 
 // Two-pass collection (sanctioned by the task brief): the single-pass
 // `%H<NUL>%s%n%b` + `--name-only` interleave is brittle because execFileSync
-// rejects NUL bytes inside arguments, and NUL-delimited parsing interleaves
-// badly with --name-only output. Bounded by commit count; acceptable for this
-// repo's cadence.
+// rejects NUL bytes inside arguments. Bounded by commit count; acceptable for
+// this repo's cadence.
+//
+// diff-tree with -m unions files across a merge's parents (a plain `show`
+// combined diff drops files identical to either parent — e.g. hotfix-branch
+// back-merges), and -z returns raw NUL-delimited paths so spaces/non-ASCII
+// are never C-quoted. NUL is fine in captured output, never in argv.
 const commitsSince = (root: string, from: string): { message: string; files: string[] }[] => {
   const hashes = g(root, ["log", "--reverse", "--format=%H", `${from}..HEAD`])
     .split("\n")
     .filter(Boolean);
   return hashes.map((h) => ({
     message: g(root, ["show", "-s", "--format=%B", h]),
-    files: g(root, ["show", "--name-only", "--format=", h])
-      .split("\n")
-      .map((l) => l.trim())
+    files: g(root, ["diff-tree", "--no-commit-id", "--name-only", "-r", "-m", "--root", "-z", h])
+      .split("\0")
       .filter(Boolean),
   }));
 };
@@ -69,7 +76,10 @@ export function analyzeReleaseScope(
     if (touched.length === 0) continue;
     const lvl = subjectLevel(message);
     if (lvl) levels.push(lvl);
-    for (const p of RELEASE_PACKAGES) if (touched.some((f) => f.startsWith(`packages/${p}/`))) pkgs.add(p);
+    for (const f of touched) {
+      const pkg = RELEASE_PACKAGES.find((p) => f.startsWith(`packages/${p}/`));
+      if (pkg) pkgs.add(pkg);
+    }
   }
   if (levels.length === 0) return { level: null, productPkgs: [...pkgs] };
   const level = levels.reduce<Level>((best, l) => (LEVEL_RANK[l] > LEVEL_RANK[best] ? l : best), "patch");
