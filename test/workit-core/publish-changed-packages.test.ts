@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test, spyOn } from "bun:test";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
@@ -9,7 +9,7 @@ import {
 } from "../../packages/workit-core/scripts/publish-changed-packages";
 
 type Repo = ReturnType<typeof repo>;
-function repo() {
+function repo({ tagged = true }: { tagged?: boolean } = {}) {
   const root = mkdtempSync(path.join(os.tmpdir(), "wf-pubchg-"));
   const g = (args: string[]) => execFileSync("git", args, { cwd: root, encoding: "utf8" });
   g(["init", "-q", "-b", "main"]);
@@ -20,7 +20,8 @@ function repo() {
     writeFileSync(path.join(root, "packages", pkg, "src", "i.ts"), "i\n");
     writeFileSync(path.join(root, "packages", pkg, "package.json"), `{"name":"@brainervirus/${pkg}","version":"0.8.10"}\n`);
   }
-  g(["add", "-A"]); g(["commit", "-q", "-m", "chore: seed"]); g(["tag", "v0.8.10"]);
+  g(["add", "-A"]); g(["commit", "-q", "-m", "chore: seed"]);
+  if (tagged) g(["tag", "v0.8.10"]);
   return {
     root,
     cleanup: () => rmSync(root, { recursive: true, force: true }),
@@ -73,6 +74,55 @@ describe("publishChanged", () => {
         "workit-cli",
       ]);
       expect(calls[0]).toBe(`publish --access public @ ${path.join(r.root, "packages/workit-core")}`);
+      const log = spyOn(console, "log");
+      publishChanged({ root: r.root, run: () => {} });
+      expect(log.mock.calls.map((c) => c[0])).toEqual([
+        `published workit-core @ ${path.join(r.root, "packages", "workit-core")}`,
+        `skip workit-opencode (no payload change since v0.8.10)`,
+        `skip workit-cursor (no payload change since v0.8.10)`,
+        `skip workit-cli (no payload change since v0.8.10)`,
+      ]);
+      log.mockRestore();
+    } finally { r.cleanup(); }
+  });
+  test("publish failure logs shipped state, names the package, and stops", () => {
+    const r = repo();
+    try {
+      r.change("packages/workit-core/src/i.ts", "c\n");
+      r.change("packages/workit-opencode/src/i.ts", "c\n");
+      const log = spyOn(console, "log");
+      const ran: string[] = [];
+      let err: unknown;
+      try {
+        publishChanged({
+          root: r.root,
+          run: (_cmd, _args, opts) => {
+            ran.push(opts.cwd);
+            if (opts.cwd.endsWith("workit-opencode")) throw new Error("boom");
+          },
+        });
+      } catch (e) { err = e; }
+      expect((err as Error).message).toBe("boom");
+      expect(ran).toEqual([path.join(r.root, "packages", "workit-core"), path.join(r.root, "packages", "workit-opencode")]);
+      expect(log.mock.calls.map((c) => c[0])).toEqual([
+        `published workit-core @ ${path.join(r.root, "packages", "workit-core")}`,
+        `publish failed workit-opencode: boom`,
+      ]);
+      log.mockRestore();
+    } finally { r.cleanup(); }
+  });
+  test("first-ever release ships everything when no v* tag exists", () => {
+    const r = repo({ tagged: false });
+    try {
+      const cwds: string[] = [];
+      const result = publishChanged({
+        root: r.root,
+        run: (_cmd, _args, opts) => { cwds.push(opts.cwd); },
+      });
+      expect(result.published).toEqual(["workit-core", "workit-opencode", "workit-cursor", "workit-cli"]);
+      expect(result.skipped).toEqual([]);
+      expect(result.tag).toBeNull();
+      expect(cwds).toEqual(["workit-core", "workit-opencode", "workit-cursor", "workit-cli"].map((pkg) => path.join(r.root, "packages", pkg)));
     } finally { r.cleanup(); }
   });
   test("dryRun records without invoking npm", () => {

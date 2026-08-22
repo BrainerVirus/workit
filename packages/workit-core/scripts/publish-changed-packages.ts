@@ -47,7 +47,12 @@ export function publishChanged(opts: {
       continue;
     }
     const cwd = resolve(root, "packages", pkg);
-    if (!dryRun) run("npm", ["publish", "--access", "public"], { cwd });
+    try {
+      if (!dryRun) run("npm", ["publish", "--access", "public"], { cwd });
+    } catch (e) {
+      console.log(`publish failed ${pkg}: ${e instanceof Error ? e.message : String(e)}`);
+      throw e;
+    }
     published.push(pkg);
     console.log(`published ${pkg} @ ${cwd}`);
   }
