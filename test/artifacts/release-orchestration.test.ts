@@ -44,22 +44,34 @@ test("root scripts build the three adapters and run the pack-only gate (AR-02)",
   );
 });
 
-test("release job order is install → build → candidate gate → semantic-release (AR-01/CA-33)", () => {
+test("release job order is install → build → candidate gate → semantic-release → manifest sync (AR-01/CA-33/AR-15)", () => {
   const wf = Bun.YAML.parse(read(".github/workflows/release.yml")) as {
     jobs: { release: { steps: Array<{ name?: string; run?: string }> } };
   };
   const steps = wf.jobs.release.steps.map((s) => s.name ?? s.run ?? "");
-  const order = ["Install dependencies", "Build adapters", "Verify release candidate", "Release"];
+  const order = [
+    "Install dependencies",
+    "Build adapters",
+    "Verify release candidate",
+    "Release",
+    "Sync release manifests to main",
+  ];
   const idx = order.map((name) => steps.indexOf(name));
   expect(idx[0], steps.join(" | ")).toBeGreaterThanOrEqual(0);
   for (let i = 1; i < idx.length; i++) {
     expect(idx[i], steps.join(" | ")).toBeGreaterThan(idx[i - 1]);
   }
-  // Release is the last step: no dependency/protocol check may appear only
-  // after a package could already have been published (AR-01).
-  expect(idx[3], steps.join(" | ")).toBe(steps.length - 1);
+  // The manifest sync is the only step allowed AFTER semantic-release
+  // (AR-15): it is post-publish bookkeeping that gates nothing. No
+  // dependency/protocol check may appear only after a package could already
+  // have been published (AR-01).
+  expect(idx[4], steps.join(" | ")).toBe(steps.length - 1);
+  const afterRelease = steps.slice(idx[3] + 1, idx[4]).join(" | ");
+  expect(afterRelease, "no gate may run between Release and the manifest sync").toBe("");
   expect(wf.jobs.release.steps[idx[1]].run).toContain("bun run build");
   expect(wf.jobs.release.steps[idx[2]].run).toContain("bun run verify:release-candidate");
+  // AR-15: the sync commit never re-triggers CI.
+  expect(wf.jobs.release.steps[idx[4]].run).toContain("[skip ci]");
 });
 
 test("rewrite runs before npm package verification and after version assignment (AR-02)", () => {

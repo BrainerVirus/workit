@@ -28,7 +28,7 @@ const ROWS: Row[] = [
     row: "POST-01",
     requirement: "release can publish without built adapter dist/",
     evidence: [
-      "test/artifacts/release-orchestration.test.ts::release job order is install → build → candidate gate → semantic-release (AR-01/CA-33)",
+      "test/artifacts/release-orchestration.test.ts::release job order is install → build → candidate gate → semantic-release → manifest sync (AR-01/CA-33/AR-15)",
     ],
   },
   {
@@ -132,7 +132,7 @@ const ROWS: Row[] = [
     requirement:
       "release workflow builds every artifact and runs the release-candidate gate before semantic-release",
     evidence: [
-      "test/artifacts/release-orchestration.test.ts::release job order is install → build → candidate gate → semantic-release (AR-01/CA-33)",
+      "test/artifacts/release-orchestration.test.ts::release job order is install → build → candidate gate → semantic-release → manifest sync (AR-01/CA-33/AR-15)",
     ],
   },
   {
@@ -255,7 +255,7 @@ const ROWS: Row[] = [
       "on a clean checkout with no generated dist/, the release job builds all adapters and completes verify:release-candidate before semantic-release",
     evidence: [
       "test/artifacts/release-orchestration.test.ts::a clean checkout tracks no generated adapter dist/ files (CA-33)",
-      "test/artifacts/release-orchestration.test.ts::release job order is install → build → candidate gate → semantic-release (AR-01/CA-33)",
+      "test/artifacts/release-orchestration.test.ts::release job order is install → build → candidate gate → semantic-release → manifest sync (AR-01/CA-33/AR-15)",
     ],
   },
   {
