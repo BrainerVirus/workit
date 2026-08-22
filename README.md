@@ -253,6 +253,8 @@ git push origin main
 
 The repository's package manifests carry a fixed source version; semantic-release rewrites workspace versions **in CI only** (`packages/workit-core/scripts/rewrite-workspace-deps.ts`, run as `verifyConditionsCmd`/`prepareCmd`) and never commits the rewrite back. As a result the source manifests and the published npm versions can diverge; the [CHANGELOG](CHANGELOG.md) is the source of truth for released versions. npm provenance (OIDC trusted publishing) is not yet enabled — the release authenticates with `NPM_TOKEN`.
 
+Releases are path-gated: merges touching only CI/test/docs produce no release, and npm receives only packages whose payload changed since the previous tag (AR-16).
+
 ## Architecture
 
 | Concern          | OpenCode                | Cursor                                                |
