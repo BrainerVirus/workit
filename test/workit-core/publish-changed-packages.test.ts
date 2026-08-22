@@ -32,6 +32,10 @@ function repo({ tagged = true }: { tagged?: boolean } = {}) {
       const f = path.join(root, rel);
       mkdirSync(path.dirname(f), { recursive: true });
       writeFileSync(f, body);
+      // B1: acceptance tests exercise committed diffs — changedPackages must
+      // never see unreviewed working-tree edits.
+      g(["add", "-A"]);
+      g(["commit", "-q", "-m", "chore: change"]);
     },
   };
 }
@@ -41,6 +45,16 @@ describe("changedPackages", () => {
     const r = repo();
     try {
       r.change("packages/workit-cli/src/i.ts", "c\n");
+      expect(changedPackages(r.root, "v0.8.10")).toEqual(["workit-cli"]);
+    } finally {
+      r.cleanup();
+    }
+  });
+  test("uncommitted working-tree edits are never counted (B1)", () => {
+    const r = repo();
+    try {
+      r.change("packages/workit-cli/src/i.ts", "c\n");
+      writeFileSync(path.join(r.root, "packages/workit-opencode/src/i.ts"), "dirty\n");
       expect(changedPackages(r.root, "v0.8.10")).toEqual(["workit-cli"]);
     } finally {
       r.cleanup();
@@ -155,6 +169,15 @@ describe("publishChanged", () => {
           path.join(r.root, "packages", pkg),
         ),
       );
+      const log = spyOn(console, "log");
+      publishChanged({ root: r.root, run: () => {} });
+      expect(log.mock.calls.map((c) => c[0])).toEqual([
+        `published workit-core @ ${path.join(r.root, "packages", "workit-core")}`,
+        `published workit-opencode @ ${path.join(r.root, "packages", "workit-opencode")}`,
+        `published workit-cursor @ ${path.join(r.root, "packages", "workit-cursor")}`,
+        `published workit-cli @ ${path.join(r.root, "packages", "workit-cli")}`,
+      ]);
+      log.mockRestore();
     } finally {
       r.cleanup();
     }

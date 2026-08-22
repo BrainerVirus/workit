@@ -10,8 +10,10 @@ const git = (root: string, args: string[]): string =>
   execFileSync("git", args, { cwd: root, encoding: "utf8" }).trim();
 
 export function changedPackages(root: string, fromTag: string): string[] {
+  // Committed state only: <tag>..HEAD, never the working tree — unreviewed
+  // local edits must not decide what ships.
   return RELEASE_PACKAGES.filter((pkg) => {
-    const out = git(root, ["diff", "--name-only", fromTag, "--", `packages/${pkg}`]);
+    const out = git(root, ["diff", "--name-only", `${fromTag}..HEAD`, "--", `packages/${pkg}`]);
     return out !== "";
   });
 }
@@ -34,6 +36,7 @@ export function publishChanged(opts: {
       const cwd = resolve(root, "packages", pkg);
       if (!dryRun) run("npm", ["publish", "--access", "public"], { cwd });
       published.push(pkg);
+      console.log(`published ${pkg} @ ${cwd}`);
     }
     return { published, skipped: [], tag: null };
   }
