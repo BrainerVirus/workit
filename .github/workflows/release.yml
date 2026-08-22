@@ -54,21 +54,37 @@ jobs:
 
       # AR-15: semantic-release bumps versions only inside this ephemeral
       # checkout, so without a commit-back the repo manifests stay frozen while
-      # tags march on (the 0.4.0-vs-v0.8.x drift). Sync every tracked manifest
-      # to the newest v* tag and push with [skip ci] — a no-op on reruns.
+      # tags march on (the 0.4.0-vs-v0.8.x drift). main is protected, so the
+      # sync lands through an auto-merged PR instead of a direct push. Any
+      # dirty tracked manifest before the sync is semantic-release's transient
+      # workspace-dep rewrite (AR-02: those writes must never reach the repo)
+      # and is discarded first — the commit then carries version fields only.
       - name: Sync release manifests to main
         if: success()
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          MANIFESTS=(package.json 'packages/*/package.json' 'packages/workit-cursor/.cursor-plugin/plugin.json')
+          git checkout -- "${MANIFESTS[@]}" 2>/dev/null || true
           bun packages/workit-core/scripts/sync-release-manifests.ts
-          if [[ -n "$(git status --porcelain -- package.json 'packages/*/package.json' 'packages/workit-cursor/.cursor-plugin/plugin.json')" ]]; then
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-            git add package.json 'packages/*/package.json' 'packages/workit-cursor/.cursor-plugin/plugin.json'
-            git commit -m "chore(release): sync manifests to latest tag [skip ci]"
-            git push origin HEAD:main
-          else
+          if [[ -z "$(git status --porcelain -- "${MANIFESTS[@]}")" ]]; then
             echo "manifests already match the latest tag"
+            exit 0
           fi
+          VERSION=$(node -p "require('./packages/workit-core/package.json').version")
+          BRANCH="chore/manifest-sync-v${VERSION}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git checkout -b "${BRANCH}"
+          git add "${MANIFESTS[@]}"
+          git commit -m "chore(release): sync manifests to v${VERSION}"
+          git push -u origin "${BRANCH}"
+          gh pr create \
+            --title "chore(release): sync manifests to v${VERSION}" \
+            --body "Automated post-release manifest alignment (AR-15). Sets every tracked manifest to the released ${VERSION}." \
+            --base main --head "${BRANCH}"
+          # Required checks gate the merge; if auto-merge is unavailable the
+          # PR stays open for manual merge — the release itself already
+          # succeeded, so this is bookkeeping, not a release failure.
+          gh pr merge --auto --squash --delete-branch || echo "auto-merge unavailable — merge https://github.com/${GITHUB_REPOSITORY}/pull/$(gh pr view ${BRANCH} --json number -q .number) manually"
