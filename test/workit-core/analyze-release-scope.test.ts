@@ -78,6 +78,22 @@ describe("analyzeReleaseScope", () => {
     } finally { r.cleanup(); }
   });
 
+  test("conventional !: breaking syntax yields major", () => {
+    const r = repo(); r.tag("v0.8.11");
+    try {
+      r.commit("feat(cli)!: drop flag", { "packages/workit-cli/src/f.ts": "f\n" });
+      expect(analyzeReleaseScope(r.root).level).toBe("major");
+    } finally { r.cleanup(); }
+  });
+
+  test("!: inside subject body does not imply breaking", () => {
+    const r = repo(); r.tag("v0.8.11");
+    try {
+      r.commit("fix(cli): parse a!: b", { "packages/workit-cli/src/f.ts": "f\n" });
+      expect(analyzeReleaseScope(r.root).level).toBe("patch");
+    } finally { r.cleanup(); }
+  });
+
   test("mixed tooling+product counts; squash subjects parse", () => {
     const r = repo(); r.tag("v0.8.11");
     try {

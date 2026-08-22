@@ -31,7 +31,7 @@ const subjectLevel = (commit: string): Level | null => {
   const firstLine = commit.split("\n")[0] ?? "";
   const m = /^(?:fix|perf|feat)(?:\([^)]*\))?!?:/.exec(firstLine);
   if (!m) return null;
-  if (/!:/.test(firstLine)) return "major";
+  if (m[0].includes("!")) return "major";
   const body = commit.split("\n").slice(1).join("\n");
   return /BREAKING CHANGE:/.test(body) ? "major" : TYPE_LEVEL[m[0].split("(")[0].replace("!", "")];
 };
