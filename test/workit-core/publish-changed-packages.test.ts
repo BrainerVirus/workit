@@ -8,7 +8,6 @@ import {
   publishChanged,
 } from "../../packages/workit-core/scripts/publish-changed-packages";
 
-type Repo = ReturnType<typeof repo>;
 function repo({ tagged = true }: { tagged?: boolean } = {}) {
   const root = mkdtempSync(path.join(os.tmpdir(), "wf-pubchg-"));
   const g = (args: string[]) => execFileSync("git", args, { cwd: root, encoding: "utf8" });
