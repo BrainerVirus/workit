@@ -1,6 +1,6 @@
 {
   "name": "@brainervirus/workit-core",
-  "version": "0.8.10",
+  "version": "0.8.12",
   "private": false,
   "description": "Workit — workflow rails for agentic coding: specs, plans, YouTrack, CI-gated commits (shared core)",
   "keywords": [
