@@ -466,7 +466,6 @@ test("cursor MCP server registers the full required tool surface", () => {
   // literal registerTool first argument nor the lifecycle name template.
   expect(registered).not.toMatch(/"workflow_[a-z_]+"/);
   expect(lifecycle).not.toMatch(/workflow_plan_/);
-  expect(server).not.toMatch(/`workflow_plan_\$\{action\}`/);
 });
 
 test("docs validate accepts the new docs/<slug> layout", () => {

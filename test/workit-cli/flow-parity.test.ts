@@ -14,8 +14,7 @@ import {
   DESTINATION_MENU_LABELS,
   HANDOFF_DESTINATION_MARKER,
 } from "../../packages/workit-core/src/core/menu";
-import { createTools } from "../../packages/workit-opencode/src/tools";
-import { WorkflowStateStore } from "../../packages/workit-core/src/state";
+import { assertOpencodeWorkitNamespace } from "../shared/helpers/opencode-namespace";
 
 // Task 6 (CA-19, CA-21): the CLI flow/handoff surface maps argv + a
 // TTY/--confirm confirmation seam to the shared core. These tests drive the
@@ -688,14 +687,7 @@ test("usage errors exit 2 with stderr diagnostics", async () => {
 // OpenCode has workit_commit/workit_handoff_session; Cursor has
 // workit_handoff_prompt.
 test("host tool surfaces share the common workit_* namespace with documented host-only tools", () => {
-  const opencode = Object.keys(createTools({} as never, new WorkflowStateStore())).sort();
-  expect(opencode.length).toBeGreaterThan(0);
-  for (const name of opencode) {
-    expect(name).toMatch(/^workit_[a-z0-9_]+$/);
-  }
-  expect(opencode).toContain("workit_commit");
-  expect(opencode).toContain("workit_handoff_session");
-  expect(opencode).not.toContain("workit_handoff_prompt");
+  const opencode = assertOpencodeWorkitNamespace();
 
   const repoRoot = path.resolve(import.meta.dir, "..", "..");
   const server = readFileSync(path.join(repoRoot, "packages/workit-cursor/mcp/server.ts"), "utf8");
