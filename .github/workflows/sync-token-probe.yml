@@ -73,6 +73,16 @@ jobs:
             echo "::endgroup::"
           fi
 
+          if [[ "$FAILED" -ne 0 ]]; then
+            # Hard evidence for the exact credential in use: identity plus the
+            # effective per-repo permission bits GitHub computed for it.
+            echo "::group::token diagnostics"
+            gh api user --jq '"token identity: \(.login) (\(.type))"' || true
+            gh api "repos/${GITHUB_REPOSITORY}" \
+              --jq '"effective repo permissions: " + (.permissions | tostring)' || true
+            echo "::endgroup::"
+          fi
+
           rm -f SYNC_PROBE.txt
           if [[ "$FAILED" -eq 0 ]]; then
             echo "PROBE RESULT: PASS — RELEASE_SYNC_TOKEN can push branches and open PRs; sufficient for the release manifest sync."
