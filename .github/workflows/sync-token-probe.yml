@@ -40,7 +40,11 @@ jobs:
           echo "probe ${GITHUB_RUN_ID}" > SYNC_PROBE.txt
           git checkout -b "$BRANCH"
           git add SYNC_PROBE.txt
-          git commit -m "chore(probe): verify sync token"
+          # [skip ci] in the head commit suppresses push- AND pull_request-
+          # triggered runs for this ephemeral branch: cleanup deletes the ref
+          # within seconds, so any started run would die at checkout (the
+          # red artifacts jobs seen on the first probe run).
+          git commit -m "chore(probe): verify sync token [skip ci]"
           if git push -u origin "$BRANCH"; then
             echo "PASS: Contents write OK"
           else
