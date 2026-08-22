@@ -1,6 +1,6 @@
 {
   "name": "@brainervirus/workit-opencode",
-  "version": "0.8.9",
+  "version": "0.8.10",
   "private": false,
   "description": "Workit OpenCode plugin (thin wrapper over @brainervirus/workit-core)",
   "keywords": [
