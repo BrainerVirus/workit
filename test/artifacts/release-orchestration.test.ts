@@ -46,7 +46,11 @@ test("root scripts build the three adapters and run the pack-only gate (AR-02)",
 
 test("release job order is install → build → candidate gate → semantic-release → manifest sync (AR-01/CA-33/AR-15)", () => {
   const wf = Bun.YAML.parse(read(".github/workflows/release.yml")) as {
-    jobs: { release: { steps: Array<{ name?: string; run?: string }> } };
+    jobs: {
+      release: {
+        steps: Array<{ name?: string; run?: string; env?: Record<string, string> }>;
+      };
+    };
   };
   const steps = wf.jobs.release.steps.map((s) => s.name ?? s.run ?? "");
   const order = [
@@ -70,12 +74,16 @@ test("release job order is install → build → candidate gate → semantic-rel
   expect(afterRelease, "no gate may run between Release and the manifest sync").toBe("");
   expect(wf.jobs.release.steps[idx[1]].run).toContain("bun run build");
   expect(wf.jobs.release.steps[idx[2]].run).toContain("bun run verify:release-candidate");
-  // AR-15: main is protected — the sync lands via an auto-merged PR, and any
-  // pre-sync dirtiness (the transient workspace-dep rewrite) is discarded.
-  const syncRun = wf.jobs.release.steps[idx[4]].run;
+  // AR-15: main is protected — the sync lands via an auto-merged PR opened
+  // with the RELEASE_SYNC_TOKEN PAT (GITHUB_TOKEN-opened PRs never trigger
+  // the required checks, so auto-merge would hang); any pre-sync dirtiness
+  // (the transient workspace-dep rewrite) is discarded first.
+  const syncStep = wf.jobs.release.steps[idx[4]]!;
+  const syncRun = syncStep.run ?? "";
   expect(syncRun).toContain("git checkout --");
   expect(syncRun).toContain("gh pr create");
   expect(syncRun).toContain("--auto --squash");
+  expect(syncStep.env?.GH_TOKEN ?? "").toContain("RELEASE_SYNC_TOKEN");
 });
 
 test("rewrite runs before npm package verification and after version assignment (AR-02)", () => {
