@@ -108,361 +108,397 @@ test("workit_docs_branch proposes create_from_develop on main", async () => {
   }
 });
 
-test("branch setup creates feature branch from develop when starting on main", async () => {
-  const { root, remote } = repoWithDevelop();
-  try {
-    const raw = await createRepoTools().workit_branch_setup.execute(
-      {
-        confirmed: true,
-        target_branch: "feature/x",
-        stash: "no",
-      },
-      { directory: root, worktree: root } as never,
-    );
-    const result = JSON.parse(raw as string);
-    expect(result.ok).toBe(true);
-    expect(git(root, ["branch", "--show-current"]).stdout.trim()).toBe("feature/x");
-    const mergeBase = git(root, ["merge-base", "feature/x", "develop"]).stdout.trim();
-    const developHead = git(root, ["rev-parse", "develop"]).stdout.trim();
-    expect(mergeBase).toBe(developHead);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-    rmSync(remote, { recursive: true, force: true });
-  }
-});
+test(
+  "branch setup creates feature branch from develop when starting on main",
+  async () => {
+    const { root, remote } = repoWithDevelop();
+    try {
+      const raw = await createRepoTools().workit_branch_setup.execute(
+        {
+          confirmed: true,
+          target_branch: "feature/x",
+          stash: "no",
+        },
+        { directory: root, worktree: root } as never,
+      );
+      const result = JSON.parse(raw as string);
+      expect(result.ok).toBe(true);
+      expect(git(root, ["branch", "--show-current"]).stdout.trim()).toBe("feature/x");
+      const mergeBase = git(root, ["merge-base", "feature/x", "develop"]).stdout.trim();
+      const developHead = git(root, ["rev-parse", "develop"]).stdout.trim();
+      expect(mergeBase).toBe(developHead);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(remote, { recursive: true, force: true });
+    }
+  },
+  { timeout: 60_000 },
+);
 
-test("workspace target branch drives docs branch and branch setup", async () => {
-  const { root, remote } = repoWithDevelop();
-  const workspaces = path.join(isolatedConfig, "workit", "workspaces.json");
-  try {
-    writeFileSync(path.join(root, "main.txt"), "main only\n");
-    git(root, ["add", "main.txt"]);
-    git(root, ["commit", "-q", "-m", "main only"]);
-    git(root, ["push", "-q", "-u", "origin", "main"]);
-    mkdirSync(path.dirname(workspaces), { recursive: true });
-    writeFileSync(
-      workspaces,
-      JSON.stringify({
-        workspaces: [
+test(
+  "workspace target branch drives docs branch and branch setup",
+  async () => {
+    const { root, remote } = repoWithDevelop();
+    const workspaces = path.join(isolatedConfig, "workit", "workspaces.json");
+    try {
+      writeFileSync(path.join(root, "main.txt"), "main only\n");
+      git(root, ["add", "main.txt"]);
+      git(root, ["commit", "-q", "-m", "main only"]);
+      git(root, ["push", "-q", "-u", "origin", "main"]);
+      mkdirSync(path.dirname(workspaces), { recursive: true });
+      writeFileSync(
+        workspaces,
+        JSON.stringify({
+          workspaces: [
+            {
+              name: "github",
+              glob: `${root}/**`,
+              vcs: { provider: "github", defaultTargetBranch: "main" },
+            },
+          ],
+        }),
+      );
+      mkdirSync(path.join(root, "docs", "github-flow"), { recursive: true });
+      writeFileSync(path.join(root, "docs/github-flow/plan.md"), "# Plan\n");
+      git(root, ["add", "docs/github-flow/plan.md"]);
+      git(root, ["commit", "-q", "-m", "plan"]);
+
+      const resolved = docsBranch({ plan_path: "docs/github-flow/plan.md", workspace_root: root });
+      expect(resolved.action).toBe("create_from_base");
+      expect(resolved.base).toBe("main");
+
+      const raw = await createRepoTools().workit_branch_setup.execute(
+        {
+          confirmed: true,
+          target_branch: "feature/github-flow",
+          stash: "no",
+        },
+        { directory: root, worktree: root } as never,
+      );
+      expect(JSON.parse(raw as string).ok).toBe(true);
+      expect(git(root, ["rev-parse", "feature/github-flow"]).stdout.trim()).toBe(
+        git(root, ["rev-parse", "main"]).stdout.trim(),
+      );
+    } finally {
+      rmSync(workspaces, { force: true });
+      rmSync(root, { recursive: true, force: true });
+      rmSync(remote, { recursive: true, force: true });
+    }
+  },
+  { timeout: 60_000 },
+);
+
+test(
+  "docs branch recognizes a custom configured base",
+  () => {
+    const { root, remote } = repoWithDevelop();
+    const workspaces = path.join(isolatedConfig, "workit", "workspaces.json");
+    const config = path.join(isolatedConfig, "workit", "config.json");
+    try {
+      git(root, ["checkout", "-q", "-b", "trunk"]);
+      git(root, ["push", "-q", "-u", "origin", "trunk"]);
+      mkdirSync(path.dirname(workspaces), { recursive: true });
+      writeFileSync(
+        workspaces,
+        JSON.stringify({
+          workspaces: [
+            {
+              name: "custom",
+              glob: `${root}/**`,
+              vcs: { provider: "github", defaultTargetBranch: "trunk" },
+            },
+          ],
+        }),
+      );
+      writeFileSync(
+        config,
+        JSON.stringify({
+          branchPolicy: { preset: "custom", allowed: ["trunk", "feature/*"], protected: ["main"] },
+        }),
+      );
+      mkdirSync(path.join(root, "docs", "custom-base"), { recursive: true });
+      writeFileSync(path.join(root, "docs/custom-base/plan.md"), "# Plan\n");
+
+      const resolved = docsBranch({ plan_path: "docs/custom-base/plan.md", workspace_root: root });
+      expect(resolved.action).toBe("create_from_base");
+      expect(resolved.base).toBe("trunk");
+      expect(resolved.branch).toBe("feature/custom-base");
+    } finally {
+      rmSync(workspaces, { force: true });
+      rmSync(config, { force: true });
+      rmSync(root, { recursive: true, force: true });
+      rmSync(remote, { recursive: true, force: true });
+    }
+  },
+  { timeout: 60_000 },
+);
+
+test(
+  "branch setup errors when origin develop is missing",
+  async () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "wf-branch-no-develop-"));
+    try {
+      git(root, ["init", "-q", "-b", "main"]);
+      git(root, ["config", "user.name", "Workflow Test"]);
+      git(root, ["config", "user.email", "workflow@example.test"]);
+      writeFileSync(path.join(root, "README.md"), "base\n");
+      git(root, ["add", "README.md"]);
+      git(root, ["commit", "-q", "-m", "base"]);
+      const raw = await createRepoTools().workit_branch_setup.execute(
+        {
+          confirmed: true,
+          target_branch: "feature/x",
+          stash: "no",
+        },
+        { directory: root, worktree: root } as never,
+      );
+      expect(JSON.parse(raw as string).ok).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+  { timeout: 60_000 },
+);
+
+test(
+  "branch resolution honors use-current and bugfix slug/kind derivation",
+  async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "wf-branch-derive-"));
+    try {
+      const run = (args: string[]) => spawnSync("git", args, { cwd: dir, encoding: "utf8" });
+      run(["init", "-q", "-b", "develop"]);
+      run(["config", "user.name", "T"]);
+      run(["config", "user.email", "t@t"]);
+      writeFileSync(path.join(dir, "r.md"), "x");
+      run(["add", "r.md"]);
+      run(["commit", "-q", "-m", "base"]);
+      run(["branch", "feature/current"]);
+      run(["branch", "feature/base"]);
+      run(["checkout", "-q", "feature/base"]);
+
+      mkdirSync(path.join(dir, "docs", "uc"), { recursive: true });
+      mkdirSync(path.join(dir, "docs", "x"), { recursive: true });
+      mkdirSync(path.join(dir, "docs", "fix-x"), { recursive: true });
+      mkdirSync(path.join(dir, "docs", "g"), { recursive: true });
+      mkdirSync(path.join(dir, "docs", "feat"), { recursive: true });
+      writeFileSync(path.join(dir, "docs/uc/spec.md"), "# UC\n\n**Branch:** use-current\n");
+      writeFileSync(
+        path.join(dir, "docs/uc/plan.md"),
+        "# UC\n\n**Spec:** `docs/uc/spec.md`\n\n### Task 1: One\n\n- [ ] **Step 1:** Work\n",
+      );
+      const useCurrent = resolveBranch({
+        spec_path: "docs/uc/spec.md",
+        plan_path: "docs/uc/plan.md",
+        workspace_root: dir,
+      });
+      expect("error" in useCurrent ? useCurrent.error : useCurrent.source).toBe("use-current");
+      expect("error" in useCurrent ? useCurrent.error : useCurrent.branch).toBe("feature/base");
+
+      run(["branch", "main"]);
+      run(["checkout", "-q", "main"]);
+      writeFileSync(
+        path.join(dir, "docs/fix-x/plan.md"),
+        "# Fix x\n\n### Task 1: One\n\n- [ ] **Step 1:** Work\n",
+      );
+      const fixSlug = resolveBranch({
+        spec_path: "missing.md",
+        plan_path: "docs/fix-x/plan.md",
+        workspace_root: dir,
+      });
+      expect("error" in fixSlug ? fixSlug.error : fixSlug.branch).toBe("bugfix/fix-x");
+
+      writeFileSync(
+        path.join(dir, "docs/g/plan.md"),
+        "# G\n\n**Goal:** bug fix without adding features\n\n### Task 1: One\n\n- [ ] **Step 1:** Work\n",
+      );
+      const goal = resolveBranch({
+        spec_path: "missing.md",
+        plan_path: "docs/g/plan.md",
+        workspace_root: dir,
+      });
+      expect("error" in goal ? goal.error : goal.branch).toBe("bugfix/g");
+
+      writeFileSync(
+        path.join(dir, "docs/feat/plan.md"),
+        "# F\n\n**Goal:** Add cool feature\n\n### Task 1: One\n\n- [ ] **Step 1:** Work\n",
+      );
+      const feat = resolveBranch({
+        spec_path: "missing.md",
+        plan_path: "docs/feat/plan.md",
+        workspace_root: dir,
+      });
+      expect("error" in feat ? feat.error : feat.branch).toBe("feature/feat");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  },
+  { timeout: 60_000 },
+);
+
+test(
+  "branch setup guards protected targets, missing targets, and dirty stash flow",
+  async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "wf-branch-guards-"));
+    try {
+      const run = (args: string[]) => spawnSync("git", args, { cwd: dir, encoding: "utf8" });
+      run(["init", "-q", "-b", "develop"]);
+      run(["config", "user.name", "T"]);
+      run(["config", "user.email", "t@t"]);
+      writeFileSync(path.join(dir, "r.md"), "x");
+      run(["add", "r.md"]);
+      run(["commit", "-q", "-m", "base"]);
+      run(["branch", "main"]);
+      run(["checkout", "-q", "main"]);
+
+      const tools = createRepoTools();
+      const ctx = { directory: dir, worktree: dir } as never;
+      const noTarget = JSON.parse(
+        (await tools.workit_branch_setup.execute({ confirmed: true }, ctx)) as string,
+      );
+      expect(noTarget.error).toContain("target branch required");
+      const protected_ = JSON.parse(
+        (await tools.workit_branch_setup.execute(
+          { confirmed: true, target_branch: "main" },
+          ctx,
+        )) as string,
+      );
+      expect(protected_.error).toContain("protected branch");
+      const badKind = JSON.parse(
+        (await tools.workit_branch_setup.execute(
+          { confirmed: true, target_branch: "random/x" },
+          ctx,
+        )) as string,
+      );
+      expect(badKind.error).toContain("not allowed by the branch policy");
+
+      run(["checkout", "-q", "-b", "feature/dirty"]);
+      writeFileSync(path.join(dir, "dirty.txt"), "uncommitted");
+      const dirty = JSON.parse(
+        (await tools.workit_branch_setup.execute(
+          { confirmed: true, target_branch: "feature/next", stash: "no" },
+          ctx,
+        )) as string,
+      );
+      expect(dirty.error).toContain("dirty working tree");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  },
+  { timeout: 60_000 },
+);
+
+test(
+  "branch setup reapply_stash requires a recorded stash ref",
+  async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "wf-branch-reapply-"));
+    try {
+      const run = (args: string[]) => spawnSync("git", args, { cwd: dir, encoding: "utf8" });
+      run(["init", "-q", "-b", "develop"]);
+      run(["config", "user.name", "T"]);
+      run(["config", "user.email", "t@t"]);
+      writeFileSync(path.join(dir, "r.md"), "x");
+      run(["add", "r.md"]);
+      run(["commit", "-q", "-m", "base"]);
+
+      const tools = createRepoTools();
+      const ctx = { directory: dir, worktree: dir } as never;
+      const noRef = JSON.parse(
+        (await tools.workit_branch_setup.execute(
+          { confirmed: true, action: "reapply_stash" },
+          ctx,
+        )) as string,
+      );
+      expect(noRef.error).toContain("no stash_ref");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  },
+  { timeout: 60_000 },
+);
+
+test(
+  "branch setup stash + reapply round trip restores changes",
+  async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "wf-branch-stash-roundtrip-"));
+    try {
+      const run = (args: string[]) => spawnSync("git", args, { cwd: dir, encoding: "utf8" });
+      run(["init", "-q", "-b", "develop"]);
+      run(["config", "user.name", "T"]);
+      run(["config", "user.email", "t@t"]);
+      writeFileSync(path.join(dir, "r.md"), "x");
+      run(["add", "r.md"]);
+      run(["commit", "-q", "-m", "base"]);
+      run(["checkout", "-q", "-b", "feature/dirty"]);
+      run(["checkout", "-q", "-b", "feature/next"]);
+      run(["checkout", "-q", "feature/dirty"]);
+      writeFileSync(path.join(dir, "dirty.txt"), "wip");
+
+      const tools = createRepoTools();
+      const ctx = { directory: dir, worktree: dir } as never;
+      const setup = JSON.parse(
+        (await tools.workit_branch_setup.execute(
           {
-            name: "github",
-            glob: `${root}/**`,
-            vcs: { provider: "github", defaultTargetBranch: "main" },
+            confirmed: true,
+            target_branch: "feature/next",
+            stash: "yes",
           },
-        ],
-      }),
-    );
-    mkdirSync(path.join(root, "docs", "github-flow"), { recursive: true });
-    writeFileSync(path.join(root, "docs/github-flow/plan.md"), "# Plan\n");
-    git(root, ["add", "docs/github-flow/plan.md"]);
-    git(root, ["commit", "-q", "-m", "plan"]);
+          ctx,
+        )) as string,
+      );
+      expect(setup.ok).toBe(true);
+      expect(existsSync(path.join(dir, "dirty.txt"))).toBe(false);
 
-    const resolved = docsBranch({ plan_path: "docs/github-flow/plan.md", workspace_root: root });
-    expect(resolved.action).toBe("create_from_base");
-    expect(resolved.base).toBe("main");
-
-    const raw = await createRepoTools().workit_branch_setup.execute(
-      {
-        confirmed: true,
-        target_branch: "feature/github-flow",
-        stash: "no",
-      },
-      { directory: root, worktree: root } as never,
-    );
-    expect(JSON.parse(raw as string).ok).toBe(true);
-    expect(git(root, ["rev-parse", "feature/github-flow"]).stdout.trim()).toBe(
-      git(root, ["rev-parse", "main"]).stdout.trim(),
-    );
-  } finally {
-    rmSync(workspaces, { force: true });
-    rmSync(root, { recursive: true, force: true });
-    rmSync(remote, { recursive: true, force: true });
-  }
-});
-
-test("docs branch recognizes a custom configured base", () => {
-  const { root, remote } = repoWithDevelop();
-  const workspaces = path.join(isolatedConfig, "workit", "workspaces.json");
-  const config = path.join(isolatedConfig, "workit", "config.json");
-  try {
-    git(root, ["checkout", "-q", "-b", "trunk"]);
-    git(root, ["push", "-q", "-u", "origin", "trunk"]);
-    mkdirSync(path.dirname(workspaces), { recursive: true });
-    writeFileSync(
-      workspaces,
-      JSON.stringify({
-        workspaces: [
+      const reapply = JSON.parse(
+        (await tools.workit_branch_setup.execute(
           {
-            name: "custom",
-            glob: `${root}/**`,
-            vcs: { provider: "github", defaultTargetBranch: "trunk" },
+            confirmed: true,
+            action: "reapply_stash",
           },
-        ],
-      }),
-    );
-    writeFileSync(
-      config,
-      JSON.stringify({
-        branchPolicy: { preset: "custom", allowed: ["trunk", "feature/*"], protected: ["main"] },
-      }),
-    );
-    mkdirSync(path.join(root, "docs", "custom-base"), { recursive: true });
-    writeFileSync(path.join(root, "docs/custom-base/plan.md"), "# Plan\n");
+          ctx,
+        )) as string,
+      );
+      expect(reapply.ok).toBe(true);
+      expect(existsSync(path.join(dir, "dirty.txt"))).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  },
+  { timeout: 60_000 },
+);
 
-    const resolved = docsBranch({ plan_path: "docs/custom-base/plan.md", workspace_root: root });
-    expect(resolved.action).toBe("create_from_base");
-    expect(resolved.base).toBe("trunk");
-    expect(resolved.branch).toBe("feature/custom-base");
-  } finally {
-    rmSync(workspaces, { force: true });
-    rmSync(config, { force: true });
-    rmSync(root, { recursive: true, force: true });
-    rmSync(remote, { recursive: true, force: true });
-  }
-});
+test(
+  "branch setup fails from a feature branch when origin develop is missing",
+  async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "wf-branch-no-origin-"));
+    try {
+      const run = (args: string[]) => spawnSync("git", args, { cwd: dir, encoding: "utf8" });
+      run(["init", "-q", "-b", "develop"]);
+      run(["config", "user.name", "T"]);
+      run(["config", "user.email", "t@t"]);
+      writeFileSync(path.join(dir, "r.md"), "x");
+      run(["add", "r.md"]);
+      run(["commit", "-q", "-m", "base"]);
+      run(["checkout", "-q", "-b", "feature/start"]);
 
-test("branch setup errors when origin develop is missing", async () => {
-  const root = mkdtempSync(path.join(os.tmpdir(), "wf-branch-no-develop-"));
-  try {
-    git(root, ["init", "-q", "-b", "main"]);
-    git(root, ["config", "user.name", "Workflow Test"]);
-    git(root, ["config", "user.email", "workflow@example.test"]);
-    writeFileSync(path.join(root, "README.md"), "base\n");
-    git(root, ["add", "README.md"]);
-    git(root, ["commit", "-q", "-m", "base"]);
-    const raw = await createRepoTools().workit_branch_setup.execute(
-      {
-        confirmed: true,
-        target_branch: "feature/x",
-        stash: "no",
-      },
-      { directory: root, worktree: root } as never,
-    );
-    expect(JSON.parse(raw as string).ok).toBe(false);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test("branch resolution honors use-current and bugfix slug/kind derivation", async () => {
-  const dir = mkdtempSync(path.join(os.tmpdir(), "wf-branch-derive-"));
-  try {
-    const run = (args: string[]) => spawnSync("git", args, { cwd: dir, encoding: "utf8" });
-    run(["init", "-q", "-b", "develop"]);
-    run(["config", "user.name", "T"]);
-    run(["config", "user.email", "t@t"]);
-    writeFileSync(path.join(dir, "r.md"), "x");
-    run(["add", "r.md"]);
-    run(["commit", "-q", "-m", "base"]);
-    run(["branch", "feature/current"]);
-    run(["branch", "feature/base"]);
-    run(["checkout", "-q", "feature/base"]);
-
-    mkdirSync(path.join(dir, "docs", "uc"), { recursive: true });
-    mkdirSync(path.join(dir, "docs", "x"), { recursive: true });
-    mkdirSync(path.join(dir, "docs", "fix-x"), { recursive: true });
-    mkdirSync(path.join(dir, "docs", "g"), { recursive: true });
-    mkdirSync(path.join(dir, "docs", "feat"), { recursive: true });
-    writeFileSync(path.join(dir, "docs/uc/spec.md"), "# UC\n\n**Branch:** use-current\n");
-    writeFileSync(
-      path.join(dir, "docs/uc/plan.md"),
-      "# UC\n\n**Spec:** `docs/uc/spec.md`\n\n### Task 1: One\n\n- [ ] **Step 1:** Work\n",
-    );
-    const useCurrent = resolveBranch({
-      spec_path: "docs/uc/spec.md",
-      plan_path: "docs/uc/plan.md",
-      workspace_root: dir,
-    });
-    expect("error" in useCurrent ? useCurrent.error : useCurrent.source).toBe("use-current");
-    expect("error" in useCurrent ? useCurrent.error : useCurrent.branch).toBe("feature/base");
-
-    run(["branch", "main"]);
-    run(["checkout", "-q", "main"]);
-    writeFileSync(
-      path.join(dir, "docs/fix-x/plan.md"),
-      "# Fix x\n\n### Task 1: One\n\n- [ ] **Step 1:** Work\n",
-    );
-    const fixSlug = resolveBranch({
-      spec_path: "missing.md",
-      plan_path: "docs/fix-x/plan.md",
-      workspace_root: dir,
-    });
-    expect("error" in fixSlug ? fixSlug.error : fixSlug.branch).toBe("bugfix/fix-x");
-
-    writeFileSync(
-      path.join(dir, "docs/g/plan.md"),
-      "# G\n\n**Goal:** bug fix without adding features\n\n### Task 1: One\n\n- [ ] **Step 1:** Work\n",
-    );
-    const goal = resolveBranch({
-      spec_path: "missing.md",
-      plan_path: "docs/g/plan.md",
-      workspace_root: dir,
-    });
-    expect("error" in goal ? goal.error : goal.branch).toBe("bugfix/g");
-
-    writeFileSync(
-      path.join(dir, "docs/feat/plan.md"),
-      "# F\n\n**Goal:** Add cool feature\n\n### Task 1: One\n\n- [ ] **Step 1:** Work\n",
-    );
-    const feat = resolveBranch({
-      spec_path: "missing.md",
-      plan_path: "docs/feat/plan.md",
-      workspace_root: dir,
-    });
-    expect("error" in feat ? feat.error : feat.branch).toBe("feature/feat");
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-test("branch setup guards protected targets, missing targets, and dirty stash flow", async () => {
-  const dir = mkdtempSync(path.join(os.tmpdir(), "wf-branch-guards-"));
-  try {
-    const run = (args: string[]) => spawnSync("git", args, { cwd: dir, encoding: "utf8" });
-    run(["init", "-q", "-b", "develop"]);
-    run(["config", "user.name", "T"]);
-    run(["config", "user.email", "t@t"]);
-    writeFileSync(path.join(dir, "r.md"), "x");
-    run(["add", "r.md"]);
-    run(["commit", "-q", "-m", "base"]);
-    run(["branch", "main"]);
-    run(["checkout", "-q", "main"]);
-
-    const tools = createRepoTools();
-    const ctx = { directory: dir, worktree: dir } as never;
-    const noTarget = JSON.parse(
-      (await tools.workit_branch_setup.execute({ confirmed: true }, ctx)) as string,
-    );
-    expect(noTarget.error).toContain("target branch required");
-    const protected_ = JSON.parse(
-      (await tools.workit_branch_setup.execute(
-        { confirmed: true, target_branch: "main" },
-        ctx,
-      )) as string,
-    );
-    expect(protected_.error).toContain("protected branch");
-    const badKind = JSON.parse(
-      (await tools.workit_branch_setup.execute(
-        { confirmed: true, target_branch: "random/x" },
-        ctx,
-      )) as string,
-    );
-    expect(badKind.error).toContain("not allowed by the branch policy");
-
-    run(["checkout", "-q", "-b", "feature/dirty"]);
-    writeFileSync(path.join(dir, "dirty.txt"), "uncommitted");
-    const dirty = JSON.parse(
-      (await tools.workit_branch_setup.execute(
-        { confirmed: true, target_branch: "feature/next", stash: "no" },
-        ctx,
-      )) as string,
-    );
-    expect(dirty.error).toContain("dirty working tree");
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-test("branch setup reapply_stash requires a recorded stash ref", async () => {
-  const dir = mkdtempSync(path.join(os.tmpdir(), "wf-branch-reapply-"));
-  try {
-    const run = (args: string[]) => spawnSync("git", args, { cwd: dir, encoding: "utf8" });
-    run(["init", "-q", "-b", "develop"]);
-    run(["config", "user.name", "T"]);
-    run(["config", "user.email", "t@t"]);
-    writeFileSync(path.join(dir, "r.md"), "x");
-    run(["add", "r.md"]);
-    run(["commit", "-q", "-m", "base"]);
-
-    const tools = createRepoTools();
-    const ctx = { directory: dir, worktree: dir } as never;
-    const noRef = JSON.parse(
-      (await tools.workit_branch_setup.execute(
-        { confirmed: true, action: "reapply_stash" },
-        ctx,
-      )) as string,
-    );
-    expect(noRef.error).toContain("no stash_ref");
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-test("branch setup stash + reapply round trip restores changes", async () => {
-  const dir = mkdtempSync(path.join(os.tmpdir(), "wf-branch-stash-roundtrip-"));
-  try {
-    const run = (args: string[]) => spawnSync("git", args, { cwd: dir, encoding: "utf8" });
-    run(["init", "-q", "-b", "develop"]);
-    run(["config", "user.name", "T"]);
-    run(["config", "user.email", "t@t"]);
-    writeFileSync(path.join(dir, "r.md"), "x");
-    run(["add", "r.md"]);
-    run(["commit", "-q", "-m", "base"]);
-    run(["checkout", "-q", "-b", "feature/dirty"]);
-    run(["checkout", "-q", "-b", "feature/next"]);
-    run(["checkout", "-q", "feature/dirty"]);
-    writeFileSync(path.join(dir, "dirty.txt"), "wip");
-
-    const tools = createRepoTools();
-    const ctx = { directory: dir, worktree: dir } as never;
-    const setup = JSON.parse(
-      (await tools.workit_branch_setup.execute(
-        {
-          confirmed: true,
-          target_branch: "feature/next",
-          stash: "yes",
-        },
-        ctx,
-      )) as string,
-    );
-    expect(setup.ok).toBe(true);
-    expect(existsSync(path.join(dir, "dirty.txt"))).toBe(false);
-
-    const reapply = JSON.parse(
-      (await tools.workit_branch_setup.execute(
-        {
-          confirmed: true,
-          action: "reapply_stash",
-        },
-        ctx,
-      )) as string,
-    );
-    expect(reapply.ok).toBe(true);
-    expect(existsSync(path.join(dir, "dirty.txt"))).toBe(true);
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-test("branch setup fails from a feature branch when origin develop is missing", async () => {
-  const dir = mkdtempSync(path.join(os.tmpdir(), "wf-branch-no-origin-"));
-  try {
-    const run = (args: string[]) => spawnSync("git", args, { cwd: dir, encoding: "utf8" });
-    run(["init", "-q", "-b", "develop"]);
-    run(["config", "user.name", "T"]);
-    run(["config", "user.email", "t@t"]);
-    writeFileSync(path.join(dir, "r.md"), "x");
-    run(["add", "r.md"]);
-    run(["commit", "-q", "-m", "base"]);
-    run(["checkout", "-q", "-b", "feature/start"]);
-
-    const tools = createRepoTools();
-    const ctx = { directory: dir, worktree: dir } as never;
-    const raw = JSON.parse(
-      (await tools.workit_branch_setup.execute(
-        {
-          confirmed: true,
-          target_branch: "feature/new",
-        },
-        ctx,
-      )) as string,
-    );
-    expect(raw.ok).toBe(false);
-    expect(raw.ok).toBe(false);
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
+      const tools = createRepoTools();
+      const ctx = { directory: dir, worktree: dir } as never;
+      const raw = JSON.parse(
+        (await tools.workit_branch_setup.execute(
+          {
+            confirmed: true,
+            target_branch: "feature/new",
+          },
+          ctx,
+        )) as string,
+      );
+      expect(raw.ok).toBe(false);
+      expect(raw.ok).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  },
+  { timeout: 60_000 },
+);
 
 test("docsBranch reports keep and create_from_develop and HEAD errors", () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "wf-docs-branch-"));
@@ -847,88 +883,92 @@ test("workspace preset typo falls back to the global preset without crashing", a
   }
 });
 
-test("RL-03b: provider reconciles with the actual origin remote across PR surfaces", async () => {
-  // A stale config provider (gitlab) must not drive glab on a github.com-hosted
-  // repo: vcsConfig load/resolve and prCreate derive the provider from the
-  // origin remote when no explicit workspace vcs.provider overrides it.
-  const stubBin = mkdtempSync(path.join(os.tmpdir(), "wf-remote-bin-"));
-  const ghLog = path.join(stubBin, "gh-args.txt");
-  const glabLog = path.join(stubBin, "glab-args.txt");
-  stubCli(stubBin, "gh", ghLog, "https://github.com/acme/workit/pull/1");
-  stubCli(stubBin, "glab", glabLog, "https://gitlab.com/acme/workit/-/merge_requests/1");
-  const cfgDir = mkdtempSync(path.join(os.tmpdir(), "wf-remote-cfg-"));
-  const prevConfig = process.env.WORKFLOW_TOOLKIT_CONFIG;
-  const prevPath = process.env.PATH;
-  const writeCfg = (provider: string) => {
-    // pushBranch: false — this test exercises provider reconciliation from the
-    // origin remote URL, not push behavior; the remote is a github.com/gitlab.com
-    // URL with no real endpoint, so no push may be attempted.
-    writeFileSync(
-      path.join(cfgDir, "vcs.json"),
-      JSON.stringify({ provider, defaultTargetBranch: "main", pr: { pushBranch: false } }),
-    );
-    writeFileSync(path.join(cfgDir, "gitlab.token"), "gitlab-token\n", { mode: 0o600 });
-    writeFileSync(path.join(cfgDir, "github.token"), "github-token\n", { mode: 0o600 });
-  };
-  const repoWithRemote = (url: string) => {
-    const root = mkdtempSync(path.join(os.tmpdir(), "wf-remote-repo-"));
-    const run = (args: string[]) => spawnSync("git", args, { cwd: root, encoding: "utf8" });
-    run(["init", "-q", "-b", "feature/t"]);
-    run(["config", "user.name", "T"]);
-    run(["config", "user.email", "t@t"]);
-    writeFileSync(path.join(root, "r.md"), "x");
-    run(["add", "r.md"]);
-    run(["commit", "-q", "-m", "base"]);
-    run(["remote", "add", "origin", url]);
-    return root;
-  };
-  try {
-    process.env.WORKFLOW_TOOLKIT_CONFIG = cfgDir;
-    process.env.PATH = stubPath(stubBin);
-    const ghRoot = repoWithRemote("https://github.com/acme/workit.git");
-    try {
-      writeCfg("gitlab");
-      expect(vcsConfig("resolve", ghRoot).provider).toBe("github");
-      const loaded = vcsConfig("load", ghRoot);
-      expect(loaded.provider).toBe("github");
-      expect(String(loaded.tokenPath)).toEndWith("github.token");
-      const p = prCreate(
-        { WF_PR_CONFIRMED: "true", WF_PR_TITLE: "T", WF_PR_BODY: "", WF_PR_DRAFT: "false" },
-        ghRoot,
+test(
+  "RL-03b: provider reconciles with the actual origin remote across PR surfaces",
+  async () => {
+    // A stale config provider (gitlab) must not drive glab on a github.com-hosted
+    // repo: vcsConfig load/resolve and prCreate derive the provider from the
+    // origin remote when no explicit workspace vcs.provider overrides it.
+    const stubBin = mkdtempSync(path.join(os.tmpdir(), "wf-remote-bin-"));
+    const ghLog = path.join(stubBin, "gh-args.txt");
+    const glabLog = path.join(stubBin, "glab-args.txt");
+    stubCli(stubBin, "gh", ghLog, "https://github.com/acme/workit/pull/1");
+    stubCli(stubBin, "glab", glabLog, "https://gitlab.com/acme/workit/-/merge_requests/1");
+    const cfgDir = mkdtempSync(path.join(os.tmpdir(), "wf-remote-cfg-"));
+    const prevConfig = process.env.WORKFLOW_TOOLKIT_CONFIG;
+    const prevPath = process.env.PATH;
+    const writeCfg = (provider: string) => {
+      // pushBranch: false — this test exercises provider reconciliation from the
+      // origin remote URL, not push behavior; the remote is a github.com/gitlab.com
+      // URL with no real endpoint, so no push may be attempted.
+      writeFileSync(
+        path.join(cfgDir, "vcs.json"),
+        JSON.stringify({ provider, defaultTargetBranch: "main", pr: { pushBranch: false } }),
       );
-      expect(p.ok, JSON.stringify(p)).toBe(true);
-      expect(p.provider).toBe("github");
-      expect(existsSync(glabLog)).toBe(false);
-      expect(readFileSync(ghLog, "utf8")).toContain("pr create");
-    } finally {
-      rmSync(ghRoot, { recursive: true, force: true });
-    }
-    rmSync(glabLog, { force: true });
-    rmSync(ghLog, { force: true });
-    const glRoot = repoWithRemote("https://gitlab.com/acme/workit.git");
+      writeFileSync(path.join(cfgDir, "gitlab.token"), "gitlab-token\n", { mode: 0o600 });
+      writeFileSync(path.join(cfgDir, "github.token"), "github-token\n", { mode: 0o600 });
+    };
+    const repoWithRemote = (url: string) => {
+      const root = mkdtempSync(path.join(os.tmpdir(), "wf-remote-repo-"));
+      const run = (args: string[]) => spawnSync("git", args, { cwd: root, encoding: "utf8" });
+      run(["init", "-q", "-b", "feature/t"]);
+      run(["config", "user.name", "T"]);
+      run(["config", "user.email", "t@t"]);
+      writeFileSync(path.join(root, "r.md"), "x");
+      run(["add", "r.md"]);
+      run(["commit", "-q", "-m", "base"]);
+      run(["remote", "add", "origin", url]);
+      return root;
+    };
     try {
-      writeCfg("github");
-      expect(vcsConfig("resolve", glRoot).provider).toBe("gitlab");
-      const p = prCreate(
-        { WF_PR_CONFIRMED: "true", WF_PR_TITLE: "T", WF_PR_BODY: "", WF_PR_DRAFT: "false" },
-        glRoot,
-      );
-      expect(p.ok, JSON.stringify(p)).toBe(true);
-      expect(p.provider).toBe("gitlab");
-      expect(existsSync(ghLog)).toBe(false);
-      expect(readFileSync(glabLog, "utf8")).toContain("mr create");
+      process.env.WORKFLOW_TOOLKIT_CONFIG = cfgDir;
+      process.env.PATH = stubPath(stubBin);
+      const ghRoot = repoWithRemote("https://github.com/acme/workit.git");
+      try {
+        writeCfg("gitlab");
+        expect(vcsConfig("resolve", ghRoot).provider).toBe("github");
+        const loaded = vcsConfig("load", ghRoot);
+        expect(loaded.provider).toBe("github");
+        expect(String(loaded.tokenPath)).toEndWith("github.token");
+        const p = prCreate(
+          { WF_PR_CONFIRMED: "true", WF_PR_TITLE: "T", WF_PR_BODY: "", WF_PR_DRAFT: "false" },
+          ghRoot,
+        );
+        expect(p.ok, JSON.stringify(p)).toBe(true);
+        expect(p.provider).toBe("github");
+        expect(existsSync(glabLog)).toBe(false);
+        expect(readFileSync(ghLog, "utf8")).toContain("pr create");
+      } finally {
+        rmSync(ghRoot, { recursive: true, force: true });
+      }
+      rmSync(glabLog, { force: true });
+      rmSync(ghLog, { force: true });
+      const glRoot = repoWithRemote("https://gitlab.com/acme/workit.git");
+      try {
+        writeCfg("github");
+        expect(vcsConfig("resolve", glRoot).provider).toBe("gitlab");
+        const p = prCreate(
+          { WF_PR_CONFIRMED: "true", WF_PR_TITLE: "T", WF_PR_BODY: "", WF_PR_DRAFT: "false" },
+          glRoot,
+        );
+        expect(p.ok, JSON.stringify(p)).toBe(true);
+        expect(p.provider).toBe("gitlab");
+        expect(existsSync(ghLog)).toBe(false);
+        expect(readFileSync(glabLog, "utf8")).toContain("mr create");
+      } finally {
+        rmSync(glRoot, { recursive: true, force: true });
+      }
     } finally {
-      rmSync(glRoot, { recursive: true, force: true });
+      if (prevConfig === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+      else process.env.WORKFLOW_TOOLKIT_CONFIG = prevConfig;
+      if (prevPath === undefined) delete process.env.PATH;
+      else process.env.PATH = prevPath;
+      rmSync(stubBin, { recursive: true, force: true });
+      rmSync(cfgDir, { recursive: true, force: true });
     }
-  } finally {
-    if (prevConfig === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
-    else process.env.WORKFLOW_TOOLKIT_CONFIG = prevConfig;
-    if (prevPath === undefined) delete process.env.PATH;
-    else process.env.PATH = prevPath;
-    rmSync(stubBin, { recursive: true, force: true });
-    rmSync(cfgDir, { recursive: true, force: true });
-  }
-});
+  },
+  { timeout: 60_000 },
+);
 
 test("RL-01: malformed config.json throws the exact-path error from policy-aware resolve", () => {
   // The now-policy-aware vcs resolve and resolveBranchPolicyFor both call
