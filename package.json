@@ -1,6 +1,6 @@
 {
   "name": "workit",
-  "version": "0.8.9",
+  "version": "0.8.10",
   "private": true,
   "description": "Monorepo for workit — workflow rails for agentic coding",
   "license": "MIT",
