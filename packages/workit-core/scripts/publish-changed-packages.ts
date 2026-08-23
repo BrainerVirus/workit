@@ -71,12 +71,15 @@ export function publishChanged(opts: {
   return { published, skipped, tag };
 }
 
+// @semantic-release/exec spawns this Cmd as a shell string whose ONLY optional
+// positional arg is rendered from ${lastRelease.gitTag}: present when a
+// previous release exists, absent on a first-ever release. The repo root is
+// always the spawn cwd (release.config.cjs paths are repo-root-relative), so
+// the CLI takes no root argument.
 if (import.meta.main) {
-  const root = process.argv[2] ? resolve(process.argv[2]) : process.cwd();
-  const fromTag = process.argv[3];
   publishChanged({
-    root,
+    root: process.cwd(),
     dryRun: process.env.PUBLISH_DRY_RUN === "1",
-    ...(fromTag !== undefined ? { fromTag } : {}),
+    ...(process.argv[2] !== undefined ? { fromTag: process.argv[2] } : {}),
   });
 }
