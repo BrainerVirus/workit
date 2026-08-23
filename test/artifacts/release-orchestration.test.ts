@@ -145,6 +145,10 @@ test("rewrite runs before npm package verification and after version assignment 
   // release/tag plugin (AR-16).
   const lastNpmIdx = cfg.plugins.reduce<number>((acc, p, i) => (isNpm(p) ? i : acc), -1);
   const publishIdx = cfg.plugins.findIndex((p) => typeof opts(p).publishCmd === "string");
+  // The publisher must diff against the PREVIOUS tag: semantic-release creates
+  // the new release tag before publish plugins run, so latestTag() inside the
+  // script would see the release being cut and skip every package.
+  expect(opts(cfg.plugins[publishIdx]).publishCmd).toContain("${lastRelease.gitTag}");
   const githubIdx = cfg.plugins.findIndex((p) => nameOf(p) === "@semantic-release/github");
   expect(publishIdx).toBeGreaterThan(lastNpmIdx);
   expect(githubIdx).toBeGreaterThan(publishIdx);

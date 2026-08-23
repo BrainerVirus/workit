@@ -25,9 +25,13 @@ module.exports = {
     ["@semantic-release/exec", {
       prepareCmd: "bun packages/workit-core/scripts/rewrite-workspace-deps.ts",
     }],
-    // AR-16: publish only packages with payload changes since the previous tag.
+    // AR-16: publish only packages with payload changes since the PREVIOUS
+    // tag. ${lastRelease.gitTag} is mandatory here: semantic-release creates
+    // the NEW release tag before publish plugins run, so latestTag() inside
+    // the script would resolve to the release being cut and skip everything.
     ["@semantic-release/exec", {
-      publishCmd: "bun packages/workit-core/scripts/publish-changed-packages.ts",
+      publishCmd:
+        "bun packages/workit-core/scripts/publish-changed-packages.ts ${lastRelease.gitTag}",
     }],
     "@semantic-release/github",
   ],
