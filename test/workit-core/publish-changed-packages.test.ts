@@ -182,6 +182,32 @@ describe("publishChanged", () => {
       r.cleanup();
     }
   });
+  test("explicit fromTag wins over latestTag (semantic-release tags the release before publish)", () => {
+    const r = repo();
+    try {
+      // Real CI ordering: product changes land, then semantic-release creates
+      // the NEW release tag on HEAD before publish plugins run — diffing
+      // against latestTag() at that point is always empty.
+      r.change("packages/workit-core/src/i.ts", "c\n");
+      execFileSync("git", ["tag", "v0.9.0"], { cwd: r.root });
+      const calls: string[] = [];
+      const result = publishChanged({
+        root: r.root,
+        fromTag: "v0.8.10",
+        run: (_cmd, args, opts) => {
+          calls.push(`${args.join(" ")} @ ${opts.cwd}`);
+        },
+      });
+      expect(result.published).toEqual(["workit-core"]);
+      expect(result.skipped).toEqual(["workit-opencode", "workit-cursor", "workit-cli"]);
+      expect(result.tag).toBe("v0.8.10");
+      expect(calls[0]).toBe(
+        `publish --access public @ ${path.join(r.root, "packages/workit-core")}`,
+      );
+    } finally {
+      r.cleanup();
+    }
+  });
   test("dryRun records without invoking npm", () => {
     const r = repo();
     try {

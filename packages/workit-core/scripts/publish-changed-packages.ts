@@ -21,6 +21,14 @@ export function changedPackages(root: string, fromTag: string): string[] {
 export function publishChanged(opts: {
   root: string;
   dryRun?: boolean;
+  /**
+   * Base tag to diff against. Empty string means first-ever release (ship
+   * all). Default: latestTag(root). semantic-release creates the NEW release
+   * tag before publish plugins run, so production passes the PREVIOUS tag via
+   * `${lastRelease.gitTag}` — diffing against latestTag() there is always
+   * empty and would skip every package.
+   */
+  fromTag?: string;
   run?: (cmd: string, args: string[], o: { cwd: string }) => unknown;
 }): { published: string[]; skipped: string[]; tag: string | null } {
   const { root, dryRun = false } = opts;
@@ -28,7 +36,8 @@ export function publishChanged(opts: {
     opts.run ??
     ((cmd: string, args: string[], o: { cwd: string }) =>
       execFileSync(cmd, args, { cwd: o.cwd, encoding: "utf8", stdio: "inherit" }));
-  const tag = latestTag(root);
+  const tag =
+    opts.fromTag !== undefined ? (opts.fromTag === "" ? null : opts.fromTag) : latestTag(root);
   if (tag === null) {
     // First-ever release: everything ships.
     const published: string[] = [];
@@ -64,5 +73,10 @@ export function publishChanged(opts: {
 
 if (import.meta.main) {
   const root = process.argv[2] ? resolve(process.argv[2]) : process.cwd();
-  publishChanged({ root, dryRun: process.env.PUBLISH_DRY_RUN === "1" });
+  const fromTag = process.argv[3];
+  publishChanged({
+    root,
+    dryRun: process.env.PUBLISH_DRY_RUN === "1",
+    ...(fromTag !== undefined ? { fromTag } : {}),
+  });
 }
