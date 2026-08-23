@@ -101,4 +101,31 @@ test("rewrite runs before npm package verification and after version assignment 
   // the semantic-release version bumps and rewrites to the released version.
   expect(prepare).toBeGreaterThan(npmLast);
   expect(config.match(/rewrite-workspace-deps\.ts/g) ?? []).toHaveLength(2);
+
+  // CA-08 selective-publish pins are STRUCTURAL: load the pure-object config
+  // instead of matching raw bytes, so a comment reflow can't break them.
+  const cfg = require(path.resolve(REPO_ROOT, "release.config.cjs")) as { plugins: unknown[] };
+  const opts = (p: unknown): Record<string, unknown> =>
+    Array.isArray(p) && p.length > 1 && typeof p[1] === "object" && p[1] !== null
+      ? (p[1] as Record<string, unknown>)
+      : {};
+  const nameOf = (p: unknown): string =>
+    typeof p === "string" ? p : Array.isArray(p) ? String(p[0]) : "";
+  const isNpm = (p: unknown) => nameOf(p) === "@semantic-release/npm";
+
+  // analyze gate runs first: the leading plugin is the exec entry carrying
+  // analyzeCmd (AR-16).
+  expect(nameOf(cfg.plugins[0])).toBe("@semantic-release/exec");
+  expect(opts(cfg.plugins[0])).toHaveProperty("analyzeCmd");
+  // bumpers only: exactly four @semantic-release/npm entries, none publishing.
+  const npmEntries = cfg.plugins.filter(isNpm);
+  expect(npmEntries).toHaveLength(4);
+  for (const entry of npmEntries) expect(opts(entry).npmPublish).toBe(false);
+  // selective publish lands after the bumpers and before the GitHub
+  // release/tag plugin (AR-16).
+  const lastNpmIdx = cfg.plugins.reduce<number>((acc, p, i) => (isNpm(p) ? i : acc), -1);
+  const publishIdx = cfg.plugins.findIndex((p) => typeof opts(p).publishCmd === "string");
+  const githubIdx = cfg.plugins.findIndex((p) => nameOf(p) === "@semantic-release/github");
+  expect(publishIdx).toBeGreaterThan(lastNpmIdx);
+  expect(githubIdx).toBeGreaterThan(publishIdx);
 });
