@@ -296,7 +296,35 @@ export const branchSetup = ({
   if (!allowedBranch(cwd, target))
     return { error: `target branch ${target} is not allowed by the branch policy` };
 
+  // CA-02: resolve the base before any mutation so a missing origin/<base>
+  // fails with the tree untouched instead of after a stash push.
+  let base: string | undefined;
+  let targetExists = true;
+  try {
+    exec(["rev-parse", "--verify", "--quiet", `refs/heads/${target}`]);
+  } catch {
+    targetExists = false;
+  }
+  if (!targetExists) {
+    try {
+      const baseResolved = baseBranch(cwd);
+      if ("error" in baseResolved) return { error: baseResolved.error };
+      base = baseResolved.base;
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : "base resolution failed" };
+    }
+  }
+
   let stash_ref: string | undefined;
+  const restoreStash = () => {
+    if (!stash_ref) return;
+    try {
+      exec(["stash", "pop", stash_ref]);
+      stash_ref = undefined;
+    } catch {
+      /* best-effort tree restore on failure paths */
+    }
+  };
   if (current !== target) {
     const dirty = Boolean(gitContext(cwd).status_short.trim());
     if (dirty) {
@@ -318,17 +346,29 @@ export const branchSetup = ({
     } catch (error) {
       const message = error instanceof Error ? error.message : "checkout failed";
       if (/worktree/i.test(message)) {
+        restoreStash();
         return {
           error: `branch ${target} is locked by an existing git worktree — remove it first (we do not use worktrees)`,
         };
       }
       try {
-        const baseResolved = baseBranch(cwd);
-        if ("error" in baseResolved) return { error: baseResolved.error };
-        const baseResult = ensureBaseBranch(cwd, baseResolved.base);
-        if (!baseResult.ok) return { error: baseResult.error };
+        let effectiveBase = base;
+        if (effectiveBase === undefined) {
+          const lateResolved = baseBranch(cwd);
+          if ("error" in lateResolved) {
+            restoreStash();
+            return { error: lateResolved.error };
+          }
+          effectiveBase = lateResolved.base;
+        }
+        const baseResult = ensureBaseBranch(cwd, effectiveBase);
+        if (!baseResult.ok) {
+          restoreStash();
+          return { error: baseResult.error };
+        }
         exec(["checkout", "-b", target]);
       } catch (createError) {
+        restoreStash();
         return {
           error: createError instanceof Error ? createError.message : "branch create failed",
         };
