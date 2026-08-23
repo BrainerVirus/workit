@@ -114,9 +114,29 @@ test("rewrite runs before npm package verification and after version assignment 
   const isNpm = (p: unknown) => nameOf(p) === "@semantic-release/npm";
 
   // analyze gate runs first: the leading plugin is the exec entry carrying
-  // analyzeCmd (AR-16).
+  // analyzeCommitsCmd (AR-16). @semantic-release/exec v7 renamed analyzeCmd →
+  // analyzeCommitsCmd; a stale key is silently ignored by the plugin, so the
+  // pins below also reject any option name the installed plugin does not know.
   expect(nameOf(cfg.plugins[0])).toBe("@semantic-release/exec");
-  expect(opts(cfg.plugins[0])).toHaveProperty("analyzeCmd");
+  expect(opts(cfg.plugins[0]).analyzeCommitsCmd).toBe(
+    "bun packages/workit-core/scripts/analyze-release-scope.ts",
+  );
+  const execKeys = new Set([
+    "cmd",
+    "verifyConditionsCmd",
+    "analyzeCommitsCmd",
+    "verifyReleaseCmd",
+    "generateNotesCmd",
+    "prepareCmd",
+    "addChannelCmd",
+    "publishCmd",
+    "successCmd",
+    "failCmd",
+  ]);
+  for (const p of cfg.plugins) {
+    if (nameOf(p) !== "@semantic-release/exec") continue;
+    for (const key of Object.keys(opts(p))) expect(execKeys.has(key)).toBe(true);
+  }
   // bumpers only: exactly four @semantic-release/npm entries, none publishing.
   const npmEntries = cfg.plugins.filter(isNpm);
   expect(npmEntries).toHaveLength(4);

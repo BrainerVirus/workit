@@ -3,9 +3,11 @@ module.exports = {
   plugins: [
     // AR-16: path-gated release decision — prints major|minor|patch only when
     // product paths changed since the previous v* tag; empty output skips the
-    // release entirely (no tag, no publish, no sync PR).
+    // release entirely (no tag, no publish, no sync PR). Key is
+    // analyzeCommitsCmd: @semantic-release/exec v7 renamed it from analyzeCmd
+    // and silently ignores the old name.
     ["@semantic-release/exec", {
-      analyzeCmd: "bun packages/workit-core/scripts/analyze-release-scope.ts",
+      analyzeCommitsCmd: "bun packages/workit-core/scripts/analyze-release-scope.ts",
     }],
     "@semantic-release/release-notes-generator",
     // AR-02: verify-time rewrite runs FIRST — before any npm plugin's
