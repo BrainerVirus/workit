@@ -199,11 +199,10 @@ export const docsBranch = ({
   return { error: `cannot resolve docs branch from HEAD ${JSON.stringify(current)}` };
 };
 
-// Port of scripts/lib/ensure-develop-base.sh
-export const ensureBaseBranch = (cwd: string, base: string): { ok: boolean; error?: string } => {
-  const git = gitContext(cwd);
-  if (!git.branch || git.branch === "unknown")
-    return { ok: false, error: "not in a git repository" };
+// Read-only half of ensureBaseBranch (fetch --prune + show-ref origin/base):
+// safe to run before any mutation so a missing origin/<base> fails before a
+// stash push empties the tree.
+const originBaseReady = (cwd: string, base: string): { ok: boolean; error?: string } => {
   const run = (args: string[]) =>
     execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] });
   try {
@@ -212,20 +211,32 @@ export const ensureBaseBranch = (cwd: string, base: string): { ok: boolean; erro
     } catch {
       run(["fetch", "origin", "--prune"]);
     }
-    let hasOriginBase = true;
     try {
       execFileSync("git", ["show-ref", "--verify", "--quiet", `refs/remotes/origin/${base}`], {
         cwd,
         stdio: "pipe",
       });
     } catch {
-      hasOriginBase = false;
-    }
-    if (!hasOriginBase)
       return {
         ok: false,
         error: `origin/${base} missing — push ${base} before creating feature/* or bugfix/* branches`,
       };
+    }
+    return { ok: true };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : "ensure-base-branch failed",
+    };
+  }
+};
+
+// Mutating half of ensureBaseBranch: fast-forwards the local base (creating
+// it from origin/<base> if needed). Only safe on a clean tree.
+const fastForwardBase = (cwd: string, base: string): { ok: boolean; error?: string } => {
+  const run = (args: string[]) =>
+    execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] });
+  try {
     let hasLocalBase = true;
     try {
       execFileSync("git", ["show-ref", "--verify", "--quiet", `refs/heads/${base}`], {
@@ -252,6 +263,15 @@ export const ensureBaseBranch = (cwd: string, base: string): { ok: boolean; erro
       error: error instanceof Error ? error.message : "ensure-base-branch failed",
     };
   }
+};
+
+export const ensureBaseBranch = (cwd: string, base: string): { ok: boolean; error?: string } => {
+  const git = gitContext(cwd);
+  if (!git.branch || git.branch === "unknown")
+    return { ok: false, error: "not in a git repository" };
+  const ready = originBaseReady(cwd, base);
+  if (!ready.ok) return ready;
+  return fastForwardBase(cwd, base);
 };
 
 // CA-05: flow-state snapshots live under the OS tempdir scoped by a hash of
@@ -392,10 +412,9 @@ export const branchSetup = ({
   if (!allowedBranch(cwd, target))
     return { error: `target branch ${target} is not allowed by the branch policy` };
 
-  // CA-02: resolve the base before any mutation so a missing origin/<base>
-  // fails with the tree untouched instead of after a stash push.
-  // ensureBaseBranch itself deliberately stays post-stash below: it checks out
-  // the base branch — a mutation unsafe on a dirty tree.
+  // CA-02: resolve the base up front so an unresolvable base fails before
+  // any mutation. The origin/<base> validation runs after the stash gate
+  // below but still BEFORE any mutation (no snapshot, no stash push).
   let base: string | undefined;
   let targetExists = true;
   try {
@@ -404,13 +423,9 @@ export const branchSetup = ({
     targetExists = false;
   }
   if (!targetExists) {
-    try {
-      const baseResolved = baseBranch(cwd);
-      if ("error" in baseResolved) return { error: baseResolved.error };
-      base = baseResolved.base;
-    } catch (error) {
-      return { error: error instanceof Error ? error.message : "base resolution failed" };
-    }
+    const baseResolved = baseBranch(cwd);
+    if ("error" in baseResolved) return { error: baseResolved.error };
+    base = baseResolved.base;
   }
 
   let stash_ref: string | undefined;
@@ -435,13 +450,23 @@ export const branchSetup = ({
   };
   if (current !== target) {
     const dirty = Boolean(gitContext(cwd).status_short.trim());
+    if (dirty && stash !== "yes") {
+      return {
+        error:
+          "dirty working tree — ask with native question, then call workit_branch_setup with stash=yes",
+      };
+    }
+    // CA-02: validate origin/<base> before ANY mutation (no snapshot, no
+    // stash push, no checkout) so a missing origin/<base> fails with the
+    // tree untouched. The mutating fast-forward stays below: it checks out
+    // the base branch — unsafe on a dirty tree.
+    let validatedBase: string | undefined;
+    if (!targetExists && base !== undefined) {
+      const ready = originBaseReady(cwd, base);
+      if (!ready.ok) return { error: ready.error ?? "ensure-base-branch failed" };
+      validatedBase = base;
+    }
     if (dirty) {
-      if (stash !== "yes") {
-        return {
-          error:
-            "dirty working tree — ask with native question, then call workit_branch_setup with stash=yes",
-        };
-      }
       try {
         // CA-03: snapshot before the stash push so flow.json survives the
         // stash/checkout window even if the pathspec exclusion misses.
@@ -468,7 +493,12 @@ export const branchSetup = ({
           if ("error" in lateResolved) return failAfterStash(lateResolved.error);
           effectiveBase = lateResolved.base;
         }
-        const baseResult = ensureBaseBranch(cwd, effectiveBase);
+        // Pre-validated above when the target was missing: only the
+        // fast-forward mutation remains post-stash.
+        const baseResult =
+          validatedBase !== undefined
+            ? fastForwardBase(cwd, effectiveBase)
+            : ensureBaseBranch(cwd, effectiveBase);
         if (!baseResult.ok) return failAfterStash(baseResult.error ?? "ensure-base-branch failed");
         exec(["checkout", "-b", target]);
       } catch (createError) {
@@ -489,11 +519,20 @@ export const branchSetup = ({
     }
     writeManifest(manifest);
   } catch (error) {
-    return failAfterStash(
+    const result = failAfterStash(
       error instanceof Error
         ? `manifest update failed: ${error.message}`
         : "manifest update failed",
     );
+    // After a successful pop, don't strand HEAD on the half-created target:
+    // return to the originating branch (best-effort; a conflicting tree can
+    // still refuse the checkout and keeps the popped state).
+    if (stash_ref === undefined && gitContext(cwd).branch !== current) {
+      try {
+        exec(["checkout", current]);
+      } catch {}
+    }
+    return result;
   }
   const warnings = restoreWithWarning(snapDir);
   return {

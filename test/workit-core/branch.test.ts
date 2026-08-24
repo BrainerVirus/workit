@@ -75,10 +75,13 @@ const dirtyTree = (root: string) => {
   writeFileSync(path.join(root, "notes.md"), "untracked doc\n");
 };
 
-test("failed base resolution after stash leaves tree intact (no stranded stash)", async () => {
-  // CA-02 regression: origin lacks develop, so base resolution must fail
-  // BEFORE any mutation — never after the stash push has already emptied the
-  // tree (the late failure that stranded a stash and lost visible work).
+test("failed base resolution fails before any stash and leaves tree intact", async () => {
+  // CA-02 regression: origin lacks develop, so origin/base validation must
+  // fail BEFORE any mutation — no snapshot, no stash push, no checkout.
+  // The tree ends up exactly as it was left, with no stranded stash entry.
+  // Honest note: since the consolidated-guard fix these final-state
+  // assertions also passed via pop-back restoration; the pre-stash split
+  // removes the transient stash/snapshot window itself.
   const { root, remote } = repoOnMain({ withDevelop: false });
   try {
     dirtyTree(root);
@@ -131,9 +134,11 @@ test("policy/base resolution runs before any stash push", async () => {
   }
 });
 
-test("manifest write failure after checkout restores stash and reports error", async () => {
+test("manifest write failure after checkout restores stash and returns to previous branch", async () => {
   // Regression: a throw in the post-checkout manifest section stranded the
-  // stash — the error path must pop it back before returning.
+  // stash — the error path must pop it back before returning. The setup must
+  // also not leave HEAD on the half-created target: after the pop succeeds,
+  // checkout returns to the originating branch (best-effort).
   const { root, remote } = repoOnMain({ withDevelop: true });
   try {
     mkdirSync(path.join(root, "docs"), { recursive: true });
@@ -152,7 +157,7 @@ test("manifest write failure after checkout restores stash and reports error", a
     expect(String(result.error)).toContain("manifest update failed");
     expect(String(result.error)).not.toContain("changes preserved in stash");
     expect(git(root, ["stash", "list"]).stdout.trim()).toBe("");
-    expect(git(root, ["branch", "--show-current"]).stdout.trim()).toBe("bugfix/x");
+    expect(git(root, ["branch", "--show-current"]).stdout.trim()).toBe("main");
     expect(readFileSync(path.join(root, "README.md"), "utf8")).toBe("wip change\n");
     expect(existsSync(path.join(root, "notes.md"))).toBe(true);
   } finally {
