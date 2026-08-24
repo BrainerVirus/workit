@@ -287,6 +287,53 @@ test("setup(stash=yes) keeps flow.json byte-identical and leaves no snapshot beh
   }
 });
 
+test("failed setup restores flow.json deleted mid-window and leaves no guard root", async () => {
+  // Late-base-failure fixture (local branch `bugfix` blocks refs/heads/
+  // bugfix/x) plus a hostile mid-window actor: a post-checkout hook deletes
+  // docs/*/sdd/flow.json during ensureBaseBranch's checkout of develop —
+  // a deterministic injection at a real seam inside the snapshot/stash
+  // window, after snapshotFlowState has run (no spy needed). The error
+  // return must leave flow.json byte-identical and remove the snapshot root
+  // (a retained root would be destroyed by the next run's stale-root
+  // rmSync). Honest note: the pathspec exclusion does not keep untracked
+  // sdd files out of the stash, so when the consolidated guard's pop
+  // succeeds it incidentally restores flow.json too; pre-fix this test
+  // fails on the retained guard root, which is the regression fixed here.
+  const { root, remote } = repoOnMain({ withDevelop: true });
+  try {
+    git(root, ["branch", "bugfix"]);
+    const flowPath = path.join(root, "docs", "hardening", "sdd", "flow.json");
+    mkdirSync(path.dirname(flowPath), { recursive: true });
+    const flowBytes = Buffer.from('{"status":"approved"}\n');
+    writeFileSync(flowPath, flowBytes);
+    const hookPath = path.join(root, ".git", "hooks", "post-checkout");
+    writeFileSync(hookPath, `#!/bin/sh\nrm -rf '${flowPath}'\n`);
+    chmodSync(hookPath, 0o755);
+    dirtyTree(root);
+    const raw = await createRepoTools().workit_branch_setup.execute(
+      {
+        confirmed: true,
+        target_branch: "bugfix/x",
+        stash: "yes",
+      },
+      { directory: root, worktree: root } as never,
+    );
+    const result = JSON.parse(raw as string);
+    expect(result.ok).toBe(false);
+    // Consolidated guard still pops the stash back before restoring.
+    expect(git(root, ["stash", "list"]).stdout.trim()).toBe("");
+    expect(readFileSync(flowPath)).toEqual(flowBytes);
+    const expectedRoot = path.join(
+      os.tmpdir(),
+      `workit-flow-guard-${createHash("sha256").update(path.resolve(root)).digest("hex").slice(0, 16)}`,
+    );
+    expect(existsSync(expectedRoot)).toBe(false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(remote, { recursive: true, force: true });
+  }
+});
+
 test("failed best-effort stash pop points at the stash in the error", async () => {
   // Diverge develop's README so the stashed README edit conflicts on pop;
   // combined with an unwritable manifest dir this reaches the restore path

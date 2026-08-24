@@ -370,7 +370,14 @@ export const branchSetup = ({
     try {
       exec(["stash", "pop", String(ref)]);
     } catch (error) {
-      return { error: error instanceof Error ? error.message : "stash pop failed" };
+      // CA-03: the snapshot ran before the pop — a failing pop must still
+      // restore a mid-window-wiped flow.json before returning.
+      const [warning] = restoreWithWarning(snapDir);
+      return {
+        error: `${error instanceof Error ? error.message : "stash pop failed"}${
+          warning ? `; ${warning}` : ""
+        }`,
+      };
     }
     delete manifest.stash_ref;
     delete manifest.stash_created_at;
@@ -419,7 +426,12 @@ export const branchSetup = ({
         suffix = " (changes preserved in stash)";
       }
     }
-    return { error: `${message}${suffix}` };
+    // CA-03: the snapshot ran before the stash push, so every error return
+    // here must still restore a mid-window-wiped flow.json and drop the
+    // guard root (a retained root is destroyed by the next run's
+    // stale-root rmSync). Never masks the original error.
+    const [warning] = restoreWithWarning(snapDir);
+    return { error: `${message}${suffix}${warning ? `; ${warning}` : ""}` };
   };
   if (current !== target) {
     const dirty = Boolean(gitContext(cwd).status_short.trim());
