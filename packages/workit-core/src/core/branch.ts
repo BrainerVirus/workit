@@ -1,5 +1,16 @@
-import { readFileSync, mkdirSync, writeFileSync } from "node:fs";
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { gitContext } from "./git";
 import { readConfig, resolveBranchPolicy } from "./config";
@@ -241,6 +252,54 @@ export const ensureBaseBranch = (cwd: string, base: string): { ok: boolean; erro
   }
 };
 
+// CA-05: flow-state snapshots live under the OS tempdir scoped by a hash of
+// the workspace path — never inside the repository or docs/.
+export const snapshotFlowState = (cwd: string): string => {
+  const root = path.join(
+    tmpdir(),
+    `workit-flow-guard-${createHash("sha256").update(path.resolve(cwd)).digest("hex").slice(0, 16)}`,
+  );
+  rmSync(root, { recursive: true, force: true }); // drop a stale guard from a crashed run
+  const docsDir = path.join(path.resolve(cwd), "docs");
+  let slugs: string[] = [];
+  try {
+    slugs = readdirSync(docsDir);
+  } catch {
+    return root; // no docs/ yet — zero-file snapshot
+  }
+  for (const slug of slugs) {
+    const src = path.join(docsDir, slug, "sdd", "flow.json");
+    try {
+      if (!statSync(src).isFile()) continue;
+    } catch {
+      continue;
+    }
+    const dest = path.join(root, "docs", slug, "sdd", "flow.json");
+    mkdirSync(path.dirname(dest), { recursive: true });
+    cpSync(src, dest);
+  }
+  return root;
+};
+
+// CA-04: restore-if-missing keeps the newest working-tree bytes; the snapshot
+// root is removed only after every file is handled and retained on failure.
+export const restoreFlowSnapshot = (snapDir: string, cwd: string): void => {
+  const walk = (dir: string, rel: string): string[] =>
+    readdirSync(dir, { withFileTypes: true }).flatMap((entry) =>
+      entry.isDirectory()
+        ? walk(path.join(dir, entry.name), path.join(rel, entry.name))
+        : [path.join(rel, entry.name)],
+    );
+  const workspace = path.resolve(cwd);
+  for (const rel of walk(snapDir, "")) {
+    const dest = path.join(workspace, rel);
+    if (existsSync(dest)) continue;
+    mkdirSync(path.dirname(dest), { recursive: true });
+    cpSync(path.join(snapDir, rel), dest);
+  }
+  rmSync(snapDir, { recursive: true, force: true });
+};
+
 // Port of scripts/branch/setup-branch.sh
 export const branchSetup = ({
   action,
@@ -275,10 +334,14 @@ export const branchSetup = ({
   const writeManifest = (data: Record<string, unknown>) =>
     writeFileSync(manifestPath, JSON.stringify(data, null, 2) + "\n", "utf8");
 
+  let snapDir: string | null = null;
+
   if (action === "reapply_stash") {
     const manifest = readManifest();
     const ref = manifest.stash_ref;
     if (!ref) return { error: "no stash_ref in manifest" };
+    // D-03: guard flow.json across the stash pop window.
+    snapDir = snapshotFlowState(cwd);
     try {
       exec(["stash", "pop", String(ref)]);
     } catch (error) {
@@ -287,6 +350,11 @@ export const branchSetup = ({
     delete manifest.stash_ref;
     delete manifest.stash_created_at;
     writeManifest(manifest);
+    try {
+      restoreFlowSnapshot(snapDir, cwd);
+    } catch {
+      /* CA-04: snapshot root retained on failure */
+    }
     return { action: "reapply_stash", ok: true };
   }
 
@@ -342,6 +410,9 @@ export const branchSetup = ({
         };
       }
       try {
+        // CA-03: snapshot before the stash push so flow.json survives the
+        // stash/checkout window even if the pathspec exclusion misses.
+        snapDir = snapshotFlowState(cwd);
         exec(["stash", "push", "-u", "-m", `workit: pre-checkout ${target}`, "--", ":!docs/*/sdd"]);
       } catch (error) {
         return { error: error instanceof Error ? error.message : "stash push failed" };
@@ -390,6 +461,13 @@ export const branchSetup = ({
         ? `manifest update failed: ${error.message}`
         : "manifest update failed",
     );
+  }
+  if (snapDir) {
+    try {
+      restoreFlowSnapshot(snapDir, cwd);
+    } catch {
+      /* CA-04: snapshot root retained on failure */
+    }
   }
   return {
     action: "setup",

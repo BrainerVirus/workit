@@ -5,13 +5,16 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { createRepoTools } from "../../packages/workit-opencode/src/tools/repo";
+import { restoreFlowSnapshot, snapshotFlowState } from "../../packages/workit-core/src/core/branch";
 
 const git = (cwd: string, args: string[]) => spawnSync("git", args, { cwd, encoding: "utf8" });
 
@@ -154,6 +157,126 @@ test("manifest write failure after checkout restores stash and reports error", a
     expect(existsSync(path.join(root, "notes.md"))).toBe(true);
   } finally {
     chmodSync(path.join(root, "docs"), 0o700);
+    rmSync(root, { recursive: true, force: true });
+    rmSync(remote, { recursive: true, force: true });
+  }
+});
+
+test("snapshot captures every docs/*/sdd/flow.json outside the repository", () => {
+  const cwd = mkdtempSync(path.join(os.tmpdir(), "wf-flow-snap-"));
+  let snap: string | undefined;
+  try {
+    const alpha = Buffer.from('{"slug":"alpha","status":"approved"}\n');
+    const beta = Buffer.from('{"slug":"beta","status":"approved"}\n');
+    mkdirSync(path.join(cwd, "docs", "alpha", "sdd"), { recursive: true });
+    mkdirSync(path.join(cwd, "docs", "beta", "sdd"), { recursive: true });
+    mkdirSync(path.join(cwd, "docs", "gamma", "sdd"), { recursive: true });
+    writeFileSync(path.join(cwd, "docs", "alpha", "sdd", "flow.json"), alpha);
+    writeFileSync(path.join(cwd, "docs", "beta", "sdd", "flow.json"), beta);
+    writeFileSync(path.join(cwd, "docs", "gamma", "sdd", "other.json"), "{}\n");
+
+    snap = snapshotFlowState(cwd);
+
+    expect(snap.startsWith(os.tmpdir())).toBe(true);
+    expect(snap.includes("workit-flow-guard-")).toBe(true);
+    expect(snap.startsWith(cwd)).toBe(false);
+    expect(readFileSync(path.join(snap, "docs", "alpha", "sdd", "flow.json"))).toEqual(alpha);
+    expect(readFileSync(path.join(snap, "docs", "beta", "sdd", "flow.json"))).toEqual(beta);
+    expect(existsSync(path.join(snap, "docs", "gamma"))).toBe(false);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+    if (snap) rmSync(snap, { recursive: true, force: true });
+  }
+});
+
+test("restore recreates missing flow.json byte-identical and never overwrites newer files", () => {
+  const cwd = mkdtempSync(path.join(os.tmpdir(), "wf-flow-restore-"));
+  try {
+    const alphaBytes = Buffer.from('{"rev":1}\n');
+    mkdirSync(path.join(cwd, "docs", "alpha", "sdd"), { recursive: true });
+    mkdirSync(path.join(cwd, "docs", "beta", "sdd"), { recursive: true });
+    writeFileSync(path.join(cwd, "docs", "alpha", "sdd", "flow.json"), alphaBytes);
+    writeFileSync(path.join(cwd, "docs", "beta", "sdd", "flow.json"), '{"rev":1}\n');
+
+    const snap = snapshotFlowState(cwd);
+    rmSync(path.join(cwd, "docs", "alpha"), { recursive: true, force: true });
+    writeFileSync(path.join(cwd, "docs", "beta", "sdd", "flow.json"), '{"rev":2,"newer":true}\n');
+
+    restoreFlowSnapshot(snap, cwd);
+
+    expect(readFileSync(path.join(cwd, "docs", "alpha", "sdd", "flow.json"))).toEqual(alphaBytes);
+    expect(readFileSync(path.join(cwd, "docs", "beta", "sdd", "flow.json"), "utf8")).toContain(
+      '"newer":true',
+    );
+    expect(existsSync(snap)).toBe(false);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("restore failure retains the snapshot root", () => {
+  const cwd = mkdtempSync(path.join(os.tmpdir(), "wf-flow-retain-"));
+  mkdirSync(path.join(cwd, "docs", "alpha", "sdd"), { recursive: true });
+  writeFileSync(path.join(cwd, "docs", "alpha", "sdd", "flow.json"), '{"rev":1}\n');
+  const snap = snapshotFlowState(cwd);
+  try {
+    rmSync(path.join(cwd, "docs", "alpha", "sdd"), { recursive: true, force: true });
+    chmodSync(path.join(cwd, "docs", "alpha"), 0o500);
+
+    expect(() => restoreFlowSnapshot(snap, cwd)).toThrow();
+    expect(existsSync(snap)).toBe(true);
+  } finally {
+    chmodSync(path.join(cwd, "docs", "alpha"), 0o700);
+    rmSync(cwd, { recursive: true, force: true });
+    rmSync(snap, { recursive: true, force: true });
+  }
+});
+
+test("setup(stash=yes) keeps flow.json byte-identical and leaves no snapshot behind", async () => {
+  const { root, remote } = repoOnMain({ withDevelop: false });
+  const guardsBefore = new Set(
+    readdirSync(os.tmpdir()).filter((d) => d.startsWith("workit-flow-guard-")),
+  );
+  try {
+    writeFileSync(path.join(root, ".gitignore"), "docs/*/sdd/\n");
+    git(root, ["add", ".gitignore"]);
+    git(root, ["commit", "-q", "-m", "ignore sdd runtime state"]);
+    git(root, ["branch", "develop"]);
+    git(root, ["push", "-q", "origin", "develop"]);
+    git(root, ["branch", "-D", "develop"]);
+
+    const flowPath = path.join(root, "docs", "hardening", "sdd", "flow.json");
+    mkdirSync(path.dirname(flowPath), { recursive: true });
+    const flowBytes = Buffer.from('{"status":"approved"}\n');
+    writeFileSync(flowPath, flowBytes);
+    writeFileSync(path.join(root, "docs", "hardening", "spec.md"), "# spec\n");
+    dirtyTree(root);
+
+    const raw = await createRepoTools().workit_branch_setup.execute(
+      {
+        confirmed: true,
+        target_branch: "bugfix/hardening",
+        stash: "yes",
+      },
+      { directory: root, worktree: root } as never,
+    );
+    const result = JSON.parse(raw as string);
+    expect(result.ok).toBe(true);
+    expect(result.stash_ref).not.toBeNull();
+    expect(git(root, ["branch", "--show-current"]).stdout.trim()).toBe("bugfix/hardening");
+    expect(readFileSync(flowPath)).toEqual(flowBytes);
+
+    // CA-04/CA-05: snapshot cleaned from its hashed tempdir location.
+    const expectedRoot = path.join(
+      os.tmpdir(),
+      `workit-flow-guard-${createHash("sha256").update(path.resolve(root)).digest("hex").slice(0, 16)}`,
+    );
+    expect(existsSync(expectedRoot)).toBe(false);
+    const newGuards = readdirSync(os.tmpdir())
+      .filter((d) => d.startsWith("workit-flow-guard-"))
+      .filter((d) => !guardsBefore.has(d));
+    expect(newGuards).toEqual([]);
+  } finally {
     rmSync(root, { recursive: true, force: true });
     rmSync(remote, { recursive: true, force: true });
   }
