@@ -14,7 +14,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createRepoTools } from "../../packages/workit-opencode/src/tools/repo";
-import { restoreFlowSnapshot, snapshotFlowState } from "../../packages/workit-core/src/core/branch";
+import { restoreFlowSnapshot, snapshotFlowState, branchSetup } from "../../packages/workit-core/src/core/branch";
 
 const git = (cwd: string, args: string[]) => spawnSync("git", args, { cwd, encoding: "utf8" });
 
@@ -77,6 +77,20 @@ const repoOnMain = ({ withDevelop }: { withDevelop: boolean }) => {
 const dirtyTree = (root: string) => {
   writeFileSync(path.join(root, "README.md"), "wip change\n");
   writeFileSync(path.join(root, "notes.md"), "untracked doc\n");
+};
+
+// Shared flow-guard journal fixture: repo with develop on origin, sdd ignored
+// so flow.json survives the stash window as an untracked-ignored file.
+const journalRepo = () => {
+  const { root, remote } = repoOnMain({ withDevelop: true });
+  writeFileSync(path.join(root, ".gitignore"), "docs/*/sdd/\n");
+  git(root, ["add", ".gitignore"]);
+  git(root, ["commit", "-q", "-m", "ignore sdd runtime state"]);
+  const flowPath = path.join(root, "docs", "hardening", "sdd", "flow.json");
+  mkdirSync(path.dirname(flowPath), { recursive: true });
+  const flowBytes = Buffer.from('{"status":"approved"}\n');
+  writeFileSync(flowPath, flowBytes);
+  return { root, remote, flowPath, flowBytes };
 };
 
 test("failed base resolution fails before any stash and leaves tree intact", async () => {
@@ -392,5 +406,136 @@ test("failed best-effort stash pop points at the stash in the error", async () =
     chmodSync(path.join(root, "docs"), 0o700);
     rmSync(root, { recursive: true, force: true });
     rmSync(remote, { recursive: true, force: true });
+  }
+});
+
+test("CA-01: journal emits ordered checkpoints when a logger is injected", async () => {
+  const { root, remote, flowBytes } = journalRepo();
+  const lines: string[] = [];
+  try {
+    dirtyTree(root);
+    const result = branchSetup({
+      target_branch: "bugfix/journal",
+      stash: "yes",
+      workspace_root: root,
+      log: (m) => lines.push(m),
+    });
+    expect((result as { ok?: boolean }).ok).toBe(true);
+    expect(lines.length).toBeGreaterThan(0);
+    for (const line of lines) expect(line.startsWith("flow-guard: ")).toBe(true);
+    const indexOf = (needle: string) => lines.findIndex((l) => l.includes(needle));
+    const entry = indexOf("entry:");
+    const snapshot = indexOf("snapshot:");
+    const push = indexOf("stash push:");
+    const postCreate = indexOf("post-create:");
+    const restore = indexOf("restore:");
+    for (const idx of [entry, snapshot, push, postCreate, restore])
+      expect(idx).toBeGreaterThanOrEqual(0);
+    // Ordered checkpoints bracket the whole mutation window.
+    expect(snapshot).toBeGreaterThan(entry);
+    expect(push).toBeGreaterThan(snapshot);
+    expect(postCreate).toBeGreaterThan(push);
+    expect(restore).toBeGreaterThan(postCreate);
+    // Per-file short hash at capture time.
+    expect(
+      lines.some((l) =>
+        /^flow-guard: snapshot: docs\/hardening\/sdd\/flow\.json sha=[0-9a-f]{8}$/.test(l),
+      ),
+    ).toBe(true);
+    expect(lines.some((l) => l.includes("post-create: docs/hardening/sdd/flow.json present"))).toBe(
+      true,
+    );
+    // Nothing was wiped mid-window: the one captured file was skipped by restore.
+    expect(lines[restore]).toContain("restored=0");
+    expect(lines[restore]).toContain("skipped=1");
+    expect(readFileSync(path.join(root, "docs", "hardening", "sdd", "flow.json"))).toEqual(
+      flowBytes,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(remote, { recursive: true, force: true });
+  }
+});
+
+test("CA-03: mid-window deletion is pinpointable between two adjacent checkpoints", () => {
+  // Reuses the post-checkout hook deletion pattern: the hook wipes flow.json
+  // during checkout of the existing target. The journal must show the bytes
+  // were captured (sha line) BEFORE a presence re-stat reports MISSING, and
+  // the following restore checkpoint must report restored=1 — adjacent
+  // checkpoints pinpoint exactly where the wipe happened.
+  const { root, remote, flowPath, flowBytes } = journalRepo();
+  git(root, ["branch", "bugfix/pin"]);
+  const lines: string[] = [];
+  try {
+    const hookPath = path.join(root, ".git", "hooks", "post-checkout");
+    writeFileSync(hookPath, `#!/bin/sh\nrm -rf '${flowPath}'\n`);
+    chmodSync(hookPath, 0o755);
+    dirtyTree(root);
+    const result = branchSetup({
+      target_branch: "bugfix/pin",
+      stash: "yes",
+      workspace_root: root,
+      log: (m) => lines.push(m),
+    });
+    expect((result as { ok?: boolean }).ok).toBe(true);
+    const shaIdx = lines.findIndex((l) => l.includes("snapshot:") && l.includes("sha="));
+    const missingIdx = lines.findIndex(
+      (l) => l.includes("post-checkout:") && l.includes("MISSING"),
+    );
+    expect(shaIdx).toBeGreaterThan(-1); // present-before: bytes captured
+    expect(missingIdx).toBeGreaterThan(shaIdx); // missing-after: deleted in between
+    const restoreIdx = lines.findIndex((l, i) => i > missingIdx && l.includes("restore:"));
+    expect(restoreIdx).toBeGreaterThan(missingIdx);
+    expect(lines[restoreIdx]).toContain("restored=1");
+    expect(readFileSync(flowPath)).toEqual(flowBytes);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(remote, { recursive: true, force: true });
+  }
+});
+
+test("absent logger preserves today's exact return values and side effects", async () => {
+  const a = journalRepo();
+  const b = journalRepo();
+  const lines: string[] = [];
+  try {
+    dirtyTree(a.root);
+    dirtyTree(b.root);
+    const withLog = branchSetup({
+      target_branch: "bugfix/twin",
+      stash: "yes",
+      workspace_root: a.root,
+      log: (m) => lines.push(m),
+    });
+    const withoutLog = branchSetup({
+      target_branch: "bugfix/twin",
+      stash: "yes",
+      workspace_root: b.root,
+    });
+    // Identical results modulo per-repo absolute path and wall-clock stamp.
+    const strip = (r: unknown) => {
+      const copy = { ...(r as Record<string, unknown>) };
+      delete copy.manifest;
+      delete copy.stash_created_at;
+      return copy;
+    };
+    expect(strip(withLog)).toEqual(strip(withoutLog));
+    for (const line of lines) expect(line.startsWith("flow-guard: ")).toBe(true);
+    // Absent-logger side effects match today's contract.
+    expect(git(b.root, ["branch", "--show-current"]).stdout.trim()).toBe("bugfix/twin");
+    expect(git(b.root, ["stash", "list"]).stdout.split("\n").filter(Boolean).length).toBe(1);
+    expect(readFileSync(path.join(b.root, "docs", "hardening", "sdd", "flow.json"))).toEqual(
+      b.flowBytes,
+    );
+    const expectedRoot = path.join(
+      os.tmpdir(),
+      `workit-flow-guard-${createHash("sha256").update(path.resolve(b.root)).digest("hex").slice(0, 16)}`,
+    );
+    expect(existsSync(expectedRoot)).toBe(false);
+  } finally {
+    rmSync(a.root, { recursive: true, force: true });
+    rmSync(a.remote, { recursive: true, force: true });
+    rmSync(b.root, { recursive: true, force: true });
+    rmSync(b.remote, { recursive: true, force: true });
   }
 });

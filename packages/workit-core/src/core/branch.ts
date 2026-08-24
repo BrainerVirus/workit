@@ -348,12 +348,14 @@ export const branchSetup = ({
   target_branch,
   stash,
   workspace_root,
+  log,
 }: {
   action?: string;
   sdd_dir?: string;
   target_branch?: string;
   stash?: string;
   workspace_root: string;
+  log?: (message: string) => void;
 }) => {
   const cwd = path.resolve(workspace_root);
   const exec = (args: string[]): string =>
@@ -376,8 +378,55 @@ export const branchSetup = ({
     writeFileSync(manifestPath, JSON.stringify(data, null, 2) + "\n", "utf8");
 
   let snapDir: string | null = null;
+  // CA-01: flow-guard journal brackets the stash/checkout mutation window so a
+  // mid-window wipe is pinpointable between adjacent checkpoint lines. With no
+  // logger injected every call below is a no-op and nothing extra runs —
+  // behaviorally identical to the pre-journal code.
+  const journal = (message: string) => log?.(`flow-guard: ${message}`);
+  const snapshotRelPaths = (): string[] => {
+    const dir = snapDir;
+    if (!dir || !log) return [];
+    try {
+      const walk = (from: string, rel: string): string[] =>
+        readdirSync(from, { withFileTypes: true }).flatMap((entry) =>
+          entry.isDirectory()
+            ? walk(path.join(from, entry.name), path.join(rel, entry.name))
+            : [path.join(rel, entry.name)],
+        );
+      return walk(dir, "");
+    } catch {
+      return [];
+    }
+  };
+  const journalSnapshot = () => {
+    const dir = snapDir;
+    if (!dir || !log) return;
+    const rels = snapshotRelPaths();
+    journal(`snapshot: ${rels.length} file(s)`);
+    for (const rel of rels) {
+      let shortHash = "";
+      try {
+        shortHash = createHash("sha256").update(readFileSync(path.join(dir, rel))).digest("hex").slice(0, 8);
+      } catch {}
+      journal(`snapshot: ${rel} sha=${shortHash}`);
+    }
+  };
+  const journalPresence = (phase: string) => {
+    for (const rel of snapshotRelPaths()) {
+      journal(`${phase}: ${rel} ${existsSync(path.join(cwd, rel)) ? "present" : "MISSING"}`);
+    }
+  };
   const restoreWithWarning = (dir: string | null): string[] => {
-    const warning = dir ? restoreFlowSnapshot(dir, cwd) : undefined;
+    if (!dir) return [];
+    let planned: string | undefined;
+    if (log) {
+      const rels = snapshotRelPaths();
+      const missing = rels.filter((rel) => !existsSync(path.join(cwd, rel)));
+      planned = `restore: restored=${missing.length} skipped=${rels.length - missing.length}`;
+    }
+    const warning = restoreFlowSnapshot(dir, cwd);
+    if (planned) journal(`${planned}${warning ? ` warning: ${warning}` : ""}`);
+    else if (warning) journal(`restore warning: ${warning}`);
     return warning ? [warning] : [];
   };
 
@@ -387,11 +436,14 @@ export const branchSetup = ({
     if (!ref) return { error: "no stash_ref in manifest" };
     // D-03: guard flow.json across the stash pop window.
     snapDir = snapshotFlowState(cwd);
+    journalSnapshot();
+    journal(`pre-pop: ${String(ref)}`);
     try {
       exec(["stash", "pop", String(ref)]);
     } catch (error) {
       // CA-03: the snapshot ran before the pop — a failing pop must still
       // restore a mid-window-wiped flow.json before returning.
+      journal("pop: failed");
       const [warning] = restoreWithWarning(snapDir);
       return {
         error: `${error instanceof Error ? error.message : "stash pop failed"}${
@@ -399,6 +451,7 @@ export const branchSetup = ({
         }`,
       };
     }
+    journal("pop: ok");
     delete manifest.stash_ref;
     delete manifest.stash_created_at;
     writeManifest(manifest);
@@ -427,6 +480,7 @@ export const branchSetup = ({
     if ("error" in baseResolved) return { error: baseResolved.error };
     base = baseResolved.base;
   }
+  journal(`entry: current=${current} target=${target} base=${base ?? "-"}`);
 
   let stash_ref: string | undefined;
   // Best-effort restore; if the pop itself fails, the caller's error gains a
@@ -434,10 +488,13 @@ export const branchSetup = ({
   const failAfterStash = (message: string): { error: string } => {
     let suffix = "";
     if (stash_ref) {
+      journal(`pre-pop: ${stash_ref}`);
       try {
         exec(["stash", "pop", stash_ref]);
         stash_ref = undefined;
+        journal("pop: ok");
       } catch {
+        journal("pop: failed");
         suffix = " (changes preserved in stash)";
       }
     }
@@ -471,14 +528,17 @@ export const branchSetup = ({
         // CA-03: snapshot before the stash push so flow.json survives the
         // stash/checkout window even if the pathspec exclusion misses.
         snapDir = snapshotFlowState(cwd);
+        journalSnapshot();
         exec(["stash", "push", "-u", "-m", `workit: pre-checkout ${target}`, "--", ":!docs/*/sdd"]);
       } catch (error) {
         return { error: error instanceof Error ? error.message : "stash push failed" };
       }
       stash_ref = "stash@{0}";
+      journal(`stash push: ${stash_ref}`);
     }
     try {
       exec(["checkout", target]);
+      journalPresence("post-checkout");
     } catch (error) {
       const message = error instanceof Error ? error.message : "checkout failed";
       if (/worktree/i.test(message)) {
@@ -501,6 +561,7 @@ export const branchSetup = ({
             : ensureBaseBranch(cwd, effectiveBase);
         if (!baseResult.ok) return failAfterStash(baseResult.error ?? "ensure-base-branch failed");
         exec(["checkout", "-b", target]);
+        journalPresence("post-create");
       } catch (createError) {
         return failAfterStash(
           createError instanceof Error ? createError.message : "branch create failed",
