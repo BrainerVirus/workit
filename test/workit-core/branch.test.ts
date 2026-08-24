@@ -55,6 +55,10 @@ const repoOnMain = ({ withDevelop }: { withDevelop: boolean }) => {
   const remote = mkdtempSync(path.join(os.tmpdir(), "wf-branch-hardening-remote-"));
   git(remote, ["init", "-q", "--bare"]);
   git(root, ["init", "-q", "-b", "main"]);
+  // Preserve written bytes verbatim on all platforms: CI Windows runners set
+  // core.autocrlf=true globally, which would rewrite LF fixtures to CRLF.
+  git(root, ["config", "core.autocrlf", "false"]);
+  git(root, ["config", "core.safecrlf", "false"]);
   git(root, ["config", "user.name", "Workflow Test"]);
   git(root, ["config", "user.email", "workflow@example.test"]);
   writeFileSync(path.join(root, "README.md"), "base\n");
@@ -126,7 +130,10 @@ test("policy/base resolution runs before any stash push", async () => {
     const result = JSON.parse(raw as string);
     expect(result.ok).toBe(false);
     expect(git(root, ["stash", "list"]).stdout.trim()).toBe("");
-    expect(readFileSync(path.join(root, "README.md"), "utf8")).toBe("wip change\n");
+    // Stash pop rewrites the file via git; tolerate CRLF checkout.
+    expect(readFileSync(path.join(root, "README.md"), "utf8").replace(/\r\n/g, "\n")).toBe(
+      "wip change\n",
+    );
     expect(existsSync(path.join(root, "notes.md"))).toBe(true);
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -139,6 +146,9 @@ test("manifest write failure after checkout restores stash and returns to previo
   // stash — the error path must pop it back before returning. The setup must
   // also not leave HEAD on the half-created target: after the pop succeeds,
   // checkout returns to the originating branch (best-effort).
+  // Skipped on win32: dir mode bits are not enforced on Windows, so the
+  // chmod-0500 EACCES injection never fires there. Still runs on ubuntu/macos.
+  if (process.platform === "win32") return; // chmod is not advisory on win32
   const { root, remote } = repoOnMain({ withDevelop: true });
   try {
     mkdirSync(path.join(root, "docs"), { recursive: true });
@@ -158,7 +168,9 @@ test("manifest write failure after checkout restores stash and returns to previo
     expect(String(result.error)).not.toContain("changes preserved in stash");
     expect(git(root, ["stash", "list"]).stdout.trim()).toBe("");
     expect(git(root, ["branch", "--show-current"]).stdout.trim()).toBe("main");
-    expect(readFileSync(path.join(root, "README.md"), "utf8")).toBe("wip change\n");
+    expect(readFileSync(path.join(root, "README.md"), "utf8").replace(/\r\n/g, "\n")).toBe(
+      "wip change\n",
+    );
     expect(existsSync(path.join(root, "notes.md"))).toBe(true);
   } finally {
     chmodSync(path.join(root, "docs"), 0o700);
@@ -224,6 +236,7 @@ test("restore recreates missing flow.json byte-identical and never overwrites ne
 
 test("restore failure retains the snapshot root and reports a warning", () => {
   if (process.getuid?.() === 0) return; // chmod injection ineffective as root
+  if (process.platform === "win32") return; // dir mode bits are not enforced on Windows
   const cwd = mkdtempSync(path.join(os.tmpdir(), "wf-flow-retain-"));
   mkdirSync(path.join(cwd, "docs", "alpha", "sdd"), { recursive: true });
   writeFileSync(path.join(cwd, "docs", "alpha", "sdd", "flow.json"), '{"rev":1}\n');
@@ -343,6 +356,9 @@ test("failed best-effort stash pop points at the stash in the error", async () =
   // Diverge develop's README so the stashed README edit conflicts on pop;
   // combined with an unwritable manifest dir this reaches the restore path
   // where the pop itself fails — the error must say where the work lives.
+  // Skipped on win32: dir mode bits are not enforced on Windows, so the
+  // chmod-0500 EACCES injection never fires there. Still runs on ubuntu/macos.
+  if (process.platform === "win32") return; // chmod is not advisory on win32
   const { root, remote } = repoOnMain({ withDevelop: true });
   try {
     git(root, ["checkout", "-q", "develop"]);
@@ -367,8 +383,11 @@ test("failed best-effort stash pop points at the stash in the error", async () =
     expect(String(result.error)).toContain("changes preserved in stash");
     expect(git(root, ["stash", "list"]).stdout.trim()).not.toBe("");
     // Pop conflicts (README diverged): work stays in the stash, target tree
-    // keeps its own content under conflict markers.
-    expect(readFileSync(path.join(root, "README.md"), "utf8")).toContain("develop version");
+    // keeps its own content under conflict markers. Pop rewrites via git;
+    // tolerate CRLF checkout.
+    expect(readFileSync(path.join(root, "README.md"), "utf8").replace(/\r\n/g, "\n")).toContain(
+      "develop version",
+    );
   } finally {
     chmodSync(path.join(root, "docs"), 0o700);
     rmSync(root, { recursive: true, force: true });
