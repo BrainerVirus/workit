@@ -1,9 +1,11 @@
 import {
+  copyFileSync,
   cpSync,
   existsSync,
   mkdirSync,
   readFileSync,
   readdirSync,
+  renameSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -260,6 +262,7 @@ export const snapshotFlowState = (cwd: string): string => {
     `workit-flow-guard-${createHash("sha256").update(path.resolve(cwd)).digest("hex").slice(0, 16)}`,
   );
   rmSync(root, { recursive: true, force: true }); // drop a stale guard from a crashed run
+  mkdirSync(root, { recursive: true });
   const docsDir = path.join(path.resolve(cwd), "docs");
   let slugs: string[] = [];
   try {
@@ -283,21 +286,39 @@ export const snapshotFlowState = (cwd: string): string => {
 
 // CA-04: restore-if-missing keeps the newest working-tree bytes; the snapshot
 // root is removed only after every file is handled and retained on failure.
-export const restoreFlowSnapshot = (snapDir: string, cwd: string): void => {
+// A caught failure must not vanish: the message is returned so callers can
+// surface it to operators as a warning.
+export const restoreFlowSnapshot = (snapDir: string, cwd: string): string | undefined => {
   const walk = (dir: string, rel: string): string[] =>
     readdirSync(dir, { withFileTypes: true }).flatMap((entry) =>
       entry.isDirectory()
         ? walk(path.join(dir, entry.name), path.join(rel, entry.name))
         : [path.join(rel, entry.name)],
     );
-  const workspace = path.resolve(cwd);
-  for (const rel of walk(snapDir, "")) {
-    const dest = path.join(workspace, rel);
-    if (existsSync(dest)) continue;
-    mkdirSync(path.dirname(dest), { recursive: true });
-    cpSync(path.join(snapDir, rel), dest);
+  try {
+    const workspace = path.resolve(cwd);
+    for (const rel of walk(snapDir, "")) {
+      const dest = path.join(workspace, rel);
+      if (existsSync(dest)) continue;
+      mkdirSync(path.dirname(dest), { recursive: true });
+      // Atomic publish: a crash mid-copy must never leave a truncated flow.json
+      // at the destination.
+      const tmpDest = `${dest}.tmp-${process.pid}`;
+      try {
+        copyFileSync(path.join(snapDir, rel), tmpDest);
+        renameSync(tmpDest, dest);
+      } catch (error) {
+        rmSync(tmpDest, { force: true });
+        throw error;
+      }
+    }
+    rmSync(snapDir, { recursive: true, force: true });
+    return undefined;
+  } catch (error) {
+    return `flow state snapshot restore failed: ${
+      error instanceof Error ? error.message : String(error)
+    }`;
   }
-  rmSync(snapDir, { recursive: true, force: true });
 };
 
 // Port of scripts/branch/setup-branch.sh
@@ -335,6 +356,10 @@ export const branchSetup = ({
     writeFileSync(manifestPath, JSON.stringify(data, null, 2) + "\n", "utf8");
 
   let snapDir: string | null = null;
+  const restoreWithWarning = (dir: string | null): string[] => {
+    const warning = dir ? restoreFlowSnapshot(dir, cwd) : undefined;
+    return warning ? [warning] : [];
+  };
 
   if (action === "reapply_stash") {
     const manifest = readManifest();
@@ -350,12 +375,8 @@ export const branchSetup = ({
     delete manifest.stash_ref;
     delete manifest.stash_created_at;
     writeManifest(manifest);
-    try {
-      restoreFlowSnapshot(snapDir, cwd);
-    } catch {
-      /* CA-04: snapshot root retained on failure */
-    }
-    return { action: "reapply_stash", ok: true };
+    const warnings = restoreWithWarning(snapDir);
+    return { action: "reapply_stash", ok: true, ...(warnings.length > 0 ? { warnings } : {}) };
   }
 
   const target = target_branch ?? "";
@@ -462,13 +483,7 @@ export const branchSetup = ({
         : "manifest update failed",
     );
   }
-  if (snapDir) {
-    try {
-      restoreFlowSnapshot(snapDir, cwd);
-    } catch {
-      /* CA-04: snapshot root retained on failure */
-    }
-  }
+  const warnings = restoreWithWarning(snapDir);
   return {
     action: "setup",
     ok: true,
@@ -476,5 +491,6 @@ export const branchSetup = ({
     previous_branch: current,
     stash_ref: stash_ref ?? null,
     manifest: manifestPath,
+    ...(warnings.length > 0 ? { warnings } : {}),
   };
 };

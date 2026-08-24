@@ -209,12 +209,16 @@ test("restore recreates missing flow.json byte-identical and never overwrites ne
       '"newer":true',
     );
     expect(existsSync(snap)).toBe(false);
+    expect(
+      readdirSync(path.join(cwd, "docs", "alpha", "sdd")).filter((f) => f.includes(".tmp-")),
+    ).toEqual([]);
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }
 });
 
-test("restore failure retains the snapshot root", () => {
+test("restore failure retains the snapshot root and reports a warning", () => {
+  if (process.getuid?.() === 0) return; // chmod injection ineffective as root
   const cwd = mkdtempSync(path.join(os.tmpdir(), "wf-flow-retain-"));
   mkdirSync(path.join(cwd, "docs", "alpha", "sdd"), { recursive: true });
   writeFileSync(path.join(cwd, "docs", "alpha", "sdd", "flow.json"), '{"rev":1}\n');
@@ -223,7 +227,7 @@ test("restore failure retains the snapshot root", () => {
     rmSync(path.join(cwd, "docs", "alpha", "sdd"), { recursive: true, force: true });
     chmodSync(path.join(cwd, "docs", "alpha"), 0o500);
 
-    expect(() => restoreFlowSnapshot(snap, cwd)).toThrow();
+    expect(restoreFlowSnapshot(snap, cwd)).toContain("flow state snapshot restore failed");
     expect(existsSync(snap)).toBe(true);
   } finally {
     chmodSync(path.join(cwd, "docs", "alpha"), 0o700);
@@ -262,7 +266,8 @@ test("setup(stash=yes) keeps flow.json byte-identical and leaves no snapshot beh
     );
     const result = JSON.parse(raw as string);
     expect(result.ok).toBe(true);
-    expect(result.stash_ref).not.toBeNull();
+    expect(result.data.stash_ref).not.toBeNull();
+    expect(result.data.warnings).toBeUndefined();
     expect(git(root, ["branch", "--show-current"]).stdout.trim()).toBe("bugfix/hardening");
     expect(readFileSync(flowPath)).toEqual(flowBytes);
 
