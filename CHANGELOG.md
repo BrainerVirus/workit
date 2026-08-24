@@ -76,6 +76,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Menu receipt label matching now tolerates host qualifiers such as `(Recommended)` and `(new session only)`; original label bytes are preserved.
 - Windows CI flake: the RL-03 pr-create target test now gets the 60s per-test budget already used by sibling heavy-git tests (Windows git cold starts).
 - Handoff runs a preflight before creating the continuation session, so a logical failure creates no session; sessions are titled `Workit: <slug>` and selected automatically in the TUI, with native `Continue opencode -s <session-id>` as manual recovery only when selection fails.
+- Branch setup no longer strands the pre-checkout stash when base/checkout resolution fails — the working tree is restored exactly as it was. SDD flow state (`docs/*/sdd/flow.json`) is snapshotted before stash/checkout mutations and restored if lost; successful setups may include a `warnings` field when a flow-state snapshot could not be restored automatically.
 
 ## [0.6.0] - 2026-08-10
 
