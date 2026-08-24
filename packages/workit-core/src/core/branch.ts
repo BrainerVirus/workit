@@ -298,6 +298,8 @@ export const branchSetup = ({
 
   // CA-02: resolve the base before any mutation so a missing origin/<base>
   // fails with the tree untouched instead of after a stash push.
+  // ensureBaseBranch itself deliberately stays post-stash below: it checks out
+  // the base branch — a mutation unsafe on a dirty tree.
   let base: string | undefined;
   let targetExists = true;
   try {
@@ -316,14 +318,19 @@ export const branchSetup = ({
   }
 
   let stash_ref: string | undefined;
-  const restoreStash = () => {
-    if (!stash_ref) return;
-    try {
-      exec(["stash", "pop", stash_ref]);
-      stash_ref = undefined;
-    } catch {
-      /* best-effort tree restore on failure paths */
+  // Best-effort restore; if the pop itself fails, the caller's error gains a
+  // suffix pointing at the stash so stranded work stays discoverable.
+  const failAfterStash = (message: string): { error: string } => {
+    let suffix = "";
+    if (stash_ref) {
+      try {
+        exec(["stash", "pop", stash_ref]);
+        stash_ref = undefined;
+      } catch {
+        suffix = " (changes preserved in stash)";
+      }
     }
+    return { error: `${message}${suffix}` };
   };
   if (current !== target) {
     const dirty = Boolean(gitContext(cwd).status_short.trim());
@@ -346,44 +353,44 @@ export const branchSetup = ({
     } catch (error) {
       const message = error instanceof Error ? error.message : "checkout failed";
       if (/worktree/i.test(message)) {
-        restoreStash();
-        return {
-          error: `branch ${target} is locked by an existing git worktree — remove it first (we do not use worktrees)`,
-        };
+        return failAfterStash(
+          `branch ${target} is locked by an existing git worktree — remove it first (we do not use worktrees)`,
+        );
       }
       try {
         let effectiveBase = base;
         if (effectiveBase === undefined) {
           const lateResolved = baseBranch(cwd);
-          if ("error" in lateResolved) {
-            restoreStash();
-            return { error: lateResolved.error };
-          }
+          if ("error" in lateResolved) return failAfterStash(lateResolved.error);
           effectiveBase = lateResolved.base;
         }
         const baseResult = ensureBaseBranch(cwd, effectiveBase);
-        if (!baseResult.ok) {
-          restoreStash();
-          return { error: baseResult.error };
-        }
+        if (!baseResult.ok) return failAfterStash(baseResult.error ?? "ensure-base-branch failed");
         exec(["checkout", "-b", target]);
       } catch (createError) {
-        restoreStash();
-        return {
-          error: createError instanceof Error ? createError.message : "branch create failed",
-        };
+        return failAfterStash(
+          createError instanceof Error ? createError.message : "branch create failed",
+        );
       }
     }
   }
 
-  const manifest = readManifest();
-  manifest.branch = target;
-  manifest.previous_branch = current;
-  if (stash_ref) {
-    manifest.stash_ref = stash_ref;
-    manifest.stash_created_at = new Date().toISOString();
+  try {
+    const manifest = readManifest();
+    manifest.branch = target;
+    manifest.previous_branch = current;
+    if (stash_ref) {
+      manifest.stash_ref = stash_ref;
+      manifest.stash_created_at = new Date().toISOString();
+    }
+    writeManifest(manifest);
+  } catch (error) {
+    return failAfterStash(
+      error instanceof Error
+        ? `manifest update failed: ${error.message}`
+        : "manifest update failed",
+    );
   }
-  writeManifest(manifest);
   return {
     action: "setup",
     ok: true,

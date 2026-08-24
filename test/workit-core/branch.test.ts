@@ -1,5 +1,13 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -115,6 +123,74 @@ test("policy/base resolution runs before any stash push", async () => {
     expect(readFileSync(path.join(root, "README.md"), "utf8")).toBe("wip change\n");
     expect(existsSync(path.join(root, "notes.md"))).toBe(true);
   } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(remote, { recursive: true, force: true });
+  }
+});
+
+test("manifest write failure after checkout restores stash and reports error", async () => {
+  // Regression: a throw in the post-checkout manifest section stranded the
+  // stash — the error path must pop it back before returning.
+  const { root, remote } = repoOnMain({ withDevelop: true });
+  try {
+    mkdirSync(path.join(root, "docs"), { recursive: true });
+    chmodSync(path.join(root, "docs"), 0o500); // writeFileSync will EACCES
+    dirtyTree(root);
+    const raw = await createRepoTools().workit_branch_setup.execute(
+      {
+        confirmed: true,
+        target_branch: "bugfix/x",
+        stash: "yes",
+      },
+      { directory: root, worktree: root } as never,
+    );
+    const result = JSON.parse(raw as string);
+    expect(result.ok).toBe(false);
+    expect(String(result.error)).toContain("manifest update failed");
+    expect(String(result.error)).not.toContain("changes preserved in stash");
+    expect(git(root, ["stash", "list"]).stdout.trim()).toBe("");
+    expect(git(root, ["branch", "--show-current"]).stdout.trim()).toBe("bugfix/x");
+    expect(readFileSync(path.join(root, "README.md"), "utf8")).toBe("wip change\n");
+    expect(existsSync(path.join(root, "notes.md"))).toBe(true);
+  } finally {
+    chmodSync(path.join(root, "docs"), 0o700);
+    rmSync(root, { recursive: true, force: true });
+    rmSync(remote, { recursive: true, force: true });
+  }
+});
+
+test("failed best-effort stash pop points at the stash in the error", async () => {
+  // Diverge develop's README so the stashed README edit conflicts on pop;
+  // combined with an unwritable manifest dir this reaches the restore path
+  // where the pop itself fails — the error must say where the work lives.
+  const { root, remote } = repoOnMain({ withDevelop: true });
+  try {
+    git(root, ["checkout", "-q", "develop"]);
+    writeFileSync(path.join(root, "README.md"), "develop version\n");
+    git(root, ["add", "README.md"]);
+    git(root, ["commit", "-q", "-m", "diverge"]);
+    git(root, ["checkout", "-q", "main"]);
+    mkdirSync(path.join(root, "docs"), { recursive: true });
+    chmodSync(path.join(root, "docs"), 0o500);
+    dirtyTree(root);
+    const raw = await createRepoTools().workit_branch_setup.execute(
+      {
+        confirmed: true,
+        target_branch: "bugfix/x",
+        stash: "yes",
+      },
+      { directory: root, worktree: root } as never,
+    );
+    const result = JSON.parse(raw as string);
+    expect(result.ok).toBe(false);
+    expect(String(result.error)).toContain("manifest update failed");
+    expect(String(result.error)).toContain("changes preserved in stash");
+    expect(git(root, ["stash", "list"]).stdout.trim()).not.toBe("");
+    // Pop conflicts (README diverged): work stays in the stash, target tree
+    // keeps its own content under conflict markers.
+    expect(readFileSync(path.join(root, "README.md"), "utf8")).toContain("develop version");
+  } finally {
+    chmodSync(path.join(root, "docs"), 0o700);
     rmSync(root, { recursive: true, force: true });
     rmSync(remote, { recursive: true, force: true });
   }
