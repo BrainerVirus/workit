@@ -7,6 +7,7 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import os from "node:os";
@@ -225,6 +226,63 @@ test("snapshot captures every docs/*/sdd/flow.json outside the repository", () =
   }
 });
 
+test("CA-04: concurrent invocations get distinct roots and never corrupt each other", () => {
+  const cwd = mkdtempSync(path.join(os.tmpdir(), "wf-flow-concurrent-"));
+  let snap1: string | undefined;
+  let snap2: string | undefined;
+  try {
+    const flowPath = path.join(cwd, "docs", "alpha", "sdd", "flow.json");
+    mkdirSync(path.dirname(flowPath), { recursive: true });
+    writeFileSync(flowPath, '{"rev":1}\n');
+
+    snap1 = snapshotFlowState(cwd);
+    // A second invocation on the SAME workspace mid-flight: the old shared
+    // deterministic root rmSync'd snap1 out from under the first caller.
+    writeFileSync(flowPath, '{"rev":2}\n');
+    snap2 = snapshotFlowState(cwd);
+
+    expect(path.basename(snap1)).toMatch(/^workit-flow-guard-/);
+    expect(path.basename(snap2)).toMatch(/^workit-flow-guard-/);
+    expect(snap1).not.toBe(snap2);
+    // Each root keeps its own isolated contents.
+    expect(readFileSync(path.join(snap1, "docs", "alpha", "sdd", "flow.json"), "utf8")).toBe(
+      '{"rev":1}\n',
+    );
+    expect(readFileSync(path.join(snap2, "docs", "alpha", "sdd", "flow.json"), "utf8")).toBe(
+      '{"rev":2}\n',
+    );
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+    if (snap1) rmSync(snap1, { recursive: true, force: true });
+    if (snap2) rmSync(snap2, { recursive: true, force: true });
+  }
+});
+
+test("CA-05: roots older than 24h are purged; fresh foreign roots survive", () => {
+  const cwd = mkdtempSync(path.join(os.tmpdir(), "wf-flow-purge-"));
+  const stale = path.join(os.tmpdir(), "workit-flow-guard-ca05-stale");
+  const fresh = path.join(os.tmpdir(), "workit-flow-guard-ca05-fresh");
+  let snap: string | undefined;
+  try {
+    for (const dir of [stale, fresh]) {
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(path.join(dir, "x.md"), "foreign root\n");
+    }
+    utimesSync(stale, new Date(Date.now() - 25 * 3600_000), new Date(Date.now() - 25 * 3600_000));
+
+    snap = snapshotFlowState(cwd); // GC runs at snapshot time
+
+    expect(existsSync(stale)).toBe(false);
+    expect(existsSync(fresh)).toBe(true);
+    expect(existsSync(snap)).toBe(true);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+    if (snap) rmSync(snap, { recursive: true, force: true });
+    rmSync(stale, { recursive: true, force: true });
+    rmSync(fresh, { recursive: true, force: true });
+  }
+});
+
 test("restore recreates missing flow.json byte-identical and never overwrites newer files", () => {
   const cwd = mkdtempSync(path.join(os.tmpdir(), "wf-flow-restore-"));
   try {
@@ -308,12 +366,7 @@ test("setup(stash=yes) keeps flow.json byte-identical and leaves no snapshot beh
     expect(git(root, ["branch", "--show-current"]).stdout.trim()).toBe("bugfix/hardening");
     expect(readFileSync(flowPath)).toEqual(flowBytes);
 
-    // CA-04/CA-05: snapshot cleaned from its hashed tempdir location.
-    const expectedRoot = path.join(
-      os.tmpdir(),
-      `workit-flow-guard-${createHash("sha256").update(path.resolve(root)).digest("hex").slice(0, 16)}`,
-    );
-    expect(existsSync(expectedRoot)).toBe(false);
+    // CA-04/CA-05: snapshot cleaned — no new guard roots remain in tmpdir.
     const newGuards = readdirSync(os.tmpdir())
       .filter((d) => d.startsWith("workit-flow-guard-"))
       .filter((d) => !guardsBefore.has(d));
@@ -331,12 +384,15 @@ test("failed setup restores flow.json deleted mid-window and leaves no guard roo
   // a deterministic injection at a real seam inside the snapshot/stash
   // window, after snapshotFlowState has run (no spy needed). The error
   // return must leave flow.json byte-identical and remove the snapshot root
-  // (a retained root would be destroyed by the next run's stale-root
-  // rmSync). Honest note: the pathspec exclusion does not keep untracked
+  // (a retained root would be purged by the next run's 24h GC). Honest
+  // note: the pathspec exclusion does not keep untracked
   // sdd files out of the stash, so when the consolidated guard's pop
   // succeeds it incidentally restores flow.json too; pre-fix this test
   // fails on the retained guard root, which is the regression fixed here.
   const { root, remote } = repoOnMain({ withDevelop: true });
+  const guardsBefore = new Set(
+    readdirSync(os.tmpdir()).filter((d) => d.startsWith("workit-flow-guard-")),
+  );
   try {
     git(root, ["branch", "bugfix"]);
     const flowPath = path.join(root, "docs", "hardening", "sdd", "flow.json");
@@ -360,11 +416,10 @@ test("failed setup restores flow.json deleted mid-window and leaves no guard roo
     // Consolidated guard still pops the stash back before restoring.
     expect(git(root, ["stash", "list"]).stdout.trim()).toBe("");
     expect(readFileSync(flowPath)).toEqual(flowBytes);
-    const expectedRoot = path.join(
-      os.tmpdir(),
-      `workit-flow-guard-${createHash("sha256").update(path.resolve(root)).digest("hex").slice(0, 16)}`,
-    );
-    expect(existsSync(expectedRoot)).toBe(false);
+    const newGuards = readdirSync(os.tmpdir())
+      .filter((d) => d.startsWith("workit-flow-guard-"))
+      .filter((d) => !guardsBefore.has(d));
+    expect(newGuards).toEqual([]);
   } finally {
     rmSync(root, { recursive: true, force: true });
     rmSync(remote, { recursive: true, force: true });
@@ -503,6 +558,9 @@ test("absent logger preserves today's exact return values and side effects", asy
   const a = journalRepo();
   const b = journalRepo();
   const lines: string[] = [];
+  const guardsBefore = new Set(
+    readdirSync(os.tmpdir()).filter((d) => d.startsWith("workit-flow-guard-")),
+  );
   try {
     dirtyTree(a.root);
     dirtyTree(b.root);
@@ -532,11 +590,10 @@ test("absent logger preserves today's exact return values and side effects", asy
     expect(readFileSync(path.join(b.root, "docs", "hardening", "sdd", "flow.json"))).toEqual(
       b.flowBytes,
     );
-    const expectedRoot = path.join(
-      os.tmpdir(),
-      `workit-flow-guard-${createHash("sha256").update(path.resolve(b.root)).digest("hex").slice(0, 16)}`,
-    );
-    expect(existsSync(expectedRoot)).toBe(false);
+    const newGuards = readdirSync(os.tmpdir())
+      .filter((d) => d.startsWith("workit-flow-guard-"))
+      .filter((d) => !guardsBefore.has(d));
+    expect(newGuards).toEqual([]);
   } finally {
     rmSync(a.root, { recursive: true, force: true });
     rmSync(a.remote, { recursive: true, force: true });
@@ -685,11 +742,6 @@ test("incident regression: untracked approved spec/plan survive setup(stash=yes)
     expect(readFileSync(flowPath)).toEqual(flowBytes);
     expect(readFileSync(specPath)).toEqual(specBytes);
     expect(readFileSync(planPath)).toEqual(planBytes);
-    const expectedRoot = path.join(
-      os.tmpdir(),
-      `workit-flow-guard-${createHash("sha256").update(path.resolve(root)).digest("hex").slice(0, 16)}`,
-    );
-    expect(existsSync(expectedRoot)).toBe(false);
     const newGuards = readdirSync(os.tmpdir())
       .filter((d) => d.startsWith("workit-flow-guard-"))
       .filter((d) => !guardsBefore.has(d));

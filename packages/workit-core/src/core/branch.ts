@@ -274,14 +274,39 @@ export const ensureBaseBranch = (cwd: string, base: string): { ok: boolean; erro
   return fastForwardBase(cwd, base);
 };
 
-// CA-05: flow-state snapshots live under the OS tempdir scoped by a hash of
-// the workspace path — never inside the repository or docs/.
+// CA-05: crash-orphaned guard roots are garbage-collected at snapshot time.
+// Fresh roots (any live invocation) and non-workit entries are never touched.
+export const purgeStaleFlowGuardRoots = (now: number): void => {
+  const cutoff = now - 24 * 3600_000;
+  let entries: string[];
+  try {
+    entries = readdirSync(tmpdir());
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    if (!entry.startsWith("workit-flow-guard-")) continue;
+    try {
+      if (statSync(path.join(tmpdir(), entry)).mtimeMs < cutoff)
+        rmSync(path.join(tmpdir(), entry), { recursive: true, force: true });
+    } catch {
+      /* raced removal or unreadable entry: skip */
+    }
+  }
+};
+
+// CA-04: flow-state snapshots live under the OS tempdir scoped by a hash of
+// the workspace path — never inside the repository or docs/. The pid+hrtime
+// suffix makes every invocation unique, so two concurrent setups never share
+// (and never clobber) a root; CA-05 GC reclaims anything a crash orphaned.
 export const snapshotFlowState = (cwd: string): string => {
+  purgeStaleFlowGuardRoots(Date.now());
   const root = path.join(
     tmpdir(),
-    `workit-flow-guard-${createHash("sha256").update(path.resolve(cwd)).digest("hex").slice(0, 16)}`,
+    `workit-flow-guard-${createHash("sha256").update(path.resolve(cwd)).digest("hex").slice(0, 16)}.${
+      process.pid
+    }.${process.hrtime.bigint()}`,
   );
-  rmSync(root, { recursive: true, force: true }); // drop a stale guard from a crashed run
   mkdirSync(root, { recursive: true });
   const docsDir = path.join(path.resolve(cwd), "docs");
   let slugs: string[] = [];
@@ -522,8 +547,8 @@ export const branchSetup = ({
     }
     // CA-03: the snapshot ran before the stash push, so every error return
     // here must still restore a mid-window-wiped flow.json and drop the
-    // guard root (a retained root is destroyed by the next run's
-    // stale-root rmSync). Never masks the original error.
+    // guard root (a retained root is purged by the next run's 24h GC).
+    // Never masks the original error.
     const {
       warnings: [warning],
     } = restoreWithWarning(snapDir);
