@@ -623,8 +623,8 @@ test("snapshot captures docs/<slug>/spec.md and plan.md beside flow.json", () =>
     const walk = (from: string, rel: string): string[] =>
       readdirSync(from, { withFileTypes: true }).flatMap((entry) =>
         entry.isDirectory()
-          ? walk(path.join(from, entry.name), path.join(rel, entry.name))
-          : [path.join(rel, entry.name)],
+          ? walk(path.join(from, entry.name), `${rel ? `${rel}/` : ""}${entry.name}`)
+          : [`${rel ? `${rel}/` : ""}${entry.name}`],
       );
     expect(walk(snap, "").sort()).toEqual([
       "docs/alpha/plan.md",

@@ -35,6 +35,10 @@ const baseBranch = (cwd: string): { base: string } | { error: string } => {
 };
 const DECLARE_RE = /^\s*\*+Branch:\*+\s*`?([^`\s|]+)`?\s*$/gim;
 const USE_CURRENT_RE = /^\s*\*+Branch:\*+\s*use-current\s*$/im;
+// Windows portability: journal lines and stash-coverage sets carry
+// repo-relative paths, which must match git's POSIX separator output even
+// though path.join emits platform separators.
+const toPosix = (p: string) => p.split(path.sep).join("/");
 const readSafe = (p: string): string | null => {
   try {
     return readFileSync(p, "utf8");
@@ -368,7 +372,7 @@ export const restoreFlowSnapshot = (
         rmSync(tmpDest, { force: true });
         throw error;
       }
-      restored.push(rel);
+      restored.push(toPosix(rel));
     }
     rmSync(snapDir, { recursive: true, force: true });
     return { restored };
@@ -437,7 +441,7 @@ export const branchSetup = ({
             ? walk(path.join(from, entry.name), path.join(rel, entry.name))
             : [path.join(rel, entry.name)],
         );
-      return walk(dir, "");
+      return walk(dir, "").map(toPosix);
     } catch {
       return [];
     }
@@ -658,8 +662,7 @@ export const branchSetup = ({
   // path not restored keeps the ref so reapply_stash stays available.
   // Best-effort: any failure keeps today's keep-the-ref behavior.
   if (stash_ref && snapDir && warnings.length === 0) {
-    const norm = (p: string) => p.split(path.sep).join("/");
-    const covered = new Set(restoredRels.map(norm));
+    const covered = new Set(restoredRels.map(toPosix));
     try {
       const stashed = exec([
         "stash",
@@ -669,7 +672,7 @@ export const branchSetup = ({
         String(stash_ref),
       ])
         .split("\n")
-        .map((line) => norm(line.trim()))
+        .map((line) => toPosix(line.trim()))
         .filter(Boolean);
       if (stashed.length > 0 && stashed.every((p) => covered.has(p))) {
         exec(["stash", "drop", String(stash_ref)]);
