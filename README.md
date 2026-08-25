@@ -81,6 +81,8 @@ Feature parity across hosts, implemented the best way each host allows. Core log
 8. **YouTrack** — `/wk-issue-update` drafts (es-CL) and posts reviewed task updates with time; `/wk-meetings` logs meeting time only.
 9. **Docs** — `/wk-docs-refresh` updates documentation affected by changes; `workit_docs_validate` hard-fails invalid spec/plan pairs before execution.
 
+   Branch setup (`workit_branch_setup`) mutates developer state during guarded in-place checkouts, so it is hardened against partial failure: if a setup fails mid-flight it restores the working tree and returns HEAD to the originating branch, and before any stash/checkout mutation each slug's `docs/<slug>/sdd/flow.json` plus its `spec.md` and `plan.md` are snapshotted to a unique temp root and restored if lost (a successful result carries a `warnings` field when automatic restoration wasn't possible). Every mutation window emits `flow-guard:` diagnostic journal lines bracketing the stash/checkout steps, pinpointing anything that wipes flow state mid-window.
+
 ## Usage
 
 Manual setup for those who skipped the wizard (`npx @brainervirus/workit-cli init`):
