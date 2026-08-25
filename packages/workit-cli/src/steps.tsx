@@ -17,6 +17,7 @@ import {
   type WizardDraft,
   type WizardScreen,
 } from "./wizard-state";
+import { LOCALE_LANGUAGE_MAP, SearchSelect } from "./search-select";
 
 const PLATFORMS = [
   { label: "OpenCode", value: "opencode" },
@@ -36,9 +37,7 @@ const VCS_PROVIDERS = [
   { label: "Skip — configure later", value: "skip" },
 ];
 
-const LOCALE_CHOICES = ["en", "es-CL"];
 const TIMEZONE_CHOICES = ["UTC", "America/New_York", "Europe/London"];
-
 // Text screens cannot offer the 'b' back key (it is a printable character the
 // TextInput consumes), so there Esc walks back to the parent select screen and
 // cancel happens from select/confirm screens. Draft state survives either way.
@@ -119,13 +118,6 @@ export function SelectList<T extends string>({
   );
 }
 
-function localeOptions(current: string): { label: string; value: string }[] {
-  const fixed = LOCALE_CHOICES.map((locale) => ({ label: locale, value: locale }));
-  const list = LOCALE_CHOICES.includes(current)
-    ? fixed
-    : [...fixed, { label: `Use current (${current})`, value: current }];
-  return [...list, { label: "Other…", value: "other" }];
-}
 function timezoneOptions(current: string): { label: string; value: string }[] {
   const fixed = TIMEZONE_CHOICES.map((timezone) => ({ label: timezone, value: timezone }));
   const list = TIMEZONE_CHOICES.includes(current)
@@ -328,12 +320,20 @@ function Screen({ draft, dispatch }: ScreenProps): JSX.Element {
         <Box flexDirection="column" gap={1}>
           <Text bold>Step 2 — Global config · Locale</Text>
           <Text dimColor>Locale (BCP-47):</Text>
-          <SelectList
-            options={localeOptions(draft.values.locale)}
+          <Text>
+            Current: <Text color="green">{draft.values.locale}</Text>
+          </Text>
+          {/* Searchable language picker: typing filters, Enter commits the
+              highlighted row's BCP-47 tag. Other… keeps the existing validated
+              custom-input flow (CA-03); error display, back/cancel semantics
+              and the localeOther text screen are untouched. */}
+          <SearchSelect
+            options={[
+              ...LOCALE_LANGUAGE_MAP.map((entry) => ({ label: entry.label, value: entry.locale })),
+              { label: "Other…", value: "other" },
+            ]}
             value={draft.values.locale}
-            onChange={(value) => {
-              if (value !== "other") dispatch({ type: "set", field: "locale", value });
-            }}
+            placeholder="Type to search languages…"
             onSelect={(value) => {
               if (value === "other") dispatch({ type: "pickOther" });
               else {
@@ -343,7 +343,7 @@ function Screen({ draft, dispatch }: ScreenProps): JSX.Element {
             }}
           />
           {draft.errors.locale && <Text color="red">{draft.errors.locale}</Text>}
-          <Text dimColor>Enter to continue · b Back · Esc Cancel</Text>
+          <Text dimColor>Type to filter · Enter to continue · b Back · Esc Cancel</Text>
         </Box>
       );
     case "localeOther":

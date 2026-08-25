@@ -361,8 +361,11 @@ test("exactly one input control is mounted on every screen", async () => {
       // Ink tab-navigation listener + wizard nav handler + the screen control
       expect(tty.inputListenerCount()).toBe(3);
       await tty.keys(SPACE, ENTER); // platforms -> locale
+      // SearchSelect owns its input handling; its display-only TextInput is
+      // disabled and never subscribes, so the invariant holds unchanged
       expect(tty.inputListenerCount()).toBe(3);
       await tty.keys(ENTER); // locale -> timezone
+      expect(tty.inputListenerCount()).toBe(3);
       await tty.keys(ENTER); // timezone -> branchPreset
       await tty.keys(DOWN, ENTER); // github-flow -> youtrack
       await tty.keys(ENTER); // youtrack -> vcs
@@ -390,8 +393,7 @@ test("locale and timezone inputs are independent; revisiting shows the current v
     expect(localeFrame).toContain("Locale");
     expect(localeFrame).not.toContain("Timezone");
 
-    await tty.keys(DOWN, DOWN, ENTER); // en -> es-CL -> Other
-    await tty.keys("es-MX", ENTER); // -> timezone
+    await tty.keys("mx", ENTER); // search narrows to Español (México) -> commits es-MX
     const tzFrame = tty.lastFrame();
     expect(tzFrame).toContain("Timezone");
     expect(tzFrame).not.toContain("es-MX");
@@ -411,7 +413,7 @@ test("a custom Other value is validated before advancing", async () => {
   try {
     const tty = await renderInk(<Wizard onExit={noop} />);
     await tty.keys(SPACE, ENTER); // -> locale
-    await tty.keys(DOWN, DOWN, ENTER); // -> Other
+    await tty.keys("other", ENTER); // query isolates Other… -> custom text screen
     await tty.keys("en_US", ENTER); // invalid BCP-47
     const invalid = tty.lastFrame();
     expect(invalid).toContain("invalid locale");
@@ -472,8 +474,7 @@ test("Back preserves the draft values entered so far", async () => {
   try {
     const tty = await renderInk(<Wizard onExit={noop} />);
     await tty.keys(SPACE, ENTER); // -> locale
-    await tty.keys(DOWN, DOWN, ENTER); // -> Other
-    await tty.keys("es-MX", ENTER); // -> timezone
+    await tty.keys("mx", ENTER); // search narrows to Español (México) -> timezone
     await tty.keys(ENTER); // -> branchPreset
     await tty.keys(DOWN, ENTER); // github-flow -> youtrack
     await tty.keys(ENTER); // -> vcs
@@ -500,8 +501,7 @@ test("Escape cancels without writing anything", async () => {
     const exitCalls: boolean[] = [];
     const tty = await renderInk(<Wizard onExit={(complete) => exitCalls.push(complete)} />);
     await tty.keys(SPACE, ENTER); // -> locale
-    await tty.keys(DOWN, DOWN, ENTER); // -> Other
-    await tty.keys("es-MX", ENTER); // -> timezone
+    await tty.keys("mx", ENTER); // -> timezone (searched pick)
     await tty.keys(ESC); // cancel (select screen)
     expect(exitCalls).toEqual([false]);
     expect(existsSync(configPath)).toBe(false);
@@ -606,7 +606,7 @@ test("Ctrl+C cancels from a text screen instead of walking back (Task 12 advisor
       exitOnCtrlC: false,
     });
     await tty.keys(SPACE, ENTER); // -> locale
-    await tty.keys(DOWN, DOWN, ENTER); // -> Other (text screen)
+    await tty.keys("other", ENTER); // -> Other (text screen)
     await tty.key("\x03"); // ctrl+c must cancel, never walk back
     expect(exitCalls).toEqual([false]);
     tty.unmount();
@@ -620,16 +620,74 @@ test("backspace-to-empty custom locale surfaces the block on the select screen",
   try {
     const tty = await renderInk(<Wizard onExit={noop} />);
     await tty.keys(SPACE, ENTER); // -> locale
-    await tty.keys(DOWN, DOWN, ENTER); // -> Other
+    await tty.keys("other", ENTER); // -> Other
     await tty.keys("en_US"); // invalid BCP-47 stored while editing
     for (let i = 0; i < "en_US".length; i++) await tty.key(BACKSPACE);
     await tty.keys(ESC); // back -> locale select, value now ""
-    // the parent select screen must surface the block (and the empty "Use
-    // current ()" option) instead of letting Enter commit an empty locale
+    // the parent select screen must surface the block (the empty current value
+    // and the validation error) instead of letting Enter commit an empty locale
     const frame = tty.lastFrame();
-    expect(frame).toContain("Use current ()");
+    expect(frame).toContain("Current:");
     expect(frame).toContain("invalid locale");
     expect(frame).not.toContain("Timezone");
+    tty.unmount();
+  } finally {
+    cleanup();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Locale SearchSelect (Task 3): query narrowing, navigation within the
+// filtered set, and Other… routing into the existing validated custom flow.
+// ---------------------------------------------------------------------------
+
+test("typing narrows the locale picker's visible rows", async () => {
+  const cleanup = withSeedConfig(seedConfig);
+  try {
+    const tty = await renderInk(<Wizard onExit={noop} />);
+    await tty.keys(SPACE, ENTER); // -> locale
+    const full = tty.lastFrame();
+    expect(full).toContain("Español (España)");
+    expect(full).toContain("Español (Argentina)");
+    await tty.keys("chile");
+    const narrowed = tty.lastFrame();
+    expect(narrowed).toContain("chile"); // the live query
+    expect(narrowed).toContain("Español (Chile)");
+    expect(narrowed).not.toContain("Argentina");
+    expect(narrowed).not.toContain("Timezone");
+    tty.unmount();
+  } finally {
+    cleanup();
+  }
+});
+
+test("arrows move within the filtered set and Enter commits the highlighted row", async () => {
+  const cleanup = withSeedConfig(seedConfig);
+  try {
+    const tty = await renderInk(<Wizard onExit={noop} />);
+    await tty.keys(SPACE, ENTER); // -> locale
+    await tty.keys("es"); // the five Español rows
+    await tty.keys(DOWN, DOWN); // highlight Español (Chile)
+    expect(tty.lastFrame()).toContain("❯ Español (Chile)");
+    await tty.key(ENTER);
+    expect(tty.lastFrame()).toContain("Timezone");
+    await tty.keys("b"); // back -> the select screen shows the committed value
+    expect(tty.lastFrame()).toContain("Current: es-CL");
+    tty.unmount();
+  } finally {
+    cleanup();
+  }
+});
+
+test("'Other…' routes to the existing validated custom-locale flow (CA-03)", async () => {
+  const cleanup = withSeedConfig(seedConfig);
+  try {
+    const tty = await renderInk(<Wizard onExit={noop} />);
+    await tty.keys(SPACE, ENTER); // -> locale
+    await tty.keys("other", ENTER); // query isolates Other… -> pickOther flow
+    expect(tty.lastFrame()).toContain("custom");
+    await tty.keys("es-419", ENTER); // 3-digit region subtag validates via LOCALE_RE
+    expect(tty.lastFrame()).toContain("Timezone");
     tty.unmount();
   } finally {
     cleanup();

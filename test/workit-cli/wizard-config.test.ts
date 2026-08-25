@@ -12,7 +12,12 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { mergePreset, type ToolkitConfig } from "../../packages/workit-core/src/core/config";
+import {
+  LOCALE_RE,
+  mergePreset,
+  readConfigFromDir,
+  type ToolkitConfig,
+} from "../../packages/workit-core/src/core/config";
 import { readSetupState } from "../../packages/workit-core/src/core/setup-state";
 import { planHygieneFiles, ensureHygieneFiles } from "../../packages/workit-core/src/core/hygiene";
 import {
@@ -22,7 +27,8 @@ import {
   type SetupMutation,
   type SetupPreviewInput,
 } from "../../packages/workit-cli/src/logic";
-import { createInitialDraft } from "../../packages/workit-cli/src/wizard-state";
+import { createInitialDraft, reducer } from "../../packages/workit-cli/src/wizard-state";
+import { LOCALE_LANGUAGE_MAP, filterOptions } from "../../packages/workit-cli/src/search-select";
 
 // WZ-04-WZ-06, WZ-08, RL-02, RL-06 wizard scope; CA-12, CA-14, CA-22, CA-23.
 // readSetupState / mergePreset / buildSetupPreview must be pure readers: preview
@@ -595,4 +601,59 @@ test("a deliberate token path replacement is its own distinct mutation (AR-10)",
   } finally {
     clean(dir);
   }
+});
+
+// ---------------------------------------------------------------------------
+// Locale SearchSelect (Task 3): pure filtering/map behavior + reducer commit.
+// The Español block leads LOCALE_LANGUAGE_MAP so the 5-row cap keeps the whole
+// language×nationality family visible together for the shared "es" prefix.
+// ---------------------------------------------------------------------------
+
+test('filterOptions("es") caps at 5 rows across language+nationality labels', () => {
+  // Same adaptation the locale screen applies: Teams rows → picker options.
+  const options = [
+    ...LOCALE_LANGUAGE_MAP.map((entry) => ({ label: entry.label, value: entry.locale })),
+    { label: "Other…", value: "other" },
+  ];
+  const matches = filterOptions(options, "es");
+  expect(matches.length).toBeLessThanOrEqual(5);
+  expect(matches.length).toBeGreaterThan(0);
+  const labels = matches.map((m) => m.label);
+  expect(labels.join(" | ")).toContain("España");
+  expect(labels.join(" | ")).toContain("Latinoamérica");
+  expect(labels.join(" | ")).toContain("Chile");
+  // value-only matches (es-419 has no "es" in its label) are found too
+  expect(matches.map((m) => m.value)).toContain("es-419");
+  expect(labels.join(" | ")).not.toContain("English (United States)");
+  // empty query shows the first window of the full list
+  expect(filterOptions(options, "")).toEqual(options.slice(0, 5));
+});
+
+test("LOCALE_LANGUAGE_MAP covers every core localeOptions default exactly once", () => {
+  const dir = tempDir();
+  try {
+    const locales = readConfigFromDir(dir).localeOptions;
+    expect(locales.length).toBe(5);
+    const mapLocales = LOCALE_LANGUAGE_MAP.map((entry) => entry.locale);
+    for (const locale of locales) {
+      expect(mapLocales, locale).toContain(locale);
+    }
+    expect(new Set(mapLocales).size).toBe(mapLocales.length);
+    expect(LOCALE_LANGUAGE_MAP.length).toBeGreaterThanOrEqual(25);
+  } finally {
+    clean(dir);
+  }
+});
+
+test("selecting a mapped row commits its BCP-47 locale through the reducer", () => {
+  const row = LOCALE_LANGUAGE_MAP.find((entry) => entry.locale === "es-419");
+  expect(row).toBeDefined();
+  let d = createInitialDraft(config());
+  d = reducer(d, { type: "set", field: "platforms", value: ["opencode"] });
+  d = reducer(d, { type: "next" }); // -> locale
+  d = reducer(d, { type: "set", field: "locale", value: row!.locale });
+  expect(d.errors.locale, LOCALE_RE.test(row!.locale) ? undefined : row!.locale).toBeUndefined();
+  d = reducer(d, { type: "next" });
+  expect(d.screen).toBe("timezone");
+  expect(d.values.locale).toBe("es-419");
 });
