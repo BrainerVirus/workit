@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:
 import os from "node:os";
 import path from "node:path";
 import React from "react";
-import { Wizard } from "../../packages/workit-cli/src/steps";
+import { Wizard, SelectList } from "../../packages/workit-cli/src/steps";
 import { renderInk } from "../shared/helpers/ink-tty";
 import {
   createInitialDraft,
@@ -528,6 +528,72 @@ test("no competing Enter/provider race — one submit path per screen", async ()
   } finally {
     cleanup();
   }
+});
+
+// ---------------------------------------------------------------------------
+// SelectList update mechanics (WZ-13): arrow keys must dispatch exactly one
+// `set` per keypress — never from inside a setState updater, which React
+// StrictMode double-invokes (double onChange) and which desyncs the highlight
+// from the committed value.
+// ---------------------------------------------------------------------------
+
+const SPY_OPTIONS = [
+  { label: "en", value: "en" },
+  { label: "es-CL", value: "es-CL" },
+  { label: "Other…", value: "other" },
+];
+
+// Host wiring identical to the locale screen: SelectList.onChange dispatches a
+// real wizard `set` action through the real reducer; the wrapper records every
+// dispatched action (outside any updater/reducer, so only genuine dispatches
+// are counted).
+function SpyHost({
+  actions,
+  selects,
+}: {
+  actions: { field: string; value: string }[];
+  selects: string[];
+}) {
+  const [d, dispatch] = React.useReducer(reducer, undefined, () => at("gitflow", "locale"));
+  return (
+    <SelectList
+      options={SPY_OPTIONS}
+      value={d.values.locale === "" ? "other" : d.values.locale}
+      onChange={(value) => {
+        actions.push({ field: "locale", value });
+        dispatch({ type: "set", field: "locale", value });
+      }}
+      onSelect={(value) => selects.push(value)}
+    />
+  );
+}
+
+test("one DOWN dispatches exactly one set for the moved-to option under StrictMode", async () => {
+  const actions: { field: string; value: string }[] = [];
+  const selects: string[] = [];
+  const tty = await renderInk(
+    <React.StrictMode>
+      <SpyHost actions={actions} selects={selects} />
+    </React.StrictMode>,
+  );
+  await tty.key(DOWN);
+  expect(actions).toEqual([{ field: "locale", value: "es-CL" }]);
+  expect(tty.lastFrame()).toContain("❯ es-CL");
+  tty.unmount();
+});
+
+test("down,down,up then Enter submits exactly the highlighted option's value", async () => {
+  const actions: { field: string; value: string }[] = [];
+  const selects: string[] = [];
+  const tty = await renderInk(
+    <React.StrictMode>
+      <SpyHost actions={actions} selects={selects} />
+    </React.StrictMode>,
+  );
+  await tty.keys(DOWN, DOWN, UP, ENTER); // en -> es-CL -> other -> es-CL -> submit
+  expect(selects).toEqual(["es-CL"]);
+  expect(tty.lastFrame()).toContain("❯ es-CL");
+  tty.unmount();
 });
 
 test("Ctrl+C cancels from a text screen instead of walking back (Task 12 advisory)", async () => {

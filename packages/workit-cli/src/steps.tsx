@@ -72,7 +72,7 @@ type ScreenProps = {
 // value), Enter always submits the highlighted option. This is the WZ-11 fix —
 // unlike @inkjs/ui Select there is exactly one Enter path and no competing
 // onChange/onSubmit handlers, so Enter can never apply a stale value twice.
-function SelectList<T extends string>({
+export function SelectList<T extends string>({
   options,
   value,
   onChange,
@@ -91,18 +91,17 @@ function SelectList<T extends string>({
   );
 
   useInput((_input, key) => {
+    // WZ-13: compute the next index outside any setState updater — updater
+    // functions are render-phase code React StrictMode double-invokes, so
+    // dispatching from inside them fires onChange twice.
     if (key.downArrow) {
-      setIndex((i) => {
-        const next = Math.min(i + 1, options.length - 1);
-        onChange?.(options[next].value);
-        return next;
-      });
+      const next = Math.min(index + 1, options.length - 1);
+      setIndex(next);
+      onChange?.(options[next].value);
     } else if (key.upArrow) {
-      setIndex((i) => {
-        const next = Math.max(i - 1, 0);
-        onChange?.(options[next].value);
-        return next;
-      });
+      const next = Math.max(index - 1, 0);
+      setIndex(next);
+      onChange?.(options[next].value);
     } else if (key.return) {
       onSelect(options[index].value);
     }
