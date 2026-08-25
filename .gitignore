@@ -8,3 +8,15 @@ packages/workit-cursor/dist/
 docs/*/sdd/
 # Stray branch-setup manifest when sdd_dir is not supplied
 docs/manifest.json
+
+# workit: SDD working state (never commit)
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
+.env
+dist/
+*.log
+.cache/
