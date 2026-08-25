@@ -83,6 +83,10 @@ const readJsonRecord = (file: string): Existing => {
   try {
     raw = readFileSync(file, "utf8");
   } catch {
+    // A read-permission error (EACCES) must not look like a missing file (same
+    // disambiguation as setup.ts readExisting): classify it malformed so plan
+    // keeps the host installed and apply reports Failed with the path untouched.
+    if (existsSync(file)) return { kind: "malformed", error: `${file} is not readable` };
     return { kind: "missing" };
   }
   try {

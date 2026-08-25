@@ -1,5 +1,5 @@
 import { afterAll, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { applyUninstall, planUninstall } from "../../packages/workit-core/src/core/uninstall";
@@ -97,6 +97,8 @@ test("apply removes only workit entries; foreign bytes preserved elsewhere", () 
   const oc = JSON.parse(readFileSync(f.opencodeConfig, "utf8"));
   expect(oc.plugin).toEqual(["@other/pkg"]);
   expect(oc.model).toBe("keep-me");
+  // Byte-level: rewritten files end with exactly one trailing newline.
+  expect(readFileSync(f.opencodeConfig, "utf8")).toMatch(/\}\n$/);
 
   const settings = JSON.parse(readFileSync(f.cursorSettings, "utf8"));
   expect(settings.enabled_plugins).toEqual({ other: true });
@@ -142,6 +144,54 @@ test("malformed host JSON fails that action untouched while others proceed", () 
   expect(result.entries.find((e) => e.path === f.cursorMcp)!.status).toBe("removed");
 });
 
+// An existing-but-unreadable file (EACCES) must not be conflated with a missing
+// one: plan still marks the host installed and apply fails that action with
+// bytes untouched (mirrors setup.ts readExisting disambiguation).
+test("existing-but-unreadable settings.json plans installed and applies failed untouched", () => {
+  if (process.platform === "win32") return; // chmod is not advisory on win32
+  if (typeof process.getuid === "function" && process.getuid() === 0) return; // root bypasses permissions
+  const f = tracked();
+  f.seedInstalled();
+  const before = readFileSync(f.cursorSettings);
+  chmodSync(f.cursorSettings, 0o000);
+  try {
+    const plan = planUninstall(f);
+    const cur = plan.hosts.find((h) => h.host === "cursor")!;
+    expect(cur.installed).toBe(true);
+    expect(cur.actions.some((a) => a.kind === "edit-json-remove" && a.path === f.cursorSettings)).toBe(true);
+    const result = applyUninstall(plan, f);
+    expect(result.ok).toBe(false);
+    expect(result.entries.find((e) => e.path === f.cursorSettings)!.status).toBe("failed");
+    // Sibling actions proceed.
+    expect(result.entries.find((e) => e.path === f.cursorMcp)!.status).toBe("removed");
+    expect(existsSync(f.cursorPluginDir)).toBe(false);
+  } finally {
+    chmodSync(f.cursorSettings, 0o644);
+  }
+  expect(readFileSync(f.cursorSettings)).toEqual(before);
+});
+
+test("existing-but-unreadable mcp.json plans installed and applies failed untouched", () => {
+  if (process.platform === "win32") return; // chmod is not advisory on win32
+  if (typeof process.getuid === "function" && process.getuid() === 0) return; // root bypasses permissions
+  const f = tracked();
+  f.seedInstalled();
+  const before = readFileSync(f.cursorMcp);
+  chmodSync(f.cursorMcp, 0o000);
+  try {
+    const plan = planUninstall(f);
+    const cur = plan.hosts.find((h) => h.host === "cursor")!;
+    expect(cur.installed).toBe(true);
+    expect(cur.actions.some((a) => a.kind === "edit-json-remove" && a.path === f.cursorMcp)).toBe(true);
+    const result = applyUninstall(plan, f);
+    expect(result.ok).toBe(false);
+    expect(result.entries.find((e) => e.path === f.cursorMcp)!.status).toBe("failed");
+  } finally {
+    chmodSync(f.cursorMcp, 0o644);
+  }
+  expect(readFileSync(f.cursorMcp)).toEqual(before);
+});
+
 test("double-apply is idempotent and post-apply plan reports nothing installed", () => {
   const f = tracked();
   f.seedInstalled();
@@ -172,6 +222,23 @@ test("remove-dir refuses any path other than the canonical plugins/local/workit"
   const result = applyUninstall(plan, f);
   expect(result.entries[0].status).toBe("failed");
   expect(existsSync(path.join(f.home, ".cursor", "plugins", "local", "evil"))).toBe(true);
+});
+
+test("forged edit-json-remove outside recognized targets fails closed", () => {
+  const f = tracked();
+  const evil = path.join(f.home, "evil.json");
+  const plan = {
+    hosts: [
+      {
+        host: "cursor" as const,
+        installed: true,
+        actions: [{ kind: "edit-json-remove" as const, path: evil, detail: "forged" }],
+      },
+    ],
+  };
+  const result = applyUninstall(plan, f);
+  expect(result.entries[0].status).toBe("failed");
+  expect(existsSync(evil)).toBe(false);
 });
 
 test("plan-vs-applied parity: every planned action yields exactly one entry", () => {
