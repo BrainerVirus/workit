@@ -66,11 +66,15 @@ export function SearchSelect<T extends string>({
   value,
   placeholder,
   onSelect,
+  onQueryChange,
 }: {
   options: { label: string; value: T }[];
   value?: T;
   placeholder?: string;
   onSelect: (value: T) => void;
+  // Synchronous query reporting for a host-level consumed-key policy (the
+  // wizard's 'b' handler must know whether this field owns the key).
+  onQueryChange?: (query: string) => void;
 }): JSX.Element {
   const [query, setQuery] = useState("");
   const filtered = useMemo(() => filterOptions(options, query), [options, query]);
@@ -86,6 +90,7 @@ export function SearchSelect<T extends string>({
   useInput((input, key) => {
     // A query change resets the highlight to the top of the filtered set.
     const type = (next: string): void => {
+      onQueryChange?.(next);
       setQuery(next);
       setRawIndex(0);
     };

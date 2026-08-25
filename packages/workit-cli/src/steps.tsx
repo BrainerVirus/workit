@@ -65,6 +65,7 @@ function workspacePreviewTargets(cwd: string): string[] {
 type ScreenProps = {
   draft: WizardDraft;
   dispatch: Dispatch<WizardAction>;
+  onSearchQueryChange?: (query: string) => void;
 };
 
 // Single-purpose list control: up/down move the highlight (dispatching the
@@ -241,6 +242,16 @@ export function Wizard({
 }): JSX.Element {
   const [draft, dispatch] = useReducer(reducer, undefined, createInitialDraft);
   const exitedRef = useRef(false);
+  // Consumed-key policy for the locale SearchSelect: it reports every query
+  // change synchronously, and this screen-level handler observes the value
+  // BEFORE the keystroke reaches the picker (parent subscriptions run first),
+  // so `q` is the pre-keystroke query. `typed` latches once a query became
+  // non-empty: "typed and cleared" hands 'b' back to navigation.
+  const searchRef = useRef({ q: "", typed: false });
+
+  useEffect(() => {
+    searchRef.current = { q: "", typed: false };
+  }, [draft.screen]);
 
   useInput((input, key) => {
     // Ctrl+C always cancels — independent of Ink's exitOnCtrlC setting, so
@@ -251,7 +262,12 @@ export function Wizard({
       if (TEXT_SCREENS.has(draft.screen)) dispatch({ type: "back" });
       else dispatch({ type: "cancel" });
     } else if (input.toLowerCase() === "b" && !TEXT_SCREENS.has(draft.screen)) {
-      dispatch({ type: "back" });
+      // While a locale search is live or being started, 'b' belongs to the
+      // query; only a typed-then-cleared search navigates back. Other screens
+      // keep plain 'b' back-navigation.
+      const search = searchRef.current;
+      const searchOwnsB = draft.screen === "locale" && !(search.typed && search.q === "");
+      if (!searchOwnsB) dispatch({ type: "back" });
     }
   });
 
@@ -271,7 +287,16 @@ export function Wizard({
           same tree position, so React would reuse the previous screen's control
           instance and leak its field state (e.g. "feature/*" into branchProtected).
           Remounting per screen resets each control from the draft values. */}
-      <Screen key={draft.screen} draft={draft} dispatch={dispatch} />
+      <Screen
+        key={draft.screen}
+        draft={draft}
+        dispatch={dispatch}
+        onSearchQueryChange={(query) => {
+          const search = searchRef.current;
+          search.q = query;
+          if (query !== "") search.typed = true;
+        }}
+      />
     </Box>
   );
 }
@@ -295,7 +320,7 @@ function describeMutation(m: SetupMutation): string {
   }
 }
 
-function Screen({ draft, dispatch }: ScreenProps): JSX.Element {
+function Screen({ draft, dispatch, onSearchQueryChange }: ScreenProps): JSX.Element {
   switch (draft.screen) {
     case "platforms":
       return (
@@ -334,6 +359,7 @@ function Screen({ draft, dispatch }: ScreenProps): JSX.Element {
             ]}
             value={draft.values.locale}
             placeholder="Type to search languages…"
+            onQueryChange={onSearchQueryChange}
             onSelect={(value) => {
               if (value === "other") dispatch({ type: "pickOther" });
               else {

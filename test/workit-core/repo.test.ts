@@ -933,3 +933,41 @@ test(
   },
   { timeout: 60_000 },
 );
+
+test(
+  "init_apply config locale validation matches core LOCALE_RE (es-419 in, es_cl out)",
+  async () => {
+    const previousToolkit = process.env.WORKFLOW_TOOLKIT_CONFIG;
+    const dir = mkdtempSync(path.join(os.tmpdir(), "workflow-toolkit-locale-"));
+    process.env.WORKFLOW_TOOLKIT_CONFIG = dir;
+    try {
+      const tools = createRepoTools();
+      const context = { directory: dir, worktree: dir } as never;
+
+      const accepted = JSON.parse(
+        (await tools.workit_init_apply.execute(
+          { confirmed: true, action: "config", locale: "es-419" },
+          context,
+        )) as string,
+      );
+      expect(accepted.ok).toBe(true);
+      expect(JSON.parse(readFileSync(path.join(dir, "config.json"), "utf8"))).toMatchObject({
+        locale: "es-419",
+      });
+
+      const rejected = JSON.parse(
+        (await tools.workit_init_apply.execute(
+          { confirmed: true, action: "config", locale: "es_cl" },
+          context,
+        )) as string,
+      );
+      expect(rejected.ok).toBe(false);
+      expect(String(rejected.error)).toContain("invalid locale");
+    } finally {
+      if (previousToolkit === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+      else process.env.WORKFLOW_TOOLKIT_CONFIG = previousToolkit;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  },
+  { timeout: 60_000 },
+);

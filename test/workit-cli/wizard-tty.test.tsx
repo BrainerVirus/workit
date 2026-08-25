@@ -694,6 +694,29 @@ test("'Other…' routes to the existing validated custom-locale flow (CA-03)", a
   }
 });
 
+test("'b' starts a search instead of walking back; once cleared it navigates back", async () => {
+  const cleanup = withSeedConfig(seedConfig);
+  try {
+    const tty = await renderInk(<Wizard onExit={noop} />);
+    await tty.keys(SPACE, ENTER); // -> locale
+    await tty.key("b"); // first search character must reach the query
+    const searching = tty.lastFrame();
+    expect(searching).toContain("Locale"); // still the picker…
+    expect(searching).not.toContain("Platforms"); // …never walked back
+    expect(searching).toContain("Português (Brasil)"); // 'b' filtered set
+    expect(searching).not.toContain("Español (España)");
+    await tty.key("b"); // live query keeps consuming 'b'
+    expect(tty.lastFrame()).toContain("Locale");
+    for (let i = 0; i < 2; i++) await tty.key(BACKSPACE); // clear the query
+    expect(tty.lastFrame()).toContain("Español (España)"); // full list restored
+    await tty.key("b"); // cleared search hands 'b' back to navigation
+    expect(tty.lastFrame()).toContain("Step 1 — Platforms");
+    tty.unmount();
+  } finally {
+    cleanup();
+  }
+});
+
 // ---------------------------------------------------------------------------
 // Apply preview (Task 13: WZ-08 preview is authoritative, WZ-06 malformed
 // state blocks Apply, WZ-04 integrations are optional)
