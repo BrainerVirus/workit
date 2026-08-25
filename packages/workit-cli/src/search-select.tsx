@@ -111,7 +111,7 @@ export function SearchSelect<T extends string>({
     <Box flexDirection="column" gap={0}>
       <TextInput key={query} isDisabled defaultValue={query} placeholder={placeholder} />
       {filtered.length === 0 ? (
-        <Text dimColor>No matching language</Text>
+        <Text dimColor>No matches</Text>
       ) : (
         filtered.map((option, i) => (
           <Text key={option.value} color={i === index ? "cyan" : "dim"}>

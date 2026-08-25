@@ -37,7 +37,44 @@ const VCS_PROVIDERS = [
   { label: "Skip — configure later", value: "skip" },
 ];
 
-const TIMEZONE_CHOICES = ["UTC", "America/New_York", "Europe/London"];
+// Timezone catalog: the runtime's full canonical IANA set when available,
+// else a static fallback of common zones. Guard shape mirrors logic.ts
+// KNOWN_TIMEZONES — validateTimezone enforces membership exactly when
+// supportedValuesOf exists, so the picker then shows precisely that set;
+// on the fallback path validation stays open and Other… covers the rest.
+const TIMEZONE_FALLBACK = [
+  "UTC",
+  "America/New_York",
+  "America/Santiago",
+  "America/Bogota",
+  "America/Mexico_City",
+  "America/Sao_Paulo",
+  "America/Argentina/Buenos_Aires",
+  "Europe/London",
+  "Europe/Madrid",
+  "Europe/Berlin",
+  "Asia/Tokyo",
+  "Asia/Shanghai",
+  "Asia/Kolkata",
+  "Australia/Sydney",
+];
+const TIMEZONES: string[] =
+  typeof Intl.supportedValuesOf === "function"
+    ? Intl.supportedValuesOf("timeZone")
+    : TIMEZONE_FALLBACK;
+// Detected host zone seeds the picker preselection — no typing needed.
+const DETECTED_TIMEZONE = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+
+export function timezonePickerOptions(): { label: string; value: string }[] {
+  // Detected host zone heads the list so its preselection is visible in the
+  // first window without typing (the full IANA set alone would bury it).
+  const rest = TIMEZONES.filter((timezone) => timezone !== DETECTED_TIMEZONE);
+  return [
+    { label: DETECTED_TIMEZONE, value: DETECTED_TIMEZONE },
+    ...rest.map((timezone) => ({ label: timezone, value: timezone })),
+    { label: "Other…", value: "other" },
+  ];
+}
 // Text screens cannot offer the 'b' back key (it is a printable character the
 // TextInput consumes), so there Esc walks back to the parent select screen and
 // cancel happens from select/confirm screens. Draft state survives either way.
@@ -51,6 +88,11 @@ const TEXT_SCREENS: ReadonlySet<WizardScreen> = new Set([
   "workspaceGlob",
   "branchPolicyDevelop",
 ]);
+
+// Screens whose SearchSelect owns printable input: a cold 'b' starts a search
+// instead of navigating back; only a typed-then-cleared query hands 'b' back
+// to the wizard's back-navigation.
+const SEARCH_SCREENS: ReadonlySet<WizardScreen> = new Set(["locale", "timezone"]);
 
 // Deterministic match-preview samples derived from the current project path:
 // the project itself, its parent, and a synthetic child repo. Every accepted
@@ -117,14 +159,6 @@ export function SelectList<T extends string>({
       ))}
     </Box>
   );
-}
-
-function timezoneOptions(current: string): { label: string; value: string }[] {
-  const fixed = TIMEZONE_CHOICES.map((timezone) => ({ label: timezone, value: timezone }));
-  const list = TIMEZONE_CHOICES.includes(current)
-    ? fixed
-    : [...fixed, { label: `Use current (${current})`, value: current }];
-  return [...list, { label: "Other…", value: "other" }];
 }
 
 function effectivePolicy(values: SetupValues): ToolkitConfig["branchPolicy"] {
@@ -262,11 +296,11 @@ export function Wizard({
       if (TEXT_SCREENS.has(draft.screen)) dispatch({ type: "back" });
       else dispatch({ type: "cancel" });
     } else if (input.toLowerCase() === "b" && !TEXT_SCREENS.has(draft.screen)) {
-      // While a locale search is live or being started, 'b' belongs to the
-      // query; only a typed-then-cleared search navigates back. Other screens
-      // keep plain 'b' back-navigation.
+      // While a search is live or being started on a SearchSelect screen
+      // (locale, timezone), 'b' belongs to the query; only a typed-then-cleared
+      // search navigates back. Other screens keep plain 'b' back-navigation.
       const search = searchRef.current;
-      const searchOwnsB = draft.screen === "locale" && !(search.typed && search.q === "");
+      const searchOwnsB = SEARCH_SCREENS.has(draft.screen) && !(search.typed && search.q === "");
       if (!searchOwnsB) dispatch({ type: "back" });
     }
   });
@@ -390,12 +424,18 @@ function Screen({ draft, dispatch, onSearchQueryChange }: ScreenProps): JSX.Elem
         <Box flexDirection="column" gap={1}>
           <Text bold>Step 2 — Global config · Timezone</Text>
           <Text dimColor>Timezone (IANA name):</Text>
-          <SelectList
-            options={timezoneOptions(draft.values.timezone)}
-            value={draft.values.timezone}
-            onChange={(value) => {
-              if (value !== "other") dispatch({ type: "set", field: "timezone", value });
-            }}
+          <Text>
+            Current: <Text color="green">{draft.values.timezone}</Text>
+          </Text>
+          {/* Searchable timezone picker mirroring the locale screen: the
+              detected host zone is preselected, typing filters the IANA
+              catalog, Enter commits the highlighted row. Other… keeps the
+              existing validated custom-input flow (CA-04). */}
+          <SearchSelect
+            options={timezonePickerOptions()}
+            value={DETECTED_TIMEZONE}
+            placeholder="Type to search timezones…"
+            onQueryChange={onSearchQueryChange}
             onSelect={(value) => {
               if (value === "other") dispatch({ type: "pickOther" });
               else {
@@ -405,7 +445,7 @@ function Screen({ draft, dispatch, onSearchQueryChange }: ScreenProps): JSX.Elem
             }}
           />
           {draft.errors.timezone && <Text color="red">{draft.errors.timezone}</Text>}
-          <Text dimColor>Enter to continue · b Back · Esc Cancel</Text>
+          <Text dimColor>Type to filter · Enter to continue · b Back · Esc Cancel</Text>
         </Box>
       );
     case "timezoneOther":

@@ -398,7 +398,9 @@ test("locale and timezone inputs are independent; revisiting shows the current v
     expect(tzFrame).toContain("Timezone");
     expect(tzFrame).not.toContain("es-MX");
 
-    await tty.keys("b"); // back -> locale
+    // timezone search owns cold 'b'; clear the query to hand 'b' back to nav
+    await tty.keys("b", BACKSPACE);
+    await tty.key("b"); // back -> locale
     const backFrame = tty.lastFrame();
     expect(backFrame).toContain("es-MX");
     expect(backFrame).not.toContain("UTC");
@@ -485,7 +487,8 @@ test("Back preserves the draft values entered so far", async () => {
     await tty.keys(ESC); // back from a text screen -> branchPreset
     expect(tty.lastFrame()).toContain("GitHub Flow");
     await tty.keys("b"); // back -> timezone
-    await tty.keys("b"); // back -> locale
+    await tty.keys("b", BACKSPACE); // cold 'b' searches; clearing hands it back…
+    await tty.key("b"); // …then navigates back -> locale
     expect(tty.lastFrame()).toContain("es-MX");
     tty.unmount();
   } finally {
@@ -671,7 +674,9 @@ test("arrows move within the filtered set and Enter commits the highlighted row"
     expect(tty.lastFrame()).toContain("❯ Español (Chile)");
     await tty.key(ENTER);
     expect(tty.lastFrame()).toContain("Timezone");
-    await tty.keys("b"); // back -> the select screen shows the committed value
+    // timezone search owns cold 'b'; clear the query to hand 'b' back to nav
+    await tty.keys("b", BACKSPACE);
+    await tty.key("b"); // back -> the select screen shows the committed value
     expect(tty.lastFrame()).toContain("Current: es-CL");
     tty.unmount();
   } finally {
@@ -711,6 +716,95 @@ test("'b' starts a search instead of walking back; once cleared it navigates bac
     expect(tty.lastFrame()).toContain("Español (España)"); // full list restored
     await tty.key("b"); // cleared search hands 'b' back to navigation
     expect(tty.lastFrame()).toContain("Step 1 — Platforms");
+    tty.unmount();
+  } finally {
+    cleanup();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Timezone SearchSelect (Task 4): full IANA catalog with the detected host
+// zone preselected; identical consumed-'b' semantics as locale (the wizard's
+// global back handler would otherwise eat the first query character).
+// ---------------------------------------------------------------------------
+
+const detectedTz = (): string => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+
+test("the detected zone is preselected without typing", async () => {
+  const cleanup = withSeedConfig(seedConfig);
+  try {
+    const tty = await renderInk(<Wizard onExit={noop} />);
+    await tty.keys(SPACE, ENTER); // -> locale
+    await tty.keys(ENTER); // commit highlighted locale -> timezone
+    const frame = tty.lastFrame();
+    expect(frame).toContain("Timezone");
+    expect(frame).toContain("Type to filter"); // searchable picker mounted
+    expect(frame).toContain(`❯ ${detectedTz()}`); // preselected, zero typing
+    expect(frame).not.toContain("Use current"); // fixed SelectList gone
+    tty.unmount();
+  } finally {
+    cleanup();
+  }
+});
+
+test("typing narrows the timezone picker and Enter commits the searched zone", async () => {
+  const cleanup = withSeedConfig(seedConfig);
+  try {
+    const tty = await renderInk(<Wizard onExit={noop} />);
+    await tty.keys(SPACE, ENTER, ENTER); // -> timezone
+    await tty.keys("santiago");
+    const narrowed = tty.lastFrame();
+    expect(narrowed).toContain("America/Santiago");
+    expect(narrowed).not.toContain("Europe/London");
+    await tty.key(ENTER); // commit America/Santiago -> branchPreset
+    expect(tty.lastFrame()).toContain("Branch policy");
+    await tty.keys("b"); // back -> the picker shows the committed draft value
+    expect(tty.lastFrame()).toContain("Current: America/Santiago");
+    tty.unmount();
+  } finally {
+    cleanup();
+  }
+});
+
+test("'b' starts a timezone search instead of walking back; once cleared it navigates back", async () => {
+  const cleanup = withSeedConfig(seedConfig);
+  try {
+    const tty = await renderInk(<Wizard onExit={noop} />);
+    await tty.keys(SPACE, ENTER, ENTER); // -> timezone
+    await tty.key("b"); // cold 'b' must reach the query, never walk back
+    const searching = tty.lastFrame();
+    expect(searching).toContain("Timezone"); // still the picker…
+    expect(searching).not.toContain("Locale"); // …never walked back
+    expect(searching).not.toContain("Type to search timezones…"); // live query owns the field
+    await tty.key("b"); // live query keeps consuming 'b'
+    expect(tty.lastFrame()).not.toContain("Type to search timezones…");
+    for (let i = 0; i < 2; i++) await tty.key(BACKSPACE); // clear the query
+    const restored = tty.lastFrame();
+    expect(restored).toContain("Type to search timezones…"); // full window restored…
+    expect(restored).toContain(`❯ ${detectedTz()}`); // …detected zone re-highlighted
+    await tty.key("b"); // cleared search hands 'b' back to navigation
+    expect(tty.lastFrame()).toContain("Locale");
+    tty.unmount();
+  } finally {
+    cleanup();
+  }
+});
+
+test("'Other…' keeps the validated custom-timezone flow (CA-04)", async () => {
+  const cleanup = withSeedConfig(seedConfig);
+  try {
+    const tty = await renderInk(<Wizard onExit={noop} />);
+    await tty.keys(SPACE, ENTER, ENTER); // -> timezone
+    // DOWN isolates Other… ("other" also substring-matches Antarctica/Rothera)
+    await tty.keys("other", DOWN, ENTER);
+    expect(tty.lastFrame()).toContain("custom");
+    await tty.keys("Not/AZone", ENTER); // validateTimezone blocks unknown names
+    const invalid = tty.lastFrame();
+    expect(invalid).toContain("unknown timezone");
+    expect(invalid).toContain("custom");
+    for (let i = 0; i < "Not/AZone".length; i++) await tty.key(BACKSPACE);
+    await tty.keys("Europe/Madrid", ENTER);
+    expect(tty.lastFrame()).toContain("Branch policy");
     tty.unmount();
   } finally {
     cleanup();

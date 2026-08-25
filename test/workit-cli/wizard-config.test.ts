@@ -24,11 +24,13 @@ import {
   buildSetupPreview,
   TOKEN_PLACEHOLDER,
   collectConfigValues,
+  validateTimezone,
   type SetupMutation,
   type SetupPreviewInput,
 } from "../../packages/workit-cli/src/logic";
 import { createInitialDraft, reducer } from "../../packages/workit-cli/src/wizard-state";
 import { LOCALE_LANGUAGE_MAP, filterOptions } from "../../packages/workit-cli/src/search-select";
+import { timezonePickerOptions } from "../../packages/workit-cli/src/steps";
 
 // WZ-04-WZ-06, WZ-08, RL-02, RL-06 wizard scope; CA-12, CA-14, CA-22, CA-23.
 // readSetupState / mergePreset / buildSetupPreview must be pure readers: preview
@@ -656,4 +658,52 @@ test("selecting a mapped row commits its BCP-47 locale through the reducer", () 
   d = reducer(d, { type: "next" });
   expect(d.screen).toBe("timezone");
   expect(d.values.locale).toBe("es-419");
+});
+
+// ---------------------------------------------------------------------------
+// Timezone SearchSelect (Task 4): full IANA catalog through filterOptions,
+// catalog consistency with the KNOWN_TIMEZONES guard in logic.ts, and reducer
+// commit. Other… keeps validateTimezone (CA-04) untouched.
+// ---------------------------------------------------------------------------
+
+test('filterOptions("Santiago") caps at 5 rows including America/Santiago', () => {
+  const matches = filterOptions(timezonePickerOptions(), "Santiago");
+  expect(matches.length).toBeGreaterThan(0);
+  expect(matches.length).toBeLessThanOrEqual(5);
+  expect(matches.map((m) => m.value)).toContain("America/Santiago");
+});
+
+test("timezone catalog matches the KNOWN_TIMEZONES guard and contains the detected zone", () => {
+  const options = timezonePickerOptions();
+  expect(options[options.length - 1].value).toBe("other");
+  const detected = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  // The detected zone heads the list so its preselection is visible without
+  // typing; the remainder is the runtime's IANA set when supportedValuesOf
+  // exists (validateTimezone enforces membership exactly then — the same
+  // guard shape as logic.ts KNOWN_TIMEZONES), else the static fallback while
+  // validation stays open.
+  expect(options[0].value).toBe(detected);
+  const rest = options.slice(1, -1).map((option) => option.value);
+  if (typeof Intl.supportedValuesOf === "function") {
+    expect([...rest].sort()).toEqual(
+      Intl.supportedValuesOf("timeZone")
+        .filter((tz) => tz !== detected)
+        .sort(),
+    );
+  } else {
+    expect(validateTimezone("Not/AZone")).toBeNull();
+  }
+});
+
+test("committing a searched zone updates the draft through the reducer", () => {
+  let d = createInitialDraft(config());
+  d = reducer(d, { type: "set", field: "platforms", value: ["opencode"] });
+  d = reducer(d, { type: "next" }); // -> locale
+  d = reducer(d, { type: "next" }); // -> timezone
+  d = reducer(d, { type: "set", field: "timezone", value: "America/Santiago" });
+  expect(validateTimezone("America/Santiago")).toBeNull();
+  expect(d.errors.timezone).toBeUndefined();
+  d = reducer(d, { type: "next" });
+  expect(d.screen).toBe("branchPreset");
+  expect(d.values.timezone).toBe("America/Santiago");
 });
