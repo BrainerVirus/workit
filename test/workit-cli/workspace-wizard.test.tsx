@@ -34,6 +34,7 @@ import type { ToolkitConfig } from "../../packages/workit-core/src/core/config";
 const ENTER = "\r";
 const ESC = "\x1b\x1b\x1b";
 const UP = "\u001b[A";
+const DOWN = "\u001b[B";
 const SPACE = " ";
 const BACKSPACE = "\x7f";
 
@@ -78,6 +79,7 @@ function draftWith(workspaces: WorkspaceConfig[]): WizardDraft {
       branchProtected: "",
       baseUrl: "",
       vcsProvider: "gitlab",
+      issueTracker: "youtrack",
       workspaces,
       applyProject: false,
     },
@@ -109,7 +111,10 @@ const previewValues = (over: Partial<SetupPreviewInput> = {}): SetupPreviewInput
 });
 
 async function gotoWorkspaces(tty: Awaited<ReturnType<typeof renderInk>>) {
-  await tty.keys(SPACE, ENTER, ENTER, ENTER, ENTER, ENTER, ENTER);
+  // platforms SPACE+ENTER, locale/timezone ENTERs, branchPreset ENTER (gitflow
+  // skips the custom screens), issueTracker ENTER (YouTrack default), youtrack
+  // ENTER on the empty base URL.
+  await tty.keys(SPACE, ENTER, ENTER, ENTER, ENTER, ENTER, ENTER, ENTER);
   expect(tty.lastFrame()).toContain("Step 5 — Workspaces");
 }
 
@@ -660,5 +665,86 @@ test("createInitialDraft seeds workspaces from the configured dir", () => {
   } finally {
     delete process.env.WORKFLOW_TOOLKIT_CONFIG;
     clean(dir);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Issue tracker selection (Task 5): None never reaches the base-url screen and
+// the summary shows "—" with zero youtrack mutations; GitHub Issues links new
+// workspaces through WorkspaceConfig.issues.
+// ---------------------------------------------------------------------------
+
+test("choosing None skips the baseUrl screen: summary shows — and applies no youtrack writes", async () => {
+  const configDir = tmp("wk-tracker-none-cfg-");
+  const project = tmp("wk-tracker-none-proj-");
+  const previous = process.cwd();
+  process.chdir(project);
+  try {
+    withConfigDir(configDir);
+    const exitCalls: boolean[] = [];
+    const tty = await renderInk(<Wizard onExit={(ok) => exitCalls.push(ok)} />);
+    await tty.keys(SPACE, ENTER, ENTER, ENTER, ENTER); // -> issueTracker
+    await tty.keys(DOWN, DOWN, ENTER); // None -> vcs (youtrack skipped)
+    await tty.keys(ENTER); // gitlab -> workspaces
+    await tty.keys(ENTER); // Done -> project
+    await tty.keys("y"); // -> summary
+    const frame = tty.lastFrame();
+    expect(frame).toContain("Will apply");
+    expect(frame).toContain("YouTrack base URL:");
+    expect(frame).toContain("—");
+    expect(frame).not.toContain("(skip)");
+    expect(frame).not.toContain("youtrack.json");
+    expect(frame).not.toContain("youtrack.token");
+    await tty.keys("y"); // apply
+    expect(exitCalls).toEqual([true]);
+    tty.unmount();
+  } finally {
+    process.chdir(previous);
+    delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+    clean(configDir);
+    clean(project);
+  }
+});
+
+test("choosing GitHub Issues defaults new workspaces to github with issues linked", async () => {
+  const configDir = tmp("wk-tracker-gh-cfg-");
+  const project = tmp("wk-tracker-gh-proj-");
+  const previous = process.cwd();
+  process.chdir(project);
+  let captured: WizardDraft["values"] | undefined;
+  try {
+    withConfigDir(configDir);
+    const exitCalls: boolean[] = [];
+    const tty = await renderInk(
+      <Wizard
+        onExit={(ok, values) => {
+          exitCalls.push(ok);
+          if (ok && values) captured = values;
+        }}
+      />,
+    );
+    await tty.keys(SPACE, ENTER, ENTER, ENTER, ENTER); // -> issueTracker
+    await tty.keys(DOWN, ENTER); // GitHub Issues -> vcs
+    await tty.keys(DOWN, ENTER); // github provider -> workspaces
+    await tty.keys(UP, ENTER); // Use current project -> entry added
+    const menu = tty.lastFrame();
+    expect(menu).toContain("✓ matches");
+    expect(menu).toContain("github");
+    await tty.keys(ENTER); // Done -> project
+    await tty.keys("y"); // -> summary
+    expect(tty.lastFrame()).toContain("YouTrack base URL:");
+    expect(tty.lastFrame()).not.toContain("(skip)");
+    await tty.keys("y"); // apply
+    expect(exitCalls).toEqual([true]);
+    expect(captured?.issueTracker).toBe("github");
+    expect(captured?.baseUrl).toBe("");
+    expect(captured?.workspaces[0].vcs?.provider).toBe("github");
+    expect(captured?.workspaces[0].issues).toEqual({ provider: "github", link_on_pr: true });
+    tty.unmount();
+  } finally {
+    process.chdir(previous);
+    delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+    clean(configDir);
+    clean(project);
   }
 });

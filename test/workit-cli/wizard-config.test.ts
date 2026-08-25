@@ -707,3 +707,143 @@ test("committing a searched zone updates the draft through the reducer", () => {
   expect(d.screen).toBe("branchPreset");
   expect(d.values.timezone).toBe("America/Santiago");
 });
+
+// ---------------------------------------------------------------------------
+// Issue tracker selection (Task 5): SetupValues.issueTracker gates the YouTrack
+// screen exactly like skipsCustomBranch gates the custom-branch screens, and
+// the github/none choices rewire workspace defaults without core edits.
+// ---------------------------------------------------------------------------
+
+// Custom preset so every branch screen is visited on the way to issueTracker.
+const startCustom = (): ReturnType<typeof createInitialDraft> => {
+  let d = createInitialDraft(
+    config({ preset: "custom", allowed: ["feature/*"], protected: ["main"] }),
+  );
+  d = reducer(d, { type: "set", field: "platforms", value: ["opencode"] });
+  d = reducer(d, { type: "next" }); // -> locale
+  d = reducer(d, { type: "next" }); // -> timezone
+  d = reducer(d, { type: "next" }); // -> branchPreset
+  d = reducer(d, { type: "set", field: "branchPreset", value: "custom" });
+  d = reducer(d, { type: "next" }); // -> branchAllowed
+  d = reducer(d, { type: "set", field: "branchAllowed", value: "feature/*" });
+  d = reducer(d, { type: "next" }); // -> branchProtected
+  d = reducer(d, { type: "set", field: "branchProtected", value: "main" });
+  return d;
+};
+
+test("issueTracker defaults to youtrack and sits between branchProtected and youtrack", () => {
+  expect(createInitialDraft(config()).values.issueTracker).toBe("youtrack");
+
+  let d = startCustom();
+  d = reducer(d, { type: "next" });
+  expect(d.screen).toBe("issueTracker");
+  expect(reducer(d, { type: "back" }).screen).toBe("branchProtected");
+
+  // Default selection YouTrack keeps the base-url screen in the flow.
+  d = reducer(d, { type: "next" });
+  expect(d.screen).toBe("youtrack");
+  expect(reducer(d, { type: "back" }).screen).toBe("issueTracker");
+  d = reducer(d, { type: "next" });
+  expect(d.screen).toBe("vcs");
+  expect(reducer(d, { type: "back" }).screen).toBe("youtrack");
+});
+
+test("none/github skip the youtrack screen in both directions; non-custom presets reach issueTracker", () => {
+  // gitflow preset: branch screens skip straight to the new select screen
+  let g = createInitialDraft(config());
+  g = reducer(g, { type: "set", field: "platforms", value: ["opencode"] });
+  g = reducer(g, { type: "next" }); // -> locale
+  g = reducer(g, { type: "next" }); // -> timezone
+  g = reducer(g, { type: "next" }); // -> branchPreset
+  g = reducer(g, { type: "next" }); // skips branchAllowed/branchProtected
+  expect(g.screen).toBe("issueTracker");
+
+  const atIssueTracker = reducer(startCustom(), { type: "next" });
+  for (const tracker of ["none", "github"] as const) {
+    let t = reducer(atIssueTracker, { type: "set", field: "issueTracker", value: tracker });
+    t = reducer(t, { type: "next" });
+    expect(t.screen, tracker).toBe("vcs"); // skipped forward
+    t = reducer(t, { type: "back" });
+    expect(t.screen, tracker).toBe("issueTracker"); // skipped backward too
+  }
+});
+
+test("choosing None drops a typed base URL: preview carries zero youtrack mutations", () => {
+  const dir = tempDir();
+  try {
+    process.env.WORKFLOW_TOOLKIT_CONFIG = dir;
+    let d = createInitialDraft(config());
+    d = reducer(d, { type: "set", field: "baseUrl", value: "https://yt.example.com" });
+    d = reducer(d, { type: "set", field: "vcsProvider", value: "gitlab" });
+    d = reducer(d, { type: "set", field: "issueTracker", value: "none" });
+    expect(d.values.baseUrl).toBe("");
+    expect(d.errors.baseUrl).toBeUndefined();
+    const preview = buildSetupPreview(d.values, { dir, env: {} });
+    expect(preview.ok).toBe(true);
+    expect(preview.mutations.some((m) => m.path.endsWith("youtrack.json"))).toBe(false);
+    expect(preview.mutations.some((m) => m.path.endsWith("youtrack.token"))).toBe(false);
+    // switching back keeps the cleared value — the user retypes it deliberately
+    d = reducer(d, { type: "set", field: "issueTracker", value: "youtrack" });
+    expect(d.values.baseUrl).toBe("");
+  } finally {
+    delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+    clean(dir);
+  }
+});
+
+test("github mode: new workspaces default provider github with issues linked", () => {
+  const dir = tempDir();
+  try {
+    process.env.WORKFLOW_TOOLKIT_CONFIG = dir;
+    let d = createInitialDraft(config());
+    d = reducer(d, { type: "set", field: "issueTracker", value: "github" });
+    // the tracker wins over an unrelated gitlab VCS selection (writeWorkspaces
+    // validation requires the github provider for linked issues)
+    d = reducer(d, { type: "set", field: "vcsProvider", value: "gitlab" });
+
+    d = reducer(d, { type: "workspaceAddCurrent", path: "/home/u/proj" });
+    expect(d.values.workspaces[0].vcs?.provider).toBe("github");
+    expect(d.values.workspaces[0].issues).toEqual({ provider: "github", link_on_pr: true });
+
+    d = reducer(d, { type: "workspaceAdd" });
+    expect(d.workspaceDraft?.vcs?.provider).toBe("github");
+    expect(d.workspaceDraft?.issues).toEqual({ provider: "github", link_on_pr: true });
+
+    const preview = buildSetupPreview(d.values, { dir, cwd: dir, env: {} });
+    const ws = preview.mutations.find((m) => m.type === "update-workspaces") as Extract<
+      SetupMutation,
+      { type: "update-workspaces" }
+    >;
+    expect(ws.entries[0].issues).toEqual({ provider: "github", link_on_pr: true });
+    expect(ws.entries[0].vcs?.provider).toBe("github");
+  } finally {
+    delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+    clean(dir);
+  }
+});
+
+test("youtrack mode stays byte-identical: preview equals the legacy literal input", () => {
+  const dir = tempDir();
+  try {
+    process.env.WORKFLOW_TOOLKIT_CONFIG = dir;
+    let d = createInitialDraft(config());
+    d = reducer(d, { type: "set", field: "baseUrl", value: "https://yt.example.com" });
+    d = reducer(d, { type: "set", field: "vcsProvider", value: "gitlab" });
+    d = reducer(d, { type: "workspaceAddCurrent", path: "/home/u/proj" });
+    const legacy = values({
+      baseUrl: "https://yt.example.com",
+      vcsProvider: "gitlab",
+      workspaces: [{ name: "proj", glob: "/home/u/proj/**", vcs: { provider: "gitlab" } }],
+    });
+    const fromWizard = buildSetupPreview(d.values, { dir, cwd: dir, env: {} });
+    const literal = buildSetupPreview(legacy, { dir, cwd: dir, env: {} });
+    expect(JSON.stringify(fromWizard.mutations)).toBe(JSON.stringify(literal.mutations));
+    // no issues linking leaks into youtrack-mode workspaces
+    expect(
+      JSON.stringify(fromWizard.mutations.filter((m) => m.type === "update-workspaces")),
+    ).not.toContain('"issues"');
+  } finally {
+    delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+    clean(dir);
+  }
+});

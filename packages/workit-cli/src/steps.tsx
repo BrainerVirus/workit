@@ -37,6 +37,12 @@ const VCS_PROVIDERS = [
   { label: "Skip — configure later", value: "skip" },
 ];
 
+const ISSUE_TRACKERS: { label: string; value: SetupValues["issueTracker"] }[] = [
+  { label: "YouTrack", value: "youtrack" },
+  { label: "GitHub Issues", value: "github" },
+  { label: "None", value: "none" },
+];
+
 // Timezone catalog: the runtime's full canonical IANA set when available,
 // else a static fallback of common zones. Guard shape mirrors logic.ts
 // KNOWN_TIMEZONES — validateTimezone enforces membership exactly when
@@ -517,6 +523,23 @@ function Screen({ draft, dispatch, onSearchQueryChange }: ScreenProps): JSX.Elem
           <Text dimColor>Enter to continue · Esc Back</Text>
         </Box>
       );
+    case "issueTracker":
+      // Task 5: plain three-option select (no search gate needed) sitting where
+      // Step 3 lives today; YouTrack keeps the base-url screen, the others skip
+      // it in both directions via the shared reducer gating.
+      return (
+        <Box flexDirection="column" gap={1}>
+          <Text bold>Step 3 — Issue tracker</Text>
+          <Text dimColor>Where do issues live?</Text>
+          <SelectList
+            options={ISSUE_TRACKERS}
+            value={draft.values.issueTracker}
+            onChange={(value) => dispatch({ type: "set", field: "issueTracker", value })}
+            onSelect={() => dispatch({ type: "next" })}
+          />
+          <Text dimColor>Enter to continue · b Back · Esc Cancel</Text>
+        </Box>
+      );
     case "youtrack":
       return (
         <Box flexDirection="column" gap={1}>
@@ -728,7 +751,11 @@ function Screen({ draft, dispatch, onSearchQueryChange }: ScreenProps): JSX.Elem
           <Text>
             YouTrack base URL:{" "}
             <Text color="green">
-              {draft.values.baseUrl.trim() ? draft.values.baseUrl : "— (skip)"}
+              {draft.values.issueTracker === "youtrack"
+                ? draft.values.baseUrl.trim()
+                  ? draft.values.baseUrl
+                  : "— (skip)"
+                : "—"}
             </Text>
           </Text>
           <Text>

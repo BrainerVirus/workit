@@ -53,10 +53,11 @@ test("CA-06: wizard branch-policy apply equals the host init action write", asyn
         }}
       />,
     );
-    // platforms SPACE+ENTER, locale/timezone/branchPreset/youtrack/vcs ENTER,
-    // workspaces Done ENTER -> branchPolicy (git repo), accept defaults ENTER ->
-    // project, project y -> summary, summary y -> apply -> exit
-    await tty.keys(SPACE, ENTER, ENTER, ENTER, ENTER, ENTER, ENTER, ENTER, ENTER, "y", "y");
+    // platforms SPACE+ENTER, locale/timezone/branchPreset ENTERs, issueTracker
+    // ENTER (YouTrack), youtrack/vcs ENTERs, workspaces Done ENTER ->
+    // branchPolicy (git repo), accept defaults ENTER -> project, project y ->
+    // summary, summary y -> apply -> exit
+    await tty.keys(SPACE, ENTER, ENTER, ENTER, ENTER, ENTER, ENTER, ENTER, ENTER, ENTER, "y", "y");
     tty.unmount();
     expect(
       exitValues?.branchPolicy,
