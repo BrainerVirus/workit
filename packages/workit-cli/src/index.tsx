@@ -1,4 +1,6 @@
-import { render } from "ink";
+import { render, Box, Text } from "ink";
+import { ConfirmInput, MultiSelect } from "@inkjs/ui";
+import { useState, type JSX } from "react";
 import { Wizard } from "./steps";
 import type { SetupValues } from "./wizard-state";
 import { resolveBasePath } from "./wizard-state";
@@ -13,6 +15,12 @@ import {
   type SetupResult,
 } from "@brainervirus/workit-core/src/core/setup.ts";
 import { readSetupState, type SetupState } from "@brainervirus/workit-core/src/core/setup-state";
+import {
+  applyUninstall,
+  planUninstall,
+  type UninstallHost,
+  type UninstallPlan,
+} from "@brainervirus/workit-core/src/core/uninstall";
 import { applyWizardBranchPolicy } from "./logic";
 import { COMMANDS, runFlowCommand, runHandoffCommand } from "./flow";
 
@@ -49,6 +57,7 @@ const HELP = `workit — workflow rails for agentic coding
 Usage:
   workit init      Run the interactive setup wizard
   workit doctor    Verify the offline installation health (add --json for a machine-readable report)
+  workit uninstall Remove workit host registrations interactively (~/.config/workit is kept)
 ${COMMAND_DESCRIPTIONS.map(([cmd, desc]) => `  ${cmd.padEnd(helpColumn)}${desc}`).join("\n")}
   workit           Show this help
 
@@ -157,6 +166,111 @@ export async function runInit() {
   process.exit(exit !== undefined && exit.complete ? 0 : 1);
 }
 
+// `workit uninstall` (Task 9): TTY-only interactive host picker plus a
+// reviewable action summary BEFORE any mutation (D-08). The wizard collects a
+// host selection and an explicit confirm; planning and applying go through the
+// Task 8 core module with injectable homes resolved from process.env.HOME —
+// ~/.config/workit is never an action target. Exits: 0 ok/cancelled/nothing to
+// remove · 1 partial failure · 2 non-TTY usage error (CA-10, CA-13).
+type UninstallOutcome = { confirmed: boolean; hosts: UninstallHost[]; plan: UninstallPlan | null };
+
+const UNINSTALL_HOST_OPTIONS = [
+  { label: "OpenCode", value: "opencode" as const },
+  { label: "Cursor", value: "cursor" as const },
+];
+
+function UninstallWizard({ onExit }: { onExit: (outcome: UninstallOutcome) => void }): JSX.Element {
+  const [hosts, setHosts] = useState<UninstallHost[]>([]);
+  const [plan, setPlan] = useState<UninstallPlan | null>(null);
+  if (!plan) {
+    return (
+      <Box flexDirection="column" gap={1}>
+        <Text bold>Uninstall workit</Text>
+        <Text dimColor>Select the hosts to remove workit from (space to toggle):</Text>
+        <MultiSelect
+          options={UNINSTALL_HOST_OPTIONS}
+          defaultValue={[]}
+          onChange={(values) => setHosts(values as UninstallHost[])}
+          onSubmit={(values) => {
+            setHosts(values as UninstallHost[]);
+            setPlan(planUninstall({ env: process.env }));
+          }}
+        />
+        <Text dimColor>Enter to continue</Text>
+      </Box>
+    );
+  }
+  const selected = plan.hosts.filter((h) => hosts.includes(h.host));
+  return (
+    <Box flexDirection="column" gap={1}>
+      <Text bold>Uninstall workit — review</Text>
+      {selected.every((h) => h.actions.length === 0) ? (
+        <Text>No workit registrations found for the selected hosts.</Text>
+      ) : (
+        selected.flatMap((h) =>
+          h.actions.map((a) => (
+            <Text key={`${h.host}:${a.path}`}>
+              • [{h.host}] {a.detail}:
+            </Text>
+          )),
+        )
+      )}
+      <Text>Apply uninstall? (y/N)</Text>
+      <ConfirmInput
+        onConfirm={() => onExit({ confirmed: true, hosts, plan })}
+        onCancel={() => onExit({ confirmed: false, hosts, plan })}
+      />
+    </Box>
+  );
+}
+
+export async function runUninstall() {
+  if (process.stdin.isTTY !== true) {
+    console.log("workit uninstall requires an interactive terminal (TTY).");
+    console.log(
+      "It removes workit registrations from OpenCode and/or Cursor; your ~/.config/workit configuration is always kept.",
+    );
+    process.exit(2);
+  }
+  const outcomes: UninstallOutcome[] = [];
+  let done: () => void = () => {};
+  const { waitUntilExit, unmount } = render(
+    <UninstallWizard
+      onExit={(outcome) => {
+        outcomes.push(outcome);
+        done();
+      }}
+    />,
+  );
+  done = unmount;
+  await waitUntilExit();
+  const outcome = outcomes[0];
+  if (!outcome || !outcome.confirmed || !outcome.plan) {
+    console.log("Uninstall cancelled — nothing was changed.");
+    process.exit(0);
+  }
+  const actions = outcome.plan.hosts
+    .filter((h) => outcome.hosts.includes(h.host))
+    .flatMap((h) => h.actions);
+  if (actions.length === 0) {
+    console.log("Nothing to remove for the selected hosts.");
+    process.exit(0);
+  }
+  // Apply only the reviewed selection: filter the reviewed plan down to the
+  // hosts the user picked and dispatch exactly those actions.
+  const result = applyUninstall(
+    { hosts: outcome.plan.hosts.filter((h) => outcome.hosts.includes(h.host)) },
+    { env: process.env },
+  );
+  for (const entry of result.entries) {
+    console.log(
+      `${entry.status.padEnd(8)} ${entry.path}${entry.detail ? ` — ${entry.detail}` : ""}`,
+    );
+  }
+  console.log(result.ok ? "Uninstall complete." : "Uninstall finished with problems.");
+  process.exit(result.ok ? 0 : 1);
+}
+
 // `workit doctor` (DG-07): offline engine, human or --json report, exit code
 // reflects the health. Never writes the report to stderr (the logger owns that).
 function runDoctorCommand(args: string[]) {
@@ -201,6 +315,8 @@ if (import.meta.main) {
     process.exit(await runFlowCommand(args.slice(1)));
   } else if (subcommand === "handoff") {
     process.exit(await runHandoffCommand(args.slice(1)));
+  } else if (subcommand === "uninstall") {
+    await runUninstall();
   } else {
     console.log(HELP);
     process.exit(0);

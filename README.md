@@ -123,6 +123,17 @@ Local dev variant (absolute path to this repo):
 
 A local (non-npm) Cursor install lives at `~/.cursor/plugins/local/workit` and registers `enabled_plugins.workit = true`; the installer migrates exact legacy `workflow-toolkit` entries after the replacement succeeds. Marketplace installation, the MCP/hook runtime, and the authenticated submission flow are documented in the [Cursor package README](packages/workit-cursor/README.md#marketplace). The Cursor runtime runs from `@latest` with the mandatory `--prefer-online` flag — `--prefer-online` forces fresh registry re-resolution so a stale `latest` in the `_npx` cache is never reused, and no per-release manual pin bump is required. Auto-load repair is automatic: the doctor's `stale_install` finding (legacy `mcp.json`/hook selectors, or a local-dist install behind the current/published runtime) is enforced by `install-cursor-plugin.sh` through a `doctor-check.ts cursor --stale` pre-check — exit 2 triggers a refresh + canonical re-registration, healthy installs are byte-untouched, and a registry-unreachable comparison warns as `registry_unreachable` (fail-open, never an install failure).
 
+### Uninstall
+
+Run `npx @brainervirus/workit-cli uninstall` in a terminal (TTY required) to remove workit from your hosts interactively: pick OpenCode and/or Cursor, review the exact actions before anything changes, then confirm.
+
+What is removed per selected host:
+
+- **OpenCode** — the workit plugin entries are removed from `~/.config/opencode/opencode.json`. Every other plugin entry and config key stays.
+- **Cursor** — the `workit` entry (and its legacy `workflow-toolkit` identities) is dropped from `enabled_plugins` in `~/.cursor/settings.json`, the canonical directory entry leaves `plugin_dirs`, the `workit` MCP server registration is removed from `~/.cursor/mcp.json`, and the local plugin directory `~/.cursor/plugins/local/workit` is deleted. Unrelated plugins, MCP servers, and settings stay.
+
+What is kept: your entire `~/.config/workit` configuration — locale, timezone, branch policy, YouTrack/VCS credentials, and workspaces are never touched. Only the reviewed actions run; a malformed host file fails untouched instead of being overwritten. Exit codes: `0` removed / nothing to do · `1` partial failure · `2` non-interactive usage.
+
 ## Requirements
 
 - **Node.js ≥ 22** — the published CLI, OpenCode plugin, and Cursor MCP/hook artifacts run on Node 22+ (Ink 7 requires Node ≥ 22).
