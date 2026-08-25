@@ -210,7 +210,7 @@ function UninstallWizard({ onExit }: { onExit: (outcome: UninstallOutcome) => vo
         selected.flatMap((h) =>
           h.actions.map((a) => (
             <Text key={`${h.host}:${a.path}`}>
-              • [{h.host}] {a.detail}:
+              • [{h.host}] {a.detail}: {a.path}
             </Text>
           )),
         )

@@ -196,6 +196,7 @@ test("uninstall removes only the selected host and preserves unselected hosts + 
     // D-08: the reviewable action summary was shown before the mutation.
     expect(joined).toContain("Apply uninstall?");
     expect(joined).toContain("remove workit plugin entries from opencode.json");
+    expect(joined).toContain(fx.opencodeConfig);
 
     // OpenCode: the workit plugin entry is gone; unrelated entries stay.
     const oc = JSON.parse(readFileSync(fx.opencodeConfig, "utf8")) as {
