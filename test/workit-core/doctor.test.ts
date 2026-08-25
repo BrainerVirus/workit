@@ -1233,10 +1233,18 @@ test(
       encoding: "utf8",
       timeout: 300_000,
     });
-    expect(r.status, r.stderr.slice(0, 2000)).toBe(0);
-    const output = `${r.stdout ?? ""}\n${r.stderr ?? ""}`;
-    expect(output).not.toMatch(/usage: git diff/);
-    expect(output).not.toMatch(/fatal: /);
+    // Head + tail: bun prints failures at the END of stderr, and a head-only
+    // slice truncated the real failing test name out of CI logs (the flake
+    // seen on the v0.9.2 sync merge).
+    const evidence = `${r.stdout ?? ""}\n${r.stderr ?? ""}`;
+    expect(
+      r.status,
+      `${r.stderr?.slice(0, 1200) ?? ""}\n---stderr tail---\n${
+        r.stderr?.slice(-1500) ?? ""
+      }\n---stdout tail---\n${r.stdout?.slice(-800) ?? ""}`,
+    ).toBe(0);
+    expect(evidence).not.toMatch(/usage: git diff/);
+    expect(evidence).not.toMatch(/fatal: /);
   },
   { timeout: 300_000 },
 );
