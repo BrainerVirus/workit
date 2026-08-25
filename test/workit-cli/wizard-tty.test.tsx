@@ -483,31 +483,33 @@ test("custom branch policy requires nonempty allowed and protected patterns", as
 });
 
 test("Back preserves the draft values entered so far", async () => {
-  const cleanup = withSeedConfig(seedConfig);
-  try {
-    const tty = await renderInk(<Wizard onExit={noop} />);
-    await tty.keys(SPACE, ENTER); // -> locale
-    await tty.keys("mx", ENTER); // search narrows to Español (México) -> timezone
-    await tty.keys(ENTER); // -> branchPreset
-    await tty.keys(DOWN, ENTER); // github-flow -> issueTracker
-    await tty.keys(ENTER); // YouTrack -> youtrack
-    await tty.keys(ENTER); // -> vcs
-    await tty.keys(DOWN, ENTER); // github -> workspaces
-    await tty.keys("b"); // back -> vcs
-    expect(tty.lastFrame()).toContain("GitHub");
-    await tty.keys("b"); // back -> youtrack
-    await tty.keys(ESC); // back from a text screen -> issueTracker
-    expect(tty.lastFrame()).toContain("Issue tracker");
-    await tty.keys("b"); // back -> branchPreset (custom screens skipped)
-    expect(tty.lastFrame()).toContain("GitHub Flow");
-    await tty.keys("b"); // back -> timezone
-    await tty.keys("b", BACKSPACE); // cold 'b' searches; clearing hands it back…
-    await tty.key("b"); // …then navigates back -> locale
-    expect(tty.lastFrame()).toContain("es-MX");
-    tty.unmount();
-  } finally {
-    cleanup();
-  }
+  await withNonGitRoot(async () => {
+    const cleanup = withSeedConfig(seedConfig);
+    try {
+      const tty = await renderInk(<Wizard onExit={noop} />);
+      await tty.keys(SPACE, ENTER); // -> locale
+      await tty.keys("mx", ENTER); // search narrows to Español (México) -> timezone
+      await tty.keys(ENTER); // -> branchPreset
+      await tty.keys(DOWN, ENTER); // github-flow -> issueTracker
+      await tty.keys(ENTER); // YouTrack -> youtrack
+      await tty.keys(ENTER); // -> vcs
+      await tty.keys(DOWN, ENTER); // github -> workspaces
+      await tty.keys("b"); // back -> vcs
+      expect(tty.lastFrame()).toContain("GitHub");
+      await tty.keys("b"); // back -> youtrack
+      await tty.keys(ESC); // back from a text screen -> issueTracker
+      expect(tty.lastFrame()).toContain("Issue tracker");
+      await tty.keys("b"); // back -> branchPreset (custom screens skipped)
+      expect(tty.lastFrame()).toContain("GitHub Flow");
+      await tty.keys("b"); // back -> timezone
+      await tty.keys("b", BACKSPACE); // cold 'b' searches; clearing hands it back…
+      await tty.key("b"); // …then navigates back -> locale
+      expect(tty.lastFrame()).toContain("es-MX");
+      tty.unmount();
+    } finally {
+      cleanup();
+    }
+  });
 });
 
 test("Escape cancels without writing anything", async () => {
@@ -530,21 +532,23 @@ test("Escape cancels without writing anything", async () => {
 });
 
 test("no competing Enter/provider race — one submit path per screen", async () => {
-  const cleanup = withSeedConfig(seedConfig);
-  try {
-    const tty = await renderInk(<Wizard onExit={noop} />);
-    await tty.keys(SPACE, ENTER, ENTER, ENTER, ENTER, ENTER, ENTER); // -> vcs
-    expect(tty.lastFrame()).toContain("Step 4");
-    await tty.keys(DOWN, ENTER); // gitlab -> github, submit once
-    expect(tty.lastFrame()).toContain("Workspaces");
-    await tty.keys("b"); // back -> vcs
-    expect(tty.lastFrame()).toContain("GitHub");
-    await tty.keys(ENTER); // submit again -> workspaces
-    expect(tty.lastFrame()).toContain("Workspaces");
-    tty.unmount();
-  } finally {
-    cleanup();
-  }
+  await withNonGitRoot(async () => {
+    const cleanup = withSeedConfig(seedConfig);
+    try {
+      const tty = await renderInk(<Wizard onExit={noop} />);
+      await tty.keys(SPACE, ENTER, ENTER, ENTER, ENTER, ENTER, ENTER); // -> vcs
+      expect(tty.lastFrame()).toContain("Step 4");
+      await tty.keys(DOWN, ENTER); // gitlab -> github, submit once
+      expect(tty.lastFrame()).toContain("Workspaces");
+      await tty.keys("b"); // back -> vcs
+      expect(tty.lastFrame()).toContain("GitHub");
+      await tty.keys(ENTER); // submit again -> workspaces
+      expect(tty.lastFrame()).toContain("Workspaces");
+      tty.unmount();
+    } finally {
+      cleanup();
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------

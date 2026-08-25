@@ -12,6 +12,7 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { PassThrough } from "node:stream";
 import {
   LOCALE_RE,
   mergePreset,
@@ -28,9 +29,14 @@ import {
   type SetupMutation,
   type SetupPreviewInput,
 } from "../../packages/workit-cli/src/logic";
-import { createInitialDraft, reducer } from "../../packages/workit-cli/src/wizard-state";
+import {
+  createInitialDraft,
+  reducer,
+  resolveBasePath,
+} from "../../packages/workit-cli/src/wizard-state";
 import { LOCALE_LANGUAGE_MAP, filterOptions } from "../../packages/workit-cli/src/search-select";
 import { timezonePickerOptions } from "../../packages/workit-cli/src/steps";
+import { REPO_ROOT } from "../shared/helpers/packages";
 
 // WZ-04-WZ-06, WZ-08, RL-02, RL-06 wizard scope; CA-12, CA-14, CA-22, CA-23.
 // readSetupState / mergePreset / buildSetupPreview must be pure readers: preview
@@ -847,3 +853,209 @@ test("youtrack mode stays byte-identical: preview equals the legacy literal inpu
     clean(dir);
   }
 });
+
+// ---------------------------------------------------------------------------
+// Base-path resolution (Task 6, D-06/CA-06/CA-07): WORKFLOW_WORKSPACE_ROOT env
+// wins over the prompted path; without env the basePath screen gates the
+// wizard with existsSync validation; process.cwd() is gone from every
+// workspace-preview and hygiene-target code path.
+// ---------------------------------------------------------------------------
+
+// gitflow preset walk to the vcs screen: platforms → locale → timezone →
+// branchPreset → issueTracker → youtrack → vcs (six `next`s after platforms).
+const walkToVcs = (): ReturnType<typeof createInitialDraft> => {
+  let d = createInitialDraft(config());
+  d = reducer(d, { type: "set", field: "platforms", value: ["opencode"] });
+  for (let i = 0; i < 6; i++) d = reducer(d, { type: "next" });
+  return d;
+};
+
+test("D-06: WORKFLOW_WORKSPACE_ROOT beats the prompted path and seeds the initial draft", () => {
+  const prev = process.env.WORKFLOW_WORKSPACE_ROOT;
+  try {
+    process.env.WORKFLOW_WORKSPACE_ROOT = "/tmp/wk-t6-env-root";
+    const d = createInitialDraft(config());
+    expect(d.values.basePath).toBe("/tmp/wk-t6-env-root");
+    expect(resolveBasePath(d.values)).toBe("/tmp/wk-t6-env-root");
+    // a prompted value never overrides the env…
+    const edited = reducer(d, { type: "set", field: "basePath", value: "/tmp/wk-t6-prompted" });
+    expect(resolveBasePath(edited.values)).toBe("/tmp/wk-t6-env-root");
+    // …but an explicit env argument wins over the ambient one (pure seam)
+    expect(resolveBasePath(edited.values, {})).toBe("/tmp/wk-t6-prompted");
+  } finally {
+    if (prev === undefined) delete process.env.WORKFLOW_WORKSPACE_ROOT;
+    else process.env.WORKFLOW_WORKSPACE_ROOT = prev;
+  }
+});
+
+test("D-06: without env the basePath prompt gates advancement with field errors", () => {
+  const prev = process.env.WORKFLOW_WORKSPACE_ROOT;
+  delete process.env.WORKFLOW_WORKSPACE_ROOT;
+  try {
+    let d = walkToVcs();
+    d = reducer(d, { type: "next" }); // vcs -> basePath prompt (no env)
+    expect(d.screen).toBe("basePath");
+    d = reducer(d, { type: "next" }); // empty input refuses to advance
+    expect(d.screen).toBe("basePath");
+    expect(d.errors.basePath).toContain("required");
+    d = reducer(d, { type: "set", field: "basePath", value: "relative/path" });
+    d = reducer(d, { type: "next" });
+    expect(d.screen).toBe("basePath");
+    expect(d.errors.basePath).toContain("existing absolute directory");
+    const missing = path.join(os.tmpdir(), `wk-t6-missing-${process.pid}`);
+    d = reducer(d, { type: "set", field: "basePath", value: missing });
+    d = reducer(d, { type: "next" });
+    expect(d.screen).toBe("basePath");
+    expect(d.errors.basePath).toContain("existing absolute directory");
+    const real = mkdtempSync(path.join(os.tmpdir(), "wk-t6-real-"));
+    try {
+      d = reducer(d, { type: "set", field: "basePath", value: real });
+      d = reducer(d, { type: "next" });
+      expect(d.screen).toBe("workspaces");
+      // answered once — walking back skips the prompt (mirrors youtrack gating)
+      expect(reducer(d, { type: "back" }).screen).toBe("vcs");
+    } finally {
+      rmSync(real, { recursive: true, force: true });
+    }
+  } finally {
+    if (prev === undefined) delete process.env.WORKFLOW_WORKSPACE_ROOT;
+    else process.env.WORKFLOW_WORKSPACE_ROOT = prev;
+  }
+});
+
+test("D-06: with env set the basePath screen is skipped in both directions", () => {
+  const prev = process.env.WORKFLOW_WORKSPACE_ROOT;
+  try {
+    process.env.WORKFLOW_WORKSPACE_ROOT = os.tmpdir();
+    const d = walkToVcs();
+    const fwd = reducer(d, { type: "next" });
+    expect(fwd.screen).toBe("workspaces");
+    expect(reducer(fwd, { type: "back" }).screen).toBe("vcs");
+  } finally {
+    if (prev === undefined) delete process.env.WORKFLOW_WORKSPACE_ROOT;
+    else process.env.WORKFLOW_WORKSPACE_ROOT = prev;
+  }
+});
+
+class ExitSentinel extends Error {
+  constructor(readonly code: number | undefined) {
+    super(`process.exit(${code})`);
+  }
+}
+
+// CA-07 end-to-end: runInit resolves Apply's cwd from the base path. Zero
+// platforms keeps host registrations out of the run; applyProject hygiene is
+// the observable cwd seam — the gitignore must land in the resolved basePath,
+// never in the process cwd the wizard used to silently inherit.
+test("runInit apply resolves its cwd from the base path, never the process cwd", async () => {
+  const base = mkdtempSync(path.join(os.tmpdir(), "wk-t6-drive-"));
+  const root = path.join(base, "root");
+  const cwdDir = path.join(base, "cwd");
+  const configDir = path.join(base, "config");
+  const home = path.join(base, "home");
+  for (const dir of [root, cwdDir, configDir, home]) mkdirSync(dir, { recursive: true });
+  const prevRoot = process.env.WORKFLOW_WORKSPACE_ROOT;
+  const prevCfg = process.env.WORKFLOW_TOOLKIT_CONFIG;
+  const prevDev = process.env.WORKFLOW_TOOLKIT_DEV;
+  // Isolated HOME: the OpenCode registration must never touch the real
+  // ~/.config/opencode on any machine (dev pointer keeps adapter resolution
+  // inside the repository, so the install succeeds hermetically).
+  const prevHome = process.env.HOME;
+  const prevCwd = process.cwd();
+  const prevWrite = process.stdout.write;
+  const prevExit = process.exit;
+  const prevLog = console.log;
+  const prevStdin = process.stdin;
+  const stdoutFlags = process.stdout as unknown as Record<string, unknown>;
+  const prevFlags = {
+    isTTY: stdoutFlags.isTTY,
+    columns: stdoutFlags.columns,
+    rows: stdoutFlags.rows,
+  };
+  try {
+    process.env.WORKFLOW_WORKSPACE_ROOT = root;
+    process.env.WORKFLOW_TOOLKIT_CONFIG = configDir;
+    process.env.WORKFLOW_TOOLKIT_DEV = REPO_ROOT;
+    process.env.HOME = home;
+    writeFileSync(path.join(configDir, "config.json"), JSON.stringify(config()), "utf8");
+    process.chdir(cwdDir);
+
+    const fakeStdin = new PassThrough() as PassThrough & {
+      isTTY: boolean;
+      ref(): void;
+      unref(): void;
+      setRawMode(enabled: boolean): void;
+    };
+    fakeStdin.isTTY = true;
+    fakeStdin.ref = () => {};
+    fakeStdin.unref = () => {};
+    fakeStdin.setRawMode = () => {};
+
+    const chunks: string[] = [];
+    let exitCode: number | undefined;
+    process.stdin = fakeStdin as unknown as typeof process.stdin;
+    stdoutFlags.isTTY = true;
+    stdoutFlags.columns = 120;
+    stdoutFlags.rows = 40;
+    process.stdout.write = ((chunk: unknown, cb?: (() => void) | undefined) => {
+      chunks.push(String(chunk));
+      cb?.();
+      return true;
+    }) as typeof process.stdout.write;
+    console.log = (...args: unknown[]) => {
+      chunks.push(`${args.map(String).join(" ")}\n`);
+    };
+    process.exit = ((code?: number) => {
+      throw new ExitSentinel(code);
+    }) as typeof process.exit;
+
+    const ENTER = "\r";
+    const SPACE = " ";
+    const { runInit } = await import("../../packages/workit-cli/src/index");
+    const flush = async (): Promise<void> => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      await new Promise((resolve) => setImmediate(resolve));
+    };
+    const running = runInit();
+    running.catch(() => {});
+    await flush();
+    // empty platforms submit is blocked; select OpenCode, then straight through
+    // to Apply with the env root set (no basePath prompt appears): platforms
+    // submit, locale, timezone, preset->tracker, tracker->youtrack,
+    // youtrack->vcs, vcs->workspaces (env skips the prompt), Done->project
+    for (const key of [ENTER, SPACE, ENTER, ...Array(7).fill(ENTER), "y", "y"] as string[]) {
+      process.stdin.push(key);
+      await flush();
+    }
+    try {
+      await running;
+    } catch (err) {
+      if (!(err instanceof ExitSentinel)) throw err;
+      exitCode = err.code;
+    }
+
+    expect(exitCode, chunks.join("")).toBe(0);
+    const joined = chunks.join("");
+    expect(joined).toContain(path.join(root, ".gitignore"));
+    expect(existsSync(path.join(root, ".gitignore"))).toBe(true);
+    expect(existsSync(path.join(cwdDir, ".gitignore"))).toBe(false);
+  } finally {
+    if (prevRoot === undefined) delete process.env.WORKFLOW_WORKSPACE_ROOT;
+    else process.env.WORKFLOW_WORKSPACE_ROOT = prevRoot;
+    if (prevCfg === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+    else process.env.WORKFLOW_TOOLKIT_CONFIG = prevCfg;
+    if (prevDev === undefined) delete process.env.WORKFLOW_TOOLKIT_DEV;
+    else process.env.WORKFLOW_TOOLKIT_DEV = prevDev;
+    if (prevHome === undefined) delete process.env.HOME;
+    else process.env.HOME = prevHome;
+    process.chdir(prevCwd);
+    process.stdout.write = prevWrite;
+    process.exit = prevExit;
+    console.log = prevLog;
+    process.stdin = prevStdin;
+    stdoutFlags.isTTY = prevFlags.isTTY;
+    stdoutFlags.columns = prevFlags.columns;
+    stdoutFlags.rows = prevFlags.rows;
+    rmSync(base, { recursive: true, force: true });
+  }
+}, 30_000);

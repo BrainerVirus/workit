@@ -1,6 +1,14 @@
 import { Box, Text, useInput } from "ink";
 import { ConfirmInput, MultiSelect, TextInput } from "@inkjs/ui";
-import { useEffect, useReducer, useRef, useState, type Dispatch, type JSX } from "react";
+import {
+  useEffect,
+  useReducer,
+  useRef,
+  useState,
+  useCallback,
+  type Dispatch,
+  type JSX,
+} from "react";
 import {
   mergePreset,
   type BranchPreset,
@@ -12,6 +20,7 @@ import { detectBranchPolicy } from "@brainervirus/workit-core/src/core/branch-po
 import {
   createInitialDraft,
   reducer,
+  resolveBasePath,
   type SetupValues,
   type WizardAction,
   type WizardDraft,
@@ -90,6 +99,7 @@ const TEXT_SCREENS: ReadonlySet<WizardScreen> = new Set([
   "branchAllowed",
   "branchProtected",
   "youtrack",
+  "basePath",
   "workspaceName",
   "workspaceGlob",
   "branchPolicyDevelop",
@@ -211,7 +221,7 @@ function BranchPolicyScreen({ draft, dispatch }: ScreenProps): JSX.Element {
     dispatch({
       type: "set",
       field: "branchPolicyDetected",
-      value: detectBranchPolicy(process.env.WORKFLOW_WORKSPACE_ROOT ?? process.cwd()),
+      value: detectBranchPolicy(resolveBasePath(draft.values)),
     });
   }, [detected, dispatch]);
 
@@ -358,6 +368,38 @@ function describeMutation(m: SetupMutation): string {
     case "set-token-path":
       return `+ change ${m.key} in ${m.path} → ${m.value}`;
   }
+}
+
+// D-06: shown only when WORKFLOW_WORKSPACE_ROOT is unset — the prompt IS the
+// resolution root for every workspace preview and hygiene target. Extracted
+// component with stable callbacks: @inkjs/ui re-fires its onChange effect
+// whenever the handler identity changes, and fresh inline arrows per render
+// multiply dispatch rounds per keystroke (long error strings commit a frame
+// per change) — enough to trip React's update-depth guard on backspace runs.
+function BasePathScreen({ draft, dispatch }: ScreenProps): JSX.Element {
+  const onChange = useCallback(
+    (value: string) => dispatch({ type: "set", field: "basePath", value }),
+    [dispatch],
+  );
+  // Commit the submitted value before validating: @inkjs/ui fires onChange
+  // from an effect, so a keystroke can land after Enter — the same ordering
+  // hazard branchPolicyDevelop guards against.
+  const onSubmit = useCallback(
+    (value: string) => {
+      dispatch({ type: "set", field: "basePath", value });
+      dispatch({ type: "next" });
+    },
+    [dispatch],
+  );
+  return (
+    <Box flexDirection="column" gap={1}>
+      <Text bold>Step 5 — Workspace root</Text>
+      <Text dimColor>Absolute path where your projects live (e.g. /work):</Text>
+      <TextInput defaultValue={draft.values.basePath} onChange={onChange} onSubmit={onSubmit} />
+      {draft.errors.basePath && <Text color="red">{draft.errors.basePath}</Text>}
+      <Text dimColor>Enter to continue · Esc Back</Text>
+    </Box>
+  );
 }
 
 function Screen({ draft, dispatch, onSearchQueryChange }: ScreenProps): JSX.Element {
@@ -568,8 +610,10 @@ function Screen({ draft, dispatch, onSearchQueryChange }: ScreenProps): JSX.Elem
           <Text dimColor>Enter to continue · b Back · Esc Cancel</Text>
         </Box>
       );
+    case "basePath":
+      return <BasePathScreen draft={draft} dispatch={dispatch} />;
     case "workspaces": {
-      const cwd = process.cwd();
+      const base = resolveBasePath(draft.values);
       const options = [
         ...draft.values.workspaces.map((w, i) => ({
           label: `Edit ${w.name} (${w.glob})`,
@@ -580,7 +624,7 @@ function Screen({ draft, dispatch, onSearchQueryChange }: ScreenProps): JSX.Elem
           value: `remove:${i}`,
         })),
         { label: "Add workspace", value: "add" },
-        { label: `Use current project (${cwd})`, value: "current" },
+        { label: `Use current project (${base})`, value: "current" },
         { label: "Done", value: "done" },
       ];
       return (
@@ -591,7 +635,7 @@ function Screen({ draft, dispatch, onSearchQueryChange }: ScreenProps): JSX.Elem
           ) : (
             <Box flexDirection="column" gap={0}>
               {draft.values.workspaces.map((w) => {
-                const matches = matchWorkspace(w.glob, cwd);
+                const matches = matchWorkspace(w.glob, base);
                 return (
                   <Text key={`${w.name}|${w.glob}|${w.vcs?.provider ?? ""}`}>
                     {matches ? "✓ matches" : "✗ no match"} {w.name} — {w.vcs?.provider ?? "?"} —{" "}
@@ -611,7 +655,7 @@ function Screen({ draft, dispatch, onSearchQueryChange }: ScreenProps): JSX.Elem
               else if (value.startsWith("remove:"))
                 dispatch({ type: "workspaceRemove", index: Number(value.slice(7)) });
               else if (value === "add") dispatch({ type: "workspaceAdd" });
-              else if (value === "current") dispatch({ type: "workspaceAddCurrent", path: cwd });
+              else if (value === "current") dispatch({ type: "workspaceAddCurrent", path: base });
               else dispatch({ type: "next" });
             }}
           />
@@ -651,7 +695,7 @@ function Screen({ draft, dispatch, onSearchQueryChange }: ScreenProps): JSX.Elem
           {glob.trim() !== "" && (
             <Box flexDirection="column" gap={0}>
               <Text bold>Match preview (shared matcher):</Text>
-              {workspacePreviewTargets(process.cwd()).map((target) => {
+              {workspacePreviewTargets(resolveBasePath(draft.values)).map((target) => {
                 const matches = matchWorkspace(glob, target);
                 return (
                   <Text key={target} color={matches ? "green" : "red"}>
@@ -705,12 +749,14 @@ function Screen({ draft, dispatch, onSearchQueryChange }: ScreenProps): JSX.Elem
         </Box>
       );
     case "project":
+      // CA-07: print the exact directory Apply will touch — the resolved base
+      // path, never an implicit process.cwd().
       return (
         <Box flexDirection="column" gap={1}>
           <Text bold>Step 6 — Project setup</Text>
           <Text dimColor>
-            Will apply gitignore + hygiene in {process.cwd()} (existing files are never
-            overwritten):
+            Will apply gitignore + hygiene in {resolveBasePath(draft.values)} (existing files are
+            never overwritten):
           </Text>
           <ConfirmInput
             defaultChoice="confirm"
@@ -729,7 +775,9 @@ function Screen({ draft, dispatch, onSearchQueryChange }: ScreenProps): JSX.Elem
       // WZ-08: the summary renders the authoritative preview (read-only) — the
       // exact mutations Apply would perform. Malformed setup state (WZ-06)
       // blocks Apply: no confirm control is mounted until it is fixed.
-      const preview = buildSetupPreview(draft.values);
+      // CA-07: the preview's hygiene target is the same displayed base path
+      // runInit will pass to Apply.
+      const preview = buildSetupPreview(draft.values, { cwd: resolveBasePath(draft.values) });
       return (
         <Box flexDirection="column" gap={1}>
           <Text bold color="cyan">

@@ -1,6 +1,7 @@
 import { render } from "ink";
 import { Wizard } from "./steps";
 import type { SetupValues } from "./wizard-state";
+import { resolveBasePath } from "./wizard-state";
 import { createLogger } from "@brainervirus/workit-core/src/core/logger";
 import { EVENT, errorDetail } from "@brainervirus/workit-core/src/core/boundary";
 import { setDiagnosticLogger } from "@brainervirus/workit-core/src/core/config";
@@ -121,12 +122,15 @@ export async function runInit() {
   process.stdout.write("\x1b[2J\x1b[H");
   const exit = exits[0];
   if (exit && exit.complete && exit.values) {
-    const preview = buildSetupPreview(exit.values, { cwd: process.cwd(), env: process.env });
+    // D-06: Apply resolves its cwd from the same base path every wizard
+    // preview showed — env root or prompted path, never an implicit cwd.
+    const base = resolveBasePath(exit.values);
+    const preview = buildSetupPreview(exit.values, { cwd: base, env: process.env });
     if (!preview.ok) {
       printMalformedBlocked(preview.state);
       process.exit(1);
     }
-    const result = applySetupPreview(preview, { cwd: process.cwd(), env: process.env });
+    const result = applySetupPreview(preview, { cwd: base, env: process.env });
     // CA-06: the branch-policy screen is applied separately through the shared
     // proposal→write helper (byte-identical to the host init action) right
     // after the setup preview; its status line joins the summary below. The
@@ -134,11 +138,7 @@ export async function runInit() {
     // cannot drift.
     let exitCode = result.exitCode;
     if (exit.values.branchPolicy) {
-      const bp = applyWizardBranchPolicy(
-        exit.values.branchPolicy,
-        process.env.WORKFLOW_WORKSPACE_ROOT ?? process.cwd(),
-        process.env,
-      );
+      const bp = applyWizardBranchPolicy(exit.values.branchPolicy, base, process.env);
       if (bp.ok) {
         console.log(`${String(bp.status).padEnd(11)} ${bp.config_path} — branch policy`);
       } else {

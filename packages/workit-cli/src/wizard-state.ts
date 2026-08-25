@@ -39,6 +39,7 @@ export type WizardScreen =
   | "issueTracker"
   | "youtrack"
   | "vcs"
+  | "basePath"
   | "workspaces"
   | "workspaceName"
   | "workspaceGlob"
@@ -73,6 +74,9 @@ export type SetupValues = {
    *  new workspaces via WorkspaceConfig.issues, none skips both. */
   issueTracker: IssueTracker;
   baseUrl: string;
+  /** D-06: the workspace root every derived path uses. Seeded from
+   *  WORKFLOW_WORKSPACE_ROOT; otherwise the basePath prompt fills it in. */
+  basePath: string;
   vcsProvider: VcsProvider | "skip";
   workspaces: WorkspaceConfig[];
   applyProject: boolean;
@@ -106,7 +110,7 @@ export type WizardAction =
   | { type: "set"; field: "branchPolicyDevelop"; value: string }
   | {
       type: "set";
-      field: "locale" | "timezone" | "branchAllowed" | "branchProtected" | "baseUrl";
+      field: "locale" | "timezone" | "branchAllowed" | "branchProtected" | "baseUrl" | "basePath";
       value: string;
     }
   | { type: "pickOther" }
@@ -135,7 +139,8 @@ const NEXT: Record<WizardScreen, WizardScreen | null> = {
   branchProtected: "issueTracker",
   issueTracker: "youtrack",
   youtrack: "vcs",
-  vcs: "workspaces",
+  vcs: "basePath",
+  basePath: "workspaces",
   workspaces: "branchPolicy",
   workspaceName: "workspaceGlob",
   workspaceGlob: "workspaceProvider",
@@ -159,7 +164,8 @@ const PREV: Record<WizardScreen, WizardScreen | null> = {
   issueTracker: "branchProtected",
   youtrack: "issueTracker",
   vcs: "youtrack",
-  workspaces: "vcs",
+  basePath: "vcs",
+  workspaces: "basePath",
   workspaceName: "workspaces",
   workspaceGlob: "workspaceName",
   workspaceProvider: "workspaceGlob",
@@ -179,23 +185,56 @@ const skipsCustomBranch = (screen: WizardScreen, preset: BranchPreset): boolean 
 const skipsYoutrack = (screen: WizardScreen, tracker: IssueTracker): boolean =>
   screen === "youtrack" && tracker !== "youtrack";
 
+// D-06: the base-path prompt only exists when no resolution root is known yet.
+// An env-seeded or already-answered basePath skips it in both directions —
+// the same shape as skipsYoutrack.
+const skipsBasePath = (screen: WizardScreen, basePath: string): boolean =>
+  screen === "basePath" && basePath !== "";
+
+// D-06 resolution order (CA-06): WORKFLOW_WORKSPACE_ROOT env wins, then the
+// prompted path. Every former process.cwd() call-site routes through this one
+// helper so the wizard can never drift back to the process cwd.
+export function resolveBasePath(
+  values: Pick<SetupValues, "basePath">,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  return env.WORKFLOW_WORKSPACE_ROOT?.trim() || values.basePath.trim();
+}
+
+// D-06: the prompt refuses to advance without an existing absolute directory.
+// Shared by the live field validation and the screen gate so both surfaces
+// show the identical message (validated on every keystroke like the other
+// text fields — @inkjs/ui re-fires onChange after renders, so a set that only
+// cleared errors would erase the error `next` just raised).
+const basePathMessage = (value: string): string | null => {
+  const p = value.trim();
+  if (!p) return "workspace root path is required";
+  return !path.isAbsolute(p) || !existsSync(p)
+    ? `invalid workspace root "${p}" — enter an existing absolute directory`
+    : null;
+};
+
 // CA-06: the branch-policy screens only exist when the resolution root is a git
 // repo (a detected convention is meaningless otherwise). Only the branchPolicy
 // hop is gated — "project" is reached via that hop, never skipped itself — so a
 // non-git repo keeps the exact prior flow (workspaces ↔ project directly).
-const skipsBranchPolicy = (screen: WizardScreen): boolean =>
+const skipsBranchPolicy = (screen: WizardScreen, basePath: string): boolean =>
   (screen === "branchPolicy" || screen === "branchPolicyDevelop") &&
-  !existsSync(path.join(process.env.WORKFLOW_WORKSPACE_ROOT ?? process.cwd(), ".git"));
+  !existsSync(path.join(basePath, ".git"));
 
 function nextScreen(
   screen: WizardScreen,
   preset: BranchPreset,
   tracker: IssueTracker,
+  basePath: string,
 ): WizardScreen {
   let next = NEXT[screen];
   while (
     next &&
-    (skipsCustomBranch(next, preset) || skipsBranchPolicy(next) || skipsYoutrack(next, tracker))
+    (skipsCustomBranch(next, preset) ||
+      skipsBranchPolicy(next, basePath) ||
+      skipsYoutrack(next, tracker) ||
+      skipsBasePath(next, basePath))
   )
     next = NEXT[next];
   return next ?? screen;
@@ -205,11 +244,15 @@ function prevScreen(
   screen: WizardScreen,
   preset: BranchPreset,
   tracker: IssueTracker,
+  basePath: string,
 ): WizardScreen {
   let prev = PREV[screen];
   while (
     prev &&
-    (skipsCustomBranch(prev, preset) || skipsBranchPolicy(prev) || skipsYoutrack(prev, tracker))
+    (skipsCustomBranch(prev, preset) ||
+      skipsBranchPolicy(prev, basePath) ||
+      skipsYoutrack(prev, tracker) ||
+      skipsBasePath(prev, basePath))
   )
     prev = PREV[prev];
   return prev ?? screen;
@@ -251,6 +294,10 @@ function validateScreen(draft: WizardDraft): { field: string; message: string } 
       const error = validateBaseUrl(values.baseUrl);
       return error ? { field: "baseUrl", message: error } : null;
     }
+    case "basePath": {
+      const message = basePathMessage(values.basePath);
+      return message ? { field: "basePath", message } : null;
+    }
     case "workspaceName":
       return (draft.workspaceDraft?.name ?? "").trim()
         ? null
@@ -281,7 +328,7 @@ const decodeIssueTracker = (value: string, fallback: IssueTracker): IssueTracker
 
 function setTextValue(
   draft: WizardDraft,
-  field: "locale" | "timezone" | "branchAllowed" | "branchProtected" | "baseUrl",
+  field: "locale" | "timezone" | "branchAllowed" | "branchProtected" | "baseUrl" | "basePath",
   value: string,
 ): WizardDraft {
   const message =
@@ -297,9 +344,11 @@ function setTextValue(
             ? parseList(value).length > 0
               ? null
               : "at least one protected branch name is required"
-            : value.trim() === ""
-              ? null
-              : validateBaseUrl(value);
+            : field === "basePath"
+              ? basePathMessage(value)
+              : value.trim() === ""
+                ? null
+                : validateBaseUrl(value);
   // D-02: an unchanged value whose validation message is also unchanged is a
   // no-op — return the same draft so useReducer bails out instead of re-rendering
   // the control and re-firing its onChange (the update-depth feedback loop).
@@ -331,6 +380,9 @@ export function createInitialDraft(config: ToolkitConfig = readConfig()): Wizard
       // WZ-04/CA-14: no organization-specific default base URL — empty means
       // the YouTrack integration is not selected.
       baseUrl: "",
+      // D-06: the env root pre-seeds the resolution; empty makes the basePath
+      // prompt gate the flow instead of silently inheriting process.cwd().
+      basePath: process.env.WORKFLOW_WORKSPACE_ROOT ?? "",
       issueTracker: "youtrack",
       vcsProvider: "gitlab",
       workspaces: loadWorkspaces(),
@@ -450,13 +502,23 @@ export function reducer(draft: WizardDraft, action: WizardAction): WizardDraft {
         return { ...draft, errors: { ...draft.errors, [invalid.field]: invalid.message } };
       return {
         ...draft,
-        screen: nextScreen(draft.screen, draft.values.branchPreset, draft.values.issueTracker),
+        screen: nextScreen(
+          draft.screen,
+          draft.values.branchPreset,
+          draft.values.issueTracker,
+          resolveBasePath(draft.values),
+        ),
       };
     }
     case "back":
       return {
         ...draft,
-        screen: prevScreen(draft.screen, draft.values.branchPreset, draft.values.issueTracker),
+        screen: prevScreen(
+          draft.screen,
+          draft.values.branchPreset,
+          draft.values.issueTracker,
+          resolveBasePath(draft.values),
+        ),
       };
     case "cancel":
       return { ...draft, screen: "exit", cancelled: true };
