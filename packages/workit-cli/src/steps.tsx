@@ -11,6 +11,7 @@ import {
 } from "react";
 import {
   mergePreset,
+  PRESETS,
   type BranchPreset,
   type ToolkitConfig,
 } from "@brainervirus/workit-core/src/core/config.ts";
@@ -39,6 +40,34 @@ const BRANCH_PRESETS: { label: string; value: BranchPreset }[] = [
   { label: "Trunk-based", value: "trunk-based" },
   { label: "Custom", value: "custom" },
 ];
+
+// CA-08: static per-preset guidance shown under the highlighted row — derived
+// from PRESETS (the same source mergePreset applies on selection) plus the
+// conventional workflow facts. Display-only.
+export const BRANCH_PRESET_DESCRIPTIONS: Record<BranchPreset, string> = {
+  gitflow:
+    `${PRESETS.gitflow.allowed.join(", ")} allowed · ` +
+    `${PRESETS.gitflow.protected.join(", ")} protected · work merges into develop via PRs or merge commits`,
+  "github-flow":
+    `Anything goes (${PRESETS["github-flow"].allowed[0]}) · only ${PRESETS["github-flow"].protected.join(", ")} is protected · branches off main, back to main`,
+  "trunk-based":
+    `Short-lived branches off trunk · ${PRESETS["trunk-based"].protected.join(", ")} is the only protected branch`,
+  custom: "Define your own allowed and protected patterns in the next prompts",
+};
+
+// CA-09: every TextInput carries an example placeholder. Display-only —
+// @inkjs/ui renders it until the user types and never passes it to
+// onChange/onSubmit, so submitted values are unaffected.
+export const SCREEN_PLACEHOLDERS = {
+  youtrack: "e.g. https://example.youtrack.cloud",
+  localeOther: "e.g. en-US or es-CL",
+  timezoneOther: "e.g. America/Santiago",
+  branchAllowed: "e.g. feature/*, bugfix/*",
+  branchProtected: "e.g. main, develop",
+  workspaceName: "e.g. work",
+  workspaceGlob: "e.g. /work/**",
+  branchPolicyDevelop: "e.g. develop",
+} as const;
 
 const VCS_PROVIDERS = [
   { label: "GitLab", value: "gitlab" },
@@ -460,6 +489,7 @@ function Screen({ draft, dispatch, onSearchQueryChange }: ScreenProps): JSX.Elem
           <Text bold>Step 2 — Global config · Locale (custom)</Text>
           <Text dimColor>Type a BCP-47 locale (e.g. en or es-CL):</Text>
           <TextInput
+            placeholder={SCREEN_PLACEHOLDERS.localeOther}
             onChange={(value) => dispatch({ type: "set", field: "locale", value })}
             onSubmit={() => dispatch({ type: "next" })}
           />
@@ -502,6 +532,7 @@ function Screen({ draft, dispatch, onSearchQueryChange }: ScreenProps): JSX.Elem
           <Text bold>Step 2 — Global config · Timezone (custom)</Text>
           <Text dimColor>Type an IANA timezone (e.g. America/Santiago):</Text>
           <TextInput
+            placeholder={SCREEN_PLACEHOLDERS.timezoneOther}
             onChange={(value) => dispatch({ type: "set", field: "timezone", value })}
             onSubmit={() => dispatch({ type: "next" })}
           />
@@ -521,6 +552,7 @@ function Screen({ draft, dispatch, onSearchQueryChange }: ScreenProps): JSX.Elem
             onChange={(value) => dispatch({ type: "set", field: "branchPreset", value })}
             onSelect={() => dispatch({ type: "next" })}
           />
+          <Text dimColor>{BRANCH_PRESET_DESCRIPTIONS[draft.values.branchPreset]}</Text>
           <Box flexDirection="column" gap={0}>
             <Text>
               Allowed: <Text color="green">{policy.allowed.join(", ") || "—"}</Text>
@@ -543,6 +575,7 @@ function Screen({ draft, dispatch, onSearchQueryChange }: ScreenProps): JSX.Elem
           <Text bold>Step 2 — Global config · Allowed branch patterns</Text>
           <Text dimColor>Allowed branch patterns (comma-separated):</Text>
           <TextInput
+            placeholder={SCREEN_PLACEHOLDERS.branchAllowed}
             defaultValue={draft.values.branchAllowed}
             onChange={(value) => dispatch({ type: "set", field: "branchAllowed", value })}
             onSubmit={() => dispatch({ type: "next" })}
@@ -557,6 +590,7 @@ function Screen({ draft, dispatch, onSearchQueryChange }: ScreenProps): JSX.Elem
           <Text bold>Step 2 — Global config · Protected branch names</Text>
           <Text dimColor>Protected branch names (comma-separated):</Text>
           <TextInput
+            placeholder={SCREEN_PLACEHOLDERS.branchProtected}
             defaultValue={draft.values.branchProtected}
             onChange={(value) => dispatch({ type: "set", field: "branchProtected", value })}
             onSubmit={() => dispatch({ type: "next" })}
@@ -588,6 +622,7 @@ function Screen({ draft, dispatch, onSearchQueryChange }: ScreenProps): JSX.Elem
           <Text bold>Step 3 — YouTrack</Text>
           <Text dimColor>Base URL (https):</Text>
           <TextInput
+            placeholder={SCREEN_PLACEHOLDERS.youtrack}
             defaultValue={draft.values.baseUrl}
             onChange={(value) => dispatch({ type: "set", field: "baseUrl", value })}
             onSubmit={() => dispatch({ type: "next" })}
@@ -673,6 +708,7 @@ function Screen({ draft, dispatch, onSearchQueryChange }: ScreenProps): JSX.Elem
               : `Edit workspace name (${draft.values.workspaces[draft.workspaceIndex]?.name ?? ""}):`}
           </Text>
           <TextInput
+            placeholder={SCREEN_PLACEHOLDERS.workspaceName}
             defaultValue={draft.workspaceDraft?.name ?? ""}
             onChange={(value) => dispatch({ type: "workspaceDraftName", value })}
             onSubmit={() => dispatch({ type: "next" })}
@@ -688,6 +724,7 @@ function Screen({ draft, dispatch, onSearchQueryChange }: ScreenProps): JSX.Elem
           <Text bold>Step 5 — Workspaces · Pattern</Text>
           <Text dimColor>Workspace pattern (glob, e.g. /work/**):</Text>
           <TextInput
+            placeholder={SCREEN_PLACEHOLDERS.workspaceGlob}
             defaultValue={glob}
             onChange={(value) => dispatch({ type: "workspaceDraftGlob", value })}
             onSubmit={() => dispatch({ type: "next" })}
@@ -735,6 +772,7 @@ function Screen({ draft, dispatch, onSearchQueryChange }: ScreenProps): JSX.Elem
           <Text bold>Step 5 — Branch policy · Develop branch</Text>
           <Text dimColor>Integration/develop branch name (leave empty to unset):</Text>
           <TextInput
+            placeholder={SCREEN_PLACEHOLDERS.branchPolicyDevelop}
             defaultValue={
               draft.values.branchPolicy?.developBranch ??
               draft.values.branchPolicyDetected?.developBranch ??

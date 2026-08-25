@@ -35,7 +35,11 @@ import {
   resolveBasePath,
 } from "../../packages/workit-cli/src/wizard-state";
 import { LOCALE_LANGUAGE_MAP, filterOptions } from "../../packages/workit-cli/src/search-select";
-import { timezonePickerOptions } from "../../packages/workit-cli/src/steps";
+import {
+  BRANCH_PRESET_DESCRIPTIONS,
+  SCREEN_PLACEHOLDERS,
+  timezonePickerOptions,
+} from "../../packages/workit-cli/src/steps";
 import { REPO_ROOT } from "../shared/helpers/packages";
 
 // WZ-04-WZ-06, WZ-08, RL-02, RL-06 wizard scope; CA-12, CA-14, CA-22, CA-23.
@@ -935,6 +939,57 @@ test("D-06: with env set the basePath screen is skipped in both directions", () 
     if (prev === undefined) delete process.env.WORKFLOW_WORKSPACE_ROOT;
     else process.env.WORKFLOW_WORKSPACE_ROOT = prev;
   }
+});
+
+// ---------------------------------------------------------------------------
+// Display-only polish (Task 7, CA-08/CA-09): static preset descriptions on the
+// branchPreset screen and an example placeholder on every TextInput screen.
+// Placeholders must never reach draft values or submitted input.
+// ---------------------------------------------------------------------------
+
+test("branchPreset descriptions: gitflow hints develop + pr/merge; others are main-only (CA-08)", () => {
+  const gitflow = BRANCH_PRESET_DESCRIPTIONS.gitflow;
+  for (const pattern of ["feature/*", "bugfix/*", "hotfix/*", "release/*"]) {
+    expect(gitflow, pattern).toContain(pattern);
+  }
+  expect(gitflow).toContain("main");
+  expect(gitflow).toContain("develop");
+  expect(/pr|merge/i.test(gitflow)).toBe(true);
+
+  for (const preset of ["github-flow", "trunk-based"] as const) {
+    expect(BRANCH_PRESET_DESCRIPTIONS[preset]).toContain("main");
+    expect(BRANCH_PRESET_DESCRIPTIONS[preset]).not.toContain("develop");
+  }
+  expect(BRANCH_PRESET_DESCRIPTIONS.custom.length).toBeGreaterThan(0);
+});
+
+test("every wizard TextInput screen carries a non-empty example placeholder (CA-09)", () => {
+  for (const screen of [
+    "youtrack",
+    "localeOther",
+    "timezoneOther",
+    "branchAllowed",
+    "branchProtected",
+    "workspaceName",
+    "workspaceGlob",
+    "branchPolicyDevelop",
+  ] as const) {
+    expect(SCREEN_PLACEHOLDERS[screen].trim().length, screen).toBeGreaterThan(0);
+    expect(SCREEN_PLACEHOLDERS[screen], screen).toContain("e.g.");
+  }
+});
+
+test("placeholders are display-only: no example text reaches draft or submitted values", () => {
+  const initial = createInitialDraft(config());
+  // Real branch patterns may legitimately appear in values; the "e.g. …"
+  // placeholder bytes themselves may never leak into the draft.
+  for (const placeholder of Object.values(SCREEN_PLACEHOLDERS)) {
+    expect(JSON.stringify(initial.values)).not.toContain(placeholder);
+  }
+  // submitting an untouched branchPolicyDevelop keeps the develop branch unset
+  let d = createInitialDraft(config());
+  d = reducer(d, { type: "set", field: "branchPolicyDevelop", value: "" });
+  expect(d.values.branchPolicy?.developBranch ?? "").toBe("");
 });
 
 class ExitSentinel extends Error {
