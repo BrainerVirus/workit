@@ -264,7 +264,7 @@ test("restore failure retains the snapshot root and reports a warning", () => {
     rmSync(path.join(cwd, "docs", "alpha", "sdd"), { recursive: true, force: true });
     chmodSync(path.join(cwd, "docs", "alpha"), 0o500);
 
-    expect(restoreFlowSnapshot(snap, cwd)).toContain("flow state snapshot restore failed");
+    expect(restoreFlowSnapshot(snap, cwd).warning).toContain("flow state snapshot restore failed");
     expect(existsSync(snap)).toBe(true);
   } finally {
     chmodSync(path.join(cwd, "docs", "alpha"), 0o700);
@@ -715,6 +715,61 @@ test("incident regression: untracked approved spec/plan survive setup(stash=yes)
     expect(readFileSync(flowPath)).toEqual(flowBytes);
     expect(readFileSync(specPath)).toEqual(specBytes);
     expect(readFileSync(planPath)).toEqual(planBytes);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(remote, { recursive: true, force: true });
+  }
+});
+
+test("tracked-modified spec.md keeps the stash: present-at-restore is not covered", () => {
+  // Round-2 finding: restore-if-missing SKIPS files already present. A
+  // tracked-and-modified spec.md survives the stash push (reverted to HEAD
+  // bytes, file stays), so at restore time it is present → skipped → never
+  // actually restored. Counting every snapshot entry as covered made setup
+  // drop a stash that was the only copy of the user's uncommitted edit.
+  const { root, remote } = repoOnMain({ withDevelop: true });
+  const lines: string[] = [];
+  try {
+    writeFileSync(path.join(root, ".gitignore"), "docs/*/sdd/\n");
+    git(root, ["add", ".gitignore"]);
+    git(root, ["commit", "-q", "-m", "ignore sdd runtime state"]);
+
+    const slug = "hardening";
+    const specPath = path.join(root, "docs", slug, "spec.md");
+    // Track spec.md on main AND develop so it stays present across checkout.
+    mkdirSync(path.dirname(specPath), { recursive: true });
+    writeFileSync(specPath, "# spec\n\nv1\n");
+    git(root, ["add", "docs"]);
+    git(root, ["commit", "-q", "-m", "spec"]);
+    git(root, ["push", "-q", "origin", "main:develop"]);
+    // TRACKED modification after commit: the stash push takes this edit and
+    // reverts the file to v1 in the working tree.
+    const modifiedBytes = Buffer.from("# spec WIP\n\nv2\n");
+    writeFileSync(specPath, modifiedBytes);
+
+    const result = branchSetup({
+      target_branch: `bugfix/${slug}`,
+      stash: "yes",
+      workspace_root: root,
+      log: (m) => lines.push(m),
+    });
+    expect((result as { ok?: boolean }).ok).toBe(true);
+    // The stash holds the ONLY copy of the modification; the guard skipped
+    // spec.md at restore time (present), so coverage must NOT hold.
+    expect((result as { stash_ref?: string | null }).stash_ref).not.toBeNull();
+    expect(git(root, ["stash", "list"]).stdout.trim()).not.toBe("");
+    expect(lines.join("\n")).toContain("kept stash ref");
+    expect(lines.join("\n")).not.toContain("dropped redundant stash");
+
+    // reapply_stash restores the user's modification intact.
+    const manifestBefore = JSON.parse(
+      readFileSync(path.join(root, "docs", "manifest.json"), "utf8"),
+    );
+    expect(manifestBefore.stash_ref).not.toBeUndefined();
+    const reapply = branchSetup({ action: "reapply_stash", workspace_root: root });
+    expect((reapply as { ok?: boolean }).ok).toBe(true);
+    expect(readFileSync(specPath)).toEqual(modifiedBytes);
+    expect(git(root, ["stash", "list"]).stdout.trim()).toBe("");
   } finally {
     rmSync(root, { recursive: true, force: true });
     rmSync(remote, { recursive: true, force: true });

@@ -313,14 +313,20 @@ export const snapshotFlowState = (cwd: string): string => {
 // CA-04: restore-if-missing keeps the newest working-tree bytes; the snapshot
 // root is removed only after every file is handled and retained on failure.
 // A caught failure must not vanish: the message is returned so callers can
-// surface it to operators as a warning.
-export const restoreFlowSnapshot = (snapDir: string, cwd: string): string | undefined => {
+// surface it to operators as a warning. `restored` lists ONLY the files this
+// call actually wrote — present-at-restore files are skipped and excluded,
+// which is what makes the redundant-stash coverage check honest.
+export const restoreFlowSnapshot = (
+  snapDir: string,
+  cwd: string,
+): { restored: string[]; warning?: string } => {
   const walk = (dir: string, rel: string): string[] =>
     readdirSync(dir, { withFileTypes: true }).flatMap((entry) =>
       entry.isDirectory()
         ? walk(path.join(dir, entry.name), path.join(rel, entry.name))
         : [path.join(rel, entry.name)],
     );
+  const restored: string[] = [];
   try {
     const workspace = path.resolve(cwd);
     for (const rel of walk(snapDir, "")) {
@@ -337,13 +343,17 @@ export const restoreFlowSnapshot = (snapDir: string, cwd: string): string | unde
         rmSync(tmpDest, { force: true });
         throw error;
       }
+      restored.push(rel);
     }
     rmSync(snapDir, { recursive: true, force: true });
-    return undefined;
+    return { restored };
   } catch (error) {
-    return `flow state snapshot restore failed: ${
-      error instanceof Error ? error.message : String(error)
-    }`;
+    return {
+      restored,
+      warning: `flow state snapshot restore failed: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    };
   }
 };
 
@@ -428,18 +438,16 @@ export const branchSetup = ({
       journal(`${phase}: ${rel} ${existsSync(path.join(cwd, rel)) ? "present" : "MISSING"}`);
     }
   };
-  const restoreWithWarning = (dir: string | null): string[] => {
-    if (!dir) return [];
-    let planned: string | undefined;
-    if (log) {
-      const rels = snapshotRelPaths();
-      const missing = rels.filter((rel) => !existsSync(path.join(cwd, rel)));
-      planned = `restore: restored=${missing.length} skipped=${rels.length - missing.length}`;
-    }
-    const warning = restoreFlowSnapshot(dir, cwd);
-    if (planned) journal(`${planned}${warning ? ` warning: ${warning}` : ""}`);
+  const restoreWithWarning = (dir: string | null): { restored: string[]; warnings: string[] } => {
+    if (!dir) return { restored: [], warnings: [] };
+    const total = log ? snapshotRelPaths().length : 0;
+    const { restored, warning } = restoreFlowSnapshot(dir, cwd);
+    if (log)
+      journal(
+        `restore: restored=${restored.length} skipped=${total - restored.length}${warning ? ` warning: ${warning}` : ""}`,
+      );
     else if (warning) journal(`restore warning: ${warning}`);
-    return warning ? [warning] : [];
+    return { restored, warnings: warning ? [warning] : [] };
   };
 
   if (action === "reapply_stash") {
@@ -456,7 +464,9 @@ export const branchSetup = ({
       // CA-03: the snapshot ran before the pop — a failing pop must still
       // restore a mid-window-wiped flow.json before returning.
       journal("pop: failed");
-      const [warning] = restoreWithWarning(snapDir);
+      const {
+        warnings: [warning],
+      } = restoreWithWarning(snapDir);
       return {
         error: `${error instanceof Error ? error.message : "stash pop failed"}${
           warning ? `; ${warning}` : ""
@@ -467,7 +477,7 @@ export const branchSetup = ({
     delete manifest.stash_ref;
     delete manifest.stash_created_at;
     writeManifest(manifest);
-    const warnings = restoreWithWarning(snapDir);
+    const { warnings } = restoreWithWarning(snapDir);
     return { action: "reapply_stash", ok: true, ...(warnings.length > 0 ? { warnings } : {}) };
   }
 
@@ -514,7 +524,9 @@ export const branchSetup = ({
     // here must still restore a mid-window-wiped flow.json and drop the
     // guard root (a retained root is destroyed by the next run's
     // stale-root rmSync). Never masks the original error.
-    const [warning] = restoreWithWarning(snapDir);
+    const {
+      warnings: [warning],
+    } = restoreWithWarning(snapDir);
     return { error: `${message}${suffix}${warning ? `; ${warning}` : ""}` };
   };
   if (current !== target) {
@@ -607,18 +619,19 @@ export const branchSetup = ({
     }
     return result;
   }
-  // Files the guard is about to bring back: snapshot entries missing right
-  // now, captured before the restore flips them to present.
-  const restoredRels = snapshotRelPaths();
-  const warnings = restoreWithWarning(snapDir);
+  // Files the guard actually wrote back, straight from the restore itself.
+  const { restored: restoredRels, warnings } = restoreWithWarning(snapDir);
   // Round-1 fallout: the guard restores untracked spec/plan right after
   // checkout, but the stash pushed the same files — a later reapply_stash pop
   // refuses ("untracked working tree files would be overwritten"), stranding
   // a stash_ref on every successful setup. When every stashed path was just
   // restored byte-identical from the pre-stash snapshot, the stash is
-  // redundant: drop it and clear the manifest ref. Partial overlap keeps the
-  // ref so reapply_stash stays available for non-covered files. Best-effort:
-  // any failure keeps today's keep-the-ref behavior.
+  // redundant: drop it and clear the manifest ref. Coverage counts ONLY
+  // actually-restored paths: a tracked-and-modified file survives its stash
+  // (reverted to HEAD bytes, still present), so restore skips it — counting
+  // it as covered would drop the only copy of the user's edit. Any stashed
+  // path not restored keeps the ref so reapply_stash stays available.
+  // Best-effort: any failure keeps today's keep-the-ref behavior.
   if (stash_ref && snapDir && warnings.length === 0) {
     const norm = (p: string) => p.split(path.sep).join("/");
     const covered = new Set(restoredRels.map(norm));
@@ -641,6 +654,8 @@ export const branchSetup = ({
         delete manifest.stash_ref;
         delete manifest.stash_created_at;
         writeManifest(manifest);
+      } else {
+        journal(`kept stash ref ${stash_ref} (not fully covered by actual restores)`);
       }
     } catch {
       /* keep the stash ref — reapply_stash stays available */
