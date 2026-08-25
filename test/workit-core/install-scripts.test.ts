@@ -74,130 +74,146 @@ function makeStaleCursorHome(home: string, pluginDir: string) {
   });
 }
 
-test("installer self-heals a stale plugin dir: refresh + canonical re-registration, unrelated MCP preserved", () => {
-  if (!bashAvailable()) return;
-  const fixture = makeCursorStub();
-  const pluginDir = path.join(fixture.home, ".cursor", "plugins", "local", "workit");
-  try {
-    makeStaleCursorHome(fixture.home, pluginDir);
-    // Make the refresh observable: a stale flag inside the refreshed dir would
-    // survive only if the sync skipped files; the refresh is a full rsync
-    // --delete, so the flag must be gone after the installer runs.
-    const flags = path.join(pluginDir, "flags");
-    mkdirSync(flags, { recursive: true });
-    writeFileSync(path.join(flags, "stale"), "yes");
+test(
+  "installer self-heals a stale plugin dir: refresh + canonical re-registration, unrelated MCP preserved",
+  () => {
+    if (!bashAvailable()) return;
+    const fixture = makeCursorStub();
+    const pluginDir = path.join(fixture.home, ".cursor", "plugins", "local", "workit");
+    try {
+      makeStaleCursorHome(fixture.home, pluginDir);
+      // Make the refresh observable: a stale flag inside the refreshed dir would
+      // survive only if the sync skipped files; the refresh is a full rsync
+      // --delete, so the flag must be gone after the installer runs.
+      const flags = path.join(pluginDir, "flags");
+      mkdirSync(flags, { recursive: true });
+      writeFileSync(path.join(flags, "stale"), "yes");
 
-    const installed = spawnSync("bash", ["packages/workit-core/scripts/install-cursor-plugin.sh"], {
-      cwd: fixture.stub,
-      env: {
-        ...process.env,
-        HOME: fixture.home,
-        WORKFLOW_TOOLKIT_DEV: fixture.stub,
-      },
-      encoding: "utf8",
-    });
-    expect(installed.status, installed.stderr).toBe(0);
-
-    // The plugin dir is refreshed from the checkout root (stub sync re-ran) and
-    // the legacy pin is gone — canonical @latest + --prefer-online. The stale
-    // flag written before install is wiped by the refresh (rsync --delete).
-    expect(existsSync(path.join(flags, "stale"))).toBe(false);
-    expect(readFileSync(path.join(fixture.home, "sync-dev"), "utf8")).toBe(
-      realpathSync(fixture.stub),
-    );
-    const pluginMcp = JSON.parse(readFileSync(path.join(pluginDir, "mcp.json"), "utf8"));
-    expect(pluginMcp.mcpServers.workit).toEqual({
-      command: "npx",
-      args: [
-        "-y",
-        "--prefer-online",
-        "--package=@brainervirus/workit-cursor@latest",
-        "workit-cursor-mcp",
-        "${workspaceFolder}",
-      ],
-    });
-    const userMcp = JSON.parse(
-      readFileSync(path.join(fixture.home, ".cursor", "mcp.json"), "utf8"),
-    );
-    expect(userMcp.mcpServers.workit).toEqual({
-      command: "npx",
-      args: [
-        "-y",
-        "--prefer-online",
-        "--package=@brainervirus/workit-cursor@latest",
-        "workit-cursor-mcp",
-        "${workspaceFolder}",
-      ],
-    });
-    // Unrelated MCP servers survive byte-identical.
-    expect(userMcp.mcpServers["unrelated-mcp"]).toEqual({
-      command: "echo",
-      args: ["keep-me"],
-    });
-
-    // The stale→repaired transition ends with a healthy doctor.
-    const doctor = spawnSync(
-      "bash",
-      [
-        "-c",
-        `bun "${path.join(fixture.stub, "packages/workit-core/scripts/doctor-check.ts")}" cursor`,
-      ],
-      {
-        env: {
-          ...process.env,
-          HOME: fixture.home,
-          WORKFLOW_TOOLKIT_DEV: fixture.stub,
+      const installed = spawnSync(
+        "bash",
+        ["packages/workit-core/scripts/install-cursor-plugin.sh"],
+        {
+          cwd: fixture.stub,
+          env: {
+            ...process.env,
+            HOME: fixture.home,
+            WORKFLOW_TOOLKIT_DEV: fixture.stub,
+          },
+          encoding: "utf8",
         },
-        encoding: "utf8",
-      },
-    );
-    expect(doctor.status, doctor.stderr).toBe(0);
-  } finally {
-    rmSync(fixture.stub, { recursive: true, force: true });
-    rmSync(fixture.home, { recursive: true, force: true });
-  }
-});
+      );
+      expect(installed.status, installed.stderr).toBe(0);
 
-test("installer leaves a healthy canonical install untouched (no rewrite, doctor healthy)", () => {
-  if (!bashAvailable()) return;
-  const fixture = makeCursorStub();
-  const pluginDir = path.join(fixture.home, ".cursor", "plugins", "local", "workit");
-  try {
-    // makeCursorStub already mirrors a synced canonical install; capture the
-    // pre-run bytes to prove the installer never rewrites them.
-    const hookBytes = readFileSync(path.join(pluginDir, "hooks", "hooks-cursor.json"));
-    const installed = spawnSync("bash", ["packages/workit-core/scripts/install-cursor-plugin.sh"], {
-      cwd: fixture.stub,
-      env: {
-        ...process.env,
-        HOME: fixture.home,
-        WORKFLOW_TOOLKIT_DEV: fixture.stub,
-      },
-      encoding: "utf8",
-    });
-    expect(installed.status, installed.stderr).toBe(0);
-    expect(readFileSync(path.join(pluginDir, "hooks", "hooks-cursor.json"))).toEqual(hookBytes);
-    const doctor = spawnSync(
-      "bash",
-      [
-        "-c",
-        `bun "${path.join(fixture.stub, "packages/workit-core/scripts/doctor-check.ts")}" cursor`,
-      ],
-      {
-        env: {
-          ...process.env,
-          HOME: fixture.home,
-          WORKFLOW_TOOLKIT_DEV: fixture.stub,
+      // The plugin dir is refreshed from the checkout root (stub sync re-ran) and
+      // the legacy pin is gone — canonical @latest + --prefer-online. The stale
+      // flag written before install is wiped by the refresh (rsync --delete).
+      expect(existsSync(path.join(flags, "stale"))).toBe(false);
+      expect(readFileSync(path.join(fixture.home, "sync-dev"), "utf8")).toBe(
+        realpathSync(fixture.stub),
+      );
+      const pluginMcp = JSON.parse(readFileSync(path.join(pluginDir, "mcp.json"), "utf8"));
+      expect(pluginMcp.mcpServers.workit).toEqual({
+        command: "npx",
+        args: [
+          "-y",
+          "--prefer-online",
+          "--package=@brainervirus/workit-cursor@latest",
+          "workit-cursor-mcp",
+          "${workspaceFolder}",
+        ],
+      });
+      const userMcp = JSON.parse(
+        readFileSync(path.join(fixture.home, ".cursor", "mcp.json"), "utf8"),
+      );
+      expect(userMcp.mcpServers.workit).toEqual({
+        command: "npx",
+        args: [
+          "-y",
+          "--prefer-online",
+          "--package=@brainervirus/workit-cursor@latest",
+          "workit-cursor-mcp",
+          "${workspaceFolder}",
+        ],
+      });
+      // Unrelated MCP servers survive byte-identical.
+      expect(userMcp.mcpServers["unrelated-mcp"]).toEqual({
+        command: "echo",
+        args: ["keep-me"],
+      });
+
+      // The stale→repaired transition ends with a healthy doctor.
+      const doctor = spawnSync(
+        "bash",
+        [
+          "-c",
+          `bun "${path.join(fixture.stub, "packages/workit-core/scripts/doctor-check.ts")}" cursor`,
+        ],
+        {
+          env: {
+            ...process.env,
+            HOME: fixture.home,
+            WORKFLOW_TOOLKIT_DEV: fixture.stub,
+          },
+          encoding: "utf8",
         },
-        encoding: "utf8",
-      },
-    );
-    expect(doctor.status, doctor.stderr).toBe(0);
-  } finally {
-    rmSync(fixture.stub, { recursive: true, force: true });
-    rmSync(fixture.home, { recursive: true, force: true });
-  }
-});
+      );
+      expect(doctor.status, doctor.stderr).toBe(0);
+    } finally {
+      rmSync(fixture.stub, { recursive: true, force: true });
+      rmSync(fixture.home, { recursive: true, force: true });
+    }
+  },
+  { timeout: 60_000 },
+);
+
+test(
+  "installer leaves a healthy canonical install untouched (no rewrite, doctor healthy)",
+  () => {
+    if (!bashAvailable()) return;
+    const fixture = makeCursorStub();
+    const pluginDir = path.join(fixture.home, ".cursor", "plugins", "local", "workit");
+    try {
+      // makeCursorStub already mirrors a synced canonical install; capture the
+      // pre-run bytes to prove the installer never rewrites them.
+      const hookBytes = readFileSync(path.join(pluginDir, "hooks", "hooks-cursor.json"));
+      const installed = spawnSync(
+        "bash",
+        ["packages/workit-core/scripts/install-cursor-plugin.sh"],
+        {
+          cwd: fixture.stub,
+          env: {
+            ...process.env,
+            HOME: fixture.home,
+            WORKFLOW_TOOLKIT_DEV: fixture.stub,
+          },
+          encoding: "utf8",
+        },
+      );
+      expect(installed.status, installed.stderr).toBe(0);
+      expect(readFileSync(path.join(pluginDir, "hooks", "hooks-cursor.json"))).toEqual(hookBytes);
+      const doctor = spawnSync(
+        "bash",
+        [
+          "-c",
+          `bun "${path.join(fixture.stub, "packages/workit-core/scripts/doctor-check.ts")}" cursor`,
+        ],
+        {
+          env: {
+            ...process.env,
+            HOME: fixture.home,
+            WORKFLOW_TOOLKIT_DEV: fixture.stub,
+          },
+          encoding: "utf8",
+        },
+      );
+      expect(doctor.status, doctor.stderr).toBe(0);
+    } finally {
+      rmSync(fixture.stub, { recursive: true, force: true });
+      rmSync(fixture.home, { recursive: true, force: true });
+    }
+  },
+  { timeout: 60_000 },
+);
 
 function bashAvailable(): boolean {
   if (process.platform === "win32") return false;
@@ -461,280 +477,334 @@ rsync -a --delete "$WORKFLOW_TOOLKIT_DEV/packages/workit-cursor/" "$HOME/.cursor
   return { stub, home };
 }
 
-test("install-opencode-plugin.sh writes a file:// pin and fails loudly on an empty pinned entry", () => {
-  if (!bashAvailable()) return;
-  const good = makeStub("export default {};\n");
-  const empty = makeStub("");
-  try {
-    const ok = runInstall(good);
-    expect(ok.status, ok.stderr).toBe(0);
-    const config = JSON.parse(
-      readFileSync(path.join(good.home, ".config/opencode/opencode.json"), "utf8"),
-    );
-    expect(config.plugin).toEqual([`file://${good.stub}/packages/workit-opencode/src/plugin.ts`]);
+test(
+  "install-opencode-plugin.sh writes a file:// pin and fails loudly on an empty pinned entry",
+  () => {
+    if (!bashAvailable()) return;
+    const good = makeStub("export default {};\n");
+    const empty = makeStub("");
+    try {
+      const ok = runInstall(good);
+      expect(ok.status, ok.stderr).toBe(0);
+      const config = JSON.parse(
+        readFileSync(path.join(good.home, ".config/opencode/opencode.json"), "utf8"),
+      );
+      expect(config.plugin).toEqual([`file://${good.stub}/packages/workit-opencode/src/plugin.ts`]);
 
-    const bad = runInstall(empty);
-    expect(bad.status).not.toBe(0);
-    expect(bad.stderr + bad.stdout).toContain("FATAL: pinned plugin entry missing or empty");
-  } finally {
-    rmSync(good.stub, { recursive: true, force: true });
-    rmSync(good.home, { recursive: true, force: true });
-    rmSync(empty.stub, { recursive: true, force: true });
-    rmSync(empty.home, { recursive: true, force: true });
-  }
-});
+      const bad = runInstall(empty);
+      expect(bad.status).not.toBe(0);
+      expect(bad.stderr + bad.stdout).toContain("FATAL: pinned plugin entry missing or empty");
+    } finally {
+      rmSync(good.stub, { recursive: true, force: true });
+      rmSync(good.home, { recursive: true, force: true });
+      rmSync(empty.stub, { recursive: true, force: true });
+      rmSync(empty.home, { recursive: true, force: true });
+    }
+  },
+  { timeout: 60_000 },
+);
 
-test("install-opencode-plugin.sh uses the monorepo root and prioritizes one dev pin", () => {
-  if (!bashAvailable()) return;
-  const fixture = makeNestedStub();
-  try {
-    const installed = spawnSync(
-      "bash",
-      ["packages/workit-core/scripts/install-opencode-plugin.sh"],
-      {
-        cwd: fixture.stub,
-        env: {
-          ...process.env,
-          HOME: fixture.home,
-          WORKFLOW_TOOLKIT_DEV: fixture.stub,
+test(
+  "install-opencode-plugin.sh uses the monorepo root and prioritizes one dev pin",
+  () => {
+    if (!bashAvailable()) return;
+    const fixture = makeNestedStub();
+    try {
+      const installed = spawnSync(
+        "bash",
+        ["packages/workit-core/scripts/install-opencode-plugin.sh"],
+        {
+          cwd: fixture.stub,
+          env: {
+            ...process.env,
+            HOME: fixture.home,
+            WORKFLOW_TOOLKIT_DEV: fixture.stub,
+          },
+          encoding: "utf8",
         },
-        encoding: "utf8",
-      },
-    );
-    expect(installed.status, installed.stderr).toBe(0);
-    expect(readFileSync(path.join(fixture.home, "sync-dev"), "utf8")).toBe(
-      realpathSync(fixture.stub),
-    );
-    const config = JSON.parse(
-      readFileSync(path.join(fixture.home, ".config/opencode/opencode.json"), "utf8"),
-    );
-    expect(config.plugin).toEqual([
-      `file://${fixture.stub}/packages/workit-opencode/src/plugin.ts`,
-      "@dietrichgebert/ponytail",
-    ]);
-  } finally {
-    rmSync(fixture.stub, { recursive: true, force: true });
-    rmSync(fixture.home, { recursive: true, force: true });
-  }
-});
+      );
+      expect(installed.status, installed.stderr).toBe(0);
+      expect(readFileSync(path.join(fixture.home, "sync-dev"), "utf8")).toBe(
+        realpathSync(fixture.stub),
+      );
+      const config = JSON.parse(
+        readFileSync(path.join(fixture.home, ".config/opencode/opencode.json"), "utf8"),
+      );
+      expect(config.plugin).toEqual([
+        `file://${fixture.stub}/packages/workit-opencode/src/plugin.ts`,
+        "@dietrichgebert/ponytail",
+      ]);
+    } finally {
+      rmSync(fixture.stub, { recursive: true, force: true });
+      rmSync(fixture.home, { recursive: true, force: true });
+    }
+  },
+  { timeout: 60_000 },
+);
 
-test("install-opencode-plugin.sh defaults to the checkout containing the script", () => {
-  if (!bashAvailable()) return;
-  const fixture = makeStub("export default {};\n");
-  const share = path.join(fixture.home, ".local/share/workit");
-  try {
-    mkdirSync(path.join(share, ".git"), { recursive: true });
-    mkdirSync(path.join(share, "packages/workit-opencode/src"), {
-      recursive: true,
-    });
-    writeFileSync(
-      path.join(share, "packages/workit-opencode/src/plugin.ts"),
-      "export default {};\n",
-    );
-    const { WORKFLOW_TOOLKIT_DEV: _ignored, ...env } = process.env;
-    const installed = spawnSync(
-      "bash",
-      ["packages/workit-core/scripts/install-opencode-plugin.sh"],
-      {
-        cwd: fixture.stub,
-        env: { ...env, HOME: fixture.home },
-        encoding: "utf8",
-      },
-    );
-
-    expect(installed.status, installed.stderr).toBe(0);
-    const config = JSON.parse(
-      readFileSync(path.join(fixture.home, ".config/opencode/opencode.json"), "utf8"),
-    );
-    expect(config.plugin).toEqual([
-      `file://${realpathSync(fixture.stub)}/packages/workit-opencode/src/plugin.ts`,
-    ]);
-  } finally {
-    rmSync(fixture.stub, { recursive: true, force: true });
-    rmSync(fixture.home, { recursive: true, force: true });
-  }
-});
-
-test("installers clone from the public HTTPS URL, never SSH (RR-05)", () => {
-  for (const name of [
-    "install-cursor-plugin.sh",
-    "install-opencode-plugin.sh",
-    "sync-runtime.sh",
-  ]) {
-    const src = readFileSync(path.join(repoRoot, "packages/workit-core/scripts", name), "utf8");
-    expect(src, name).not.toMatch(/git@github\.com:/);
-    expect(src, name).toMatch(/https:\/\/github\.com\//);
-  }
-});
-
-test("install-cursor-plugin.sh removes the legacy dir after success, carrying user rules forward", () => {
-  if (!bashAvailable()) return;
-  const fixture = makeCursorStub();
-  const legacyDir = path.join(fixture.home, ".cursor", "plugins", "local", "workflow-toolkit");
-  const otherDir = path.join(fixture.home, ".cursor", "plugins", "local", "workflow-toolkit-extra");
-  try {
-    mkdirSync(path.join(legacyDir, "rules"), { recursive: true });
-    writeFileSync(
-      path.join(legacyDir, "rules", "user-managed.mdc"),
-      "---\nalwaysApply: true\n---\n# User rule\n",
-    );
-    mkdirSync(path.join(legacyDir, "skills"), { recursive: true });
-    writeFileSync(path.join(legacyDir, "skills", "stale-skill.md"), "# legacy\n");
-    mkdirSync(otherDir, { recursive: true });
-    writeFileSync(path.join(otherDir, "marker"), "unrelated\n");
-
-    const installed = spawnSync("bash", ["packages/workit-core/scripts/install-cursor-plugin.sh"], {
-      cwd: fixture.stub,
-      env: {
-        ...process.env,
-        HOME: fixture.home,
-        WORKFLOW_TOOLKIT_DEV: fixture.stub,
-      },
-      encoding: "utf8",
-    });
-    expect(installed.status, installed.stderr).toBe(0);
-
-    // The legacy identity is removed only after a successful install; the
-    // user-compiled rule is carried forward, unrelated sibling dirs survive.
-    expect(existsSync(legacyDir)).toBe(false);
-    expect(
-      readFileSync(
-        path.join(
-          fixture.home,
-          ".cursor",
-          "plugins",
-          "local",
-          "workit",
-          "rules",
-          "user-managed.mdc",
-        ),
-        "utf8",
-      ),
-    ).toContain("# User rule");
-    expect(readFileSync(path.join(otherDir, "marker"), "utf8")).toBe("unrelated\n");
-  } finally {
-    rmSync(fixture.stub, { recursive: true, force: true });
-    rmSync(fixture.home, { recursive: true, force: true });
-  }
-});
-
-test("install-cursor-plugin.sh resolves the local checkout root and never falls back to GitHub", () => {
-  if (!bashAvailable()) return;
-  const fixture = makeCursorStub();
-  try {
-    // A share clone with a dead remote makes the FROM_GITHUB fallback
-    // deterministically fail offline (no network). A green run therefore proves
-    // the installer used the local checkout tree, and sync-dev records which
-    // ROOT it synced from.
+test(
+  "install-opencode-plugin.sh defaults to the checkout containing the script",
+  () => {
+    if (!bashAvailable()) return;
+    const fixture = makeStub("export default {};\n");
     const share = path.join(fixture.home, ".local/share/workit");
-    mkdirSync(path.join(share, ".git"), { recursive: true });
-    spawnSync("git", ["init", "-q"], { cwd: share });
-    spawnSync("git", ["remote", "add", "origin", "https://127.0.0.1:1/workflow-toolkit.git"], {
-      cwd: share,
-    });
-
-    const installed = spawnSync("bash", ["packages/workit-core/scripts/install-cursor-plugin.sh"], {
-      cwd: fixture.stub,
-      env: {
-        ...process.env,
-        HOME: fixture.home,
-        WORKFLOW_TOOLKIT_DEV: fixture.stub,
-      },
-      encoding: "utf8",
-    });
-    expect(installed.status, installed.stderr).toBe(0);
-    expect(readFileSync(path.join(fixture.home, "sync-dev"), "utf8")).toBe(
-      realpathSync(fixture.stub),
-    );
-  } finally {
-    rmSync(fixture.stub, { recursive: true, force: true });
-    rmSync(fixture.home, { recursive: true, force: true });
-  }
-});
-
-test("install-cursor-plugin.sh --local-dist registers node-form launchers against the installed dist", () => {
-  if (!bashAvailable()) return;
-  const fixture = makeCursorStub();
-  try {
-    const installed = spawnSync(
-      "bash",
-      ["packages/workit-core/scripts/install-cursor-plugin.sh", "--local-dist"],
-      {
-        cwd: fixture.stub,
-        env: {
-          ...process.env,
-          HOME: fixture.home,
-          WORKFLOW_TOOLKIT_DEV: fixture.stub,
+    try {
+      mkdirSync(path.join(share, ".git"), { recursive: true });
+      mkdirSync(path.join(share, "packages/workit-opencode/src"), {
+        recursive: true,
+      });
+      writeFileSync(
+        path.join(share, "packages/workit-opencode/src/plugin.ts"),
+        "export default {};\n",
+      );
+      const { WORKFLOW_TOOLKIT_DEV: _ignored, ...env } = process.env;
+      const installed = spawnSync(
+        "bash",
+        ["packages/workit-core/scripts/install-opencode-plugin.sh"],
+        {
+          cwd: fixture.stub,
+          env: { ...env, HOME: fixture.home },
+          encoding: "utf8",
         },
-        encoding: "utf8",
-      },
-    );
-    expect(installed.status, installed.stderr).toBe(0);
+      );
 
+      expect(installed.status, installed.stderr).toBe(0);
+      const config = JSON.parse(
+        readFileSync(path.join(fixture.home, ".config/opencode/opencode.json"), "utf8"),
+      );
+      expect(config.plugin).toEqual([
+        `file://${realpathSync(fixture.stub)}/packages/workit-opencode/src/plugin.ts`,
+      ]);
+    } finally {
+      rmSync(fixture.stub, { recursive: true, force: true });
+      rmSync(fixture.home, { recursive: true, force: true });
+    }
+  },
+  { timeout: 60_000 },
+);
+
+test(
+  "installers clone from the public HTTPS URL, never SSH (RR-05)",
+  () => {
+    for (const name of [
+      "install-cursor-plugin.sh",
+      "install-opencode-plugin.sh",
+      "sync-runtime.sh",
+    ]) {
+      const src = readFileSync(path.join(repoRoot, "packages/workit-core/scripts", name), "utf8");
+      expect(src, name).not.toMatch(/git@github\.com:/);
+      expect(src, name).toMatch(/https:\/\/github\.com\//);
+    }
+  },
+  { timeout: 60_000 },
+);
+
+test(
+  "install-cursor-plugin.sh removes the legacy dir after success, carrying user rules forward",
+  () => {
+    if (!bashAvailable()) return;
+    const fixture = makeCursorStub();
+    const legacyDir = path.join(fixture.home, ".cursor", "plugins", "local", "workflow-toolkit");
+    const otherDir = path.join(
+      fixture.home,
+      ".cursor",
+      "plugins",
+      "local",
+      "workflow-toolkit-extra",
+    );
+    try {
+      mkdirSync(path.join(legacyDir, "rules"), { recursive: true });
+      writeFileSync(
+        path.join(legacyDir, "rules", "user-managed.mdc"),
+        "---\nalwaysApply: true\n---\n# User rule\n",
+      );
+      mkdirSync(path.join(legacyDir, "skills"), { recursive: true });
+      writeFileSync(path.join(legacyDir, "skills", "stale-skill.md"), "# legacy\n");
+      mkdirSync(otherDir, { recursive: true });
+      writeFileSync(path.join(otherDir, "marker"), "unrelated\n");
+
+      const installed = spawnSync(
+        "bash",
+        ["packages/workit-core/scripts/install-cursor-plugin.sh"],
+        {
+          cwd: fixture.stub,
+          env: {
+            ...process.env,
+            HOME: fixture.home,
+            WORKFLOW_TOOLKIT_DEV: fixture.stub,
+          },
+          encoding: "utf8",
+        },
+      );
+      expect(installed.status, installed.stderr).toBe(0);
+
+      // The legacy identity is removed only after a successful install; the
+      // user-compiled rule is carried forward, unrelated sibling dirs survive.
+      expect(existsSync(legacyDir)).toBe(false);
+      expect(
+        readFileSync(
+          path.join(
+            fixture.home,
+            ".cursor",
+            "plugins",
+            "local",
+            "workit",
+            "rules",
+            "user-managed.mdc",
+          ),
+          "utf8",
+        ),
+      ).toContain("# User rule");
+      expect(readFileSync(path.join(otherDir, "marker"), "utf8")).toBe("unrelated\n");
+    } finally {
+      rmSync(fixture.stub, { recursive: true, force: true });
+      rmSync(fixture.home, { recursive: true, force: true });
+    }
+  },
+  { timeout: 60_000 },
+);
+
+test(
+  "install-cursor-plugin.sh resolves the local checkout root and never falls back to GitHub",
+  () => {
+    if (!bashAvailable()) return;
+    const fixture = makeCursorStub();
+    try {
+      // A share clone with a dead remote makes the FROM_GITHUB fallback
+      // deterministically fail offline (no network). A green run therefore proves
+      // the installer used the local checkout tree, and sync-dev records which
+      // ROOT it synced from.
+      const share = path.join(fixture.home, ".local/share/workit");
+      mkdirSync(path.join(share, ".git"), { recursive: true });
+      spawnSync("git", ["init", "-q"], { cwd: share });
+      spawnSync("git", ["remote", "add", "origin", "https://127.0.0.1:1/workflow-toolkit.git"], {
+        cwd: share,
+      });
+
+      const installed = spawnSync(
+        "bash",
+        ["packages/workit-core/scripts/install-cursor-plugin.sh"],
+        {
+          cwd: fixture.stub,
+          env: {
+            ...process.env,
+            HOME: fixture.home,
+            WORKFLOW_TOOLKIT_DEV: fixture.stub,
+          },
+          encoding: "utf8",
+        },
+      );
+      expect(installed.status, installed.stderr).toBe(0);
+      expect(readFileSync(path.join(fixture.home, "sync-dev"), "utf8")).toBe(
+        realpathSync(fixture.stub),
+      );
+    } finally {
+      rmSync(fixture.stub, { recursive: true, force: true });
+      rmSync(fixture.home, { recursive: true, force: true });
+    }
+  },
+  { timeout: 60_000 },
+);
+
+test(
+  "install-cursor-plugin.sh --local-dist registers node-form launchers against the installed dist",
+  () => {
+    if (!bashAvailable()) return;
+    const fixture = makeCursorStub();
+    try {
+      const installed = spawnSync(
+        "bash",
+        ["packages/workit-core/scripts/install-cursor-plugin.sh", "--local-dist"],
+        {
+          cwd: fixture.stub,
+          env: {
+            ...process.env,
+            HOME: fixture.home,
+            WORKFLOW_TOOLKIT_DEV: fixture.stub,
+          },
+          encoding: "utf8",
+        },
+      );
+      expect(installed.status, installed.stderr).toBe(0);
+
+      const pluginDir = path.join(fixture.home, ".cursor", "plugins", "local", "workit");
+      const mcp = JSON.parse(readFileSync(path.join(fixture.home, ".cursor", "mcp.json"), "utf8"));
+      const server = mcp.mcpServers.workit;
+      expect(server.command).toBe("node");
+      expect(server.args[0]).toBe(path.join(pluginDir, "dist", "mcp-server.js"));
+      expect(server.args[1]).toBe("${workspaceFolder}");
+      expect(JSON.stringify(mcp)).not.toContain("@brainervirus/workit-cursor@0.8.5");
+
+      const hooks = JSON.parse(
+        readFileSync(path.join(pluginDir, "hooks", "hooks-cursor.json"), "utf8"),
+      );
+      expect(hooks.hooks.sessionStart[0].command).toBe(
+        `node ${path.join(pluginDir, "dist", "cursor-session-start.js")}`,
+      );
+    } finally {
+      rmSync(fixture.stub, { recursive: true, force: true });
+      rmSync(fixture.home, { recursive: true, force: true });
+    }
+  },
+  { timeout: 60_000 },
+);
+
+test(
+  "installer fails open when the registry is unreachable: no stale repair, install succeeds (CA-04)",
+  () => {
+    if (!bashAvailable()) return;
+    const fixture = makeCursorStub();
     const pluginDir = path.join(fixture.home, ".cursor", "plugins", "local", "workit");
-    const mcp = JSON.parse(readFileSync(path.join(fixture.home, ".cursor", "mcp.json"), "utf8"));
-    const server = mcp.mcpServers.workit;
-    expect(server.command).toBe("node");
-    expect(server.args[0]).toBe(path.join(pluginDir, "dist", "mcp-server.js"));
-    expect(server.args[1]).toBe("${workspaceFolder}");
-    expect(JSON.stringify(mcp)).not.toContain("@brainervirus/workit-cursor@0.8.5");
+    try {
+      // A local-dist install (node hook, no mcp.json selector) is the only shape
+      // that consults the registry; a canonical @latest install never probes.
+      makeStaleCursorHome(fixture.home, pluginDir);
+      rmSync(path.join(pluginDir, "mcp.json"), { force: true });
+      writeJson(path.join(pluginDir, "hooks", "hooks-cursor.json"), {
+        version: 1,
+        hooks: { sessionStart: [{ command: `node ${pluginDir}/dist/cursor-session-start.js` }] },
+      });
 
-    const hooks = JSON.parse(
-      readFileSync(path.join(pluginDir, "hooks", "hooks-cursor.json"), "utf8"),
-    );
-    expect(hooks.hooks.sessionStart[0].command).toBe(
-      `node ${path.join(pluginDir, "dist", "cursor-session-start.js")}`,
-    );
-  } finally {
-    rmSync(fixture.stub, { recursive: true, force: true });
-    rmSync(fixture.home, { recursive: true, force: true });
-  }
-});
-
-test("installer fails open when the registry is unreachable: no stale repair, install succeeds (CA-04)", () => {
-  if (!bashAvailable()) return;
-  const fixture = makeCursorStub();
-  const pluginDir = path.join(fixture.home, ".cursor", "plugins", "local", "workit");
-  try {
-    // A local-dist install (node hook, no mcp.json selector) is the only shape
-    // that consults the registry; a canonical @latest install never probes.
-    makeStaleCursorHome(fixture.home, pluginDir);
-    rmSync(path.join(pluginDir, "mcp.json"), { force: true });
-    writeJson(path.join(pluginDir, "hooks", "hooks-cursor.json"), {
-      version: 1,
-      hooks: { sessionStart: [{ command: `node ${pluginDir}/dist/cursor-session-start.js` }] },
-    });
-
-    const installed = spawnSync("bash", ["packages/workit-core/scripts/install-cursor-plugin.sh"], {
-      cwd: fixture.stub,
-      env: {
-        ...process.env,
-        HOME: fixture.home,
-        WORKFLOW_TOOLKIT_DEV: fixture.stub,
-        WORKIT_DOCTOR_STALE_REGISTRY_CMD: path.join(fixture.stub, "no-registry-bin", "npm-fail"),
-      },
-      encoding: "utf8",
-    });
-    expect(installed.status, installed.stderr).toBe(0);
-    const userMcp = JSON.parse(
-      readFileSync(path.join(fixture.home, ".cursor", "mcp.json"), "utf8"),
-    );
-    expect(userMcp.mcpServers["unrelated-mcp"]).toEqual({ command: "echo", args: ["keep-me"] });
-    expect(userMcp.mcpServers.workit).toEqual({
-      command: "npx",
-      args: [
-        "-y",
-        "--prefer-online",
-        "--package=@brainervirus/workit-cursor@latest",
-        "workit-cursor-mcp",
-        "${workspaceFolder}",
-      ],
-    });
-  } finally {
-    rmSync(fixture.stub, { recursive: true, force: true });
-    rmSync(fixture.home, { recursive: true, force: true });
-  }
-});
+      const installed = spawnSync(
+        "bash",
+        ["packages/workit-core/scripts/install-cursor-plugin.sh"],
+        {
+          cwd: fixture.stub,
+          env: {
+            ...process.env,
+            HOME: fixture.home,
+            WORKFLOW_TOOLKIT_DEV: fixture.stub,
+            WORKIT_DOCTOR_STALE_REGISTRY_CMD: path.join(
+              fixture.stub,
+              "no-registry-bin",
+              "npm-fail",
+            ),
+          },
+          encoding: "utf8",
+        },
+      );
+      expect(installed.status, installed.stderr).toBe(0);
+      const userMcp = JSON.parse(
+        readFileSync(path.join(fixture.home, ".cursor", "mcp.json"), "utf8"),
+      );
+      expect(userMcp.mcpServers["unrelated-mcp"]).toEqual({ command: "echo", args: ["keep-me"] });
+      expect(userMcp.mcpServers.workit).toEqual({
+        command: "npx",
+        args: [
+          "-y",
+          "--prefer-online",
+          "--package=@brainervirus/workit-cursor@latest",
+          "workit-cursor-mcp",
+          "${workspaceFolder}",
+        ],
+      });
+    } finally {
+      rmSync(fixture.stub, { recursive: true, force: true });
+      rmSync(fixture.home, { recursive: true, force: true });
+    }
+  },
+  { timeout: 60_000 },
+);
 
 function syncEnv(
   home: string,
@@ -819,220 +889,259 @@ exec "$REAL_BUN" "$@"
   return wrapper;
 }
 
-test("sync-runtime fails when the flock utility is missing (RR-05)", () => {
-  if (!bashAvailable()) return;
-  const home = mkdtempSync(path.join(os.tmpdir(), "wk-sync-home-"));
-  const runtimeDir = mkdtempSync(path.join(os.tmpdir(), "wk-sync-xdg-"));
-  const binDir = mkdtempSync(path.join(os.tmpdir(), "wk-sync-bin-"));
-  try {
-    const bashPath = spawnSync("bash", ["-c", "command -v bash"], {
-      encoding: "utf8",
-    }).stdout.trim();
-    const dirnamePath = spawnSync("bash", ["-c", "command -v dirname"], {
-      encoding: "utf8",
-    }).stdout.trim();
-    symlinkSync(bashPath, path.join(binDir, "bash"));
-    symlinkSync(dirnamePath, path.join(binDir, "dirname"));
-    const r = runSyncScript(syncEnv(home, runtimeDir, { PATH: binDir }));
-    expect(r.status, r.stderr).not.toBe(0);
-    expect(r.stderr).toContain("flock");
-  } finally {
-    rmSync(home, { recursive: true, force: true });
-    rmSync(runtimeDir, { recursive: true, force: true });
-    rmSync(binDir, { recursive: true, force: true });
-  }
-});
-
-test("sync-runtime exits nonzero when the sync lock is already held (RR-05)", async () => {
-  if (!bashAvailable() || !flockAvailable()) return;
-  const home = mkdtempSync(path.join(os.tmpdir(), "wk-sync-home-"));
-  const runtimeDir = mkdtempSync(path.join(os.tmpdir(), "wk-sync-xdg-"));
-  const lock = path.join(runtimeDir, "workflow-toolkit-sync.lock");
-  const marker = path.join(runtimeDir, "lock-held");
-  const holder = spawn(
-    "bash",
-    ["-c", `exec 9>"$1"; flock -n 9 || exit 1; : >"$2"; sleep 30`, "holder", lock, marker],
-    { stdio: "ignore" },
-  );
-  try {
-    for (let i = 0; i < 200 && !existsSync(marker); i++) await Bun.sleep(25);
-    expect(existsSync(marker), "test holder failed to acquire the sync lock").toBe(true);
-    const r = runSyncScript(syncEnv(home, runtimeDir));
-    expect(r.status, r.stderr).not.toBe(0);
-    expect(r.stderr).toContain("lock");
-  } finally {
-    holder.kill();
-    rmSync(home, { recursive: true, force: true });
-    rmSync(runtimeDir, { recursive: true, force: true });
-  }
-});
-
-test("sync-runtime fails loudly when updating an existing share clone cannot fetch (RR-05)", () => {
-  if (!bashAvailable() || !flockAvailable()) return;
-  const home = mkdtempSync(path.join(os.tmpdir(), "wk-sync-home-"));
-  const runtimeDir = mkdtempSync(path.join(os.tmpdir(), "wk-sync-xdg-"));
-  const share = path.join(home, ".local/share/workit");
-  try {
-    mkdirSync(path.join(share, ".git"), { recursive: true });
-    spawnSync("git", ["init", "-q"], { cwd: share });
-    spawnSync("git", ["remote", "add", "origin", "https://127.0.0.1:1/workflow-toolkit.git"], {
-      cwd: share,
-    });
-    const r = runSyncScript(syncEnv(home, runtimeDir));
-    expect(r.status, r.stderr).not.toBe(0);
-    expect(r.stderr).toContain("FATAL");
-  } finally {
-    rmSync(home, { recursive: true, force: true });
-    rmSync(runtimeDir, { recursive: true, force: true });
-  }
-});
-
-test("sync-runtime installs frozen dependencies before rebuilding and replacing stale Cursor dist", () => {
-  if (!bashAvailable() || !flockAvailable()) return;
-  const home = mkdtempSync(path.join(os.tmpdir(), "wk-sync-home-"));
-  const runtimeDir = mkdtempSync(path.join(os.tmpdir(), "wk-sync-xdg-"));
-  const binDir = mkdtempSync(path.join(os.tmpdir(), "wk-sync-bin-"));
-  const dev = makeDependencyFreeCheckout();
-  const log = path.join(binDir, "bun.log");
-  try {
-    const bun = writeOfflineBunWrapper(binDir);
-    const env = syncEnv(home, runtimeDir, {
-      WORKFLOW_TOOLKIT_DEV: dev,
-      BUN: bun,
-      BUN_LOG: log,
-      REAL_BUN: process.execPath,
-      REAL_NODE_MODULES: path.join(repoRoot, "node_modules"),
-      PATH: `${binDir}${path.delimiter}/usr/bin${path.delimiter}/bin`,
-    });
-    const r = runSyncScript(env);
-    expect(r.status, r.stderr).toBe(0);
-    expect(readFileSync(log, "utf8")).toBe("install\nbuild\n");
-    for (const entry of ["mcp-server.js", "cursor-session-start.js"]) {
-      const installed = path.join(home, ".cursor/plugins/local/workit/dist", entry);
-      expect(existsSync(installed), entry).toBe(true);
-      expect(readFileSync(installed, "utf8")).toStartWith("#!/usr/bin/env node");
-      expect(readFileSync(installed, "utf8")).not.toBe("stale\n");
+test(
+  "sync-runtime fails when the flock utility is missing (RR-05)",
+  () => {
+    if (!bashAvailable()) return;
+    const home = mkdtempSync(path.join(os.tmpdir(), "wk-sync-home-"));
+    const runtimeDir = mkdtempSync(path.join(os.tmpdir(), "wk-sync-xdg-"));
+    const binDir = mkdtempSync(path.join(os.tmpdir(), "wk-sync-bin-"));
+    try {
+      const bashPath = spawnSync("bash", ["-c", "command -v bash"], {
+        encoding: "utf8",
+      }).stdout.trim();
+      const dirnamePath = spawnSync("bash", ["-c", "command -v dirname"], {
+        encoding: "utf8",
+      }).stdout.trim();
+      symlinkSync(bashPath, path.join(binDir, "bash"));
+      symlinkSync(dirnamePath, path.join(binDir, "dirname"));
+      const r = runSyncScript(syncEnv(home, runtimeDir, { PATH: binDir }));
+      expect(r.status, r.stderr).not.toBe(0);
+      expect(r.stderr).toContain("flock");
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(runtimeDir, { recursive: true, force: true });
+      rmSync(binDir, { recursive: true, force: true });
     }
-  } finally {
-    rmSync(home, { recursive: true, force: true });
-    rmSync(runtimeDir, { recursive: true, force: true });
-    rmSync(binDir, { recursive: true, force: true });
-    rmSync(dev, { recursive: true, force: true });
-  }
-});
+  },
+  { timeout: 60_000 },
+);
 
-test("sync-runtime fails loudly when a dist-less Cursor adapter cannot find Bun", () => {
-  if (!bashAvailable() || !flockAvailable()) return;
-  const home = mkdtempSync(path.join(os.tmpdir(), "wk-sync-home-"));
-  const runtimeDir = mkdtempSync(path.join(os.tmpdir(), "wk-sync-xdg-"));
-  const binDir = mkdtempSync(path.join(os.tmpdir(), "wk-sync-bin-"));
-  const dev = mkdtempSync(path.join(os.tmpdir(), "wk-sync-dev-"));
-  try {
-    for (const tool of ["bash", "chmod", "dirname", "flock", "mkdir", "rm", "rsync"]) {
-      symlinkSync(
-        spawnSync("bash", ["-c", `command -v ${tool}`], {
-          encoding: "utf8",
-        }).stdout.trim(),
-        path.join(binDir, tool),
+test(
+  "sync-runtime exits nonzero when the sync lock is already held (RR-05)",
+  async () => {
+    if (!bashAvailable() || !flockAvailable()) return;
+    const home = mkdtempSync(path.join(os.tmpdir(), "wk-sync-home-"));
+    const runtimeDir = mkdtempSync(path.join(os.tmpdir(), "wk-sync-xdg-"));
+    const lock = path.join(runtimeDir, "workflow-toolkit-sync.lock");
+    const marker = path.join(runtimeDir, "lock-held");
+    const holder = spawn(
+      "bash",
+      ["-c", `exec 9>"$1"; flock -n 9 || exit 1; : >"$2"; sleep 30`, "holder", lock, marker],
+      { stdio: "ignore" },
+    );
+    try {
+      for (let i = 0; i < 200 && !existsSync(marker); i++) await Bun.sleep(25);
+      expect(existsSync(marker), "test holder failed to acquire the sync lock").toBe(true);
+      const r = runSyncScript(syncEnv(home, runtimeDir));
+      expect(r.status, r.stderr).not.toBe(0);
+      expect(r.stderr).toContain("lock");
+    } finally {
+      holder.kill();
+      rmSync(home, { recursive: true, force: true });
+      rmSync(runtimeDir, { recursive: true, force: true });
+    }
+  },
+  { timeout: 60_000 },
+);
+
+test(
+  "sync-runtime fails loudly when updating an existing share clone cannot fetch (RR-05)",
+  () => {
+    if (!bashAvailable() || !flockAvailable()) return;
+    const home = mkdtempSync(path.join(os.tmpdir(), "wk-sync-home-"));
+    const runtimeDir = mkdtempSync(path.join(os.tmpdir(), "wk-sync-xdg-"));
+    const share = path.join(home, ".local/share/workit");
+    try {
+      mkdirSync(path.join(share, ".git"), { recursive: true });
+      spawnSync("git", ["init", "-q"], { cwd: share });
+      spawnSync("git", ["remote", "add", "origin", "https://127.0.0.1:1/workflow-toolkit.git"], {
+        cwd: share,
+      });
+      const r = runSyncScript(syncEnv(home, runtimeDir));
+      expect(r.status, r.stderr).not.toBe(0);
+      expect(r.stderr).toContain("FATAL");
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(runtimeDir, { recursive: true, force: true });
+    }
+  },
+  { timeout: 60_000 },
+);
+
+test(
+  "sync-runtime installs frozen dependencies before rebuilding and replacing stale Cursor dist",
+  () => {
+    if (!bashAvailable() || !flockAvailable()) return;
+    const home = mkdtempSync(path.join(os.tmpdir(), "wk-sync-home-"));
+    const runtimeDir = mkdtempSync(path.join(os.tmpdir(), "wk-sync-xdg-"));
+    const binDir = mkdtempSync(path.join(os.tmpdir(), "wk-sync-bin-"));
+    const dev = makeDependencyFreeCheckout();
+    const log = path.join(binDir, "bun.log");
+    try {
+      const bun = writeOfflineBunWrapper(binDir);
+      const env = syncEnv(home, runtimeDir, {
+        WORKFLOW_TOOLKIT_DEV: dev,
+        BUN: bun,
+        BUN_LOG: log,
+        REAL_BUN: process.execPath,
+        REAL_NODE_MODULES: path.join(repoRoot, "node_modules"),
+        PATH: `${binDir}${path.delimiter}/usr/bin${path.delimiter}/bin`,
+      });
+      const r = runSyncScript(env);
+      expect(r.status, r.stderr).toBe(0);
+      expect(readFileSync(log, "utf8")).toBe("install\nbuild\n");
+      for (const entry of ["mcp-server.js", "cursor-session-start.js"]) {
+        const installed = path.join(home, ".cursor/plugins/local/workit/dist", entry);
+        expect(existsSync(installed), entry).toBe(true);
+        expect(readFileSync(installed, "utf8")).toStartWith("#!/usr/bin/env node");
+        expect(readFileSync(installed, "utf8")).not.toBe("stale\n");
+      }
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(runtimeDir, { recursive: true, force: true });
+      rmSync(binDir, { recursive: true, force: true });
+      rmSync(dev, { recursive: true, force: true });
+    }
+  },
+  { timeout: 60_000 },
+);
+
+test(
+  "sync-runtime fails loudly when a dist-less Cursor adapter cannot find Bun",
+  () => {
+    if (!bashAvailable() || !flockAvailable()) return;
+    const home = mkdtempSync(path.join(os.tmpdir(), "wk-sync-home-"));
+    const runtimeDir = mkdtempSync(path.join(os.tmpdir(), "wk-sync-xdg-"));
+    const binDir = mkdtempSync(path.join(os.tmpdir(), "wk-sync-bin-"));
+    const dev = mkdtempSync(path.join(os.tmpdir(), "wk-sync-dev-"));
+    try {
+      for (const tool of ["bash", "chmod", "dirname", "flock", "mkdir", "rm", "rsync"]) {
+        symlinkSync(
+          spawnSync("bash", ["-c", `command -v ${tool}`], {
+            encoding: "utf8",
+          }).stdout.trim(),
+          path.join(binDir, tool),
+        );
+      }
+      mkdirSync(path.join(dev, "packages/workit-opencode/src"), {
+        recursive: true,
+      });
+      mkdirSync(path.join(dev, "packages/workit-cursor/.cursor-plugin"), {
+        recursive: true,
+      });
+      mkdirSync(path.join(dev, "packages/workit-cursor/scripts"), {
+        recursive: true,
+      });
+      writeFileSync(
+        path.join(dev, "packages/workit-opencode/src/plugin.ts"),
+        "export default {};\n",
       );
+      writeFileSync(path.join(dev, "packages/workit-cursor/scripts/build.ts"), "// build entry\n");
+
+      const r = runSyncScript(
+        syncEnv(home, runtimeDir, { WORKFLOW_TOOLKIT_DEV: dev, PATH: binDir }),
+      );
+      expect(r.status, r.stderr).not.toBe(0);
+      expect(r.stderr).toContain("Bun");
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(runtimeDir, { recursive: true, force: true });
+      rmSync(binDir, { recursive: true, force: true });
+      rmSync(dev, { recursive: true, force: true });
     }
-    mkdirSync(path.join(dev, "packages/workit-opencode/src"), {
-      recursive: true,
-    });
-    mkdirSync(path.join(dev, "packages/workit-cursor/.cursor-plugin"), {
-      recursive: true,
-    });
-    mkdirSync(path.join(dev, "packages/workit-cursor/scripts"), {
-      recursive: true,
-    });
-    writeFileSync(path.join(dev, "packages/workit-opencode/src/plugin.ts"), "export default {};\n");
-    writeFileSync(path.join(dev, "packages/workit-cursor/scripts/build.ts"), "// build entry\n");
+  },
+  { timeout: 60_000 },
+);
 
-    const r = runSyncScript(syncEnv(home, runtimeDir, { WORKFLOW_TOOLKIT_DEV: dev, PATH: binDir }));
-    expect(r.status, r.stderr).not.toBe(0);
-    expect(r.stderr).toContain("Bun");
-  } finally {
-    rmSync(home, { recursive: true, force: true });
-    rmSync(runtimeDir, { recursive: true, force: true });
-    rmSync(binDir, { recursive: true, force: true });
-    rmSync(dev, { recursive: true, force: true });
-  }
-});
+test(
+  "sync-runtime does not fall back when configured BUN is invalid",
+  () => {
+    if (!bashAvailable() || !flockAvailable()) return;
+    const home = mkdtempSync(path.join(os.tmpdir(), "wk-sync-home-"));
+    const runtimeDir = mkdtempSync(path.join(os.tmpdir(), "wk-sync-xdg-"));
+    const binDir = mkdtempSync(path.join(os.tmpdir(), "wk-sync-bin-"));
+    const dev = makeDependencyFreeCheckout();
+    const fallback = path.join(binDir, "fallback-used");
+    try {
+      writeFileSync(
+        path.join(binDir, "bun"),
+        `#!/usr/bin/env bash\ntouch "${fallback}"\nexit 0\n`,
+        {
+          mode: 0o755,
+        },
+      );
+      const configured = path.join(binDir, "missing-bun");
+      const r = runSyncScript(
+        syncEnv(home, runtimeDir, {
+          WORKFLOW_TOOLKIT_DEV: dev,
+          BUN: configured,
+          PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
+        }),
+      );
+      expect(r.status, r.stderr).not.toBe(0);
+      expect(r.stderr).toContain(`BUN is set but unusable: ${configured}`);
+      expect(existsSync(fallback)).toBe(false);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(runtimeDir, { recursive: true, force: true });
+      rmSync(binDir, { recursive: true, force: true });
+      rmSync(dev, { recursive: true, force: true });
+    }
+  },
+  { timeout: 60_000 },
+);
 
-test("sync-runtime does not fall back when configured BUN is invalid", () => {
-  if (!bashAvailable() || !flockAvailable()) return;
-  const home = mkdtempSync(path.join(os.tmpdir(), "wk-sync-home-"));
-  const runtimeDir = mkdtempSync(path.join(os.tmpdir(), "wk-sync-xdg-"));
-  const binDir = mkdtempSync(path.join(os.tmpdir(), "wk-sync-bin-"));
-  const dev = makeDependencyFreeCheckout();
-  const fallback = path.join(binDir, "fallback-used");
-  try {
-    writeFileSync(path.join(binDir, "bun"), `#!/usr/bin/env bash\ntouch "${fallback}"\nexit 0\n`, {
+test(
+  "sync-runtime treats empty BUN as unset and does not skip a broken home Bun",
+  () => {
+    if (!bashAvailable() || !flockAvailable()) return;
+    const runtimeDir = mkdtempSync(path.join(os.tmpdir(), "wk-sync-xdg-"));
+    const binDir = mkdtempSync(path.join(os.tmpdir(), "wk-sync-bin-"));
+    const dev = makeDependencyFreeCheckout();
+    const pathBunUsed = path.join(binDir, "path-bun-used");
+    const makeHome = (brokenHomeBun: boolean) => {
+      const home = mkdtempSync(path.join(os.tmpdir(), "wk-sync-home-"));
+      if (brokenHomeBun) {
+        mkdirSync(path.join(home, ".bun/bin"), { recursive: true });
+        writeFileSync(path.join(home, ".bun/bin/bun"), "#!/usr/bin/env bash\nexit 9\n", {
+          mode: 0o755,
+        });
+      }
+      return home;
+    };
+    const pathBun = path.join(binDir, "bun");
+    writeFileSync(pathBun, `#!/usr/bin/env bash\ntouch "${pathBunUsed}"\nexit 0\n`, {
       mode: 0o755,
     });
-    const configured = path.join(binDir, "missing-bun");
-    const r = runSyncScript(
-      syncEnv(home, runtimeDir, {
-        WORKFLOW_TOOLKIT_DEV: dev,
-        BUN: configured,
-        PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
-      }),
-    );
-    expect(r.status, r.stderr).not.toBe(0);
-    expect(r.stderr).toContain(`BUN is set but unusable: ${configured}`);
-    expect(existsSync(fallback)).toBe(false);
-  } finally {
-    rmSync(home, { recursive: true, force: true });
-    rmSync(runtimeDir, { recursive: true, force: true });
-    rmSync(binDir, { recursive: true, force: true });
-    rmSync(dev, { recursive: true, force: true });
-  }
-});
+    const emptyHome = makeHome(false);
+    const brokenHome = makeHome(true);
+    try {
+      const empty = runSyncScript(
+        syncEnv(emptyHome, runtimeDir, {
+          WORKFLOW_TOOLKIT_DEV: dev,
+          BUN: "",
+          PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
+        }),
+      );
+      expect(existsSync(pathBunUsed), empty.stderr).toBe(true);
 
-test("sync-runtime treats empty BUN as unset and does not skip a broken home Bun", () => {
-  if (!bashAvailable() || !flockAvailable()) return;
-  const runtimeDir = mkdtempSync(path.join(os.tmpdir(), "wk-sync-xdg-"));
-  const binDir = mkdtempSync(path.join(os.tmpdir(), "wk-sync-bin-"));
-  const dev = makeDependencyFreeCheckout();
-  const pathBunUsed = path.join(binDir, "path-bun-used");
-  const makeHome = (brokenHomeBun: boolean) => {
-    const home = mkdtempSync(path.join(os.tmpdir(), "wk-sync-home-"));
-    if (brokenHomeBun) {
-      mkdirSync(path.join(home, ".bun/bin"), { recursive: true });
-      writeFileSync(path.join(home, ".bun/bin/bun"), "#!/usr/bin/env bash\nexit 9\n", {
-        mode: 0o755,
-      });
+      rmSync(pathBunUsed, { force: true });
+      const broken = runSyncScript(
+        syncEnv(brokenHome, runtimeDir, {
+          WORKFLOW_TOOLKIT_DEV: dev,
+          PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
+        }),
+      );
+      expect(broken.status).not.toBe(0);
+      expect(existsSync(pathBunUsed)).toBe(false);
+    } finally {
+      rmSync(emptyHome, { recursive: true, force: true });
+      rmSync(brokenHome, { recursive: true, force: true });
+      rmSync(runtimeDir, { recursive: true, force: true });
+      rmSync(binDir, { recursive: true, force: true });
+      rmSync(dev, { recursive: true, force: true });
     }
-    return home;
-  };
-  const pathBun = path.join(binDir, "bun");
-  writeFileSync(pathBun, `#!/usr/bin/env bash\ntouch "${pathBunUsed}"\nexit 0\n`, { mode: 0o755 });
-  const emptyHome = makeHome(false);
-  const brokenHome = makeHome(true);
-  try {
-    const empty = runSyncScript(
-      syncEnv(emptyHome, runtimeDir, {
-        WORKFLOW_TOOLKIT_DEV: dev,
-        BUN: "",
-        PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
-      }),
-    );
-    expect(existsSync(pathBunUsed), empty.stderr).toBe(true);
-
-    rmSync(pathBunUsed, { force: true });
-    const broken = runSyncScript(
-      syncEnv(brokenHome, runtimeDir, {
-        WORKFLOW_TOOLKIT_DEV: dev,
-        PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
-      }),
-    );
-    expect(broken.status).not.toBe(0);
-    expect(existsSync(pathBunUsed)).toBe(false);
-  } finally {
-    rmSync(emptyHome, { recursive: true, force: true });
-    rmSync(brokenHome, { recursive: true, force: true });
-    rmSync(runtimeDir, { recursive: true, force: true });
-    rmSync(binDir, { recursive: true, force: true });
-    rmSync(dev, { recursive: true, force: true });
-  }
-});
+  },
+  { timeout: 60_000 },
+);
