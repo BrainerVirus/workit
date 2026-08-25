@@ -82,7 +82,7 @@ function printMalformedBlocked(state: SetupState): void {
   }
 }
 
-async function runInit() {
+export async function runInit() {
   // RL-01: a malformed config.json used to throw inside the wizard's initial
   // draft (createInitialDraft -> readConfig) and die via the
   // unhandledRejection/uncaughtException handler. Detect it before render and
@@ -102,6 +102,9 @@ async function runInit() {
   logger.info(EVENT.installSteps, { step: "wizard_start" });
   const exits: Array<{ complete: boolean; values?: SetupValues }> = [];
   let done: () => void = () => {};
+  // CA-02: open on a clean screen so the npx banner never shares a frame with
+  // the wizard.
+  process.stdout.write("\x1b[2J\x1b[H");
   const { waitUntilExit, unmount } = render(
     <Wizard
       onExit={(complete, values) => {
@@ -112,6 +115,10 @@ async function runInit() {
   );
   done = unmount;
   await waitUntilExit();
+  // CA-02: wipe the wizard's final frame before any post-exit output
+  // (apply summary, blocked paths, cancel message) so summary lines never
+  // interleave with leftover frames.
+  process.stdout.write("\x1b[2J\x1b[H");
   const exit = exits[0];
   if (exit && exit.complete && exit.values) {
     const preview = buildSetupPreview(exit.values, { cwd: process.cwd(), env: process.env });
