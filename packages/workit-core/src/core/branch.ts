@@ -291,15 +291,21 @@ export const snapshotFlowState = (cwd: string): string => {
     return root; // no docs/ yet — zero-file snapshot
   }
   for (const slug of slugs) {
-    const src = path.join(docsDir, slug, "sdd", "flow.json");
-    try {
-      if (!statSync(src).isFile()) continue;
-    } catch {
-      continue;
+    // The approval gate digests docs/<slug>/spec.md and docs/<slug>/plan.md,
+    // so those bytes must survive the stash window too: a stash push -u takes
+    // untracked spec/plan away and any concurrent effective flow read would
+    // classify document_missing drift and persist an approval-chain wipe.
+    for (const rel of [["sdd", "flow.json"], ["spec.md"], ["plan.md"]]) {
+      const src = path.join(docsDir, slug, ...rel);
+      try {
+        if (!statSync(src).isFile()) continue;
+      } catch {
+        continue;
+      }
+      const dest = path.join(root, "docs", slug, ...rel);
+      mkdirSync(path.dirname(dest), { recursive: true });
+      cpSync(src, dest);
     }
-    const dest = path.join(root, "docs", slug, "sdd", "flow.json");
-    mkdirSync(path.dirname(dest), { recursive: true });
-    cpSync(src, dest);
   }
   return root;
 };
@@ -406,7 +412,10 @@ export const branchSetup = ({
     for (const rel of rels) {
       let shortHash = "";
       try {
-        shortHash = createHash("sha256").update(readFileSync(path.join(dir, rel))).digest("hex").slice(0, 8);
+        shortHash = createHash("sha256")
+          .update(readFileSync(path.join(dir, rel)))
+          .digest("hex")
+          .slice(0, 8);
       } catch {}
       journal(`snapshot: ${rel} sha=${shortHash}`);
     }

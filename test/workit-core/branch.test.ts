@@ -14,7 +14,12 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createRepoTools } from "../../packages/workit-opencode/src/tools/repo";
-import { restoreFlowSnapshot, snapshotFlowState, branchSetup } from "../../packages/workit-core/src/core/branch";
+import {
+  restoreFlowSnapshot,
+  snapshotFlowState,
+  branchSetup,
+} from "../../packages/workit-core/src/core/branch";
+import { readEffectiveFlowState } from "../../packages/workit-core/src/core/flow-state";
 
 const git = (cwd: string, args: string[]) => spawnSync("git", args, { cwd, encoding: "utf8" });
 
@@ -537,5 +542,152 @@ test("absent logger preserves today's exact return values and side effects", asy
     rmSync(a.remote, { recursive: true, force: true });
     rmSync(b.root, { recursive: true, force: true });
     rmSync(b.remote, { recursive: true, force: true });
+  }
+});
+
+test("snapshot captures docs/<slug>/spec.md and plan.md beside flow.json", () => {
+  const cwd = mkdtempSync(path.join(os.tmpdir(), "wf-doc-snap-"));
+  let snap: string | undefined;
+  try {
+    const flow = Buffer.from('{"status":"approved"}\n');
+    const alphaSpec = Buffer.from("# alpha spec\n");
+    const alphaPlan = Buffer.from("# alpha plan\n");
+    const betaSpec = Buffer.from("# beta spec\n");
+    mkdirSync(path.join(cwd, "docs", "alpha", "sdd"), { recursive: true });
+    mkdirSync(path.join(cwd, "docs", "beta"), { recursive: true });
+    writeFileSync(path.join(cwd, "docs", "alpha", "sdd", "flow.json"), flow);
+    writeFileSync(path.join(cwd, "docs", "alpha", "spec.md"), alphaSpec);
+    writeFileSync(path.join(cwd, "docs", "alpha", "plan.md"), alphaPlan);
+    writeFileSync(path.join(cwd, "docs", "alpha", "notes.md"), "not gated\n");
+    writeFileSync(path.join(cwd, "docs", "beta", "spec.md"), betaSpec);
+
+    snap = snapshotFlowState(cwd);
+
+    const walk = (from: string, rel: string): string[] =>
+      readdirSync(from, { withFileTypes: true }).flatMap((entry) =>
+        entry.isDirectory()
+          ? walk(path.join(from, entry.name), path.join(rel, entry.name))
+          : [path.join(rel, entry.name)],
+      );
+    expect(walk(snap, "").sort()).toEqual([
+      "docs/alpha/plan.md",
+      "docs/alpha/sdd/flow.json",
+      "docs/alpha/spec.md",
+      "docs/beta/spec.md",
+    ]);
+    expect(readFileSync(path.join(snap, "docs", "alpha", "sdd", "flow.json"))).toEqual(flow);
+    expect(readFileSync(path.join(snap, "docs", "alpha", "spec.md"))).toEqual(alphaSpec);
+    expect(readFileSync(path.join(snap, "docs", "alpha", "plan.md"))).toEqual(alphaPlan);
+    expect(readFileSync(path.join(snap, "docs", "beta", "spec.md"))).toEqual(betaSpec);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+    if (snap) rmSync(snap, { recursive: true, force: true });
+  }
+});
+
+test("incident regression: untracked approved spec/plan survive setup(stash=yes) and a following read does not reset", async () => {
+  // THE INCIDENT: setup(stash=yes) strands untracked docs/<slug>/spec.md and
+  // plan.md inside the recorded stash (the ':!docs/*/sdd' pathspec only
+  // protects flow.json). Any subsequent readEffectiveFlowState — a mere
+  // status/gate read — saw spec missing, classified document_missing drift,
+  // and PERSISTED a full approval-chain wipe into flow.json. The guard now
+  // snapshots the doc pair too, so restore-if-missing puts them back before
+  // the next read. Honest note on shape: a read invoked literally mid-window
+  // (between stash push and the closing restore) would still observe the
+  // stashed-away pair, because restore-if-missing runs only at window close;
+  // this fix makes the stranded-after-setup window — where production reads
+  // actually happened — safe. So the incident is reproduced at the seam right
+  // after setup returns, plus a unit test above proving the snapshot captures
+  // the pair.
+  const { root, remote } = repoOnMain({ withDevelop: true });
+  const guardsBefore = new Set(
+    readdirSync(os.tmpdir()).filter((d) => d.startsWith("workit-flow-guard-")),
+  );
+  try {
+    writeFileSync(path.join(root, ".gitignore"), "docs/*/sdd/\n");
+    git(root, ["add", ".gitignore"]);
+    git(root, ["commit", "-q", "-m", "ignore sdd runtime state"]);
+
+    const slug = "hardening";
+    const digest = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
+    const specBytes = Buffer.from("# spec\n\n**Branch:** bugfix/hardening\n");
+    const planBytes = Buffer.from("# plan\n\n**Branch:** bugfix/hardening\n");
+    const flowBytes = Buffer.from(
+      JSON.stringify(
+        {
+          slug,
+          activated: true,
+          spec: {
+            path: `docs/${slug}/spec.md`,
+            status: "approved",
+            evidence: null,
+            approved_digest: digest(specBytes),
+          },
+          plan: {
+            path: `docs/${slug}/plan.md`,
+            status: "approved",
+            evidence: null,
+            approved_digest: digest(planBytes),
+          },
+          menu: { presented: false, chosen: "", evidence: null },
+          execution: {
+            status: "pending",
+            mode: null,
+            evidence: null,
+            coordinator_session_id: null,
+          },
+          handoff_destination: false,
+          updated_at: 1700000000000,
+        },
+        null,
+        2,
+      ) + "\n",
+    );
+    const specPath = path.join(root, "docs", slug, "spec.md");
+    const planPath = path.join(root, "docs", slug, "plan.md");
+    const flowPath = path.join(root, "docs", slug, "sdd", "flow.json");
+    mkdirSync(path.dirname(flowPath), { recursive: true });
+    writeFileSync(flowPath, flowBytes);
+    writeFileSync(specPath, specBytes);
+    writeFileSync(planPath, planBytes);
+    dirtyTree(root);
+
+    const raw = await createRepoTools().workit_branch_setup.execute(
+      {
+        confirmed: true,
+        target_branch: "bugfix/hardening",
+        stash: "yes",
+      },
+      { directory: root, worktree: root } as never,
+    );
+    const result = JSON.parse(raw as string);
+    expect(result.ok).toBe(true);
+
+    // The very next gate/status read (the concurrent reader from the incident)
+    // must not phantom-reset the approval chain.
+    const read = readEffectiveFlowState(root, slug);
+    expect(read.ok).toBe(true);
+    if (read.ok) {
+      expect(read.state.spec.status).toBe("approved");
+      expect(read.state.plan.status).toBe("approved");
+      expect(read.drift).toEqual([]);
+    }
+
+    // All three files survived byte-identical; no guard root remains.
+    expect(readFileSync(flowPath)).toEqual(flowBytes);
+    expect(readFileSync(specPath)).toEqual(specBytes);
+    expect(readFileSync(planPath)).toEqual(planBytes);
+    const expectedRoot = path.join(
+      os.tmpdir(),
+      `workit-flow-guard-${createHash("sha256").update(path.resolve(root)).digest("hex").slice(0, 16)}`,
+    );
+    expect(existsSync(expectedRoot)).toBe(false);
+    const newGuards = readdirSync(os.tmpdir())
+      .filter((d) => d.startsWith("workit-flow-guard-"))
+      .filter((d) => !guardsBefore.has(d));
+    expect(newGuards).toEqual([]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(remote, { recursive: true, force: true });
   }
 });
