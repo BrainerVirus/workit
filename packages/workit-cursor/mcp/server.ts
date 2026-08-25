@@ -534,12 +534,15 @@ registerTool(
     },
   },
   async ({ action, sdd_dir, target_branch, stash, workspace_root }) => {
+    // Parity: the MCP process owns a real sanitized logger, so the flow-guard
+    // journal mirrors to the same stderr event stream as every other tool.
     const data = branchSetup({
       action,
       sdd_dir,
       target_branch,
       stash,
       workspace_root,
+      log: (message) => logger.info(message),
     });
     if (data.error) return jsonResult({ error: data.error });
     return jsonResult(withWorkspace(workspace_root, data));

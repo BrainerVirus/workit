@@ -12,6 +12,7 @@ import { parseVerifyOutput } from "@brainervirus/workit-core/src/core/verify-par
 import { branchSetup, resolveBranchPolicyFor } from "@brainervirus/workit-core/src/core/branch";
 import {
   configDir,
+  getDiagnosticLogger,
   mergeConfigValues,
   readConfig,
   writeConfig,
@@ -337,12 +338,16 @@ export function createRepoTools(runtime: RepoRuntime = defaultRuntime) {
         } catch (error) {
           return output(fail(error instanceof Error ? error.message : "invalid SDD path"));
         }
+        // Flow-guard journal rides the plugin's diagnostic logger when the
+        // host installed one; absent logger keeps branchSetup silent.
+        const diagnostic = getDiagnosticLogger();
         const result = branchSetup({
           action,
           sdd_dir: resolvedSdd,
           target_branch,
           stash,
           workspace_root: context.directory,
+          log: diagnostic ? (message) => diagnostic.info(message) : undefined,
         });
         return output(
           legacyScriptResult({
