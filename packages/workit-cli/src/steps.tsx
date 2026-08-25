@@ -48,10 +48,8 @@ export const BRANCH_PRESET_DESCRIPTIONS: Record<BranchPreset, string> = {
   gitflow:
     `${PRESETS.gitflow.allowed.join(", ")} allowed · ` +
     `${PRESETS.gitflow.protected.join(", ")} protected · work merges into develop via PRs or merge commits`,
-  "github-flow":
-    `Anything goes (${PRESETS["github-flow"].allowed[0]}) · only ${PRESETS["github-flow"].protected.join(", ")} is protected · branches off main, back to main`,
-  "trunk-based":
-    `Short-lived branches off trunk · ${PRESETS["trunk-based"].protected.join(", ")} is the only protected branch`,
+  "github-flow": `Anything goes (${PRESETS["github-flow"].allowed[0]}) · only ${PRESETS["github-flow"].protected.join(", ")} is protected · branches off main, back to main`,
+  "trunk-based": `Short-lived branches off trunk · ${PRESETS["trunk-based"].protected.join(", ")} is the only protected branch`,
   custom: "Define your own allowed and protected patterns in the next prompts",
 };
 

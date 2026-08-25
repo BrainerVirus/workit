@@ -1,5 +1,13 @@
 import { afterAll, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { applyUninstall, planUninstall } from "../../packages/workit-core/src/core/uninstall";
@@ -158,7 +166,9 @@ test("existing-but-unreadable settings.json plans installed and applies failed u
     const plan = planUninstall(f);
     const cur = plan.hosts.find((h) => h.host === "cursor")!;
     expect(cur.installed).toBe(true);
-    expect(cur.actions.some((a) => a.kind === "edit-json-remove" && a.path === f.cursorSettings)).toBe(true);
+    expect(
+      cur.actions.some((a) => a.kind === "edit-json-remove" && a.path === f.cursorSettings),
+    ).toBe(true);
     const result = applyUninstall(plan, f);
     expect(result.ok).toBe(false);
     expect(result.entries.find((e) => e.path === f.cursorSettings)!.status).toBe("failed");
@@ -182,7 +192,9 @@ test("existing-but-unreadable mcp.json plans installed and applies failed untouc
     const plan = planUninstall(f);
     const cur = plan.hosts.find((h) => h.host === "cursor")!;
     expect(cur.installed).toBe(true);
-    expect(cur.actions.some((a) => a.kind === "edit-json-remove" && a.path === f.cursorMcp)).toBe(true);
+    expect(cur.actions.some((a) => a.kind === "edit-json-remove" && a.path === f.cursorMcp)).toBe(
+      true,
+    );
     const result = applyUninstall(plan, f);
     expect(result.ok).toBe(false);
     expect(result.entries.find((e) => e.path === f.cursorMcp)!.status).toBe("failed");
@@ -217,7 +229,13 @@ test("remove-dir refuses any path other than the canonical plugins/local/workit"
   const evil = path.join(f.home, ".cursor", "plugins", "local", "..", "local", "evil");
   mkdirSync(path.join(f.home, ".cursor", "plugins", "local", "evil"), { recursive: true });
   const plan = {
-    hosts: [{ host: "cursor" as const, installed: true, actions: [{ kind: "remove-dir" as const, path: evil, detail: "forged" }] }],
+    hosts: [
+      {
+        host: "cursor" as const,
+        installed: true,
+        actions: [{ kind: "remove-dir" as const, path: evil, detail: "forged" }],
+      },
+    ],
   };
   const result = applyUninstall(plan, f);
   expect(result.entries[0].status).toBe("failed");
@@ -246,6 +264,10 @@ test("plan-vs-applied parity: every planned action yields exactly one entry", ()
   f.seedInstalled();
   const plan = planUninstall(f);
   const result = applyUninstall(plan, f);
-  expect(result.entries.map((e) => e.path)).toEqual(plan.hosts.flatMap((h) => h.actions.map((a) => a.path)));
-  expect(result.entries.map((e) => e.host)).toEqual(plan.hosts.flatMap((h) => h.actions.map(() => h.host)));
+  expect(result.entries.map((e) => e.path)).toEqual(
+    plan.hosts.flatMap((h) => h.actions.map((a) => a.path)),
+  );
+  expect(result.entries.map((e) => e.host)).toEqual(
+    plan.hosts.flatMap((h) => h.actions.map(() => h.host)),
+  );
 });

@@ -91,7 +91,9 @@ const readJsonRecord = (file: string): Existing => {
   }
   try {
     const value = JSON.parse(raw);
-    return isRecord(value) ? { kind: "record", value } : { kind: "malformed", error: `${file} is not a JSON object` };
+    return isRecord(value)
+      ? { kind: "record", value }
+      : { kind: "malformed", error: `${file} is not a JSON object` };
   } catch {
     return { kind: "malformed", error: `${file} is not valid JSON` };
   }
@@ -127,7 +129,9 @@ function cleanCursorSettings(
   }
   if (Array.isArray(next.plugin_dirs)) {
     const canonical = stripTrailingSep(pluginDir);
-    const kept = (next.plugin_dirs as unknown[]).map(String).filter((d) => stripTrailingSep(d) !== canonical);
+    const kept = (next.plugin_dirs as unknown[])
+      .map(String)
+      .filter((d) => stripTrailingSep(d) !== canonical);
     if (kept.length !== (next.plugin_dirs as unknown[]).length) {
       next.plugin_dirs = kept;
       changed = true;
@@ -138,9 +142,10 @@ function cleanCursorSettings(
 
 // Inverse of mergeOpenCodeConfig's plugin registration: remove every workit
 // identity from the plugin list.
-function cleanOpenCodeConfig(
-  config: Record<string, unknown>,
-): { next: Record<string, unknown>; changed: boolean } {
+function cleanOpenCodeConfig(config: Record<string, unknown>): {
+  next: Record<string, unknown>;
+  changed: boolean;
+} {
   const next = { ...config };
   let changed = false;
   if (Array.isArray(next.plugin)) {
@@ -158,9 +163,10 @@ function cleanOpenCodeConfig(
 }
 
 // Inverse of mergeCursorMcp: drop the canonical server name and its legacy twin.
-function cleanCursorMcp(
-  mcp: Record<string, unknown>,
-): { next: Record<string, unknown>; changed: boolean } {
+function cleanCursorMcp(mcp: Record<string, unknown>): {
+  next: Record<string, unknown>;
+  changed: boolean;
+} {
   const next = { ...mcp };
   let changed = false;
   if (isRecord(next.mcpServers)) {
@@ -178,7 +184,10 @@ function cleanCursorMcp(
 
 // Shared edit-json-remove executor for plan parity: parse → clean by target →
 // report change without writing.
-type JsonCleaner = (record: Record<string, unknown>) => { next: Record<string, unknown>; changed: boolean };
+type JsonCleaner = (record: Record<string, unknown>) => {
+  next: Record<string, unknown>;
+  changed: boolean;
+};
 
 const jsonCleanerFor = (target: string, res: ResolvedUninstall): JsonCleaner | null => {
   if (target === res.opencodeConfig) return cleanOpenCodeConfig;
