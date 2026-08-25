@@ -999,7 +999,9 @@ registerTool(
       return jsonResult(result);
     }
     if (action === "config") {
-      if (locale !== undefined && !/^[a-z]{2,3}(-[A-Z]{2})?$/.test(locale)) {
+      // Mirrors core config.ts LOCALE_RE (keep in sync): 3-digit UN M.49
+      // region subtags like es-419 validate alongside 2-letter regions.
+      if (locale !== undefined && !/^[a-z]{2,3}(-(?:[A-Z]{2}|[0-9]{3}))?$/.test(locale)) {
         return jsonResult({
           error: `invalid locale: ${JSON.stringify(locale)} — expected BCP-47 like en or es-CL`,
         });
