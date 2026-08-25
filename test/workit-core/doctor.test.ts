@@ -1237,9 +1237,12 @@ test(
     // slice truncated the real failing test name out of CI logs (the flake
     // seen on the v0.9.2 sync merge).
     const evidence = `${r.stdout ?? ""}\n${r.stderr ?? ""}`;
-    expect(r.status, `${r.stderr?.slice(0, 1200) ?? ""}\n---stderr tail---\n${
-      r.stderr?.slice(-1500) ?? ""
-    }\n---stdout tail---\n${r.stdout?.slice(-800) ?? ""}`).toBe(0);
+    expect(
+      r.status,
+      `${r.stderr?.slice(0, 1200) ?? ""}\n---stderr tail---\n${
+        r.stderr?.slice(-1500) ?? ""
+      }\n---stdout tail---\n${r.stdout?.slice(-800) ?? ""}`,
+    ).toBe(0);
     expect(evidence).not.toMatch(/usage: git diff/);
     expect(evidence).not.toMatch(/fatal: /);
   },
