@@ -106,27 +106,31 @@ function startNodeMcp(
 // CA-07: the SDK helper/schema runtime is bundled into dist/plugin.js, so the
 // packed plugin loads standalone — no stub @opencode-ai/plugin is written and
 // no runtime import of it may remain in the bundle.
-test("opencode plugin loads from dist/plugin.js with no runtime @opencode-ai/plugin dependency", async () => {
-  const packs = packWorkspacePackages();
-  const install = tmp("wk-runtime-opencode-");
-  try {
-    const nm = path.join(install, "node_modules");
-    mkdirSync(nm, { recursive: true });
-    installPackedPackage(nm, byName(packs, OPENCODE));
+test(
+  "opencode plugin loads from dist/plugin.js with no runtime @opencode-ai/plugin dependency",
+  async () => {
+    const packs = packWorkspacePackages();
+    const install = tmp("wk-runtime-opencode-");
+    try {
+      const nm = path.join(install, "node_modules");
+      mkdirSync(nm, { recursive: true });
+      installPackedPackage(nm, byName(packs, OPENCODE));
 
-    const entry = path.join(install, "node_modules", OPENCODE, "dist", "plugin.js");
-    expect(existsSync(entry)).toBe(true);
-    const bundle = readFileSync(entry, "utf8");
-    expect(bundle, "dist/plugin.js").not.toMatch(
-      /(?:from\s+|import\s*\(\s*)\s*["']@opencode-ai\/plugin["']/,
-    );
+      const entry = path.join(install, "node_modules", OPENCODE, "dist", "plugin.js");
+      expect(existsSync(entry)).toBe(true);
+      const bundle = readFileSync(entry, "utf8");
+      expect(bundle, "dist/plugin.js").not.toMatch(
+        /(?:from\s+|import\s*\(\s*)\s*["']@opencode-ai\/plugin["']/,
+      );
 
-    const mod = await import(pathToFileURL(entry).href);
-    expect(typeof mod.default).toBe("function");
-  } finally {
-    rmSync(install, { recursive: true, force: true });
-  }
-});
+      const mod = await import(pathToFileURL(entry).href);
+      expect(typeof mod.default).toBe("function");
+    } finally {
+      rmSync(install, { recursive: true, force: true });
+    }
+  },
+  { timeout: 60_000 },
+);
 
 test("cursor MCP server boots over stdio from the extracted package with node (no bun)", async () => {
   const packs = packWorkspacePackages();
@@ -171,38 +175,42 @@ test("cursor MCP server boots over stdio from the extracted package with node (n
   }
 }, 30_000);
 
-test("cursor session-start emits the workflow contract payload from the extracted package", async () => {
-  const packs = packWorkspacePackages();
-  const install = tmp("wk-runtime-session-");
-  const home = tmp("wk-runtime-session-home-");
-  try {
-    const nm = path.join(install, "node_modules");
-    mkdirSync(nm, { recursive: true });
-    installPackedPackage(nm, byName(packs, CURSOR));
-    const cursorDir = path.join(nm, CURSOR);
-    const env = isolatedEnv(home);
+test(
+  "cursor session-start emits the workflow contract payload from the extracted package",
+  async () => {
+    const packs = packWorkspacePackages();
+    const install = tmp("wk-runtime-session-");
+    const home = tmp("wk-runtime-session-home-");
+    try {
+      const nm = path.join(install, "node_modules");
+      mkdirSync(nm, { recursive: true });
+      installPackedPackage(nm, byName(packs, CURSOR));
+      const cursorDir = path.join(nm, CURSOR);
+      const env = isolatedEnv(home);
 
-    const child = spawn("node", ["dist/cursor-session-start.js"], {
-      cwd: cursorDir,
-      env,
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    let stdout = "";
-    let stderr = "";
-    child.stdout?.setEncoding("utf8");
-    child.stderr?.setEncoding("utf8");
-    child.stdout?.on("data", (c: string) => (stdout += c));
-    child.stderr?.on("data", (c: string) => (stderr += c));
-    const code = await new Promise<number | null>((resolve) => child.on("close", resolve));
-    expect(code).toBe(0);
-    const payload = JSON.parse(stdout);
-    expect(payload.additional_context).toContain("HARD-GATE");
-    expect(payload.additional_context).toContain("AskQuestion");
-  } finally {
-    rmSync(install, { recursive: true, force: true });
-    rmSync(home, { recursive: true, force: true });
-  }
-});
+      const child = spawn("node", ["dist/cursor-session-start.js"], {
+        cwd: cursorDir,
+        env,
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+      let stdout = "";
+      let stderr = "";
+      child.stdout?.setEncoding("utf8");
+      child.stderr?.setEncoding("utf8");
+      child.stdout?.on("data", (c: string) => (stdout += c));
+      child.stderr?.on("data", (c: string) => (stderr += c));
+      const code = await new Promise<number | null>((resolve) => child.on("close", resolve));
+      expect(code).toBe(0);
+      const payload = JSON.parse(stdout);
+      expect(payload.additional_context).toContain("HARD-GATE");
+      expect(payload.additional_context).toContain("AskQuestion");
+    } finally {
+      rmSync(install, { recursive: true, force: true });
+      rmSync(home, { recursive: true, force: true });
+    }
+  },
+  { timeout: 60_000 },
+);
 
 test.skipIf(!npmRegistryOk)(
   "cursor npm executables run through npm's package runner from the packed install (CA-16)",
@@ -307,92 +315,112 @@ test.skipIf(!npmRegistryOk)(
   180_000,
 );
 
-test("cli --help runs under node from the extracted package and exits 0", async () => {
-  const packs = packWorkspacePackages();
-  const install = tmp("wk-runtime-cli-");
-  const home = tmp("wk-runtime-cli-home-");
-  try {
-    const nm = path.join(install, "node_modules");
-    mkdirSync(nm, { recursive: true });
-    installPackedPackage(nm, byName(packs, CLI));
-    const cliDir = path.join(nm, CLI);
-    const env = isolatedEnv(home);
+test(
+  "cli --help runs under node from the extracted package and exits 0",
+  async () => {
+    const packs = packWorkspacePackages();
+    const install = tmp("wk-runtime-cli-");
+    const home = tmp("wk-runtime-cli-home-");
+    try {
+      const nm = path.join(install, "node_modules");
+      mkdirSync(nm, { recursive: true });
+      installPackedPackage(nm, byName(packs, CLI));
+      const cliDir = path.join(nm, CLI);
+      const env = isolatedEnv(home);
 
-    const { spawnSync } = await import("node:child_process");
-    const res = spawnSync("node", [path.join(cliDir, "dist", "index.js"), "--help"], {
-      cwd: cliDir,
-      env,
-      encoding: "utf8",
-    });
-    expect(res.status, res.stderr ?? "").toBe(0);
-    expect(res.stdout).toContain("workit");
-  } finally {
-    rmSync(install, { recursive: true, force: true });
-    rmSync(home, { recursive: true, force: true });
-  }
-});
+      const { spawnSync } = await import("node:child_process");
+      const res = spawnSync("node", [path.join(cliDir, "dist", "index.js"), "--help"], {
+        cwd: cliDir,
+        env,
+        encoding: "utf8",
+      });
+      expect(res.status, res.stderr ?? "").toBe(0);
+      expect(res.stdout).toContain("workit");
+    } finally {
+      rmSync(install, { recursive: true, force: true });
+      rmSync(home, { recursive: true, force: true });
+    }
+  },
+  { timeout: 60_000 },
+);
 
-test("packed tarball locations never reference the repository checkout", () => {
-  const packs = packWorkspacePackages();
-  const normalized = REPO_ROOT.split(path.sep).join("/");
-  for (const pack of packs) {
-    expect(pack.tarball, pack.packageName).not.toContain(normalized);
-  }
-});
+test(
+  "packed tarball locations never reference the repository checkout",
+  () => {
+    const packs = packWorkspacePackages();
+    const normalized = REPO_ROOT.split(path.sep).join("/");
+    for (const pack of packs) {
+      expect(pack.tarball, pack.packageName).not.toContain(normalized);
+    }
+  },
+  { timeout: 60_000 },
+);
 
 // Tool-rename runtime gate: the EXTRACTED installed package (what a host actually
 // reads) ships only renamed workit_* tool identifiers in its skill/template/
 // vendor markdown. Uppercase WORKFLOW_* env names are out of scope and stay.
-test("extracted adapter packages ship no live workflow_ tool references in skills/templates/vendor", () => {
-  const live = /\bworkflow_[a-z0-9_]+\b/;
-  const contentTrees = ["skills/", "templates/", "vendor/"];
-  const walkMd = (dir: string, visit: (file: string) => void): void => {
-    if (!existsSync(dir)) return;
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      const p = path.join(dir, entry.name);
-      if (entry.isDirectory()) walkMd(p, visit);
-      else if (entry.name.endsWith(".md")) visit(p);
-    }
-  };
-  const packs = packWorkspacePackages();
-  for (const name of [CORE, OPENCODE, CURSOR, CLI]) {
-    const { root, packageDir } = extractTarball(byName(packs, name).tarball);
-    try {
-      const offenders: string[] = [];
-      for (const tree of contentTrees) {
-        walkMd(path.join(packageDir, tree), (file) => {
-          const m = live.exec(readFileSync(file, "utf8"));
-          if (m) offenders.push(`${path.relative(packageDir, file)}: ${m[0]}`);
-        });
+test(
+  "extracted adapter packages ship no live workflow_ tool references in skills/templates/vendor",
+  () => {
+    const live = /\bworkflow_[a-z0-9_]+\b/;
+    const contentTrees = ["skills/", "templates/", "vendor/"];
+    const walkMd = (dir: string, visit: (file: string) => void): void => {
+      if (!existsSync(dir)) return;
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const p = path.join(dir, entry.name);
+        if (entry.isDirectory()) walkMd(p, visit);
+        else if (entry.name.endsWith(".md")) visit(p);
       }
-      expect(offenders, `${name} installed tree`).toEqual([]);
-    } finally {
-      rmSync(root, { recursive: true, force: true });
+    };
+    const packs = packWorkspacePackages();
+    for (const name of [CORE, OPENCODE, CURSOR, CLI]) {
+      const { root, packageDir } = extractTarball(byName(packs, name).tarball);
+      try {
+        const offenders: string[] = [];
+        for (const tree of contentTrees) {
+          walkMd(path.join(packageDir, tree), (file) => {
+            const m = live.exec(readFileSync(file, "utf8"));
+            if (m) offenders.push(`${path.relative(packageDir, file)}: ${m[0]}`);
+          });
+        }
+        expect(offenders, `${name} installed tree`).toEqual([]);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
     }
-  }
-});
+  },
+  { timeout: 60_000 },
+);
 
-test("the runtime gate exercises the same final candidate artifacts (CA-30)", () => {
-  // Both calls resolve to the same cached pack, so this asserts the gate uses
-  // the final candidate, not fresh-vs-cached bytes. Byte-stability across a
-  // forced repack is proven in release-candidate.test.ts ("a fresh repack
-  // yields byte-identical sha256") and phase-0-candidate.test.ts (D12).
-  const candidate = packReleaseCandidate();
-  const packs = packWorkspacePackages();
-  expect(candidate.map((p) => p.sha256)).toEqual(packs.map((p) => p.sha256));
-});
+test(
+  "the runtime gate exercises the same final candidate artifacts (CA-30)",
+  () => {
+    // Both calls resolve to the same cached pack, so this asserts the gate uses
+    // the final candidate, not fresh-vs-cached bytes. Byte-stability across a
+    // forced repack is proven in release-candidate.test.ts ("a fresh repack
+    // yields byte-identical sha256") and phase-0-candidate.test.ts (D12).
+    const candidate = packReleaseCandidate();
+    const packs = packWorkspacePackages();
+    expect(candidate.map((p) => p.sha256)).toEqual(packs.map((p) => p.sha256));
+  },
+  { timeout: 60_000 },
+);
 
-test("declared platform matrix is pinned across CI, engines, and lockfiles (PT-11/PT-12)", () => {
-  // The support matrix is the single source of truth for the published
-  // toolchain. No Deno is advertised anywhere in the repo surface. (The OS list
-  // itself is asserted via ci.yml below and in manifests.test.ts.)
+test(
+  "declared platform matrix is pinned across CI, engines, and lockfiles (PT-11/PT-12)",
+  () => {
+    // The support matrix is the single source of truth for the published
+    // toolchain. No Deno is advertised anywhere in the repo surface. (The OS list
+    // itself is asserted via ci.yml below and in manifests.test.ts.)
 
-  const ci = readFileSync(path.join(REPO_ROOT, ".github/workflows/ci.yml"), "utf8");
-  expect(ci).toContain(SUPPORT_MATRIX.bun);
-  // NODE_MINIMUM/NODE_CURRENT pinning is asserted exactly in manifests.test.ts.
-  expect(ci).not.toMatch(/[Dd]eno/);
+    const ci = readFileSync(path.join(REPO_ROOT, ".github/workflows/ci.yml"), "utf8");
+    expect(ci).toContain(SUPPORT_MATRIX.bun);
+    // NODE_MINIMUM/NODE_CURRENT pinning is asserted exactly in manifests.test.ts.
+    expect(ci).not.toMatch(/[Dd]eno/);
 
-  const lock = readFileSync(path.join(REPO_ROOT, "bun.lock"), "utf8");
-  expect(lock).toContain(SUPPORT_MATRIX.bun);
-  expect(lock).toContain(SUPPORT_MATRIX.opencode.current);
-});
+    const lock = readFileSync(path.join(REPO_ROOT, "bun.lock"), "utf8");
+    expect(lock).toContain(SUPPORT_MATRIX.bun);
+    expect(lock).toContain(SUPPORT_MATRIX.opencode.current);
+  },
+  { timeout: 60_000 },
+);

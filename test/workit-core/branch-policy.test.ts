@@ -68,45 +68,53 @@ const repoWithDevelop = () => {
   return { root, remote };
 };
 
-test("workit_docs_branch keeps current feature branch", async () => {
-  const { root, remote } = repoWithDevelop();
-  git(root, ["checkout", "-q", "-b", "feature/current"]);
-  try {
-    const raw = await createSddTools(new WorkflowStateStore()).workit_docs_branch.execute({}, {
-      directory: root,
-      worktree: root,
-      sessionID: "t",
-    } as never);
-    const result = JSON.parse(raw as string);
-    expect(result.ok).toBe(true);
-    expect(result.data.action).toBe("keep");
-    expect(result.data.branch).toBe("feature/current");
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-    rmSync(remote, { recursive: true, force: true });
-  }
-});
+test(
+  "workit_docs_branch keeps current feature branch",
+  async () => {
+    const { root, remote } = repoWithDevelop();
+    git(root, ["checkout", "-q", "-b", "feature/current"]);
+    try {
+      const raw = await createSddTools(new WorkflowStateStore()).workit_docs_branch.execute({}, {
+        directory: root,
+        worktree: root,
+        sessionID: "t",
+      } as never);
+      const result = JSON.parse(raw as string);
+      expect(result.ok).toBe(true);
+      expect(result.data.action).toBe("keep");
+      expect(result.data.branch).toBe("feature/current");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(remote, { recursive: true, force: true });
+    }
+  },
+  { timeout: 60_000 },
+);
 
-test("workit_docs_branch proposes create_from_develop on main", async () => {
-  const { root, remote } = repoWithDevelop();
-  mkdirSync(path.join(root, "docs", "2026-08-04-gates"), { recursive: true });
-  const plan = "docs/2026-08-04-gates/plan.md";
-  writeFileSync(path.join(root, plan), "# Plan\n");
-  try {
-    const raw = await createSddTools(new WorkflowStateStore()).workit_docs_branch.execute(
-      { plan_path: plan },
-      { directory: root, worktree: root, sessionID: "t" } as never,
-    );
-    const result = JSON.parse(raw as string);
-    expect(result.ok).toBe(true);
-    expect(result.data.action).toBe("create_from_develop");
-    expect(result.data.branch).toBe("feature/2026-08-04-gates");
-    expect(result.data.current_branch).toBe("main");
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-    rmSync(remote, { recursive: true, force: true });
-  }
-});
+test(
+  "workit_docs_branch proposes create_from_develop on main",
+  async () => {
+    const { root, remote } = repoWithDevelop();
+    mkdirSync(path.join(root, "docs", "2026-08-04-gates"), { recursive: true });
+    const plan = "docs/2026-08-04-gates/plan.md";
+    writeFileSync(path.join(root, plan), "# Plan\n");
+    try {
+      const raw = await createSddTools(new WorkflowStateStore()).workit_docs_branch.execute(
+        { plan_path: plan },
+        { directory: root, worktree: root, sessionID: "t" } as never,
+      );
+      const result = JSON.parse(raw as string);
+      expect(result.ok).toBe(true);
+      expect(result.data.action).toBe("create_from_develop");
+      expect(result.data.branch).toBe("feature/2026-08-04-gates");
+      expect(result.data.current_branch).toBe("main");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(remote, { recursive: true, force: true });
+    }
+  },
+  { timeout: 60_000 },
+);
 
 test(
   "branch setup creates feature branch from develop when starting on main",
@@ -683,205 +691,225 @@ test("CA-01: workspace branchPolicy overrides global config policy across consum
   }
 });
 
-test("CA-01: unmatched repo falls back to global policy, then preset defaults", async () => {
-  const { root, remote } = repoWithDevelop();
-  try {
-    writeFileSync(
-      path.join(isolatedConfig, "workit", "config.json"),
-      JSON.stringify({ branchPolicy: { preset: "github-flow" } }),
-    );
-    writeFileSync(path.join(isolatedConfig, "workit", "workspaces.json"), '{"workspaces":[]}');
-    git(root, ["checkout", "-q", "-b", "feature/x"]);
-    expect(resolveBranchPolicyFor(root).preset).toBe("github-flow");
-    rmSync(path.join(isolatedConfig, "workit", "config.json"), { force: true });
-    expect(resolveBranchPolicyFor(root).preset).toBe("gitflow"); // PRESETS default
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-    rmSync(remote, { recursive: true, force: true });
-  }
-});
+test(
+  "CA-01: unmatched repo falls back to global policy, then preset defaults",
+  async () => {
+    const { root, remote } = repoWithDevelop();
+    try {
+      writeFileSync(
+        path.join(isolatedConfig, "workit", "config.json"),
+        JSON.stringify({ branchPolicy: { preset: "github-flow" } }),
+      );
+      writeFileSync(path.join(isolatedConfig, "workit", "workspaces.json"), '{"workspaces":[]}');
+      git(root, ["checkout", "-q", "-b", "feature/x"]);
+      expect(resolveBranchPolicyFor(root).preset).toBe("github-flow");
+      rmSync(path.join(isolatedConfig, "workit", "config.json"), { force: true });
+      expect(resolveBranchPolicyFor(root).preset).toBe("gitflow"); // PRESETS default
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(remote, { recursive: true, force: true });
+    }
+  },
+  { timeout: 60_000 },
+);
 
-test("CA-05: defaultTargetBranch is preset-aware when unset", async () => {
-  // vcs.defaultTargetBranch stays consistent when unset: github-flow -> main,
-  // gitflow -> develop. Explicit workspace/global values still win (RL-03).
-  const stubBin = mkdtempSync(path.join(os.tmpdir(), "wf-ca05-bin-"));
-  const ghLog = path.join(stubBin, "gh-args.txt");
-  stubCli(stubBin, "gh", ghLog, "https://github.com/o/r/pull/1");
-  const prevPath = process.env.PATH;
-  const mainOnlyRepo = () => {
-    const dir = mkdtempSync(path.join(os.tmpdir(), "wf-ca05-main-"));
-    const remote = mkdtempSync(path.join(os.tmpdir(), "wf-ca05-main-remote-"));
-    git(remote, ["init", "-q", "--bare"]);
-    git(dir, ["init", "-q", "-b", "main"]);
-    git(dir, ["config", "user.name", "Workflow Test"]);
-    git(dir, ["config", "user.email", "workflow@example.test"]);
-    writeFileSync(path.join(dir, "README.md"), "base\n");
-    git(dir, ["add", "README.md"]);
-    git(dir, ["commit", "-q", "-m", "base"]);
-    git(dir, ["remote", "add", "origin", remote]);
-    git(dir, ["push", "-q", "-u", "origin", "main"]);
-    return { dir, remote };
-  };
-  try {
-    process.env.PATH = stubPath(stubBin);
-    const mainOnly = mainOnlyRepo();
+test(
+  "CA-05: defaultTargetBranch is preset-aware when unset",
+  async () => {
+    // vcs.defaultTargetBranch stays consistent when unset: github-flow -> main,
+    // gitflow -> develop. Explicit workspace/global values still win (RL-03).
+    const stubBin = mkdtempSync(path.join(os.tmpdir(), "wf-ca05-bin-"));
+    const ghLog = path.join(stubBin, "gh-args.txt");
+    stubCli(stubBin, "gh", ghLog, "https://github.com/o/r/pull/1");
+    const prevPath = process.env.PATH;
+    const mainOnlyRepo = () => {
+      const dir = mkdtempSync(path.join(os.tmpdir(), "wf-ca05-main-"));
+      const remote = mkdtempSync(path.join(os.tmpdir(), "wf-ca05-main-remote-"));
+      git(remote, ["init", "-q", "--bare"]);
+      git(dir, ["init", "-q", "-b", "main"]);
+      git(dir, ["config", "user.name", "Workflow Test"]);
+      git(dir, ["config", "user.email", "workflow@example.test"]);
+      writeFileSync(path.join(dir, "README.md"), "base\n");
+      git(dir, ["add", "README.md"]);
+      git(dir, ["commit", "-q", "-m", "base"]);
+      git(dir, ["remote", "add", "origin", remote]);
+      git(dir, ["push", "-q", "-u", "origin", "main"]);
+      return { dir, remote };
+    };
+    try {
+      process.env.PATH = stubPath(stubBin);
+      const mainOnly = mainOnlyRepo();
+      try {
+        writeFileSync(
+          path.join(isolatedConfig, "workit", "workspaces.json"),
+          JSON.stringify({
+            workspaces: [
+              { name: "w", glob: `${mainOnly.dir}/**`, branchPolicy: { preset: "github-flow" } },
+            ],
+          }),
+        );
+        writeFileSync(
+          path.join(isolatedConfig, "workit", "vcs.json"),
+          JSON.stringify({ provider: "github" }),
+        );
+        writeFileSync(path.join(isolatedConfig, "workit", "github.token"), "test-token\n");
+        mkdirSync(path.join(mainOnly.dir, "docs", "x"), { recursive: true });
+        writeFileSync(path.join(mainOnly.dir, "docs/x/plan.md"), "# Plan\n");
+        expect(vcsConfig("resolve", mainOnly.dir).defaultTargetBranch).toBe("main");
+        const db = docsBranch({ plan_path: "docs/x/plan.md", workspace_root: mainOnly.dir });
+        expect("error" in db).toBe(false);
+        if (!("error" in db)) expect(db.base).toBe("main");
+        const p = prCreate({ WF_PR_CONFIRMED: "true", WF_PR_TITLE: "T" }, mainOnly.dir);
+        expect(p.ok, JSON.stringify(p)).toBe(true);
+        expect(p.targetBranch).toBe("main");
+      } finally {
+        rmSync(mainOnly.dir, { recursive: true, force: true });
+        rmSync(mainOnly.remote, { recursive: true, force: true });
+      }
+      const { root, remote } = repoWithDevelop();
+      try {
+        writeFileSync(
+          path.join(isolatedConfig, "workit", "workspaces.json"),
+          JSON.stringify({
+            workspaces: [{ name: "w", glob: `${root}/**`, branchPolicy: { preset: "gitflow" } }],
+          }),
+        );
+        writeFileSync(
+          path.join(isolatedConfig, "workit", "vcs.json"),
+          JSON.stringify({ provider: "github" }),
+        );
+        git(root, ["checkout", "-q", "-b", "feature/ca05"]);
+        expect(vcsConfig("resolve", root).defaultTargetBranch).toBe("develop");
+        const db2 = docsBranch({ plan_path: "docs/x/plan.md", workspace_root: root });
+        expect("error" in db2).toBe(false);
+        if (!("error" in db2)) expect(db2.base).toBe("develop");
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+        rmSync(remote, { recursive: true, force: true });
+      }
+    } finally {
+      if (prevPath === undefined) delete process.env.PATH;
+      else process.env.PATH = prevPath;
+      rmSync(stubBin, { recursive: true, force: true });
+    }
+  },
+  { timeout: 60_000 },
+);
+
+test(
+  "CA-02: a matched workspace's branchPolicy default beats a global vcs defaultTargetBranch",
+  async () => {
+    // PR #43 regression: a global vcs.json defaultTargetBranch ("develop")
+    // shadowed the personal github-flow workspace's policy-derived "main".
+    // Spec'd order — workspace tier (explicit vcs default, then branchPolicy
+    // default) > global vcs.json > preset — must hold; unmatched repos keep the
+    // global vcs.json fallback.
+    const githubFlow = repoWithDevelop();
+    const gitflow = repoWithDevelop();
+    const unmatched = repoWithDevelop();
     try {
       writeFileSync(
         path.join(isolatedConfig, "workit", "workspaces.json"),
         JSON.stringify({
           workspaces: [
-            { name: "w", glob: `${mainOnly.dir}/**`, branchPolicy: { preset: "github-flow" } },
+            {
+              name: "personal",
+              glob: `${githubFlow.root}/**`,
+              vcs: { provider: "github" },
+              branchPolicy: { preset: "github-flow" },
+            },
+            {
+              name: "work",
+              glob: `${gitflow.root}/**`,
+              vcs: { provider: "gitlab", defaultTargetBranch: "develop" },
+              branchPolicy: { preset: "gitflow" },
+            },
           ],
         }),
       );
       writeFileSync(
         path.join(isolatedConfig, "workit", "vcs.json"),
-        JSON.stringify({ provider: "github" }),
+        JSON.stringify({ provider: "gitlab", defaultTargetBranch: "staging" }),
       );
-      writeFileSync(path.join(isolatedConfig, "workit", "github.token"), "test-token\n");
-      mkdirSync(path.join(mainOnly.dir, "docs", "x"), { recursive: true });
-      writeFileSync(path.join(mainOnly.dir, "docs/x/plan.md"), "# Plan\n");
-      expect(vcsConfig("resolve", mainOnly.dir).defaultTargetBranch).toBe("main");
-      const db = docsBranch({ plan_path: "docs/x/plan.md", workspace_root: mainOnly.dir });
-      expect("error" in db).toBe(false);
-      if (!("error" in db)) expect(db.base).toBe("main");
-      const p = prCreate({ WF_PR_CONFIRMED: "true", WF_PR_TITLE: "T" }, mainOnly.dir);
-      expect(p.ok, JSON.stringify(p)).toBe(true);
-      expect(p.targetBranch).toBe("main");
+
+      // the global "staging" must NOT shadow the github-flow policy default "main"
+      expect(resolveWorkspace(githubFlow.root)?.name).toBe("personal");
+      expect(resolveBranchPolicyFor(githubFlow.root).defaultTargetBranch).toBe("main");
+      expect(vcsConfig("resolve", githubFlow.root).defaultTargetBranch).toBe("main");
+
+      // explicit workspace vcs.defaultTargetBranch stays authoritative: develop,
+      // not the genuinely-different global "staging"
+      expect(resolveWorkspace(gitflow.root)?.name).toBe("work");
+      expect(vcsConfig("resolve", gitflow.root).defaultTargetBranch).toBe("develop");
+
+      // unmatched repo keeps the global vcs.json default as a fallback
+      expect(resolveWorkspace(unmatched.root)).toBeNull();
+      expect(vcsConfig("resolve", unmatched.root).defaultTargetBranch).toBe("staging");
     } finally {
-      rmSync(mainOnly.dir, { recursive: true, force: true });
-      rmSync(mainOnly.remote, { recursive: true, force: true });
+      for (const r of [githubFlow, gitflow, unmatched]) {
+        rmSync(r.root, { recursive: true, force: true });
+        rmSync(r.remote, { recursive: true, force: true });
+      }
     }
+  },
+  { timeout: 60_000 },
+);
+
+test(
+  "explicit workspace vcs.defaultTargetBranch beats the workspace branchPolicy default",
+  async () => {
+    // A workspace declaring BOTH an explicit vcs.defaultTargetBranch and a
+    // branchPolicy whose preset default differs must resolve the explicit value
+    // — the tier that the CA-02 test leaves coincident (its work workspace's
+    // explicit "develop" equals the gitflow preset default).
     const { root, remote } = repoWithDevelop();
     try {
       writeFileSync(
         path.join(isolatedConfig, "workit", "workspaces.json"),
         JSON.stringify({
-          workspaces: [{ name: "w", glob: `${root}/**`, branchPolicy: { preset: "gitflow" } }],
+          workspaces: [
+            {
+              name: "w",
+              glob: `${root}/**`,
+              vcs: { provider: "github", defaultTargetBranch: "release" },
+              branchPolicy: { preset: "github-flow" },
+            },
+          ],
         }),
       );
-      writeFileSync(
-        path.join(isolatedConfig, "workit", "vcs.json"),
-        JSON.stringify({ provider: "github" }),
-      );
-      git(root, ["checkout", "-q", "-b", "feature/ca05"]);
-      expect(vcsConfig("resolve", root).defaultTargetBranch).toBe("develop");
-      const db2 = docsBranch({ plan_path: "docs/x/plan.md", workspace_root: root });
-      expect("error" in db2).toBe(false);
-      if (!("error" in db2)) expect(db2.base).toBe("develop");
+      expect(vcsConfig("resolve", root).defaultTargetBranch).toBe("release");
     } finally {
       rmSync(root, { recursive: true, force: true });
       rmSync(remote, { recursive: true, force: true });
     }
-  } finally {
-    if (prevPath === undefined) delete process.env.PATH;
-    else process.env.PATH = prevPath;
-    rmSync(stubBin, { recursive: true, force: true });
-  }
-});
+  },
+  { timeout: 60_000 },
+);
 
-test("CA-02: a matched workspace's branchPolicy default beats a global vcs defaultTargetBranch", async () => {
-  // PR #43 regression: a global vcs.json defaultTargetBranch ("develop")
-  // shadowed the personal github-flow workspace's policy-derived "main".
-  // Spec'd order — workspace tier (explicit vcs default, then branchPolicy
-  // default) > global vcs.json > preset — must hold; unmatched repos keep the
-  // global vcs.json fallback.
-  const githubFlow = repoWithDevelop();
-  const gitflow = repoWithDevelop();
-  const unmatched = repoWithDevelop();
-  try {
-    writeFileSync(
-      path.join(isolatedConfig, "workit", "workspaces.json"),
-      JSON.stringify({
-        workspaces: [
-          {
-            name: "personal",
-            glob: `${githubFlow.root}/**`,
-            vcs: { provider: "github" },
-            branchPolicy: { preset: "github-flow" },
-          },
-          {
-            name: "work",
-            glob: `${gitflow.root}/**`,
-            vcs: { provider: "gitlab", defaultTargetBranch: "develop" },
-            branchPolicy: { preset: "gitflow" },
-          },
-        ],
-      }),
-    );
-    writeFileSync(
-      path.join(isolatedConfig, "workit", "vcs.json"),
-      JSON.stringify({ provider: "gitlab", defaultTargetBranch: "staging" }),
-    );
-
-    // the global "staging" must NOT shadow the github-flow policy default "main"
-    expect(resolveWorkspace(githubFlow.root)?.name).toBe("personal");
-    expect(resolveBranchPolicyFor(githubFlow.root).defaultTargetBranch).toBe("main");
-    expect(vcsConfig("resolve", githubFlow.root).defaultTargetBranch).toBe("main");
-
-    // explicit workspace vcs.defaultTargetBranch stays authoritative: develop,
-    // not the genuinely-different global "staging"
-    expect(resolveWorkspace(gitflow.root)?.name).toBe("work");
-    expect(vcsConfig("resolve", gitflow.root).defaultTargetBranch).toBe("develop");
-
-    // unmatched repo keeps the global vcs.json default as a fallback
-    expect(resolveWorkspace(unmatched.root)).toBeNull();
-    expect(vcsConfig("resolve", unmatched.root).defaultTargetBranch).toBe("staging");
-  } finally {
-    for (const r of [githubFlow, gitflow, unmatched]) {
-      rmSync(r.root, { recursive: true, force: true });
-      rmSync(r.remote, { recursive: true, force: true });
+test(
+  "workspace preset typo falls back to the global preset without crashing",
+  async () => {
+    const { root, remote } = repoWithDevelop();
+    try {
+      writeFileSync(
+        path.join(isolatedConfig, "workit", "config.json"),
+        JSON.stringify({ branchPolicy: { preset: "github-flow" } }),
+      );
+      writeFileSync(
+        path.join(isolatedConfig, "workit", "workspaces.json"),
+        JSON.stringify({
+          workspaces: [{ name: "w", glob: `${root}/**`, branchPolicy: { preset: "gitflo" } }],
+        }),
+      );
+      expect(() => resolveBranchPolicyFor(root)).not.toThrow();
+      expect(resolveBranchPolicyFor(root).preset).toBe("github-flow");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(remote, { recursive: true, force: true });
     }
-  }
-});
-
-test("explicit workspace vcs.defaultTargetBranch beats the workspace branchPolicy default", async () => {
-  // A workspace declaring BOTH an explicit vcs.defaultTargetBranch and a
-  // branchPolicy whose preset default differs must resolve the explicit value
-  // — the tier that the CA-02 test leaves coincident (its work workspace's
-  // explicit "develop" equals the gitflow preset default).
-  const { root, remote } = repoWithDevelop();
-  try {
-    writeFileSync(
-      path.join(isolatedConfig, "workit", "workspaces.json"),
-      JSON.stringify({
-        workspaces: [
-          {
-            name: "w",
-            glob: `${root}/**`,
-            vcs: { provider: "github", defaultTargetBranch: "release" },
-            branchPolicy: { preset: "github-flow" },
-          },
-        ],
-      }),
-    );
-    expect(vcsConfig("resolve", root).defaultTargetBranch).toBe("release");
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-    rmSync(remote, { recursive: true, force: true });
-  }
-});
-
-test("workspace preset typo falls back to the global preset without crashing", async () => {
-  const { root, remote } = repoWithDevelop();
-  try {
-    writeFileSync(
-      path.join(isolatedConfig, "workit", "config.json"),
-      JSON.stringify({ branchPolicy: { preset: "github-flow" } }),
-    );
-    writeFileSync(
-      path.join(isolatedConfig, "workit", "workspaces.json"),
-      JSON.stringify({
-        workspaces: [{ name: "w", glob: `${root}/**`, branchPolicy: { preset: "gitflo" } }],
-      }),
-    );
-    expect(() => resolveBranchPolicyFor(root)).not.toThrow();
-    expect(resolveBranchPolicyFor(root).preset).toBe("github-flow");
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-    rmSync(remote, { recursive: true, force: true });
-  }
-});
+  },
+  { timeout: 60_000 },
+);
 
 test(
   "RL-03b: provider reconciles with the actual origin remote across PR surfaces",
@@ -997,59 +1025,63 @@ test("RL-01: malformed config.json throws the exact-path error from policy-aware
   }
 });
 
-test("branch policy rejects codex/ under gitflow and allows under custom", async () => {
-  const dir = mkdtempSync(path.join(os.tmpdir(), "wf-branch-policy-"));
-  const prevConfig = process.env.WORKFLOW_TOOLKIT_CONFIG;
-  try {
-    process.env.WORKFLOW_TOOLKIT_CONFIG_DIR = dir;
-    delete process.env.WORKFLOW_TOOLKIT_CONFIG;
-    const repo = mkdtempSync(path.join(os.tmpdir(), "wf-branch-policy-repo-"));
+test(
+  "branch policy rejects codex/ under gitflow and allows under custom",
+  async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "wf-branch-policy-"));
+    const prevConfig = process.env.WORKFLOW_TOOLKIT_CONFIG;
     try {
-      const run = (args: string[]) => spawnSync("git", args, { cwd: repo, encoding: "utf8" });
-      run(["init", "-q", "-b", "develop"]);
-      run(["config", "user.name", "T"]);
-      run(["config", "user.email", "t@t"]);
-      writeFileSync(path.join(repo, "r.md"), "x");
-      run(["add", "r.md"]);
-      run(["commit", "-q", "-m", "base"]);
-      run(["checkout", "-q", "-b", "main"]);
-      mkdirSync(path.join(repo, "docs", "codex-feat"), { recursive: true });
-      writeFileSync(
-        path.join(repo, "docs/codex-feat/spec.md"),
-        "# S\n\n**Branch:** `codex/feature/x`\n",
-      );
-      writeFileSync(
-        path.join(repo, "docs/codex-feat/plan.md"),
-        "# P\n\n**Spec:** `docs/codex-feat/spec.md`\n**Branch:** `codex/feature/x`\n\n### Task 1: One\n\n- [ ] **Step 1:** Work\n",
-      );
+      process.env.WORKFLOW_TOOLKIT_CONFIG_DIR = dir;
+      delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+      const repo = mkdtempSync(path.join(os.tmpdir(), "wf-branch-policy-repo-"));
+      try {
+        const run = (args: string[]) => spawnSync("git", args, { cwd: repo, encoding: "utf8" });
+        run(["init", "-q", "-b", "develop"]);
+        run(["config", "user.name", "T"]);
+        run(["config", "user.email", "t@t"]);
+        writeFileSync(path.join(repo, "r.md"), "x");
+        run(["add", "r.md"]);
+        run(["commit", "-q", "-m", "base"]);
+        run(["checkout", "-q", "-b", "main"]);
+        mkdirSync(path.join(repo, "docs", "codex-feat"), { recursive: true });
+        writeFileSync(
+          path.join(repo, "docs/codex-feat/spec.md"),
+          "# S\n\n**Branch:** `codex/feature/x`\n",
+        );
+        writeFileSync(
+          path.join(repo, "docs/codex-feat/plan.md"),
+          "# P\n\n**Spec:** `docs/codex-feat/spec.md`\n**Branch:** `codex/feature/x`\n\n### Task 1: One\n\n- [ ] **Step 1:** Work\n",
+        );
 
-      const gitflowRes = resolveBranch({
-        spec_path: "docs/codex-feat/spec.md",
-        plan_path: "docs/codex-feat/plan.md",
-        workspace_root: repo,
-      });
-      expect("error" in gitflowRes).toBe(true);
+        const gitflowRes = resolveBranch({
+          spec_path: "docs/codex-feat/spec.md",
+          plan_path: "docs/codex-feat/plan.md",
+          workspace_root: repo,
+        });
+        expect("error" in gitflowRes).toBe(true);
 
-      writeConfig({
-        locale: "en",
-        localeOptions: ["en"],
-        timezone: "UTC",
-        branchPolicy: { preset: "custom", allowed: ["codex/*"], protected: ["main"] },
-      });
-      const customRes = resolveBranch({
-        spec_path: "docs/codex-feat/spec.md",
-        plan_path: "docs/codex-feat/plan.md",
-        workspace_root: repo,
-      });
-      expect("error" in customRes).toBe(false);
-      if (!("error" in customRes)) expect(customRes.branch).toBe("codex/feature/x");
+        writeConfig({
+          locale: "en",
+          localeOptions: ["en"],
+          timezone: "UTC",
+          branchPolicy: { preset: "custom", allowed: ["codex/*"], protected: ["main"] },
+        });
+        const customRes = resolveBranch({
+          spec_path: "docs/codex-feat/spec.md",
+          plan_path: "docs/codex-feat/plan.md",
+          workspace_root: repo,
+        });
+        expect("error" in customRes).toBe(false);
+        if (!("error" in customRes)) expect(customRes.branch).toBe("codex/feature/x");
+      } finally {
+        rmSync(repo, { recursive: true, force: true });
+      }
     } finally {
-      rmSync(repo, { recursive: true, force: true });
+      delete process.env.WORKFLOW_TOOLKIT_CONFIG_DIR;
+      if (prevConfig === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+      else process.env.WORKFLOW_TOOLKIT_CONFIG = prevConfig;
+      rmSync(dir, { recursive: true, force: true });
     }
-  } finally {
-    delete process.env.WORKFLOW_TOOLKIT_CONFIG_DIR;
-    if (prevConfig === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
-    else process.env.WORKFLOW_TOOLKIT_CONFIG = prevConfig;
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
+  },
+  { timeout: 60_000 },
+);

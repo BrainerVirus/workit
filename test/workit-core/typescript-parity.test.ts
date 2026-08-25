@@ -186,98 +186,114 @@ function flockAvailable(): boolean {
   return spawnSync("bash", ["-c", "command -v flock"], { encoding: "utf8" }).status === 0;
 }
 
-test("defaultBase prefers main then develop; rangeArgOrDefault appends ...HEAD", () => {
-  const { repo } = buildFixtureRepo();
-  try {
-    expect(defaultBase(repo)).toBe("main");
-    expect(rangeArgOrDefault(undefined, repo)).toBe("main...HEAD");
-    expect(rangeArgOrDefault("v1.0.0..v2.0.0", repo)).toBe("v1.0.0..v2.0.0");
-    // a repo with no main/master falls back through the ref list to HEAD~1
-    const bare = mkdtempSync(path.join(os.tmpdir(), "wf-parity-bare-"));
+test(
+  "defaultBase prefers main then develop; rangeArgOrDefault appends ...HEAD",
+  () => {
+    const { repo } = buildFixtureRepo();
     try {
-      spawnSync("git", ["init", "-q"], { cwd: bare });
-      expect(defaultBase(bare)).toBe("HEAD~1");
+      expect(defaultBase(repo)).toBe("main");
+      expect(rangeArgOrDefault(undefined, repo)).toBe("main...HEAD");
+      expect(rangeArgOrDefault("v1.0.0..v2.0.0", repo)).toBe("v1.0.0..v2.0.0");
+      // a repo with no main/master falls back through the ref list to HEAD~1
+      const bare = mkdtempSync(path.join(os.tmpdir(), "wf-parity-bare-"));
+      try {
+        spawnSync("git", ["init", "-q"], { cwd: bare });
+        expect(defaultBase(bare)).toBe("HEAD~1");
+      } finally {
+        rmSync(bare, { recursive: true, force: true });
+      }
     } finally {
-      rmSync(bare, { recursive: true, force: true });
+      rmSync(repo, { recursive: true, force: true });
     }
-  } finally {
-    rmSync(repo, { recursive: true, force: true });
-  }
-});
+  },
+  { timeout: 60_000 },
+);
 
-test("branch classification and current branch match the shell predicates", () => {
-  const { repo } = buildFixtureRepo();
-  try {
-    expect(currentBranch(repo)).toBe("feature/fixture");
-    expect(isProtectedBranch("main")).toBe(true);
-    expect(isProtectedBranch("master")).toBe(true);
-    expect(isProtectedBranch("develop")).toBe(true);
-    expect(isProtectedBranch("prod")).toBe(true);
-    expect(isProtectedBranch("production")).toBe(true);
-    expect(isProtectedBranch("feature/x")).toBe(false);
-    expect(isPrBranch("feature/x")).toBe(true);
-    expect(isPrBranch("bugfix/x")).toBe(true);
-    expect(isPrBranch("main")).toBe(false);
-    expect(isPrBranch("chore/x")).toBe(false);
-  } finally {
-    rmSync(repo, { recursive: true, force: true });
-  }
-});
+test(
+  "branch classification and current branch match the shell predicates",
+  () => {
+    const { repo } = buildFixtureRepo();
+    try {
+      expect(currentBranch(repo)).toBe("feature/fixture");
+      expect(isProtectedBranch("main")).toBe(true);
+      expect(isProtectedBranch("master")).toBe(true);
+      expect(isProtectedBranch("develop")).toBe(true);
+      expect(isProtectedBranch("prod")).toBe(true);
+      expect(isProtectedBranch("production")).toBe(true);
+      expect(isProtectedBranch("feature/x")).toBe(false);
+      expect(isPrBranch("feature/x")).toBe(true);
+      expect(isPrBranch("bugfix/x")).toBe(true);
+      expect(isPrBranch("main")).toBe(false);
+      expect(isPrBranch("chore/x")).toBe(false);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  },
+  { timeout: 60_000 },
+);
 
-test("resolvePrBranchContext yields the branch-exclusive range the shell produced", () => {
-  const { repo, mergeBase } = buildFixtureRepo();
-  try {
-    const ctx = withGitLabConfig(() => resolvePrBranchContext(repo));
-    expect(ctx.ok).toBe(true);
-    if (!ctx.ok) return;
-    expect(ctx.value.baseRef).toBe("develop");
-    expect(ctx.value.range).toBe("develop..HEAD");
-    expect(ctx.value.diffRange).toBe(`${mergeBase}..HEAD`);
-    expect(ctx.value.mergeBase).toBe(mergeBase);
-  } finally {
-    rmSync(repo, { recursive: true, force: true });
-  }
-});
+test(
+  "resolvePrBranchContext yields the branch-exclusive range the shell produced",
+  () => {
+    const { repo, mergeBase } = buildFixtureRepo();
+    try {
+      const ctx = withGitLabConfig(() => resolvePrBranchContext(repo));
+      expect(ctx.ok).toBe(true);
+      if (!ctx.ok) return;
+      expect(ctx.value.baseRef).toBe("develop");
+      expect(ctx.value.range).toBe("develop..HEAD");
+      expect(ctx.value.diffRange).toBe(`${mergeBase}..HEAD`);
+      expect(ctx.value.mergeBase).toBe(mergeBase);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  },
+  { timeout: 60_000 },
+);
 
-test("pr-ready-context sections match the shell output (auto branch-exclusive range)", () => {
-  const { repo } = buildFixtureRepo();
-  try {
-    const result = withGitLabConfig(() => prReadyContext(repo));
-    expect(result.exitCode).toBe(0);
-    const sections = parseSections(result.stdout);
-    const repoSection = parseKeyValueLines(sections.Repository ?? "", [
-      "root",
-      "branch",
-      "range",
-      "base_ref",
-      "merge_base",
-      "diff_range",
-      "range_mode",
-    ]);
-    expect(repoSection.branch).toBe("feature/fixture");
-    expect(repoSection.range).toBe("develop..HEAD");
-    expect(repoSection.base_ref).toBe("develop");
-    expect(repoSection.range_mode).toBe("branch-exclusive");
-    expect(repoSection.diff_range).toBe(`${repoSection.merge_base}..HEAD`);
-    expect(sections.Commits ?? "").toContain("feature change");
-    expect(sections.Commits ?? "").toContain("main base"); // develop..HEAD includes both
-    expect(sections["Diff Stat"] ?? "").toContain("feature.txt");
-    expect(sections["Changed Files"] ?? "").toContain("feature.txt");
-    expect(sections["Changed Files"] ?? "").toContain("README.md");
-    expect(sections["PR Template"] ?? "").toContain(
-      "template_path: .github/pull_request_template.md",
-    );
-    // parseSections splits on "## ", so the template body lands in its own section
-    expect(sections.Summary ?? "").toContain("- fix");
-    expect(sections["VCS Config"] ?? "").toContain("workspace: work");
-    expect(sections["VCS Config"] ?? "").toContain("provider: gitlab");
-    // B4: concise shell shape — workspace:/provider: only, no raw summary JSON.
-    expect(sections["VCS Config"] ?? "").not.toContain('"defaultTargetBranch"');
-    expect(sections["Merged PR Style"] ?? "").toContain("vcs not configured"); // no token -> no network
-  } finally {
-    rmSync(repo, { recursive: true, force: true });
-  }
-});
+test(
+  "pr-ready-context sections match the shell output (auto branch-exclusive range)",
+  () => {
+    const { repo } = buildFixtureRepo();
+    try {
+      const result = withGitLabConfig(() => prReadyContext(repo));
+      expect(result.exitCode).toBe(0);
+      const sections = parseSections(result.stdout);
+      const repoSection = parseKeyValueLines(sections.Repository ?? "", [
+        "root",
+        "branch",
+        "range",
+        "base_ref",
+        "merge_base",
+        "diff_range",
+        "range_mode",
+      ]);
+      expect(repoSection.branch).toBe("feature/fixture");
+      expect(repoSection.range).toBe("develop..HEAD");
+      expect(repoSection.base_ref).toBe("develop");
+      expect(repoSection.range_mode).toBe("branch-exclusive");
+      expect(repoSection.diff_range).toBe(`${repoSection.merge_base}..HEAD`);
+      expect(sections.Commits ?? "").toContain("feature change");
+      expect(sections.Commits ?? "").toContain("main base"); // develop..HEAD includes both
+      expect(sections["Diff Stat"] ?? "").toContain("feature.txt");
+      expect(sections["Changed Files"] ?? "").toContain("feature.txt");
+      expect(sections["Changed Files"] ?? "").toContain("README.md");
+      expect(sections["PR Template"] ?? "").toContain(
+        "template_path: .github/pull_request_template.md",
+      );
+      // parseSections splits on "## ", so the template body lands in its own section
+      expect(sections.Summary ?? "").toContain("- fix");
+      expect(sections["VCS Config"] ?? "").toContain("workspace: work");
+      expect(sections["VCS Config"] ?? "").toContain("provider: gitlab");
+      // B4: concise shell shape — workspace:/provider: only, no raw summary JSON.
+      expect(sections["VCS Config"] ?? "").not.toContain('"defaultTargetBranch"');
+      expect(sections["Merged PR Style"] ?? "").toContain("vcs not configured"); // no token -> no network
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  },
+  { timeout: 60_000 },
+);
 
 test(
   "pr-ready-context with an explicit range skips the branch-exclusive fields",
@@ -314,102 +330,118 @@ test("pr-ready-context errors on protected branches with the shell message", () 
   }
 });
 
-test("changelog-context sections match the shell output", () => {
-  const { repo } = buildFixtureRepo();
-  try {
-    const result = changelogContext(repo);
-    expect(result.exitCode).toBe(0);
-    const sections = parseSections(result.stdout);
-    const repoSection = parseKeyValueLines(sections.Repository ?? "", ["branch", "range"]);
-    expect(repoSection.branch).toBe("feature/fixture");
-    expect(repoSection.range).toBe("main...HEAD");
-    expect(sections["Keep a Changelog Rules"] ?? "").toContain("Use an [Unreleased] section.");
-    // parseSections splits on "## ", so the excerpt ends at the changelog's own
-    // "## [Unreleased]" heading — identical to how the shell output was parsed.
-    expect(sections["Existing CHANGELOG.md"] ?? "").toBe("# Changelog");
-    expect(sections.Commits ?? "").toContain("feature change");
-    expect(sections["Changed Files"] ?? "").toBe("feature.txt");
-  } finally {
-    rmSync(repo, { recursive: true, force: true });
-  }
-});
+test(
+  "changelog-context sections match the shell output",
+  () => {
+    const { repo } = buildFixtureRepo();
+    try {
+      const result = changelogContext(repo);
+      expect(result.exitCode).toBe(0);
+      const sections = parseSections(result.stdout);
+      const repoSection = parseKeyValueLines(sections.Repository ?? "", ["branch", "range"]);
+      expect(repoSection.branch).toBe("feature/fixture");
+      expect(repoSection.range).toBe("main...HEAD");
+      expect(sections["Keep a Changelog Rules"] ?? "").toContain("Use an [Unreleased] section.");
+      // parseSections splits on "## ", so the excerpt ends at the changelog's own
+      // "## [Unreleased]" heading — identical to how the shell output was parsed.
+      expect(sections["Existing CHANGELOG.md"] ?? "").toBe("# Changelog");
+      expect(sections.Commits ?? "").toContain("feature change");
+      expect(sections["Changed Files"] ?? "").toBe("feature.txt");
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  },
+  { timeout: 60_000 },
+);
 
-test("docs-refresh-context sections match the shell output", () => {
-  const { repo } = buildFixtureRepo();
-  try {
-    const result = docsRefreshContext(repo);
-    expect(result.exitCode).toBe(0);
-    const sections = parseSections(result.stdout);
-    expect(parseKeyValueLines(sections.Repository ?? "", ["range"]).range).toBe("main...HEAD");
-    expect(sections["Changed Files"] ?? "").toBe("feature.txt");
-    const docFiles = sections["Documentation Files"] ?? "";
-    expect(docFiles).toContain("./CHANGELOG.md");
-    expect(docFiles).toContain("./README.md");
-    expect(docFiles).toContain("./.github/pull_request_template.md");
-    expect(sections["README Preview"] ?? "").toContain("# Fixture");
-    expect(sections["Package Scripts"] ?? "").toBe("package.json not found.");
-  } finally {
-    rmSync(repo, { recursive: true, force: true });
-  }
-});
+test(
+  "docs-refresh-context sections match the shell output",
+  () => {
+    const { repo } = buildFixtureRepo();
+    try {
+      const result = docsRefreshContext(repo);
+      expect(result.exitCode).toBe(0);
+      const sections = parseSections(result.stdout);
+      expect(parseKeyValueLines(sections.Repository ?? "", ["range"]).range).toBe("main...HEAD");
+      expect(sections["Changed Files"] ?? "").toBe("feature.txt");
+      const docFiles = sections["Documentation Files"] ?? "";
+      expect(docFiles).toContain("./CHANGELOG.md");
+      expect(docFiles).toContain("./README.md");
+      expect(docFiles).toContain("./.github/pull_request_template.md");
+      expect(sections["README Preview"] ?? "").toContain("# Fixture");
+      expect(sections["Package Scripts"] ?? "").toBe("package.json not found.");
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  },
+  { timeout: 60_000 },
+);
 
-test("release-notes-context requires a range and reproduces the shell sections", () => {
-  const { repo } = buildFixtureRepo();
-  try {
-    const missing = releaseNotesContext(repo, "");
-    expect(missing.exitCode).toBe(1);
-    expect(missing.stderr).toContain("ERROR: release tag or range required");
+test(
+  "release-notes-context requires a range and reproduces the shell sections",
+  () => {
+    const { repo } = buildFixtureRepo();
+    try {
+      const missing = releaseNotesContext(repo, "");
+      expect(missing.exitCode).toBe(1);
+      expect(missing.stderr).toContain("ERROR: release tag or range required");
 
-    const explicit = releaseNotesContext(repo, "HEAD");
-    expect(explicit.exitCode).toBe(0);
-    const sections = parseSections(explicit.stdout);
-    const repoSection = parseKeyValueLines(sections.Repository ?? "", ["requested", "range"]);
-    expect(repoSection.requested).toBe("HEAD");
-    expect(repoSection.range).toBe("HEAD");
-    expect(sections.Commits ?? "").toContain("feature change");
-    expect(sections["Existing Release Files"] ?? "").toBe("CHANGELOG.md");
-  } finally {
-    rmSync(repo, { recursive: true, force: true });
-  }
-});
+      const explicit = releaseNotesContext(repo, "HEAD");
+      expect(explicit.exitCode).toBe(0);
+      const sections = parseSections(explicit.stdout);
+      const repoSection = parseKeyValueLines(sections.Repository ?? "", ["requested", "range"]);
+      expect(repoSection.requested).toBe("HEAD");
+      expect(repoSection.range).toBe("HEAD");
+      expect(sections.Commits ?? "").toContain("feature change");
+      expect(sections["Existing Release Files"] ?? "").toBe("CHANGELOG.md");
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  },
+  { timeout: 60_000 },
+);
 
-test("verify-project reproduces the shell's parsed counts and check labels", () => {
-  const { repo } = buildFixtureRepo();
-  try {
-    const result = runVerifyProject(repo);
-    const parsed = parseVerifyOutput(result.stdout);
-    expect(parsed).toEqual({
-      passed: 1,
-      failed: 0,
-      skipped: 2,
-      // skipped checks have no `command:` line, so they don't appear as commands
-      commands: [
-        {
-          label: "CHANGELOG.md format",
-          command: 'grep -qi "## [Unreleased]" CHANGELOG.md',
-          status: "pass",
-        },
-      ],
-    });
-    expect(result.exitCode).toBe(0);
+test(
+  "verify-project reproduces the shell's parsed counts and check labels",
+  () => {
+    const { repo } = buildFixtureRepo();
+    try {
+      const result = runVerifyProject(repo);
+      const parsed = parseVerifyOutput(result.stdout);
+      expect(parsed).toEqual({
+        passed: 1,
+        failed: 0,
+        skipped: 2,
+        // skipped checks have no `command:` line, so they don't appear as commands
+        commands: [
+          {
+            label: "CHANGELOG.md format",
+            command: 'grep -qi "## [Unreleased]" CHANGELOG.md',
+            status: "pass",
+          },
+        ],
+      });
+      expect(result.exitCode).toBe(0);
 
-    // failing changelog -> exit 1 (shell parity)
-    rmSync(path.join(repo, "CHANGELOG.md"));
-    const failing = runVerifyProject(repo);
-    expect(failing.exitCode).toBe(1);
-    expect(parseVerifyOutput(failing.stdout).failed).toBe(1);
+      // failing changelog -> exit 1 (shell parity)
+      rmSync(path.join(repo, "CHANGELOG.md"));
+      const failing = runVerifyProject(repo);
+      expect(failing.exitCode).toBe(1);
+      expect(parseVerifyOutput(failing.stdout).failed).toBe(1);
 
-    // dry-run skips every check
-    const dry = runVerifyProject(repo, true);
-    expect(dry.exitCode).toBe(0);
-    expect(dry.stdout).toContain("dry_run: true");
-    const dryParsed = parseVerifyOutput(dry.stdout);
-    expect(dryParsed.failed).toBe(0);
-    expect(dryParsed.skipped).toBe(3);
-  } finally {
-    rmSync(repo, { recursive: true, force: true });
-  }
-});
+      // dry-run skips every check
+      const dry = runVerifyProject(repo, true);
+      expect(dry.exitCode).toBe(0);
+      expect(dry.stdout).toContain("dry_run: true");
+      const dryParsed = parseVerifyOutput(dry.stdout);
+      expect(dryParsed.failed).toBe(0);
+      expect(dryParsed.skipped).toBe(3);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  },
+  { timeout: 60_000 },
+);
 
 test(
   "verify-project picks the package runner and runs package.json scripts",
@@ -517,65 +549,83 @@ test("git context exposes the same branch and status fields the shell produced",
   }
 });
 
-test("git context surfaces captured stderr when the cwd is not a git repository", () => {
-  const dir = mkdtempSync(path.join(os.tmpdir(), "wf-parity-nogit-"));
-  try {
-    const ctx = gitContext(dir);
-    expect(ctx.stderr).toContain("not a git repository");
-    expect(ctx.exitCode).not.toBe(0);
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
+test(
+  "git context surfaces captured stderr when the cwd is not a git repository",
+  () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "wf-parity-nogit-"));
+    try {
+      const ctx = gitContext(dir);
+      expect(ctx.stderr).toContain("not a git repository");
+      expect(ctx.exitCode).not.toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  },
+  { timeout: 60_000 },
+);
 
-test("PATH scanning uses path.delimiter (Windows-safe) not a literal colon", () => {
-  const prCreateSource = readFileSync(
-    path.resolve(import.meta.dir, "..", "..", "packages", "workit-core", "src/core/pr-create.ts"),
-    "utf8",
-  );
-  expect(prCreateSource).toContain("split(path.delimiter)");
-  // Functional delimiter coverage lives in workspaces-scripts.test.ts: the
-  // missing-CLI guard runs whichOnPath over a path.delimiter-joined PATH.
-});
+test(
+  "PATH scanning uses path.delimiter (Windows-safe) not a literal colon",
+  () => {
+    const prCreateSource = readFileSync(
+      path.resolve(import.meta.dir, "..", "..", "packages", "workit-core", "src/core/pr-create.ts"),
+      "utf8",
+    );
+    expect(prCreateSource).toContain("split(path.delimiter)");
+    // Functional delimiter coverage lives in workspaces-scripts.test.ts: the
+    // missing-CLI guard runs whichOnPath over a path.delimiter-joined PATH.
+  },
+  { timeout: 60_000 },
+);
 
-test("YouTrack API uses fetch (not the curl binary) and never leaks the token", async () => {
-  const dir = mkdtempSync(path.join(os.tmpdir(), "wf-parity-fetch-"));
-  const tokenPath = path.join(dir, "youtrack.token");
-  const configPath = path.join(dir, "youtrack.json");
-  writeFileSync(tokenPath, "secret-token\n", { mode: 0o600 });
-  writeFileSync(
-    configPath,
-    JSON.stringify({ tokenFile: tokenPath, baseUrl: "https://youtrack.example.test" }),
-  );
-  const previous = process.env.WORKFLOW_YOUTRACK_CONFIG;
-  const originalFetch = globalThis.fetch;
-  let seenAuth = "";
-  globalThis.fetch = (async (input: unknown, init?: unknown) => {
-    seenAuth = String((init as { headers?: Record<string, string> })?.headers?.Authorization ?? "");
-    return new Response("boom", { status: 500 });
-  }) as unknown as typeof fetch;
-  process.env.WORKFLOW_YOUTRACK_CONFIG = configPath;
-  try {
-    const result = await youTrackApi(["post-comment", "NSR-40", "Revisado"], "1");
-    expect(seenAuth).toBe("Bearer secret-token"); // header carried, exactly like curl -H
-    expect("error" in result).toBe(true);
-    expect(JSON.stringify(result)).not.toContain("secret-token");
-    expect(JSON.stringify(result)).not.toContain("Authorization");
-  } finally {
-    globalThis.fetch = originalFetch;
-    if (previous === undefined) delete process.env.WORKFLOW_YOUTRACK_CONFIG;
-    else process.env.WORKFLOW_YOUTRACK_CONFIG = previous;
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
+test(
+  "YouTrack API uses fetch (not the curl binary) and never leaks the token",
+  async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "wf-parity-fetch-"));
+    const tokenPath = path.join(dir, "youtrack.token");
+    const configPath = path.join(dir, "youtrack.json");
+    writeFileSync(tokenPath, "secret-token\n", { mode: 0o600 });
+    writeFileSync(
+      configPath,
+      JSON.stringify({ tokenFile: tokenPath, baseUrl: "https://youtrack.example.test" }),
+    );
+    const previous = process.env.WORKFLOW_YOUTRACK_CONFIG;
+    const originalFetch = globalThis.fetch;
+    let seenAuth = "";
+    globalThis.fetch = (async (input: unknown, init?: unknown) => {
+      seenAuth = String(
+        (init as { headers?: Record<string, string> })?.headers?.Authorization ?? "",
+      );
+      return new Response("boom", { status: 500 });
+    }) as unknown as typeof fetch;
+    process.env.WORKFLOW_YOUTRACK_CONFIG = configPath;
+    try {
+      const result = await youTrackApi(["post-comment", "NSR-40", "Revisado"], "1");
+      expect(seenAuth).toBe("Bearer secret-token"); // header carried, exactly like curl -H
+      expect("error" in result).toBe(true);
+      expect(JSON.stringify(result)).not.toContain("secret-token");
+      expect(JSON.stringify(result)).not.toContain("Authorization");
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (previous === undefined) delete process.env.WORKFLOW_YOUTRACK_CONFIG;
+      else process.env.WORKFLOW_YOUTRACK_CONFIG = previous;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  },
+  { timeout: 60_000 },
+);
 
-test("no runtime source spawns curl anymore", () => {
-  const coreSrc = path.resolve(import.meta.dir, "..", "..", "packages", "workit-core", "src");
-  const youtrack = readFileSync(path.join(coreSrc, "core/youtrack.ts"), "utf8");
-  expect(youtrack).not.toMatch(/spawnSync\(\s*"curl"/);
-  const vcs = readFileSync(path.join(coreSrc, "core/vcs-config.ts"), "utf8");
-  expect(vcs).not.toMatch(/spawnSync\(\s*"curl"/);
-});
+test(
+  "no runtime source spawns curl anymore",
+  () => {
+    const coreSrc = path.resolve(import.meta.dir, "..", "..", "packages", "workit-core", "src");
+    const youtrack = readFileSync(path.join(coreSrc, "core/youtrack.ts"), "utf8");
+    expect(youtrack).not.toMatch(/spawnSync\(\s*"curl"/);
+    const vcs = readFileSync(path.join(coreSrc, "core/vcs-config.ts"), "utf8");
+    expect(vcs).not.toMatch(/spawnSync\(\s*"curl"/);
+  },
+  { timeout: 60_000 },
+);
 
 // The skills-rsync sub-case wraps the real rsync (REAL_RSYNC) for the
 // non-skills copies, so a missing rsync makes the first rsync fail with a

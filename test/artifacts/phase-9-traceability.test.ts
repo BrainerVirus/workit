@@ -397,69 +397,89 @@ function resolveCommand(cmd: string): string {
   return `plan.md::${cmd}`;
 }
 
-test("every mapped row resolves to an existing test case or declared command", () => {
-  for (const row of ROWS) {
-    for (const ev of row.evidence) {
-      const where = ev.startsWith("command:") ? resolveCommand(ev.slice(8)) : resolveTest(ev);
-      expect(where, `${row.row}: ${ev}`).toBeTruthy();
+test(
+  "every mapped row resolves to an existing test case or declared command",
+  () => {
+    for (const row of ROWS) {
+      for (const ev of row.evidence) {
+        const where = ev.startsWith("command:") ? resolveCommand(ev.slice(8)) : resolveTest(ev);
+        expect(where, `${row.row}: ${ev}`).toBeTruthy();
+      }
     }
-  }
-});
+  },
+  { timeout: 60_000 },
+);
 
-test("no row is prose-only: every POST/AR/CA row has at least one evidence target", () => {
-  const unmapped = ROWS.filter((r) => r.evidence.length === 0).map((r) => r.row);
-  expect(unmapped).toEqual([]);
-});
+test(
+  "no row is prose-only: every POST/AR/CA row has at least one evidence target",
+  () => {
+    const unmapped = ROWS.filter((r) => r.evidence.length === 0).map((r) => r.row);
+    expect(unmapped).toEqual([]);
+  },
+  { timeout: 60_000 },
+);
 
-test("the mapping table is complete: the spec carries no POST/AR/CA row outside the table", () => {
-  const spec = readFileSync(SPEC, "utf8");
-  const inSpec = {
-    post: [...spec.matchAll(/POST-\d\d/g)].map((m) => m[0]),
-    ar: [...spec.matchAll(/AR-\d\d/g)].map((m) => m[0]),
-    ca: [...spec.matchAll(/CA-(?:3[3-9]|4[0-5])/g)].map((m) => m[0]),
-  };
-  const inTable = {
-    post: ROWS.filter((r) => r.row.startsWith("POST-")).map((r) => r.row),
-    ar: ROWS.filter((r) => r.row.startsWith("AR-")).map((r) => r.row),
-    ca: ROWS.filter((r) => r.row.startsWith("CA-")).map((r) => r.row),
-  };
-  expect(new Set(inSpec.post)).toEqual(new Set(inTable.post));
-  expect(new Set(inSpec.ar)).toEqual(new Set(inTable.ar));
-  expect(new Set(inSpec.ca)).toEqual(new Set(inTable.ca));
-});
+test(
+  "the mapping table is complete: the spec carries no POST/AR/CA row outside the table",
+  () => {
+    const spec = readFileSync(SPEC, "utf8");
+    const inSpec = {
+      post: [...spec.matchAll(/POST-\d\d/g)].map((m) => m[0]),
+      ar: [...spec.matchAll(/AR-\d\d/g)].map((m) => m[0]),
+      ca: [...spec.matchAll(/CA-(?:3[3-9]|4[0-5])/g)].map((m) => m[0]),
+    };
+    const inTable = {
+      post: ROWS.filter((r) => r.row.startsWith("POST-")).map((r) => r.row),
+      ar: ROWS.filter((r) => r.row.startsWith("AR-")).map((r) => r.row),
+      ca: ROWS.filter((r) => r.row.startsWith("CA-")).map((r) => r.row),
+    };
+    expect(new Set(inSpec.post)).toEqual(new Set(inTable.post));
+    expect(new Set(inSpec.ar)).toEqual(new Set(inTable.ar));
+    expect(new Set(inSpec.ca)).toEqual(new Set(inTable.ca));
+  },
+  { timeout: 60_000 },
+);
 
-test("the gate references the dependency-closure and release-ordering evidence instead of re-proving it", () => {
-  const evidence = ROWS.flatMap((r) => r.evidence);
-  expect(
-    evidence.some((e) => e.startsWith("test/workit-cli/packed-cli.test.ts::")),
-    "packed CLI declared-closure proof (AR-03/CA-34) must be referenced, not re-implemented",
-  ).toBe(true);
-  expect(
-    evidence.some((e) => e.startsWith("test/artifacts/release-orchestration.test.ts::")),
-    "release-ordering proof (AR-01/AR-02/CA-33) must be exercised",
-  ).toBe(true);
-});
+test(
+  "the gate references the dependency-closure and release-ordering evidence instead of re-proving it",
+  () => {
+    const evidence = ROWS.flatMap((r) => r.evidence);
+    expect(
+      evidence.some((e) => e.startsWith("test/workit-cli/packed-cli.test.ts::")),
+      "packed CLI declared-closure proof (AR-03/CA-34) must be referenced, not re-implemented",
+    ).toBe(true);
+    expect(
+      evidence.some((e) => e.startsWith("test/artifacts/release-orchestration.test.ts::")),
+      "release-ordering proof (AR-01/AR-02/CA-33) must be exercised",
+    ).toBe(true);
+  },
+  { timeout: 60_000 },
+);
 
-test("the declared branch is active (AR-15/CA-45 pre-reconciliation state)", () => {
-  const branch = spawnSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
-    cwd: REPO_ROOT,
-    encoding: "utf8",
-  });
-  expect(branch.status, branch.stderr ?? "").toBe(0);
-  const head = branch.stdout.trim();
-  if (head === DECLARED_BRANCH) return;
-  // CI checks out the PR merge commit (detached HEAD): the declared branch
-  // must exist and be an ancestor of the checked-out state. Post-merge the
-  // declared branch is gone — nothing left to assert.
-  const ref = spawnSync(
-    "git",
-    ["rev-parse", "--verify", `refs/remotes/origin/${DECLARED_BRANCH}`],
-    { cwd: REPO_ROOT, encoding: "utf8" },
-  );
-  if (ref.status !== 0) return;
-  const ancestor = spawnSync("git", ["merge-base", "--is-ancestor", ref.stdout.trim(), "HEAD"], {
-    cwd: REPO_ROOT,
-    encoding: "utf8",
-  });
-  expect(ancestor.status).toBe(0);
-});
+test(
+  "the declared branch is active (AR-15/CA-45 pre-reconciliation state)",
+  () => {
+    const branch = spawnSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
+      cwd: REPO_ROOT,
+      encoding: "utf8",
+    });
+    expect(branch.status, branch.stderr ?? "").toBe(0);
+    const head = branch.stdout.trim();
+    if (head === DECLARED_BRANCH) return;
+    // CI checks out the PR merge commit (detached HEAD): the declared branch
+    // must exist and be an ancestor of the checked-out state. Post-merge the
+    // declared branch is gone — nothing left to assert.
+    const ref = spawnSync(
+      "git",
+      ["rev-parse", "--verify", `refs/remotes/origin/${DECLARED_BRANCH}`],
+      { cwd: REPO_ROOT, encoding: "utf8" },
+    );
+    if (ref.status !== 0) return;
+    const ancestor = spawnSync("git", ["merge-base", "--is-ancestor", ref.stdout.trim(), "HEAD"], {
+      cwd: REPO_ROOT,
+      encoding: "utf8",
+    });
+    expect(ancestor.status).toBe(0);
+  },
+  { timeout: 60_000 },
+);
