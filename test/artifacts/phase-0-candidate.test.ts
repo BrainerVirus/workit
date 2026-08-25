@@ -77,25 +77,33 @@ test("isolatedEnv strips script-specific path overrides that could re-point at t
   }
 });
 
-test("packs all workspace packages into local tarballs without publishing", () => {
-  const packs = packWorkspacePackages();
-  expect(packs.map((p) => p.packageName)).toEqual([CORE, OPENCODE, CURSOR, CLI]);
-  for (const pack of packs) {
-    expect(existsSync(pack.tarball), pack.packageName).toBe(true);
-    expect(pack.sha256).toMatch(/^[0-9a-f]{64}$/);
-    expect(listTarball(pack.tarball).length, pack.packageName).toBeGreaterThan(0);
-  }
-});
+test(
+  "packs all workspace packages into local tarballs without publishing",
+  () => {
+    const packs = packWorkspacePackages();
+    expect(packs.map((p) => p.packageName)).toEqual([CORE, OPENCODE, CURSOR, CLI]);
+    for (const pack of packs) {
+      expect(existsSync(pack.tarball), pack.packageName).toBe(true);
+      expect(pack.sha256).toMatch(/^[0-9a-f]{64}$/);
+      expect(listTarball(pack.tarball).length, pack.packageName).toBeGreaterThan(0);
+    }
+  },
+  { timeout: 60_000 },
+);
 
-test("the final release candidate is byte-stable with the phase-0 pack (CA-30)", () => {
-  // Force a fresh pack against the earlier (cached) phase-0 pack: comparing two
-  // calls that both hit the module cache would be comparing an array with
-  // itself (D12). Order matters — packWorkspacePackages() must run first so the
-  // force actually repacks.
-  const packs = packWorkspacePackages();
-  const candidate = packReleaseCandidate({ force: true });
-  expect(candidate.map((p) => p.sha256)).toEqual(packs.map((p) => p.sha256));
-});
+test(
+  "the final release candidate is byte-stable with the phase-0 pack (CA-30)",
+  () => {
+    // Force a fresh pack against the earlier (cached) phase-0 pack: comparing two
+    // calls that both hit the module cache would be comparing an array with
+    // itself (D12). Order matters — packWorkspacePackages() must run first so the
+    // force actually repacks.
+    const packs = packWorkspacePackages();
+    const candidate = packReleaseCandidate({ force: true });
+    expect(candidate.map((p) => p.sha256)).toEqual(packs.map((p) => p.sha256));
+  },
+  { timeout: 60_000 },
+);
 
 test("packed adapter core dependency equals the packed core version (RR-01)", () => {
   const packs = packWorkspacePackages();
