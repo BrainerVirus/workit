@@ -391,7 +391,10 @@ export const branchSetup = ({
   const journal = (message: string) => log?.(`flow-guard: ${message}`);
   const snapshotRelPaths = (): string[] => {
     const dir = snapDir;
-    if (!dir || !log) return [];
+    // Not gated on log: the redundant-stash coverage check below needs this
+    // walk even without a logger (the walk is read-only over the tmpdir
+    // snapshot).
+    if (!dir) return [];
     try {
       const walk = (from: string, rel: string): string[] =>
         readdirSync(from, { withFileTypes: true }).flatMap((entry) =>
@@ -604,7 +607,45 @@ export const branchSetup = ({
     }
     return result;
   }
+  // Files the guard is about to bring back: snapshot entries missing right
+  // now, captured before the restore flips them to present.
+  const restoredRels = snapshotRelPaths();
   const warnings = restoreWithWarning(snapDir);
+  // Round-1 fallout: the guard restores untracked spec/plan right after
+  // checkout, but the stash pushed the same files — a later reapply_stash pop
+  // refuses ("untracked working tree files would be overwritten"), stranding
+  // a stash_ref on every successful setup. When every stashed path was just
+  // restored byte-identical from the pre-stash snapshot, the stash is
+  // redundant: drop it and clear the manifest ref. Partial overlap keeps the
+  // ref so reapply_stash stays available for non-covered files. Best-effort:
+  // any failure keeps today's keep-the-ref behavior.
+  if (stash_ref && snapDir && warnings.length === 0) {
+    const norm = (p: string) => p.split(path.sep).join("/");
+    const covered = new Set(restoredRels.map(norm));
+    try {
+      const stashed = exec([
+        "stash",
+        "show",
+        "--include-untracked",
+        "--name-only",
+        String(stash_ref),
+      ])
+        .split("\n")
+        .map((line) => norm(line.trim()))
+        .filter(Boolean);
+      if (stashed.length > 0 && stashed.every((p) => covered.has(p))) {
+        exec(["stash", "drop", String(stash_ref)]);
+        stash_ref = undefined;
+        journal("dropped redundant stash (fully covered by snapshot restore)");
+        const manifest = readManifest();
+        delete manifest.stash_ref;
+        delete manifest.stash_created_at;
+        writeManifest(manifest);
+      }
+    } catch {
+      /* keep the stash ref — reapply_stash stays available */
+    }
+  }
   return {
     action: "setup",
     ok: true,

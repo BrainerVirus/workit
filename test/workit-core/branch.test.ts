@@ -650,7 +650,10 @@ test("incident regression: untracked approved spec/plan survive setup(stash=yes)
     writeFileSync(flowPath, flowBytes);
     writeFileSync(specPath, specBytes);
     writeFileSync(planPath, planBytes);
-    dirtyTree(root);
+    // No dirtyTree helper here on purpose: the stash must hold ONLY the doc
+    // pair so the guard's restore fully covers it and setup drops the
+    // redundant stash (mixed WIP keeps the stash — partial overlap must stay
+    // reappliable).
 
     const raw = await createRepoTools().workit_branch_setup.execute(
       {
@@ -662,6 +665,11 @@ test("incident regression: untracked approved spec/plan survive setup(stash=yes)
     );
     const result = JSON.parse(raw as string);
     expect(result.ok).toBe(true);
+    // Round-1 fallout fix: the stash held the same doc pair the guard just
+    // restored, so every successful setup stranded a stash_ref whose later
+    // reapply_stash pop refused ("untracked working tree files would be
+    // overwritten"). Full coverage ⇒ setup drops the stash itself.
+    expect(result.data.stash_ref).toBeNull();
 
     // The very next gate/status read (the concurrent reader from the incident)
     // must not phantom-reset the approval chain.
@@ -686,6 +694,27 @@ test("incident regression: untracked approved spec/plan survive setup(stash=yes)
       .filter((d) => d.startsWith("workit-flow-guard-"))
       .filter((d) => !guardsBefore.has(d));
     expect(newGuards).toEqual([]);
+
+    // No stranded stash: the ref is gone from the stash and the manifest.
+    expect(git(root, ["stash", "list"]).stdout.trim()).toBe("");
+    const manifest = JSON.parse(readFileSync(path.join(root, "docs", "manifest.json"), "utf8"));
+    expect(manifest.stash_ref).toBeUndefined();
+    expect(manifest.stash_created_at).toBeUndefined();
+
+    // A subsequent reapply_stash is a harmless structured error, not a
+    // conflicting pop.
+    const reapplyRaw = await createRepoTools().workit_branch_setup.execute(
+      { confirmed: true, action: "reapply_stash" },
+      { directory: root, worktree: root } as never,
+    );
+    const reapply = JSON.parse(reapplyRaw as string);
+    expect(reapply.ok).toBe(false);
+    expect(String(reapply.error)).toContain("no stash_ref");
+
+    // Harmless: all three files still byte-identical after the refused reapply.
+    expect(readFileSync(flowPath)).toEqual(flowBytes);
+    expect(readFileSync(specPath)).toEqual(specBytes);
+    expect(readFileSync(planPath)).toEqual(planBytes);
   } finally {
     rmSync(root, { recursive: true, force: true });
     rmSync(remote, { recursive: true, force: true });
