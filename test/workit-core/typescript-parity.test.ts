@@ -279,24 +279,28 @@ test("pr-ready-context sections match the shell output (auto branch-exclusive ra
   }
 });
 
-test("pr-ready-context with an explicit range skips the branch-exclusive fields", () => {
-  const { repo } = buildFixtureRepo();
-  try {
-    const result = withGitLabConfig(() => prReadyContext(repo, "HEAD~2..HEAD"));
-    expect(result.exitCode).toBe(0);
-    const repoSection = parseKeyValueLines(parseSections(result.stdout).Repository ?? "", [
-      "branch",
-      "range",
-      "base_ref",
-      "range_mode",
-    ]);
-    expect(repoSection.range).toBe("HEAD~2..HEAD");
-    expect(repoSection.base_ref).toBeUndefined();
-    expect(repoSection.range_mode).toBeUndefined();
-  } finally {
-    rmSync(repo, { recursive: true, force: true });
-  }
-}, { timeout: 60_000 });
+test(
+  "pr-ready-context with an explicit range skips the branch-exclusive fields",
+  () => {
+    const { repo } = buildFixtureRepo();
+    try {
+      const result = withGitLabConfig(() => prReadyContext(repo, "HEAD~2..HEAD"));
+      expect(result.exitCode).toBe(0);
+      const repoSection = parseKeyValueLines(parseSections(result.stdout).Repository ?? "", [
+        "branch",
+        "range",
+        "base_ref",
+        "range_mode",
+      ]);
+      expect(repoSection.range).toBe("HEAD~2..HEAD");
+      expect(repoSection.base_ref).toBeUndefined();
+      expect(repoSection.range_mode).toBeUndefined();
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  },
+  { timeout: 60_000 },
+);
 
 test("pr-ready-context errors on protected branches with the shell message", () => {
   const { repo } = buildFixtureRepo();
