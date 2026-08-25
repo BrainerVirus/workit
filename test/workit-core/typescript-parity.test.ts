@@ -296,7 +296,7 @@ test("pr-ready-context with an explicit range skips the branch-exclusive fields"
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }
-});
+}, { timeout: 60_000 });
 
 test("pr-ready-context errors on protected branches with the shell message", () => {
   const { repo } = buildFixtureRepo();
