@@ -99,12 +99,17 @@ export async function runInit() {
   // surface the same graceful blocked output Apply would have shown.
   const state = readSetupState();
   if (state.config.status === "malformed") {
+    // CA-02: even this earliest exit opens on a clean screen so the blocked
+    // output never sits atop the npx banner.
+    process.stdout.write("\x1b[2J\x1b[H");
     printMalformedBlocked(state);
     process.exit(1);
   }
   // ponytail: no-TTY guard — piping/disabling stdin would hang render(); print
   // guidance and exit nonzero instead of silently pretending setup happened
   if (process.stdin.isTTY !== true) {
+    // CA-02: same clean-screen rule as the malformed guard above.
+    process.stdout.write("\x1b[2J\x1b[H");
     console.log("workit init requires an interactive terminal (TTY).");
     for (const line of setupCompletionGuidance()) console.log(line);
     process.exit(1);
@@ -168,8 +173,10 @@ export async function runInit() {
 
 // `workit uninstall` (Task 9): TTY-only interactive host picker plus a
 // reviewable action summary BEFORE any mutation (D-08). The wizard collects a
-// host selection and an explicit confirm; planning and applying go through the
-// Task 8 core module with injectable homes resolved from process.env.HOME —
+// host selection and an explicit confirm; the outcome carries the ALREADY
+// FILTERED reviewed plan so apply reuses exactly what was displayed (no
+// duplicated selection predicate). Planning and applying go through the Task 8
+// core module with injectable homes resolved from process.env.HOME —
 // ~/.config/workit is never an action target. Exits: 0 ok/cancelled/nothing to
 // remove · 1 partial failure · 2 non-TTY usage error (CA-10, CA-13).
 type UninstallOutcome = { confirmed: boolean; hosts: UninstallHost[]; plan: UninstallPlan | null };
@@ -201,6 +208,9 @@ function UninstallWizard({ onExit }: { onExit: (outcome: UninstallOutcome) => vo
     );
   }
   const selected = plan.hosts.filter((h) => hosts.includes(h.host));
+  // The reviewed plan IS the filtered plan: the outcome hands apply exactly
+  // what this screen displayed, so display and applied set cannot drift.
+  const reviewed: UninstallPlan = { hosts: selected };
   return (
     <Box flexDirection="column" gap={1}>
       <Text bold>Uninstall workit — review</Text>
@@ -217,8 +227,8 @@ function UninstallWizard({ onExit }: { onExit: (outcome: UninstallOutcome) => vo
       )}
       <Text>Apply uninstall? (y/N)</Text>
       <ConfirmInput
-        onConfirm={() => onExit({ confirmed: true, hosts, plan })}
-        onCancel={() => onExit({ confirmed: false, hosts, plan })}
+        onConfirm={() => onExit({ confirmed: true, hosts, plan: reviewed })}
+        onCancel={() => onExit({ confirmed: false, hosts, plan: reviewed })}
       />
     </Box>
   );
@@ -249,19 +259,14 @@ export async function runUninstall() {
     console.log("Uninstall cancelled — nothing was changed.");
     process.exit(0);
   }
-  const actions = outcome.plan.hosts
-    .filter((h) => outcome.hosts.includes(h.host))
-    .flatMap((h) => h.actions);
+  // The reviewed plan is already filtered to the selected hosts (the review
+  // screen built it) — apply exactly what was displayed, no re-filtering.
+  const actions = outcome.plan.hosts.flatMap((h) => h.actions);
   if (actions.length === 0) {
     console.log("Nothing to remove for the selected hosts.");
     process.exit(0);
   }
-  // Apply only the reviewed selection: filter the reviewed plan down to the
-  // hosts the user picked and dispatch exactly those actions.
-  const result = applyUninstall(
-    { hosts: outcome.plan.hosts.filter((h) => outcome.hosts.includes(h.host)) },
-    { env: process.env },
-  );
+  const result = applyUninstall(outcome.plan, { env: process.env });
   for (const entry of result.entries) {
     console.log(
       `${entry.status.padEnd(8)} ${entry.path}${entry.detail ? ` — ${entry.detail}` : ""}`,

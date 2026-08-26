@@ -6,7 +6,7 @@
 // (CA-11, CA-12, CA-13, CA-14). Homes are injectable exactly like setup/doctor
 // path options (D-07): tests pass explicit paths and no default ever resolves
 // to a real user directory in tests.
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { isWorkitPlugin } from "./registration";
@@ -59,7 +59,10 @@ type ResolvedUninstall = {
 };
 
 const resolveUninstallPaths = (options: UninstallPaths = {}): ResolvedUninstall => {
-  const home = options.home ?? options.env?.HOME ?? process.env.HOME ?? os.homedir();
+  // Same chain as setup.ts (parity advisory): explicit option > env.HOME >
+  // homedir. No process.env tier — an ambient HOME must never leak past an
+  // explicitly empty injected env.
+  const home = options.home ?? options.env?.HOME ?? os.homedir();
   return {
     opencodeConfig:
       options.opencodeConfig ?? path.join(home, ".config", "opencode", "opencode.json"),
@@ -265,14 +268,27 @@ export function planUninstall(paths: UninstallPaths = {}): UninstallPlan {
 // CA-14 traversal guard: rm -rf is permitted ONLY on the exact resolved
 // canonical <home>/.cursor/plugins/local/workit directory. Any other resolved
 // path (symlinked alias, sibling, traversal) fails closed without touching disk.
+// Belt-and-braces (Task 8 advisory): when both sides resolve, their real paths
+// must agree too — an ancestor symlink swapped in between plan and apply cannot
+// widen the rm target. An unresolvable path falls through to the lexical
+// verdict (apply then reports skipped/failed downstream).
 const canonicalRemoveDirAllowed = (actionPath: string, res: ResolvedUninstall): boolean => {
   const expected = path.resolve(res.cursorPluginDir);
-  return (
-    actionPath === expected &&
-    path.basename(expected) === "workit" &&
-    path.basename(path.dirname(expected)) === "local" &&
-    path.basename(path.dirname(path.dirname(expected))) === "plugins"
-  );
+  if (
+    !(
+      actionPath === expected &&
+      path.basename(expected) === "workit" &&
+      path.basename(path.dirname(expected)) === "local" &&
+      path.basename(path.dirname(path.dirname(expected))) === "plugins"
+    )
+  ) {
+    return false;
+  }
+  try {
+    return realpathSync(actionPath) === realpathSync(expected);
+  } catch {
+    return true;
+  }
 };
 
 const applyEditJsonRemove = (
@@ -290,7 +306,18 @@ const applyEditJsonRemove = (
   // Only-if-changed: byte-preserving when there is nothing to remove.
   if (!changed) return { status: "skipped", detail: "no workit entries present" };
   const serialized = JSON.stringify(next, null, 2) + "\n";
-  if (readFileSync(target, "utf8") === serialized) {
+  // The byte-compare re-read races any external writer; a vanished/unreadable
+  // file between the two reads must fail THIS action, not abort the rest.
+  let current: string;
+  try {
+    current = readFileSync(target, "utf8");
+  } catch (error) {
+    return {
+      status: "failed",
+      detail: `read failed before write: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+  if (current === serialized) {
     return { status: "skipped", detail: "already clean" };
   }
   try {

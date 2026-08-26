@@ -1,4 +1,4 @@
-import { afterAll, expect, test } from "bun:test";
+import { afterAll, expect, spyOn, test } from "bun:test";
 import {
   chmodSync,
   existsSync,
@@ -6,10 +6,12 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import * as fsMod from "node:fs";
 import { applyUninstall, planUninstall } from "../../packages/workit-core/src/core/uninstall";
 
 // Uninstall planning/apply tests run ONLY on temp fixture homes (D-07): every
@@ -257,6 +259,113 @@ test("forged edit-json-remove outside recognized targets fails closed", () => {
   const result = applyUninstall(plan, f);
   expect(result.entries[0].status).toBe("failed");
   expect(existsSync(evil)).toBe(false);
+});
+
+test("HOME fallback chain matches setup.ts: explicit home > env.HOME > homedir (no process.env tier)", () => {
+  // With an empty injected env and no explicit home, resolution must land on
+  // os.homedir() (spied to a hermetic fixture) — never on an ambient
+  // process.env.HOME tier.
+  const spiedHome = mkdtempSync(path.join(os.tmpdir(), "wk-uninstall-homespy-"));
+  mkdirSync(path.join(spiedHome, ".config", "opencode"), { recursive: true });
+  writeFileSync(
+    path.join(spiedHome, ".config", "opencode", "opencode.json"),
+    JSON.stringify({ plugin: ["@brainervirus/workit-opencode"] }, null, 2) + "\n",
+    "utf8",
+  );
+  const spy = spyOn(os, "homedir").mockReturnValue(spiedHome);
+  const prevHome = process.env.HOME;
+  process.env.HOME = "/hostile/injected-home";
+  try {
+    const plan = planUninstall({ env: {} });
+    const oc = plan.hosts.find((h) => h.host === "opencode")!;
+    expect(oc.actions.map((a) => a.path)).toEqual([
+      path.join(spiedHome, ".config", "opencode", "opencode.json"),
+    ]);
+    const cur = plan.hosts.find((h) => h.host === "cursor")!;
+    expect(cur.actions.some((a) => a.path.startsWith("/hostile"))).toBe(false);
+  } finally {
+    spy.mockRestore();
+    if (prevHome === undefined) delete process.env.HOME;
+    else process.env.HOME = prevHome;
+    rmSync(spiedHome, { recursive: true, force: true });
+  }
+  // Explicit home still wins over env.HOME (fixture sanity).
+  const f = tracked();
+  f.seedInstalled();
+  const explicit = planUninstall({ env: { HOME: "/env-home" }, home: f.home });
+  expect(explicit.hosts[0].actions[0]?.path).toBe(
+    path.join(f.home, ".config", "opencode", "opencode.json"),
+  );
+});
+
+test("byte-compare read failure fails that action; siblings proceed (vanish-between-reads race)", () => {
+  const f = tracked();
+  f.seedInstalled();
+  const plan = planUninstall(f);
+  // Deterministic TOCTOU: the byte-compare re-read of settings.json (the second
+  // read of that path inside apply) throws as if the file vanished after
+  // parse — the guard must fail THIS action only, never abort the rest.
+  let settingsReads = 0;
+  const realReadFileSync = readFileSync;
+  const spy = spyOn(fsMod, "readFileSync").mockImplementation(((p: unknown, opts: unknown) => {
+    if (String(p) === f.cursorSettings && (settingsReads += 1) >= 2) {
+      throw new Error("simulated vanish between reads");
+    }
+    return realReadFileSync(p as string, opts as undefined);
+  }) as typeof readFileSync);
+  try {
+    const result = applyUninstall(plan, f);
+    const settingsEntry = result.entries.find((e) => e.path === f.cursorSettings)!;
+    expect(settingsEntry.status).toBe("failed");
+    expect(settingsEntry.detail).toContain("read failed");
+    expect(result.ok).toBe(false);
+    // Sibling actions still completed.
+    expect(result.entries.find((e) => e.path === f.cursorMcp)!.status).toBe("removed");
+    expect(existsSync(f.cursorPluginDir)).toBe(false);
+  } finally {
+    spy.mockRestore();
+  }
+});
+
+test("rm allow-list survives an ancestor-symlinked HOME (realpath belt does not over-block)", () => {
+  if (process.platform === "win32") return;
+  const f = tracked();
+  f.seedInstalled();
+  // The whole fixture home is reached through a symlink alias — exactly what
+  // realpath equality sees on BOTH sides, so the belt must stay open here.
+  const alias = path.join(path.dirname(f.home), `${path.basename(f.home)}-alias`);
+  symlinkSync(f.home, alias, "dir");
+  try {
+    const aliased: Parameters<typeof planUninstall>[0] = {
+      ...f,
+      home: alias,
+      cursorPluginDir: path.join(alias, ".cursor", "plugins", "local", "workit"),
+    };
+    const plan = planUninstall(aliased);
+    const result = applyUninstall(plan, aliased);
+    expect(result.ok, JSON.stringify(result.entries)).toBe(true);
+    const dirEntry = result.entries.find((e) => e.path === aliased.cursorPluginDir)!;
+    expect(dirEntry.status).toBe("removed");
+    expect(existsSync(f.cursorPluginDir)).toBe(false);
+  } finally {
+    rmSync(alias, { force: true });
+  }
+});
+
+test("a plugin dir swapped to an off-site symlink removes only the link, never the target", () => {
+  if (process.platform === "win32") return;
+  const f = tracked();
+  f.seedInstalled();
+  // TOCTOU-style swap: after planning, workit/ becomes a symlink to a decoy.
+  rmSync(f.cursorPluginDir, { recursive: true, force: true });
+  const decoy = path.join(f.root, "decoy");
+  mkdirSync(decoy, { recursive: true });
+  writeFileSync(path.join(decoy, "precious"), "keep", "utf8");
+  symlinkSync(decoy, f.cursorPluginDir, "dir");
+  const result = applyUninstall(planUninstall(f), f);
+  expect(result.entries.find((e) => e.path === f.cursorPluginDir)!.status).toBe("removed");
+  expect(existsSync(path.join(decoy, "precious"))).toBe(true); // decoy untouched
+  expect(existsSync(f.cursorPluginDir)).toBe(false); // the link itself is gone
 });
 
 test("plan-vs-applied parity: every planned action yields exactly one entry", () => {

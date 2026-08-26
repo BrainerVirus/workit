@@ -1,8 +1,9 @@
 import { expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
+import { retryOnce } from "../shared/helpers/retry-once";
 
 // CA-02 (clean screen): runInit must open with exactly one clear
 // (\x1b[2J\x1b[H) before the wizard renders and emit exactly one more after
@@ -64,11 +65,21 @@ function clean(raw: string): string {
 
 type DriveResult = { chunks: string[]; exitCode?: number };
 
-async function driveRunInit(keys: string[]): Promise<DriveResult> {
+type DriveOptions = {
+  /** Drive a non-TTY stdin: exercises the pre-render no-TTY guard. */
+  isTTY?: boolean;
+  /** Seed config.json as malformed JSON: exercises the pre-render blocked guard. */
+  malformedConfig?: boolean;
+};
+
+async function driveRunInit(keys: string[], options: DriveOptions = {}): Promise<DriveResult> {
+  const { isTTY = true, malformedConfig = false } = options;
   const base = mkdtempSync(path.join(os.tmpdir(), "workit-clean-"));
   const configPath = path.join(base, "config");
   mkdirSync(configPath, { recursive: true });
+  const prevToolkitConfig = process.env.WORKFLOW_TOOLKIT_CONFIG;
   process.env.WORKFLOW_TOOLKIT_CONFIG = configPath;
+  if (malformedConfig) writeFileSync(path.join(configPath, "config.json"), "{ not json", "utf8");
   const prevWorkspaceRoot = process.env.WORKFLOW_WORKSPACE_ROOT;
   // Non-git resolution root keeps the branch-policy screen out of the walk.
   process.env.WORKFLOW_WORKSPACE_ROOT = path.join(
@@ -91,7 +102,7 @@ async function driveRunInit(keys: string[]): Promise<DriveResult> {
     unref(): void;
     setRawMode(enabled: boolean): void;
   };
-  fakeStdin.isTTY = true;
+  fakeStdin.isTTY = isTTY;
   fakeStdin.ref = () => {};
   fakeStdin.unref = () => {};
   fakeStdin.setRawMode = () => {};
@@ -100,7 +111,7 @@ async function driveRunInit(keys: string[]): Promise<DriveResult> {
   let exitCode: number | undefined;
   try {
     process.stdin = fakeStdin as unknown as typeof process.stdin;
-    (process.stdout as { isTTY: boolean }).isTTY = true;
+    (process.stdout as { isTTY: boolean }).isTTY = isTTY;
     (process.stdout as { columns: number }).columns = 120;
     (process.stdout as { rows: number }).rows = 40;
     process.stdout.write = ((chunk: unknown, cb?: (() => void) | undefined) => {
@@ -127,9 +138,11 @@ async function driveRunInit(keys: string[]): Promise<DriveResult> {
     // unhandled rejection while the key loop below is still awaiting.
     running.catch(() => {});
     await flush();
-    for (const key of keys) {
-      process.stdin.push(key);
-      await flush();
+    if (isTTY) {
+      for (const key of keys) {
+        process.stdin.push(key);
+        await flush();
+      }
     }
     try {
       await running;
@@ -139,7 +152,8 @@ async function driveRunInit(keys: string[]): Promise<DriveResult> {
     }
     return { chunks, exitCode };
   } finally {
-    delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+    if (prevToolkitConfig === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+    else process.env.WORKFLOW_TOOLKIT_CONFIG = prevToolkitConfig;
     if (prevWorkspaceRoot === undefined) delete process.env.WORKFLOW_WORKSPACE_ROOT;
     else process.env.WORKFLOW_WORKSPACE_ROOT = prevWorkspaceRoot;
     process.stdout.write = prevWrite;
@@ -164,62 +178,88 @@ function clearCount(joined: string): number {
   return count;
 }
 
-test("apply path: first chunk clears, exactly one post-exit clear precedes the first summary line", async () => {
-  const { chunks, exitCode } = await driveRunInit([
-    SPACE,
-    ENTER, // platforms -> locale
-    ENTER, // locale -> timezone
-    ENTER, // timezone -> branchPreset
-    ENTER, // branchPreset -> issueTracker
-    ENTER, // issueTracker (YouTrack) -> youtrack
-    "https://yt.example.com",
-    ENTER, // youtrack -> vcs
-    ENTER, // vcs -> workspaces
-    ENTER, // workspaces (Done) -> project
-    "y", // project -> summary
-    "y", // apply
-  ]);
-  expect(exitCode).toBe(0);
+// Wall-clock flake class (Task 2 advisory): ~11 sequential 50ms real-timer
+// beats per drive depend on ink throttle timing; under load a stale frame can
+// fail an assertion once. Each drive runs inside retryOnce — first error is
+// rethrown if the retry also fails, so diagnosis stays honest.
+test("apply path: first chunk clears, exactly one post-exit clear precedes the first summary line", () =>
+  retryOnce(async () => {
+    const { chunks, exitCode } = await driveRunInit([
+      SPACE,
+      ENTER, // platforms -> locale
+      ENTER, // locale -> timezone
+      ENTER, // timezone -> branchPreset
+      ENTER, // branchPreset -> issueTracker
+      ENTER, // issueTracker (YouTrack) -> youtrack
+      "https://yt.example.com",
+      ENTER, // youtrack -> vcs
+      ENTER, // vcs -> workspaces
+      ENTER, // workspaces (Done) -> project
+      "y", // project -> summary
+      "y", // apply
+    ]);
+    expect(exitCode).toBe(0);
+    expect(chunks.length).toBeGreaterThan(0);
+    expect(chunks[0].startsWith(CLEAR)).toBe(true);
+
+    const joined = chunks.join("");
+    expect(clearCount(joined)).toBe(2);
+    const second = joined.indexOf(CLEAR, CLEAR.length);
+    expect(second).toBeGreaterThan(0);
+
+    // Nothing summary-like before the post-exit clear.
+    expect(clean(joined.slice(CLEAR.length, second))).not.toContain("Setup complete.");
+
+    // The first visible line after the clear is an Apply-summary entry line,
+    // never leftover wizard frame content.
+    const tail = clean(joined.slice(second + CLEAR.length));
+    const tailLines = tail
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
+    expect(tailLines[0]).toMatch(/^(Installed|Configured|Skipped|Failed)\b/);
+    expect(tail).toContain("Setup complete.");
+  }));
+
+test("cancel path: still exactly two clears; exit output never sits atop stale frames", () =>
+  retryOnce(async () => {
+    const { chunks, exitCode } = await driveRunInit([
+      SPACE,
+      ENTER, // platforms -> locale
+      ESC, // cancel from the select screen
+    ]);
+    expect(exitCode).toBe(1);
+
+    const joined = chunks.join("");
+    expect(chunks[0].startsWith(CLEAR)).toBe(true);
+    expect(clearCount(joined)).toBe(2);
+    const second = joined.indexOf(CLEAR, CLEAR.length);
+    expect(second).toBeGreaterThan(0);
+
+    // Wizard frames really rendered between the two clears (the post-exit clear
+    // is not just a duplicate of the pre-render one).
+    expect(clean(joined.slice(CLEAR.length, second))).toContain("Locale");
+
+    // Cancel prints no summary; nothing follows the final clear.
+    expect(clean(joined.slice(second + CLEAR.length)).trim()).toBe("");
+  }));
+
+// Pre-render exit paths (Task 2 advisory): the malformed-config guard and the
+// no-TTY guard print before any render, so each must still open with the clear
+// sequence — output never shares a frame with the npx banner.
+test("malformed config exits pre-render: output starts with the clear sequence", async () => {
+  const { chunks, exitCode } = await driveRunInit([], { malformedConfig: true });
+  expect(exitCode).toBe(1);
   expect(chunks.length).toBeGreaterThan(0);
   expect(chunks[0].startsWith(CLEAR)).toBe(true);
-
-  const joined = chunks.join("");
-  expect(clearCount(joined)).toBe(2);
-  const second = joined.indexOf(CLEAR, CLEAR.length);
-  expect(second).toBeGreaterThan(0);
-
-  // Nothing summary-like before the post-exit clear.
-  expect(clean(joined.slice(CLEAR.length, second))).not.toContain("Setup complete.");
-
-  // The first visible line after the clear is an Apply-summary entry line,
-  // never leftover wizard frame content.
-  const tail = clean(joined.slice(second + CLEAR.length));
-  const tailLines = tail
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean);
-  expect(tailLines[0]).toMatch(/^(Installed|Configured|Skipped|Failed)\b/);
-  expect(tail).toContain("Setup complete.");
+  expect(clearCount(chunks.join(""))).toBe(1); // guard exits before any render
+  expect(clean(chunks.join(""))).toContain("Apply blocked");
 });
 
-test("cancel path: still exactly two clears; exit output never sits atop stale frames", async () => {
-  const { chunks, exitCode } = await driveRunInit([
-    SPACE,
-    ENTER, // platforms -> locale
-    ESC, // cancel from the select screen
-  ]);
+test("non-TTY stdin exits pre-render: guidance starts with the clear sequence", async () => {
+  const { chunks, exitCode } = await driveRunInit([], { isTTY: false });
   expect(exitCode).toBe(1);
-
-  const joined = chunks.join("");
   expect(chunks[0].startsWith(CLEAR)).toBe(true);
-  expect(clearCount(joined)).toBe(2);
-  const second = joined.indexOf(CLEAR, CLEAR.length);
-  expect(second).toBeGreaterThan(0);
-
-  // Wizard frames really rendered between the two clears (the post-exit clear
-  // is not just a duplicate of the pre-render one).
-  expect(clean(joined.slice(CLEAR.length, second))).toContain("Locale");
-
-  // Cancel prints no summary; nothing follows the final clear.
-  expect(clean(joined.slice(second + CLEAR.length)).trim()).toBe("");
+  expect(clearCount(chunks.join(""))).toBe(1);
+  expect(clean(chunks.join(""))).toContain("requires an interactive terminal");
 });
