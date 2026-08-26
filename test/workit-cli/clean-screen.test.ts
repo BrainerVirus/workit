@@ -66,7 +66,7 @@ function clean(raw: string): string {
 
 type DriveResult = { chunks: string[]; exitCode?: number };
 
-type DriveStep = string | { waitFor: string };
+type DriveStep = string | { waitFor: string | RegExp };
 
 type DriveOptions = {
   /** Drive a non-TTY stdin: exercises the pre-render no-TTY guard. */
@@ -152,11 +152,25 @@ async function driveRunInit(keys: DriveStep[], options: DriveOptions = {}): Prom
         if (typeof step !== "string") {
           // Deterministic gate: hold the next key until the named frame text
           // actually reaches stdout — fixed beats lose the race against ink's
-          // throttled first paint on fast/loaded runners.
+          // throttled first paint on fast/loaded runners. The gate accepts a
+          // string (substring match) or a RegExp (tested against the cleaned
+          // visible text). The RegExp form is what makes the selection-tick
+          // gate glyph-tolerant: @inkjs/ui MultiSelect renders
+          // `figures.tick` ("✔" on unicode-capable runs, "√" on the
+          // figures fallback) so a literal "✔" string never matches on CI
+          // runners where figures chooses the fallback even with TTY stdout.
           const deadline = Date.now() + 5_000;
-          while (!clean(chunks.join("")).includes(step.waitFor)) {
+          while (true) {
+            const visible = clean(chunks.join(""));
+            const matched =
+              typeof step.waitFor === "string"
+                ? visible.includes(step.waitFor)
+                : step.waitFor.test(visible);
+            if (matched) break;
             if (Date.now() > deadline) {
-              throw new Error(`frame "${step.waitFor}" never rendered`);
+              throw new Error(
+                `frame ${typeof step.waitFor === "string" ? `"${step.waitFor}"` : step.waitFor} never rendered`,
+              );
             }
             await new Promise((resolve) => setTimeout(resolve, 10));
           }
@@ -207,7 +221,10 @@ test("apply path: first chunk clears, exactly one post-exit clear precedes the f
   retryOnce(async () => {
     const { chunks, exitCode } = await driveRunInit([
       SPACE,
-      { waitFor: "✔" }, // selection applied — @inkjs/ui fires onChange post-render
+      { waitFor: /[✔√]/ }, // selection applied — @inkjs/ui MultiSelect renders
+      // `figures.tick`, which resolves to "✔" on unicode-capable runs and
+      // "√" on the figures fallback. CI runners choose the fallback even
+      // with TTY stdout, so the gate has to accept either glyph.
       ENTER, // platforms -> locale
       ENTER, // locale -> timezone
       ENTER, // timezone -> branchPreset
@@ -247,9 +264,14 @@ test("cancel path: still exactly two clears; exit output never sits atop stale f
   retryOnce(async () => {
     const { chunks, exitCode } = await driveRunInit([
       SPACE,
-      { waitFor: "✔" }, // selection applied — @inkjs/ui fires onChange post-render
-      ENTER, // platforms -> locale
-      { waitFor: "Locale" }, // locale screen really painted
+      { waitFor: /[✔√]/ }, // selection applied — @inkjs/ui MultiSelect renders
+      // `figures.tick`; gate is glyph-tolerant (see apply-path note).
+      ENTER, // platforms -> locale (or any subsequent step if ENTER lands
+      // before SPACE settles — the swallowed-ENTER race). The next wait
+      // accepts any post-platforms wizard frame, not just "Locale", so
+      // ESC always fires from inside a real wizard screen.
+      { waitFor: /Step 2|Step 3|Locale|Timezone/ }, // any non-platforms
+      // wizard heading already painted (post-ENTER settled)
       ESC, // cancel from the select screen
     ]);
     expect(exitCode).toBe(1);
