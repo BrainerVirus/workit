@@ -127,6 +127,12 @@ export async function runInit() {
         done();
       }}
     />,
+    // The wizard guards stdin.isTTY above and prints non-TTY guidance instead
+    // of rendering, so when render is reached the session IS interactive.
+    // Pinning it overrides ink's CI heuristic (GitHub Actions sets CI=true),
+    // which would otherwise suppress all frames but the final one and make a
+    // real user's wizard output depend on ambient env vars (CA-02).
+    { interactive: true },
   );
   done = instance.unmount;
   try {
@@ -260,6 +266,9 @@ export async function runUninstall() {
         done();
       }}
     />,
+    // Same stdin.isTTY guard above: interactive by construction. Pinning it
+    // keeps rendering independent of ambient CI env vars.
+    { interactive: true },
   );
   done = instance.unmount;
   try {
