@@ -207,6 +207,7 @@ test("apply path: first chunk clears, exactly one post-exit clear precedes the f
   retryOnce(async () => {
     const { chunks, exitCode } = await driveRunInit([
       SPACE,
+      { waitFor: "✔" }, // selection applied — @inkjs/ui fires onChange post-render
       ENTER, // platforms -> locale
       ENTER, // locale -> timezone
       ENTER, // timezone -> branchPreset
@@ -246,8 +247,9 @@ test("cancel path: still exactly two clears; exit output never sits atop stale f
   retryOnce(async () => {
     const { chunks, exitCode } = await driveRunInit([
       SPACE,
+      { waitFor: "✔" }, // selection applied — @inkjs/ui fires onChange post-render
       ENTER, // platforms -> locale
-      { waitFor: "Locale" }, // deterministic: the select screen really painted
+      { waitFor: "Locale" }, // locale screen really painted
       ESC, // cancel from the select screen
     ]);
     expect(exitCode).toBe(1);
