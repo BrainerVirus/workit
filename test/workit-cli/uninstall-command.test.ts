@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
 import { retryOnce } from "../shared/helpers/retry-once";
+import { assertNoLiveInkInstance } from "../shared/helpers/ink-clean-probe";
 
 // Task 9 (`workit uninstall`): TTY-only interactive host picker + reviewable
 // action summary BEFORE mutation (D-08); non-TTY stdin prints guidance and
@@ -116,16 +117,25 @@ async function driveUninstall(
   isTTY = true,
 ): Promise<{ chunks: string[]; exitCode: number | undefined }> {
   const prevHome = process.env.HOME;
-  const prevWrite = process.stdout.write;
   const prevExit = process.exit;
   const prevLog = console.log;
   const prevStdin = process.stdin;
-  const stdoutFlags = process.stdout as unknown as Record<string, unknown>;
-  const prevFlags = {
-    isTTY: stdoutFlags.isTTY,
-    columns: stdoutFlags.columns,
-    rows: stdoutFlags.rows,
-  };
+  // Private stdout object per drive: ink keys live instances BY STDOUT, so an
+  // interrupted drive abandons its instance here instead of poisoning every
+  // later render() on the shared real stdout (instance reuse + dead stdin).
+  const prevStdout = process.stdout;
+  const recordedStdout = {
+    write(chunk: unknown, cb?: (() => void) | undefined): boolean {
+      chunks.push(String(chunk));
+      cb?.();
+      return true;
+    },
+    isTTY,
+    columns: 120,
+    rows: 40,
+    on(): void {},
+    off(): void {},
+  } as unknown as typeof process.stdout;
   const fakeStdin = new PassThrough() as PassThrough & {
     isTTY: boolean;
     ref(): void;
@@ -142,14 +152,7 @@ async function driveUninstall(
   try {
     if (home !== undefined) process.env.HOME = home;
     process.stdin = fakeStdin as unknown as typeof process.stdin;
-    stdoutFlags.isTTY = isTTY;
-    stdoutFlags.columns = 120;
-    stdoutFlags.rows = 40;
-    process.stdout.write = ((chunk: unknown, cb?: (() => void) | undefined) => {
-      chunks.push(String(chunk));
-      cb?.();
-      return true;
-    }) as typeof process.stdout.write;
+    process.stdout = recordedStdout;
     console.log = (...args: unknown[]) => {
       chunks.push(`${args.map(String).join(" ")}\n`);
     };
@@ -178,17 +181,17 @@ async function driveUninstall(
       if (!(err instanceof ExitSentinel)) throw err;
       exitCode = err.code;
     }
+    // Drive determinism gate: the product must have fully torn down its Ink
+    // instance before this drive hands the (still swapped) stdout back.
+    await assertNoLiveInkInstance();
     return { chunks, exitCode };
   } finally {
     if (prevHome === undefined) delete process.env.HOME;
     else process.env.HOME = prevHome;
-    process.stdout.write = prevWrite;
     process.exit = prevExit;
     console.log = prevLog;
     process.stdin = prevStdin;
-    stdoutFlags.isTTY = prevFlags.isTTY;
-    stdoutFlags.columns = prevFlags.columns;
-    stdoutFlags.rows = prevFlags.rows;
+    process.stdout = prevStdout;
   }
 }
 

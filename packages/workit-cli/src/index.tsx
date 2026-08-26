@@ -120,7 +120,7 @@ export async function runInit() {
   // CA-02: open on a clean screen so the npx banner never shares a frame with
   // the wizard.
   process.stdout.write("\x1b[2J\x1b[H");
-  const { waitUntilExit, unmount } = render(
+  const instance = render(
     <Wizard
       onExit={(complete, values) => {
         exits.push({ complete, values });
@@ -128,8 +128,17 @@ export async function runInit() {
       }}
     />,
   );
-  done = unmount;
-  await waitUntilExit();
+  done = instance.unmount;
+  try {
+    await instance.waitUntilExit();
+  } finally {
+    // Lifecycle guarantee (CI repair): a surviving Ink instance would be
+    // REUSED by the next render() on this stdout (bound to this run's stdin),
+    // hijacking every later render; unmount() is idempotent after a normal
+    // onExit-driven teardown and also tears down when waitUntilExit rejects
+    // (tree crash), restoring the terminal in real usage too.
+    instance.unmount();
+  }
   // CA-02: wipe the wizard's final frame before any post-exit output
   // (apply summary, blocked paths, cancel message) so summary lines never
   // interleave with leftover frames.
@@ -244,7 +253,7 @@ export async function runUninstall() {
   }
   const outcomes: UninstallOutcome[] = [];
   let done: () => void = () => {};
-  const { waitUntilExit, unmount } = render(
+  const instance = render(
     <UninstallWizard
       onExit={(outcome) => {
         outcomes.push(outcome);
@@ -252,8 +261,14 @@ export async function runUninstall() {
       }}
     />,
   );
-  done = unmount;
-  await waitUntilExit();
+  done = instance.unmount;
+  try {
+    await instance.waitUntilExit();
+  } finally {
+    // Same lifecycle guarantee as runInit: never leave a live Ink instance
+    // mounted on this stdout, even if waitUntilExit rejects.
+    instance.unmount();
+  }
   const outcome = outcomes[0];
   if (!outcome || !outcome.confirmed || !outcome.plan) {
     console.log("Uninstall cancelled — nothing was changed.");

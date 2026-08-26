@@ -41,6 +41,7 @@ import {
   timezonePickerOptions,
 } from "../../packages/workit-cli/src/steps";
 import { REPO_ROOT } from "../shared/helpers/packages";
+import { assertNoLiveInkInstance } from "../shared/helpers/ink-clean-probe";
 
 // WZ-04-WZ-06, WZ-08, RL-02, RL-06 wizard scope; CA-12, CA-14, CA-22, CA-23.
 // readSetupState / mergePreset / buildSetupPreview must be pure readers: preview
@@ -1099,16 +1100,27 @@ test("runInit apply resolves its cwd from the base path, never the process cwd",
   // inside the repository, so the install succeeds hermetically).
   const prevHome = process.env.HOME;
   const prevCwd = process.cwd();
-  const prevWrite = process.stdout.write;
   const prevExit = process.exit;
   const prevLog = console.log;
   const prevStdin = process.stdin;
-  const stdoutFlags = process.stdout as unknown as Record<string, unknown>;
-  const prevFlags = {
-    isTTY: stdoutFlags.isTTY,
-    columns: stdoutFlags.columns,
-    rows: stdoutFlags.rows,
-  };
+  // Private stdout object per drive: ink keys live instances BY STDOUT, so an
+  // interrupted drive abandons its instance here instead of poisoning every
+  // later render() on the shared real stdout (instance reuse + dead stdin).
+  const prevStdout = process.stdout;
+  const chunks: string[] = [];
+  let exitCode: number | undefined;
+  const recordedStdout = {
+    write(chunk: unknown, cb?: (() => void) | undefined): boolean {
+      chunks.push(String(chunk));
+      cb?.();
+      return true;
+    },
+    isTTY: true,
+    columns: 120,
+    rows: 40,
+    on(): void {},
+    off(): void {},
+  } as unknown as typeof process.stdout;
   try {
     process.env.WORKFLOW_WORKSPACE_ROOT = root;
     process.env.WORKFLOW_TOOLKIT_CONFIG = configDir;
@@ -1128,17 +1140,8 @@ test("runInit apply resolves its cwd from the base path, never the process cwd",
     fakeStdin.unref = () => {};
     fakeStdin.setRawMode = () => {};
 
-    const chunks: string[] = [];
-    let exitCode: number | undefined;
     process.stdin = fakeStdin as unknown as typeof process.stdin;
-    stdoutFlags.isTTY = true;
-    stdoutFlags.columns = 120;
-    stdoutFlags.rows = 40;
-    process.stdout.write = ((chunk: unknown, cb?: (() => void) | undefined) => {
-      chunks.push(String(chunk));
-      cb?.();
-      return true;
-    }) as typeof process.stdout.write;
+    process.stdout = recordedStdout;
     console.log = (...args: unknown[]) => {
       chunks.push(`${args.map(String).join(" ")}\n`);
     };
@@ -1170,6 +1173,9 @@ test("runInit apply resolves its cwd from the base path, never the process cwd",
       if (!(err instanceof ExitSentinel)) throw err;
       exitCode = err.code;
     }
+    // Drive determinism gate: the product must have fully torn down its Ink
+    // instance before this drive hands the (still swapped) stdout back.
+    await assertNoLiveInkInstance();
 
     expect(exitCode, chunks.join("")).toBe(0);
     const joined = chunks.join("");
@@ -1186,13 +1192,10 @@ test("runInit apply resolves its cwd from the base path, never the process cwd",
     if (prevHome === undefined) delete process.env.HOME;
     else process.env.HOME = prevHome;
     process.chdir(prevCwd);
-    process.stdout.write = prevWrite;
     process.exit = prevExit;
     console.log = prevLog;
     process.stdin = prevStdin;
-    stdoutFlags.isTTY = prevFlags.isTTY;
-    stdoutFlags.columns = prevFlags.columns;
-    stdoutFlags.rows = prevFlags.rows;
+    process.stdout = prevStdout;
     rmSync(base, { recursive: true, force: true });
   }
 }, 30_000);

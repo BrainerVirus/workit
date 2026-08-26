@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
 import { retryOnce } from "../shared/helpers/retry-once";
+import { assertNoLiveInkInstance } from "../shared/helpers/ink-clean-probe";
 
 // CA-02 (clean screen): runInit must open with exactly one clear
 // (\x1b[2J\x1b[H) before the wizard renders and emit exactly one more after
@@ -89,13 +90,26 @@ async function driveRunInit(keys: DriveStep[], options: DriveOptions = {}): Prom
     `workit-clean-nongit-${process.pid}`,
   );
 
-  const prevWrite = process.stdout.write;
   const prevExit = process.exit;
   const prevLog = console.log;
   const prevStdin = process.stdin;
-  const prevStdoutIsTTY = (process.stdout as { isTTY?: boolean }).isTTY;
-  const prevStdoutColumns = (process.stdout as { columns?: number }).columns;
-  const prevStdoutRows = (process.stdout as { rows?: number }).rows;
+  // Private stdout object per drive: ink keys live instances BY STDOUT, so a
+  // drive that gets interrupted (frame-gate deadline, runner timeout) leaves
+  // its instance bound to this abandoned object instead of poisoning every
+  // later render() on the shared real stdout (instance reuse + dead stdin).
+  const prevStdout = process.stdout;
+  const recordedStdout = {
+    write(chunk: unknown, cb?: (() => void) | undefined): boolean {
+      chunks.push(String(chunk));
+      cb?.();
+      return true;
+    },
+    isTTY,
+    columns: 120,
+    rows: 40,
+    on(): void {},
+    off(): void {},
+  } as unknown as typeof process.stdout;
 
   // Same TTY-shaped fake stdin the ink-tty harness builds.
   const fakeStdin = new PassThrough() as PassThrough & {
@@ -113,14 +127,7 @@ async function driveRunInit(keys: DriveStep[], options: DriveOptions = {}): Prom
   let exitCode: number | undefined;
   try {
     process.stdin = fakeStdin as unknown as typeof process.stdin;
-    (process.stdout as { isTTY: boolean }).isTTY = isTTY;
-    (process.stdout as { columns: number }).columns = 120;
-    (process.stdout as { rows: number }).rows = 40;
-    process.stdout.write = ((chunk: unknown, cb?: (() => void) | undefined) => {
-      chunks.push(String(chunk));
-      cb?.();
-      return true;
-    }) as typeof process.stdout.write;
+    process.stdout = recordedStdout;
     console.log = (...args: unknown[]) => {
       chunks.push(`${args.map(String).join(" ")}\n`);
     };
@@ -165,20 +172,19 @@ async function driveRunInit(keys: DriveStep[], options: DriveOptions = {}): Prom
       if (!(err instanceof ExitSentinel)) throw err;
       exitCode = err.code;
     }
+    // Drive determinism gate: the product must have fully torn down its Ink
+    // instance before this drive hands the (still swapped) stdout back.
+    await assertNoLiveInkInstance();
     return { chunks, exitCode };
   } finally {
     if (prevToolkitConfig === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
     else process.env.WORKFLOW_TOOLKIT_CONFIG = prevToolkitConfig;
     if (prevWorkspaceRoot === undefined) delete process.env.WORKFLOW_WORKSPACE_ROOT;
     else process.env.WORKFLOW_WORKSPACE_ROOT = prevWorkspaceRoot;
-    process.stdout.write = prevWrite;
     process.exit = prevExit;
     console.log = prevLog;
     process.stdin = prevStdin;
-    const stdout = process.stdout as { isTTY?: boolean; columns?: number; rows?: number };
-    stdout.isTTY = prevStdoutIsTTY;
-    stdout.columns = prevStdoutColumns;
-    stdout.rows = prevStdoutRows;
+    process.stdout = prevStdout;
     rmSync(base, { recursive: true, force: true });
   }
 }
