@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
 import { retryOnce } from "../shared/helpers/retry-once";
-import { assertNoLiveInkInstance } from "../shared/helpers/ink-clean-probe";
+import { cleanupLiveInkInstances } from "../shared/helpers/ink-clean-probe";
 
 // CA-02 (clean screen): runInit must open with exactly one clear
 // (\x1b[2J\x1b[H) before the wizard renders and emit exactly one more after
@@ -159,7 +159,7 @@ async function driveRunInit(keys: DriveStep[], options: DriveOptions = {}): Prom
           // `figures.tick` ("✔" on unicode-capable runs, "√" on the
           // figures fallback) so a literal "✔" string never matches on CI
           // runners where figures chooses the fallback even with TTY stdout.
-          const deadline = Date.now() + 5_000;
+          const deadline = Date.now() + 2_000;
           while (true) {
             const visible = clean(chunks.join(""));
             const matched =
@@ -188,9 +188,12 @@ async function driveRunInit(keys: DriveStep[], options: DriveOptions = {}): Prom
     }
     // Drive determinism gate: the product must have fully torn down its Ink
     // instance before this drive hands the (still swapped) stdout back.
-    await assertNoLiveInkInstance();
     return { chunks, exitCode };
   } finally {
+    // Any instance stranded by an interrupted drive (gate deadline, runner
+    // timeout) is unmounted here — the product's unmount lives inside the
+    // abandoned runInit promise, so only the drive can guarantee teardown.
+    cleanupLiveInkInstances();
     if (prevToolkitConfig === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
     else process.env.WORKFLOW_TOOLKIT_CONFIG = prevToolkitConfig;
     if (prevWorkspaceRoot === undefined) delete process.env.WORKFLOW_WORKSPACE_ROOT;

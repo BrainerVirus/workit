@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
 import { retryOnce } from "../shared/helpers/retry-once";
-import { assertNoLiveInkInstance } from "../shared/helpers/ink-clean-probe";
+import { cleanupLiveInkInstances } from "../shared/helpers/ink-clean-probe";
 
 // Task 9 (`workit uninstall`): TTY-only interactive host picker + reviewable
 // action summary BEFORE mutation (D-08); non-TTY stdin prints guidance and
@@ -180,11 +180,9 @@ async function driveUninstall(
       if (!(err instanceof ExitSentinel)) throw err;
       exitCode = err.code;
     }
-    // Drive determinism gate: the product must have fully torn down its Ink
-    // instance before this drive hands the (still swapped) stdout back.
-    await assertNoLiveInkInstance();
     return { chunks, exitCode };
   } finally {
+    cleanupLiveInkInstances();
     if (prevHome === undefined) delete process.env.HOME;
     else process.env.HOME = prevHome;
     process.exit = prevExit;

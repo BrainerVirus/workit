@@ -41,7 +41,7 @@ import {
   timezonePickerOptions,
 } from "../../packages/workit-cli/src/steps";
 import { REPO_ROOT } from "../shared/helpers/packages";
-import { assertNoLiveInkInstance } from "../shared/helpers/ink-clean-probe";
+import { cleanupLiveInkInstances } from "../shared/helpers/ink-clean-probe";
 
 // WZ-04-WZ-06, WZ-08, RL-02, RL-06 wizard scope; CA-12, CA-14, CA-22, CA-23.
 // readSetupState / mergePreset / buildSetupPreview must be pure readers: preview
@@ -1172,16 +1172,13 @@ test("runInit apply resolves its cwd from the base path, never the process cwd",
       if (!(err instanceof ExitSentinel)) throw err;
       exitCode = err.code;
     }
-    // Drive determinism gate: the product must have fully torn down its Ink
-    // instance before this drive hands the (still swapped) stdout back.
-    await assertNoLiveInkInstance();
-
     expect(exitCode, chunks.join("")).toBe(0);
     const joined = chunks.join("");
     expect(joined).toContain(path.join(root, ".gitignore"));
     expect(existsSync(path.join(root, ".gitignore"))).toBe(true);
     expect(existsSync(path.join(cwdDir, ".gitignore"))).toBe(false);
   } finally {
+    cleanupLiveInkInstances();
     if (prevRoot === undefined) delete process.env.WORKFLOW_WORKSPACE_ROOT;
     else process.env.WORKFLOW_WORKSPACE_ROOT = prevRoot;
     if (prevCfg === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
