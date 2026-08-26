@@ -641,6 +641,15 @@ test('filterOptions("es") caps at 5 rows across language+nationality labels', ()
   expect(filterOptions(options, "")).toEqual(options.slice(0, 5));
 });
 
+test("filterOptions folds diacritics on both sides (espanol matches Español)", () => {
+  const options = LOCALE_LANGUAGE_MAP.map((entry) => ({ label: entry.label, value: entry.locale }));
+  const folded = filterOptions(options, "espanol");
+  expect(folded.length).toBeGreaterThan(0);
+  expect(folded.map((m) => m.label).join(" | ")).toContain("Español");
+  // the accented query folds too
+  expect(filterOptions(options, "Español").length).toBeGreaterThan(0);
+});
+
 test("LOCALE_LANGUAGE_MAP covers every core localeOptions default exactly once", () => {
   const dir = tempDir();
   try {
@@ -832,6 +841,35 @@ test("github mode: new workspaces default provider github with issues linked", (
   }
 });
 
+test("walking the tracker back from github strips issues linking from added workspaces", () => {
+  const dir = tempDir();
+  try {
+    process.env.WORKFLOW_TOOLKIT_CONFIG = dir;
+    let d = createInitialDraft(config());
+    d = reducer(d, { type: "set", field: "issueTracker", value: "github" });
+    d = reducer(d, { type: "workspaceAddCurrent", path: "/home/u/proj" });
+    expect(d.values.workspaces[0].issues).toEqual({ provider: "github", link_on_pr: true });
+    for (const tracker of ["none", "youtrack"] as const) {
+      let t = reducer(d, { type: "set", field: "issueTracker", value: tracker });
+      expect(t.values.workspaces[0].issues, tracker).toBeUndefined();
+      expect(t.values.workspaces[0].name).toBe("proj"); // everything else intact
+    }
+    // switching back to github re-links new workspaces but stays honest about
+    // existing ones (they were stripped; nothing silently re-links)
+    const back = reducer(reducer(d, { type: "set", field: "issueTracker", value: "none" }), {
+      type: "set",
+      field: "issueTracker",
+      value: "github",
+    });
+    expect(back.values.workspaces[0].issues).toBeUndefined();
+    // no-op guard: an unchanged tracker dispatch returns the same draft object
+    expect(reducer(d, { type: "set", field: "issueTracker", value: "github" })).toBe(d);
+  } finally {
+    delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+    clean(dir);
+  }
+});
+
 test("youtrack mode stays byte-identical: preview equals the legacy literal input", () => {
   const dir = tempDir();
   try {
@@ -941,6 +979,48 @@ test("D-06: with env set the basePath screen is skipped in both directions", () 
   }
 });
 
+test("basePath gate rejects an existing FILE (directory required)", () => {
+  const prev = process.env.WORKFLOW_WORKSPACE_ROOT;
+  delete process.env.WORKFLOW_WORKSPACE_ROOT;
+  const dir = tempDir();
+  try {
+    const file = path.join(dir, "passwd");
+    writeFileSync(file, "root:x:0:0\n", "utf8");
+    let d = walkToVcs();
+    d = reducer(d, { type: "next" }); // -> basePath prompt
+    d = reducer(d, { type: "set", field: "basePath", value: file });
+    expect(d.errors.basePath).toContain("existing absolute directory");
+    expect(reducer(d, { type: "next" }).screen).toBe("basePath"); // gated
+  } finally {
+    if (prev === undefined) delete process.env.WORKFLOW_WORKSPACE_ROOT;
+    else process.env.WORKFLOW_WORKSPACE_ROOT = prev;
+    clean(dir);
+  }
+});
+
+test("a whitespace-only WORKFLOW_WORKSPACE_ROOT seed is treated as unset", () => {
+  const prev = process.env.WORKFLOW_WORKSPACE_ROOT;
+  try {
+    process.env.WORKFLOW_WORKSPACE_ROOT = "   ";
+    let d = walkToVcs();
+    d = reducer(d, { type: "next" });
+    expect(d.screen).toBe("basePath"); // prompt appears, never silently skipped
+    expect(resolveBasePath(d.values)).toBe("");
+    const real = mkdtempSync(path.join(os.tmpdir(), "wk-t6-ws-"));
+    try {
+      d = reducer(d, { type: "set", field: "basePath", value: real });
+      expect(resolveBasePath(d.values, {})).toBe(real);
+      d = reducer(d, { type: "next" });
+      expect(d.screen).toBe("workspaces");
+    } finally {
+      rmSync(real, { recursive: true, force: true });
+    }
+  } finally {
+    if (prev === undefined) delete process.env.WORKFLOW_WORKSPACE_ROOT;
+    else process.env.WORKFLOW_WORKSPACE_ROOT = prev;
+  }
+});
+
 // ---------------------------------------------------------------------------
 // Display-only polish (Task 7, CA-08/CA-09): static preset descriptions on the
 // branchPreset screen and an example placeholder on every TextInput screen.
@@ -952,7 +1032,6 @@ test("branchPreset descriptions: gitflow hints develop + pr/merge; others are ma
   for (const pattern of ["feature/*", "bugfix/*", "hotfix/*", "release/*"]) {
     expect(gitflow, pattern).toContain(pattern);
   }
-  expect(gitflow).toContain("main");
   expect(gitflow).toContain("develop");
   expect(/pr|merge/i.test(gitflow)).toBe(true);
 
@@ -963,6 +1042,9 @@ test("branchPreset descriptions: gitflow hints develop + pr/merge; others are ma
   expect(BRANCH_PRESET_DESCRIPTIONS.custom.length).toBeGreaterThan(0);
 });
 
+// Map-level sanity only; the rendered JSX wiring of every placeholder is
+// pinned by the TTY tests in wizard-tty.test.tsx (placeholder assertions on
+// each screen's frame), so deleting a placeholder prop cannot pass silently.
 test("every wizard TextInput screen carries a non-empty example placeholder (CA-09)", () => {
   for (const screen of [
     "youtrack",

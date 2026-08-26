@@ -421,10 +421,12 @@ test("add flow: name → glob preview → provider → menu shows the entry with
     // menu highlights Done (last); UP UP -> Add workspace
     await tty.keys(UP, UP, ENTER);
     expect(tty.lastFrame()).toContain("Workspaces · Name");
+    expect(tty.lastFrame()).toContain("e.g. work"); // CA-09 placeholder wiring
     await tty.keys("work", ENTER);
     // glob screen: live shared-matcher preview shows matches AND non-matches
     // (typed in two chunks — a single-burst write drops the intermediate frame
     // under Ink's renderer; real terminals deliver per keystroke)
+    expect(tty.lastFrame()).toContain("e.g. /work/**"); // CA-09 placeholder wiring
     await tty.keys(`${project}/child`);
     await tty.keys(`-repo/**`);
     const globFrame = tty.lastFrame();
@@ -735,7 +737,9 @@ test("choosing None skips the baseUrl screen: summary shows — and applies no y
     const frame = tty.lastFrame();
     expect(frame).toContain("Will apply");
     expect(frame).toContain("YouTrack base URL:");
-    expect(frame).toContain("—");
+    // Full-line semantics (the harness strips newlines): the em-dash must sit
+    // at line end, directly followed by the next summary line's label.
+    expect(frame).toContain("YouTrack base URL: —VCS provider:");
     expect(frame).not.toContain("(skip)");
     expect(frame).not.toContain("youtrack.json");
     expect(frame).not.toContain("youtrack.token");

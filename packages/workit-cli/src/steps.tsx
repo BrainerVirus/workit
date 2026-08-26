@@ -73,6 +73,13 @@ const VCS_PROVIDERS = [
   { label: "Skip — configure later", value: "skip" },
 ];
 
+// Module-level so the locale screen's SearchSelect useMemo actually memoizes
+// instead of re-filtering a freshly built array every render (Task 3 advisory).
+const LOCALE_PICKER_OPTIONS: { label: string; value: string }[] = [
+  ...LOCALE_LANGUAGE_MAP.map((entry) => ({ label: entry.label, value: entry.locale })),
+  { label: "Other…", value: "other" },
+];
+
 const ISSUE_TRACKERS: { label: string; value: SetupValues["issueTracker"] }[] = [
   { label: "YouTrack", value: "youtrack" },
   { label: "GitHub Issues", value: "github" },
@@ -110,13 +117,19 @@ const DETECTED_TIMEZONE = Intl.DateTimeFormat().resolvedOptions().timeZone || "U
 export function timezonePickerOptions(): { label: string; value: string }[] {
   // Detected host zone heads the list so its preselection is visible in the
   // first window without typing (the full IANA set alone would bury it).
-  const rest = TIMEZONES.filter((timezone) => timezone !== DETECTED_TIMEZONE);
-  return [
-    { label: DETECTED_TIMEZONE, value: DETECTED_TIMEZONE },
-    ...rest.map((timezone) => ({ label: timezone, value: timezone })),
-    { label: "Other…", value: "other" },
-  ];
+  return TIMEZONE_PICKER_OPTIONS;
 }
+// Built once at module load (TIMEZONES and DETECTED_TIMEZONE are already
+// module-eval constants): rebuilding the IANA catalog per render made the
+// screen's useMemo ineffective (Task 3 advisory).
+const TIMEZONE_PICKER_OPTIONS: { label: string; value: string }[] = [
+  { label: DETECTED_TIMEZONE, value: DETECTED_TIMEZONE },
+  ...TIMEZONES.filter((timezone) => timezone !== DETECTED_TIMEZONE).map((timezone) => ({
+    label: timezone,
+    value: timezone,
+  })),
+  { label: "Other…", value: "other" },
+];
 // Text screens cannot offer the 'b' back key (it is a printable character the
 // TextInput consumes), so there Esc walks back to the parent select screen and
 // cancel happens from select/confirm screens. Draft state survives either way.
@@ -174,21 +187,27 @@ export function SelectList<T extends string>({
       options.findIndex((option) => option.value === value),
     ),
   );
+  // Burst-input mirror (Task 1 advisory): two arrow keys can arrive in one
+  // stdin chunk, both handled before React re-renders — a closure-read index
+  // would collapse them into one step. The ref is updated synchronously in the
+  // handler and re-synced on every render. WZ-13 unchanged: no side effects
+  // inside setState updaters; onChange stays a sibling of setIndex.
+  const indexRef = useRef(index);
+  indexRef.current = index;
 
   useInput((_input, key) => {
-    // WZ-13: compute the next index outside any setState updater — updater
-    // functions are render-phase code React StrictMode double-invokes, so
-    // dispatching from inside them fires onChange twice.
-    if (key.downArrow) {
-      const next = Math.min(index + 1, options.length - 1);
-      setIndex(next);
-      onChange?.(options[next].value);
-    } else if (key.upArrow) {
-      const next = Math.max(index - 1, 0);
+    if (key.downArrow || key.upArrow) {
+      const next = key.downArrow
+        ? Math.min(indexRef.current + 1, options.length - 1)
+        : Math.max(indexRef.current - 1, 0);
+      // Boundary clamp: an arrow that cannot move neither re-renders nor
+      // re-dispatches the already-current value.
+      if (next === indexRef.current) return;
+      indexRef.current = next;
       setIndex(next);
       onChange?.(options[next].value);
     } else if (key.return) {
-      onSelect(options[index].value);
+      onSelect(options[indexRef.current].value);
     }
   });
 
@@ -462,10 +481,7 @@ function Screen({ draft, dispatch, onSearchQueryChange }: ScreenProps): JSX.Elem
               custom-input flow (CA-03); error display, back/cancel semantics
               and the localeOther text screen are untouched. */}
           <SearchSelect
-            options={[
-              ...LOCALE_LANGUAGE_MAP.map((entry) => ({ label: entry.label, value: entry.locale })),
-              { label: "Other…", value: "other" },
-            ]}
+            options={LOCALE_PICKER_OPTIONS}
             value={draft.values.locale}
             placeholder="Type to search languages…"
             onQueryChange={onSearchQueryChange}
@@ -509,7 +525,7 @@ function Screen({ draft, dispatch, onSearchQueryChange }: ScreenProps): JSX.Elem
               existing validated custom-input flow (CA-04). */}
           <SearchSelect
             options={timezonePickerOptions()}
-            value={DETECTED_TIMEZONE}
+            value={draft.values.timezone || DETECTED_TIMEZONE}
             placeholder="Type to search timezones…"
             onQueryChange={onSearchQueryChange}
             onSelect={(value) => {

@@ -36,6 +36,10 @@ export const LOCALE_LANGUAGE_MAP: { label: string; locale: string }[] = [
 
 const VISIBLE_ROWS = 5;
 
+// Diacritic folding: NFD-strip combining marks on both sides of the compare so
+// "espanol" matches "Español" (Task 3 advisory). Pure — unit-tested without Ink.
+const fold = (s: string): string => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+
 // Case-insensitive substring over label or value; capped at the visible rows
 // the component renders. Pure — unit-tested without Ink.
 export function filterOptions<T extends string>(
@@ -43,11 +47,13 @@ export function filterOptions<T extends string>(
   query: string,
   limit: number = VISIBLE_ROWS,
 ): { label: string; value: T }[] {
-  const q = query.trim().toLowerCase();
+  const q = fold(query.trim().toLowerCase());
   if (!q) return options.slice(0, limit);
   return options
     .filter(
-      (option) => option.label.toLowerCase().includes(q) || option.value.toLowerCase().includes(q),
+      (option) =>
+        fold(option.label.toLowerCase()).includes(q) ||
+        fold(option.value.toLowerCase()).includes(q),
     )
     .slice(0, limit);
 }
@@ -101,7 +107,7 @@ export function SearchSelect<T extends string>({
     } else if (key.return) {
       if (filtered[index]) onSelect(filtered[index].value);
     } else if (key.backspace || key.delete) {
-      type(query.slice(0, Math.max(0, query.length - 1)));
+      type(query.slice(0, -1));
     } else if (input && !key.ctrl && !key.meta && !key.escape && !key.tab) {
       type(query + input);
     }

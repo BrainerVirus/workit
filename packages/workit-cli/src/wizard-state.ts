@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import {
@@ -202,14 +202,20 @@ export function resolveBasePath(
 }
 
 // D-06: the prompt refuses to advance without an existing absolute directory.
-// Shared by the live field validation and the screen gate so both surfaces
-// show the identical message (validated on every keystroke like the other
-// text fields — @inkjs/ui re-fires onChange after renders, so a set that only
-// cleared errors would erase the error `next` just raised).
+// A stat-based directory check (not existsSync) so a file at the path — e.g.
+// /etc/passwd — is rejected here instead of failing confusingly at Apply.
+const isDirectory = (p: string): boolean => {
+  try {
+    return statSync(p).isDirectory();
+  } catch {
+    return false;
+  }
+};
+
 const basePathMessage = (value: string): string | null => {
   const p = value.trim();
   if (!p) return "workspace root path is required";
-  return !path.isAbsolute(p) || !existsSync(p)
+  return !path.isAbsolute(p) || !isDirectory(p)
     ? `invalid workspace root "${p}" — enter an existing absolute directory`
     : null;
 };
@@ -218,6 +224,7 @@ const basePathMessage = (value: string): string | null => {
 // repo (a detected convention is meaningless otherwise). Only the branchPolicy
 // hop is gated — "project" is reached via that hop, never skipped itself — so a
 // non-git repo keeps the exact prior flow (workspaces ↔ project directly).
+// existsSync (not isDirectory): .git is a plain file in linked worktrees.
 const skipsBranchPolicy = (screen: WizardScreen, basePath: string): boolean =>
   (screen === "branchPolicy" || screen === "branchPolicyDevelop") &&
   !existsSync(path.join(basePath, ".git"));
@@ -420,15 +427,32 @@ export function reducer(draft: WizardDraft, action: WizardAction): WizardDraft {
           // preview can never emit youtrack mutations for an integration the
           // user did not choose — even after walking back. Switching back keeps
           // it cleared: the URL is retyped deliberately.
-          if (next === "youtrack") {
-            return { ...draft, values: { ...draft.values, issueTracker: next } };
-          }
+          // Retroactive strip (Task 5 advisory): any change AWAY from github
+          // strips issues linking from already-added entries and the
+          // in-progress draft, so the applied config can never link issues for
+          // a tracker that is not GitHub.
+          const stripIssues = ({ issues: _, ...rest }: WorkspaceConfig): WorkspaceConfig => rest;
+          const needsStrip =
+            next !== "github" &&
+            (draft.values.workspaces.some((w) => w.issues !== undefined) ||
+              draft.workspaceDraft?.issues !== undefined);
           const errors = { ...draft.errors };
           delete errors.baseUrl;
           return {
             ...draft,
             errors,
-            values: { ...draft.values, issueTracker: next, baseUrl: "" },
+            workspaceDraft:
+              needsStrip && draft.workspaceDraft
+                ? stripIssues(draft.workspaceDraft)
+                : draft.workspaceDraft,
+            values: {
+              ...draft.values,
+              issueTracker: next,
+              baseUrl: next === "youtrack" ? draft.values.baseUrl : "",
+              workspaces: needsStrip
+                ? draft.values.workspaces.map(stripIssues)
+                : draft.values.workspaces,
+            },
           };
         }
         case "applyProject":
