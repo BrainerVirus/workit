@@ -120,22 +120,10 @@ async function driveUninstall(
   const prevExit = process.exit;
   const prevLog = console.log;
   const prevStdin = process.stdin;
-  // Private stdout object per drive: ink keys live instances BY STDOUT, so an
-  // interrupted drive abandons its instance here instead of poisoning every
-  // later render() on the shared real stdout (instance reuse + dead stdin).
-  const prevStdout = process.stdout;
-  const recordedStdout = {
-    write(chunk: unknown, cb?: (() => void) | undefined): boolean {
-      chunks.push(String(chunk));
-      cb?.();
-      return true;
-    },
-    isTTY,
-    columns: 120,
-    rows: 40,
-    on(): void {},
-    off(): void {},
-  } as unknown as typeof process.stdout;
+  const prevWrite = process.stdout.write;
+  const prevStdoutIsTTY = (process.stdout as { isTTY?: boolean }).isTTY;
+  const prevStdoutColumns = (process.stdout as { columns?: number }).columns;
+  const prevStdoutRows = (process.stdout as { rows?: number }).rows;
   const fakeStdin = new PassThrough() as PassThrough & {
     isTTY: boolean;
     ref(): void;
@@ -152,7 +140,18 @@ async function driveUninstall(
   try {
     if (home !== undefined) process.env.HOME = home;
     process.stdin = fakeStdin as unknown as typeof process.stdin;
-    process.stdout = recordedStdout;
+    (process.stdout as { isTTY: boolean }).isTTY = isTTY;
+    (process.stdout as { columns: number }).columns = 120;
+    (process.stdout as { rows: number }).rows = 40;
+    // Patch .write on the real stream object: ink's getOptions treats a
+    // stream as the render target ONLY when it is an instanceof Stream, so a
+    // duck-typed replacement object silently leaves ink with an undefined
+    // stdout and nothing ever paints (CI-only failure class).
+    process.stdout.write = ((chunk: unknown, cb?: (() => void) | undefined) => {
+      chunks.push(String(chunk));
+      cb?.();
+      return true;
+    }) as typeof process.stdout.write;
     console.log = (...args: unknown[]) => {
       chunks.push(`${args.map(String).join(" ")}\n`);
     };
@@ -191,7 +190,10 @@ async function driveUninstall(
     process.exit = prevExit;
     console.log = prevLog;
     process.stdin = prevStdin;
-    process.stdout = prevStdout;
+    process.stdout.write = prevWrite;
+    (process.stdout as { isTTY?: boolean }).isTTY = prevStdoutIsTTY;
+    (process.stdout as { columns?: number }).columns = prevStdoutColumns;
+    (process.stdout as { rows?: number }).rows = prevStdoutRows;
   }
 }
 
