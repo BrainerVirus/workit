@@ -34,6 +34,7 @@ import type { ToolkitConfig } from "../../packages/workit-core/src/core/config";
 const ENTER = "\r";
 const ESC = "\x1b\x1b\x1b";
 const UP = "\u001b[A";
+const DOWN = "\u001b[B";
 const SPACE = " ";
 const BACKSPACE = "\x7f";
 
@@ -78,6 +79,8 @@ function draftWith(workspaces: WorkspaceConfig[]): WizardDraft {
       branchProtected: "",
       baseUrl: "",
       vcsProvider: "gitlab",
+      issueTracker: "youtrack",
+      basePath: "",
       workspaces,
       applyProject: false,
     },
@@ -109,7 +112,10 @@ const previewValues = (over: Partial<SetupPreviewInput> = {}): SetupPreviewInput
 });
 
 async function gotoWorkspaces(tty: Awaited<ReturnType<typeof renderInk>>) {
-  await tty.keys(SPACE, ENTER, ENTER, ENTER, ENTER, ENTER, ENTER);
+  // platforms SPACE+ENTER, locale/timezone ENTERs, branchPreset ENTER (gitflow
+  // skips the custom screens), issueTracker ENTER (YouTrack default), youtrack
+  // ENTER on the empty base URL.
+  await tty.keys(SPACE, ENTER, ENTER, ENTER, ENTER, ENTER, ENTER, ENTER);
   expect(tty.lastFrame()).toContain("Step 5 — Workspaces");
 }
 
@@ -378,6 +384,9 @@ test("workspaces menu renders real controls, not a placeholder", async () => {
   const project = tmp("wk-ws-menu-proj-");
   const previous = process.cwd();
   process.chdir(project);
+  // Pin the D-06 resolution root to the project so traversals skip the new
+  // base-path prompt and previews derive from the env (Task 6 mechanical update).
+  process.env.WORKFLOW_WORKSPACE_ROOT = project;
   try {
     withConfigDir(configDir);
     const tty = await renderInk(<Wizard onExit={noop} />);
@@ -390,6 +399,7 @@ test("workspaces menu renders real controls, not a placeholder", async () => {
     tty.unmount();
   } finally {
     process.chdir(previous);
+    delete process.env.WORKFLOW_WORKSPACE_ROOT;
     delete process.env.WORKFLOW_TOOLKIT_CONFIG;
     clean(configDir);
     clean(project);
@@ -401,6 +411,9 @@ test("add flow: name → glob preview → provider → menu shows the entry with
   const project = tmp("wk-ws-add-proj-");
   const previous = process.cwd();
   process.chdir(project);
+  // Pin the D-06 resolution root to the project so traversals skip the new
+  // base-path prompt and previews derive from the env (Task 6 mechanical update).
+  process.env.WORKFLOW_WORKSPACE_ROOT = project;
   try {
     withConfigDir(configDir);
     const tty = await renderInk(<Wizard onExit={noop} />);
@@ -408,10 +421,12 @@ test("add flow: name → glob preview → provider → menu shows the entry with
     // menu highlights Done (last); UP UP -> Add workspace
     await tty.keys(UP, UP, ENTER);
     expect(tty.lastFrame()).toContain("Workspaces · Name");
+    expect(tty.lastFrame()).toContain("e.g. work"); // CA-09 placeholder wiring
     await tty.keys("work", ENTER);
     // glob screen: live shared-matcher preview shows matches AND non-matches
     // (typed in two chunks — a single-burst write drops the intermediate frame
     // under Ink's renderer; real terminals deliver per keystroke)
+    expect(tty.lastFrame()).toContain("e.g. /work/**"); // CA-09 placeholder wiring
     await tty.keys(`${project}/child`);
     await tty.keys(`-repo/**`);
     const globFrame = tty.lastFrame();
@@ -427,6 +442,7 @@ test("add flow: name → glob preview → provider → menu shows the entry with
     tty.unmount();
   } finally {
     process.chdir(previous);
+    delete process.env.WORKFLOW_WORKSPACE_ROOT;
     delete process.env.WORKFLOW_TOOLKIT_CONFIG;
     clean(configDir);
     clean(project);
@@ -438,6 +454,9 @@ test("a matching current-project pattern renders a ✓ verdict in the menu", asy
   const project = tmp("wk-ws-verdict-proj-");
   const previous = process.cwd();
   process.chdir(project);
+  // Pin the D-06 resolution root to the project so traversals skip the new
+  // base-path prompt and previews derive from the env (Task 6 mechanical update).
+  process.env.WORKFLOW_WORKSPACE_ROOT = project;
   try {
     withConfigDir(configDir, [entry("work", `${project}/**`)]);
     const tty = await renderInk(<Wizard onExit={noop} />);
@@ -446,6 +465,7 @@ test("a matching current-project pattern renders a ✓ verdict in the menu", asy
     expect(menu).toContain("✓ matches work");
   } finally {
     process.chdir(previous);
+    delete process.env.WORKFLOW_WORKSPACE_ROOT;
     delete process.env.WORKFLOW_TOOLKIT_CONFIG;
     clean(configDir);
     clean(project);
@@ -457,6 +477,9 @@ test("edit flow: change the pattern, the verdict flips and the save persists it"
   const project = tmp("wk-ws-edit-proj-");
   const previous = process.cwd();
   process.chdir(project);
+  // Pin the D-06 resolution root to the project so traversals skip the new
+  // base-path prompt and previews derive from the env (Task 6 mechanical update).
+  process.env.WORKFLOW_WORKSPACE_ROOT = project;
   try {
     withConfigDir(configDir, [entry("work", "/work/**")]);
     const tty = await renderInk(<Wizard onExit={noop} />);
@@ -476,6 +499,7 @@ test("edit flow: change the pattern, the verdict flips and the save persists it"
     tty.unmount();
   } finally {
     process.chdir(previous);
+    delete process.env.WORKFLOW_WORKSPACE_ROOT;
     delete process.env.WORKFLOW_TOOLKIT_CONFIG;
     clean(configDir);
     clean(project);
@@ -487,6 +511,9 @@ test("remove flow: the entry disappears from the menu", async () => {
   const project = tmp("wk-ws-remove-proj-");
   const previous = process.cwd();
   process.chdir(project);
+  // Pin the D-06 resolution root to the project so traversals skip the new
+  // base-path prompt and previews derive from the env (Task 6 mechanical update).
+  process.env.WORKFLOW_WORKSPACE_ROOT = project;
   try {
     withConfigDir(configDir, [entry("work", "/work/**")]);
     const tty = await renderInk(<Wizard onExit={noop} />);
@@ -499,6 +526,7 @@ test("remove flow: the entry disappears from the menu", async () => {
     tty.unmount();
   } finally {
     process.chdir(previous);
+    delete process.env.WORKFLOW_WORKSPACE_ROOT;
     delete process.env.WORKFLOW_TOOLKIT_CONFIG;
     clean(configDir);
     clean(project);
@@ -510,6 +538,9 @@ test("current-project setup adds the cwd pattern in one step", async () => {
   const project = tmp("wk-ws-current-proj-");
   const previous = process.cwd();
   process.chdir(project);
+  // Pin the D-06 resolution root to the project so traversals skip the new
+  // base-path prompt and previews derive from the env (Task 6 mechanical update).
+  process.env.WORKFLOW_WORKSPACE_ROOT = project;
   try {
     withConfigDir(configDir);
     const tty = await renderInk(<Wizard onExit={noop} />);
@@ -524,6 +555,7 @@ test("current-project setup adds the cwd pattern in one step", async () => {
     tty.unmount();
   } finally {
     process.chdir(previous);
+    delete process.env.WORKFLOW_WORKSPACE_ROOT;
     delete process.env.WORKFLOW_TOOLKIT_CONFIG;
     clean(configDir);
     clean(project);
@@ -535,6 +567,9 @@ test("workspace name/glob validation blocks advancing with inline errors", async
   const project = tmp("wk-ws-validate-proj-");
   const previous = process.cwd();
   process.chdir(project);
+  // Pin the D-06 resolution root to the project so traversals skip the new
+  // base-path prompt and previews derive from the env (Task 6 mechanical update).
+  process.env.WORKFLOW_WORKSPACE_ROOT = project;
   try {
     withConfigDir(configDir);
     const tty = await renderInk(<Wizard onExit={noop} />);
@@ -550,6 +585,7 @@ test("workspace name/glob validation blocks advancing with inline errors", async
     tty.unmount();
   } finally {
     process.chdir(previous);
+    delete process.env.WORKFLOW_WORKSPACE_ROOT;
     delete process.env.WORKFLOW_TOOLKIT_CONFIG;
     clean(configDir);
     clean(project);
@@ -561,6 +597,9 @@ test("back and cancel inside the workspace flow preserve state and write nothing
   const project = tmp("wk-ws-nav-proj-");
   const previous = process.cwd();
   process.chdir(project);
+  // Pin the D-06 resolution root to the project so traversals skip the new
+  // base-path prompt and previews derive from the env (Task 6 mechanical update).
+  process.env.WORKFLOW_WORKSPACE_ROOT = project;
   try {
     withConfigDir(configDir);
     const exitCalls: boolean[] = [];
@@ -584,6 +623,7 @@ test("back and cancel inside the workspace flow preserve state and write nothing
     tty.unmount();
   } finally {
     process.chdir(previous);
+    delete process.env.WORKFLOW_WORKSPACE_ROOT;
     delete process.env.WORKFLOW_TOOLKIT_CONFIG;
     clean(configDir);
     clean(project);
@@ -595,6 +635,9 @@ test("summary shows the update-workspaces mutation after an add", async () => {
   const project = tmp("wk-ws-summary-proj-");
   const previous = process.cwd();
   process.chdir(project);
+  // Pin the D-06 resolution root to the project so traversals skip the new
+  // base-path prompt and previews derive from the env (Task 6 mechanical update).
+  process.env.WORKFLOW_WORKSPACE_ROOT = project;
   try {
     withConfigDir(configDir);
     const exitCalls: boolean[] = [];
@@ -617,6 +660,7 @@ test("summary shows the update-workspaces mutation after an add", async () => {
     tty.unmount();
   } finally {
     process.chdir(previous);
+    delete process.env.WORKFLOW_WORKSPACE_ROOT;
     delete process.env.WORKFLOW_TOOLKIT_CONFIG;
     clean(configDir);
     clean(project);
@@ -628,6 +672,9 @@ test("untouched workspaces produce no update-workspaces mutation in the summary"
   const project = tmp("wk-ws-summary-skip-proj-");
   const previous = process.cwd();
   process.chdir(project);
+  // Pin the D-06 resolution root to the project so traversals skip the new
+  // base-path prompt and previews derive from the env (Task 6 mechanical update).
+  process.env.WORKFLOW_WORKSPACE_ROOT = project;
   try {
     withConfigDir(configDir, [entry("work", "/work/**")]);
     const exitCalls: boolean[] = [];
@@ -643,6 +690,7 @@ test("untouched workspaces produce no update-workspaces mutation in the summary"
     tty.unmount();
   } finally {
     process.chdir(previous);
+    delete process.env.WORKFLOW_WORKSPACE_ROOT;
     delete process.env.WORKFLOW_TOOLKIT_CONFIG;
     clean(configDir);
     clean(project);
@@ -660,5 +708,198 @@ test("createInitialDraft seeds workspaces from the configured dir", () => {
   } finally {
     delete process.env.WORKFLOW_TOOLKIT_CONFIG;
     clean(dir);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Issue tracker selection (Task 5): None never reaches the base-url screen and
+// the summary shows "—" with zero youtrack mutations; GitHub Issues links new
+// workspaces through WorkspaceConfig.issues.
+// ---------------------------------------------------------------------------
+
+test("choosing None skips the baseUrl screen: summary shows — and applies no youtrack writes", async () => {
+  const configDir = tmp("wk-tracker-none-cfg-");
+  const project = tmp("wk-tracker-none-proj-");
+  const previous = process.cwd();
+  process.chdir(project);
+  // Pin the D-06 resolution root to the project so traversals skip the new
+  // base-path prompt and previews derive from the env (Task 6 mechanical update).
+  process.env.WORKFLOW_WORKSPACE_ROOT = project;
+  try {
+    withConfigDir(configDir);
+    const exitCalls: boolean[] = [];
+    const tty = await renderInk(<Wizard onExit={(ok) => exitCalls.push(ok)} />);
+    await tty.keys(SPACE, ENTER, ENTER, ENTER, ENTER); // -> issueTracker
+    await tty.keys(DOWN, DOWN, ENTER); // None -> vcs (youtrack skipped)
+    await tty.keys(ENTER); // gitlab -> workspaces
+    await tty.keys(ENTER); // Done -> project
+    await tty.keys("y"); // -> summary
+    const frame = tty.lastFrame();
+    expect(frame).toContain("Will apply");
+    expect(frame).toContain("YouTrack base URL:");
+    // Full-line semantics (the harness strips newlines): the em-dash must sit
+    // at line end, directly followed by the next summary line's label.
+    expect(frame).toContain("YouTrack base URL: —VCS provider:");
+    expect(frame).not.toContain("(skip)");
+    expect(frame).not.toContain("youtrack.json");
+    expect(frame).not.toContain("youtrack.token");
+    await tty.keys("y"); // apply
+    expect(exitCalls).toEqual([true]);
+    tty.unmount();
+  } finally {
+    process.chdir(previous);
+    delete process.env.WORKFLOW_WORKSPACE_ROOT;
+    delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+    clean(configDir);
+    clean(project);
+  }
+});
+
+test("choosing GitHub Issues defaults new workspaces to github with issues linked", async () => {
+  const configDir = tmp("wk-tracker-gh-cfg-");
+  const project = tmp("wk-tracker-gh-proj-");
+  const previous = process.cwd();
+  process.chdir(project);
+  // Pin the D-06 resolution root so traversals skip the base-path prompt.
+  process.env.WORKFLOW_WORKSPACE_ROOT = project;
+  let captured: WizardDraft["values"] | undefined;
+  try {
+    withConfigDir(configDir);
+    const exitCalls: boolean[] = [];
+    const tty = await renderInk(
+      <Wizard
+        onExit={(ok, values) => {
+          exitCalls.push(ok);
+          if (ok && values) captured = values;
+        }}
+      />,
+    );
+    await tty.keys(SPACE, ENTER, ENTER, ENTER, ENTER); // -> issueTracker
+    await tty.keys(DOWN, ENTER); // GitHub Issues -> vcs
+    await tty.keys(DOWN, ENTER); // github provider -> workspaces
+    await tty.keys(UP, ENTER); // Use current project -> entry added
+    const menu = tty.lastFrame();
+    expect(menu).toContain("✓ matches");
+    expect(menu).toContain("github");
+    await tty.keys(ENTER); // Done -> project
+    await tty.keys("y"); // -> summary
+    expect(tty.lastFrame()).toContain("YouTrack base URL:");
+    expect(tty.lastFrame()).not.toContain("(skip)");
+    await tty.keys("y"); // apply
+    expect(exitCalls).toEqual([true]);
+    expect(captured?.issueTracker).toBe("github");
+    expect(captured?.baseUrl).toBe("");
+    expect(captured?.workspaces[0].vcs?.provider).toBe("github");
+    expect(captured?.workspaces[0].issues).toEqual({ provider: "github", link_on_pr: true });
+    tty.unmount();
+  } finally {
+    process.chdir(previous);
+    delete process.env.WORKFLOW_WORKSPACE_ROOT;
+    delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+    clean(configDir);
+    clean(project);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Base-path resolution (Task 6, D-06/CA-06/CA-07): without env the wizard
+// prompts for the workspace root; with env every derived path comes from it;
+// Step 6 prints the exact hygiene target Apply will touch.
+// ---------------------------------------------------------------------------
+
+test("without env the wizard prompts for the workspace root and blocks invalid input", async () => {
+  const configDir = tmp("wk-ws-root-cfg-");
+  const project = tmp("wk-ws-root-proj-");
+  const previous = process.cwd();
+  const prevRoot = process.env.WORKFLOW_WORKSPACE_ROOT;
+  delete process.env.WORKFLOW_WORKSPACE_ROOT;
+  process.chdir(project);
+  try {
+    withConfigDir(configDir);
+    const tty = await renderInk(<Wizard onExit={noop} />);
+    // platforms SPACE+ENTER, then ENTERs to vcs (locale/timezone/preset/tracker/youtrack)
+    await tty.keys(SPACE, ENTER, ENTER, ENTER, ENTER, ENTER, ENTER); // -> vcs
+    await tty.keys(ENTER); // vcs -> base-path prompt (env unset)
+    expect(tty.lastFrame()).toContain("Workspace root");
+    await tty.keys(ENTER); // empty submit refuses to advance
+    expect(tty.lastFrame()).toContain("required");
+    await tty.keys("relative/path", ENTER);
+    expect(tty.lastFrame()).toContain("existing absolute directory");
+    for (let i = 0; i < "relative/path".length; i++) await tty.key(BACKSPACE);
+    const missing = path.join(project, "missing-dir");
+    await tty.keys(missing, ENTER);
+    expect(tty.lastFrame()).toContain("existing absolute directory");
+    for (let i = 0; i < missing.length; i++) await tty.key(BACKSPACE);
+    await tty.keys(`${project}`, ENTER);
+    const menu = tty.lastFrame();
+    expect(menu).toContain("Use current project");
+    expect(menu).toContain(`${project}`);
+    tty.unmount();
+  } finally {
+    process.chdir(previous);
+    if (prevRoot === undefined) delete process.env.WORKFLOW_WORKSPACE_ROOT;
+    else process.env.WORKFLOW_WORKSPACE_ROOT = prevRoot;
+    delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+    clean(configDir);
+    clean(project);
+  }
+});
+
+test("with WORKFLOW_WORKSPACE_ROOT set, current-project and previews derive from it, not cwd", async () => {
+  const configDir = tmp("wk-ws-envroot-cfg-");
+  const project = tmp("wk-ws-envroot-proj-");
+  const root = tmp("wk-ws-envroot-dir-");
+  const previous = process.cwd();
+  process.chdir(project);
+  process.env.WORKFLOW_WORKSPACE_ROOT = root;
+  try {
+    withConfigDir(configDir);
+    const tty = await renderInk(<Wizard onExit={noop} />);
+    await gotoWorkspaces(tty);
+    const menu = tty.lastFrame();
+    expect(menu).toContain(`Use current project (${root})`);
+    expect(menu).not.toContain(`Use current project (${project})`);
+    await tty.keys(UP, ENTER); // use current project -> entry derives from env
+    const added = tty.lastFrame();
+    expect(added).toContain(root.slice(root.lastIndexOf("/") + 1));
+    expect(added).toContain(`${root}/**`);
+    expect(added).toContain("✓ matches");
+    tty.unmount();
+  } finally {
+    process.chdir(previous);
+    delete process.env.WORKFLOW_WORKSPACE_ROOT;
+    delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+    clean(configDir);
+    clean(project);
+    clean(root);
+  }
+});
+
+test("Step 6 prints the resolved basePath as the exact hygiene target", async () => {
+  const configDir = tmp("wk-ws-step6-cfg-");
+  const project = tmp("wk-ws-step6-proj-");
+  const root = tmp("wk-ws-step6-root-");
+  const previous = process.cwd();
+  process.chdir(project);
+  process.env.WORKFLOW_WORKSPACE_ROOT = root;
+  try {
+    withConfigDir(configDir, [entry("work", `${root}/**`)]);
+    const tty = await renderInk(<Wizard onExit={noop} />);
+    await gotoWorkspaces(tty);
+    await tty.keys(ENTER); // Done -> project
+    const proj = tty.lastFrame();
+    expect(proj).toContain(`Will apply gitignore + hygiene in ${root}`);
+    expect(proj).not.toContain(project);
+    await tty.keys("y"); // -> summary
+    // CA-07: the planned gitignore mutation resolves against the displayed dir
+    expect(tty.lastFrame()).toContain(`append ${path.join(root, ".gitignore")}`);
+    tty.unmount(); // never apply
+  } finally {
+    process.chdir(previous);
+    delete process.env.WORKFLOW_WORKSPACE_ROOT;
+    delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+    clean(configDir);
+    clean(project);
+    clean(root);
   }
 });

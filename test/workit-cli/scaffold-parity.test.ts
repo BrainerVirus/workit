@@ -83,7 +83,8 @@ test("wizard is a sequential state machine: one reducer owns all draft transitio
   expect(stateSource).toMatch(/case "apply"/);
   // The wizard dispatches to the reducer and mounts one screen at a time.
   expect(stepsSource).toMatch(/useReducer\(reducer, undefined, createInitialDraft\)/);
-  expect(stepsSource).toMatch(/<Screen key=\{draft\.screen\}/);
+  // \s+ tolerates the formatter wrapping the JSX attributes across lines.
+  expect(stepsSource).toMatch(/<Screen\s+key=\{draft\.screen\}/);
 });
 
 test("wizard writes nothing before Apply; index exits nonzero until configuration completed (WZ-10)", () => {

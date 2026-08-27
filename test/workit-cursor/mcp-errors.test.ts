@@ -125,6 +125,31 @@ test("a domain error return is marked isError:true, not a successful-looking res
   }
 });
 
+test("set-config locale matches core LOCALE_RE (es-419 accepted, es_cl rejected)", async () => {
+  const configDir = mkdtempSync(path.join(os.tmpdir(), "wf-locale-cfg-"));
+  const server = startServer({ WORKFLOW_TOOLKIT_CONFIG: configDir });
+  try {
+    await initialize(server);
+    const accepted = await server.request("tools/call", {
+      name: "workit_init_apply",
+      arguments: { action: "config", confirmed: false, locale: "es-419" },
+    });
+    const ok = (accepted as any).result;
+    expect(ok.isError).not.toBe(true);
+    expect(JSON.stringify(ok)).toContain('"locale":"es-419"');
+
+    const rejected = await server.request("tools/call", {
+      name: "workit_init_apply",
+      arguments: { action: "config", confirmed: false, locale: "es_cl" },
+    });
+    const bad = (rejected as any).result;
+    expect(bad.isError).toBe(true);
+    expect(bad.content?.[0]?.text ?? "").toContain("invalid locale");
+  } finally {
+    server.child.kill();
+  }
+});
+
 test("a domain error string containing a secret is redacted before reaching the MCP client (D5)", async () => {
   const server = startServer();
   try {

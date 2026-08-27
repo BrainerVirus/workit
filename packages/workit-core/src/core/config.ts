@@ -122,7 +122,9 @@ export const ensureConfigDir = (dir: string = resolveConfigDir()): string => {
 
 export const configDir = (): string => ensureConfigDir();
 
-export const LOCALE_RE = /^[a-z]{2,3}(-[A-Z]{2})?$/;
+// Region subtags: 2-letter ISO 3166 alpha-2 or 3-digit UN M.49 (es-419 =
+// Latinoamérica), per BCP-47 well-formedness for the tags this toolkit stores.
+export const LOCALE_RE = /^[a-z]{2,3}(-(?:[A-Z]{2}|[0-9]{3}))?$/;
 
 const DEFAULTS: ToolkitConfig = {
   locale: "en",

@@ -61,6 +61,7 @@ export type InkTty = {
   lastFrame(): string;
   key(key: string): Promise<void>;
   keys(...keys: string[]): Promise<void>;
+  burst(...keys: string[]): Promise<void>;
   inputListenerCount(): number;
   unmount(): void;
 };
@@ -134,6 +135,13 @@ export async function renderInk(
     },
     async keys(...keysToPress: string[]) {
       for (const key of keysToPress) await this.key(key);
+    },
+    // Burst mode: every key lands in ONE stdin chunk (held-arrow / fast typist),
+    // so Ink parses and emits all keypresses before React re-renders.
+    async burst(...keysToPress: string[]) {
+      stdin.write(keysToPress.join(""));
+      await instance.waitUntilRenderFlush();
+      await new Promise((resolve) => setImmediate(resolve));
     },
     inputListenerCount() {
       return counts[counts.length - 1] ?? -1;

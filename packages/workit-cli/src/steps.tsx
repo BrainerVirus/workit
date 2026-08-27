@@ -1,8 +1,17 @@
 import { Box, Text, useInput } from "ink";
 import { ConfirmInput, MultiSelect, TextInput } from "@inkjs/ui";
-import { useEffect, useReducer, useRef, useState, type Dispatch, type JSX } from "react";
+import {
+  useEffect,
+  useReducer,
+  useRef,
+  useState,
+  useCallback,
+  type Dispatch,
+  type JSX,
+} from "react";
 import {
   mergePreset,
+  PRESETS,
   type BranchPreset,
   type ToolkitConfig,
 } from "@brainervirus/workit-core/src/core/config.ts";
@@ -12,11 +21,13 @@ import { detectBranchPolicy } from "@brainervirus/workit-core/src/core/branch-po
 import {
   createInitialDraft,
   reducer,
+  resolveBasePath,
   type SetupValues,
   type WizardAction,
   type WizardDraft,
   type WizardScreen,
 } from "./wizard-state";
+import { LOCALE_LANGUAGE_MAP, SearchSelect } from "./search-select";
 
 const PLATFORMS = [
   { label: "OpenCode", value: "opencode" },
@@ -30,15 +41,95 @@ const BRANCH_PRESETS: { label: string; value: BranchPreset }[] = [
   { label: "Custom", value: "custom" },
 ];
 
+// CA-08: static per-preset guidance shown under the highlighted row — derived
+// from PRESETS (the same source mergePreset applies on selection) plus the
+// conventional workflow facts. Display-only.
+export const BRANCH_PRESET_DESCRIPTIONS: Record<BranchPreset, string> = {
+  gitflow:
+    `${PRESETS.gitflow.allowed.join(", ")} allowed · ` +
+    `${PRESETS.gitflow.protected.join(", ")} protected · work merges into develop via PRs or merge commits`,
+  "github-flow": `Anything goes (${PRESETS["github-flow"].allowed[0]}) · only ${PRESETS["github-flow"].protected.join(", ")} is protected · branches off main, back to main`,
+  "trunk-based": `Short-lived branches off trunk · ${PRESETS["trunk-based"].protected.join(", ")} is the only protected branch`,
+  custom: "Define your own allowed and protected patterns in the next prompts",
+};
+
+// CA-09: every TextInput carries an example placeholder. Display-only —
+// @inkjs/ui renders it until the user types and never passes it to
+// onChange/onSubmit, so submitted values are unaffected.
+export const SCREEN_PLACEHOLDERS = {
+  youtrack: "e.g. https://example.youtrack.cloud",
+  localeOther: "e.g. en-US or es-CL",
+  timezoneOther: "e.g. America/Santiago",
+  branchAllowed: "e.g. feature/*, bugfix/*",
+  branchProtected: "e.g. main, develop",
+  workspaceName: "e.g. work",
+  workspaceGlob: "e.g. /work/**",
+  branchPolicyDevelop: "e.g. develop",
+} as const;
+
 const VCS_PROVIDERS = [
   { label: "GitLab", value: "gitlab" },
   { label: "GitHub", value: "github" },
   { label: "Skip — configure later", value: "skip" },
 ];
 
-const LOCALE_CHOICES = ["en", "es-CL"];
-const TIMEZONE_CHOICES = ["UTC", "America/New_York", "Europe/London"];
+// Module-level so the locale screen's SearchSelect useMemo actually memoizes
+// instead of re-filtering a freshly built array every render (Task 3 advisory).
+const LOCALE_PICKER_OPTIONS: { label: string; value: string }[] = [
+  ...LOCALE_LANGUAGE_MAP.map((entry) => ({ label: entry.label, value: entry.locale })),
+  { label: "Other…", value: "other" },
+];
 
+const ISSUE_TRACKERS: { label: string; value: SetupValues["issueTracker"] }[] = [
+  { label: "YouTrack", value: "youtrack" },
+  { label: "GitHub Issues", value: "github" },
+  { label: "None", value: "none" },
+];
+
+// Timezone catalog: the runtime's full canonical IANA set when available,
+// else a static fallback of common zones. Guard shape mirrors logic.ts
+// KNOWN_TIMEZONES — validateTimezone enforces membership exactly when
+// supportedValuesOf exists, so the picker then shows precisely that set;
+// on the fallback path validation stays open and Other… covers the rest.
+const TIMEZONE_FALLBACK = [
+  "UTC",
+  "America/New_York",
+  "America/Santiago",
+  "America/Bogota",
+  "America/Mexico_City",
+  "America/Sao_Paulo",
+  "America/Argentina/Buenos_Aires",
+  "Europe/London",
+  "Europe/Madrid",
+  "Europe/Berlin",
+  "Asia/Tokyo",
+  "Asia/Shanghai",
+  "Asia/Kolkata",
+  "Australia/Sydney",
+];
+const TIMEZONES: string[] =
+  typeof Intl.supportedValuesOf === "function"
+    ? Intl.supportedValuesOf("timeZone")
+    : TIMEZONE_FALLBACK;
+// Detected host zone seeds the picker preselection — no typing needed.
+const DETECTED_TIMEZONE = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+
+export function timezonePickerOptions(): { label: string; value: string }[] {
+  // Detected host zone heads the list so its preselection is visible in the
+  // first window without typing (the full IANA set alone would bury it).
+  return TIMEZONE_PICKER_OPTIONS;
+}
+// Built once at module load (TIMEZONES and DETECTED_TIMEZONE are already
+// module-eval constants): rebuilding the IANA catalog per render made the
+// screen's useMemo ineffective (Task 3 advisory).
+const TIMEZONE_PICKER_OPTIONS: { label: string; value: string }[] = [
+  { label: DETECTED_TIMEZONE, value: DETECTED_TIMEZONE },
+  ...TIMEZONES.filter((timezone) => timezone !== DETECTED_TIMEZONE).map((timezone) => ({
+    label: timezone,
+    value: timezone,
+  })),
+  { label: "Other…", value: "other" },
+];
 // Text screens cannot offer the 'b' back key (it is a printable character the
 // TextInput consumes), so there Esc walks back to the parent select screen and
 // cancel happens from select/confirm screens. Draft state survives either way.
@@ -48,10 +139,16 @@ const TEXT_SCREENS: ReadonlySet<WizardScreen> = new Set([
   "branchAllowed",
   "branchProtected",
   "youtrack",
+  "basePath",
   "workspaceName",
   "workspaceGlob",
   "branchPolicyDevelop",
 ]);
+
+// Screens whose SearchSelect owns printable input: a cold 'b' starts a search
+// instead of navigating back; only a typed-then-cleared query hands 'b' back
+// to the wizard's back-navigation.
+const SEARCH_SCREENS: ReadonlySet<WizardScreen> = new Set(["locale", "timezone"]);
 
 // Deterministic match-preview samples derived from the current project path:
 // the project itself, its parent, and a synthetic child repo. Every accepted
@@ -66,13 +163,14 @@ function workspacePreviewTargets(cwd: string): string[] {
 type ScreenProps = {
   draft: WizardDraft;
   dispatch: Dispatch<WizardAction>;
+  onSearchQueryChange?: (query: string) => void;
 };
 
 // Single-purpose list control: up/down move the highlight (dispatching the
 // value), Enter always submits the highlighted option. This is the WZ-11 fix —
 // unlike @inkjs/ui Select there is exactly one Enter path and no competing
 // onChange/onSubmit handlers, so Enter can never apply a stale value twice.
-function SelectList<T extends string>({
+export function SelectList<T extends string>({
   options,
   value,
   onChange,
@@ -89,22 +187,27 @@ function SelectList<T extends string>({
       options.findIndex((option) => option.value === value),
     ),
   );
+  // Burst-input mirror (Task 1 advisory): two arrow keys can arrive in one
+  // stdin chunk, both handled before React re-renders — a closure-read index
+  // would collapse them into one step. The ref is updated synchronously in the
+  // handler and re-synced on every render. WZ-13 unchanged: no side effects
+  // inside setState updaters; onChange stays a sibling of setIndex.
+  const indexRef = useRef(index);
+  indexRef.current = index;
 
   useInput((_input, key) => {
-    if (key.downArrow) {
-      setIndex((i) => {
-        const next = Math.min(i + 1, options.length - 1);
-        onChange?.(options[next].value);
-        return next;
-      });
-    } else if (key.upArrow) {
-      setIndex((i) => {
-        const next = Math.max(i - 1, 0);
-        onChange?.(options[next].value);
-        return next;
-      });
+    if (key.downArrow || key.upArrow) {
+      const next = key.downArrow
+        ? Math.min(indexRef.current + 1, options.length - 1)
+        : Math.max(indexRef.current - 1, 0);
+      // Boundary clamp: an arrow that cannot move neither re-renders nor
+      // re-dispatches the already-current value.
+      if (next === indexRef.current) return;
+      indexRef.current = next;
+      setIndex(next);
+      onChange?.(options[next].value);
     } else if (key.return) {
-      onSelect(options[index].value);
+      onSelect(options[indexRef.current].value);
     }
   });
 
@@ -118,21 +221,6 @@ function SelectList<T extends string>({
       ))}
     </Box>
   );
-}
-
-function localeOptions(current: string): { label: string; value: string }[] {
-  const fixed = LOCALE_CHOICES.map((locale) => ({ label: locale, value: locale }));
-  const list = LOCALE_CHOICES.includes(current)
-    ? fixed
-    : [...fixed, { label: `Use current (${current})`, value: current }];
-  return [...list, { label: "Other…", value: "other" }];
-}
-function timezoneOptions(current: string): { label: string; value: string }[] {
-  const fixed = TIMEZONE_CHOICES.map((timezone) => ({ label: timezone, value: timezone }));
-  const list = TIMEZONE_CHOICES.includes(current)
-    ? fixed
-    : [...fixed, { label: `Use current (${current})`, value: current }];
-  return [...list, { label: "Other…", value: "other" }];
 }
 
 function effectivePolicy(values: SetupValues): ToolkitConfig["branchPolicy"] {
@@ -179,7 +267,7 @@ function BranchPolicyScreen({ draft, dispatch }: ScreenProps): JSX.Element {
     dispatch({
       type: "set",
       field: "branchPolicyDetected",
-      value: detectBranchPolicy(process.env.WORKFLOW_WORKSPACE_ROOT ?? process.cwd()),
+      value: detectBranchPolicy(resolveBasePath(draft.values)),
     });
   }, [detected, dispatch]);
 
@@ -250,6 +338,16 @@ export function Wizard({
 }): JSX.Element {
   const [draft, dispatch] = useReducer(reducer, undefined, createInitialDraft);
   const exitedRef = useRef(false);
+  // Consumed-key policy for the locale SearchSelect: it reports every query
+  // change synchronously, and this screen-level handler observes the value
+  // BEFORE the keystroke reaches the picker (parent subscriptions run first),
+  // so `q` is the pre-keystroke query. `typed` latches once a query became
+  // non-empty: "typed and cleared" hands 'b' back to navigation.
+  const searchRef = useRef({ q: "", typed: false });
+
+  useEffect(() => {
+    searchRef.current = { q: "", typed: false };
+  }, [draft.screen]);
 
   useInput((input, key) => {
     // Ctrl+C always cancels — independent of Ink's exitOnCtrlC setting, so
@@ -260,7 +358,12 @@ export function Wizard({
       if (TEXT_SCREENS.has(draft.screen)) dispatch({ type: "back" });
       else dispatch({ type: "cancel" });
     } else if (input.toLowerCase() === "b" && !TEXT_SCREENS.has(draft.screen)) {
-      dispatch({ type: "back" });
+      // While a search is live or being started on a SearchSelect screen
+      // (locale, timezone), 'b' belongs to the query; only a typed-then-cleared
+      // search navigates back. Other screens keep plain 'b' back-navigation.
+      const search = searchRef.current;
+      const searchOwnsB = SEARCH_SCREENS.has(draft.screen) && !(search.typed && search.q === "");
+      if (!searchOwnsB) dispatch({ type: "back" });
     }
   });
 
@@ -280,7 +383,16 @@ export function Wizard({
           same tree position, so React would reuse the previous screen's control
           instance and leak its field state (e.g. "feature/*" into branchProtected).
           Remounting per screen resets each control from the draft values. */}
-      <Screen key={draft.screen} draft={draft} dispatch={dispatch} />
+      <Screen
+        key={draft.screen}
+        draft={draft}
+        dispatch={dispatch}
+        onSearchQueryChange={(query) => {
+          const search = searchRef.current;
+          search.q = query;
+          if (query !== "") search.typed = true;
+        }}
+      />
     </Box>
   );
 }
@@ -304,7 +416,39 @@ function describeMutation(m: SetupMutation): string {
   }
 }
 
-function Screen({ draft, dispatch }: ScreenProps): JSX.Element {
+// D-06: shown only when WORKFLOW_WORKSPACE_ROOT is unset — the prompt IS the
+// resolution root for every workspace preview and hygiene target. Extracted
+// component with stable callbacks: @inkjs/ui re-fires its onChange effect
+// whenever the handler identity changes, and fresh inline arrows per render
+// multiply dispatch rounds per keystroke (long error strings commit a frame
+// per change) — enough to trip React's update-depth guard on backspace runs.
+function BasePathScreen({ draft, dispatch }: ScreenProps): JSX.Element {
+  const onChange = useCallback(
+    (value: string) => dispatch({ type: "set", field: "basePath", value }),
+    [dispatch],
+  );
+  // Commit the submitted value before validating: @inkjs/ui fires onChange
+  // from an effect, so a keystroke can land after Enter — the same ordering
+  // hazard branchPolicyDevelop guards against.
+  const onSubmit = useCallback(
+    (value: string) => {
+      dispatch({ type: "set", field: "basePath", value });
+      dispatch({ type: "next" });
+    },
+    [dispatch],
+  );
+  return (
+    <Box flexDirection="column" gap={1}>
+      <Text bold>Step 5 — Workspace root</Text>
+      <Text dimColor>Absolute path where your projects live (e.g. /work):</Text>
+      <TextInput defaultValue={draft.values.basePath} onChange={onChange} onSubmit={onSubmit} />
+      {draft.errors.basePath && <Text color="red">{draft.errors.basePath}</Text>}
+      <Text dimColor>Enter to continue · Esc Back</Text>
+    </Box>
+  );
+}
+
+function Screen({ draft, dispatch, onSearchQueryChange }: ScreenProps): JSX.Element {
   switch (draft.screen) {
     case "platforms":
       return (
@@ -329,12 +473,18 @@ function Screen({ draft, dispatch }: ScreenProps): JSX.Element {
         <Box flexDirection="column" gap={1}>
           <Text bold>Step 2 — Global config · Locale</Text>
           <Text dimColor>Locale (BCP-47):</Text>
-          <SelectList
-            options={localeOptions(draft.values.locale)}
+          <Text>
+            Current: <Text color="green">{draft.values.locale}</Text>
+          </Text>
+          {/* Searchable language picker: typing filters, Enter commits the
+              highlighted row's BCP-47 tag. Other… keeps the existing validated
+              custom-input flow (CA-03); error display, back/cancel semantics
+              and the localeOther text screen are untouched. */}
+          <SearchSelect
+            options={LOCALE_PICKER_OPTIONS}
             value={draft.values.locale}
-            onChange={(value) => {
-              if (value !== "other") dispatch({ type: "set", field: "locale", value });
-            }}
+            placeholder="Type to search languages…"
+            onQueryChange={onSearchQueryChange}
             onSelect={(value) => {
               if (value === "other") dispatch({ type: "pickOther" });
               else {
@@ -344,7 +494,7 @@ function Screen({ draft, dispatch }: ScreenProps): JSX.Element {
             }}
           />
           {draft.errors.locale && <Text color="red">{draft.errors.locale}</Text>}
-          <Text dimColor>Enter to continue · b Back · Esc Cancel</Text>
+          <Text dimColor>Type to filter · Enter to continue · b Back · Esc Cancel</Text>
         </Box>
       );
     case "localeOther":
@@ -353,6 +503,7 @@ function Screen({ draft, dispatch }: ScreenProps): JSX.Element {
           <Text bold>Step 2 — Global config · Locale (custom)</Text>
           <Text dimColor>Type a BCP-47 locale (e.g. en or es-CL):</Text>
           <TextInput
+            placeholder={SCREEN_PLACEHOLDERS.localeOther}
             onChange={(value) => dispatch({ type: "set", field: "locale", value })}
             onSubmit={() => dispatch({ type: "next" })}
           />
@@ -365,12 +516,18 @@ function Screen({ draft, dispatch }: ScreenProps): JSX.Element {
         <Box flexDirection="column" gap={1}>
           <Text bold>Step 2 — Global config · Timezone</Text>
           <Text dimColor>Timezone (IANA name):</Text>
-          <SelectList
-            options={timezoneOptions(draft.values.timezone)}
-            value={draft.values.timezone}
-            onChange={(value) => {
-              if (value !== "other") dispatch({ type: "set", field: "timezone", value });
-            }}
+          <Text>
+            Current: <Text color="green">{draft.values.timezone}</Text>
+          </Text>
+          {/* Searchable timezone picker mirroring the locale screen: the
+              detected host zone is preselected, typing filters the IANA
+              catalog, Enter commits the highlighted row. Other… keeps the
+              existing validated custom-input flow (CA-04). */}
+          <SearchSelect
+            options={timezonePickerOptions()}
+            value={draft.values.timezone || DETECTED_TIMEZONE}
+            placeholder="Type to search timezones…"
+            onQueryChange={onSearchQueryChange}
             onSelect={(value) => {
               if (value === "other") dispatch({ type: "pickOther" });
               else {
@@ -380,7 +537,7 @@ function Screen({ draft, dispatch }: ScreenProps): JSX.Element {
             }}
           />
           {draft.errors.timezone && <Text color="red">{draft.errors.timezone}</Text>}
-          <Text dimColor>Enter to continue · b Back · Esc Cancel</Text>
+          <Text dimColor>Type to filter · Enter to continue · b Back · Esc Cancel</Text>
         </Box>
       );
     case "timezoneOther":
@@ -389,6 +546,7 @@ function Screen({ draft, dispatch }: ScreenProps): JSX.Element {
           <Text bold>Step 2 — Global config · Timezone (custom)</Text>
           <Text dimColor>Type an IANA timezone (e.g. America/Santiago):</Text>
           <TextInput
+            placeholder={SCREEN_PLACEHOLDERS.timezoneOther}
             onChange={(value) => dispatch({ type: "set", field: "timezone", value })}
             onSubmit={() => dispatch({ type: "next" })}
           />
@@ -408,6 +566,7 @@ function Screen({ draft, dispatch }: ScreenProps): JSX.Element {
             onChange={(value) => dispatch({ type: "set", field: "branchPreset", value })}
             onSelect={() => dispatch({ type: "next" })}
           />
+          <Text dimColor>{BRANCH_PRESET_DESCRIPTIONS[draft.values.branchPreset]}</Text>
           <Box flexDirection="column" gap={0}>
             <Text>
               Allowed: <Text color="green">{policy.allowed.join(", ") || "—"}</Text>
@@ -430,6 +589,7 @@ function Screen({ draft, dispatch }: ScreenProps): JSX.Element {
           <Text bold>Step 2 — Global config · Allowed branch patterns</Text>
           <Text dimColor>Allowed branch patterns (comma-separated):</Text>
           <TextInput
+            placeholder={SCREEN_PLACEHOLDERS.branchAllowed}
             defaultValue={draft.values.branchAllowed}
             onChange={(value) => dispatch({ type: "set", field: "branchAllowed", value })}
             onSubmit={() => dispatch({ type: "next" })}
@@ -444,6 +604,7 @@ function Screen({ draft, dispatch }: ScreenProps): JSX.Element {
           <Text bold>Step 2 — Global config · Protected branch names</Text>
           <Text dimColor>Protected branch names (comma-separated):</Text>
           <TextInput
+            placeholder={SCREEN_PLACEHOLDERS.branchProtected}
             defaultValue={draft.values.branchProtected}
             onChange={(value) => dispatch({ type: "set", field: "branchProtected", value })}
             onSubmit={() => dispatch({ type: "next" })}
@@ -452,12 +613,30 @@ function Screen({ draft, dispatch }: ScreenProps): JSX.Element {
           <Text dimColor>Enter to continue · Esc Back</Text>
         </Box>
       );
+    case "issueTracker":
+      // Task 5: plain three-option select (no search gate needed) sitting where
+      // Step 3 lives today; YouTrack keeps the base-url screen, the others skip
+      // it in both directions via the shared reducer gating.
+      return (
+        <Box flexDirection="column" gap={1}>
+          <Text bold>Step 3 — Issue tracker</Text>
+          <Text dimColor>Where do issues live?</Text>
+          <SelectList
+            options={ISSUE_TRACKERS}
+            value={draft.values.issueTracker}
+            onChange={(value) => dispatch({ type: "set", field: "issueTracker", value })}
+            onSelect={() => dispatch({ type: "next" })}
+          />
+          <Text dimColor>Enter to continue · b Back · Esc Cancel</Text>
+        </Box>
+      );
     case "youtrack":
       return (
         <Box flexDirection="column" gap={1}>
           <Text bold>Step 3 — YouTrack</Text>
           <Text dimColor>Base URL (https):</Text>
           <TextInput
+            placeholder={SCREEN_PLACEHOLDERS.youtrack}
             defaultValue={draft.values.baseUrl}
             onChange={(value) => dispatch({ type: "set", field: "baseUrl", value })}
             onSubmit={() => dispatch({ type: "next" })}
@@ -480,8 +659,10 @@ function Screen({ draft, dispatch }: ScreenProps): JSX.Element {
           <Text dimColor>Enter to continue · b Back · Esc Cancel</Text>
         </Box>
       );
+    case "basePath":
+      return <BasePathScreen draft={draft} dispatch={dispatch} />;
     case "workspaces": {
-      const cwd = process.cwd();
+      const base = resolveBasePath(draft.values);
       const options = [
         ...draft.values.workspaces.map((w, i) => ({
           label: `Edit ${w.name} (${w.glob})`,
@@ -492,7 +673,7 @@ function Screen({ draft, dispatch }: ScreenProps): JSX.Element {
           value: `remove:${i}`,
         })),
         { label: "Add workspace", value: "add" },
-        { label: `Use current project (${cwd})`, value: "current" },
+        { label: `Use current project (${base})`, value: "current" },
         { label: "Done", value: "done" },
       ];
       return (
@@ -503,7 +684,7 @@ function Screen({ draft, dispatch }: ScreenProps): JSX.Element {
           ) : (
             <Box flexDirection="column" gap={0}>
               {draft.values.workspaces.map((w) => {
-                const matches = matchWorkspace(w.glob, cwd);
+                const matches = matchWorkspace(w.glob, base);
                 return (
                   <Text key={`${w.name}|${w.glob}|${w.vcs?.provider ?? ""}`}>
                     {matches ? "✓ matches" : "✗ no match"} {w.name} — {w.vcs?.provider ?? "?"} —{" "}
@@ -523,7 +704,7 @@ function Screen({ draft, dispatch }: ScreenProps): JSX.Element {
               else if (value.startsWith("remove:"))
                 dispatch({ type: "workspaceRemove", index: Number(value.slice(7)) });
               else if (value === "add") dispatch({ type: "workspaceAdd" });
-              else if (value === "current") dispatch({ type: "workspaceAddCurrent", path: cwd });
+              else if (value === "current") dispatch({ type: "workspaceAddCurrent", path: base });
               else dispatch({ type: "next" });
             }}
           />
@@ -541,6 +722,7 @@ function Screen({ draft, dispatch }: ScreenProps): JSX.Element {
               : `Edit workspace name (${draft.values.workspaces[draft.workspaceIndex]?.name ?? ""}):`}
           </Text>
           <TextInput
+            placeholder={SCREEN_PLACEHOLDERS.workspaceName}
             defaultValue={draft.workspaceDraft?.name ?? ""}
             onChange={(value) => dispatch({ type: "workspaceDraftName", value })}
             onSubmit={() => dispatch({ type: "next" })}
@@ -556,6 +738,7 @@ function Screen({ draft, dispatch }: ScreenProps): JSX.Element {
           <Text bold>Step 5 — Workspaces · Pattern</Text>
           <Text dimColor>Workspace pattern (glob, e.g. /work/**):</Text>
           <TextInput
+            placeholder={SCREEN_PLACEHOLDERS.workspaceGlob}
             defaultValue={glob}
             onChange={(value) => dispatch({ type: "workspaceDraftGlob", value })}
             onSubmit={() => dispatch({ type: "next" })}
@@ -563,7 +746,7 @@ function Screen({ draft, dispatch }: ScreenProps): JSX.Element {
           {glob.trim() !== "" && (
             <Box flexDirection="column" gap={0}>
               <Text bold>Match preview (shared matcher):</Text>
-              {workspacePreviewTargets(process.cwd()).map((target) => {
+              {workspacePreviewTargets(resolveBasePath(draft.values)).map((target) => {
                 const matches = matchWorkspace(glob, target);
                 return (
                   <Text key={target} color={matches ? "green" : "red"}>
@@ -603,6 +786,7 @@ function Screen({ draft, dispatch }: ScreenProps): JSX.Element {
           <Text bold>Step 5 — Branch policy · Develop branch</Text>
           <Text dimColor>Integration/develop branch name (leave empty to unset):</Text>
           <TextInput
+            placeholder={SCREEN_PLACEHOLDERS.branchPolicyDevelop}
             defaultValue={
               draft.values.branchPolicy?.developBranch ??
               draft.values.branchPolicyDetected?.developBranch ??
@@ -617,12 +801,14 @@ function Screen({ draft, dispatch }: ScreenProps): JSX.Element {
         </Box>
       );
     case "project":
+      // CA-07: print the exact directory Apply will touch — the resolved base
+      // path, never an implicit process.cwd().
       return (
         <Box flexDirection="column" gap={1}>
           <Text bold>Step 6 — Project setup</Text>
           <Text dimColor>
-            Will apply gitignore + hygiene in {process.cwd()} (existing files are never
-            overwritten):
+            Will apply gitignore + hygiene in {resolveBasePath(draft.values)} (existing files are
+            never overwritten):
           </Text>
           <ConfirmInput
             defaultChoice="confirm"
@@ -641,7 +827,9 @@ function Screen({ draft, dispatch }: ScreenProps): JSX.Element {
       // WZ-08: the summary renders the authoritative preview (read-only) — the
       // exact mutations Apply would perform. Malformed setup state (WZ-06)
       // blocks Apply: no confirm control is mounted until it is fixed.
-      const preview = buildSetupPreview(draft.values);
+      // CA-07: the preview's hygiene target is the same displayed base path
+      // runInit will pass to Apply.
+      const preview = buildSetupPreview(draft.values, { cwd: resolveBasePath(draft.values) });
       return (
         <Box flexDirection="column" gap={1}>
           <Text bold color="cyan">
@@ -663,7 +851,11 @@ function Screen({ draft, dispatch }: ScreenProps): JSX.Element {
           <Text>
             YouTrack base URL:{" "}
             <Text color="green">
-              {draft.values.baseUrl.trim() ? draft.values.baseUrl : "— (skip)"}
+              {draft.values.issueTracker === "youtrack"
+                ? draft.values.baseUrl.trim()
+                  ? draft.values.baseUrl
+                  : "— (skip)"
+                : "—"}
             </Text>
           </Text>
           <Text>

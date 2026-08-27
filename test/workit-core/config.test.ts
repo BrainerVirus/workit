@@ -9,6 +9,7 @@ import {
   writeConfig,
   resolveBranchPolicy,
   mergeConfigValues,
+  LOCALE_RE,
   PRESETS,
   type ToolkitConfig,
 } from "../../packages/workit-core/src/core/config";
@@ -72,6 +73,28 @@ test("invalid locale falls back to en", () => {
   } finally {
     cleanupEnv();
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("LOCALE_RE accepts 3-digit UN M.49 region subtags and still rejects malformed tags", () => {
+  expect(LOCALE_RE.test("es-419")).toBe(true);
+  // pre-existing shapes keep working
+  expect(LOCALE_RE.test("en")).toBe(true);
+  expect(LOCALE_RE.test("es-CL")).toBe(true);
+  expect(LOCALE_RE.test("zh-CN")).toBe(true);
+  for (const bad of [
+    "not-valid!",
+    "es_419",
+    "es-4190",
+    "es-41",
+    "es-cl",
+    "ES",
+    "e1",
+    "es-",
+    "-419",
+    "es-4X9",
+  ]) {
+    expect(LOCALE_RE.test(bad), bad).toBe(false);
   }
 });
 

@@ -12,17 +12,36 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { mergePreset, type ToolkitConfig } from "../../packages/workit-core/src/core/config";
+import { PassThrough } from "node:stream";
+import {
+  LOCALE_RE,
+  mergePreset,
+  readConfigFromDir,
+  type ToolkitConfig,
+} from "../../packages/workit-core/src/core/config";
 import { readSetupState } from "../../packages/workit-core/src/core/setup-state";
 import { planHygieneFiles, ensureHygieneFiles } from "../../packages/workit-core/src/core/hygiene";
 import {
   buildSetupPreview,
   TOKEN_PLACEHOLDER,
   collectConfigValues,
+  validateTimezone,
   type SetupMutation,
   type SetupPreviewInput,
 } from "../../packages/workit-cli/src/logic";
-import { createInitialDraft } from "../../packages/workit-cli/src/wizard-state";
+import {
+  createInitialDraft,
+  reducer,
+  resolveBasePath,
+} from "../../packages/workit-cli/src/wizard-state";
+import { LOCALE_LANGUAGE_MAP, filterOptions } from "../../packages/workit-cli/src/search-select";
+import {
+  BRANCH_PRESET_DESCRIPTIONS,
+  SCREEN_PLACEHOLDERS,
+  timezonePickerOptions,
+} from "../../packages/workit-cli/src/steps";
+import { REPO_ROOT } from "../shared/helpers/packages";
+import { cleanupLiveInkInstances } from "../shared/helpers/ink-clean-probe";
 
 // WZ-04-WZ-06, WZ-08, RL-02, RL-06 wizard scope; CA-12, CA-14, CA-22, CA-23.
 // readSetupState / mergePreset / buildSetupPreview must be pure readers: preview
@@ -596,3 +615,586 @@ test("a deliberate token path replacement is its own distinct mutation (AR-10)",
     clean(dir);
   }
 });
+
+// ---------------------------------------------------------------------------
+// Locale SearchSelect (Task 3): pure filtering/map behavior + reducer commit.
+// The Español block leads LOCALE_LANGUAGE_MAP so the 5-row cap keeps the whole
+// language×nationality family visible together for the shared "es" prefix.
+// ---------------------------------------------------------------------------
+
+test('filterOptions("es") caps at 5 rows across language+nationality labels', () => {
+  // Same adaptation the locale screen applies: Teams rows → picker options.
+  const options = [
+    ...LOCALE_LANGUAGE_MAP.map((entry) => ({ label: entry.label, value: entry.locale })),
+    { label: "Other…", value: "other" },
+  ];
+  const matches = filterOptions(options, "es");
+  expect(matches.length).toBeLessThanOrEqual(5);
+  expect(matches.length).toBeGreaterThan(0);
+  const labels = matches.map((m) => m.label);
+  expect(labels.join(" | ")).toContain("España");
+  expect(labels.join(" | ")).toContain("Latinoamérica");
+  expect(labels.join(" | ")).toContain("Chile");
+  // value-only matches (es-419 has no "es" in its label) are found too
+  expect(matches.map((m) => m.value)).toContain("es-419");
+  expect(labels.join(" | ")).not.toContain("English (United States)");
+  // empty query shows the first window of the full list
+  expect(filterOptions(options, "")).toEqual(options.slice(0, 5));
+});
+
+test("filterOptions folds diacritics on both sides (espanol matches Español)", () => {
+  const options = LOCALE_LANGUAGE_MAP.map((entry) => ({ label: entry.label, value: entry.locale }));
+  const folded = filterOptions(options, "espanol");
+  expect(folded.length).toBeGreaterThan(0);
+  expect(folded.map((m) => m.label).join(" | ")).toContain("Español");
+  // the accented query folds too
+  expect(filterOptions(options, "Español").length).toBeGreaterThan(0);
+});
+
+test("LOCALE_LANGUAGE_MAP covers every core localeOptions default exactly once", () => {
+  const dir = tempDir();
+  try {
+    const locales = readConfigFromDir(dir).localeOptions;
+    expect(locales.length).toBe(5);
+    const mapLocales = LOCALE_LANGUAGE_MAP.map((entry) => entry.locale);
+    for (const locale of locales) {
+      expect(mapLocales, locale).toContain(locale);
+    }
+    expect(new Set(mapLocales).size).toBe(mapLocales.length);
+    expect(LOCALE_LANGUAGE_MAP.length).toBeGreaterThanOrEqual(25);
+  } finally {
+    clean(dir);
+  }
+});
+
+test("selecting a mapped row commits its BCP-47 locale through the reducer", () => {
+  const row = LOCALE_LANGUAGE_MAP.find((entry) => entry.locale === "es-419");
+  expect(row).toBeDefined();
+  let d = createInitialDraft(config());
+  d = reducer(d, { type: "set", field: "platforms", value: ["opencode"] });
+  d = reducer(d, { type: "next" }); // -> locale
+  d = reducer(d, { type: "set", field: "locale", value: row!.locale });
+  expect(d.errors.locale, LOCALE_RE.test(row!.locale) ? undefined : row!.locale).toBeUndefined();
+  d = reducer(d, { type: "next" });
+  expect(d.screen).toBe("timezone");
+  expect(d.values.locale).toBe("es-419");
+});
+
+// ---------------------------------------------------------------------------
+// Timezone SearchSelect (Task 4): full IANA catalog through filterOptions,
+// catalog consistency with the KNOWN_TIMEZONES guard in logic.ts, and reducer
+// commit. Other… keeps validateTimezone (CA-04) untouched.
+// ---------------------------------------------------------------------------
+
+test('filterOptions("Santiago") caps at 5 rows including America/Santiago', () => {
+  const matches = filterOptions(timezonePickerOptions(), "Santiago");
+  expect(matches.length).toBeGreaterThan(0);
+  expect(matches.length).toBeLessThanOrEqual(5);
+  expect(matches.map((m) => m.value)).toContain("America/Santiago");
+});
+
+test("timezone catalog matches the KNOWN_TIMEZONES guard and contains the detected zone", () => {
+  const options = timezonePickerOptions();
+  expect(options[options.length - 1].value).toBe("other");
+  const detected = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  // The detected zone heads the list so its preselection is visible without
+  // typing; the remainder is the runtime's IANA set when supportedValuesOf
+  // exists (validateTimezone enforces membership exactly then — the same
+  // guard shape as logic.ts KNOWN_TIMEZONES), else the static fallback while
+  // validation stays open.
+  expect(options[0].value).toBe(detected);
+  const rest = options.slice(1, -1).map((option) => option.value);
+  if (typeof Intl.supportedValuesOf === "function") {
+    expect([...rest].sort()).toEqual(
+      Intl.supportedValuesOf("timeZone")
+        .filter((tz) => tz !== detected)
+        .sort(),
+    );
+  } else {
+    expect(validateTimezone("Not/AZone")).toBeNull();
+  }
+});
+
+test("committing a searched zone updates the draft through the reducer", () => {
+  let d = createInitialDraft(config());
+  d = reducer(d, { type: "set", field: "platforms", value: ["opencode"] });
+  d = reducer(d, { type: "next" }); // -> locale
+  d = reducer(d, { type: "next" }); // -> timezone
+  d = reducer(d, { type: "set", field: "timezone", value: "America/Santiago" });
+  expect(validateTimezone("America/Santiago")).toBeNull();
+  expect(d.errors.timezone).toBeUndefined();
+  d = reducer(d, { type: "next" });
+  expect(d.screen).toBe("branchPreset");
+  expect(d.values.timezone).toBe("America/Santiago");
+});
+
+// ---------------------------------------------------------------------------
+// Issue tracker selection (Task 5): SetupValues.issueTracker gates the YouTrack
+// screen exactly like skipsCustomBranch gates the custom-branch screens, and
+// the github/none choices rewire workspace defaults without core edits.
+// ---------------------------------------------------------------------------
+
+// Custom preset so every branch screen is visited on the way to issueTracker.
+const startCustom = (): ReturnType<typeof createInitialDraft> => {
+  let d = createInitialDraft(
+    config({ preset: "custom", allowed: ["feature/*"], protected: ["main"] }),
+  );
+  d = reducer(d, { type: "set", field: "platforms", value: ["opencode"] });
+  d = reducer(d, { type: "next" }); // -> locale
+  d = reducer(d, { type: "next" }); // -> timezone
+  d = reducer(d, { type: "next" }); // -> branchPreset
+  d = reducer(d, { type: "set", field: "branchPreset", value: "custom" });
+  d = reducer(d, { type: "next" }); // -> branchAllowed
+  d = reducer(d, { type: "set", field: "branchAllowed", value: "feature/*" });
+  d = reducer(d, { type: "next" }); // -> branchProtected
+  d = reducer(d, { type: "set", field: "branchProtected", value: "main" });
+  return d;
+};
+
+test("issueTracker defaults to youtrack and sits between branchProtected and youtrack", () => {
+  expect(createInitialDraft(config()).values.issueTracker).toBe("youtrack");
+
+  let d = startCustom();
+  d = reducer(d, { type: "next" });
+  expect(d.screen).toBe("issueTracker");
+  expect(reducer(d, { type: "back" }).screen).toBe("branchProtected");
+
+  // Default selection YouTrack keeps the base-url screen in the flow.
+  d = reducer(d, { type: "next" });
+  expect(d.screen).toBe("youtrack");
+  expect(reducer(d, { type: "back" }).screen).toBe("issueTracker");
+  d = reducer(d, { type: "next" });
+  expect(d.screen).toBe("vcs");
+  expect(reducer(d, { type: "back" }).screen).toBe("youtrack");
+});
+
+test("none/github skip the youtrack screen in both directions; non-custom presets reach issueTracker", () => {
+  // gitflow preset: branch screens skip straight to the new select screen
+  let g = createInitialDraft(config());
+  g = reducer(g, { type: "set", field: "platforms", value: ["opencode"] });
+  g = reducer(g, { type: "next" }); // -> locale
+  g = reducer(g, { type: "next" }); // -> timezone
+  g = reducer(g, { type: "next" }); // -> branchPreset
+  g = reducer(g, { type: "next" }); // skips branchAllowed/branchProtected
+  expect(g.screen).toBe("issueTracker");
+
+  const atIssueTracker = reducer(startCustom(), { type: "next" });
+  for (const tracker of ["none", "github"] as const) {
+    let t = reducer(atIssueTracker, { type: "set", field: "issueTracker", value: tracker });
+    t = reducer(t, { type: "next" });
+    expect(t.screen, tracker).toBe("vcs"); // skipped forward
+    t = reducer(t, { type: "back" });
+    expect(t.screen, tracker).toBe("issueTracker"); // skipped backward too
+  }
+});
+
+test("choosing None drops a typed base URL: preview carries zero youtrack mutations", () => {
+  const dir = tempDir();
+  try {
+    process.env.WORKFLOW_TOOLKIT_CONFIG = dir;
+    let d = createInitialDraft(config());
+    d = reducer(d, { type: "set", field: "baseUrl", value: "https://yt.example.com" });
+    d = reducer(d, { type: "set", field: "vcsProvider", value: "gitlab" });
+    d = reducer(d, { type: "set", field: "issueTracker", value: "none" });
+    expect(d.values.baseUrl).toBe("");
+    expect(d.errors.baseUrl).toBeUndefined();
+    const preview = buildSetupPreview(d.values, { dir, env: {} });
+    expect(preview.ok).toBe(true);
+    expect(preview.mutations.some((m) => m.path.endsWith("youtrack.json"))).toBe(false);
+    expect(preview.mutations.some((m) => m.path.endsWith("youtrack.token"))).toBe(false);
+    // switching back keeps the cleared value — the user retypes it deliberately
+    d = reducer(d, { type: "set", field: "issueTracker", value: "youtrack" });
+    expect(d.values.baseUrl).toBe("");
+  } finally {
+    delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+    clean(dir);
+  }
+});
+
+test("github mode: new workspaces default provider github with issues linked", () => {
+  const dir = tempDir();
+  try {
+    process.env.WORKFLOW_TOOLKIT_CONFIG = dir;
+    let d = createInitialDraft(config());
+    d = reducer(d, { type: "set", field: "issueTracker", value: "github" });
+    // the tracker wins over an unrelated gitlab VCS selection (writeWorkspaces
+    // validation requires the github provider for linked issues)
+    d = reducer(d, { type: "set", field: "vcsProvider", value: "gitlab" });
+
+    d = reducer(d, { type: "workspaceAddCurrent", path: "/home/u/proj" });
+    expect(d.values.workspaces[0].vcs?.provider).toBe("github");
+    expect(d.values.workspaces[0].issues).toEqual({ provider: "github", link_on_pr: true });
+
+    d = reducer(d, { type: "workspaceAdd" });
+    expect(d.workspaceDraft?.vcs?.provider).toBe("github");
+    expect(d.workspaceDraft?.issues).toEqual({ provider: "github", link_on_pr: true });
+
+    const preview = buildSetupPreview(d.values, { dir, cwd: dir, env: {} });
+    const ws = preview.mutations.find((m) => m.type === "update-workspaces") as Extract<
+      SetupMutation,
+      { type: "update-workspaces" }
+    >;
+    expect(ws.entries[0].issues).toEqual({ provider: "github", link_on_pr: true });
+    expect(ws.entries[0].vcs?.provider).toBe("github");
+  } finally {
+    delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+    clean(dir);
+  }
+});
+
+test("walking the tracker back from github strips issues linking from added workspaces", () => {
+  const dir = tempDir();
+  try {
+    process.env.WORKFLOW_TOOLKIT_CONFIG = dir;
+    let d = createInitialDraft(config());
+    d = reducer(d, { type: "set", field: "issueTracker", value: "github" });
+    d = reducer(d, { type: "workspaceAddCurrent", path: "/home/u/proj" });
+    expect(d.values.workspaces[0].issues).toEqual({ provider: "github", link_on_pr: true });
+    for (const tracker of ["none", "youtrack"] as const) {
+      let t = reducer(d, { type: "set", field: "issueTracker", value: tracker });
+      expect(t.values.workspaces[0].issues, tracker).toBeUndefined();
+      expect(t.values.workspaces[0].name).toBe("proj"); // everything else intact
+    }
+    // switching back to github re-links new workspaces but stays honest about
+    // existing ones (they were stripped; nothing silently re-links)
+    const back = reducer(reducer(d, { type: "set", field: "issueTracker", value: "none" }), {
+      type: "set",
+      field: "issueTracker",
+      value: "github",
+    });
+    expect(back.values.workspaces[0].issues).toBeUndefined();
+    // no-op guard: an unchanged tracker dispatch returns the same draft object
+    expect(reducer(d, { type: "set", field: "issueTracker", value: "github" })).toBe(d);
+  } finally {
+    delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+    clean(dir);
+  }
+});
+
+test("youtrack mode stays byte-identical: preview equals the legacy literal input", () => {
+  const dir = tempDir();
+  try {
+    process.env.WORKFLOW_TOOLKIT_CONFIG = dir;
+    let d = createInitialDraft(config());
+    d = reducer(d, { type: "set", field: "baseUrl", value: "https://yt.example.com" });
+    d = reducer(d, { type: "set", field: "vcsProvider", value: "gitlab" });
+    d = reducer(d, { type: "workspaceAddCurrent", path: "/home/u/proj" });
+    const legacy = values({
+      baseUrl: "https://yt.example.com",
+      vcsProvider: "gitlab",
+      workspaces: [{ name: "proj", glob: "/home/u/proj/**", vcs: { provider: "gitlab" } }],
+    });
+    const fromWizard = buildSetupPreview(d.values, { dir, cwd: dir, env: {} });
+    const literal = buildSetupPreview(legacy, { dir, cwd: dir, env: {} });
+    expect(JSON.stringify(fromWizard.mutations)).toBe(JSON.stringify(literal.mutations));
+    // no issues linking leaks into youtrack-mode workspaces
+    expect(
+      JSON.stringify(fromWizard.mutations.filter((m) => m.type === "update-workspaces")),
+    ).not.toContain('"issues"');
+  } finally {
+    delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+    clean(dir);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Base-path resolution (Task 6, D-06/CA-06/CA-07): WORKFLOW_WORKSPACE_ROOT env
+// wins over the prompted path; without env the basePath screen gates the
+// wizard with existsSync validation; process.cwd() is gone from every
+// workspace-preview and hygiene-target code path.
+// ---------------------------------------------------------------------------
+
+// gitflow preset walk to the vcs screen: platforms → locale → timezone →
+// branchPreset → issueTracker → youtrack → vcs (six `next`s after platforms).
+const walkToVcs = (): ReturnType<typeof createInitialDraft> => {
+  let d = createInitialDraft(config());
+  d = reducer(d, { type: "set", field: "platforms", value: ["opencode"] });
+  for (let i = 0; i < 6; i++) d = reducer(d, { type: "next" });
+  return d;
+};
+
+test("D-06: WORKFLOW_WORKSPACE_ROOT beats the prompted path and seeds the initial draft", () => {
+  const prev = process.env.WORKFLOW_WORKSPACE_ROOT;
+  try {
+    process.env.WORKFLOW_WORKSPACE_ROOT = "/tmp/wk-t6-env-root";
+    const d = createInitialDraft(config());
+    expect(d.values.basePath).toBe("/tmp/wk-t6-env-root");
+    expect(resolveBasePath(d.values)).toBe("/tmp/wk-t6-env-root");
+    // a prompted value never overrides the env…
+    const edited = reducer(d, { type: "set", field: "basePath", value: "/tmp/wk-t6-prompted" });
+    expect(resolveBasePath(edited.values)).toBe("/tmp/wk-t6-env-root");
+    // …but an explicit env argument wins over the ambient one (pure seam)
+    expect(resolveBasePath(edited.values, {})).toBe("/tmp/wk-t6-prompted");
+  } finally {
+    if (prev === undefined) delete process.env.WORKFLOW_WORKSPACE_ROOT;
+    else process.env.WORKFLOW_WORKSPACE_ROOT = prev;
+  }
+});
+
+test("D-06: without env the basePath prompt gates advancement with field errors", () => {
+  const prev = process.env.WORKFLOW_WORKSPACE_ROOT;
+  delete process.env.WORKFLOW_WORKSPACE_ROOT;
+  try {
+    let d = walkToVcs();
+    d = reducer(d, { type: "next" }); // vcs -> basePath prompt (no env)
+    expect(d.screen).toBe("basePath");
+    d = reducer(d, { type: "next" }); // empty input refuses to advance
+    expect(d.screen).toBe("basePath");
+    expect(d.errors.basePath).toContain("required");
+    d = reducer(d, { type: "set", field: "basePath", value: "relative/path" });
+    d = reducer(d, { type: "next" });
+    expect(d.screen).toBe("basePath");
+    expect(d.errors.basePath).toContain("existing absolute directory");
+    const missing = path.join(os.tmpdir(), `wk-t6-missing-${process.pid}`);
+    d = reducer(d, { type: "set", field: "basePath", value: missing });
+    d = reducer(d, { type: "next" });
+    expect(d.screen).toBe("basePath");
+    expect(d.errors.basePath).toContain("existing absolute directory");
+    const real = mkdtempSync(path.join(os.tmpdir(), "wk-t6-real-"));
+    try {
+      d = reducer(d, { type: "set", field: "basePath", value: real });
+      d = reducer(d, { type: "next" });
+      expect(d.screen).toBe("workspaces");
+      // answered once — walking back skips the prompt (mirrors youtrack gating)
+      expect(reducer(d, { type: "back" }).screen).toBe("vcs");
+    } finally {
+      rmSync(real, { recursive: true, force: true });
+    }
+  } finally {
+    if (prev === undefined) delete process.env.WORKFLOW_WORKSPACE_ROOT;
+    else process.env.WORKFLOW_WORKSPACE_ROOT = prev;
+  }
+});
+
+test("D-06: with env set the basePath screen is skipped in both directions", () => {
+  const prev = process.env.WORKFLOW_WORKSPACE_ROOT;
+  try {
+    process.env.WORKFLOW_WORKSPACE_ROOT = os.tmpdir();
+    const d = walkToVcs();
+    const fwd = reducer(d, { type: "next" });
+    expect(fwd.screen).toBe("workspaces");
+    expect(reducer(fwd, { type: "back" }).screen).toBe("vcs");
+  } finally {
+    if (prev === undefined) delete process.env.WORKFLOW_WORKSPACE_ROOT;
+    else process.env.WORKFLOW_WORKSPACE_ROOT = prev;
+  }
+});
+
+test("basePath gate rejects an existing FILE (directory required)", () => {
+  const prev = process.env.WORKFLOW_WORKSPACE_ROOT;
+  delete process.env.WORKFLOW_WORKSPACE_ROOT;
+  const dir = tempDir();
+  try {
+    const file = path.join(dir, "passwd");
+    writeFileSync(file, "root:x:0:0\n", "utf8");
+    let d = walkToVcs();
+    d = reducer(d, { type: "next" }); // -> basePath prompt
+    d = reducer(d, { type: "set", field: "basePath", value: file });
+    expect(d.errors.basePath).toContain("existing absolute directory");
+    expect(reducer(d, { type: "next" }).screen).toBe("basePath"); // gated
+  } finally {
+    if (prev === undefined) delete process.env.WORKFLOW_WORKSPACE_ROOT;
+    else process.env.WORKFLOW_WORKSPACE_ROOT = prev;
+    clean(dir);
+  }
+});
+
+test("a whitespace-only WORKFLOW_WORKSPACE_ROOT seed is treated as unset", () => {
+  const prev = process.env.WORKFLOW_WORKSPACE_ROOT;
+  try {
+    process.env.WORKFLOW_WORKSPACE_ROOT = "   ";
+    let d = walkToVcs();
+    d = reducer(d, { type: "next" });
+    expect(d.screen).toBe("basePath"); // prompt appears, never silently skipped
+    expect(resolveBasePath(d.values)).toBe("");
+    const real = mkdtempSync(path.join(os.tmpdir(), "wk-t6-ws-"));
+    try {
+      d = reducer(d, { type: "set", field: "basePath", value: real });
+      expect(resolveBasePath(d.values, {})).toBe(real);
+      d = reducer(d, { type: "next" });
+      expect(d.screen).toBe("workspaces");
+    } finally {
+      rmSync(real, { recursive: true, force: true });
+    }
+  } finally {
+    if (prev === undefined) delete process.env.WORKFLOW_WORKSPACE_ROOT;
+    else process.env.WORKFLOW_WORKSPACE_ROOT = prev;
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Display-only polish (Task 7, CA-08/CA-09): static preset descriptions on the
+// branchPreset screen and an example placeholder on every TextInput screen.
+// Placeholders must never reach draft values or submitted input.
+// ---------------------------------------------------------------------------
+
+test("branchPreset descriptions: gitflow hints develop + pr/merge; others are main-only (CA-08)", () => {
+  const gitflow = BRANCH_PRESET_DESCRIPTIONS.gitflow;
+  for (const pattern of ["feature/*", "bugfix/*", "hotfix/*", "release/*"]) {
+    expect(gitflow, pattern).toContain(pattern);
+  }
+  expect(gitflow).toContain("develop");
+  expect(/pr|merge/i.test(gitflow)).toBe(true);
+
+  for (const preset of ["github-flow", "trunk-based"] as const) {
+    expect(BRANCH_PRESET_DESCRIPTIONS[preset]).toContain("main");
+    expect(BRANCH_PRESET_DESCRIPTIONS[preset]).not.toContain("develop");
+  }
+  expect(BRANCH_PRESET_DESCRIPTIONS.custom.length).toBeGreaterThan(0);
+});
+
+// Map-level sanity only; the rendered JSX wiring of every placeholder is
+// pinned by the TTY tests in wizard-tty.test.tsx (placeholder assertions on
+// each screen's frame), so deleting a placeholder prop cannot pass silently.
+test("every wizard TextInput screen carries a non-empty example placeholder (CA-09)", () => {
+  for (const screen of [
+    "youtrack",
+    "localeOther",
+    "timezoneOther",
+    "branchAllowed",
+    "branchProtected",
+    "workspaceName",
+    "workspaceGlob",
+    "branchPolicyDevelop",
+  ] as const) {
+    expect(SCREEN_PLACEHOLDERS[screen].trim().length, screen).toBeGreaterThan(0);
+    expect(SCREEN_PLACEHOLDERS[screen], screen).toContain("e.g.");
+  }
+});
+
+test("placeholders are display-only: no example text reaches draft or submitted values", () => {
+  const initial = createInitialDraft(config());
+  // Real branch patterns may legitimately appear in values; the "e.g. …"
+  // placeholder bytes themselves may never leak into the draft.
+  for (const placeholder of Object.values(SCREEN_PLACEHOLDERS)) {
+    expect(JSON.stringify(initial.values)).not.toContain(placeholder);
+  }
+  // submitting an untouched branchPolicyDevelop keeps the develop branch unset
+  let d = createInitialDraft(config());
+  d = reducer(d, { type: "set", field: "branchPolicyDevelop", value: "" });
+  expect(d.values.branchPolicy?.developBranch ?? "").toBe("");
+});
+
+class ExitSentinel extends Error {
+  constructor(readonly code: number | undefined) {
+    super(`process.exit(${code})`);
+  }
+}
+
+// CA-07 end-to-end: runInit resolves Apply's cwd from the base path. Zero
+// platforms keeps host registrations out of the run; applyProject hygiene is
+// the observable cwd seam — the gitignore must land in the resolved basePath,
+// never in the process cwd the wizard used to silently inherit.
+test("runInit apply resolves its cwd from the base path, never the process cwd", async () => {
+  const base = mkdtempSync(path.join(os.tmpdir(), "wk-t6-drive-"));
+  const root = path.join(base, "root");
+  const cwdDir = path.join(base, "cwd");
+  const configDir = path.join(base, "config");
+  const home = path.join(base, "home");
+  for (const dir of [root, cwdDir, configDir, home]) mkdirSync(dir, { recursive: true });
+  const prevRoot = process.env.WORKFLOW_WORKSPACE_ROOT;
+  const prevCfg = process.env.WORKFLOW_TOOLKIT_CONFIG;
+  const prevDev = process.env.WORKFLOW_TOOLKIT_DEV;
+  // Isolated HOME: the OpenCode registration must never touch the real
+  // ~/.config/opencode on any machine (dev pointer keeps adapter resolution
+  // inside the repository, so the install succeeds hermetically).
+  const prevHome = process.env.HOME;
+  const prevCwd = process.cwd();
+  const prevExit = process.exit;
+  const prevLog = console.log;
+  const prevStdin = process.stdin;
+  const prevWrite = process.stdout.write;
+  const prevStdoutIsTTY = (process.stdout as { isTTY?: boolean }).isTTY;
+  const prevStdoutColumns = (process.stdout as { columns?: number }).columns;
+  const prevStdoutRows = (process.stdout as { rows?: number }).rows;
+  const chunks: string[] = [];
+  let exitCode: number | undefined;
+  try {
+    process.env.WORKFLOW_WORKSPACE_ROOT = root;
+    process.env.WORKFLOW_TOOLKIT_CONFIG = configDir;
+    process.env.WORKFLOW_TOOLKIT_DEV = REPO_ROOT;
+    process.env.HOME = home;
+    writeFileSync(path.join(configDir, "config.json"), JSON.stringify(config()), "utf8");
+    process.chdir(cwdDir);
+
+    const fakeStdin = new PassThrough() as PassThrough & {
+      isTTY: boolean;
+      ref(): void;
+      unref(): void;
+      setRawMode(enabled: boolean): void;
+    };
+    fakeStdin.isTTY = true;
+    fakeStdin.ref = () => {};
+    fakeStdin.unref = () => {};
+    fakeStdin.setRawMode = () => {};
+
+    process.stdin = fakeStdin as unknown as typeof process.stdin;
+    (process.stdout as { isTTY: boolean }).isTTY = true;
+    (process.stdout as { columns: number }).columns = 120;
+    (process.stdout as { rows: number }).rows = 40;
+    // Patch .write on the real stream object: ink's getOptions treats a
+    // stream as the render target ONLY when it is an instanceof Stream, so a
+    // duck-typed replacement object silently leaves ink with an undefined
+    // stdout and nothing ever paints (CI-only failure class).
+    process.stdout.write = ((chunk: unknown, cb?: (() => void) | undefined) => {
+      chunks.push(String(chunk));
+      cb?.();
+      return true;
+    }) as typeof process.stdout.write;
+    console.log = (...args: unknown[]) => {
+      chunks.push(`${args.map(String).join(" ")}\n`);
+    };
+    process.exit = ((code?: number) => {
+      throw new ExitSentinel(code);
+    }) as typeof process.exit;
+
+    const ENTER = "\r";
+    const SPACE = " ";
+    const { runInit } = await import("../../packages/workit-cli/src/index");
+    const flush = async (): Promise<void> => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      await new Promise((resolve) => setImmediate(resolve));
+    };
+    const running = runInit();
+    running.catch(() => {});
+    await flush();
+    // empty platforms submit is blocked; select OpenCode, then straight through
+    // to Apply with the env root set (no basePath prompt appears): platforms
+    // submit, locale, timezone, preset->tracker, tracker->youtrack,
+    // youtrack->vcs, vcs->workspaces (env skips the prompt), Done->project
+    for (const key of [ENTER, SPACE, ENTER, ...Array(7).fill(ENTER), "y", "y"] as string[]) {
+      process.stdin.push(key);
+      await flush();
+    }
+    try {
+      await running;
+    } catch (err) {
+      if (!(err instanceof ExitSentinel)) throw err;
+      exitCode = err.code;
+    }
+    expect(exitCode, chunks.join("")).toBe(0);
+    const joined = chunks.join("");
+    expect(joined).toContain(path.join(root, ".gitignore"));
+    expect(existsSync(path.join(root, ".gitignore"))).toBe(true);
+    expect(existsSync(path.join(cwdDir, ".gitignore"))).toBe(false);
+  } finally {
+    cleanupLiveInkInstances();
+    if (prevRoot === undefined) delete process.env.WORKFLOW_WORKSPACE_ROOT;
+    else process.env.WORKFLOW_WORKSPACE_ROOT = prevRoot;
+    if (prevCfg === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+    else process.env.WORKFLOW_TOOLKIT_CONFIG = prevCfg;
+    if (prevDev === undefined) delete process.env.WORKFLOW_TOOLKIT_DEV;
+    else process.env.WORKFLOW_TOOLKIT_DEV = prevDev;
+    if (prevHome === undefined) delete process.env.HOME;
+    else process.env.HOME = prevHome;
+    process.chdir(prevCwd);
+    process.exit = prevExit;
+    console.log = prevLog;
+    process.stdin = prevStdin;
+    process.stdout.write = prevWrite;
+    (process.stdout as { isTTY?: boolean }).isTTY = prevStdoutIsTTY;
+    (process.stdout as { columns?: number }).columns = prevStdoutColumns;
+    (process.stdout as { rows?: number }).rows = prevStdoutRows;
+    rmSync(base, { recursive: true, force: true });
+  }
+}, 30_000);

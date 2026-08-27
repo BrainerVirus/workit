@@ -492,7 +492,9 @@ export function createRepoTools(runtime: RepoRuntime = defaultRuntime) {
           return output(result.ok ? ok(result) : fail(result.error));
         }
         if (action === "config") {
-          const LOCALE_RE = /^[a-z]{2,3}(-[A-Z]{2})?$/;
+          // Mirrors core config.ts LOCALE_RE (keep in sync): 3-digit UN M.49
+          // region subtags like es-419 validate alongside 2-letter regions.
+          const LOCALE_RE = /^[a-z]{2,3}(-(?:[A-Z]{2}|[0-9]{3}))?$/;
           if (locale !== undefined && !LOCALE_RE.test(locale)) {
             return output(
               fail(`invalid locale: ${JSON.stringify(locale)} — expected BCP-47 like en or es-CL`),
