@@ -1,6 +1,6 @@
 {
   "name": "@brainervirus/workit-cli",
-  "version": "0.9.2",
+  "version": "0.10.0",
   "private": false,
   "description": "Workit interactive setup wizard (Ink TUI)",
   "keywords": [
