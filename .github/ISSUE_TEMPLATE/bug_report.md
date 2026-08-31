@@ -13,7 +13,7 @@ assignees: ""
 - workit version (from `package.json` or `npm ls workit`):
 
 **Tool**
-Which workflow tool or skill failed? (e.g. `wk-commit`, `wk-pr`, `workflow_verify`, `wk-handoff`, the `workflow-toolkit` MCP server)
+Which workflow tool or skill failed? (e.g. `wk-commit`, `wk-pr`, `workit_verify`, `wk-handoff`, the `workflow-toolkit` MCP server)
 
 **Expected behavior**
 What did you expect to happen?

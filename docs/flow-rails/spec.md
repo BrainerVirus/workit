@@ -57,7 +57,7 @@ flowchart TD
 - CA-02: A per-turn hook reads every `docs/*/sdd/flow.json` reachable from the working directory; when `menu.chosen === "subagent-driven"` and the plan status is active, the turn gets one `SDD_REMINDER_TEXT` injection.
 - CA-03: The injection is idempotent — the same reminder text is not duplicated within a turn (per-turn re-injection is the design).
 - CA-04: Missing, malformed, unreadable, or plan-complete flow.json (or no docs/ dir) yields no reminder and no hook error.
-- CA-05: `workflow_verify` and `bun run check` stay green with new tests covering CA-02/CA-03/CA-04.
+- CA-05: `workit_verify` and `bun run check` stay green with new tests covering CA-02/CA-03/CA-04.
 
 ## Decisions
 

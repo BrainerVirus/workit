@@ -162,7 +162,7 @@ test("explicit not_applied time failure safely retries time only", async () => {
       postedComment: true,
       loggedMinutes: 0,
       outcome: "not_applied",
-      retry: "workflow_youtrack_log_time",
+      retry: "workit_youtrack_log_time",
     },
     error: "rejected before request",
   });
@@ -192,7 +192,7 @@ test("explicit not_applied comment failure safely retries the missing effects", 
       postedComment: false,
       loggedMinutes: 0,
       outcome: "not_applied",
-      retry: "workflow_youtrack_post",
+      retry: "workit_youtrack_post",
     },
     error: "rejected before request",
   });
@@ -241,7 +241,7 @@ test.skipIf(process.platform === "win32")(
         [
           async () => ({ ok: false, error: "not sent", outcome: "not_applied" }),
           "not_applied",
-          "workflow_youtrack_log_time",
+          "workit_youtrack_log_time",
         ],
       ] as const) {
         const tools = createYouTrackTools({
@@ -251,7 +251,7 @@ test.skipIf(process.platform === "win32")(
           postComment: async () => ({}),
           logTime: operation,
         });
-        const raw = await tools.workflow_youtrack_log_time.execute(
+        const raw = await tools.workit_youtrack_log_time.execute(
           { confirmed: true, issueId: "NSR-40", minutes: 30 },
           { directory: "/repo", worktree: "/repo" } as never,
         );
@@ -282,7 +282,7 @@ test("bundled standalone time logging rejects invalid inputs before credentials 
         [{ confirmed: true, issueId: "NSR-40", minutes: 0 }, "minutes must be positive"],
         [{ confirmed: true, issueId: "NSR-40", minutes: -1 }, "minutes must be positive"],
       ] as const) {
-        const raw = await tools.workflow_youtrack_log_time.execute(input, {
+        const raw = await tools.workit_youtrack_log_time.execute(input, {
           directory: root,
           worktree: root,
         } as never);
@@ -292,8 +292,8 @@ test("bundled standalone time logging rejects invalid inputs before credentials 
             issueId: input.issueId,
             loggedMinutes: 0,
             outcome: "not_applied",
-            retry: "workflow_youtrack_log_time",
-            instructions: "Correct the invalid input, then retry workflow_youtrack_log_time once.",
+            retry: "workit_youtrack_log_time",
+            instructions: "Correct the invalid input, then retry workit_youtrack_log_time once.",
           },
           error,
         });
@@ -324,7 +324,7 @@ test("YouTrack context rejects escaped spec and plan paths before credentials or
     logTime: async () => ({}),
   });
   for (const input of [{ spec_path: "/tmp/outside" }, { plan_path: "../outside" }]) {
-    const raw = await tools.workflow_youtrack_context.execute(
+    const raw = await tools.workit_youtrack_context.execute(
       input as never,
       { directory: root, worktree: root } as never,
     );
@@ -333,7 +333,7 @@ test("YouTrack context rejects escaped spec and plan paths before credentials or
   const outside = path.join(parent, "outside.md");
   writeFileSync(outside, "**YouTrack:** NSR-40\n");
   symlinkSync(outside, path.join(root, "linked.md"));
-  const linked = await tools.workflow_youtrack_context.execute({ spec_path: "linked.md" }, {
+  const linked = await tools.workit_youtrack_context.execute({ spec_path: "linked.md" }, {
     directory: root,
     worktree: root,
   } as never);
@@ -603,19 +603,19 @@ test("registers seven standard tools without workspace_root and guards mutations
   });
   expect(Object.keys(tools).sort()).toEqual(
     [
-      "workflow_youtrack_verify_token",
-      "workflow_youtrack_parse_issue",
-      "workflow_youtrack_context",
-      "workflow_youtrack_parse_duration",
-      "workflow_youtrack_draft",
-      "workflow_youtrack_log_time",
-      "workflow_youtrack_post",
+      "workit_youtrack_verify_token",
+      "workit_youtrack_parse_issue",
+      "workit_youtrack_context",
+      "workit_youtrack_parse_duration",
+      "workit_youtrack_draft",
+      "workit_youtrack_log_time",
+      "workit_youtrack_post",
     ].sort(),
   );
   for (const definition of Object.values(tools)) {
     expect("workspace_root" in definition.args).toBe(false);
   }
-  for (const name of ["workflow_youtrack_log_time", "workflow_youtrack_post"] as const) {
+  for (const name of ["workit_youtrack_log_time", "workit_youtrack_post"] as const) {
     const raw = await tools[name].execute(
       { confirmed: false } as never,
       { directory: "/repo", worktree: "/repo" } as never,
@@ -638,24 +638,24 @@ test.skipIf(process.platform === "win32")(
       const ctx = { directory: "/repo", worktree: "/repo" } as never;
 
       const verify = JSON.parse(
-        (await tools.workflow_youtrack_verify_token.execute({}, ctx)) as string,
+        (await tools.workit_youtrack_verify_token.execute({}, ctx)) as string,
       );
       expect(verify.ok).toBe(true);
 
       const parsed = JSON.parse(
-        (await tools.workflow_youtrack_parse_issue.execute({ issue_ref: "NSR-40" }, ctx)) as string,
+        (await tools.workit_youtrack_parse_issue.execute({ issue_ref: "NSR-40" }, ctx)) as string,
       );
       expect(parsed.ok).toBe(true);
       expect(parsed.data.issueId).toBe("NSR-40");
 
       const duration = JSON.parse(
-        (await tools.workflow_youtrack_parse_duration.execute({ text: "30m" }, ctx)) as string,
+        (await tools.workit_youtrack_parse_duration.execute({ text: "30m" }, ctx)) as string,
       );
       expect(duration.ok).toBe(true);
       expect(duration.data.minutes).toBe(30);
 
       const draft = JSON.parse(
-        (await tools.workflow_youtrack_draft.execute(
+        (await tools.workit_youtrack_draft.execute(
           {
             issueId: "NSR-40",
             userNotes: "Avance",
@@ -682,7 +682,7 @@ test.skipIf(process.platform === "win32")(
       const ctx = { directory: "/repo", worktree: "/repo" } as never;
 
       const logged = JSON.parse(
-        (await tools.workflow_youtrack_log_time.execute(
+        (await tools.workit_youtrack_log_time.execute(
           {
             confirmed: true,
             issueId: "NSR-1",
@@ -695,7 +695,7 @@ test.skipIf(process.platform === "win32")(
       expect(logged.error).toContain("boom");
 
       const posted = JSON.parse(
-        (await tools.workflow_youtrack_post.execute(
+        (await tools.workit_youtrack_post.execute(
           {
             confirmed: true,
             issueId: "NSR-1",
@@ -723,7 +723,7 @@ test.skipIf(process.platform === "win32")(
       });
       const ctx = { directory: "/repo", worktree: "/repo" } as never;
       const meetings = JSON.parse(
-        (await tools.workflow_youtrack_context.execute(
+        (await tools.workit_youtrack_context.execute(
           {
             mode: "meetings",
           },
@@ -733,7 +733,7 @@ test.skipIf(process.platform === "win32")(
       expect(meetings.ok).toBe(true);
 
       const escaped = JSON.parse(
-        (await tools.workflow_youtrack_context.execute(
+        (await tools.workit_youtrack_context.execute(
           {
             spec_path: "../outside.md",
           },

@@ -13,8 +13,8 @@ The self-review concept originates from the vendored `superpowers:writing-plans`
 - G1: `transitionSpec` (draft → self_reviewed, first confirmed call) runs `qualitySpec` on the spec text; any **hard** finding → `{ ok: false, error }` listing the missing items; status stays `draft`. Second call (self_reviewed → approved) unaffected.
 - G2: `transitionPlan` (draft → self_reviewed) validates the plan parses (`parseTasksFromPlan` returns ≥1 task) and required headers exist (`**Spec:**`, `**Branch:**`, `### Task N:` headings); failure → rejected with detail; status stays `draft`.
 - G3: The rejection message is actionable: it names the missing section(s)/CA-XX or the plan-header problems so the agent can fix and retry.
-- G3b: The cognitive half is enforced too — the contract reminder adds the superpowers self-review ritual: before the first `workflow_spec_approve`/`workflow_plan_approve`, the agent must run the writing-plans Self-Review checklist (spec coverage, placeholder scan, type consistency) and fix findings inline. The reminder text mirrors the superpowers skill's own checklist.
-- G4: Existing flows keep working: `workflow_spec_approve` ×2 and `workflow_plan_approve` ×2 sequences unchanged in UX; warnings never block (only hard findings).
+- G3b: The cognitive half is enforced too — the contract reminder adds the superpowers self-review ritual: before the first `workit_spec_approve`/`workit_plan_approve`, the agent must run the writing-plans Self-Review checklist (spec coverage, placeholder scan, type consistency) and fix findings inline. The reminder text mirrors the superpowers skill's own checklist.
+- G4: Existing flows keep working: `workit_spec_approve` ×2 and `workit_plan_approve` ×2 sequences unchanged in UX; warnings never block (only hard findings).
 
 ## Non-goals
 
@@ -34,7 +34,7 @@ flowchart TD
   branch["¿Hard findings?"]
   reject["Rechazo + lista de faltantes"]
   ok["Transición permitida"]
-  approve -->|workflow_spec_approve (1ra vez)| gate
+  approve -->|workit_spec_approve (1ra vez)| gate
   gate -->|qualitySpec + parseTasks| findings
   findings -->|hard findings?| branch
   branch -->|sí → rechazo con detalle| reject

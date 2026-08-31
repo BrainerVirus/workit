@@ -1,0 +1,92 @@
+name: Sync token probe
+
+# AR-15 diagnostic (dispatch-only): verifies RELEASE_SYNC_TOKEN carries the
+# two grants the release manifest-sync step needs — push a branch
+# (Contents: RW) and open a PR (Pull requests: RW). The probe branch/PR are
+# closed immediately; nothing lands on main. Delete once the token is stable.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      # persist-credentials: false — otherwise checkout installs the workflow
+      # GITHUB_TOKEN as an http.extraheader and the push below would
+      # authenticate as github-actions[bot], silently testing the wrong
+      # credential (the false PASS seen on the first run).
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Probe push + PR creation with RELEASE_SYNC_TOKEN
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_SYNC_TOKEN }}
+        run: |
+          set -uo pipefail
+          BRANCH="probe/sync-token-${GITHUB_RUN_ID}"
+          FAILED=0
+          git config user.name "sync-probe"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          cleanup() {
+            if [[ -n "${PR_NUMBER:-}" ]]; then
+              gh pr close "$PR_NUMBER" >/dev/null 2>&1 || true
+            fi
+            git push origin --delete "$BRANCH" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          echo "::group::stage 1 — git push a branch (needs Contents: RW)"
+          echo "probe ${GITHUB_RUN_ID}" > SYNC_PROBE.txt
+          git checkout -b "$BRANCH"
+          git add SYNC_PROBE.txt
+          # [skip ci] in the head commit suppresses push- AND pull_request-
+          # triggered runs for this ephemeral branch: cleanup deletes the ref
+          # within seconds, so any started run would die at checkout (the
+          # red artifacts jobs seen on the first probe run).
+          git commit -m "chore(probe): verify sync token [skip ci]"
+          if git push -u origin "$BRANCH"; then
+            echo "PASS: Contents write OK"
+          else
+            echo "FAIL: git push rejected — grant the fine-grained token Contents: Read and write for this repository"
+            FAILED=1
+          fi
+          echo "::endgroup::"
+
+          if [[ "$FAILED" -eq 0 ]]; then
+            echo "::group::stage 2 — gh pr create (needs Pull requests: RW)"
+            if gh pr create --base main --head "$BRANCH" \
+              --title "[probe] RELEASE_SYNC_TOKEN check" \
+              --body "Automated permission probe; closed immediately."; then
+              PR_NUMBER=$(gh pr view "$BRANCH" --json number -q .number)
+              echo "PASS: Pull requests write OK (PR #${PR_NUMBER})"
+            else
+              echo "FAIL: gh pr create rejected — grant the fine-grained token Pull requests: Read and write for this repository"
+              FAILED=1
+            fi
+            echo "::endgroup::"
+          fi
+
+          if [[ "$FAILED" -ne 0 ]]; then
+            # Hard evidence for the exact credential in use: identity plus the
+            # effective per-repo permission bits GitHub computed for it.
+            echo "::group::token diagnostics"
+            gh api user --jq '"token identity: \(.login) (\(.type))"' || true
+            gh api "repos/${GITHUB_REPOSITORY}" \
+              --jq '"effective repo permissions: " + (.permissions | tostring)' || true
+            echo "::endgroup::"
+          fi
+
+          rm -f SYNC_PROBE.txt
+          if [[ "$FAILED" -eq 0 ]]; then
+            echo "PROBE RESULT: PASS — RELEASE_SYNC_TOKEN can push branches and open PRs; sufficient for the release manifest sync."
+          else
+            echo "PROBE RESULT: FAIL — see the FAIL lines above for the exact missing grant."
+            exit 1
+          fi

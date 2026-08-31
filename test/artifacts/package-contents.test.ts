@@ -335,6 +335,40 @@ test("cursor vendor filtering rejects shebang files when executable metadata is 
   }
 });
 
+// --- Tool-rename content gate: shipped prose names only live workit_* tools ---
+// The orchestration tools are registered as workit_*; a live workflow_*
+// reference in shipped skill/template/vendor markdown points at a tool that no
+// longer exists. Uppercase WORKFLOW_* env names are out of scope and stay.
+const LIVE_WORKFLOW_TOOL = /\bworkflow_[a-z0-9_]+\b/;
+const LIVE_WORKIT_TOOL = /\bworkit_[a-z0-9_]+\b/;
+const CONTENT_TREES = [
+  "skills/",
+  "templates/",
+  "vendor/",
+  "rules/",
+  "assets/skills/",
+  "assets/templates/",
+  "assets/vendor/",
+];
+
+test("shipped skill/template/vendor markdown uses workit_ tool identifiers with no live workflow_ references", () => {
+  const packs = packWorkspacePackages();
+  for (const pack of packs) {
+    const offenders: string[] = [];
+    let sawWorkitTool = false;
+    for (const entry of listTarball(pack.tarball)) {
+      if (!entry.endsWith(".md") && !entry.endsWith(".mdc")) continue;
+      if (!CONTENT_TREES.some((tree) => entry.startsWith(tree))) continue;
+      const md = readTarballFile(pack.tarball, entry);
+      const stale = LIVE_WORKFLOW_TOOL.exec(md);
+      if (stale) offenders.push(`${entry}: ${stale[0]}`);
+      if (LIVE_WORKIT_TOOL.test(md)) sawWorkitTool = true;
+    }
+    expect(offenders, `${pack.packageName} ships stale workflow_ tool references`).toEqual([]);
+    expect(sawWorkitTool, `${pack.packageName} ships renamed workit_ tool references`).toBe(true);
+  }
+});
+
 test("shipped vendor markdown references no filtered-out files (finding)", () => {
   const packs = packWorkspacePackages();
   for (const [packageName, vendorRoot] of [

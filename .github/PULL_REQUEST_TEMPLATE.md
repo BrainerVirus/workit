@@ -5,7 +5,7 @@
 ## Quality gates
 
 - [ ] `bun run check` passes locally (tests + typecheck)
-- [ ] `workflow_docs_validate` passes on any touched spec/plan pair
+- [ ] `workit_docs_validate` passes on any touched spec/plan pair
 - [ ] Platform parity verified: behavior tested on the platforms this touches (OpenCode / Cursor), or explicitly marked platform-specific
 
 ## Checklist

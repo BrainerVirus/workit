@@ -19,7 +19,7 @@ Never ask for or accept tokens in chat. For missing YouTrack configuration, prev
 
 When the user wants to personalize the toolkit (locale, timezone, branch policy), ask native questions one at a time:
 
-1. **Locale** — present a combobox of `localeOptions` (en, es-CL, es-MX, es-AR, pt-BR) + custom answer; validate the answer against BCP-47 (`^[a-z]{2,3}(-[A-Z]{2})?$`) before passing it.
+1. **Locale** — present a combobox of `localeOptions` (en, es-CL, es-MX, es-AR, pt-BR) + custom answer; validate the answer against BCP-47 (`^[a-z]{2,3}(-(?:[A-Z]{2}|[0-9]{3}))?$`, so `es-419` is valid) before passing it.
 2. **Timezone** — e.g. `America/Santiago`, custom allowed.
 3. **Branch policy preset** — gitflow / github-flow / trunk-based / custom.
 4. **Custom branch lists** (only when preset = custom): allowed patterns (`feature/*`, `codex/*`, …) and protected names (`main`, …).

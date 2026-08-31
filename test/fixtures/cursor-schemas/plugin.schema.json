@@ -87,10 +87,7 @@
       "description": "Glob pattern(s) or path(s) to rule files."
     },
     "hooks": {
-      "oneOf": [
-        { "type": "string" },
-        { "type": "object" }
-      ],
+      "oneOf": [{ "type": "string" }, { "type": "object" }],
       "description": "Path to a hooks configuration file, or an inline hooks object."
     },
     "variables": {
@@ -169,10 +166,7 @@
         {
           "type": "array",
           "items": {
-            "oneOf": [
-              { "type": "string" },
-              { "type": "object" }
-            ]
+            "oneOf": [{ "type": "string" }, { "type": "object" }]
           }
         }
       ]

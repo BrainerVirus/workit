@@ -132,7 +132,7 @@ Expected: all commands exit 0.
 
 - [ ] **Step 2: Validate workflow documents**
 
-Call `workflow_docs_validate` with `docs/cursor-npx-runtime-pin/spec.md` and `docs/cursor-npx-runtime-pin/plan.md`.
+Call `workit_docs_validate` with `docs/cursor-npx-runtime-pin/spec.md` and `docs/cursor-npx-runtime-pin/plan.md`.
 
 Expected: `ok: true`, branch `bugfix/cursor-npx-runtime-pin`, and three ordered tasks.
 

@@ -1,6 +1,9 @@
-import { render } from "ink";
+import { render, Box, Text } from "ink";
+import { ConfirmInput, MultiSelect } from "@inkjs/ui";
+import { useState, type JSX } from "react";
 import { Wizard } from "./steps";
 import type { SetupValues } from "./wizard-state";
+import { resolveBasePath } from "./wizard-state";
 import { createLogger } from "@brainervirus/workit-core/src/core/logger";
 import { EVENT, errorDetail } from "@brainervirus/workit-core/src/core/boundary";
 import { setDiagnosticLogger } from "@brainervirus/workit-core/src/core/config";
@@ -12,6 +15,12 @@ import {
   type SetupResult,
 } from "@brainervirus/workit-core/src/core/setup.ts";
 import { readSetupState, type SetupState } from "@brainervirus/workit-core/src/core/setup-state";
+import {
+  applyUninstall,
+  planUninstall,
+  type UninstallHost,
+  type UninstallPlan,
+} from "@brainervirus/workit-core/src/core/uninstall";
 import { applyWizardBranchPolicy } from "./logic";
 import { COMMANDS, runFlowCommand, runHandoffCommand } from "./flow";
 
@@ -37,6 +46,7 @@ const COMMAND_DESCRIPTIONS: readonly (readonly [string, string])[] = [
   [COMMANDS.resume, "Resume a paused plan"],
   [COMMANDS.complete, "Complete a plan (ledger and verification gated)"],
   [COMMANDS["review-package"], "Write a review diff for a base..head range"],
+  [COMMANDS["append-advisory"], "Append an advisory line to docs/<slug>/sdd/advisories.md"],
   [COMMANDS.handoff, "Emit the destination handoff prompt for a plan"],
 ];
 
@@ -47,6 +57,7 @@ const HELP = `workit — workflow rails for agentic coding
 Usage:
   workit init      Run the interactive setup wizard
   workit doctor    Verify the offline installation health (add --json for a machine-readable report)
+  workit uninstall Remove workit host registrations interactively (~/.config/workit is kept)
 ${COMMAND_DESCRIPTIONS.map(([cmd, desc]) => `  ${cmd.padEnd(helpColumn)}${desc}`).join("\n")}
   workit           Show this help
 
@@ -81,19 +92,24 @@ function printMalformedBlocked(state: SetupState): void {
   }
 }
 
-async function runInit() {
+export async function runInit() {
   // RL-01: a malformed config.json used to throw inside the wizard's initial
   // draft (createInitialDraft -> readConfig) and die via the
   // unhandledRejection/uncaughtException handler. Detect it before render and
   // surface the same graceful blocked output Apply would have shown.
   const state = readSetupState();
   if (state.config.status === "malformed") {
+    // CA-02: even this earliest exit opens on a clean screen so the blocked
+    // output never sits atop the npx banner.
+    process.stdout.write("\x1b[2J\x1b[H");
     printMalformedBlocked(state);
     process.exit(1);
   }
   // ponytail: no-TTY guard — piping/disabling stdin would hang render(); print
   // guidance and exit nonzero instead of silently pretending setup happened
   if (process.stdin.isTTY !== true) {
+    // CA-02: same clean-screen rule as the malformed guard above.
+    process.stdout.write("\x1b[2J\x1b[H");
     console.log("workit init requires an interactive terminal (TTY).");
     for (const line of setupCompletionGuidance()) console.log(line);
     process.exit(1);
@@ -101,24 +117,49 @@ async function runInit() {
   logger.info(EVENT.installSteps, { step: "wizard_start" });
   const exits: Array<{ complete: boolean; values?: SetupValues }> = [];
   let done: () => void = () => {};
-  const { waitUntilExit, unmount } = render(
+  // CA-02: open on a clean screen so the npx banner never shares a frame with
+  // the wizard.
+  process.stdout.write("\x1b[2J\x1b[H");
+  const instance = render(
     <Wizard
       onExit={(complete, values) => {
         exits.push({ complete, values });
         done();
       }}
     />,
+    // The wizard guards stdin.isTTY above and prints non-TTY guidance instead
+    // of rendering, so when render is reached the session IS interactive.
+    // Pinning it overrides ink's CI heuristic (GitHub Actions sets CI=true),
+    // which would otherwise suppress all frames but the final one and make a
+    // real user's wizard output depend on ambient env vars (CA-02).
+    { interactive: true },
   );
-  done = unmount;
-  await waitUntilExit();
+  done = instance.unmount;
+  try {
+    await instance.waitUntilExit();
+  } finally {
+    // Lifecycle guarantee (CI repair): a surviving Ink instance would be
+    // REUSED by the next render() on this stdout (bound to this run's stdin),
+    // hijacking every later render; unmount() is idempotent after a normal
+    // onExit-driven teardown and also tears down when waitUntilExit rejects
+    // (tree crash), restoring the terminal in real usage too.
+    instance.unmount();
+  }
+  // CA-02: wipe the wizard's final frame before any post-exit output
+  // (apply summary, blocked paths, cancel message) so summary lines never
+  // interleave with leftover frames.
+  process.stdout.write("\x1b[2J\x1b[H");
   const exit = exits[0];
   if (exit && exit.complete && exit.values) {
-    const preview = buildSetupPreview(exit.values, { cwd: process.cwd(), env: process.env });
+    // D-06: Apply resolves its cwd from the same base path every wizard
+    // preview showed — env root or prompted path, never an implicit cwd.
+    const base = resolveBasePath(exit.values);
+    const preview = buildSetupPreview(exit.values, { cwd: base, env: process.env });
     if (!preview.ok) {
       printMalformedBlocked(preview.state);
       process.exit(1);
     }
-    const result = applySetupPreview(preview, { cwd: process.cwd(), env: process.env });
+    const result = applySetupPreview(preview, { cwd: base, env: process.env });
     // CA-06: the branch-policy screen is applied separately through the shared
     // proposal→write helper (byte-identical to the host init action) right
     // after the setup preview; its status line joins the summary below. The
@@ -126,11 +167,7 @@ async function runInit() {
     // cannot drift.
     let exitCode = result.exitCode;
     if (exit.values.branchPolicy) {
-      const bp = applyWizardBranchPolicy(
-        exit.values.branchPolicy,
-        process.env.WORKFLOW_WORKSPACE_ROOT ?? process.cwd(),
-        process.env,
-      );
+      const bp = applyWizardBranchPolicy(exit.values.branchPolicy, base, process.env);
       if (bp.ok) {
         console.log(`${String(bp.status).padEnd(11)} ${bp.config_path} — branch policy`);
       } else {
@@ -149,6 +186,120 @@ async function runInit() {
   process.exit(exit !== undefined && exit.complete ? 0 : 1);
 }
 
+// `workit uninstall` (Task 9): TTY-only interactive host picker plus a
+// reviewable action summary BEFORE any mutation (D-08). The wizard collects a
+// host selection and an explicit confirm; the outcome carries the ALREADY
+// FILTERED reviewed plan so apply reuses exactly what was displayed (no
+// duplicated selection predicate). Planning and applying go through the Task 8
+// core module with injectable homes resolved from process.env.HOME —
+// ~/.config/workit is never an action target. Exits: 0 ok/cancelled/nothing to
+// remove · 1 partial failure · 2 non-TTY usage error (CA-10, CA-13).
+type UninstallOutcome = { confirmed: boolean; hosts: UninstallHost[]; plan: UninstallPlan | null };
+
+const UNINSTALL_HOST_OPTIONS = [
+  { label: "OpenCode", value: "opencode" as const },
+  { label: "Cursor", value: "cursor" as const },
+];
+
+function UninstallWizard({ onExit }: { onExit: (outcome: UninstallOutcome) => void }): JSX.Element {
+  const [hosts, setHosts] = useState<UninstallHost[]>([]);
+  const [plan, setPlan] = useState<UninstallPlan | null>(null);
+  if (!plan) {
+    return (
+      <Box flexDirection="column" gap={1}>
+        <Text bold>Uninstall workit</Text>
+        <Text dimColor>Select the hosts to remove workit from (space to toggle):</Text>
+        <MultiSelect
+          options={UNINSTALL_HOST_OPTIONS}
+          defaultValue={[]}
+          onChange={(values) => setHosts(values as UninstallHost[])}
+          onSubmit={(values) => {
+            setHosts(values as UninstallHost[]);
+            setPlan(planUninstall({ env: process.env }));
+          }}
+        />
+        <Text dimColor>Enter to continue</Text>
+      </Box>
+    );
+  }
+  const selected = plan.hosts.filter((h) => hosts.includes(h.host));
+  // The reviewed plan IS the filtered plan: the outcome hands apply exactly
+  // what this screen displayed, so display and applied set cannot drift.
+  const reviewed: UninstallPlan = { hosts: selected };
+  return (
+    <Box flexDirection="column" gap={1}>
+      <Text bold>Uninstall workit — review</Text>
+      {selected.every((h) => h.actions.length === 0) ? (
+        <Text>No workit registrations found for the selected hosts.</Text>
+      ) : (
+        selected.flatMap((h) =>
+          h.actions.map((a) => (
+            <Text key={`${h.host}:${a.path}`}>
+              • [{h.host}] {a.detail}: {a.path}
+            </Text>
+          )),
+        )
+      )}
+      <Text>Apply uninstall? (y/N)</Text>
+      <ConfirmInput
+        onConfirm={() => onExit({ confirmed: true, hosts, plan: reviewed })}
+        onCancel={() => onExit({ confirmed: false, hosts, plan: reviewed })}
+      />
+    </Box>
+  );
+}
+
+export async function runUninstall() {
+  if (process.stdin.isTTY !== true) {
+    console.log("workit uninstall requires an interactive terminal (TTY).");
+    console.log(
+      "It removes workit registrations from OpenCode and/or Cursor; your ~/.config/workit configuration is always kept.",
+    );
+    process.exit(2);
+  }
+  const outcomes: UninstallOutcome[] = [];
+  let done: () => void = () => {};
+  const instance = render(
+    <UninstallWizard
+      onExit={(outcome) => {
+        outcomes.push(outcome);
+        done();
+      }}
+    />,
+    // Same stdin.isTTY guard above: interactive by construction. Pinning it
+    // keeps rendering independent of ambient CI env vars.
+    { interactive: true },
+  );
+  done = instance.unmount;
+  try {
+    await instance.waitUntilExit();
+  } finally {
+    // Same lifecycle guarantee as runInit: never leave a live Ink instance
+    // mounted on this stdout, even if waitUntilExit rejects.
+    instance.unmount();
+  }
+  const outcome = outcomes[0];
+  if (!outcome || !outcome.confirmed || !outcome.plan) {
+    console.log("Uninstall cancelled — nothing was changed.");
+    process.exit(0);
+  }
+  // The reviewed plan is already filtered to the selected hosts (the review
+  // screen built it) — apply exactly what was displayed, no re-filtering.
+  const actions = outcome.plan.hosts.flatMap((h) => h.actions);
+  if (actions.length === 0) {
+    console.log("Nothing to remove for the selected hosts.");
+    process.exit(0);
+  }
+  const result = applyUninstall(outcome.plan, { env: process.env });
+  for (const entry of result.entries) {
+    console.log(
+      `${entry.status.padEnd(8)} ${entry.path}${entry.detail ? ` — ${entry.detail}` : ""}`,
+    );
+  }
+  console.log(result.ok ? "Uninstall complete." : "Uninstall finished with problems.");
+  process.exit(result.ok ? 0 : 1);
+}
+
 // `workit doctor` (DG-07): offline engine, human or --json report, exit code
 // reflects the health. Never writes the report to stderr (the logger owns that).
 function runDoctorCommand(args: string[]) {
@@ -156,7 +307,9 @@ function runDoctorCommand(args: string[]) {
   if (args.includes("--json")) {
     console.log(JSON.stringify(report, null, 2));
   } else {
-    console.log(`workit doctor — ${report.ok ? "healthy" : "problems found"} (offline)`);
+    console.log(
+      `workit doctor — ${report.ok ? "healthy" : "problems found"} (${report.offline ? "offline" : "online"})`,
+    );
     for (const check of report.checks) {
       const mark = check.status === "fail" ? "FAIL" : check.status === "warn" ? "WARN" : "ok  ";
       console.log(`${mark} ${check.id} — ${check.detail}`);
@@ -191,6 +344,8 @@ if (import.meta.main) {
     process.exit(await runFlowCommand(args.slice(1)));
   } else if (subcommand === "handoff") {
     process.exit(await runHandoffCommand(args.slice(1)));
+  } else if (subcommand === "uninstall") {
+    await runUninstall();
   } else {
     console.log(HELP);
     process.exit(0);

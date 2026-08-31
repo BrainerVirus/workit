@@ -159,7 +159,8 @@ test("packed CLI setup flow configures OpenCode + Cursor and doctor verifies it"
     expect(mcp.mcpServers?.workit?.command).toBe("npx");
     expect(mcp.mcpServers?.workit?.args).toEqual([
       "-y",
-      "--package=@brainervirus/workit-cursor@0.8.5",
+      "--prefer-online",
+      "--package=@brainervirus/workit-cursor@latest",
       "workit-cursor-mcp",
       "${workspaceFolder}",
     ]);
@@ -359,6 +360,12 @@ test("packed CLI: non-TTY init gives guidance + nonzero; --help exits 0", () => 
     expect(init.stdout).toContain("workit doctor");
     expect(init.stdout).toContain("/wk-status");
     expect(init.stderr).not.toContain('"initialization"');
+
+    // non-TTY uninstall is a usage error (exit 2), not an interactive failure
+    const uninstall = runInIsolation(install, "node", [entry, "uninstall"], env);
+    expect(uninstall.status, uninstall.stdout + uninstall.stderr).toBe(2);
+    expect(uninstall.stdout).toContain("interactive terminal");
+    expect(uninstall.stderr).toBe("");
   } finally {
     rmSync(install, { recursive: true, force: true });
   }
@@ -423,7 +430,7 @@ const fileSha256 = (file: string) => createHash("sha256").update(readFileSync(fi
 // Task 6 (CA-19, CA-21): the packed flow/handoff surface. The bundled CLI is
 // run as a subprocess against a real extracted-package fixture so resolution,
 // confirmation, and core-generated output all survive the packed Node bundle.
-test("packed CLI: help lists every flow and handoff command", () => {
+test("packed CLI: help lists every flow, handoff, and uninstall command", () => {
   const packs = packWorkspacePackages();
   const install = tmp("wk-packedcli-help-");
   try {
@@ -444,6 +451,7 @@ test("packed CLI: help lists every flow and handoff command", () => {
       "workit flow complete --plan <path> [--confirm]",
       "workit flow review-package --plan <path> --base <sha> --head <sha> [--confirm]",
       "workit handoff --message <text>",
+      "workit uninstall",
     ]) {
       expect(help.stdout, command).toContain(command);
     }

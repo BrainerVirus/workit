@@ -92,7 +92,7 @@ test("a throwing MCP tool handler returns isError:true structured content", asyn
 
     // host stays usable afterward
     const git = await server.request("tools/call", {
-      name: "workflow_git_context",
+      name: "workit_git_context",
       arguments: { workspace_root: process.cwd() },
     });
     expect((git as any).result.isError).not.toBe(true);
@@ -107,7 +107,7 @@ test("a domain error return is marked isError:true, not a successful-looking res
   try {
     await initialize(server);
     const response = await server.request("tools/call", {
-      name: "workflow_changelog_apply",
+      name: "workit_changelog_apply",
       arguments: {},
     });
     const result = (response as any).result;
@@ -120,6 +120,31 @@ test("a domain error return is marked isError:true, not a successful-looking res
       arguments: {},
     });
     expect((status as any).result.isError).not.toBe(true);
+  } finally {
+    server.child.kill();
+  }
+});
+
+test("set-config locale matches core LOCALE_RE (es-419 accepted, es_cl rejected)", async () => {
+  const configDir = mkdtempSync(path.join(os.tmpdir(), "wf-locale-cfg-"));
+  const server = startServer({ WORKFLOW_TOOLKIT_CONFIG: configDir });
+  try {
+    await initialize(server);
+    const accepted = await server.request("tools/call", {
+      name: "workit_init_apply",
+      arguments: { action: "config", confirmed: false, locale: "es-419" },
+    });
+    const ok = (accepted as any).result;
+    expect(ok.isError).not.toBe(true);
+    expect(JSON.stringify(ok)).toContain('"locale":"es-419"');
+
+    const rejected = await server.request("tools/call", {
+      name: "workit_init_apply",
+      arguments: { action: "config", confirmed: false, locale: "es_cl" },
+    });
+    const bad = (rejected as any).result;
+    expect(bad.isError).toBe(true);
+    expect(bad.content?.[0]?.text ?? "").toContain("invalid locale");
   } finally {
     server.child.kill();
   }

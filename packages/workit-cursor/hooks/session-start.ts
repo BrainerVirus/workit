@@ -126,19 +126,19 @@ HARD-GATE: Any user choice with options → call Cursor AskQuestion directly wit
 </workit-askquestion-hard-gate>
 
 <workit-visual-companion>
-HARD-GATE: NEVER offer Superpowers visual companion or open a browser tab. For UI wireframes use workflow_present_ascii; for flows use workflow_present_flow. Overrides Superpowers brainstorming visual companion offer.
+HARD-GATE: NEVER offer Superpowers visual companion or open a browser tab. For UI wireframes use workit_present_ascii; for flows use workit_present_flow. Overrides Superpowers brainstorming visual companion offer.
 </workit-visual-companion>
 
 <workit-no-worktrees>
-HARD-GATE: NEVER using-git-worktrees or git worktree. In-place feature/* or bugfix/* checkout only via workflow_resolve_branch + workflow_branch_setup. Dirty tree → native AskQuestion before checkout.
+HARD-GATE: NEVER using-git-worktrees or git worktree. In-place feature/* or bugfix/* checkout only via workit_resolve_branch + workit_branch_setup. Dirty tree → native AskQuestion before checkout.
 </workit-no-worktrees>
 
 <workit-sdd-path>
-HARD-GATE: NEVER .superpowers/sdd. ALWAYS workflow_sdd_context with plan_path first — resolves canonical docs/<slug>/sdd/ and creates nothing (no empty ledger; progress.md appears only on the first confirmed append). workflow_sdd_task_brief, workflow_sdd_review_package, workflow_sdd_append_progress only.
+HARD-GATE: NEVER .superpowers/sdd. ALWAYS workit_sdd_context with plan_path first — resolves canonical docs/<slug>/sdd/ and creates nothing (no empty ledger; progress.md appears only on the first confirmed append). workit_sdd_task_brief, workit_sdd_review_package, workit_sdd_append_progress only.
 </workit-sdd-path>
 
 <workit-todowrite>
-HARD-GATE: After workflow_sdd_context, call Cursor TodoWrite with returned todos (merge: false). SDD ledger is persistence — TodoWrite is the native task list UI. Keep in_progress/completed in sync each task.
+HARD-GATE: After workit_sdd_context, call Cursor TodoWrite with returned todos (merge: false). SDD ledger is persistence — TodoWrite is the native task list UI. Keep in_progress/completed in sync each task.
 </workit-todowrite>
 
 <workit-superpowers-doc-contract>

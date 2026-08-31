@@ -83,7 +83,7 @@ test("session start performs no network sync — network-unavailable behavior is
   }
 });
 
-test("session-start contract: ordinary sessions retain five choices, marked destinations four", () => {
+test("session-start contract: six source choices, marked destinations five", () => {
   const plain = mkdtempSync(path.join(os.tmpdir(), "wf-hook-contract-plain-"));
   const marked = mkdtempSync(path.join(os.tmpdir(), "wf-hook-contract-dest-"));
   try {
@@ -108,24 +108,29 @@ test("session-start contract: ordinary sessions retain five choices, marked dest
     expect(plainOut.status, plainOut.stderr ?? "").toBe(0);
     const plainText = JSON.parse(plainOut.stdout).additional_context as string;
     // The hook serves the exact canonical contract bytes and the ordinary
-    // five-choice reminder for a session with no marked destination.
+    // six-choice reminder for a session with no marked destination.
     expect(plainText).toContain(contractText.trim());
     expect(plainText).toContain(
-      "Subagent-driven, Inline, Handoff (new session only), Review spec first, Review plan first",
+      "Subagent-driven, Inline, Handoff (new session only), Review spec first, Review plan first, Change model first",
     );
+    expect(plainText).toContain("Change model first");
     expect(reminderOf(plainText)).toContain("Handoff");
 
     const destOut = run(marked, JSON.stringify({ workspace_roots: [marked] }));
     expect(destOut.status, destOut.stderr ?? "").toBe(0);
     const destText = JSON.parse(destOut.stdout).additional_context as string;
     expect(destText).toContain(contractText.trim());
-    // The marked-session reminder carries the marker and the four-choice
+    // The marked-session reminder carries the marker and the five-choice
     // allow-list, and never offers the originating Handoff option.
     const destReminder = reminderOf(destText);
     expect(destReminder).toContain(HANDOFF_DESTINATION_MARKER);
     expect(destReminder).not.toContain("Handoff");
-    expect(destReminder).toContain("Subagent-driven, Inline, Review spec first, Review plan first");
-    expect(destText).toContain("Subagent-driven, Inline, Review spec first, Review plan first");
+    expect(destReminder).toContain(
+      "Subagent-driven, Inline, Review spec first, Review plan first, Change model first",
+    );
+    expect(destText).toContain(
+      "Subagent-driven, Inline, Review spec first, Review plan first, Change model first",
+    );
   } finally {
     rmSync(plain, { recursive: true, force: true });
     rmSync(marked, { recursive: true, force: true });

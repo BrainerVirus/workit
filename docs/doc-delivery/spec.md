@@ -14,7 +14,7 @@ Goal: (1) teach the agent to deliver docs as clickable markdown links with a con
 
 1. **Clickable delivery rule**: the contract reminder (Spec 7) gains one line — "Deliver specs/plans as `[spec.md](docs/<slug>/spec.md)` markdown links plus a 3-5 bullet summary (Context, Goals, key decisions, status)." The brainstorming/wf-implement skills' user-review sections repeat it.
 2. **Backtick-ref detector**: `detectBacktickDocRefs(text)` in `src/core/detector.ts` — matches `` `docs/<path>.md` `` occurrences without a markdown link `[` in the same message. The Spec 7 hook injects a correction into the next turn: "Deliver with a clickable markdown link and summarize the content."
-3. **SDD gitignore validation**: `workflow_docs_validate` reports `sdd_not_ignored` (hard) when `docs/<slug>/sdd/` exists and `git check-ignore` does not cover it. `workflow_docs_promote` (Spec 5) requires the sdd dir be ignored.
+3. **SDD gitignore validation**: `workit_docs_validate` reports `sdd_not_ignored` (hard) when `docs/<slug>/sdd/` exists and `git check-ignore` does not cover it. `workit_docs_promote` (Spec 5) requires the sdd dir be ignored.
 4. **Minimal project gitignore via wf-init**: when setting up a project, ensure `.gitignore` contains `docs/*/sdd/` plus common non-shared entries (`.DS_Store`, `Thumbs.db`, `*.swp`, `.idea/`, `.vscode/`, `.env`, `node_modules/`, `dist/`, `*.log`, `.cache/`). Only append missing lines; never overwrite an existing `.gitignore`. Requires `confirmed`.
 
 ## Non-goals
@@ -52,11 +52,11 @@ Hook (Spec 7 mechanism): after prose-choice detection, also check `detectBacktic
 
 In `src/core/docs-validate.ts`, after existing checks: if `docs/<slug>/sdd` exists (slug derived from spec path), run `git check-ignore docs/<slug>/sdd/<file>` (via `execFileSync`); if not ignored → hard finding `sdd_not_ignored` with the fix message.
 
-`workflow_docs_promote` (`src/core/docs-repo.ts`): before copying, if the sdd dir exists and is not ignored, refuse with the same message unless `force`.
+`workit_docs_promote` (`src/core/docs-repo.ts`): before copying, if the sdd dir exists and is not ignored, refuse with the same message unless `force`.
 
 ### 4. wf-init gitignore
 
-In the `config` action of `workflow_toolkit_init_apply` (or a dedicated `gitignore` action): ensure the workspace `.gitignore` contains the entries. Read existing; append missing lines; write back. Requires `confirmed`. The entry list:
+In the `config` action of `workit_init_apply` (or a dedicated `gitignore` action): ensure the workspace `.gitignore` contains the entries. Read existing; append missing lines; write back. Requires `confirmed`. The entry list:
 
 ```gitignore
 # workflow-toolkit: SDD working state (never commit)
@@ -80,13 +80,13 @@ dist/
 1. Agent writes spec → delivers with `[spec.md](docs/...)` + summary (reminder enforces).
 2. If it uses backticks only → next turn gets the doc-delivery correction.
 3. Project setup via wf-init → `.gitignore` gains the entries → sdd stays untracked.
-4. `workflow_docs_validate`/`promote` flag sdd dirs that are not ignored.
+4. `workit_docs_validate`/`promote` flag sdd dirs that are not ignored.
 
 ## Acceptance criteria
 
 - CA-01: `REMINDER_TEXT` (and the full contract template) includes the clickable-delivery line — `[spec.md](docs/<slug>/spec.md)` + 3-5 bullet summary; the brainstorming/wf-implement skills' user-review sections repeat it.
 - CA-02: `detectBacktickDocRefs` matches backtick-only `` `docs/<path>.md` `` refs; returns null when a markdown link exists in the same message or there are no refs.
-- CA-03: `workflow_docs_validate` reports a hard `sdd_not_ignored` finding when `docs/<slug>/sdd/` exists and is not gitignored; `workflow_docs_promote` refuses unless the sdd dir is ignored or `force: true`.
+- CA-03: `workit_docs_validate` reports a hard `sdd_not_ignored` finding when `docs/<slug>/sdd/` exists and is not gitignored; `workit_docs_promote` refuses unless the sdd dir is ignored or `force: true`.
 - CA-04: wf-init appends the missing `.gitignore` entries (`docs/*/sdd/` + common cruft) without duplicating lines or overwriting existing custom entries; requires `confirmed`.
 
 ## Error handling

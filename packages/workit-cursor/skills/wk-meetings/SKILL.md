@@ -16,7 +16,7 @@ If unsure, call `workit_status`. Stop if `ready: false`.
 
 ## Step 1 — Context (required)
 
-Call MCP `workflow_youtrack_context` with `mode: "meetings"` (no `issue_id` yet). Stop on error.
+Call MCP `workit_youtrack_context` with `mode: "meetings"` (no `issue_id` yet). Stop on error.
 
 ## Step 2 — Pick meeting type (required)
 
@@ -30,7 +30,7 @@ Use native **AskQuestion** with `meetingOptions` from context:
 
 ## Step 3 — Duration
 
-Ask how much meeting time today (English UI). User text → `workflow_youtrack_parse_duration`. **Do not compute minutes yourself.**
+Ask how much meeting time today (English UI). User text → `workit_youtrack_parse_duration`. **Do not compute minutes yourself.**
 
 ## Step 4 — Preview + confirm
 
@@ -40,9 +40,9 @@ Use native **AskQuestion** to confirm logging the shown meeting time; on yes:
 
 ## Step 5 — Log time only
 
-Call `workflow_youtrack_log_time` with `issueId`, `minutes`, `text` (from `workItemText`). **Do not pass `date`** — tool uses epoch ms automatically.
+Call `workit_youtrack_log_time` with `issueId`, `minutes`, `text` (from `workItemText`). **Do not pass `date`** — tool uses epoch ms automatically.
 
-**Never** call `workflow_youtrack_post` from this skill.
+**Never** call `workit_youtrack_post` from this skill.
 
 ## Rules
 

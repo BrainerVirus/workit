@@ -85,127 +85,163 @@ const frontmatterKeys = (file: string): Set<string> => {
   return keys;
 };
 
-test("both official JSON schemas validate the tracked manifests (CA-13)", () => {
-  const validate = ajv();
-  const pluginSchema = JSON.parse(read("test/fixtures/cursor-schemas/plugin.schema.json"));
-  const marketSchema = JSON.parse(read("test/fixtures/cursor-schemas/marketplace.schema.json"));
-  const market = json(MARKETPLACE_REL);
-  const plugin = json(PLUGIN_MANIFEST_REL);
-  const marketValid = validate.validate(marketSchema, market);
-  expect(validate.errors ?? [], "marketplace.json").toEqual([]);
-  expect(marketValid).toBe(true);
-  const pluginValid = validate.validate(pluginSchema, plugin);
-  expect(validate.errors ?? [], "plugin.json").toEqual([]);
-  expect(pluginValid).toBe(true);
-});
+test(
+  "both official JSON schemas validate the tracked manifests (CA-13)",
+  () => {
+    const validate = ajv();
+    const pluginSchema = JSON.parse(read("test/fixtures/cursor-schemas/plugin.schema.json"));
+    const marketSchema = JSON.parse(read("test/fixtures/cursor-schemas/marketplace.schema.json"));
+    const market = json(MARKETPLACE_REL);
+    const plugin = json(PLUGIN_MANIFEST_REL);
+    const marketValid = validate.validate(marketSchema, market);
+    expect(validate.errors ?? [], "marketplace.json").toEqual([]);
+    expect(marketValid).toBe(true);
+    const pluginValid = validate.validate(pluginSchema, plugin);
+    expect(validate.errors ?? [], "plugin.json").toEqual([]);
+    expect(pluginValid).toBe(true);
+  },
+  { timeout: 60_000 },
+);
 
-test("marketplace.json source resolves to the plugin dir relative to the repo root", () => {
-  const market = json<{ plugins: { name: string; source: string }[] }>(MARKETPLACE_REL);
-  expect(market.plugins).toHaveLength(1);
-  const entry = market.plugins[0];
-  expect(entry.source).toBe("packages/workit-cursor");
-  const pluginRoot = path.join(REPO_ROOT, entry.source);
-  expect(existsSync(path.join(pluginRoot, ".cursor-plugin/plugin.json"))).toBe(true);
-  const plugin = json<{ name: string }>(PLUGIN_MANIFEST_REL);
-  expect(plugin.name).toBe(entry.name);
-});
+test(
+  "marketplace.json source resolves to the plugin dir relative to the repo root",
+  () => {
+    const market = json<{ plugins: { name: string; source: string }[] }>(MARKETPLACE_REL);
+    expect(market.plugins).toHaveLength(1);
+    const entry = market.plugins[0];
+    expect(entry.source).toBe("packages/workit-cursor");
+    const pluginRoot = path.join(REPO_ROOT, entry.source);
+    expect(existsSync(path.join(pluginRoot, ".cursor-plugin/plugin.json"))).toBe(true);
+    const plugin = json<{ name: string }>(PLUGIN_MANIFEST_REL);
+    expect(plugin.name).toBe(entry.name);
+  },
+  { timeout: 60_000 },
+);
 
-test("every manifest component path resolves inside the plugin root, logo exists (CA-14/CA-17)", () => {
-  const plugin = json<Record<string, string | string[]>>(PLUGIN_MANIFEST_REL);
-  const root = path.join(REPO_ROOT, PLUGIN_DIR_REL);
-  const fields = ["skills", "rules", "mcpServers", "hooks"] as const;
-  for (const field of fields) {
-    const value = plugin[field];
-    for (const rel of Array.isArray(value) ? value : [value]) {
-      expect(rel, field).not.toContain("..");
-      expect(rel, field).not.toMatch(/^\//);
-      const abs = path.join(root, rel);
-      expect(existsSync(abs), `${field}: ${rel}`).toBe(true);
+test(
+  "every manifest component path resolves inside the plugin root, logo exists (CA-14/CA-17)",
+  () => {
+    const plugin = json<Record<string, string | string[]>>(PLUGIN_MANIFEST_REL);
+    const root = path.join(REPO_ROOT, PLUGIN_DIR_REL);
+    const fields = ["skills", "rules", "mcpServers", "hooks"] as const;
+    for (const field of fields) {
+      const value = plugin[field];
+      for (const rel of Array.isArray(value) ? value : [value]) {
+        expect(rel, field).not.toContain("..");
+        expect(rel, field).not.toMatch(/^\//);
+        const abs = path.join(root, rel);
+        expect(existsSync(abs), `${field}: ${rel}`).toBe(true);
+      }
     }
-  }
-  const logo = path.join(root, plugin.logo as string);
-  expect(existsSync(logo), "logo").toBe(true);
-});
+    const logo = path.join(root, plugin.logo as string);
+    expect(existsSync(logo), "logo").toBe(true);
+  },
+  { timeout: 60_000 },
+);
 
-test("all declared skills and rules have valid frontmatter (CA-15)", () => {
-  const root = path.join(REPO_ROOT, PLUGIN_DIR_REL);
-  for (const [dir, skills] of [
-    [path.join(root, "skills"), CANONICAL_SKILLS.workit],
-    [path.join(root, "vendor/superpowers/skills"), CANONICAL_SKILLS.superpowers],
-  ] as const) {
-    expect(validateSkillManifests(dir, skills, "skills")).toBeNull();
-    for (const skill of skills) {
-      const keys = frontmatterKeys(path.join(dir, skill, "SKILL.md"));
-      expect(keys.has("name"), `${skill}/SKILL.md name`).toBe(true);
-      expect(keys.has("description"), `${skill}/SKILL.md description`).toBe(true);
+test(
+  "all declared skills and rules have valid frontmatter (CA-15)",
+  () => {
+    const root = path.join(REPO_ROOT, PLUGIN_DIR_REL);
+    for (const [dir, skills] of [
+      [path.join(root, "skills"), CANONICAL_SKILLS.workit],
+      [path.join(root, "vendor/superpowers/skills"), CANONICAL_SKILLS.superpowers],
+    ] as const) {
+      expect(validateSkillManifests(dir, skills, "skills")).toBeNull();
+      for (const skill of skills) {
+        const keys = frontmatterKeys(path.join(dir, skill, "SKILL.md"));
+        expect(keys.has("name"), `${skill}/SKILL.md name`).toBe(true);
+        expect(keys.has("description"), `${skill}/SKILL.md description`).toBe(true);
+      }
     }
-  }
-  const rulesDir = path.join(root, "rules");
-  for (const rule of readdirSync(rulesDir).filter((f) => f.endsWith(".mdc"))) {
-    const keys = frontmatterKeys(path.join(rulesDir, rule));
-    expect(keys.has("description"), `${rule} description`).toBe(true);
-  }
-});
+    const rulesDir = path.join(root, "rules");
+    for (const rule of readdirSync(rulesDir).filter((f) => f.endsWith(".mdc"))) {
+      const keys = frontmatterKeys(path.join(rulesDir, rule));
+      expect(keys.has("description"), `${rule} description`).toBe(true);
+    }
+  },
+  { timeout: 60_000 },
+);
 
-test("no active runtime path targets an ignored dist file (CA-17)", () => {
-  for (const rel of [
-    "packages/workit-cursor/mcp.json",
-    "packages/workit-cursor/hooks/hooks-cursor.json",
-  ]) {
-    const raw = read(rel);
-    expect(raw, rel).not.toContain("dist/");
-    expect(raw, rel).not.toContain("run-server");
-    expect(raw, rel).not.toContain("session-start.js");
-  }
-});
+test(
+  "no active runtime path targets an ignored dist file (CA-17)",
+  () => {
+    for (const rel of [
+      "packages/workit-cursor/mcp.json",
+      "packages/workit-cursor/hooks/hooks-cursor.json",
+    ]) {
+      const raw = read(rel);
+      expect(raw, rel).not.toContain("dist/");
+      expect(raw, rel).not.toContain("run-server");
+      expect(raw, rel).not.toContain("session-start.js");
+    }
+  },
+  { timeout: 60_000 },
+);
 
-test("rebuilding the sanitized vendor tree yields no diff (CA-15)", () => {
-  expect(validateMarketplace(REPO_ROOT)).toEqual([]);
-});
+test(
+  "rebuilding the sanitized vendor tree yields no diff (CA-15)",
+  () => {
+    expect(validateMarketplace(REPO_ROOT)).toEqual([]);
+  },
+  { timeout: 60_000 },
+);
 
-test("vendor content drift in a non-last skill is detected (regression)", () => {
-  const dir = cleanCheckoutCopy();
-  try {
-    const skill = path.join(
-      dir,
-      PLUGIN_DIR_REL,
-      "vendor/superpowers/skills/brainstorming/SKILL.md",
-    );
-    appendFileSync(skill, "\n// sentinel drift line\n");
-    const errors = validateMarketplace(dir);
-    expect(errors.some((e) => e.includes("vendor drift"))).toBe(true);
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
+test(
+  "vendor content drift in a non-last skill is detected (regression)",
+  () => {
+    const dir = cleanCheckoutCopy();
+    try {
+      const skill = path.join(
+        dir,
+        PLUGIN_DIR_REL,
+        "vendor/superpowers/skills/brainstorming/SKILL.md",
+      );
+      appendFileSync(skill, "\n// sentinel drift line\n");
+      const errors = validateMarketplace(dir);
+      expect(errors.some((e) => e.includes("vendor drift"))).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  },
+  { timeout: 60_000 },
+);
 
-test("validate:cursor-marketplace passes on a clean git ls-files checkout (CA-21)", () => {
-  const dir = cleanCheckoutCopy();
-  try {
-    const run = spawnSync("bun", ["run", "validate:cursor-marketplace", dir], {
-      cwd: REPO_ROOT,
-      encoding: "utf8",
-    });
-    expect(run.status, run.stderr || run.stdout).toBe(0);
-    expect(run.stdout).toContain("marketplace validation passed");
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
+test(
+  "validate:cursor-marketplace passes on a clean git ls-files checkout (CA-21)",
+  () => {
+    const dir = cleanCheckoutCopy();
+    try {
+      const run = spawnSync("bun", ["run", "validate:cursor-marketplace", dir], {
+        cwd: REPO_ROOT,
+        encoding: "utf8",
+      });
+      expect(run.status, run.stderr || run.stdout).toBe(0);
+      expect(run.stdout).toContain("marketplace validation passed");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  },
+  { timeout: 60_000 },
+);
 
-test("inline-object hooks/mcpServers never crash the component-path loop (T9)", () => {
-  const dir = cleanCheckoutCopy();
-  try {
-    const manifestPath = path.join(dir, PLUGIN_MANIFEST_REL);
-    const plugin = JSON.parse(readFileSync(manifestPath, "utf8"));
-    plugin.hooks = { "post-tool-use": { command: "npx workit-cursor-session-start" } };
-    plugin.mcpServers = { workit: { command: "npx", args: ["-y", "workit-cursor-mcp"] } };
-    writeFileSync(manifestPath, JSON.stringify(plugin, null, 2));
-    // The validator must not throw on the schema-valid inline-object form; it
-    // either validates cleanly or reports schema errors — never a TypeError.
-    const errors = validateMarketplace(dir);
-    expect(Array.isArray(errors)).toBe(true);
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
+test(
+  "inline-object hooks/mcpServers never crash the component-path loop (T9)",
+  () => {
+    const dir = cleanCheckoutCopy();
+    try {
+      const manifestPath = path.join(dir, PLUGIN_MANIFEST_REL);
+      const plugin = JSON.parse(readFileSync(manifestPath, "utf8"));
+      plugin.hooks = { "post-tool-use": { command: "npx workit-cursor-session-start" } };
+      plugin.mcpServers = { workit: { command: "npx", args: ["-y", "workit-cursor-mcp"] } };
+      writeFileSync(manifestPath, JSON.stringify(plugin, null, 2));
+      // The validator must not throw on the schema-valid inline-object form; it
+      // either validates cleanly or reports schema errors — never a TypeError.
+      const errors = validateMarketplace(dir);
+      expect(Array.isArray(errors)).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  },
+  { timeout: 60_000 },
+);

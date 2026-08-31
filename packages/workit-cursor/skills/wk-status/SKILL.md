@@ -82,4 +82,4 @@ Use `items[youtrack_token].token_create_url` / `token_edit_path`, or top-level `
 
 - Do not call YouTrack HTTP directly — `workit_status` includes verify.
 - Do not ask user to paste token — point them to edit the token file if `placeholder: true`.
-- Optional: `workflow_youtrack_verify_token` only if user asks to re-test API alone.
+- Optional: `workit_youtrack_verify_token` only if user asks to re-test API alone.

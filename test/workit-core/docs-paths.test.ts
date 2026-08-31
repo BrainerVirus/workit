@@ -334,12 +334,12 @@ test("probeLegacyDocs reports legacy without any prepare side effects", () => {
   }
 });
 
-test("workflow_docs_layout prepare registers on the opencode adapter and prepares a fresh slug", async () => {
+test("workit_docs_layout prepare registers on the opencode adapter and prepares a fresh slug", async () => {
   const root = tmp();
   try {
     const tools = createDocsRepoTools();
-    expect(typeof tools.workflow_docs_layout).toBe("object");
-    const raw = await tools.workflow_docs_layout.execute({ slug }, {
+    expect(typeof tools.workit_docs_layout).toBe("object");
+    const raw = await tools.workit_docs_layout.execute({ slug }, {
       directory: root,
       worktree: root,
     } as never);
@@ -446,11 +446,11 @@ test("prepareDocsLayout errors when docs/<slug> exists as a regular file", () =>
   }
 });
 
-test("workflow_docs_layout prepare rejects traversal through the opencode adapter", async () => {
+test("workit_docs_layout prepare rejects traversal through the opencode adapter", async () => {
   const root = tmp();
   try {
     const tools = createDocsRepoTools();
-    const raw = await tools.workflow_docs_layout.execute({ plan_path: "../outside.md" }, {
+    const raw = await tools.workit_docs_layout.execute({ plan_path: "../outside.md" }, {
       directory: root,
       worktree: root,
     } as never);

@@ -12,6 +12,7 @@ import { parseVerifyOutput } from "@brainervirus/workit-core/src/core/verify-par
 import { branchSetup, resolveBranchPolicyFor } from "@brainervirus/workit-core/src/core/branch";
 import {
   configDir,
+  getDiagnosticLogger,
   mergeConfigValues,
   readConfig,
   writeConfig,
@@ -237,12 +238,12 @@ export function createRepoTools(runtime: RepoRuntime = defaultRuntime) {
       execute: async (_input, context) =>
         output(scriptResult(await runtime.toolkitStatus(context.directory), json)),
     }),
-    workflow_git_context: tool({
+    workit_git_context: tool({
       description: "Read Git branch and change context",
       args: { paths: tool.schema.array(tool.schema.string()).optional() },
       execute: async ({ paths }, context) => output(ok(gitContext(context.directory, paths ?? []))),
     }),
-    workflow_verify: tool({
+    workit_verify: tool({
       description: "Discover and run repository verification",
       args: { dry_run: tool.schema.boolean().optional() },
       execute: async ({ dry_run }, context) =>
@@ -253,19 +254,19 @@ export function createRepoTools(runtime: RepoRuntime = defaultRuntime) {
           ),
         ),
     }),
-    workflow_pr_context: tool({
+    workit_pr_context: tool({
       description: "Gather branch-exclusive PR context",
       args: { range: tool.schema.string().optional() },
       execute: async ({ range }, context) =>
         contextWithRange(context.directory, runtime.prContext, range, parsePr),
     }),
-    workflow_changelog_context: tool({
+    workit_changelog_context: tool({
       description: "Gather changelog context",
       args: { range: tool.schema.string().optional() },
       execute: async ({ range }, context) =>
         contextWithRange(context.directory, runtime.changelogContext, range, parseChangelog),
     }),
-    workflow_release_notes_context: tool({
+    workit_release_notes_context: tool({
       description: "Gather release notes for an explicit range",
       args: { range_or_tag: tool.schema.string() },
       execute: async ({ range_or_tag }, context) =>
@@ -278,13 +279,13 @@ export function createRepoTools(runtime: RepoRuntime = defaultRuntime) {
               parseRelease,
             ),
     }),
-    workflow_docs_context: tool({
+    workit_docs_context: tool({
       description: "Gather documentation refresh context",
       args: { range: tool.schema.string().optional() },
       execute: async ({ range }, context) =>
         output(scriptResult(runtime.docsContext(context.directory, range), parseDocs)),
     }),
-    workflow_changelog_apply: tool({
+    workit_changelog_apply: tool({
       description: "Apply confirmed Keep a Changelog entries to Unreleased",
       args: {
         confirmed: tool.schema.boolean(),
@@ -319,7 +320,7 @@ export function createRepoTools(runtime: RepoRuntime = defaultRuntime) {
         );
       },
     }),
-    workflow_branch_setup: tool({
+    workit_branch_setup: tool({
       description: "Apply a confirmed in-place feature or bugfix branch setup",
       args: {
         confirmed: tool.schema.boolean(),
@@ -337,12 +338,16 @@ export function createRepoTools(runtime: RepoRuntime = defaultRuntime) {
         } catch (error) {
           return output(fail(error instanceof Error ? error.message : "invalid SDD path"));
         }
+        // Flow-guard journal rides the plugin's diagnostic logger when the
+        // host installed one; absent logger keeps branchSetup silent.
+        const diagnostic = getDiagnosticLogger();
         const result = branchSetup({
           action,
           sdd_dir: resolvedSdd,
           target_branch,
           stash,
           workspace_root: context.directory,
+          log: diagnostic ? (message) => diagnostic.info(message) : undefined,
         });
         return output(
           legacyScriptResult({
@@ -354,7 +359,7 @@ export function createRepoTools(runtime: RepoRuntime = defaultRuntime) {
         );
       },
     }),
-    workflow_commit: tool({
+    workit_commit: tool({
       description: "Commit the current index on a feature or bugfix branch without staging files",
       args: { confirmed: tool.schema.boolean(), message: tool.schema.string() },
       execute: async ({ confirmed, message }, context) => {
@@ -381,7 +386,7 @@ export function createRepoTools(runtime: RepoRuntime = defaultRuntime) {
         );
       },
     }),
-    workflow_pr_create: tool({
+    workit_pr_create: tool({
       description: "Create a confirmed pull or merge request",
       args: {
         confirmed: tool.schema.boolean(),
@@ -487,7 +492,9 @@ export function createRepoTools(runtime: RepoRuntime = defaultRuntime) {
           return output(result.ok ? ok(result) : fail(result.error));
         }
         if (action === "config") {
-          const LOCALE_RE = /^[a-z]{2,3}(-[A-Z]{2})?$/;
+          // Mirrors core config.ts LOCALE_RE (keep in sync): 3-digit UN M.49
+          // region subtags like es-419 validate alongside 2-letter regions.
+          const LOCALE_RE = /^[a-z]{2,3}(-(?:[A-Z]{2}|[0-9]{3}))?$/;
           if (locale !== undefined && !LOCALE_RE.test(locale)) {
             return output(
               fail(`invalid locale: ${JSON.stringify(locale)} — expected BCP-47 like en or es-CL`),

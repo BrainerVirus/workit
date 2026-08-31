@@ -16,14 +16,16 @@ export const SOURCE_MENU_LABELS = [
   "Handoff",
   "Review spec first",
   "Review plan first",
+  "Change model first",
 ] as const;
 
-/** Display labels a marked destination presents — exactly four, no Handoff (CA-08). */
+/** Display labels a marked destination presents — exactly five, no Handoff (CA-08). */
 export const DESTINATION_MENU_LABELS = [
   "Subagent-driven",
   "Inline",
   "Review spec first",
   "Review plan first",
+  "Change model first",
 ] as const;
 
 /**

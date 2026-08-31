@@ -51,31 +51,31 @@ Shape:
 
 Status transitions (enforced by tools):
 
-- `draft` → `self_reviewed`: `workflow_spec_approve` with `confirmed: true` (agent declares self-review done).
-- `self_reviewed` → `approved`: second `workflow_spec_approve` with `confirmed: true` — the skill instructs the agent to call this **only after** the user gave explicit approval via a native question. (Same for plan.)
-- No backward transitions. `workflow_plan_approve` hard-fails unless `spec.status === "approved"`.
+- `draft` → `self_reviewed`: `workit_spec_approve` with `confirmed: true` (agent declares self-review done).
+- `self_reviewed` → `approved`: second `workit_spec_approve` with `confirmed: true` — the skill instructs the agent to call this **only after** the user gave explicit approval via a native question. (Same for plan.)
+- No backward transitions. `workit_plan_approve` hard-fails unless `spec.status === "approved"`.
 
 A file-based store is used (not the in-memory `WorkflowStateStore`) so both platforms (OpenCode plugin + Cursor MCP server) share the same state, and handoff to a new session preserves it.
 
 ### 2. New tools (registered in both platforms, same signatures)
 
-- `workflow_flow_status` (read-only): `{ spec_path?, plan_path? }` → current status of both docs, or `draft` if no flow.json exists.
-- `workflow_spec_approve`: `{ confirmed: true, spec_path }` → transition per the rules above; records `updated_at`.
-- `workflow_plan_approve`: `{ confirmed: true, plan_path }` → same for plan; hard-fails unless spec `approved`.
-- `workflow_plan_menu`: `{ confirmed: true, plan_path, choice: "subagent-driven"|"inline"|"handoff"|"review-spec"|"review-plan" }` → records `menu.presented = true` + `chosen`. Called by the agent after the native question menu is answered.
+- `workit_flow_status` (read-only): `{ spec_path?, plan_path? }` → current status of both docs, or `draft` if no flow.json exists.
+- `workit_spec_approve`: `{ confirmed: true, spec_path }` → transition per the rules above; records `updated_at`.
+- `workit_plan_approve`: `{ confirmed: true, plan_path }` → same for plan; hard-fails unless spec `approved`.
+- `workit_plan_menu`: `{ confirmed: true, plan_path, choice: "subagent-driven"|"inline"|"handoff"|"review-spec"|"review-plan" }` → records `menu.presented = true` + `chosen`. Called by the agent after the native question menu is answered.
 
-All new tools validate args with zod (via `tool.schema`) and use the existing `confirmed: true` pattern already present in `workflow_sdd_task_brief` / `workflow_sdd_review_package`.
+All new tools validate args with zod (via `tool.schema`) and use the existing `confirmed: true` pattern already present in `workit_sdd_task_brief` / `workit_sdd_review_package`.
 
 ### 3. Hard-fail gates in existing flows
 
 - `wf-implement` (execution-contract path): refuses to run unless `plan.status === "approved"` AND `menu.presented === true` (choice may be any of the five). Error message states exactly which gate is missing.
 - `wf-handoff`: refuses to run unless `spec.status === "approved"` and `plan.status === "approved"`. Handoff carries the flow.json path in the seeded continuation prompt so the new session can consult it.
-- `workflow_docs_validate` (existing): unchanged behavior; called after spec write and after plan write as today.
+- `workit_docs_validate` (existing): unchanged behavior; called after spec write and after plan write as today.
 
 ### 4. Skill updates (prose that calls the tools)
 
-- `brainstorming` skill (as shipped in the toolkit's skills): after writing the spec, agent must call `workflow_spec_approve` (`self_reviewed`), then run self-review, then ask the user via native question, then `workflow_spec_approve` (`approved`) only after user approval. Same cycle for the plan via `workflow_plan_approve`.
-- After plan approval: native question menu (5 options), then `workflow_plan_menu` records the choice, then either `wf-implement` (which checks the gates) or `wf-handoff`.
+- `brainstorming` skill (as shipped in the toolkit's skills): after writing the spec, agent must call `workit_spec_approve` (`self_reviewed`), then run self-review, then ask the user via native question, then `workit_spec_approve` (`approved`) only after user approval. Same cycle for the plan via `workit_plan_approve`.
+- After plan approval: native question menu (5 options), then `workit_plan_menu` records the choice, then either `wf-implement` (which checks the gates) or `wf-handoff`.
 - These skill instructions live in the toolkit's own skills/wf-implement + templates (the toolkit already overrides Superpowers behavior — vendoring later will move the source of truth, not the mechanism).
 
 ### 5. TS/zod consolidation (delete legacy)
@@ -126,15 +126,15 @@ Single suite against `src/core` (replacing the current split `bun test` + `npm -
 
 ## Data flow
 
-1. User asks for a feature → brainstorm → spec written → `workflow_spec_approve(confirmed)` → status `self_reviewed`.
-2. Agent self-reviews spec (advisory loop; Critical/Important block, Minor accumulate) → native question to user → user approves → `workflow_spec_approve(confirmed)` → `approved`.
-3. Plan written → `workflow_plan_approve(confirmed)` → `self_reviewed` → self-review → native question → `workflow_plan_approve(confirmed)` → `approved`.
-4. Native question menu (5 options) → `workflow_plan_menu(confirmed, choice)` → `menu.presented = true`.
+1. User asks for a feature → brainstorm → spec written → `workit_spec_approve(confirmed)` → status `self_reviewed`.
+2. Agent self-reviews spec (advisory loop; Critical/Important block, Minor accumulate) → native question to user → user approves → `workit_spec_approve(confirmed)` → `approved`.
+3. Plan written → `workit_plan_approve(confirmed)` → `self_reviewed` → self-review → native question → `workit_plan_approve(confirmed)` → `approved`.
+4. Native question menu (5 options) → `workit_plan_menu(confirmed, choice)` → `menu.presented = true`.
 5. `wf-implement` (checks gates) or `wf-handoff` (checks gates, seeds continuation with flow.json path).
 
 ## Acceptance criteria
 
-- CA-01: `workflow_spec_approve`/`workflow_plan_approve` hard-fail when a step is attempted before its prerequisite is approved (plan before spec approved, backward transitions, missing `confirmed: true`).
+- CA-01: `workit_spec_approve`/`workit_plan_approve` hard-fail when a step is attempted before its prerequisite is approved (plan before spec approved, backward transitions, missing `confirmed: true`).
 - CA-02: The `self_reviewed → approved` transition is tool-recorded and happens only after the user's explicit approval via a native question.
 - CA-03: `wf-implement` refuses to run unless `plan.status === "approved"` AND `menu.presented === true`; `wf-handoff` refuses unless both docs are approved.
 - CA-04: All logic is consolidated in the TS + zod core; `src/legacy/`, `cursor/mcp/lib/`, and the scripts layer are deleted; `bun run check` green.
@@ -149,7 +149,7 @@ Single suite against `src/core` (replacing the current split `bun test` + `npm -
 ## Compatibility
 
 - Existing sessions that never created a flow.json: treated as `draft`; `wf-implement`/`wf-handoff` will hard-fail until the user approves via the new flow. This is intentional (hard-fail is the product decision from the deterministic-gates release).
-- The `workflow_sdd_*` tools, YouTrack tools, and present tools keep their current names/signatures (only their internals move into `src/core`).
+- The `workit_sdd_*` tools, YouTrack tools, and present tools keep their current names/signatures (only their internals move into `src/core`).
 
 ## Out of scope (tracked separately)
 

@@ -6,14 +6,14 @@
 
 Flow mutations that depend on a native-question receipt compare the recorded `selectedLabel` against the expected enum value with exact case-insensitive matching (`sameChoiceLabel` in `flow-state.ts`). Hosts routinely decorate question labels with qualifiers — OpenCode's question tool appends `(Recommended)` to the recommended option, and the post-plan contract renders `Handoff (new session only)` for display. Any qualifier makes the stored label fail the comparison:
 
-- `workflow_plan_menu [choice=handoff]` rejected a receipt whose label was `Handoff (new session only)` (`evidence_mismatch`), leaving a seeded handoff session unselected and the flow unmarked.
-- `workflow_plan_menu [choice=subagent-driven]` rejected `Subagent-driven (Recommended)`, prompting the user a second time.
+- `workit_plan_menu [choice=handoff]` rejected a receipt whose label was `Handoff (new session only)` (`evidence_mismatch`), leaving a seeded handoff session unselected and the flow unmarked.
+- `workit_plan_menu [choice=subagent-driven]` rejected `Subagent-driven (Recommended)`, prompting the user a second time.
 
 Both failures happened in real usage during the `workspace-routing-config-repair` execution. The approval transitions (`transitionSpec`/`transitionPlan`) are immune because they never compare labels, but menu recording and the receipt store's label filter do. The comparison must be robust to host-added qualifiers so no menu option can ever fail to bind, while still rejecting genuinely mismatched or fabricated receipts.
 
 ## Goals
 
-- Make `workflow_plan_menu` bind every one of the five source menu options (`Subagent-driven`, `Inline`, `Handoff`, `Review spec first`, `Review plan first`) and the four destination options regardless of host-added qualifiers such as `(Recommended)` or `(new session only)`.
+- Make `workit_plan_menu` bind every one of the five source menu options (`Subagent-driven`, `Inline`, `Handoff`, `Review spec first`, `Review plan first`) and the four destination options regardless of host-added qualifiers such as `(Recommended)` or `(new session only)`.
 - Make the receipt-store label filter accept the same normalized forms so handoff marking, approvals, and lifecycle transitions never reject a qualifier-decorated label.
 - Keep rejecting receipts whose base label genuinely does not match the expected choice (fabrication/forgery guard unchanged).
 - Prove with focused tests that each menu option works with plain, `(Recommended)`-decorated, and `(new session only)`-decorated labels through core, OpenCode tool, and Cursor surfaces.
@@ -80,7 +80,7 @@ The single shared matcher normalizes both sides; every caller (receipt-store lab
 
 ## Acceptance criteria
 
-- CA-01: `workflow_plan_menu` records `subagent-driven`, `inline`, `handoff`, `review-spec`, and `review-plan` when the receipt label is the plain display form, the `(Recommended)` form, or the `(new session only)` form.
+- CA-01: `workit_plan_menu` records `subagent-driven`, `inline`, `handoff`, `review-spec`, and `review-plan` when the receipt label is the plain display form, the `(Recommended)` form, or the `(new session only)` form.
 - CA-02: The four destination options record identically on a marked handoff destination.
 - CA-03: A receipt whose base label genuinely differs from the requested choice is still rejected with `evidence_mismatch` (e.g. `Implement` for `inline`, `Handoff` for `review-spec`).
 - CA-04: The receipt-store `consume` label filter accepts qualifier-decorated labels for the same expected value, so handoff marking and lifecycle transitions bind without re-asking.

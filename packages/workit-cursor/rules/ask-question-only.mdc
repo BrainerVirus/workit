@@ -37,7 +37,7 @@ One AskQuestion per turn when possible. Open-ended free text (no options) may st
 
 After writing a plan, **do not emit** Superpowers' inline text beginning “Two execution options”.
 
-After `workflow_docs_validate` succeeds on the saved spec/plan pair, call Cursor `AskQuestion` with exactly:
+After `workit_docs_validate` succeeds on the saved spec/plan pair, call Cursor `AskQuestion` with exactly:
 
 - Subagent-driven → **unsupported on Cursor** (the MCP rejects it as `unsupported_mode`; use OpenCode `wk-implement`)
 - Inline → execute in this session

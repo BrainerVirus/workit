@@ -15,7 +15,7 @@ export const REMINDER_TEXT = `<workflow-contract-reminder>
 - Bounded user choices → call the native \`question\` tool (never A/B/C or 1/2/3 lists in prose).
 - After a plan is approved → native \`question\` menu with exactly: ${SOURCE_MENU_LABELS_DISPLAY.join(", ")}.
 - Tools with \`confirmed\` → call them; never fabricate their result.
-- Before the first \`workflow_spec_approve\`/\`workflow_plan_approve\` (self-review) run the superpowers writing-plans Self-Review checklist: spec coverage (every spec requirement maps to a task), placeholder scan, type consistency; fix findings inline.
+- Before the first \`workit_spec_approve\`/\`workit_plan_approve\` (self-review) run the superpowers writing-plans Self-Review checklist: spec coverage (every spec requirement maps to a task), placeholder scan, type consistency; fix findings inline.
 - Delivering docs → clickable markdown link \`[spec.md](docs/<slug>/spec.md)\` + 3-5 bullet summary.
 </workflow-contract-reminder>`;
 
@@ -29,7 +29,7 @@ export const DESTINATION_REMINDER_TEXT = `<workflow-contract-reminder>
 - Bounded user choices → call the native \`question\` tool (never A/B/C or 1/2/3 lists in prose).
 - This session is a handoff destination: present the post-plan menu with exactly: ${DESTINATION_MENU_LABELS.join(", ")}.
 - Tools with \`confirmed\` → call them; never fabricate their result.
-- Before the first \`workflow_spec_approve\`/\`workflow_plan_approve\` (self-review) run the superpowers writing-plans Self-Review checklist: spec coverage (every spec requirement maps to a task), placeholder scan, type consistency; fix findings inline.
+- Before the first \`workit_spec_approve\`/\`workit_plan_approve\` (self-review) run the superpowers writing-plans Self-Review checklist: spec coverage (every spec requirement maps to a task), placeholder scan, type consistency; fix findings inline.
 - Delivering docs → clickable markdown link \`[spec.md](docs/<slug>/spec.md)\` + 3-5 bullet summary.
 ${HANDOFF_DESTINATION_MARKER}
 </workflow-contract-reminder>`;
@@ -51,6 +51,17 @@ export const SDD_REMINDER_TEXT = `<workflow-sdd-reminder>
 An approved plan is subagent-driven — execute it via \`wk-implement\` / \`task\` delegation. Never implement the approved plan inline in the main session.
 </workflow-sdd-reminder>`;
 
+/**
+ * Worker-only context (CA-16): an authorized direct child of the activating
+ * coordinator receives ONLY this compact contract — never the coordinator
+ * bootstrap or SDD_REMINDER_TEXT. It carries the worker duties (brief, TDD,
+ * commit range, report) and no coordination instructions.
+ */
+export const SDD_WORKER_REMINDER_TEXT = `<workflow-sdd-worker>
+You are an authorized delegated worker for an active subagent-driven plan.
+Execute only the supplied task brief: follow TDD (failing test first), land exactly one contiguous non-empty commit range for your task, then report status, commits, and test results to the coordinator. Do not manage coordinator bookkeeping or launch another agent harness.
+</workflow-sdd-worker>`;
+
 export const DOC_RENDER_TEXT = `<workflow-doc-render>
 When delivering a spec or plan, by default render the full markdown content of the doc in chat (headings, tables, mermaid fences preserved) — NOT a backtick-wrapped raw block.
 If the doc exceeds the render threshold (more than 150 lines, over 8KB, or more than 3 mermaid diagrams), deliver only the clickable link \`[spec.md](docs/<slug>/spec.md)\` + a 3-5 bullet summary.
@@ -67,7 +78,7 @@ A tool failed with a config-gap error (\`workflow config missing\`). Never confi
 </workflow-config-guard>`;
 
 export const VERIFICATION_TEXT = `<workflow-verification-rail>
-Skill: verification-before-completion. NO completion claims without fresh verification evidence — run the check command (e.g. \`bun run check\` / \`workflow_verify\`) and show its output before claiming done/fixed/passing. If you haven't run the verification command in this message, you cannot claim it passes.
+Skill: verification-before-completion. NO completion claims without fresh verification evidence — run the check command (e.g. \`bun run check\` / \`workit_verify\`) and show its output before claiming done/fixed/passing. If you haven't run the verification command in this message, you cannot claim it passes.
 </workflow-verification-rail>`;
 
 export const TDD_TEXT = `<workflow-tdd-rail>

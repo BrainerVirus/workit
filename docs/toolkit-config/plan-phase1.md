@@ -6,7 +6,7 @@
 **Branch:** `feature/toolkit-config`
 **Goal:** Add the multi-user config core: `config.json` (locale + branch policy) read/written via `src/core/config.ts`, an assisted `wf-init` wizard mode, locale-aware bootstrap injection, and branch-policy-driven branch tools — all with fallback to today's defaults.
 
-**Architecture:** A new `src/core/config.ts` owns `config.json` (env-overridable `WORKFLOW_TOOLKIT_CONFIG` dir, default `~/.config/workflow-toolkit/`). `resolveBranchPolicy()` feeds `src/core/branch.ts` (replacing hardcoded `BRANCH_PAT`/`PROTECTED`) and `docs-validate.ts`. The bootstrap injects `config.locale`. `workflow_toolkit_init_apply` gains guided-mode args (config values passed by the skill after native questions).
+**Architecture:** A new `src/core/config.ts` owns `config.json` (env-overridable `WORKFLOW_TOOLKIT_CONFIG` dir, default `~/.config/workflow-toolkit/`). `resolveBranchPolicy()` feeds `src/core/branch.ts` (replacing hardcoded `BRANCH_PAT`/`PROTECTED`) and `docs-validate.ts`. The bootstrap injects `config.locale`. `workit_init_apply` gains guided-mode args (config values passed by the skill after native questions).
 
 **Tech Stack:** TypeScript + zod (existing), `bun test`, node:fs (existing patterns). No new dependencies.
 
@@ -396,16 +396,16 @@ git commit -m "feat(bootstrap): inject configured locale into the contract"
 
 ---
 
-### Task 4: Assisted init — guided config values in `workflow_toolkit_init_apply`
+### Task 4: Assisted init — guided config values in `workit_init_apply`
 
 **Files:**
-- Modify: `src/tools/repo.ts` (`workflow_toolkit_init_apply` accepts and writes config.json values)
+- Modify: `src/tools/repo.ts` (`workit_init_apply` accepts and writes config.json values)
 - Modify: `cursor/mcp/server.ts` (same args)
 - Test: `test/config-tools.test.ts`
 
 **Interfaces:**
 - Consumes: `writeConfig`, `readConfig` (Task 1)
-- Produces: `workflow_toolkit_init_apply` gains optional args `{ locale?, localeOptions?, timezone?, branch_policy_preset?, branch_policy_allowed?, branch_policy_protected? }` — when present, writes/updates `config.json`; when absent, current behavior unchanged
+- Produces: `workit_init_apply` gains optional args `{ locale?, localeOptions?, timezone?, branch_policy_preset?, branch_policy_allowed?, branch_policy_protected? }` — when present, writes/updates `config.json`; when absent, current behavior unchanged
 
 - [ ] **Step 1: Write the failing test**
 
@@ -424,7 +424,7 @@ test("init_apply writes config.json with guided values", async () => {
   try {
     process.env.WORKFLOW_TOOLKIT_CONFIG_DIR = dir;
     const tools = createRepoTools();
-    const raw = await tools.workflow_toolkit_init_apply.execute({
+    const raw = await tools.workit_init_apply.execute({
       confirmed: true,
       action: "config",
       locale: "es-CL",
@@ -450,12 +450,12 @@ test("init_apply writes config.json with guided values", async () => {
 Run: `bun test test/config-tools.test.ts`
 Expected: FAIL — `action: "config"` unsupported.
 
-- [ ] **Step 3: Extend `workflow_toolkit_init_apply` in `src/tools/repo.ts`**
+- [ ] **Step 3: Extend `workit_init_apply` in `src/tools/repo.ts`**
 
 Find the tool (around line 284). It currently maps `action` to `init/apply.sh`. Add a `config` action handled in TS before the script dispatch:
 
 ```typescript
-// inside workflow_toolkit_init_apply execute, before the script call:
+// inside workit_init_apply execute, before the script call:
 if (action === "config") {
   const current = readConfig();
   const next: ToolkitConfig = {
@@ -486,7 +486,7 @@ branch_policy_protected: tool.schema.array(tool.schema.string()).optional(),
 
 - [ ] **Step 4: Mirror in `cursor/mcp/server.ts`**
 
-In the `workflow_toolkit_init_apply` registration, add the same optional zod fields and a `config` branch in the handler that calls `writeConfig`/`readConfig` with the same merge logic.
+In the `workit_init_apply` registration, add the same optional zod fields and a `config` branch in the handler that calls `writeConfig`/`readConfig` with the same merge logic.
 
 - [ ] **Step 5: Run tests**
 
@@ -495,7 +495,7 @@ Expected: PASS.
 
 - [ ] **Step 6: Update `skills/wf-init/SKILL.md`**
 
-Add a guided-mode section: after native questions (VCS, YouTrack, locale combobox, branch preset), call `workflow_toolkit_init_apply` with `action: "config"` and the answered values.
+Add a guided-mode section: after native questions (VCS, YouTrack, locale combobox, branch preset), call `workit_init_apply` with `action: "config"` and the answered values.
 
 - [ ] **Step 7: Commit**
 
@@ -512,6 +512,6 @@ git commit -m "feat(init): assisted config action with locale and branch policy"
 - [ ] `src/core/config.ts` exports `configDir`, `readConfig`, `writeConfig`, `PRESETS`, `resolveBranchPolicy`.
 - [ ] Branch tools reject `codex/feature/x` under gitflow; custom policy allows it (tested).
 - [ ] Bootstrap contract includes the configured locale line.
-- [ ] `workflow_toolkit_init_apply` accepts `action: "config"` with guided values on both platforms.
+- [ ] `workit_init_apply` accepts `action: "config"` with guided values on both platforms.
 - [ ] Existing behavior unchanged with no config.json (defaults en/gitflow).
 - [ ] Missing config never hard-fails any tool.

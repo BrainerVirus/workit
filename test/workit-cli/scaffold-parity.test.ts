@@ -83,7 +83,8 @@ test("wizard is a sequential state machine: one reducer owns all draft transitio
   expect(stateSource).toMatch(/case "apply"/);
   // The wizard dispatches to the reducer and mounts one screen at a time.
   expect(stepsSource).toMatch(/useReducer\(reducer, undefined, createInitialDraft\)/);
-  expect(stepsSource).toMatch(/<Screen key=\{draft\.screen\}/);
+  // \s+ tolerates the formatter wrapping the JSX attributes across lines.
+  expect(stepsSource).toMatch(/<Screen\s+key=\{draft\.screen\}/);
 });
 
 test("wizard writes nothing before Apply; index exits nonzero until configuration completed (WZ-10)", () => {
@@ -110,6 +111,23 @@ test("wizard writes nothing before Apply; index exits nonzero until configuratio
     "utf8",
   );
   expect(indexSource).toMatch(/process\.exit\(exit !== undefined && exit\.complete \? 0 : 1\)/);
+});
+
+test("CLI scaffold ships the execution-reliability contract surface", () => {
+  const template = readFileSync(
+    path.join(repoRoot, "packages/workit-cli/assets/templates/execution-contract.md"),
+    "utf8",
+  );
+  const flow = readFileSync(path.join(repoRoot, "packages/workit-cli/src/flow.ts"), "utf8");
+
+  for (const phrase of [
+    "Change model first",
+    "delegation_lineage_denied",
+    "workit_sdd_append_advisory",
+  ]) {
+    expect(template).toContain(phrase);
+  }
+  expect(flow).toContain("append-advisory");
 });
 
 // Task 14 Step 7 (CA-13): initApplyData token writes must use the same wx +

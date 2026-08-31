@@ -11,11 +11,11 @@ Goal: make the formatting add-ons **always-on** — the spec/plan templates requ
 ## Goals
 
 1. Provide a quality spec template (`templates/spec-template.md`) that keeps the Superpowers structure (Context, Goals, Non-goals, Architecture, Acceptance criteria, Decisions) and mandates formatting add-ons where applicable:
-   - ASCII wireframe for any UI surface (via `workflow_present_ascii`).
-   - Mermaid diagram for flows/architecture (via `workflow_present_flow`).
+   - ASCII wireframe for any UI surface (via `workit_present_ascii`).
+   - Mermaid diagram for flows/architecture (via `workit_present_flow`).
    - Tables for glossaries, scope, contracts, comparisons.
 2. Provide a matching quality plan template (`templates/plan-template.md`): tasks with explicit criteria, status tables.
-3. Extend `workflow_docs_validate` to check spec quality beyond headers/branch:
+3. Extend `workit_docs_validate` to check spec quality beyond headers/branch:
    - Required sections present (Context, Goals, Non-goals, Architecture, Acceptance criteria).
    - Acceptance criteria present and enumerable (CA-01, CA-02, … or equivalent).
    - If the spec mentions UI: at least one ASCII wireframe block.
@@ -52,13 +52,13 @@ Goal: make the formatting add-ons **always-on** — the spec/plan templates requ
 - …
 
 ## Architecture
-<!-- flows/architecture: mermaid required (workflow_present_flow) -->
+<!-- flows/architecture: mermaid required (workit_present_flow) -->
 ```mermaid
 flowchart TD
   …
 ```
 
-<!-- UI surfaces: ASCII wireframe required (workflow_present_ascii) -->
+<!-- UI surfaces: ASCII wireframe required (workit_present_ascii) -->
 ```text
 ┌──────────────┐
 │ …            │
@@ -85,7 +85,7 @@ flowchart TD
 
 ### 2. Validation extension
 
-`src/core/docs-validate.ts` gains a quality pass (opt-in via `{ quality: true }` or a separate `workflow_docs_quality` tool) returning structured findings:
+`src/core/docs-validate.ts` gains a quality pass (opt-in via `{ quality: true }` or a separate `workit_docs_quality` tool) returning structured findings:
 
 - `missing_section` — required section heading absent.
 - `missing_acceptance_criteria` — no CA-XX list.
@@ -96,14 +96,14 @@ flowchart TD
 
 ### 3. Flow wiring
 
-- `skills/wf-implement` + execution contract: after `workflow_docs_validate` (structure) run the quality check; block task start on hard quality findings (Critical = missing CA or missing required diagram when applicable).
+- `skills/wf-implement` + execution contract: after `workit_docs_validate` (structure) run the quality check; block task start on hard quality findings (Critical = missing CA or missing required diagram when applicable).
 - Brainstorming/writing-plans skills reference the templates: "fill `templates/spec-template.md`" instead of free-form.
-- `workflow_docs_validate` output includes `quality: { passed, findings }` so agents surface it.
+- `workit_docs_validate` output includes `quality: { passed, findings }` so agents surface it.
 
 ## Data flow
 
-1. Brainstorm → agent loads `templates/spec-template.md`, fills sections, renders diagrams via `workflow_present_ascii`/`workflow_present_flow`.
-2. `workflow_docs_validate` (structure) passes → quality check runs → findings reported.
+1. Brainstorm → agent loads `templates/spec-template.md`, fills sections, renders diagrams via `workit_present_ascii`/`workit_present_flow`.
+2. `workit_docs_validate` (structure) passes → quality check runs → findings reported.
 3. Draft iterations: warnings listed, no block. Approval: quality findings must be resolved (or explicitly waived by the user) before plan approval / promote / implement.
 4. Plan written from `templates/plan-template.md`; same quality pass.
 
@@ -111,7 +111,7 @@ flowchart TD
 
 - CA-01: `templates/spec-template.md` keeps the required sections (Context, Goals, Non-goals, Architecture, Acceptance criteria) and mandates ASCII wireframes for UI, mermaid for flows/architecture, and tables where applicable.
 - CA-02: `templates/plan-template.md` provides tasks with explicit criteria and status tables.
-- CA-03: `workflow_docs_validate`'s quality pass returns structured findings (`missing_section`, `missing_acceptance_criteria`, `missing_ascii_for_ui`, `missing_mermaid_for_flow`, `missing_table`) when the corresponding add-ons are absent.
+- CA-03: `workit_docs_validate`'s quality pass returns structured findings (`missing_section`, `missing_acceptance_criteria`, `missing_ascii_for_ui`, `missing_mermaid_for_flow`, `missing_table`) when the corresponding add-ons are absent.
 - CA-04: Quality findings are warnings for drafts and hard failures at promote/implement time.
 - CA-05: A spec generated via the templates includes ASCII + mermaid + tables without being asked (manual smoke).
 

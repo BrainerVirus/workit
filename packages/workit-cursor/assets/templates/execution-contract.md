@@ -7,59 +7,61 @@ Load `using-superpowers`, `subagent-driven-development`, `test-driven-developmen
 
 ## Handoff destination
 
-This session is a handoff destination for a continued plan. The originating session already recorded the post-plan menu choice; present exactly these four choices and never re-offer the originating handoff option:
+This session is a handoff destination for a continued plan. The originating session already recorded the post-plan menu choice; present exactly these four choices plus model deferral and never re-offer the originating handoff option:
 
 - Subagent-driven
 - Inline
 - Review spec first
 - Review plan first
+- Change model first
 
 <workflow-handoff-destination>true</workflow-handoff-destination>
 
 ## Hard gates
 
 - The parent is coordinator-only: it does not edit product code or perform delegated exploration.
-- Never use a worktree. Branch changes are in-place through `workflow_branch_setup` on `feature/*` or `bugfix/*`; never commit on protected branches.
-- Working state, briefs, ledgers, and review diffs live only under gitignored `<SDD_DIR>` in `docs/<slug>/sdd/` and use `workflow_sdd_*` tools.
+- Never use a worktree. Branch changes are in-place through `workit_branch_setup` on `feature/*` or `bugfix/*`; never commit on protected branches.
+- Working state, briefs, ledgers, and review diffs live only under gitignored `<SDD_DIR>` in `docs/<slug>/sdd/` and use `workit_sdd_*` tools.
 - Use native `todowrite` for visible task state as well as the gitignored ledger.
 - Use native `question` for branch/stash choices and guarded external mutations; call mutation tools only after approval with `confirmed: true` (grounded in the recorded NativeChoiceEvidence).
-- Flow-tool confirmations are never agent-typed booleans and never caller-supplied evidence objects: on OpenCode the plugin records the user's native-`question` answer as a host-observed one-use receipt (`attested: true`, `callID`, `selectedLabel`, `recordedAt`) consumed by `workflow_spec_approve` / `workflow_plan_approve` / `workflow_plan_menu` — no evidence argument exists, and delegated worker status comes from host session parentage (`parentID`), never a caller `role` field. On Cursor, confirmations are policy-only (`attested: false`) and subagent-driven execution is rejected as unsupported.
-- On Cursor, for every repository-scoped `workflow_*` call, pass the active Cursor workspace as `workspace_root`; never rely on the MCP process default.
+- Flow-tool confirmations are never agent-typed booleans and never caller-supplied evidence objects: on OpenCode the plugin records the user's native-`question` answer as a host-observed one-use receipt (`attested: true`, `callID`, `selectedLabel`, `recordedAt`) consumed by `workit_spec_approve` / `workit_plan_approve` / `workit_plan_menu` — no evidence argument exists, and delegated worker status comes from host session parentage (`parentID`), never a caller `role` field. On Cursor, confirmations are policy-only (`attested: false`) and subagent-driven execution is rejected as unsupported.
+- Delegated authority is direct-child-only: a worker is the session whose host `parentID` exactly equals the activating coordinator's recorded `coordinator_session_id`; missing, mismatched, or multi-owner lineage fails closed with `delegation_lineage_denied`, and nested `opencode` launches are denied during active delegated work. An authorized child receives only the compact worker contract (execute the supplied brief, follow TDD, land one contiguous non-empty commit range, report results) — never coordinator guidance, `wk-implement`, or ledger management; coordinator bookkeeping via `workit_sdd_*` stays with the coordinator session.
+- On Cursor, for every repository-scoped `workit_*` call, pass the active Cursor workspace as `workspace_root`; never rely on the MCP process default.
 - Use native `task` with only the built-in `explore` and `general` agents.
 
 ## Flow gates (HARD)
 
 - `wk-implement` refuses to run unless the plan is `approved` (flow.json) and the post-plan menu was presented.
 - `wk-handoff` refuses to run unless both spec and plan are `approved`.
-- Sequence is enforced by tools: `workflow_spec_approve`, `workflow_plan_approve`, `workflow_plan_menu` — never skip a step (the spec/plan self-review runs automatically inside the transition; only the final approval asks for your confirmation).
+- Sequence is enforced by tools: `workit_spec_approve`, `workit_plan_approve`, `workit_plan_menu` — never skip a step (the spec/plan self-review runs automatically inside the transition; only the final approval asks for your confirmation).
 
 ## Setup
 
-0. Call `workflow_docs_validate` with the linked spec/plan paths. Hard-fail on any error before todos or branch setup.
-1. Call `workflow_sdd_context` with `<PLAN_PATH>` and initialize `todowrite` from returned tasks.
-2. Call `workflow_plan_tasks`; cache each top-level task's `section_text`.
+0. Call `workit_docs_validate` with the linked spec/plan paths. Hard-fail on any error before todos or branch setup.
+1. Call `workit_sdd_context` with `<PLAN_PATH>` and initialize `todowrite` from returned tasks.
+2. Call `workit_plan_tasks`; cache each top-level task's `section_text`.
 3. Mark IDs in `completed_task_ids` completed and never redispatch them.
-4. Call `workflow_resolve_branch`, then show the current branch, target branch, and stash behavior before any in-place checkout/setup mutation.
+4. Call `workit_resolve_branch`, then show the current branch, target branch, and stash behavior before any in-place checkout/setup mutation.
 5. Always use `question`: for a clean tree ask whether to proceed or cancel; for a dirty tree add the stash choice and describe what will be stashed.
-6. Call `workflow_branch_setup` with `confirmed: true` only after approval.
+6. Call `workit_branch_setup` with `confirmed: true` only after approval.
 
 ## Remaining-task loop
 
 For each top-level task absent from `completed_task_ids`:
 
 1. Mark it `in_progress` with `todowrite`.
-2. Create a working-state brief with `workflow_sdd_task_brief` and `confirmed: true`.
+2. Create a working-state brief with `workit_sdd_task_brief` and `confirmed: true`.
 3. Delegate read-only discovery, when needed, to an `explore` agent. Delegate implementation to a fresh `general` agent. Product changes follow TDD.
-4. Create a working-state diff with `workflow_sdd_review_package` and `confirmed: true`.
+4. Create a working-state diff with `workit_sdd_review_package` and `confirmed: true`.
 5. Delegate spec-compliance review and code-quality review to separate `general` agents.
-6. **Blocking** findings (Critical, Important, or spec-compliance) may trigger at most **two** fix+re-review rounds per task. **Advisory** findings (Minor, style, YAGNI, taste) never pause the loop — append them to `<SDD_DIR>/advisories.md`.
-7. Append the validated ledger entry with `workflow_sdd_append_progress` and `confirmed: true`; mark the todo completed.
+6. **Blocking** findings (Critical, Important, or spec-compliance) may trigger at most **two** fix+re-review rounds per task. **Advisory** findings (Minor, style, YAGNI, taste) never pause the loop — append them with `workit_sdd_append_advisory` (`--task <id> --text <text>`, `confirmed: true`) instead of an unrestricted file edit.
+7. Append the validated ledger entry with `workit_sdd_append_progress` and `confirmed: true`; mark the todo completed.
 
 ## Final gate
 
-Run a separate full-branch code review, then `workflow_verify`. Present the full `<SDD_DIR>/advisories.md` roll-up once, then use native `question` so the user can choose which advisory items to fix, discuss, or discard. Report exact check results and never infer success. Use `workflow_git_context` for a commit preview and load `wk-commit` through `skill` for an approved commit. If working state contains a stash reference, preview reapplication through `question`, then call `workflow_branch_setup` with `confirmed: true` after approval.
+Run a separate full-branch code review, then `workit_verify`. Present the full `<SDD_DIR>/advisories.md` roll-up once, then use native `question` so the user can choose which advisory items to fix, discuss, or discard. Report exact check results and never infer success. Use `workit_git_context` for a commit preview and load `wk-commit` through `skill` for an approved commit. If working state contains a stash reference, preview reapplication through `question`, then call `workit_branch_setup` with `confirmed: true` after approval.
 
-**Mandatory:** end the run by calling `workflow_plan_complete` (OpenCode/Cursor) or the CLI `workit flow complete` (CLI host) after the final task once the SDD ledger is complete (all task IDs appended) and `workflow_verify` passes — a complete ledger and green verification are the tool's gates. Never finish the run while the plan is still `active`.
+**Mandatory:** end the run by calling `workit_plan_complete` (OpenCode/Cursor) or the CLI `workit flow complete` (CLI host) after the final task once the SDD ledger is complete (all task IDs appended) and `workit_verify` passes — a complete ledger and green verification are the tool's gates. Never finish the run while the plan is still `active`.
 
 ## Task order
 
@@ -68,4 +70,4 @@ Run a separate full-branch code review, then `workflow_verify`. Present the full
 ## Quality gate (HARD)
 
 - Specs/plans are written from `templates/spec-template.md` / `templates/plan-template.md`.
-- After `workflow_docs_validate`, surface `quality` findings (spec scan). Hard findings (missing required section, missing CA-XX) block task start unless the user explicitly waives them. Warnings are advisory.
+- After `workit_docs_validate`, surface `quality` findings (spec scan). Hard findings (missing required section, missing CA-XX) block task start unless the user explicitly waives them. Warnings are advisory.

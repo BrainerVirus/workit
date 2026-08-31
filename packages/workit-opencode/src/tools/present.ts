@@ -6,7 +6,7 @@ const output = (value: unknown) => JSON.stringify(value, null, 2);
 
 export function createPresentTools() {
   return {
-    workflow_present_ascii: tool({
+    workit_present_ascii: tool({
       description: "Render deterministic ASCII UI wireframe from JSON spec",
       args: {
         title: tool.schema.string().optional(),
@@ -19,7 +19,7 @@ export function createPresentTools() {
         return output(ok(result.data));
       },
     }),
-    workflow_present_flow: tool({
+    workit_present_flow: tool({
       description: "Render mermaid flowchart from JSON nodes/edges",
       args: {
         title: tool.schema.string().optional(),

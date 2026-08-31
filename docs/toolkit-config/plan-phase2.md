@@ -7,7 +7,7 @@
 
 **Goal:** Make issue templates (issue-update/greeting/headers) editable from `~/.config/workflow-toolkit/templates/` via an assisted tool, and add canonical multi-platform rules (compiled to Cursor `.mdc` and OpenCode contract sections) with assisted editing.
 
-**Architecture:** `src/core/templates.ts` reads templates from the config dir with repo fallback and powers `workflow_template_edit` / `workflow_template_list`; `buildDraft` and greeting read the config templates. `src/core/rules.ts` holds the canonical rule model + compiler (`compileRuleCursor` → `.mdc`, `compileRuleOpenCode` → contract section) and powers `workflow_rule_list` / `workflow_rule_edit`; sync-runtime emits `.mdc` files; the bootstrap appends compiled OpenCode sections.
+**Architecture:** `src/core/templates.ts` reads templates from the config dir with repo fallback and powers `workit_template_edit` / `workit_template_list`; `buildDraft` and greeting read the config templates. `src/core/rules.ts` holds the canonical rule model + compiler (`compileRuleCursor` → `.mdc`, `compileRuleOpenCode` → contract section) and powers `workit_rule_list` / `workit_rule_edit`; sync-runtime emits `.mdc` files; the bootstrap appends compiled OpenCode sections.
 
 **Tech Stack:** TypeScript + zod (existing), `bun test`, node:fs (existing patterns). No new dependencies.
 
@@ -17,7 +17,7 @@
 - Canonical rules live in `~/.config/workflow-toolkit/rules/<name>/rule.md` with frontmatter `name`, `description`, `platforms` (`[cursor, opencode]`), markdown body.
 - Compiler: Cursor output = `.mdc` (frontmatter `description` + `alwaysApply: true` + body); OpenCode output = contract section (`## <name>` heading + body).
 - User rules override repo defaults by name (repo defaults in `rules/` of the toolkit, if any).
-- `workflow_template_edit` / `workflow_rule_edit` require `confirmed: true` and write only to the config dir.
+- `workit_template_edit` / `workit_rule_edit` require `confirmed: true` and write only to the config dir.
 - Missing template/rule file → repo fallback; never hard-fail.
 - `bun run check` green after each task. Version stays `0.4.0`.
 
@@ -28,7 +28,7 @@
 **Files:**
 - Create: `src/core/templates.ts`
 - Modify: `src/core/youtrack.ts` (`buildDraft` reads the issue-update template from config with fallback)
-- Modify: `src/tools/docs-repo.ts` or new `src/tools/templates.ts` (register `workflow_template_list`, `workflow_template_edit`)
+- Modify: `src/tools/docs-repo.ts` or new `src/tools/templates.ts` (register `workit_template_list`, `workit_template_edit`)
 - Modify: `cursor/mcp/server.ts` (same two tools)
 - Modify: `src/tools/index.ts` (register the new tool group)
 - Test: `test/templates.test.ts` + `test/template-tools.test.ts`
@@ -39,7 +39,7 @@
   - `readTemplate(name: "issue-update" | "greeting" | "headers"): { source: "config" | "repo"; content: string }` — config path first, repo fallback
   - `writeTemplate(name, content, confirmed): { ok: true; path } | { ok: false; error }`
   - `listTemplates(): { name: string; source: "config" | "repo" | "missing"; path: string }[]`
-  - Tools `workflow_template_list`, `workflow_template_edit { name, confirmed }` (agent-assisted: skill reads current, applies edits, writes back)
+  - Tools `workit_template_list`, `workit_template_edit { name, confirmed }` (agent-assisted: skill reads current, applies edits, writes back)
 
 - [ ] **Step 1: Write the failing test**
 
@@ -204,7 +204,7 @@ export function buildDraft({ issueId, projectName, userNotes, greeting, facts, i
 
 Note: the repo default template reproduces the exact current output (header `# Actualización` + blank line + parts), so existing tests keep passing.
 
-- [ ] **Step 6: Register `workflow_template_list` and `workflow_template_edit`**
+- [ ] **Step 6: Register `workit_template_list` and `workit_template_edit`**
 
 Create `src/tools/templates.ts`:
 
@@ -217,12 +217,12 @@ const output = (value: unknown) => JSON.stringify(value, null, 2);
 
 export function createTemplateTools() {
   return {
-    workflow_template_list: tool({
+    workit_template_list: tool({
       description: "List editable templates (issue-update, greeting, headers) with their source",
       args: {},
       execute: async () => output(ok({ templates: listTemplates() })),
     }),
-    workflow_template_edit: tool({
+    workit_template_edit: tool({
       description: "Write an edited template to the toolkit config dir (agent-assisted)",
       args: {
         name: tool.schema.enum(["issue-update", "greeting", "headers"]),
@@ -260,7 +260,7 @@ git commit -m "feat(templates): editable issue/greeting/headers templates with a
 
 **Files:**
 - Create: `src/core/rules.ts`
-- Create: `src/tools/rules.ts` (`workflow_rule_list`, `workflow_rule_edit`)
+- Create: `src/tools/rules.ts` (`workit_rule_list`, `workit_rule_edit`)
 - Modify: `src/tools/index.ts`
 - Modify: `cursor/mcp/server.ts`
 - Modify: `src/bootstrap.ts` (append compiled OpenCode rule sections)
@@ -546,7 +546,7 @@ fi
 
 (Alternatively, emit via the MCP server at startup; the sync approach keeps it deterministic and testable.)
 
-- [ ] **Step 6: Register `workflow_rule_list` and `workflow_rule_edit`**
+- [ ] **Step 6: Register `workit_rule_list` and `workit_rule_edit`**
 
 Create `src/tools/rules.ts`:
 
@@ -559,12 +559,12 @@ const output = (value: unknown) => JSON.stringify(value, null, 2);
 
 export function createRuleTools() {
   return {
-    workflow_rule_list: tool({
+    workit_rule_list: tool({
       description: "List canonical rules (config + repo) with platforms and source",
       args: {},
       execute: async () => output(ok({ rules: listRules() })),
     }),
-    workflow_rule_edit: tool({
+    workit_rule_edit: tool({
       description: "Write a canonical rule to the toolkit config dir (agent-assisted)",
       args: {
         name: tool.schema.string(),
@@ -604,8 +604,8 @@ git commit -m "feat(rules): canonical multi-platform rules with compiler, edit/l
 - [ ] `bun run check` green after each task.
 - [ ] `src/core/templates.ts` exports `readTemplate`, `writeTemplate`, `listTemplates`; repo fallback works.
 - [ ] `buildDraft` reads the issue-update template (config first, repo fallback); existing tests unchanged.
-- [ ] `workflow_template_list` / `workflow_template_edit` on both platforms.
+- [ ] `workit_template_list` / `workit_template_edit` on both platforms.
 - [ ] `src/core/rules.ts` exports parse/list/read/write + compilers; `compiledOpenCodeSections` and `writeCompiledCursorRules` work.
 - [ ] Bootstrap appends user rule sections; sync-runtime emits `.mdc` files.
-- [ ] `workflow_rule_list` / `workflow_rule_edit` on both platforms.
+- [ ] `workit_rule_list` / `workit_rule_edit` on both platforms.
 - [ ] Missing config dir never hard-fails any tool.

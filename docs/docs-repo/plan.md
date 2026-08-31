@@ -5,7 +5,7 @@
 **Spec:** `docs/docs-repo/spec.md`
 **Branch:** `feature/docs-repo`
 
-**Goal:** Add three tools — `workflow_docs_repo_link`, `workflow_docs_list`, `workflow_docs_promote` — that link a docs repo in the toolkit config, list local specs with promotion status, and promote selected specs into `features/YYYY-MM-<slug>/` (README + spec + plan, index updated) behind a quality gate, without ever committing.
+**Goal:** Add three tools — `workit_docs_repo_link`, `workit_docs_list`, `workit_docs_promote` — that link a docs repo in the toolkit config, list local specs with promotion status, and promote selected specs into `features/YYYY-MM-<slug>/` (README + spec + plan, index updated) behind a quality gate, without ever committing.
 
 **Architecture:** A new `src/core/docs-repo.ts` module owns config read/write (`~/.config/workflow-toolkit/docs-repo.json`) and promotion logic (copy, README generation, index update). Three tools registered in the OpenCode plugin (`src/tools/docs-repo.ts`) and the Cursor MCP server. The promote gate reuses `docsValidate` + `qualitySpec` from `src/core/docs-validate.ts`.
 
@@ -434,7 +434,7 @@ export const promoteSpec = (
   | { ok: false; error: string; findings?: unknown[] } => {
   if (!opts.confirmed) return { ok: false, error: "confirmed: true required" };
   const repoPath = docsRepoPath();
-  if (!repoPath) return { ok: false, error: "docs repo not linked — run workflow_docs_repo_link" };
+  if (!repoPath) return { ok: false, error: "docs repo not linked — run workit_docs_repo_link" };
 
   const specRel = path.posix.join("docs", slug, "spec.md");
   const planRel = path.posix.join("docs", slug, "plan.md");
@@ -527,9 +527,9 @@ git commit -m "feat(core): promote spec+plan to docs repo with quality gate and 
 **Interfaces:**
 - Consumes: `linkDocsRepo`, `listSpecs`, `promoteSpec` from `src/core/docs-repo`
 - Produces (registered tools, `{ ok, data, error }` envelope):
-  - `workflow_docs_repo_link({ path, confirmed })`
-  - `workflow_docs_list()` — reads `context.directory` as workspace
-  - `workflow_docs_promote({ slug, confirmed, force? })`
+  - `workit_docs_repo_link({ path, confirmed })`
+  - `workit_docs_list()` — reads `context.directory` as workspace
+  - `workit_docs_promote({ slug, confirmed, force? })`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -558,9 +558,9 @@ test("repo_link requires confirmed and persists", async () => {
     process.env.WORKFLOW_DOCS_REPO_CONFIG = path.join(os.tmpdir(), "wf-docsrepo-tool-config.json");
     const tools = createDocsRepoTools();
     const ctx = { directory: repo, worktree: repo } as never;
-    const no = JSON.parse(await tools.workflow_docs_repo_link.execute({ path: repo, confirmed: false }, ctx) as string);
+    const no = JSON.parse(await tools.workit_docs_repo_link.execute({ path: repo, confirmed: false }, ctx) as string);
     expect(no.ok).toBe(false);
-    const yes = JSON.parse(await tools.workflow_docs_repo_link.execute({ path: repo, confirmed: true }, ctx) as string);
+    const yes = JSON.parse(await tools.workit_docs_repo_link.execute({ path: repo, confirmed: true }, ctx) as string);
     expect(yes.ok).toBe(true);
   } finally { rmSync(repo, { recursive: true, force: true }); }
 });
@@ -578,12 +578,12 @@ test("docs_list reports specs; promote copies files", async () => {
 
     const tools = createDocsRepoTools();
     const ctx = { directory: work, worktree: work } as never;
-    const list = JSON.parse(await tools.workflow_docs_list.execute({}, ctx) as string);
+    const list = JSON.parse(await tools.workit_docs_list.execute({}, ctx) as string);
     expect(list.ok).toBe(true);
     expect(list.data.specs[0].slug).toBe("zeta");
     expect(list.data.specs[0].promoted).toBe(false);
 
-    const promote = JSON.parse(await tools.workflow_docs_promote.execute(
+    const promote = JSON.parse(await tools.workit_docs_promote.execute(
       { slug: "zeta", confirmed: true }, ctx) as string);
     expect(promote.ok).toBe(true);
   } finally { rmSync(repo, { recursive: true, force: true }); rmSync(work, { recursive: true, force: true }); }
@@ -606,7 +606,7 @@ const output = (value: unknown) => JSON.stringify(value, null, 2);
 
 export function createDocsRepoTools() {
   return {
-    workflow_docs_repo_link: tool({
+    workit_docs_repo_link: tool({
       description: "Link the component docs repo in the toolkit config (validates git repo + features/)",
       args: {
         path: tool.schema.string(),
@@ -617,7 +617,7 @@ export function createDocsRepoTools() {
         return output(result.ok ? ok({ path: result.path }) : fail(result.error));
       },
     }),
-    workflow_docs_list: tool({
+    workit_docs_list: tool({
       description: "List local specs (docs/<slug>/spec.md) with docs-repo promotion status",
       args: {},
       execute: async (_input, context) => {
@@ -625,7 +625,7 @@ export function createDocsRepoTools() {
         return output(ok(result));
       },
     }),
-    workflow_docs_promote: tool({
+    workit_docs_promote: tool({
       description: "Promote a spec (+plan) to the linked docs repo features/YYYY-MM-<slug>/ with quality gate",
       args: {
         slug: tool.schema.string(),
@@ -664,7 +664,7 @@ Register three tools before the transport (match the existing `server.registerTo
 
 ```typescript
 server.registerTool(
-  "workflow_docs_repo_link",
+  "workit_docs_repo_link",
   {
     description: "Link the component docs repo in the toolkit config",
     inputSchema: {
@@ -680,7 +680,7 @@ server.registerTool(
 );
 
 server.registerTool(
-  "workflow_docs_list",
+  "workit_docs_list",
   {
     description: "List local specs with docs-repo promotion status",
     inputSchema: { workspace_root: workspaceRootSchema },
@@ -689,7 +689,7 @@ server.registerTool(
 );
 
 server.registerTool(
-  "workflow_docs_promote",
+  "workit_docs_promote",
   {
     description: "Promote a spec (+plan) to the linked docs repo with quality gate",
     inputSchema: {
@@ -712,9 +712,9 @@ server.registerTool(
 In `test/plugin.test.ts`, add the three names to the `fixtures` map (they return errors on missing inputs, which is fine for the envelope test):
 
 ```typescript
-workflow_docs_repo_link: { path: "missing", confirmed: false },
-workflow_docs_list: {},
-workflow_docs_promote: { slug: "x", confirmed: false },
+workit_docs_repo_link: { path: "missing", confirmed: false },
+workit_docs_list: {},
+workit_docs_promote: { slug: "x", confirmed: false },
 ```
 
 In `test/smoke.ts`, bump the tool count from 35 to 38:

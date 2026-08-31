@@ -26,14 +26,14 @@ Requirements: OpenCode ≥ 1.15.0, Node ≥ 22 (the published plugin is a self-c
 ## What it provides
 
 - **12 `wk-*` commands/skills** (`wk-init`, `wk-status`, `wk-verify`, `wk-commit`, `wk-pr`, `wk-changelog`, `wk-release-notes`, `wk-docs-refresh`, `wk-handoff`, `wk-implement`, `wk-meetings`, `wk-issue-update`).
-- **Native plugin tools** (`workflow_*`) — branch setup, PR create/context, docs validate/promote, YouTrack post/log/time, templates, rules, presentation, doctor, and handoff.
+- **Native plugin tools** (`workit_*`) — branch setup, PR create/context, docs validate/promote, YouTrack post/log/time, templates, rules, presentation, doctor, and handoff.
 - **Per-turn enforcement rails** — contract reminder, doc rendering, self-review gates, config guard, issue rails, and post-hoc detectors.
 
 ## Host-native behavior
 
-- **Approvals** — flow gates (`workflow_spec_approve` / `workflow_plan_approve` / `workflow_plan_menu`) record native `question` receipts; the self-review validation runs automatically during the transition. Approvals bind to the document's exact SHA-256 digest: editing an approved spec/plan invalidates the approval and forces a fresh reapproval.
-- **Lifecycle** — `workflow_plan_pause` / `workflow_plan_resume` / `workflow_plan_complete` move a plan through `pending`/`active`/`paused`/`completed`, each gated by a one-use native-question receipt; completion requires a complete SDD ledger and passing repository verification.
-- **Delegation** — approved plans execute through subagent-driven task delegation (native `task`); while a subagent-driven plan is active, coordinator product edits are intercepted.
+- **Approvals** — flow gates (`workit_spec_approve` / `workit_plan_approve` / `workit_plan_menu`) record native `question` receipts; the self-review validation runs automatically during the transition. Approvals bind to the document's exact SHA-256 digest: editing an approved spec/plan invalidates the approval and forces a fresh reapproval.
+- **Lifecycle** — `workit_plan_pause` / `workit_plan_resume` / `workit_plan_complete` move a plan through `pending`/`active`/`paused`/`completed`, each gated by a one-use native-question receipt; completion requires a complete SDD ledger and passing repository verification.
+- **Delegation** — approved plans execute through subagent-driven task delegation (native `task`); while a subagent-driven plan is active, coordinator product edits are intercepted. Receipts are purpose-bound: each gate consumes the newest fresh receipt for exactly its purpose, so unrelated questions never authorize or mask a gate. Delegated authority is direct-child-only — authorized workers receive compact worker-only context, while mismatched session lineage is denied (`delegation_lineage_denied`).
 - **Commit** — `wk-commit` previews a Conventional Commit and confirms through a native `question`.
 - **Handoff** — `wk-handoff` seeds and spawns a native OpenCode continuation session; a destination session presents a four-choice menu (never the originating Handoff option) and carries the handoff-destination marker.
 - **Diagnostics** — durable JSONL journal plus native `client.app.log()`; nothing is mirrored to `process.stderr` or the agent conversation.

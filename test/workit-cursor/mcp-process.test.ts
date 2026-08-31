@@ -15,50 +15,50 @@ import {
 const REPO_ROOT = path.resolve(import.meta.dir, "..", "..");
 
 const REQUIRED_TOOLS = [
-  "workflow_verify",
-  "workflow_pr_context",
-  "workflow_pr_create",
-  "workflow_changelog_context",
-  "workflow_changelog_apply",
-  "workflow_release_notes_context",
-  "workflow_docs_context",
-  "workflow_git_context",
-  "workflow_resolve_branch",
-  "workflow_branch_setup",
-  "workflow_sdd_context",
-  "workflow_sdd_task_brief",
-  "workflow_sdd_review_package",
-  "workflow_sdd_append_progress",
-  "workflow_docs_branch",
-  "workflow_docs_validate",
-  "workflow_plan_tasks",
-  "workflow_handoff_prompt",
+  "workit_verify",
+  "workit_pr_context",
+  "workit_pr_create",
+  "workit_changelog_context",
+  "workit_changelog_apply",
+  "workit_release_notes_context",
+  "workit_docs_context",
+  "workit_git_context",
+  "workit_resolve_branch",
+  "workit_branch_setup",
+  "workit_sdd_context",
+  "workit_sdd_task_brief",
+  "workit_sdd_review_package",
+  "workit_sdd_append_progress",
+  "workit_docs_branch",
+  "workit_docs_validate",
+  "workit_plan_tasks",
+  "workit_handoff_prompt",
   "workit_init_status",
   "workit_status",
   "workit_init_apply",
-  "workflow_youtrack_verify_token",
-  "workflow_youtrack_parse_issue",
-  "workflow_youtrack_context",
-  "workflow_youtrack_parse_duration",
-  "workflow_youtrack_log_time",
-  "workflow_youtrack_draft",
-  "workflow_youtrack_post",
-  "workflow_present_ascii",
-  "workflow_present_flow",
-  "workflow_flow_status",
-  "workflow_spec_approve",
-  "workflow_plan_approve",
-  "workflow_plan_menu",
-  "workflow_plan_pause",
-  "workflow_plan_resume",
-  "workflow_plan_complete",
-  "workflow_docs_repo_link",
-  "workflow_docs_list",
-  "workflow_docs_promote",
-  "workflow_template_list",
-  "workflow_template_edit",
-  "workflow_rule_list",
-  "workflow_rule_edit",
+  "workit_youtrack_verify_token",
+  "workit_youtrack_parse_issue",
+  "workit_youtrack_context",
+  "workit_youtrack_parse_duration",
+  "workit_youtrack_log_time",
+  "workit_youtrack_draft",
+  "workit_youtrack_post",
+  "workit_present_ascii",
+  "workit_present_flow",
+  "workit_flow_status",
+  "workit_spec_approve",
+  "workit_plan_approve",
+  "workit_plan_menu",
+  "workit_plan_pause",
+  "workit_plan_resume",
+  "workit_plan_complete",
+  "workit_docs_repo_link",
+  "workit_docs_list",
+  "workit_docs_promote",
+  "workit_template_list",
+  "workit_template_edit",
+  "workit_rule_list",
+  "workit_rule_edit",
 ];
 
 function startServer(
@@ -134,6 +134,8 @@ test("cursor MCP server initializes and lists every registered handler over stdi
     for (const tool of REQUIRED_TOOLS) {
       expect(names).toContain(tool);
     }
+    // No Cursor registration may expose a legacy `workflow_*` name.
+    expect(names.filter((n) => n.startsWith("workflow_"))).toEqual([]);
   } finally {
     child.kill();
   }
@@ -153,7 +155,7 @@ test("cursor MCP representative handlers run without workspace_root faults", asy
     );
 
     const git = await request("tools/call", {
-      name: "workflow_git_context",
+      name: "workit_git_context",
       arguments: { workspace_root: tmp },
     });
     expect((git as any).result.isError).not.toBe(true);
@@ -168,7 +170,7 @@ test("cursor MCP representative handlers run without workspace_root faults", asy
     expect(text).not.toContain("workspace_root is not defined");
 
     const parseDuration = await request("tools/call", {
-      name: "workflow_youtrack_parse_duration",
+      name: "workit_youtrack_parse_duration",
       arguments: { text: "1h 30m", workspace_root: tmp },
     });
     expect((parseDuration as any).result.isError).not.toBe(true);
@@ -176,7 +178,7 @@ test("cursor MCP representative handlers run without workspace_root faults", asy
     // D6: omitting workspace_root exercises the schema `.default()` (process.cwd()
     // in the spawned server) instead of an explicit root — the handler must work.
     const gitDefault = await request("tools/call", {
-      name: "workflow_git_context",
+      name: "workit_git_context",
       arguments: {},
     });
     expect((gitDefault as any).result.isError).not.toBe(true);
@@ -208,7 +210,7 @@ test("run-server <workspace> from an unrelated cwd defaults omitted roots to the
         `${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })}\n`,
       );
       const git = await request("tools/call", {
-        name: "workflow_git_context",
+        name: "workit_git_context",
         arguments: {},
       });
       expect((git as any).result.isError).not.toBe(true);
@@ -244,7 +246,7 @@ test("WORKFLOW_WORKSPACE_ROOT env beats the process cwd for omitted tool roots",
         `${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })}\n`,
       );
       const git = await request("tools/call", {
-        name: "workflow_git_context",
+        name: "workit_git_context",
         arguments: {},
       });
       expect((git as any).result.isError).not.toBe(true);
@@ -269,7 +271,8 @@ test("marketplace npx command shape resolves to a working npm bin (local install
   expect(mcp.mcpServers.workit.command).toBe("npx");
   expect(mcp.mcpServers.workit.args).toEqual([
     "-y",
-    "--package=@brainervirus/workit-cursor@0.8.5",
+    "--prefer-online",
+    "--package=@brainervirus/workit-cursor@latest",
     "workit-cursor-mcp",
     "${workspaceFolder}",
   ]);
@@ -278,7 +281,8 @@ test("marketplace npx command shape resolves to a working npm bin (local install
   );
   expect(hooks.hooks.sessionStart).toEqual([
     {
-      command: "npx -y --package=@brainervirus/workit-cursor@0.8.5 workit-cursor-session-start",
+      command:
+        "npx -y --prefer-online --package=@brainervirus/workit-cursor@latest workit-cursor-session-start",
     },
   ]);
 
@@ -311,8 +315,9 @@ test("marketplace npx command shape resolves to a working npm bin (local install
       );
       const listed = await request("tools/list", {});
       const names = ((listed as any).result.tools as { name: string }[]).map((t) => t.name);
-      expect(names).toContain("workflow_verify");
-      expect(names).toContain("workflow_pr_context");
+      expect(names).toContain("workit_verify");
+      expect(names).toContain("workit_pr_context");
+      expect(names.filter((n: string) => n.startsWith("workflow_"))).toEqual([]);
     } finally {
       child.kill();
     }

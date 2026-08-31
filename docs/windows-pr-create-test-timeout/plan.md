@@ -30,9 +30,9 @@
 ### Task 2: Changelog and verification
 
 - [ ] **Step 1:** Update CHANGELOG.md Unreleased with a `### Fixed` entry: Windows CI flake — RL-03 pr-create target test gets the 60s budget already used by sibling heavy-git tests.
-- [ ] **Step 2:** Run `workflow_verify` (lint, format:check, tests, build, changelog) and fix any failures.
+- [ ] **Step 2:** Run `workit_verify` (lint, format:check, tests, build, changelog) and fix any failures.
 
-**Criteria:** `workflow_verify` passes; changelog entry present; CI (especially the Windows workit-core job) green on the branch.
+**Criteria:** `workit_verify` passes; changelog entry present; CI (especially the Windows workit-core job) green on the branch.
 
 | Status | Task |
 | --- | --- |

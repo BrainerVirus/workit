@@ -24,9 +24,13 @@ const names = [
   "wk-issue-update",
 ];
 
-test("the plugin module only exports the default OpenCode plugin", () => {
-  expect(Object.keys(pluginModule)).toEqual(["default"]);
-});
+test(
+  "the plugin module only exports the default OpenCode plugin",
+  () => {
+    expect(Object.keys(pluginModule)).toEqual(["default"]);
+  },
+  { timeout: 60_000 },
+);
 
 import {
   COORDINATOR_RECOVERY_TEXT,
@@ -57,472 +61,532 @@ const flowFixture = () => {
 };
 
 // Real host-observed receipt path: the plugin's tool.execute.after hook records
-// the answered native question for the session, and workflow_spec_approve
+// the answered native question for the session, and workit_spec_approve
 // consumes the session's MOST RECENT receipt (no evidence argument exists
 // anywhere in the tool schema). Correlation is by session + freshness + one-use
 // + negative-answer rejection, not by an execution window (FINDING 2).
-test("the plugin records a real question result as a one-use receipt and the approval tool consumes it", async () => {
-  const { root, slug } = flowFixture();
-  try {
-    const client = {
-      session: { get: async () => ({ data: {} }) },
-    };
-    const hooks = await plugin({
-      client,
-      directory: root,
-      worktree: root,
-      serverUrl: new URL("http://localhost"),
-    } as never);
-    const spec = `docs/${slug}/spec.md`;
-    await hooks.tool?.workflow_flow_status.execute({ plan_path: `docs/${slug}/plan.md` }, {
-      directory: root,
-      worktree: root,
-      sessionID: "s1",
-    } as never);
+test(
+  "the plugin records a real question result as a one-use receipt and the approval tool consumes it",
+  async () => {
+    const { root, slug } = flowFixture();
+    try {
+      const client = {
+        session: { get: async () => ({ data: {} }) },
+      };
+      const hooks = await plugin({
+        client,
+        directory: root,
+        worktree: root,
+        serverUrl: new URL("http://localhost"),
+      } as never);
+      const spec = `docs/${slug}/spec.md`;
+      await hooks.tool?.workit_flow_status.execute({ plan_path: `docs/${slug}/plan.md` }, {
+        directory: root,
+        worktree: root,
+        sessionID: "s1",
+      } as never);
 
-    // No receipt yet: approval fails with the host-observed-receipt error.
-    const before = await hooks.tool?.workflow_spec_approve.execute({ spec_path: spec }, {
-      directory: root,
-      worktree: root,
-      sessionID: "s1",
-    } as never);
-    expect(JSON.parse(before as string).ok).toBe(false);
+      // No receipt yet: approval fails with the host-observed-receipt error.
+      const before = await hooks.tool?.workit_spec_approve.execute({ spec_path: spec }, {
+        directory: root,
+        worktree: root,
+        sessionID: "s1",
+      } as never);
+      expect(JSON.parse(before as string).ok).toBe(false);
 
-    // The user answers the native question; the after-hook records the
-    // receipt, and the approval tool consumes the most recent one.
-    await hooks["tool.execute.after"]?.(
-      { tool: "question", sessionID: "s1", callID: "call-1", args: {} },
-      {
-        title: "Asked 1 question",
-        output: "User has answered your questions",
-        metadata: { answers: [["Approve spec"]] },
-      },
-    );
-    const after = await hooks.tool?.workflow_spec_approve.execute({ spec_path: spec }, {
-      directory: root,
-      worktree: root,
-      sessionID: "s1",
-    } as never);
-    const result = JSON.parse(after as string);
-    expect(result.ok).toBe(true);
-    expect(result.data.status).toBe("approved");
+      // The user answers the native question; the after-hook records the
+      // receipt, and the approval tool consumes the most recent one.
+      await hooks["tool.execute.after"]?.(
+        { tool: "question", sessionID: "s1", callID: "call-1", args: {} },
+        {
+          title: "Asked 1 question",
+          output: "User has answered your questions",
+          metadata: { answers: [["Approve spec"]] },
+        },
+      );
+      const after = await hooks.tool?.workit_spec_approve.execute({ spec_path: spec }, {
+        directory: root,
+        worktree: root,
+        sessionID: "s1",
+      } as never);
+      const result = JSON.parse(after as string);
+      expect(result.ok).toBe(true);
+      expect(result.data.status).toBe("approved");
 
-    // Replay fails: the receipt was consumed exactly once.
-    const replay = await hooks.tool?.workflow_spec_approve.execute({ spec_path: spec }, {
-      directory: root,
-      worktree: root,
-      sessionID: "s1",
-    } as never);
-    expect(JSON.parse(replay as string).ok).toBe(false);
+      // Replay fails: the receipt was consumed exactly once.
+      const replay = await hooks.tool?.workit_spec_approve.execute({ spec_path: spec }, {
+        directory: root,
+        worktree: root,
+        sessionID: "s1",
+      } as never);
+      expect(JSON.parse(replay as string).ok).toBe(false);
 
-    // The single receipt consumed the whole draft -> approved transition: a
-    // fresh answer on an already-approved spec cannot advance further and the
-    // receipt IS spent (consume-before-transition).
-    await hooks["tool.execute.after"]?.(
-      { tool: "question", sessionID: "s1", callID: "call-2", args: {} },
-      {
-        title: "Asked 1 question",
-        output: "User has answered your questions",
-        metadata: { answers: [["Approve spec"]] },
-      },
-    );
-    const second = await hooks.tool?.workflow_spec_approve.execute({ spec_path: spec }, {
-      directory: root,
-      worktree: root,
-      sessionID: "s1",
-    } as never);
-    const secondResult = JSON.parse(second as string);
-    expect(secondResult.ok).toBe(false);
-    expect(secondResult.data?.code).toBe("flow_already_approved");
+      // The single receipt consumed the whole draft -> approved transition: a
+      // fresh answer on an already-approved spec cannot advance further and the
+      // receipt IS spent (consume-before-transition).
+      await hooks["tool.execute.after"]?.(
+        { tool: "question", sessionID: "s1", callID: "call-2", args: {} },
+        {
+          title: "Asked 1 question",
+          output: "User has answered your questions",
+          metadata: { answers: [["Approve spec"]] },
+        },
+      );
+      const second = await hooks.tool?.workit_spec_approve.execute({ spec_path: spec }, {
+        directory: root,
+        worktree: root,
+        sessionID: "s1",
+      } as never);
+      const secondResult = JSON.parse(second as string);
+      expect(secondResult.ok).toBe(false);
+      expect(secondResult.data?.code).toBe("flow_already_approved");
 
-    // A forged multi-select answer produces no receipt (single-select only).
-    await hooks["tool.execute.after"]?.(
-      { tool: "question", sessionID: "s1", callID: "call-3", args: {} },
-      {
-        title: "Asked 1 question",
-        output: "User has answered your questions",
-        metadata: { answers: [["A", "B"]] },
-      },
-    );
-    const noReceipt = await hooks.tool?.workflow_spec_approve.execute({ spec_path: spec }, {
-      directory: root,
-      worktree: root,
-      sessionID: "s1",
-    } as never);
-    expect(JSON.parse(noReceipt as string).ok).toBe(false);
+      // A forged multi-select answer produces no receipt (single-select only).
+      await hooks["tool.execute.after"]?.(
+        { tool: "question", sessionID: "s1", callID: "call-3", args: {} },
+        {
+          title: "Asked 1 question",
+          output: "User has answered your questions",
+          metadata: { answers: [["A", "B"]] },
+        },
+      );
+      const noReceipt = await hooks.tool?.workit_spec_approve.execute({ spec_path: spec }, {
+        directory: root,
+        worktree: root,
+        sessionID: "s1",
+      } as never);
+      expect(JSON.parse(noReceipt as string).ok).toBe(false);
 
-    // A negative answer can never be laundered into an approval: it is
-    // rejected and spent (FINDING 3).
-    await hooks["tool.execute.after"]?.(
-      { tool: "question", sessionID: "s1", callID: "call-4", args: {} },
-      {
-        title: "Asked 1 question",
-        output: "User has answered your questions",
-        metadata: { answers: [["No"]] },
-      },
-    );
-    const negative = await hooks.tool?.workflow_spec_approve.execute({ spec_path: spec }, {
-      directory: root,
-      worktree: root,
-      sessionID: "s1",
-    } as never);
-    const negativeResult = JSON.parse(negative as string);
-    expect(negativeResult.ok).toBe(false);
-    expect(negativeResult.data?.code).toBe("receipt_rejected");
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
+      // A bare "No" has no workflow purpose and is not recorded as a flow
+      // receipt (CA-02); a spec-approval request with no typed receipt is
+      // receipt_missing, not receipt_rejected.
+      await hooks["tool.execute.after"]?.(
+        { tool: "question", sessionID: "s1", callID: "call-4", args: {} },
+        {
+          title: "Asked 1 question",
+          output: "User has answered your questions",
+          metadata: { answers: [["No"]] },
+        },
+      );
+      const negative = await hooks.tool?.workit_spec_approve.execute({ spec_path: spec }, {
+        directory: root,
+        worktree: root,
+        sessionID: "s1",
+      } as never);
+      const negativeResult = JSON.parse(negative as string);
+      expect(negativeResult.ok).toBe(false);
+      expect(negativeResult.data?.code).toBe("receipt_missing");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+  { timeout: 60_000 },
+);
 
 const establishSubagentDriven = (root: string, slug: string) => {
   const spec = `docs/${slug}/spec.md`;
   const plan = `docs/${slug}/plan.md`;
   const store = new HostReceiptStore();
-  const ev = (label: string) => {
-    store.record("root", `call-${label}`, label);
-    const consumed = store.consume("root");
-    if (!consumed.ok) throw new Error(consumed.error);
-    return createOpenCodeEvidence(consumed.receipt);
-  };
+  store.record("root", "call-spec", "Approve spec", Date.now(), "", "spec-approval");
+  const specEv = createOpenCodeEvidence(
+    (() => {
+      const c = store.consume("root", { purpose: "spec-approval" });
+      if (!c.ok) throw new Error(c.error);
+      return c.receipt;
+    })(),
+  );
+  store.record("root", "call-plan", "Approve plan", Date.now(), "", "plan-approval");
+  const planEv = createOpenCodeEvidence(
+    (() => {
+      const c = store.consume("root", { purpose: "plan-approval" });
+      if (!c.ok) throw new Error(c.error);
+      return c.receipt;
+    })(),
+  );
+  store.record("root", "call-menu", "subagent-driven", Date.now(), "", "execution-menu");
+  const menuEv = createOpenCodeEvidence(
+    (() => {
+      const c = store.consume("root", { purpose: "execution-menu", label: "subagent-driven" });
+      if (!c.ok) throw new Error(c.error);
+      return c.receipt;
+    })(),
+  );
   const prep = prepareFlowState(root, slug, { spec_path: spec, plan_path: plan });
   if (!prep.ok) throw new Error(prep.error);
   for (const step of [
-    transitionSpec(root, slug, spec, ev("Approve")),
-    transitionPlan(root, slug, plan, ev("Approve")),
+    transitionSpec(root, slug, spec, specEv),
+    transitionPlan(root, slug, plan, planEv),
   ])
     if (!step.ok) throw new Error(step.error);
-  const menu = recordMenuChoice(root, slug, plan, "subagent-driven", ev("subagent-driven"));
+  const menu = recordMenuChoice(root, slug, plan, "subagent-driven", menuEv, {
+    hostWorkspace: root,
+    role: "coordinator",
+    sessionId: "root-session",
+  });
   if (!menu.ok) throw new Error(menu.error);
 };
 
-test("tool.execute.before denies root-session write tools and mutating shell while subagent-driven is active", async () => {
-  const { root, slug } = flowFixture();
-  try {
-    establishSubagentDriven(root, slug);
-    const client = {
-      session: { get: async () => ({ data: { directory: root } }) },
-    };
-    const hooks = await plugin({
-      client,
-      directory: root,
-      worktree: root,
-      serverUrl: new URL("http://localhost"),
-    } as never);
+test(
+  "tool.execute.before denies root-session write tools and mutating shell while subagent-driven is active",
+  async () => {
+    const { root, slug } = flowFixture();
+    try {
+      establishSubagentDriven(root, slug);
+      const client = {
+        session: { get: async () => ({ data: { directory: root } }) },
+      };
+      const hooks = await plugin({
+        client,
+        directory: root,
+        worktree: root,
+        serverUrl: new URL("http://localhost"),
+      } as never);
 
-    for (const tool of ["write", "edit", "apply_patch", "patch", "workflow_commit"]) {
-      const output = { args: {} };
-      let thrown: Error | undefined;
+      for (const tool of ["write", "edit", "apply_patch", "patch", "workit_commit"]) {
+        const output = { args: {} };
+        let thrown: Error | undefined;
+        try {
+          await hooks["tool.execute.before"]?.(
+            { tool, sessionID: "root-session", callID: `c-${tool}` },
+            output,
+          );
+        } catch (error) {
+          thrown = error as Error;
+        }
+        expect(thrown, tool).toBeDefined();
+        expect(thrown?.message, tool).toContain(COORDINATOR_RECOVERY_TEXT);
+      }
+
+      const mutating = { args: { command: "git push origin main" } };
+      let shellError: Error | undefined;
       try {
         await hooks["tool.execute.before"]?.(
-          { tool, sessionID: "root-session", callID: `c-${tool}` },
-          output,
+          { tool: "bash", sessionID: "root-session", callID: "c-bash" },
+          mutating,
         );
       } catch (error) {
-        thrown = error as Error;
+        shellError = error as Error;
       }
-      expect(thrown, tool).toBeDefined();
-      expect(thrown?.message, tool).toContain(COORDINATOR_RECOVERY_TEXT);
-    }
+      expect(shellError).toBeDefined();
+      expect(shellError?.message).toContain(COORDINATOR_SHELL_DENIED_TEXT);
 
-    const mutating = { args: { command: "git push origin main" } };
-    let shellError: Error | undefined;
+      // The bounded allowlist keeps read/test/review commands working.
+      for (const command of [
+        "cat spec.md",
+        "git status",
+        "bun run check",
+        "bun test test/x.test.ts",
+      ]) {
+        const allowed = { args: { command } };
+        await expect(
+          hooks["tool.execute.before"]?.(
+            { tool: "bash", sessionID: "root-session", callID: "c-allow" },
+            allowed,
+          ),
+        ).resolves.toBeUndefined();
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+  { timeout: 60_000 },
+);
+
+test(
+  "tool.execute.before never intercepts delegated child sessions",
+  async () => {
+    const { root, slug } = flowFixture();
     try {
-      await hooks["tool.execute.before"]?.(
-        { tool: "bash", sessionID: "root-session", callID: "c-bash" },
-        mutating,
-      );
-    } catch (error) {
-      shellError = error as Error;
-    }
-    expect(shellError).toBeDefined();
-    expect(shellError?.message).toContain(COORDINATOR_SHELL_DENIED_TEXT);
-
-    // The bounded allowlist keeps read/test/review commands working.
-    for (const command of [
-      "cat spec.md",
-      "git status",
-      "bun run check",
-      "bun test test/x.test.ts",
-    ]) {
-      const allowed = { args: { command } };
+      establishSubagentDriven(root, slug);
+      const client = {
+        session: {
+          get: async () => ({ data: { parentID: "root-session", directory: root } }),
+        },
+      };
+      const hooks = await plugin({
+        client,
+        directory: root,
+        worktree: root,
+        serverUrl: new URL("http://localhost"),
+      } as never);
+      const output = { args: { command: "rm -rf docs" } };
       await expect(
         hooks["tool.execute.before"]?.(
-          { tool: "bash", sessionID: "root-session", callID: "c-allow" },
-          allowed,
+          { tool: "bash", sessionID: "child-session", callID: "c-1" },
+          output,
         ),
       ).resolves.toBeUndefined();
+      const write = { args: {} };
+      await expect(
+        hooks["tool.execute.before"]?.(
+          { tool: "write", sessionID: "child-session", callID: "c-2" },
+          write,
+        ),
+      ).resolves.toBeUndefined();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
     }
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
+  },
+  { timeout: 60_000 },
+);
 
-test("tool.execute.before never intercepts delegated child sessions", async () => {
-  const { root, slug } = flowFixture();
-  try {
-    establishSubagentDriven(root, slug);
-    const client = {
-      session: {
-        get: async () => ({ data: { parentID: "root-session", directory: root } }),
-      },
-    };
-    const hooks = await plugin({
-      client,
-      directory: root,
-      worktree: root,
-      serverUrl: new URL("http://localhost"),
-    } as never);
-    const output = { args: { command: "rm -rf docs" } };
-    await expect(
-      hooks["tool.execute.before"]?.(
-        { tool: "bash", sessionID: "child-session", callID: "c-1" },
-        output,
-      ),
-    ).resolves.toBeUndefined();
-    const write = { args: {} };
-    await expect(
-      hooks["tool.execute.before"]?.(
-        { tool: "write", sessionID: "child-session", callID: "c-2" },
-        write,
-      ),
-    ).resolves.toBeUndefined();
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test("tool.execute.before leaves the root session alone when no subagent-driven plan is active", async () => {
-  const { root } = flowFixture();
-  try {
-    const client = {
-      session: { get: async () => ({ data: { directory: root } }) },
-    };
-    const hooks = await plugin({
-      client,
-      directory: root,
-      worktree: root,
-      serverUrl: new URL("http://localhost"),
-    } as never);
-    const output = { args: { command: "rm -rf docs" } };
-    await expect(
-      hooks["tool.execute.before"]?.(
-        { tool: "bash", sessionID: "root-session", callID: "c-1" },
-        output,
-      ),
-    ).resolves.toBeUndefined();
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
+test(
+  "tool.execute.before leaves the root session alone when no subagent-driven plan is active",
+  async () => {
+    const { root } = flowFixture();
+    try {
+      const client = {
+        session: { get: async () => ({ data: { directory: root } }) },
+      };
+      const hooks = await plugin({
+        client,
+        directory: root,
+        worktree: root,
+        serverUrl: new URL("http://localhost"),
+      } as never);
+      const output = { args: { command: "rm -rf docs" } };
+      await expect(
+        hooks["tool.execute.before"]?.(
+          { tool: "bash", sessionID: "root-session", callID: "c-1" },
+          output,
+        ),
+      ).resolves.toBeUndefined();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+  { timeout: 60_000 },
+);
 
 const cliLifecycleEvidence = () =>
   ({ host: "cli", attested: false, confirmation: "flag" }) as const;
 
-test("tool.execute.before leaves the root session usable once the plan is paused", async () => {
-  const { root, slug } = flowFixture();
-  try {
-    establishSubagentDriven(root, slug);
-    expect(
-      transitionExecution(root, slug, `docs/${slug}/plan.md`, "pause", cliLifecycleEvidence()).ok,
-    ).toBe(true);
-    const client = {
-      session: { get: async () => ({ data: { directory: root } }) },
-    };
-    const hooks = await plugin({
-      client,
-      directory: root,
-      worktree: root,
-      serverUrl: new URL("http://localhost"),
-    } as never);
-    const write = { args: {} };
-    await expect(
-      hooks["tool.execute.before"]?.(
-        { tool: "write", sessionID: "root-session", callID: "c-paused" },
-        write,
-      ),
-    ).resolves.toBeUndefined();
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
+test(
+  "tool.execute.before leaves the root session usable once the plan is paused",
+  async () => {
+    const { root, slug } = flowFixture();
+    try {
+      establishSubagentDriven(root, slug);
+      expect(
+        transitionExecution(root, slug, `docs/${slug}/plan.md`, "pause", cliLifecycleEvidence()).ok,
+      ).toBe(true);
+      const client = {
+        session: { get: async () => ({ data: { directory: root } }) },
+      };
+      const hooks = await plugin({
+        client,
+        directory: root,
+        worktree: root,
+        serverUrl: new URL("http://localhost"),
+      } as never);
+      const write = { args: {} };
+      await expect(
+        hooks["tool.execute.before"]?.(
+          { tool: "write", sessionID: "root-session", callID: "c-paused" },
+          write,
+        ),
+      ).resolves.toBeUndefined();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+  { timeout: 60_000 },
+);
 
-test("tool.execute.before leaves the root session usable once the plan is completed", async () => {
-  const { root, slug } = flowFixture();
-  try {
-    establishSubagentDriven(root, slug);
-    mkdirSync(path.join(root, "docs", slug, "sdd"), { recursive: true });
-    writeFileSync(path.join(root, "docs", slug, "sdd", "progress.md"), "Task 1: complete\n");
-    writeFileSync(path.join(root, "CHANGELOG.md"), "## [Unreleased]\n\n- fixture\n");
-    expect(
-      transitionExecution(
+test(
+  "tool.execute.before leaves the root session usable once the plan is completed",
+  async () => {
+    const { root, slug } = flowFixture();
+    try {
+      establishSubagentDriven(root, slug);
+      mkdirSync(path.join(root, "docs", slug, "sdd"), { recursive: true });
+      writeFileSync(path.join(root, "docs", slug, "sdd", "progress.md"), "Task 1: complete\n");
+      writeFileSync(path.join(root, "CHANGELOG.md"), "## [Unreleased]\n\n- fixture\n");
+      expect(
+        transitionExecution(
+          root,
+          slug,
+          `docs/${slug}/plan.md`,
+          "complete",
+          cliLifecycleEvidence(),
+          undefined,
+          { verifyProject: () => ({ stdout: "", stderr: "", exitCode: 0, cwd: root }) },
+        ).ok,
+      ).toBe(true);
+      const client = {
+        session: { get: async () => ({ data: { directory: root } }) },
+      };
+      const hooks = await plugin({
+        client,
+        directory: root,
+        worktree: root,
+        serverUrl: new URL("http://localhost"),
+      } as never);
+      const write = { args: {} };
+      await expect(
+        hooks["tool.execute.before"]?.(
+          { tool: "write", sessionID: "root-session", callID: "c-completed" },
+          write,
+        ),
+      ).resolves.toBeUndefined();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+  { timeout: 60_000 },
+);
+
+test(
+  "tool.execute.before leaves the root session usable for an active inline flow",
+  async () => {
+    const { root, slug } = flowFixture();
+    try {
+      establishSubagentDriven(root, slug);
+      // Record an active INLINE menu choice instead of the subagent-driven one.
+      const store = new HostReceiptStore();
+      store.record("root", "call-inline", "inline", Date.now(), "", "execution-menu");
+      const menu = recordMenuChoice(
         root,
         slug,
         `docs/${slug}/plan.md`,
-        "complete",
-        cliLifecycleEvidence(),
-        undefined,
-        { verifyProject: () => ({ stdout: "", stderr: "", exitCode: 0, cwd: root }) },
-      ).ok,
-    ).toBe(true);
-    const client = {
-      session: { get: async () => ({ data: { directory: root } }) },
-    };
-    const hooks = await plugin({
-      client,
-      directory: root,
-      worktree: root,
-      serverUrl: new URL("http://localhost"),
-    } as never);
-    const write = { args: {} };
-    await expect(
-      hooks["tool.execute.before"]?.(
-        { tool: "write", sessionID: "root-session", callID: "c-completed" },
-        write,
-      ),
-    ).resolves.toBeUndefined();
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
+        "inline",
+        createOpenCodeEvidence(
+          (() => {
+            const consumed = store.consume("root", { purpose: "execution-menu", label: "inline" });
+            if (!consumed.ok) throw new Error(consumed.error);
+            return consumed.receipt;
+          })(),
+        ),
+      );
+      expect(menu.ok).toBe(true);
+      const client = {
+        session: { get: async () => ({ data: { directory: root } }) },
+      };
+      const hooks = await plugin({
+        client,
+        directory: root,
+        worktree: root,
+        serverUrl: new URL("http://localhost"),
+      } as never);
+      const write = { args: {} };
+      await expect(
+        hooks["tool.execute.before"]?.(
+          { tool: "write", sessionID: "root-session", callID: "c-inline" },
+          write,
+        ),
+      ).resolves.toBeUndefined();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+  { timeout: 60_000 },
+);
 
-test("tool.execute.before leaves the root session usable for an active inline flow", async () => {
-  const { root, slug } = flowFixture();
-  try {
-    establishSubagentDriven(root, slug);
-    // Record an active INLINE menu choice instead of the subagent-driven one.
-    const store = new HostReceiptStore();
-    const menu = recordMenuChoice(
-      root,
-      slug,
-      `docs/${slug}/plan.md`,
-      "inline",
-      createOpenCodeEvidence(
-        (() => {
-          store.record("root", "call-inline", "inline");
-          const consumed = store.consume("root");
-          if (!consumed.ok) throw new Error(consumed.error);
-          return consumed.receipt;
-        })(),
-      ),
-    );
-    expect(menu.ok).toBe(true);
-    const client = {
-      session: { get: async () => ({ data: { directory: root } }) },
-    };
-    const hooks = await plugin({
-      client,
-      directory: root,
-      worktree: root,
-      serverUrl: new URL("http://localhost"),
-    } as never);
-    const write = { args: {} };
-    await expect(
-      hooks["tool.execute.before"]?.(
-        { tool: "write", sessionID: "root-session", callID: "c-inline" },
-        write,
-      ),
-    ).resolves.toBeUndefined();
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
+test(
+  "tool.execute.before keeps blocking the root session after a plan edit (lifecycle survives plan drift)",
+  async () => {
+    const { root, slug } = flowFixture();
+    try {
+      establishSubagentDriven(root, slug);
+      // Editing the approved plan introduces approval drift, which resets only
+      // the plan approval digest; the active execution lifecycle survives, so
+      // the coordinator write rail stays ON.
+      writeFileSync(
+        path.join(root, "docs", slug, "plan.md"),
+        PLUGIN_PLAN(slug).replace("do it", "do it now"),
+      );
+      const client = {
+        session: { get: async () => ({ data: { directory: root } }) },
+      };
+      const hooks = await plugin({
+        client,
+        directory: root,
+        worktree: root,
+        serverUrl: new URL("http://localhost"),
+      } as never);
+      const write = { args: {} };
+      await expect(
+        hooks["tool.execute.before"]?.(
+          { tool: "write", sessionID: "root-session", callID: "c-stale" },
+          write,
+        ),
+      ).rejects.toThrow(/coordinator/i);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+  { timeout: 60_000 },
+);
 
-test("tool.execute.before leaves the root session usable for a stale (drift-reset) subagent-driven flow", async () => {
-  const { root, slug } = flowFixture();
-  try {
-    establishSubagentDriven(root, slug);
-    // Editing the approved plan introduces approval drift: the effective read
-    // reconciles it and resets execution to pending, so the rail is off.
-    writeFileSync(
-      path.join(root, "docs", slug, "plan.md"),
-      PLUGIN_PLAN(slug).replace("do it", "do it now"),
-    );
-    const client = {
-      session: { get: async () => ({ data: { directory: root } }) },
-    };
-    const hooks = await plugin({
-      client,
-      directory: root,
-      worktree: root,
-      serverUrl: new URL("http://localhost"),
-    } as never);
-    const write = { args: {} };
-    await expect(
-      hooks["tool.execute.before"]?.(
-        { tool: "write", sessionID: "root-session", callID: "c-stale" },
-        write,
-      ),
-    ).resolves.toBeUndefined();
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
+test(
+  "the plugin records lifecycle answers as one-use receipts consumed by the lifecycle tools",
+  async () => {
+    const { root, slug } = flowFixture();
+    try {
+      establishSubagentDriven(root, slug);
+      const client = {
+        session: { get: async () => ({ data: { directory: root } }) },
+      };
+      const hooks = await plugin({
+        client,
+        directory: root,
+        worktree: root,
+        serverUrl: new URL("http://localhost"),
+      } as never);
+      const plan = `docs/${slug}/plan.md`;
 
-test("the plugin records lifecycle answers as one-use receipts consumed by the lifecycle tools", async () => {
-  const { root, slug } = flowFixture();
-  try {
-    establishSubagentDriven(root, slug);
-    const client = {
-      session: { get: async () => ({ data: { directory: root } }) },
-    };
-    const hooks = await plugin({
-      client,
-      directory: root,
-      worktree: root,
-      serverUrl: new URL("http://localhost"),
-    } as never);
-    const plan = `docs/${slug}/plan.md`;
+      await hooks["tool.execute.after"]?.(
+        { tool: "question", sessionID: "root", callID: "call-pause", args: {} },
+        {
+          title: "Pause the plan?",
+          output: "User has answered your questions",
+          metadata: { answers: [["Pause plan"]] },
+        },
+      );
+      const paused = await hooks.tool?.workit_plan_pause.execute({ plan_path: plan }, {
+        directory: root,
+        worktree: root,
+        sessionID: "root",
+      } as never);
+      const pausedResult = JSON.parse(paused as string);
+      expect(pausedResult.ok).toBe(true);
+      expect(pausedResult.data.execution.status).toBe("paused");
 
-    await hooks["tool.execute.after"]?.(
-      { tool: "question", sessionID: "root", callID: "call-pause", args: {} },
-      {
-        title: "Pause the plan?",
-        output: "User has answered your questions",
-        metadata: { answers: [["Pause plan"]] },
-      },
-    );
-    const paused = await hooks.tool?.workflow_plan_pause.execute({ plan_path: plan }, {
-      directory: root,
-      worktree: root,
-      sessionID: "root",
-    } as never);
-    const pausedResult = JSON.parse(paused as string);
-    expect(pausedResult.ok).toBe(true);
-    expect(pausedResult.data.execution.status).toBe("paused");
+      // Replay fails: the pause receipt was spent exactly once.
+      const replay = await hooks.tool?.workit_plan_pause.execute({ plan_path: plan }, {
+        directory: root,
+        worktree: root,
+        sessionID: "root",
+      } as never);
+      expect(JSON.parse(replay as string).ok).toBe(false);
 
-    // Replay fails: the pause receipt was spent exactly once.
-    const replay = await hooks.tool?.workflow_plan_pause.execute({ plan_path: plan }, {
-      directory: root,
-      worktree: root,
-      sessionID: "root",
-    } as never);
-    expect(JSON.parse(replay as string).ok).toBe(false);
-
-    await hooks["tool.execute.after"]?.(
-      { tool: "question", sessionID: "root", callID: "call-resume", args: {} },
-      {
-        title: "Resume the plan?",
-        output: "User has answered your questions",
-        metadata: { answers: [["Resume plan"]] },
-      },
-    );
-    const resumed = await hooks.tool?.workflow_plan_resume.execute({ plan_path: plan }, {
-      directory: root,
-      worktree: root,
-      sessionID: "root",
-    } as never);
-    const resumedResult = JSON.parse(resumed as string);
-    expect(resumedResult.ok).toBe(true);
-    expect(resumedResult.data.execution.status).toBe("active");
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
+      await hooks["tool.execute.after"]?.(
+        { tool: "question", sessionID: "root", callID: "call-resume", args: {} },
+        {
+          title: "Resume the plan?",
+          output: "User has answered your questions",
+          metadata: { answers: [["Resume plan"]] },
+        },
+      );
+      const resumed = await hooks.tool?.workit_plan_resume.execute({ plan_path: plan }, {
+        directory: root,
+        worktree: root,
+        sessionID: "root",
+      } as never);
+      const resumedResult = JSON.parse(resumed as string);
+      expect(resumedResult.ok).toBe(true);
+      expect(resumedResult.data.execution.status).toBe("active");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+  { timeout: 60_000 },
+);
 
 // Task 3 (label-matching parity): the real host path end-to-end. The after-hook
 // records the ANSWERED label verbatim — including a qualifier-decorated menu
 // choice the host rendered ("(Recommended)" / "(new session only)") — and
-// workflow_plan_menu consumes it against the bare enum via the shared matcher.
+// workit_plan_menu consumes it against the bare enum via the shared matcher.
 const answerQuestion = (
   hooks: Record<string, any>,
   sessionID: string,
@@ -547,7 +611,7 @@ test.each([
   ],
   ["the display-only handoff qualifier", "s2", "Handoff (new session only)", "handoff"],
 ])(
-  "the plugin hook records %s and workflow_plan_menu consumes it",
+  "the plugin hook records %s and workit_plan_menu consumes it",
   async (_name, sessionID, label, choice) => {
     const { root, slug } = flowFixture();
     try {
@@ -562,7 +626,7 @@ test.each([
       } as never);
       const spec = `docs/${slug}/spec.md`;
       const plan = `docs/${slug}/plan.md`;
-      await hooks.tool?.workflow_flow_status.execute({ plan_path: plan }, {
+      await hooks.tool?.workit_flow_status.execute({ plan_path: plan }, {
         directory: root,
         worktree: root,
         sessionID,
@@ -570,7 +634,7 @@ test.each([
 
       await answerQuestion(hooks, sessionID, "call-spec", "Approve spec");
       const specR = JSON.parse(
-        (await hooks.tool?.workflow_spec_approve.execute({ spec_path: spec }, {
+        (await hooks.tool?.workit_spec_approve.execute({ spec_path: spec }, {
           directory: root,
           worktree: root,
           sessionID,
@@ -579,7 +643,7 @@ test.each([
       expect(specR.ok).toBe(true);
       await answerQuestion(hooks, sessionID, "call-plan", "Approve plan");
       const planR = JSON.parse(
-        (await hooks.tool?.workflow_plan_approve.execute({ plan_path: plan }, {
+        (await hooks.tool?.workit_plan_approve.execute({ plan_path: plan }, {
           directory: root,
           worktree: root,
           sessionID,
@@ -589,7 +653,7 @@ test.each([
 
       await answerQuestion(hooks, sessionID, "call-menu", label);
       const menu = JSON.parse(
-        (await hooks.tool?.workflow_plan_menu.execute({ plan_path: plan, choice }, {
+        (await hooks.tool?.workit_plan_menu.execute({ plan_path: plan, choice }, {
           directory: root,
           worktree: root,
           sessionID,
@@ -805,102 +869,108 @@ describe("plugin registration", () => {
         } as never);
         const fixtures: Record<string, Record<string, unknown>> = {
           workit_init_status: {},
-          workflow_doctor: {},
+          workit_doctor: {},
           workit_status: {},
-          workflow_git_context: { paths: [] },
-          workflow_verify: { dry_run: true },
-          workflow_pr_context: {},
-          workflow_changelog_context: {},
-          workflow_release_notes_context: { range_or_tag: "HEAD" },
-          workflow_docs_context: {},
-          workflow_docs_validate: {
+          workit_git_context: { paths: [] },
+          workit_verify: { dry_run: true },
+          workit_pr_context: {},
+          workit_changelog_context: {},
+          workit_release_notes_context: { range_or_tag: "HEAD" },
+          workit_docs_context: {},
+          workit_docs_validate: {
             spec_path: "missing-spec.md",
             plan_path: "missing-plan.md",
           },
-          workflow_docs_branch: {},
-          workflow_docs_layout: { slug: "fixture-layout" },
-          workflow_changelog_apply: { confirmed: false },
-          workflow_branch_setup: { confirmed: false },
-          workflow_commit: { confirmed: false, message: "test: fixture" },
-          workflow_pr_create: { confirmed: false, title: "Fixture" },
+          workit_docs_branch: {},
+          workit_docs_layout: { slug: "fixture-layout" },
+          workit_changelog_apply: { confirmed: false },
+          workit_branch_setup: { confirmed: false },
+          workit_commit: { confirmed: false, message: "test: fixture" },
+          workit_pr_create: { confirmed: false, title: "Fixture" },
           workit_init_apply: {
             confirmed: false,
             action: "youtrack_scaffold",
           },
-          workflow_plan_tasks: { plan_path: "missing-plan.md" },
-          workflow_resolve_branch: {
+          workit_plan_tasks: { plan_path: "missing-plan.md" },
+          workit_resolve_branch: {
             spec_path: "missing-spec.md",
             plan_path: "missing-plan.md",
           },
-          workflow_flow_status: { plan_path: "missing-plan.md" },
-          workflow_docs_repo_link: { path: "missing", confirmed: false },
-          workflow_docs_list: {},
-          workflow_docs_promote: { slug: "x", confirmed: false },
-          workflow_template_list: {},
-          workflow_template_edit: { name: "issue-update", content: "x", confirmed: false },
-          workflow_rule_list: {},
-          workflow_rule_edit: {
+          workit_flow_status: { plan_path: "missing-plan.md" },
+          workit_docs_repo_link: { path: "missing", confirmed: false },
+          workit_docs_list: {},
+          workit_docs_promote: { slug: "x", confirmed: false },
+          workit_template_list: {},
+          workit_template_edit: { name: "issue-update", content: "x", confirmed: false },
+          workit_rule_list: {},
+          workit_rule_edit: {
             name: "x",
             description: "x",
             platforms: ["cursor"],
             body: "# X\\n",
             confirmed: false,
           },
-          workflow_spec_approve: {
+          workit_spec_approve: {
             confirmed: false,
             spec_path: "missing-spec.md",
           },
-          workflow_plan_approve: {
+          workit_plan_approve: {
             confirmed: false,
             plan_path: "missing-plan.md",
           },
-          workflow_plan_menu: {
+          workit_plan_menu: {
             confirmed: false,
             plan_path: "missing-plan.md",
             choice: "inline",
           },
-          workflow_plan_pause: { plan_path: "missing-plan.md" },
-          workflow_plan_resume: { plan_path: "missing-plan.md" },
-          workflow_plan_complete: { plan_path: "missing-plan.md" },
-          workflow_sdd_context: { plan_path: "missing-plan.md" },
-          workflow_sdd_task_brief: {
+          workit_plan_pause: { plan_path: "missing-plan.md" },
+          workit_plan_resume: { plan_path: "missing-plan.md" },
+          workit_plan_complete: { plan_path: "missing-plan.md" },
+          workit_sdd_context: { plan_path: "missing-plan.md" },
+          workit_sdd_task_brief: {
             confirmed: false,
             sdd_dir: "docs/fixture/sdd",
             task_id: 1,
             section_text: "Task",
           },
-          workflow_sdd_review_package: {
+          workit_sdd_review_package: {
             confirmed: false,
             sdd_dir: "docs/fixture/sdd",
             base_sha: "HEAD",
             head_sha: "HEAD",
           },
-          workflow_sdd_append_progress: {
+          workit_sdd_append_progress: {
             confirmed: false,
             progress_path: "docs/fixture/sdd/progress.md",
             line: "Task 1: complete",
           },
-          workflow_handoff_session: { message: "safe fixture --stay" },
-          workflow_youtrack_verify_token: {},
-          workflow_youtrack_parse_issue: { issue_ref: "TEST-1" },
-          workflow_youtrack_context: { mode: "task", issue_id: "TEST-1" },
-          workflow_youtrack_parse_duration: { text: "30m" },
-          workflow_youtrack_draft: { issueId: "TEST-1", userNotes: "Fixture" },
-          workflow_youtrack_log_time: {
+          workit_sdd_append_advisory: {
+            confirmed: false,
+            advisories_path: "docs/fixture/sdd/advisories.md",
+            task_id: 1,
+            text: "Fixture",
+          },
+          workit_handoff_session: { message: "safe fixture --stay" },
+          workit_youtrack_verify_token: {},
+          workit_youtrack_parse_issue: { issue_ref: "TEST-1" },
+          workit_youtrack_context: { mode: "task", issue_id: "TEST-1" },
+          workit_youtrack_parse_duration: { text: "30m" },
+          workit_youtrack_draft: { issueId: "TEST-1", userNotes: "Fixture" },
+          workit_youtrack_log_time: {
             confirmed: false,
             issueId: "TEST-1",
             minutes: 30,
           },
-          workflow_youtrack_post: {
+          workit_youtrack_post: {
             confirmed: false,
             issueId: "TEST-1",
             markdown: "Fixture",
           },
-          workflow_present_ascii: {
+          workit_present_ascii: {
             title: "Fixture",
             rows: [{ type: "header", label: "Title" }],
           },
-          workflow_present_flow: {
+          workit_present_flow: {
             nodes: [{ id: "a", label: "Start" }],
             edges: [],
           },
@@ -921,7 +991,7 @@ describe("plugin registration", () => {
           results[name] = result;
           expect(Object.keys(result).sort(), name).toEqual(["data", "error", "ok"]);
         }
-        expect(results.workflow_youtrack_verify_token).toEqual({
+        expect(results.workit_youtrack_verify_token).toEqual({
           ok: false,
           data: null,
           error:
@@ -1005,7 +1075,7 @@ describe("plugin registration", () => {
         worktree: root,
         serverUrl: new URL("http://unreachable.invalid"),
       } as never);
-      const raw = await hooks.tool?.workflow_handoff_session.execute(
+      const raw = await hooks.tool?.workit_handoff_session.execute(
         {
           message: "docs/x/spec.md docs/x/plan.md --stay",
         },
@@ -1045,7 +1115,7 @@ describe("plugin registration", () => {
       worktree: root,
       serverUrl: new URL("http://localhost"),
     } as never);
-    await hooks.tool?.workflow_plan_tasks.execute({ plan_path: "docs/x/plan.md" }, {
+    await hooks.tool?.workit_plan_tasks.execute({ plan_path: "docs/x/plan.md" }, {
       directory: root,
       worktree: root,
       sessionID: "s1",
@@ -1060,24 +1130,32 @@ describe("plugin registration", () => {
   });
 });
 
-test("compaction context includes active workflow paths only", () => {
-  const state = new WorkflowStateStore();
-  expect(state.compactionContext("missing")).toBeNull();
-  state.set("s1", { spec: "a.md", plan: "b.md", sdd: "sdd/x" });
-  expect(state.compactionContext("s1")).toContain("Spec: a.md");
-  expect(state.compactionContext("s1")).toContain("SDD: sdd/x");
-});
+test(
+  "compaction context includes active workflow paths only",
+  () => {
+    const state = new WorkflowStateStore();
+    expect(state.compactionContext("missing")).toBeNull();
+    state.set("s1", { spec: "a.md", plan: "b.md", sdd: "sdd/x" });
+    expect(state.compactionContext("s1")).toContain("Spec: a.md");
+    expect(state.compactionContext("s1")).toContain("SDD: sdd/x");
+  },
+  { timeout: 60_000 },
+);
 
-test("config registers vendored superpowers skills alongside toolkit skills", async () => {
-  const hooks = await plugin({
-    directory: "/repo",
-    worktree: "/repo",
-    serverUrl: new URL("http://localhost"),
-  } as never);
-  const config: Record<string, any> = {};
-  await hooks.config?.(config);
-  const paths = config.skills.paths as string[];
-  const normalized = paths.map((p) => p.split(path.sep).join("/"));
-  expect(normalized.some((p) => p.endsWith("/skills"))).toBe(true);
-  expect(normalized.some((p) => p.endsWith("/vendor/superpowers/skills"))).toBe(true);
-});
+test(
+  "config registers vendored superpowers skills alongside toolkit skills",
+  async () => {
+    const hooks = await plugin({
+      directory: "/repo",
+      worktree: "/repo",
+      serverUrl: new URL("http://localhost"),
+    } as never);
+    const config: Record<string, any> = {};
+    await hooks.config?.(config);
+    const paths = config.skills.paths as string[];
+    const normalized = paths.map((p) => p.split(path.sep).join("/"));
+    expect(normalized.some((p) => p.endsWith("/skills"))).toBe(true);
+    expect(normalized.some((p) => p.endsWith("/vendor/superpowers/skills"))).toBe(true);
+  },
+  { timeout: 60_000 },
+);

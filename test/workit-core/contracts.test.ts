@@ -72,8 +72,8 @@ test("all native skills exist and contain no Cursor runtime vocabulary", () => {
     "question",
     "todowrite",
     "task",
-    "workflow_handoff_session",
-    "workflow_verify",
+    "workit_handoff_session",
+    "workit_verify",
   ]) {
     expect(source).toContain(required);
   }
@@ -116,15 +116,15 @@ test("implement confirms every branch setup after previewing branch and stash be
     expect(source).toContain("stash behavior");
     expect(source).toContain("clean tree");
     expect(source).toContain("proceed or cancel");
-    expect(source).toContain("workflow_branch_setup");
+    expect(source).toContain("workit_branch_setup");
     expect(source).toContain("confirmed: true");
   }
 });
 
 test("issue update names both safe retries and bounds each retry to one attempt", () => {
   const text = skill("wk-issue-update");
-  expect(text).toContain('result.data.retry === "workflow_youtrack_post"');
-  expect(text).toContain('result.data.retry === "workflow_youtrack_log_time"');
+  expect(text).toContain('result.data.retry === "workit_youtrack_post"');
+  expect(text).toContain('result.data.retry === "workit_youtrack_log_time"');
   expect(text).toContain("unchanged reviewed `issueId`, `markdown`, and `minutes`");
   expect(text).toContain("same `issueId` and `minutes`");
   expect(text).toContain("at most once");
@@ -134,13 +134,13 @@ test("issue update names both safe retries and bounds each retry to one attempt"
 test("status uses only the aggregate toolkit status tool", () => {
   const text = skill("wk-status");
   expect(text).toContain("Use only `workit_status`");
-  expect(text).not.toContain("workflow_youtrack_verify_token");
+  expect(text).not.toContain("workit_youtrack_verify_token");
 });
 
 test("handoff always ends the originating turn and never falls back inline", () => {
   const text = skill("wk-handoff");
   expect(text).toContain(
-    "After any `workflow_handoff_session` result—success, partial, or failure—end the originating turn immediately",
+    "After any `workit_handoff_session` result—success, partial, or failure—end the originating turn immediately",
   );
   expect(text).toContain(
     "Never create todos, execute the plan inline, modify files, retry handoff, or call another tool",
@@ -179,7 +179,7 @@ test("post-plan override lists five fixed options and forbids two-option prose",
   expect(stripped).not.toMatch(/Two execution options:\s*\n/);
   expect(stripped).not.toContain("1. Subagent-Driven (recommended)");
   expect(surfaces).toMatch(/no stay|No `--stay` option/i);
-  expect(surfaces).toContain("workflow_docs_validate");
+  expect(surfaces).toContain("workit_docs_validate");
 });
 
 test("source reminder prose carries the display-only (new session only) qualifier on the Handoff label", () => {
@@ -292,7 +292,7 @@ test("PR skills show title and body before create confirmation", () => {
     const createQ = body.search(
       /Create the reviewed|create this MR\/PR|Create MR\/PR now|before creation/i,
     );
-    const createTool = body.indexOf("workflow_pr_create");
+    const createTool = body.indexOf("workit_pr_create");
     expect(showIdx).toBeGreaterThanOrEqual(0);
     expect(createQ).toBeGreaterThan(showIdx);
     expect(createTool).toBeGreaterThan(createQ);
@@ -501,7 +501,7 @@ test("templates and skills codify one contiguous non-empty commit range per task
   expect(script).toMatch(/RULE=.*real base\.\.head/s);
 });
 
-test("execution contracts mandate plan completion: workflow_plan_complete after a complete ledger and green verification (CA-01/CA-07)", () => {
+test("execution contracts mandate plan completion: workit_plan_complete after a complete ledger and green verification (CA-01/CA-07)", () => {
   const read = (rel: string) => readFileSync(path.join(import.meta.dir, "..", "..", rel), "utf8");
   const surfaces = [
     "packages/workit-core/skills/wk-implement/SKILL.md",
@@ -527,7 +527,7 @@ test("execution contracts mandate plan completion: workflow_plan_complete after 
   // green repository verification. A single missing copy fails the test.
   for (const rel of surfaces) {
     const surface = read(rel);
-    expect(surface, rel).toContain("workflow_plan_complete");
+    expect(surface, rel).toContain("workit_plan_complete");
     expect(surface, rel).toContain("ledger is complete");
     expect(surface, rel).toContain("verification");
     // CA-01: no run may finish while the plan is `active` — every surface
@@ -603,13 +603,78 @@ test("user and maintainer documentation reflects the integrity contracts, withou
   expect(cliReadme).toContain("workit handoff");
   expect(cliReadme).toMatch(/--confirm/);
   // Host capability table documents lifecycle on every host, and the Cursor
-  // runtime pin is never weakened (CA-17).
+  // runtime runs from @latest with a mandatory --prefer-online flag so the
+  // registry is re-resolved on every execution (CA-17).
   expect(agents).toMatch(/pending\/active\/paused\/completed|Lifecycle/i);
-  expect(agents).toContain("@brainervirus/workit-cursor@0.8.5");
-  expect(agents).not.toMatch(/workit-cursor@latest/);
+  expect(agents).toMatch(/workit-cursor@latest/);
+  expect(agents).toMatch(/--prefer-online/);
+  expect(agents).not.toMatch(/never (a )?mutable latest|never fall back to a mutable/);
   // Host READMEs map lifecycle surfaces where the host behavior changed.
-  expect(ocReadme).toMatch(/workflow_plan_pause|lifecycle|digest/i);
-  expect(cursorReadme).toMatch(/workflow_plan_pause|lifecycle|digest/i);
+  expect(ocReadme).toMatch(/workit_plan_pause|lifecycle|digest/i);
+  expect(cursorReadme).toMatch(/workit_plan_pause|lifecycle|digest/i);
+});
+
+test("execution-reliability contract phrases are present across canonical and host asset surfaces (CA-01..CA-20)", () => {
+  const read = (rel: string) => readFileSync(path.join(import.meta.dir, "..", "..", rel), "utf8");
+  const contractRels = [
+    "packages/workit-core/templates/execution-contract.md",
+    "packages/workit-opencode/assets/templates/execution-contract.md",
+    "packages/workit-cursor/assets/templates/execution-contract.md",
+    "packages/workit-cli/assets/templates/execution-contract.md",
+  ];
+  const handoffRels = [
+    "packages/workit-core/skills/wk-handoff/SKILL.md",
+    "packages/workit-opencode/assets/skills/wk-handoff/SKILL.md",
+  ];
+  const implementRels = [
+    "packages/workit-core/skills/wk-implement/SKILL.md",
+    "packages/workit-opencode/assets/skills/wk-implement/SKILL.md",
+  ];
+  const docContractRels = [
+    "packages/workit-core/templates/superpowers-doc-contract.md",
+    "packages/workit-opencode/assets/templates/superpowers-doc-contract.md",
+    "packages/workit-cursor/assets/templates/superpowers-doc-contract.md",
+    "packages/workit-cli/assets/templates/superpowers-doc-contract.md",
+  ];
+  const joined = [...contractRels, ...handoffRels, ...implementRels, ...docContractRels]
+    .map(read)
+    .join("\n");
+  // Model deferral is present.
+  expect(joined).toContain("Change model first");
+  // Direct-child authority.
+  expect(joined).toContain("delegation_lineage_denied");
+  // Persisted activating coordinator.
+  expect(joined).toContain("coordinator_session_id");
+  // Coordinator-owned advisories.
+  expect(joined).toContain("workit_sdd_append_advisory");
+  // Native recovery phrase.
+  expect(joined).toContain("Continue opencode -s <session-id>");
+  // Immediate menu recording.
+  expect(joined).toMatch(
+    /immediately before any skill|workit_plan_menu immediately|call `?workit_plan_menu`? immediately/i,
+  );
+  for (const rel of contractRels) {
+    const text = read(rel);
+    expect(text, `${rel} Change model first`).toContain("Change model first");
+    expect(text, `${rel} delegation_lineage_denied`).toContain("delegation_lineage_denied");
+  }
+  for (const rel of handoffRels) {
+    const text = read(rel);
+    expect(text, `${rel} Workit: <slug>`).toContain("Workit: <slug>");
+    expect(text, `${rel} Continue opencode -s <session-id>`).toContain(
+      "Continue opencode -s <session-id>",
+    );
+  }
+  for (const rel of implementRels) {
+    expect(read(rel), `${rel} compact worker contract`).toContain("compact worker contract");
+  }
+  for (const rel of docContractRels) {
+    const text = read(rel);
+    expect(text, `${rel} Change model first`).toContain("Change model first");
+    expect(text, `${rel} workit_plan_menu immediately`).toMatch(
+      /workit_plan_menu.{0,40}immediately/i,
+    );
+  }
 });
 
 // --- Cross-host parity matrix (CA-08/CA-10/CA-20/CA-21/CA-22/CA-23) ---
@@ -773,7 +838,7 @@ function opencodeDriver(): HostDriver {
     JSON.parse(
       await (
         tools as unknown as Record<string, { execute: (a: never, c: never) => Promise<string> }>
-      )[name as "workflow_flow_status"].execute(
+      )[name as "workit_flow_status"].execute(
         args as never,
         {
           directory: root,
@@ -783,9 +848,9 @@ function opencodeDriver(): HostDriver {
       ),
     ) as { ok: boolean; data?: any; error?: string };
   const status = async (root: string, slug: string): Promise<NState> => {
-    const out = await run("workflow_flow_status", { plan_path: planFor(slug) }, root);
+    const out = await run("workit_flow_status", { plan_path: planFor(slug) }, root);
     if (!out.ok) return normFailure(out.data?.code ?? "flow_status_failed", out.data?.details);
-    // OpenCode's workflow_flow_status does not surface `handoff_destination`, so
+    // OpenCode's workit_flow_status does not surface `handoff_destination`, so
     // the flag keeps the flow.json fallback here (advisory F9); the Cursor and
     // CLI drivers read it from their host surfaces.
     return normSuccess(out.data, destFromFlow(root, slug));
@@ -801,13 +866,13 @@ function opencodeDriver(): HostDriver {
   return {
     name: "opencode",
     status,
-    pause: mutate("workflow_plan_pause", "Pause plan"),
-    resume: mutate("workflow_plan_resume", "Resume plan"),
-    complete: mutate("workflow_plan_complete", "Complete plan"),
+    pause: mutate("workit_plan_pause", "Pause plan"),
+    resume: mutate("workit_plan_resume", "Resume plan"),
+    complete: mutate("workit_plan_complete", "Complete plan"),
     async reenterHandoff(root, slug) {
       receipts.record("oc", "call-handoff", "handoff");
       const out = await run(
-        "workflow_plan_menu",
+        "workit_plan_menu",
         { plan_path: planFor(slug), choice: "handoff" },
         root,
       );
@@ -815,7 +880,7 @@ function opencodeDriver(): HostDriver {
       return status(root, slug);
     },
     async firstHandoff(root, slug) {
-      // OpenCode's host handoff surface is workflow_handoff_session (exercised in
+      // OpenCode's host handoff surface is workit_handoff_session (exercised in
       // handoff.test.ts); the matrix drives the shared core mutation for OpenCode
       // as the advisory allows ("or core markHandoffDestination").
       const built = buildHandoffPrompt(root, planFor(slug));
@@ -841,15 +906,15 @@ function cursorDriver(request: CursorRequest): HostDriver {
     };
   };
   const status = async (root: string, slug: string): Promise<NState> => {
-    const r = await call("workflow_flow_status", {
+    const r = await call("workit_flow_status", {
       plan_path: planFor(slug),
       workspace_root: root,
     });
     if (r.isError) return normFailure(r.text.code ?? "flow_status_failed", r.text.details);
-    // The Cursor MCP workflow_flow_status payload does not surface
+    // The Cursor MCP workit_flow_status payload does not surface
     // `handoff_destination`; read the host surface when a future payload adds it
     // and fall back to flow.json today. The MCP surface that DOES report the
-    // flag (workflow_handoff_prompt) is asserted directly in firstHandoff.
+    // flag (workit_handoff_prompt) is asserted directly in firstHandoff.
     const dest =
       typeof r.text.handoff_destination === "boolean"
         ? r.text.handoff_destination
@@ -866,11 +931,11 @@ function cursorDriver(request: CursorRequest): HostDriver {
   return {
     name: "cursor",
     status,
-    pause: mutate("workflow_plan_pause"),
-    resume: mutate("workflow_plan_resume"),
-    complete: mutate("workflow_plan_complete"),
+    pause: mutate("workit_plan_pause"),
+    resume: mutate("workit_plan_resume"),
+    complete: mutate("workit_plan_complete"),
     async reenterHandoff(root, slug) {
-      const r = await call("workflow_plan_menu", {
+      const r = await call("workit_plan_menu", {
         plan_path: planFor(slug),
         choice: "handoff",
         workspace_root: root,
@@ -879,10 +944,10 @@ function cursorDriver(request: CursorRequest): HostDriver {
       return status(root, slug);
     },
     async firstHandoff(root, slug) {
-      // Drive the real MCP handoff surface: workflow_handoff_prompt reports the
+      // Drive the real MCP handoff surface: workit_handoff_prompt reports the
       // destination flag and the reset menu in its own payload (CA-07), so the
       // matrix reads the flag from the host surface, not flow.json.
-      const r = await call("workflow_handoff_prompt", {
+      const r = await call("workit_handoff_prompt", {
         message: planFor(slug),
         workspace_root: root,
       });
