@@ -13,7 +13,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import path from "node:path";
 import { docsValidate, parseTasksFromPlan, qualitySpec, stripFences } from "./docs-validate";
 import { resolveCanonicalLayout } from "./docs-layout";
@@ -64,6 +64,27 @@ export type FlowExecutionState = {
    * every non-subagent-driven path and for legacy states without the field.
    */
   coordinator_session_id: string | null;
+  /**
+   * Cursor delegation capability state (cursor-subagent-inline CA-01..CA-05):
+   * only SHA-256 hashes are persisted — never a raw lease or token. Cursor has
+   * no host-visible parentID, so an accepted Cursor `subagent-driven` menu
+   * choice stores a coordinator-lease hash and returns the raw lease ONCE;
+   * `mintDelegateToken` stores one task-scoped token hash and returns the raw
+   * token once. Optional and absent (never serialized) for OpenCode/CLI flows
+   * and legacy states so pre-delegation flow.json bytes stay stable.
+   */
+  delegation?: FlowDelegationState | null;
+};
+
+export type FlowDelegationState = {
+  coordinator_lease_hash: string | null;
+  /** The task id the active token is bound to (one active token per flow). */
+  active_task_id: number | null;
+  token_hash: string | null;
+  /** Workspace root + slug the token hash is bound to (binding check). */
+  token_workspace: string | null;
+  token_slug: string | null;
+  status: "active" | "revoked";
 };
 
 /**
@@ -278,11 +299,39 @@ const normalizeState = (parsed: unknown, slug: string): FlowState => {
       mode: (execution.mode ?? null) as ExecutionMode | null,
       evidence: (execution.evidence ?? null) as LifecycleEvidence | null,
       coordinator_session_id: execution.coordinator_session_id ?? null,
+      // Optional field: legacy flow.json without the key stays byte-stable
+      // (no serialized `delegation` appears unless delegation state exists).
+      ...(execution.delegation !== undefined
+        ? { delegation: normalizeDelegation(execution.delegation) }
+        : {}),
     },
     handoff_destination: p.handoff_destination ?? false,
     updated_at: p.updated_at ?? Date.now(),
   };
 };
+
+const normalizeDelegation = (v: unknown): FlowDelegationState | null => {
+  if (v === null || v === undefined) return null;
+  if (!isRecord(v)) return null;
+  const hash = (x: unknown): string | null =>
+    typeof x === "string" && HEX64_RE.test(x) ? x : null;
+  return {
+    coordinator_lease_hash: hash(v.coordinator_lease_hash),
+    active_task_id:
+      typeof v.active_task_id === "number" && Number.isSafeInteger(v.active_task_id)
+        ? v.active_task_id
+        : null,
+    token_hash: hash(v.token_hash),
+    token_workspace: typeof v.token_workspace === "string" ? v.token_workspace : null,
+    token_slug: typeof v.token_slug === "string" ? v.token_slug : null,
+    status: v.status === "active" ? "active" : "revoked",
+  };
+};
+
+// Cursor delegation persistence helper: raw lease/token values are hashed ONCE
+// here and only the hex digest is ever placed on FlowState (CA-01 spec). The
+// raw values are returned to the coordinator in tool results, never written.
+const delegationHash = (raw: string): string => createHash("sha256").update(raw).digest("hex");
 
 const emptyState = (slug: string): FlowState => ({
   slug,
@@ -290,7 +339,13 @@ const emptyState = (slug: string): FlowState => ({
   spec: { path: "", status: "draft", evidence: null, approved_digest: null },
   plan: { path: "", status: "draft", evidence: null, approved_digest: null },
   menu: { presented: false, chosen: "", evidence: null },
-  execution: { status: "pending", mode: null, evidence: null, coordinator_session_id: null },
+  execution: {
+    status: "pending",
+    mode: null,
+    evidence: null,
+    coordinator_session_id: null,
+    delegation: null,
+  },
   handoff_destination: false,
   updated_at: Date.now(),
 });
@@ -478,6 +533,11 @@ const validateState = (
         evidence: (execRaw?.evidence as LifecycleEvidence | null | undefined) ?? null,
         coordinator_session_id:
           (execRaw?.coordinator_session_id as string | null | undefined) ?? null,
+        // Optional field: legacy flow.json without the key stays byte-stable
+        // (no serialized `delegation` appears unless delegation state exists).
+        ...(execRaw?.delegation !== undefined
+          ? { delegation: normalizeDelegation(execRaw.delegation) }
+          : {}),
       },
       handoff_destination: parsed.handoff_destination ?? false,
       updated_at: parsed.updated_at ?? Date.now(),
@@ -731,7 +791,13 @@ const resetForSpecDrift = (state: FlowState): FlowState => ({
   spec: { ...state.spec, status: "draft", evidence: null, approved_digest: null },
   plan: { ...state.plan, status: "draft", evidence: null, approved_digest: null },
   menu: { presented: false, chosen: "", evidence: null },
-  execution: { status: "pending", mode: null, evidence: null, coordinator_session_id: null },
+  execution: {
+    status: "pending",
+    mode: null,
+    evidence: null,
+    coordinator_session_id: null,
+    ...(state.execution.delegation !== undefined ? { delegation: null } : {}),
+  },
   handoff_destination: false,
   updated_at: Date.now(),
 });
@@ -821,7 +887,12 @@ const deriveLegacyExecution = (
       coordinator_session_id: null,
     };
   }
-  return { status: "pending", mode: null, evidence: null, coordinator_session_id: null };
+  return {
+    status: "pending",
+    mode: null,
+    evidence: null,
+    coordinator_session_id: null,
+  };
 };
 
 type CompatibilityResult = { state: FlowState; changed: boolean };
@@ -1605,7 +1676,12 @@ export const prepareFlowState = (
         spec: { path: specPath, status: "draft", evidence: null, approved_digest: null },
         plan: { path: planPath, status: "draft", evidence: null, approved_digest: null },
         menu: { presented: false, chosen: "", evidence: null },
-        execution: { status: "pending", mode: null, evidence: null, coordinator_session_id: null },
+        execution: {
+          status: "pending",
+          mode: null,
+          evidence: null,
+          coordinator_session_id: null,
+        },
         handoff_destination: false,
         updated_at: Date.now(),
       });
@@ -1753,6 +1829,19 @@ export const transitionPlan = (
   });
 };
 
+/**
+ * The coordinator lease capability: returned ONCE to the coordinator when the
+ * Cursor menu records `subagent-driven`; only its hash is persisted.
+ */
+export type CoordinatorLease = {
+  raw: string;
+  hash: string;
+};
+
+export type MenuChoiceResult =
+  | ({ ok: true } & ({ coordinator_lease: string } | { coordinator_lease?: undefined }))
+  | FlowError;
+
 export const recordMenuChoice = (
   root: string,
   slug: string,
@@ -1760,18 +1849,13 @@ export const recordMenuChoice = (
   choice: unknown,
   evidence: unknown,
   ctx?: MutationContext,
-): FlowGateResult => {
+): MenuChoiceResult => {
   const bound = assertMutationWorkspace(root, ctx);
   if (!bound.ok) return bound;
   const recorded = assertEvidenceShape(evidence);
   if (!recorded.ok) return err("evidence_invalid", recorded.error);
   if (typeof choice !== "string" || !MENU_CHOICES.includes(choice as MenuChoice)) {
     return err("menu_choice_invalid", `invalid menu choice: ${JSON.stringify(choice)}`);
-  }
-  // Cursor cannot run subagent-driven plans (no child sessions): entering that
-  // flow state on Cursor is rejected with recovery guidance (CA-42).
-  if (recorded.evidence.host === "cursor" && choice === "subagent-driven") {
-    return err("unsupported_mode", CURSOR_SUBAGENT_UNSUPPORTED_TEXT);
   }
   // The execution-menu evidence must be the label the user selected on the
   // native question; a mismatched choice is fabricated (FG-04). Comparison is
@@ -1789,7 +1873,12 @@ export const recordMenuChoice = (
   }
   const doc = resolveDoc(root, slug, planPath, "plan");
   if (!doc.ok) return err("path_invalid", doc.error);
-  return readModifyWrite(root, slug, (state) => {
+  // The Cursor coordinator lease is generated BEFORE the critical section so
+  // the raw value is returned exactly once and only the hash crosses the
+  // persisted-state boundary.
+  const cursorSubagent = recorded.evidence.host === "cursor" && choice === "subagent-driven";
+  const lease = cursorSubagent ? randomBytes(32).toString("hex") : null;
+  const result = readModifyWrite(root, slug, (state) => {
     if (state.spec.status !== "approved")
       return err("spec_not_approved", "spec must be approved before the execution menu");
     if (state.plan.status !== "approved")
@@ -1808,13 +1897,24 @@ export const recordMenuChoice = (
     // pending. The menu evidence IS the lifecycle evidence — the choice the
     // user selected on the native question. The activating OpenCode
     // coordinator session (CA-12) is persisted ONLY for an accepted
-    // subagent-driven activation; inline/handoff/review choices and Cursor's
-    // rejected subagent path keep it null.
+    // subagent-driven activation; inline/handoff/review choices keep it null.
+    // Cursor's accepted subagent-driven path keeps it null too (no session
+    // identity): delegation authority comes from the coordinator lease instead.
     const executing = choice === "subagent-driven" || choice === "inline";
     const coordinatorSessionId =
       choice === "subagent-driven" && recorded.evidence.host === "opencode"
         ? (ctx?.sessionId ?? null)
         : null;
+    const delegation = cursorSubagent
+      ? {
+          coordinator_lease_hash: delegationHash(lease as string),
+          active_task_id: null,
+          token_hash: null,
+          token_workspace: null,
+          token_slug: null,
+          status: "active" as const,
+        }
+      : state.execution.delegation;
     return {
       ok: true,
       next: {
@@ -1830,13 +1930,198 @@ export const recordMenuChoice = (
               mode: choice as ExecutionMode,
               evidence: recorded.evidence,
               coordinator_session_id: coordinatorSessionId,
+              delegation,
             }
           : {
               status: "pending",
               mode: null,
               evidence: recorded.evidence,
               coordinator_session_id: null,
+              delegation,
             },
+        updated_at: Date.now(),
+      },
+    };
+  });
+  if (!result.ok) return result;
+  return cursorSubagent ? { ok: true, coordinator_lease: lease as string } : { ok: true };
+};
+
+/**
+ * Cursor delegation capability model (cursor-subagent-inline CA-01..CA-05):
+ * the coordinator lease authorizes token minting; the task-scoped token
+ * authorizes delegated mutations. Only hashes persist — raw values cross the
+ * API boundary exactly once. Token lifecycle: one active token per flow,
+ * reusable within its task, revoked by `revokeDelegateToken` when the task
+ * progress line is recorded, replaced when the next task token mints.
+ */
+export const mintCoordinatorLease = (): CoordinatorLease => {
+  const raw = randomBytes(32).toString("hex");
+  return { raw, hash: delegationHash(raw) };
+};
+
+export type DelegateTokenResult = { ok: true; token: string } | FlowError;
+
+export const mintDelegateToken = (
+  root: string,
+  slug: string,
+  planPath: string,
+  taskId: number,
+  coordinatorLease: string,
+): DelegateTokenResult => {
+  if (typeof taskId !== "number" || !Number.isSafeInteger(taskId) || taskId <= 0) {
+    return err(
+      "task_invalid",
+      `task id must be a positive safe integer: ${JSON.stringify(taskId)}`,
+    );
+  }
+  if (typeof coordinatorLease !== "string" || coordinatorLease === "") {
+    return err(
+      "coordinator_lease_invalid",
+      "a coordinator lease is required to mint a delegation token",
+    );
+  }
+  const doc = resolveDoc(root, slug, planPath, "plan");
+  if (!doc.ok) return err("path_invalid", doc.error);
+  const token = randomBytes(32).toString("hex");
+  const tokenHash = delegationHash(token);
+  const result = readModifyWrite(root, slug, (state) => {
+    const exec = state.execution;
+    if (exec.status !== "active" || exec.mode !== "subagent-driven") {
+      return err(
+        "flow_not_active",
+        "a delegation token requires an active subagent-driven execution",
+      );
+    }
+    const delegation = exec.delegation;
+    if (!delegation || delegation.status !== "active" || !delegation.coordinator_lease_hash) {
+      return err(
+        "coordinator_lease_invalid",
+        "this flow has no active coordinator lease — record the execution menu with Cursor subagent-driven first",
+      );
+    }
+    if (delegation.coordinator_lease_hash !== delegationHash(coordinatorLease)) {
+      return err(
+        "coordinator_lease_invalid",
+        "the supplied coordinator lease does not match the flow's recorded lease",
+      );
+    }
+    if (state.plan.status !== "approved") {
+      return err("plan_not_approved", "plan must be approved before delegating a task");
+    }
+    let planText: string;
+    try {
+      planText = readFileSync(doc.path, "utf8");
+    } catch {
+      return err("plan_missing", `plan not found: ${planPath}`);
+    }
+    if (!parseTasksFromPlan(planText).some((t) => t.id === taskId)) {
+      return err("task_invalid", `task ${taskId} does not exist in the approved plan`);
+    }
+    if (ledgerCompletion(root, slug).completed.includes(taskId)) {
+      return err("task_completed", `task ${taskId} is already completed in the SDD ledger`);
+    }
+    return {
+      ok: true,
+      next: {
+        ...state,
+        execution: {
+          ...exec,
+          delegation: {
+            ...delegation,
+            active_task_id: taskId,
+            token_hash: tokenHash,
+            token_workspace: root,
+            token_slug: slug,
+            status: "active",
+          },
+        },
+        updated_at: Date.now(),
+      },
+    };
+  });
+  if (!result.ok) return result;
+  return { ok: true, token };
+};
+
+export type DelegateTokenContext = {
+  slug: string;
+  taskId: number;
+  hostWorkspace: string;
+};
+export type DelegateTokenValidation = { ok: true; context: DelegateTokenContext } | FlowError;
+
+export const validateDelegateToken = (root: string, token: string): DelegateTokenValidation => {
+  if (typeof token !== "string" || token === "") {
+    return err("delegation_token_invalid", "a delegation token is required");
+  }
+  const hash = delegationHash(token);
+  let entries: string[] = [];
+  try {
+    entries = readdirSync(path.join(root, "docs"), { withFileTypes: true })
+      .filter((e) => e.isDirectory())
+      .map((e) => e.name);
+  } catch {
+    return err("delegation_token_invalid", `no flows exist under ${JSON.stringify(root)}`);
+  }
+  for (const slug of entries) {
+    try {
+      const state = readFlowState(root, slug);
+      const delegation = state.execution.delegation;
+      if (!delegation || !delegation.token_hash) continue;
+      if (delegation.token_hash !== hash) continue;
+      if (delegation.token_workspace !== root || delegation.token_slug !== slug) continue;
+      if (
+        delegation.status !== "active" ||
+        state.execution.status !== "active" ||
+        state.execution.mode !== "subagent-driven" ||
+        delegation.active_task_id === null
+      ) {
+        return err(
+          "delegation_token_revoked",
+          "the delegation token is no longer active for this flow",
+        );
+      }
+      return {
+        ok: true,
+        context: { slug, taskId: delegation.active_task_id, hostWorkspace: root },
+      };
+    } catch {
+      // unreadable flow state: skip, never throw from validation
+    }
+  }
+  return err(
+    "delegation_token_invalid",
+    "the delegation token does not match any active flow token in this workspace",
+  );
+};
+
+export const revokeDelegateToken = (root: string, slug: string, taskId: number): FlowGateResult => {
+  if (typeof taskId !== "number" || !Number.isSafeInteger(taskId) || taskId <= 0) {
+    return err(
+      "task_invalid",
+      `task id must be a positive safe integer: ${JSON.stringify(taskId)}`,
+    );
+  }
+  return readModifyWrite(root, slug, (state) => {
+    const exec = state.execution;
+    const delegation = exec.delegation;
+    if (
+      !delegation ||
+      delegation.status !== "active" ||
+      delegation.active_task_id !== taskId ||
+      !delegation.token_hash
+    ) {
+      return err(
+        "delegation_token_not_active",
+        `no active delegation token for task ${taskId} in ${slug}`,
+      );
+    }
+    return {
+      ok: true,
+      next: {
+        ...state,
+        execution: { ...exec, delegation: { ...delegation, status: "revoked" } },
         updated_at: Date.now(),
       },
     };
