@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { spawn } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -59,6 +59,7 @@ const REQUIRED_TOOLS = [
   "workit_template_edit",
   "workit_rule_list",
   "workit_rule_edit",
+  "workit_delegate",
 ];
 
 function startServer(
@@ -325,3 +326,126 @@ test("marketplace npx command shape resolves to a working npm bin (local install
     rmSync(nm, { recursive: true, force: true });
   }
 });
+
+// Cursor subagent-driven delegation (cursor-subagent-inline CA-02..CA-05): the
+// workit_delegate tool mints a task token from the coordinator lease; mutation
+// tools accept delegation_token and validate it before constructing context;
+// invalid tokens fail closed with structured errors and never downgrade to the
+// coordinator session.
+const DELEGATION_SPEC = (slug: string) =>
+  `# ${slug}\n\n**Branch:** \`feature/${slug}\`\n\n## Context\n\n## Goals\n\n## Non-goals\n\n## Architecture\n\n## Acceptance criteria\n\n- CA-01: test\n`;
+const DELEGATION_PLAN = (slug: string) =>
+  `# ${slug}\n\n**Spec:** \`docs/${slug}/spec.md\`\n**Branch:** \`feature/${slug}\`\n\n## Context\n\n### Task 1: Do the thing\n\n- [ ] **Step 1:** do it\n`;
+
+const delegationFixture = () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "workit-mcp-delegation-"));
+  const slug = "dlg-flow";
+  mkdirSync(path.join(root, "docs", slug), { recursive: true });
+  writeFileSync(path.join(root, "docs", slug, "spec.md"), DELEGATION_SPEC(slug));
+  writeFileSync(path.join(root, "docs", slug, "plan.md"), DELEGATION_PLAN(slug));
+  return { root, slug, spec: `docs/${slug}/spec.md`, plan: `docs/${slug}/plan.md` };
+};
+
+test(
+  "cursor MCP: workit_delegate mints a task token and delegated mutations pass while invalid tokens fail closed",
+  async () => {
+    const { root, spec, plan } = delegationFixture();
+    const { child, request } = startServer();
+    try {
+      await request("initialize", {
+        protocolVersion: "2024-11-05",
+        capabilities: {},
+        clientInfo: { name: "delegation", version: "1.0" },
+      });
+      child.stdin.write(
+        `${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })}\n`,
+      );
+      const call = (name: string, arguments_: unknown) =>
+        request("tools/call", { name, arguments: arguments_ });
+      const text = (msg: any) => JSON.parse((msg as any).result.content?.[0]?.text ?? "{}");
+      const errored = (msg: any) => Boolean((msg as any).result.isError);
+
+      await call("workit_flow_status", { plan_path: plan, workspace_root: root });
+      await call("workit_spec_approve", { spec_path: spec, workspace_root: root });
+      await call("workit_plan_approve", { plan_path: plan, workspace_root: root });
+      const menu = await call("workit_plan_menu", {
+        choice: "subagent-driven",
+        plan_path: plan,
+        workspace_root: root,
+      });
+      const lease = text(menu).coordinator_lease;
+      expect(lease).toMatch(/^[0-9a-f]{64}$/);
+
+      // A wrong lease never mints (structured coordinator_lease_invalid).
+      const wrongLease = await call("workit_delegate", {
+        slug: "dlg-flow",
+        plan_path: plan,
+        task_id: 1,
+        coordinator_lease: "f".repeat(64),
+        workspace_root: root,
+      });
+      expect(text(wrongLease).code).toBe("coordinator_lease_invalid");
+
+      const minted = await call("workit_delegate", {
+        slug: "dlg-flow",
+        plan_path: plan,
+        task_id: 1,
+        coordinator_lease: lease,
+        workspace_root: root,
+      });
+      expect(errored(minted)).toBe(false);
+      const token = text(minted).delegation_token;
+      expect(token).toMatch(/^[0-9a-f]{64}$/);
+
+      // The valid token authorizes the SDD mutation for the active task while
+      // the coordinator is boundary-blocked; the mutation tools expose no
+      // caller-supplied role/taskIdentity fields (validated by the schema).
+      const tools = await request("tools/list", {});
+      const briefSchema = ((tools as any).result.tools as any[]).find(
+        (t) => t.name === "workit_sdd_task_brief",
+      );
+      const briefSchemaText = JSON.stringify(briefSchema);
+      expect(briefSchemaText).toContain("delegation_token");
+      expect(briefSchemaText).not.toContain('"role"');
+      expect(briefSchemaText).not.toContain("taskIdentity");
+
+      const brief = await call("workit_sdd_task_brief", {
+        sdd_dir: "docs/dlg-flow/sdd",
+        task_id: 1,
+        section_text: "- [ ] Work\n",
+        delegation_token: token,
+        workspace_root: root,
+      });
+      expect(errored(brief)).toBe(false);
+      expect(text(brief).brief_path).toBe("docs/dlg-flow/sdd/task-1-brief.md");
+
+      // A missing token preserves coordinator behavior: SDD control writes are
+      // coordinator-owned (assertSddControlGates denies delegated workers, not
+      // the coordinator), so the tokenless path still writes the brief.
+      const noToken = await call("workit_sdd_task_brief", {
+        sdd_dir: "docs/dlg-flow/sdd",
+        task_id: 1,
+        section_text: "- [ ] Coordinator brief\n",
+        workspace_root: root,
+      });
+      expect(errored(noToken)).toBe(false);
+      expect(text(noToken).brief_path).toBe("docs/dlg-flow/sdd/task-1-brief.md");
+
+      // A garbage token fails closed with the structured code, never a
+      // coordinator downgrade.
+      const badToken = await call("workit_sdd_task_brief", {
+        sdd_dir: "docs/dlg-flow/sdd",
+        task_id: 1,
+        section_text: "- [ ] Work\n",
+        delegation_token: "not-a-real-token",
+        workspace_root: root,
+      });
+      expect(errored(badToken)).toBe(true);
+      expect(text(badToken).code).toBe("delegation_token_invalid");
+    } finally {
+      child.kill();
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+  { timeout: 60_000 },
+);

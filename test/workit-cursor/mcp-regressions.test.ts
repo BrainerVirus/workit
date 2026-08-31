@@ -792,3 +792,22 @@ test(
   },
   { timeout: 60_000 },
 );
+
+// Cursor delegation (CA-03/D-02): the adapter's delegated progress path revokes
+// the task's active token when the progress line is recorded — no token survives
+// its own progress write, and the raw token never persists or logs.
+test(
+  "cursor delegation adapter wires revoke-on-progress through the MCP server source",
+  () => {
+    const server = readFileSync(path.join(CURSOR_ROOT, "mcp/server.ts"), "utf8");
+    // The append_progress wrapper calls the core revocation helper with the
+    // delegated task identity (revoke-on-progress contract).
+    expect(server).toContain("revokeDelegateToken");
+    expect(server).toContain("workit_delegate");
+    // The mutation wrapper threads the validated delegated context, not a
+    // caller-supplied role.
+    expect(server).not.toMatch(/role:\s*["'`]delegated/);
+    expect(server).not.toMatch(/taskIdentity:\s*args|taskIdentity:\s*input/);
+  },
+  { timeout: 60_000 },
+);
