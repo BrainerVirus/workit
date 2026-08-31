@@ -14,7 +14,7 @@
 ## Global Constraints
 
 - Each task lands exactly one contiguous non-empty commit range (`base..head`): fix rounds append commits to that range and never rewrite/amend an active review range; each progress line records the task's real base..head shas.
-- The final task ends execution with the renamed plan-completion tool after the SDD ledger is complete and repository verification passes; during this plan's transition, the current host may still expose the pre-rename workflow tool identifier.
+- The final task ends execution with `workit_plan_complete` (or the CLI `workit flow complete`) once the SDD ledger is complete and repository verification passes — a run never finishes while the plan is still `active`.
 - TDD rail: write the failing test first, run it and observe failure, then write the minimum production change and run the focused test again.
 - Cursor tokens are opaque capabilities: use cryptographically random values, persist only SHA-256 hashes, never log raw values, and fail closed on validation errors.
 - Cursor Handoff remains the existing pasteable prompt and is not modified.
@@ -119,7 +119,7 @@
 - [ ] **Step 2: Update documentation.** Update root README, `AGENTS.md`, Cursor README, and CHANGELOG Unreleased to describe the host-specific execution model and the fail-closed lease/token capability; remove the stale claim that Cursor subagent-driven is unsupported, but do not claim Cursor has OpenCode parentID authentication or change Handoff wording.
 - [ ] **Step 3: Run focused parity tests.** Run `bun test test/workit-opencode/flow-enforcement.test.ts test/workit-cli/flow-parity.test.ts test/workit-cursor/flow-enforcement.test.ts` and confirm PASS.
 - [ ] **Step 4: Run full verification.** Run `bun run check`, `bun run validate:cursor-marketplace`, and the repository verification command; expected result is exit 0 for lint, format, tests, build, changelog, and Marketplace validation.
-- [ ] **Step 5: Complete the SDD ledger and plan.** Call `workflow_sdd_append_progress` (or the renamed equivalent after Spec 2) for task IDs 1-4 with each task's real non-empty commit range, then call `workflow_plan_complete` (or `workit_plan_complete` after the tool rename) only after verification passes.
+- [ ] **Step 5: Complete the SDD ledger and plan.** Call `workit_sdd_append_progress` for task IDs 1-4 with each task's real non-empty commit range, then call `workit_plan_complete` only after verification passes.
 - [ ] **Step 6: Commit the task.** Commit the parity tests, docs, and final verification updates as one non-empty task range.
 
 **Criteria:** All host-parity tests pass; Handoff is unchanged; full verification is green; every task has a ledger range; the plan is `completed`, not `active`.

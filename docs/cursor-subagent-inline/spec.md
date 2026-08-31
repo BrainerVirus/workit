@@ -87,7 +87,7 @@ When Cursor records `subagent-driven`, core stores only a hash of a coordinator 
 - CA-07: Cursor Inline does not mint tokens or dispatch subagents; OpenCode keeps parentage delegation and CLI behavior remains unchanged, with host-parity tests covering all three adapters.
 - CA-08: Cursor Handoff remains the existing pasteable prompt path and is not changed by this feature.
 - CA-09: README, Cursor README, AGENTS.md, CHANGELOG Unreleased, and shipped Cursor templates explain the host-specific delegation difference without claiming Cursor has OpenCode parentID authentication.
-- CA-10: `bun run check`, `workflow_verify`, and `bun run validate:cursor-marketplace` pass.
+- CA-10: `bun run check`, `workit_verify`, and `bun run validate:cursor-marketplace` pass.
 
 ## Decisions
 
