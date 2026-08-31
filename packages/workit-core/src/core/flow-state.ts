@@ -116,16 +116,6 @@ export const COORDINATOR_RECOVERY_TEXT =
   "editing in the coordinator session.";
 
 /**
- * Cursor recovery guidance for the unsupported subagent-driven mutation path
- * (CA-42): the Cursor MCP has no child sessions, so it cannot run a
- * subagent-driven plan and must not enter that flow state.
- */
-export const CURSOR_SUBAGENT_UNSUPPORTED_TEXT =
-  "Cursor cannot execute subagent-driven plans: the MCP has no child-session " +
-  "support. Choose Inline, Handoff, or a review option in this session, or " +
-  "run the plan in OpenCode with `wk-implement`.";
-
-/**
  * The only acceptable approval / execution-menu evidence (FG-04, CA-19, AR-12).
  * Trust comes from HOST CAPABILITIES, never from caller-supplied fields:
  *
@@ -1829,18 +1819,7 @@ export const transitionPlan = (
   });
 };
 
-/**
- * The coordinator lease capability: returned ONCE to the coordinator when the
- * Cursor menu records `subagent-driven`; only its hash is persisted.
- */
-export type CoordinatorLease = {
-  raw: string;
-  hash: string;
-};
-
-export type MenuChoiceResult =
-  | ({ ok: true } & ({ coordinator_lease: string } | { coordinator_lease?: undefined }))
-  | FlowError;
+export type MenuChoiceResult = { ok: true; coordinator_lease?: string } | FlowError;
 
 export const recordMenuChoice = (
   root: string,
@@ -1878,6 +1857,7 @@ export const recordMenuChoice = (
   // persisted-state boundary.
   const cursorSubagent = recorded.evidence.host === "cursor" && choice === "subagent-driven";
   const lease = cursorSubagent ? randomBytes(32).toString("hex") : null;
+  const leaseHash = lease === null ? null : delegationHash(lease);
   const result = readModifyWrite(root, slug, (state) => {
     if (state.spec.status !== "approved")
       return err("spec_not_approved", "spec must be approved before the execution menu");
@@ -1907,7 +1887,7 @@ export const recordMenuChoice = (
         : null;
     const delegation = cursorSubagent
       ? {
-          coordinator_lease_hash: delegationHash(lease as string),
+          coordinator_lease_hash: leaseHash,
           active_task_id: null,
           token_hash: null,
           token_workspace: null,
@@ -1944,7 +1924,7 @@ export const recordMenuChoice = (
     };
   });
   if (!result.ok) return result;
-  return cursorSubagent ? { ok: true, coordinator_lease: lease as string } : { ok: true };
+  return cursorSubagent && lease !== null ? { ok: true, coordinator_lease: lease } : { ok: true };
 };
 
 /**
@@ -1955,11 +1935,6 @@ export const recordMenuChoice = (
  * reusable within its task, revoked by `revokeDelegateToken` when the task
  * progress line is recorded, replaced when the next task token mints.
  */
-export const mintCoordinatorLease = (): CoordinatorLease => {
-  const raw = randomBytes(32).toString("hex");
-  return { raw, hash: delegationHash(raw) };
-};
-
 export type DelegateTokenResult = { ok: true; token: string } | FlowError;
 
 export const mintDelegateToken = (

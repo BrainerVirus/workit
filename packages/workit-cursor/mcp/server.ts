@@ -1339,7 +1339,7 @@ registerTool(
   "workit_plan_menu",
   {
     description:
-      "Record the answered post-plan choice menu with the Cursor policy-only confirmation. subagent-driven is rejected as unsupported on Cursor (CA-42); there is no evidence argument.",
+      "Record the answered post-plan choice menu with the Cursor policy-only confirmation. An accepted Cursor subagent-driven choice activates execution and returns a coordinator_lease (mint delegation tokens with it); there is no evidence argument.",
     inputSchema: {
       plan_path: z.string(),
       choice: z.enum(["subagent-driven", "inline", "handoff", "review-spec", "review-plan"]),
@@ -1359,7 +1359,12 @@ registerTool(
       cursorMutationContext(workspace),
     );
     if (result.ok === false) return jsonResult({ error: result.error, code: result.code });
-    return jsonResult({ menu: { presented: true, chosen: choice } });
+    return jsonResult({
+      menu: { presented: true, chosen: choice },
+      ...(result.coordinator_lease !== undefined
+        ? { coordinator_lease: result.coordinator_lease }
+        : {}),
+    });
   },
 );
 

@@ -1024,14 +1024,30 @@ test("Cursor recordMenuChoice with subagent-driven issues a coordinator lease on
     expect(persisted.execution.delegation.coordinator_lease_hash).toBe(
       createHash("sha256").update(lease).digest("hex"),
     );
-    // Non-subagent choices and other paths do not issue a lease.
-    expect("coordinator_lease" in readFlowState(root, slug) ? false : true).toBe(true);
   } finally {
     cleanup(root);
   }
 });
 
-test("coordinator lease reuse and invalid lease are rejected by mintDelegateToken", () => {
+test("non-subagent-driven recordMenuChoice results carry no coordinator_lease", () => {
+  for (const choice of ["inline", "handoff", "review-spec", "review-plan"] as const) {
+    const { root, slug } = fixture();
+    try {
+      const spec = `docs/${slug}/spec.md`;
+      const plan = `docs/${slug}/plan.md`;
+      expect(prepareFlowState(root, slug, { spec_path: spec, plan_path: plan }).ok).toBe(true);
+      expect(transitionSpec(root, slug, spec, cursorEvidence()).ok).toBe(true);
+      expect(transitionPlan(root, slug, plan, cursorEvidence()).ok).toBe(true);
+      const result = recordMenuChoice(root, slug, plan, choice, cursorEvidence());
+      expect(result.ok, choice).toBe(true);
+      if (result.ok) expect("coordinator_lease" in result, choice).toBe(false);
+    } finally {
+      cleanup(root);
+    }
+  }
+});
+
+test("a wrong or empty coordinator lease is rejected by mintDelegateToken", () => {
   const { root, slug, planPath, lease } = cursorSubagentFixture();
   try {
     const first = mintDelegateToken(root, slug, planPath, 1, lease);
@@ -1110,7 +1126,7 @@ test("one active token per flow: minting the next task token revokes the previou
   }
 });
 
-test("recording a task progress line revokes the active token atomically", () => {
+test("revokeDelegateToken clears the active task token", () => {
   const { root, slug, planPath, lease } = cursorSubagentFixture();
   try {
     const minted = mintDelegateToken(root, slug, planPath, 1, lease);
@@ -1123,7 +1139,6 @@ test("recording a task progress line revokes the active token atomically", () =>
     // Idempotent-ish: revoking again fails closed (nothing active for task).
     const again = revokeDelegateToken(root, slug, 1);
     expect(again.ok).toBe(false);
-    // Task 1 must be completed in the ledger before revocation of its token succeeds.
   } finally {
     cleanup(root);
   }
@@ -1161,6 +1176,39 @@ test("mintDelegateToken requires the active Cursor subagent-driven flow and an u
     const blocked = mintDelegateToken(root, slug, planPath, 1, lease);
     expect(blocked.ok).toBe(false);
     if (!blocked.ok) expect(blocked.code).toBe("flow_not_active");
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("mintDelegateToken fails closed against an OpenCode-host subagent-driven flow with no delegation state", () => {
+  const { root, slug, planPath } = (() => {
+    const { root, slug } = fixture();
+    const store = new HostReceiptStore();
+    const spec = `docs/${slug}/spec.md`;
+    const plan = `docs/${slug}/plan.md`;
+    const prep = prepareFlowState(root, slug, { spec_path: spec, plan_path: plan });
+    if (!prep.ok) throw new Error(prep.error);
+    if (!transitionSpec(root, slug, spec, openEvidence(store, "s", "Approve spec")).ok)
+      throw new Error("spec transition failed");
+    if (!transitionPlan(root, slug, plan, openEvidence(store, "s", "Approve plan")).ok)
+      throw new Error("plan transition failed");
+    const menu = recordMenuChoice(
+      root,
+      slug,
+      plan,
+      "subagent-driven",
+      openEvidence(store, "s", "subagent-driven"),
+      { hostWorkspace: root, role: "coordinator", sessionId: "opencoord" },
+    );
+    if (!menu.ok) throw new Error(menu.error);
+    if ("coordinator_lease" in menu) throw new Error("OpenCode menu must not return a lease");
+    return { root, slug, planPath: plan };
+  })();
+  try {
+    const minted = mintDelegateToken(root, slug, planPath, 1, "any-lease-value");
+    expect(minted.ok).toBe(false);
+    if (!minted.ok) expect(minted.code).toBe("coordinator_lease_invalid");
   } finally {
     cleanup(root);
   }

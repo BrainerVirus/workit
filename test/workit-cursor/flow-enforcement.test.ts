@@ -14,7 +14,6 @@ import os from "node:os";
 import path from "node:path";
 import { cursorQuestionEvidence } from "../../packages/workit-cursor/mcp/flow-evidence";
 import {
-  CURSOR_SUBAGENT_UNSUPPORTED_TEXT,
   HANDOFF_DESTINATION_MARKER,
   assertEvidenceShape,
   assertHostEvidence,
@@ -214,7 +213,7 @@ test(
 );
 
 test(
-  "cursor MCP: subagent-driven menu is rejected as unsupported with recovery guidance",
+  "cursor MCP: subagent-driven menu is accepted and returns a raw coordinator lease",
   async () => {
     const { root } = fixture();
     const { child, request } = startServer();
@@ -244,24 +243,19 @@ test(
         plan_path: plan,
         workspace_root: root,
       });
-      expect(callText(menu).isError).toBe(true);
-      expect(callText(menu).text.code).toBe("unsupported_mode");
-      expect(JSON.stringify(callText(menu).text)).toContain(CURSOR_SUBAGENT_UNSUPPORTED_TEXT);
+      expect(callText(menu).isError).toBe(false);
+      expect(callText(menu).text.coordinator_lease).toMatch(/^[0-9a-f]{64}$/);
 
-      // The menu was not recorded: the flow cannot enter subagent-driven on Cursor.
+      // The flow entered subagent-driven execution with a lease hash.
       const status = await call("workit_flow_status", {
         plan_path: plan,
         workspace_root: root,
       });
-      expect(callText(status).text.menu.presented).toBe(false);
-
-      // A supported choice records the menu with the policy-only confirmation.
-      const inline = await call("workit_plan_menu", {
-        choice: "inline",
-        plan_path: plan,
-        workspace_root: root,
-      });
-      expect(callText(inline).isError).toBe(false);
+      expect(callText(status).text.menu.presented).toBe(true);
+      expect(callText(status).text.execution.mode).toBe("subagent-driven");
+      expect(callText(status).text.execution.delegation.coordinator_lease_hash).toMatch(
+        /^[0-9a-f]{64}$/,
+      );
     } finally {
       child.kill();
       rmSync(root, { recursive: true, force: true });

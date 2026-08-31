@@ -333,9 +333,9 @@ const ROWS: Row[] = [
   {
     row: "CA-42",
     requirement:
-      "Cursor flow results expose unauthenticated confirmation provenance and subagent-driven selection returns actionable unsupported-mode failure",
+      "Cursor flow results expose unauthenticated confirmation provenance and an accepted subagent-driven selection returns a raw coordinator lease",
     evidence: [
-      "test/workit-cursor/flow-enforcement.test.ts::cursor MCP: subagent-driven menu is rejected as unsupported with recovery guidance",
+      "test/workit-cursor/flow-enforcement.test.ts::cursor MCP: subagent-driven menu is accepted and returns a raw coordinator lease",
       "test/workit-cursor/flow-enforcement.test.ts::cursor MCP: no evidence argument exists — caller-supplied evidence is inert",
     ],
   },

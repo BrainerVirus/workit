@@ -98,7 +98,7 @@ describe("cross-host execution transition parity", () => {
     }
   });
 
-  test("cursor subagent-driven is rejected and state unchanged", () => {
+  test("cursor subagent-driven activates and records execution mode with a coordinator lease", () => {
     const { root, slug } = fixture();
     try {
       const store = new HostReceiptStore();
@@ -108,18 +108,25 @@ describe("cross-host execution transition parity", () => {
         attested: false,
         confirmation: "contract",
       });
-      expect(recorded.ok).toBe(false);
-      if (recorded.ok) return;
-      expect(recorded.code).toBe("unsupported_mode");
+      expect(recorded.ok).toBe(true);
+      if (recorded.ok) expect(recorded.coordinator_lease).toMatch(/^[0-9a-f]{64}$/);
       const effective = readEffectiveFlowState(root, slug);
       expect(effective.ok).toBe(true);
       if (!effective.ok) return;
-      expect(effective.state.menu.presented).toBe(false);
+      expect(effective.state.menu.presented).toBe(true);
       expect(effective.state.execution).toEqual({
-        status: "pending",
-        mode: null,
-        evidence: null,
+        status: "active",
+        mode: "subagent-driven",
+        evidence: { host: "cursor", attested: false, confirmation: "contract" },
         coordinator_session_id: null,
+        delegation: {
+          coordinator_lease_hash: expect.any(String),
+          active_task_id: null,
+          token_hash: null,
+          token_workspace: null,
+          token_slug: null,
+          status: "active",
+        },
       });
     } finally {
       cleanup(root);
