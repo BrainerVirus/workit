@@ -837,6 +837,8 @@ test(
       expect(tokenFlag.code).toBe(2);
       expect(tokenFlag.stderr).toContain("unknown flag");
 
+      // Intentional tripwires: the CLI has no delegation surface — these fail
+      // if one is ever added (a `workit_delegate` command or token flag).
       const repoRoot = path.resolve(import.meta.dir, "..", "..");
       const flowSource = readFileSync(
         path.join(repoRoot, "packages/workit-cli/src/flow.ts"),

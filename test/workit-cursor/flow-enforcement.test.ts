@@ -971,10 +971,21 @@ test(
     expect(rootReadme).toContain("workit_delegate");
     expect(rootReadme).toContain("delegation_token");
     expect(rootReadme).toContain("coordinator_lease");
-    expect(rootReadme).not.toMatch(
-      /subagent-driven[^\n]*(is unsupported|rejected as unsupported|not supported)/i,
-    );
     expect(rootReadme).not.toContain("not supported (no delegated identity)");
+    // Docs-regression tripwire: a standalone "not supported"/"unsupported"
+    // phrase reintroduced anywhere in the sections this test owns fails, not
+    // only when it shares a line with "subagent-driven". Sections are bounded
+    // so legitimate OpenCode parentID mentions elsewhere stay untouched.
+    const sectionOf = (doc: string, startHeading: string, endHeading?: string) => {
+      const lines = doc.split("\n");
+      const start = lines.findIndex((line) => line.startsWith(`## ${startHeading}`));
+      expect(start).toBeGreaterThanOrEqual(0);
+      const stop = endHeading ? lines.findIndex((line) => line.startsWith(`## ${endHeading}`)) : -1;
+      return lines.slice(start, stop === -1 ? lines.length : stop).join("\n");
+    };
+    const standaloneUnsupported = /\b(?:not supported|not yet supported|unsupported)\b/i;
+    const readmeExecDocs = sectionOf(rootReadme, "Features", "Flows");
+    expect(readmeExecDocs).not.toMatch(standaloneUnsupported);
     // No claim that Cursor authenticates via OpenCode parentID: the matrix
     // Implementation row's Cursor cell carries the lease/token model only.
     const implRow = rootReadme.split("\n").find((line) => line.startsWith("| Implementation"));
@@ -988,9 +999,7 @@ test(
     const agents = readFileSync(path.join(repoRoot, "AGENTS.md"), "utf8");
     expect(agents).toContain("coordinator_lease");
     expect(agents).toContain("workit_delegate");
-    expect(agents).not.toMatch(
-      /subagent-driven[^\n]*(is unsupported|rejected as unsupported|not supported)/i,
-    );
+    expect(agents).not.toMatch(standaloneUnsupported);
   },
   { timeout: 60_000 },
 );

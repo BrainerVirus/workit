@@ -11,6 +11,8 @@ Execute plan by dispatching a fresh implementer subagent per task, a task review
 
 **Core principle:** Fresh subagent per task + task review (spec + quality) + broad final review = high quality, fast iteration
 
+On Cursor, the coordinator mints a task-scoped delegation token via `workit_delegate` (from the `workit_plan_menu` coordinator lease) and the subagent prompt must carry it as `delegation_token` for mutation calls.
+
 **Narration:** between tool calls, narrate at most one short line — the
 ledger and the tool results carry the record.
 
