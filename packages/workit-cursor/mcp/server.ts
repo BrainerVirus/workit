@@ -82,7 +82,6 @@ import {
   cursorCoordinatorContext,
   cursorMutationContext,
   cursorQuestionEvidence,
-  type CursorMutationIdentity,
 } from "./flow-evidence";
 
 // The policy-only constant is valid by construction; the adapter never takes
@@ -101,10 +100,6 @@ const cursorConfirmation = (): NativeChoiceEvidence => {
  * the coordinator session. The raw token is used only here and is never
  * logged or persisted.
  */
-const cursorIdentity = (
-  workspace_root: string,
-  delegation_token: string | undefined,
-): CursorMutationIdentity => cursorMutationContext(workspace_root, delegation_token);
 import {
   resolveCanonicalLayout,
   prepareDocsLayout,
@@ -347,7 +342,7 @@ registerTool(
     },
   },
   async ({ confirmed, title, body, draft, target_branch, delegation_token, workspace_root }) => {
-    const identity = cursorIdentity(workspace_root, delegation_token);
+    const identity = cursorMutationContext(workspace_root, delegation_token);
     if (!identity.ok) return jsonResult({ error: identity.error, code: identity.code });
     if (!confirmed) return jsonResult({ error: "confirmed: true required" });
     const data = prCreate(
@@ -443,7 +438,7 @@ registerTool(
     },
   },
   async ({ entries, normalize_only, path: changelogPath, delegation_token, workspace_root }) => {
-    const identity = cursorIdentity(workspace_root, delegation_token);
+    const identity = cursorMutationContext(workspace_root, delegation_token);
     if (!identity.ok) return jsonResult({ error: identity.error, code: identity.code });
     const data = changelogApply({
       entries,
@@ -570,7 +565,7 @@ registerTool(
     },
   },
   async ({ action, sdd_dir, target_branch, stash, delegation_token, workspace_root }) => {
-    const identity = cursorIdentity(workspace_root, delegation_token);
+    const identity = cursorMutationContext(workspace_root, delegation_token);
     if (!identity.ok) return jsonResult({ error: identity.error, code: identity.code });
     // Parity: the MCP process owns a real sanitized logger, so the flow-guard
     // journal mirrors to the same stderr event stream as every other tool.
@@ -618,10 +613,19 @@ registerTool(
     },
   },
   async ({ sdd_dir, task_id, section_text, delegation_token, workspace_root }) => {
-    const identity = cursorIdentity(workspace_root, delegation_token);
+    const identity = cursorMutationContext(workspace_root, delegation_token);
     if (!identity.ok) return jsonResult({ error: identity.error, code: identity.code });
     const slug = slugFromSddPath(sdd_dir);
     if (!slug) return jsonResult({ error: "could not derive slug — expected docs/<slug>/sdd/..." });
+    // Slug binding (cursor-subagent-inline): a delegated identity is bound to
+    // the flow the token was minted for; a caller-derived slug pointing at a
+    // different flow fails closed instead of writing another flow's ledger.
+    if (identity.slug !== undefined && identity.slug !== slug) {
+      return jsonResult({
+        error: `delegation token is bound to flow ${JSON.stringify(identity.slug)}, not ${JSON.stringify(slug)}`,
+        code: "slug_mismatch",
+      });
+    }
     const gate = assertSddControlGates(
       workspace_root,
       slug,
@@ -652,10 +656,17 @@ registerTool(
     },
   },
   async ({ sdd_dir, base_sha, head_sha, delegation_token, workspace_root }) => {
-    const identity = cursorIdentity(workspace_root, delegation_token);
+    const identity = cursorMutationContext(workspace_root, delegation_token);
     if (!identity.ok) return jsonResult({ error: identity.error, code: identity.code });
     const slug = slugFromSddPath(sdd_dir);
     if (!slug) return jsonResult({ error: "could not derive slug — expected docs/<slug>/sdd/..." });
+    // Slug binding: same fail-closed contract as workit_sdd_task_brief.
+    if (identity.slug !== undefined && identity.slug !== slug) {
+      return jsonResult({
+        error: `delegation token is bound to flow ${JSON.stringify(identity.slug)}, not ${JSON.stringify(slug)}`,
+        code: "slug_mismatch",
+      });
+    }
     const gate = assertSddControlGates(
       workspace_root,
       slug,
@@ -686,10 +697,18 @@ registerTool(
     },
   },
   async ({ progress_path, line, delegation_token, workspace_root }) => {
-    const identity = cursorIdentity(workspace_root, delegation_token);
+    const identity = cursorMutationContext(workspace_root, delegation_token);
     if (!identity.ok) return jsonResult({ error: identity.error, code: identity.code });
     const slug = slugFromSddPath(progress_path);
     if (!slug) return jsonResult({ error: "could not derive slug — expected docs/<slug>/sdd/..." });
+    // Slug binding: same fail-closed contract as workit_sdd_task_brief — a
+    // worker can never write (and thus never revoke) another flow's ledger.
+    if (identity.slug !== undefined && identity.slug !== slug) {
+      return jsonResult({
+        error: `delegation token is bound to flow ${JSON.stringify(identity.slug)}, not ${JSON.stringify(slug)}`,
+        code: "slug_mismatch",
+      });
+    }
     const gate = assertSddControlGates(
       workspace_root,
       slug,
@@ -705,6 +724,9 @@ registerTool(
     // only the worker's own task token is revoked; the revoke is best-effort
     // AFTER the progress line landed (a coordinator append has no token to
     // revoke and simply records the no-active-token structured failure).
+    // ponytail: the token can be revoked between this validation and the
+    // locked write — the TOCTOU consequence is bounded to one extra mutation
+    // by the already-validated token.
     if (identity.context.role === "delegated" && identity.context.taskIdentity) {
       revokeDelegateToken(workspace_root, slug, Number(identity.context.taskIdentity));
     }
@@ -774,7 +796,7 @@ registerTool(
     },
   },
   async ({ action, slug, spec_path, plan_path, confirmed, delegation_token, workspace_root }) => {
-    const identity = cursorIdentity(workspace_root, delegation_token);
+    const identity = cursorMutationContext(workspace_root, delegation_token);
     if (!identity.ok) return jsonResult({ error: identity.error, code: identity.code });
     if (action === "migrate") {
       const detect = detectLegacyDocs(workspace_root);
@@ -1195,7 +1217,7 @@ registerTool(
     },
   },
   async ({ issueId, minutes, text, dateMs, delegation_token, workspace_root }) => {
-    const identity = cursorIdentity(workspace_root, delegation_token);
+    const identity = cursorMutationContext(workspace_root, delegation_token);
     if (!identity.ok) return jsonResult({ error: identity.error, code: identity.code });
     const data = await youtrackLogTime({
       issueId,
@@ -1240,7 +1262,7 @@ registerTool(
     },
   },
   async ({ confirmed, issueId, markdown, minutes, delegation_token, workspace_root }) => {
-    const identity = cursorIdentity(workspace_root, delegation_token);
+    const identity = cursorMutationContext(workspace_root, delegation_token);
     if (!identity.ok) return jsonResult({ error: identity.error, code: identity.code });
     const data = await youtrackPostUpdate({
       confirmed,
@@ -1415,8 +1437,6 @@ registerTool(
     const resolved = resolveCanonicalLayout({ workspace_root, plan_path });
     if (!resolved.ok) return jsonResult(withWorkspace(workspace_root, { error: resolved.error }));
     const { workspace, slug } = resolved.layout;
-    const coordinator = cursorIdentity(workspace, undefined);
-    if (!coordinator.ok) return jsonResult({ error: coordinator.error, code: coordinator.code });
     const result = recordMenuChoice(
       workspace,
       slug,
@@ -1545,7 +1565,7 @@ registerTool(
     },
   },
   async ({ path: docsPath, confirmed, delegation_token }) => {
-    const identity = cursorIdentity(
+    const identity = cursorMutationContext(
       process.env.WORKFLOW_WORKSPACE_ROOT ?? process.cwd(),
       delegation_token,
     );
@@ -1578,7 +1598,7 @@ registerTool(
     },
   },
   async ({ slug, confirmed, force, delegation_token, workspace_root }) => {
-    const identity = cursorIdentity(workspace_root, delegation_token);
+    const identity = cursorMutationContext(workspace_root, delegation_token);
     if (!identity.ok) return jsonResult({ error: identity.error, code: identity.code });
     const result = promoteSpec(workspace_root, slug, { confirmed, force });
     if (!result.ok) return jsonResult({ error: result.error, findings: result.findings ?? [] });
@@ -1611,7 +1631,7 @@ registerTool(
     },
   },
   async ({ name, content, confirmed, delegation_token }) => {
-    const identity = cursorIdentity(
+    const identity = cursorMutationContext(
       process.env.WORKFLOW_WORKSPACE_ROOT ?? process.cwd(),
       delegation_token,
     );
@@ -1645,7 +1665,7 @@ registerTool(
     },
   },
   async ({ name, description, platforms, body, confirmed, delegation_token }) => {
-    const identity = cursorIdentity(
+    const identity = cursorMutationContext(
       process.env.WORKFLOW_WORKSPACE_ROOT ?? process.cwd(),
       delegation_token,
     );

@@ -170,13 +170,14 @@ test(
 );
 
 test(
-  "concurrent token mint/revoke writes keep at most one active token",
+  "sequential mint storm keeps exactly one active token",
   async () => {
     const f = fixture();
     try {
-      // Six competing mints race through the shared locked writer: each
-      // replaces the previous one-active token, so exactly one of the
-      // returned raw tokens survives.
+      // Promise.all of synchronous f.mint calls evaluates sequentially — this
+      // proves the storm invariant (each mint replaces the previous one-active
+      // token), NOT cross-thread contention. Real cross-process contention is
+      // covered by the two-process workit_delegate race in mcp-process.test.ts.
       const batch = await Promise.all([
         f.mint(1),
         f.mint(1),

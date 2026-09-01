@@ -27,10 +27,12 @@ export const CURSOR_HOST = "cursor" as const;
  * workspace yields the delegated context (`role: "delegated"`, `taskIdentity`
  * String(active_task_id)). A missing-but-supplied, invalid, revoked, or
  * wrong-workspace token returns a structured failure and NEVER a coordinator
- * context — no silent downgrade (fail closed).
+ * context — no silent downgrade (fail closed). A delegated identity also
+ * carries the token's validated `slug` so adapters can bind caller-derived
+ * paths to the flow the token actually belongs to.
  */
 export type CursorMutationIdentity =
-  | { ok: true; context: MutationContext }
+  | { ok: true; context: MutationContext; slug?: string }
   | { ok: false; code: string; error: string };
 
 /** The deterministic coordinator context, for coordinator-only tools. */
@@ -54,6 +56,7 @@ export const cursorMutationContext = (
   }
   return {
     ok: true,
+    slug: validated.context.slug,
     context: {
       hostWorkspace: workspaceRoot,
       role: "delegated",
