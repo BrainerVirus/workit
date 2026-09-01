@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 # Implement
 
-Execute the plan in the **approved execution mode** recorded by `workit_plan_menu` (call `workit_flow_status` to read it). Both modes stay coordinator-gated: this session never edits product code — Subagent-driven dispatches Cursor-native subagents, Inline does every task itself. Plan-level edits stay coordinator-gated.
+Execute the plan in the **approved execution mode** recorded by `workit_plan_menu` (call `workit_flow_status` to read it). In Subagent-driven mode this session never edits product code — dispatch Cursor-native subagents; in Inline mode it executes every task itself. Plan-level edits stay coordinator-gated.
 
 ## Step 1 — Gather facts (required)
 
@@ -20,7 +20,7 @@ Use the returned `tasks[]` as ground truth. Cache each `section_text` for subage
 
 Resolve plugin root: `WORKFLOW_TOOLKIT_ROOT` env or `~/.cursor/plugins/local/workit/`.
 
-Load `templates/execution-contract.md`. Substitute `<SPEC_PATH>`, `<PLAN_PATH>`, `<BRANCH>`, `<SDD_DIR>`, `<TASK_LIST>` from MCP. OMIT the `## Handoff destination` section and its `<workflow-handoff-destination>` marker line — that section is only for sessions started from a `workit_handoff_prompt` destination prompt. This inline executor is NOT a destination and must never present itself as one (five-choice source menu, Handoff still available). If template missing, stop with error.
+Load `templates/execution-contract.md`. Substitute `<SPEC_PATH>`, `<PLAN_PATH>`, `<BRANCH>`, `<SDD_DIR>`, `<TASK_LIST>` from MCP. OMIT the `## Handoff destination` section and its `<workflow-handoff-destination>` marker line — that section is only for sessions started from a `workit_handoff_prompt` destination prompt. This executor is NOT a destination and must never present itself as one (five-choice source menu, Handoff still available). If template missing, stop with error.
 
 ## Step 3 — Route by execution mode
 
@@ -49,7 +49,7 @@ Requires the flow's execution mode `subagent-driven` (set by `workit_plan_menu`)
 2. Per task: call MCP `workit_delegate` with `{slug, plan_path, task_id, coordinator_lease, workspace_root}` to mint a task-scoped **`delegation_token`**.
 3. Dispatch a Cursor-native subagent whose prompt includes the task brief and the raw `delegation_token`; the worker passes it as `delegation_token` on its mutation calls (`workit_sdd_task_brief`, `workit_sdd_review_package`, `workit_sdd_append_progress`, `workit_branch_setup`, `workit_pr_create`, …). The MCP validates the token against the flow state and fails closed on invalid, wrong-task, wrong-workspace, or revoked tokens.
 4. Coordinator product edits stay blocked — implementation, reviews, and fix rounds happen in the dispatched subagents.
-5. Appending the task's progress line with `workit_sdd_append_progress` revokes that task's token; mint a fresh token per task.
+5. Appending the task's progress line with the worker's token via `workit_sdd_append_progress` revokes that task's token; mint a fresh token per task.
 
 ### Inline
 

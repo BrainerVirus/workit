@@ -922,7 +922,9 @@ test(
     // The Inline section is single-agent: no token minting, no subagent dispatch.
     const inlineIdx = skill.indexOf("### Inline");
     expect(inlineIdx).toBeGreaterThan(0);
-    const inlineSection = skill.slice(inlineIdx, skill.indexOf("### ", inlineIdx + 1));
+    const inlineEnd = skill.indexOf("**Mandatory:**");
+    expect(inlineEnd).toBeGreaterThan(inlineIdx);
+    const inlineSection = skill.slice(inlineIdx, inlineEnd);
     expect(inlineSection).toContain("executing-plans");
     expect(inlineSection).toContain("current session");
     expect(inlineSection).not.toMatch(/subagent|workit_delegate|delegation_token/i);
@@ -930,7 +932,9 @@ test(
     // The Subagent-driven section carries the full capability chain.
     const sddIdx = skill.indexOf("### Subagent-driven");
     expect(sddIdx).toBeGreaterThan(0);
-    const sddSection = skill.slice(sddIdx, skill.indexOf("### ", sddIdx + 1));
+    const sddEnd = skill.indexOf("### Inline");
+    expect(sddEnd).toBeGreaterThan(sddIdx);
+    const sddSection = skill.slice(sddIdx, sddEnd);
     expect(sddSection).toContain("coordinator_lease");
     expect(sddSection).toContain("workit_delegate");
     expect(sddSection).toContain("delegation_token");
