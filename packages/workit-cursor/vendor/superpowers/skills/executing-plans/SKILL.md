@@ -7,11 +7,11 @@ description: Use when you have a written implementation plan to execute in a sep
 
 ## Overview
 
-Load plan, review critically, execute all tasks, report when complete.
+Load plan, review critically, execute all tasks in the current session, report when complete. This is the single-agent Inline execution path.
 
 **Announce at start:** "I'm using the executing-plans skill to implement this plan."
 
-**Note:** Tell your human partner that Superpowers works much better with access to subagents. The quality of its work will be significantly higher if run on a platform with subagent support (Claude Code, Codex CLI, Codex App, and Copilot CLI all qualify; see the per-platform tool refs in `../using-superpowers/references/`). If subagents are available, use superpowers:subagent-driven-development instead of this skill.
+**Note:** This skill is the single-agent Inline execution path: every task runs in the current session — no token minting, no subagent dispatching. Tell your human partner that Superpowers works much better with access to subagents. The quality of its work will be significantly higher if run on a platform with subagent support (Claude Code, Codex CLI, Codex App, and Copilot CLI all qualify; see the per-platform tool refs in `../using-superpowers/references/`). If subagents are available and the plan's approved execution mode is Subagent-driven, use superpowers:subagent-driven-development instead of this skill.
 
 ## The Process
 

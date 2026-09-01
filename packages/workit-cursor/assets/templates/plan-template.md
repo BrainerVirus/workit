@@ -1,6 +1,6 @@
 # <Feature> Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. On Cursor the two paths are: **Subagent-driven** — Cursor-native subagents dispatched by the coordinator, each carrying a task-scoped `delegation_token` minted with `workit_delegate` from the one-time `coordinator_lease`; **Inline** — `executing-plans` in the current session, single-agent, no dispatch, no token minting. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Spec:** `docs/<slug>/spec.md`
 **Branch:** `feature/<slug>`

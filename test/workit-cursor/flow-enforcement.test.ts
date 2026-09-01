@@ -868,6 +868,83 @@ test(
   { timeout: 60_000 },
 );
 
+// --- Task 3: Cursor execution-mode routing in shipped contracts ---
+
+const CURSOR_ROOT = path.join(REPO_ROOT, "packages", "workit-cursor");
+
+const readCursor = (rel: string) => readFileSync(path.join(CURSOR_ROOT, rel), "utf8");
+
+test(
+  "shipped cursor contracts route subagent-driven through lease/token and inline through executing-plans",
+  () => {
+    const skill = readCursor("skills/wk-implement/SKILL.md");
+    const rule = readCursor("rules/ask-question-only.mdc");
+    const execContract = readCursor("assets/templates/execution-contract.md");
+    const docContract = readCursor("assets/templates/superpowers-doc-contract.md");
+    const planTemplate = readCursor("assets/templates/plan-template.md");
+    const readme = readCursor("README.md");
+    const vendorInline = readCursor("vendor/superpowers/skills/executing-plans/SKILL.md");
+
+    // Subagent-driven path: the menu result's coordinator lease, per-task token
+    // minting through workit_delegate, and Cursor-native subagent dispatch that
+    // carries the delegation_token on mutation calls.
+    for (const surface of [skill, rule, execContract, docContract, readme]) {
+      expect(surface).toContain("coordinator_lease");
+      expect(surface).toContain("workit_delegate");
+      expect(surface).toContain("delegation_token");
+      expect(surface).toMatch(/Cursor-native subagents?/i);
+    }
+    expect(skill).toContain("workit_plan_menu");
+
+    // Inline path: executing-plans directly in the current session, no dispatch.
+    expect(skill).toContain("executing-plans");
+    expect(vendorInline).toContain("executing-plans");
+    expect(planTemplate).toContain("Subagent-driven");
+    expect(planTemplate).toContain("Inline");
+
+    // The stale rejection copy is gone from every shipped surface.
+    for (const surface of [
+      skill,
+      rule,
+      execContract,
+      docContract,
+      planTemplate,
+      readme,
+      vendorInline,
+    ]) {
+      expect(surface).not.toContain("unsupported_mode");
+      expect(surface).not.toMatch(
+        /subagent-driven[^\n]*(is unsupported|rejected as unsupported|not supported)/i,
+      );
+    }
+    expect(readme).not.toMatch(/stays inline-only|not supported on this host/i);
+
+    // The Inline section is single-agent: no token minting, no subagent dispatch.
+    const inlineIdx = skill.indexOf("### Inline");
+    expect(inlineIdx).toBeGreaterThan(0);
+    const inlineSection = skill.slice(inlineIdx, skill.indexOf("### ", inlineIdx + 1));
+    expect(inlineSection).toContain("executing-plans");
+    expect(inlineSection).toContain("current session");
+    expect(inlineSection).not.toMatch(/subagent|workit_delegate|delegation_token/i);
+
+    // The Subagent-driven section carries the full capability chain.
+    const sddIdx = skill.indexOf("### Subagent-driven");
+    expect(sddIdx).toBeGreaterThan(0);
+    const sddSection = skill.slice(sddIdx, skill.indexOf("### ", sddIdx + 1));
+    expect(sddSection).toContain("coordinator_lease");
+    expect(sddSection).toContain("workit_delegate");
+    expect(sddSection).toContain("delegation_token");
+
+    // Vendor inline guidance stays single-agent and token-free: no token minting
+    // and no Cursor-native subagent dispatch, only the inline single-agent path.
+    expect(vendorInline).toContain("single-agent");
+    expect(vendorInline).not.toContain("workit_delegate");
+    expect(vendorInline).not.toContain("delegation_token");
+    expect(vendorInline).not.toMatch(/Cursor-native subagent/i);
+  },
+  { timeout: 60_000 },
+);
+
 test(
   "cursor MCP workit_handoff_prompt leaves the flow unmarked when prompt generation fails",
   async () => {
