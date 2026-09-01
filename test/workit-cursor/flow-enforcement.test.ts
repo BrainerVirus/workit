@@ -949,6 +949,52 @@ test(
   { timeout: 60_000 },
 );
 
+// --- Task 4: host parity — Cursor Handoff wording and root-level docs ---
+
+test(
+  "cursor handoff keeps the pasteable-prompt path and root docs describe the lease/token model",
+  () => {
+    const repoRoot = REPO_ROOT;
+
+    // Cursor Handoff remains the existing pasteable-prompt path: the skill and
+    // handoff prompt copy keep their current wording.
+    const handoffSkill = readCursor("skills/wk-handoff/SKILL.md");
+    expect(handoffSkill).toContain("workit_handoff_prompt");
+    expect(handoffSkill).toContain("copy-paste implementation prompt");
+    expect(handoffSkill).not.toContain("spawns a native");
+    expect(handoffSkill).not.toContain("coordinator_lease");
+
+    // Root README host-capabilities matrix: Cursor implementation is the
+    // lease/token-gated native subagent path, never "not supported", and never
+    // a claim of OpenCode parentID authentication.
+    const rootReadme = readFileSync(path.join(repoRoot, "README.md"), "utf8");
+    expect(rootReadme).toContain("workit_delegate");
+    expect(rootReadme).toContain("delegation_token");
+    expect(rootReadme).toContain("coordinator_lease");
+    expect(rootReadme).not.toMatch(
+      /subagent-driven[^\n]*(is unsupported|rejected as unsupported|not supported)/i,
+    );
+    expect(rootReadme).not.toContain("not supported (no delegated identity)");
+    // No claim that Cursor authenticates via OpenCode parentID: the matrix
+    // Implementation row's Cursor cell carries the lease/token model only.
+    const implRow = rootReadme.split("\n").find((line) => line.startsWith("| Implementation"));
+    expect(implRow).toBeDefined();
+    const cursorCell = implRow!.split("|")[3] ?? "";
+    expect(cursorCell).toContain("workit_delegate");
+    expect(cursorCell).not.toContain("parentID");
+
+    // Root AGENTS.md host-native adaptation table reflects lease/token
+    // delegation instead of unsupported/policy-only rejection.
+    const agents = readFileSync(path.join(repoRoot, "AGENTS.md"), "utf8");
+    expect(agents).toContain("coordinator_lease");
+    expect(agents).toContain("workit_delegate");
+    expect(agents).not.toMatch(
+      /subagent-driven[^\n]*(is unsupported|rejected as unsupported|not supported)/i,
+    );
+  },
+  { timeout: 60_000 },
+);
+
 test(
   "cursor MCP workit_handoff_prompt leaves the flow unmarked when prompt generation fails",
   async () => {
