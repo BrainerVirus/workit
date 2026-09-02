@@ -444,9 +444,12 @@ test("flow contracts state the host-capability boundary: OpenCode receipts + par
   expect(surfaces).not.toContain('role: "delegated"');
   expect(surfaces).not.toContain("taskIdentity");
   expect(surfaces).not.toContain("questionId");
-  // Cursor reports its policy-only boundary honestly and rejects subagent-driven.
+  // Cursor reports its policy-only boundary honestly: Subagent-driven runs
+  // through the coordinator lease + workit_delegate token, Inline is single-agent.
   expect(surfaces).toContain("attested: false");
-  expect(surfaces).toMatch(/subagent-driven[^\n]*(unsupported|rejected)/i);
+  expect(surfaces).toMatch(/subagent-driven[^\n]*coordinator_lease/i);
+  expect(surfaces).toContain("workit_delegate");
+  expect(surfaces).not.toMatch(/subagent-driven[^\n]*(unsupported|rejected)/i);
   // Host contract copies stay byte-identical across the four template roots.
   const templates = [
     "packages/workit-core/templates",

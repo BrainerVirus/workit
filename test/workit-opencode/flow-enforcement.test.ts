@@ -991,3 +991,32 @@ test(
   },
   { timeout: 60_000 },
 );
+
+// --- Task 4: host parity — OpenCode delegation stays parentage-derived ---
+
+test(
+  "opencode delegation is parentage-derived: no lease/token surface exists on the host",
+  async () => {
+    const { tools } = fixture();
+    // workit_delegate is a Cursor-host-only MCP tool: OpenCode never exposes a
+    // delegation minting surface, and no OpenCode tool schema accepts a token.
+    expect(Object.keys(tools)).not.toContain("workit_delegate");
+    for (const name of Object.keys(tools)) {
+      const schema =
+        (tools[name as keyof typeof tools] as { args?: Record<string, unknown> }).args ?? {};
+      expect(Object.keys(schema), name).not.toContain("delegation_token");
+      expect(Object.keys(schema), name).not.toContain("coordinator_lease");
+    }
+    // The adapter still derives delegated status from host parentage: a real
+    // child session is delegated with no lease/token involved (the existing
+    // parentage tests assert the denial; here we pin the mechanism itself).
+    const flowSource = readFileSync(
+      path.resolve(import.meta.dir, "../../packages/workit-opencode/src/tools/flow.ts"),
+      "utf8",
+    );
+    expect(flowSource).toContain("roleFromParentage");
+    expect(flowSource).toMatch(/parentID/);
+    expect(flowSource).not.toContain("workit_delegate");
+  },
+  { timeout: 60_000 },
+);

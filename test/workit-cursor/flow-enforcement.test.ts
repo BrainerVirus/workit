@@ -14,7 +14,6 @@ import os from "node:os";
 import path from "node:path";
 import { cursorQuestionEvidence } from "../../packages/workit-cursor/mcp/flow-evidence";
 import {
-  CURSOR_SUBAGENT_UNSUPPORTED_TEXT,
   HANDOFF_DESTINATION_MARKER,
   assertEvidenceShape,
   assertHostEvidence,
@@ -214,7 +213,7 @@ test(
 );
 
 test(
-  "cursor MCP: subagent-driven menu is rejected as unsupported with recovery guidance",
+  "cursor MCP: subagent-driven menu is accepted and returns a raw coordinator lease",
   async () => {
     const { root } = fixture();
     const { child, request } = startServer();
@@ -244,24 +243,19 @@ test(
         plan_path: plan,
         workspace_root: root,
       });
-      expect(callText(menu).isError).toBe(true);
-      expect(callText(menu).text.code).toBe("unsupported_mode");
-      expect(JSON.stringify(callText(menu).text)).toContain(CURSOR_SUBAGENT_UNSUPPORTED_TEXT);
+      expect(callText(menu).isError).toBe(false);
+      expect(callText(menu).text.coordinator_lease).toMatch(/^[0-9a-f]{64}$/);
 
-      // The menu was not recorded: the flow cannot enter subagent-driven on Cursor.
+      // The flow entered subagent-driven execution with a lease hash.
       const status = await call("workit_flow_status", {
         plan_path: plan,
         workspace_root: root,
       });
-      expect(callText(status).text.menu.presented).toBe(false);
-
-      // A supported choice records the menu with the policy-only confirmation.
-      const inline = await call("workit_plan_menu", {
-        choice: "inline",
-        plan_path: plan,
-        workspace_root: root,
-      });
-      expect(callText(inline).isError).toBe(false);
+      expect(callText(status).text.menu.presented).toBe(true);
+      expect(callText(status).text.execution.mode).toBe("subagent-driven");
+      expect(callText(status).text.execution.delegation.coordinator_lease_hash).toMatch(
+        /^[0-9a-f]{64}$/,
+      );
     } finally {
       child.kill();
       rmSync(root, { recursive: true, force: true });
@@ -870,6 +864,142 @@ test(
       child.kill();
       rmSync(root, { recursive: true, force: true });
     }
+  },
+  { timeout: 60_000 },
+);
+
+// --- Task 3: Cursor execution-mode routing in shipped contracts ---
+
+const CURSOR_ROOT = path.join(REPO_ROOT, "packages", "workit-cursor");
+
+const readCursor = (rel: string) => readFileSync(path.join(CURSOR_ROOT, rel), "utf8");
+
+test(
+  "shipped cursor contracts route subagent-driven through lease/token and inline through executing-plans",
+  () => {
+    const skill = readCursor("skills/wk-implement/SKILL.md");
+    const rule = readCursor("rules/ask-question-only.mdc");
+    const execContract = readCursor("assets/templates/execution-contract.md");
+    const docContract = readCursor("assets/templates/superpowers-doc-contract.md");
+    const planTemplate = readCursor("assets/templates/plan-template.md");
+    const readme = readCursor("README.md");
+    const vendorInline = readCursor("vendor/superpowers/skills/executing-plans/SKILL.md");
+
+    // Subagent-driven path: the menu result's coordinator lease, per-task token
+    // minting through workit_delegate, and Cursor-native subagent dispatch that
+    // carries the delegation_token on mutation calls.
+    for (const surface of [skill, rule, execContract, docContract, readme]) {
+      expect(surface).toContain("coordinator_lease");
+      expect(surface).toContain("workit_delegate");
+      expect(surface).toContain("delegation_token");
+      expect(surface).toMatch(/Cursor-native subagents?/i);
+    }
+    expect(skill).toContain("workit_plan_menu");
+
+    // Inline path: executing-plans directly in the current session, no dispatch.
+    expect(skill).toContain("executing-plans");
+    expect(vendorInline).toContain("executing-plans");
+    expect(planTemplate).toContain("Subagent-driven");
+    expect(planTemplate).toContain("Inline");
+
+    // The stale rejection copy is gone from every shipped surface.
+    for (const surface of [
+      skill,
+      rule,
+      execContract,
+      docContract,
+      planTemplate,
+      readme,
+      vendorInline,
+    ]) {
+      expect(surface).not.toContain("unsupported_mode");
+      expect(surface).not.toMatch(
+        /subagent-driven[^\n]*(is unsupported|rejected as unsupported|not supported)/i,
+      );
+    }
+    expect(readme).not.toMatch(/stays inline-only|not supported on this host/i);
+
+    // The Inline section is single-agent: no token minting, no subagent dispatch.
+    const inlineIdx = skill.indexOf("### Inline");
+    expect(inlineIdx).toBeGreaterThan(0);
+    const inlineEnd = skill.indexOf("**Mandatory:**");
+    expect(inlineEnd).toBeGreaterThan(inlineIdx);
+    const inlineSection = skill.slice(inlineIdx, inlineEnd);
+    expect(inlineSection).toContain("executing-plans");
+    expect(inlineSection).toContain("current session");
+    expect(inlineSection).not.toMatch(/subagent|workit_delegate|delegation_token/i);
+
+    // The Subagent-driven section carries the full capability chain.
+    const sddIdx = skill.indexOf("### Subagent-driven");
+    expect(sddIdx).toBeGreaterThan(0);
+    const sddEnd = skill.indexOf("### Inline");
+    expect(sddEnd).toBeGreaterThan(sddIdx);
+    const sddSection = skill.slice(sddIdx, sddEnd);
+    expect(sddSection).toContain("coordinator_lease");
+    expect(sddSection).toContain("workit_delegate");
+    expect(sddSection).toContain("delegation_token");
+
+    // Vendor inline guidance stays single-agent and token-free: no token minting
+    // and no Cursor-native subagent dispatch, only the inline single-agent path.
+    expect(vendorInline).toContain("single-agent");
+    expect(vendorInline).not.toContain("workit_delegate");
+    expect(vendorInline).not.toContain("delegation_token");
+    expect(vendorInline).not.toMatch(/Cursor-native subagent/i);
+  },
+  { timeout: 60_000 },
+);
+
+// --- Task 4: host parity — Cursor Handoff wording and root-level docs ---
+
+test(
+  "cursor handoff keeps the pasteable-prompt path and root docs describe the lease/token model",
+  () => {
+    const repoRoot = REPO_ROOT;
+
+    // Cursor Handoff remains the existing pasteable-prompt path: the skill and
+    // handoff prompt copy keep their current wording.
+    const handoffSkill = readCursor("skills/wk-handoff/SKILL.md");
+    expect(handoffSkill).toContain("workit_handoff_prompt");
+    expect(handoffSkill).toContain("copy-paste implementation prompt");
+    expect(handoffSkill).not.toContain("spawns a native");
+    expect(handoffSkill).not.toContain("coordinator_lease");
+
+    // Root README host-capabilities matrix: Cursor implementation is the
+    // lease/token-gated native subagent path, never "not supported", and never
+    // a claim of OpenCode parentID authentication.
+    const rootReadme = readFileSync(path.join(repoRoot, "README.md"), "utf8");
+    expect(rootReadme).toContain("workit_delegate");
+    expect(rootReadme).toContain("delegation_token");
+    expect(rootReadme).toContain("coordinator_lease");
+    expect(rootReadme).not.toContain("not supported (no delegated identity)");
+    // Docs-regression tripwire: a standalone "not supported"/"unsupported"
+    // phrase reintroduced anywhere in the sections this test owns fails, not
+    // only when it shares a line with "subagent-driven". Sections are bounded
+    // so legitimate OpenCode parentID mentions elsewhere stay untouched.
+    const sectionOf = (doc: string, startHeading: string, endHeading?: string) => {
+      const lines = doc.split("\n");
+      const start = lines.findIndex((line) => line.startsWith(`## ${startHeading}`));
+      expect(start).toBeGreaterThanOrEqual(0);
+      const stop = endHeading ? lines.findIndex((line) => line.startsWith(`## ${endHeading}`)) : -1;
+      return lines.slice(start, stop === -1 ? lines.length : stop).join("\n");
+    };
+    const standaloneUnsupported = /\b(?:not supported|not yet supported|unsupported)\b/i;
+    const readmeExecDocs = sectionOf(rootReadme, "Features", "Flows");
+    expect(readmeExecDocs).not.toMatch(standaloneUnsupported);
+    // No claim that Cursor authenticates via OpenCode parentID: the matrix
+    // Implementation row's Cursor cell carries the lease/token model only.
+    const implRow = rootReadme.split("\n").find((line) => line.startsWith("| Implementation"));
+    expect(implRow).toBeDefined();
+    const cursorCell = implRow!.split("|")[3] ?? "";
+    expect(cursorCell).toContain("workit_delegate");
+    expect(cursorCell).not.toContain("parentID");
+
+    // Root AGENTS.md host-native adaptation table reflects lease/token
+    // delegation instead of unsupported/policy-only rejection.
+    const agents = readFileSync(path.join(repoRoot, "AGENTS.md"), "utf8");
+    expect(agents).toContain("coordinator_lease");
+    expect(agents).toContain("workit_delegate");
+    expect(agents).not.toMatch(standaloneUnsupported);
   },
   { timeout: 60_000 },
 );

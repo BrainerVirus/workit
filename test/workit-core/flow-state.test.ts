@@ -19,8 +19,11 @@ import {
   recordMenuChoice,
   prepareFlowState,
   writeFlowState,
+  mintDelegateToken,
+  validateDelegateToken,
+  revokeDelegateToken,
 } from "../../packages/workit-core/src/core/flow-state";
-import { establishApprovedFlow, evidence, openEvidence } from "./flow-fixtures";
+import { establishApprovedFlow, evidence, openEvidence, cursorEvidence } from "./flow-fixtures";
 import { HostReceiptStore } from "../../packages/workit-core/src/core/flow-state";
 
 const sha256 = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
@@ -974,6 +977,238 @@ test("CA-18: unsupported field values return flow_state_invalid without touching
       }
       expect(readFileSync(file, "utf8")).toBe(raw);
     }
+  } finally {
+    cleanup(root);
+  }
+});
+
+const planWithTasks = (slug: string, tasks: { id: number; title: string }[]) =>
+  `# ${slug}\n\n**Spec:** \`docs/${slug}/spec.md\`\n**Branch:** \`feature/${slug}\`\n\n## Context\n\n` +
+  tasks.map((t) => `### Task ${t.id}: ${t.title}\n\n- [ ] **Step 1:** do it\n`).join("\n");
+
+const cursorSubagentFixture = (taskIds: number[] = [1, 2]) => {
+  const { root, slug } = fixture();
+  writeFileSync(
+    path.join(root, "docs", slug, "plan.md"),
+    planWithTasks(
+      slug,
+      taskIds.map((id) => ({ id, title: `Do task ${id}` })),
+    ),
+  );
+  const spec = `docs/${slug}/spec.md`;
+  const plan = `docs/${slug}/plan.md`;
+  const prep = prepareFlowState(root, slug, { spec_path: spec, plan_path: plan });
+  if (!prep.ok) throw new Error(prep.error);
+  expect(transitionSpec(root, slug, spec, cursorEvidence()).ok).toBe(true);
+  expect(transitionPlan(root, slug, plan, cursorEvidence()).ok).toBe(true);
+  const menu = recordMenuChoice(root, slug, plan, "subagent-driven", cursorEvidence());
+  expect(menu.ok, JSON.stringify(menu)).toBe(true);
+  if (!menu.ok || !("coordinator_lease" in menu) || !menu.coordinator_lease) {
+    throw new Error("coordinator lease not returned");
+  }
+  return { root, slug, plan, lease: menu.coordinator_lease, planPath: plan };
+};
+
+test("Cursor recordMenuChoice with subagent-driven issues a coordinator lease once and activates execution", () => {
+  const { root, slug, lease } = cursorSubagentFixture();
+  try {
+    expect(typeof lease).toBe("string");
+    expect(lease.length).toBeGreaterThanOrEqual(32);
+    const state = readFlowState(root, slug);
+    expect(state.menu.chosen).toBe("subagent-driven");
+    expect(state.execution).toMatchObject({ status: "active", mode: "subagent-driven" });
+    // Raw lease never persisted; only its SHA-256 hash.
+    const persisted = JSON.parse(readFileSync(flowJson(root, slug), "utf8"));
+    expect(JSON.stringify(persisted)).not.toContain(lease);
+    expect(createHash("sha256").update(lease).digest("hex")).toMatch(/^[0-9a-f]{64}$/);
+    expect(persisted.execution.delegation.coordinator_lease_hash).toBe(
+      createHash("sha256").update(lease).digest("hex"),
+    );
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("non-subagent-driven recordMenuChoice results carry no coordinator_lease", () => {
+  for (const choice of ["inline", "handoff", "review-spec", "review-plan"] as const) {
+    const { root, slug } = fixture();
+    try {
+      const spec = `docs/${slug}/spec.md`;
+      const plan = `docs/${slug}/plan.md`;
+      expect(prepareFlowState(root, slug, { spec_path: spec, plan_path: plan }).ok).toBe(true);
+      expect(transitionSpec(root, slug, spec, cursorEvidence()).ok).toBe(true);
+      expect(transitionPlan(root, slug, plan, cursorEvidence()).ok).toBe(true);
+      const result = recordMenuChoice(root, slug, plan, choice, cursorEvidence());
+      expect(result.ok, choice).toBe(true);
+      if (result.ok) expect("coordinator_lease" in result, choice).toBe(false);
+    } finally {
+      cleanup(root);
+    }
+  }
+});
+
+test("a wrong or empty coordinator lease is rejected by mintDelegateToken", () => {
+  const { root, slug, planPath, lease } = cursorSubagentFixture();
+  try {
+    const first = mintDelegateToken(root, slug, planPath, 1, lease);
+    expect(first.ok).toBe(true);
+    // The same lease may mint the next task's token (task-scoped, replaced),
+    // but a WRONG lease never mints.
+    const wrong = mintDelegateToken(root, slug, planPath, 2, lease + "x");
+    expect(wrong.ok).toBe(false);
+    if (!wrong.ok) expect(wrong.code).toBe("coordinator_lease_invalid");
+    const garbage = mintDelegateToken(root, slug, planPath, 2, "");
+    expect(garbage.ok).toBe(false);
+    if (!garbage.ok) expect(garbage.code).toBe("coordinator_lease_invalid");
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("delegate token is bound to (workspaceRoot, slug, taskId) and reusable within the task", () => {
+  const { root, slug, planPath, lease } = cursorSubagentFixture();
+  try {
+    const minted = mintDelegateToken(root, slug, planPath, 1, lease);
+    expect(minted.ok).toBe(true);
+    if (!minted.ok) throw new Error(minted.error);
+    // Raw token not persisted.
+    expect(readFileSync(flowJson(root, slug), "utf8")).not.toContain(minted.token);
+    // Reusable within the same task.
+    const again = validateDelegateToken(root, minted.token);
+    expect(again.ok).toBe(true);
+    if (again.ok) {
+      expect(again.context.slug).toBe(slug);
+      expect(again.context.taskId).toBe(1);
+    }
+    // Wrong task id fails.
+    const other = mintDelegateToken(root, slug, planPath, 3, lease);
+    expect(other.ok).toBe(false);
+    if (!other.ok) expect(other.code).toBe("task_invalid");
+    // Wrong workspace fails.
+    const otherRoot = mkdtempSync(path.join(os.tmpdir(), "wf-flow-other-"));
+    try {
+      const wrongWorkspace = validateDelegateToken(otherRoot, minted.token);
+      expect(wrongWorkspace.ok).toBe(false);
+      if (!wrongWorkspace.ok) expect(wrongWorkspace.code).toBe("delegation_token_invalid");
+    } finally {
+      cleanup(otherRoot);
+    }
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("one active token per flow: minting the next task token revokes the previous one", () => {
+  const { root, slug, planPath, lease } = cursorSubagentFixture();
+  try {
+    const first = mintDelegateToken(root, slug, planPath, 1, lease);
+    expect(first.ok).toBe(true);
+    if (!first.ok) throw new Error(first.error);
+    expect(validateDelegateToken(root, first.token).ok).toBe(true);
+    const second = mintDelegateToken(root, slug, planPath, 2, lease);
+    expect(second.ok).toBe(true);
+    if (!second.ok) throw new Error(second.error);
+    expect(validateDelegateToken(root, first.token).ok).toBe(false);
+    expect(validateDelegateToken(root, second.token).ok).toBe(true);
+    // Task 1 is unfinished, so its token is replaceable: re-minting revokes
+    // the task 2 token and rebinds to task 1 (one active token per flow).
+    const replacement = mintDelegateToken(root, slug, planPath, 1, lease);
+    expect(replacement.ok).toBe(true);
+    if (!replacement.ok) throw new Error(replacement.error);
+    expect(validateDelegateToken(root, second.token).ok).toBe(false);
+    expect(validateDelegateToken(root, replacement.token).ok).toBe(true);
+    // A completed task's token can never be re-minted.
+    const completed = mintDelegateToken(root, slug, planPath, 9, lease);
+    expect(completed.ok).toBe(false);
+    if (!completed.ok) expect(completed.code).toBe("task_invalid");
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("revokeDelegateToken clears the active task token", () => {
+  const { root, slug, planPath, lease } = cursorSubagentFixture();
+  try {
+    const minted = mintDelegateToken(root, slug, planPath, 1, lease);
+    expect(minted.ok).toBe(true);
+    if (!minted.ok) throw new Error(minted.error);
+    expect(validateDelegateToken(root, minted.token).ok).toBe(true);
+    const revoked = revokeDelegateToken(root, slug, 1);
+    expect(revoked.ok).toBe(true);
+    expect(validateDelegateToken(root, minted.token).ok).toBe(false);
+    // Idempotent-ish: revoking again fails closed (nothing active for task).
+    const again = revokeDelegateToken(root, slug, 1);
+    expect(again.ok).toBe(false);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("validateDelegateToken rejects invalid, missing, and revoked tokens with structured errors", () => {
+  const { root, slug, planPath, lease } = cursorSubagentFixture();
+  try {
+    const missing = validateDelegateToken(root, "");
+    expect(missing.ok).toBe(false);
+    if (!missing.ok) expect(missing.code).toBe("delegation_token_invalid");
+    const garbage = validateDelegateToken(root, "not-a-real-token");
+    expect(garbage.ok).toBe(false);
+    if (!garbage.ok) expect(garbage.code).toBe("delegation_token_invalid");
+    const minted = mintDelegateToken(root, slug, planPath, 1, lease);
+    if (!minted.ok) throw new Error(minted.error);
+    expect(revokeDelegateToken(root, slug, 1).ok).toBe(true);
+    const revoked = validateDelegateToken(root, minted.token);
+    expect(revoked.ok).toBe(false);
+    if (!revoked.ok) expect(revoked.code).toBe("delegation_token_revoked");
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("mintDelegateToken requires the active Cursor subagent-driven flow and an unfinished task", () => {
+  const { root, slug, planPath, lease } = cursorSubagentFixture();
+  try {
+    // Hand the flow to pending (as if the menu never executed).
+    const base = readFlowState(root, slug);
+    writeFlowState(root, {
+      ...base,
+      execution: { ...base.execution, status: "pending", mode: null },
+    });
+    const blocked = mintDelegateToken(root, slug, planPath, 1, lease);
+    expect(blocked.ok).toBe(false);
+    if (!blocked.ok) expect(blocked.code).toBe("flow_not_active");
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("mintDelegateToken fails closed against an OpenCode-host subagent-driven flow with no delegation state", () => {
+  const { root, slug, planPath } = (() => {
+    const { root, slug } = fixture();
+    const store = new HostReceiptStore();
+    const spec = `docs/${slug}/spec.md`;
+    const plan = `docs/${slug}/plan.md`;
+    const prep = prepareFlowState(root, slug, { spec_path: spec, plan_path: plan });
+    if (!prep.ok) throw new Error(prep.error);
+    if (!transitionSpec(root, slug, spec, openEvidence(store, "s", "Approve spec")).ok)
+      throw new Error("spec transition failed");
+    if (!transitionPlan(root, slug, plan, openEvidence(store, "s", "Approve plan")).ok)
+      throw new Error("plan transition failed");
+    const menu = recordMenuChoice(
+      root,
+      slug,
+      plan,
+      "subagent-driven",
+      openEvidence(store, "s", "subagent-driven"),
+      { hostWorkspace: root, role: "coordinator", sessionId: "opencoord" },
+    );
+    if (!menu.ok) throw new Error(menu.error);
+    if ("coordinator_lease" in menu) throw new Error("OpenCode menu must not return a lease");
+    return { root, slug, planPath: plan };
+  })();
+  try {
+    const minted = mintDelegateToken(root, slug, planPath, 1, "any-lease-value");
+    expect(minted.ok).toBe(false);
+    if (!minted.ok) expect(minted.code).toBe("coordinator_lease_invalid");
   } finally {
     cleanup(root);
   }

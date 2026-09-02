@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import {
   chmodSync,
   existsSync,
@@ -14,7 +15,6 @@ import {
   COORDINATOR_RECOVERY_TEXT,
   COORDINATOR_SHELL_DENIED_TEXT,
   COORDINATOR_WRITE_TOOLS,
-  CURSOR_SUBAGENT_UNSUPPORTED_TEXT,
   HostReceiptStore,
   assertEvidenceShape,
   assertHostEvidence,
@@ -731,7 +731,7 @@ test("recordMenuChoice rejects a leading 'First' qualifier that the base label n
   }
 });
 
-test("Cursor menu cannot record subagent-driven: unsupported mode with recovery guidance", () => {
+test("Cursor menu records subagent-driven: coordinator lease returned once, execution active", () => {
   const { root, slug } = fixture();
   try {
     const spec = `docs/${slug}/spec.md`;
@@ -740,16 +740,24 @@ test("Cursor menu cannot record subagent-driven: unsupported mode with recovery 
     expect(transitionSpec(root, slug, spec, cursorEvidence()).ok).toBe(true);
     expect(transitionPlan(root, slug, plan, cursorEvidence()).ok).toBe(true);
 
-    const blocked = recordMenuChoice(root, slug, plan, "subagent-driven", cursorEvidence());
-    expect(blocked.ok).toBe(false);
-    if (blocked.ok === false) {
-      expect(blocked.code).toBe("unsupported_mode");
-      expect(blocked.error).toContain(CURSOR_SUBAGENT_UNSUPPORTED_TEXT);
+    const accepted = recordMenuChoice(root, slug, plan, "subagent-driven", cursorEvidence());
+    expect(accepted.ok).toBe(true);
+    if (accepted.ok) {
+      expect(accepted.coordinator_lease).toMatch(/^[0-9a-f]{64}$/);
     }
-    expect(readFlowState(root, slug).menu.presented).toBe(false);
-
-    const inline = recordMenuChoice(root, slug, plan, "inline", cursorEvidence());
-    expect(inline.ok).toBe(true);
+    const state = readFlowState(root, slug);
+    expect(state.menu).toMatchObject({ presented: true, chosen: "subagent-driven" });
+    expect(state.execution).toMatchObject({ status: "active", mode: "subagent-driven" });
+    // Raw lease never persisted; only its SHA-256 hash (issued once semantics).
+    if (accepted.ok && typeof accepted.coordinator_lease === "string") {
+      const persisted = JSON.parse(
+        readFileSync(path.join(root, "docs", slug, "sdd", "flow.json"), "utf8"),
+      ) as { execution: { delegation: { coordinator_lease_hash: string } } };
+      expect(JSON.stringify(persisted)).not.toContain(accepted.coordinator_lease);
+      expect(persisted.execution.delegation.coordinator_lease_hash).toBe(
+        createHash("sha256").update(accepted.coordinator_lease).digest("hex"),
+      );
+    }
   } finally {
     cleanup(root);
   }
@@ -2313,7 +2321,7 @@ test("CA-12: approval drift clears the id; a valid reactivation records the new 
   }
 });
 
-test("CA-12: non-subagent choices never set the id; Cursor's rejected subagent choice keeps it null", () => {
+test("CA-12: non-subagent choices never set the id; Cursor's subagent-driven activation keeps it null", () => {
   for (const choice of ["inline", "handoff", "review-spec", "review-plan"] as const) {
     const { root, slug } = fixture();
     try {
@@ -2330,13 +2338,14 @@ test("CA-12: non-subagent choices never set the id; Cursor's rejected subagent c
     expect(prepareFlowState(root, slug, { spec_path: spec, plan_path: plan }).ok).toBe(true);
     expect(transitionSpec(root, slug, spec, cursorEvidence()).ok).toBe(true);
     expect(transitionPlan(root, slug, plan, cursorEvidence()).ok).toBe(true);
-    const rejected = recordMenuChoice(root, slug, plan, "subagent-driven", cursorEvidence(), {
+    const accepted = recordMenuChoice(root, slug, plan, "subagent-driven", cursorEvidence(), {
       hostWorkspace: root,
       role: "coordinator",
       sessionId: "cursor-session",
     });
-    expect(rejected.ok).toBe(false);
-    if (!rejected.ok) expect(rejected.code).toBe("unsupported_mode");
+    expect(accepted.ok).toBe(true);
+    // Cursor has no session identity: authority comes from the coordinator
+    // lease, so the OpenCode coordinator session id stays null.
     expect(readFlowState(root, slug).execution.coordinator_session_id).toBeNull();
   } finally {
     cleanup(root);

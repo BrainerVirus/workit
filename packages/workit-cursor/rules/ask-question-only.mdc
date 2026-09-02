@@ -39,7 +39,7 @@ After writing a plan, **do not emit** Superpowers' inline text beginning “Two 
 
 After `workit_docs_validate` succeeds on the saved spec/plan pair, call Cursor `AskQuestion` with exactly:
 
-- Subagent-driven → **unsupported on Cursor** (the MCP rejects it as `unsupported_mode`; use OpenCode `wk-implement`)
+- Subagent-driven → dispatches Cursor-native subagents: `workit_plan_menu` returns a one-time `coordinator_lease`, `workit_delegate` mints a task-scoped `delegation_token` per task, and the worker passes it as `delegation_token` on mutation calls
 - Inline → execute in this session
 - Handoff → `/wk-handoff` (new session only)
 - Review spec first

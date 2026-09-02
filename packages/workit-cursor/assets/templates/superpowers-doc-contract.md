@@ -1,6 +1,6 @@
 # Superpowers document contract
 
-Use OpenCode's native `question` for every bounded user choice. Give concise choices and allow a custom answer; if the tool is unavailable, ask one concise plain-text question. Use `skill` to load workflow and Superpowers skills, `todowrite` for task state, and `task` for delegated work.
+Use OpenCode's native `question` for every bounded user choice. Give concise choices and allow a custom answer; if the tool is unavailable, ask one concise plain-text question. Use `skill` to load workflow and Superpowers skills, `todowrite` for task state, and `task` for delegated work (OpenCode) or the host-native equivalent — on Cursor, Subagent-driven dispatches Cursor-native subagents with a task `delegation_token`, Inline runs single-agent in the current session.
 
 ## Tracked document layout
 
@@ -35,7 +35,7 @@ Before writing **Branch:** into a new spec or plan, call `workit_docs_branch` an
 - Commits use `wk-commit` after its native `question` confirmation.
 - Continuation uses `wk-handoff`, whose `workit_handoff_session` creates and seeds the OpenCode session automatically.
 - Never use worktrees. Resolve the declared branch with `workit_resolve_branch`, preview dirty-tree stash choices with `question`, and apply an approved in-place checkout through `workit_branch_setup` with `confirmed: true` (grounded in the recorded NativeChoiceEvidence).
-- Flow-tool confirmations are never agent-typed booleans and never caller-supplied evidence objects: on OpenCode the plugin records the user's native-`question` answer as a host-observed one-use receipt (`attested: true`, `callID`, `selectedLabel`, `recordedAt`) consumed by `workit_spec_approve` / `workit_plan_approve` / `workit_plan_menu` — no evidence argument exists, and delegated worker status comes from host session parentage (`parentID`), never a caller `role` field. On Cursor, confirmations are policy-only (`attested: false`) and subagent-driven execution is rejected as unsupported.
+- Flow-tool confirmations are never agent-typed booleans and never caller-supplied evidence objects: on OpenCode the plugin records the user's native-`question` answer as a host-observed one-use receipt (`attested: true`, `callID`, `selectedLabel`, `recordedAt`) consumed by `workit_spec_approve` / `workit_plan_approve` / `workit_plan_menu` — no evidence argument exists, and delegated worker status comes from host session parentage (`parentID`), never a caller `role` field. On Cursor, confirmations are policy-only (`attested: false`), Subagent-driven execution is supported through the one-time `coordinator_lease` and per-task `delegation_token` minted by `workit_delegate` (fail-closed validation; no `parentID` identity exists on Cursor), and Inline runs single-agent in the current session.
 - Keep all SDD state under the gitignored `docs/<slug>/sdd/`; use `workit_sdd_context` and the registered `workit_sdd_*` tools.
 - After implementation, use `question` before an approved stash reapply through `workit_branch_setup` with `confirmed: true`.
 

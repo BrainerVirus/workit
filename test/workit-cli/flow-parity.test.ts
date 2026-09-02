@@ -807,3 +807,48 @@ test(
   },
   { timeout: 60_000 },
 );
+
+// --- Task 4: host parity — CLI execution-mode behavior is unchanged ---
+
+test(
+  "CLI flow commands are unchanged and carry no delegation surface",
+  async () => {
+    const { root, slug, writeFlow } = fixture();
+    try {
+      // The CLI execution-mode surface stays exactly: status/pause/resume/
+      // complete/review-package/append-advisory + handoff. No workit_delegate,
+      // no lease/token flags, no execution-menu command.
+      writeFlow();
+      const status = await runFlow(["status", "--plan", `docs/${slug}/plan.md`], { cwd: root });
+      expect(status.code).toBe(0);
+      expect(status.stderr).toBe("");
+      const data = JSON.parse(status.stdout);
+      expect(data.execution).toMatchObject({ status: "active", mode: "subagent-driven" });
+      expect(JSON.stringify(data)).not.toContain("delegation_token");
+      expect(JSON.stringify(data)).not.toContain("coordinator_lease");
+
+      const unknown = await runFlow(["delegate", "--plan", `docs/${slug}/plan.md`], { cwd: root });
+      expect(unknown.code).toBe(2);
+      expect(unknown.stderr).toContain("usage: workit flow <");
+      const tokenFlag = await runFlow(
+        ["pause", "--plan", `docs/${slug}/plan.md`, "--confirm", "--delegation-token", "x"],
+        { cwd: root },
+      );
+      expect(tokenFlag.code).toBe(2);
+      expect(tokenFlag.stderr).toContain("unknown flag");
+
+      // Intentional tripwires: the CLI has no delegation surface — these fail
+      // if one is ever added (a `workit_delegate` command or token flag).
+      const repoRoot = path.resolve(import.meta.dir, "..", "..");
+      const flowSource = readFileSync(
+        path.join(repoRoot, "packages/workit-cli/src/flow.ts"),
+        "utf8",
+      );
+      expect(flowSource).not.toContain("workit_delegate");
+      expect(flowSource).not.toContain("delegation_token");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+  { timeout: 60_000 },
+);

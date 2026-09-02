@@ -1,5 +1,6 @@
 import {
   createCursorConfirmation,
+  validateDelegateToken,
   type EvidenceResult,
   type MutationContext,
 } from "@brainervirus/workit-core/src/core/flow-state";
@@ -17,19 +18,50 @@ export const cursorQuestionEvidence = (): EvidenceResult => createCursorConfirma
 export const CURSOR_HOST = "cursor" as const;
 
 /**
- * Cursor MutationContext (FG-05, CA-21). The Cursor MCP has no per-session
- * identity (registerTool receives only tool arguments), so the session id is a
- * deterministic value derived from the workspace root + host constant: every
- * request against the same repo is attributed to the same stable session, and
- * nothing machine-generated crosses a repo boundary. Cursor has no delegated
- * workers (no subagent-driven `task` flow), so every Cursor mutation is the
- * coordinator session. Fail-closed by construction: role/taskIdentity are
- * never accepted as tool args on the Cursor MCP — a client-supplied role would
- * let the model self-certify as a delegated worker and re-open the boundary.
+ * Cursor mutation identity (FG-05, CA-21, cursor-subagent-inline CA-03/CA-04).
+ * Without a delegation token the context is the deterministic coordinator
+ * session (hostWorkspace + host constant): the MCP has no per-session identity,
+ * so every tokenless request against the same repo is attributed to the same
+ * stable session. With a token, the token is validated through the core helper
+ * BEFORE any context is built: only a valid active token bound to this
+ * workspace yields the delegated context (`role: "delegated"`, `taskIdentity`
+ * String(active_task_id)). A missing-but-supplied, invalid, revoked, or
+ * wrong-workspace token returns a structured failure and NEVER a coordinator
+ * context — no silent downgrade (fail closed). A delegated identity also
+ * carries the token's validated `slug` so adapters can bind caller-derived
+ * paths to the flow the token actually belongs to.
  */
-export const cursorMutationContext = (workspaceRoot: string): MutationContext => ({
+export type CursorMutationIdentity =
+  | { ok: true; context: MutationContext; slug?: string }
+  | { ok: false; code: string; error: string };
+
+/** The deterministic coordinator context, for coordinator-only tools. */
+export const cursorCoordinatorContext = (workspaceRoot: string): MutationContext => ({
   hostWorkspace: workspaceRoot,
   role: "coordinator",
   sessionId: `${CURSOR_HOST}:${workspaceRoot}`,
   taskIdentity: undefined,
 });
+
+export const cursorMutationContext = (
+  workspaceRoot: string,
+  delegationToken?: string,
+): CursorMutationIdentity => {
+  if (delegationToken === undefined) {
+    return { ok: true, context: cursorCoordinatorContext(workspaceRoot) };
+  }
+  const validated = validateDelegateToken(workspaceRoot, delegationToken);
+  if (!validated.ok) {
+    return { ok: false, code: validated.code, error: validated.error };
+  }
+  return {
+    ok: true,
+    slug: validated.context.slug,
+    context: {
+      hostWorkspace: workspaceRoot,
+      role: "delegated",
+      sessionId: `${CURSOR_HOST}:${workspaceRoot}:task-${validated.context.taskId}`,
+      taskIdentity: String(validated.context.taskId),
+    },
+  };
+};
