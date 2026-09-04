@@ -1,0 +1,625 @@
+import { createHash, randomUUID } from "node:crypto";
+import * as fs from "node:fs";
+import { hostname } from "node:os";
+import path from "node:path";
+import {
+  SCHEMA_VERSION,
+  canonicalJson,
+  failure,
+  intentSchema,
+  newId,
+  newRevision,
+  provenanceSchema,
+  success,
+  taskRecordSchema,
+  workspaceRecordSchema,
+  type Id,
+  type Intent,
+  type Provenance,
+  type Result,
+  type Revision,
+  type TaskRecord,
+  type Utc,
+  type WorkspaceRecord,
+} from "./task-contract";
+
+export type MutationContext = { now: Utc; revision: Revision };
+export type TaskMutation = (task: TaskRecord, context: MutationContext) => Result<TaskRecord>;
+export type WorkspaceMutation = (
+  workspace: WorkspaceRecord,
+  context: MutationContext,
+) => Result<WorkspaceRecord>;
+export type CoupledMutation = {
+  taskId: Id;
+  expectedTaskRevision?: Revision;
+  expectedRevision?: Revision;
+  expectedWorkspaceRevision: Revision;
+  task: TaskMutation;
+  workspace: WorkspaceMutation;
+};
+export type CoupledSnapshot = { task: TaskRecord; workspace: WorkspaceRecord };
+export type CreateInput = {
+  intent: Intent;
+  provenance: Provenance;
+  expectedWorkspaceRevision: Revision | null;
+};
+export type RecoveryInput = {
+  expectedBytes: string;
+  snapshotDigest: string;
+  reason: string;
+  authorityRefs: unknown[];
+  processStopped?: boolean;
+  accountedFor?: boolean;
+};
+export type RecoveryCandidate = {
+  target: "task" | "workspace";
+  path: string;
+  digest: string;
+};
+
+const now = (): Utc => new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+const jsonBytes = (value: unknown): string => `${canonicalJson(value)}\n`;
+const digestBytes = (value: string | Buffer): string =>
+  createHash("sha256").update(value).digest("hex");
+const isObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null;
+const validId = (value: string): boolean =>
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value);
+
+export class TaskStore {
+  readonly root: string;
+
+  constructor(root: string) {
+    this.root = path.resolve(root);
+  }
+
+  readTask(taskId: Id): Result<TaskRecord> {
+    if (!validId(taskId)) return failure("invalid_input", "task ID is invalid", { taskId });
+    const result = this.readRecord<TaskRecord>(
+      path.join(this.tasksDir, `${taskId}.json`),
+      taskRecordSchema,
+    );
+    if (!result.exists) return failure("not_found", "task not found", { taskId });
+    return result.result;
+  }
+
+  listTasks(): Result<TaskRecord[]> {
+    if (!fs.existsSync(this.tasksDir)) return success(null, null, []);
+    let names: string[];
+    try {
+      names = fs.readdirSync(this.tasksDir).filter((name) => name.endsWith(".json"));
+    } catch (error) {
+      return failure("storage_error", `unable to list tasks: ${String(error)}`, {
+        path: this.tasksDir,
+      });
+    }
+    const tasks: TaskRecord[] = [];
+    for (const name of names.sort()) {
+      const item = this.readRecord<TaskRecord>(path.join(this.tasksDir, name), taskRecordSchema);
+      if (!item.exists) continue;
+      if (!item.result.ok) return item.result;
+      tasks.push(item.result.data);
+    }
+    return success(null, null, tasks);
+  }
+
+  readWorkspace(): Result<WorkspaceRecord | null> {
+    const item = this.readRecord<WorkspaceRecord>(this.workspacePath, workspaceRecordSchema);
+    if (!item.exists) return success(null, null, null);
+    return item.result;
+  }
+
+  create(
+    input: CreateInput | Intent,
+    provenance?: Provenance,
+    expectedWorkspaceRevision?: Revision | null,
+  ) {
+    const value: CreateInput =
+      "intent" in input
+        ? input
+        : {
+            intent: input,
+            provenance: provenance!,
+            expectedWorkspaceRevision: expectedWorkspaceRevision ?? null,
+          };
+    return this.withLock<TaskRecord>(() => {
+      const current = this.readWorkspace();
+      if (!current.ok) return current;
+      if (
+        current.data
+          ? value.expectedWorkspaceRevision !== current.data.revision
+          : value.expectedWorkspaceRevision !== null
+      ) {
+        return failure("revision_conflict", "workspace revision does not match", {
+          expectedWorkspaceRevision: value.expectedWorkspaceRevision,
+          actualWorkspaceRevision: current.data?.revision ?? null,
+        });
+      }
+      if (!value.provenance) return failure("invalid_input", "provenance is required");
+      if (
+        !intentSchema.safeParse(value.intent).success ||
+        !provenanceSchema.safeParse(value.provenance).success
+      )
+        return failure("invalid_input", "task intent or provenance is invalid");
+      const workspace: WorkspaceRecord = {
+        schemaVersion: SCHEMA_VERSION,
+        id: newId(),
+        revision: newRevision(),
+        root: this.root,
+        writer: null,
+      };
+      const timestamp = now();
+      const task: TaskRecord = {
+        schemaVersion: SCHEMA_VERSION,
+        id: newId(),
+        workspaceId: workspace.id,
+        revision: newRevision(),
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        origin: null,
+        intent: {
+          id: newId(),
+          recordedAt: timestamp,
+          provenance: value.provenance,
+          data: value.intent,
+        },
+        constraints: [],
+        status: "active",
+        closure: null,
+        progress: { summary: "", nextAction: null, blockers: [] },
+        assessments: [],
+        policy: null,
+        policyChanges: [],
+        candidates: [],
+        evidence: [],
+        decisions: [],
+        findings: [],
+        workers: [],
+      };
+      const writtenWorkspace = this.replaceSnapshot(this.workspacePath, workspace, null);
+      if (!writtenWorkspace.ok) return writtenWorkspace;
+      const writtenTask = this.replaceSnapshot(this.taskPath(task.id), task, null);
+      if (!writtenTask.ok)
+        return failure(
+          "external_outcome_unknown",
+          "workspace created but task write is uncertain",
+          { operation: "create", outcome: "unknown" },
+        );
+      return success(task.revision, workspace.revision, task);
+    });
+  }
+
+  mutateTask(taskId: Id, expected: Revision, update: TaskMutation): Result<TaskRecord> {
+    return this.withLock(() => {
+      const current = this.readTask(taskId);
+      if (!current.ok) return current;
+      if (current.data.revision !== expected) return this.conflict(expected, current.data.revision);
+      const context = { now: now(), revision: newRevision() };
+      const changed = update(current.data, context);
+      if (!changed.ok) return changed;
+      const record = {
+        ...changed.data,
+        id: taskId,
+        workspaceId: current.data.workspaceId,
+        createdAt: current.data.createdAt,
+        revision: context.revision,
+        updatedAt: context.now,
+      };
+      const valid = taskRecordSchema.safeParse(record);
+      if (!valid.success)
+        return failure("invalid_input", "task mutation produced an invalid record");
+      const written = this.replaceSnapshot(this.taskPath(taskId), valid.data, current.data);
+      return written.ok ? success(valid.data.revision, null, valid.data) : written;
+    });
+  }
+
+  mutateWorkspace(expected: Revision, update: WorkspaceMutation): Result<WorkspaceRecord> {
+    return this.withLock(() => {
+      const current = this.readWorkspace();
+      if (!current.ok) return current;
+      if (!current.data) return failure("not_found", "workspace not found");
+      if (current.data.revision !== expected) return this.conflict(expected, current.data.revision);
+      const context = { now: now(), revision: newRevision() };
+      const changed = update(current.data, context);
+      if (!changed.ok) return changed;
+      const record = {
+        ...changed.data,
+        id: current.data.id,
+        root: this.root,
+        revision: context.revision,
+      };
+      const valid = workspaceRecordSchema.safeParse(record);
+      if (!valid.success)
+        return failure("invalid_input", "workspace mutation produced an invalid record");
+      const written = this.replaceSnapshot(this.workspacePath, valid.data, current.data);
+      return written.ok ? success(valid.data.revision, valid.data.revision, valid.data) : written;
+    });
+  }
+
+  mutateTaskAndWorkspace(input: CoupledMutation): Result<CoupledSnapshot> {
+    return this.withLock(() => {
+      const task = this.readTask(input.taskId);
+      if (!task.ok) return task;
+      const workspace = this.readWorkspace();
+      if (!workspace.ok) return workspace;
+      if (!workspace.data) return failure("not_found", "workspace not found");
+      const expectedTaskRevision = input.expectedTaskRevision ?? input.expectedRevision!;
+      if (!expectedTaskRevision) return failure("invalid_input", "task revision is required");
+      if (task.data.revision !== expectedTaskRevision)
+        return this.conflict(expectedTaskRevision, task.data.revision);
+      if (workspace.data.revision !== input.expectedWorkspaceRevision)
+        return this.conflict(input.expectedWorkspaceRevision, workspace.data.revision);
+      const workspaceContext = { now: now(), revision: newRevision() };
+      const changedWorkspace = input.workspace(workspace.data, workspaceContext);
+      if (!changedWorkspace.ok) return changedWorkspace;
+      const nextWorkspace = workspaceRecordSchema.safeParse({
+        ...changedWorkspace.data,
+        id: workspace.data.id,
+        root: this.root,
+        revision: workspaceContext.revision,
+      });
+      if (!nextWorkspace.success)
+        return failure("invalid_input", "workspace mutation produced an invalid record");
+      const reserved = this.replaceSnapshot(this.workspacePath, nextWorkspace.data, workspace.data);
+      if (!reserved.ok) return reserved;
+      const taskContext = { now: now(), revision: newRevision() };
+      const changedTask = input.task(task.data, taskContext);
+      if (!changedTask.ok) {
+        this.markUncertain(nextWorkspace.data);
+        return failure(
+          "external_outcome_unknown",
+          "workspace reserved but task update is uncertain",
+          { operation: "coupled_mutation", outcome: "unknown" },
+        );
+      }
+      const nextTask = taskRecordSchema.safeParse({
+        ...changedTask.data,
+        id: input.taskId,
+        workspaceId: task.data.workspaceId,
+        createdAt: task.data.createdAt,
+        revision: taskContext.revision,
+        updatedAt: taskContext.now,
+      });
+      if (!nextTask.success) {
+        this.markUncertain(nextWorkspace.data);
+        return failure(
+          "external_outcome_unknown",
+          "workspace reserved but task update is uncertain",
+          { operation: "coupled_mutation", outcome: "unknown" },
+        );
+      }
+      const written = this.replaceSnapshot(this.taskPath(input.taskId), nextTask.data, task.data);
+      if (!written.ok) {
+        this.markUncertain(nextWorkspace.data);
+        return failure(
+          "external_outcome_unknown",
+          "workspace reserved but task replacement is uncertain",
+          { operation: "coupled_mutation", outcome: "unknown" },
+        );
+      }
+      return success(nextTask.data.revision, nextWorkspace.data.revision, {
+        task: nextTask.data,
+        workspace: nextWorkspace.data,
+      });
+    });
+  }
+
+  recoveryCandidates(): Result<RecoveryCandidate[]> {
+    if (!fs.existsSync(this.recoveryDir)) return success(null, null, []);
+    try {
+      const candidates: RecoveryCandidate[] = [];
+      for (const name of fs.readdirSync(this.recoveryDir)) {
+        const match = /^(task|workspace)\.([^.]+)\.([0-9a-f]{64})\.json$/.exec(name);
+        if (match)
+          candidates.push({
+            target: match[1] as "task" | "workspace",
+            path: path.join(this.recoveryDir, name),
+            digest: match[3],
+          });
+      }
+      return success(null, null, candidates);
+    } catch (error) {
+      return failure("storage_error", `unable to list recovery: ${String(error)}`, {
+        path: this.recoveryDir,
+      });
+    }
+  }
+
+  recoverTask(
+    taskId: Id,
+    input: RecoveryInput | string,
+    snapshotDigest?: string,
+    reason?: string,
+    authorityRefs?: unknown[],
+  ): Result<TaskRecord> {
+    return this.recover(
+      "task",
+      taskId,
+      this.normalizeRecovery(input, snapshotDigest, reason, authorityRefs),
+    );
+  }
+
+  recoverWorkspace(
+    input: RecoveryInput | string,
+    snapshotDigest?: string,
+    reason?: string,
+    authorityRefs?: unknown[],
+  ): Result<WorkspaceRecord> {
+    return this.recover(
+      "workspace",
+      null,
+      this.normalizeRecovery(input, snapshotDigest, reason, authorityRefs),
+    );
+  }
+
+  private recover(
+    target: "task" | "workspace",
+    taskId: Id | null,
+    input: RecoveryInput,
+  ): Result<any> {
+    if (taskId !== null && !validId(taskId))
+      return failure("invalid_input", "task ID is invalid", { taskId });
+    if (!input.reason || !Array.isArray(input.authorityRefs))
+      return failure("invalid_input", "recovery authority is invalid");
+    try {
+      this.clearRecoverableLock(input);
+    } catch (error) {
+      return failure("recovery_required", String(error));
+    }
+    return this.withLock<any>(() => {
+      const file = target === "workspace" ? this.workspacePath : this.taskPath(taskId!);
+      let currentBytes: Buffer;
+      try {
+        currentBytes = fs.readFileSync(file);
+      } catch {
+        return failure("not_found", "snapshot not found");
+      }
+      if (digestBytes(currentBytes) !== input.expectedBytes)
+        return failure("revision_conflict", "snapshot bytes do not match expected bytes");
+      let selectedBytes = currentBytes;
+      if (digestBytes(currentBytes) !== input.snapshotDigest) {
+        const candidate = this.findRecovery(target, input.snapshotDigest);
+        if (!candidate)
+          return failure("recovery_required", "validated recovery snapshot not found");
+        selectedBytes = fs.readFileSync(candidate);
+      }
+      if (target === "workspace") {
+        const parsed = this.parseBytes<WorkspaceRecord>(selectedBytes, workspaceRecordSchema);
+        if (!parsed.ok) return parsed;
+        const value = { ...parsed.data, revision: newRevision(), writer: null };
+        const result = this.replaceSnapshot(file, value, currentBytes);
+        return result.ok ? success(value.revision, value.revision, value) : result;
+      }
+      const parsed = this.parseBytes<TaskRecord>(selectedBytes, taskRecordSchema);
+      if (!parsed.ok) return parsed;
+      const value = {
+        ...parsed.data,
+        revision: newRevision(),
+        updatedAt: now(),
+        status: parsed.data.status === "active" ? "paused" : parsed.data.status,
+      } as TaskRecord;
+      const result = this.replaceSnapshot(file, value, currentBytes);
+      return result.ok ? success(value.revision, null, value) : result;
+    });
+  }
+
+  private normalizeRecovery(
+    input: RecoveryInput | string,
+    snapshotDigest?: string,
+    reason?: string,
+    authorityRefs?: unknown[],
+  ): RecoveryInput {
+    if (typeof input === "object" && input !== null) return input;
+    return {
+      expectedBytes: String(input),
+      snapshotDigest: String(snapshotDigest),
+      reason: reason ?? "recovery",
+      authorityRefs: authorityRefs ?? [],
+    };
+  }
+
+  private clearRecoverableLock(input: RecoveryInput) {
+    if (!fs.existsSync(this.lockPath)) return;
+    if (!input.processStopped && !input.accountedFor) {
+      let lock: { pid?: number };
+      try {
+        lock = JSON.parse(fs.readFileSync(this.lockPath, "utf8")) as { pid?: number };
+      } catch {
+        throw new Error("recovery authority cannot validate metadata lock");
+      }
+      if (typeof lock.pid !== "number")
+        throw new Error("recovery authority cannot validate metadata lock");
+      try {
+        process.kill(lock.pid, 0);
+        throw new Error("recorded lock owner is still running");
+      } catch (error: any) {
+        if (error?.message === "recorded lock owner is still running") throw error;
+        if (error?.code !== "ESRCH") throw new Error("recorded lock owner state is uncertain");
+      }
+    }
+    try {
+      fs.unlinkSync(this.lockPath);
+    } catch (error) {
+      throw new Error(`unable to clear metadata lock: ${String(error)}`);
+    }
+  }
+
+  private markUncertain(workspace: WorkspaceRecord) {
+    if (!workspace.writer || workspace.writer.state === "uncertain") return;
+    const value = {
+      ...workspace,
+      writer: { ...workspace.writer, state: "uncertain" as const },
+      revision: newRevision(),
+    };
+    this.replaceSnapshot(this.workspacePath, value, workspace);
+  }
+
+  private withLock<T>(operation: () => Result<T>): Result<T> {
+    try {
+      this.initializeMutationStorage();
+    } catch (error) {
+      return failure("storage_error", `unable to initialize store: ${String(error)}`, {
+        path: this.workitDir,
+      });
+    }
+    let fd: number | undefined;
+    try {
+      fd = fs.openSync(this.lockPath, "wx", 0o600);
+      fs.writeFileSync(
+        fd,
+        JSON.stringify({
+          pid: process.pid,
+          processStart: this.processStart(process.pid),
+          host: hostname(),
+          nonce: randomUUID(),
+        }),
+      );
+      fs.fsyncSync(fd);
+      fs.closeSync(fd);
+    } catch (error: any) {
+      try {
+        if (fd !== undefined) fs.closeSync(fd);
+      } catch {}
+      if (error?.code === "EEXIST")
+        return failure("recovery_required", "metadata lock requires explicit recovery", {
+          path: this.lockPath,
+        });
+      return failure("storage_error", `unable to acquire metadata lock: ${String(error)}`, {
+        path: this.lockPath,
+      });
+    }
+    try {
+      return operation();
+    } finally {
+      try {
+        fs.unlinkSync(this.lockPath);
+      } catch {}
+    }
+  }
+
+  private initializeMutationStorage() {
+    fs.mkdirSync(this.tasksDir, { recursive: true });
+    fs.mkdirSync(this.recoveryDir, { recursive: true });
+    fs.writeFileSync(this.gitignorePath, "*\n");
+  }
+
+  private replaceSnapshot(file: string, value: unknown, previous: unknown): Result<any> {
+    try {
+      if (Buffer.isBuffer(previous)) this.saveRecovery(file, previous);
+      else if (previous !== null && typeof previous === "object")
+        this.saveRecovery(file, jsonBytes(previous));
+      else if (typeof previous === "string" || Buffer.isBuffer(previous))
+        this.saveRecovery(file, previous);
+      const temporary = `${file}.${process.pid}.${randomUUID()}.tmp`;
+      const fd = fs.openSync(temporary, "wx", 0o600);
+      try {
+        fs.writeSync(fd, jsonBytes(value));
+        fs.fsyncSync(fd);
+      } finally {
+        fs.closeSync(fd);
+      }
+      fs.renameSync(temporary, file);
+      try {
+        const dir = fs.openSync(path.dirname(file), "r");
+        fs.fsyncSync(dir);
+        fs.closeSync(dir);
+      } catch {}
+      return success(null, null, value);
+    } catch (error) {
+      return failure("storage_error", `snapshot replacement failed: ${String(error)}`, {
+        path: file,
+      });
+    }
+  }
+
+  private saveRecovery(file: string, bytes: string | Buffer) {
+    const target = path.basename(file) === "workspace.json" ? "workspace" : "task";
+    const id = target === "task" ? path.basename(file, ".json") : "workspace";
+    const destination = path.join(this.recoveryDir, `${target}.${id}.${digestBytes(bytes)}.json`);
+    try {
+      fs.writeFileSync(destination, bytes, { flag: "wx", mode: 0o600 });
+    } catch (error: any) {
+      if (error?.code !== "EEXIST") throw error;
+    }
+  }
+
+  private findRecovery(target: "task" | "workspace", digest: string): string | null {
+    const result = this.recoveryCandidates();
+    if (!result.ok) return null;
+    return (
+      result.data.find((candidate) => candidate.target === target && candidate.digest === digest)
+        ?.path ?? null
+    );
+  }
+
+  private readRecord<T>(file: string, schema: { safeParse(value: unknown): any }) {
+    try {
+      const bytes = fs.readFileSync(file, "utf8");
+      return { exists: true, result: this.parseBytes<T>(bytes, schema) };
+    } catch (error: any) {
+      if (error?.code === "ENOENT")
+        return { exists: false, result: success(null, null, null as T) };
+      return {
+        exists: true,
+        result: failure("recovery_required", `snapshot cannot be read: ${String(error)}`, {
+          path: file,
+        }),
+      };
+    }
+  }
+
+  private parseBytes<T>(
+    bytes: string | Buffer,
+    schema: { safeParse(value: unknown): any },
+  ): Result<T> {
+    let value: unknown;
+    try {
+      value = JSON.parse(typeof bytes === "string" ? bytes : bytes.toString("utf8"));
+    } catch {
+      return failure("recovery_required", "snapshot JSON is corrupt");
+    }
+    if (isObject(value) && "schemaVersion" in value && value.schemaVersion !== SCHEMA_VERSION)
+      return failure("unsupported_version", "unsupported snapshot schema version");
+    const parsed = schema.safeParse(value);
+    return parsed.success
+      ? success(null, null, parsed.data)
+      : failure("recovery_required", "snapshot does not satisfy its schema");
+  }
+
+  private processStart(pid: number): string | null {
+    try {
+      return fs.readFileSync(`/proc/${pid}/stat`, "utf8").split(" ")[21] ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  private conflict(expected: Revision, actual: Revision): Result<never> {
+    return failure("revision_conflict", "snapshot revision does not match", {
+      expectedRevision: expected,
+      actualRevision: actual,
+    });
+  }
+
+  private taskPath(taskId: Id) {
+    return path.join(this.tasksDir, `${taskId}.json`);
+  }
+  private get workitDir() {
+    return path.join(this.root, ".workit");
+  }
+  private get tasksDir() {
+    return path.join(this.workitDir, "tasks");
+  }
+  private get recoveryDir() {
+    return path.join(this.workitDir, "recovery");
+  }
+  private get workspacePath() {
+    return path.join(this.workitDir, "workspace.json");
+  }
+  private get lockPath() {
+    return path.join(this.workitDir, "metadata.lock");
+  }
+  private get gitignorePath() {
+    return path.join(this.workitDir, ".gitignore");
+  }
+}
