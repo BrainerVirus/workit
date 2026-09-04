@@ -51,6 +51,11 @@ type McpClient = {
   request: (method: string, params: unknown) => Promise<{ result?: unknown; error?: unknown }>;
 };
 
+type PendingRequest = {
+  resolve: (value: { result?: unknown; error?: unknown }) => void;
+  reject: (reason: Error) => void;
+};
+
 function startNodeMcp(
   cwd: string,
   bin: string,
@@ -61,7 +66,7 @@ function startNodeMcp(
   const child = spawn(bin, args, { cwd, env, stdio: ["pipe", "pipe", "pipe"], ...options });
   let buffer = "";
   let stderr = "";
-  const pending = new Map<number, (value: { result?: unknown; error?: unknown }) => void>();
+  const pending = new Map<number, PendingRequest>();
   child.stdout?.setEncoding("utf8");
   child.stdout?.on("data", (chunk: string) => {
     buffer += chunk;
@@ -77,10 +82,10 @@ function startNodeMcp(
         newline = buffer.indexOf("\n");
         continue;
       }
-      const resolve = pending.get(msg.id);
-      if (resolve) {
+      const request = pending.get(msg.id);
+      if (request) {
         pending.delete(msg.id);
-        resolve(msg);
+        request.resolve(msg);
       }
       newline = buffer.indexOf("\n");
     }
@@ -88,6 +93,13 @@ function startNodeMcp(
   child.stderr?.setEncoding("utf8");
   child.stderr?.on("data", (chunk: string) => {
     stderr += chunk;
+  });
+  child.once("exit", (code, signal) => {
+    const reason = new Error(
+      `child exited before response (code=${code}, signal=${signal ?? "none"}); stderr=${stderr.slice(-4000)}; pid=${child.pid}`,
+    );
+    for (const request of pending.values()) request.reject(reason);
+    pending.clear();
   });
   const nextId = { id: 0 };
   const request = (method: string, params: unknown) => {
@@ -102,9 +114,12 @@ function startNodeMcp(
           ),
         );
       }, 15000);
-      pending.set(id, (msg) => {
-        clearTimeout(timer);
-        resolve(msg);
+      pending.set(id, {
+        resolve: (msg) => {
+          clearTimeout(timer);
+          resolve(msg);
+        },
+        reject,
       });
     });
   };
@@ -250,6 +265,7 @@ test.skipIf(!npmRegistryOk)(
         "utf8",
       );
       const env = isolatedEnv(home);
+      const npmEnv = { ...env, npm_config_offline: "true", npm_config_min_release_age: "0" };
       const installRes = spawnSync(
         "npm",
         ["install", "--no-audit", "--no-fund", "--no-package-lock", "--ignore-scripts"],
@@ -273,8 +289,8 @@ test.skipIf(!npmRegistryOk)(
       const { child, request } = startNodeMcp(
         install,
         "npm",
-        ["exec", "--offline", "--", "workit-cursor-mcp"],
-        env,
+        ["exec", "-c", "workit-cursor-mcp"],
+        npmEnv,
         { shell: process.platform === "win32" },
       );
       try {
@@ -304,9 +320,9 @@ test.skipIf(!npmRegistryOk)(
       }
 
       // Session-start executable: emits the protocol JSON contract on stdout.
-      const session = spawnSync("npm", ["exec", "--", "workit-cursor-session-start"], {
+      const session = spawnSync("npm", ["exec", "-c", "workit-cursor-session-start"], {
         cwd: install,
-        env,
+        env: npmEnv,
         encoding: "utf8",
         timeout: 60_000,
         shell: process.platform === "win32",
