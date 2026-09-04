@@ -35,7 +35,7 @@ npx @brainervirus/workit-cli init
 
 ### Requirements
 
-- **Node.js ≥ 22** — the MCP server and session-start hook are self-contained Node bundles invoked through `npx`.
+- **Node.js ≥ 24** — the MCP server and session-start hook are self-contained Node bundles invoked through `npx`.
 - **Network** — `npx -y --prefer-online …@latest` resolves and downloads the package on first run in each environment; a machine that cannot reach the npm registry cannot start the MCP server or hook (see [Runtime](#runtime)).
 
 ## What it provides

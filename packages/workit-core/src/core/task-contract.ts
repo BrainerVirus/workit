@@ -17,7 +17,6 @@ export type OperationFamily = (typeof OPERATION_FAMILIES)[number];
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const digestPattern = /^[0-9a-f]{64}$/;
-const utcPattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/;
 const invalidUnicode = (value: string): boolean => {
   for (let i = 0; i < value.length; i += 1) {
     const code = value.charCodeAt(i);
@@ -37,8 +36,24 @@ const text = z.string().check((ctx) => {
 const id = text.regex(uuidPattern, "expected lowercase UUID");
 const digest = text.regex(digestPattern, "expected lowercase SHA-256 digest");
 const revision = text.regex(uuidPattern, "expected UUID revision");
-const utc = text.check((ctx) => {
-  if (!utcPattern.test(ctx.value) || !Number.isFinite(Date.parse(ctx.value)))
+const validUtc = (value: string): boolean => {
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?Z$/.exec(value);
+  if (!match) return false;
+  const [, year, month, day, hour, minute, second] = match;
+  const date = new Date(0);
+  date.setUTCFullYear(Number(year), Number(month) - 1, Number(day));
+  date.setUTCHours(Number(hour), Number(minute), Number(second), 0);
+  return (
+    date.getUTCFullYear() === Number(year) &&
+    date.getUTCMonth() === Number(month) - 1 &&
+    date.getUTCDate() === Number(day) &&
+    date.getUTCHours() === Number(hour) &&
+    date.getUTCMinutes() === Number(minute) &&
+    date.getUTCSeconds() === Number(second)
+  );
+};
+export const utcSchema = text.check((ctx) => {
+  if (!validUtc(ctx.value))
     ctx.issues.push({
       code: "custom",
       input: ctx.value,
@@ -46,6 +61,7 @@ const utc = text.check((ctx) => {
       path: [],
     });
 });
+const utc = utcSchema;
 const safeInteger = z.number().int().safe();
 const nonEmpty = text.min(1);
 const pathValue = nonEmpty.check((ctx) => {
@@ -132,7 +148,21 @@ export const signalSchema = z
     reason: text,
     refs: z.array(refSchema),
   })
-  .strict();
+  .strict()
+  .check((ctx) => {
+    const signal = ctx.value;
+    const valid =
+      signal.value === "unknown"
+        ? signal.basis === "unknown"
+        : signal.basis === "observed" || signal.basis === "inferred";
+    if (!valid)
+      ctx.issues.push({
+        code: "custom",
+        input: signal,
+        message: "signal value and basis disagree",
+        path: [],
+      });
+  });
 export type Signal = z.infer<typeof signalSchema>;
 const signalSet = z
   .object({
@@ -284,12 +314,28 @@ export const candidateSchema = z
     files: z.array(
       z
         .object({
-          path: nonEmpty,
+          path: pathValue,
           kind: z.enum(["file", "symlink", "absent"]),
           digest: nullableDigest,
           executable: z.boolean().nullable(),
         })
-        .strict(),
+        .strict()
+        .check((ctx) => {
+          const file = ctx.value;
+          const valid =
+            file.kind === "absent"
+              ? file.digest === null && file.executable === null
+              : file.kind === "file"
+                ? file.digest !== null && typeof file.executable === "boolean"
+                : file.digest !== null && file.executable === null;
+          if (!valid)
+            ctx.issues.push({
+              code: "custom",
+              input: file,
+              message: "invalid file metadata",
+              path: [],
+            });
+        }),
     ),
     environment: z
       .array(
@@ -643,6 +689,7 @@ const workerOperations = {
     action: z.literal("report"),
     ...taskId,
     expectedRevision: revision,
+    expectedWorkspaceRevision: revision,
     workerId: id,
     report: workerReportSchema,
   }),
@@ -659,12 +706,14 @@ const writerOperations = {
   acquire: operation({
     action: z.literal("acquire"),
     ...taskId,
+    expectedRevision: revision,
     expectedWorkspaceRevision: revision,
     workerId: nullableId,
   }),
   release: operation({
     action: z.literal("release"),
     ...taskId,
+    expectedRevision: revision,
     expectedWorkspaceRevision: revision,
     reason: text,
   }),
@@ -767,6 +816,13 @@ export const failure = (
 ): Result<never> => ({ ok: false, schemaVersion: 1, code, error, details });
 
 export function parseOperation(family: OperationFamily, input: unknown): Result<OperationRequest> {
+  if (
+    typeof input === "object" &&
+    input !== null &&
+    "schemaVersion" in input &&
+    (input as { schemaVersion?: unknown }).schemaVersion !== SCHEMA_VERSION
+  )
+    return failure("unsupported_version", "unsupported schema version", { operation: family });
   const compiled = compiledOperationSchemas[family].safeParse(input);
   const parsed = compiled.success ? operationSchemas[family].safeParse(input) : compiled;
   if (parsed.success) return success(null, null, parsed.data as OperationRequest);
@@ -803,6 +859,8 @@ function canonical(value: unknown, seen: Set<object>): JsonValue {
       throw new TypeError("value is not a JSON object");
     if (Reflect.ownKeys(value).some((key) => typeof key !== "string"))
       throw new TypeError("symbol key is not JSON");
+    if (Object.keys(value).some((key) => invalidUnicode(key)))
+      throw new TypeError("invalid Unicode");
     result = Object.fromEntries(
       Object.keys(value)
         .sort()
@@ -837,10 +895,15 @@ export function decisionDigest(input: Omit<Decision, "digest"> | Decision): Dige
   return sha256(value);
 }
 export function candidateDigest(input: Candidate): Digest {
+  const normalizedScope = {
+    description: input.scope.description,
+    paths: [...input.scope.paths].sort(),
+    exclusions: [...input.scope.exclusions].sort(),
+  };
   return sha256({
-    scope: input.scope,
+    scope: normalizedScope,
     completeness: input.completeness,
-    files: input.files,
+    files: [...input.files].sort((a, b) => a.path.localeCompare(b.path)),
     environment: input.environment
       .map(({ name, value }) => ({ name, value }))
       .sort((a, b) => a.name.localeCompare(b.name)),
@@ -854,5 +917,12 @@ export function requirementId(input: {
   before: string;
   dependentAction: string | null;
 }): Digest {
-  return sha256(input);
+  return sha256({
+    ...input,
+    scope: {
+      description: input.scope.description,
+      paths: [...input.scope.paths].sort(),
+      exclusions: [...input.scope.exclusions].sort(),
+    },
+  });
 }
