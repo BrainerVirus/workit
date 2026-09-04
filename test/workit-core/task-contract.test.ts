@@ -155,6 +155,38 @@ test("candidate and requirement digests ignore unordered scope and inventory ord
   );
 });
 
+test("candidate identity ordering is independent of localeCompare", () => {
+  const candidate = {
+    id: "a".repeat(64),
+    scope: { description: "x", paths: ["ä", "z"], exclusions: [] },
+    completeness: "known" as const,
+    files: [
+      { path: "ä", kind: "file" as const, digest: "a".repeat(64), executable: false },
+      { path: "z", kind: "file" as const, digest: "b".repeat(64), executable: false },
+    ],
+    environment: [
+      { name: "ä", value: "1", refs: [] },
+      { name: "z", value: "2", refs: [] },
+    ],
+    head: null,
+  };
+  const localeCompare = String.prototype.localeCompare;
+  String.prototype.localeCompare = () => {
+    throw new Error("locale-sensitive ordering is not allowed");
+  };
+  try {
+    expect(candidateDigest(candidate)).toBeString();
+  } finally {
+    String.prototype.localeCompare = localeCompare;
+  }
+});
+
+test("canonical JSON rejects arrays with missing indices", () => {
+  const sparse: unknown[] = [];
+  sparse.length = 1;
+  expect(() => canonicalJson(sparse)).toThrow("sparse array");
+});
+
 test("rejects malformed versions, paths, numbers, Unicode, duplicates, UUIDs, digests, and timestamps", () => {
   const base = taskStartRequest();
   for (const input of [

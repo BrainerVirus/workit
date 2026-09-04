@@ -852,7 +852,9 @@ function canonical(value: unknown, seen: Set<object>): JsonValue {
   seen.add(value);
   let result: JsonValue;
   if (Array.isArray(value)) {
-    if (value.some((_, index) => !(index in value))) throw new TypeError("sparse array");
+    for (let index = 0; index < value.length; index += 1) {
+      if (!(index in value)) throw new TypeError("sparse array");
+    }
     result = value.map((item) => canonical(item, seen));
   } else {
     if (Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null)
@@ -885,6 +887,18 @@ export function newId(): Id {
 export function newRevision(): Revision {
   return randomUUID().toLowerCase();
 }
+const compareCodeUnits = (left: string, right: string): number => {
+  const length = Math.min(left.length, right.length);
+  for (let index = 0; index < length; index += 1) {
+    const difference = left.charCodeAt(index) - right.charCodeAt(index);
+    if (difference !== 0) return difference;
+  }
+  return left.length - right.length;
+};
+const compareNullableText = (left: string | null, right: string | null): number =>
+  left === right ? 0 : left === null ? -1 : right === null ? 1 : compareCodeUnits(left, right);
+const compareBooleanNullable = (left: boolean | null, right: boolean | null): number =>
+  left === right ? 0 : left === null ? -1 : right === null ? 1 : Number(left) - Number(right);
 export function decisionDigest(input: Omit<Decision, "digest"> | Decision): Digest {
   const {
     digest: _ignored,
@@ -897,16 +911,25 @@ export function decisionDigest(input: Omit<Decision, "digest"> | Decision): Dige
 export function candidateDigest(input: Candidate): Digest {
   const normalizedScope = {
     description: input.scope.description,
-    paths: [...input.scope.paths].sort(),
-    exclusions: [...input.scope.exclusions].sort(),
+    paths: [...input.scope.paths].sort(compareCodeUnits),
+    exclusions: [...input.scope.exclusions].sort(compareCodeUnits),
   };
   return sha256({
     scope: normalizedScope,
     completeness: input.completeness,
-    files: [...input.files].sort((a, b) => a.path.localeCompare(b.path)),
+    files: [...input.files].sort(
+      (left, right) =>
+        compareCodeUnits(left.path, right.path) ||
+        compareCodeUnits(left.kind, right.kind) ||
+        compareNullableText(left.digest, right.digest) ||
+        compareBooleanNullable(left.executable, right.executable),
+    ),
     environment: input.environment
       .map(({ name, value }) => ({ name, value }))
-      .sort((a, b) => a.name.localeCompare(b.name)),
+      .sort(
+        (left, right) =>
+          compareCodeUnits(left.name, right.name) || compareNullableText(left.value, right.value),
+      ),
     head: input.head,
   });
 }
@@ -921,8 +944,8 @@ export function requirementId(input: {
     ...input,
     scope: {
       description: input.scope.description,
-      paths: [...input.scope.paths].sort(),
-      exclusions: [...input.scope.exclusions].sort(),
+      paths: [...input.scope.paths].sort(compareCodeUnits),
+      exclusions: [...input.scope.exclusions].sort(compareCodeUnits),
     },
   });
 }
