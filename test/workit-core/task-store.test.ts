@@ -1,5 +1,13 @@
 import { expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  symlinkSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { TaskStore } from "../../packages/workit-core/src/core/task-store";
@@ -186,6 +194,164 @@ test("workspace recovery requires its own CAS revision and preserves a clean own
   });
   expect(recovered).toMatchObject({ ok: true, data: { writer: null } });
   void task;
+});
+
+test("recovery rejects malformed or mutated process evidence", () => {
+  const { store, task } = startedStore();
+  const changed = store.mutateTask(task.id, task.revision, identity);
+  expect(changed.ok).toBe(true);
+  const candidate = store.recoveryCandidates();
+  if (!candidate.ok) throw new Error(candidate.error);
+  const taskCandidate = candidate.data.find((item) => item.target === "task");
+  if (!taskCandidate) throw new Error("missing task recovery candidate");
+  const file = join(store.root, ".workit", "tasks", `${task.id}.json`);
+  writeFileSync(file, "{broken");
+  writeFileSync(
+    join(store.root, ".workit", "metadata.lock"),
+    JSON.stringify({ pid: 999999, processStart: "old", host: "test", nonce: "n" }),
+  );
+  expect(
+    store.recoverTask(task.id, {
+      expectedBytes: sha256("{broken"),
+      snapshotDigest: taskCandidate.digest,
+      expectedWorkspaceRevision: workspaceRevision(store),
+      reason: "bad evidence",
+      authorityRefs: [],
+      processEvidence: (lock) => {
+        try {
+          if (lock) (lock as any).pid = 1;
+        } catch {}
+        return success(null, null, { state: "invalid", pid: 0 } as any);
+      },
+    }),
+  ).toMatchObject({ ok: false, code: "recovery_required" });
+});
+
+test("recovery rejects symlink and cross-workspace candidates", () => {
+  const { store, task } = startedStore();
+  const file = join(store.root, ".workit", "tasks", `${task.id}.json`);
+  const candidatePath = join(
+    store.root,
+    ".workit",
+    "recovery",
+    `task.${task.id}.${sha256("symlink")}.json`,
+  );
+  const target = join(store.root, ".workit", "tasks", "other.json");
+  writeFileSync(target, "{broken");
+  symlinkSync(target, candidatePath);
+  writeFileSync(file, "{broken");
+  expect(
+    store.recoverTask(task.id, {
+      expectedBytes: sha256("{broken"),
+      snapshotDigest: sha256("symlink"),
+      expectedWorkspaceRevision: workspaceRevision(store),
+      reason: "symlink",
+      authorityRefs: [],
+      processEvidence: recoveryEvidence(),
+    }),
+  ).toMatchObject({ ok: false, code: "recovery_required" });
+});
+
+test("corrupt workspace recovery rejects an untrusted workspace identity", () => {
+  const { store } = startedStore();
+  const workspaceFile = join(store.root, ".workit", "workspace.json");
+  const workspace = store.readWorkspace();
+  if (!workspace.ok || !workspace.data) throw new Error("workspace missing");
+  const forged = JSON.parse(readFileSync(workspaceFile, "utf8")) as Record<string, unknown>;
+  forged.id = "00000000-0000-4000-8000-000000000099";
+  const forgedBytes = `${JSON.stringify(forged)}\n`;
+  const digest = sha256(forgedBytes);
+  writeFileSync(
+    join(store.root, ".workit", "recovery", `workspace.workspace.${digest}.json`),
+    forgedBytes,
+  );
+  writeFileSync(workspaceFile, "{broken");
+  expect(
+    store.recoverWorkspace({
+      expectedBytes: sha256("{broken"),
+      snapshotDigest: digest,
+      expectedWorkspaceRevision: workspace.data.revision,
+      reason: "forged workspace",
+      authorityRefs: [],
+      processEvidence: recoveryEvidence(),
+    }),
+  ).toMatchObject({ ok: false, code: "recovery_required" });
+});
+
+test("stale valid-lock recovery requires matching process identity evidence", () => {
+  const { store, task } = startedStore();
+  const changed = store.mutateTask(task.id, task.revision, identity);
+  expect(changed.ok).toBe(true);
+  const candidate = store.recoveryCandidates();
+  if (!candidate.ok) throw new Error(candidate.error);
+  const taskCandidate = candidate.data.find((item) => item.target === "task");
+  if (!taskCandidate) throw new Error("missing task recovery candidate");
+  const file = join(store.root, ".workit", "tasks", `${task.id}.json`);
+  writeFileSync(file, "{broken");
+  writeFileSync(
+    join(store.root, ".workit", "metadata.lock"),
+    JSON.stringify({ pid: 999999, processStart: "old", host: "test", nonce: "n" }),
+  );
+  const recovered = store.recoverTask(task.id, {
+    expectedBytes: sha256("{broken"),
+    snapshotDigest: taskCandidate.digest,
+    expectedWorkspaceRevision: workspaceRevision(store),
+    reason: "stale lock",
+    authorityRefs: [],
+    processEvidence: (lock) => {
+      expect(lock).toMatchObject({ pid: 999999, processStart: "old", nonce: "n" });
+      return success(null, null, {
+        state: "stopped",
+        pid: 999999,
+        processStart: "old",
+        ownerDigest: null,
+      });
+    },
+  });
+  expect(recovered.ok).toBe(true);
+});
+
+test("failed replacement retains exact prior bytes in recovery", () => {
+  const { store, task } = startedStore();
+  const file = join(store.root, ".workit", "tasks", `${task.id}.json`);
+  const before = readFileSync(file);
+  const result = store.mutateTask(task.id, task.revision, (current, context) => {
+    unlinkSync(file);
+    mkdirSync(file);
+    return success(context.revision, null, current);
+  });
+  expect(result).toMatchObject({ ok: false, code: "storage_error" });
+  const recovery = store.recoveryCandidates();
+  if (!recovery.ok) throw new Error(recovery.error);
+  const candidate = recovery.data.find((item) => item.target === "task");
+  expect(candidate).toBeDefined();
+  if (candidate) expect(readFileSync(candidate.path)).toEqual(before);
+});
+
+test("recovery rechecks bytes after reacquiring its lock", () => {
+  const { store, task } = startedStore();
+  const changed = store.mutateTask(task.id, task.revision, identity);
+  expect(changed.ok).toBe(true);
+  const candidate = store.recoveryCandidates();
+  if (!candidate.ok) throw new Error(candidate.error);
+  const taskCandidate = candidate.data.find((item) => item.target === "task");
+  if (!taskCandidate) throw new Error("missing task recovery candidate");
+  const file = join(store.root, ".workit", "tasks", `${task.id}.json`);
+  writeFileSync(file, "{broken");
+  const raced = "{another-writer-won}";
+  const result = store.recoverTask(task.id, {
+    expectedBytes: sha256("{broken"),
+    snapshotDigest: taskCandidate.digest,
+    expectedWorkspaceRevision: workspaceRevision(store),
+    reason: "race",
+    authorityRefs: [],
+    processEvidence: () => {
+      writeFileSync(file, raced);
+      return recoveryEvidence()();
+    },
+  });
+  expect(result).toMatchObject({ ok: false, code: "revision_conflict" });
+  expect(readFileSync(file, "utf8")).toBe(raced);
 });
 
 test("coupled mutation retains uncertain workspace ownership after task failure", () => {

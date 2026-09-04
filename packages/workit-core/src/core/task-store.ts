@@ -75,7 +75,10 @@ const processEvidenceSchema = z
     state: z.enum(["stopped", "accounted_for"]),
     pid: z.number().int().nonnegative(),
     processStart: z.string().nullable(),
-    ownerDigest: z.string().nullable(),
+    ownerDigest: z
+      .string()
+      .regex(/^[0-9a-f]{64}$/)
+      .nullable(),
   })
   .strict();
 export type RecoveryCandidate = {
@@ -229,6 +232,9 @@ export class TaskStore {
       const current = this.readTask(taskId);
       if (!current.ok) return current;
       if (current.data.revision !== expected) return this.conflict(expected, current.data.revision);
+      const previousBytes = this.snapshotBytes(this.taskPath(taskId));
+      if (!previousBytes)
+        return failure("storage_error", "task snapshot disappeared during mutation");
       const context = { now: now(), revision: newRevision() };
       let changed: Result<TaskRecord>;
       try {
@@ -248,9 +254,6 @@ export class TaskStore {
       const valid = taskRecordSchema.safeParse(record);
       if (!valid.success)
         return failure("invalid_input", "task mutation produced an invalid record");
-      const previousBytes = this.snapshotBytes(this.taskPath(taskId));
-      if (!previousBytes)
-        return failure("storage_error", "task snapshot disappeared during mutation");
       const written = this.replaceSnapshot(this.taskPath(taskId), valid.data, previousBytes);
       return written.ok ? success(valid.data.revision, null, valid.data) : written;
     });
@@ -262,6 +265,9 @@ export class TaskStore {
       if (!current.ok) return current;
       if (!current.data) return failure("not_found", "workspace not found");
       if (current.data.revision !== expected) return this.conflict(expected, current.data.revision);
+      const previousBytes = this.snapshotBytes(this.workspacePath);
+      if (!previousBytes)
+        return failure("storage_error", "workspace snapshot disappeared during mutation");
       const context = { now: now(), revision: newRevision() };
       let changed: Result<WorkspaceRecord>;
       try {
@@ -279,9 +285,6 @@ export class TaskStore {
       const valid = workspaceRecordSchema.safeParse(record);
       if (!valid.success)
         return failure("invalid_input", "workspace mutation produced an invalid record");
-      const previousBytes = this.snapshotBytes(this.workspacePath);
-      if (!previousBytes)
-        return failure("storage_error", "workspace snapshot disappeared during mutation");
       const written = this.replaceSnapshot(this.workspacePath, valid.data, previousBytes);
       return written.ok ? success(valid.data.revision, valid.data.revision, valid.data) : written;
     });
@@ -300,6 +303,10 @@ export class TaskStore {
         return this.conflict(expectedTaskRevision, task.data.revision);
       if (workspace.data.revision !== input.expectedWorkspaceRevision)
         return this.conflict(input.expectedWorkspaceRevision, workspace.data.revision);
+      const previousWorkspaceBytes = this.snapshotBytes(this.workspacePath);
+      const previousTaskBytes = this.snapshotBytes(this.taskPath(input.taskId));
+      if (!previousWorkspaceBytes || !previousTaskBytes)
+        return failure("storage_error", "snapshot disappeared during coupled mutation");
       const workspaceContext = { now: now(), revision: newRevision() };
       let changedWorkspace: Result<WorkspaceRecord>;
       try {
@@ -316,9 +323,6 @@ export class TaskStore {
       });
       if (!nextWorkspace.success)
         return failure("invalid_input", "workspace mutation produced an invalid record");
-      const previousWorkspaceBytes = this.snapshotBytes(this.workspacePath);
-      if (!previousWorkspaceBytes)
-        return failure("storage_error", "workspace snapshot disappeared during mutation");
       const reserved = this.replaceSnapshot(
         this.workspacePath,
         nextWorkspace.data,
@@ -358,15 +362,6 @@ export class TaskStore {
         return failure(
           "external_outcome_unknown",
           "workspace reserved but task update is uncertain",
-          { operation: "coupled_mutation", outcome: "unknown" },
-        );
-      }
-      const previousTaskBytes = this.snapshotBytes(this.taskPath(input.taskId));
-      if (!previousTaskBytes) {
-        this.markUncertain(nextWorkspace.data);
-        return failure(
-          "external_outcome_unknown",
-          "workspace reserved but task snapshot disappeared",
           { operation: "coupled_mutation", outcome: "unknown" },
         );
       }
@@ -508,6 +503,21 @@ export class TaskStore {
         }
       }
       const result = this.withLock<any>(() => {
+        let reacquiredBytes: Buffer;
+        try {
+          reacquiredBytes = fs.readFileSync(file);
+        } catch {
+          return failure("recovery_required", "snapshot disappeared during recovery");
+        }
+        if (digestBytes(reacquiredBytes) !== input.expectedBytes)
+          return failure("revision_conflict", "snapshot changed during recovery");
+        if (target === "task") {
+          const currentWorkspace = this.readWorkspace();
+          if (!currentWorkspace.ok || !currentWorkspace.data)
+            return failure("recovery_required", "workspace changed during recovery");
+          if (currentWorkspace.data.revision !== input.expectedWorkspaceRevision)
+            return this.conflict(input.expectedWorkspaceRevision, currentWorkspace.data.revision);
+        }
         if (target === "workspace") {
           const parsed = this.parseBytes<WorkspaceRecord>(selectedBytes, workspaceRecordSchema);
           if (!parsed.ok) return parsed;
@@ -602,16 +612,18 @@ export class TaskStore {
     }
     let fd: number | undefined;
     let temporary: string | undefined;
+    let acquiredNonce: string | undefined;
     try {
       temporary = `${this.lockPath}.${process.pid}.${randomUUID()}.tmp`;
       fd = fs.openSync(temporary, "wx", 0o600);
+      acquiredNonce = randomUUID();
       fs.writeFileSync(
         fd,
         JSON.stringify({
           pid: process.pid,
           processStart: this.processStart(process.pid),
           host: hostname(),
-          nonce: randomUUID(),
+          nonce: acquiredNonce,
         }),
       );
       fs.fsyncSync(fd);
@@ -649,10 +661,7 @@ export class TaskStore {
       retain = retainOnStorageError && !result.ok && result.code === "storage_error";
       return result;
     } finally {
-      if (!retain)
-        try {
-          fs.unlinkSync(this.lockPath);
-        } catch {}
+      if (!retain && acquiredNonce) this.releaseLock(acquiredNonce);
     }
   }
 
@@ -660,6 +669,13 @@ export class TaskStore {
     fs.mkdirSync(this.tasksDir, { recursive: true });
     fs.mkdirSync(this.recoveryDir, { recursive: true });
     fs.writeFileSync(this.gitignorePath, "*\n");
+  }
+
+  private releaseLock(nonce: string) {
+    try {
+      const current = JSON.parse(fs.readFileSync(this.lockPath, "utf8")) as { nonce?: string };
+      if (current.nonce === nonce) fs.unlinkSync(this.lockPath);
+    } catch {}
   }
 
   private replaceSnapshot(file: string, value: unknown, previous: unknown): Result<any> {
