@@ -61,10 +61,10 @@ Reuse existing logger, path safety, repository context, Git, PR, YouTrack, chang
 
 ## Execution preflight
 
-Implementation authority begins only after the user chooses an execution mode. At that point, stay in the current checkout, confirm that no unrelated user changes would enter the branch, create the guarded in-place branch `codex/workit-v1`, run `node_modules/.bin/oxfmt --check docs/workit-v1/spec.md docs/workit-v1/contracts.md docs/workit-v1/plan.md`, and commit the approved design artifacts before Task 1:
+Implementation authority begins only after the user chooses an execution mode. At that point, stay in the current checkout, confirm that no unrelated user changes would enter the branch, create the guarded in-place GitHub-flow branch `feature/workit-v1`, run `node_modules/.bin/oxfmt --check docs/workit-v1/spec.md docs/workit-v1/contracts.md docs/workit-v1/plan.md`, and commit the approved design artifacts before Task 1:
 
 ```bash
-git switch -c codex/workit-v1
+git switch -c feature/workit-v1
 git add docs/workit-v1/spec.md docs/workit-v1/contracts.md docs/workit-v1/plan.md
 git commit -m "docs: specify adaptive Workit v1"
 ```
