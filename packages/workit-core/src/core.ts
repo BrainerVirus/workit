@@ -2,6 +2,52 @@ import { spawnSync } from "node:child_process";
 import { existsSync, realpathSync } from "node:fs";
 import path from "node:path";
 
+export {
+  SCHEMA_VERSION,
+  POLICY_VERSION,
+  OPERATION_FAMILIES,
+  operationSchemas,
+  operationJsonSchema,
+  parseOperation,
+  success,
+  failure,
+  canonicalJson,
+  sha256,
+  newId,
+  newRevision,
+  decisionDigest,
+  candidateDigest,
+  requirementId,
+} from "./core/task-contract";
+export type {
+  OperationFamily,
+  OperationRequest,
+  TaskStartRequest,
+  Caller,
+  Scope,
+  Ref,
+  Assessment,
+  Dimension,
+  Requirement,
+  Constraint,
+  Intent,
+  Progress,
+  Policy,
+  Candidate,
+  Evidence,
+  Decision,
+  Finding,
+  Assignment,
+  WorkerReport,
+  Worker,
+  TaskRecord,
+  WorkspaceRecord,
+  TaskView,
+  TaskSummary,
+  ExportBundle,
+  Result as ContractResult,
+} from "./core/task-contract";
+
 export type Result<T> =
   | { ok: true; data: T; error: null }
   | { ok: false; data: T | null; error: string };

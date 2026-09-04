@@ -387,7 +387,7 @@ test(
     for (const os of SUPPORT_MATRIX.os) {
       expect(ci).toContain(os);
     }
-    expect(ci).toMatch(/node:\s*\[22\]/);
+    expect(ci).toMatch(/node:\s*\[24\.20\.0\]/);
     expect(ci).not.toMatch(/[Dd]eno/);
   },
   { timeout: 60_000 },

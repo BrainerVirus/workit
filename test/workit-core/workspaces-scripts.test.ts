@@ -332,13 +332,6 @@ test(
 test(
   "pr-create.sh: missing gh/glab on PATH -> structured error with official install URL",
   () => {
-    const pathDirs = (process.env.PATH ?? "").split(path.delimiter);
-    // Strip real gh/glab entries too (gh.exe) so the guard cannot find a real
-    // CLI on the runner, not just the extensionless-name leftovers.
-    const cleanPath = pathDirs.filter(
-      (d) => d && !["gh", "gh.exe", "glab", "glab.exe"].some((n) => existsSync(path.join(d, n))),
-    );
-
     for (const [provider, cli, url] of [
       ["github", "gh", "https://cli.github.com"],
       ["gitlab", "glab", "https://gitlab.com/gitlab-org/cli"],
@@ -351,7 +344,7 @@ test(
           "gitlab.token": "test-token-123",
         },
         {
-          PATH: `${os.tmpdir()}${path.delimiter}${cleanPath.join(path.delimiter)}`,
+          PATH: os.tmpdir(),
           WF_PR_CONFIRMED: "true",
           WF_PR_TITLE: "Test title",
         },
@@ -680,13 +673,6 @@ test(
     const repoDir = realpathSync(mkdtempSync(path.join(os.tmpdir(), "wf-gh-repo-")));
     const logFile = path.join(stubBin, "args.txt");
     stubCli(stubBin, "gh", logFile, "https://github.com/o/r/pull/1");
-    const pathDirs = (process.env.PATH ?? "").split(path.delimiter);
-    // Strip real gh/glab entries too (gh.exe) so the guard cannot find a real
-    // CLI on the runner, not just the extensionless-name leftovers.
-    const cleanPath = pathDirs.filter(
-      (d) => d && !["gh", "gh.exe", "glab", "glab.exe"].some((n) => existsSync(path.join(d, n))),
-    );
-
     let bareDir: string;
     try {
       bareDir = realpathSync(mkdtempSync(path.join(os.tmpdir(), "wf-gh-remote-")));
@@ -732,7 +718,7 @@ test(
           "github.token": "test-token-123",
         },
         {
-          PATH: `${stubBin}${path.delimiter}${cleanPath.join(path.delimiter)}`,
+          PATH: `${stubBin}${path.delimiter}${process.env.PATH ?? ""}`,
           WF_PR_CONFIRMED: "true",
           WF_PR_TITLE: "Test title",
           WORKFLOW_GH_ISSUE: "42",
@@ -773,10 +759,6 @@ test(
       const stub = c.provider === "gitlab" ? "glab" : "gh";
       const logFile = path.join(stubBin, `${stub}-args.txt`);
       stubCli(stubBin, stub, logFile, "https://example.com/ok");
-      const pathDirs = (process.env.PATH ?? "").split(path.delimiter);
-      const cleanPath = pathDirs.filter(
-        (d) => d && !existsSync(path.join(d, "gh")) && !existsSync(path.join(d, "glab")),
-      );
       const repo = realpathSync(mkdtempSync(path.join(os.tmpdir(), "wf-pr-target-repo-")));
       const bare = realpathSync(mkdtempSync(path.join(os.tmpdir(), "wf-pr-target-remote-")));
       const git = (args: string[]) => spawnSync("git", args, { cwd: repo, encoding: "utf8" });
@@ -802,7 +784,7 @@ test(
             [`${c.provider}.token`]: "test-token-123",
           },
           {
-            PATH: `${stubBin}${path.delimiter}${cleanPath.join(path.delimiter)}`,
+            PATH: `${stubBin}${path.delimiter}${process.env.PATH ?? ""}`,
             WF_PR_CONFIRMED: "true",
             WF_PR_TITLE: "T",
           },
