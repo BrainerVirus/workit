@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import { hostname } from "node:os";
 import path from "node:path";
+import * as z from "zod";
 import {
   SCHEMA_VERSION,
   canonicalJson,
@@ -69,6 +70,14 @@ export type ProcessEvidence = {
   processStart: string | null;
   ownerDigest: string | null;
 };
+const processEvidenceSchema = z
+  .object({
+    state: z.enum(["stopped", "accounted_for"]),
+    pid: z.number().int().nonnegative(),
+    processStart: z.string().nullable(),
+    ownerDigest: z.string().nullable(),
+  })
+  .strict();
 export type RecoveryCandidate = {
   target: "task" | "workspace";
   path: string;
@@ -425,8 +434,6 @@ export class TaskStore {
       return failure("invalid_input", "recovery authority is invalid");
     if (input.authorityRefs.some((ref) => !refSchema.safeParse(ref).success))
       return failure("invalid_input", "recovery references are invalid");
-    const gate = this.acquireRecoveryGate();
-    if (!gate.ok) return gate;
     try {
       const lock = this.readLock();
       if (!lock.ok) return lock;
@@ -500,34 +507,28 @@ export class TaskStore {
           return failure("recovery_required", "metadata lock could not be cleared");
         }
       }
-      const result = this.withLock<any>(
-        () => {
-          if (target === "workspace") {
-            const parsed = this.parseBytes<WorkspaceRecord>(selectedBytes, workspaceRecordSchema);
-            if (!parsed.ok) return parsed;
-            const value = { ...parsed.data, revision: newRevision(), writer: null };
-            const result = this.replaceSnapshot(file, value, currentBytes);
-            return result.ok ? success(value.revision, value.revision, value) : result;
-          }
-          const parsed = this.parseBytes<TaskRecord>(selectedBytes, taskRecordSchema);
+      const result = this.withLock<any>(() => {
+        if (target === "workspace") {
+          const parsed = this.parseBytes<WorkspaceRecord>(selectedBytes, workspaceRecordSchema);
           if (!parsed.ok) return parsed;
-          const value = {
-            ...parsed.data,
-            revision: newRevision(),
-            updatedAt: now(),
-            status: parsed.data.status === "active" ? "paused" : parsed.data.status,
-          } as TaskRecord;
+          const value = { ...parsed.data, revision: newRevision(), writer: null };
           const result = this.replaceSnapshot(file, value, currentBytes);
-          return result.ok ? success(value.revision, null, value) : result;
-        },
-        true,
-        true,
-      );
+          return result.ok ? success(value.revision, value.revision, value) : result;
+        }
+        const parsed = this.parseBytes<TaskRecord>(selectedBytes, taskRecordSchema);
+        if (!parsed.ok) return parsed;
+        const value = {
+          ...parsed.data,
+          revision: newRevision(),
+          updatedAt: now(),
+          status: parsed.data.status === "active" ? "paused" : parsed.data.status,
+        } as TaskRecord;
+        const result = this.replaceSnapshot(file, value, currentBytes);
+        return result.ok ? success(value.revision, null, value) : result;
+      }, true);
       return result;
-    } finally {
-      try {
-        fs.unlinkSync(this.recoveryGatePath);
-      } catch {}
+    } catch (error) {
+      return failure("recovery_required", `recovery protocol failed: ${String(error)}`);
     }
   }
 
@@ -536,11 +537,32 @@ export class TaskStore {
     lock: MetadataLock | null,
     writer: WorkspaceRecord["writer"],
   ): Result<ProcessEvidence> {
+    const lockCopy = lock ? this.deepFreeze(structuredClone(lock)) : null;
+    const writerCopy = writer ? this.deepFreeze(structuredClone(writer)) : null;
+    const lockDigest = lockCopy ? sha256(canonicalJson(lockCopy)) : null;
+    const writerDigest = writerCopy ? sha256(canonicalJson(writerCopy)) : null;
     try {
-      return input.processEvidence(lock, writer);
+      const result = input.processEvidence(lockCopy, writerCopy);
+      if (lockCopy && sha256(canonicalJson(lockCopy)) !== lockDigest)
+        return failure("recovery_required", "process evidence mutated lock identity");
+      if (writerCopy && sha256(canonicalJson(writerCopy)) !== writerDigest)
+        return failure("recovery_required", "process evidence mutated writer identity");
+      if (!result.ok) return result;
+      const parsed = processEvidenceSchema.safeParse(result.data);
+      return parsed.success
+        ? success(null, null, parsed.data)
+        : failure("recovery_required", "process evidence is invalid");
     } catch (error) {
       return failure("recovery_required", `process evidence failed: ${String(error)}`);
     }
+  }
+
+  private deepFreeze<T>(value: T): T {
+    if (value && typeof value === "object") {
+      for (const child of Object.values(value as Record<string, unknown>)) this.deepFreeze(child);
+      Object.freeze(value);
+    }
+    return value;
   }
 
   private readLock(): Result<MetadataLock | null> {
@@ -560,21 +582,6 @@ export class TaskStore {
     }
   }
 
-  private acquireRecoveryGate(): Result<null> {
-    try {
-      fs.mkdirSync(this.workitDir, { recursive: true });
-      const fd = fs.openSync(this.recoveryGatePath, "wx", 0o600);
-      fs.writeFileSync(fd, JSON.stringify({ pid: process.pid, nonce: randomUUID() }));
-      fs.fsyncSync(fd);
-      fs.closeSync(fd);
-      return success(null, null, null);
-    } catch (error: any) {
-      if (error?.code === "EEXIST")
-        return failure("recovery_required", "recovery is already in progress");
-      return failure("storage_error", `unable to acquire recovery gate: ${String(error)}`);
-    }
-  }
-
   private markUncertain(workspace: WorkspaceRecord) {
     if (!workspace.writer || workspace.writer.state === "uncertain") return;
     const value = {
@@ -585,15 +592,7 @@ export class TaskStore {
     this.replaceSnapshot(this.workspacePath, value, workspace);
   }
 
-  private withLock<T>(
-    operation: () => Result<T>,
-    allowRecoveryGate = false,
-    retainOnStorageError = false,
-  ): Result<T> {
-    if (!allowRecoveryGate && fs.existsSync(this.recoveryGatePath))
-      return failure("recovery_required", "recovery is in progress", {
-        path: this.recoveryGatePath,
-      });
+  private withLock<T>(operation: () => Result<T>, retainOnStorageError = false): Result<T> {
     try {
       this.initializeMutationStorage();
     } catch (error) {
@@ -602,8 +601,10 @@ export class TaskStore {
       });
     }
     let fd: number | undefined;
+    let temporary: string | undefined;
     try {
-      fd = fs.openSync(this.lockPath, "wx", 0o600);
+      temporary = `${this.lockPath}.${process.pid}.${randomUUID()}.tmp`;
+      fd = fs.openSync(temporary, "wx", 0o600);
       fs.writeFileSync(
         fd,
         JSON.stringify({
@@ -615,10 +616,20 @@ export class TaskStore {
       );
       fs.fsyncSync(fd);
       fs.closeSync(fd);
+      fd = undefined;
+      fs.linkSync(temporary, this.lockPath);
+      fs.unlinkSync(temporary);
+      temporary = undefined;
+      this.fsyncDirectory(this.workitDir);
     } catch (error: any) {
-      try {
-        if (fd !== undefined) fs.closeSync(fd);
-      } catch {}
+      if (fd !== undefined)
+        try {
+          fs.closeSync(fd);
+        } catch {}
+      if (temporary)
+        try {
+          fs.unlinkSync(temporary);
+        } catch {}
       if (error?.code === "EEXIST")
         return failure("recovery_required", "metadata lock requires explicit recovery", {
           path: this.lockPath,
@@ -718,21 +729,19 @@ export class TaskStore {
     workspace: WorkspaceRecord | null,
   ): Buffer | null {
     if (!fs.existsSync(this.recoveryDir)) return null;
+    const workspaceId = workspace?.id ?? this.trustedWorkspaceId();
+    if (target === "workspace" && !workspaceId) return null;
     const candidates = this.recoveryCandidates();
     if (!candidates.ok) return null;
     for (const candidate of candidates.data) {
       if (candidate.target !== target || candidate.digest !== digest) continue;
       try {
-        if (!fs.statSync(candidate.path).isFile()) continue;
+        if (!fs.lstatSync(candidate.path).isFile()) continue;
         const bytes = fs.readFileSync(candidate.path);
         if (digestBytes(bytes) !== digest) continue;
         if (target === "workspace") {
           const parsed = this.parseBytes<WorkspaceRecord>(bytes, workspaceRecordSchema);
-          if (
-            parsed.ok &&
-            (!workspace || parsed.data.id === workspace.id) &&
-            parsed.data.root === this.root
-          )
+          if (parsed.ok && parsed.data.id === workspaceId && parsed.data.root === this.root)
             return bytes;
         } else {
           const parsed = this.parseBytes<TaskRecord>(bytes, taskRecordSchema);
@@ -751,6 +760,25 @@ export class TaskStore {
     } finally {
       fs.closeSync(fd);
     }
+  }
+
+  private trustedWorkspaceId(): Id | null {
+    if (!fs.existsSync(this.tasksDir)) return null;
+    const ids = new Set<Id>();
+    try {
+      for (const name of fs.readdirSync(this.tasksDir)) {
+        if (!name.endsWith(".json") || !validId(name.slice(0, -5))) return null;
+        const parsed = this.parseBytes<TaskRecord>(
+          fs.readFileSync(path.join(this.tasksDir, name)),
+          taskRecordSchema,
+        );
+        if (!parsed.ok || parsed.data.id !== name.slice(0, -5)) return null;
+        ids.add(parsed.data.workspaceId);
+      }
+    } catch {
+      return null;
+    }
+    return ids.size === 1 ? [...ids][0] : null;
   }
 
   private snapshotBytes(file: string): Buffer | null {
@@ -827,9 +855,6 @@ export class TaskStore {
   }
   private get lockPath() {
     return path.join(this.workitDir, "metadata.lock");
-  }
-  private get recoveryGatePath() {
-    return path.join(this.workitDir, "recovery.lock");
   }
   private get gitignorePath() {
     return path.join(this.workitDir, ".gitignore");
