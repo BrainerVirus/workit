@@ -60,6 +60,7 @@ function startNodeMcp(
 ): McpClient {
   const child = spawn(bin, args, { cwd, env, stdio: ["pipe", "pipe", "pipe"], ...options });
   let buffer = "";
+  let stderr = "";
   const pending = new Map<number, (value: { result?: unknown; error?: unknown }) => void>();
   child.stdout?.setEncoding("utf8");
   child.stdout?.on("data", (chunk: string) => {
@@ -84,7 +85,10 @@ function startNodeMcp(
       newline = buffer.indexOf("\n");
     }
   });
-  child.stderr?.on("data", () => {});
+  child.stderr?.setEncoding("utf8");
+  child.stderr?.on("data", (chunk: string) => {
+    stderr += chunk;
+  });
   const nextId = { id: 0 };
   const request = (method: string, params: unknown) => {
     const id = ++nextId.id;
@@ -92,7 +96,11 @@ function startNodeMcp(
     return new Promise<{ result?: unknown; error?: unknown }>((resolve, reject) => {
       const timer = setTimeout(() => {
         pending.delete(id);
-        reject(new Error(`timeout waiting for ${method}`));
+        reject(
+          new Error(
+            `timeout waiting for ${method}; stderr=${stderr.slice(-4000)}; pid=${child.pid}`,
+          ),
+        );
       }, 15000);
       pending.set(id, (msg) => {
         clearTimeout(timer);
@@ -265,7 +273,7 @@ test.skipIf(!npmRegistryOk)(
       const { child, request } = startNodeMcp(
         install,
         "npm",
-        ["exec", "--", "workit-cursor-mcp"],
+        ["exec", "--offline", "--", "workit-cursor-mcp"],
         env,
         { shell: process.platform === "win32" },
       );
