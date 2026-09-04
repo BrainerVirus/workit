@@ -10,11 +10,14 @@ import {
   newId,
   newRevision,
   provenanceSchema,
+  refSchema,
+  sha256,
   success,
   taskRecordSchema,
   workspaceRecordSchema,
   type Id,
   type Intent,
+  type Ref,
   type Provenance,
   type Result,
   type Revision,
@@ -47,9 +50,24 @@ export type RecoveryInput = {
   expectedBytes: string;
   snapshotDigest: string;
   reason: string;
-  authorityRefs: unknown[];
-  processStopped?: boolean;
-  accountedFor?: boolean;
+  authorityRefs: Ref[];
+  expectedWorkspaceRevision: Revision;
+  processEvidence: (
+    lock: MetadataLock | null,
+    writer: WorkspaceRecord["writer"],
+  ) => Result<ProcessEvidence>;
+};
+export type MetadataLock = {
+  pid: number;
+  processStart: string | null;
+  host: string;
+  nonce: string;
+};
+export type ProcessEvidence = {
+  state: "stopped" | "accounted_for";
+  pid: number;
+  processStart: string | null;
+  ownerDigest: string | null;
 };
 export type RecoveryCandidate = {
   target: "task" | "workspace";
@@ -70,7 +88,7 @@ export class TaskStore {
   readonly root: string;
 
   constructor(root: string) {
-    this.root = path.resolve(root);
+    this.root = fs.existsSync(root) ? fs.realpathSync(root) : path.resolve(root);
   }
 
   readTask(taskId: Id): Result<TaskRecord> {
@@ -80,6 +98,8 @@ export class TaskStore {
       taskRecordSchema,
     );
     if (!result.exists) return failure("not_found", "task not found", { taskId });
+    if (result.result.ok && result.result.data.id !== taskId)
+      return failure("recovery_required", "task filename and record ID differ", { taskId });
     return result.result;
   }
 
@@ -98,6 +118,8 @@ export class TaskStore {
       const item = this.readRecord<TaskRecord>(path.join(this.tasksDir, name), taskRecordSchema);
       if (!item.exists) continue;
       if (!item.result.ok) return item.result;
+      if (!validId(name.slice(0, -5)) || item.result.data.id !== name.slice(0, -5))
+        return failure("recovery_required", "task filename and record ID differ", { path: name });
       tasks.push(item.result.data);
     }
     return success(null, null, tasks);
@@ -106,6 +128,10 @@ export class TaskStore {
   readWorkspace(): Result<WorkspaceRecord | null> {
     const item = this.readRecord<WorkspaceRecord>(this.workspacePath, workspaceRecordSchema);
     if (!item.exists) return success(null, null, null);
+    if (item.result.ok && item.result.data.root !== this.root)
+      return failure("recovery_required", "workspace root binding is invalid", {
+        path: this.workspacePath,
+      });
     return item.result;
   }
 
@@ -195,7 +221,12 @@ export class TaskStore {
       if (!current.ok) return current;
       if (current.data.revision !== expected) return this.conflict(expected, current.data.revision);
       const context = { now: now(), revision: newRevision() };
-      const changed = update(current.data, context);
+      let changed: Result<TaskRecord>;
+      try {
+        changed = update(current.data, Object.freeze({ ...context }));
+      } catch (error) {
+        return failure("storage_error", `task mutation failed: ${String(error)}`);
+      }
       if (!changed.ok) return changed;
       const record = {
         ...changed.data,
@@ -208,7 +239,10 @@ export class TaskStore {
       const valid = taskRecordSchema.safeParse(record);
       if (!valid.success)
         return failure("invalid_input", "task mutation produced an invalid record");
-      const written = this.replaceSnapshot(this.taskPath(taskId), valid.data, current.data);
+      const previousBytes = this.snapshotBytes(this.taskPath(taskId));
+      if (!previousBytes)
+        return failure("storage_error", "task snapshot disappeared during mutation");
+      const written = this.replaceSnapshot(this.taskPath(taskId), valid.data, previousBytes);
       return written.ok ? success(valid.data.revision, null, valid.data) : written;
     });
   }
@@ -220,7 +254,12 @@ export class TaskStore {
       if (!current.data) return failure("not_found", "workspace not found");
       if (current.data.revision !== expected) return this.conflict(expected, current.data.revision);
       const context = { now: now(), revision: newRevision() };
-      const changed = update(current.data, context);
+      let changed: Result<WorkspaceRecord>;
+      try {
+        changed = update(current.data, Object.freeze({ ...context }));
+      } catch (error) {
+        return failure("storage_error", `workspace mutation failed: ${String(error)}`);
+      }
       if (!changed.ok) return changed;
       const record = {
         ...changed.data,
@@ -231,7 +270,10 @@ export class TaskStore {
       const valid = workspaceRecordSchema.safeParse(record);
       if (!valid.success)
         return failure("invalid_input", "workspace mutation produced an invalid record");
-      const written = this.replaceSnapshot(this.workspacePath, valid.data, current.data);
+      const previousBytes = this.snapshotBytes(this.workspacePath);
+      if (!previousBytes)
+        return failure("storage_error", "workspace snapshot disappeared during mutation");
+      const written = this.replaceSnapshot(this.workspacePath, valid.data, previousBytes);
       return written.ok ? success(valid.data.revision, valid.data.revision, valid.data) : written;
     });
   }
@@ -250,7 +292,12 @@ export class TaskStore {
       if (workspace.data.revision !== input.expectedWorkspaceRevision)
         return this.conflict(input.expectedWorkspaceRevision, workspace.data.revision);
       const workspaceContext = { now: now(), revision: newRevision() };
-      const changedWorkspace = input.workspace(workspace.data, workspaceContext);
+      let changedWorkspace: Result<WorkspaceRecord>;
+      try {
+        changedWorkspace = input.workspace(workspace.data, Object.freeze({ ...workspaceContext }));
+      } catch (error) {
+        return failure("storage_error", `workspace mutation failed: ${String(error)}`);
+      }
       if (!changedWorkspace.ok) return changedWorkspace;
       const nextWorkspace = workspaceRecordSchema.safeParse({
         ...changedWorkspace.data,
@@ -260,10 +307,27 @@ export class TaskStore {
       });
       if (!nextWorkspace.success)
         return failure("invalid_input", "workspace mutation produced an invalid record");
-      const reserved = this.replaceSnapshot(this.workspacePath, nextWorkspace.data, workspace.data);
+      const previousWorkspaceBytes = this.snapshotBytes(this.workspacePath);
+      if (!previousWorkspaceBytes)
+        return failure("storage_error", "workspace snapshot disappeared during mutation");
+      const reserved = this.replaceSnapshot(
+        this.workspacePath,
+        nextWorkspace.data,
+        previousWorkspaceBytes,
+      );
       if (!reserved.ok) return reserved;
       const taskContext = { now: now(), revision: newRevision() };
-      const changedTask = input.task(task.data, taskContext);
+      let changedTask: Result<TaskRecord>;
+      try {
+        changedTask = input.task(task.data, Object.freeze({ ...taskContext }));
+      } catch (error) {
+        this.markUncertain(nextWorkspace.data);
+        return failure(
+          "external_outcome_unknown",
+          `workspace reserved but task mutation threw: ${String(error)}`,
+          { operation: "coupled_mutation", outcome: "unknown" },
+        );
+      }
       if (!changedTask.ok) {
         this.markUncertain(nextWorkspace.data);
         return failure(
@@ -288,7 +352,20 @@ export class TaskStore {
           { operation: "coupled_mutation", outcome: "unknown" },
         );
       }
-      const written = this.replaceSnapshot(this.taskPath(input.taskId), nextTask.data, task.data);
+      const previousTaskBytes = this.snapshotBytes(this.taskPath(input.taskId));
+      if (!previousTaskBytes) {
+        this.markUncertain(nextWorkspace.data);
+        return failure(
+          "external_outcome_unknown",
+          "workspace reserved but task snapshot disappeared",
+          { operation: "coupled_mutation", outcome: "unknown" },
+        );
+      }
+      const written = this.replaceSnapshot(
+        this.taskPath(input.taskId),
+        nextTask.data,
+        previousTaskBytes,
+      );
       if (!written.ok) {
         this.markUncertain(nextWorkspace.data);
         return failure(
@@ -325,31 +402,12 @@ export class TaskStore {
     }
   }
 
-  recoverTask(
-    taskId: Id,
-    input: RecoveryInput | string,
-    snapshotDigest?: string,
-    reason?: string,
-    authorityRefs?: unknown[],
-  ): Result<TaskRecord> {
-    return this.recover(
-      "task",
-      taskId,
-      this.normalizeRecovery(input, snapshotDigest, reason, authorityRefs),
-    );
+  recoverTask(taskId: Id, input: RecoveryInput): Result<TaskRecord> {
+    return this.recover("task", taskId, input);
   }
 
-  recoverWorkspace(
-    input: RecoveryInput | string,
-    snapshotDigest?: string,
-    reason?: string,
-    authorityRefs?: unknown[],
-  ): Result<WorkspaceRecord> {
-    return this.recover(
-      "workspace",
-      null,
-      this.normalizeRecovery(input, snapshotDigest, reason, authorityRefs),
-    );
+  recoverWorkspace(input: RecoveryInput): Result<WorkspaceRecord> {
+    return this.recover("workspace", null, input);
   }
 
   private recover(
@@ -359,14 +417,24 @@ export class TaskStore {
   ): Result<any> {
     if (taskId !== null && !validId(taskId))
       return failure("invalid_input", "task ID is invalid", { taskId });
-    if (!input.reason || !Array.isArray(input.authorityRefs))
+    if (
+      !input.reason ||
+      !Array.isArray(input.authorityRefs) ||
+      typeof input.processEvidence !== "function"
+    )
       return failure("invalid_input", "recovery authority is invalid");
+    if (input.authorityRefs.some((ref) => !refSchema.safeParse(ref).success))
+      return failure("invalid_input", "recovery references are invalid");
+    const gate = this.acquireRecoveryGate();
+    if (!gate.ok) return gate;
     try {
-      this.clearRecoverableLock(input);
-    } catch (error) {
-      return failure("recovery_required", String(error));
-    }
-    return this.withLock<any>(() => {
+      const lock = this.readLock();
+      if (!lock.ok) return lock;
+      const workspace = this.readWorkspace();
+      if (!workspace.ok && target === "task") return workspace;
+      const workspaceValue = workspace.ok ? workspace.data : null;
+      if (workspaceValue && workspaceValue.revision !== input.expectedWorkspaceRevision)
+        return this.conflict(input.expectedWorkspaceRevision, workspaceValue.revision);
       const file = target === "workspace" ? this.workspacePath : this.taskPath(taskId!);
       let currentBytes: Buffer;
       try {
@@ -378,69 +446,132 @@ export class TaskStore {
         return failure("revision_conflict", "snapshot bytes do not match expected bytes");
       let selectedBytes = currentBytes;
       if (digestBytes(currentBytes) !== input.snapshotDigest) {
-        const candidate = this.findRecovery(target, input.snapshotDigest);
+        const candidate = this.findRecovery(target, taskId, input.snapshotDigest, workspaceValue);
         if (!candidate)
           return failure("recovery_required", "validated recovery snapshot not found");
-        selectedBytes = fs.readFileSync(candidate);
+        selectedBytes = candidate;
       }
+      const selectedRecord =
+        target === "workspace"
+          ? this.parseBytes<WorkspaceRecord>(selectedBytes, workspaceRecordSchema)
+          : this.parseBytes<TaskRecord>(selectedBytes, taskRecordSchema);
+      if (!selectedRecord.ok) return selectedRecord;
+      const writer =
+        target === "workspace"
+          ? (selectedRecord.data as WorkspaceRecord).writer
+          : (workspaceValue?.writer ?? null);
+      const evidence = this.processEvidence(input, lock.data, writer);
+      if (!evidence.ok) return evidence;
+      if (
+        lock.data &&
+        (evidence.data.pid !== lock.data.pid ||
+          evidence.data.processStart !== lock.data.processStart)
+      )
+        return failure("recovery_required", "process evidence does not match metadata lock");
+      if (
+        writer &&
+        (evidence.data.state !== "accounted_for" ||
+          evidence.data.ownerDigest !== sha256(canonicalJson(writer)))
+      )
+        return failure("recovery_required", "workspace writer is not accounted for");
       if (target === "workspace") {
-        const parsed = this.parseBytes<WorkspaceRecord>(selectedBytes, workspaceRecordSchema);
-        if (!parsed.ok) return parsed;
-        const value = { ...parsed.data, revision: newRevision(), writer: null };
-        const result = this.replaceSnapshot(file, value, currentBytes);
-        return result.ok ? success(value.revision, value.revision, value) : result;
+        const parsed = selectedRecord as Result<WorkspaceRecord>;
+        if (!parsed.ok || parsed.data.root !== this.root)
+          return failure("recovery_required", "workspace recovery binding is invalid");
+        if (parsed.data.revision !== input.expectedWorkspaceRevision)
+          return failure(
+            "revision_conflict",
+            "workspace revision does not match recovery precondition",
+          );
+      } else {
+        const parsed = selectedRecord as Result<TaskRecord>;
+        if (
+          !parsed.ok ||
+          parsed.data.id !== taskId ||
+          !workspaceValue ||
+          parsed.data.workspaceId !== workspaceValue.id
+        )
+          return failure("recovery_required", "task recovery binding is invalid");
       }
-      const parsed = this.parseBytes<TaskRecord>(selectedBytes, taskRecordSchema);
-      if (!parsed.ok) return parsed;
-      const value = {
-        ...parsed.data,
-        revision: newRevision(),
-        updatedAt: now(),
-        status: parsed.data.status === "active" ? "paused" : parsed.data.status,
-      } as TaskRecord;
-      const result = this.replaceSnapshot(file, value, currentBytes);
-      return result.ok ? success(value.revision, null, value) : result;
-    });
-  }
-
-  private normalizeRecovery(
-    input: RecoveryInput | string,
-    snapshotDigest?: string,
-    reason?: string,
-    authorityRefs?: unknown[],
-  ): RecoveryInput {
-    if (typeof input === "object" && input !== null) return input;
-    return {
-      expectedBytes: String(input),
-      snapshotDigest: String(snapshotDigest),
-      reason: reason ?? "recovery",
-      authorityRefs: authorityRefs ?? [],
-    };
-  }
-
-  private clearRecoverableLock(input: RecoveryInput) {
-    if (!fs.existsSync(this.lockPath)) return;
-    if (!input.processStopped && !input.accountedFor) {
-      let lock: { pid?: number };
+      if (lock.data) {
+        try {
+          fs.unlinkSync(this.lockPath);
+        } catch {
+          return failure("recovery_required", "metadata lock could not be cleared");
+        }
+      }
+      const result = this.withLock<any>(
+        () => {
+          if (target === "workspace") {
+            const parsed = this.parseBytes<WorkspaceRecord>(selectedBytes, workspaceRecordSchema);
+            if (!parsed.ok) return parsed;
+            const value = { ...parsed.data, revision: newRevision(), writer: null };
+            const result = this.replaceSnapshot(file, value, currentBytes);
+            return result.ok ? success(value.revision, value.revision, value) : result;
+          }
+          const parsed = this.parseBytes<TaskRecord>(selectedBytes, taskRecordSchema);
+          if (!parsed.ok) return parsed;
+          const value = {
+            ...parsed.data,
+            revision: newRevision(),
+            updatedAt: now(),
+            status: parsed.data.status === "active" ? "paused" : parsed.data.status,
+          } as TaskRecord;
+          const result = this.replaceSnapshot(file, value, currentBytes);
+          return result.ok ? success(value.revision, null, value) : result;
+        },
+        true,
+        true,
+      );
+      return result;
+    } finally {
       try {
-        lock = JSON.parse(fs.readFileSync(this.lockPath, "utf8")) as { pid?: number };
-      } catch {
-        throw new Error("recovery authority cannot validate metadata lock");
-      }
-      if (typeof lock.pid !== "number")
-        throw new Error("recovery authority cannot validate metadata lock");
-      try {
-        process.kill(lock.pid, 0);
-        throw new Error("recorded lock owner is still running");
-      } catch (error: any) {
-        if (error?.message === "recorded lock owner is still running") throw error;
-        if (error?.code !== "ESRCH") throw new Error("recorded lock owner state is uncertain");
-      }
+        fs.unlinkSync(this.recoveryGatePath);
+      } catch {}
     }
+  }
+
+  private processEvidence(
+    input: RecoveryInput,
+    lock: MetadataLock | null,
+    writer: WorkspaceRecord["writer"],
+  ): Result<ProcessEvidence> {
     try {
-      fs.unlinkSync(this.lockPath);
+      return input.processEvidence(lock, writer);
     } catch (error) {
-      throw new Error(`unable to clear metadata lock: ${String(error)}`);
+      return failure("recovery_required", `process evidence failed: ${String(error)}`);
+    }
+  }
+
+  private readLock(): Result<MetadataLock | null> {
+    if (!fs.existsSync(this.lockPath)) return success(null, null, null);
+    try {
+      const value = JSON.parse(fs.readFileSync(this.lockPath, "utf8")) as MetadataLock;
+      if (
+        typeof value.pid !== "number" ||
+        (typeof value.processStart !== "string" && value.processStart !== null) ||
+        typeof value.host !== "string" ||
+        typeof value.nonce !== "string"
+      )
+        return failure("recovery_required", "metadata lock is invalid");
+      return success(null, null, value);
+    } catch {
+      return failure("recovery_required", "metadata lock is invalid");
+    }
+  }
+
+  private acquireRecoveryGate(): Result<null> {
+    try {
+      fs.mkdirSync(this.workitDir, { recursive: true });
+      const fd = fs.openSync(this.recoveryGatePath, "wx", 0o600);
+      fs.writeFileSync(fd, JSON.stringify({ pid: process.pid, nonce: randomUUID() }));
+      fs.fsyncSync(fd);
+      fs.closeSync(fd);
+      return success(null, null, null);
+    } catch (error: any) {
+      if (error?.code === "EEXIST")
+        return failure("recovery_required", "recovery is already in progress");
+      return failure("storage_error", `unable to acquire recovery gate: ${String(error)}`);
     }
   }
 
@@ -454,7 +585,15 @@ export class TaskStore {
     this.replaceSnapshot(this.workspacePath, value, workspace);
   }
 
-  private withLock<T>(operation: () => Result<T>): Result<T> {
+  private withLock<T>(
+    operation: () => Result<T>,
+    allowRecoveryGate = false,
+    retainOnStorageError = false,
+  ): Result<T> {
+    if (!allowRecoveryGate && fs.existsSync(this.recoveryGatePath))
+      return failure("recovery_required", "recovery is in progress", {
+        path: this.recoveryGatePath,
+      });
     try {
       this.initializeMutationStorage();
     } catch (error) {
@@ -488,12 +627,21 @@ export class TaskStore {
         path: this.lockPath,
       });
     }
+    let retain = false;
     try {
-      return operation();
-    } finally {
+      let result: Result<T>;
       try {
-        fs.unlinkSync(this.lockPath);
-      } catch {}
+        result = operation();
+      } catch (error) {
+        result = failure("storage_error", `mutation failed: ${String(error)}`);
+      }
+      retain = retainOnStorageError && !result.ok && result.code === "storage_error";
+      return result;
+    } finally {
+      if (!retain)
+        try {
+          fs.unlinkSync(this.lockPath);
+        } catch {}
     }
   }
 
@@ -504,13 +652,13 @@ export class TaskStore {
   }
 
   private replaceSnapshot(file: string, value: unknown, previous: unknown): Result<any> {
+    let temporary: string | undefined;
     try {
       if (Buffer.isBuffer(previous)) this.saveRecovery(file, previous);
       else if (previous !== null && typeof previous === "object")
         this.saveRecovery(file, jsonBytes(previous));
-      else if (typeof previous === "string" || Buffer.isBuffer(previous))
-        this.saveRecovery(file, previous);
-      const temporary = `${file}.${process.pid}.${randomUUID()}.tmp`;
+      else if (typeof previous === "string") this.saveRecovery(file, previous);
+      temporary = `${file}.${process.pid}.${randomUUID()}.tmp`;
       const fd = fs.openSync(temporary, "wx", 0o600);
       try {
         fs.writeSync(fd, jsonBytes(value));
@@ -519,16 +667,18 @@ export class TaskStore {
         fs.closeSync(fd);
       }
       fs.renameSync(temporary, file);
-      try {
-        const dir = fs.openSync(path.dirname(file), "r");
-        fs.fsyncSync(dir);
-        fs.closeSync(dir);
-      } catch {}
+      temporary = undefined;
+      this.fsyncDirectory(path.dirname(file));
       return success(null, null, value);
     } catch (error) {
       return failure("storage_error", `snapshot replacement failed: ${String(error)}`, {
         path: file,
       });
+    } finally {
+      if (temporary)
+        try {
+          fs.unlinkSync(temporary);
+        } catch {}
     }
   }
 
@@ -536,20 +686,79 @@ export class TaskStore {
     const target = path.basename(file) === "workspace.json" ? "workspace" : "task";
     const id = target === "task" ? path.basename(file, ".json") : "workspace";
     const destination = path.join(this.recoveryDir, `${target}.${id}.${digestBytes(bytes)}.json`);
+    if (fs.existsSync(destination)) {
+      if (digestBytes(fs.readFileSync(destination)) === digestBytes(bytes)) return;
+      throw new Error("recovery copy already exists with different bytes");
+    }
+    let temporary: string | undefined;
     try {
-      fs.writeFileSync(destination, bytes, { flag: "wx", mode: 0o600 });
-    } catch (error: any) {
-      if (error?.code !== "EEXIST") throw error;
+      temporary = `${destination}.${process.pid}.${randomUUID()}.tmp`;
+      const fd = fs.openSync(temporary, "wx", 0o600);
+      try {
+        fs.writeSync(fd, bytes as any);
+        fs.fsyncSync(fd);
+      } finally {
+        fs.closeSync(fd);
+      }
+      fs.renameSync(temporary, destination);
+      temporary = undefined;
+      this.fsyncDirectory(this.recoveryDir);
+    } finally {
+      if (temporary)
+        try {
+          fs.unlinkSync(temporary);
+        } catch {}
     }
   }
 
-  private findRecovery(target: "task" | "workspace", digest: string): string | null {
-    const result = this.recoveryCandidates();
-    if (!result.ok) return null;
-    return (
-      result.data.find((candidate) => candidate.target === target && candidate.digest === digest)
-        ?.path ?? null
-    );
+  private findRecovery(
+    target: "task" | "workspace",
+    taskId: Id | null,
+    digest: string,
+    workspace: WorkspaceRecord | null,
+  ): Buffer | null {
+    if (!fs.existsSync(this.recoveryDir)) return null;
+    const candidates = this.recoveryCandidates();
+    if (!candidates.ok) return null;
+    for (const candidate of candidates.data) {
+      if (candidate.target !== target || candidate.digest !== digest) continue;
+      try {
+        if (!fs.statSync(candidate.path).isFile()) continue;
+        const bytes = fs.readFileSync(candidate.path);
+        if (digestBytes(bytes) !== digest) continue;
+        if (target === "workspace") {
+          const parsed = this.parseBytes<WorkspaceRecord>(bytes, workspaceRecordSchema);
+          if (
+            parsed.ok &&
+            (!workspace || parsed.data.id === workspace.id) &&
+            parsed.data.root === this.root
+          )
+            return bytes;
+        } else {
+          const parsed = this.parseBytes<TaskRecord>(bytes, taskRecordSchema);
+          if (parsed.ok && parsed.data.id === taskId && parsed.data.workspaceId === workspace?.id)
+            return bytes;
+        }
+      } catch {}
+    }
+    return null;
+  }
+
+  private fsyncDirectory(directory: string) {
+    const fd = fs.openSync(directory, "r");
+    try {
+      fs.fsyncSync(fd);
+    } finally {
+      fs.closeSync(fd);
+    }
+  }
+
+  private snapshotBytes(file: string): Buffer | null {
+    try {
+      return fs.readFileSync(file);
+    } catch {
+      return null;
+    }
   }
 
   private readRecord<T>(file: string, schema: { safeParse(value: unknown): any }) {
@@ -618,6 +827,9 @@ export class TaskStore {
   }
   private get lockPath() {
     return path.join(this.workitDir, "metadata.lock");
+  }
+  private get recoveryGatePath() {
+    return path.join(this.workitDir, "recovery.lock");
   }
   private get gitignorePath() {
     return path.join(this.workitDir, ".gitignore");

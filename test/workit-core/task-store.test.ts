@@ -42,6 +42,13 @@ const startedStore = () => {
 };
 
 const identity = (task: TaskRecord) => success(task.revision, null, task);
+const recoveryEvidence = () => () =>
+  success(null, null, { state: "stopped" as const, pid: 0, processStart: null, ownerDigest: null });
+const workspaceRevision = (store: TaskStore) => {
+  const value = store.readWorkspace();
+  if (!value.ok || !value.data) throw new Error("workspace missing");
+  return value.data.revision;
+};
 
 test("creates snapshots atomically and writes the ignore file only on mutation", () => {
   const { store, task } = startedStore();
@@ -99,6 +106,8 @@ test("recovery restores validated bytes with a fresh revision", () => {
     snapshotDigest: taskCandidate.digest,
     reason: "crash recovery",
     authorityRefs: [],
+    expectedWorkspaceRevision: workspaceRevision(store),
+    processEvidence: recoveryEvidence(),
   });
   expect(recovered.ok).toBe(true);
   if (recovered.ok) expect(recovered.data.revision).not.toBe(task.revision);
@@ -106,6 +115,77 @@ test("recovery restores validated bytes with a fresh revision", () => {
     ok: false,
     code: "revision_conflict",
   });
+});
+
+test("recovery cannot use caller booleans as process authority", () => {
+  const { store, task } = startedStore();
+  const changed = store.mutateTask(task.id, task.revision, identity);
+  expect(changed.ok).toBe(true);
+  const candidate = store.recoveryCandidates();
+  expect(candidate.ok).toBe(true);
+  if (!candidate.ok) throw new Error(candidate.error);
+  const taskCandidate = candidate.data.find((item) => item.target === "task");
+  if (!taskCandidate) throw new Error("missing task recovery candidate");
+  const file = join(store.root, ".workit", "tasks", `${task.id}.json`);
+  writeFileSync(file, "{broken");
+  const recovered = store.recoverTask(task.id, {
+    expectedBytes: sha256("{broken"),
+    snapshotDigest: taskCandidate.digest,
+    reason: "caller assertion",
+    authorityRefs: [],
+    expectedWorkspaceRevision: workspaceRevision(store),
+    processEvidence: () => failure("recovery_required", "no native evidence"),
+    processStopped: true,
+  } as any);
+  expect(recovered).toMatchObject({ ok: false, code: "recovery_required" });
+});
+
+test("recovery rejects a candidate whose bytes do not belong to the task", () => {
+  const { store, task } = startedStore();
+  const file = join(store.root, ".workit", "tasks", `${task.id}.json`);
+  const forged = JSON.parse(readFileSync(file, "utf8")) as TaskRecord;
+  forged.id = "00000000-0000-4000-8000-000000000099";
+  const forgedBytes = `${JSON.stringify(forged)}\n`;
+  writeFileSync(
+    join(store.root, ".workit", "recovery", `task.${task.id}.${sha256(forgedBytes)}.json`),
+    forgedBytes,
+  );
+  writeFileSync(file, "{broken");
+  const recovered = store.recoverTask(task.id, {
+    expectedBytes: sha256("{broken"),
+    snapshotDigest: sha256(forgedBytes),
+    reason: "forged candidate",
+    authorityRefs: [],
+    expectedWorkspaceRevision: workspaceRevision(store),
+    processEvidence: recoveryEvidence(),
+  });
+  expect(recovered).toMatchObject({ ok: false, code: "recovery_required" });
+});
+
+test("workspace recovery requires its own CAS revision and preserves a clean owner", () => {
+  const { store, task } = startedStore();
+  const workspace = store.readWorkspace();
+  if (!workspace.ok || !workspace.data) throw new Error("workspace missing");
+  const changed = store.mutateWorkspace(workspace.data.revision, (current, context) =>
+    success(context.revision, context.revision, current),
+  );
+  expect(changed.ok).toBe(true);
+  const candidates = store.recoveryCandidates();
+  if (!candidates.ok) throw new Error(candidates.error);
+  const candidate = candidates.data.find((item) => item.target === "workspace");
+  if (!candidate) throw new Error("missing workspace recovery candidate");
+  const file = join(store.root, ".workit", "workspace.json");
+  writeFileSync(file, "{broken");
+  const recovered = store.recoverWorkspace({
+    expectedBytes: sha256("{broken"),
+    snapshotDigest: candidate.digest,
+    expectedWorkspaceRevision: workspace.data.revision,
+    reason: "workspace recovery",
+    authorityRefs: [],
+    processEvidence: recoveryEvidence(),
+  });
+  expect(recovered).toMatchObject({ ok: true, data: { writer: null } });
+  void task;
 });
 
 test("coupled mutation retains uncertain workspace ownership after task failure", () => {
@@ -130,7 +210,9 @@ test("coupled mutation retains uncertain workspace ownership after task failure"
           },
         },
       }),
-    task: () => failure("storage_error", "simulated task failure"),
+    task: () => {
+      throw new Error("simulated task failure");
+    },
   });
   expect(result).toMatchObject({ ok: false, code: "external_outcome_unknown" });
   expect(store.readWorkspace()).toMatchObject({
