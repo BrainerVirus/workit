@@ -125,7 +125,8 @@ reconciliation before any write.
 
 ## Verification
 
-- Commit: `28bbafd..ea4f4e9`, `feat(core): select focused Workit methods`.
+- Commit range: `28bbafd..c297099` (implementation `ea4f4e9`; additive report
+  evidence `c297099`).
 - `bun test test/workit-core/methods.test.ts`: 9 passed; covers mechanical
   no-method selection, independent TDD/review, challenge/plan/helper independence,
   unavailable review, stable order, deduplication, and compact bootstrap.
