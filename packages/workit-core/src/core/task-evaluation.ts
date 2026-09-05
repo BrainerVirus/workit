@@ -375,7 +375,9 @@ const applicableDecision = (
         decision.binding.scope &&
         scopeCovers(decision.binding.scope, requirement.scope) &&
         decision.digest === decisionDigest(decision) &&
-        (checkoutRoot ? verifyDecisionContentAtRoot(checkoutRoot, decision.binding).ok : true),
+        (checkoutRoot
+          ? verifyDecisionContentAtRoot(checkoutRoot, decision.binding).ok
+          : decision.binding.contentRefs.every((reference) => reference.kind !== "file")),
     );
 
 const applicableRequirementDecision = (
@@ -395,7 +397,9 @@ const applicableRequirementDecision = (
         data.requirementIds.includes(requirement.id) &&
         scopeCovers(data.binding.scope, requirement.scope) &&
         data.digest === decisionDigest(data) &&
-        (checkoutRoot ? verifyDecisionContentAtRoot(checkoutRoot, data.binding).ok : true),
+        (checkoutRoot
+          ? verifyDecisionContentAtRoot(checkoutRoot, data.binding).ok
+          : data.binding.contentRefs.every((reference) => reference.kind !== "file")),
     )
     .map(({ id }) => ({ id }));
 
@@ -417,9 +421,9 @@ export function evaluateRequirements(
   task: TaskRecord,
   workspace: WorkspaceRecord,
   capabilities: Capability[],
-  candidate: Candidate | null = task.candidates.at(-1) ?? null,
+  candidate: Candidate | null,
+  checkoutRoot: string,
   _caller?: Caller,
-  checkoutRoot?: string,
 ) {
   const evidence = evaluateEvidence(task, candidate);
   if (task.policy && task.policy.policyVersion !== POLICY_VERSION)

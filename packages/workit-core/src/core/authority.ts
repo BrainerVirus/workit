@@ -11,6 +11,8 @@ import {
   success,
   type Decision,
   type Entry,
+  type Caller,
+  type Digest,
   type Id,
   type Provenance,
   type Ref,
@@ -22,20 +24,72 @@ import {
 import { TaskStore } from "./task-store";
 
 export type NativeAuthorityContext = {
-  provenance: Provenance;
   now: Utc;
 };
 
-export type NativeDecisionObservation = {
-  receipt: Ref;
-  provenance: Provenance;
+export type NativeDecisionVerification = {
+  observation: unknown;
+  expected: {
+    taskId: Id;
+    workspaceId: Id;
+    purpose: Decision["purpose"];
+    response: Decision["response"];
+    binding: Decision["binding"];
+    bindingBytes: string;
+    digest: Digest;
+    requirementIds: Digest[];
+  };
+  caller: Caller;
 };
 
-export type NativeActionObservation = {
-  actionRef: Ref;
-  effect: "none" | "performed" | "unknown";
-  receipt: Ref;
+export type NativeActionVerification = {
+  observation: unknown;
+  expected: {
+    taskId: Id;
+    workspaceId: Id;
+    decisionId: Id;
+    actionRef: Ref;
+    taskRevision: Revision;
+    workspaceRevision: Revision;
+    outcome: "reserve" | "succeeded" | "not_started" | "unknown";
+    decision: Pick<Decision, "purpose" | "response" | "binding" | "digest" | "requirementIds">;
+  };
+  caller: Caller;
+};
+
+export type NativeAuthorityVerifier = {
+  verifyDecision: (input: NativeDecisionVerification) => Result<Provenance>;
+  verifyAction: (input: NativeActionVerification) => Result<Provenance>;
+};
+
+type VerifiedNativeAuthority = {
+  kind: "decision" | "action";
   provenance: Provenance;
+  taskId: Id;
+  workspaceId: Id;
+  decisionId?: Id;
+  purpose?: Decision["purpose"];
+  response?: Decision["response"];
+  binding?: Decision["binding"];
+  bindingBytes?: string;
+  digest?: Digest;
+  requirementIds?: Digest[];
+  actionRef?: Ref;
+  taskRevision?: Revision;
+  workspaceRevision?: Revision;
+  outcome?: "reserve" | "succeeded" | "not_started" | "unknown";
+};
+
+const verifiedAuthorities = new WeakSet<object>();
+
+const trustedAuthority = (
+  kind: VerifiedNativeAuthority["kind"],
+  provenance: Provenance,
+  expected: Omit<VerifiedNativeAuthority, "kind" | "provenance">,
+): VerifiedNativeAuthority => {
+  const token = { kind, provenance, ...expected };
+  verifiedAuthorities.add(token);
+  return token;
 };
 
 export type ReserveActionInput = {
@@ -48,6 +102,7 @@ export type ReserveActionInput = {
   binding?: Decision["binding"];
   step?: string;
   steps?: string[];
+  authority: VerifiedNativeAuthority;
   native?: NativeAuthorityContext;
 };
 
@@ -70,7 +125,7 @@ export type SettleActionInput = {
   workspaceRevision: Revision;
   outcome: "succeeded" | "not_started" | "unknown";
   step?: string;
-  observation: NativeActionObservation;
+  authority: VerifiedNativeAuthority;
   native?: NativeAuthorityContext;
 };
 
@@ -113,54 +168,125 @@ const decisionMatches = (
 
 const sameRef = (left: Ref, right: Ref): boolean => canonicalJson(left) === canonicalJson(right);
 
-const validNativeReceipt = (observation: { receipt: Ref; provenance: Provenance }): boolean => {
-  if (!refSchema.safeParse(observation.receipt).success) return false;
-  if (!provenanceSchema.safeParse(observation.provenance).success) return false;
-  if (
-    observation.receipt.kind !== "host" ||
-    observation.receipt.host !== observation.provenance.host ||
-    observation.provenance.session?.kind !== "host" ||
-    observation.provenance.session.host !== observation.provenance.host
-  )
-    return false;
+const validProvenance = (value: unknown, caller: Caller): value is Provenance => {
+  if (!provenanceSchema.safeParse(value).success) return false;
+  const provenance = value as Provenance;
   return (
-    observation.provenance.kind === "host_observed" &&
-    observation.provenance.receipts.some((receipt) => sameRef(receipt, observation.receipt))
+    provenance.kind === "host_observed" &&
+    provenance.host === caller.host &&
+    provenance.session?.kind === "host" &&
+    provenance.session.host === caller.host &&
+    provenance.session.handle === caller.actor &&
+    provenance.receipts.some((receipt) => receipt.kind === "host" && receipt.host === caller.host)
   );
 };
 
-export const validateNativeDecisionObservation = (observation: NativeDecisionObservation) =>
-  validNativeReceipt(observation)
-    ? success(null, null, null)
-    : failure("permission_denied", "native decision receipt is not validated");
-
-export const validateNativeActionObservation = (
-  observation: NativeActionObservation,
-  outcome: SettleActionInput["outcome"],
-  actionRef: Ref,
-) => {
-  if (!observation || typeof observation !== "object")
-    return failure("invalid_input", "native action observation is required");
-  if (!validNativeReceipt(observation))
-    return failure("permission_denied", "native action receipt is not validated");
-  if (!sameRef(observation.actionRef, actionRef))
-    return failure("permission_denied", "native action reference does not match reservation");
-  const expectedEffect =
-    outcome === "succeeded" ? "performed" : outcome === "not_started" ? "none" : "unknown";
-  if (observation.effect !== expectedEffect)
-    return failure("permission_denied", "native action effect does not match settlement");
-  return success(null, null, null);
+export const verifyNativeDecision = (
+  verifier: NativeAuthorityVerifier | undefined,
+  input: NativeDecisionVerification,
+): Result<VerifiedNativeAuthority> => {
+  if (!verifier) return failure("permission_denied", "native authority verifier is unavailable");
+  const result = verifier.verifyDecision(input);
+  if (!result.ok || !validProvenance(result.data, input.caller))
+    return failure("permission_denied", "native decision observation was not attested");
+  return success(
+    null,
+    null,
+    trustedAuthority("decision", result.data, {
+      taskId: input.expected.taskId,
+      workspaceId: input.expected.workspaceId,
+      purpose: input.expected.purpose,
+      response: input.expected.response,
+      binding: input.expected.binding,
+      bindingBytes: input.expected.bindingBytes,
+      digest: input.expected.digest,
+      requirementIds: [...input.expected.requirementIds],
+    }),
+  );
 };
+
+export const verifyNativeAction = (
+  verifier: NativeAuthorityVerifier | undefined,
+  input: NativeActionVerification,
+): Result<VerifiedNativeAuthority> => {
+  if (!verifier) return failure("permission_denied", "native authority verifier is unavailable");
+  const result = verifier.verifyAction(input);
+  if (!result.ok || !validProvenance(result.data, input.caller))
+    return failure("permission_denied", "native action observation was not attested");
+  return success(
+    null,
+    null,
+    trustedAuthority("action", result.data, {
+      taskId: input.expected.taskId,
+      workspaceId: input.expected.workspaceId,
+      decisionId: input.expected.decisionId,
+      actionRef: input.expected.actionRef,
+      taskRevision: input.expected.taskRevision,
+      workspaceRevision: input.expected.workspaceRevision,
+      outcome: input.expected.outcome,
+      purpose: input.expected.decision.purpose,
+      response: input.expected.decision.response,
+      binding: input.expected.decision.binding,
+      digest: input.expected.decision.digest,
+      requirementIds: [...input.expected.decision.requirementIds],
+    }),
+  );
+};
+
+const authorityMatches = (
+  authority: VerifiedNativeAuthority,
+  expected: {
+    taskId: Id;
+    workspaceId: Id;
+    decisionId: Id;
+    actionRef: Ref;
+    taskRevision: Revision;
+    workspaceRevision: Revision;
+    outcome: VerifiedNativeAuthority["outcome"];
+  },
+): boolean =>
+  verifiedAuthorities.has(authority) &&
+  authority.kind === "action" &&
+  authority.taskId === expected.taskId &&
+  authority.workspaceId === expected.workspaceId &&
+  authority.decisionId === expected.decisionId &&
+  sameRef(authority.actionRef!, expected.actionRef) &&
+  authority.taskRevision === expected.taskRevision &&
+  authority.workspaceRevision === expected.workspaceRevision &&
+  authority.outcome === expected.outcome;
+
+const authorityDecisionMatches = (
+  authority: VerifiedNativeAuthority,
+  decision: Decision,
+): boolean =>
+  authority.purpose === decision.purpose &&
+  authority.response === decision.response &&
+  authority.digest === decision.digest &&
+  canonicalJson(authority.binding) === canonicalJson(decision.binding) &&
+  canonicalJson(authority.requirementIds) === canonicalJson(decision.requirementIds);
+
+const provenanceMatches = (left: Provenance, right: Provenance): boolean =>
+  left.kind === "host_observed" &&
+  right.kind === "host_observed" &&
+  left.host === right.host &&
+  canonicalJson(left.session) === canonicalJson(right.session);
 
 /** Return only still-valid, approved decisions for the exact requested binding. */
 export function applicableDecision(
   task: TaskRecord,
   purpose: Decision["purpose"],
   binding: Decision["binding"],
+  checkoutRoot?: string,
 ): Decision[] {
   if (binding.taskId !== task.id || binding.workspaceId !== task.workspaceId) return [];
   return task.decisions
-    .filter((entry) => decisionMatches(entry, purpose, binding))
+    .filter(
+      (entry) =>
+        decisionMatches(entry, purpose, binding) &&
+        (checkoutRoot
+          ? verifyDecisionContentAtRoot(checkoutRoot, entry.data.binding).ok
+          : entry.data.binding.contentRefs.every((reference) => reference.kind !== "file")),
+    )
     .map((entry) => entry.data);
 }
 
@@ -238,9 +364,27 @@ const validateAction = (
   const decision = entry.data;
   if (decision.purpose !== "action")
     return failure("permission_denied", "decision is not an action approval");
+  if (
+    !authorityMatches(input.authority, {
+      taskId: task.id,
+      workspaceId,
+      decisionId: input.decisionId,
+      actionRef: input.actionRef,
+      taskRevision: input.expectedRevision,
+      workspaceRevision: input.expectedWorkspaceRevision,
+      outcome: "reserve",
+    })
+  )
+    return failure("permission_denied", "native reservation authority is not bound");
+  if (!authorityDecisionMatches(input.authority, decision))
+    return failure("permission_denied", "native reservation authority does not match decision");
   if (decision.response !== "approved")
     return failure("permission_denied", "decision was rejected");
-  if (entry.provenance.kind !== "host_observed" || entry.provenance.receipts.length === 0)
+  if (
+    entry.provenance.kind !== "host_observed" ||
+    entry.provenance.receipts.length === 0 ||
+    !provenanceMatches(entry.provenance, input.authority.provenance)
+  )
     return failure("permission_denied", "action approval lacks native receipt assurance");
   if (decision.revoked) return failure("permission_denied", "decision is revoked");
   if (decision.digest !== decisionDigest(decision))
@@ -275,6 +419,8 @@ const validateAction = (
 export function reserveAction(input: ReserveActionInput): Result<ActionReservation> {
   if (!input.store || !input.expectedRevision || !input.expectedWorkspaceRevision)
     return failure("invalid_input", "action reservation preconditions are required");
+  if (!verifiedAuthorities.has(input.authority))
+    return failure("permission_denied", "native reservation authority is not verified");
   const changed = input.store.mutateTask(
     input.taskId,
     input.expectedRevision,
@@ -365,12 +511,17 @@ export function settleAction(input: SettleActionInput): Result<Entry<Decision>> 
     return failure("invalid_input", "action settlement preconditions are required");
   if (!refSchema.safeParse(input.actionRef).success)
     return failure("invalid_input", "action reference is invalid");
-  const observation = validateNativeActionObservation(
-    input.observation,
-    input.outcome,
-    input.actionRef,
-  );
-  if (!observation.ok) return observation as Result<never>;
+  if (
+    !verifiedAuthorities.has(input.authority) ||
+    input.authority.kind !== "action" ||
+    input.authority.taskId !== input.taskId ||
+    input.authority.decisionId !== input.decisionId ||
+    !sameRef(input.authority.actionRef!, input.actionRef) ||
+    input.authority.taskRevision !== input.taskRevision ||
+    input.authority.workspaceRevision !== input.workspaceRevision ||
+    input.authority.outcome !== input.outcome
+  )
+    return failure("permission_denied", "native settlement authority is not verified");
   let outcomeResult: Result<Entry<Decision>> | null = null;
   const changed = input.store.mutateTask(
     input.taskId,
@@ -379,6 +530,18 @@ export function settleAction(input: SettleActionInput): Result<Entry<Decision>> 
       const workspace = input.store.readWorkspace();
       if (!workspace.ok) return workspace as Result<never>;
       if (!workspace.data) return failure("not_found", "workspace not found");
+      if (
+        !authorityMatches(input.authority, {
+          taskId: input.taskId,
+          workspaceId: workspace.data.id,
+          decisionId: input.decisionId,
+          actionRef: input.actionRef,
+          taskRevision: input.taskRevision,
+          workspaceRevision: input.workspaceRevision,
+          outcome: input.outcome,
+        })
+      )
+        return failure("permission_denied", "native settlement authority does not match context");
       if (workspace.data.revision !== input.workspaceRevision)
         return failure("revision_conflict", "workspace revision does not match", {
           expectedWorkspaceRevision: input.workspaceRevision,
@@ -386,6 +549,10 @@ export function settleAction(input: SettleActionInput): Result<Entry<Decision>> 
         });
       const entry = current.decisions.find((candidate) => candidate.id === input.decisionId);
       if (!entry) return failure("not_found", "decision not found");
+      if (!authorityDecisionMatches(input.authority, entry.data))
+        return failure("permission_denied", "native settlement authority does not match decision");
+      if (!provenanceMatches(entry.provenance, input.authority.provenance))
+        return failure("permission_denied", "native settlement caller does not match approval");
       if (entry.data.purpose !== "action" || entry.data.digest !== decisionDigest(entry.data))
         return failure("permission_denied", "decision binding is invalid");
       if (entry.data.consumption?.state === "uncertain")

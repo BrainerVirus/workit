@@ -553,6 +553,15 @@ export const actionProgressSchema = z
       });
   });
 export type ActionProgress = z.infer<typeof actionProgressSchema>;
+export const actionProgressListSchema = z.array(actionProgressSchema).check((ctx) => {
+  if (new Set(ctx.value.map((progress) => progress.decisionId)).size !== ctx.value.length)
+    ctx.issues.push({
+      code: "custom",
+      input: ctx.value,
+      message: "action progress decision ids must be unique",
+      path: ["decisionId"],
+    });
+});
 export const taskRecordSchema = z
   .object({
     schemaVersion: z.literal(1),
@@ -573,7 +582,7 @@ export const taskRecordSchema = z
     candidates: z.array(candidateSchema),
     evidence: z.array(entrySchema(evidenceSchema)),
     decisions: z.array(entrySchema(decisionSchema)),
-    actionProgress: z.array(actionProgressSchema).optional(),
+    actionProgress: actionProgressListSchema.optional(),
     findings: z.array(entrySchema(findingSchema)),
     workers: z.array(entrySchema(workerSchema)),
   })

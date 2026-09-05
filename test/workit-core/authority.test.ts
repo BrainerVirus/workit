@@ -4,6 +4,8 @@ import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  applicableDecision,
+  evaluateRequirements,
   WorkitCore,
   TaskStore,
   captureCandidate,
@@ -12,12 +14,73 @@ import {
 } from "../../packages/workit-core/src/core";
 import { assessment, caller, ref, scope, taskStartRequest } from "./task-fixtures";
 
-const context = (root: string): OperationContext => ({
-  root,
-  caller: caller(),
-  capabilities: [],
-  constraints: [],
-  now: "2026-01-01T00:00:00Z",
+const context = (root: string, authority = verifier()): OperationContext =>
+  ({
+    root,
+    caller: caller(),
+    capabilities: [],
+    constraints: [],
+    now: "2026-01-01T00:00:00Z",
+    nativeAuthority: authority,
+  }) as OperationContext;
+
+const attested = (host: "workit_cli" | "cursor" = "workit_cli", handle = "receipt") => {
+  const receipt = { kind: "host" as const, host, handle };
+  return {
+    kind: "host_observed" as const,
+    host,
+    session: { kind: "host" as const, host, handle: "test" },
+    workerId: null,
+    receipts: [receipt],
+  };
+};
+
+const verifier = (calls: Array<Record<string, unknown>> = []) => ({
+  verifyDecision: (input: Record<string, unknown>) => {
+    calls.push({ kind: "decision", ...input });
+    if ((input.observation as { kind?: string } | undefined)?.kind !== "decision")
+      return {
+        ok: false as const,
+        schemaVersion: 1 as const,
+        code: "permission_denied" as const,
+        error: "untrusted decision observation",
+        details: {},
+      };
+    return {
+      ok: true,
+      schemaVersion: 1 as const,
+      revision: null,
+      workspaceRevision: null,
+      data: attested("workit_cli"),
+    };
+  },
+  verifyAction: (input: Record<string, unknown>) => {
+    calls.push({ kind: "action", ...input });
+    const observation = input.observation as
+      | { kind?: string; provenance?: { host?: string }; actionRef?: unknown }
+      | undefined;
+    const expected = input.expected as { actionRef?: unknown };
+    if (
+      observation?.kind !== "action" ||
+      observation.provenance?.host !== (input.caller as { host?: string }).host ||
+      (observation.actionRef !== undefined &&
+        JSON.stringify(observation.actionRef) !== JSON.stringify(expected.actionRef))
+    )
+      return {
+        ok: false as const,
+        schemaVersion: 1 as const,
+        code: "permission_denied" as const,
+        error: "untrusted action observation",
+        details: {},
+      };
+    return {
+      ok: true,
+      schemaVersion: 1 as const,
+      revision: null,
+      workspaceRevision: null,
+      data: attested("workit_cli"),
+    };
+  },
 });
 
 const active = () => {
@@ -41,29 +104,39 @@ const actionBinding = (task: ReturnType<typeof active>["task"], workspaceId: str
   contentRefs: [],
 });
 
-const nativeObservation = (
+const nativeObservationFor = (
+  host: "workit_cli" | "cursor",
   handle: string,
   effect: "none" | "performed" | "unknown" = "performed",
 ) => {
   const receipt = {
     kind: "host" as const,
-    host: "workit_cli" as const,
+    host,
     handle: `receipt-${handle}`,
   };
   return {
+    kind: "action" as const,
     receipt,
     effect,
     provenance: {
       kind: "host_observed" as const,
-      host: "workit_cli" as const,
-      session: { kind: "host" as const, host: "workit_cli" as const, handle: "test" },
+      host,
+      session: { kind: "host" as const, host, handle: "test" },
       workerId: null,
       receipts: [receipt],
     },
   };
 };
 
-const nativeDecision = (handle: string) => nativeObservation(`decision-${handle}`);
+const nativeObservation = (
+  handle: string,
+  effect: "none" | "performed" | "unknown" = "performed",
+) => nativeObservationFor("workit_cli", handle, effect);
+
+const nativeDecision = (handle: string) => ({
+  ...nativeObservation(`decision-${handle}`),
+  kind: "decision" as const,
+});
 
 const recordNativeDecision = (core: WorkitCore, request: Record<string, unknown>, handle: string) =>
   core.observeDecision(request, nativeDecision(handle));
@@ -87,6 +160,142 @@ test("decision.record keeps claimed approval agent-reported and native observati
   expect(result.data.provenance).toMatchObject({ kind: "agent_reported", host: "workit_cli" });
 });
 
+test("same-host forged native observations are rejected by the trusted verifier", () => {
+  const { core, task, workspace } = active();
+  const request = {
+    schemaVersion: 1,
+    action: "record" as const,
+    taskId: task.id,
+    expectedRevision: task.revision,
+    purpose: "action" as const,
+    binding: actionBinding(task, workspace.id),
+    response: "approved" as const,
+    requirementIds: [],
+  };
+  expect(core.observeDecision(request, nativeObservation("forged"))).toMatchObject({
+    ok: false,
+    code: "permission_denied",
+  });
+});
+
+test("native approval receipts are bound once to the exact decision purpose and bytes", () => {
+  const { root, store, task, workspace } = active();
+  const calls: Array<Record<string, unknown>> = [];
+  const core = new WorkitCore(store, context(root, verifier(calls)));
+  const binding = actionBinding(task, workspace.id);
+  const firstRequest = {
+    schemaVersion: 1,
+    action: "record" as const,
+    taskId: task.id,
+    expectedRevision: task.revision,
+    purpose: "action" as const,
+    binding,
+    response: "approved" as const,
+    requirementIds: [],
+  };
+  const receiptObservation = nativeDecision("receipt-reuse");
+  const first = core.observeDecision(firstRequest, receiptObservation);
+  expect(first).toMatchObject({ ok: true });
+  if (!first.ok) throw new Error(first.error);
+  expect(calls[0]?.expected).toMatchObject({
+    taskId: task.id,
+    workspaceId: workspace.id,
+    purpose: "action",
+    response: "approved",
+    binding,
+    requirementIds: [],
+  });
+  const current = store.readTask(task.id);
+  if (!current.ok) throw new Error(current.error);
+  expect(
+    core.observeDecision(
+      { ...firstRequest, expectedRevision: current.data.revision, purpose: "design" },
+      receiptObservation,
+    ),
+  ).toMatchObject({ ok: false, code: "permission_denied" });
+});
+
+test("cross-host settlement observations cannot settle a caller-bound reservation", () => {
+  const { core, store, task, workspace } = active();
+  const recorded = recordNativeDecision(
+    core,
+    {
+      schemaVersion: 1,
+      action: "record",
+      taskId: task.id,
+      expectedRevision: task.revision,
+      purpose: "action",
+      binding: actionBinding(task, workspace.id),
+      response: "approved",
+      requirementIds: [],
+    },
+    "cross-host",
+  );
+  if (!recorded.ok) throw new Error(recorded.error);
+  const current = store.readTask(task.id);
+  if (!current.ok) throw new Error(current.error);
+  const reservation = core.reserveAction({
+    taskId: task.id,
+    decisionId: recorded.data.id,
+    actionRef: { kind: "host", host: "workit_cli", handle: "cross-host-action" },
+    expectedRevision: current.data.revision,
+    expectedWorkspaceRevision: workspace.revision,
+    observation: nativeObservation("cross-host-action"),
+  });
+  if (!reservation.ok) throw new Error(reservation.error);
+  expect(
+    core.settleAction({
+      ...reservation.data,
+      outcome: "succeeded",
+      observation: {
+        ...nativeObservationFor("cursor", "cross-host", "performed"),
+        actionRef: reservation.data.actionRef,
+      },
+    }),
+  ).toMatchObject({ ok: false, code: "permission_denied" });
+});
+
+test("finding.record preserves agent-reported provenance without native observation", () => {
+  const { core, task } = active();
+  const result = core.finding({
+    schemaVersion: 1,
+    action: "record",
+    taskId: task.id,
+    expectedRevision: task.revision,
+    claim: "agent finding",
+    consequence: "needs review",
+    scope: task.intent.data.scope,
+    candidateId: null,
+    refs: [ref()],
+  });
+  expect(result).toMatchObject({ ok: true, data: { provenance: { kind: "agent_reported" } } });
+});
+
+test("content-bound decisions are inapplicable without a verified checkout root", () => {
+  const { core, store, task, workspace, root } = active();
+  const file = join(root, "bound.md");
+  writeFileSync(file, "bound");
+  const digest = createHash("sha256").update(readFileSync(file)).digest("hex");
+  const binding = {
+    ...actionBinding(task, workspace.id),
+    contentRefs: [{ kind: "file" as const, path: "bound.md", digest }],
+  };
+  const decision = core.decision({
+    schemaVersion: 1,
+    action: "record",
+    taskId: task.id,
+    expectedRevision: task.revision,
+    purpose: "design",
+    binding,
+    response: "approved",
+    requirementIds: [],
+  });
+  if (!decision.ok) throw new Error(decision.error);
+  const current = store.readTask(task.id);
+  if (!current.ok) throw new Error(current.error);
+  expect(applicableDecision(current.data, "design", binding)).toEqual([]);
+});
+
 test("agent-reported approval cannot reserve, while a receipt-bound native approval can", () => {
   const { core, store, task, workspace } = active();
   const request = {
@@ -107,6 +316,7 @@ test("agent-reported approval cannot reserve, while a receipt-bound native appro
     actionRef: { kind: "host", host: "workit_cli", handle: "agent-action" },
     expectedRevision: reported.revision!,
     expectedWorkspaceRevision: workspace.revision,
+    observation: nativeObservation("agent-action"),
   });
   expect(blocked).toMatchObject({ ok: false, code: "permission_denied" });
   const nativeTask = store.readTask(task.id);
@@ -127,6 +337,7 @@ test("agent-reported approval cannot reserve, while a receipt-bound native appro
       actionRef: { kind: "host", host: "workit_cli", handle: "native-action" },
       expectedRevision: reserveTask.data.revision,
       expectedWorkspaceRevision: workspace.revision,
+      observation: nativeObservation("native-action"),
     }),
   ).toMatchObject({ ok: true });
 });
@@ -153,6 +364,7 @@ test("settlement requires a receipt-bound native observation and exact action bi
     actionRef: { kind: "host", host: "workit_cli", handle: "settled-action" },
     expectedRevision: current.data.revision,
     expectedWorkspaceRevision: workspace.revision,
+    observation: nativeObservation("settled-action"),
   });
   if (!reservation.ok) throw new Error(reservation.error);
   expect(core.settleAction({ ...reservation.data, outcome: "not_started" } as any)).toMatchObject({
@@ -214,6 +426,8 @@ test("stale limitation document bytes stop accepted-limitations applicability", 
   });
   expect(decision).toMatchObject({ ok: true });
   if (!decision.ok) throw new Error(decision.error);
+  const decisionTask = store.readTask(task.id);
+  if (!decisionTask.ok) throw new Error(decisionTask.error);
   const before = core.task({
     schemaVersion: 1,
     action: "inspect",
@@ -226,6 +440,8 @@ test("stale limitation document bytes stop accepted-limitations applicability", 
       ?.status,
   ).toBe("accepted_limitation");
   writeFileSync(file, "drifted limitation");
+  const blind = evaluateRequirements(decisionTask.data, workspace, [], null, root);
+  expect(blind.find((item) => item.requirementId === requirement.id)?.status).toBe("unsatisfied");
   const after = core.task({
     schemaVersion: 1,
     action: "inspect",
@@ -342,6 +558,7 @@ test("bounded progress persists after an intermediate native settlement", () => 
     step: "one",
     expectedRevision: current.data.revision,
     expectedWorkspaceRevision: workspace.revision,
+    observation: nativeObservation("step-one"),
   });
   if (!first.ok) throw new Error(first.error);
   expect(
@@ -371,6 +588,7 @@ test("bounded progress persists after an intermediate native settlement", () => 
     step: "two",
     expectedRevision: restartedTask.data.revision,
     expectedWorkspaceRevision: restartedWorkspace.data.revision,
+    observation: nativeObservation("step-two"),
   });
   expect(second).toMatchObject({
     ok: true,
@@ -416,6 +634,7 @@ test("two invocations cannot reserve one bounded approval", () => {
     actionRef: { kind: "host" as const, host: "workit_cli" as const, handle: "native-1" },
     expectedRevision: current.data.revision,
     expectedWorkspaceRevision: currentWorkspace.data.revision,
+    observation: nativeObservation("native-1"),
   };
   expect(core.reserveAction(input)).toMatchObject({ ok: true });
   const after = store.readTask(task.id);
@@ -426,6 +645,7 @@ test("two invocations cannot reserve one bounded approval", () => {
       ...input,
       expectedRevision: after.data.revision,
       expectedWorkspaceRevision: afterWorkspace.data.revision,
+      observation: nativeObservation("native-1-repeat"),
     }),
   ).toMatchObject({ ok: false, code: "permission_denied" });
 });
@@ -457,6 +677,7 @@ test("ambiguous settlement blocks blind retry and not_started releases only with
     actionRef: { kind: "host", host: "workit_cli", handle: "native-1" },
     expectedRevision: current.data.revision,
     expectedWorkspaceRevision: currentWorkspace.data.revision,
+    observation: nativeObservation("native-1-unknown"),
   });
   if (!reservation.ok) throw new Error(reservation.error);
   const settled = core.settleAction({
@@ -479,6 +700,7 @@ test("ambiguous settlement blocks blind retry and not_started releases only with
       actionRef: { kind: "host", host: "workit_cli", handle: "native-2" },
       expectedRevision: after.data.revision,
       expectedWorkspaceRevision: afterWorkspace.data.revision,
+      observation: nativeObservation("native-2-unknown"),
     }),
   ).toMatchObject({ ok: false, code: "external_outcome_unknown" });
 });
@@ -515,6 +737,7 @@ test("bounded workflows advance once and cannot repeat a completed step", () => 
     step: "one",
     expectedRevision: current.data.revision,
     expectedWorkspaceRevision: currentWorkspace.data.revision,
+    observation: nativeObservation("one"),
   });
   if (!first.ok) throw new Error(first.error);
   const settledFirst = core.settleAction({
@@ -534,6 +757,7 @@ test("bounded workflows advance once and cannot repeat a completed step", () => 
     step: "two",
     expectedRevision: afterFirst.data.revision,
     expectedWorkspaceRevision: afterFirstWorkspace.data.revision,
+    observation: nativeObservation("two"),
   });
   expect(second).toMatchObject({
     ok: true,
@@ -559,6 +783,7 @@ test("bounded workflows advance once and cannot repeat a completed step", () => 
       step: "one",
       expectedRevision: afterSecond.data.revision,
       expectedWorkspaceRevision: afterSecondWorkspace.data.revision,
+      observation: nativeObservation("repeat"),
     }),
   ).toMatchObject({ ok: false, code: "permission_denied" });
 });
@@ -656,6 +881,7 @@ test("action reservation rejects changed approved document bytes and scope", () 
       binding: { ...binding, scope: scope({ paths: ["other"] }) },
       expectedRevision: current.data.revision,
       expectedWorkspaceRevision: currentWorkspace.data.revision,
+      observation: nativeObservation("native-1-drift"),
     }),
   ).toMatchObject({ ok: false, code: "permission_denied" });
   expect(
@@ -665,6 +891,7 @@ test("action reservation rejects changed approved document bytes and scope", () 
       actionRef: { kind: "host", host: "workit_cli", handle: "native-1" },
       expectedRevision: current.data.revision,
       expectedWorkspaceRevision: currentWorkspace.data.revision,
+      observation: nativeObservation("native-1-drift-repeat"),
     }),
   ).toMatchObject({ ok: false, code: "permission_denied" });
 });
@@ -703,6 +930,7 @@ test("rejected and revoked decisions never authorize actions, and provenance is 
       actionRef: { kind: "host", host: "workit_cli", handle: "native-1" },
       expectedRevision: after.data.revision,
       expectedWorkspaceRevision: workspace.revision,
+      observation: nativeObservation("rejected"),
     }),
   ).toMatchObject({ ok: false, code: "permission_denied" });
   const approved = recordNativeDecision(
@@ -740,6 +968,7 @@ test("rejected and revoked decisions never authorize actions, and provenance is 
       actionRef: { kind: "host", host: "workit_cli", handle: "native-2" },
       expectedRevision: revokedTask.data.revision,
       expectedWorkspaceRevision: workspace.revision,
+      observation: nativeObservation("revoked"),
     }),
   ).toMatchObject({ ok: false, code: "permission_denied" });
 });

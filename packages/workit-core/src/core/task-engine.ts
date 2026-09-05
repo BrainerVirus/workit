@@ -1,5 +1,6 @@
 import { realpathSync } from "node:fs";
 import {
+  canonicalJson,
   failure,
   decisionDigest,
   newId,
@@ -26,10 +27,11 @@ import {
   storedDecisionApplicable,
   reserveAction as reserveBoundedAction,
   settleAction as settleBoundedAction,
-  validateNativeDecisionObservation,
+  verifyNativeAction,
+  verifyNativeDecision,
   verifyDecisionContent,
   type ActionReservation,
-  type NativeDecisionObservation,
+  type NativeAuthorityVerifier,
   type ReserveActionInput,
   type SettleActionInput,
 } from "./authority";
@@ -49,6 +51,7 @@ export type OperationContext = {
   capabilities: Capability[];
   constraints: Constraint[];
   now: Utc | (() => Utc);
+  nativeAuthority?: NativeAuthorityVerifier;
 };
 
 const provenance = (
@@ -264,31 +267,27 @@ export class WorkitCore {
     return this.recordDecision(request);
   }
 
-  observeDecision(
-    request: unknown,
-    observation: NativeDecisionObservation,
-  ): Result<Entry<Decision>> {
-    return this.recordDecision(request, observation);
+  observeDecision(request: unknown, observation: unknown): Result<Entry<Decision>> {
+    return this.recordDecision(request, observation, true);
   }
 
   private recordDecision(
     request: unknown,
-    nativeObservation?: NativeDecisionObservation,
+    nativeObservation?: unknown,
+    nativeRequired = false,
   ): Result<Entry<Decision>> {
     const root = this.contextRootError();
     if (!root.ok) return root as Result<never>;
     const parsed = parseOperation("decision", request);
     if (!parsed.ok) return parsed as Result<never>;
     const input = parsed.data as any;
-    if (nativeObservation) {
-      const valid = validateNativeDecisionObservation(nativeObservation);
-      if (!valid.ok) return valid as Result<never>;
-      if (
-        nativeObservation.provenance.host !== this.context.caller.host ||
-        !sameSession(nativeObservation.provenance.session, this.context)
-      )
-        return failure("permission_denied", "native decision session does not match caller");
-    }
+    if (nativeRequired && input.action !== "record")
+      return failure(
+        "permission_denied",
+        "native observation is only valid for recording decisions",
+      );
+    if (nativeRequired && nativeObservation === undefined)
+      return failure("permission_denied", "native decision observation is required");
     const task = this.store.readTask(input.taskId);
     if (!task.ok) return task as Result<never>;
     if (input.action === "record") {
@@ -306,6 +305,32 @@ export class WorkitCore {
       );
       if (input.requirementIds.some((id: string) => !knownRequirements.has(id)))
         return failure("invalid_input", "decision references an unknown requirement");
+      const base = {
+        purpose: input.purpose,
+        binding: input.binding,
+        response: input.response,
+        requirementIds: input.requirementIds,
+        revoked: null,
+        consumption: null,
+      } satisfies Omit<Decision, "digest">;
+      const data: Decision = { ...base, digest: decisionDigest(base) };
+      const native = nativeRequired
+        ? verifyNativeDecision(this.context.nativeAuthority, {
+            observation: nativeObservation,
+            expected: {
+              taskId: task.data.id,
+              workspaceId: workspace.data.id,
+              purpose: input.purpose,
+              response: input.response,
+              binding: input.binding,
+              bindingBytes: canonicalJson(input.binding),
+              digest: data.digest,
+              requirementIds: [...input.requirementIds],
+            },
+            caller: this.context.caller,
+          })
+        : null;
+      if (native && !native.ok) return native as Result<never>;
       const changed = this.store.mutateTask(
         task.data.id,
         input.expectedRevision,
@@ -315,19 +340,23 @@ export class WorkitCore {
           const known = new Set(current.policy?.requirements.map((item) => item.id) ?? []);
           if (input.requirementIds.some((id: string) => !known.has(id)))
             return failure("invalid_input", "decision references an unknown requirement");
-          const base = {
-            purpose: input.purpose,
-            binding: input.binding,
-            response: input.response,
-            requirementIds: input.requirementIds,
-            revoked: null,
-            consumption: null,
-          } satisfies Omit<Decision, "digest">;
-          const data: Decision = { ...base, digest: decisionDigest(base) };
+          if (
+            native?.ok &&
+            current.decisions.some((entry) =>
+              entry.provenance.receipts.some((existingReceipt) =>
+                native.data.provenance.receipts.some(
+                  (receipt) => canonicalJson(receipt) === canonicalJson(existingReceipt),
+                ),
+              ),
+            )
+          )
+            return failure("permission_denied", "native decision receipt was already consumed");
           const entry: Entry<Decision> = {
             id: newId(),
             recordedAt: mutation.now,
-            provenance: nativeObservation?.provenance ?? provenance(this.context, "agent_reported"),
+            provenance: native?.ok
+              ? native.data.provenance
+              : provenance(this.context, "agent_reported"),
             data,
           };
           return success(mutation.revision, null, {
@@ -400,7 +429,7 @@ export class WorkitCore {
           const entry: Entry<Finding> = {
             id: newId(),
             recordedAt: mutation.now,
-            provenance: provenance(this.context),
+            provenance: provenance(this.context, "agent_reported"),
             data: {
               claim: input.claim,
               consequence: input.consequence,
@@ -536,23 +565,77 @@ export class WorkitCore {
     return success(task.data.revision, null, entries);
   }
 
-  reserveAction(input: Omit<ReserveActionInput, "store" | "native">): Result<ActionReservation> {
+  reserveAction(
+    input: Omit<ReserveActionInput, "store" | "native" | "authority"> & { observation: unknown },
+  ): Result<ActionReservation> {
     const root = this.contextRootError();
     if (!root.ok) return root as Result<never>;
+    if (input.observation === undefined)
+      return failure("invalid_input", "native action observation is required");
+    const task = this.store.readTask(input.taskId);
+    if (!task.ok) return task as Result<never>;
+    const workspace = this.store.readWorkspace();
+    if (!workspace.ok) return workspace as Result<never>;
+    if (!workspace.data) return failure("not_found", "workspace not found");
+    const decision = task.data.decisions.find((entry) => entry.id === input.decisionId);
+    if (!decision) return failure("not_found", "decision not found");
+    const authority = verifyNativeAction(this.context.nativeAuthority, {
+      observation: input.observation,
+      expected: {
+        taskId: task.data.id,
+        workspaceId: workspace.data.id,
+        decisionId: input.decisionId,
+        actionRef: input.actionRef,
+        taskRevision: input.expectedRevision,
+        workspaceRevision: input.expectedWorkspaceRevision,
+        outcome: "reserve",
+        decision: decision.data,
+      },
+      caller: this.context.caller,
+    });
+    if (!authority.ok) return authority as Result<never>;
     return reserveBoundedAction({
       ...input,
       store: this.store,
-      native: { provenance: provenance(this.context), now: trustedNow(this.context) },
+      authority: authority.data,
+      native: { now: trustedNow(this.context) },
     });
   }
 
-  settleAction(input: Omit<SettleActionInput, "store" | "native">): Result<Entry<Decision>> {
+  settleAction(
+    input: Omit<SettleActionInput, "store" | "native" | "authority"> & { observation: unknown },
+  ): Result<Entry<Decision>> {
     const root = this.contextRootError();
     if (!root.ok) return root as Result<never>;
+    if (input.observation === undefined)
+      return failure("invalid_input", "native action observation is required");
+    const task = this.store.readTask(input.taskId);
+    if (!task.ok) return task as Result<never>;
+    const workspace = this.store.readWorkspace();
+    if (!workspace.ok) return workspace as Result<never>;
+    if (!workspace.data) return failure("not_found", "workspace not found");
+    const decision = task.data.decisions.find((entry) => entry.id === input.decisionId);
+    if (!decision) return failure("not_found", "decision not found");
+    const authority = verifyNativeAction(this.context.nativeAuthority, {
+      observation: input.observation,
+      expected: {
+        taskId: task.data.id,
+        workspaceId: workspace.data.id,
+        decisionId: input.decisionId,
+        actionRef: input.actionRef,
+        taskRevision: input.taskRevision,
+        workspaceRevision: input.workspaceRevision,
+        outcome: input.outcome,
+        decision: decision.data,
+      },
+      caller: this.context.caller,
+    });
+    if (!authority.ok) return authority as Result<never>;
     return settleBoundedAction({
       ...input,
       store: this.store,
-      native: { provenance: provenance(this.context), now: trustedNow(this.context) },
+      authority: authority.data,
+      native: { now: trustedNow(this.context) },
     });
   }
 
@@ -580,8 +663,8 @@ export class WorkitCore {
       workspace.data,
       this.context.capabilities,
       current.data,
-      this.context.caller,
       this.store.root,
+      this.context.caller,
     );
     return success(task.revision, workspace.data.revision, {
       id: task.id,
@@ -608,8 +691,8 @@ export class WorkitCore {
       workspace.data,
       this.context.capabilities,
       current.data,
-      this.context.caller,
       this.store.root,
+      this.context.caller,
     );
     return success(task.revision, workspace.data.revision, {
       task,
@@ -712,8 +795,8 @@ export class WorkitCore {
       workspace.data,
       this.context.capabilities,
       withCandidate,
-      this.context.caller,
       this.store.root,
+      this.context.caller,
     );
     const view = {
       task: taskForView,

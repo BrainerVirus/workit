@@ -55,9 +55,10 @@ export { TaskStore } from "./core/task-store";
 export { applicableDecision, reserveAction, settleAction } from "./core/authority";
 export type {
   ActionReservation,
-  NativeActionObservation,
   NativeAuthorityContext,
-  NativeDecisionObservation,
+  NativeAuthorityVerifier,
+  NativeActionVerification,
+  NativeDecisionVerification,
   ReserveActionInput,
   SettleActionInput,
 } from "./core/authority";
