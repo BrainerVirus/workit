@@ -5,6 +5,7 @@ import {
   mkdtempSync,
   readFileSync,
   symlinkSync,
+  utimesSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -90,11 +91,20 @@ test("unsupported snapshots and leftover locks stay inspectable", () => {
   expect(store.readWorkspace()).toMatchObject({ ok: false, code: "unsupported_version" });
   expect(readFileSync(workspaceFile, "utf8")).toBe(JSON.stringify({ schemaVersion: 2 }));
   writeFileSync(workspaceFile, workspaceBytes);
-  writeFileSync(join(workit, "metadata.lock"), JSON.stringify({ pid: 999999, nonce: "x" }));
+  const lockPath = join(workit, "metadata.lock");
+  const lockBytes = JSON.stringify({
+    pid: 999999,
+    processStart: "old",
+    host: "test",
+    nonce: "x",
+  });
+  writeFileSync(lockPath, lockBytes);
+  utimesSync(lockPath, new Date(0), new Date(0));
   expect(store.mutateTask(task.id, task.revision, identity)).toMatchObject({
     ok: false,
     code: "recovery_required",
   });
+  expect(readFileSync(lockPath, "utf8")).toBe(lockBytes);
 });
 
 test("recovery restores validated bytes with a fresh revision", () => {
@@ -309,6 +319,72 @@ test("stale valid-lock recovery requires matching process identity evidence", ()
     },
   });
   expect(recovered.ok).toBe(true);
+});
+
+test("abandoned reclaim guards fail closed and preserve the lock and snapshot", () => {
+  const { store, task } = startedStore();
+  const changed = store.mutateTask(task.id, task.revision, identity);
+  expect(changed.ok).toBe(true);
+  const candidate = store.recoveryCandidates();
+  if (!candidate.ok) throw new Error(candidate.error);
+  const taskCandidate = candidate.data.find((item) => item.target === "task");
+  if (!taskCandidate) throw new Error("missing task recovery candidate");
+  const file = join(store.root, ".workit", "tasks", `${task.id}.json`);
+  writeFileSync(file, "{broken}");
+  const lockPath = join(store.root, ".workit", "metadata.lock");
+  const lockBytes = JSON.stringify({
+    pid: 999999,
+    processStart: "old",
+    host: "test",
+    nonce: "n",
+  });
+  writeFileSync(lockPath, lockBytes);
+  mkdirSync(`${lockPath}.reclaim`);
+
+  const recovered = store.recoverTask(task.id, {
+    expectedBytes: sha256("{broken}"),
+    snapshotDigest: taskCandidate.digest,
+    expectedWorkspaceRevision: workspaceRevision(store),
+    reason: "abandoned reclaim guard",
+    authorityRefs: [],
+    processEvidence: (lock) => {
+      expect(lock).toEqual({ pid: 999999, processStart: "old", host: "test", nonce: "n" });
+      return success(null, null, {
+        state: "stopped",
+        pid: 999999,
+        processStart: "old",
+        ownerDigest: null,
+      });
+    },
+  });
+
+  expect(recovered).toMatchObject({ ok: false, code: "recovery_required" });
+  expect(readFileSync(file, "utf8")).toBe("{broken}");
+  expect(readFileSync(lockPath, "utf8")).toBe(lockBytes);
+});
+
+test("recovery rejects a symlink to strict-valid matching candidate bytes", () => {
+  const { store, task } = startedStore();
+  const file = join(store.root, ".workit", "tasks", `${task.id}.json`);
+  const candidateBytes = readFileSync(file);
+  const digest = sha256(candidateBytes.toString("utf8"));
+  const candidatePath = join(store.root, ".workit", "recovery", `task.${task.id}.${digest}.json`);
+  const target = join(store.root, "candidate.json");
+  writeFileSync(target, candidateBytes);
+  symlinkSync(target, candidatePath);
+  writeFileSync(file, "{broken}");
+
+  const recovered = store.recoverTask(task.id, {
+    expectedBytes: sha256("{broken}"),
+    snapshotDigest: digest,
+    expectedWorkspaceRevision: workspaceRevision(store),
+    reason: "symlink candidate",
+    authorityRefs: [],
+    processEvidence: recoveryEvidence(),
+  });
+
+  expect(recovered).toMatchObject({ ok: false, code: "recovery_required" });
+  expect(readFileSync(file, "utf8")).toBe("{broken}");
 });
 
 test("failed replacement retains exact prior bytes in recovery", () => {
