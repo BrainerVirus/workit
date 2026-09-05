@@ -125,8 +125,8 @@ reconciliation before any write.
 
 ## Verification
 
-- Commit range: `28bbafd..c297099` (implementation `ea4f4e9`; additive report
-  evidence `c297099`).
+- Implementation commit: `ea4f4e9`; additive verification and manifest-repair
+  commits remain contiguous after accepted base `28bbafd`.
 - Manifest repair RED: `test/artifacts/manifests.test.ts` initially failed
   because legacy `CANONICAL_SKILLS.workit` rejected intentional v1 co-residence.
   GREEN uses an exact packaged legacy tree and a separate exact seven-item core
