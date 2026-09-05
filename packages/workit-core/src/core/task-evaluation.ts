@@ -530,7 +530,6 @@ export function evaluateClosure(
   if (requestedOutcome !== "stopped" && !view.task.policy)
     return failure("requirements_unsatisfied", "task has not been assessed");
   if (
-    requestedOutcome !== "stopped" &&
     view.task.policy &&
     (view.task.policy as { policyVersion: string }).policyVersion !== POLICY_VERSION
   )

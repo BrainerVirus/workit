@@ -636,6 +636,54 @@ test("an unsupported stored policy version fails verified closure even with no r
   });
 });
 
+test("an unsupported stored policy version blocks stopped closure at the public boundary", () => {
+  const root = mkdtempSync(join(tmpdir(), "workit-unsupported-close-"));
+  const store = new TaskStore(root);
+  const core = new WorkitCore(store, context(root));
+  const started = core.task(taskStartRequest());
+  expect(started.ok).toBe(true);
+  if (!started.ok) throw new Error(started.error);
+  const taskId = (started.data as any).id as string;
+  const task = store.readTask(taskId);
+  expect(task.ok).toBe(true);
+  if (!task.ok) throw new Error(task.error);
+  const assessed = core.policy({
+    schemaVersion: 1,
+    action: "assess",
+    taskId,
+    expectedRevision: task.data.revision,
+    assessment: assessment(),
+  });
+  expect(assessed.ok).toBe(true);
+  if (!assessed.ok) throw new Error(assessed.error);
+  const assessedTask = store.readTask(taskId);
+  expect(assessedTask.ok).toBe(true);
+  if (!assessedTask.ok || !assessedTask.data.policy) throw new Error("policy missing");
+  const forged = store.mutateTask(taskId, assessedTask.data.revision, (current, mutation) =>
+    success(mutation.revision, null, {
+      ...current,
+      policy: { ...current.policy!, policyVersion: "9.9.9" },
+    }),
+  );
+  expect(forged.ok).toBe(true);
+  if (!forged.ok) throw new Error(forged.error);
+  const workspace = store.readWorkspace();
+  expect(workspace.ok).toBe(true);
+  if (!workspace.ok || !workspace.data) throw new Error("workspace missing");
+  expect(
+    core.task({
+      schemaVersion: 1,
+      action: "close",
+      taskId,
+      expectedRevision: forged.data.revision,
+      expectedWorkspaceRevision: workspace.data.revision,
+      outcome: "stopped",
+      summary: "stopped",
+      decisionIds: [],
+    }),
+  ).toMatchObject({ ok: false, code: "requirements_unsatisfied" });
+});
+
 test("policy preview is pure and closure requires every applicable evidence type", () => {
   const root = mkdtempSync(join(tmpdir(), "workit-engine-"));
   const store = new TaskStore(root);
