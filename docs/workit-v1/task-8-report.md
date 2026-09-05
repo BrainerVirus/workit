@@ -1,10 +1,11 @@
 # Task 8 evidence
 
-Pressure evidence note: no fresh child-agent runtime was invoked because the
-shared checkout contract reserves this run for one writer. The entries below are
-explicit author-run baseline and post-authoring application scenarios, not claims
-of multi-agent sampling; they preserve the exact pressure, baseline choice, and
-expected GREEN behavior for a later fresh-context qualification run.
+The author-run scenarios below were followed by two fresh, read-only Luna
+evaluators. Each evaluator recorded its baseline before reading the target skill,
+then replayed three deadline, authority, and sunk-cost/exhaustion variants after
+loading it. All seven skills changed the pressured baseline to the intended
+bounded behavior with no Important text defect. The larger multi-repetition live
+qualification remains behind Task 19's explicit authorization boundary.
 
 ## RED: method registry
 
@@ -142,6 +143,9 @@ reconciliation before any write.
   `tsc --noEmit` passed.
 - Focused oxlint, oxfmt, diff, frontmatter, and word-count checks passed. All
   seven skills are under 500 words with valid required frontmatter.
+- Fresh pressure checks passed for challenge, behavioral TDD, review, planning,
+  implementation, debugging, and handoff. The evaluators did not read this report
+  before testing and made no checkout changes.
 - Manifest boundary: legacy/distributed `CANONICAL_SKILLS.workit` remains
   unchanged for current host builders; `WORKIT_METHOD_SKILLS` separately
   validates exactly the seven Task 8 core skills. `test/artifacts/manifests.test.ts`
