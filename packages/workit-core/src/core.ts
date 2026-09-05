@@ -71,6 +71,20 @@ export {
 export type { CandidateEnvironment, ClosureEvaluation } from "./core/task-evaluation";
 export { WorkitCore } from "./core/task-engine";
 export type { OperationContext } from "./core/task-engine";
+export {
+  assertProductWriteAllowed,
+  observeWorkerLifecycle,
+  verifyNativeWorker,
+} from "./core/workers";
+export type {
+  CallerContext,
+  HostSession,
+  NativeWorkerObservation,
+  NativeWorkerVerification,
+  NativeWorkerVerifier,
+  ObserveWorkerLifecycleInput,
+  ProductWriteInput,
+} from "./core/workers";
 
 export type Result<T> =
   | { ok: true; data: T; error: null }
