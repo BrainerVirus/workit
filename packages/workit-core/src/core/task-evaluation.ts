@@ -4,6 +4,7 @@ import { spawnSync } from "node:child_process";
 import path from "node:path";
 import {
   candidateDigest,
+  candidateSchema,
   decisionDigest,
   failure,
   success,
@@ -21,7 +22,9 @@ import {
   type WorkspaceRecord,
 } from "./task-contract";
 
-export type CandidateEnvironment = readonly string[] | Record<string, string | null | undefined>;
+export type CandidateEnvironment =
+  | readonly (string | { name: string; value?: string | null })[]
+  | Record<string, string | null | undefined>;
 
 const digestBytes = (value: string | Buffer): string =>
   createHash("sha256").update(value).digest("hex");
@@ -39,8 +42,17 @@ const scopeMatches = (value: string, scope: Scope): boolean => {
   );
 };
 const pathRelevant = (value: string, scope: Scope): boolean => scopeMatches(value, scope);
+const compareCodeUnits = (left: string, right: string): number => {
+  const length = Math.min(left.length, right.length);
+  for (let index = 0; index < length; index += 1) {
+    const difference = left.charCodeAt(index) - right.charCodeAt(index);
+    if (difference !== 0) return difference;
+  }
+  return left.length - right.length;
+};
 
-const gitPaths = (root: string): string[] => {
+type Inventory = { paths: string[]; uncertain: boolean };
+const gitPaths = (root: string): Inventory => {
   const result = spawnSync(
     "git",
     ["ls-files", "-z", "--cached", "--others", "--exclude-standard"],
@@ -49,21 +61,29 @@ const gitPaths = (root: string): string[] => {
       encoding: "buffer",
     },
   );
-  if (result.status !== 0 || !result.stdout) return [];
-  return result.stdout
-    .toString("utf8")
-    .split("\0")
-    .filter(Boolean)
-    .map((item) => item.split(path.sep).join("/"));
+  if (result.status !== 0) {
+    const stderr = result.stderr?.toString("utf8") ?? "";
+    return { paths: [], uncertain: !/not a git repository/i.test(stderr) };
+  }
+  if (!result.stdout) return { paths: [], uncertain: false };
+  return {
+    paths: result.stdout
+      .toString("utf8")
+      .split("\0")
+      .filter(Boolean)
+      .map((item) => item.split(path.sep).join("/")),
+    uncertain: false,
+  };
 };
 
-const walk = (root: string, directory: string, output: Set<string>): void => {
+const walk = (root: string, directory: string, output: Set<string>): boolean => {
   let names: string[];
   try {
     names = fs.readdirSync(directory);
   } catch {
-    return;
+    return true;
   }
+  let uncertain = false;
   for (const name of names) {
     if (name === ".git" || name === ".workit") continue;
     const target = path.join(directory, name);
@@ -71,12 +91,15 @@ const walk = (root: string, directory: string, output: Set<string>): void => {
     try {
       stat = fs.lstatSync(target);
     } catch {
+      uncertain = true;
       continue;
     }
     const item = relative(root, target);
     output.add(item);
-    if (stat.isDirectory() && !stat.isSymbolicLink()) walk(root, target, output);
+    if (stat.isDirectory() && !stat.isSymbolicLink())
+      uncertain = walk(root, target, output) || uncertain;
   }
+  return uncertain;
 };
 
 const scopeRoots = (root: string, scope: Scope): Result<string[]> => {
@@ -111,23 +134,28 @@ export function captureCandidate(
   const roots = scopeRoots(checkout, scope);
   if (!roots.ok) return roots;
   const names = new Set<string>();
+  let uncertain = false;
   for (const target of roots.data) {
+    const item = relative(checkout, target);
+    if (item === ".git" || item === ".workit") continue;
+    names.add(item);
     if (!fs.existsSync(target)) continue;
     let stat: fs.Stats;
     try {
       stat = fs.lstatSync(target);
     } catch {
+      uncertain = true;
       continue;
     }
-    const item = relative(checkout, target);
-    if (item === ".git" || item === ".workit") continue;
-    names.add(item);
-    if (stat.isDirectory() && !stat.isSymbolicLink()) walk(checkout, target, names);
+    if (stat.isDirectory() && !stat.isSymbolicLink())
+      uncertain = walk(checkout, target, names) || uncertain;
   }
-  for (const item of gitPaths(checkout)) if (scopeMatches(item, scope)) names.add(item);
+  const git = gitPaths(checkout);
+  uncertain = git.uncertain || uncertain;
+  for (const item of git.paths) if (scopeMatches(item, scope)) names.add(item);
 
   const files: Candidate["files"] = [];
-  let completeness: Candidate["completeness"] = "known";
+  let completeness: Candidate["completeness"] = uncertain ? "uncertain" : "known";
   for (const item of [...names].sort()) {
     if (!scopeMatches(item, scope)) continue;
     const target = path.join(checkout, item);
@@ -150,16 +178,28 @@ export function captureCandidate(
       } else completeness = "uncertain";
     }
   }
-  const values = Array.isArray(environment)
-    ? environment.map((name) => ({ name, value: process.env[name] ?? null, refs: [] }))
-    : Object.keys(environment as Record<string, string | null | undefined>)
-        .sort()
-        .map((name) => ({
-          name,
-          value: (environment as Record<string, string | null | undefined>)[name] ?? null,
-          refs: [],
-        }));
+  const supplied = Array.isArray(environment)
+    ? environment.map((value) =>
+        typeof value === "string"
+          ? { name: value, value: process.env[value] ?? null }
+          : { name: value.name, value: value.value ?? null },
+      )
+    : Object.keys(environment as Record<string, string | null | undefined>).map((name) => ({
+        name,
+        value: (environment as Record<string, string | null | undefined>)[name] ?? null,
+      }));
+  const namesByEnvironment = supplied.map(({ name }) => name);
+  if (
+    new Set(namesByEnvironment).size !== namesByEnvironment.length ||
+    namesByEnvironment.some((name) => typeof name !== "string" || !name)
+  )
+    return failure("invalid_input", "candidate environment names must be unique and non-empty");
+  const values = supplied
+    .sort((left, right) => compareCodeUnits(left.name, right.name))
+    .map(({ name, value }) => ({ name, value, refs: [] }));
   const headResult = spawnSync("git", ["rev-parse", "HEAD"], { cwd: checkout, encoding: "utf8" });
+  if (headResult.status !== 0 && !/not a git repository/i.test(headResult.stderr ?? ""))
+    completeness = "uncertain";
   const head = headResult.status === 0 ? headResult.stdout.trim() : null;
   const partial: Candidate = {
     id: "0".repeat(64),
@@ -169,7 +209,11 @@ export function captureCandidate(
     environment: values,
     head,
   };
-  return success(null, null, { ...partial, id: candidateDigest(partial) });
+  const candidate = { ...partial, id: candidateDigest(partial) };
+  const parsed = candidateSchema.safeParse(candidate);
+  return parsed.success
+    ? success(null, null, parsed.data)
+    : failure("invalid_input", "captured candidate is invalid");
 }
 
 const fileMap = (candidate: Candidate): Map<string, Candidate["files"][number]> =>
@@ -186,9 +230,17 @@ const changedPaths = (before: Candidate, after: Candidate): string[] => {
   return changed;
 };
 
-const hostFromRef = (value: unknown): string | null => {
+const sessionFromRef = (value: unknown): { host: string; handle: string } | null => {
   if (typeof value !== "object" || value === null || (value as any).kind !== "host") return null;
-  return typeof (value as any).host === "string" ? (value as any).host : null;
+  return typeof (value as any).host === "string" && typeof (value as any).handle === "string"
+    ? { host: (value as any).host, handle: (value as any).handle }
+    : null;
+};
+const sameSession = (left: { host: string; handle: string } | null, right: unknown): boolean => {
+  const other = sessionFromRef(right);
+  return (
+    left !== null && other !== null && left.host === other.host && left.handle === other.handle
+  );
 };
 
 const evidenceScope = (task: TaskRecord, ids: string[]): Scope | null => {
@@ -216,6 +268,20 @@ export function evaluateEvidence(
         status: "failed" as const,
         reason: "failed evidence remains historical",
       };
+    if (evidence.kind === "check" || evidence.kind === "review") {
+      if (!evidence.beforeCandidateId || !evidence.candidateId)
+        return {
+          evidenceId: entry.id,
+          status: "stale",
+          reason: "check or review evidence lacks start and end candidates",
+        };
+      if (evidence.beforeCandidateId !== evidence.candidateId)
+        return {
+          evidenceId: entry.id,
+          status: "stale",
+          reason: "candidate changed during the check or review",
+        };
+    }
     if (!evidence.candidateId || !current)
       return {
         evidenceId: entry.id,
@@ -241,10 +307,21 @@ export function evaluateEvidence(
 }
 
 const scopeCovers = (outer: Scope, inner: Scope): boolean => {
+  const innerPaths = inner.paths.length ? inner.paths : ["."];
   const covers = (item: string): boolean =>
     outer.paths.some((base) => base === "." || item === base || item.startsWith(`${base}/`)) &&
     !excluded(item, outer.exclusions);
-  return inner.paths.every(covers);
+  const exclusionIsCoveredByInner = (item: string): boolean =>
+    inner.exclusions.some(
+      (excludedPath) => excludedPath === item || item.startsWith(`${excludedPath}/`),
+    );
+  const outerExcludesIncludedInnerPath = (item: string): boolean =>
+    innerPaths.some(
+      (base) =>
+        (base === "." || item === base || item.startsWith(`${base}/`)) &&
+        !exclusionIsCoveredByInner(item),
+    );
+  return innerPaths.every(covers) && !outer.exclusions.some(outerExcludesIncludedInnerPath);
 };
 const applicableDecision = (
   task: TaskRecord,
@@ -266,12 +343,45 @@ const applicableDecision = (
         decision.digest === decisionDigest(decision),
     );
 
+const applicableRequirementDecision = (
+  task: TaskRecord,
+  workspace: WorkspaceRecord,
+  requirement: Requirement,
+): { id: string }[] =>
+  task.decisions
+    .filter(
+      ({ data }) =>
+        data.purpose !== "limitation" &&
+        data.response === "approved" &&
+        data.revoked === null &&
+        data.binding.taskId === task.id &&
+        data.binding.workspaceId === workspace.id &&
+        data.requirementIds.includes(requirement.id) &&
+        scopeCovers(data.binding.scope, requirement.scope) &&
+        data.digest === decisionDigest(data),
+    )
+    .map(({ id }) => ({ id }));
+
+const evidenceMatchesRequirement = (
+  kind: EvidenceEvaluation["status"],
+  evidenceKind: string,
+  dimension: Requirement["dimension"],
+): boolean => {
+  if (kind !== "passed") return false;
+  if (dimension === "testing" || dimension === "verification") return evidenceKind === "check";
+  if (dimension === "review") return evidenceKind === "review";
+  if (dimension === "investigation" || dimension === "challenge")
+    return evidenceKind === "investigation";
+  if (dimension === "artifacts" || dimension === "continuity") return evidenceKind === "artifact";
+  return false;
+};
+
 export function evaluateRequirements(
   task: TaskRecord,
   workspace: WorkspaceRecord,
   capabilities: Capability[],
   candidate: Candidate | null = task.candidates.at(-1) ?? null,
-  caller?: Caller,
+  _caller?: Caller,
 ) {
   const evidence = evaluateEvidence(task, candidate);
   return (task.policy?.requirements ?? []).map((requirement) => {
@@ -279,14 +389,31 @@ export function evaluateRequirements(
       .map((entry, index) => ({ entry, evaluation: evidence[index] }))
       .filter(({ entry }) => entry.data.requirementIds.includes(requirement.id));
     const passed = related.filter(({ entry, evaluation }) => {
-      if (evaluation.status !== "passed") return false;
-      if (requirement.dimension === "testing" && !entry.data.candidateId) return false;
+      if (!evidenceMatchesRequirement(evaluation.status, entry.data.kind, requirement.dimension))
+        return false;
+      if (
+        (entry.data.kind === "check" || entry.data.kind === "review") &&
+        (!entry.data.beforeCandidateId ||
+          !entry.data.candidateId ||
+          entry.data.beforeCandidateId !== entry.data.candidateId)
+      )
+        return false;
       if (requirement.dimension !== "review") return true;
-      const reviewHost = hostFromRef(entry.data.reviewContext);
+      const reviewSession = sessionFromRef(entry.data.reviewContext);
+      const implementationSession = sessionFromRef(task.intent.provenance.session);
+      const sameImplementation = sameSession(reviewSession, implementationSession);
+      const sameWriter = task.evidence.some(
+        (other) =>
+          other.data.requirementIds.includes(requirement.id) &&
+          other.data.kind !== "review" &&
+          sameSession(reviewSession, other.provenance.session),
+      );
       return (
         entry.data.kind === "review" &&
-        reviewHost !== null &&
-        (caller ? reviewHost !== caller.host : reviewHost !== entry.provenance.host)
+        reviewSession !== null &&
+        sameSession(reviewSession, entry.provenance.session) &&
+        !sameImplementation &&
+        !sameWriter
       );
     });
     if (passed.length)
@@ -297,15 +424,27 @@ export function evaluateRequirements(
         decisionIds: [],
         reason: "fresh applicable evidence passed",
       };
-    const decisions = requirement.acceptanceAllowed
+    const decisions =
+      requirement.dimension === "decisions"
+        ? applicableRequirementDecision(task, workspace, requirement)
+        : [];
+    if (decisions.length)
+      return {
+        requirementId: requirement.id,
+        status: "satisfied" as const,
+        evidenceIds: [],
+        decisionIds: decisions.map((decision) => decision.id),
+        reason: "an applicable approved decision satisfies the requirement",
+      };
+    const limitations = requirement.acceptanceAllowed
       ? applicableDecision(task, workspace, requirement)
       : [];
-    if (decisions.length)
+    if (limitations.length)
       return {
         requirementId: requirement.id,
         status: "accepted_limitation" as const,
         evidenceIds: [],
-        decisionIds: decisions.map(
+        decisionIds: limitations.map(
           (decision) => task.decisions.find((entry) => entry.data === decision)!.id,
         ),
         reason: "an applicable approved limitation permits the missing evidence",

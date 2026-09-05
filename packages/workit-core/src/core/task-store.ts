@@ -129,9 +129,14 @@ type LockSnapshot = { raw: string; data: MetadataLock };
 
 export class TaskStore {
   readonly root: string;
+  private clock: () => Utc = now;
 
   constructor(root: string) {
     this.root = fs.existsSync(root) ? fs.realpathSync(root) : path.resolve(root);
+  }
+
+  setClock(clock: () => Utc): void {
+    this.clock = clock;
   }
 
   readTask(taskId: Id): Result<TaskRecord> {
@@ -210,14 +215,19 @@ export class TaskStore {
         !provenanceSchema.safeParse(value.provenance).success
       )
         return failure("invalid_input", "task intent or provenance is invalid");
-      const workspace: WorkspaceRecord = {
-        schemaVersion: SCHEMA_VERSION,
-        id: newId(),
-        revision: newRevision(),
-        root: this.root,
-        writer: null,
-      };
-      const timestamp = now();
+      const previousWorkspaceBytes = current.data ? this.snapshotBytes(this.workspacePath) : null;
+      if (current.data && !previousWorkspaceBytes)
+        return failure("storage_error", "workspace snapshot disappeared during creation");
+      const workspace: WorkspaceRecord = current.data
+        ? { ...current.data, revision: newRevision(), root: this.root }
+        : {
+            schemaVersion: SCHEMA_VERSION,
+            id: newId(),
+            revision: newRevision(),
+            root: this.root,
+            writer: null,
+          };
+      const timestamp = this.clock();
       const task: TaskRecord = {
         schemaVersion: SCHEMA_VERSION,
         id: newId(),
@@ -245,15 +255,33 @@ export class TaskStore {
         findings: [],
         workers: [],
       };
-      const writtenWorkspace = this.replaceSnapshot(this.workspacePath, workspace, null);
+      const writtenWorkspace = this.replaceSnapshot(
+        this.workspacePath,
+        workspace,
+        previousWorkspaceBytes,
+      );
       if (!writtenWorkspace.ok) return writtenWorkspace;
       const writtenTask = this.replaceSnapshot(this.taskPath(task.id), task, null);
-      if (!writtenTask.ok)
+      if (!writtenTask.ok) {
+        if (current.data && previousWorkspaceBytes) {
+          const restored = this.replaceSnapshot(
+            this.workspacePath,
+            current.data,
+            this.snapshotBytes(this.workspacePath),
+          );
+          if (!restored.ok)
+            return failure(
+              "external_outcome_unknown",
+              "task creation failed and workspace restoration is uncertain",
+              { operation: "create", outcome: "unknown" },
+            );
+        }
         return failure(
           "external_outcome_unknown",
           "workspace created but task write is uncertain",
           { operation: "create", outcome: "unknown" },
         );
+      }
       return success(task.revision, workspace.revision, task);
     });
   }
@@ -266,7 +294,7 @@ export class TaskStore {
       const previousBytes = this.snapshotBytes(this.taskPath(taskId));
       if (!previousBytes)
         return failure("storage_error", "task snapshot disappeared during mutation");
-      const context = { now: now(), revision: newRevision() };
+      const context = { now: this.clock(), revision: newRevision() };
       let changed: Result<TaskRecord>;
       try {
         changed = update(current.data, Object.freeze({ ...context }));
@@ -299,7 +327,7 @@ export class TaskStore {
       const previousBytes = this.snapshotBytes(this.workspacePath);
       if (!previousBytes)
         return failure("storage_error", "workspace snapshot disappeared during mutation");
-      const context = { now: now(), revision: newRevision() };
+      const context = { now: this.clock(), revision: newRevision() };
       let changed: Result<WorkspaceRecord>;
       try {
         changed = update(current.data, Object.freeze({ ...context }));
@@ -338,7 +366,7 @@ export class TaskStore {
       const previousTaskBytes = this.snapshotBytes(this.taskPath(input.taskId));
       if (!previousWorkspaceBytes || !previousTaskBytes)
         return failure("storage_error", "snapshot disappeared during coupled mutation");
-      const workspaceContext = { now: now(), revision: newRevision() };
+      const workspaceContext = { now: this.clock(), revision: newRevision() };
       let changedWorkspace: Result<WorkspaceRecord>;
       try {
         changedWorkspace = input.workspace(workspace.data, Object.freeze({ ...workspaceContext }));
@@ -360,7 +388,7 @@ export class TaskStore {
         previousWorkspaceBytes,
       );
       if (!reserved.ok) return reserved;
-      const taskContext = { now: now(), revision: newRevision() };
+      const taskContext = { now: this.clock(), revision: newRevision() };
       let changedTask: Result<TaskRecord>;
       try {
         changedTask = input.task(task.data, Object.freeze({ ...taskContext }));
@@ -559,7 +587,7 @@ export class TaskStore {
           const value = {
             ...parsed.data,
             revision: newRevision(),
-            updatedAt: now(),
+            updatedAt: this.clock(),
             status: parsed.data.status === "active" ? "paused" : parsed.data.status,
           } as TaskRecord;
           const replaced = this.replaceSnapshot(file, value, reacquiredBytes);

@@ -66,6 +66,55 @@ test("creates snapshots atomically and writes the ignore file only on mutation",
   expect(existsSync(join(store.root, ".workit", ".gitignore"))).toBe(true);
 });
 
+test("new tasks preserve the workspace identity and writer while advancing its CAS revision", () => {
+  const root = fixtureRoot();
+  const store = new TaskStore(root);
+  const first = store.create({
+    expectedWorkspaceRevision: null,
+    provenance,
+    intent: { objective: "first", scope: scope(), authorityRefs: [ref()] },
+  });
+  expect(first.ok).toBe(true);
+  if (!first.ok) throw new Error(first.error);
+  const before = store.readWorkspace();
+  expect(before.ok).toBe(true);
+  if (!before.ok || !before.data) throw new Error("workspace missing");
+  const writer = {
+    state: "held" as const,
+    owner: {
+      taskId: first.data.id,
+      workerId: null,
+      session: { kind: "host" as const, host: "workit_cli" as const, handle: "writer" },
+    },
+    acquiredAt: "2026-01-01T00:00:00Z",
+  };
+  writeFileSync(
+    join(root, ".workit", "workspace.json"),
+    `${JSON.stringify({ ...before.data, writer })}\n`,
+  );
+  const second = store.create({
+    expectedWorkspaceRevision: before.data.revision,
+    provenance,
+    intent: { objective: "second", scope: scope(), authorityRefs: [ref()] },
+  });
+  expect(second.ok).toBe(true);
+  if (!second.ok) throw new Error(second.error);
+  const after = store.readWorkspace();
+  expect(after.ok).toBe(true);
+  if (!after.ok || !after.data) throw new Error("workspace missing after second task");
+  expect(second.data.workspaceId).toBe(before.data.id);
+  expect(after.data.id).toBe(before.data.id);
+  expect(after.data.revision).not.toBe(before.data.revision);
+  expect(after.data.writer).toEqual(writer);
+  expect(store.listTasks()).toMatchObject({
+    ok: true,
+    data: expect.arrayContaining([
+      expect.objectContaining({ id: first.data.id }),
+      expect.objectContaining({ id: second.data.id }),
+    ]),
+  });
+});
+
 test("a stale task revision cannot overwrite a newer snapshot", () => {
   const { store, task } = startedStore();
   const first = store.mutateTask(task.id, task.revision, identity);

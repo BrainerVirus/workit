@@ -34,20 +34,31 @@ export type OperationContext = {
   now: Utc | (() => Utc);
 };
 
-const provenance = (context: OperationContext) => ({
-  kind: "host_observed" as const,
+const provenance = (
+  context: OperationContext,
+  kind: "host_observed" | "agent_reported" = "host_observed",
+) => ({
+  kind,
   host: context.caller.host,
   session: { kind: "host" as const, host: context.caller.host, handle: context.caller.actor },
   workerId: null,
   receipts: [],
 });
-const environment = (): CandidateEnvironment => ["CI", "NODE_ENV"];
+const environment = (): CandidateEnvironment => [];
+const sameSession = (value: unknown, context: OperationContext): boolean =>
+  typeof value === "object" &&
+  value !== null &&
+  (value as any).kind === "host" &&
+  (value as any).host === context.caller.host &&
+  (value as any).handle === context.caller.actor;
 
 export class WorkitCore {
   constructor(
     private readonly store: TaskStore,
     private readonly context: OperationContext,
-  ) {}
+  ) {
+    this.store.setClock(() => (typeof context.now === "function" ? context.now() : context.now));
+  }
 
   task(request: unknown): Result<TaskSummary | TaskSummary[] | TaskView> {
     const parsed = parseOperation("task", request);
@@ -156,30 +167,35 @@ export class WorkitCore {
     )
       return failure("invalid_input", "missing or skipped evidence requires a reason");
     if (evidence.kind === "review") {
-      const host =
-        evidence.reviewContext && (evidence.reviewContext as any).kind === "host"
-          ? (evidence.reviewContext as any).host
-          : null;
-      if (!host || host === this.context.caller.host)
-        return failure("invalid_input", "independent review requires a separate host context");
+      if (!sameSession(evidence.reviewContext, this.context))
+        return failure("invalid_input", "review context must match the trusted caller session");
     }
     const currentCandidate = captureCandidate(
       this.store.root,
       task.data.intent.data.scope,
       environment(),
     );
+    if (!currentCandidate.ok) return currentCandidate as Result<never>;
+    const knownCandidates = new Set(task.data.candidates.map((candidate) => candidate.id));
+    for (const candidateId of [evidence.beforeCandidateId, evidence.candidateId]) {
+      if (
+        candidateId &&
+        candidateId !== currentCandidate.data.id &&
+        !knownCandidates.has(candidateId)
+      )
+        return failure("invalid_input", "evidence candidate is not a captured candidate");
+    }
     const changed = this.store.mutateTask(
       task.data.id,
       input.expectedRevision,
       (current, mutation) => {
-        if (!currentCandidate.ok) return currentCandidate;
         const candidates = current.candidates.some((item) => item.id === currentCandidate.data.id)
           ? current.candidates
           : [...current.candidates, currentCandidate.data];
         const entry = {
           id: newId(),
           recordedAt: mutation.now,
-          provenance: provenance(this.context),
+          provenance: provenance(this.context, "agent_reported"),
           data: evidence,
         };
         return success(mutation.revision, null, {
@@ -210,11 +226,13 @@ export class WorkitCore {
     const workspace = this.store.readWorkspace();
     if (!workspace.ok) return workspace as Result<never>;
     if (!workspace.data) return failure("not_found", "workspace not found");
+    const current = captureCandidate(this.store.root, task.intent.data.scope, environment());
+    if (!current.ok) return current as Result<never>;
     const requirements = evaluateRequirements(
       task,
       workspace.data,
       this.context.capabilities,
-      undefined,
+      current.data,
       this.context.caller,
     );
     return success(task.revision, workspace.data.revision, {
@@ -261,12 +279,20 @@ export class WorkitCore {
       (status === "active" && task.data.status !== "paused")
     )
       return failure("invalid_transition", `cannot transition ${task.data.status} to ${status}`);
+    if (status === "active" && input.authorityRefs.length === 0)
+      return failure("permission_denied", "resuming a task requires authority references");
     const changed = this.store.mutateTaskAndWorkspace({
       taskId: task.data.id,
       expectedTaskRevision: input.expectedRevision,
       expectedWorkspaceRevision: input.expectedWorkspaceRevision,
       workspace: (workspace, context) => success(context.revision, context.revision, workspace),
-      task: (current, context) => success(context.revision, null, { ...current, status }),
+      task: (current, context) =>
+        success(context.revision, null, {
+          ...current,
+          status,
+          progress:
+            status === "paused" ? { ...current.progress, summary: input.reason } : current.progress,
+        }),
     });
     if (!changed.ok) return changed as Result<never>;
     return this.summary(changed.data.task);
@@ -307,7 +333,7 @@ export class WorkitCore {
             data: input.intent,
           },
           policy: null,
-          progress: { ...current.progress, summary: input.reason },
+          progress: { ...current.progress, summary: `Policy invalidated: ${input.reason}` },
         }),
     });
     if (!changed.ok) return changed as Result<never>;
