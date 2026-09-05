@@ -9,6 +9,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   CANONICAL_SKILLS,
+  WORKIT_METHOD_SKILLS,
   validateSkillManifests,
 } from "../../workit-core/src/core/skill-manifests";
 import { copySanitizedVendor } from "../../workit-core/scripts/vendor-assets";
@@ -18,6 +19,13 @@ const pkgDir = path.resolve(scriptDir, "..");
 const coreDir = path.resolve(pkgDir, "..", "workit-core");
 const target = process.argv[2] ? path.resolve(process.argv[2]) : pkgDir;
 const vendorSkills = path.join(coreDir, "vendor/superpowers/skills");
+
+const sourceWorkitError = validateSkillManifests(
+  path.join(coreDir, "skills"),
+  [...CANONICAL_SKILLS.workit, ...WORKIT_METHOD_SKILLS],
+  "opencode Workit source skills",
+);
+if (sourceWorkitError) throw new Error(sourceWorkitError);
 
 const sourceVendorError = validateSkillManifests(
   vendorSkills,

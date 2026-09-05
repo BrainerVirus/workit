@@ -131,11 +131,15 @@ reconciliation before any write.
   because legacy `CANONICAL_SKILLS.workit` rejected intentional v1 co-residence.
   GREEN uses an exact packaged legacy tree and a separate exact seven-item core
   method assertion.
+- Source-gate repair RED: the OpenCode source validator silently accepted a
+  rogue `workit-extra`; GREEN validates the transitional legacy-plus-method
+  union before copying while packaging only legacy skills.
 - `bun test test/workit-core/methods.test.ts`: 10 passed; covers mechanical
   no-method selection, independent TDD/review, challenge/plan/helper independence,
   unavailable review, stable order, deduplication, and compact bootstrap.
-- Exact Node 24.20.0/Bun 1.4.1 Task 1–8 + continuity-repair + manifest slice:
-  146 passed, 0 failed, 727 assertions; `tsc --noEmit` passed.
+- Exact Node 24.20.0/Bun 1.4.1 Task 1–8 + continuity-repair + manifests +
+  OpenCode skill-contract slice: 148 passed, 0 failed, 739 assertions;
+  `tsc --noEmit` passed.
 - Focused oxlint, oxfmt, diff, frontmatter, and word-count checks passed. All
   seven skills are under 500 words with valid required frontmatter.
 - Manifest boundary: legacy/distributed `CANONICAL_SKILLS.workit` remains
