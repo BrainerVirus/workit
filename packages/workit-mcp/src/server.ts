@@ -16,6 +16,7 @@ import {
   type OperationFamily,
 } from "@brainervirus/workit-core/src/core";
 import type { Host, Result } from "@brainervirus/workit-core/src/core/task-contract";
+import { redactSecrets } from "@brainervirus/workit-core/src/core/logger";
 
 export type McpHost = Extract<Host, "cursor" | "codex_cli" | "codex_desktop">;
 export type NativeContextProvider = { current(): Promise<OperationContext> };
@@ -34,16 +35,10 @@ const VERSION = (() => {
 
 const safeErrorMessage = (error: unknown): string => {
   const message = error instanceof Error ? error.message : String(error);
-  return message
-    .split(/\r?\n/, 1)[0]
-    .replace(/\s+(?:at|stack:)\s.*$/i, "")
-    .replace(/\b(?:Bearer|Basic|Digest|Token)\s+\S+/gi, "[REDACTED]")
-    .replace(
-      /\b([A-Za-z0-9_-]*(?:token|secret|password|passwd|apikey|api[_-]?key|authorization|credential|bearer)[A-Za-z0-9_-]*)([:=]\s*).+/gi,
-      "$1$2[REDACTED]",
-    )
-    .replace(/(https?:\/\/[^?#\s]+)\?[^#\s]*/g, "$1?[REDACTED]")
-    .slice(0, 500);
+  return redactSecrets(message.split(/\r?\n/, 1)[0].replace(/\s+(?:at|stack:)\s.*$/i, "")).slice(
+    0,
+    500,
+  );
 };
 
 const reportError = (tool: string, error: unknown): void => {
