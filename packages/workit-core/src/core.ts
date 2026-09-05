@@ -60,6 +60,8 @@ export type {
   ResumeObservationInput,
   ResumeReconciliation,
 } from "./core/task-context";
+export { METHODS, invariantBootstrap, selectMethods } from "./core/methods";
+export type { MethodId, SelectedMethod } from "./core/methods";
 export { applicableDecision, reserveAction, settleAction } from "./core/authority";
 export type {
   ActionReservation,
