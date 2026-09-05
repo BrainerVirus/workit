@@ -5,7 +5,9 @@ import {
   canonicalJson,
   decisionDigest,
   failure,
+  provenanceSchema,
   refSchema,
+  scopeCovers,
   success,
   type Decision,
   type Entry,
@@ -18,11 +20,22 @@ import {
   type Utc,
 } from "./task-contract";
 import { TaskStore } from "./task-store";
-import { scopeCovers } from "./task-evaluation";
 
 export type NativeAuthorityContext = {
   provenance: Provenance;
   now: Utc;
+};
+
+export type NativeDecisionObservation = {
+  receipt: Ref;
+  provenance: Provenance;
+};
+
+export type NativeActionObservation = {
+  actionRef: Ref;
+  effect: "none" | "performed" | "unknown";
+  receipt: Ref;
+  provenance: Provenance;
 };
 
 export type ReserveActionInput = {
@@ -56,22 +69,18 @@ export type SettleActionInput = {
   taskRevision: Revision;
   workspaceRevision: Revision;
   outcome: "succeeded" | "not_started" | "unknown";
-  nativeEvidence?: boolean;
-  evidenceRefs?: Ref[];
   step?: string;
-  completedSteps?: string[];
+  observation: NativeActionObservation;
   native?: NativeAuthorityContext;
 };
 
 type Workflow = { steps: string[]; completed: string[] };
-const workflows = new Map<string, Workflow>();
 
 const scopeEqual = (
   left: Decision["binding"]["scope"],
   right: Decision["binding"]["scope"],
 ): boolean => canonicalJson(left) === canonicalJson(right);
 
-const workflowKey = (taskId: Id, decisionId: Id) => `${taskId}:${decisionId}`;
 const parseSteps = (content: string): string[] => {
   try {
     const value = JSON.parse(content) as { steps?: unknown };
@@ -102,6 +111,47 @@ const decisionMatches = (
   );
 };
 
+const sameRef = (left: Ref, right: Ref): boolean => canonicalJson(left) === canonicalJson(right);
+
+const validNativeReceipt = (observation: { receipt: Ref; provenance: Provenance }): boolean => {
+  if (!refSchema.safeParse(observation.receipt).success) return false;
+  if (!provenanceSchema.safeParse(observation.provenance).success) return false;
+  if (
+    observation.receipt.kind !== "host" ||
+    observation.receipt.host !== observation.provenance.host ||
+    observation.provenance.session?.kind !== "host" ||
+    observation.provenance.session.host !== observation.provenance.host
+  )
+    return false;
+  return (
+    observation.provenance.kind === "host_observed" &&
+    observation.provenance.receipts.some((receipt) => sameRef(receipt, observation.receipt))
+  );
+};
+
+export const validateNativeDecisionObservation = (observation: NativeDecisionObservation) =>
+  validNativeReceipt(observation)
+    ? success(null, null, null)
+    : failure("permission_denied", "native decision receipt is not validated");
+
+export const validateNativeActionObservation = (
+  observation: NativeActionObservation,
+  outcome: SettleActionInput["outcome"],
+  actionRef: Ref,
+) => {
+  if (!observation || typeof observation !== "object")
+    return failure("invalid_input", "native action observation is required");
+  if (!validNativeReceipt(observation))
+    return failure("permission_denied", "native action receipt is not validated");
+  if (!sameRef(observation.actionRef, actionRef))
+    return failure("permission_denied", "native action reference does not match reservation");
+  const expectedEffect =
+    outcome === "succeeded" ? "performed" : outcome === "not_started" ? "none" : "unknown";
+  if (observation.effect !== expectedEffect)
+    return failure("permission_denied", "native action effect does not match settlement");
+  return success(null, null, null);
+};
+
 /** Return only still-valid, approved decisions for the exact requested binding. */
 export function applicableDecision(
   task: TaskRecord,
@@ -115,26 +165,63 @@ export function applicableDecision(
 }
 
 const digestBytes = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
-const verifyContentRefs = (store: TaskStore, binding: Decision["binding"]): Result<null> => {
+export const verifyDecisionContentAtRoot = (
+  checkoutRoot: string,
+  binding: Decision["binding"],
+): Result<null> => {
+  let root: string;
+  try {
+    root = fs.realpathSync(checkoutRoot);
+  } catch {
+    return failure("permission_denied", "checkout root is unavailable");
+  }
   for (const reference of binding.contentRefs) {
     if (reference.kind !== "file") continue;
     if (!reference.digest)
       return failure("invalid_input", "document references require a byte digest");
-    const target = path.resolve(store.root, reference.path);
-    if (target !== store.root && !target.startsWith(`${store.root}${path.sep}`))
+    const target = path.resolve(root, reference.path);
+    if (target !== root && !target.startsWith(`${root}${path.sep}`))
       return failure("invalid_input", "document reference escapes checkout");
     try {
-      const stat = fs.lstatSync(target);
-      if (!stat.isFile() || stat.isSymbolicLink())
-        return failure("invalid_input", "document reference is not a regular file");
+      const relative = path.relative(root, target);
+      let current = root;
+      for (const segment of relative.split(path.sep)) {
+        if (!segment) continue;
+        current = path.join(current, segment);
+        const stat = fs.lstatSync(current);
+        const real = fs.realpathSync(current);
+        if (real !== root && !real.startsWith(`${root}${path.sep}`))
+          return failure("invalid_input", "document reference escapes checkout");
+        if (stat.isSymbolicLink())
+          return failure("invalid_input", "document reference uses a symlink");
+        if (current === target && !stat.isFile())
+          return failure("invalid_input", "document reference is not a regular file");
+        if (current !== target && !stat.isDirectory())
+          return failure("invalid_input", "document reference ancestor is not a directory");
+      }
       if (digestBytes(fs.readFileSync(target)) !== reference.digest)
         return failure("permission_denied", "approved document bytes have changed");
     } catch {
-      return failure("permission_denied", "approved document is unavailable");
+      return failure("invalid_input", "approved document is unavailable");
     }
   }
   return success(null, null, null);
 };
+
+const verifyContentRefs = (store: TaskStore, binding: Decision["binding"]): Result<null> =>
+  verifyDecisionContentAtRoot(store.root, binding);
+
+export const storedDecisionApplicable = (
+  store: TaskStore,
+  task: TaskRecord,
+  purpose: Decision["purpose"],
+  binding: Decision["binding"],
+): Entry<Decision>[] =>
+  task.decisions.filter(
+    (entry) =>
+      decisionMatches(entry, purpose, binding) &&
+      verifyDecisionContentAtRoot(store.root, entry.data.binding).ok,
+  );
 
 const validateAction = (
   store: TaskStore,
@@ -153,6 +240,8 @@ const validateAction = (
     return failure("permission_denied", "decision is not an action approval");
   if (decision.response !== "approved")
     return failure("permission_denied", "decision was rejected");
+  if (entry.provenance.kind !== "host_observed" || entry.provenance.receipts.length === 0)
+    return failure("permission_denied", "action approval lacks native receipt assurance");
   if (decision.revoked) return failure("permission_denied", "decision is revoked");
   if (decision.digest !== decisionDigest(decision))
     return failure("permission_denied", "decision binding is invalid");
@@ -162,16 +251,18 @@ const validateAction = (
     return failure("permission_denied", "action binding does not match the approved decision");
   const content = verifyContentRefs(store, decision.binding);
   if (!content.ok) return content as Result<never>;
-  const requestedSteps = input.steps ?? parseSteps(decision.binding.approvedContent);
+  const requestedSteps = parseSteps(decision.binding.approvedContent);
+  if (input.steps && canonicalJson(input.steps) !== canonicalJson(requestedSteps))
+    return failure("permission_denied", "bounded action steps do not match approved content");
   if (
     requestedSteps.some((step) => !step || typeof step !== "string") ||
     new Set(requestedSteps).size !== requestedSteps.length
   )
     return failure("invalid_input", "bounded action steps must be unique and non-empty");
-  const workflow = workflows.get(workflowKey(task.id, input.decisionId)) ?? {
-    steps: requestedSteps,
-    completed: [],
-  };
+  const stored = task.actionProgress?.find((item) => item.decisionId === input.decisionId);
+  const workflow = stored
+    ? { steps: stored.steps, completed: stored.completedSteps }
+    : { steps: requestedSteps, completed: [] };
   if (
     workflow.steps.length &&
     requestedSteps.length &&
@@ -207,11 +298,7 @@ export function reserveAction(input: ReserveActionInput): Result<ActionReservati
         });
       if (existing?.state === "consumed")
         return failure("permission_denied", "action approval is consumed");
-      const priorWorkflow = workflows.get(workflowKey(current.id, input.decisionId));
-      if (
-        existing?.state === "reserved" &&
-        (!priorWorkflow || priorWorkflow.completed.length === 0)
-      )
+      if (existing?.state === "reserved" && workflow.completed.length === 0)
         return failure("permission_denied", "action approval is already reserved");
       const requestedStep = input.step ?? workflow.steps[workflow.completed.length];
       if (
@@ -224,16 +311,25 @@ export function reserveAction(input: ReserveActionInput): Result<ActionReservati
         );
       if (requestedStep && workflow.completed.includes(requestedStep))
         return failure("permission_denied", "action step was already completed");
-      const nextWorkflow = workflow.steps.length
-        ? { ...workflow, completed: [...workflow.completed] }
-        : workflow;
-      workflows.set(workflowKey(current.id, input.decisionId), nextWorkflow);
       const nextDecision = {
         ...entry.data,
         consumption: { state: "reserved" as const, at: mutation.now, actionRef: input.actionRef },
       };
+      const actionProgress = workflow.steps.length
+        ? [
+            ...(current.actionProgress ?? []).filter(
+              (progress) => progress.decisionId !== input.decisionId,
+            ),
+            {
+              decisionId: input.decisionId,
+              steps: [...workflow.steps],
+              completedSteps: [...workflow.completed],
+            },
+          ]
+        : (current.actionProgress ?? []);
       return success(mutation.revision, null, {
         ...current,
+        actionProgress,
         decisions: current.decisions.map((candidate) =>
           candidate.id === input.decisionId ? { ...candidate, data: nextDecision } : candidate,
         ),
@@ -247,9 +343,11 @@ export function reserveAction(input: ReserveActionInput): Result<ActionReservati
     return failure("recovery_required", "workspace disappeared after reservation");
   const entry = changed.data.decisions.find((candidate) => candidate.id === input.decisionId);
   if (!entry) return failure("recovery_required", "reserved decision disappeared");
-  const workflow = workflows.get(workflowKey(input.taskId, input.decisionId)) ?? {
+  const workflow = changed.data.actionProgress?.find(
+    (progress) => progress.decisionId === input.decisionId,
+  ) ?? {
     steps: [],
-    completed: [],
+    completedSteps: [],
   };
   return success(changed.data.revision, workspace.data.revision, {
     taskId: input.taskId,
@@ -257,8 +355,8 @@ export function reserveAction(input: ReserveActionInput): Result<ActionReservati
     actionRef: input.actionRef,
     taskRevision: changed.data.revision,
     workspaceRevision: workspace.data.revision,
-    completedSteps: [...workflow.completed],
-    remainingSteps: workflow.steps.slice(workflow.completed.length),
+    completedSteps: [...workflow.completedSteps],
+    remainingSteps: workflow.steps.slice(workflow.completedSteps.length),
   });
 }
 
@@ -267,14 +365,12 @@ export function settleAction(input: SettleActionInput): Result<Entry<Decision>> 
     return failure("invalid_input", "action settlement preconditions are required");
   if (!refSchema.safeParse(input.actionRef).success)
     return failure("invalid_input", "action reference is invalid");
-  if (
-    input.outcome === "not_started" &&
-    input.nativeEvidence !== true &&
-    !input.evidenceRefs?.length
-  )
-    return failure("permission_denied", "not_started requires native evidence");
-  if (input.evidenceRefs?.some((reference) => !refSchema.safeParse(reference).success))
-    return failure("invalid_input", "native settlement evidence is invalid");
+  const observation = validateNativeActionObservation(
+    input.observation,
+    input.outcome,
+    input.actionRef,
+  );
+  if (!observation.ok) return observation as Result<never>;
   let outcomeResult: Result<Entry<Decision>> | null = null;
   const changed = input.store.mutateTask(
     input.taskId,
@@ -301,8 +397,18 @@ export function settleAction(input: SettleActionInput): Result<Entry<Decision>> 
         return failure("permission_denied", "action is not reserved");
       if (canonicalJson(entry.data.consumption.actionRef) !== canonicalJson(input.actionRef))
         return failure("permission_denied", "settlement reference does not match reservation");
-      const key = workflowKey(input.taskId, input.decisionId);
-      const workflow = workflows.get(key) ?? { steps: [], completed: [] };
+      const stored = current.actionProgress?.find(
+        (progress) => progress.decisionId === input.decisionId,
+      );
+      const workflow = stored
+        ? { steps: stored.steps, completed: stored.completedSteps }
+        : { steps: [], completed: [] };
+      if (
+        entry.data.binding.approvedContent &&
+        !stored &&
+        parseSteps(entry.data.binding.approvedContent).length
+      )
+        return failure("recovery_required", "bounded action progress is missing");
       const currentStep = input.step ?? workflow.steps[workflow.completed.length];
       if (
         workflow.steps.length &&
@@ -318,7 +424,6 @@ export function settleAction(input: SettleActionInput): Result<Entry<Decision>> 
           ...entry.data,
           consumption: { ...entry.data.consumption, state: "uncertain" as const, at: mutation.now },
         };
-        workflows.delete(key);
         return success(mutation.revision, null, {
           ...current,
           decisions: current.decisions.map((candidate) =>
@@ -328,7 +433,6 @@ export function settleAction(input: SettleActionInput): Result<Entry<Decision>> 
       }
       if (input.outcome === "not_started") {
         const released = { ...entry.data, consumption: null };
-        workflows.delete(key);
         return success(mutation.revision, null, {
           ...current,
           decisions: current.decisions.map((candidate) =>
@@ -338,16 +442,27 @@ export function settleAction(input: SettleActionInput): Result<Entry<Decision>> 
       }
       if (currentStep) workflow.completed.push(currentStep);
       const complete = !workflow.steps.length || workflow.completed.length >= workflow.steps.length;
-      workflows.set(key, workflow);
       const settled = {
         ...entry.data,
         consumption: complete
           ? { ...entry.data.consumption, state: "consumed" as const, at: mutation.now }
-          : entry.data.consumption,
+          : null,
       };
-      if (complete) workflows.delete(key);
+      const actionProgress = workflow.steps.length
+        ? [
+            ...(current.actionProgress ?? []).filter(
+              (progress) => progress.decisionId !== input.decisionId,
+            ),
+            {
+              decisionId: input.decisionId,
+              steps: [...workflow.steps],
+              completedSteps: [...workflow.completed],
+            },
+          ]
+        : (current.actionProgress ?? []);
       const next = {
         ...current,
+        actionProgress,
         decisions: current.decisions.map((candidate) =>
           candidate.id === input.decisionId ? { ...candidate, data: settled } : candidate,
         ),

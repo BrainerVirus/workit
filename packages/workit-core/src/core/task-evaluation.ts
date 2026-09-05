@@ -8,6 +8,7 @@ import {
   candidateSchema,
   decisionDigest,
   failure,
+  scopeCovers as contractScopeCovers,
   success,
   type Candidate,
   type Capability,
@@ -22,6 +23,7 @@ import {
   type TaskView,
   type WorkspaceRecord,
 } from "./task-contract";
+import { verifyDecisionContentAtRoot } from "./authority";
 
 export type CandidateEnvironment =
   | readonly (string | { name: string; value?: string | null })[]
@@ -353,27 +355,12 @@ export function evaluateEvidence(
   });
 }
 
-export const scopeCovers = (outer: Scope, inner: Scope): boolean => {
-  const innerPaths = inner.paths.length ? inner.paths : ["."];
-  const covers = (item: string): boolean =>
-    outer.paths.some((base) => base === "." || item === base || item.startsWith(`${base}/`)) &&
-    !excluded(item, outer.exclusions);
-  const exclusionIsCoveredByInner = (item: string): boolean =>
-    inner.exclusions.some(
-      (excludedPath) => excludedPath === item || item.startsWith(`${excludedPath}/`),
-    );
-  const outerExcludesIncludedInnerPath = (item: string): boolean =>
-    innerPaths.some(
-      (base) =>
-        (base === "." || item === base || item.startsWith(`${base}/`)) &&
-        !exclusionIsCoveredByInner(item),
-    );
-  return innerPaths.every(covers) && !outer.exclusions.some(outerExcludesIncludedInnerPath);
-};
+export const scopeCovers = contractScopeCovers;
 const applicableDecision = (
   task: TaskRecord,
   workspace: WorkspaceRecord,
   requirement: Requirement,
+  checkoutRoot?: string,
 ): Decision[] =>
   task.decisions
     .map((entry) => entry.data)
@@ -387,13 +374,15 @@ const applicableDecision = (
         decision.requirementIds.includes(requirement.id) &&
         decision.binding.scope &&
         scopeCovers(decision.binding.scope, requirement.scope) &&
-        decision.digest === decisionDigest(decision),
+        decision.digest === decisionDigest(decision) &&
+        (checkoutRoot ? verifyDecisionContentAtRoot(checkoutRoot, decision.binding).ok : true),
     );
 
 const applicableRequirementDecision = (
   task: TaskRecord,
   workspace: WorkspaceRecord,
   requirement: Requirement,
+  checkoutRoot?: string,
 ): { id: string }[] =>
   task.decisions
     .filter(
@@ -405,7 +394,8 @@ const applicableRequirementDecision = (
         data.binding.workspaceId === workspace.id &&
         data.requirementIds.includes(requirement.id) &&
         scopeCovers(data.binding.scope, requirement.scope) &&
-        data.digest === decisionDigest(data),
+        data.digest === decisionDigest(data) &&
+        (checkoutRoot ? verifyDecisionContentAtRoot(checkoutRoot, data.binding).ok : true),
     )
     .map(({ id }) => ({ id }));
 
@@ -429,6 +419,7 @@ export function evaluateRequirements(
   capabilities: Capability[],
   candidate: Candidate | null = task.candidates.at(-1) ?? null,
   _caller?: Caller,
+  checkoutRoot?: string,
 ) {
   const evidence = evaluateEvidence(task, candidate);
   if (task.policy && task.policy.policyVersion !== POLICY_VERSION)
@@ -478,7 +469,7 @@ export function evaluateRequirements(
       };
     const decisions =
       requirement.dimension === "decisions"
-        ? applicableRequirementDecision(task, workspace, requirement)
+        ? applicableRequirementDecision(task, workspace, requirement, checkoutRoot)
         : [];
     if (decisions.length)
       return {
@@ -489,7 +480,7 @@ export function evaluateRequirements(
         reason: "an applicable approved decision satisfies the requirement",
       };
     const limitations = requirement.acceptanceAllowed
-      ? applicableDecision(task, workspace, requirement)
+      ? applicableDecision(task, workspace, requirement, checkoutRoot)
       : [];
     if (limitations.length)
       return {
@@ -564,6 +555,7 @@ export function evaluateClosure(
             decision.response === "approved" &&
             decision.revoked === null &&
             decision.digest === decisionDigest(decision) &&
+            verifyDecisionContentAtRoot(view.workspace.root, decision.binding).ok &&
             decision.binding.taskId === view.task.id &&
             decision.binding.workspaceId === view.workspace.id &&
             scopeCovers(decision.binding.scope, entry.data.scope) &&

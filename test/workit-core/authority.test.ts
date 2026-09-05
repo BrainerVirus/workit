@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -41,7 +41,34 @@ const actionBinding = (task: ReturnType<typeof active>["task"], workspaceId: str
   contentRefs: [],
 });
 
-test("decision.record derives the digest and native provenance", () => {
+const nativeObservation = (
+  handle: string,
+  effect: "none" | "performed" | "unknown" = "performed",
+) => {
+  const receipt = {
+    kind: "host" as const,
+    host: "workit_cli" as const,
+    handle: `receipt-${handle}`,
+  };
+  return {
+    receipt,
+    effect,
+    provenance: {
+      kind: "host_observed" as const,
+      host: "workit_cli" as const,
+      session: { kind: "host" as const, host: "workit_cli" as const, handle: "test" },
+      workerId: null,
+      receipts: [receipt],
+    },
+  };
+};
+
+const nativeDecision = (handle: string) => nativeObservation(`decision-${handle}`);
+
+const recordNativeDecision = (core: WorkitCore, request: Record<string, unknown>, handle: string) =>
+  core.observeDecision(request, nativeDecision(handle));
+
+test("decision.record keeps claimed approval agent-reported and native observation is explicit", () => {
   const { core, task, workspace } = active();
   const binding = actionBinding(task, workspace.id);
   const result = core.decision({
@@ -57,21 +84,327 @@ test("decision.record derives the digest and native provenance", () => {
   expect(result).toMatchObject({ ok: true, data: { data: { purpose: "action", revoked: null } } });
   if (!result.ok) throw new Error(result.error);
   expect(result.data.data.digest).toBe(decisionDigest(result.data.data));
-  expect(result.data.provenance).toMatchObject({ kind: "host_observed", host: "workit_cli" });
+  expect(result.data.provenance).toMatchObject({ kind: "agent_reported", host: "workit_cli" });
 });
 
-test("two invocations cannot reserve one bounded approval", () => {
+test("agent-reported approval cannot reserve, while a receipt-bound native approval can", () => {
   const { core, store, task, workspace } = active();
-  const recorded = core.decision({
+  const request = {
+    schemaVersion: 1,
+    action: "record" as const,
+    taskId: task.id,
+    expectedRevision: task.revision,
+    purpose: "action" as const,
+    binding: actionBinding(task, workspace.id),
+    response: "approved" as const,
+    requirementIds: [],
+  };
+  const reported = core.decision(request);
+  if (!reported.ok) throw new Error(reported.error);
+  const blocked = core.reserveAction({
+    taskId: task.id,
+    decisionId: reported.data.id,
+    actionRef: { kind: "host", host: "workit_cli", handle: "agent-action" },
+    expectedRevision: reported.revision!,
+    expectedWorkspaceRevision: workspace.revision,
+  });
+  expect(blocked).toMatchObject({ ok: false, code: "permission_denied" });
+  const nativeTask = store.readTask(task.id);
+  if (!nativeTask.ok) throw new Error(nativeTask.error);
+  const observed = recordNativeDecision(
+    core,
+    { ...request, expectedRevision: nativeTask.data.revision },
+    "approval",
+  );
+  expect(observed).toMatchObject({ ok: true, data: { provenance: { kind: "host_observed" } } });
+  if (!observed.ok) throw new Error(observed.error);
+  const reserveTask = store.readTask(task.id);
+  if (!reserveTask.ok) throw new Error(reserveTask.error);
+  expect(
+    core.reserveAction({
+      taskId: task.id,
+      decisionId: observed.data.id,
+      actionRef: { kind: "host", host: "workit_cli", handle: "native-action" },
+      expectedRevision: reserveTask.data.revision,
+      expectedWorkspaceRevision: workspace.revision,
+    }),
+  ).toMatchObject({ ok: true });
+});
+
+test("settlement requires a receipt-bound native observation and exact action binding", () => {
+  const { core, store, task, workspace } = active();
+  const request = {
+    schemaVersion: 1,
+    action: "record" as const,
+    taskId: task.id,
+    expectedRevision: task.revision,
+    purpose: "action" as const,
+    binding: actionBinding(task, workspace.id),
+    response: "approved" as const,
+    requirementIds: [],
+  };
+  const recorded = recordNativeDecision(core, request, "settlement");
+  if (!recorded.ok) throw new Error(recorded.error);
+  const current = store.readTask(task.id);
+  if (!current.ok) throw new Error(current.error);
+  const reservation = core.reserveAction({
+    taskId: task.id,
+    decisionId: recorded.data.id,
+    actionRef: { kind: "host", host: "workit_cli", handle: "settled-action" },
+    expectedRevision: current.data.revision,
+    expectedWorkspaceRevision: workspace.revision,
+  });
+  if (!reservation.ok) throw new Error(reservation.error);
+  expect(core.settleAction({ ...reservation.data, outcome: "not_started" } as any)).toMatchObject({
+    ok: false,
+    code: "invalid_input",
+  });
+  expect(
+    core.settleAction({
+      ...reservation.data,
+      outcome: "not_started",
+      observation: {
+        ...nativeObservation("wrong-action", "none"),
+        actionRef: { kind: "host", host: "workit_cli", handle: "wrong" },
+      },
+    }),
+  ).toMatchObject({ ok: false, code: "permission_denied" });
+  expect(
+    core.settleAction({
+      ...reservation.data,
+      outcome: "not_started",
+      observation: {
+        ...nativeObservation("no-effect", "none"),
+        actionRef: reservation.data.actionRef,
+      },
+    }),
+  ).toMatchObject({ ok: true });
+});
+
+test("stale limitation document bytes stop accepted-limitations applicability", () => {
+  const { core, store, task, workspace, root } = active();
+  const file = join(root, "limitation.md");
+  writeFileSync(file, "approved limitation");
+  const digest = createHash("sha256").update(readFileSync(file)).digest("hex");
+  const assessed = core.policy({
+    schemaVersion: 1,
+    action: "assess",
+    taskId: task.id,
+    expectedRevision: task.revision,
+    assessment: assessment(),
+  });
+  if (!assessed.ok) throw new Error(assessed.error);
+  const current = store.readTask(task.id);
+  if (!current.ok || !current.data.policy) throw new Error("policy missing");
+  const requirement = current.data.policy.requirements.find((item) => item.acceptanceAllowed);
+  if (!requirement) throw new Error("limitation-capable requirement missing");
+  const binding = {
+    ...actionBinding(current.data, workspace.id),
+    contentRefs: [{ kind: "file" as const, path: "limitation.md", digest }],
+  };
+  const decision = core.decision({
+    schemaVersion: 1,
+    action: "record",
+    taskId: task.id,
+    expectedRevision: current.data.revision,
+    purpose: "limitation",
+    binding,
+    response: "approved",
+    requirementIds: [requirement.id],
+  });
+  expect(decision).toMatchObject({ ok: true });
+  if (!decision.ok) throw new Error(decision.error);
+  const before = core.task({
+    schemaVersion: 1,
+    action: "inspect",
+    taskId: task.id,
+    view: "summary",
+  });
+  if (!before.ok) throw new Error(before.error);
+  expect(
+    (before.data as any).requirements.find((item: any) => item.requirementId === requirement.id)
+      ?.status,
+  ).toBe("accepted_limitation");
+  writeFileSync(file, "drifted limitation");
+  const after = core.task({
+    schemaVersion: 1,
+    action: "inspect",
+    taskId: task.id,
+    view: "summary",
+  });
+  if (!after.ok) throw new Error(after.error);
+  expect(
+    (after.data as any).requirements.find((item: any) => item.requirementId === requirement.id)
+      ?.status,
+  ).toBe("unsatisfied");
+});
+
+test("document approval rejects a symlinked ancestor outside the checkout", () => {
+  const { core, task, workspace, root } = active();
+  const outside = mkdtempSync(join(tmpdir(), "workit-outside-"));
+  mkdirSync(join(outside, "nested"));
+  const file = join(outside, "nested", "approved.md");
+  writeFileSync(file, "outside");
+  symlinkSync(join(outside, "nested"), join(root, "linked"), "dir");
+  const digest = createHash("sha256").update(readFileSync(file)).digest("hex");
+  expect(
+    core.decision({
+      schemaVersion: 1,
+      action: "record",
+      taskId: task.id,
+      expectedRevision: task.revision,
+      purpose: "limitation",
+      binding: {
+        ...actionBinding(task, workspace.id),
+        contentRefs: [{ kind: "file" as const, path: "linked/approved.md", digest }],
+      },
+      response: "approved",
+      requirementIds: [],
+    }),
+  ).toMatchObject({ ok: false, code: "invalid_input" });
+});
+
+test("dismissal rejects evidence unrelated to the finding claim and references", () => {
+  const { core, store, task } = active();
+  const finding = core.finding({
     schemaVersion: 1,
     action: "record",
     taskId: task.id,
     expectedRevision: task.revision,
-    purpose: "action",
-    binding: actionBinding(task, workspace.id),
-    response: "approved",
-    requirementIds: [],
+    claim: "unsafe behavior",
+    consequence: "unsafe closure",
+    scope: task.intent.data.scope,
+    candidateId: null,
+    refs: [ref({ url: "https://example.test/finding" })],
   });
+  if (!finding.ok) throw new Error(finding.error);
+  const current = store.readTask(task.id);
+  if (!current.ok) throw new Error(current.error);
+  const evidence = core.evidence({
+    schemaVersion: 1,
+    action: "record",
+    taskId: task.id,
+    expectedRevision: current.data.revision,
+    evidence: {
+      kind: "investigation",
+      claim: "unrelated investigation",
+      requirementIds: [],
+      beforeCandidateId: null,
+      candidateId: null,
+      result: "failed",
+      summary: "different issue",
+      refs: [ref({ url: "https://example.test/other" })],
+      exitCode: 1,
+      reviewContext: null,
+    },
+  });
+  if (!evidence.ok) throw new Error(evidence.error);
+  const afterEvidence = store.readTask(task.id);
+  if (!afterEvidence.ok) throw new Error(afterEvidence.error);
+  expect(
+    core.finding({
+      schemaVersion: 1,
+      action: "resolve",
+      taskId: task.id,
+      expectedRevision: afterEvidence.data.revision,
+      findingId: finding.data.id,
+      disposition: "dismissed",
+      reason: "not supported",
+      evidenceIds: [evidence.data.id],
+      decisionIds: [],
+    }),
+  ).toMatchObject({ ok: false, code: "permission_denied" });
+});
+
+test("bounded progress persists after an intermediate native settlement", () => {
+  const { core, store, task, workspace } = active();
+  const request = {
+    schemaVersion: 1,
+    action: "record" as const,
+    taskId: task.id,
+    expectedRevision: task.revision,
+    purpose: "action" as const,
+    binding: {
+      ...actionBinding(task, workspace.id),
+      approvedContent: JSON.stringify({ steps: ["one", "two"] }),
+    },
+    response: "approved" as const,
+    requirementIds: [],
+  };
+  const recorded = recordNativeDecision(core, request, "persisted-workflow");
+  if (!recorded.ok) throw new Error(recorded.error);
+  const current = store.readTask(task.id);
+  if (!current.ok) throw new Error(current.error);
+  const first = core.reserveAction({
+    taskId: task.id,
+    decisionId: recorded.data.id,
+    actionRef: { kind: "host", host: "workit_cli", handle: "step-one" },
+    step: "one",
+    expectedRevision: current.data.revision,
+    expectedWorkspaceRevision: workspace.revision,
+  });
+  if (!first.ok) throw new Error(first.error);
+  expect(
+    core.settleAction({
+      ...first.data,
+      outcome: "succeeded",
+      observation: {
+        ...nativeObservation("step-one", "performed"),
+        actionRef: first.data.actionRef,
+      },
+    }),
+  ).toMatchObject({ ok: true });
+  const after = store.readTask(task.id);
+  if (!after.ok) throw new Error(after.error);
+  expect(after.data.actionProgress).toEqual([
+    { decisionId: recorded.data.id, steps: ["one", "two"], completedSteps: ["one"] },
+  ]);
+  const restarted = new WorkitCore(new TaskStore(store.root), context(store.root));
+  const restartedTask = new TaskStore(store.root).readTask(task.id);
+  const restartedWorkspace = new TaskStore(store.root).readWorkspace();
+  if (!restartedTask.ok || !restartedWorkspace.ok || !restartedWorkspace.data)
+    throw new Error("state missing after restart");
+  const second = restarted.reserveAction({
+    taskId: task.id,
+    decisionId: recorded.data.id,
+    actionRef: { kind: "host", host: "workit_cli", handle: "step-two" },
+    step: "two",
+    expectedRevision: restartedTask.data.revision,
+    expectedWorkspaceRevision: restartedWorkspace.data.revision,
+  });
+  expect(second).toMatchObject({
+    ok: true,
+    data: { completedSteps: ["one"], remainingSteps: ["two"] },
+  });
+  if (!second.ok) throw new Error(second.error);
+  expect(
+    restarted.settleAction({
+      ...second.data,
+      outcome: "succeeded",
+      observation: {
+        ...nativeObservation("step-two", "performed"),
+        actionRef: second.data.actionRef,
+      },
+    }),
+  ).toMatchObject({ ok: true });
+});
+
+test("two invocations cannot reserve one bounded approval", () => {
+  const { core, store, task, workspace } = active();
+  const recorded = recordNativeDecision(
+    core,
+    {
+      schemaVersion: 1,
+      action: "record",
+      taskId: task.id,
+      expectedRevision: task.revision,
+      purpose: "action",
+      binding: actionBinding(task, workspace.id),
+      response: "approved",
+      requirementIds: [],
+    },
+    "one-time",
+  );
   if (!recorded.ok) throw new Error(recorded.error);
   const current = store.readTask(task.id);
   const currentWorkspace = store.readWorkspace();
@@ -99,16 +432,20 @@ test("two invocations cannot reserve one bounded approval", () => {
 
 test("ambiguous settlement blocks blind retry and not_started releases only with native evidence", () => {
   const { core, store, task, workspace } = active();
-  const recorded = core.decision({
-    schemaVersion: 1,
-    action: "record",
-    taskId: task.id,
-    expectedRevision: task.revision,
-    purpose: "action",
-    binding: actionBinding(task, workspace.id),
-    response: "approved",
-    requirementIds: [],
-  });
+  const recorded = recordNativeDecision(
+    core,
+    {
+      schemaVersion: 1,
+      action: "record",
+      taskId: task.id,
+      expectedRevision: task.revision,
+      purpose: "action",
+      binding: actionBinding(task, workspace.id),
+      response: "approved",
+      requirementIds: [],
+    },
+    "unknown",
+  );
   if (!recorded.ok) throw new Error(recorded.error);
   const current = store.readTask(task.id);
   const currentWorkspace = store.readWorkspace();
@@ -122,13 +459,21 @@ test("ambiguous settlement blocks blind retry and not_started releases only with
     expectedWorkspaceRevision: currentWorkspace.data.revision,
   });
   if (!reservation.ok) throw new Error(reservation.error);
-  const settled = core.settleAction({ ...reservation.data, outcome: "unknown" });
+  const settled = core.settleAction({
+    ...reservation.data,
+    outcome: "unknown",
+    observation: {
+      ...nativeObservation("unknown", "unknown"),
+      actionRef: reservation.data.actionRef,
+    },
+  });
   expect(settled).toMatchObject({ ok: false, code: "external_outcome_unknown" });
   const after = store.readTask(task.id);
   const afterWorkspace = store.readWorkspace();
   if (!after.ok || !afterWorkspace.ok || !afterWorkspace.data) throw new Error("state missing");
+  const restarted = new WorkitCore(new TaskStore(store.root), context(store.root));
   expect(
-    core.reserveAction({
+    restarted.reserveAction({
       taskId: task.id,
       decisionId: recorded.data.id,
       actionRef: { kind: "host", host: "workit_cli", handle: "native-2" },
@@ -144,16 +489,20 @@ test("bounded workflows advance once and cannot repeat a completed step", () => 
     ...actionBinding(task, workspace.id),
     approvedContent: JSON.stringify({ steps: ["one", "two"] }),
   };
-  const recorded = core.decision({
-    schemaVersion: 1,
-    action: "record",
-    taskId: task.id,
-    expectedRevision: task.revision,
-    purpose: "action",
-    binding,
-    response: "approved",
-    requirementIds: [],
-  });
+  const recorded = recordNativeDecision(
+    core,
+    {
+      schemaVersion: 1,
+      action: "record",
+      taskId: task.id,
+      expectedRevision: task.revision,
+      purpose: "action",
+      binding,
+      response: "approved",
+      requirementIds: [],
+    },
+    "bounded",
+  );
   if (!recorded.ok) throw new Error(recorded.error);
   const current = store.readTask(task.id);
   const currentWorkspace = store.readWorkspace();
@@ -168,7 +517,11 @@ test("bounded workflows advance once and cannot repeat a completed step", () => 
     expectedWorkspaceRevision: currentWorkspace.data.revision,
   });
   if (!first.ok) throw new Error(first.error);
-  const settledFirst = core.settleAction({ ...first.data, outcome: "succeeded" });
+  const settledFirst = core.settleAction({
+    ...first.data,
+    outcome: "succeeded",
+    observation: { ...nativeObservation("one", "performed"), actionRef: first.data.actionRef },
+  });
   if (!settledFirst.ok) throw new Error(settledFirst.error);
   const afterFirst = store.readTask(task.id);
   const afterFirstWorkspace = store.readWorkspace();
@@ -187,7 +540,13 @@ test("bounded workflows advance once and cannot repeat a completed step", () => 
     data: { completedSteps: ["one"], remainingSteps: ["two"] },
   });
   if (!second.ok) throw new Error(second.error);
-  expect(core.settleAction({ ...second.data, outcome: "succeeded" })).toMatchObject({ ok: true });
+  expect(
+    core.settleAction({
+      ...second.data,
+      outcome: "succeeded",
+      observation: { ...nativeObservation("two", "performed"), actionRef: second.data.actionRef },
+    }),
+  ).toMatchObject({ ok: true });
   const afterSecond = store.readTask(task.id);
   const afterSecondWorkspace = store.readWorkspace();
   if (!afterSecond.ok || !afterSecondWorkspace.ok || !afterSecondWorkspace.data)
@@ -207,16 +566,20 @@ test("bounded workflows advance once and cannot repeat a completed step", () => 
 test("decision applicability rejects purpose, binding, scope, rejection, revocation, and byte drift", () => {
   const { core, store, task, workspace } = active();
   const binding = actionBinding(task, workspace.id);
-  const recorded = core.decision({
-    schemaVersion: 1,
-    action: "record",
-    taskId: task.id,
-    expectedRevision: task.revision,
-    purpose: "design",
-    binding,
-    response: "approved",
-    requirementIds: [],
-  });
+  const recorded = recordNativeDecision(
+    core,
+    {
+      schemaVersion: 1,
+      action: "record",
+      taskId: task.id,
+      expectedRevision: task.revision,
+      purpose: "design",
+      binding,
+      response: "approved",
+      requirementIds: [],
+    },
+    "drift",
+  );
   expect(recorded).toMatchObject({ ok: true });
   if (!recorded.ok) throw new Error(recorded.error);
   expect(core.applicableDecision(task.id, "action", binding)).toMatchObject({ data: [] });
@@ -265,16 +628,20 @@ test("action reservation rejects changed approved document bytes and scope", () 
     ...actionBinding(task, workspace.id),
     contentRefs: [{ kind: "file" as const, path: "approved.md", digest }],
   };
-  const recorded = core.decision({
-    schemaVersion: 1,
-    action: "record",
-    taskId: task.id,
-    expectedRevision: task.revision,
-    purpose: "action",
-    binding,
-    response: "approved",
-    requirementIds: [],
-  });
+  const recorded = recordNativeDecision(
+    core,
+    {
+      schemaVersion: 1,
+      action: "record",
+      taskId: task.id,
+      expectedRevision: task.revision,
+      purpose: "action",
+      binding,
+      response: "approved",
+      requirementIds: [],
+    },
+    "document-drift",
+  );
   if (!recorded.ok) throw new Error(recorded.error);
   writeFileSync(file, "drifted");
   const current = store.readTask(task.id);
@@ -338,16 +705,20 @@ test("rejected and revoked decisions never authorize actions, and provenance is 
       expectedWorkspaceRevision: workspace.revision,
     }),
   ).toMatchObject({ ok: false, code: "permission_denied" });
-  const approved = core.decision({
-    schemaVersion: 1,
-    action: "record",
-    taskId: task.id,
-    expectedRevision: after.data.revision,
-    purpose: "action",
-    binding: actionBinding(task, workspace.id),
-    response: "approved",
-    requirementIds: [],
-  });
+  const approved = recordNativeDecision(
+    core,
+    {
+      schemaVersion: 1,
+      action: "record",
+      taskId: task.id,
+      expectedRevision: after.data.revision,
+      purpose: "action",
+      binding: actionBinding(task, workspace.id),
+      response: "approved",
+      requirementIds: [],
+    },
+    "revocation",
+  );
   if (!approved.ok) throw new Error(approved.error);
   const approvedTask = store.readTask(task.id);
   if (!approvedTask.ok) throw new Error(approvedTask.error);

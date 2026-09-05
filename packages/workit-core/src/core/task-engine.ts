@@ -22,12 +22,14 @@ import {
   type Utc,
 } from "./task-contract";
 import {
-  applicableDecision,
   bindingCovers,
+  storedDecisionApplicable,
   reserveAction as reserveBoundedAction,
   settleAction as settleBoundedAction,
+  validateNativeDecisionObservation,
   verifyDecisionContent,
   type ActionReservation,
+  type NativeDecisionObservation,
   type ReserveActionInput,
   type SettleActionInput,
 } from "./authority";
@@ -259,11 +261,34 @@ export class WorkitCore {
   }
 
   decision(request: unknown): Result<Entry<Decision>> {
+    return this.recordDecision(request);
+  }
+
+  observeDecision(
+    request: unknown,
+    observation: NativeDecisionObservation,
+  ): Result<Entry<Decision>> {
+    return this.recordDecision(request, observation);
+  }
+
+  private recordDecision(
+    request: unknown,
+    nativeObservation?: NativeDecisionObservation,
+  ): Result<Entry<Decision>> {
     const root = this.contextRootError();
     if (!root.ok) return root as Result<never>;
     const parsed = parseOperation("decision", request);
     if (!parsed.ok) return parsed as Result<never>;
     const input = parsed.data as any;
+    if (nativeObservation) {
+      const valid = validateNativeDecisionObservation(nativeObservation);
+      if (!valid.ok) return valid as Result<never>;
+      if (
+        nativeObservation.provenance.host !== this.context.caller.host ||
+        !sameSession(nativeObservation.provenance.session, this.context)
+      )
+        return failure("permission_denied", "native decision session does not match caller");
+    }
     const task = this.store.readTask(input.taskId);
     if (!task.ok) return task as Result<never>;
     if (input.action === "record") {
@@ -302,7 +327,7 @@ export class WorkitCore {
           const entry: Entry<Decision> = {
             id: newId(),
             recordedAt: mutation.now,
-            provenance: provenance(this.context),
+            provenance: nativeObservation?.provenance ?? provenance(this.context, "agent_reported"),
             data,
           };
           return success(mutation.revision, null, {
@@ -424,6 +449,22 @@ export class WorkitCore {
     }
     if (input.disposition === "dismissed" && evidence.length === 0)
       return failure("permission_denied", "dismissal requires supporting evidence");
+    if (input.disposition === "dismissed") {
+      const relevant = evidence.every((entry) => {
+        if (entry.data.result === "missing" || entry.data.result === "skipped") return false;
+        const candidateMatches =
+          finding.data.candidateId === null
+            ? entry.data.candidateId === null
+            : entry.data.candidateId === finding.data.candidateId ||
+              entry.data.beforeCandidateId === finding.data.candidateId;
+        const referenceMatches = finding.data.refs.some((left) =>
+          entry.data.refs.some((right) => JSON.stringify(left) === JSON.stringify(right)),
+        );
+        return candidateMatches && (referenceMatches || entry.data.claim === finding.data.claim);
+      });
+      if (!relevant)
+        return failure("permission_denied", "dismissal evidence is unrelated to the finding");
+    }
     if (input.disposition === "deferred") {
       const workspace = this.store.readWorkspace();
       if (!workspace.ok) return workspace as Result<never>;
@@ -434,6 +475,7 @@ export class WorkitCore {
           entry.data.response === "approved" &&
           entry.data.revoked === null &&
           entry.data.digest === decisionDigest(entry.data) &&
+          verifyDecisionContent(this.store, entry.data.binding).ok &&
           entry.data.binding.taskId === task.data.id &&
           entry.data.binding.workspaceId === workspace.data!.id &&
           bindingCovers(entry.data.binding.scope, finding.data.scope) &&
@@ -490,11 +532,7 @@ export class WorkitCore {
     if (!root.ok) return root as Result<never>;
     const task = this.store.readTask(taskId);
     if (!task.ok) return task as Result<never>;
-    const entries = task.data.decisions.filter(
-      (entry) =>
-        applicableDecision(task.data, purpose, binding).includes(entry.data) &&
-        verifyDecisionContent(this.store, entry.data.binding).ok,
-    );
+    const entries = storedDecisionApplicable(this.store, task.data, purpose, binding);
     return success(task.data.revision, null, entries);
   }
 
@@ -543,6 +581,7 @@ export class WorkitCore {
       this.context.capabilities,
       current.data,
       this.context.caller,
+      this.store.root,
     );
     return success(task.revision, workspace.data.revision, {
       id: task.id,
@@ -570,6 +609,7 @@ export class WorkitCore {
       this.context.capabilities,
       current.data,
       this.context.caller,
+      this.store.root,
     );
     return success(task.revision, workspace.data.revision, {
       task,
@@ -673,6 +713,7 @@ export class WorkitCore {
       this.context.capabilities,
       withCandidate,
       this.context.caller,
+      this.store.root,
     );
     const view = {
       task: taskForView,

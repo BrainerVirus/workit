@@ -105,6 +105,31 @@ export const scopeSchema = z
   .strict();
 export type Scope = z.infer<typeof scopeSchema>;
 
+export const scopeCovers = (outer: Scope, inner: Scope): boolean => {
+  const innerPaths = inner.paths.length ? inner.paths : ["."];
+  const excluded = (path: string, scope: Scope): boolean =>
+    scope.exclusions.some(
+      (excludedPath) => excludedPath === path || path.startsWith(`${excludedPath}/`),
+    );
+  const covers = (path: string): boolean =>
+    outer.paths.some((base) => base === "." || path === base || path.startsWith(`${base}/`)) &&
+    !excluded(path, outer);
+  const innerExcludes = (path: string): boolean =>
+    inner.exclusions.some(
+      (excludedPath) => excludedPath === path || path.startsWith(`${excludedPath}/`),
+    );
+  return (
+    innerPaths.every(covers) &&
+    !outer.exclusions.some((excludedPath) =>
+      innerPaths.some(
+        (base) =>
+          (base === "." || excludedPath === base || excludedPath.startsWith(`${base}/`)) &&
+          !innerExcludes(excludedPath),
+      ),
+    )
+  );
+};
+
 export const refSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("file"), path: pathValue, digest: nullableDigest }).strict(),
   z
@@ -506,6 +531,28 @@ export const closureSchema = z
   })
   .strict();
 export type Closure = z.infer<typeof closureSchema>;
+export const actionProgressSchema = z
+  .object({
+    decisionId: id,
+    steps: z.array(nonEmpty),
+    completedSteps: z.array(nonEmpty),
+  })
+  .strict()
+  .check((ctx) => {
+    const { steps, completedSteps } = ctx.value;
+    const valid =
+      new Set(steps).size === steps.length &&
+      new Set(completedSteps).size === completedSteps.length &&
+      completedSteps.every((step, index) => steps[index] === step);
+    if (!valid)
+      ctx.issues.push({
+        code: "custom",
+        input: ctx.value,
+        message: "completed action steps must be a unique prefix of approved steps",
+        path: ["completedSteps"],
+      });
+  });
+export type ActionProgress = z.infer<typeof actionProgressSchema>;
 export const taskRecordSchema = z
   .object({
     schemaVersion: z.literal(1),
@@ -526,6 +573,7 @@ export const taskRecordSchema = z
     candidates: z.array(candidateSchema),
     evidence: z.array(entrySchema(evidenceSchema)),
     decisions: z.array(entrySchema(decisionSchema)),
+    actionProgress: z.array(actionProgressSchema).optional(),
     findings: z.array(entrySchema(findingSchema)),
     workers: z.array(entrySchema(workerSchema)),
   })
