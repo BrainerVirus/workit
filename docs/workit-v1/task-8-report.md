@@ -122,3 +122,16 @@ fresh and no universal spec/plan is required.
 Observed post-authoring shape: the transfer exports compact state without
 credentials or ownership, imports paused state, and requires destination
 reconciliation before any write.
+
+## Verification
+
+- Commit: `28bbafd..ea4f4e9`, `feat(core): select focused Workit methods`.
+- `bun test test/workit-core/methods.test.ts`: 9 passed; covers mechanical
+  no-method selection, independent TDD/review, challenge/plan/helper independence,
+  unavailable review, stable order, deduplication, and compact bootstrap.
+- Prior core regression slice: 95 passed across contract, policy, engine,
+  authority, worker, and continuity tests.
+- `bunx tsc --noEmit`, focused oxlint, oxfmt, frontmatter, and word-count checks:
+  passed. All seven skills are under 500 words with valid required frontmatter.
+- Residual: `test/artifacts/manifests.test.ts` still expects legacy adapter
+  `wk-*` assets; removing/updating those assets belongs to Task 18.
