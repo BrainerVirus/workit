@@ -1,4 +1,5 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
+import path from "node:path";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
@@ -33,18 +34,36 @@ const VERSION = (() => {
   }
 })();
 
-const safeErrorMessage = (error: unknown): string => {
-  const message = error instanceof Error ? error.message : String(error);
-  return redactSecrets(message.split(/\r?\n/, 1)[0].replace(/\s+(?:at|stack:)\s.*$/i, "")).slice(
-    0,
-    500,
-  );
+const rootVariants = (workspaceRoot?: string): string[] => {
+  if (!workspaceRoot) return [];
+  const roots = new Set<string>();
+  for (const candidate of [workspaceRoot, path.resolve(workspaceRoot)]) {
+    if (path.isAbsolute(candidate) && candidate !== path.parse(candidate).root)
+      roots.add(candidate);
+  }
+  try {
+    const canonical = realpathSync(workspaceRoot);
+    if (canonical !== path.parse(canonical).root) roots.add(canonical);
+  } catch {
+    // The core will return a structured failure for an unavailable root.
+  }
+  return [...roots].sort((left, right) => right.length - left.length);
 };
 
-const reportError = (tool: string, error: unknown): void => {
+export const sanitizeTransportText = (value: unknown, workspaceRoot?: string): string => {
+  const message = value instanceof Error ? value.message : String(value);
+  const withoutStack = message.split(/\r?\n/, 1)[0].replace(/\s+(?:at|stack:)\s.*$/i, "");
+  const withoutRoot = rootVariants(workspaceRoot).reduce(
+    (current, root) => current.split(root).join("[WORKSPACE_ROOT]"),
+    withoutStack,
+  );
+  return redactSecrets(withoutRoot).slice(0, 500);
+};
+
+const reportError = (tool: string, error: unknown, workspaceRoot?: string): void => {
   try {
     process.stderr.write(
-      `${JSON.stringify({ level: "error", message: "MCP tool failed", tool, error: safeErrorMessage(error) })}\n`,
+      `${JSON.stringify({ level: "error", message: "MCP tool failed", tool, error: sanitizeTransportText(error, workspaceRoot) })}\n`,
     );
   } catch {
     // Diagnostics must never break the protocol response.
@@ -67,14 +86,30 @@ const toolInputSchema = (family: OperationFamily) => {
   return { type: "object" as const, ...schema };
 };
 
-const mcpResult = (result: Result<unknown>): CallToolResult => ({
-  content: [{ type: "text", text: JSON.stringify(result) }],
-  structuredContent: result,
-  ...(result.ok ? {} : { isError: true }),
-});
+const sanitizeFailure = (result: Result<unknown>, workspaceRoot?: string): Result<unknown> => {
+  if (result.ok) return result;
+  const sanitize = (value: unknown): unknown => {
+    if (typeof value === "string") return sanitizeTransportText(value, workspaceRoot);
+    if (Array.isArray(value)) return value.map(sanitize);
+    if (value !== null && typeof value === "object") {
+      return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, sanitize(item)]));
+    }
+    return value;
+  };
+  return sanitize(result) as Result<unknown>;
+};
 
-const thrownResult = (tool: string, error: unknown): CallToolResult => {
-  reportError(tool, error);
+const resultForClient = (result: Result<unknown>, workspaceRoot?: string): CallToolResult => {
+  const safe = sanitizeFailure(result, workspaceRoot);
+  return {
+    content: [{ type: "text", text: JSON.stringify(safe) }],
+    structuredContent: safe,
+    ...(safe.ok ? {} : { isError: true }),
+  };
+};
+
+const thrownResult = (tool: string, error: unknown, workspaceRoot?: string): CallToolResult => {
+  reportError(tool, error, workspaceRoot);
   const result = {
     ok: false as const,
     schemaVersion: 1 as const,
@@ -82,7 +117,7 @@ const thrownResult = (tool: string, error: unknown): CallToolResult => {
     error: "MCP operation failed",
     details: {},
   };
-  return mcpResult(result);
+  return resultForClient(result, workspaceRoot);
 };
 
 export function createMcpServer(host: McpHost, contextProvider: NativeContextProvider): Server {
@@ -99,36 +134,41 @@ export function createMcpServer(host: McpHost, contextProvider: NativeContextPro
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const toolName = request.params.name;
+    let workspaceRoot: string | undefined;
     try {
       const family = OPERATION_FAMILIES.find((candidate) => toolName === `workit_${candidate}`);
       if (!family) {
-        return mcpResult({
+        return resultForClient({
           ok: false,
           schemaVersion: 1,
           code: "invalid_input",
-          error: safeErrorMessage(`Unknown Workit tool: ${toolName}`),
+          error: sanitizeTransportText(`Unknown Workit tool: ${toolName}`),
           details: { fields: [{ path: "name", reason: "unknown operation family" }] },
         });
       }
 
       const context = await contextProvider.current();
+      workspaceRoot = context.root;
       if (context.caller.host !== host) {
-        return mcpResult({
-          ok: false,
-          schemaVersion: 1,
-          code: "invalid_input",
-          error: "native context host does not match MCP host",
-          details: { operation: family },
-        });
+        return resultForClient(
+          {
+            ok: false,
+            schemaVersion: 1,
+            code: "invalid_input",
+            error: "native context host does not match MCP host",
+            details: { operation: family },
+          },
+          workspaceRoot,
+        );
       }
       const parsed = parseOperation(family, request.params.arguments);
-      if (!parsed.ok) return mcpResult(parsed);
+      if (!parsed.ok) return resultForClient(parsed, workspaceRoot);
 
       const core = new WorkitCore(new TaskStore(context.root), context);
       const run = core[family] as unknown as (input: unknown) => Result<unknown>;
-      return mcpResult(run.call(core, parsed.data));
+      return resultForClient(run.call(core, parsed.data), workspaceRoot);
     } catch (error) {
-      return thrownResult(toolName, error);
+      return thrownResult(toolName, error, workspaceRoot);
     }
   });
 

@@ -11,6 +11,7 @@ Multi-platform workit: OpenCode, Cursor, and the CLI share one core. Every featu
 | Lifecycle | `workit_plan_pause`/`resume`/`complete` (receipts) | `workit_plan_pause`/`resume`/`complete` (policy-only) | `workit flow pause\|resume\|complete` |
 | Handoff | spawns a native OpenCode session | seeds a handoff prompt for the next agent | `workit handoff` (prints the destination prompt) |
 | Tools | native plugin tools | MCP server (`workit_*`) | `workit` commands |
+| Shared MCP transport | n/a (native tools remain host-owned) | `@brainervirus/workit-mcp`; host wiring remains adapter-owned | n/a |
 | Skills | `skills.paths` + vendored dirs | plugin `skills/` dirs | n/a |
 | Branch policy init | `workit_init_apply action=branch_policy` | same MCP tool | wizard screen |
 | Distribution | npm plugin entry (`opencode.json`) | Cursor Marketplace (git-discovered `.cursor-plugin/plugin.json`) | npm bin (`npx`) |

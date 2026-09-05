@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -10,7 +10,11 @@ import {
   type OperationContext,
 } from "../../packages/workit-core/src/core";
 import type { Host } from "../../packages/workit-core/src/core/task-contract";
-import { createMcpServer, type NativeContextProvider } from "../../packages/workit-mcp/src/index";
+import {
+  createMcpServer,
+  sanitizeTransportText,
+  type NativeContextProvider,
+} from "../../packages/workit-mcp/src/index";
 import { operationCorpus, taskStartRequest } from "../workit-core/task-fixtures";
 
 const id = "00000000-0000-4000-8000-000000000001";
@@ -101,6 +105,43 @@ test("MCP maps exact core results and marks domain failures as errors", async ()
     await server.close();
     rmSync(workspaceRoot, { recursive: true, force: true });
   }
+});
+
+test("MCP redacts secrets and the trusted workspace root only in failure envelopes", async () => {
+  const tempRoot = mkdtempSync(path.join(os.tmpdir(), "workit-mcp-failure-"));
+  const workspaceRoot = path.join(tempRoot, "workspace-secret-SUPERSECRET");
+  writeFileSync(workspaceRoot, "not a directory");
+  const { client, server } = await connect("cursor", {
+    current: async () => context("cursor", workspaceRoot),
+  });
+  try {
+    const result = await client.callTool({
+      name: "workit_task",
+      arguments: { schemaVersion: 1, action: "inspect", taskId: id, view: "summary" },
+    });
+    const text = JSON.stringify(result.structuredContent);
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent).toMatchObject({ ok: false, code: "recovery_required" });
+    expect(text).not.toContain("SUPERSECRET");
+    expect(text).not.toContain(workspaceRoot);
+    expect(text).toContain("[WORKSPACE_ROOT]");
+  } finally {
+    await client.close();
+    await server.close();
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("startup transport diagnostics use bounded secret and workspace-root sanitization", () => {
+  const workspaceRoot = "/tmp/workit-startup-secret-root";
+  const message = sanitizeTransportText(
+    new Error(`Bearer super-secret ${workspaceRoot}/server.ts:1:2`),
+    workspaceRoot,
+  );
+  expect(message).not.toContain("super-secret");
+  expect(message).not.toContain(workspaceRoot);
+  expect(message).toContain("[WORKSPACE_ROOT]");
+  expect(message.length).toBeLessThanOrEqual(500);
 });
 
 test("MCP resolves the trusted provider root and leaves read-only task listing bytes unchanged", async () => {

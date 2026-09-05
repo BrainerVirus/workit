@@ -6,6 +6,7 @@ Multi-platform Superpowers workflow plugin for **Cursor**, **OpenCode**, and the
 | --------------- | --------------------------------------------------------------------------- |
 | **OpenCode**    | `packages/workit-opencode/` — native plugin (commands, skills, tools)       |
 | **Cursor**      | `packages/workit-cursor/` — MCP + hooks + rules + skills plugin             |
+| **Shared MCP**  | `packages/workit-mcp/` — low-level transport for the eight core families |
 | **Shared core** | `packages/workit-core/` — shared logic, skills, commands, scripts, templates |
 | **CLI**         | `packages/workit-cli/` — Ink setup wizard + doctor (bin `workit`)           |
 
@@ -44,7 +45,7 @@ bun i
 - **Approval integrity** — approvals bind to the document's exact bytes via a SHA-256 digest; editing an approved spec or plan after approval invalidates it and forces a fresh reapproval before execution can resume.
 - **Execution lifecycle** — every approved plan moves through exactly four states (`pending` → `active` → `paused`/`active` → `completed`) with verified completion (SDD ledger complete + repository verification passing) and active-only subagent interception.
 - **12 `wk-*` skills** on OpenCode and Cursor (`wk-init`, `wk-status`, `wk-verify`, `wk-commit`, `wk-pr`, `wk-changelog`, `wk-release-notes`, `wk-docs-refresh`, `wk-handoff`, `wk-implement`, `wk-meetings`, `wk-issue-update`); the CLI exposes `workit init`, `workit doctor`, `workit flow`, and `workit handoff`.
-- **`workit_*` tools** — branch setup, PR create/context, docs validate/promote, YouTrack post/log/time, templates, rules, presentation (ASCII/mermaid), doctor, handoff, and plan lifecycle (`workit_plan_pause`/`resume`/`complete`) (native plugin tools on OpenCode, an MCP server on Cursor).
+- **`workit_*` tools** — branch setup, PR create/context, docs validate/promote, YouTrack post/log/time, templates, rules, presentation (ASCII/mermaid), doctor, handoff, and plan lifecycle (`workit_plan_pause`/`resume`/`complete`) (native plugin tools on OpenCode, host-specific MCP wiring on Cursor, and a shared low-level transport in `packages/workit-mcp/`).
 - **`workit` user-facing surface** — the session-contract marker is `<workit-contract>`, the init/status tools are `workit_init_apply` / `workit_init_status` / `workit_status`, the share path is `~/.local/share/workit`, and the Cursor install root is marked by `.workit-root` (legacy `~/.config/workflow-toolkit/` migration behavior is unchanged).
 - **Post-plan menus** — after the plan is approved an ordinary session presents five choices (Subagent-driven, Inline, Handoff, Review spec first, Review plan first); a handoff-destination session presents exactly four (never Handoff again). Subagent-driven execution adapts per host: OpenCode derives delegated status from session parentage (`parentID`); Cursor mints task-scoped delegation tokens through the coordinator lease — `workit_plan_menu` (subagent-driven) returns a one-time `coordinator_lease`, `workit_delegate` mints a fail-closed `delegation_token` per task (only hashes persist), and the coordinator dispatches Cursor-native subagents that pass the token on mutation calls. Inline runs single-agent in the current session on both hosts.
 - **Per-turn contract rails** — brainstorming-before-code, TDD, verification-before-completion, systematic-debugging, receiving-code-review, doc-delivery, config-guard, and issue-rail reminders plus post-hoc detectors.
@@ -122,6 +123,8 @@ Local dev variant (absolute path to this repo):
 ```
 
 A local (non-npm) Cursor install lives at `~/.cursor/plugins/local/workit` and registers `enabled_plugins.workit = true`; the installer migrates exact legacy `workflow-toolkit` entries after the replacement succeeds. Marketplace installation, the MCP/hook runtime, and the authenticated submission flow are documented in the [Cursor package README](packages/workit-cursor/README.md#marketplace). The Cursor runtime runs from `@latest` with the mandatory `--prefer-online` flag — `--prefer-online` forces fresh registry re-resolution so a stale `latest` in the `_npx` cache is never reused, and no per-release manual pin bump is required. Auto-load repair is automatic: the doctor's `stale_install` finding (legacy `mcp.json`/hook selectors, or a local-dist install behind the current/published runtime) is enforced by `install-cursor-plugin.sh` through a `doctor-check.ts cursor --stale` pre-check — exit 2 triggers a refresh + canonical re-registration, healthy installs are byte-untouched, and a registry-unreachable comparison warns as `registry_unreachable` (fail-open, never an install failure).
+
+**Shared MCP transport** — `packages/workit-mcp/` packages the eight core operation-family tools behind the low-level MCP `Server` transport. Its executable requires `--host cursor|codex_cli|codex_desktop`; the native context provider supplies the trusted workspace and caller boundary, while the transport derives schemas and delegates operations to `workit-core`. Host activation and registration remain adapter work for later tasks.
 
 ### Uninstall
 

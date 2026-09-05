@@ -1,12 +1,13 @@
 import { fileURLToPath } from "node:url";
 import path from "node:path";
-import { assertMcpHost, runStdioServer } from "./server";
+import { assertMcpHost, runStdioServer, sanitizeTransportText } from "./server";
 import type { McpHost } from "./server";
 
 export {
   assertMcpHost,
   createMcpServer,
   runStdioServer,
+  sanitizeTransportText,
   type McpHost,
   type NativeContextProvider,
 } from "./server";
@@ -19,8 +20,7 @@ const main = async (): Promise<void> => {
     assertMcpHost(host);
     await runStdioServer(host as McpHost);
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    process.stderr.write(`${message.replace(/\r?\n/g, " ").slice(0, 500)}\n`);
+    process.stderr.write(`${sanitizeTransportText(error)}\n`);
     process.exitCode = 2;
   }
 };

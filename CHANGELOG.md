@@ -20,6 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added the shared `@brainervirus/workit-mcp` low-level transport for the eight
+  core operation families, with trusted native context boundaries and
+  host-specific activation left to the adapter tasks.
 - Workit CLI task control over all eight shared operation families and 24
   schema-owned actions, with inline/`@file`/stdin payloads, exact `--json`
   Results, headless consent handling, and read-only `workit handoff --task`
