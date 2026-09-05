@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import {
+  POLICY_VERSION,
   candidateDigest,
   candidateSchema,
   decisionDigest,
@@ -171,6 +172,8 @@ export function captureCandidate(
           digest: digestBytes(fs.readFileSync(target)),
           executable: (stat.mode & 0o111) !== 0,
         });
+      } else if (!stat.isDirectory()) {
+        completeness = "uncertain";
       }
     } catch (error: any) {
       if (error?.code === "ENOENT") {
@@ -197,6 +200,7 @@ export function captureCandidate(
   const values = supplied
     .sort((left, right) => compareCodeUnits(left.name, right.name))
     .map(({ name, value }) => ({ name, value, refs: [] }));
+  if (values.some(({ value }) => value === null)) completeness = "uncertain";
   const headResult = spawnSync("git", ["rev-parse", "HEAD"], { cwd: checkout, encoding: "utf8" });
   if (headResult.status !== 0 && !/not a git repository/i.test(headResult.stderr ?? ""))
     completeness = "uncertain";
@@ -243,17 +247,10 @@ const sameSession = (left: { host: string; handle: string } | null, right: unkno
   );
 };
 
-const evidenceScope = (task: TaskRecord, ids: string[]): Scope | null => {
-  const scopes = (task.policy?.requirements ?? [])
+const evidenceScopes = (task: TaskRecord, ids: string[]): Scope[] =>
+  (task.policy?.requirements ?? [])
     .filter((requirement) => ids.includes(requirement.id))
     .map((requirement) => requirement.scope);
-  if (!scopes.length) return null;
-  return {
-    description: scopes.map((item) => item.description).join("; "),
-    paths: [...new Set(scopes.flatMap((item) => item.paths))],
-    exclusions: [...new Set(scopes.flatMap((item) => item.exclusions))],
-  };
-};
 
 export function evaluateEvidence(
   task: TaskRecord,
@@ -291,12 +288,19 @@ export function evaluateEvidence(
     const observed =
       task.candidates.find((item) => item.id === evidence.candidateId) ??
       (current.id === evidence.candidateId ? current : undefined);
-    if (!observed || current.completeness === "uncertain")
+    if (!observed || observed.completeness === "uncertain" || current.completeness === "uncertain")
       return { evidenceId: entry.id, status: "stale", reason: "candidate is missing or uncertain" };
     if (observed.id === current.id)
       return { evidenceId: entry.id, status: evidence.result, reason: "candidate is unchanged" };
-    const scope = evidenceScope(task, evidence.requirementIds);
-    if (!scope || changedPaths(observed, current).some((item) => pathRelevant(item, scope)))
+    const scopes = evidenceScopes(task, evidence.requirementIds);
+    const changed = changedPaths(observed, current);
+    const environmentChanged =
+      JSON.stringify(observed.environment) !== JSON.stringify(current.environment);
+    if (
+      !scopes.length ||
+      environmentChanged ||
+      changed.some((item) => scopes.some((scope) => pathRelevant(item, scope)))
+    )
       return { evidenceId: entry.id, status: "stale", reason: "relevant candidate state changed" };
     return {
       evidenceId: entry.id,
@@ -384,6 +388,14 @@ export function evaluateRequirements(
   _caller?: Caller,
 ) {
   const evidence = evaluateEvidence(task, candidate);
+  if (task.policy && task.policy.policyVersion !== POLICY_VERSION)
+    return task.policy.requirements.map((requirement) => ({
+      requirementId: requirement.id,
+      status: "unsatisfied" as const,
+      evidenceIds: [],
+      decisionIds: [],
+      reason: "stored policy version is unsupported; reassessment is required",
+    }));
   return (task.policy?.requirements ?? []).map((requirement) => {
     const related = task.evidence
       .map((entry, index) => ({ entry, evaluation: evidence[index] }))
@@ -477,6 +489,15 @@ export function evaluateClosure(
 ): Result<ClosureEvaluation> {
   if (requestedOutcome !== "stopped" && !view.task.policy)
     return failure("requirements_unsatisfied", "task has not been assessed");
+  if (
+    requestedOutcome !== "stopped" &&
+    view.task.policy &&
+    (view.task.policy as { policyVersion: string }).policyVersion !== POLICY_VERSION
+  )
+    return failure(
+      "requirements_unsatisfied",
+      "stored policy version is unsupported; reassessment is required",
+    );
   const evaluations = view.requirements;
   const blocking = evaluations.filter(
     (item) => item.status === "unsatisfied" || item.status === "unavailable",

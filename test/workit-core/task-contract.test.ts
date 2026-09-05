@@ -181,6 +181,19 @@ test("candidate identity ordering is independent of localeCompare", () => {
   }
 });
 
+test("candidate schema rejects a shape-valid forged identity", () => {
+  const content = {
+    scope: { description: "x", paths: ["."], exclusions: [] },
+    completeness: "known" as const,
+    files: [],
+    environment: [],
+    head: null,
+  };
+  const valid = { ...content, id: candidateDigest({ ...content, id: "0".repeat(64) }) };
+  expect(candidateSchema.safeParse(valid).success).toBe(true);
+  expect(candidateSchema.safeParse({ ...valid, id: "f".repeat(64) }).success).toBe(false);
+});
+
 test("canonical JSON rejects arrays with missing indices", () => {
   const sparse: unknown[] = [];
   sparse.length = 1;

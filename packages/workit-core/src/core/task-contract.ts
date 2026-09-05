@@ -301,7 +301,7 @@ export type Dimension = z.infer<typeof dimensionSchema>;
 
 export const policySchema = z
   .object({
-    policyVersion: text.regex(/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/),
+    policyVersion: z.literal(POLICY_VERSION),
     inputDigest: digest,
     requirements: z.array(
       z
@@ -381,7 +381,16 @@ export const candidateSchema = z
       }),
     head: text.nullable(),
   })
-  .strict();
+  .strict()
+  .check((ctx) => {
+    if (ctx.value.id !== candidateDigest(ctx.value))
+      ctx.issues.push({
+        code: "custom",
+        input: ctx.value,
+        message: "candidate identity does not match its content",
+        path: ["id"],
+      });
+  });
 export type Candidate = z.infer<typeof candidateSchema>;
 export const evidenceSchema = z
   .object({

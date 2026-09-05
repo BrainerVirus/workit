@@ -43,6 +43,7 @@ export type CoupledMutation = {
   expectedTaskRevision?: Revision;
   expectedRevision?: Revision;
   expectedWorkspaceRevision: Revision;
+  now?: Utc;
   task: TaskMutation;
   workspace: WorkspaceMutation;
 };
@@ -51,6 +52,7 @@ export type CreateInput = {
   intent: Intent;
   provenance: Provenance;
   expectedWorkspaceRevision: Revision | null;
+  now?: Utc;
 };
 export type RecoveryInput = {
   expectedBytes: string;
@@ -129,14 +131,9 @@ type LockSnapshot = { raw: string; data: MetadataLock };
 
 export class TaskStore {
   readonly root: string;
-  private clock: () => Utc = now;
 
   constructor(root: string) {
     this.root = fs.existsSync(root) ? fs.realpathSync(root) : path.resolve(root);
-  }
-
-  setClock(clock: () => Utc): void {
-    this.clock = clock;
   }
 
   readTask(taskId: Id): Result<TaskRecord> {
@@ -227,7 +224,7 @@ export class TaskStore {
             root: this.root,
             writer: null,
           };
-      const timestamp = this.clock();
+      const timestamp = value.now ?? now();
       const task: TaskRecord = {
         schemaVersion: SCHEMA_VERSION,
         id: newId(),
@@ -286,7 +283,12 @@ export class TaskStore {
     });
   }
 
-  mutateTask(taskId: Id, expected: Revision, update: TaskMutation): Result<TaskRecord> {
+  mutateTask(
+    taskId: Id,
+    expected: Revision,
+    update: TaskMutation,
+    timestamp?: Utc,
+  ): Result<TaskRecord> {
     return this.withLock(() => {
       const current = this.readTask(taskId);
       if (!current.ok) return current;
@@ -294,7 +296,7 @@ export class TaskStore {
       const previousBytes = this.snapshotBytes(this.taskPath(taskId));
       if (!previousBytes)
         return failure("storage_error", "task snapshot disappeared during mutation");
-      const context = { now: this.clock(), revision: newRevision() };
+      const context = { now: timestamp ?? now(), revision: newRevision() };
       let changed: Result<TaskRecord>;
       try {
         changed = update(current.data, Object.freeze({ ...context }));
@@ -327,7 +329,7 @@ export class TaskStore {
       const previousBytes = this.snapshotBytes(this.workspacePath);
       if (!previousBytes)
         return failure("storage_error", "workspace snapshot disappeared during mutation");
-      const context = { now: this.clock(), revision: newRevision() };
+      const context = { now: now(), revision: newRevision() };
       let changed: Result<WorkspaceRecord>;
       try {
         changed = update(current.data, Object.freeze({ ...context }));
@@ -366,7 +368,7 @@ export class TaskStore {
       const previousTaskBytes = this.snapshotBytes(this.taskPath(input.taskId));
       if (!previousWorkspaceBytes || !previousTaskBytes)
         return failure("storage_error", "snapshot disappeared during coupled mutation");
-      const workspaceContext = { now: this.clock(), revision: newRevision() };
+      const workspaceContext = { now: input.now ?? now(), revision: newRevision() };
       let changedWorkspace: Result<WorkspaceRecord>;
       try {
         changedWorkspace = input.workspace(workspace.data, Object.freeze({ ...workspaceContext }));
@@ -388,7 +390,7 @@ export class TaskStore {
         previousWorkspaceBytes,
       );
       if (!reserved.ok) return reserved;
-      const taskContext = { now: this.clock(), revision: newRevision() };
+      const taskContext = { now: input.now ?? now(), revision: newRevision() };
       let changedTask: Result<TaskRecord>;
       try {
         changedTask = input.task(task.data, Object.freeze({ ...taskContext }));
@@ -587,7 +589,7 @@ export class TaskStore {
           const value = {
             ...parsed.data,
             revision: newRevision(),
-            updatedAt: this.clock(),
+            updatedAt: now(),
             status: parsed.data.status === "active" ? "paused" : parsed.data.status,
           } as TaskRecord;
           const replaced = this.replaceSnapshot(file, value, reacquiredBytes);

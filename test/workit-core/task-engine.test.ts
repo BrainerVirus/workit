@@ -8,6 +8,7 @@ import {
   captureCandidate,
   decisionDigest,
   evaluateClosure,
+  evaluateEvidence,
   newId,
   success,
   type OperationContext,
@@ -144,6 +145,97 @@ test("candidate capture is deterministic, records absent scope paths, and reject
   ).toMatchObject({ ok: false, code: "invalid_input" });
 });
 
+test("evidence freshness checks each referenced requirement scope independently", () => {
+  const root = mkdtempSync(join(tmpdir(), "workit-multi-scope-"));
+  mkdirSync(join(root, "src", "generated"), { recursive: true });
+  writeFileSync(join(root, "src", "a.ts"), "a");
+  writeFileSync(join(root, "src", "generated", "g.ts"), "before");
+  const before = captureCandidate(root, scope(), [{ name: "RUNTIME", value: "same" }]);
+  expect(before.ok).toBe(true);
+  if (!before.ok) throw new Error(before.error);
+  writeFileSync(join(root, "src", "generated", "g.ts"), "after");
+  const after = captureCandidate(root, scope(), [{ name: "RUNTIME", value: "same" }]);
+  expect(after.ok).toBe(true);
+  if (!after.ok) throw new Error(after.error);
+  const firstRequirement = "1".repeat(64);
+  const secondRequirement = "2".repeat(64);
+  const task = {
+    candidates: [before.data],
+    policy: {
+      requirements: [
+        { id: firstRequirement, scope: scope({ paths: ["src"], exclusions: ["src/generated"] }) },
+        { id: secondRequirement, scope: scope({ paths: ["src/generated"] }) },
+      ],
+    },
+    evidence: [
+      {
+        id: "3".repeat(16),
+        data: {
+          kind: "check",
+          result: "passed",
+          requirementIds: [firstRequirement, secondRequirement],
+          beforeCandidateId: before.data.id,
+          candidateId: before.data.id,
+        },
+      },
+    ],
+  } as any;
+  expect(evaluateEvidence(task, after.data)[0]).toMatchObject({ status: "stale" });
+});
+
+test("relevant environment changes stale evidence regardless of file scope", () => {
+  const root = mkdtempSync(join(tmpdir(), "workit-environment-"));
+  mkdirSync(join(root, "src"), { recursive: true });
+  writeFileSync(join(root, "src", "a.ts"), "a");
+  const before = captureCandidate(root, scope({ paths: ["src"] }), [
+    { name: "RUNTIME", value: "one" },
+  ]);
+  const after = captureCandidate(root, scope({ paths: ["src"] }), [
+    { name: "RUNTIME", value: "two" },
+  ]);
+  expect(before.ok).toBe(true);
+  expect(after.ok).toBe(true);
+  if (!before.ok || !after.ok) throw new Error("environment candidate missing");
+  const requirementId = "4".repeat(64);
+  const task = {
+    candidates: [before.data],
+    policy: { requirements: [{ id: requirementId, scope: scope({ paths: ["src"] }) }] },
+    evidence: [
+      {
+        id: "5".repeat(16),
+        data: {
+          kind: "check",
+          result: "passed",
+          requirementIds: [requirementId],
+          beforeCandidateId: before.data.id,
+          candidateId: before.data.id,
+        },
+      },
+    ],
+  } as any;
+  expect(evaluateEvidence(task, after.data)[0]).toMatchObject({ status: "stale" });
+  const unknown = captureCandidate(root, scope({ paths: ["src"] }), [
+    { name: "RUNTIME", value: null },
+  ]);
+  expect(unknown).toMatchObject({ ok: true, data: { completeness: "uncertain" } });
+  if (!unknown.ok) throw new Error(unknown.error);
+  const uncertainTask = {
+    ...task,
+    candidates: [unknown.data],
+    evidence: [
+      {
+        ...task.evidence[0],
+        data: {
+          ...task.evidence[0].data,
+          beforeCandidateId: unknown.data.id,
+          candidateId: unknown.data.id,
+        },
+      },
+    ],
+  } as any;
+  expect(evaluateEvidence(uncertainTask, after.data)[0]).toMatchObject({ status: "stale" });
+});
+
 test("engine mutations honor a fixed trusted clock", () => {
   const root = mkdtempSync(join(tmpdir(), "workit-clock-"));
   const store = new TaskStore(root);
@@ -169,6 +261,53 @@ test("engine mutations honor a fixed trusted clock", () => {
   expect(assessedTask.ok).toBe(true);
   if (!assessedTask.ok) throw new Error(assessedTask.error);
   expect(assessedTask.data.assessments.at(-1)?.recordedAt).toBe("2026-01-01T00:00:00Z");
+});
+
+test("trusted clocks are isolated between cores sharing one store", () => {
+  const root = mkdtempSync(join(tmpdir(), "workit-clock-isolation-"));
+  const store = new TaskStore(root);
+  const first = new WorkitCore(store, context(root));
+  const second = new WorkitCore(store, {
+    ...context(root),
+    now: "2030-02-03T04:05:06Z",
+    caller: caller({ actor: "second" }),
+  });
+  const started = first.task(taskStartRequest());
+  expect(started.ok).toBe(true);
+  if (!started.ok) throw new Error(started.error);
+  const firstTask = store.readTask((started.data as any).id as string);
+  expect(firstTask.ok).toBe(true);
+  if (!firstTask.ok) throw new Error(firstTask.error);
+  const workspace = store.readWorkspace();
+  expect(workspace.ok).toBe(true);
+  if (!workspace.ok || !workspace.data) throw new Error("workspace missing");
+  const secondStarted = second.task(
+    taskStartRequest({ expectedWorkspaceRevision: workspace.data.revision }),
+  );
+  expect(secondStarted.ok).toBe(true);
+  if (!secondStarted.ok) throw new Error(secondStarted.error);
+  const assessed = first.policy({
+    schemaVersion: 1,
+    action: "assess",
+    taskId: firstTask.data.id,
+    expectedRevision: firstTask.data.revision,
+    assessment: assessment(),
+  });
+  expect(assessed.ok).toBe(true);
+  if (!assessed.ok) throw new Error(assessed.error);
+  const after = store.readTask(firstTask.data.id);
+  expect(after.ok).toBe(true);
+  if (!after.ok) throw new Error(after.error);
+  expect(after.data.assessments.at(-1)?.recordedAt).toBe("2026-01-01T00:00:00Z");
+});
+
+test("a context rooted at another checkout cannot read or mutate the store", () => {
+  const root = mkdtempSync(join(tmpdir(), "workit-root-"));
+  const other = mkdtempSync(join(tmpdir(), "workit-other-"));
+  const store = new TaskStore(root);
+  const core = new WorkitCore(store, { ...context(other), root: other });
+  expect(core.task(taskStartRequest())).toMatchObject({ ok: false, code: "invalid_input" });
+  expect(store.readWorkspace()).toEqual(success(null, null, null));
 });
 
 test("review evidence uses the trusted caller session and requires an independent session", () => {
@@ -407,6 +546,17 @@ test("verified closure requires an assessed policy and current evidence", () => 
       decisionIds: [],
     }),
   ).toMatchObject({ ok: false, code: "requirements_unsatisfied" });
+});
+
+test("an unsupported stored policy version fails verified closure even with no requirements", () => {
+  const view = {
+    task: { policy: { policyVersion: "9.9.9", requirements: [] } },
+    requirements: [],
+  } as any;
+  expect(evaluateClosure("verified", view)).toMatchObject({
+    ok: false,
+    code: "requirements_unsatisfied",
+  });
 });
 
 test("policy preview is pure and closure requires every applicable evidence type", () => {

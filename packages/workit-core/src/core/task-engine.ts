@@ -1,3 +1,4 @@
+import { realpathSync } from "node:fs";
 import {
   failure,
   newId,
@@ -52,15 +53,31 @@ const sameSession = (value: unknown, context: OperationContext): boolean =>
   (value as any).host === context.caller.host &&
   (value as any).handle === context.caller.actor;
 
+const trustedNow = (context: OperationContext): Utc =>
+  typeof context.now === "function" ? context.now() : context.now;
+
 export class WorkitCore {
   constructor(
     private readonly store: TaskStore,
     private readonly context: OperationContext,
-  ) {
-    this.store.setClock(() => (typeof context.now === "function" ? context.now() : context.now));
+  ) {}
+
+  private contextRootError(): Result<null> {
+    try {
+      if (realpathSync(this.context.root) !== this.store.root)
+        return failure(
+          "invalid_input",
+          "operation context root does not match the task store root",
+        );
+    } catch {
+      return failure("invalid_input", "operation context root cannot be resolved");
+    }
+    return success(null, null, null);
   }
 
   task(request: unknown): Result<TaskSummary | TaskSummary[] | TaskView> {
+    const root = this.contextRootError();
+    if (!root.ok) return root as Result<never>;
     const parsed = parseOperation("task", request);
     if (!parsed.ok) return parsed as Result<never>;
     const input = parsed.data as any;
@@ -70,6 +87,7 @@ export class WorkitCore {
           intent: input.intent,
           provenance: provenance(this.context),
           expectedWorkspaceRevision: input.expectedWorkspaceRevision,
+          now: trustedNow(this.context),
         });
         if (!created.ok) return created as Result<never>;
         return this.summary(created.data);
@@ -107,6 +125,8 @@ export class WorkitCore {
   }
 
   policy(request: unknown): Result<Policy | null> {
+    const root = this.contextRootError();
+    if (!root.ok) return root as Result<never>;
     const parsed = parseOperation("policy", request);
     if (!parsed.ok) return parsed as Result<never>;
     const input = parsed.data as any;
@@ -147,12 +167,15 @@ export class WorkitCore {
         };
         return success(mutation.revision, null, next);
       },
+      trustedNow(this.context),
     );
     if (!changed.ok) return changed as Result<never>;
     return success(changed.data.revision, null, changed.data.policy);
   }
 
   evidence(request: unknown): Result<Entry<Evidence>> {
+    const root = this.contextRootError();
+    if (!root.ok) return root as Result<never>;
     const parsed = parseOperation("evidence", request);
     if (!parsed.ok) return parsed as Result<never>;
     const input = parsed.data as any;
@@ -204,6 +227,7 @@ export class WorkitCore {
           evidence: [...current.evidence, entry],
         });
       },
+      trustedNow(this.context),
     );
     if (!changed.ok) return changed as Result<never>;
     return success(changed.data.revision, null, changed.data.evidence.at(-1)!);
@@ -285,6 +309,7 @@ export class WorkitCore {
       taskId: task.data.id,
       expectedTaskRevision: input.expectedRevision,
       expectedWorkspaceRevision: input.expectedWorkspaceRevision,
+      now: trustedNow(this.context),
       workspace: (workspace, context) => success(context.revision, context.revision, workspace),
       task: (current, context) =>
         success(context.revision, null, {
@@ -308,6 +333,7 @@ export class WorkitCore {
       input.expectedRevision,
       (current, context) =>
         success(context.revision, null, { ...current, progress: input.progress }),
+      trustedNow(this.context),
     );
     if (!changed.ok) return changed as Result<never>;
     return this.summary(changed.data);
@@ -322,6 +348,7 @@ export class WorkitCore {
       taskId: task.data.id,
       expectedTaskRevision: input.expectedRevision,
       expectedWorkspaceRevision: input.expectedWorkspaceRevision,
+      now: trustedNow(this.context),
       workspace: (workspace, context) => success(context.revision, context.revision, workspace),
       task: (current, context) =>
         success(context.revision, null, {
@@ -375,6 +402,7 @@ export class WorkitCore {
       taskId: task.data.id,
       expectedTaskRevision: input.expectedRevision,
       expectedWorkspaceRevision: input.expectedWorkspaceRevision,
+      now: trustedNow(this.context),
       workspace: (value, context) => success(context.revision, context.revision, value),
       task: (value, context) =>
         success(context.revision, null, {
