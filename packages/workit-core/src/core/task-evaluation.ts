@@ -33,13 +33,38 @@ const inside = (root: string, candidate: string): boolean =>
   candidate === root || candidate.startsWith(`${root}${path.sep}`);
 const relative = (root: string, candidate: string): string =>
   path.relative(root, candidate).split(path.sep).join("/") || ".";
+const canonicalPath = (value: string): string | null => {
+  if (typeof value !== "string" || !value) return null;
+  if (value.includes("\\") || value.split("/").includes("..")) return null;
+  const normalized = path.posix.normalize(value);
+  if (normalized === ".." || normalized.startsWith("../") || normalized.startsWith("/"))
+    return null;
+  return normalized === "." ? "." : normalized.replace(/\/$/, "");
+};
+const canonicalScope = (scope: Scope): Scope | null => {
+  const paths = scope.paths.length ? scope.paths : ["."];
+  const normalizedPaths = paths.map(canonicalPath);
+  const normalizedExclusions = scope.exclusions.map(canonicalPath);
+  if (
+    normalizedPaths.some((value) => value === null) ||
+    normalizedExclusions.some((value) => value === null)
+  )
+    return null;
+  return {
+    description: scope.description,
+    paths: [...new Set(normalizedPaths as string[])],
+    exclusions: [...new Set(normalizedExclusions as string[])],
+  };
+};
 const excluded = (value: string, exclusions: string[]): boolean =>
   exclusions.some((item) => item === value || (item !== "." && value.startsWith(`${item}/`)));
 const scopeMatches = (value: string, scope: Scope): boolean => {
-  const paths = scope.paths.length ? scope.paths : ["."];
+  const normalized = canonicalScope(scope);
+  if (!normalized) return false;
+  const paths = normalized.paths;
   return (
     paths.some((item) => item === "." || value === item || value.startsWith(`${item}/`)) &&
-    !excluded(value, scope.exclusions)
+    !excluded(value, normalized.exclusions)
   );
 };
 const pathRelevant = (value: string, scope: Scope): boolean => scopeMatches(value, scope);
@@ -66,15 +91,31 @@ const gitPaths = (root: string): Inventory => {
     const stderr = result.stderr?.toString("utf8") ?? "";
     return { paths: [], uncertain: !/not a git repository/i.test(stderr) };
   }
-  if (!result.stdout) return { paths: [], uncertain: false };
-  return {
-    paths: result.stdout
-      .toString("utf8")
-      .split("\0")
-      .filter(Boolean)
-      .map((item) => item.split(path.sep).join("/")),
-    uncertain: false,
-  };
+  const paths = result.stdout
+    ? result.stdout
+        .toString("utf8")
+        .split("\0")
+        .filter(Boolean)
+        .map((item) => item.split(path.sep).join("/"))
+    : [];
+  const stagedDeleted = spawnSync(
+    "git",
+    ["diff", "--cached", "--name-only", "--diff-filter=D", "-z"],
+    { cwd: root, encoding: "buffer" },
+  );
+  if (stagedDeleted.status !== 0) {
+    const stderr = stagedDeleted.stderr?.toString("utf8") ?? "";
+    if (!/not a git repository/i.test(stderr)) return { paths, uncertain: true };
+  } else if (stagedDeleted.stdout) {
+    paths.push(
+      ...stagedDeleted.stdout
+        .toString("utf8")
+        .split("\0")
+        .filter(Boolean)
+        .map((item) => item.split(path.sep).join("/")),
+    );
+  }
+  return { paths: [...new Set(paths)], uncertain: false };
 };
 
 const walk = (root: string, directory: string, output: Set<string>): boolean => {
@@ -132,7 +173,9 @@ export function captureCandidate(
   } catch {
     return failure("invalid_input", "candidate root does not exist");
   }
-  const roots = scopeRoots(checkout, scope);
+  const normalizedScope = canonicalScope(scope);
+  if (!normalizedScope) return failure("invalid_input", "candidate scope is invalid");
+  const roots = scopeRoots(checkout, normalizedScope);
   if (!roots.ok) return roots;
   const names = new Set<string>();
   let uncertain = false;
@@ -153,12 +196,12 @@ export function captureCandidate(
   }
   const git = gitPaths(checkout);
   uncertain = git.uncertain || uncertain;
-  for (const item of git.paths) if (scopeMatches(item, scope)) names.add(item);
+  for (const item of git.paths) if (scopeMatches(item, normalizedScope)) names.add(item);
 
   const files: Candidate["files"] = [];
   let completeness: Candidate["completeness"] = uncertain ? "uncertain" : "known";
   for (const item of [...names].sort()) {
-    if (!scopeMatches(item, scope)) continue;
+    if (!scopeMatches(item, normalizedScope)) continue;
     const target = path.join(checkout, item);
     try {
       const stat = fs.lstatSync(target);
@@ -207,7 +250,7 @@ export function captureCandidate(
   const head = headResult.status === 0 ? headResult.stdout.trim() : null;
   const partial: Candidate = {
     id: "0".repeat(64),
-    scope,
+    scope: normalizedScope,
     completeness,
     files,
     environment: values,
@@ -414,18 +457,15 @@ export function evaluateRequirements(
       const reviewSession = sessionFromRef(entry.data.reviewContext);
       const implementationSession = sessionFromRef(task.intent.provenance.session);
       const sameImplementation = sameSession(reviewSession, implementationSession);
-      const sameWriter = task.evidence.some(
-        (other) =>
-          other.data.requirementIds.includes(requirement.id) &&
-          other.data.kind !== "review" &&
-          sameSession(reviewSession, other.provenance.session),
+      const sameEvidenceSession = task.evidence.some(
+        (other) => other.id !== entry.id && sameSession(reviewSession, other.provenance.session),
       );
       return (
         entry.data.kind === "review" &&
         reviewSession !== null &&
         sameSession(reviewSession, entry.provenance.session) &&
         !sameImplementation &&
-        !sameWriter
+        !sameEvidenceSession
       );
     });
     if (passed.length)

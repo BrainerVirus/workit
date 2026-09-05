@@ -301,7 +301,7 @@ export type Dimension = z.infer<typeof dimensionSchema>;
 
 export const policySchema = z
   .object({
-    policyVersion: z.literal(POLICY_VERSION),
+    policyVersion: text.regex(/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/),
     inputDigest: digest,
     requirements: z.array(
       z

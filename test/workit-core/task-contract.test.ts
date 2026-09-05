@@ -3,6 +3,7 @@ import {
   canonicalJson,
   candidateSchema,
   candidateDigest,
+  policySchema,
   requirementId,
   signalSchema,
   utcSchema,
@@ -192,6 +193,16 @@ test("candidate schema rejects a shape-valid forged identity", () => {
   const valid = { ...content, id: candidateDigest({ ...content, id: "0".repeat(64) }) };
   expect(candidateSchema.safeParse(valid).success).toBe(true);
   expect(candidateSchema.safeParse({ ...valid, id: "f".repeat(64) }).success).toBe(false);
+});
+
+test("policy schema preserves unknown historical versions for display", () => {
+  expect(
+    policySchema.safeParse({
+      policyVersion: "9.9.9",
+      inputDigest: "a".repeat(64),
+      requirements: [],
+    }).success,
+  ).toBe(true);
 });
 
 test("canonical JSON rejects arrays with missing indices", () => {

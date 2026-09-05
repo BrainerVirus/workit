@@ -145,6 +145,12 @@ export class TaskStore {
     if (!result.exists) return failure("not_found", "task not found", { taskId });
     if (result.result.ok && result.result.data.id !== taskId)
       return failure("recovery_required", "task filename and record ID differ", { taskId });
+    if (result.result.ok) {
+      const workspace = this.readWorkspace();
+      if (!workspace.ok) return workspace as Result<never>;
+      if (!workspace.data || result.result.data.workspaceId !== workspace.data.id)
+        return failure("recovery_required", "task workspace binding is invalid", { taskId });
+    }
     return result.result;
   }
 
@@ -158,6 +164,12 @@ export class TaskStore {
         path: this.tasksDir,
       });
     }
+    const workspace = this.readWorkspace();
+    if (!workspace.ok) return workspace as Result<never>;
+    if (!workspace.data)
+      return failure("recovery_required", "task workspace binding is invalid", {
+        path: this.workspacePath,
+      });
     const tasks: TaskRecord[] = [];
     for (const name of names.sort()) {
       const item = this.readRecord<TaskRecord>(path.join(this.tasksDir, name), taskRecordSchema);
@@ -165,6 +177,8 @@ export class TaskStore {
       if (!item.result.ok) return item.result;
       if (!validId(name.slice(0, -5)) || item.result.data.id !== name.slice(0, -5))
         return failure("recovery_required", "task filename and record ID differ", { path: name });
+      if (item.result.data.workspaceId !== workspace.data.id)
+        return failure("recovery_required", "task workspace binding is invalid", { path: name });
       tasks.push(item.result.data);
     }
     return success(null, null, tasks);

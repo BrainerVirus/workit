@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -143,6 +144,55 @@ test("candidate capture is deterministic, records absent scope paths, and reject
       { name: "A_INPUT", value: "two" },
     ]),
   ).toMatchObject({ ok: false, code: "invalid_input" });
+});
+
+test("canonical relative scope spellings still inventory and stale edits", () => {
+  const root = mkdtempSync(join(tmpdir(), "workit-scope-canonical-"));
+  mkdirSync(join(root, "src"), { recursive: true });
+  writeFileSync(join(root, "src", "a.ts"), "before");
+  const before = captureCandidate(root, scope({ paths: ["./src/"] }), []);
+  expect(before.ok).toBe(true);
+  if (!before.ok) throw new Error(before.error);
+  expect(before.data.files).toEqual(
+    expect.arrayContaining([expect.objectContaining({ path: "src/a.ts", kind: "file" })]),
+  );
+  writeFileSync(join(root, "src", "a.ts"), "after");
+  const after = captureCandidate(root, scope({ paths: ["src"] }), []);
+  expect(after.ok).toBe(true);
+  if (!after.ok) throw new Error(after.error);
+  expect(after.data.id).not.toBe(before.data.id);
+});
+
+test("candidate inventory retains staged deletions as absent entries", () => {
+  const root = mkdtempSync(join(tmpdir(), "workit-staged-delete-"));
+  writeFileSync(join(root, "removed.txt"), "tracked");
+  expect(spawnSync("git", ["init", "-q"], { cwd: root }).status).toBe(0);
+  expect(spawnSync("git", ["add", "removed.txt"], { cwd: root }).status).toBe(0);
+  expect(
+    spawnSync(
+      "git",
+      [
+        "-c",
+        "user.name=Workit Test",
+        "-c",
+        "user.email=workit@example.test",
+        "commit",
+        "-qm",
+        "init",
+      ],
+      { cwd: root },
+    ).status,
+  ).toBe(0);
+  unlinkSync(join(root, "removed.txt"));
+  expect(spawnSync("git", ["add", "-u"], { cwd: root }).status).toBe(0);
+  const candidate = captureCandidate(root, scope(), []);
+  expect(candidate.ok).toBe(true);
+  if (!candidate.ok) throw new Error(candidate.error);
+  expect(candidate.data.files).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ path: "removed.txt", kind: "absent", digest: null }),
+    ]),
+  );
 });
 
 test("evidence freshness checks each referenced requirement scope independently", () => {
@@ -351,6 +401,10 @@ test("review evidence uses the trusted caller session and requires an independen
     (item) => item.dimension === "review",
   );
   if (!reviewRequirement) throw new Error("review requirement missing");
+  const otherRequirement = assessedTask.data.policy.requirements.find(
+    (item) => item.dimension !== "review",
+  );
+  if (!otherRequirement) throw new Error("additional requirement missing");
   const candidate = captureCandidate(root, assessedTask.data.intent.data.scope, []);
   expect(candidate.ok).toBe(true);
   if (!candidate.ok) throw new Error(candidate.error);
@@ -358,11 +412,34 @@ test("review evidence uses the trusted caller session and requires an independen
     ...leadContext,
     caller: caller({ actor: "reviewer" }),
   });
-  const recorded = reviewer.evidence({
+  const implementationEvidence = reviewer.evidence({
     schemaVersion: 1,
     action: "record",
     taskId,
     expectedRevision: assessedTask.data.revision,
+    evidence: {
+      kind: "check",
+      claim: "reviewer's check",
+      requirementIds: [otherRequirement.id],
+      beforeCandidateId: candidate.data.id,
+      candidateId: candidate.data.id,
+      result: "passed",
+      summary: "check passed",
+      refs: [],
+      exitCode: 0,
+      reviewContext: null,
+    },
+  });
+  expect(implementationEvidence.ok).toBe(true);
+  if (!implementationEvidence.ok) throw new Error(implementationEvidence.error);
+  const taskAfterCheck = store.readTask(taskId);
+  expect(taskAfterCheck.ok).toBe(true);
+  if (!taskAfterCheck.ok) throw new Error(taskAfterCheck.error);
+  const recorded = reviewer.evidence({
+    schemaVersion: 1,
+    action: "record",
+    taskId,
+    expectedRevision: taskAfterCheck.data.revision,
     evidence: {
       kind: "review",
       claim: "independent review",
@@ -387,7 +464,7 @@ test("review evidence uses the trusted caller session and requires an independen
     ok: true,
     data: {
       requirements: expect.arrayContaining([
-        expect.objectContaining({ requirementId: reviewRequirement.id, status: "satisfied" }),
+        expect.objectContaining({ requirementId: reviewRequirement.id, status: "unsatisfied" }),
       ]),
     },
   });
@@ -396,7 +473,7 @@ test("review evidence uses the trusted caller session and requires an independen
     ok: true,
     data: {
       requirements: expect.arrayContaining([
-        expect.objectContaining({ requirementId: reviewRequirement.id, status: "satisfied" }),
+        expect.objectContaining({ requirementId: reviewRequirement.id, status: "unsatisfied" }),
       ]),
     },
   });

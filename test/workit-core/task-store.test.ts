@@ -123,6 +123,20 @@ test("a stale task revision cannot overwrite a newer snapshot", () => {
   expect(stale).toMatchObject({ ok: false, code: "revision_conflict" });
 });
 
+test("task reads and mutations fail closed on a foreign workspace binding", () => {
+  const { store, task } = startedStore();
+  const file = join(store.root, ".workit", "tasks", `${task.id}.json`);
+  const forged = JSON.parse(readFileSync(file, "utf8")) as TaskRecord;
+  forged.workspaceId = "00000000-0000-4000-8000-000000000099";
+  writeFileSync(file, `${JSON.stringify(forged)}\n`);
+  expect(store.readTask(task.id)).toMatchObject({ ok: false, code: "recovery_required" });
+  expect(store.listTasks()).toMatchObject({ ok: false, code: "recovery_required" });
+  expect(store.mutateTask(task.id, task.revision, identity)).toMatchObject({
+    ok: false,
+    code: "recovery_required",
+  });
+});
+
 test("corrupt current bytes are reported without replacement", () => {
   const { store, task } = startedStore();
   const file = join(store.root, ".workit", "tasks", `${task.id}.json`);
