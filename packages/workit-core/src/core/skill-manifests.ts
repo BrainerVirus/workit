@@ -19,15 +19,30 @@ export const CANONICAL_SKILLS = {
     "writing-skills",
   ],
   workit: [
-    "workit-challenge",
-    "workit-behavioral-tdd",
-    "workit-review",
-    "workit-plan",
-    "workit-implement",
-    "workit-debug",
-    "workit-handoff",
+    "wk-changelog",
+    "wk-commit",
+    "wk-docs-refresh",
+    "wk-handoff",
+    "wk-implement",
+    "wk-init",
+    "wk-issue-update",
+    "wk-meetings",
+    "wk-pr",
+    "wk-release-notes",
+    "wk-status",
+    "wk-verify",
   ],
 } as const;
+
+export const WORKIT_METHOD_SKILLS = [
+  "workit-challenge",
+  "workit-behavioral-tdd",
+  "workit-review",
+  "workit-plan",
+  "workit-implement",
+  "workit-debug",
+  "workit-handoff",
+] as const;
 
 export const skillManifestNames = (root: string): string[] =>
   existsSync(root)

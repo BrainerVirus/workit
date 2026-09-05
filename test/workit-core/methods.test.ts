@@ -5,6 +5,11 @@ import type {
   Requirement,
 } from "../../packages/workit-core/src/core/task-contract";
 import { invariantBootstrap, selectMethods } from "../../packages/workit-core/src/core/methods";
+import {
+  CANONICAL_SKILLS,
+  WORKIT_METHOD_SKILLS,
+  skillManifestNames,
+} from "../../packages/workit-core/src/core/skill-manifests";
 
 const digest = "a".repeat(64);
 const requirement = (overrides: Partial<Requirement>): Requirement => ({
@@ -144,4 +149,20 @@ test("bootstrap contains invariant authority, state, and tool guidance only", ()
   expect(bootstrap).not.toContain("workit-behavioral-tdd");
   expect(bootstrap).not.toContain("workit-review");
   expect(bootstrap).not.toContain("workit-plan");
+});
+
+test("method manifest lists exactly seven core skills without removing legacy skills", () => {
+  expect(WORKIT_METHOD_SKILLS).toEqual([
+    "workit-challenge",
+    "workit-behavioral-tdd",
+    "workit-review",
+    "workit-plan",
+    "workit-implement",
+    "workit-debug",
+    "workit-handoff",
+  ]);
+  expect(CANONICAL_SKILLS.workit).toContain("wk-implement");
+  expect(
+    skillManifestNames("packages/workit-core/skills").filter((name) => name.startsWith("workit-")),
+  ).toEqual([...[...WORKIT_METHOD_SKILLS].sort()]);
 });
