@@ -20,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Workit CLI task control over all eight shared operation families and 24
+  schema-owned actions, with inline/`@file`/stdin payloads, exact `--json`
+  Results, headless consent handling, and read-only `workit handoff --task`
+  export plus compact destination context.
 - Interactive `workit uninstall` CLI command: a TTY-only host picker (OpenCode/Cursor) with a reviewable action summary before any mutation; it applies the exact inverse of setup's registrations for the selected hosts only — unselected hosts and `~/.config/workit` are preserved byte-for-byte, malformed host files fail untouched, and exit codes are 0 ok / 1 partial failure / 2 non-TTY usage.
 - Expose plan lifecycle controls (`workit_plan_pause`/`resume`/`complete`) and CLI flow/handoff commands (`workit flow status|pause|resume|complete`, `workit handoff`), including a four-choice handoff-destination contract.
 - Added an approved reliability-overhaul specification with full requirement, audit, and Ponytail traceability.

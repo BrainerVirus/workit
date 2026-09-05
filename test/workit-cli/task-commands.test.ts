@@ -10,6 +10,7 @@ import {
   runInIsolation,
   isolatedEnv,
 } from "../shared/helpers/packages";
+import { TaskStore } from "../../packages/workit-core/src/core";
 
 const id = "00000000-0000-4000-8000-000000000001";
 const scope = { description: "checkout", paths: ["."], exclusions: [] };
@@ -25,6 +26,11 @@ const capture = () => {
     read: () => ({ stdout, stderr }),
   };
 };
+
+async function* bytes(value: Uint8Array, split = 1): AsyncIterable<Uint8Array> {
+  for (let offset = 0; offset < value.length; offset += split)
+    yield value.slice(offset, Math.min(value.length, offset + split));
+}
 
 test("the CLI exposes exactly the eight families and 24 actions", () => {
   expect(TASK_FAMILIES).toEqual([
@@ -158,6 +164,88 @@ test("payload files and stdin preserve nested JSON and reject conflicts", async 
   }
 });
 
+test("payload decoding is fatal UTF-8 and preserves split multibyte characters", async () => {
+  const root = fixture();
+  try {
+    const payload = JSON.stringify({
+      expectedWorkspaceRevision: null,
+      intent: { ...intent, objective: "café 🧪" },
+    });
+    const stdinResult = capture();
+    expect(
+      await runTaskCommand(["task", "start", "--payload", "-", "--json"], {
+        cwd: root,
+        stdin: bytes(new TextEncoder().encode(payload)),
+        out: stdinResult.out,
+        err: stdinResult.err,
+      }),
+    ).toBe(0);
+    const started = JSON.parse(stdinResult.read().stdout);
+    expect(started.data.objective).toBe("café 🧪");
+
+    const fileRoot = fixture();
+    try {
+      const file = path.join(fileRoot, "payload.json");
+      writeFileSync(file, new TextEncoder().encode(payload));
+      const fileResult = capture();
+      expect(
+        await runTaskCommand(["task", "start", "--payload", `@${file}`, "--json"], {
+          cwd: fileRoot,
+          out: fileResult.out,
+          err: fileResult.err,
+        }),
+      ).toBe(0);
+      expect(JSON.parse(fileResult.read().stdout).data.objective).toBe("café 🧪");
+    } finally {
+      rmSync(fileRoot, { recursive: true, force: true });
+    }
+
+    const invalidFile = path.join(root, "bad.json");
+    writeFileSync(invalidFile, Uint8Array.from([0xff, 0xfe]));
+    for (const input of [
+      {
+        args: ["task", "list", "--payload", "-", "--json"],
+        stdin: bytes(Uint8Array.from([0xc3, 0x28])),
+      },
+      { args: ["task", "list", "--payload", `@${invalidFile}`, "--json"], stdin: undefined },
+    ]) {
+      const invalid = capture();
+      expect(
+        await runTaskCommand(input.args, {
+          cwd: root,
+          stdin: input.stdin,
+          out: invalid.out,
+          err: invalid.err,
+        }),
+      ).toBe(1);
+      expect(JSON.parse(invalid.read().stdout)).toMatchObject({ ok: false, code: "invalid_input" });
+      expect(invalid.read().stderr).toBe("");
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("--json is order-independent for every parser failure", async () => {
+  const root = fixture();
+  try {
+    for (const args of [
+      ["task", "list", "--bogus", "x", "--json"],
+      ["task", "list", "--json", "--bogus", "x"],
+      ["task", "list", "--json", "--json"],
+      ["task", "not-an-action", "--json"],
+      ["not-a-family", "list", "--json"],
+    ]) {
+      const result = capture();
+      expect(await runTaskCommand(args, { cwd: root, out: result.out, err: result.err })).toBe(2);
+      expect(JSON.parse(result.read().stdout)).toMatchObject({ ok: false, schemaVersion: 1 });
+      expect(result.read().stderr).toBe("");
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("headless resume consent stays needs_input and malformed CLI input is nonzero", async () => {
   const root = fixture();
   try {
@@ -220,6 +308,51 @@ test("handoff exports task state and compact context without docs", async () => 
     ).toBe(0);
     expect(handoff.read().stdout).toContain("Destination context");
     expect(handoff.read().stdout).toContain("CLI task");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("handoff rejects a mutation between export and inspect", async () => {
+  const root = fixture();
+  try {
+    const start = capture();
+    await runTaskCommand(
+      [
+        "task",
+        "start",
+        "--payload",
+        JSON.stringify({ expectedWorkspaceRevision: null, intent }),
+        "--json",
+      ],
+      { cwd: root, out: start.out, err: start.err },
+    );
+    const taskId = JSON.parse(start.read().stdout).data.id as string;
+    const handoff = capture();
+    const code = await runTaskCommand(["handoff", "--task", taskId, "--json"], {
+      cwd: root,
+      out: handoff.out,
+      err: handoff.err,
+      afterExport: () => {
+        const store = new TaskStore(root);
+        const task = store.readTask(taskId);
+        if (!task.ok) throw new Error(task.error);
+        const changed = store.mutateTask(taskId, task.data.revision, (current, context) => ({
+          ok: true,
+          schemaVersion: 1,
+          revision: context.revision,
+          workspaceRevision: null,
+          data: { ...current, progress: { ...current.progress, summary: "changed" } },
+        }));
+        if (!changed.ok) throw new Error(changed.error);
+      },
+    });
+    expect(code).toBe(1);
+    expect(JSON.parse(handoff.read().stdout)).toMatchObject({
+      ok: false,
+      code: "revision_conflict",
+    });
+    expect(handoff.read().stdout).not.toContain("Destination context");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

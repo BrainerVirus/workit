@@ -41,6 +41,7 @@ export type TaskCliDeps = {
   nativeRecovery?: OperationContext["nativeRecovery"];
   stdinIsTTY?: () => boolean;
   confirm?: () => Promise<boolean>;
+  afterExport?: () => void;
   stdin?: JsonInput;
   out?: Stream;
   err?: Stream;
@@ -69,6 +70,12 @@ const jsonResult = (stream: Stream, result: Result<unknown>) =>
   write(stream, JSON.stringify(result));
 
 const usage = (message: string): Result<never> => failure("invalid_input", message);
+const parseUsage = (message: string, json: boolean): ParseResult => ({
+  ok: false,
+  result: usage(message),
+  json,
+  usage: message,
+});
 const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 const same = (left: unknown, right: unknown): boolean => {
@@ -79,11 +86,16 @@ const same = (left: unknown, right: unknown): boolean => {
   }
 };
 
+const decodeUtf8 = (bytes: Uint8Array): string =>
+  new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+
 async function readInput(input: JsonInput): Promise<string> {
   if (typeof input === "string") return input;
+  const decoder = new TextDecoder("utf-8", { fatal: true });
   let value = "";
   for await (const chunk of input)
-    value += typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk);
+    value += typeof chunk === "string" ? chunk : decoder.decode(chunk, { stream: true });
+  value += decoder.decode();
   return value;
 }
 
@@ -98,7 +110,7 @@ async function payloadValue(
       raw === "-"
         ? await readInput(deps.stdin ?? process.stdin)
         : raw.startsWith("@")
-          ? readFileSync(raw.slice(1), "utf8")
+          ? decodeUtf8(readFileSync(raw.slice(1)))
           : raw;
   } catch (error) {
     return {
@@ -132,48 +144,40 @@ function inject(request: Record<string, unknown>, key: string, value: unknown): 
 }
 
 async function parseTaskArgs(argv: string[], deps: TaskCliDeps): Promise<ParseResult> {
+  const jsonRequested = argv.includes("--json");
   const familyName = argv[0];
   if (familyName === "handoff") return parseHandoffArgs(argv.slice(1), deps);
   if (!familyName || !(TASK_FAMILIES as readonly string[]).includes(familyName))
-    return {
-      ok: false,
-      result: usage(`unknown operation family: ${familyName ?? ""}`),
-      json: argv.includes("--json"),
-    };
+    return parseUsage(`unknown operation family: ${familyName ?? ""}`, jsonRequested);
   const family = familyName as OperationFamily;
   const actionName = argv[1];
   const action = actionName?.replace(/-/g, "_");
   if (!action || !familyHas(family, action))
-    return {
-      ok: false,
-      result: usage(`unknown action for ${family}: ${actionName ?? ""}`),
-      json: argv.includes("--json"),
-    };
+    return parseUsage(`unknown action for ${family}: ${actionName ?? ""}`, jsonRequested);
 
   let payload: string | undefined;
   let taskId: string | undefined;
   let revision: string | undefined;
   let workspaceRevision: string | null | undefined;
   let view: string | undefined;
-  let json = false;
+  let json = jsonRequested;
   let confirmed = false;
   const seen = new Set<string>();
   for (let i = 2; i < argv.length; i += 1) {
     const token = argv[i];
     if (token === "--json" || token === "--confirm") {
-      if (seen.has(token))
-        return { ok: false, result: usage(`duplicate argument: ${token}`), json };
+      if (seen.has(token)) return parseUsage(`duplicate argument: ${token}`, json);
       seen.add(token);
       if (token === "--json") json = true;
       else confirmed = true;
       continue;
     }
     if (!["--payload", "--task", "--revision", "--workspace-revision", "--view"].includes(token))
-      return { ok: false, result: usage(`unknown argument: ${token}`), json };
+      return parseUsage(`unknown argument: ${token}`, json);
     const value = argv[++i];
     if (value === undefined || (value.trim() === "" && token !== "--workspace-revision"))
-      return { ok: false, result: usage(`${token} requires a value`), json };
-    if (seen.has(token)) return { ok: false, result: usage(`duplicate argument: ${token}`), json };
+      return parseUsage(`${token} requires a value`, json);
+    if (seen.has(token)) return parseUsage(`duplicate argument: ${token}`, json);
     seen.add(token);
     if (token === "--payload") payload = value;
     else if (token === "--task") taskId = value;
@@ -213,25 +217,24 @@ async function parseTaskArgs(argv: string[], deps: TaskCliDeps): Promise<ParseRe
 
 async function parseHandoffArgs(argv: string[], deps: TaskCliDeps): Promise<ParseResult> {
   let taskId: string | undefined;
-  let json = false;
+  let json = argv.includes("--json");
   const seen = new Set<string>();
   for (let i = 0; i < argv.length; i += 1) {
     const token = argv[i];
     if (token === "--json") {
-      if (seen.has(token))
-        return { ok: false, result: usage(`duplicate argument: ${token}`), json };
+      if (seen.has(token)) return parseUsage(`duplicate argument: ${token}`, json);
       seen.add(token);
       json = true;
       continue;
     }
-    if (token !== "--task") return { ok: false, result: usage(`unknown argument: ${token}`), json };
+    if (token !== "--task") return parseUsage(`unknown argument: ${token}`, json);
     if (taskId !== undefined || argv[i + 1] === undefined || argv[i + 1].trim() === "")
-      return { ok: false, result: usage("--task requires one non-empty value"), json };
-    if (seen.has(token)) return { ok: false, result: usage(`duplicate argument: ${token}`), json };
+      return parseUsage("--task requires one non-empty value", json);
+    if (seen.has(token)) return parseUsage(`duplicate argument: ${token}`, json);
     seen.add(token);
     taskId = argv[++i];
   }
-  if (!taskId) return { ok: false, result: usage("handoff requires --task <id>"), json };
+  if (!taskId) return parseUsage("handoff requires --task <id>", json);
   void deps;
   return {
     ok: true,
@@ -372,6 +375,7 @@ export async function runTaskCommand(argv: string[], deps: TaskCliDeps = {}): Pr
     const exported = dispatch(core, "state", parsed.parsed.request);
     if (!exported.ok) result = exported;
     else {
+      deps.afterExport?.();
       const viewed = dispatch(core, "task", {
         schemaVersion: 1,
         action: "inspect",
@@ -379,6 +383,17 @@ export async function runTaskCommand(argv: string[], deps: TaskCliDeps = {}): Pr
         view: "full",
       });
       if (!viewed.ok) result = viewed;
+      else if (
+        viewed.revision !== exported.revision ||
+        viewed.workspaceRevision !== exported.workspaceRevision
+      )
+        result = failure("revision_conflict", "task changed while preparing handoff", {
+          operation: "handoff",
+          ...(exported.revision ? { expectedRevision: exported.revision } : {}),
+          ...(viewed.revision ? { actualRevision: viewed.revision } : {}),
+          expectedWorkspaceRevision: exported.workspaceRevision,
+          actualWorkspaceRevision: viewed.workspaceRevision,
+        });
       else
         result = success(exported.revision, exported.workspaceRevision, {
           bundle: exported.data,
