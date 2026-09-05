@@ -97,6 +97,12 @@ test("Node executable completes MCP initialize and tools/list with protocol-only
       "workit_writer",
       "workit_state",
     ]);
+    const called = await request("tools/call", {
+      name: "workit_task",
+      arguments: { schemaVersion: 1, action: "list" },
+    });
+    expect(called.result.isError).not.toBe(true);
+    expect(called.result.structuredContent).toMatchObject({ ok: true, schemaVersion: 1 });
   } finally {
     child.kill();
   }
