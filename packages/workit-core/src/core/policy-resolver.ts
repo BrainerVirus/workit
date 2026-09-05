@@ -8,6 +8,7 @@ import {
   findingSchema,
   intentSchema,
   POLICY_VERSION,
+  policyChangeSchema,
   policySchema,
   requirementId,
   requirementSchema,
@@ -126,6 +127,16 @@ const normalizeConstraint = (constraint: Constraint): Constraint => ({
   ),
 });
 
+const normalizeDecision = (decision: Decision): Decision => ({
+  ...decision,
+  binding: {
+    ...decision.binding,
+    scope: normalizedScope(decision.binding.scope),
+    contentRefs: normalizedRefList(decision.binding.contentRefs),
+  },
+  requirementIds: stableUnique(decision.requirementIds),
+});
+
 const normalizeIntent = (intent: Intent): Intent => ({
   ...intent,
   scope: normalizedScope(intent.scope),
@@ -133,7 +144,7 @@ const normalizeIntent = (intent: Intent): Intent => ({
 });
 
 const normalizePrior = (prior: ResolverPrior): ResolverPrior => ({
-  decisions: stableList(prior.decisions),
+  decisions: stableList(prior.decisions.map(normalizeDecision)),
   findings: stableList(
     prior.findings.map((finding) => ({
       ...finding,
@@ -183,6 +194,10 @@ function normalizeResolverInput(input: unknown): Result<NormalizedResolverInput>
   if (new Set(ids).size !== ids.length)
     return failure("invalid_input", "constraint IDs must be unique", {
       fields: [{ path: "constraints", reason: "duplicate constraint id" }],
+    });
+  if (value.preferences?.fast && value.preferences.thorough)
+    return failure("invalid_input", "fast and thorough preferences contradict", {
+      fields: [{ path: "preferences", reason: "fast and thorough cannot both be enabled" }],
     });
 
   const normalized: NormalizedResolverInput = {
@@ -305,16 +320,18 @@ function resolveRequirements(input: NormalizedResolverInput): Requirement[] {
         acceptanceAllowed: true,
       }),
       requirement({
-        ruleId: "self-review",
+        ruleId: input.preferences?.thorough ? "fresh-context-review" : "self-review",
         dimension: "review",
         scope,
-        reason:
-          "Mechanical low-risk work uses self-review rather than mandatory fresh-context review.",
-        satisfaction:
-          "The lead reviews the resulting diff and records the relevant scope and checks.",
+        reason: input.preferences?.thorough
+          ? "The thorough preference upgrades mechanical self-review to fresh-context review."
+          : "Mechanical low-risk work uses self-review rather than mandatory fresh-context review.",
+        satisfaction: input.preferences?.thorough
+          ? "A separate review context examines the current candidate and records its result."
+          : "The lead reviews the resulting diff and records the relevant scope and checks.",
         before: "close",
         dependentAction: null,
-        acceptanceAllowed: true,
+        acceptanceAllowed: !input.preferences?.thorough,
       }),
     );
 
@@ -346,7 +363,7 @@ function resolveRequirements(input: NormalizedResolverInput): Requirement[] {
         acceptanceAllowed: true,
       }),
     );
-  if (signals.helperUseful.value === true)
+  if (signals.helperUseful.value === true && !input.preferences?.fast)
     requirements.push(
       requirement({
         ruleId: "helper-usefulness",
@@ -372,7 +389,14 @@ function resolveRequirements(input: NormalizedResolverInput): Requirement[] {
             : "challenge");
       requirements.push(
         requirement({
-          ruleId: `project-constraint:${constraint.id}:${obligation.kind}`,
+          ruleId: `project-constraint:${constraint.id}:${obligation.kind}:${sha256({
+            kind: obligation.kind,
+            scope: normalizedScope(obligation.scope),
+            refs: normalizedRefList(obligation.refs),
+            method: obligation.method,
+            before: obligation.before,
+            dependentAction: obligation.dependentAction,
+          })}`,
           dimension,
           scope: obligation.scope,
           reason: `${constraint.kind} constraint requires ${obligation.kind}: ${constraint.statement}`,
@@ -413,6 +437,9 @@ export function diffPolicy(
   reason: string,
   now: string,
 ): PolicyChange | null {
+  if (!policySchema.safeParse(previous).success && previous !== null)
+    throw new TypeError("previous policy is invalid");
+  if (!policySchema.safeParse(next).success) throw new TypeError("next policy is invalid");
   const oldIds = new Set(previous?.requirements.map((requirement) => requirement.id) ?? []);
   const newIds = new Set(next.requirements.map((requirement) => requirement.id));
   const added = [...newIds].filter((id) => !oldIds.has(id)).sort(compareCodeUnits);
@@ -422,12 +449,15 @@ export function diffPolicy(
   const changeReason = retired.length
     ? `${normalizedReason || "policy reassessed"} (retired: ${retired.join(",")})`
     : normalizedReason || "policy reassessed";
-  return {
+  const change = {
     recordedAt: now,
     fromInputDigest: previous?.inputDigest ?? null,
     toInputDigest: next.inputDigest,
     added,
     retired,
     reason: changeReason,
-  };
+  } satisfies PolicyChange;
+  const parsed = policyChangeSchema.safeParse(change);
+  if (!parsed.success) throw new TypeError("policy change is invalid");
+  return parsed.data;
 }

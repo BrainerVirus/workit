@@ -139,7 +139,16 @@ export const factSchema = z
     basis: z.enum(["observed", "inferred", "unknown"]),
     refs: z.array(refSchema),
   })
-  .strict();
+  .strict()
+  .check((ctx) => {
+    if (ctx.value.basis === "observed" && ctx.value.refs.length === 0)
+      ctx.issues.push({
+        code: "custom",
+        input: ctx.value,
+        message: "observed facts require supporting references",
+        path: ["refs"],
+      });
+  });
 export type Fact = z.infer<typeof factSchema>;
 export const signalSchema = z
   .object({
@@ -161,6 +170,13 @@ export const signalSchema = z
         input: signal,
         message: "signal value and basis disagree",
         path: [],
+      });
+    if (signal.basis === "observed" && signal.refs.length === 0)
+      ctx.issues.push({
+        code: "custom",
+        input: signal,
+        message: "observed signals require supporting references",
+        path: ["refs"],
       });
   });
 export type Signal = z.infer<typeof signalSchema>;
@@ -237,7 +253,20 @@ export const constraintSchema = z
           before: z.enum(["dependent_action", "write", "close"]),
           dependentAction: text.nullable(),
         })
-        .strict(),
+        .strict()
+        .check((ctx) => {
+          const obligation = ctx.value;
+          const validMethod =
+            (obligation.kind === "method" && obligation.method !== null) ||
+            (obligation.kind !== "method" && obligation.method === null);
+          if (!validMethod)
+            ctx.issues.push({
+              code: "custom",
+              input: obligation,
+              message: "method obligations require a method; checks and decisions do not",
+              path: ["method"],
+            });
+        }),
     ),
   })
   .strict();
