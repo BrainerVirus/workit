@@ -30,6 +30,7 @@ import {
   verifyNativeAction,
   verifyNativeDecision,
   verifyDecisionContent,
+  retireNativeAuthority,
   type ActionReservation,
   type NativeAuthorityVerifier,
   type ReserveActionInput,
@@ -76,6 +77,8 @@ const trustedNow = (context: OperationContext): Utc =>
   typeof context.now === "function" ? context.now() : context.now;
 
 export class WorkitCore {
+  private readonly authorityOwner = {};
+
   constructor(
     private readonly store: TaskStore,
     private readonly context: OperationContext,
@@ -315,22 +318,29 @@ export class WorkitCore {
       } satisfies Omit<Decision, "digest">;
       const data: Decision = { ...base, digest: decisionDigest(base) };
       const native = nativeRequired
-        ? verifyNativeDecision(this.context.nativeAuthority, {
-            observation: nativeObservation,
-            expected: {
-              taskId: task.data.id,
-              workspaceId: workspace.data.id,
-              purpose: input.purpose,
-              response: input.response,
-              binding: input.binding,
-              bindingBytes: canonicalJson(input.binding),
-              digest: data.digest,
-              requirementIds: [...input.requirementIds],
+        ? verifyNativeDecision(
+            this.context.nativeAuthority,
+            {
+              observation: nativeObservation,
+              expected: {
+                taskId: task.data.id,
+                workspaceId: workspace.data.id,
+                purpose: input.purpose,
+                response: input.response,
+                binding: input.binding,
+                bindingBytes: canonicalJson(input.binding),
+                digest: data.digest,
+                requirementIds: [...input.requirementIds],
+              },
+              caller: this.context.caller,
             },
-            caller: this.context.caller,
-          })
+            { owner: this.authorityOwner, store: this.store, root: this.store.root },
+          )
         : null;
       if (native && !native.ok) return native as Result<never>;
+      const nativeProvenance = native?.ok ? retireNativeAuthority(native.data) : null;
+      if (native?.ok && !nativeProvenance)
+        return failure("permission_denied", "native decision authority was retired");
       const changed = this.store.mutateTask(
         task.data.id,
         input.expectedRevision,
@@ -341,10 +351,10 @@ export class WorkitCore {
           if (input.requirementIds.some((id: string) => !known.has(id)))
             return failure("invalid_input", "decision references an unknown requirement");
           if (
-            native?.ok &&
+            nativeProvenance &&
             current.decisions.some((entry) =>
               entry.provenance.receipts.some((existingReceipt) =>
-                native.data.provenance.receipts.some(
+                nativeProvenance.receipts.some(
                   (receipt) => canonicalJson(receipt) === canonicalJson(existingReceipt),
                 ),
               ),
@@ -354,9 +364,7 @@ export class WorkitCore {
           const entry: Entry<Decision> = {
             id: newId(),
             recordedAt: mutation.now,
-            provenance: native?.ok
-              ? native.data.provenance
-              : provenance(this.context, "agent_reported"),
+            provenance: nativeProvenance ?? provenance(this.context, "agent_reported"),
             data,
           };
           return success(mutation.revision, null, {
@@ -566,7 +574,10 @@ export class WorkitCore {
   }
 
   reserveAction(
-    input: Omit<ReserveActionInput, "store" | "native" | "authority"> & { observation: unknown },
+    input: Omit<
+      ReserveActionInput,
+      "store" | "native" | "authority" | "authorityOwner" | "authorityCaller"
+    > & { observation: unknown },
   ): Result<ActionReservation> {
     const root = this.contextRootError();
     if (!root.ok) return root as Result<never>;
@@ -579,31 +590,40 @@ export class WorkitCore {
     if (!workspace.data) return failure("not_found", "workspace not found");
     const decision = task.data.decisions.find((entry) => entry.id === input.decisionId);
     if (!decision) return failure("not_found", "decision not found");
-    const authority = verifyNativeAction(this.context.nativeAuthority, {
-      observation: input.observation,
-      expected: {
-        taskId: task.data.id,
-        workspaceId: workspace.data.id,
-        decisionId: input.decisionId,
-        actionRef: input.actionRef,
-        taskRevision: input.expectedRevision,
-        workspaceRevision: input.expectedWorkspaceRevision,
-        outcome: "reserve",
-        decision: decision.data,
+    const authority = verifyNativeAction(
+      this.context.nativeAuthority,
+      {
+        observation: input.observation,
+        expected: {
+          taskId: task.data.id,
+          workspaceId: workspace.data.id,
+          decisionId: input.decisionId,
+          actionRef: input.actionRef,
+          taskRevision: input.expectedRevision,
+          workspaceRevision: input.expectedWorkspaceRevision,
+          outcome: "reserve",
+          decision: decision.data,
+        },
+        caller: this.context.caller,
       },
-      caller: this.context.caller,
-    });
+      { owner: this.authorityOwner, store: this.store, root: this.store.root },
+    );
     if (!authority.ok) return authority as Result<never>;
     return reserveBoundedAction({
       ...input,
       store: this.store,
       authority: authority.data,
+      authorityOwner: this.authorityOwner,
+      authorityCaller: this.context.caller,
       native: { now: trustedNow(this.context) },
     });
   }
 
   settleAction(
-    input: Omit<SettleActionInput, "store" | "native" | "authority"> & { observation: unknown },
+    input: Omit<
+      SettleActionInput,
+      "store" | "native" | "authority" | "authorityOwner" | "authorityCaller"
+    > & { observation: unknown },
   ): Result<Entry<Decision>> {
     const root = this.contextRootError();
     if (!root.ok) return root as Result<never>;
@@ -616,25 +636,31 @@ export class WorkitCore {
     if (!workspace.data) return failure("not_found", "workspace not found");
     const decision = task.data.decisions.find((entry) => entry.id === input.decisionId);
     if (!decision) return failure("not_found", "decision not found");
-    const authority = verifyNativeAction(this.context.nativeAuthority, {
-      observation: input.observation,
-      expected: {
-        taskId: task.data.id,
-        workspaceId: workspace.data.id,
-        decisionId: input.decisionId,
-        actionRef: input.actionRef,
-        taskRevision: input.taskRevision,
-        workspaceRevision: input.workspaceRevision,
-        outcome: input.outcome,
-        decision: decision.data,
+    const authority = verifyNativeAction(
+      this.context.nativeAuthority,
+      {
+        observation: input.observation,
+        expected: {
+          taskId: task.data.id,
+          workspaceId: workspace.data.id,
+          decisionId: input.decisionId,
+          actionRef: input.actionRef,
+          taskRevision: input.taskRevision,
+          workspaceRevision: input.workspaceRevision,
+          outcome: input.outcome,
+          decision: decision.data,
+        },
+        caller: this.context.caller,
       },
-      caller: this.context.caller,
-    });
+      { owner: this.authorityOwner, store: this.store, root: this.store.root },
+    );
     if (!authority.ok) return authority as Result<never>;
     return settleBoundedAction({
       ...input,
       store: this.store,
       authority: authority.data,
+      authorityOwner: this.authorityOwner,
+      authorityCaller: this.context.caller,
       native: { now: trustedNow(this.context) },
     });
   }

@@ -62,7 +62,9 @@ export type NativeAuthorityVerifier = {
   verifyAction: (input: NativeActionVerification) => Result<Provenance>;
 };
 
-type VerifiedNativeAuthority = {
+type VerifiedNativeAuthority = object;
+
+type AuthorityRecord = {
   kind: "decision" | "action";
   provenance: Provenance;
   taskId: Id;
@@ -78,17 +80,25 @@ type VerifiedNativeAuthority = {
   taskRevision?: Revision;
   workspaceRevision?: Revision;
   outcome?: "reserve" | "succeeded" | "not_started" | "unknown";
+  owner: object;
+  store: TaskStore;
+  root: string;
+  caller: Caller;
 };
 
-const verifiedAuthorities = new WeakSet<object>();
+type AuthorityBinding = { owner: object; store: TaskStore; root: string };
+
+const verifiedAuthorities = new WeakMap<object, AuthorityRecord>();
 
 const trustedAuthority = (
-  kind: VerifiedNativeAuthority["kind"],
+  kind: AuthorityRecord["kind"],
   provenance: Provenance,
-  expected: Omit<VerifiedNativeAuthority, "kind" | "provenance">,
+  expected: Omit<AuthorityRecord, "kind" | "provenance" | "owner" | "store" | "root" | "caller">,
+  binding: AuthorityBinding,
+  caller: Caller,
 ): VerifiedNativeAuthority => {
-  const token = { kind, provenance, ...expected };
-  verifiedAuthorities.add(token);
+  const token = {};
+  verifiedAuthorities.set(token, { kind, provenance, ...expected, ...binding, caller });
   return token;
 };
 
@@ -103,6 +113,8 @@ export type ReserveActionInput = {
   step?: string;
   steps?: string[];
   authority: VerifiedNativeAuthority;
+  authorityOwner: object;
+  authorityCaller: Caller;
   native?: NativeAuthorityContext;
 };
 
@@ -126,6 +138,8 @@ export type SettleActionInput = {
   outcome: "succeeded" | "not_started" | "unknown";
   step?: string;
   authority: VerifiedNativeAuthority;
+  authorityOwner: object;
+  authorityCaller: Caller;
   native?: NativeAuthorityContext;
 };
 
@@ -184,6 +198,7 @@ const validProvenance = (value: unknown, caller: Caller): value is Provenance =>
 export const verifyNativeDecision = (
   verifier: NativeAuthorityVerifier | undefined,
   input: NativeDecisionVerification,
+  binding: AuthorityBinding,
 ): Result<VerifiedNativeAuthority> => {
   if (!verifier) return failure("permission_denied", "native authority verifier is unavailable");
   const result = verifier.verifyDecision(input);
@@ -192,22 +207,29 @@ export const verifyNativeDecision = (
   return success(
     null,
     null,
-    trustedAuthority("decision", result.data, {
-      taskId: input.expected.taskId,
-      workspaceId: input.expected.workspaceId,
-      purpose: input.expected.purpose,
-      response: input.expected.response,
-      binding: input.expected.binding,
-      bindingBytes: input.expected.bindingBytes,
-      digest: input.expected.digest,
-      requirementIds: [...input.expected.requirementIds],
-    }),
+    trustedAuthority(
+      "decision",
+      result.data,
+      {
+        taskId: input.expected.taskId,
+        workspaceId: input.expected.workspaceId,
+        purpose: input.expected.purpose,
+        response: input.expected.response,
+        binding: input.expected.binding,
+        bindingBytes: input.expected.bindingBytes,
+        digest: input.expected.digest,
+        requirementIds: [...input.expected.requirementIds],
+      },
+      binding,
+      input.caller,
+    ),
   );
 };
 
 export const verifyNativeAction = (
   verifier: NativeAuthorityVerifier | undefined,
   input: NativeActionVerification,
+  binding: AuthorityBinding,
 ): Result<VerifiedNativeAuthority> => {
   if (!verifier) return failure("permission_denied", "native authority verifier is unavailable");
   const result = verifier.verifyAction(input);
@@ -216,25 +238,56 @@ export const verifyNativeAction = (
   return success(
     null,
     null,
-    trustedAuthority("action", result.data, {
-      taskId: input.expected.taskId,
-      workspaceId: input.expected.workspaceId,
-      decisionId: input.expected.decisionId,
-      actionRef: input.expected.actionRef,
-      taskRevision: input.expected.taskRevision,
-      workspaceRevision: input.expected.workspaceRevision,
-      outcome: input.expected.outcome,
-      purpose: input.expected.decision.purpose,
-      response: input.expected.decision.response,
-      binding: input.expected.decision.binding,
-      digest: input.expected.decision.digest,
-      requirementIds: [...input.expected.decision.requirementIds],
-    }),
+    trustedAuthority(
+      "action",
+      result.data,
+      {
+        taskId: input.expected.taskId,
+        workspaceId: input.expected.workspaceId,
+        decisionId: input.expected.decisionId,
+        actionRef: input.expected.actionRef,
+        taskRevision: input.expected.taskRevision,
+        workspaceRevision: input.expected.workspaceRevision,
+        outcome: input.expected.outcome,
+        purpose: input.expected.decision.purpose,
+        response: input.expected.decision.response,
+        binding: input.expected.decision.binding,
+        digest: input.expected.decision.digest,
+        requirementIds: [...input.expected.decision.requirementIds],
+      },
+      binding,
+      input.caller,
+    ),
   );
 };
 
-const authorityMatches = (
+const takeAuthority = (
   authority: VerifiedNativeAuthority,
+  binding: AuthorityBinding,
+  caller: Caller,
+): AuthorityRecord | null => {
+  const record = verifiedAuthorities.get(authority);
+  verifiedAuthorities.delete(authority);
+  if (!record) return null;
+  if (
+    record.owner !== binding.owner ||
+    record.store !== binding.store ||
+    record.root !== binding.root ||
+    record.root !== record.store.root ||
+    canonicalJson(record.caller) !== canonicalJson(caller)
+  )
+    return null;
+  return record;
+};
+
+export const retireNativeAuthority = (authority: VerifiedNativeAuthority): Provenance | null => {
+  const record = verifiedAuthorities.get(authority);
+  verifiedAuthorities.delete(authority);
+  return record?.provenance ?? null;
+};
+
+const authorityMatches = (
+  authority: AuthorityRecord,
   expected: {
     taskId: Id;
     workspaceId: Id;
@@ -242,10 +295,9 @@ const authorityMatches = (
     actionRef: Ref;
     taskRevision: Revision;
     workspaceRevision: Revision;
-    outcome: VerifiedNativeAuthority["outcome"];
+    outcome: AuthorityRecord["outcome"];
   },
 ): boolean =>
-  verifiedAuthorities.has(authority) &&
   authority.kind === "action" &&
   authority.taskId === expected.taskId &&
   authority.workspaceId === expected.workspaceId &&
@@ -255,10 +307,7 @@ const authorityMatches = (
   authority.workspaceRevision === expected.workspaceRevision &&
   authority.outcome === expected.outcome;
 
-const authorityDecisionMatches = (
-  authority: VerifiedNativeAuthority,
-  decision: Decision,
-): boolean =>
+const authorityDecisionMatches = (authority: AuthorityRecord, decision: Decision): boolean =>
   authority.purpose === decision.purpose &&
   authority.response === decision.response &&
   authority.digest === decision.digest &&
@@ -354,6 +403,7 @@ const validateAction = (
   task: TaskRecord,
   workspaceId: Id,
   input: ReserveActionInput,
+  authority: AuthorityRecord,
 ): Result<{ entry: Entry<Decision>; workflow: Workflow }> => {
   if (task.status !== "active")
     return failure("invalid_transition", "only active tasks can authorize actions");
@@ -365,7 +415,7 @@ const validateAction = (
   if (decision.purpose !== "action")
     return failure("permission_denied", "decision is not an action approval");
   if (
-    !authorityMatches(input.authority, {
+    !authorityMatches(authority, {
       taskId: task.id,
       workspaceId,
       decisionId: input.decisionId,
@@ -376,14 +426,14 @@ const validateAction = (
     })
   )
     return failure("permission_denied", "native reservation authority is not bound");
-  if (!authorityDecisionMatches(input.authority, decision))
+  if (!authorityDecisionMatches(authority, decision))
     return failure("permission_denied", "native reservation authority does not match decision");
   if (decision.response !== "approved")
     return failure("permission_denied", "decision was rejected");
   if (
     entry.provenance.kind !== "host_observed" ||
     entry.provenance.receipts.length === 0 ||
-    !provenanceMatches(entry.provenance, input.authority.provenance)
+    !provenanceMatches(entry.provenance, authority.provenance)
   )
     return failure("permission_denied", "action approval lacks native receipt assurance");
   if (decision.revoked) return failure("permission_denied", "decision is revoked");
@@ -419,7 +469,16 @@ const validateAction = (
 export function reserveAction(input: ReserveActionInput): Result<ActionReservation> {
   if (!input.store || !input.expectedRevision || !input.expectedWorkspaceRevision)
     return failure("invalid_input", "action reservation preconditions are required");
-  if (!verifiedAuthorities.has(input.authority))
+  const authority = takeAuthority(
+    input.authority,
+    {
+      owner: input.authorityOwner,
+      store: input.store,
+      root: input.store.root,
+    },
+    input.authorityCaller,
+  );
+  if (!authority)
     return failure("permission_denied", "native reservation authority is not verified");
   const changed = input.store.mutateTask(
     input.taskId,
@@ -433,7 +492,7 @@ export function reserveAction(input: ReserveActionInput): Result<ActionReservati
           expectedWorkspaceRevision: input.expectedWorkspaceRevision,
           actualWorkspaceRevision: workspace.data.revision,
         });
-      const valid = validateAction(input.store, current, workspace.data.id, input);
+      const valid = validateAction(input.store, current, workspace.data.id, input, authority);
       if (!valid.ok) return valid as Result<never>;
       const { entry, workflow } = valid.data;
       const existing = entry.data.consumption;
@@ -509,17 +568,29 @@ export function reserveAction(input: ReserveActionInput): Result<ActionReservati
 export function settleAction(input: SettleActionInput): Result<Entry<Decision>> {
   if (!input.store || !input.taskRevision || !input.workspaceRevision)
     return failure("invalid_input", "action settlement preconditions are required");
+  const authority = takeAuthority(
+    input.authority,
+    {
+      owner: input.authorityOwner,
+      store: input.store,
+      root: input.store.root,
+    },
+    input.authorityCaller,
+  );
+  if (!authority)
+    return failure("permission_denied", "native settlement authority is not verified");
   if (!refSchema.safeParse(input.actionRef).success)
     return failure("invalid_input", "action reference is invalid");
   if (
-    !verifiedAuthorities.has(input.authority) ||
-    input.authority.kind !== "action" ||
-    input.authority.taskId !== input.taskId ||
-    input.authority.decisionId !== input.decisionId ||
-    !sameRef(input.authority.actionRef!, input.actionRef) ||
-    input.authority.taskRevision !== input.taskRevision ||
-    input.authority.workspaceRevision !== input.workspaceRevision ||
-    input.authority.outcome !== input.outcome
+    !authorityMatches(authority, {
+      taskId: input.taskId,
+      workspaceId: authority.workspaceId,
+      decisionId: input.decisionId,
+      actionRef: input.actionRef,
+      taskRevision: input.taskRevision,
+      workspaceRevision: input.workspaceRevision,
+      outcome: input.outcome,
+    })
   )
     return failure("permission_denied", "native settlement authority is not verified");
   let outcomeResult: Result<Entry<Decision>> | null = null;
@@ -531,7 +602,7 @@ export function settleAction(input: SettleActionInput): Result<Entry<Decision>> 
       if (!workspace.ok) return workspace as Result<never>;
       if (!workspace.data) return failure("not_found", "workspace not found");
       if (
-        !authorityMatches(input.authority, {
+        !authorityMatches(authority, {
           taskId: input.taskId,
           workspaceId: workspace.data.id,
           decisionId: input.decisionId,
@@ -549,9 +620,9 @@ export function settleAction(input: SettleActionInput): Result<Entry<Decision>> 
         });
       const entry = current.decisions.find((candidate) => candidate.id === input.decisionId);
       if (!entry) return failure("not_found", "decision not found");
-      if (!authorityDecisionMatches(input.authority, entry.data))
+      if (!authorityDecisionMatches(authority, entry.data))
         return failure("permission_denied", "native settlement authority does not match decision");
-      if (!provenanceMatches(entry.provenance, input.authority.provenance))
+      if (!provenanceMatches(entry.provenance, authority.provenance))
         return failure("permission_denied", "native settlement caller does not match approval");
       if (entry.data.purpose !== "action" || entry.data.digest !== decisionDigest(entry.data))
         return failure("permission_denied", "decision binding is invalid");

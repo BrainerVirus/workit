@@ -10,8 +10,13 @@ import {
   TaskStore,
   captureCandidate,
   decisionDigest,
+  type NativeAuthorityVerifier,
   type OperationContext,
 } from "../../packages/workit-core/src/core";
+import {
+  reserveAction as reserveBoundedAction,
+  verifyNativeAction,
+} from "../../packages/workit-core/src/core/authority";
 import { assessment, caller, ref, scope, taskStartRequest } from "./task-fixtures";
 
 const context = (root: string, authority = verifier()): OperationContext =>
@@ -35,7 +40,7 @@ const attested = (host: "workit_cli" | "cursor" = "workit_cli", handle = "receip
   };
 };
 
-const verifier = (calls: Array<Record<string, unknown>> = []) => ({
+const verifier = (calls: Array<Record<string, unknown>> = []): NativeAuthorityVerifier => ({
   verifyDecision: (input: Record<string, unknown>) => {
     calls.push({ kind: "decision", ...input });
     if ((input.observation as { kind?: string } | undefined)?.kind !== "decision")
@@ -252,6 +257,76 @@ test("cross-host settlement observations cannot settle a caller-bound reservatio
         actionRef: reservation.data.actionRef,
       },
     }),
+  ).toMatchObject({ ok: false, code: "permission_denied" });
+});
+
+test("verified action authority cannot cross its owning core or store", () => {
+  const { core, store, task, workspace, root } = active();
+  const recorded = recordNativeDecision(
+    core,
+    {
+      schemaVersion: 1,
+      action: "record",
+      taskId: task.id,
+      expectedRevision: task.revision,
+      purpose: "action",
+      binding: actionBinding(task, workspace.id),
+      response: "approved",
+      requirementIds: [],
+    },
+    "owner-scope",
+  );
+  if (!recorded.ok) throw new Error(recorded.error);
+  const current = store.readTask(task.id);
+  if (!current.ok) throw new Error(current.error);
+  const actionRef = { kind: "host" as const, host: "workit_cli" as const, handle: "owner-scope" };
+  const owner = {};
+  const authority = verifyNativeAction(
+    verifier(),
+    {
+      observation: nativeObservation("owner-scope"),
+      expected: {
+        taskId: task.id,
+        workspaceId: workspace.id,
+        decisionId: recorded.data.id,
+        actionRef,
+        taskRevision: current.data.revision,
+        workspaceRevision: workspace.revision,
+        outcome: "reserve",
+        decision: recorded.data.data,
+      },
+      caller: caller(),
+    },
+    { owner, store, root },
+  );
+  if (!authority.ok) throw new Error(authority.error);
+  expect(
+    reserveBoundedAction({
+      store: new TaskStore(store.root),
+      taskId: task.id,
+      decisionId: recorded.data.id,
+      actionRef,
+      expectedRevision: current.data.revision,
+      expectedWorkspaceRevision: workspace.revision,
+      authority: authority.data,
+      authorityOwner: {},
+      authorityCaller: caller(),
+      native: { now: "2026-01-01T00:00:00Z" },
+    } as any),
+  ).toMatchObject({ ok: false, code: "permission_denied" });
+  expect(
+    reserveBoundedAction({
+      store,
+      taskId: task.id,
+      decisionId: recorded.data.id,
+      actionRef,
+      expectedRevision: current.data.revision,
+      expectedWorkspaceRevision: workspace.revision,
+      authority: authority.data,
+      authorityOwner: owner,
+      authorityCaller: caller(),
+      native: { now: "2026-01-01T00:00:00Z" },
+    } as any),
   ).toMatchObject({ ok: false, code: "permission_denied" });
 });
 

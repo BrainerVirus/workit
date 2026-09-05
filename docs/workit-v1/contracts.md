@@ -105,6 +105,16 @@ and claimed consent must not be upgraded to observed human approval. Native
 observations can attest that a tool ran without attesting that its output proves
 correctness. Imported provenance never grants destination authority.
 
+`OperationContext` is the trusted host-adapter boundary: its caller, native
+authority verifier, constraints, clock, and checkout root are constructed by
+the host adapter and are not model-operation fields. The core is not a sandbox
+against malicious in-process package code that can instantiate a core or write
+`.workit` directly. A host adapter's native-authority verifier must validate the
+actual host event, receipt, session, and requested binding/action, then return
+validated provenance or fail closed; an adapter must not self-attest by merely
+echoing agent-supplied observation JSON. Verified action authority is scoped to
+the owning core/store/context and is one-shot.
+
 ## 2. Assessment, policy, and evaluation
 
 ```typescript
@@ -270,6 +280,11 @@ type Finding = {
   disposition: "open" | "fixed" | "dismissed" | "deferred";
   resolution: { reason: string; evidenceIds: Id[]; decisionIds: Id[] } | null;
 };
+type ActionProgress = {
+  decisionId: Id;
+  steps: string[];
+  completedSteps: string[];
+};
 type Assignment = {
   role: "investigator" | "reviewer" | "implementer";
   objective: string;
@@ -376,6 +391,7 @@ type TaskRecord = {
   candidates: Candidate[];
   evidence: Entry<Evidence>[];
   decisions: Entry<Decision>[];
+  actionProgress?: ActionProgress[];
   findings: Entry<Finding>[];
   workers: Entry<Worker>[];
 };
@@ -413,6 +429,12 @@ type ExportBundle = {
   digest: Digest;
 };
 ```
+
+When present, `actionProgress` has at most one entry per decision. Each entry's
+`steps` are unique and `completedSteps` is a unique prefix of `steps`; the
+serialized record, not an in-memory workflow map, is the restart source of
+truth. Reserved or uncertain consumption remains fail-closed until a fresh
+native observation reconciles it.
 
 Use `.workit/tasks/<id>.json` and `.workit/workspace.json` as specified in the
 product document. The canonical absolute root belongs only to this local
