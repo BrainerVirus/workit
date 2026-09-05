@@ -325,6 +325,7 @@ export class WorkitCore {
   private helperEntry(
     task: TaskRecord,
     requireSession = false,
+    requireActive = false,
   ): Result<Entry<import("./task-contract").Worker>> {
     const workerId = this.context.workerId ?? null;
     if (workerId === null) return failure("permission_denied", "operation is lead-only");
@@ -334,6 +335,8 @@ export class WorkitCore {
       return failure("permission_denied", "worker session does not match the caller");
     if (requireSession && (!worker.data.session || !sameSession(worker.data.session, this.context)))
       return failure("permission_denied", "worker session has not been observed");
+    if (requireActive && worker.data.state !== "running")
+      return failure("permission_denied", "worker is not active");
     return success(null, null, worker);
   }
 
@@ -476,7 +479,7 @@ export class WorkitCore {
     if (task.data.status === "closed")
       return failure("invalid_transition", "closed task cannot record evidence");
     const helper =
-      (this.context.workerId ?? null) === null ? null : this.helperEntry(task.data, true);
+      (this.context.workerId ?? null) === null ? null : this.helperEntry(task.data, true, true);
     if (helper && !helper.ok) return helper as Result<never>;
     const evidence = input.evidence as Evidence;
     if (helper?.ok) {
@@ -486,7 +489,8 @@ export class WorkitCore {
         (assignment.candidateId !== null &&
           evidence.candidateId !== assignment.candidateId &&
           evidence.beforeCandidateId !== assignment.candidateId) ||
-        !refsWithinScope(evidence.refs, assignment.scope)
+        !refsWithinScope(evidence.refs, assignment.scope) ||
+        !refsWithinScope(evidence.refs, task.data.intent.data.scope)
       )
         return failure("permission_denied", "evidence is outside the worker assignment");
     }
@@ -711,15 +715,17 @@ export class WorkitCore {
     if (task.data.status === "closed")
       return failure("invalid_transition", "closed task cannot mutate findings");
     const helper =
-      (this.context.workerId ?? null) === null ? null : this.helperEntry(task.data, true);
+      (this.context.workerId ?? null) === null ? null : this.helperEntry(task.data, true, true);
     if (helper && !helper.ok) return helper as Result<never>;
     if (input.action === "record") {
       if (helper?.ok) {
         const assignment = helper.data.data.assignment;
         if (
           !bindingCovers(assignment.scope, input.scope) ||
+          !bindingCovers(task.data.intent.data.scope, input.scope) ||
           (assignment.candidateId !== null && input.candidateId !== assignment.candidateId) ||
-          !refsWithinScope(input.refs, assignment.scope)
+          !refsWithinScope(input.refs, assignment.scope) ||
+          !refsWithinScope(input.refs, task.data.intent.data.scope)
         )
           return failure("permission_denied", "finding is outside the worker assignment");
       }
@@ -928,7 +934,7 @@ export class WorkitCore {
     if (input.action === "report") {
       if (helperId === null || helperId !== input.workerId)
         return failure("permission_denied", "workers can submit only their own report");
-      const helper = this.helperEntry(task.data, true);
+      const helper = this.helperEntry(task.data, true, true);
       if (!helper.ok) return helper as Result<never>;
       const evidence = task.data.evidence.filter((candidate) =>
         input.report.evidenceIds.includes(candidate.id),
@@ -943,7 +949,17 @@ export class WorkitCore {
         return failure("invalid_input", "worker report references an unknown record");
       if (
         evidence.some((candidate) => candidate.provenance.workerId !== helperId) ||
-        findings.some((candidate) => candidate.provenance.workerId !== helperId)
+        findings.some((candidate) => candidate.provenance.workerId !== helperId) ||
+        evidence.some(
+          (candidate) =>
+            !refsWithinScope(candidate.data.refs, helper.data.data.assignment.scope) ||
+            !refsWithinScope(candidate.data.refs, task.data.intent.data.scope),
+        ) ||
+        findings.some(
+          (candidate) =>
+            !refsWithinScope(candidate.data.refs, helper.data.data.assignment.scope) ||
+            !refsWithinScope(candidate.data.refs, task.data.intent.data.scope),
+        )
       )
         return failure("permission_denied", "worker report is outside the worker assignment");
       const changed = this.store.mutateTaskAndWorkspace({

@@ -511,3 +511,104 @@ test("scope revision is denied while worker ownership or execution could be acti
     }),
   ).toMatchObject({ ok: false, code: "recovery_required" });
 });
+
+test("stopped helpers cannot mutate metadata after a task scope revision", () => {
+  const lead = active({ nativeWorker: observationVerifier() });
+  const assigned = assign(lead.core, lead.task, lead.workspace, "investigator", ["src"]);
+  expect(assigned.ok).toBe(true);
+  if (!assigned.ok) throw new Error(assigned.error);
+  let task = lead.store.readTask(lead.task.id);
+  let workspace = lead.store.readWorkspace();
+  if (!task.ok || !workspace.ok || !workspace.data) throw new Error("state missing");
+  expect(
+    observeRunning(
+      lead.core,
+      lead.task.id,
+      assigned.data.id,
+      task.data.revision,
+      workspace.data.revision,
+    ).ok,
+  ).toBe(true);
+  task = lead.store.readTask(lead.task.id);
+  workspace = lead.store.readWorkspace();
+  if (!task.ok || !workspace.ok || !workspace.data) throw new Error("state missing");
+  expect(
+    lead.core.observeWorkerLifecycle({
+      taskId: lead.task.id,
+      workerId: assigned.data.id,
+      expectedRevision: task.data.revision,
+      expectedWorkspaceRevision: workspace.data.revision,
+      state: "stopped",
+      session: { kind: "host", host: "workit_cli", handle: "worker-session" },
+      observation: { event: "worker-stopped" },
+    }).ok,
+  ).toBe(true);
+  task = lead.store.readTask(lead.task.id);
+  workspace = lead.store.readWorkspace();
+  if (!task.ok || !workspace.ok || !workspace.data) throw new Error("state missing");
+  expect(
+    lead.core.task({
+      schemaVersion: 1,
+      action: "revise",
+      taskId: task.data.id,
+      expectedRevision: task.data.revision,
+      expectedWorkspaceRevision: workspace.data.revision,
+      intent: { ...task.data.intent.data, scope: scope({ paths: ["docs"] }) },
+      reason: "scope changed",
+    }).ok,
+  ).toBe(true);
+  task = lead.store.readTask(lead.task.id);
+  workspace = lead.store.readWorkspace();
+  if (!task.ok || !workspace.ok || !workspace.data) throw new Error("state missing");
+  const staleHelper = new WorkitCore(
+    lead.store,
+    context(lead.root, {
+      caller: caller({ actor: "worker-session" }),
+      workerId: assigned.data.id,
+    }),
+  );
+  expect(
+    staleHelper.evidence({
+      schemaVersion: 1,
+      action: "record",
+      taskId: task.data.id,
+      expectedRevision: task.data.revision,
+      evidence: {
+        kind: "investigation",
+        claim: "stale",
+        requirementIds: [],
+        beforeCandidateId: null,
+        candidateId: null,
+        result: "passed",
+        summary: "stale",
+        refs: [{ kind: "file", path: "src/old.ts", digest: null }],
+        exitCode: null,
+        reviewContext: null,
+      },
+    }),
+  ).toMatchObject({ ok: false, code: "permission_denied" });
+  expect(
+    staleHelper.finding({
+      schemaVersion: 1,
+      action: "record",
+      taskId: task.data.id,
+      expectedRevision: task.data.revision,
+      claim: "stale",
+      consequence: "stale",
+      scope: scope({ paths: ["src"] }),
+      candidateId: null,
+      refs: [{ kind: "file", path: "src/old.ts", digest: null }],
+    }),
+  ).toMatchObject({ ok: false, code: "permission_denied" });
+  expect(
+    staleHelper.worker({
+      schemaVersion: 1,
+      action: "report",
+      taskId: task.data.id,
+      expectedRevision: task.data.revision,
+      expectedWorkspaceRevision: workspace.data.revision,
+      workerId: assigned.data.id,
+      report: { outcome: "completed", summary: "stale", evidenceIds: [], findingIds: [] },
+    }),
+  ).toMatchObject({ ok: false, code: "permission_denied" });
+});
