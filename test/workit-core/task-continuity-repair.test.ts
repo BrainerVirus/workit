@@ -14,6 +14,7 @@ import {
   type NativeWorkerVerifier,
   type NativeAuthorityVerifier,
   type OperationContext,
+  type ExportBundle,
   type Ref,
   type TaskView,
 } from "../../packages/workit-core/src/core";
@@ -537,4 +538,85 @@ test("export omits host and external refs throughout portable history", () => {
   );
   expect(importedRecord).toMatchObject({ kind: "record" });
   expect(importedRecord && importedRecord.id).not.toBe(evidenceId);
+});
+
+test("portable assessment state remains truthful and importable after host refs are removed", () => {
+  const value = active();
+  const hostRef: Ref = { kind: "host", host: "workit_cli", handle: "HOST_ONLY" };
+  const fileRef: Ref = { kind: "file", path: "portable.txt", digest: "b".repeat(64) };
+  const base = assessment();
+  const assessmentWithHostOnlyState = {
+    ...base,
+    facts: [
+      { statement: "host-only fact", basis: "observed" as const, refs: [hostRef] },
+      { statement: "mixed fact", basis: "observed" as const, refs: [hostRef, fileRef] },
+    ],
+    signals: {
+      ...base.signals,
+      behaviorChange: {
+        value: false,
+        basis: "observed" as const,
+        reason: "host-only observation",
+        refs: [hostRef],
+      },
+      mechanicalLowRisk: {
+        value: true,
+        basis: "observed" as const,
+        reason: "mixed observation",
+        refs: [hostRef, fileRef],
+      },
+    },
+    consequences: [
+      {
+        area: "security" as const,
+        fact: { statement: "host-only consequence", basis: "observed" as const, refs: [hostRef] },
+      },
+    ],
+  };
+  const changed = value.store.mutateTask(value.task.id, value.task.revision, (task, mutation) =>
+    success(mutation.revision, null, {
+      ...task,
+      assessments: [
+        {
+          id: randomUUID(),
+          recordedAt: mutation.now,
+          provenance: task.intent.provenance,
+          data: assessmentWithHostOnlyState,
+        },
+      ],
+    }),
+  );
+  expect(changed.ok).toBe(true);
+
+  const exported = value.core.state({ schemaVersion: 1, action: "export", taskId: value.task.id });
+  expect(exported).toMatchObject({ ok: true });
+  if (!exported.ok) throw new Error(exported.error);
+  const bundle = exported.data as ExportBundle;
+  const portableAssessment = bundle.task.assessments[0].data;
+  expect(portableAssessment.facts[0]).toMatchObject({ basis: "unknown", refs: [] });
+  expect(portableAssessment.facts[1]).toMatchObject({ basis: "observed", refs: [fileRef] });
+  expect(portableAssessment.signals.behaviorChange).toMatchObject({
+    value: "unknown",
+    basis: "unknown",
+    refs: [],
+  });
+  expect(portableAssessment.signals.behaviorChange.reason).toContain("portable");
+  expect(portableAssessment.signals.mechanicalLowRisk).toMatchObject({
+    value: true,
+    basis: "observed",
+    refs: [fileRef],
+  });
+  expect(portableAssessment.consequences[0].fact).toMatchObject({ basis: "unknown", refs: [] });
+
+  const destinationRoot = makeRoot();
+  const destination = new WorkitCore(new TaskStore(destinationRoot), makeContext(destinationRoot));
+  expect(
+    destination.state({
+      schemaVersion: 1,
+      action: "import",
+      expectedWorkspaceRevision: null,
+      bundle,
+      authorityRefs: [],
+    }),
+  ).toMatchObject({ ok: true });
 });

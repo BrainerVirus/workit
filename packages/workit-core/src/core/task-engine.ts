@@ -29,6 +29,7 @@ import {
   type Provenance,
   type Worker,
   type WorkspaceRecord,
+  taskRecordSchema,
 } from "./task-contract";
 import {
   bindingCovers,
@@ -354,6 +355,24 @@ const portableRefs = (refs: Ref[]): Ref[] =>
   refs.filter((ref) => ref.kind === "file" || ref.kind === "record");
 const portableRef = (ref: Ref | null): Ref | null =>
   ref && (ref.kind === "file" || ref.kind === "record") ? ref : null;
+const portableFact = (fact: Assessment["facts"][number]) => {
+  const refs = portableRefs(fact.refs);
+  return fact.basis === "observed" && refs.length === 0
+    ? { ...fact, basis: "unknown" as const, refs }
+    : { ...fact, refs };
+};
+const portableSignal = (signal: Assessment["signals"][keyof Assessment["signals"]]) => {
+  const refs = portableRefs(signal.refs);
+  return signal.basis === "observed" && refs.length === 0
+    ? {
+        ...signal,
+        value: "unknown" as const,
+        basis: "unknown" as const,
+        reason: "portable supporting reference was removed",
+        refs,
+      }
+    : { ...signal, refs };
+};
 
 const importedProvenance = (context: OperationContext): Provenance => ({
   kind: "imported",
@@ -403,16 +422,13 @@ const portableTask = (task: TaskRecord): TaskRecord => {
     ...entry,
     data: {
       ...entry.data,
-      facts: entry.data.facts.map((fact) => ({ ...fact, refs: portableRefs(fact.refs) })),
+      facts: entry.data.facts.map(portableFact),
       signals: Object.fromEntries(
-        Object.entries(entry.data.signals).map(([name, signal]) => [
-          name,
-          { ...signal, refs: portableRefs(signal.refs) },
-        ]),
+        Object.entries(entry.data.signals).map(([name, signal]) => [name, portableSignal(signal)]),
       ) as typeof entry.data.signals,
       consequences: entry.data.consequences.map((consequence) => ({
         ...consequence,
-        fact: { ...consequence.fact, refs: portableRefs(consequence.fact.refs) },
+        fact: portableFact(consequence.fact),
       })),
       verification: entry.data.verification.map((verification) => ({
         ...verification,
@@ -729,16 +745,21 @@ export class WorkitCore {
       const workspace = this.store.readWorkspace();
       if (!workspace.ok) return workspace as Result<never>;
       if (!workspace.data) return failure("not_found", "workspace not found");
+      const portable = taskRecordSchema.safeParse(portableTask(task.data));
+      if (!portable.success)
+        return failure("storage_error", "portable task is invalid after sanitization");
       const bundle = {
         schemaVersion: 1 as const,
         exportedAt: trustedNow(this.context),
         sourceWorkspaceId: workspace.data.id,
-        task: portableTask(task.data),
+        task: portable.data,
       };
-      return success(task.data.revision, workspace.data.revision, {
+      const checked = exportBundleSchema.safeParse({
         ...bundle,
         digest: exportDigest(bundle),
       });
+      if (!checked.success) return failure("storage_error", "portable export bundle is invalid");
+      return success(task.data.revision, workspace.data.revision, checked.data);
     }
     if (input.action === "import") {
       const checked = exportBundleSchema.safeParse(input.bundle);
