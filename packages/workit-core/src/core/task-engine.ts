@@ -15,12 +15,15 @@ import {
   type Evidence,
   type Finding,
   type Policy,
+  provenanceSchema,
   type Ref,
   type Result,
+  type Scope,
   type TaskRecord,
   type TaskSummary,
   type TaskView,
   type Utc,
+  type Provenance,
   type Worker,
   type WorkspaceRecord,
 } from "./task-contract";
@@ -42,10 +45,9 @@ import { diffPolicy, resolvePolicy } from "./policy-resolver";
 import { TaskStore } from "./task-store";
 import {
   assertProductWriteAllowed,
-  observeWorkerLifecycle as applyWorkerLifecycle,
-  verifyNativeWorker,
   type CallerContext,
   type NativeWorkerObservation,
+  type NativeWorkerVerification,
   type NativeWorkerVerifier,
 } from "./workers";
 import {
@@ -85,6 +87,210 @@ const sameSession = (value: unknown, context: OperationContext): boolean =>
   (value as any).host === context.caller.host &&
   (value as any).handle === context.caller.actor;
 
+type WorkerBinding = {
+  owner: object;
+  store: TaskStore;
+  root: string;
+  caller: Caller;
+};
+type WorkerAuthority = {
+  taskId: string;
+  workspaceId: string;
+  workerId: string;
+  expectedRevision: string;
+  expectedWorkspaceRevision: string;
+  state: NativeWorkerObservation["state"];
+  session: NativeWorkerObservation["session"];
+  provenance: Provenance;
+  owner: object;
+  store: TaskStore;
+  root: string;
+  caller: Caller;
+};
+type VerifiedWorker = object;
+const verifiedWorkers = new WeakMap<object, WorkerAuthority>();
+
+const sameValue = (left: unknown, right: unknown): boolean => {
+  try {
+    return canonicalJson(left) === canonicalJson(right);
+  } catch {
+    return false;
+  }
+};
+
+const validNativeProvenance = (
+  value: unknown,
+  caller: Caller,
+  expected: Pick<NativeWorkerObservation, "workerId" | "session">,
+): value is Provenance => {
+  if (!provenanceSchema.safeParse(value).success) return false;
+  const provenance = value as Provenance;
+  return (
+    provenance.kind === "host_observed" &&
+    provenance.host === caller.host &&
+    provenance.workerId === expected.workerId &&
+    sameValue(provenance.session, expected.session) &&
+    provenance.receipts.some((receipt) => receipt.kind === "host" && receipt.host === caller.host)
+  );
+};
+
+const verifyNativeWorker = (
+  verifier: NativeWorkerVerifier | undefined,
+  input: NativeWorkerVerification,
+  binding: WorkerBinding,
+): Result<VerifiedWorker> => {
+  if (!verifier) return failure("permission_denied", "native worker verifier is unavailable");
+  let result: Result<Provenance>;
+  try {
+    result = verifier.verifyWorker(input);
+  } catch (error) {
+    return failure("permission_denied", `native worker observation failed: ${String(error)}`);
+  }
+  const expected = input.expected;
+  if (!result.ok || !validNativeProvenance(result.data, input.caller, expected))
+    return failure("permission_denied", "native worker observation was not attested");
+  const token = {};
+  verifiedWorkers.set(token, {
+    taskId: expected.taskId,
+    workspaceId: expected.workspaceId,
+    workerId: expected.workerId,
+    expectedRevision: expected.expectedRevision,
+    expectedWorkspaceRevision: expected.expectedWorkspaceRevision,
+    state: expected.state,
+    session: expected.session,
+    provenance: result.data,
+    ...binding,
+  });
+  return success(null, null, token);
+};
+
+const takeWorker = (
+  token: VerifiedWorker,
+  binding: WorkerBinding,
+  expected: NativeWorkerObservation,
+): WorkerAuthority | null => {
+  const value = verifiedWorkers.get(token);
+  verifiedWorkers.delete(token);
+  if (!value) return null;
+  if (
+    value.owner !== binding.owner ||
+    value.store !== binding.store ||
+    value.root !== binding.root ||
+    value.root !== value.store.root ||
+    !sameValue(value.caller, binding.caller) ||
+    value.taskId !== expected.taskId ||
+    value.workerId !== expected.workerId ||
+    value.expectedRevision !== expected.expectedRevision ||
+    value.expectedWorkspaceRevision !== expected.expectedWorkspaceRevision ||
+    value.state !== expected.state ||
+    !sameValue(value.session, expected.session)
+  )
+    return null;
+  return value;
+};
+
+type ObserveWorkerLifecycleInput = NativeWorkerObservation & {
+  store: TaskStore;
+  authority: VerifiedWorker;
+  authorityOwner: object;
+  caller: Caller;
+  now?: Utc;
+};
+
+const applyWorkerLifecycle = (input: ObserveWorkerLifecycleInput): Result<Entry<Worker>> => {
+  if (!input.store || !input.authority || !input.authorityOwner)
+    return failure("invalid_input", "native worker observation preconditions are required");
+  const authority = takeWorker(
+    input.authority,
+    {
+      owner: input.authorityOwner,
+      store: input.store,
+      root: input.store.root,
+      caller: input.caller,
+    },
+    input,
+  );
+  if (!authority) return failure("permission_denied", "native worker observation is not verified");
+
+  const task = input.store.readTask(input.taskId);
+  if (!task.ok) return task as Result<never>;
+  const workspace = input.store.readWorkspace();
+  if (!workspace.ok) return workspace as Result<never>;
+  if (!workspace.data) return failure("not_found", "workspace not found");
+  if (
+    task.data.workspaceId !== authority.workspaceId ||
+    workspace.data.id !== authority.workspaceId
+  )
+    return failure("recovery_required", "worker workspace binding is invalid");
+  const entry = task.data.workers.find((candidate) => candidate.id === input.workerId);
+  if (!entry) return failure("not_found", "worker not found");
+  if (task.data.status === "closed")
+    return failure("invalid_transition", "closed task cannot observe workers");
+  if (task.data.status === "paused" && (input.state === "running" || input.state === "cancelling"))
+    return failure("invalid_transition", "paused task cannot run a worker");
+  if (
+    (input.state === "running" || input.state === "cancelling" || input.state === "stopped") &&
+    !input.session
+  )
+    return failure("invalid_input", "running worker observations require a session");
+  if (entry.data.session && !sameValue(entry.data.session, input.session))
+    return failure("permission_denied", "worker session does not match its assignment");
+  if (input.state !== "running" && entry.data.state === "assigned" && input.state !== "stopped")
+    return failure("invalid_transition", "worker has not started");
+  if (input.state === "running" && entry.data.state === "stopped")
+    return failure("invalid_transition", "stopped worker cannot run again");
+  const nextEntry = {
+    ...entry,
+    recordedAt: input.now ?? entry.recordedAt,
+    provenance: authority.provenance,
+    data: { ...entry.data, state: input.state, session: input.session },
+  } satisfies Entry<Worker>;
+  const shouldClear =
+    input.state === "stopped" &&
+    workspace.data.writer !== null &&
+    workspace.data.writer.owner.taskId === task.data.id &&
+    workspace.data.writer.owner.workerId === input.workerId;
+  const shouldUncertain =
+    input.state === "unknown" &&
+    workspace.data.writer !== null &&
+    workspace.data.writer.owner.taskId === task.data.id &&
+    workspace.data.writer.owner.workerId === input.workerId;
+  const changed = input.store.mutateTaskAndWorkspace({
+    taskId: task.data.id,
+    expectedTaskRevision: input.expectedRevision,
+    expectedWorkspaceRevision: input.expectedWorkspaceRevision,
+    now: input.now,
+    workspace: (current, mutation) =>
+      success(mutation.revision, mutation.revision, {
+        ...current,
+        writer: shouldClear
+          ? null
+          : shouldUncertain && current.writer
+            ? { ...current.writer, state: "uncertain" as const }
+            : current.writer,
+      }),
+    task: (current, mutation) =>
+      success(mutation.revision, null, {
+        ...current,
+        workers: current.workers.map((candidate) =>
+          candidate.id === nextEntry.id ? { ...nextEntry, recordedAt: mutation.now } : candidate,
+        ),
+      }),
+  });
+  if (!changed.ok) return changed as Result<never>;
+  const updated = changed.data.task.workers.find((candidate) => candidate.id === input.workerId);
+  return updated
+    ? success(changed.data.task.revision, changed.data.workspace.revision, updated)
+    : failure("recovery_required", "worker disappeared during lifecycle observation");
+};
+
+const refsWithinScope = (refs: Ref[], scope: Scope): boolean =>
+  refs.every(
+    (ref) =>
+      ref.kind !== "file" ||
+      bindingCovers(scope, { description: "", paths: [ref.path], exclusions: [] }),
+  );
+
 const trustedNow = (context: OperationContext): Utc =>
   typeof context.now === "function" ? context.now() : context.now;
 
@@ -116,13 +322,18 @@ export class WorkitCore {
     };
   }
 
-  private helperEntry(task: TaskRecord): Result<Entry<import("./task-contract").Worker>> {
+  private helperEntry(
+    task: TaskRecord,
+    requireSession = false,
+  ): Result<Entry<import("./task-contract").Worker>> {
     const workerId = this.context.workerId ?? null;
     if (workerId === null) return failure("permission_denied", "operation is lead-only");
     const worker = task.workers.find((entry) => entry.id === workerId);
     if (!worker) return failure("permission_denied", "worker is not assigned to this task");
     if (worker.data.session && !sameSession(worker.data.session, this.context))
       return failure("permission_denied", "worker session does not match the caller");
+    if (requireSession && (!worker.data.session || !sameSession(worker.data.session, this.context)))
+      return failure("permission_denied", "worker session has not been observed");
     return success(null, null, worker);
   }
 
@@ -264,7 +475,8 @@ export class WorkitCore {
     if (!task.ok) return task as Result<never>;
     if (task.data.status === "closed")
       return failure("invalid_transition", "closed task cannot record evidence");
-    const helper = (this.context.workerId ?? null) === null ? null : this.helperEntry(task.data);
+    const helper =
+      (this.context.workerId ?? null) === null ? null : this.helperEntry(task.data, true);
     if (helper && !helper.ok) return helper as Result<never>;
     const evidence = input.evidence as Evidence;
     if (helper?.ok) {
@@ -273,7 +485,8 @@ export class WorkitCore {
         evidence.requirementIds.some((id: string) => !assignment.requirementIds.includes(id)) ||
         (assignment.candidateId !== null &&
           evidence.candidateId !== assignment.candidateId &&
-          evidence.beforeCandidateId !== assignment.candidateId)
+          evidence.beforeCandidateId !== assignment.candidateId) ||
+        !refsWithinScope(evidence.refs, assignment.scope)
       )
         return failure("permission_denied", "evidence is outside the worker assignment");
     }
@@ -497,14 +710,16 @@ export class WorkitCore {
     if (!task.ok) return task as Result<never>;
     if (task.data.status === "closed")
       return failure("invalid_transition", "closed task cannot mutate findings");
-    const helper = (this.context.workerId ?? null) === null ? null : this.helperEntry(task.data);
+    const helper =
+      (this.context.workerId ?? null) === null ? null : this.helperEntry(task.data, true);
     if (helper && !helper.ok) return helper as Result<never>;
     if (input.action === "record") {
       if (helper?.ok) {
         const assignment = helper.data.data.assignment;
         if (
           !bindingCovers(assignment.scope, input.scope) ||
-          (assignment.candidateId !== null && input.candidateId !== assignment.candidateId)
+          (assignment.candidateId !== null && input.candidateId !== assignment.candidateId) ||
+          !refsWithinScope(input.refs, assignment.scope)
         )
           return failure("permission_denied", "finding is outside the worker assignment");
       }
@@ -713,7 +928,7 @@ export class WorkitCore {
     if (input.action === "report") {
       if (helperId === null || helperId !== input.workerId)
         return failure("permission_denied", "workers can submit only their own report");
-      const helper = this.helperEntry(task.data);
+      const helper = this.helperEntry(task.data, true);
       if (!helper.ok) return helper as Result<never>;
       const evidence = task.data.evidence.filter((candidate) =>
         input.report.evidenceIds.includes(candidate.id),
@@ -799,6 +1014,12 @@ export class WorkitCore {
   observeWorkerLifecycle(input: NativeWorkerObservation): Result<Entry<Worker>> {
     const root = this.contextRootError();
     if (!root.ok) return root as Result<never>;
+    if (
+      this.context.workerId !== undefined &&
+      this.context.workerId !== null &&
+      this.context.workerId !== input.workerId
+    )
+      return failure("permission_denied", "worker observation does not match the caller");
     const task = this.store.readTask(input.taskId);
     if (!task.ok) return task as Result<never>;
     const workspace = this.store.readWorkspace();
@@ -944,7 +1165,7 @@ export class WorkitCore {
     workspace: WorkspaceRecord;
     paths: string[];
   }) {
-    return assertProductWriteAllowed({ ...input, caller: this.callerContext() });
+    return assertProductWriteAllowed({ ...input, caller: this.callerContext(), store: this.store });
   }
 
   applicableDecision(
@@ -1180,6 +1401,14 @@ export class WorkitCore {
     if (!helper.ok) return helper as Result<never>;
     if (task.data.status === "closed")
       return failure("invalid_transition", "closed task cannot be revised");
+    const workspace = this.store.readWorkspace();
+    if (!workspace.ok) return workspace as Result<never>;
+    if (!workspace.data) return failure("not_found", "workspace not found");
+    if (workspace.data.writer || task.data.workers.some((entry) => entry.data.state !== "stopped"))
+      return failure(
+        "recovery_required",
+        "scope revision requires worker ownership reconciliation",
+      );
     const changed = this.store.mutateTaskAndWorkspace({
       taskId: task.data.id,
       expectedTaskRevision: input.expectedRevision,

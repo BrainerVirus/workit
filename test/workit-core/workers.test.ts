@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -11,6 +11,7 @@ import {
   type TaskRecord,
   type WorkspaceRecord,
 } from "../../packages/workit-core/src/core";
+import * as coreApi from "../../packages/workit-core/src/core";
 import { caller, scope, taskStartRequest } from "./task-fixtures";
 
 const now = "2026-01-01T00:00:00Z";
@@ -330,4 +331,183 @@ test("product writes require the current writer and assigned paths", () => {
       paths: ["../secret"],
     }),
   ).toMatchObject({ ok: false, code: "invalid_input" });
+});
+
+test("write authorization ignores forged snapshots and rejects symlink escapes", () => {
+  const lead = active();
+  const assigned = assign(lead.core, lead.task, lead.workspace, "implementer", ["src"]);
+  expect(assigned.ok).toBe(true);
+  if (!assigned.ok) throw new Error(assigned.error);
+  const helper = new WorkitCore(lead.store, context(lead.root, { workerId: assigned.data.id }));
+  const task = lead.store.readTask(lead.task.id);
+  const workspace = lead.store.readWorkspace();
+  if (!task.ok || !workspace.ok || !workspace.data) throw new Error("state missing");
+  const outside = mkdtempSync(join(tmpdir(), "workit-outside-"));
+  mkdirSync(join(lead.root, "links"));
+  symlinkSync(outside, join(lead.root, "links", "outside"), "dir");
+  try {
+    const forgedTask = {
+      ...task.data,
+      workers: task.data.workers.map((entry) => ({
+        ...entry,
+        data: {
+          ...entry.data,
+          state: "running" as const,
+          session: { kind: "host" as const, host: "workit_cli" as const, handle: "worker-session" },
+          assignment: { ...entry.data.assignment, scope: scope() },
+        },
+      })),
+    };
+    const forgedWorkspace = {
+      ...workspace.data,
+      writer: {
+        state: "held" as const,
+        owner: {
+          taskId: task.data.id,
+          workerId: assigned.data.id,
+          session: { kind: "host" as const, host: "workit_cli" as const, handle: "worker-session" },
+        },
+        acquiredAt: now,
+      },
+    };
+    expect(
+      helper.assertProductWriteAllowed({
+        task: forgedTask,
+        workspace: forgedWorkspace,
+        paths: ["src/new.ts"],
+      }),
+    ).toMatchObject({ ok: false, code: "permission_denied" });
+    expect(
+      helper.assertProductWriteAllowed({
+        task: task.data,
+        workspace: workspace.data,
+        paths: ["links/outside/new.ts"],
+      }),
+    ).toMatchObject({ ok: false, code: "invalid_input" });
+  } finally {
+    // The fixture directory is process-scoped and cleaned by the test runner.
+  }
+});
+
+test("raw worker authority is not part of the public core API", () => {
+  expect((coreApi as Record<string, unknown>).verifyNativeWorker).toBeUndefined();
+  expect((coreApi as Record<string, unknown>).observeWorkerLifecycle).toBeUndefined();
+});
+
+test("unobserved helpers cannot report metadata or escape assignment file scope", () => {
+  const lead = active();
+  const assigned = assign(lead.core, lead.task, lead.workspace, "investigator", ["src"]);
+  expect(assigned.ok).toBe(true);
+  if (!assigned.ok) throw new Error(assigned.error);
+  const helper = new WorkitCore(lead.store, context(lead.root, { workerId: assigned.data.id }));
+  const task = lead.store.readTask(lead.task.id);
+  const workspace = lead.store.readWorkspace();
+  if (!task.ok || !workspace.ok || !workspace.data) throw new Error("state missing");
+  const evidence = helper.evidence({
+    schemaVersion: 1,
+    action: "record",
+    taskId: task.data.id,
+    expectedRevision: task.data.revision,
+    evidence: {
+      kind: "investigation",
+      claim: "x",
+      requirementIds: [],
+      beforeCandidateId: null,
+      candidateId: null,
+      result: "passed",
+      summary: "x",
+      refs: [{ kind: "file", path: "outside.txt", digest: null }],
+      exitCode: null,
+      reviewContext: null,
+    },
+  });
+  expect(evidence).toMatchObject({ ok: false, code: "permission_denied" });
+  expect(
+    helper.worker({
+      schemaVersion: 1,
+      action: "report",
+      taskId: task.data.id,
+      expectedRevision: task.data.revision,
+      expectedWorkspaceRevision: workspace.data.revision,
+      workerId: assigned.data.id,
+      report: { outcome: "completed", summary: "x", evidenceIds: [], findingIds: [] },
+    }),
+  ).toMatchObject({ ok: false, code: "permission_denied" });
+});
+
+test("a helper cannot submit a native lifecycle observation for another worker", () => {
+  const lead = active({ nativeWorker: observationVerifier() });
+  const first = assign(lead.core, lead.task, lead.workspace);
+  expect(first.ok).toBe(true);
+  if (!first.ok) throw new Error(first.error);
+  const task = lead.store.readTask(lead.task.id);
+  const workspace = lead.store.readWorkspace();
+  if (!task.ok || !workspace.ok || !workspace.data) throw new Error("state missing");
+  const second = assign(lead.core, task.data, workspace.data);
+  expect(second.ok).toBe(true);
+  if (!second.ok) throw new Error(second.error);
+  const currentTask = lead.store.readTask(lead.task.id);
+  const currentWorkspace = lead.store.readWorkspace();
+  if (!currentTask.ok || !currentWorkspace.ok || !currentWorkspace.data)
+    throw new Error("state missing");
+  const helper = new WorkitCore(lead.store, context(lead.root, { workerId: first.data.id }));
+  expect(
+    observeRunning(
+      helper,
+      lead.task.id,
+      second.data.id,
+      currentTask.data.revision,
+      currentWorkspace.data.revision,
+    ),
+  ).toMatchObject({ ok: false, code: "permission_denied" });
+});
+
+test("scope revision is denied while worker ownership or execution could be active", () => {
+  const lead = active({ nativeWorker: observationVerifier() });
+  const assigned = assign(lead.core, lead.task, lead.workspace);
+  expect(assigned.ok).toBe(true);
+  if (!assigned.ok) throw new Error(assigned.error);
+  let task = lead.store.readTask(lead.task.id);
+  let workspace = lead.store.readWorkspace();
+  if (!task.ok || !workspace.ok || !workspace.data) throw new Error("state missing");
+  expect(
+    observeRunning(
+      lead.core,
+      lead.task.id,
+      assigned.data.id,
+      task.data.revision,
+      workspace.data.revision,
+    ).ok,
+  ).toBe(true);
+  task = lead.store.readTask(lead.task.id);
+  workspace = lead.store.readWorkspace();
+  if (!task.ok || !workspace.ok || !workspace.data) throw new Error("state missing");
+  const helper = new WorkitCore(
+    lead.store,
+    context(lead.root, { workerId: assigned.data.id, caller: caller({ actor: "worker-session" }) }),
+  );
+  expect(
+    helper.writer({
+      schemaVersion: 1,
+      action: "acquire",
+      taskId: task.data.id,
+      expectedRevision: task.data.revision,
+      expectedWorkspaceRevision: workspace.data.revision,
+      workerId: assigned.data.id,
+    }).ok,
+  ).toBe(true);
+  task = lead.store.readTask(lead.task.id);
+  workspace = lead.store.readWorkspace();
+  if (!task.ok || !workspace.ok || !workspace.data) throw new Error("state missing");
+  expect(
+    lead.core.task({
+      schemaVersion: 1,
+      action: "revise",
+      taskId: task.data.id,
+      expectedRevision: task.data.revision,
+      expectedWorkspaceRevision: workspace.data.revision,
+      intent: { ...task.data.intent.data, scope: scope({ paths: ["other"] }) },
+      reason: "scope changed",
+    }),
+  ).toMatchObject({ ok: false, code: "recovery_required" });
 });
