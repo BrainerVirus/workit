@@ -53,6 +53,18 @@
         "zod": "^3.24.0",
       },
     },
+    "packages/workit-mcp": {
+      "name": "@brainervirus/workit-mcp",
+      "version": "0.11.0",
+      "bin": {
+        "workit-mcp": "./dist/index.js",
+      },
+      "dependencies": {
+        "@brainervirus/workit-core": "workspace:*",
+        "@modelcontextprotocol/sdk": "1.30.0",
+        "zod": "4.5.4",
+      },
+    },
     "packages/workit-opencode": {
       "name": "@brainervirus/workit-opencode",
       "version": "0.11.0",
@@ -84,6 +96,8 @@
     "@brainervirus/workit-core": ["@brainervirus/workit-core@workspace:packages/workit-core"],
 
     "@brainervirus/workit-cursor": ["@brainervirus/workit-cursor@workspace:packages/workit-cursor"],
+
+    "@brainervirus/workit-mcp": ["@brainervirus/workit-mcp@workspace:packages/workit-mcp"],
 
     "@brainervirus/workit-opencode": ["@brainervirus/workit-opencode@workspace:packages/workit-opencode"],
 
