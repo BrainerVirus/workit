@@ -34,7 +34,11 @@ export type {
   Progress,
   Policy,
   Candidate,
+  Capability,
+  Entry,
+  EvidenceEvaluation,
   Evidence,
+  Outcome,
   Decision,
   Finding,
   Assignment,
@@ -47,6 +51,16 @@ export type {
   ExportBundle,
   Result as ContractResult,
 } from "./core/task-contract";
+export { TaskStore } from "./core/task-store";
+export {
+  captureCandidate,
+  evaluateEvidence,
+  evaluateRequirements,
+  evaluateClosure,
+} from "./core/task-evaluation";
+export type { CandidateEnvironment, ClosureEvaluation } from "./core/task-evaluation";
+export { WorkitCore } from "./core/task-engine";
+export type { OperationContext } from "./core/task-engine";
 
 export type Result<T> =
   | { ok: true; data: T; error: null }
