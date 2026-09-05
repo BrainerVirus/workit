@@ -54,6 +54,12 @@ export type CreateInput = {
   expectedWorkspaceRevision: Revision | null;
   now?: Utc;
 };
+export type ImportInput = {
+  task: TaskRecord;
+  expectedWorkspaceRevision: Revision | null;
+  workspaceId?: Id;
+  now?: Utc;
+};
 export type RecoveryInput = {
   expectedBytes: string;
   snapshotDigest: string;
@@ -297,6 +303,77 @@ export class TaskStore {
     });
   }
 
+  importTask(input: ImportInput): Result<TaskRecord> {
+    return this.withLock<TaskRecord>(() => {
+      const current = this.readWorkspace();
+      if (!current.ok) return current;
+      if (
+        current.data
+          ? input.expectedWorkspaceRevision !== current.data.revision
+          : input.expectedWorkspaceRevision !== null
+      )
+        return failure("revision_conflict", "workspace revision does not match", {
+          expectedWorkspaceRevision: input.expectedWorkspaceRevision,
+          actualWorkspaceRevision: current.data?.revision ?? null,
+        });
+      const previousWorkspaceBytes = current.data ? this.snapshotBytes(this.workspacePath) : null;
+      if (current.data && !previousWorkspaceBytes)
+        return failure("storage_error", "workspace snapshot disappeared during import");
+      const timestamp = input.now ?? now();
+      const workspace: WorkspaceRecord = current.data
+        ? { ...current.data, revision: newRevision(), root: this.root }
+        : {
+            schemaVersion: SCHEMA_VERSION,
+            id: input.workspaceId ?? newId(),
+            revision: newRevision(),
+            root: this.root,
+            writer: null,
+          };
+      const task = {
+        ...input.task,
+        workspaceId: workspace.id,
+        revision: newRevision(),
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      };
+      const validTask = taskRecordSchema.safeParse(task);
+      if (!validTask.success)
+        return failure("invalid_input", "imported task does not satisfy its schema");
+      const writtenWorkspace = this.replaceSnapshot(
+        this.workspacePath,
+        workspace,
+        previousWorkspaceBytes,
+      );
+      if (!writtenWorkspace.ok) return writtenWorkspace;
+      const writtenTask = this.replaceSnapshot(this.taskPath(task.id), validTask.data, null);
+      if (!writtenTask.ok) {
+        if (current.data && previousWorkspaceBytes) {
+          const restored = this.replaceSnapshot(
+            this.workspacePath,
+            current.data,
+            this.snapshotBytes(this.workspacePath),
+          );
+          if (!restored.ok)
+            return failure(
+              "external_outcome_unknown",
+              "import failed and workspace restoration is uncertain",
+              { operation: "import", outcome: "unknown" },
+            );
+        }
+        return failure(
+          "external_outcome_unknown",
+          `workspace created but task import is uncertain: ${writtenTask.error}`,
+          {
+            operation: "import",
+            outcome: "unknown",
+            path: writtenTask.details.path,
+          },
+        );
+      }
+      return success(validTask.data.revision, workspace.revision, validTask.data);
+    });
+  }
+
   mutateTask(
     taskId: Id,
     expected: Revision,
@@ -533,11 +610,6 @@ export class TaskStore {
         const parsed = selectedRecord as Result<WorkspaceRecord>;
         if (!parsed.ok || parsed.data.root !== this.root)
           return failure("recovery_required", "workspace recovery binding is invalid");
-        if (parsed.data.revision !== input.expectedWorkspaceRevision)
-          return failure(
-            "revision_conflict",
-            "workspace revision does not match recovery precondition",
-          );
       } else {
         const parsed = selectedRecord as Result<TaskRecord>;
         if (

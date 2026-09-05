@@ -3,6 +3,7 @@ import {
   canonicalJson,
   failure,
   decisionDigest,
+  exportBundleSchema,
   newId,
   parseOperation,
   success,
@@ -13,6 +14,7 @@ import {
   type Decision,
   type Entry,
   type Evidence,
+  type ExportBundle,
   type Finding,
   type Policy,
   provenanceSchema,
@@ -42,7 +44,8 @@ import {
   type SettleActionInput,
 } from "./authority";
 import { diffPolicy, resolvePolicy } from "./policy-resolver";
-import { TaskStore } from "./task-store";
+import { TaskStore, type MetadataLock, type ProcessEvidence } from "./task-store";
+import { exportDigest } from "./task-context";
 import {
   assertProductWriteAllowed,
   type CallerContext,
@@ -66,6 +69,12 @@ export type OperationContext = {
   now: Utc | (() => Utc);
   nativeAuthority?: NativeAuthorityVerifier;
   nativeWorker?: NativeWorkerVerifier;
+  nativeRecovery?: (input: {
+    lock: MetadataLock | null;
+    writer: WorkspaceRecord["writer"];
+    reason: string;
+    authorityRefs: Ref[];
+  }) => Result<ProcessEvidence>;
   workerId?: string | null;
 };
 
@@ -294,6 +303,178 @@ const refsWithinScope = (refs: Ref[], scope: Scope): boolean =>
 const trustedNow = (context: OperationContext): Utc =>
   typeof context.now === "function" ? context.now() : context.now;
 
+const mapRef = (ref: Ref, ids: Map<string, string>): Ref => {
+  if (ref.kind !== "record") return ref;
+  return { ...ref, id: ids.get(ref.id) ?? ref.id };
+};
+
+const importedProvenance = (context: OperationContext): Provenance => ({
+  kind: "imported",
+  host: context.caller.host,
+  session: null,
+  workerId: null,
+  receipts: [],
+});
+
+const portableTask = (task: TaskRecord): TaskRecord => {
+  const clone = structuredClone(task);
+  const portableProvenance = (value: Provenance): Provenance => ({
+    ...value,
+    session: null,
+    receipts: [],
+  });
+  const entries = [
+    clone.intent,
+    ...clone.assessments,
+    ...clone.evidence,
+    ...clone.decisions,
+    ...clone.findings,
+    ...clone.workers,
+  ];
+  for (const entry of entries) entry.provenance = portableProvenance(entry.provenance);
+  for (const worker of clone.workers) worker.data.session = null;
+  return clone;
+};
+
+const importedTask = (
+  source: TaskRecord,
+  bundle: ExportBundle,
+  destinationWorkspaceId: string,
+  context: OperationContext,
+  timestamp: Utc,
+): TaskRecord => {
+  const ids = new Map<string, string>();
+  const fresh = (id: string) => {
+    const value = newId();
+    ids.set(id, value);
+    return value;
+  };
+  const provenance = importedProvenance(context);
+  const intent = {
+    ...source.intent,
+    id: fresh(source.intent.id),
+    recordedAt: timestamp,
+    provenance,
+  };
+  const assessments = source.assessments.map((entry) => ({
+    ...entry,
+    id: fresh(entry.id),
+    recordedAt: timestamp,
+    provenance,
+  }));
+  const evidence = source.evidence.map((entry) => ({
+    ...entry,
+    id: fresh(entry.id),
+    recordedAt: timestamp,
+    provenance,
+    data: {
+      ...entry.data,
+      refs: entry.data.refs.map((ref) => mapRef(ref, ids)),
+    },
+  }));
+  const decisions = source.decisions.map((entry) => ({
+    ...entry,
+    id: fresh(entry.id),
+    recordedAt: timestamp,
+    provenance,
+  }));
+  const findings = source.findings.map((entry) => ({
+    ...entry,
+    id: fresh(entry.id),
+    recordedAt: timestamp,
+    provenance,
+    data: {
+      ...entry.data,
+      refs: entry.data.refs.map((ref) => mapRef(ref, ids)),
+      resolution: entry.data.resolution
+        ? {
+            ...entry.data.resolution,
+            evidenceIds: entry.data.resolution.evidenceIds.map((id) => ids.get(id) ?? id),
+            decisionIds: entry.data.resolution.decisionIds.map((id) => ids.get(id) ?? id),
+          }
+        : null,
+    },
+  }));
+  const workers = source.workers.map((entry) => ({
+    ...entry,
+    id: fresh(entry.id),
+    recordedAt: timestamp,
+    provenance,
+    data: {
+      ...entry.data,
+      state: "stopped" as const,
+      session: null,
+      assignment: {
+        ...entry.data.assignment,
+        decisionIds: entry.data.assignment.decisionIds.map((id) => ids.get(id) ?? id),
+      },
+      report: entry.data.report
+        ? {
+            ...entry.data.report,
+            evidenceIds: entry.data.report.evidenceIds.map((id) => ids.get(id) ?? id),
+            findingIds: entry.data.report.findingIds.map((id) => ids.get(id) ?? id),
+          }
+        : null,
+    },
+  }));
+  const actionProgress = source.actionProgress?.map((entry) => ({
+    ...entry,
+    decisionId: ids.get(entry.decisionId) ?? entry.decisionId,
+  }));
+  const task: TaskRecord = {
+    ...source,
+    id: newId(),
+    workspaceId: destinationWorkspaceId,
+    revision: newId(),
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    origin: {
+      workspaceId: bundle.sourceWorkspaceId,
+      taskId: bundle.task.id,
+      exportDigest: bundle.digest,
+    },
+    intent,
+    constraints: context.constraints,
+    status: "paused",
+    closure: null,
+    assessments,
+    evidence,
+    decisions: decisions.map((entry) => ({
+      ...entry,
+      data: {
+        ...entry.data,
+        binding: {
+          ...entry.data.binding,
+          taskId: "",
+          workspaceId: destinationWorkspaceId,
+          contentRefs: entry.data.binding.contentRefs.map((ref) => mapRef(ref, ids)),
+        },
+        consumption: null,
+      },
+    })),
+    ...(actionProgress ? { actionProgress } : {}),
+    findings,
+    workers,
+    policy: source.policy,
+    progress: {
+      ...source.progress,
+      blockers: source.progress.blockers.map((blocker) => ({
+        ...blocker,
+        refs: blocker.refs.map((ref) => mapRef(ref, ids)),
+      })),
+    },
+  };
+  task.decisions = task.decisions.map((entry) => ({
+    ...entry,
+    data: {
+      ...entry.data,
+      binding: { ...entry.data.binding, taskId: task.id },
+      digest: decisionDigest(entry.data),
+    },
+  }));
+  return task;
+};
+
 export class WorkitCore {
   private readonly authorityOwner = {};
 
@@ -360,6 +541,99 @@ export class WorkitCore {
     )
       return failure("recovery_required", "worker state requires reconciliation");
     return null;
+  }
+
+  state(request: unknown): Result<ExportBundle | TaskSummary | TaskRecord | WorkspaceRecord> {
+    const root = this.contextRootError();
+    if (!root.ok) return root as Result<never>;
+    if ((this.context.workerId ?? null) !== null)
+      return failure("permission_denied", "helpers cannot control task state");
+    const parsed = parseOperation("state", request);
+    if (!parsed.ok) return parsed as Result<never>;
+    const input = parsed.data as any;
+    if (input.action === "export") {
+      const task = this.store.readTask(input.taskId);
+      if (!task.ok) return task as Result<never>;
+      const workspace = this.store.readWorkspace();
+      if (!workspace.ok) return workspace as Result<never>;
+      if (!workspace.data) return failure("not_found", "workspace not found");
+      const bundle = {
+        schemaVersion: 1 as const,
+        exportedAt: trustedNow(this.context),
+        sourceWorkspaceId: workspace.data.id,
+        task: portableTask(task.data),
+      };
+      return success(task.data.revision, workspace.data.revision, {
+        ...bundle,
+        digest: exportDigest(bundle),
+      });
+    }
+    if (input.action === "import") {
+      const checked = exportBundleSchema.safeParse(input.bundle);
+      if (!checked.success) return failure("invalid_input", "export bundle is invalid");
+      const bundle = checked.data;
+      if (
+        bundle.sourceWorkspaceId !== bundle.task.workspaceId ||
+        exportDigest({
+          schemaVersion: bundle.schemaVersion,
+          exportedAt: bundle.exportedAt,
+          sourceWorkspaceId: bundle.sourceWorkspaceId,
+          task: bundle.task,
+        }) !== bundle.digest
+      )
+        return failure("invalid_input", "export bundle digest is invalid");
+      const workspace = this.store.readWorkspace();
+      if (!workspace.ok) return workspace as Result<never>;
+      const destinationWorkspaceId = workspace.data?.id ?? newId();
+      const timestamp = trustedNow(this.context);
+      const task = importedTask(
+        bundle.task,
+        bundle,
+        destinationWorkspaceId,
+        this.context,
+        timestamp,
+      );
+      const imported = this.store.importTask({
+        task,
+        expectedWorkspaceRevision: input.expectedWorkspaceRevision,
+        workspaceId: destinationWorkspaceId,
+        now: timestamp,
+      });
+      if (!imported.ok) return imported as Result<never>;
+      return this.summary(imported.data);
+    }
+    if (!this.context.nativeRecovery)
+      return failure("permission_denied", "native recovery authority is unavailable");
+    const processEvidence = (
+      lock: MetadataLock | null,
+      writer: WorkspaceRecord["writer"],
+    ): Result<ProcessEvidence> =>
+      this.context.nativeRecovery!({
+        lock,
+        writer,
+        reason: input.reason,
+        authorityRefs: input.authorityRefs,
+      });
+    if (input.target === "workspace")
+      return this.store.recoverWorkspace({
+        expectedBytes: input.expectedBytes,
+        snapshotDigest: input.snapshotDigest,
+        reason: input.reason,
+        authorityRefs: input.authorityRefs,
+        expectedWorkspaceRevision: input.expectedWorkspaceRevision,
+        processEvidence,
+      });
+    const workspace = this.store.readWorkspace();
+    if (!workspace.ok) return workspace as Result<never>;
+    if (!workspace.data) return failure("not_found", "workspace not found");
+    return this.store.recoverTask(input.taskId, {
+      expectedBytes: input.expectedBytes,
+      snapshotDigest: input.snapshotDigest,
+      reason: input.reason,
+      authorityRefs: input.authorityRefs,
+      expectedWorkspaceRevision: input.expectedWorkspaceRevision,
+      processEvidence,
+    });
   }
 
   task(request: unknown): Result<TaskSummary | TaskSummary[] | TaskView> {
@@ -1367,6 +1641,8 @@ export class WorkitCore {
       (status === "active" && task.data.status !== "paused")
     )
       return failure("invalid_transition", `cannot transition ${task.data.status} to ${status}`);
+    if (status === "active" && task.data.origin)
+      return failure("needs_input", "imported task requires resume reconciliation");
     if (status === "active" && input.authorityRefs.length === 0)
       return failure("permission_denied", "resuming a task requires authority references");
     const workspace = this.store.readWorkspace();

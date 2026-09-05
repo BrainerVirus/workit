@@ -52,6 +52,14 @@ export type {
   Result as ContractResult,
 } from "./core/task-contract";
 export { TaskStore } from "./core/task-store";
+export type { MetadataLock, ProcessEvidence, RecoveryInput } from "./core/task-store";
+export { compactTaskContext, reconcileResume } from "./core/task-context";
+export type {
+  CompactTaskContext,
+  ResumeObservation,
+  ResumeObservationInput,
+  ResumeReconciliation,
+} from "./core/task-context";
 export { applicableDecision, reserveAction, settleAction } from "./core/authority";
 export type {
   ActionReservation,
