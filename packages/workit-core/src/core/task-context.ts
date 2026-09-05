@@ -82,10 +82,30 @@ export type CompactTaskContext = {
 const COMPACT_MAX_BYTES = 4096;
 const COMPACT_MAX_ITEMS = 8;
 const COMPACT_TEXT_BYTES = 128;
+const sensitiveUrl = /\bhttps?:\/\/[^/\s:@]+:[^@\s]+@/gi;
+const sensitiveValue =
+  /(?:token|secret|password|passwd|api[-_ ]?key|private[-_ ]?key|authorization)\s*[:=]\s*(?:bearer\s+)?\S+|\bbearer\s+\S+/gi;
+const privateKey = /-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?-----END [^-]*PRIVATE KEY-----/gi;
 const compactText = (value: string | null, limit: number): string | null =>
-  value === null ? null : value.slice(0, limit);
+  value === null
+    ? null
+    : value
+        .replace(privateKey, "<redacted-private-key>")
+        .replace(sensitiveUrl, "<redacted-url>")
+        .replace(sensitiveValue, (match) => {
+          const separator = match.search(/[:=]/u);
+          if (separator >= 0) return `${match.slice(0, separator)}=<redacted>`;
+          const space = match.search(/\s/u);
+          return `${match.slice(0, space)} <redacted>`;
+        })
+        .slice(0, limit);
+const compactBytes = (value: string): number => new TextEncoder().encode(value).byteLength;
 const compactReference = (ref: Ref): CompactReference => {
-  if (ref.kind === "file") return { kind: "file", path: ref.path.slice(0, COMPACT_TEXT_BYTES) };
+  if (ref.kind === "file")
+    return {
+      kind: "file",
+      path: compactText(ref.path, COMPACT_TEXT_BYTES) ?? "",
+    };
   if (ref.kind === "record")
     return {
       kind: "record",
@@ -98,7 +118,7 @@ const compactReference = (ref: Ref): CompactReference => {
 export function compactTaskContext(view: TaskView): string {
   const decisions: CompactDecision[] = view.task.decisions
     .slice()
-    .sort((left, right) => left.id.localeCompare(right.id))
+    .sort((left, right) => (left.id < right.id ? -1 : left.id > right.id ? 1 : 0))
     .slice(0, COMPACT_MAX_ITEMS)
     .map((entry) => ({
       id: entry.id,
@@ -129,12 +149,15 @@ export function compactTaskContext(view: TaskView): string {
     nextAction: compactText(view.task.progress.nextAction, COMPACT_TEXT_BYTES),
   };
   let encoded = JSON.stringify(context);
-  while (encoded.length > COMPACT_MAX_BYTES && (context.decisions.length || context.gaps.length)) {
+  while (
+    compactBytes(encoded) > COMPACT_MAX_BYTES &&
+    (context.decisions.length || context.gaps.length)
+  ) {
     if (context.gaps.length) context.gaps.pop();
     else context.decisions.pop();
     encoded = JSON.stringify(context);
   }
-  if (encoded.length > COMPACT_MAX_BYTES) {
+  if (compactBytes(encoded) > COMPACT_MAX_BYTES) {
     context.objective = compactText(context.objective, 64) ?? "";
     context.nextAction = compactText(context.nextAction, 64);
     encoded = JSON.stringify(context);

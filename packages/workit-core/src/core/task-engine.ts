@@ -32,6 +32,7 @@ import {
 } from "./task-contract";
 import {
   bindingCovers,
+  applicableDecision,
   storedDecisionApplicable,
   reserveAction as reserveBoundedAction,
   settleAction as settleBoundedAction,
@@ -147,6 +148,42 @@ const validNativeProvenance = (
     provenance.receipts.some((receipt) => receipt.kind === "host" && receipt.host === caller.host)
   );
 };
+
+const validResumeApproval = (
+  task: TaskRecord,
+  workspace: WorkspaceRecord,
+  authorityRefs: Ref[],
+  context: OperationContext,
+): boolean =>
+  authorityRefs.some((ref) => {
+    if (ref.kind !== "record" || ref.collection !== "decisions") return false;
+    const entry = task.decisions.find((candidate) => candidate.id === ref.id);
+    if (!entry || entry.provenance.kind !== "host_observed") return false;
+    if (
+      entry.provenance.host !== context.caller.host ||
+      !sameSession(entry.provenance.session, context) ||
+      !entry.provenance.receipts.some(
+        (receipt) => receipt.kind === "host" && receipt.host === context.caller.host,
+      )
+    )
+      return false;
+    const decision = entry.data;
+    if (
+      !["design", "action"].includes(decision.purpose) ||
+      decision.response !== "approved" ||
+      decision.revoked !== null ||
+      decision.binding.approvedContent !== "resume" ||
+      decision.binding.taskId !== task.id ||
+      decision.binding.workspaceId !== workspace.id ||
+      canonicalJson(decision.binding.scope) !== canonicalJson(task.intent.data.scope)
+    )
+      return false;
+    return (["design", "action"] as const).some((purpose) =>
+      applicableDecision(task, purpose, decision.binding, workspace.root).some(
+        (candidate) => candidate.digest === decision.digest,
+      ),
+    );
+  });
 
 const verifyNativeWorker = (
   verifier: NativeWorkerVerifier | undefined,
@@ -313,6 +350,11 @@ const mapRef = (ref: Ref, ids: Map<string, string>): Ref => {
   return { ...ref, id: ids.get(ref.id) ?? ref.id };
 };
 
+const portableRefs = (refs: Ref[]): Ref[] =>
+  refs.filter((ref) => ref.kind === "file" || ref.kind === "record");
+const portableRef = (ref: Ref | null): Ref | null =>
+  ref && (ref.kind === "file" || ref.kind === "record") ? ref : null;
+
 const importedProvenance = (context: OperationContext): Provenance => ({
   kind: "imported",
   host: context.caller.host,
@@ -338,6 +380,83 @@ const portableTask = (task: TaskRecord): TaskRecord => {
   ];
   for (const entry of entries) entry.provenance = portableProvenance(entry.provenance);
   for (const worker of clone.workers) worker.data.session = null;
+  clone.intent = {
+    ...clone.intent,
+    data: { ...clone.intent.data, authorityRefs: portableRefs(clone.intent.data.authorityRefs) },
+  };
+  clone.constraints = clone.constraints.flatMap((constraint) => {
+    const source = portableRef(constraint.source);
+    return source
+      ? [
+          {
+            ...constraint,
+            source,
+            requires: constraint.requires.map((requirement) => ({
+              ...requirement,
+              refs: portableRefs(requirement.refs),
+            })),
+          },
+        ]
+      : [];
+  });
+  clone.assessments = clone.assessments.map((entry) => ({
+    ...entry,
+    data: {
+      ...entry.data,
+      facts: entry.data.facts.map((fact) => ({ ...fact, refs: portableRefs(fact.refs) })),
+      signals: Object.fromEntries(
+        Object.entries(entry.data.signals).map(([name, signal]) => [
+          name,
+          { ...signal, refs: portableRefs(signal.refs) },
+        ]),
+      ) as typeof entry.data.signals,
+      consequences: entry.data.consequences.map((consequence) => ({
+        ...consequence,
+        fact: { ...consequence.fact, refs: portableRefs(consequence.fact.refs) },
+      })),
+      verification: entry.data.verification.map((verification) => ({
+        ...verification,
+        availableChecks: portableRefs(verification.availableChecks),
+      })),
+    },
+  }));
+  clone.progress = {
+    ...clone.progress,
+    blockers: clone.progress.blockers.map((blocker) => ({
+      ...blocker,
+      refs: portableRefs(blocker.refs),
+    })),
+  };
+  clone.evidence = clone.evidence.map((entry) => ({
+    ...entry,
+    data: {
+      ...entry.data,
+      refs: portableRefs(entry.data.refs),
+      reviewContext: portableRef(entry.data.reviewContext),
+    },
+  }));
+  clone.decisions = clone.decisions.map((entry) => ({
+    ...entry,
+    data: {
+      ...entry.data,
+      consumption: entry.data.consumption
+        ? portableRef(entry.data.consumption.actionRef)
+          ? {
+              ...entry.data.consumption,
+              actionRef: portableRef(entry.data.consumption.actionRef)!,
+            }
+          : null
+        : null,
+      binding: {
+        ...entry.data.binding,
+        contentRefs: portableRefs(entry.data.binding.contentRefs),
+      },
+    },
+  }));
+  clone.findings = clone.findings.map((entry) => ({
+    ...entry,
+    data: { ...entry.data, refs: portableRefs(entry.data.refs) },
+  }));
   // Candidate metadata can contain environment-derived paths and digests. The destination
   // must recapture its own candidate instead of receiving source checkout material.
   clone.candidates = [];
@@ -352,24 +471,67 @@ const importedTask = (
   timestamp: Utc,
 ): TaskRecord => {
   const ids = new Map<string, string>();
-  const fresh = (id: string) => {
+  const allocate = (id: string) => {
+    const existing = ids.get(id);
+    if (existing) return existing;
     const value = newId();
     ids.set(id, value);
     return value;
   };
+  for (const entry of [
+    source.intent,
+    ...source.assessments,
+    ...source.evidence,
+    ...source.decisions,
+    ...source.findings,
+    ...source.workers,
+  ])
+    allocate(entry.id);
+  const fresh = (id: string) => allocate(id);
   const provenance = importedProvenance(context);
   const intent = {
     ...source.intent,
     id: fresh(source.intent.id),
     recordedAt: timestamp,
     provenance,
+    data: {
+      ...source.intent.data,
+      authorityRefs: source.intent.data.authorityRefs.map((ref) => mapRef(ref, ids)),
+    },
   };
-  const assessments = source.assessments.map((entry) => ({
-    ...entry,
-    id: fresh(entry.id),
-    recordedAt: timestamp,
-    provenance,
-  }));
+  const assessments = source.assessments.map((entry) => {
+    const data = entry.data;
+    return {
+      ...entry,
+      id: fresh(entry.id),
+      recordedAt: timestamp,
+      provenance,
+      data: {
+        ...data,
+        facts: data.facts.map((fact) => ({
+          ...fact,
+          refs: fact.refs.map((ref) => mapRef(ref, ids)),
+        })),
+        signals: Object.fromEntries(
+          Object.entries(data.signals).map(([name, signal]) => [
+            name,
+            { ...signal, refs: signal.refs.map((ref) => mapRef(ref, ids)) },
+          ]),
+        ) as typeof data.signals,
+        consequences: data.consequences.map((consequence) => ({
+          ...consequence,
+          fact: {
+            ...consequence.fact,
+            refs: consequence.fact.refs.map((ref) => mapRef(ref, ids)),
+          },
+        })),
+        verification: data.verification.map((verification) => ({
+          ...verification,
+          availableChecks: verification.availableChecks.map((ref) => mapRef(ref, ids)),
+        })),
+      },
+    };
+  });
   const evidence = source.evidence.map((entry) => ({
     ...entry,
     id: fresh(entry.id),
@@ -378,6 +540,7 @@ const importedTask = (
     data: {
       ...entry.data,
       refs: entry.data.refs.map((ref) => mapRef(ref, ids)),
+      reviewContext: entry.data.reviewContext ? mapRef(entry.data.reviewContext, ids) : null,
     },
   }));
   const decisions = source.decisions.map((entry) => ({
@@ -464,7 +627,7 @@ const importedTask = (
     findings,
     workers,
     candidates: [],
-    policy: source.policy,
+    policy: null,
     progress: {
       ...source.progress,
       blockers: source.progress.blockers.map((blocker) => ({
@@ -1583,9 +1746,13 @@ export class WorkitCore {
       assessment,
       constraints: this.context.constraints,
       prior: {
-        decisions: task.decisions.map((entry) => entry.data),
-        findings: task.findings.map((entry) => entry.data),
-        requirements: task.policy?.requirements ?? [],
+        decisions: task.decisions
+          .filter((entry) => entry.provenance.kind !== "imported")
+          .map((entry) => entry.data),
+        findings: task.findings
+          .filter((entry) => entry.provenance.kind !== "imported")
+          .map((entry) => entry.data),
+        requirements: task.origin || task.policy === null ? [] : task.policy.requirements,
       },
     });
   }
@@ -1751,24 +1918,11 @@ export class WorkitCore {
           "needs_input",
           "stored policy version is unsupported; reassessment is required",
         );
-      const current = captureCandidate(this.store.root, task.data.intent.data.scope, environment());
+      const view = this.view(task.data);
+      if (!view.ok) return view as Result<never>;
+      const current = reconcileResumeContext(view.data);
       if (!current.ok) return current as Result<never>;
-      const taskForEvaluation = {
-        ...task.data,
-        candidates: task.data.candidates.some((candidate) => candidate.id === current.data.id)
-          ? task.data.candidates
-          : [...task.data.candidates, current.data],
-        // Imported history remains context; only destination-recorded decisions can authorize.
-        decisions: task.data.decisions.filter((entry) => entry.provenance.kind !== "imported"),
-      };
-      const requirements = evaluateRequirements(
-        taskForEvaluation,
-        workspace.data,
-        this.context.capabilities,
-        current.data,
-        this.store.root,
-        this.context.caller,
-      );
+      const requirements = view.data.requirements;
       if (
         requirements.some(
           (requirement) =>
@@ -1783,12 +1937,21 @@ export class WorkitCore {
             )
             .map((requirement) => requirement.requirementId),
         });
-      const staleEvidence = evaluateEvidence(taskForEvaluation, current.data).filter(
-        (entry) => entry.status === "stale",
-      );
-      if (staleEvidence.length)
+      if (current.data.reassessmentRequired)
+        return failure("needs_input", "imported task requires destination policy reassessment");
+      if (current.data.staleEvidenceIds.length)
         return failure("needs_input", "imported task requires fresh destination evidence");
-      resumeCandidate = current.data;
+      if (
+        current.data.blockers.some(
+          (blocker) =>
+            blocker.dependentAction === "resume" ||
+            blocker.reason === "worker state requires reconciliation",
+        )
+      )
+        return failure("recovery_required", "imported task requires resume reconciliation");
+      if (!validResumeApproval(task.data, workspace.data, input.authorityRefs, this.context))
+        return failure("permission_denied", "imported resume requires native destination approval");
+      resumeCandidate = current.data.candidate;
     }
     const blocker = this.activeWorkerBlocker(task.data, workspace.data);
     if (blocker) return blocker as Result<never>;
