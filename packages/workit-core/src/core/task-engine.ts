@@ -71,6 +71,7 @@ import {
 export type OperationContext = {
   root: string;
   caller: Caller;
+  provenanceKind?: "host_observed" | "agent_reported";
   capabilities: Capability[];
   constraints: Constraint[];
   now: Utc | (() => Utc);
@@ -87,7 +88,7 @@ export type OperationContext = {
 
 const provenance = (
   context: OperationContext,
-  kind: "host_observed" | "agent_reported" = "host_observed",
+  kind: "host_observed" | "agent_reported" = context.provenanceKind ?? "host_observed",
 ) => ({
   kind,
   host: context.caller.host,

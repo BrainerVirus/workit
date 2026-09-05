@@ -23,6 +23,7 @@ import {
 } from "@brainervirus/workit-core/src/core/uninstall";
 import { applyWizardBranchPolicy } from "./logic";
 import { COMMANDS, runFlowCommand, runHandoffCommand } from "./flow";
+import { runTaskCommand, TASK_FAMILIES } from "./task";
 
 // Secret-safe diagnostic logger (DG-01-DG-03, DG-05, DG-10). Sink injection
 // only: CLI events mirror to stderr, never the Ink-rendered stdout. Routine
@@ -48,6 +49,8 @@ const COMMAND_DESCRIPTIONS: readonly (readonly [string, string])[] = [
   [COMMANDS["review-package"], "Write a review diff for a base..head range"],
   [COMMANDS["append-advisory"], "Append an advisory line to docs/<slug>/sdd/advisories.md"],
   [COMMANDS.handoff, "Emit the destination handoff prompt for a plan"],
+  ["workit task <family> <action> [options]", "Inspect and control a Workit task"],
+  ["workit handoff --task <id>", "Export task state and compact destination context"],
 ];
 
 const helpColumn = Math.max(...COMMAND_DESCRIPTIONS.map(([cmd]) => cmd.length)) + 2;
@@ -342,8 +345,12 @@ if (import.meta.main) {
     runDoctorCommand(args);
   } else if (subcommand === "flow") {
     process.exit(await runFlowCommand(args.slice(1)));
+  } else if ((TASK_FAMILIES as readonly string[]).includes(subcommand)) {
+    process.exit(await runTaskCommand(args));
   } else if (subcommand === "handoff") {
-    process.exit(await runHandoffCommand(args.slice(1)));
+    process.exit(
+      args.includes("--task") ? await runTaskCommand(args) : await runHandoffCommand(args.slice(1)),
+    );
   } else if (subcommand === "uninstall") {
     await runUninstall();
   } else {
