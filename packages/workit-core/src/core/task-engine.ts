@@ -1,6 +1,7 @@
 import { realpathSync } from "node:fs";
 import {
   failure,
+  decisionDigest,
   newId,
   parseOperation,
   success,
@@ -8,15 +9,28 @@ import {
   type Capability,
   type Caller,
   type Constraint,
+  type Decision,
   type Entry,
   type Evidence,
+  type Finding,
   type Policy,
+  type Ref,
   type Result,
   type TaskRecord,
   type TaskSummary,
   type TaskView,
   type Utc,
 } from "./task-contract";
+import {
+  applicableDecision,
+  bindingCovers,
+  reserveAction as reserveBoundedAction,
+  settleAction as settleBoundedAction,
+  verifyDecisionContent,
+  type ActionReservation,
+  type ReserveActionInput,
+  type SettleActionInput,
+} from "./authority";
 import { diffPolicy, resolvePolicy } from "./policy-resolver";
 import { TaskStore } from "./task-store";
 import {
@@ -225,12 +239,283 @@ export class WorkitCore {
           ...current,
           candidates,
           evidence: [...current.evidence, entry],
+          findings: current.findings.map((finding) => {
+            const relevant =
+              finding.data.candidateId === null ||
+              evidence.candidateId !== finding.data.candidateId ||
+              finding.data.refs.some((left: Ref) =>
+                evidence.refs.some((right: Ref) => JSON.stringify(left) === JSON.stringify(right)),
+              );
+            return finding.data.disposition === "open" || evidence.result === "skipped" || !relevant
+              ? finding
+              : { ...finding, data: { ...finding.data, disposition: "open", resolution: null } };
+          }),
         });
       },
       trustedNow(this.context),
     );
     if (!changed.ok) return changed as Result<never>;
     return success(changed.data.revision, null, changed.data.evidence.at(-1)!);
+  }
+
+  decision(request: unknown): Result<Entry<Decision>> {
+    const root = this.contextRootError();
+    if (!root.ok) return root as Result<never>;
+    const parsed = parseOperation("decision", request);
+    if (!parsed.ok) return parsed as Result<never>;
+    const input = parsed.data as any;
+    const task = this.store.readTask(input.taskId);
+    if (!task.ok) return task as Result<never>;
+    if (input.action === "record") {
+      if (task.data.status === "closed")
+        return failure("invalid_transition", "closed task cannot record a decision");
+      const workspace = this.store.readWorkspace();
+      if (!workspace.ok) return workspace as Result<never>;
+      if (!workspace.data) return failure("not_found", "workspace not found");
+      if (input.binding.taskId !== task.data.id || input.binding.workspaceId !== workspace.data.id)
+        return failure("permission_denied", "decision task or workspace binding is invalid");
+      const content = verifyDecisionContent(this.store, input.binding);
+      if (!content.ok) return content as Result<never>;
+      const knownRequirements = new Set(
+        task.data.policy?.requirements.map((item) => item.id) ?? [],
+      );
+      if (input.requirementIds.some((id: string) => !knownRequirements.has(id)))
+        return failure("invalid_input", "decision references an unknown requirement");
+      const changed = this.store.mutateTask(
+        task.data.id,
+        input.expectedRevision,
+        (current, mutation) => {
+          const content = verifyDecisionContent(this.store, input.binding);
+          if (!content.ok) return content as Result<never>;
+          const known = new Set(current.policy?.requirements.map((item) => item.id) ?? []);
+          if (input.requirementIds.some((id: string) => !known.has(id)))
+            return failure("invalid_input", "decision references an unknown requirement");
+          const base = {
+            purpose: input.purpose,
+            binding: input.binding,
+            response: input.response,
+            requirementIds: input.requirementIds,
+            revoked: null,
+            consumption: null,
+          } satisfies Omit<Decision, "digest">;
+          const data: Decision = { ...base, digest: decisionDigest(base) };
+          const entry: Entry<Decision> = {
+            id: newId(),
+            recordedAt: mutation.now,
+            provenance: provenance(this.context),
+            data,
+          };
+          return success(mutation.revision, null, {
+            ...current,
+            decisions: [...current.decisions, entry],
+          });
+        },
+        trustedNow(this.context),
+      );
+      if (!changed.ok) return changed as Result<never>;
+      return success(changed.data.revision, null, changed.data.decisions.at(-1)!);
+    }
+    const decision = task.data.decisions.find((entry) => entry.id === input.decisionId);
+    if (!decision) return failure("not_found", "decision not found");
+    if (!input.reason.trim())
+      return failure("invalid_input", "decision revocation requires a reason");
+    if (decision.data.revoked) return failure("invalid_transition", "decision is already revoked");
+    if (decision.data.consumption)
+      return failure("permission_denied", "consumed decision cannot be revoked");
+    const changed = this.store.mutateTask(
+      task.data.id,
+      input.expectedRevision,
+      (current, mutation) => {
+        const entry = current.decisions.find((candidate) => candidate.id === input.decisionId);
+        if (!entry) return failure("not_found", "decision not found");
+        if (entry.data.revoked) return failure("invalid_transition", "decision is already revoked");
+        if (entry.data.consumption)
+          return failure("permission_denied", "consumed decision cannot be revoked");
+        const data = {
+          ...entry.data,
+          revoked: { at: mutation.now, reason: input.reason },
+        };
+        const updated = { ...entry, data };
+        return success(mutation.revision, null, {
+          ...current,
+          decisions: current.decisions.map((candidate) =>
+            candidate.id === input.decisionId ? updated : candidate,
+          ),
+        });
+      },
+      trustedNow(this.context),
+    );
+    if (!changed.ok) return changed as Result<never>;
+    const entry = changed.data.decisions.find((candidate) => candidate.id === input.decisionId);
+    return entry
+      ? success(changed.data.revision, null, entry)
+      : failure("recovery_required", "decision disappeared");
+  }
+
+  finding(request: unknown): Result<Entry<Finding>> {
+    const root = this.contextRootError();
+    if (!root.ok) return root as Result<never>;
+    const parsed = parseOperation("finding", request);
+    if (!parsed.ok) return parsed as Result<never>;
+    const input = parsed.data as any;
+    const task = this.store.readTask(input.taskId);
+    if (!task.ok) return task as Result<never>;
+    if (task.data.status === "closed")
+      return failure("invalid_transition", "closed task cannot mutate findings");
+    if (input.action === "record") {
+      if (
+        input.candidateId &&
+        !task.data.candidates.some((candidate) => candidate.id === input.candidateId)
+      )
+        return failure("invalid_input", "finding candidate is not a captured candidate");
+      const changed = this.store.mutateTask(
+        task.data.id,
+        input.expectedRevision,
+        (current, mutation) => {
+          const entry: Entry<Finding> = {
+            id: newId(),
+            recordedAt: mutation.now,
+            provenance: provenance(this.context),
+            data: {
+              claim: input.claim,
+              consequence: input.consequence,
+              scope: input.scope,
+              candidateId: input.candidateId,
+              refs: input.refs,
+              disposition: "open",
+              resolution: null,
+            },
+          };
+          return success(mutation.revision, null, {
+            ...current,
+            findings: [...current.findings, entry],
+          });
+        },
+        trustedNow(this.context),
+      );
+      if (!changed.ok) return changed as Result<never>;
+      return success(changed.data.revision, null, changed.data.findings.at(-1)!);
+    }
+    const finding = task.data.findings.find((entry) => entry.id === input.findingId);
+    if (!finding) return failure("not_found", "finding not found");
+    if (!input.reason.trim())
+      return failure("invalid_input", "finding resolution requires a reason");
+    const evidence = task.data.evidence.filter((entry) => input.evidenceIds.includes(entry.id));
+    const decisions = task.data.decisions.filter((entry) => input.decisionIds.includes(entry.id));
+    if (
+      evidence.length !== input.evidenceIds.length ||
+      decisions.length !== input.decisionIds.length
+    )
+      return failure("invalid_input", "finding resolution references an unknown record");
+    if (input.disposition === "fixed") {
+      const current = captureCandidate(this.store.root, task.data.intent.data.scope, environment());
+      if (!current.ok) return current as Result<never>;
+      const evaluations = evaluateEvidence(task.data, current.data);
+      const verified = evidence.some((entry) => {
+        const evaluation = evaluations.find((item) => item.evidenceId === entry.id);
+        return (
+          evaluation?.status === "passed" &&
+          (entry.data.kind === "check" || entry.data.kind === "review") &&
+          (finding.data.candidateId === null || entry.data.candidateId === finding.data.candidateId)
+        );
+      });
+      if (!verified)
+        return failure("permission_denied", "fixed findings require passing verification evidence");
+    }
+    if (input.disposition === "dismissed" && evidence.length === 0)
+      return failure("permission_denied", "dismissal requires supporting evidence");
+    if (input.disposition === "deferred") {
+      const workspace = this.store.readWorkspace();
+      if (!workspace.ok) return workspace as Result<never>;
+      if (!workspace.data) return failure("not_found", "workspace not found");
+      const allowed = decisions.some(
+        (entry) =>
+          entry.data.purpose === "limitation" &&
+          entry.data.response === "approved" &&
+          entry.data.revoked === null &&
+          entry.data.digest === decisionDigest(entry.data) &&
+          entry.data.binding.taskId === task.data.id &&
+          entry.data.binding.workspaceId === workspace.data!.id &&
+          bindingCovers(entry.data.binding.scope, finding.data.scope) &&
+          entry.data.requirementIds.some((id: string) =>
+            task.data.policy?.requirements.some(
+              (requirement) => requirement.id === id && requirement.acceptanceAllowed,
+            ),
+          ),
+      );
+      if (!allowed)
+        return failure("permission_denied", "deferred findings require an applicable limitation");
+    }
+    const changed = this.store.mutateTask(
+      task.data.id,
+      input.expectedRevision,
+      (current, mutation) => {
+        const existing = current.findings.find((entry) => entry.id === input.findingId);
+        if (!existing) return failure("not_found", "finding not found");
+        const data =
+          input.disposition === "open"
+            ? { ...existing.data, disposition: "open" as const, resolution: null }
+            : {
+                ...existing.data,
+                disposition: input.disposition,
+                resolution: {
+                  reason: input.reason,
+                  evidenceIds: input.evidenceIds,
+                  decisionIds: input.decisionIds,
+                },
+              };
+        const updated = { ...existing, data };
+        return success(mutation.revision, null, {
+          ...current,
+          findings: current.findings.map((entry) =>
+            entry.id === input.findingId ? updated : entry,
+          ),
+        });
+      },
+      trustedNow(this.context),
+    );
+    if (!changed.ok) return changed as Result<never>;
+    const entry = changed.data.findings.find((candidate) => candidate.id === input.findingId);
+    return entry
+      ? success(changed.data.revision, null, entry)
+      : failure("recovery_required", "finding disappeared");
+  }
+
+  applicableDecision(
+    taskId: string,
+    purpose: Decision["purpose"],
+    binding: Decision["binding"],
+  ): Result<Entry<Decision>[]> {
+    const root = this.contextRootError();
+    if (!root.ok) return root as Result<never>;
+    const task = this.store.readTask(taskId);
+    if (!task.ok) return task as Result<never>;
+    const entries = task.data.decisions.filter(
+      (entry) =>
+        applicableDecision(task.data, purpose, binding).includes(entry.data) &&
+        verifyDecisionContent(this.store, entry.data.binding).ok,
+    );
+    return success(task.data.revision, null, entries);
+  }
+
+  reserveAction(input: Omit<ReserveActionInput, "store" | "native">): Result<ActionReservation> {
+    const root = this.contextRootError();
+    if (!root.ok) return root as Result<never>;
+    return reserveBoundedAction({
+      ...input,
+      store: this.store,
+      native: { provenance: provenance(this.context), now: trustedNow(this.context) },
+    });
+  }
+
+  settleAction(input: Omit<SettleActionInput, "store" | "native">): Result<Entry<Decision>> {
+    const root = this.contextRootError();
+    if (!root.ok) return root as Result<never>;
+    return settleBoundedAction({
+      ...input,
+      store: this.store,
+      native: { provenance: provenance(this.context), now: trustedNow(this.context) },
+    });
   }
 
   private resolve(task: TaskRecord, assessment: Assessment): Result<Policy> {

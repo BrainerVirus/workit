@@ -625,6 +625,60 @@ test("verified closure requires an assessed policy and current evidence", () => 
   ).toMatchObject({ ok: false, code: "requirements_unsatisfied" });
 });
 
+test("verified closure remains blocked while a finding is open", () => {
+  const root = mkdtempSync(join(tmpdir(), "workit-engine-finding-close-"));
+  const store = new TaskStore(root);
+  const core = new WorkitCore(store, context(root));
+  const started = core.task(taskStartRequest());
+  if (!started.ok) throw new Error(started.error);
+  const taskId = (started.data as any).id as string;
+  const task = store.readTask(taskId);
+  if (!task.ok) throw new Error(task.error);
+  const assessed = core.policy({
+    schemaVersion: 1,
+    action: "assess",
+    taskId,
+    expectedRevision: task.data.revision,
+    assessment: assessment(),
+  });
+  if (!assessed.ok) throw new Error(assessed.error);
+  const afterPolicy = store.readTask(taskId);
+  const workspace = store.readWorkspace();
+  if (!afterPolicy.ok || !workspace.ok || !workspace.data) throw new Error("state missing");
+  const finding = core.finding({
+    schemaVersion: 1,
+    action: "record",
+    taskId,
+    expectedRevision: afterPolicy.data.revision,
+    claim: "open blocker",
+    consequence: "unsafe closure",
+    scope: afterPolicy.data.intent.data.scope,
+    candidateId: null,
+    refs: [ref()],
+  });
+  expect(finding.ok).toBe(true);
+  const current = store.readTask(taskId);
+  const currentWorkspace = store.readWorkspace();
+  if (!current.ok || !currentWorkspace.ok || !currentWorkspace.data)
+    throw new Error("state missing");
+  expect(
+    core.task({
+      schemaVersion: 1,
+      action: "close",
+      taskId,
+      expectedRevision: current.data.revision,
+      expectedWorkspaceRevision: currentWorkspace.data.revision,
+      outcome: "verified",
+      summary: "done",
+      decisionIds: [],
+    }),
+  ).toMatchObject({
+    ok: false,
+    code: "requirements_unsatisfied",
+    error: "open findings must be resolved before closure",
+  });
+});
+
 test("an unsupported stored policy version fails verified closure even with no requirements", () => {
   const view = {
     task: { policy: { policyVersion: "9.9.9", requirements: [] } },

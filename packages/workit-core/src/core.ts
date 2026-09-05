@@ -52,6 +52,13 @@ export type {
   Result as ContractResult,
 } from "./core/task-contract";
 export { TaskStore } from "./core/task-store";
+export { applicableDecision, reserveAction, settleAction } from "./core/authority";
+export type {
+  ActionReservation,
+  NativeAuthorityContext,
+  ReserveActionInput,
+  SettleActionInput,
+} from "./core/authority";
 export {
   captureCandidate,
   evaluateEvidence,

@@ -353,7 +353,7 @@ export function evaluateEvidence(
   });
 }
 
-const scopeCovers = (outer: Scope, inner: Scope): boolean => {
+export const scopeCovers = (outer: Scope, inner: Scope): boolean => {
   const innerPaths = inner.paths.length ? inner.paths : ["."];
   const covers = (item: string): boolean =>
     outer.paths.some((base) => base === "." || item === base || item.startsWith(`${base}/`)) &&
@@ -538,6 +538,50 @@ export function evaluateClosure(
       "stored policy version is unsupported; reassessment is required",
     );
   const evaluations = view.requirements;
+  const openFindings = view.task.findings.filter((entry) => entry.data.disposition === "open");
+  if (requestedOutcome !== "stopped" && openFindings.length)
+    return failure("requirements_unsatisfied", "open findings must be resolved before closure");
+  if (requestedOutcome !== "stopped") {
+    const evidenceById = new Map(view.evidence.map((entry) => [entry.evidenceId, entry.status]));
+    for (const entry of view.task.findings) {
+      if (entry.data.disposition === "fixed") {
+        const verified = entry.data.resolution?.evidenceIds.some((id) => {
+          const evidence = view.task.evidence.find((item) => item.id === id);
+          return (
+            evidenceById.get(id) === "passed" &&
+            (evidence?.data.kind === "check" || evidence?.data.kind === "review")
+          );
+        });
+        if (!verified)
+          return failure("requirements_unsatisfied", "fixed findings require current verification");
+      }
+      if (entry.data.disposition === "deferred") {
+        const valid = entry.data.resolution?.decisionIds.some((id) => {
+          const decision = view.task.decisions.find((item) => item.id === id)?.data;
+          return Boolean(
+            decision &&
+            decision.purpose === "limitation" &&
+            decision.response === "approved" &&
+            decision.revoked === null &&
+            decision.digest === decisionDigest(decision) &&
+            decision.binding.taskId === view.task.id &&
+            decision.binding.workspaceId === view.workspace.id &&
+            scopeCovers(decision.binding.scope, entry.data.scope) &&
+            decision.requirementIds.some((requirementId) =>
+              view.task.policy?.requirements.some(
+                (requirement) => requirement.id === requirementId && requirement.acceptanceAllowed,
+              ),
+            ),
+          );
+        });
+        if (!valid)
+          return failure(
+            "requirements_unsatisfied",
+            "deferred findings require an applicable limitation",
+          );
+      }
+    }
+  }
   const blocking = evaluations.filter(
     (item) => item.status === "unsatisfied" || item.status === "unavailable",
   );
@@ -554,8 +598,18 @@ export function evaluateClosure(
         requirementIds: accepted.map((item) => item.requirementId),
       },
     );
-  const evidenceIds = [...new Set(evaluations.flatMap((item) => item.evidenceIds))];
-  const decisionIds = [...new Set(evaluations.flatMap((item) => item.decisionIds))];
+  const evidenceIds = [
+    ...new Set([
+      ...evaluations.flatMap((item) => item.evidenceIds),
+      ...view.task.findings.flatMap((item) => item.data.resolution?.evidenceIds ?? []),
+    ]),
+  ];
+  const decisionIds = [
+    ...new Set([
+      ...evaluations.flatMap((item) => item.decisionIds),
+      ...view.task.findings.flatMap((item) => item.data.resolution?.decisionIds ?? []),
+    ]),
+  ];
   return success(null, null, {
     outcome:
       requestedOutcome === "stopped"
