@@ -331,6 +331,7 @@ export function applicableDecision(
   return task.decisions
     .filter(
       (entry) =>
+        entry.provenance.kind !== "imported" &&
         decisionMatches(entry, purpose, binding) &&
         (checkoutRoot
           ? verifyDecisionContentAtRoot(checkoutRoot, entry.data.binding).ok
@@ -394,6 +395,7 @@ export const storedDecisionApplicable = (
 ): Entry<Decision>[] =>
   task.decisions.filter(
     (entry) =>
+      entry.provenance.kind !== "imported" &&
       decisionMatches(entry, purpose, binding) &&
       verifyDecisionContentAtRoot(store.root, entry.data.binding).ok,
   );

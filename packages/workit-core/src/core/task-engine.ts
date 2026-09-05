@@ -1,5 +1,6 @@
 import { realpathSync } from "node:fs";
 import {
+  POLICY_VERSION,
   canonicalJson,
   failure,
   decisionDigest,
@@ -45,7 +46,11 @@ import {
 } from "./authority";
 import { diffPolicy, resolvePolicy } from "./policy-resolver";
 import { TaskStore, type MetadataLock, type ProcessEvidence } from "./task-store";
-import { exportDigest } from "./task-context";
+import {
+  exportDigest,
+  reconcileResume as reconcileResumeContext,
+  type ResumeReconciliation,
+} from "./task-context";
 import {
   assertProductWriteAllowed,
   type CallerContext,
@@ -333,6 +338,9 @@ const portableTask = (task: TaskRecord): TaskRecord => {
   ];
   for (const entry of entries) entry.provenance = portableProvenance(entry.provenance);
   for (const worker of clone.workers) worker.data.session = null;
+  // Candidate metadata can contain environment-derived paths and digests. The destination
+  // must recapture its own candidate instead of receiving source checkout material.
+  clone.candidates = [];
   return clone;
 };
 
@@ -455,6 +463,7 @@ const importedTask = (
     ...(actionProgress ? { actionProgress } : {}),
     findings,
     workers,
+    candidates: [],
     policy: source.policy,
     progress: {
       ...source.progress,
@@ -1087,6 +1096,7 @@ export class WorkitCore {
       if (!workspace.data) return failure("not_found", "workspace not found");
       const allowed = decisions.some(
         (entry) =>
+          entry.provenance.kind !== "imported" &&
           entry.data.purpose === "limitation" &&
           entry.data.response === "approved" &&
           entry.data.revoked === null &&
@@ -1631,6 +1641,92 @@ export class WorkitCore {
     });
   }
 
+  reconcileResume(
+    view: TaskView,
+    observations: NativeWorkerObservation[] = [],
+  ): Result<ResumeReconciliation> {
+    const root = this.contextRootError();
+    if (!root.ok) return root as Result<never>;
+    if ((this.context.workerId ?? null) !== null)
+      return failure("permission_denied", "helpers cannot reconcile task workers");
+    if (view.task.workspaceId !== view.workspace.id)
+      return failure("invalid_input", "task and workspace bindings are invalid");
+    try {
+      if (realpathSync(view.workspace.root) !== this.store.root)
+        return failure("invalid_input", "task view root does not match the task store");
+    } catch {
+      return failure("invalid_input", "task view root cannot be resolved");
+    }
+    const updates: NativeWorkerObservation[] = [];
+    const seen = new Set<string>();
+    const binding: WorkerBinding = {
+      owner: this.authorityOwner,
+      store: this.store,
+      root: this.store.root,
+      caller: this.context.caller,
+    };
+    for (const observation of observations) {
+      if (seen.has(observation.workerId))
+        return failure("invalid_input", "worker observations must be unique");
+      seen.add(observation.workerId);
+      if (
+        observation.taskId !== view.task.id ||
+        observation.expectedRevision !== view.task.revision ||
+        observation.expectedWorkspaceRevision !== view.workspace.revision
+      )
+        return failure("revision_conflict", "worker observation is stale");
+      if (!view.task.workers.some((entry) => entry.id === observation.workerId))
+        return failure("permission_denied", "worker observation is not assigned");
+      const verified = verifyNativeWorker(
+        this.context.nativeWorker,
+        {
+          observation: observation.observation,
+          expected: { ...observation, workspaceId: view.workspace.id },
+          caller: this.context.caller,
+        },
+        binding,
+      );
+      if (!verified.ok) return verified as Result<never>;
+      if (!takeWorker(verified.data, binding, observation))
+        return failure("permission_denied", "worker observation authority was not retained");
+      updates.push(observation);
+    }
+    const observedStates = new Map(updates.map((entry) => [entry.workerId, entry.state]));
+    const effectiveView: TaskView = {
+      ...view,
+      task: {
+        ...view.task,
+        workers: view.task.workers.map((entry) => {
+          const update = updates.find((item) => item.workerId === entry.id);
+          return update
+            ? {
+                ...entry,
+                data: { ...entry.data, state: update.state, session: update.session },
+              }
+            : entry;
+        }),
+      },
+    };
+    const base = reconcileResumeContext(effectiveView);
+    if (!base.ok) return base;
+    const needsReconciliation = view.task.workers.some((entry) =>
+      ["running", "cancelling", "unknown"].includes(
+        observedStates.get(entry.id) ?? entry.data.state,
+      ),
+    );
+    const blockers = [...base.data.blockers];
+    if (
+      needsReconciliation &&
+      !blockers.some((entry) => entry.reason === "worker state requires reconciliation")
+    )
+      blockers.push({
+        reason: "worker state requires reconciliation",
+        dependentAction: "resume",
+        refs: [],
+      });
+    return success(null, null, { ...base.data, workerUpdates: updates, blockers });
+  }
+
   private transition(input: any, status: "active" | "paused"): Result<TaskSummary> {
     const task = this.store.readTask(input.taskId);
     if (!task.ok) return task as Result<never>;
@@ -1641,13 +1737,59 @@ export class WorkitCore {
       (status === "active" && task.data.status !== "paused")
     )
       return failure("invalid_transition", `cannot transition ${task.data.status} to ${status}`);
-    if (status === "active" && task.data.origin)
-      return failure("needs_input", "imported task requires resume reconciliation");
     if (status === "active" && input.authorityRefs.length === 0)
       return failure("permission_denied", "resuming a task requires authority references");
     const workspace = this.store.readWorkspace();
     if (!workspace.ok) return workspace as Result<never>;
     if (!workspace.data) return failure("not_found", "workspace not found");
+    let resumeCandidate: import("./task-contract").Candidate | null = null;
+    if (status === "active" && task.data.origin) {
+      if (!task.data.policy)
+        return failure("needs_input", "imported task requires a current policy");
+      if (task.data.policy.policyVersion !== POLICY_VERSION)
+        return failure(
+          "needs_input",
+          "stored policy version is unsupported; reassessment is required",
+        );
+      const current = captureCandidate(this.store.root, task.data.intent.data.scope, environment());
+      if (!current.ok) return current as Result<never>;
+      const taskForEvaluation = {
+        ...task.data,
+        candidates: task.data.candidates.some((candidate) => candidate.id === current.data.id)
+          ? task.data.candidates
+          : [...task.data.candidates, current.data],
+        // Imported history remains context; only destination-recorded decisions can authorize.
+        decisions: task.data.decisions.filter((entry) => entry.provenance.kind !== "imported"),
+      };
+      const requirements = evaluateRequirements(
+        taskForEvaluation,
+        workspace.data,
+        this.context.capabilities,
+        current.data,
+        this.store.root,
+        this.context.caller,
+      );
+      if (
+        requirements.some(
+          (requirement) =>
+            requirement.status === "unsatisfied" || requirement.status === "unavailable",
+        )
+      )
+        return failure("requirements_unsatisfied", "imported task requires current requirements", {
+          requirementIds: requirements
+            .filter(
+              (requirement) =>
+                requirement.status === "unsatisfied" || requirement.status === "unavailable",
+            )
+            .map((requirement) => requirement.requirementId),
+        });
+      const staleEvidence = evaluateEvidence(taskForEvaluation, current.data).filter(
+        (entry) => entry.status === "stale",
+      );
+      if (staleEvidence.length)
+        return failure("needs_input", "imported task requires fresh destination evidence");
+      resumeCandidate = current.data;
+    }
     const blocker = this.activeWorkerBlocker(task.data, workspace.data);
     if (blocker) return blocker as Result<never>;
     const changed = this.store.mutateTaskAndWorkspace({
@@ -1660,6 +1802,11 @@ export class WorkitCore {
         success(context.revision, null, {
           ...current,
           status,
+          candidates:
+            resumeCandidate &&
+            !current.candidates.some((candidate) => candidate.id === resumeCandidate!.id)
+              ? [...current.candidates, resumeCandidate]
+              : current.candidates,
           progress:
             status === "paused" ? { ...current.progress, summary: input.reason } : current.progress,
         }),

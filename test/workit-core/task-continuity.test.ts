@@ -433,9 +433,16 @@ test("compact context contains decisions, gaps, and next action once without tra
   const compact = compactTaskContext(view);
   const parsed = JSON.parse(compact) as Record<string, unknown>;
   expect(parsed).toMatchObject({ nextAction: "run checks", gaps: ["missing check"] });
-  expect(JSON.stringify(parsed.decisions)).toBe(
-    JSON.stringify([{ purpose: "design", content: decisionText }]),
-  );
+  expect(parsed.decisions).toEqual([
+    {
+      id: expect.any(String),
+      purpose: "design",
+      status: "approved",
+      digest: "a".repeat(64),
+      references: [],
+    },
+  ]);
   expect(compact).not.toContain("transcript");
-  expect(compact.match(new RegExp(decisionText, "g"))?.length).toBe(1);
+  expect(compact).not.toContain(decisionText);
+  expect(compact.match(/run checks/g)?.length).toBe(1);
 });

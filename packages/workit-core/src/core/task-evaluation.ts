@@ -363,6 +363,7 @@ const applicableDecision = (
   checkoutRoot?: string,
 ): Decision[] =>
   task.decisions
+    .filter((entry) => entry.provenance.kind !== "imported")
     .map((entry) => entry.data)
     .filter(
       (decision) =>
@@ -388,7 +389,8 @@ const applicableRequirementDecision = (
 ): { id: string }[] =>
   task.decisions
     .filter(
-      ({ data }) =>
+      ({ data, provenance }) =>
+        provenance.kind !== "imported" &&
         data.purpose !== "limitation" &&
         data.response === "approved" &&
         data.revoked === null &&
@@ -552,9 +554,11 @@ export function evaluateClosure(
       }
       if (entry.data.disposition === "deferred") {
         const valid = entry.data.resolution?.decisionIds.some((id) => {
-          const decision = view.task.decisions.find((item) => item.id === id)?.data;
+          const decisionEntry = view.task.decisions.find((item) => item.id === id);
+          const decision = decisionEntry?.data;
           return Boolean(
             decision &&
+            decisionEntry?.provenance.kind !== "imported" &&
             decision.purpose === "limitation" &&
             decision.response === "approved" &&
             decision.revoked === null &&
