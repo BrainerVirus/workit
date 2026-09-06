@@ -2,13 +2,13 @@
 
 Multi-platform Workit workflow plugin for **Cursor**, **OpenCode**, and the **CLI**: verify, PR, changelog, commits, SDD implementation, session handoff, YouTrack, and deterministic UI presentation.
 
-| Package         | Purpose                                                                     |
-| --------------- | --------------------------------------------------------------------------- |
-| **OpenCode**    | `packages/workit-opencode/` — native plugin (seven skills, eight tools)     |
-| **Cursor**      | `packages/workit-cursor/` — MCP + hooks + rules + skills plugin             |
+| Package         | Purpose                                                                  |
+| --------------- | ------------------------------------------------------------------------ |
+| **OpenCode**    | `packages/workit-opencode/` — native plugin (seven skills, eight tools)  |
+| **Cursor**      | `packages/workit-cursor/` — MCP + hooks + rules + skills plugin          |
 | **Shared MCP**  | `packages/workit-mcp/` — low-level transport for the eight core families |
-| **Shared core** | `packages/workit-core/` — shared logic and host adapter contracts            |
-| **CLI**         | `packages/workit-cli/` — Ink setup wizard + doctor (bin `workit`)           |
+| **Shared core** | `packages/workit-core/` — shared logic and host adapter contracts        |
+| **CLI**         | `packages/workit-cli/` — Ink setup wizard + doctor (bin `workit`)        |
 
 Config directory (both platforms): `~/.config/workit/` — legacy `~/.config/workflow-toolkit/` was auto-migrated on first run, then its non-secret files were removed after the active config passed status checks; the runtime reads only the active config dir.
 
@@ -56,16 +56,16 @@ bun i
 
 Feature parity across hosts, implemented the best way each host allows. Core logic lives in `packages/workit-core`; each host adapts its native surfaces to it.
 
-| Capability     | OpenCode                                          | Cursor                                                        | CLI                                |
-| -------------- | ------------------------------------------------- | ------------------------------------------------------------- | ---------------------------------- |
-| Approval       | native `question` tool receipts (`attested: true`) | AskQuestion, policy-only (`attested: false`)                   | `--confirm` flags / TTY prompts    |
-| Implementation | subagent-driven task delegation (native `task`)    | lease/token-gated Cursor-native subagents: `workit_plan_menu` (subagent-driven) returns a one-time `coordinator_lease`, `workit_delegate` mints a task-scoped `delegation_token` per task (fail-closed; only hashes persist) passed by the subagent as `delegation_token` on mutation calls | n/a                                |
-| Lifecycle      | `workit_task` / `workit_policy` / `workit_state` (native receipts) | host-native MCP adapter (policy-only) | `workit flow pause\|resume\|complete\|review-package` (`--confirm`) |
-| Commit         | shared writer contract + native `question` confirmation | host-native adapter, policy-only                         | n/a                                |
-| Handoff        | spawns a native OpenCode session                   | seeds a handoff prompt for the next agent                      | `workit handoff` (prints the destination prompt) |
-| Tools          | native plugin tools                                | MCP server (`workit_*`)                                      | `workit` commands                  |
-| Skills         | seven canonical method skills                      | host-native plugin skills                                      | n/a                                |
-| Diagnostics    | JSONL journal + native `client.app.log()`          | redacted stderr (stdout stays protocol-only)                   | `warn`/`error` on stderr           |
+| Capability     | OpenCode                                                           | Cursor                                                                                                                                                                                                                                                                                      | CLI                                                                 |
+| -------------- | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| Approval       | native `question` tool receipts (`attested: true`)                 | AskQuestion, policy-only (`attested: false`)                                                                                                                                                                                                                                                | `--confirm` flags / TTY prompts                                     |
+| Implementation | subagent-driven task delegation (native `task`)                    | lease/token-gated Cursor-native subagents: `workit_plan_menu` (subagent-driven) returns a one-time `coordinator_lease`, `workit_delegate` mints a task-scoped `delegation_token` per task (fail-closed; only hashes persist) passed by the subagent as `delegation_token` on mutation calls | n/a                                                                 |
+| Lifecycle      | `workit_task` / `workit_policy` / `workit_state` (native receipts) | host-native MCP adapter (policy-only)                                                                                                                                                                                                                                                       | `workit flow pause\|resume\|complete\|review-package` (`--confirm`) |
+| Commit         | shared writer contract + native `question` confirmation            | host-native adapter, policy-only                                                                                                                                                                                                                                                            | n/a                                                                 |
+| Handoff        | spawns a native OpenCode session                                   | seeds a handoff prompt for the next agent                                                                                                                                                                                                                                                   | `workit handoff` (prints the destination prompt)                    |
+| Tools          | native plugin tools                                                | MCP server (`workit_*`)                                                                                                                                                                                                                                                                     | `workit` commands                                                   |
+| Skills         | seven canonical method skills                                      | host-native plugin skills                                                                                                                                                                                                                                                                   | n/a                                                                 |
+| Diagnostics    | JSONL journal + native `client.app.log()`                          | redacted stderr (stdout stays protocol-only)                                                                                                                                                                                                                                                | `warn`/`error` on stderr                                            |
 
 ## Flows
 
@@ -157,13 +157,13 @@ export PATH="$HOME/.bun/bin:$PATH"
 
 Everything lives in `~/.config/workit/`; legacy `~/.config/workflow-toolkit/` was auto-migrated on first run and its non-secret files (config.json, vcs.json, youtrack.json, workspaces.json, templates/) were removed once the active config passed status checks — the runtime reads only the active config dir. Tokens are never printed by tools; you edit token files locally.
 
-| File                                               | Purpose                | Key fields                                                                                                                                                                                                                                              |
-| -------------------------------------------------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `config.json`                                      | Global preferences     | `locale`, `timezone`, `branchPolicy: { preset: gitflow \| github-flow \| trunk-based \| custom, allowed, protected }`                                                                                                                                   |
-| `youtrack.json`                                    | YouTrack integration   | `baseUrl`, `tokenFile`, `timezone`, `locale`, `defaultMention`, `meetingIssue`/`meetingIssues`, `greetings`, `commentHeader`, `tokenDefaults`                                                                                                           |
+| File                                               | Purpose                | Key fields                                                                                                                                                                                                                                                                              |
+| -------------------------------------------------- | ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `config.json`                                      | Global preferences     | `locale`, `timezone`, `branchPolicy: { preset: gitflow \| github-flow \| trunk-based \| custom, allowed, protected }`                                                                                                                                                                   |
+| `youtrack.json`                                    | YouTrack integration   | `baseUrl`, `tokenFile`, `timezone`, `locale`, `defaultMention`, `meetingIssue`/`meetingIssues`, `greetings`, `commentHeader`, `tokenDefaults`                                                                                                                                           |
 | `vcs.json`                                         | VCS defaults           | `provider: gitlab \| github`, per-provider `{ host, apiUrl, tokenFile }`, `pr: { squashOnMerge, removeSourceBranch, pushBranch, confirmSkip }`. A global `defaultTargetBranch` is optional and applies to repos without a workspace branchPolicy or explicit `vcs.defaultTargetBranch`. |
-| `workspaces.json`                                  | **Per-repo contexts**  | `workspaces: [{ name, glob, branchPolicy: { preset, developBranch, prefixes, allowed, protected, integration: pr \| merge }, vcs: { provider, defaultTargetBranch }, youtrack: { baseUrl, link_issues }, issues: { provider: "github", link_on_pr } }]` |
-| `youtrack.token` / `gitlab.token` / `github.token` | Credentials (mode 600) | created as placeholders by `workit init`; replace `YOUR_TOKEN_HERE` locally                                                                                                                                                                            |
+| `workspaces.json`                                  | **Per-repo contexts**  | `workspaces: [{ name, glob, branchPolicy: { preset, developBranch, prefixes, allowed, protected, integration: pr \| merge }, vcs: { provider, defaultTargetBranch }, youtrack: { baseUrl, link_issues }, issues: { provider: "github", link_on_pr } }]`                                 |
+| `youtrack.token` / `gitlab.token` / `github.token` | Credentials (mode 600) | created as placeholders by `workit init`; replace `YOUR_TOKEN_HERE` locally                                                                                                                                                                                                             |
 
 **Multi-context setup (personal + work in one install)** — `workspaces.json` scopes VCS provider, PR target, and issue linking per repository glob, e.g.:
 
@@ -233,12 +233,12 @@ bun run validate:cursor-marketplace  # validate the Marketplace artifact against
 
 Each package also exposes its own scripts:
 
-| Package | Scripts |
-| --- | --- |
-| `workit-core` | `typecheck` |
+| Package           | Scripts              |
+| ----------------- | -------------------- |
+| `workit-core`     | `typecheck`          |
 | `workit-opencode` | `build`, `typecheck` |
-| `workit-cursor` | `build` |
-| `workit-cli` | `build`, `typecheck` |
+| `workit-cursor`   | `build`              |
+| `workit-cli`      | `build`, `typecheck` |
 
 ## CI / release
 
@@ -263,12 +263,12 @@ Releases are path-gated: merges touching only CI/test/docs produce no release, a
 
 ## Architecture
 
-| Concern          | OpenCode                | Cursor                                                |
-| ---------------- | ----------------------- | ----------------------------------------------------- |
-| Tools            | native plugin           | MCP server                                            |
-| Session contract | `messages.transform`    | `sessionStart` hook                                   |
-| Handoff          | spawns OpenCode session | handoff prompt                                        |
-| Shared logic     | `scripts/`              | `scripts/` via `WORKFLOW_TOOLKIT_ROOT`                |
+| Concern          | OpenCode                | Cursor                                                              |
+| ---------------- | ----------------------- | ------------------------------------------------------------------- |
+| Tools            | native plugin           | MCP server                                                          |
+| Session contract | `messages.transform`    | `sessionStart` hook                                                 |
+| Handoff          | spawns OpenCode session | handoff prompt                                                      |
+| Shared logic     | `scripts/`              | `scripts/` via `WORKFLOW_TOOLKIT_ROOT`                              |
 | Install root     | GitHub plugin pin       | `~/.local/share/workit` (`.workit-root` marker) + local plugin copy |
 
 ## Future: Codex CLI
