@@ -1,4 +1,4 @@
-import { existsSync, realpathSync } from "node:fs";
+import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Plugin } from "@opencode-ai/plugin";
@@ -12,6 +12,7 @@ import {
   NativeReceiptStore,
   nativeWorkerFor,
   observeQuestion,
+  sameWorkspace,
   type DirectChildren,
 } from "./tools/workit";
 import { compactContextFor, loadProvenance, workerContextFor } from "./runtime";
@@ -31,13 +32,24 @@ type SessionClient = {
 type SessionInfo = { id?: string; parentID?: string; directory?: string };
 
 const sessionData = async (client: SessionClient | undefined, sessionID: string) => {
-  if (!client) return {};
+  if (!client) return null;
   try {
     return (await client.session?.get?.({ path: { id: sessionID } }))?.data ?? {};
   } catch {
     return null;
   }
 };
+
+const trustedSession = (
+  directory: string,
+  sessionID: string,
+  session: unknown,
+): session is SessionInfo =>
+  typeof session === "object" &&
+  session !== null &&
+  (session as SessionInfo).id === sessionID &&
+  typeof (session as SessionInfo).directory === "string" &&
+  sameWorkspace(directory, (session as SessionInfo).directory);
 
 const mutationSurface = new Set(["write", "edit", "apply_patch", "patch"]);
 const shellMutation =
@@ -47,29 +59,29 @@ const unquote = (value: string): string => value.replace(/^(["'])(.*)\1$/, "$2")
 
 const shellWritePaths = (command: string): string[] => {
   const paths: string[] = [];
-  for (const match of command.matchAll(/(?:^|\s)(?:>>|>)\s*([^\s;&|]+)/g))
-    paths.push(unquote(match[1]));
-  const tokens = command
-    .split(/[\s;&|]+/)
-    .map(unquote)
-    .filter(Boolean);
-  const commandNames = new Set([
-    "rm",
-    "mv",
-    "cp",
-    "mkdir",
-    "rmdir",
-    "touch",
-    "install",
-    "tee",
-    "chmod",
-    "chown",
-  ]);
-  const head = tokens[0]?.split("/").pop() ?? "";
-  if (commandNames.has(head))
-    paths.push(...tokens.slice(1).filter((token) => !token.startsWith("-") && token !== "--"));
-  if (head === "git" && tokens[1] === "add")
-    paths.push(...tokens.slice(2).filter((token) => !token.startsWith("-") && token !== "--"));
+  const segments = command.split(/&&|\|\||[;|]/);
+  for (const segment of segments) {
+    for (const match of segment.matchAll(/(?:^|\s)(?:>>|>)\s*([^\s;&|]+)/g))
+      paths.push(unquote(match[1]));
+    const tokens = segment.split(/\s+/).map(unquote).filter(Boolean);
+    const head = tokens[0]?.split("/").pop() ?? "";
+    const commandNames = new Set([
+      "rm",
+      "mv",
+      "cp",
+      "mkdir",
+      "rmdir",
+      "touch",
+      "install",
+      "tee",
+      "chmod",
+      "chown",
+    ]);
+    if (commandNames.has(head))
+      paths.push(...tokens.slice(1).filter((token) => !token.startsWith("-") && token !== "--"));
+    if (head === "git" && tokens[1] === "add")
+      paths.push(...tokens.slice(2).filter((token) => !token.startsWith("-") && token !== "--"));
+  }
   return [...new Set(paths)];
 };
 
@@ -82,15 +94,6 @@ const writePaths = (tool: string, args: Record<string, unknown>): string[] => {
     (value): value is string => typeof value === "string" && value.length > 0,
   );
   return paths;
-};
-
-const sameWorkspace = (expected: string, observed: unknown): boolean => {
-  if (typeof observed !== "string" || !observed) return false;
-  try {
-    return realpathSync(expected) === realpathSync(observed);
-  } catch {
-    return path.resolve(expected) === path.resolve(observed);
-  }
 };
 
 const enforceWriter = async (
@@ -119,8 +122,6 @@ const enforceWriter = async (
   const observed = await sessionData(client, sessionID);
   if (observed === null)
     throw new Error("permission_denied: OpenCode session observation unavailable");
-  if (typeof observed.directory === "string" && !sameWorkspace(directory, observed.directory))
-    throw new Error("permission_denied: OpenCode session directory does not match workspace");
   const workerMatches = listed.data.flatMap((task) =>
     task.status === "active"
       ? task.workers
@@ -134,6 +135,19 @@ const enforceWriter = async (
   const activeTasks = listed.data.filter(
     (task) => task.status === "active" && task.workspaceId === workspace.data?.id,
   );
+  if (activeTasks.length > 0 && !trustedSession(directory, sessionID, observed))
+    throw new Error("permission_denied: trusted OpenCode session observation is required");
+  if (workerMatches.length === 0 && observed.parentID)
+    throw new Error("permission_denied: OpenCode session parentage is not a coordinator");
+  if (workerMatches.length === 1) {
+    const coordinator = workerMatches[0].task.intent.provenance.session;
+    if (
+      coordinator?.kind !== "host" ||
+      coordinator.host !== "opencode" ||
+      observed.parentID !== coordinator.handle
+    )
+      throw new Error("permission_denied: OpenCode worker parentage is not validated");
+  }
   const task =
     (workspace.data.writer &&
       activeTasks.find((candidate) => candidate.id === workspace.data?.writer?.owner.taskId)) ||
@@ -185,6 +199,7 @@ const plugin: Plugin = async ({ client, directory }) => {
     parentID: string,
     state: "running" | "stopped" | "unknown",
     binding?: { taskId: string; workerId: string },
+    initial = false,
   ) => {
     const store = new TaskStore(directory);
     const listed = store.listTasks();
@@ -201,16 +216,28 @@ const plugin: Plugin = async ({ client, directory }) => {
             .map((entry) => ({ task, entry }))
         : [],
     );
+    const matches = persisted.filter(({ entry }) => entry.data.session?.kind === "host");
     const selected = binding
       ? persisted.find(
           ({ task, entry }) => task.id === binding.taskId && entry.id === binding.workerId,
         )
-      : persisted.find(({ entry }) => entry.data.session?.kind === "host");
+      : matches.length === 1
+        ? matches[0]
+        : undefined;
     if (!selected) return;
-    if (!binding && selected.entry.provenance.session?.kind === "host") {
-      parentID = selected.entry.provenance.session.handle;
-      directChildren.set(sessionID, parentID);
+    if (selected.entry.provenance.session?.kind !== "host") return;
+    if (!binding) {
+      // ponytail: running lifecycle overwrites worker provenance with the child
+      // session; task intent is the persisted coordinator parent after restart.
+      const coordinator = selected.task.intent.provenance.session;
+      if (coordinator?.kind !== "host" || coordinator.host !== "opencode") return;
+      parentID = coordinator.handle;
     }
+    if (!initial) {
+      const observed = await sessionData(client, sessionID);
+      if (!trustedSession(directory, sessionID, observed) || observed.parentID !== parentID) return;
+    }
+    directChildren.set(sessionID, parentID);
     const core = new WorkitCore(store, {
       root: directory,
       caller: { host: "opencode", actor: parentID },
@@ -263,10 +290,16 @@ const plugin: Plugin = async ({ client, directory }) => {
     );
     if (candidates.length !== 1) return;
     directChildren.set(info.id, info.parentID);
-    await observeLifecycle(info.id, info.parentID, "running", {
-      taskId: candidates[0].task.id,
-      workerId: candidates[0].entry.id,
-    });
+    await observeLifecycle(
+      info.id,
+      info.parentID,
+      "running",
+      {
+        taskId: candidates[0].task.id,
+        workerId: candidates[0].entry.id,
+      },
+      true,
+    );
   };
   return {
     tool: tools,
@@ -275,6 +308,13 @@ const plugin: Plugin = async ({ client, directory }) => {
         await bindCreatedSession(event.properties.info);
         return;
       }
+      if (
+        event.type !== "session.status" &&
+        event.type !== "session.idle" &&
+        event.type !== "session.error" &&
+        event.type !== "session.deleted"
+      )
+        return;
       const properties = event.properties as {
         sessionID?: unknown;
         info?: { id?: unknown };
@@ -335,7 +375,7 @@ const plugin: Plugin = async ({ client, directory }) => {
         if (unresolvedTaskLaunches.delete(input.sessionID))
           throw new Error("recovery_required: a cancelled worker remains uncertain");
         const session = await sessionData(client, input.sessionID);
-        if (!client || session === null || session.parentID)
+        if (!client || !trustedSession(directory, input.sessionID, session) || session.parentID)
           throw new Error(
             "delegation_lineage_denied: native task workers must be direct children of the coordinator",
           );
@@ -402,7 +442,7 @@ const plugin: Plugin = async ({ client, directory }) => {
       if (bootstrapped.has(sessionID)) return;
       const anchor = first.parts[0];
       const session = await sessionData(client, sessionID);
-      if (session && session.directory && !sameWorkspace(directory, session.directory)) return;
+      if (!trustedSession(directory, sessionID, session)) return;
       const workerContext = session?.parentID
         ? workerContextFor(directory, sessionID, session.parentID, directChildren)
         : null;
@@ -438,7 +478,7 @@ const plugin: Plugin = async ({ client, directory }) => {
           text: `<workit-worker-context>${workerContext}</workit-worker-context>`,
         } as never);
       }
-      if (session !== null) bootstrapped.add(sessionID);
+      bootstrapped.add(sessionID);
     },
   };
 };

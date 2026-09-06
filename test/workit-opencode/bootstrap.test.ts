@@ -30,6 +30,9 @@ describe("session bootstrap", () => {
       directory: "/repo",
       worktree: "/repo",
       serverUrl: new URL("http://localhost"),
+      client: {
+        session: { get: async () => ({ data: { id: "s1", directory: "/repo" } }) },
+      },
     } as never);
     const output = {
       messages: [

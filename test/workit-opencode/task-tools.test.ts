@@ -43,9 +43,20 @@ test("native receipts reject unrelated questions and are consumed once per purpo
     {
       sessionID: "s",
       callID: "decision",
-      args: { questions: [{ question: "Approve this decision?", options: ["Approve"] }] },
+      args: {
+        questions: [
+          {
+            header: "Workit decision: design",
+            question: "Approve this decision?",
+            options: [
+              { label: "approved", description: "Design" },
+              { label: "rejected", description: "Reject this decision" },
+            ],
+          },
+        ],
+      },
     },
-    { metadata: { answers: [["Approve"]] } },
+    { metadata: { answers: [["approved"]] } },
   );
   expect(receipts.consume("s", "decision").ok).toBe(true);
   expect(receipts.consume("s", "decision").ok).toBe(false);
@@ -59,9 +70,12 @@ test("native receipts retain exact call, label, and content bindings", () => {
     args: {
       questions: [
         {
-          header: "Decision",
+          header: "Workit decision: design",
           question: "Approve the scoped change?",
-          options: ["approved", "rejected"],
+          options: [
+            { label: "approved", description: "Design" },
+            { label: "rejected", description: "Reject this decision" },
+          ],
         },
       ],
     },
@@ -100,9 +114,12 @@ test("native receipts reject a matching-purpose answer with different content", 
       args: {
         questions: [
           {
-            header: "Decision",
+            header: "Workit decision: design",
             question: "Approve the first scoped change?",
-            options: ["approved", "rejected"],
+            options: [
+              { label: "approved", description: "First change" },
+              { label: "rejected", description: "Reject this decision" },
+            ],
           },
         ],
       },
@@ -128,7 +145,9 @@ test("native operation arguments cannot supply caller or provenance", async () =
     directory: "/repo",
     worktree: "/repo",
     serverUrl: new URL("http://localhost"),
-    client: { session: { get: async () => ({ data: {} }) } },
+    client: {
+      session: { get: async () => ({ data: { id: "native-session", directory: "/repo" } }) },
+    },
   } as never);
   const raw = await hooks.tool?.workit_task.execute(
     {
@@ -163,7 +182,7 @@ test("the decision tool consumes only the matching native question receipt", asy
       directory: root,
       worktree: root,
       serverUrl: new URL("http://localhost"),
-      client: { session: { get: async () => ({ data: {} }) } },
+      client: { session: { get: async () => ({ data: { id: "lead", directory: root } }) } },
     } as never);
     await hooks["tool.execute.after"]?.(
       {
@@ -173,9 +192,12 @@ test("the decision tool consumes only the matching native question receipt", asy
         args: {
           questions: [
             {
-              header: "Decision",
+              header: "Workit decision: design",
               question: "Approve this design?",
-              options: ["approved", "rejected"],
+              options: [
+                { label: "approved", description: "the design" },
+                { label: "rejected", description: "Reject this decision" },
+              ],
             },
           ],
         },

@@ -1,3 +1,5 @@
+import { realpathSync } from "node:fs";
+import path from "node:path";
 import { tool } from "@opencode-ai/plugin";
 import {
   WorkitCore,
@@ -17,15 +19,23 @@ import type { NativeWorkerVerifier } from "@brainervirus/workit-core/src/core/wo
 
 type SessionLookup = {
   session: {
-    get: (input: {
-      path: { id: string };
-    }) => Promise<{ data?: { parentID?: string; directory?: string } }>;
+    get: (input: { path: { id: string } }) => Promise<{ data?: SessionInfo }>;
   };
 };
 
+type SessionInfo = { id?: string; parentID?: string; directory?: string };
+
 export type DirectChildren = Map<string, string>;
 export type ReceiptExpectation = Partial<
-  Pick<Receipt, "callID" | "selectedLabel" | "contentDigest" | "question">
+  Pick<
+    Receipt,
+    | "callID"
+    | "selectedLabel"
+    | "selectedDescription"
+    | "decisionPurpose"
+    | "contentDigest"
+    | "question"
+  >
 >;
 
 type Question = {
@@ -34,12 +44,12 @@ type Question = {
   options?: unknown;
 };
 
-type QuestionOption = string | { label?: unknown; description?: unknown };
-
 type Receipt = {
   sessionID: string;
   callID: string;
   selectedLabel: string;
+  selectedDescription: string;
+  decisionPurpose: "design" | "action" | "limitation" | "preference";
   question: string;
   purpose: "decision" | "worker" | "resume" | "pause" | "complete";
   contentDigest: string;
@@ -48,30 +58,49 @@ type Receipt = {
 
 const negative = /^(?:no|nope|nah|reject|cancel|decline|deny|skip|back|not now|not yet)\b/i;
 const freshMs = 5 * 60 * 1000;
+const rejectedDescription = "Reject this decision";
 
-const optionLabels = (options: unknown): string[] =>
-  Array.isArray(options)
-    ? options.flatMap((option: QuestionOption) => {
-        if (typeof option === "string") return [option];
-        return option && typeof option === "object" && typeof option.label === "string"
-          ? [option.label]
-          : [];
-      })
-    : [];
+const decisionContent = (
+  purpose: Receipt["decisionPurpose"],
+  question: string,
+  approvedContent: string,
+) => ({
+  header: `Workit decision: ${purpose}`,
+  question,
+  options: [
+    { label: "approved", description: approvedContent },
+    { label: "rejected", description: rejectedDescription },
+  ],
+});
+
+const decisionOptions = (options: unknown) =>
+  Array.isArray(options) &&
+  options.length === 2 &&
+  options.every(
+    (option) =>
+      typeof option === "object" &&
+      option !== null &&
+      typeof (option as { label?: unknown }).label === "string" &&
+      typeof (option as { description?: unknown }).description === "string" &&
+      Object.keys(option).length === 2 &&
+      Object.keys(option).every((key) => key === "label" || key === "description"),
+  )
+    ? (options as Array<{ label: string; description: string }>)
+    : null;
 
 const purposeForQuestion = (question: Question): Receipt["purpose"] | undefined => {
   const header = typeof question.header === "string" ? question.header.trim() : "";
-  const options = optionLabels(question.options);
+  const options = decisionOptions(question.options);
+  const decisionPurpose = header.match(
+    /^Workit decision: (design|action|limitation|preference)$/,
+  )?.[1];
   if (
-    header === "Decision" &&
-    options.length === 2 &&
-    options.includes("approved") &&
-    options.includes("rejected")
+    decisionPurpose &&
+    options !== null &&
+    options[0].label === "approved" &&
+    options[1].label === "rejected" &&
+    options[1].description === rejectedDescription
   )
-    return "decision";
-  // Kept for the legacy one-line approval prompt shipped by the contract. It
-  // is exact; generic approval language is intentionally not classified.
-  if (header === "" && question.question === "Approve this decision?" && options.length === 1)
     return "decision";
   return undefined;
 };
@@ -95,17 +124,26 @@ export class NativeReceiptStore {
     if (!question || typeof question !== "object") return;
     const purpose = purposeForQuestion(question);
     if (!purpose || negative.test(answer.trim())) return;
-    const options = optionLabels(question.options);
-    if (!options.includes(answer)) return;
-    const content = {
-      header: typeof question.header === "string" ? question.header : "",
-      question: typeof question.question === "string" ? question.question : "",
-      options: question.options ?? null,
-    };
+    const options = decisionOptions(question.options);
+    if (!options) return;
+    const selected = options?.find((option) => option.label === answer);
+    if (!selected) return;
+    const decisionPurpose =
+      typeof question.header === "string"
+        ? question.header.match(/^Workit decision: (design|action|limitation|preference)$/)?.[1]
+        : undefined;
+    if (!decisionPurpose) return;
+    const content = decisionContent(
+      decisionPurpose as Receipt["decisionPurpose"],
+      typeof question.question === "string" ? question.question : "",
+      options[0].description,
+    );
     const receipt: Receipt = {
       sessionID: input.sessionID,
       callID: input.callID,
       selectedLabel: answer,
+      selectedDescription: selected.description,
+      decisionPurpose: decisionPurpose as Receipt["decisionPurpose"],
       question: content.question,
       purpose,
       contentDigest: sha256(canonicalJson(content)),
@@ -130,6 +168,10 @@ export class NativeReceiptStore {
         (expected.callID !== undefined && receipt.callID !== expected.callID) ||
         (expected.selectedLabel !== undefined &&
           receipt.selectedLabel !== expected.selectedLabel) ||
+        (expected.selectedDescription !== undefined &&
+          receipt.selectedDescription !== expected.selectedDescription) ||
+        (expected.decisionPurpose !== undefined &&
+          receipt.decisionPurpose !== expected.decisionPurpose) ||
         (expected.contentDigest !== undefined &&
           receipt.contentDigest !== expected.contentDigest) ||
         (expected.question !== undefined && receipt.question !== expected.question)
@@ -185,12 +227,24 @@ const operationShapeFor = (family: OperationFamily): Record<string, any> => {
 const output = (value: unknown): string => JSON.stringify(value, null, 2);
 
 const sessionData = async (client: SessionLookup | undefined, sessionID: string) => {
-  if (!client) return { parentID: undefined, directory: undefined };
+  if (!client) return null;
   try {
     const result = await client.session.get({ path: { id: sessionID } });
-    return result.data ?? {};
+    const data = result.data;
+    if (!data || data.id !== sessionID || typeof data.directory !== "string" || !data.directory)
+      return null;
+    return data;
   } catch {
     return null;
+  }
+};
+
+export const sameWorkspace = (expected: string, observed: unknown): boolean => {
+  if (typeof observed !== "string" || !observed) return false;
+  try {
+    return realpathSync(expected) === realpathSync(observed);
+  } catch {
+    return path.resolve(expected) === path.resolve(observed);
   }
 };
 
@@ -235,6 +289,18 @@ const nativeAuthority = (receipts: NativeReceiptStore, actor: string): NativeAut
       caller.host !== "opencode" ||
       caller.actor !== actor ||
       receipt.selectedLabel !== expected.response ||
+      receipt.selectedDescription !== expected.binding.approvedContent ||
+      receipt.decisionPurpose !== expected.purpose ||
+      receipt.contentDigest !==
+        sha256(
+          canonicalJson(
+            decisionContent(
+              expected.purpose,
+              expected.binding.presented,
+              expected.binding.approvedContent,
+            ),
+          ),
+        ) ||
       receipt.question !== expected.binding.presented
     )
       return failure("permission_denied", "native decision receipt is not bound to this session");
@@ -283,6 +349,7 @@ const workerIdFor = async (
       if (
         worker.data.session?.kind === "host" &&
         worker.data.session.handle === actor &&
+        typeof current.parentID === "string" &&
         directChildren.get(actor) === current.parentID
       )
         return worker.id;
@@ -314,10 +381,14 @@ export const createWorkitTools = ({
             failure("permission_denied", "OpenCode native session observation unavailable"),
           );
         const data = await sessionData(client, context.sessionID);
-        if (data === null)
+        if (data === null || !sameWorkspace(context.directory, data.directory ?? ""))
           return output(failure("permission_denied", "OpenCode session observation unavailable"));
         const store = new TaskStore(context.directory);
         const workerId = await workerIdFor(store, client, context.sessionID, directChildren);
+        if (data.parentID && workerId === null)
+          return output(
+            failure("permission_denied", "OpenCode child session has no validated Workit worker"),
+          );
         const operationContext: OperationContext = {
           root: context.directory,
           caller: { host: "opencode", actor: context.sessionID },
@@ -333,10 +404,22 @@ export const createWorkitTools = ({
         if (family === "decision" && (args as { action?: string }).action === "record") {
           const decision = parsed.data as {
             response: string;
-            binding: { presented: string };
+            purpose: Receipt["decisionPurpose"];
+            binding: { presented: string; approvedContent: string };
           };
           const observed = receipts.consume(context.sessionID, "decision", {
             selectedLabel: decision.response,
+            selectedDescription: decision.binding.approvedContent,
+            decisionPurpose: decision.purpose,
+            contentDigest: sha256(
+              canonicalJson(
+                decisionContent(
+                  decision.purpose,
+                  decision.binding.presented,
+                  decision.binding.approvedContent,
+                ),
+              ),
+            ),
             question: decision.binding.presented,
           });
           if (!observed.ok) return output(failure("permission_denied", observed.error));

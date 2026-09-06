@@ -16,7 +16,7 @@ export const loadWorkitBootstrap = (rootDir: string): string | null => {
 
 export const getWorkitBootstrap = (): string | null => {
   if (cached !== undefined) return cached;
-  cached = `${marker}\n${invariantBootstrap()}`;
+  cached = `${marker}\n${invariantBootstrap()}\nOpenCode Workit decisions use the native question header "Workit decision: <purpose>", the exact presented question, and exactly two options: approved (description = approved content) and rejected (description = Reject this decision).`;
   return cached;
 };
 

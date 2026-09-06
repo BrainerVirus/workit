@@ -197,7 +197,7 @@ test("session discovery injects one bootstrap and one compact restoration", asyn
       directory: root,
       worktree: root,
       serverUrl: new URL("http://localhost"),
-      client: { session: { get: async () => ({ data: {} }) } },
+      client: { session: { get: async () => ({ data: { id: "lead", directory: root } }) } },
     } as never);
     const output = { messages: [userFor("lead")] };
     await hooks["experimental.chat.messages.transform"]?.({} as never, output as never);
@@ -257,7 +257,13 @@ test("direct-child reviewer and implementer contexts are exact and lineage-bound
       directory: root,
       worktree: root,
       serverUrl: new URL("http://localhost"),
-      client: { session: { get: async () => ({ data: { parentID: "coord" } }) } },
+      client: {
+        session: {
+          get: async ({ path: { id } }: { path: { id: string } }) => ({
+            data: { id, directory: root, parentID: "coord" },
+          }),
+        },
+      },
     } as never);
     await reviewerHooks["tool.execute.after"]?.(
       { tool: "task", sessionID: "coord", callID: "launch", args: {} },
@@ -333,7 +339,13 @@ test("direct-child reviewer and implementer contexts are exact and lineage-bound
       directory: root,
       worktree: root,
       serverUrl: new URL("http://localhost"),
-      client: { session: { get: async () => ({ data: { parentID: "other-coordinator" } }) } },
+      client: {
+        session: {
+          get: async ({ path: { id } }: { path: { id: string } }) => ({
+            data: { id, directory: root, parentID: "other-coordinator" },
+          }),
+        },
+      },
     } as never);
     const mismatchedOutput = { messages: [userFor("reviewer-session")] };
     await mismatchedHooks["experimental.chat.messages.transform"]?.(
@@ -368,7 +380,9 @@ test("known write surfaces enforce the current writer while unknown shell writes
       directory: root,
       worktree: root,
       serverUrl: new URL("http://localhost"),
-      client: { session: { get: async () => ({ data: {} }) } },
+      client: {
+        session: { get: async () => ({ data: { id: "other", directory: root } }) },
+      },
     } as never);
     const calls = [
       { tool: "write", args: { path: "src/file.ts" } },
