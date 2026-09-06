@@ -1,6 +1,6 @@
 # Agent Contract
 
-Multi-platform workit: OpenCode, Cursor, and the CLI share one core. Every feature must ship with **feature parity across hosts, implemented the best way each host allows**.
+Multi-platform workit: OpenCode, Cursor, Codex CLI/desktop, and the CLI share one core. Every feature must ship with **feature parity across hosts, implemented the best way each host allows**.
 
 ## Host-native adaptation
 
@@ -15,6 +15,10 @@ Multi-platform workit: OpenCode, Cursor, and the CLI share one core. Every featu
 | Skills | `skills.paths` + seven canonical policy-selected method skills (no vendored Superpowers dirs) | plugin `skills/` dirs | n/a |
 | Branch policy init | `workit_init_apply action=branch_policy` | same MCP tool | wizard screen |
 | Distribution | npm plugin entry (`opencode.json`) | Cursor Marketplace (git-discovered `.cursor-plugin/plugin.json`) | npm bin (`npx`) |
+
+Codex CLI and desktop use the native plugin manifest, hooks, and shared MCP
+transport. Hook enforcement is limited to documented covered events; the host
+does not expose arbitrary-question receipts or attested writer delegation.
 
 ## Parity rules
 

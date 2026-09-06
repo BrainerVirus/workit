@@ -1,0 +1,40 @@
+{
+  "name": "@brainervirus/workit-codex",
+  "version": "0.11.0",
+  "private": false,
+  "description": "Workit Codex CLI and desktop plugin",
+  "keywords": [
+    "agent",
+    "codex",
+    "mcp",
+    "workflow"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/BrainerVirus/workit.git"
+  },
+  "bin": {
+    "workit-codex-hook": "./dist/workit-hook.js",
+    "workit-codex-mcp": "./dist/launch-mcp.js"
+  },
+  "files": [
+    "dist/",
+    ".codex-plugin/",
+    ".mcp.json",
+    "hooks/hooks.json",
+    "skills/"
+  ],
+  "type": "module",
+  "main": "./dist/launch-mcp.js",
+  "scripts": {
+    "build": "bun scripts/build.ts"
+  },
+  "dependencies": {
+    "@brainervirus/workit-core": "workspace:*",
+    "@brainervirus/workit-mcp": "workspace:*"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

@@ -1,6 +1,7 @@
 # Workit
 
-Multi-platform Workit workflow support for Cursor, OpenCode, and the CLI. The
+Multi-platform Workit workflow support for Cursor, OpenCode, Codex CLI/desktop,
+and the CLI. The
 hosts share one task contract and eight operation families while adapting
 authority and lifecycle behavior to the native surfaces each host documents.
 
@@ -8,6 +9,7 @@ authority and lifecycle behavior to the native surfaces each host documents.
 | ----------- | ------------------------------------------------------------------------------- |
 | OpenCode    | Native plugin with seven method skills and eight tools                          |
 | Cursor      | MCP transport, one native hook dispatcher, one contract rule, and seven skills  |
+| Codex       | Native plugin manifest, shared MCP transport, and documented lifecycle hooks     |
 | Shared MCP  | Low-level transport for the eight core operation families                       |
 | Shared core | Task, policy, evidence, finding, decision, worker, writer, and continuity state |
 | CLI         | Setup wizard (`workit`)                                                         |
@@ -43,6 +45,11 @@ non-blocking; arbitrary shell writes, Tab edits, and stable subagent-stop
 identity are unavailable. Reviewer and investigator native delegation is
 read-only. Implementer delegation is unavailable because Cursor cannot attest
 writer identity or safely release a child writer.
+
+Codex CLI and desktop use the same shared transport and native hook bundle;
+their surface qualification remains separate. Codex hooks provide bounded
+known-write guardrails and read-only/agent-guided subagent observations, but no
+native arbitrary-question receipt or attested writer delegation.
 
 ## Manual setup
 
@@ -114,6 +121,7 @@ workit/
 │   ├── workit-mcp/         # shared MCP transport
 │   ├── workit-opencode/    # OpenCode plugin
 │   ├── workit-cursor/      # Cursor MCP, hooks, rule, and skills
+│   ├── workit-codex/       # Codex CLI/desktop MCP, hooks, and skills
 │   └── workit-cli/         # CLI setup wizard
 ├── .cursor-plugin/         # Marketplace metadata
 └── test/                   # repository verification

@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "workit": {
+      "command": "node",
+      "args": ["${PLUGIN_ROOT}/dist/launch-mcp.js"],
+      "cwd": "."
+    }
+  }
+}

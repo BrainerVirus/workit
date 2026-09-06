@@ -1,0 +1,20 @@
+{
+  "name": "workit",
+  "version": "0.11.0",
+  "description": "Adaptive engineering workflow rails for Codex",
+  "author": { "name": "BrainerVirus" },
+  "repository": "https://github.com/BrainerVirus/workit",
+  "license": "MIT",
+  "keywords": ["agent", "codex", "mcp", "workflow"],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Workit",
+    "shortDescription": "Adaptive engineering workflow rails for Codex",
+    "longDescription": "Shared task policy, evidence, and truthful host capability reporting for Codex CLI and desktop.",
+    "developerName": "BrainerVirus",
+    "category": "Developer Tools",
+    "capabilities": ["MCP", "Hooks", "Task continuity"],
+    "defaultPrompt": ["Inspect the current Workit task state."]
+  }
+}

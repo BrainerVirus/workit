@@ -20,6 +20,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Codex CLI and desktop integration with a native plugin manifest, shared MCP
+  transport, documented SessionStart/PreToolUse/subagent hooks, and separate
+  CLI/desktop qualification records. Unsupported receipts and writer delegation
+  remain explicitly unavailable.
+
 - Cursor v1 now uses the shared MCP transport, one documented native hook
   executable, and exactly seven canonical adaptive method skills. AskQuestion,
   session-start/compaction, subagent stop identity, arbitrary shell writes, and
