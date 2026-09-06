@@ -225,6 +225,7 @@ const plugin: Plugin = async ({ client, directory }) => {
     state: "running" | "stopped" | "unknown",
     binding?: { taskId: string; workerId: string },
     initial = false,
+    eventInfo?: SessionInfo,
   ) => {
     const store = new TaskStore(directory);
     const listed = store.listTasks();
@@ -259,7 +260,9 @@ const plugin: Plugin = async ({ client, directory }) => {
       parentID = coordinator.handle;
     }
     if (!initial) {
-      const observed = await sessionData(client, sessionID);
+      // OpenCode deletes the session before the follow-up GET can succeed;
+      // only session.deleted may use its full, independently validated payload.
+      const observed = eventInfo ?? (await sessionData(client, sessionID));
       if (!trustedSession(directory, sessionID, observed) || observed.parentID !== parentID) return;
     }
     directChildren.set(sessionID, parentID);
@@ -364,7 +367,14 @@ const plugin: Plugin = async ({ client, directory }) => {
             : event.type === "session.deleted"
               ? "stopped"
               : "unknown";
-      await observeLifecycle(sessionID, binding?.parentID ?? "", state, binding);
+      await observeLifecycle(
+        sessionID,
+        binding?.parentID ?? "",
+        state,
+        binding,
+        false,
+        event.type === "session.deleted" ? (properties.info as SessionInfo | undefined) : undefined,
+      );
     },
     "tool.execute.after": async (input, output) => {
       observeQuestion(receipts, input, output);

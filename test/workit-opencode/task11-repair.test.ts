@@ -265,12 +265,110 @@ test("lifecycle events reconcile a persisted worker after plugin restart", async
     );
     await hooks.event?.({
       event: {
+        type: "session.error",
+        properties: { sessionID: "child", error: { name: "UnknownError", message: "boom" } },
+      },
+    } as never);
+    const uncertain = active.store.readTask(active.task.id);
+    expect(uncertain.ok && uncertain.data.workers[0].data.state).toBe("unknown");
+    await hooks.event?.({
+      event: {
         type: "session.status",
         properties: { sessionID: "child", status: { type: "idle" } },
       },
     } as never);
     const updated = active.store.readTask(active.task.id);
     expect(updated.ok && updated.data.workers[0].data.state).toBe("stopped");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("session.deleted trusts its full session payload when lookup disappears", async () => {
+  const root = mkdtempSync(join(tmpdir(), "workit-task11-deleted-session-"));
+  try {
+    const active = start(root, "coordinator");
+    const assigned = active.core.worker({
+      schemaVersion: 1,
+      action: "assign",
+      taskId: active.task.id,
+      expectedRevision: active.task.revision,
+      expectedWorkspaceRevision: active.workspace.revision,
+      assignment: {
+        role: "reviewer",
+        objective: "review",
+        scope: scope({ paths: ["review"] }),
+        decisionIds: [],
+        requirementIds: [],
+        candidateId: null,
+        stoppingCondition: "report",
+      },
+    });
+    expect(assigned.ok).toBe(true);
+    if (!assigned.ok) throw new Error(assigned.error);
+    const task = active.store.readTask(active.task.id);
+    const workspace = active.store.readWorkspace();
+    if (!task.ok || !workspace.ok || !workspace.data) throw new Error("fixture missing");
+    const observed = new WorkitCore(active.store, {
+      root,
+      caller: { host: "opencode", actor: "coordinator" },
+      capabilities: [],
+      constraints: [],
+      now: () => "2026-01-01T00:00:00Z",
+      nativeWorker: {
+        verifyWorker: ({ expected }) =>
+          success(null, null, {
+            kind: "host_observed",
+            host: "opencode",
+            session: expected.session,
+            workerId: expected.workerId,
+            receipts: [{ kind: "host", host: "opencode", handle: "lifecycle" }],
+          }),
+      },
+    }).observeWorkerLifecycle({
+      taskId: active.task.id,
+      workerId: assigned.data.id,
+      expectedRevision: task.data.revision,
+      expectedWorkspaceRevision: workspace.data.revision,
+      state: "running",
+      session: { kind: "host", host: "opencode", handle: "child" },
+      observation: { event: "created" },
+    });
+    if (!observed.ok) throw new Error(observed.error);
+    const info = {
+      id: "child",
+      projectID: "project",
+      directory: root,
+      parentID: "coordinator",
+      title: "child",
+      version: "1.18.29",
+      time: { created: 0, updated: 0 },
+    };
+    let deleted = false;
+    const hooks = await plugin(
+      input(root, {
+        session: {
+          get: async () => ({ data: deleted ? undefined : info }),
+        },
+      }) as never,
+    );
+    for (const malformed of [
+      { id: "child" },
+      { ...info, directory: join(root, "other") },
+      { ...info, parentID: "other-coordinator" },
+    ]) {
+      await hooks.event?.({
+        event: { type: "session.deleted", properties: { info: malformed } },
+      } as never);
+      const unchanged = active.store.readTask(active.task.id);
+      expect(unchanged.ok && unchanged.data.workers[0].data.state).toBe("running");
+    }
+    deleted = true;
+    await hooks.event?.({
+      event: { type: "session.deleted", properties: { info } },
+    } as never);
+    const stopped = active.store.readTask(active.task.id);
+    expect(stopped.ok && stopped.data.workers[0].data.state).toBe("stopped");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
