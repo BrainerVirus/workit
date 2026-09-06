@@ -212,7 +212,7 @@ test(
       expect(plugin.version, source).toBe(pkg.version);
       expect(plugin.logo, source).toBe("assets/logo.svg");
       expect(plugin.skills, source).toBe("skills/");
-      expect(plugin.rules, source).toBe("rules/");
+      expect(plugin.rules, source).toEqual(["rules/workit-contract.mdc"]);
       expect(plugin.mcpServers, source).toBe("mcp.json");
       expect(plugin.hooks, source).toBe("hooks/hooks-cursor.json");
       for (const field of [plugin.skills, plugin.rules, plugin.mcpServers, plugin.hooks]) {
@@ -247,6 +247,9 @@ test(
     for (const skill of CURSOR_SKILLS) {
       expect(entries, `skills/${skill}/SKILL.md`).toContain(`skills/${skill}/SKILL.md`);
     }
+    expect(
+      [...entries].filter((entry) => entry.startsWith("rules/") && entry.endsWith(".mdc")),
+    ).toEqual(["rules/workit-contract.mdc"]);
   },
   { timeout: 60_000 },
 );
@@ -299,7 +302,7 @@ test(
 );
 
 test(
-  "clean checkout tracks all seven declared skills and four rules (CA-15)",
+  "clean checkout tracks all seven declared skills and the contract rule (CA-15)",
   () => {
     const tracked = spawnSync("git", ["ls-files", "--", "packages/workit-cursor"], {
       cwd: REPO_ROOT,
@@ -310,14 +313,9 @@ test(
     for (const skill of CURSOR_SKILLS) {
       expect(files.has(`packages/workit-cursor/skills/${skill}/SKILL.md`), skill).toBe(true);
     }
-    for (const rule of [
-      "workit-contract.mdc",
-      "cursor-todowrite.mdc",
-      "no-worktrees.mdc",
-      "sdd-docs-path.mdc",
-    ]) {
-      expect(files.has(`packages/workit-cursor/rules/${rule}`), rule).toBe(true);
-    }
+    expect(
+      [...files].filter((file) => file.startsWith("packages/workit-cursor/rules/")).sort(),
+    ).toEqual(["packages/workit-cursor/rules/workit-contract.mdc"]);
   },
   { timeout: 60_000 },
 );

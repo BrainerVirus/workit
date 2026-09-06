@@ -358,6 +358,30 @@ const CONTENT_TREES = [
   "assets/vendor/",
 ];
 
+const RETIRED_CURSOR_ROUTE = /\bworkit_(?:sdd_[a-z0-9_]*|resolve_branch|branch_setup|doctor)\b/;
+
+test("Cursor ships one contract rule and no retired workflow routes", () => {
+  const tarball = byName(packWorkspacePackages(), CURSOR).tarball;
+  const offenders: string[] = [];
+  for (const entry of listTarball(tarball)) {
+    if (!entry.endsWith(".md") && !entry.endsWith(".mdc")) continue;
+    if (
+      !entry.startsWith("rules/") &&
+      !entry.startsWith("skills/") &&
+      !entry.startsWith("assets/skills/") &&
+      !entry.startsWith("assets/templates/") &&
+      entry !== "README.md"
+    )
+      continue;
+    const stale = RETIRED_CURSOR_ROUTE.exec(readTarballFile(tarball, entry));
+    if (stale) offenders.push(`${entry}: ${stale[0]}`);
+  }
+  expect(offenders).toEqual([]);
+  expect(
+    listTarball(tarball).filter((entry) => entry.startsWith("rules/") && entry.endsWith(".mdc")),
+  ).toEqual(["rules/workit-contract.mdc"]);
+});
+
 test("shipped skill/template/vendor markdown uses workit_ tool identifiers with no live workflow_ references", () => {
   const packs = packWorkspacePackages();
   for (const pack of packs) {
@@ -372,7 +396,11 @@ test("shipped skill/template/vendor markdown uses workit_ tool identifiers with 
       if (LIVE_WORKIT_TOOL.test(md)) sawWorkitTool = true;
     }
     expect(offenders, `${pack.packageName} ships stale workflow_ tool references`).toEqual([]);
-    if (pack.packageName !== OPENCODE && pack.packageName !== "@brainervirus/workit-mcp")
+    if (
+      pack.packageName !== OPENCODE &&
+      pack.packageName !== CURSOR &&
+      pack.packageName !== "@brainervirus/workit-mcp"
+    )
       expect(sawWorkitTool, `${pack.packageName} ships renamed workit_ tool references`).toBe(true);
   }
 });

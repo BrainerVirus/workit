@@ -27,7 +27,7 @@
     "assets/",
     "mcp.json",
     ".cursor-plugin/",
-    "rules/",
+    "rules/workit-contract.mdc",
     "skills/",
     "hooks/hooks-cursor.json"
   ],

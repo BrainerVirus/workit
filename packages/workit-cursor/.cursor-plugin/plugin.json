@@ -15,7 +15,7 @@
   "category": "Developer Tools",
   "tags": ["workflow", "agent", "mcp", "pr", "changelog", "commit", "handoff"],
   "skills": "skills/",
-  "rules": "rules/",
+  "rules": ["rules/workit-contract.mdc"],
   "mcpServers": "mcp.json",
   "hooks": "hooks/hooks-cursor.json"
 }
