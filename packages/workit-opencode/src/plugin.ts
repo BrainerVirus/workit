@@ -243,6 +243,7 @@ const plugin: Plugin = async ({ client, directory }) => {
         : [],
     );
     const matches = persisted.filter(({ entry }) => entry.data.session?.kind === "host");
+    if (binding && !initial && matches.length !== 1) return;
     const selected = binding
       ? persisted.find(
           ({ task, entry }) => task.id === binding.taskId && entry.id === binding.workerId,

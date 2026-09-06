@@ -374,6 +374,100 @@ test("session.deleted trusts its full session payload when lookup disappears", a
   }
 });
 
+test("bound lifecycle events reject ambiguous child worker handles", async () => {
+  const root = mkdtempSync(join(tmpdir(), "workit-task11-bound-ambiguity-"));
+  try {
+    const active = start(root, "coordinator");
+    const assign = () => {
+      const task = active.store.readTask(active.task.id);
+      const workspace = active.store.readWorkspace();
+      if (!task.ok || !workspace.ok || !workspace.data) throw new Error("fixture missing");
+      return active.core.worker({
+        schemaVersion: 1,
+        action: "assign",
+        taskId: active.task.id,
+        expectedRevision: task.data.revision,
+        expectedWorkspaceRevision: workspace.data.revision,
+        assignment: {
+          role: "reviewer",
+          objective: "review",
+          scope: scope({ paths: ["review"] }),
+          decisionIds: [],
+          requirementIds: [],
+          candidateId: null,
+          stoppingCondition: "report",
+        },
+      });
+    };
+    const first = assign();
+    expect(first.ok).toBe(true);
+    if (!first.ok) throw new Error(first.error);
+    const info = {
+      id: "child",
+      projectID: "project",
+      directory: root,
+      parentID: "coordinator",
+      title: "child",
+      version: "1.18.29",
+      time: { created: 0, updated: 0 },
+    };
+    const hooks = await plugin(
+      input(root, { session: { get: async () => ({ data: info }) } }) as never,
+    );
+    await hooks.event?.({
+      event: { type: "session.created", properties: { info } },
+    } as never);
+    const firstRunning = active.store.readTask(active.task.id);
+    expect(firstRunning.ok && firstRunning.data.workers[0].data.state).toBe("running");
+
+    const second = assign();
+    expect(second.ok).toBe(true);
+    if (!second.ok) throw new Error(second.error);
+    const task = active.store.readTask(active.task.id);
+    const workspace = active.store.readWorkspace();
+    if (!task.ok || !workspace.ok || !workspace.data) throw new Error("fixture missing");
+    const secondRunning = new WorkitCore(active.store, {
+      root,
+      caller: { host: "opencode", actor: "coordinator" },
+      capabilities: [],
+      constraints: [],
+      now: () => "2026-01-01T00:00:00Z",
+      nativeWorker: {
+        verifyWorker: ({ expected }) =>
+          success(null, null, {
+            kind: "host_observed",
+            host: "opencode",
+            session: expected.session,
+            workerId: expected.workerId,
+            receipts: [{ kind: "host", host: "opencode", handle: "lifecycle" }],
+          }),
+      },
+    }).observeWorkerLifecycle({
+      taskId: active.task.id,
+      workerId: second.data.id,
+      expectedRevision: task.data.revision,
+      expectedWorkspaceRevision: workspace.data.revision,
+      state: "running",
+      session: { kind: "host", host: "opencode", handle: "child" },
+      observation: { event: "created" },
+    });
+    expect(secondRunning.ok).toBe(true);
+    for (const event of [
+      { type: "session.status", properties: { sessionID: "child", status: { type: "idle" } } },
+      { type: "session.error", properties: { sessionID: "child", error: { message: "boom" } } },
+      { type: "session.deleted", properties: { info } },
+    ]) {
+      await hooks.event?.({ event } as never);
+      const unchanged = active.store.readTask(active.task.id);
+      expect(
+        unchanged.ok && unchanged.data.workers.every((worker) => worker.data.state === "running"),
+      ).toBe(true);
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("restart lifecycle events reject a child whose parent changed", async () => {
   const root = mkdtempSync(join(tmpdir(), "workit-task11-parent-drift-"));
   try {
