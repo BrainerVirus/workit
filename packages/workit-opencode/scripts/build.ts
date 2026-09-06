@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 // Build the self-contained OpenCode plugin entry (dist/plugin.js) and copy the
-// deterministic assets root (commands, skills, templates, filtered vendor).
+// deterministic assets root containing the seven canonical method skills.
 // Runs from the repo (where workspace deps resolve); target dir defaults to the
 // package dir and can be overridden for the pack sandbox.
 import { spawnSync } from "node:child_process";

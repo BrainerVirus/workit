@@ -56,7 +56,6 @@ type Receipt = {
   recordedAt: number;
 };
 
-const negative = /^(?:no|nope|nah|reject|cancel|decline|deny|skip|back|not now|not yet)\b/i;
 const freshMs = 5 * 60 * 1000;
 const rejectedDescription = "Reject this decision";
 
@@ -115,7 +114,14 @@ export class NativeReceiptStore {
     output: { metadata?: unknown },
   ): void {
     const answers = (output.metadata as { answers?: unknown } | undefined)?.answers;
-    const answer = Array.isArray(answers) && Array.isArray(answers[0]) ? answers[0][0] : undefined;
+    const answer =
+      Array.isArray(answers) &&
+      answers.length === 1 &&
+      Array.isArray(answers[0]) &&
+      answers[0].length === 1 &&
+      typeof answers[0][0] === "string"
+        ? answers[0][0]
+        : undefined;
     if (typeof answer !== "string" || !answer.trim()) return;
     const args = input.args as { questions?: unknown } | undefined;
     const questions = args?.questions;
@@ -123,7 +129,7 @@ export class NativeReceiptStore {
     const question = questions[0] as Question;
     if (!question || typeof question !== "object") return;
     const purpose = purposeForQuestion(question);
-    if (!purpose || negative.test(answer.trim())) return;
+    if (!purpose) return;
     const options = decisionOptions(question.options);
     if (!options) return;
     const selected = options?.find((option) => option.label === answer);
@@ -289,7 +295,10 @@ const nativeAuthority = (receipts: NativeReceiptStore, actor: string): NativeAut
       caller.host !== "opencode" ||
       caller.actor !== actor ||
       receipt.selectedLabel !== expected.response ||
-      receipt.selectedDescription !== expected.binding.approvedContent ||
+      receipt.selectedDescription !==
+        (expected.response === "approved"
+          ? expected.binding.approvedContent
+          : rejectedDescription) ||
       receipt.decisionPurpose !== expected.purpose ||
       receipt.contentDigest !==
         sha256(
@@ -409,7 +418,10 @@ export const createWorkitTools = ({
           };
           const observed = receipts.consume(context.sessionID, "decision", {
             selectedLabel: decision.response,
-            selectedDescription: decision.binding.approvedContent,
+            selectedDescription:
+              decision.response === "approved"
+                ? decision.binding.approvedContent
+                : rejectedDescription,
             decisionPurpose: decision.purpose,
             contentDigest: sha256(
               canonicalJson(

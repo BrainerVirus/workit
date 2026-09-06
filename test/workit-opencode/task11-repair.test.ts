@@ -434,6 +434,12 @@ test("known bash mutations bind actual targets and reject absolute targets", asy
         { args: { command: "echo changed > src/file.ts && rm -rf /tmp/out" } },
       ),
     ).rejects.toThrow("invalid_input");
+    await expect(
+      hooks["tool.execute.before"]?.(
+        { tool: "write", sessionID: "owner", callID: "out-of-scope" },
+        { args: { filePath: join(root, "docs/outside.ts") } },
+      ),
+    ).rejects.toThrow("permission_denied");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -574,6 +580,30 @@ test("native receipts bind OpenCode option objects by their exact labels", () =>
   expect(receipts.consume("s", "decision").ok).toBe(true);
 });
 
+test("native receipts reject multi-answer question output", () => {
+  const receipts = new NativeReceiptStore();
+  receipts.record(
+    {
+      sessionID: "multi-answer",
+      callID: "decision",
+      args: {
+        questions: [
+          {
+            header: "Workit decision: design",
+            question: "Approve this change?",
+            options: [
+              { label: "approved", description: "Design" },
+              { label: "rejected", description: "Reject this decision" },
+            ],
+          },
+        ],
+      },
+    },
+    { metadata: { answers: [["approved", "rejected"]] } },
+  );
+  expect(receipts.consume("multi-answer", "decision").ok).toBe(false);
+});
+
 test("decision receipts cannot cross core decision purposes", () => {
   const receipts = new NativeReceiptStore();
   receipts.record(
@@ -658,6 +688,64 @@ test("decision receipts bind approved content to the exact native question", asy
       { directory: root, sessionID: "lead" } as never,
     );
     expect(JSON.parse(raw as string)).toMatchObject({ ok: false, code: "permission_denied" });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("rejected native Workit decisions remain exact and host-observed", async () => {
+  const root = mkdtempSync(join(tmpdir(), "workit-task11-decision-rejected-"));
+  try {
+    const active = start(root, "lead");
+    const hooks = await plugin(
+      input(root, {
+        session: { get: async () => ({ data: { id: "lead", directory: root } }) },
+      }) as never,
+    );
+    await hooks["tool.execute.after"]?.(
+      {
+        tool: "question",
+        sessionID: "lead",
+        callID: "rejected-question-call",
+        args: {
+          questions: [
+            {
+              header: "Workit decision: design",
+              question: "Approve the design?",
+              options: [
+                { label: "approved", description: "Design v1" },
+                { label: "rejected", description: "Reject this decision" },
+              ],
+            },
+          ],
+        },
+      },
+      { title: "Workit decision", output: "rejected", metadata: { answers: [["rejected"]] } },
+    );
+    const task = active.store.readTask(active.task.id);
+    const workspace = active.store.readWorkspace();
+    if (!task.ok || !workspace.ok || !workspace.data) throw new Error("fixture missing");
+    const raw = await hooks.tool?.workit_decision.execute(
+      {
+        schemaVersion: 1,
+        action: "record",
+        taskId: active.task.id,
+        expectedRevision: task.data.revision,
+        purpose: "design",
+        binding: {
+          taskId: active.task.id,
+          workspaceId: workspace.data.id,
+          scope: scope(),
+          presented: "Approve the design?",
+          approvedContent: "Design v1",
+          contentRefs: [],
+        },
+        response: "rejected",
+        requirementIds: [],
+      },
+      { directory: root, sessionID: "lead" } as never,
+    );
+    expect(JSON.parse(raw as string).ok).toBe(true);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

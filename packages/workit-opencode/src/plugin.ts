@@ -85,15 +85,36 @@ const shellWritePaths = (command: string): string[] => {
   return [...new Set(paths)];
 };
 
-const writePaths = (tool: string, args: Record<string, unknown>): string[] => {
+const normalizeWritePath = (directory: string, value: string): string => {
+  if (!path.isAbsolute(value)) return value;
+  const relative = path.relative(path.resolve(directory), path.resolve(value));
+  return relative && !relative.startsWith("..") && !path.isAbsolute(relative) ? relative : value;
+};
+
+const patchWritePaths = (patchText: unknown): string[] => {
+  if (typeof patchText !== "string") return [];
+  const paths: string[] = [];
+  for (const line of patchText.split(/\r?\n/)) {
+    const match = line.match(/^\*\*\* (?:Add|Update|Delete) File: (.+)$/);
+    const move = line.match(/^\*\*\* Move to: (.+)$/);
+    if (match?.[1]) paths.push(match[1].trim());
+    else if (move?.[1]) paths.push(move[1].trim());
+  }
+  return paths;
+};
+
+const writePaths = (directory: string, tool: string, args: Record<string, unknown>): string[] => {
   if (tool === "bash") return shellWritePaths(String(args.command ?? ""));
+  if (tool === "apply_patch")
+    return patchWritePaths(args.patchText).map((value) => normalizeWritePath(directory, value));
   const values = [args.path, args.file, args.filename, args.target, args.paths].flatMap((value) =>
     Array.isArray(value) ? value : [value],
   );
+  if (tool === "write" || tool === "edit") values.push(args.filePath);
   const paths = values.filter(
     (value): value is string => typeof value === "string" && value.length > 0,
   );
-  return paths;
+  return paths.map((value) => normalizeWritePath(directory, value));
 };
 
 const enforceWriter = async (
@@ -107,7 +128,7 @@ const enforceWriter = async (
     mutationSurface.has(toolName) ||
     (toolName === "bash" && shellMutation.test(String(args.command ?? "")));
   if (!known) return;
-  const paths = writePaths(toolName, args);
+  const paths = writePaths(directory, toolName, args);
   // A shell command is only in the enforced class when a simple target can be
   // identified. Opaque shell writes remain agent-guided by design.
   if (toolName !== "bash" && paths.length === 0)

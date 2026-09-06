@@ -1,9 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import path from "node:path";
 import {
   getWorkitBootstrap,
   isWorkitBootstrap,
-  loadWorkitBootstrap,
 } from "../../packages/workit-opencode/src/bootstrap";
 import plugin from "../../packages/workit-opencode/src/plugin";
 
@@ -65,15 +63,4 @@ describe("session bootstrap", () => {
     await hooks["experimental.chat.messages.transform"]?.({} as never, output as never);
     expect(output.messages[0].parts.length).toBe(afterFirst);
   });
-});
-
-test("loadWorkitBootstrap returns null for a missing template root", () => {
-  expect(loadWorkitBootstrap("/nonexistent-toolkit-root")).toBeNull();
-});
-
-test("loadWorkitBootstrap reads the real contract template", () => {
-  const contract = loadWorkitBootstrap(
-    path.resolve(import.meta.dir, "..", "..", "packages", "workit-core"),
-  );
-  expect(contract).toContain("**Spec:**");
 });

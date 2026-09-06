@@ -285,7 +285,7 @@ test("direct-child reviewer and implementer contexts are exact and lineage-bound
     await expect(
       reviewerHooks["tool.execute.before"]?.(
         { tool: "write", sessionID: "reviewer-session", callID: "reviewer-write" },
-        { args: { path: "review/file.ts" } },
+        { args: { filePath: join(root, "review/file.ts") } },
       ),
     ).rejects.toThrow("read-only worker");
 
@@ -402,6 +402,66 @@ test("known write surfaces enforce the current writer while unknown shell writes
         { args: { command: 'python -c \'open("src/file.ts", "w").write("x")\'' } },
       ),
     ).resolves.toBeUndefined();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("OpenCode native write shapes normalize filePath and apply_patch targets", async () => {
+  const root = mkdtempSync(join(tmpdir(), "workit-opencode-native-writes-"));
+  try {
+    const active = activeTask(root, "owner");
+    const acquired = active.core.writer({
+      schemaVersion: 1,
+      action: "acquire",
+      taskId: active.task.id,
+      expectedRevision: active.task.revision,
+      expectedWorkspaceRevision: active.workspace.revision,
+      workerId: null,
+    });
+    expect(acquired.ok).toBe(true);
+    const hooks = await plugin({
+      directory: root,
+      worktree: root,
+      serverUrl: new URL("http://localhost"),
+      client: { session: { get: async () => ({ data: { id: "owner", directory: root } }) } },
+    } as never);
+    await expect(
+      hooks["tool.execute.before"]?.(
+        { tool: "write", sessionID: "owner", callID: "write" },
+        { args: { filePath: join(root, "src/file.ts") } },
+      ),
+    ).resolves.toBeUndefined();
+    await expect(
+      hooks["tool.execute.before"]?.(
+        { tool: "edit", sessionID: "owner", callID: "edit" },
+        { args: { filePath: join(root, "src/file.ts") } },
+      ),
+    ).resolves.toBeUndefined();
+    await expect(
+      hooks["tool.execute.before"]?.(
+        { tool: "apply_patch", sessionID: "owner", callID: "patch" },
+        { args: { patchText: "*** Begin Patch\n*** Update File: src/file.ts\n*** End Patch" } },
+      ),
+    ).resolves.toBeUndefined();
+    await expect(
+      hooks["tool.execute.before"]?.(
+        { tool: "apply_patch", sessionID: "owner", callID: "move" },
+        { args: { patchText: "*** Begin Patch\n*** Move to: src/renamed.ts\n*** End Patch" } },
+      ),
+    ).resolves.toBeUndefined();
+    await expect(
+      hooks["tool.execute.before"]?.(
+        { tool: "write", sessionID: "owner", callID: "outside" },
+        { args: { filePath: "/tmp/outside.ts" } },
+      ),
+    ).rejects.toThrow("invalid_input");
+    await expect(
+      hooks["tool.execute.before"]?.(
+        { tool: "apply_patch", sessionID: "owner", callID: "opaque" },
+        { args: { patchText: "*** Begin Patch\nplain content\n*** End Patch" } },
+      ),
+    ).rejects.toThrow("invalid_input");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
