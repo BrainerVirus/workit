@@ -18,7 +18,7 @@ const repository = (branch: string) => {
   return { root, git };
 };
 
-test("native tools expose the common workit_* namespace with OpenCode-only commit/handoff_session", () => {
+test("native tools expose exactly the eight OpenCode operation families", () => {
   assertOpencodeWorkitNamespace();
 });
 
