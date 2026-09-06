@@ -15,7 +15,19 @@ export const compactContextFor = (root: string, sessionID: string): string | nul
     const listed = store.listTasks();
     if (!listed.ok) return null;
     const task = listed.data
-      .filter((entry) => entry.status !== "closed")
+      .filter(
+        (entry) =>
+          entry.status !== "closed" &&
+          ((entry.intent.provenance.session?.kind === "host" &&
+            entry.intent.provenance.session.host === "opencode" &&
+            entry.intent.provenance.session.handle === sessionID) ||
+            entry.workers.some(
+              (worker) =>
+                worker.data.session?.kind === "host" &&
+                worker.data.session.host === "opencode" &&
+                worker.data.session.handle === sessionID,
+            )),
+      )
       .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0];
     if (!task) return null;
     const core = new WorkitCore(store, {

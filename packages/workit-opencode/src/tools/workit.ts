@@ -4,6 +4,7 @@ import {
   TaskStore,
   canonicalJson,
   failure,
+  operationSchemas,
   parseOperation,
   sha256,
   success,
@@ -33,6 +34,8 @@ type Question = {
   options?: unknown;
 };
 
+type QuestionOption = string | { label?: unknown; description?: unknown };
+
 type Receipt = {
   sessionID: string;
   callID: string;
@@ -46,13 +49,30 @@ type Receipt = {
 const negative = /^(?:no|nope|nah|reject|cancel|decline|deny|skip|back|not now|not yet)\b/i;
 const freshMs = 5 * 60 * 1000;
 
+const optionLabels = (options: unknown): string[] =>
+  Array.isArray(options)
+    ? options.flatMap((option: QuestionOption) => {
+        if (typeof option === "string") return [option];
+        return option && typeof option === "object" && typeof option.label === "string"
+          ? [option.label]
+          : [];
+      })
+    : [];
+
 const purposeForQuestion = (question: Question): Receipt["purpose"] | undefined => {
-  const text = `${String(question.header ?? "")} ${String(question.question ?? "")}`.toLowerCase();
-  if (/\bdecision\b|\bapprove\b|\bapproval\b|\bconsent\b/.test(text)) return "decision";
-  if (/\bworker\b|\bcancel\b/.test(text)) return "worker";
-  if (/\bresume\b/.test(text)) return "resume";
-  if (/\bpause\b/.test(text)) return "pause";
-  if (/\bcomplete\b/.test(text)) return "complete";
+  const header = typeof question.header === "string" ? question.header.trim() : "";
+  const options = optionLabels(question.options);
+  if (
+    header === "Decision" &&
+    options.length === 2 &&
+    options.includes("approved") &&
+    options.includes("rejected")
+  )
+    return "decision";
+  // Kept for the legacy one-line approval prompt shipped by the contract. It
+  // is exact; generic approval language is intentionally not classified.
+  if (header === "" && question.question === "Approve this decision?" && options.length === 1)
+    return "decision";
   return undefined;
 };
 
@@ -75,6 +95,8 @@ export class NativeReceiptStore {
     if (!question || typeof question !== "object") return;
     const purpose = purposeForQuestion(question);
     if (!purpose || negative.test(answer.trim())) return;
+    const options = optionLabels(question.options);
+    if (!options.includes(answer)) return;
     const content = {
       header: typeof question.header === "string" ? question.header : "",
       question: typeof question.question === "string" ? question.question : "",
@@ -140,47 +162,25 @@ export class NativeReceiptStore {
   }
 }
 
-const operationShape = tool.schema
-  .object({
-    schemaVersion: tool.schema.literal(1),
-    action: tool.schema.string(),
-    taskId: tool.schema.string().optional(),
-    expectedRevision: tool.schema.string().optional(),
-    expectedWorkspaceRevision: tool.schema
-      .union([tool.schema.string(), tool.schema.null()])
-      .optional(),
-    intent: tool.schema.any().optional(),
-    progress: tool.schema.any().optional(),
-    reason: tool.schema.string().optional(),
-    view: tool.schema.string().optional(),
-    assessment: tool.schema.any().optional(),
-    evidence: tool.schema.any().optional(),
-    claim: tool.schema.string().optional(),
-    consequence: tool.schema.string().optional(),
-    scope: tool.schema.any().optional(),
-    candidateId: tool.schema.any().optional(),
-    refs: tool.schema.any().optional(),
-    findingId: tool.schema.string().optional(),
-    disposition: tool.schema.string().optional(),
-    evidenceIds: tool.schema.any().optional(),
-    decisionIds: tool.schema.any().optional(),
-    purpose: tool.schema.string().optional(),
-    binding: tool.schema.any().optional(),
-    response: tool.schema.string().optional(),
-    requirementIds: tool.schema.any().optional(),
-    decisionId: tool.schema.string().optional(),
-    assignment: tool.schema.any().optional(),
-    workerId: tool.schema.any().optional(),
-    report: tool.schema.any().optional(),
-    outcome: tool.schema.string().optional(),
-    summary: tool.schema.string().optional(),
-    bundle: tool.schema.any().optional(),
-    authorityRefs: tool.schema.any().optional(),
-    target: tool.schema.string().optional(),
-    expectedBytes: tool.schema.string().optional(),
-    snapshotDigest: tool.schema.string().optional(),
-  })
-  .passthrough().shape;
+const operationShapeFor = (family: OperationFamily): Record<string, any> => {
+  const options = (
+    operationSchemas[family] as unknown as {
+      options: Array<{ shape: Record<string, any> }>;
+    }
+  ).options;
+  const keys = new Set(options.flatMap((option) => Object.keys(option.shape)));
+  const shape: Record<string, any> = {};
+  for (const key of keys) {
+    const schemas = options.map((option) => option.shape[key]).filter(Boolean);
+    const schema =
+      schemas.length === 1 ? schemas[0] : tool.schema.union(schemas as [any, any, ...any[]]);
+    shape[key] =
+      options.every((option) => key in option.shape) && !schema.isOptional()
+        ? schema
+        : schema.optional();
+  }
+  return shape;
+};
 
 const output = (value: unknown): string => JSON.stringify(value, null, 2);
 
@@ -249,7 +249,10 @@ const nativeAuthority = (receipts: NativeReceiptStore, actor: string): NativeAut
   verifyAction: () => failure("permission_denied", "native action observation is unavailable"),
 });
 
-const nativeWorker = (directChildren: DirectChildren, actor: string): NativeWorkerVerifier => ({
+export const nativeWorkerFor = (
+  directChildren: DirectChildren,
+  actor: string,
+): NativeWorkerVerifier => ({
   verifyWorker: ({ expected, caller }) => {
     if (caller.host !== "opencode" || caller.actor !== actor || !expected.session)
       return failure("permission_denied", "native worker observation is unavailable");
@@ -302,7 +305,7 @@ export const createWorkitTools = ({
   const make = (family: OperationFamily) =>
     tool({
       description: `Workit ${family} operations backed by the shared task contract.`,
-      args: operationShape,
+      args: operationShapeFor(family),
       execute: async (args, context) => {
         const parsed = parseOperation(family, args);
         if (!parsed.ok) return output(parsed);
@@ -323,7 +326,7 @@ export const createWorkitTools = ({
           now: () => new Date().toISOString().replace(/\.\d{3}Z$/, "Z"),
           workerId,
           nativeAuthority: nativeAuthority(receipts, context.sessionID),
-          nativeWorker: nativeWorker(directChildren, context.sessionID),
+          nativeWorker: nativeWorkerFor(directChildren, context.sessionID),
         };
         const core = new WorkitCore(store, operationContext);
         let result: Result<unknown>;

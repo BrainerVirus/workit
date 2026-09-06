@@ -1,13 +1,19 @@
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Plugin } from "@opencode-ai/plugin";
-import { TaskStore } from "@brainervirus/workit-core/src/core";
+import { TaskStore, WorkitCore } from "@brainervirus/workit-core/src/core";
 import { assertProductWriteAllowed } from "@brainervirus/workit-core/src/core/workers";
 import { createLogger } from "@brainervirus/workit-core/src/core/logger";
 import { EVENT, errorDetail } from "@brainervirus/workit-core/src/core/boundary";
 import { getWorkitBootstrap } from "./bootstrap";
-import { createWorkitTools, NativeReceiptStore, observeQuestion } from "./tools/workit";
+import {
+  createWorkitTools,
+  NativeReceiptStore,
+  nativeWorkerFor,
+  observeQuestion,
+  type DirectChildren,
+} from "./tools/workit";
 import { compactContextFor, loadProvenance, workerContextFor } from "./runtime";
 
 const root = fileURLToPath(new URL("../assets/", import.meta.url));
@@ -18,11 +24,11 @@ const logger = createLogger({
 
 type SessionClient = {
   session?: {
-    get?: (input: {
-      path: { id: string };
-    }) => Promise<{ data?: { parentID?: string; directory?: string } }>;
+    get?: (input: { path: { id: string } }) => Promise<{ data?: SessionInfo }>;
   };
 };
+
+type SessionInfo = { id?: string; parentID?: string; directory?: string };
 
 const sessionData = async (client: SessionClient | undefined, sessionID: string) => {
   if (!client) return {};
@@ -35,17 +41,56 @@ const sessionData = async (client: SessionClient | undefined, sessionID: string)
 
 const mutationSurface = new Set(["write", "edit", "apply_patch", "patch"]);
 const shellMutation =
-  /(?:^|[;&|]\s*|\s)(?:rm|mv|cp|mkdir|rmdir|touch|install|tee|chmod|chown|sed|perl|git\s+(?:add|commit|clean|reset|checkout|switch|merge|rebase|push|pull|apply))\b|>>?|<<?/;
+  /(?:^|[;&|]\s*|\s)(?:rm|mv|cp|mkdir|rmdir|touch|install|tee|chmod|chown|git\s+add)\b|>>?|<<?/;
+
+const unquote = (value: string): string => value.replace(/^(["'])(.*)\1$/, "$2");
+
+const shellWritePaths = (command: string): string[] => {
+  const paths: string[] = [];
+  for (const match of command.matchAll(/(?:^|\s)(?:>>|>)\s*([^\s;&|]+)/g))
+    paths.push(unquote(match[1]));
+  const tokens = command
+    .split(/[\s;&|]+/)
+    .map(unquote)
+    .filter(Boolean);
+  const commandNames = new Set([
+    "rm",
+    "mv",
+    "cp",
+    "mkdir",
+    "rmdir",
+    "touch",
+    "install",
+    "tee",
+    "chmod",
+    "chown",
+  ]);
+  const head = tokens[0]?.split("/").pop() ?? "";
+  if (commandNames.has(head))
+    paths.push(...tokens.slice(1).filter((token) => !token.startsWith("-") && token !== "--"));
+  if (head === "git" && tokens[1] === "add")
+    paths.push(...tokens.slice(2).filter((token) => !token.startsWith("-") && token !== "--"));
+  return [...new Set(paths)];
+};
 
 const writePaths = (tool: string, args: Record<string, unknown>): string[] => {
-  if (tool === "bash") return ["."];
+  if (tool === "bash") return shellWritePaths(String(args.command ?? ""));
   const values = [args.path, args.file, args.filename, args.target, args.paths].flatMap((value) =>
     Array.isArray(value) ? value : [value],
   );
   const paths = values.filter(
     (value): value is string => typeof value === "string" && value.length > 0,
   );
-  return paths.length ? paths : ["."];
+  return paths;
+};
+
+const sameWorkspace = (expected: string, observed: unknown): boolean => {
+  if (typeof observed !== "string" || !observed) return false;
+  try {
+    return realpathSync(expected) === realpathSync(observed);
+  } catch {
+    return path.resolve(expected) === path.resolve(observed);
+  }
 };
 
 const enforceWriter = async (
@@ -59,34 +104,48 @@ const enforceWriter = async (
     mutationSurface.has(toolName) ||
     (toolName === "bash" && shellMutation.test(String(args.command ?? "")));
   if (!known) return;
+  const paths = writePaths(toolName, args);
+  // A shell command is only in the enforced class when a simple target can be
+  // identified. Opaque shell writes remain agent-guided by design.
+  if (toolName !== "bash" && paths.length === 0)
+    throw new Error("invalid_input: product write target is required");
+  if (toolName === "bash" && paths.length === 0) return;
   const store = new TaskStore(directory);
   const workspace = store.readWorkspace();
   if (!workspace.ok) throw new Error(`${workspace.code}: ${workspace.error}`);
+  if (!workspace.data) return;
   const listed = store.listTasks();
   if (!listed.ok) throw new Error(`${listed.code}: ${listed.error}`);
-  const worker = listed.data
-    .flatMap((task) => task.workers)
-    .find(
-      (entry) => entry.data.session?.kind === "host" && entry.data.session.handle === sessionID,
-    );
-  if (worker && worker.data.assignment.role !== "implementer")
-    throw new Error("permission_denied: read-only worker cannot write product files");
-  if (!workspace.data?.writer) return;
-  const task = store.readTask(workspace.data.writer.owner.taskId);
-  if (!task.ok) throw new Error(`${task.code}: ${task.error}`);
-  if (workspace.data.writer.state === "uncertain")
-    throw new Error("recovery_required: checkout writer requires recovery");
-  if (
-    workspace.data.writer.owner.session.kind !== "host" ||
-    workspace.data.writer.owner.session.handle !== sessionID
-  )
-    throw new Error("writer_conflict: checkout is owned by another validated actor");
   const observed = await sessionData(client, sessionID);
   if (observed === null)
     throw new Error("permission_denied: OpenCode session observation unavailable");
+  if (typeof observed.directory === "string" && !sameWorkspace(directory, observed.directory))
+    throw new Error("permission_denied: OpenCode session directory does not match workspace");
+  const workerMatches = listed.data.flatMap((task) =>
+    task.status === "active"
+      ? task.workers
+          .filter(
+            (entry) =>
+              entry.data.session?.kind === "host" && entry.data.session.handle === sessionID,
+          )
+          .map((entry) => ({ task, entry }))
+      : [],
+  );
+  const activeTasks = listed.data.filter(
+    (task) => task.status === "active" && task.workspaceId === workspace.data?.id,
+  );
+  const task =
+    (workspace.data.writer &&
+      activeTasks.find((candidate) => candidate.id === workspace.data?.writer?.owner.taskId)) ||
+    (workerMatches.length === 1 ? workerMatches[0].task : null) ||
+    (activeTasks.length === 1 ? activeTasks[0] : null);
+  if (!task) return;
+  const worker = workerMatches.find((candidate) => candidate.task.id === task.id)?.entry;
+  if (worker && worker.data.assignment.role !== "implementer")
+    throw new Error("permission_denied: read-only worker cannot write product files");
   const workerId = worker?.id ?? null;
   const result = assertProductWriteAllowed({
-    task: task.data,
+    task,
     workspace: workspace.data,
     caller: {
       host: "opencode",
@@ -94,7 +153,7 @@ const enforceWriter = async (
       session: { kind: "host", host: "opencode", handle: sessionID },
       workerId,
     },
-    paths: writePaths(toolName, args),
+    paths,
     store,
   });
   if (!result.ok) throw new Error(`${result.code}: ${result.error}`);
@@ -102,10 +161,15 @@ const enforceWriter = async (
 
 const plugin: Plugin = async ({ client, directory }) => {
   const receipts = new NativeReceiptStore();
-  const directChildren = new Map<string, string>();
-  const uncertainWorkers = new Set<string>();
+  const directChildren: DirectChildren = new Map();
+  const lifecycleBindings = new Map<
+    string,
+    { parentID: string; taskId: string; workerId: string }
+  >();
+  // Fallback only for a task result that names no session. Once a trusted
+  // session exists, lifecycle authority is persisted in core state.
+  const unresolvedTaskLaunches = new Set<string>();
   const bootstrapped = new Set<string>();
-  const compacted = new Set<string>();
   try {
     logger.info(EVENT.initialization, { host: "opencode", plugin_root: root });
     logger.info(
@@ -116,8 +180,127 @@ const plugin: Plugin = async ({ client, directory }) => {
     logger.warn(EVENT.hooks, { boundary: "initialization", ...errorDetail(error) });
   }
   const tools = createWorkitTools({ client, receipts, directChildren });
+  const observeLifecycle = async (
+    sessionID: string,
+    parentID: string,
+    state: "running" | "stopped" | "unknown",
+    binding?: { taskId: string; workerId: string },
+  ) => {
+    const store = new TaskStore(directory);
+    const listed = store.listTasks();
+    const workspace = store.readWorkspace();
+    if (!listed.ok || !workspace.ok || !workspace.data) return;
+    const persisted = listed.data.flatMap((task) =>
+      task.status === "active"
+        ? task.workers
+            .filter(
+              (entry) =>
+                entry.id === binding?.workerId ||
+                (entry.data.session?.kind === "host" && entry.data.session.handle === sessionID),
+            )
+            .map((entry) => ({ task, entry }))
+        : [],
+    );
+    const selected = binding
+      ? persisted.find(
+          ({ task, entry }) => task.id === binding.taskId && entry.id === binding.workerId,
+        )
+      : persisted.find(({ entry }) => entry.data.session?.kind === "host");
+    if (!selected) return;
+    if (!binding && selected.entry.provenance.session?.kind === "host") {
+      parentID = selected.entry.provenance.session.handle;
+      directChildren.set(sessionID, parentID);
+    }
+    const core = new WorkitCore(store, {
+      root: directory,
+      caller: { host: "opencode", actor: parentID },
+      capabilities: [],
+      constraints: [],
+      now: () => new Date().toISOString().replace(/\.\d{3}Z$/, "Z"),
+      nativeWorker: nativeWorkerFor(directChildren, parentID),
+    });
+    const result = core.observeWorkerLifecycle({
+      taskId: selected.task.id,
+      workerId: selected.entry.id,
+      expectedRevision: selected.task.revision,
+      expectedWorkspaceRevision: workspace.data.revision,
+      state,
+      session: { kind: "host", host: "opencode", handle: sessionID },
+      observation: { event: state, sessionID },
+    });
+    if (result.ok) {
+      lifecycleBindings.set(sessionID, {
+        parentID,
+        taskId: selected.task.id,
+        workerId: selected.entry.id,
+      });
+    }
+  };
+  const bindCreatedSession = async (info: SessionInfo) => {
+    if (
+      typeof info.id !== "string" ||
+      typeof info.parentID !== "string" ||
+      !sameWorkspace(directory, info.directory)
+    )
+      return;
+    const store = new TaskStore(directory);
+    const workspace = store.readWorkspace();
+    const listed = store.listTasks();
+    if (!workspace.ok || !workspace.data || !listed.ok) return;
+    const candidates = listed.data.flatMap((task) =>
+      task.status === "active" && task.workspaceId === workspace.data?.id
+        ? task.workers
+            .filter(
+              (entry) =>
+                entry.data.state === "assigned" &&
+                entry.data.session === null &&
+                entry.provenance.session?.kind === "host" &&
+                entry.provenance.session.host === "opencode" &&
+                entry.provenance.session.handle === info.parentID,
+            )
+            .map((entry) => ({ task, entry }))
+        : [],
+    );
+    if (candidates.length !== 1) return;
+    directChildren.set(info.id, info.parentID);
+    await observeLifecycle(info.id, info.parentID, "running", {
+      taskId: candidates[0].task.id,
+      workerId: candidates[0].entry.id,
+    });
+  };
   return {
     tool: tools,
+    event: async ({ event }) => {
+      if (event.type === "session.created") {
+        await bindCreatedSession(event.properties.info);
+        return;
+      }
+      const properties = event.properties as {
+        sessionID?: unknown;
+        info?: { id?: unknown };
+      };
+      const sessionID =
+        typeof properties.sessionID === "string"
+          ? properties.sessionID
+          : typeof properties.info?.id === "string"
+            ? properties.info.id
+            : undefined;
+      if (typeof sessionID !== "string") return;
+      const binding = lifecycleBindings.get(sessionID);
+      const state =
+        event.type === "session.status"
+          ? event.properties.status.type === "busy"
+            ? "running"
+            : event.properties.status.type === "idle"
+              ? "stopped"
+              : "unknown"
+          : event.type === "session.idle"
+            ? "stopped"
+            : event.type === "session.deleted"
+              ? "stopped"
+              : "unknown";
+      await observeLifecycle(sessionID, binding?.parentID ?? "", state, binding);
+    },
     "tool.execute.after": async (input, output) => {
       observeQuestion(receipts, input, output);
       if (input.tool === "task") {
@@ -129,18 +312,27 @@ const plugin: Plugin = async ({ client, directory }) => {
           const childSession = await sessionData(client, child);
           if (childSession?.parentID === input.sessionID)
             directChildren.set(child, input.sessionID);
-          else uncertainWorkers.add(child);
         }
         const state = String(
           metadata?.status ?? metadata?.state ?? output.output ?? "",
         ).toLowerCase();
         if (/(?:cancel|interrupt|unknown|uncertain)/.test(state))
-          uncertainWorkers.add(typeof child === "string" ? child : input.callID);
+          unresolvedTaskLaunches.add(input.sessionID);
       }
     },
     "tool.execute.before": async (input, output) => {
       if (input.tool === "task") {
-        if (uncertainWorkers.size > 0)
+        const listed = new TaskStore(directory).listTasks();
+        if (
+          listed.ok &&
+          listed.data.some((task) =>
+            task.workers.some(
+              (worker) => worker.data.state === "cancelling" || worker.data.state === "unknown",
+            ),
+          )
+        )
+          throw new Error("recovery_required: a cancelled worker remains uncertain");
+        if (unresolvedTaskLaunches.delete(input.sessionID))
           throw new Error("recovery_required: a cancelled worker remains uncertain");
         const session = await sessionData(client, input.sessionID);
         if (!client || session === null || session.parentID)
@@ -197,15 +389,10 @@ const plugin: Plugin = async ({ client, directory }) => {
       }
     },
     "experimental.session.compacting": async ({ sessionID }, output) => {
-      if (compacted.has(sessionID)) return;
       const context = compactContextFor(directory, sessionID);
       if (context) {
-        if (output.context.some((entry) => entry.includes("<workit-task-context>"))) {
-          compacted.add(sessionID);
-          return;
-        }
+        if (output.context.some((entry) => entry.includes("<workit-task-context>"))) return;
         output.context.push(`<workit-task-context>${context}</workit-task-context>`);
-        compacted.add(sessionID);
       }
     },
     "experimental.chat.messages.transform": async (_input, output) => {
@@ -215,6 +402,7 @@ const plugin: Plugin = async ({ client, directory }) => {
       if (bootstrapped.has(sessionID)) return;
       const anchor = first.parts[0];
       const session = await sessionData(client, sessionID);
+      if (session && session.directory && !sameWorkspace(directory, session.directory)) return;
       const workerContext = session?.parentID
         ? workerContextFor(directory, sessionID, session.parentID, directChildren)
         : null;
@@ -250,7 +438,7 @@ const plugin: Plugin = async ({ client, directory }) => {
           text: `<workit-worker-context>${workerContext}</workit-worker-context>`,
         } as never);
       }
-      bootstrapped.add(sessionID);
+      if (session !== null) bootstrapped.add(sessionID);
     },
   };
 };

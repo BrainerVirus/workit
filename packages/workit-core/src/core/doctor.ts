@@ -302,7 +302,9 @@ const checkVersions = (res: Resolved): DoctorCheck => {
     problems.push(`adapters pin different core versions: ${[...refs].join(", ")}`);
   }
   const opencodePkg = readJson(path.join(res.dev, "packages/workit-opencode/package.json"));
-  const sdk = opencodePkg?.dependencies?.["@opencode-ai/plugin"];
+  const sdk =
+    opencodePkg?.dependencies?.["@opencode-ai/plugin"] ??
+    opencodePkg?.devDependencies?.["@opencode-ai/plugin"];
   const sdkVersion = typeof sdk === "string" ? (sdk.match(/^\d+(?:\.\d+){0,2}/) ?? [])[0] : null;
   if (sdkVersion && !semverAtLeast(sdkVersion, SUPPORT_MATRIX.opencode.minimum)) {
     problems.push(
