@@ -23,8 +23,8 @@ Debugging is investigation, not a fast symptom patch. Use this method when the
    and stale conclusions rather than assuming the first patch worked.
 
 Honor task status, scope, revisions, and native authority gates. Do not bypass
-   them for an incident, create a second lifecycle, or claim a fix from a green
-   command that did not exercise the affected behavior.
+them for an incident, create a second lifecycle, or claim a fix from a green
+command that did not exercise the affected behavior.
 
 When the host reports writer capability unavailable, do not mutate or delegate
 mutation. Continue inline only if policy and lead authority permit it;
@@ -32,8 +32,8 @@ otherwise report the capability gap.
 
 ## Common mistakes
 
-| Mistake | Correction |
-| --- | --- |
-| Patching the nearest stack frame | Trace the input, callers, and shared cause. |
-| Reproducing only after editing | Capture the failure before mutation. |
+| Mistake                               | Correction                                             |
+| ------------------------------------- | ------------------------------------------------------ |
+| Patching the nearest stack frame      | Trace the input, callers, and shared cause.            |
+| Reproducing only after editing        | Capture the failure before mutation.                   |
 | Treating one passing command as proof | Verify the affected behavior and record real evidence. |

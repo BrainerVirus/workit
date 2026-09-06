@@ -33,8 +33,8 @@ otherwise report the capability gap.
 
 ## Common mistakes
 
-| Mistake | Correction |
-| --- | --- |
-| “The helper timed out, so the writer is free” | Observe exit or perform explicit recovery. |
-| Letting a helper approve its own exception | Return the decision to the lead/user. |
+| Mistake                                        | Correction                                          |
+| ---------------------------------------------- | --------------------------------------------------- |
+| “The helper timed out, so the writer is free”  | Observe exit or perform explicit recovery.          |
+| Letting a helper approve its own exception     | Return the decision to the lead/user.               |
 | Running a build while another writer is active | Treat builds and tests that mutate state as writes. |
