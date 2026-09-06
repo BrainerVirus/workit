@@ -84,6 +84,41 @@ test("shell hooks resolve cwd and deny any outside-root write operand", () => {
   ).toMatchObject({ permission: "deny" });
 });
 
+test("shell hooks reject unavailable cwd and attached output redirections", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "workit-cursor-hook-"));
+  for (const command of [">/tmp/out", "2>/tmp/err", "2>&1"]) {
+    expect(
+      handleCursorHook({
+        hook_event_name: "beforeShellExecution",
+        conversation_id: "conv-1",
+        workspace_roots: [root],
+        cwd: root,
+        command,
+      }),
+    ).toMatchObject({ permission: "deny" });
+  }
+  for (const command of [">>file", "&>file"]) {
+    expect(
+      handleCursorHook({
+        hook_event_name: "beforeShellExecution",
+        conversation_id: "conv-1",
+        workspace_roots: [root],
+        cwd: root,
+        command,
+      }),
+    ).toEqual({ permission: "allow" });
+  }
+  expect(
+    handleCursorHook({
+      hook_event_name: "beforeShellExecution",
+      conversation_id: "conv-1",
+      workspace_roots: [root],
+      cwd: path.join(root, "missing"),
+      command: "touch file",
+    }),
+  ).toMatchObject({ permission: "deny" });
+});
+
 test("blocking shell hooks deny ambiguous writes while advisory events stay nonblocking", () => {
   expect(
     handleCursorHook({
@@ -135,7 +170,7 @@ test("subagent starts are assigned once inside an active task and stops without 
     parent_conversation_id: "parent",
     subagent_id: "child",
     workspace_roots: [root],
-    task: "implement the bounded change",
+    task: "[workit-role: implementer] implement the bounded change",
   } as const;
   expect(handleCursorHook(input)).toMatchObject({ permission: "allow" });
   expect(handleCursorHook(input)).toMatchObject({ permission: "deny" });
@@ -151,6 +186,111 @@ test("subagent starts are assigned once inside an active task and stops without 
     }),
   ).toEqual({});
   expect(new TaskStore(root).listTasks()).toEqual(beforeStop);
+});
+
+test("active native subagents require explicit Workit roles and preserve reviewer scope", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "workit-cursor-hook-"));
+  const core = new WorkitCore(new TaskStore(root), {
+    root,
+    caller: caller({ host: "cursor", actor: "parent" }),
+    capabilities: [],
+    constraints: [],
+    now: "2026-01-01T00:00:00Z",
+  });
+  expect(core.task(taskStartRequest()).ok).toBe(true);
+  const base = {
+    hook_event_name: "subagentStart" as const,
+    conversation_id: "parent",
+    parent_conversation_id: "parent",
+    workspace_roots: [root],
+  };
+  expect(
+    handleCursorHook({ ...base, subagent_id: "missing-role", subagent_type: "generalPurpose" }),
+  ).toMatchObject({ permission: "deny" });
+  expect(
+    handleCursorHook({
+      ...base,
+      subagent_id: "reviewer",
+      subagent_type: "generalPurpose",
+      task: "[workit-role: reviewer] inspect the bounded change",
+    }),
+  ).toMatchObject({ permission: "allow" });
+  expect(
+    handleCursorHook({
+      ...base,
+      subagent_id: "implementer",
+      subagent_type: "generalPurpose",
+      task: "[workit-role: implementer] implement the bounded change",
+    }),
+  ).toMatchObject({ permission: "allow" });
+  const task = new TaskStore(root).listTasks();
+  expect(task.ok).toBe(true);
+  if (!task.ok) return;
+  expect(task.data[0]?.workers.map((worker) => worker.data.assignment.role)).toEqual([
+    "reviewer",
+    "implementer",
+  ]);
+  const store = new TaskStore(root);
+  const workspace = store.readWorkspace();
+  expect(workspace.ok).toBe(true);
+  if (!workspace.ok || !workspace.data) return;
+  const active = task.data[0]!;
+  const reviewer = active.workers[0]!;
+  const reviewerCore = new WorkitCore(store, {
+    root,
+    caller: caller({ host: "cursor", actor: "reviewer" }),
+    workerId: reviewer.id,
+    capabilities: [],
+    constraints: [],
+    now: "2026-01-01T00:00:00Z",
+  });
+  expect(
+    reviewerCore.writer({
+      schemaVersion: 1,
+      action: "acquire",
+      taskId: active.id,
+      expectedRevision: active.revision,
+      expectedWorkspaceRevision: workspace.data.revision,
+      workerId: reviewer.id,
+    }),
+  ).toMatchObject({ ok: false, code: "permission_denied" });
+  const implementer = active.workers[1]!;
+  const implementerCore = new WorkitCore(store, {
+    root,
+    caller: caller({ host: "cursor", actor: "implementer" }),
+    workerId: implementer.id,
+    capabilities: [],
+    constraints: [],
+    now: "2026-01-01T00:00:00Z",
+  });
+  expect(
+    implementerCore.writer({
+      schemaVersion: 1,
+      action: "acquire",
+      taskId: active.id,
+      expectedRevision: active.revision,
+      expectedWorkspaceRevision: workspace.data.revision,
+      workerId: implementer.id,
+    }).ok,
+  ).toBe(true);
+  expect(
+    handleCursorHook({
+      hook_event_name: "preToolUse",
+      conversation_id: "reviewer",
+      workspace_roots: [root],
+      tool_name: "Write",
+      tool_input: { file_path: "src/in-scope.ts" },
+    }),
+  ).toMatchObject({ permission: "deny" });
+  expect(
+    handleCursorHook({
+      hook_event_name: "preToolUse",
+      conversation_id: "implementer",
+      workspace_roots: [root],
+      tool_name: "Write",
+      tool_input: { file_path: "src/in-scope.ts" },
+    }),
+  ).toMatchObject({ permission: "allow" });
 });
 
 test("subagent hooks remain transparent when no Workit task is active", () => {

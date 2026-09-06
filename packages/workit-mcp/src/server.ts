@@ -194,11 +194,12 @@ export function createMcpServer(host: McpHost, contextProvider: NativeContextPro
 
 const defaultContextProvider = (host: McpHost): NativeContextProvider => {
   const root = process.env.WORKFLOW_WORKSPACE_ROOT ?? process.cwd();
-  const actor = process.env.WORKFLOW_SESSION_ID ?? "mcp";
+  const actor = process.env.WORKFLOW_SESSION_ID ?? "";
   return {
     current: async () => ({
       root,
       caller: { host, actor },
+      callerAttested: actor !== "",
       capabilities: [],
       constraints: [],
       now: new Date().toISOString().replace(/\.\d{3}Z$/, "Z"),

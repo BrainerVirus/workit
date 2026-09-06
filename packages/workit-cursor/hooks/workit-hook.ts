@@ -1,4 +1,4 @@
-import { existsSync, realpathSync } from "node:fs";
+import { existsSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 import {
   compactTaskContext,
@@ -86,7 +86,7 @@ export const cursorCapabilities = (availability: HookAvailability = {}): Capabil
       surface: "subagentStart",
       assurance: has("subagentStart") ? "enforced" : "unavailable",
       reason: has("subagentStart")
-        ? "Cursor subagentStart supplies subagent_id and parent_conversation_id before execution"
+        ? "Cursor subagentStart supplies identity; Workit also requires an explicit role marker"
         : "Cursor subagentStart is absent",
       refs: [hostRef("subagentStart")],
     },
@@ -212,24 +212,46 @@ const normalizePath = (root: string, value: string, cwd = root): string | null =
   return relative;
 };
 
+const resolveCwd = (root: string, value: string): string | null => {
+  try {
+    const candidate = path.resolve(root, value);
+    if (!statSync(candidate).isDirectory()) return null;
+    const canonical = realpathSync(candidate);
+    const relative = path.relative(root, canonical);
+    if (relative.startsWith("..") || path.isAbsolute(relative)) return null;
+    return canonical;
+  } catch {
+    return null;
+  }
+};
+
 const shellWritePaths = (root: string, command: string, cwd = root) => {
-  const writeIntent = /(?:^|[\s;&|])(?:>>?|rm|mv|cp|mkdir|touch|install)(?:\s|$)/.test(command);
+  const writeIntent =
+    /(?:\d*>>?|&>)/.test(command) ||
+    /(?:^|[\s;&|])(?:rm|mv|cp|mkdir|touch|install)(?:\s|$)/.test(command);
   if (!writeIntent) return { paths: [], writeIntent: false, invalid: false };
   // Quoted, chained, or multiline commands are deliberately not interpreted:
   // the documented hook cannot prove which file an arbitrary shell expands.
-  if (/['"\n;&|]/.test(command)) return { paths: [], writeIntent: true };
+  if (/['"\n;|`$*?()\\]/.test(command) || /&(?!>)/.test(command))
+    return { paths: [], writeIntent: true, invalid: true };
   const tokens = command.trim().split(/\s+/);
   const values: string[] = [];
+  let invalid = false;
+  let commandSeen = false;
   for (let index = 0; index < tokens.length; index += 1) {
     const token = tokens[index];
-    if (token === ">" || token === ">>") {
-      if (tokens[index + 1] && !tokens[index + 1].startsWith("-")) values.push(tokens[++index]);
+    const attached = token.match(/^(?:\d*>>?|&>)(.*)$/);
+    if (attached) {
+      const value = attached[1] || tokens[++index];
+      if (!value || value.startsWith("-") || value.startsWith("&")) invalid = true;
+      else values.push(value);
       continue;
     }
-    if (!/^(?:rm|mv|cp|mkdir|touch|install)$/.test(token)) continue;
-    for (const value of tokens.slice(index + 1).filter((item) => !item.startsWith("-")))
-      values.push(value);
-    break;
+    if (/^(?:rm|mv|cp|mkdir|touch|install)$/.test(token)) {
+      commandSeen = true;
+      continue;
+    }
+    if (commandSeen && !token.startsWith("-")) values.push(token);
   }
   const paths = values
     .map((value) => normalizePath(root, value, cwd))
@@ -237,12 +259,13 @@ const shellWritePaths = (root: string, command: string, cwd = root) => {
   return {
     paths,
     writeIntent: true,
-    invalid: values.length === 0 || paths.length !== values.length,
+    invalid: invalid || values.length === 0 || paths.length !== values.length,
   };
 };
 
 const writeTargets = (root: string, input: CursorHookInput) => {
-  const cwd = input.cwd ? path.resolve(root, input.cwd) : root;
+  const cwd = input.cwd ? resolveCwd(root, input.cwd) : root;
+  if (!cwd) return { paths: [], writeIntent: true, invalid: true };
   if (input.hook_event_name === "preToolUse") {
     const args = isRecord(input.tool_input) ? input.tool_input : {};
     const values = [args.file_path, args.path, args.target, args.filename].filter(nonEmpty);
@@ -300,6 +323,15 @@ const workerVerifier = (input: CursorHookInput): NativeWorkerVerifier => ({
   },
 });
 
+const explicitRole = (task: string | undefined) => {
+  const match = /^(?:\[workit-role: (implementer|reviewer|investigator)\])(?:\s+(.*))?$/.exec(
+    task?.trim() ?? "",
+  );
+  return match
+    ? { role: match[1] as "implementer" | "reviewer" | "investigator", objective: match[2] ?? "" }
+    : null;
+};
+
 const handleSubagentStart = (input: CursorHookInput, root: string) => {
   const state = activeTask(new TaskStore(root));
   if (!state.ok) return state.reason === "no active task" ? allow : deny(state.reason);
@@ -312,17 +344,13 @@ const handleSubagentStart = (input: CursorHookInput, root: string) => {
     )
   )
     return deny("subagent assignment replayed");
+  const assignmentRole = explicitRole(input.task);
+  if (!assignmentRole) return deny("active Workit subagents require an explicit role marker");
   const store = new TaskStore(root);
   const core = new WorkitCore(store, {
     ...contextFor(root, input.parent_conversation_id, null, { subagentStart: true }),
     nativeWorker: workerVerifier(input),
   });
-  const type = (input.subagent_type ?? "").toLowerCase();
-  const role = type.includes("review")
-    ? "reviewer"
-    : type.includes("explore")
-      ? "investigator"
-      : "implementer";
   const assigned = core.worker({
     action: "assign",
     schemaVersion: 1,
@@ -330,8 +358,8 @@ const handleSubagentStart = (input: CursorHookInput, root: string) => {
     expectedRevision: state.task.revision,
     expectedWorkspaceRevision: state.workspace.revision,
     assignment: {
-      role,
-      objective: input.task ?? "Native Cursor subagent assignment",
+      role: assignmentRole.role,
+      objective: assignmentRole.objective || "Native Cursor subagent assignment",
       scope: state.task.intent.data.scope,
       decisionIds: [],
       requirementIds: [],
@@ -403,11 +431,7 @@ export const handleCursorHook = (raw: unknown): Record<string, unknown> => {
       return deny("shell write target is ambiguous or unavailable");
     if (!targets.paths.length) return allow;
   } else if (/^shell$/i.test(input.tool_name ?? "")) {
-    const shell =
-      isRecord(input.tool_input) && nonEmpty(input.tool_input.command)
-        ? input.tool_input.command
-        : "";
-    const parsed = shellWritePaths(root, shell, input.cwd ? path.resolve(root, input.cwd) : root);
+    const parsed = writeTargets(root, input);
     if (parsed.invalid) return deny("shell write target is outside or unavailable");
     if (!parsed.paths.length && parsed.writeIntent)
       return deny("shell write target is ambiguous or unavailable");

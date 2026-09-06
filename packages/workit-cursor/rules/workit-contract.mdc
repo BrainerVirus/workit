@@ -16,3 +16,9 @@ delegation token, receipt, or cross-process caller channel.
 
 Preserve one active task, exact workspace/session bindings, reviewer
 read-only scope, implementer writer ownership, and the no-worktree rule.
+
+When starting a native Cursor subagent during an active Workit task, begin the
+task payload with exactly one bounded role marker: `[workit-role: implementer]`,
+`[workit-role: reviewer]`, or `[workit-role: investigator]`. Cursor's native
+`subagent_type` values describe execution kinds, not Workit authority roles;
+missing or invalid markers are denied while a task is active.

@@ -33,7 +33,7 @@ afterAll(() => rmSync(tempRoot, { recursive: true, force: true }));
 const start = () => {
   const child = spawn(process.execPath, [entry, "--host", "cursor"], {
     cwd: REPO_ROOT,
-    env: { ...process.env, WORKFLOW_WORKSPACE_ROOT: tempRoot },
+    env: { ...process.env, WORKFLOW_WORKSPACE_ROOT: tempRoot, WORKFLOW_SESSION_ID: "" },
     stdio: ["pipe", "pipe", "pipe"],
   });
   let stdout = "";
@@ -103,6 +103,22 @@ test("Node executable completes MCP initialize and tools/list with protocol-only
     });
     expect(called.result.isError).not.toBe(true);
     expect(called.result.structuredContent).toMatchObject({ ok: true, schemaVersion: 1 });
+    const authority = await request("tools/call", {
+      name: "workit_writer",
+      arguments: {
+        schemaVersion: 1,
+        action: "acquire",
+        taskId: "00000000-0000-4000-8000-000000000001",
+        expectedRevision: "00000000-0000-4000-8000-000000000001",
+        expectedWorkspaceRevision: "00000000-0000-4000-8000-000000000001",
+        workerId: null,
+      },
+    });
+    expect(authority.result.structuredContent).toMatchObject({
+      ok: false,
+      code: "capability_unavailable",
+      details: { capability: "native_caller_identity" },
+    });
   } finally {
     child.kill();
   }
