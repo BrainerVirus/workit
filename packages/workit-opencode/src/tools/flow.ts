@@ -36,11 +36,11 @@ const resolveSlug = (
 };
 
 /**
- * The host session lookup used for delegation (AR-12, CA-20). OpenCode 1.17.x
+ * The host session lookup used for delegation (AR-12, CA-20). OpenCode 1.18.x
  * SDK shape: `session.get({ path: { id } })` returns the session with an
  * optional `parentID`; a session with a parent is a child (delegated worker).
  * (Task 30: newer SDKs use `session.get({ sessionID })` — this adapter binds
- * to the shape verified against the installed @opencode-ai/sdk 1.17.7.)
+ * to the shape verified against the installed @opencode-ai/sdk 1.18.29.)
  */
 export type SessionLookup = {
   session: {

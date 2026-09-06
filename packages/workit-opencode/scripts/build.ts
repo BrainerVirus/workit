@@ -8,31 +8,19 @@ import { cpSync, existsSync, mkdirSync, rmSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  CANONICAL_SKILLS,
   WORKIT_METHOD_SKILLS,
+  skillManifestNames,
   validateSkillManifests,
 } from "../../workit-core/src/core/skill-manifests";
-import { copySanitizedVendor } from "../../workit-core/scripts/vendor-assets";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const pkgDir = path.resolve(scriptDir, "..");
 const coreDir = path.resolve(pkgDir, "..", "workit-core");
 const target = process.argv[2] ? path.resolve(process.argv[2]) : pkgDir;
-const vendorSkills = path.join(coreDir, "vendor/superpowers/skills");
-
-const sourceWorkitError = validateSkillManifests(
-  path.join(coreDir, "skills"),
-  [...CANONICAL_SKILLS.workit, ...WORKIT_METHOD_SKILLS],
-  "opencode Workit source skills",
-);
-if (sourceWorkitError) throw new Error(sourceWorkitError);
-
-const sourceVendorError = validateSkillManifests(
-  vendorSkills,
-  CANONICAL_SKILLS.superpowers,
-  "core Superpowers vendor",
-);
-if (sourceVendorError) throw new Error(sourceVendorError);
+const sourceNames = skillManifestNames(path.join(coreDir, "skills"));
+const missingSource = WORKIT_METHOD_SKILLS.filter((name) => !sourceNames.includes(name));
+if (missingSource.length)
+  throw new Error(`missing Workit method skills: ${missingSource.join(", ")}`);
 
 const dist = path.join(target, "dist");
 rmSync(dist, { recursive: true, force: true });
@@ -57,26 +45,20 @@ if (build.status !== 0) {
   process.exit(1);
 }
 
-// Deterministic assets: commands, skills, templates, filtered vendor content.
+// Deterministic assets: only the seven policy-selected method skills.
 const assets = path.join(target, "assets");
 rmSync(assets, { recursive: true, force: true });
-for (const sub of ["commands", "templates"]) {
-  const src = path.join(coreDir, sub);
-  if (!existsSync(src)) continue;
-  cpSync(src, path.join(assets, sub), { recursive: true });
-}
 const skills = path.join(assets, "skills");
 mkdirSync(skills, { recursive: true });
-for (const name of CANONICAL_SKILLS.workit) {
+for (const name of WORKIT_METHOD_SKILLS) {
   const source = path.join(coreDir, "skills", name);
-  if (!existsSync(source)) throw new Error(`missing legacy Workit skill: ${source}`);
+  if (!existsSync(source)) throw new Error(`missing Workit method skill: ${source}`);
   cpSync(source, path.join(skills, name), { recursive: true });
 }
 const packagedWorkitError = validateSkillManifests(
   skills,
-  CANONICAL_SKILLS.workit,
+  WORKIT_METHOD_SKILLS,
   "opencode Workit packaged skills",
 );
 if (packagedWorkitError) throw new Error(packagedWorkitError);
-copySanitizedVendor(vendorSkills, path.join(assets, "vendor/superpowers/skills"));
-console.log(`opencode: built dist/plugin.js + assets/ (${target})`);
+console.log(`opencode: built dist/plugin.js + seven method skills (${target})`);

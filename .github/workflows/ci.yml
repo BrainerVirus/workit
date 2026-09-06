@@ -22,7 +22,7 @@ env:
   NODE_MINIMUM: "24"
   NODE_CURRENT: "24.20.0"
   OPENCODE_MINIMUM: "1.15.0"
-  OPENCODE_CURRENT: "1.17.7"
+  OPENCODE_CURRENT: "1.18.29"
 
 jobs:
   # One check job per package (mirrors test/<package>/), so the checks matrix

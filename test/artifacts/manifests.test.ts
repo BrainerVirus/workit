@@ -123,6 +123,7 @@ test(
 
     const stale: string[] = [];
     for (const file of files) {
+      if (!existsSync(path.join(REPO_ROOT, file))) continue;
       const text = read(file);
       const fixture = file === "test/workit-core/doctor.test.ts";
       for (const match of text.matchAll(CURSOR_RUNTIME_SELECTOR)) {

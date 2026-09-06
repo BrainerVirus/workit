@@ -179,15 +179,11 @@ test("plugin registers without a Cursor runtime path", async () => {
     } as never);
     const config: Record<string, any> = {};
     await hooks.config?.(config);
-    expect(Object.keys(config.command)).toHaveLength(12);
+    expect(Object.keys(config.command ?? {})).toHaveLength(0);
     expect(config.skills.paths).toEqual([
       path.resolve(import.meta.dir, "../../packages/workit-opencode/assets/skills"),
-      path.resolve(
-        import.meta.dir,
-        "../../packages/workit-opencode/assets/vendor/superpowers/skills",
-      ),
     ]);
-    expect(Object.keys(hooks.tool ?? {})).toHaveLength(48);
+    expect(Object.keys(hooks.tool ?? {})).toHaveLength(8);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

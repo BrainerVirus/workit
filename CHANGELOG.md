@@ -20,6 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- OpenCode v1 integration now exposes the eight shared Workit operation tools,
+  native receipt/lineage hooks, compact task continuity, and only the seven
+  policy-selected method skills; the plugin build targets OpenCode 1.18.29.
 - Added the shared `@brainervirus/workit-mcp` low-level transport for the eight
   core operation families, with trusted native context boundaries and
   host-specific activation left to the adapter tasks.

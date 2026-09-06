@@ -1,6 +1,4 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import {
   getWorkitBootstrap,
@@ -10,11 +8,21 @@ import {
 import plugin from "../../packages/workit-opencode/src/plugin";
 
 describe("session bootstrap", () => {
-  test("bootstrap contract includes visual companion override", () => {
+  test("bootstrap contract names the native operation families", () => {
     const bootstrap = getWorkitBootstrap();
-    expect(bootstrap).toContain("NEVER offer Superpowers visual companion");
-    expect(bootstrap).toContain("workit_present_ascii");
-    expect(bootstrap).toContain("workit_present_flow");
+    expect(bootstrap).toContain("<workit-contract>");
+    for (const operation of [
+      "task",
+      "policy",
+      "evidence",
+      "finding",
+      "decision",
+      "worker",
+      "writer",
+      "state",
+    ])
+      expect(bootstrap).toContain(operation);
+    expect(bootstrap).not.toContain("workflow-sdd-reminder");
   });
 
   test("messages.transform injects bootstrap once on first user turn", async () => {
@@ -65,34 +73,4 @@ test("loadWorkitBootstrap reads the real contract template", () => {
     path.resolve(import.meta.dir, "..", "..", "packages", "workit-core"),
   );
   expect(contract).toContain("**Spec:**");
-});
-
-test("bootstrap contract declares the configured locale", async () => {
-  const dir = mkdtempSync(path.join(os.tmpdir(), "wf-bootstrap-locale-"));
-  const prevConfig = process.env.WORKFLOW_TOOLKIT_CONFIG;
-  try {
-    process.env.WORKFLOW_TOOLKIT_CONFIG_DIR = dir;
-    delete process.env.WORKFLOW_TOOLKIT_CONFIG;
-    writeFileSync(
-      path.join(dir, "config.json"),
-      JSON.stringify(
-        {
-          locale: "es-CL",
-          localeOptions: ["en", "es-CL"],
-          timezone: "UTC",
-          branchPolicy: { preset: "gitflow" },
-        },
-        null,
-        2,
-      ),
-    );
-    const fresh = await import(`../../packages/workit-opencode/src/bootstrap?locale=${Date.now()}`);
-    const bootstrap = fresh.getWorkitBootstrap();
-    expect(bootstrap).toContain("es-CL");
-  } finally {
-    delete process.env.WORKFLOW_TOOLKIT_CONFIG_DIR;
-    if (prevConfig === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
-    else process.env.WORKFLOW_TOOLKIT_CONFIG = prevConfig;
-    rmSync(dir, { recursive: true, force: true });
-  }
 });

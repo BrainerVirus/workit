@@ -152,7 +152,7 @@ Then add to your shell profile (or rely on the MCP launcher's `~/.bun/bin/bun` f
 export PATH="$HOME/.bun/bin:$PATH"
 ```
 
-- **OpenCode ≥ 1.15.0** — the declared minimum OpenCode host; the build pins the SDK at 1.17.7 (bundled into the plugin, not a runtime dependency).
+- **OpenCode ≥ 1.15.0** — the declared minimum OpenCode host; the build pins the SDK at 1.18.29 (bundled into the plugin, not a runtime dependency).
 - **Git** — branch resolution, SDD review diffs, and verify gates.
 - **Provider CLI for PRs/MRs** — installed **and authenticated**:
   - **`gh`** (GitHub CLI) for GitHub-hosted repos: `gh auth login`

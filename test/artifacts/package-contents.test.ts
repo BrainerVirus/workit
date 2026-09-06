@@ -47,16 +47,24 @@ const tsEntries = (tarball: string) =>
 const distJs = (tarball: string, prefix = "dist/") =>
   listTarball(tarball).filter((e) => e.startsWith(prefix) && e.endsWith(".js"));
 
-test("opencode tarball ships one bundled dist entry plus its own assets (RR-02/PT-06/PT-07)", () => {
+test("opencode tarball ships one bundled dist entry plus seven method skills (RR-02/PT-06/PT-07)", () => {
   const packs = packWorkspacePackages();
   const tarball = byName(packs, OPENCODE).tarball;
   const entries = listTarball(tarball);
 
   expect(entries).toContain("dist/plugin.js");
-  expect(entries.some((e) => e.startsWith("assets/commands/"))).toBe(true);
-  expect(entries.some((e) => e.startsWith("assets/skills/"))).toBe(true);
-  expect(entries.some((e) => e.startsWith("assets/templates/"))).toBe(true);
-  expect(entries.some((e) => e.startsWith("assets/vendor/superpowers/skills/"))).toBe(true);
+  expect(entries.filter((e) => e.startsWith("assets/skills/") && e.endsWith("/SKILL.md"))).toEqual([
+    "assets/skills/workit-behavioral-tdd/SKILL.md",
+    "assets/skills/workit-challenge/SKILL.md",
+    "assets/skills/workit-debug/SKILL.md",
+    "assets/skills/workit-handoff/SKILL.md",
+    "assets/skills/workit-implement/SKILL.md",
+    "assets/skills/workit-plan/SKILL.md",
+    "assets/skills/workit-review/SKILL.md",
+  ]);
+  expect(entries.some((e) => e.startsWith("assets/commands/"))).toBe(false);
+  expect(entries.some((e) => e.startsWith("assets/templates/"))).toBe(false);
+  expect(entries.some((e) => e.startsWith("assets/vendor/"))).toBe(false);
   expect(tsEntries(tarball)).toEqual([]);
 
   // CA-07: the SDK helper/schema runtime is bundled, so the packed entry has no
@@ -365,7 +373,8 @@ test("shipped skill/template/vendor markdown uses workit_ tool identifiers with 
       if (LIVE_WORKIT_TOOL.test(md)) sawWorkitTool = true;
     }
     expect(offenders, `${pack.packageName} ships stale workflow_ tool references`).toEqual([]);
-    expect(sawWorkitTool, `${pack.packageName} ships renamed workit_ tool references`).toBe(true);
+    if (pack.packageName !== OPENCODE)
+      expect(sawWorkitTool, `${pack.packageName} ships renamed workit_ tool references`).toBe(true);
   }
 });
 

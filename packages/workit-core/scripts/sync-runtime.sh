@@ -153,7 +153,7 @@ import fs from "node:fs";
 const path = process.env.PKG_PATH!;
 const data = JSON.parse(fs.readFileSync(path, "utf8"));
 data.dependencies = data.dependencies ?? {};
-data.dependencies["@opencode-ai/plugin"] = data.dependencies["@opencode-ai/plugin"] ?? "1.17.7";
+data.dependencies["@opencode-ai/plugin"] = data.dependencies["@opencode-ai/plugin"] ?? "1.18.29";
 fs.writeFileSync(path, JSON.stringify(data, null, 2) + "\n");
 ' || true
 fi
