@@ -4,9 +4,8 @@ import type { OperationContext } from "@brainervirus/workit-core/src/core";
 
 export { cursorCapabilities } from "../hooks/workit-hook";
 
-/** Cursor MCP receives only host-provided process identity. AskQuestion and
- * hook observations are not bridged through a mutable side channel, so this
- * transport never claims caller attestation. */
+/** Cursor MCP has no documented per-request session identity. Keep the actor
+ * empty and mark it unattested; the shared transport blocks authority writes. */
 export const cursorContextProvider = (
   workspaceRoot = process.env.WORKFLOW_WORKSPACE_ROOT ?? process.cwd(),
 ): { current: () => Promise<OperationContext> } => ({
@@ -14,12 +13,9 @@ export const cursorContextProvider = (
     root: workspaceRoot,
     caller: {
       host: "cursor",
-      actor:
-        process.env.CURSOR_CONVERSATION_ID ??
-        process.env.WORKFLOW_SESSION_ID ??
-        process.env.CURSOR_SESSION_ID ??
-        "cursor-mcp",
+      actor: "",
     },
+    callerAttested: false,
     capabilities: cursorCapabilities(),
     constraints: [],
     now: new Date().toISOString().replace(/\.\d{3}Z$/, "Z"),

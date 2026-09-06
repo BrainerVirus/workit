@@ -102,8 +102,7 @@ export const cursorCapabilities = (availability: HookAvailability = {}): Capabil
       name: "compact_context",
       surface: "sessionStart/preCompact",
       assurance: has("sessionStart") ? "agent_guided" : "unavailable",
-      reason:
-        "sessionStart and preCompact can add or report context but cannot block or guarantee delivery",
+      reason: "sessionStart injects context; preCompact can only show a bounded user reminder",
       refs: [hostRef("sessionStart"), hostRef("preCompact")],
     },
   ];
@@ -162,15 +161,16 @@ export const parseCursorHookInput = (value: unknown): HookParseResult => {
       ...(value.tool_input !== undefined ? { tool_input: value.tool_input } : {}),
       ...(nonEmpty(value.command) ? { command: value.command } : {}),
       ...(nonEmpty(value.cwd) ? { cwd: value.cwd } : {}),
-      ...(nonEmpty(value.subagent_id) ? { subagent_id: value.subagent_id } : {}),
-      ...(nonEmpty(value.subagent_type) ? { subagent_type: value.subagent_type } : {}),
-      ...(nonEmpty(value.parent_conversation_id)
+      ...(event === "subagentStart" && nonEmpty(value.subagent_id)
+        ? { subagent_id: value.subagent_id }
+        : {}),
+      ...(event === "subagentStart" && nonEmpty(value.subagent_type)
+        ? { subagent_type: value.subagent_type }
+        : {}),
+      ...(event === "subagentStart" && nonEmpty(value.parent_conversation_id)
         ? { parent_conversation_id: value.parent_conversation_id }
         : {}),
-      ...(nonEmpty(value.task) ? { task: value.task } : {}),
-      ...(value.status === "completed" || value.status === "error" || value.status === "aborted"
-        ? { status: value.status }
-        : {}),
+      ...(event === "subagentStart" && nonEmpty(value.task) ? { task: value.task } : {}),
     },
   };
 };
@@ -204,52 +204,57 @@ const activeTask = (store: TaskStore) => {
   return { ok: true as const, workspace: workspace.data, task: tasks[0] };
 };
 
-const normalizePath = (root: string, value: string): string | null => {
-  const candidate = path.isAbsolute(value) ? value : path.resolve(root, value);
+const normalizePath = (root: string, value: string, cwd = root): string | null => {
+  const candidate = path.isAbsolute(value) ? value : path.resolve(cwd, value);
   const relative = path.relative(root, candidate);
   if (!relative) return ".";
   if (relative.startsWith("..") || path.isAbsolute(relative)) return null;
   return relative;
 };
 
-const shellWritePaths = (root: string, command: string) => {
+const shellWritePaths = (root: string, command: string, cwd = root) => {
   const writeIntent = /(?:^|[\s;&|])(?:>>?|rm|mv|cp|mkdir|touch|install)(?:\s|$)/.test(command);
-  if (!writeIntent) return { paths: [], writeIntent: false };
+  if (!writeIntent) return { paths: [], writeIntent: false, invalid: false };
   // Quoted, chained, or multiline commands are deliberately not interpreted:
   // the documented hook cannot prove which file an arbitrary shell expands.
   if (/['"\n;&|]/.test(command)) return { paths: [], writeIntent: true };
   const tokens = command.trim().split(/\s+/);
-  const paths: string[] = [];
+  const values: string[] = [];
   for (let index = 0; index < tokens.length; index += 1) {
     const token = tokens[index];
     if (token === ">" || token === ">>") {
-      if (tokens[index + 1] && !tokens[index + 1].startsWith("-")) paths.push(tokens[++index]);
+      if (tokens[index + 1] && !tokens[index + 1].startsWith("-")) values.push(tokens[++index]);
       continue;
     }
     if (!/^(?:rm|mv|cp|mkdir|touch|install)$/.test(token)) continue;
     for (const value of tokens.slice(index + 1).filter((item) => !item.startsWith("-")))
-      paths.push(value);
+      values.push(value);
     break;
   }
+  const paths = values
+    .map((value) => normalizePath(root, value, cwd))
+    .filter((value): value is string => value !== null);
   return {
-    paths: paths
-      .map((value) => normalizePath(root, value))
-      .filter((value): value is string => value !== null),
+    paths,
     writeIntent: true,
+    invalid: values.length === 0 || paths.length !== values.length,
   };
 };
 
-const writePaths = (root: string, input: CursorHookInput): string[] => {
+const writeTargets = (root: string, input: CursorHookInput) => {
+  const cwd = input.cwd ? path.resolve(root, input.cwd) : root;
   if (input.hook_event_name === "preToolUse") {
     const args = isRecord(input.tool_input) ? input.tool_input : {};
     const values = [args.file_path, args.path, args.target, args.filename].filter(nonEmpty);
-    const direct = values
-      .map((value) => normalizePath(root, value))
-      .filter((value): value is string => value !== null);
-    if (direct.length) return direct;
-    return shellWritePaths(root, nonEmpty(args.command) ? args.command : "").paths;
+    if (values.length) {
+      const paths = values
+        .map((value) => normalizePath(root, value, cwd))
+        .filter((value): value is string => value !== null);
+      return { paths, writeIntent: true, invalid: paths.length !== values.length };
+    }
+    return shellWritePaths(root, nonEmpty(args.command) ? args.command : "", cwd);
   }
-  return shellWritePaths(root, input.command ?? "").paths;
+  return shellWritePaths(root, input.command ?? "", cwd);
 };
 
 const isWriteTool = (name: string): boolean =>
@@ -351,37 +356,9 @@ const handleSubagentStart = (input: CursorHookInput, root: string) => {
   return started.ok ? allow : deny(started.error);
 };
 
-const handleSubagentStop = (input: CursorHookInput, root: string) => {
-  // Cursor's documented stop payload has no stable subagent_id. Without it,
-  // reporting a worker would be an identity forgery, so remain observational.
-  if (!input.subagent_id || !input.parent_conversation_id || !input.status) return {};
-  const store = new TaskStore(root);
-  const state = activeTask(store);
-  if (!state.ok) return {};
-  const worker = state.task.workers.find(
-    (entry) =>
-      entry.data.session?.kind === "host" && entry.data.session.handle === input.subagent_id,
-  );
-  if (!worker) return {};
-  const core = new WorkitCore(store, {
-    ...contextFor(root, input.parent_conversation_id),
-    nativeWorker: workerVerifier(input),
-  });
-  const observed = core.observeWorkerLifecycle({
-    taskId: state.task.id,
-    workerId: worker.id,
-    expectedRevision: state.task.revision,
-    expectedWorkspaceRevision: state.workspace.revision,
-    state: input.status === "aborted" ? "cancelling" : "stopped",
-    session: hostRef(input.subagent_id),
-    observation: {
-      subagent_id: input.subagent_id,
-      parent_conversation_id: input.parent_conversation_id,
-      status: input.status,
-    },
-  });
-  return observed.ok ? {} : {};
-};
+// Cursor's documented stop payload has no stable subagent identity. It is
+// observational only; fabricated fields must never mutate worker state.
+const handleSubagentStop = () => ({});
 
 export const handleCursorHook = (raw: unknown): Record<string, unknown> => {
   const parsed = parseCursorHookInput(raw);
@@ -412,20 +389,26 @@ export const handleCursorHook = (raw: unknown): Record<string, unknown> => {
       additional_context: `<workit-contract>\n${invariantBootstrap()}${compact}\n</workit-contract>`,
     };
   }
-  if (input.hook_event_name === "preCompact") return {};
+  if (input.hook_event_name === "preCompact")
+    return {
+      user_message:
+        "Workit context may be stale after compaction; re-run inspection or resume before acting.",
+    };
   if (input.hook_event_name === "subagentStart") return handleSubagentStart(input, root);
-  if (input.hook_event_name === "subagentStop") return handleSubagentStop(input, root);
+  if (input.hook_event_name === "subagentStop") return handleSubagentStop();
   if (input.hook_event_name === "beforeShellExecution") {
-    const paths = writePaths(root, input);
-    if (!paths.length && shellWritePaths(root, input.command ?? "").writeIntent)
+    const targets = writeTargets(root, input);
+    if (targets.invalid) return deny("shell write target is outside or unavailable");
+    if (!targets.paths.length && targets.writeIntent)
       return deny("shell write target is ambiguous or unavailable");
-    if (!paths.length) return allow;
+    if (!targets.paths.length) return allow;
   } else if (/^shell$/i.test(input.tool_name ?? "")) {
     const shell =
       isRecord(input.tool_input) && nonEmpty(input.tool_input.command)
         ? input.tool_input.command
         : "";
-    const parsed = shellWritePaths(root, shell);
+    const parsed = shellWritePaths(root, shell, input.cwd ? path.resolve(root, input.cwd) : root);
+    if (parsed.invalid) return deny("shell write target is outside or unavailable");
     if (!parsed.paths.length && parsed.writeIntent)
       return deny("shell write target is ambiguous or unavailable");
     if (!parsed.paths.length) return allow;
@@ -443,12 +426,13 @@ export const handleCursorHook = (raw: unknown): Record<string, unknown> => {
       beforeShellExecution: input.hook_event_name === "beforeShellExecution",
     }),
   );
-  const paths = writePaths(root, input);
-  if (!paths.length) return deny("recognized product write has no parseable target");
+  const targets = writeTargets(root, input);
+  if (targets.invalid) return deny("recognized product write target is outside or unavailable");
+  if (!targets.paths.length) return deny("recognized product write has no parseable target");
   const checked = core.assertProductWriteAllowed({
     task: state.task,
     workspace: state.workspace,
-    paths,
+    paths: targets.paths,
   });
   return checked.ok ? allow : deny(checked.error);
 };

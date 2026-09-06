@@ -71,6 +71,8 @@ import {
 export type OperationContext = {
   root: string;
   caller: Caller;
+  /** Whether the host supplied a trusted per-session caller identity. */
+  callerAttested?: boolean;
   provenanceKind?: "host_observed" | "agent_reported";
   capabilities: Capability[];
   constraints: Constraint[];

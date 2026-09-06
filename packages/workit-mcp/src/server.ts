@@ -79,6 +79,12 @@ export function assertMcpHost(host: unknown): asserts host is McpHost {
 const operationDescription = (family: OperationFamily): string =>
   `Workit ${family} operations. Inputs are validated by the shared Workit contract.`;
 
+const READ_ONLY_ACTIONS = new Set(["list", "inspect", "preview", "explain", "export"]);
+const requiresCallerIdentity = (input: unknown): boolean =>
+  typeof input !== "object" ||
+  input === null ||
+  !READ_ONLY_ACTIONS.has(String((input as { action?: unknown }).action));
+
 const toolInputSchema = (family: OperationFamily) => {
   const schema = operationJsonSchema(family);
   // MCP requires an object at the root. The operation union remains entirely
@@ -163,6 +169,17 @@ export function createMcpServer(host: McpHost, contextProvider: NativeContextPro
       }
       const parsed = parseOperation(family, request.params.arguments);
       if (!parsed.ok) return resultForClient(parsed, workspaceRoot);
+      if (context.callerAttested === false && requiresCallerIdentity(parsed.data))
+        return resultForClient(
+          {
+            ok: false,
+            schemaVersion: 1,
+            code: "capability_unavailable",
+            error: "native caller identity is unavailable",
+            details: { capability: "native_caller_identity", operation: family },
+          },
+          workspaceRoot,
+        );
 
       const core = new WorkitCore(new TaskStore(context.root), context);
       const run = core[family] as unknown as (input: unknown) => Result<unknown>;

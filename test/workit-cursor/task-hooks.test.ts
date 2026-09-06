@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { TaskStore, WorkitCore } from "../../packages/workit-core/src/core";
 import { caller, taskStartRequest } from "../workit-core/task-fixtures";
@@ -48,6 +48,42 @@ test("Cursor hook rejects malformed trust-boundary inputs", () => {
   ).toMatchObject({ ok: false, error: "conversation_id and session_id must match" });
 });
 
+test("shell hooks resolve cwd and deny any outside-root write operand", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "workit-cursor-hook-"));
+  const nested = path.join(root, "nested");
+  mkdirSync(nested);
+  expect(
+    handleCursorHook({
+      hook_event_name: "beforeShellExecution",
+      conversation_id: "conv-1",
+      workspace_roots: [root],
+      cwd: root,
+      command: "cp src/in-scope /tmp/outside",
+    }),
+  ).toMatchObject({
+    permission: "deny",
+    agent_message: "shell write target is outside or unavailable",
+  });
+  expect(
+    handleCursorHook({
+      hook_event_name: "beforeShellExecution",
+      conversation_id: "conv-1",
+      workspace_roots: [root],
+      cwd: nested,
+      command: "touch file",
+    }),
+  ).toEqual({ permission: "allow" });
+  expect(
+    handleCursorHook({
+      hook_event_name: "beforeShellExecution",
+      conversation_id: "conv-1",
+      workspace_roots: [root],
+      cwd: "/tmp",
+      command: "touch file",
+    }),
+  ).toMatchObject({ permission: "deny" });
+});
+
 test("blocking shell hooks deny ambiguous writes while advisory events stay nonblocking", () => {
   expect(
     handleCursorHook({
@@ -63,7 +99,10 @@ test("blocking shell hooks deny ambiguous writes while advisory events stay nonb
       conversation_id: "conv-1",
       workspace_roots: [process.cwd()],
     }),
-  ).toEqual({});
+  ).toEqual({
+    user_message:
+      "Workit context may be stale after compaction; re-run inspection or resume before acting.",
+  });
 });
 
 test("malformed blocking hook input exits fail-closed", () => {
@@ -100,14 +139,18 @@ test("subagent starts are assigned once inside an active task and stops without 
   } as const;
   expect(handleCursorHook(input)).toMatchObject({ permission: "allow" });
   expect(handleCursorHook(input)).toMatchObject({ permission: "deny" });
+  const beforeStop = new TaskStore(root).listTasks();
   expect(
     handleCursorHook({
       hook_event_name: "subagentStop",
       conversation_id: "parent",
       workspace_roots: [root],
+      subagent_id: "child",
+      parent_conversation_id: "parent",
       status: "completed",
     }),
   ).toEqual({});
+  expect(new TaskStore(root).listTasks()).toEqual(beforeStop);
 });
 
 test("subagent hooks remain transparent when no Workit task is active", () => {
