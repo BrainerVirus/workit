@@ -160,6 +160,8 @@ const enforceWriter = async (
   );
   if (activeTasks.length > 0 && !trustedSession(directory, sessionID, observed))
     throw new Error("permission_denied: trusted OpenCode session observation is required");
+  if (workerMatches.length > 1)
+    throw new Error("permission_denied: OpenCode worker session is ambiguous");
   if (workerMatches.length === 0 && observed.parentID)
     throw new Error("permission_denied: OpenCode session parentage is not a coordinator");
   if (workerMatches.length === 1) {

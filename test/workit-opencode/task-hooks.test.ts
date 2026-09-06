@@ -407,6 +407,108 @@ test("known write surfaces enforce the current writer while unknown shell writes
   }
 });
 
+test("ambiguous implementer sessions cannot authorize product writes", async () => {
+  const root = mkdtempSync(join(tmpdir(), "workit-opencode-ambiguous-writer-"));
+  try {
+    const active = activeTask(root, "coord");
+    const first = workerAssignment(
+      active.core,
+      active.task.id,
+      active.task.revision,
+      active.workspace.revision,
+      "implementer",
+    );
+    expect(first.ok).toBe(true);
+    if (!first.ok) throw new Error(first.error);
+    let task = active.store.readTask(active.task.id);
+    let workspace = active.store.readWorkspace();
+    if (!task.ok || !workspace.ok || !workspace.data) throw new Error("assigned state missing");
+    expect(
+      observeWorker(
+        root,
+        "coord",
+        first.data.id,
+        active.task.id,
+        "child",
+        task.data.revision,
+        workspace.data.revision,
+      ).ok,
+    ).toBe(true);
+    task = active.store.readTask(active.task.id);
+    workspace = active.store.readWorkspace();
+    if (!task.ok || !workspace.ok || !workspace.data) throw new Error("running state missing");
+    const acquired = new WorkitCore(active.store, {
+      root,
+      caller: { host: "opencode", actor: "child" },
+      capabilities: [],
+      constraints: [],
+      now: () => "2026-01-01T00:00:00Z",
+      workerId: first.data.id,
+    }).writer({
+      schemaVersion: 1,
+      action: "acquire",
+      taskId: active.task.id,
+      expectedRevision: task.data.revision,
+      expectedWorkspaceRevision: workspace.data.revision,
+      workerId: first.data.id,
+    });
+    if (!acquired.ok) throw new Error(acquired.error);
+    const hooks = await plugin({
+      directory: root,
+      worktree: root,
+      serverUrl: new URL("http://localhost"),
+      client: {
+        session: {
+          get: async ({ path: { id } }: { path: { id: string } }) => ({
+            data: { id, directory: root, parentID: "coord" },
+          }),
+        },
+      },
+    } as never);
+    await expect(
+      hooks["tool.execute.before"]?.(
+        { tool: "write", sessionID: "child", callID: "single" },
+        { args: { filePath: join(root, "src/file.ts") } },
+      ),
+    ).resolves.toBeUndefined();
+
+    task = active.store.readTask(active.task.id);
+    workspace = active.store.readWorkspace();
+    if (!task.ok || !workspace.ok || !workspace.data) throw new Error("writer state missing");
+    const second = workerAssignment(
+      active.core,
+      active.task.id,
+      task.data.revision,
+      workspace.data.revision,
+      "implementer",
+    );
+    expect(second.ok).toBe(true);
+    if (!second.ok) throw new Error(second.error);
+    task = active.store.readTask(active.task.id);
+    workspace = active.store.readWorkspace();
+    if (!task.ok || !workspace.ok || !workspace.data) throw new Error("second assignment missing");
+    expect(
+      observeWorker(
+        root,
+        "coord",
+        second.data.id,
+        active.task.id,
+        "child",
+        task.data.revision,
+        workspace.data.revision,
+      ).ok,
+    ).toBe(true);
+    await expect(
+      hooks["tool.execute.before"]?.(
+        { tool: "write", sessionID: "child", callID: "ambiguous" },
+        { args: { filePath: join(root, "src/file.ts") } },
+      ),
+    ).rejects.toThrow("permission_denied");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("OpenCode native write shapes normalize filePath and apply_patch targets", async () => {
   const root = mkdtempSync(join(tmpdir(), "workit-opencode-native-writes-"));
   try {
