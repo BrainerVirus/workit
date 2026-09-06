@@ -27,6 +27,10 @@ Do not edit Workit metadata directly, create nested helper trees, widen paths, o
 create a second lifecycle. Read-only investigation and bounded reports do not
 grant product-write ownership.
 
+When the host reports writer capability unavailable, do not mutate or delegate
+mutation. Continue inline only if policy and lead authority permit it;
+otherwise report the capability gap.
+
 ## Common mistakes
 
 | Mistake | Correction |

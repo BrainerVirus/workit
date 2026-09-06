@@ -26,6 +26,10 @@ Honor task status, scope, revisions, and native authority gates. Do not bypass
    them for an incident, create a second lifecycle, or claim a fix from a green
    command that did not exercise the affected behavior.
 
+When the host reports writer capability unavailable, do not mutate or delegate
+mutation. Continue inline only if policy and lead authority permit it;
+otherwise report the capability gap.
+
 ## Common mistakes
 
 | Mistake | Correction |

@@ -77,7 +77,7 @@ export const cursorCapabilities = (availability: HookAvailability = {}): Capabil
       assurance: has("subagentStart") && has("subagentStop") ? "agent_guided" : "unavailable",
       reason:
         has("subagentStart") && has("subagentStop")
-          ? "subagentStart is blocking, but documented subagentStop lacks a stable subagent identity"
+          ? "reviewer/investigator starts are bounded; Cursor implementer delegation is unavailable and subagentStop lacks a stable child identity"
           : "Cursor native subagent lifecycle hooks are incomplete",
       refs: [hostRef("subagentStart"), hostRef("subagentStop")],
     },
@@ -86,7 +86,7 @@ export const cursorCapabilities = (availability: HookAvailability = {}): Capabil
       surface: "subagentStart",
       assurance: has("subagentStart") ? "enforced" : "unavailable",
       reason: has("subagentStart")
-        ? "Cursor subagentStart supplies identity; Workit also requires an explicit role marker"
+        ? "Cursor subagentStart enforces explicit reviewer/investigator markers; implementer delegation is unavailable"
         : "Cursor subagentStart is absent",
       refs: [hostRef("subagentStart")],
     },
@@ -324,8 +324,10 @@ const workerVerifier = (input: CursorHookInput): NativeWorkerVerifier => ({
 });
 
 const explicitRole = (task: string | undefined) => {
+  const value = task?.trim() ?? "";
+  if ((value.match(/\[workit-role:/g) ?? []).length !== 1) return null;
   const match = /^(?:\[workit-role: (implementer|reviewer|investigator)\])(?:\s+(.*))?$/.exec(
-    task?.trim() ?? "",
+    value,
   );
   return match
     ? { role: match[1] as "implementer" | "reviewer" | "investigator", objective: match[2] ?? "" }
@@ -346,6 +348,8 @@ const handleSubagentStart = (input: CursorHookInput, root: string) => {
     return deny("subagent assignment replayed");
   const assignmentRole = explicitRole(input.task);
   if (!assignmentRole) return deny("active Workit subagents require an explicit role marker");
+  if (assignmentRole.role === "implementer")
+    return deny("Cursor implementer delegation is unavailable without attested writer identity");
   const store = new TaskStore(root);
   const core = new WorkitCore(store, {
     ...contextFor(root, input.parent_conversation_id, null, { subagentStart: true }),
