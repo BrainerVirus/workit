@@ -53,6 +53,14 @@ test("official payloads validate and malformed or outside writes deny", () => {
   ).toMatchObject({ ok: true });
   expect(
     parseCodexHookInput(
+      official({ hook_event_name: "SessionStart", source: "clear", unexpected: true }, root),
+    ),
+  ).toMatchObject({ ok: false });
+  expect(
+    handleCodexHook(official({ hook_event_name: "SubagentStart", agent_id: "agent-1" }, root)),
+  ).not.toMatchObject({ hookSpecificOutput: { permissionDecision: expect.anything() } });
+  expect(
+    parseCodexHookInput(
       official(
         {
           hook_event_name: "SubagentStop",
@@ -98,6 +106,99 @@ test("official payloads validate and malformed or outside writes deny", () => {
     hookEventName: "PreToolUse",
     permissionDecision: "deny",
   });
+});
+
+test("recognized writes stay transparent without controlled active work", () => {
+  const root = cwd();
+  const absent = handleCodexHook(
+    official(
+      {
+        hook_event_name: "PreToolUse",
+        turn_id: "turn-1",
+        tool_use_id: "tool-1",
+        tool_name: "Write",
+        tool_input: { file_path: "src/absent.ts" },
+      },
+      root,
+    ),
+  );
+  expect(absent.hookSpecificOutput).toMatchObject({ permissionDecision: "allow" });
+
+  const store = new TaskStore(root);
+  const context: OperationContext = {
+    root,
+    caller: { host: detectCodexSurface(process.env), actor: "session-1" },
+    callerAttested: false,
+    capabilities: [],
+    constraints: [],
+    now: "2026-01-01T00:00:00Z",
+  };
+  const core = new WorkitCore(store, context);
+  const started = core.task(taskStartRequest());
+  expect(started.ok).toBe(true);
+  if (!started.ok) throw new Error(started.error);
+  const current = store.readTask((started.data as { id: string }).id);
+  const workspace = store.readWorkspace();
+  if (!current.ok || !workspace.ok || !workspace.data) throw new Error("state missing");
+  const paused = core.task({
+    schemaVersion: 1,
+    action: "pause",
+    taskId: current.data.id,
+    expectedRevision: current.data.revision,
+    expectedWorkspaceRevision: workspace.data.revision,
+    reason: "test",
+  });
+  expect(paused.ok).toBe(true);
+  const noActive = handleCodexHook(
+    official(
+      {
+        hook_event_name: "PreToolUse",
+        turn_id: "turn-1",
+        tool_use_id: "tool-2",
+        tool_name: "Write",
+        tool_input: { file_path: "src/no-active.ts" },
+      },
+      root,
+    ),
+  );
+  expect(noActive.hookSpecificOutput).toMatchObject({ permissionDecision: "allow" });
+});
+
+test("ambiguous or corrupt controlled state denies recognized writes", () => {
+  const root = cwd();
+  const store = new TaskStore(root);
+  const context: OperationContext = {
+    root,
+    caller: { host: detectCodexSurface(process.env), actor: "session-1" },
+    callerAttested: false,
+    capabilities: [],
+    constraints: [],
+    now: "2026-01-01T00:00:00Z",
+  };
+  const core = new WorkitCore(store, context);
+  const first = core.task(taskStartRequest());
+  expect(first.ok).toBe(true);
+  if (!first.ok) throw new Error(first.error);
+  const firstTask = store.readTask((first.data as { id: string }).id);
+  const firstWorkspace = store.readWorkspace();
+  if (!firstTask.ok || !firstWorkspace.ok || !firstWorkspace.data) throw new Error("state missing");
+  const second = core.task(
+    taskStartRequest({ expectedWorkspaceRevision: firstWorkspace.data.revision }),
+  );
+  expect(second.ok).toBe(true);
+  const ambiguous = handleCodexHook(
+    official(
+      {
+        hook_event_name: "PreToolUse",
+        turn_id: "turn-1",
+        tool_use_id: "tool-1",
+        tool_name: "Write",
+        tool_input: { file_path: "src/ambiguous.ts" },
+      },
+      root,
+    ),
+  );
+  expect(ambiguous.hookSpecificOutput).toMatchObject({ permissionDecision: "deny" });
 });
 
 test("PreToolUse delegates every recognized product write to shared core", () => {

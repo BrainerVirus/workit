@@ -116,10 +116,63 @@ const events = new Set<CodexHookEvent>([
   "SubagentStart",
   "SubagentStop",
 ]);
+const allowedKeys: Record<CodexHookEvent, Set<string>> = {
+  SessionStart: new Set([
+    "hook_event_name",
+    "session_id",
+    "cwd",
+    "model",
+    "permission_mode",
+    "transcript_path",
+    "source",
+  ]),
+  PreToolUse: new Set([
+    "hook_event_name",
+    "session_id",
+    "cwd",
+    "model",
+    "permission_mode",
+    "transcript_path",
+    "turn_id",
+    "tool_name",
+    "tool_input",
+    "tool_use_id",
+    "agent_id",
+    "agent_type",
+  ]),
+  SubagentStart: new Set([
+    "hook_event_name",
+    "session_id",
+    "cwd",
+    "model",
+    "permission_mode",
+    "transcript_path",
+    "turn_id",
+    "agent_id",
+    "agent_type",
+  ]),
+  SubagentStop: new Set([
+    "hook_event_name",
+    "session_id",
+    "cwd",
+    "model",
+    "permission_mode",
+    "transcript_path",
+    "turn_id",
+    "agent_id",
+    "agent_type",
+    "agent_transcript_path",
+    "last_assistant_message",
+    "stop_hook_active",
+  ]),
+};
 
 export const parseCodexHookInput = (value: unknown): HookParseResult => {
   if (!record(value) || !events.has(value.hook_event_name as CodexHookEvent))
     return { ok: false, error: "hook_event_name is required" };
+  const event = value.hook_event_name as CodexHookEvent;
+  const unknown = Object.keys(value).find((key) => !allowedKeys[event].has(key));
+  if (unknown) return { ok: false, error: `${unknown} is not allowed for ${event}` };
   if (!nonEmpty(value.session_id)) return { ok: false, error: "session_id is required" };
   if (!nonEmpty(value.model)) return { ok: false, error: "model is required" };
   if (
@@ -137,7 +190,6 @@ export const parseCodexHookInput = (value: unknown): HookParseResult => {
   } catch {
     return { ok: false, error: "cwd must be an existing absolute path" };
   }
-  const event = value.hook_event_name as CodexHookEvent;
   if (
     event === "SessionStart" &&
     !["startup", "resume", "clear", "compact"].includes(String(value.source))
@@ -283,14 +335,17 @@ const denied = (event: CodexHookEvent, reason: string) =>
 
 const activeTask = (store: TaskStore) => {
   const workspace = store.readWorkspace();
-  if (!workspace.ok) return { ok: false as const, reason: workspace.error };
-  if (!workspace.data) return { ok: false as const, reason: "workspace is unavailable" };
+  if (!workspace.ok)
+    return { ok: false as const, kind: "invalid" as const, reason: workspace.error };
+  if (!workspace.data)
+    return { ok: false as const, kind: "absent" as const, reason: "workspace is unavailable" };
   const tasks = store.listTasks();
-  if (!tasks.ok) return { ok: false as const, reason: tasks.error };
+  if (!tasks.ok) return { ok: false as const, kind: "invalid" as const, reason: tasks.error };
   const active = tasks.data.filter((task) => task.status === "active");
   if (active.length !== 1)
     return {
       ok: false as const,
+      kind: active.length === 0 ? ("absent" as const) : ("ambiguous" as const),
       reason: active.length === 0 ? "no active task" : "active task is ambiguous",
     };
   return { ok: true as const, task: active[0], workspace: workspace.data };
@@ -310,7 +365,7 @@ const sessionContext = (input: CodexHookInput): string => {
       const view = new WorkitCore(store, {
         root: input.cwd,
         caller: { host: detectCodexSurface(process.env), actor: input.session_id },
-        callerAttested: false,
+        callerAttested: true,
         capabilities: codexCapabilities(detectCodexSurface(process.env), { sessionStart: true }),
         constraints: [],
         now: new Date().toISOString().replace(/\.\d{3}Z$/, "Z"),
@@ -336,11 +391,13 @@ export const handleCodexHook = (raw: unknown): Record<string, unknown> => {
       record(raw) && events.has(raw.hook_event_name as CodexHookEvent)
         ? (raw.hook_event_name as CodexHookEvent)
         : "PreToolUse";
-    return event === "PreToolUse" || event === "SubagentStart"
+    return event === "PreToolUse"
       ? denied(event, parsed.error)
-      : event === "SubagentStop"
-        ? {}
-        : output(event, { additionalContext: `[workit diagnostic: ${parsed.error}]` });
+      : event === "SubagentStart"
+        ? output(event, { additionalContext: `[workit diagnostic: ${parsed.error}]` })
+        : event === "SubagentStop"
+          ? {}
+          : output(event, { additionalContext: `[workit diagnostic: ${parsed.error}]` });
   }
   const input = parsed.data;
   if (input.hook_event_name === "SessionStart") {
@@ -357,7 +414,10 @@ export const handleCodexHook = (raw: unknown): Record<string, unknown> => {
     try {
       const store = new TaskStore(input.cwd);
       const state = activeTask(store);
-      if (!state.ok) return denied("PreToolUse", state.reason);
+      if (!state.ok)
+        return state.kind === "absent"
+          ? output("PreToolUse", { permissionDecision: "allow" })
+          : denied("PreToolUse", state.reason);
       // The persisted writer/worker session is the authority. Surface detection
       // is diagnostic only and must not grant a caller a host identity.
       const worker = state.task.workers.find(
@@ -371,7 +431,7 @@ export const handleCodexHook = (raw: unknown): Record<string, unknown> => {
       const core = new WorkitCore(store, {
         root: input.cwd,
         caller: { host, actor: input.session_id },
-        callerAttested: false,
+        callerAttested: true,
         workerId: worker?.id ?? null,
         capabilities: codexCapabilities(host, { preToolUse: true }),
         constraints: [],

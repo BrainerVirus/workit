@@ -1,8 +1,7 @@
 import { existsSync, realpathSync, statSync } from "node:fs";
-import { tmpdir } from "node:os";
 import path from "node:path";
-import { runStdioServer } from "@brainervirus/workit-mcp";
-import type { OperationContext } from "@brainervirus/workit-core/src/core";
+import { TaskStore, type OperationContext } from "@brainervirus/workit-core/src/core";
+import { runStdioServer } from "@brainervirus/workit-mcp/src/server";
 import { codexCapabilities, detectCodexSurface, type CodexHost } from "../hooks/workit-hook";
 
 export const codexQualification = (host: CodexHost) =>
@@ -24,30 +23,33 @@ export const resolveCodexWorkspaceRoot = (
     if (!statSync(candidate).isDirectory()) return null;
     const canonical = realpathSync(candidate);
     if (canonical === realpathSync(pluginRoot)) return null;
+    const workspace = new TaskStore(canonical).readWorkspace();
+    if (!workspace.ok || !workspace.data || workspace.data.root !== canonical) return null;
     return canonical;
   } catch {
     return null;
   }
 };
 
-const unavailableRoot = path.join(tmpdir(), "workit-codex-workspace-unavailable");
-
 export const codexContextProvider = (
   host: CodexHost = detectCodexSurface(process.env),
   root?: string,
 ): { current: () => Promise<OperationContext> } => ({
-  current: async () => ({
-    root:
-      (root === undefined
+  current: async () => {
+    const workspaceRoot =
+      root === undefined
         ? resolveCodexWorkspaceRoot(process.cwd(), process.env)
-        : resolveCodexWorkspaceRoot(process.cwd(), { WORKFLOW_WORKSPACE_ROOT: root })) ??
-      unavailableRoot,
-    caller: { host, actor: "" },
-    callerAttested: false,
-    capabilities: codexCapabilities(host),
-    constraints: [],
-    now: new Date().toISOString().replace(/\.\d{3}Z$/, "Z"),
-  }),
+        : resolveCodexWorkspaceRoot(process.cwd(), { WORKFLOW_WORKSPACE_ROOT: root });
+    if (!workspaceRoot) throw new Error("Codex workspace root is unavailable");
+    return {
+      root: workspaceRoot,
+      caller: { host, actor: "" },
+      callerAttested: false,
+      capabilities: codexCapabilities(host),
+      constraints: [],
+      now: new Date().toISOString().replace(/\.\d{3}Z$/, "Z"),
+    };
+  },
 });
 
 if (import.meta.main)
