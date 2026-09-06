@@ -1,7 +1,6 @@
 import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import {
-  appendFileSync,
   cpSync,
   existsSync,
   mkdirSync,
@@ -16,7 +15,7 @@ import path from "node:path";
 import Ajv from "ajv";
 import addFormats from "ajv-formats";
 import {
-  CANONICAL_SKILLS,
+  CURSOR_SKILLS,
   validateSkillManifests,
 } from "../../packages/workit-core/src/core/skill-manifests";
 import { validateMarketplace } from "../../packages/workit-core/scripts/validate-cursor-marketplace";
@@ -143,10 +142,7 @@ test(
   "all declared skills and rules have valid frontmatter (CA-15)",
   () => {
     const root = path.join(REPO_ROOT, PLUGIN_DIR_REL);
-    for (const [dir, skills] of [
-      [path.join(root, "skills"), CANONICAL_SKILLS.workit],
-      [path.join(root, "vendor/superpowers/skills"), CANONICAL_SKILLS.superpowers],
-    ] as const) {
+    for (const [dir, skills] of [[path.join(root, "skills"), CURSOR_SKILLS]] as const) {
       expect(validateSkillManifests(dir, skills, "skills")).toBeNull();
       for (const skill of skills) {
         const keys = frontmatterKeys(path.join(dir, skill, "SKILL.md"));
@@ -183,26 +179,6 @@ test(
   "rebuilding the sanitized vendor tree yields no diff (CA-15)",
   () => {
     expect(validateMarketplace(REPO_ROOT)).toEqual([]);
-  },
-  { timeout: 60_000 },
-);
-
-test(
-  "vendor content drift in a non-last skill is detected (regression)",
-  () => {
-    const dir = cleanCheckoutCopy();
-    try {
-      const skill = path.join(
-        dir,
-        PLUGIN_DIR_REL,
-        "vendor/superpowers/skills/brainstorming/SKILL.md",
-      );
-      appendFileSync(skill, "\n// sentinel drift line\n");
-      const errors = validateMarketplace(dir);
-      expect(errors.some((e) => e.includes("vendor drift"))).toBe(true);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
   },
   { timeout: 60_000 },
 );

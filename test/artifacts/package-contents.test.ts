@@ -83,6 +83,7 @@ test("cursor tarball ships dist MCP + hook entries, manifests, assets and npm bi
   for (const required of [
     "dist/mcp-server.js",
     "dist/cursor-session-start.js",
+    "dist/workit-hook.js",
     "mcp.json",
     "assets/logo.svg",
     ".cursor-plugin/plugin.json",
@@ -103,6 +104,7 @@ test("cursor tarball ships dist MCP + hook entries, manifests, assets and npm bi
   expect(pkg.bin).toEqual({
     "workit-cursor-mcp": "./dist/mcp-server.js",
     "workit-cursor-session-start": "./dist/cursor-session-start.js",
+    "workit-cursor-hook": "./dist/workit-hook.js",
   });
 });
 
@@ -307,7 +309,7 @@ test("adapter vendor trees ship no executable or shebang files (finding)", () =>
   }
 });
 
-test("cursor vendor filtering rejects shebang files when executable metadata is unavailable", () => {
+test("cursor build has no vendored legacy skills", () => {
   const fixture = mkdtempSync(path.join(os.tmpdir(), "wk-cursor-windows-mode-"));
   const target = path.join(fixture, "output");
   try {
@@ -334,10 +336,7 @@ test("cursor vendor filtering rejects shebang files when executable metadata is 
       { encoding: "utf8" },
     );
     expect(build.status, build.stderr).toBe(0);
-    walkFiles(path.join(target, "vendor"), (file) => {
-      const head = readFileSync(file).subarray(0, 2).toString("latin1");
-      expect(head, path.relative(target, file)).not.toBe("#!");
-    });
+    expect(existsSync(path.join(target, "vendor"))).toBe(false);
   } finally {
     rmSync(fixture, { recursive: true, force: true });
   }
@@ -373,7 +372,7 @@ test("shipped skill/template/vendor markdown uses workit_ tool identifiers with 
       if (LIVE_WORKIT_TOOL.test(md)) sawWorkitTool = true;
     }
     expect(offenders, `${pack.packageName} ships stale workflow_ tool references`).toEqual([]);
-    if (pack.packageName !== OPENCODE)
+    if (pack.packageName !== OPENCODE && pack.packageName !== "@brainervirus/workit-mcp")
       expect(sawWorkitTool, `${pack.packageName} ships renamed workit_ tool references`).toBe(true);
   }
 });

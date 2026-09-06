@@ -1,45 +1,17 @@
 #!/usr/bin/env bun
 // Build the self-contained Cursor MCP + session-hook entries and copy the
-// deterministic assets root (templates incl. hygiene). Runs from the repo
+// Cursor contract asset. Runs from the repo
 // (where workspace deps resolve); target dir defaults to the package dir and
 // can be overridden for the pack sandbox.
 import { spawnSync } from "node:child_process";
-import {
-  chmodSync,
-  cpSync,
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  rmSync,
-} from "node:fs";
+import { cpSync, existsSync, mkdirSync, rmSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  CANONICAL_SKILLS,
-  validateSkillManifests,
-} from "../../workit-core/src/core/skill-manifests";
-import { copySanitizedVendor } from "../../workit-core/scripts/vendor-assets";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const pkgDir = path.resolve(scriptDir, "..");
 const coreDir = path.resolve(pkgDir, "..", "workit-core");
 const target = process.argv[2] ? path.resolve(process.argv[2]) : pkgDir;
-const vendorSkills = path.join(coreDir, "vendor/superpowers/skills");
-
-const sourceWorkitError = validateSkillManifests(
-  path.join(pkgDir, "skills"),
-  CANONICAL_SKILLS.workit,
-  "Cursor Workit source skills",
-);
-if (sourceWorkitError) throw new Error(sourceWorkitError);
-
-const sourceVendorError = validateSkillManifests(
-  vendorSkills,
-  CANONICAL_SKILLS.superpowers,
-  "core Superpowers vendor",
-);
-if (sourceVendorError) throw new Error(sourceVendorError);
-
 const dist = path.join(target, "dist");
 rmSync(dist, { recursive: true, force: true });
 mkdirSync(dist, { recursive: true });
@@ -47,6 +19,7 @@ mkdirSync(dist, { recursive: true });
 const entries = [
   ["mcp/run-server.ts", "mcp-server.js"],
   ["hooks/session-start.ts", "cursor-session-start.js"],
+  ["hooks/workit-hook.ts", "workit-hook.js"],
 ] as const;
 for (const [entry, out] of entries) {
   const build = spawnSync(
@@ -73,37 +46,31 @@ for (const [entry, out] of entries) {
   }
 }
 
-// Deterministic assets: templates (incl. hygiene) for session-start + bundled core.
-// Only the generated templates/ subtree is wiped; committed static assets such as
-// the Marketplace logo (assets/logo.svg) must survive the build.
+// Keep only the Cursor-native contract asset. The old shared template bundle
+// describes retired wk-* and delegation-token flows and must not ship here.
 const assets = path.join(target, "assets");
 rmSync(path.join(assets, "templates"), { recursive: true, force: true });
 const templatesSrc = path.join(coreDir, "templates");
-if (existsSync(templatesSrc)) {
+const contractTemplate = path.join(templatesSrc, "workit-contract.md");
+if (existsSync(contractTemplate)) {
   mkdirSync(assets, { recursive: true });
-  cpSync(templatesSrc, path.join(assets, "templates"), { recursive: true });
+  mkdirSync(path.join(assets, "templates"), { recursive: true });
+  cpSync(contractTemplate, path.join(assets, "templates", "workit-contract.md"));
 }
 
-const vendor = path.join(target, "vendor");
-rmSync(vendor, { recursive: true, force: true });
-const builtSkills = path.join(vendor, "superpowers/skills");
-copySanitizedVendor(vendorSkills, builtSkills);
-// Deterministic tracked tree: normalize modes so the committed vendor is
-// independent of the developer's umask and carries no executable bit (CA-15).
-const normalizeModes = (dir: string): void => {
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const p = path.join(dir, entry.name);
-    if (entry.isDirectory()) normalizeModes(p);
-    else chmodSync(p, 0o644);
-  }
-};
-normalizeModes(builtSkills);
-const builtVendorError = validateSkillManifests(
-  builtSkills,
-  CANONICAL_SKILLS.superpowers,
-  "filtered Cursor vendor",
-);
-if (builtVendorError) throw new Error(builtVendorError);
-console.log(
-  `cursor: built dist/mcp-server.js + dist/cursor-session-start.js + assets/ + vendor/ (${target})`,
-);
+const skills = path.join(target, "skills");
+rmSync(skills, { recursive: true, force: true });
+rmSync(path.join(target, "vendor"), { recursive: true, force: true });
+mkdirSync(skills, { recursive: true });
+for (const name of [
+  "workit-challenge",
+  "workit-behavioral-tdd",
+  "workit-review",
+  "workit-plan",
+  "workit-implement",
+  "workit-debug",
+  "workit-handoff",
+]) {
+  cpSync(path.join(coreDir, "skills", name), path.join(skills, name), { recursive: true });
+}
+console.log(`cursor: built shared MCP, native hook, assets, and seven method skills (${target})`);

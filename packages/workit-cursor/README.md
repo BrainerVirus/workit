@@ -1,6 +1,6 @@
 # @brainervirus/workit-cursor
 
-Cursor plugin for workit — MCP server, session-start hook, rules, and skills for agentic coding workflows (specs, plans, YouTrack, CI-gated commits).
+Cursor plugin for workit — shared MCP tools, documented native hooks, compact continuity, and adaptive method skills.
 
 ## Install
 
@@ -40,21 +40,21 @@ npx @brainervirus/workit-cli init
 
 ## What it provides
 
-- MCP server exposing the `workit_*` tools (branch setup, PR create/context, docs validate/promote, YouTrack post/log/time, templates, rules, presentation, doctor, handoff, and plan lifecycle `workit_plan_pause`/`resume`/`complete`).
-- Session-start contract hook.
-- 4 rules and 12 `wk-*` skills (plus 14 sanitized Superpowers skills).
+- MCP server exposing exactly the eight shared `workit_*` operation families.
+- One bounded native hook executable for session context, recognized product-write and shell interception, and native subagent lifecycle observations.
+- Seven canonical `workit-*` method skills and the `workit-contract` rule.
 
 ## Host limitations
 
-Cursor adapts workit through policy-only confirmation: approvals and lifecycle transitions are recorded as policy decisions (`attested: false`) rather than fabricated delegated identity; model selection remains a host-native action. Both execution modes are supported: **Subagent-driven** — `workit_plan_menu` returns a one-time `coordinator_lease`, `workit_delegate` mints a task-scoped `delegation_token` per task (fail-closed validation; only hashes persist), and the coordinator dispatches Cursor-native subagents that pass the token as `delegation_token` on mutation calls (the task token is revoked when the worker's progress line lands); **Inline** — `executing-plans` runs every task single-agent in the current session with no dispatch and no token minting. Approvals bind to the document's exact SHA-256 digest — editing an approved spec/plan invalidates the approval and forces a fresh reapproval. OpenCode records native `question` receipts and derives delegated status from session parentage (`parentID`), which Cursor does not have; see the root [README](../../README.md#host-capabilities) for the full host-capability matrix.
+Cursor maps shared Workit operations through the shared MCP transport. AskQuestion remains policy-only (`agent_guided`), session start and compaction are non-blocking, and arbitrary shell writes, Tab edits, and exact subagent stop identity are unavailable. Known Write/Edit/Delete targets and native subagent starts are enforced only when the documented Cursor hook inputs prove them.
 
 ## Configuration
 
 - Plugin metadata: `packages/workit-cursor/.cursor-plugin/plugin.json` (`name: "workit"`, `displayName: "Workit"`).
 - MCP server: `mcp.json`.
 - Session-start hook: `hooks/hooks-cursor.json`.
-- Rules: `rules/` (`ask-question-only.mdc`, `cursor-todowrite.mdc`, `no-worktrees.mdc`, `sdd-docs-path.mdc`).
-- Skills: `skills/` (12 `wk-*`) and `vendor/superpowers/skills/` (14).
+- Rules: `rules/` (`workit-contract.mdc`, `cursor-todowrite.mdc`, `no-worktrees.mdc`, `sdd-docs-path.mdc`).
+- Skills: `skills/` (seven canonical Workit methods).
 
 ## Runtime
 
@@ -79,14 +79,13 @@ The runtime runs from `@latest` with the mandatory `--prefer-online` flag: Curso
 | `mcp/` + `dist/mcp-server.js` | MCP server entry (built). |
 | `hooks/` | session-start hook manifest. |
 | `rules/` | 4 `.mdc` rules. |
-| `skills/` | 12 `wk-*` skills. |
-| `vendor/superpowers/skills/` | 14 sanitized Superpowers skills. |
+| `skills/` | Seven canonical adaptive Workit method skills. |
 | `.cursor-plugin/plugin.json` | authoritative plugin manifest. |
 
 ## Package scripts
 
 ```bash
-bun run build   # bundle dist/mcp-server.js, dist/cursor-session-start.js, sanitize vendor skills
+  bun run build   # bundle MCP + native hook entries and copy seven method skills
 ```
 
 From the repository root, `bun run validate:cursor-marketplace` validates the tracked Marketplace artifact against the official Cursor JSON schemas and clean-checkout invariants (component paths, frontmatter, logo, sanitized vendor parity, no ignored-`dist` runtime references).
@@ -97,7 +96,7 @@ The repository root carries `.cursor-plugin/marketplace.json`, indexing `package
 
 - **Installing from Marketplace** — a Marketplace admin adds the repository URL through Cursor's authenticated publisher flow; end users then install the plugin from the Cursor Marketplace UI, which reads `.cursor-plugin/plugin.json` and the tracked components directly from Git.
 - **Submission** — Marketplace submission is a separate, later authenticated action at `https://cursor.com/marketplace/publish`. It is **not** performed here and no publication or acceptance is claimed; the repository is kept validated and submission-ready.
-- **Update review** — Git plugin metadata (manifest, rules, skills, assets) is reviewed by Cursor on Marketplace updates, while the npm runtime runs from `@latest` with `--prefer-online`. The selector is shared across `mcp.json`, `hooks-cursor.json`, and `run-cursor-mcp.sh`, and a stale `latest` resolution is prevented by the mandatory `--prefer-online` flag.
+- **Update review** — Git plugin metadata (manifest, rules, skills, assets) is reviewed by Cursor on Marketplace updates, while the npm runtime runs from `@latest` with `--prefer-online`. The selector is shared across `mcp.json` and `hooks-cursor.json`, and a stale `latest` resolution is prevented by the mandatory `--prefer-online` flag.
 - **Troubleshooting** — `workit doctor` (or the `workit_doctor` tool) reports installation health including runtime, token, VCS/YouTrack, and log-writability checks; it exits nonzero on failure. An MCP/hook startup failure with no network is an `npx`/registry reachability issue, not a Workit defect.
 
 ## Auto-load repair

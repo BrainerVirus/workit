@@ -47,7 +47,7 @@ function makeDependencyFreeCheckout() {
   for (const file of ["package.json", "bun.lock"]) {
     cpSync(path.join(repoRoot, file), path.join(checkout, file));
   }
-  for (const pkg of ["workit-core", "workit-cursor", "workit-opencode"]) {
+  for (const pkg of ["workit-core", "workit-mcp", "workit-cursor", "workit-opencode"]) {
     cpSync(path.join(repoRoot, "packages", pkg), path.join(checkout, "packages", pkg), {
       recursive: true,
       filter: (src) =>
@@ -56,7 +56,7 @@ function makeDependencyFreeCheckout() {
   }
   const dist = path.join(checkout, "packages/workit-cursor/dist");
   mkdirSync(dist, { recursive: true });
-  for (const entry of ["mcp-server.js", "cursor-session-start.js"]) {
+  for (const entry of ["mcp-server.js", "cursor-session-start.js", "workit-hook.js"]) {
     writeFileSync(path.join(dist, entry), "stale\n");
   }
   return checkout;
@@ -73,13 +73,18 @@ if [ "\${1:-}" = "install" ]; then
   [ "\${2:-}" = "--frozen-lockfile" ] || exit 41
   printf 'install\n' >> "$BUN_LOG"
   [ "\${FAIL_INSTALL:-0}" = "0" ] || exit 42
-  mkdir -p "$PWD/node_modules/@brainervirus" "$PWD/node_modules/@modelcontextprotocol"
-  ln -s "$PWD/packages/workit-core" "$PWD/node_modules/@brainervirus/workit-core"
-  ln -s "$REAL_NODE_MODULES/@modelcontextprotocol/sdk" "$PWD/node_modules/@modelcontextprotocol/sdk"
-  ln -s "$REAL_NODE_MODULES/zod" "$PWD/node_modules/zod"
+  mkdir -p "$PWD/node_modules/@brainervirus" "$PWD/node_modules/@modelcontextprotocol" "$PWD/node_modules/@openclaw"
+  ln -sfn "$PWD/packages/workit-core" "$PWD/node_modules/@brainervirus/workit-core"
+  ln -sfn "$PWD/packages/workit-mcp" "$PWD/node_modules/@brainervirus/workit-mcp"
+  ln -sfn "$REAL_NODE_MODULES/@openclaw/fs-safe" "$PWD/node_modules/@openclaw/fs-safe"
+  ln -sfn "$REAL_NODE_MODULES/@modelcontextprotocol/sdk" "$PWD/node_modules/@modelcontextprotocol/sdk"
+  ln -sfn "$REAL_NODE_MODULES/zod" "$PWD/node_modules/zod"
   exit 0
 fi
 case "\${1:-}" in
+  */packages/workit-mcp/scripts/build.ts)
+    "$REAL_BUN" "$@"
+    ;;
   */packages/workit-cursor/scripts/build.ts)
     grep -qx install "$BUN_LOG" || exit 43
     printf 'build\n' >> "$BUN_LOG"
@@ -732,7 +737,7 @@ test.skipIf(!bashAvailable() || !flockAvailable() || !findOnPath("rsync"))(
         const ts = await syncRuntime({ env });
         expect(ts).toEqual({ ok: true });
         expect(readFileSync(bunLog, "utf8")).toBe("install\nbuild\n");
-        for (const entry of ["mcp-server.js", "cursor-session-start.js"]) {
+        for (const entry of ["mcp-server.js", "cursor-session-start.js", "workit-hook.js"]) {
           const installed = path.join(devHome, ".cursor/plugins/local/workit/dist", entry);
           expect(existsSync(installed), entry).toBe(true);
           expect(readFileSync(installed, "utf8")).toStartWith("#!/usr/bin/env node");
@@ -754,7 +759,7 @@ test.skipIf(!bashAvailable() || !flockAvailable() || !findOnPath("rsync"))(
         const bash = runScript(bashEnv);
         expect(bash.status, bash.stderr).toBe(0);
         expect(readFileSync(bunLog, "utf8")).toBe("install\nbuild\n");
-        for (const entry of ["mcp-server.js", "cursor-session-start.js"]) {
+        for (const entry of ["mcp-server.js", "cursor-session-start.js", "workit-hook.js"]) {
           const installed = path.join(devHome2, ".cursor/plugins/local/workit/dist", entry);
           expect(existsSync(installed), entry).toBe(true);
           expect(readFileSync(installed, "utf8")).toStartWith("#!/usr/bin/env node");
@@ -974,7 +979,12 @@ test.skipIf(!bashAvailable() || !flockAvailable() || !findOnPath("rsync"))(
       mkdirSync(path.join(skillsDev, "packages/workit-cursor/mcp"), { recursive: true });
       mkdirSync(path.join(skillsDev, "packages/workit-cursor/scripts"), { recursive: true });
       mkdirSync(path.join(skillsDev, "packages/workit-cursor/dist"), { recursive: true });
-      for (const dependency of ["@brainervirus/workit-core", "@modelcontextprotocol/sdk", "zod"]) {
+      for (const dependency of [
+        "@brainervirus/workit-core",
+        "@brainervirus/workit-mcp",
+        "@modelcontextprotocol/sdk",
+        "zod",
+      ]) {
         mkdirSync(path.join(skillsDev, "node_modules", dependency), { recursive: true });
       }
       mkdirSync(path.join(skillsDev, "packages/workit-core/vendor/superpowers/skills"), {
@@ -989,7 +999,7 @@ test.skipIf(!bashAvailable() || !flockAvailable() || !findOnPath("rsync"))(
       writeFileSync(skillsBun, '#!/usr/bin/env bash\n[[ "${1:-}" != */skill-manifests.ts ]]\n', {
         mode: 0o755,
       });
-      for (const entry of ["mcp-server.js", "cursor-session-start.js"]) {
+      for (const entry of ["mcp-server.js", "cursor-session-start.js", "workit-hook.js"]) {
         writeFileSync(
           path.join(skillsDev, "packages/workit-cursor/dist", entry),
           "#!/usr/bin/env node\n",
@@ -1096,7 +1106,12 @@ test.skipIf(!bashAvailable() || !flockAvailable())(
       mkdirSync(path.join(dev, "packages/workit-cursor/mcp"), { recursive: true });
       mkdirSync(path.join(dev, "packages/workit-cursor/scripts"), { recursive: true });
       mkdirSync(path.join(dev, "packages/workit-cursor/dist"), { recursive: true });
-      for (const dependency of ["@brainervirus/workit-core", "@modelcontextprotocol/sdk", "zod"]) {
+      for (const dependency of [
+        "@brainervirus/workit-core",
+        "@brainervirus/workit-mcp",
+        "@modelcontextprotocol/sdk",
+        "zod",
+      ]) {
         mkdirSync(path.join(dev, "node_modules", dependency), { recursive: true });
       }
       writeFileSync(
@@ -1107,7 +1122,7 @@ test.skipIf(!bashAvailable() || !flockAvailable())(
       const lockBun = path.join(fakeRsyncDir, "bun");
       writeFileSync(lockBun, "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
       env.BUN = lockBun;
-      for (const entry of ["mcp-server.js", "cursor-session-start.js"]) {
+      for (const entry of ["mcp-server.js", "cursor-session-start.js", "workit-hook.js"]) {
         writeFileSync(
           path.join(dev, "packages/workit-cursor/dist", entry),
           "#!/usr/bin/env node\n",

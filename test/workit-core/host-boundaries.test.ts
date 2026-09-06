@@ -71,19 +71,19 @@ test("root tsconfig typechecks every maintained TS surface", () => {
   }
 });
 
-test("cursor normalizes workspace root once through resolveWorkspaceRoot", () => {
+test("cursor delegates workspace root context to the shared transport", () => {
   const server = readFileSync(CURSOR_SERVER, "utf8");
-  expect(server.match(/const workspaceRootSchema\s*=/g)).toHaveLength(1);
+  expect(server).toContain("@brainervirus/workit-mcp");
+  expect(server).toContain("cursorContextProvider");
   expect(resolveWorkspaceRoot(undefined)).toBe(process.cwd());
   expect(resolveWorkspaceRoot("/workspace")).toBe("/workspace");
 });
 
-test("opencode and cursor flow registrations share the same pure core functions", async () => {
+test("cursor does not duplicate host flow or schema registrations", async () => {
   const server = readFileSync(CURSOR_SERVER, "utf8");
-  expect(server).toMatch(/resolveCanonicalLayout\(\{\s*workspace_root,\s*spec_path,\s*plan_path/s);
-  // Robust equivalence: the cursor server resolves a workspace root and feeds it
-  // to the shared readFlowState core function (argument shape may evolve).
-  expect(server).toMatch(/readFlowState\s*\(\s*workspace\b/);
+  expect(server).not.toContain("resolveCanonicalLayout");
+  expect(server).not.toContain("readFlowState");
+  expect(server).not.toContain("registerTool");
 
   const { createFlowTools } = await import("../../packages/workit-opencode/src/tools/flow");
   const { HostReceiptStore } = await import("../../packages/workit-core/src/core/flow-state");
@@ -135,13 +135,9 @@ test("opencode and cursor flow registrations share the same pure core functions"
   }
 });
 
-test("both hosts register workit_docs_layout prepare", async () => {
+test("Cursor publishes only the shared eight operation families", async () => {
   const server = readFileSync(CURSOR_SERVER, "utf8");
-  expect(server).toMatch(/"workit_docs_layout"/);
-  expect(server).toMatch(/prepareDocsLayout\(\{ workspace_root, slug, spec_path, plan_path \}\)/);
-
-  const { createDocsRepoTools } =
-    await import("../../packages/workit-opencode/src/tools/docs-repo");
-  const tools = createDocsRepoTools();
-  expect(typeof tools.workit_docs_layout).toBe("object");
+  expect(server).toContain("createMcpServer");
+  const { OPERATION_FAMILIES } = await import("../../packages/workit-core/src/core");
+  expect(OPERATION_FAMILIES).toHaveLength(8);
 });

@@ -5,6 +5,35 @@
       {
         "command": "npx -y --prefer-online --package=@brainervirus/workit-cursor@latest workit-cursor-session-start"
       }
+    ],
+    "preToolUse": [
+      {
+        "command": "npx -y --prefer-online --package=@brainervirus/workit-cursor@latest workit-cursor-hook",
+        "matcher": "Write|Edit|Delete|Shell",
+        "failClosed": true
+      }
+    ],
+    "beforeShellExecution": [
+      {
+        "command": "npx -y --prefer-online --package=@brainervirus/workit-cursor@latest workit-cursor-hook",
+        "failClosed": true
+      }
+    ],
+    "subagentStart": [
+      {
+        "command": "npx -y --prefer-online --package=@brainervirus/workit-cursor@latest workit-cursor-hook",
+        "failClosed": true
+      }
+    ],
+    "subagentStop": [
+      {
+        "command": "npx -y --prefer-online --package=@brainervirus/workit-cursor@latest workit-cursor-hook"
+      }
+    ],
+    "preCompact": [
+      {
+        "command": "npx -y --prefer-online --package=@brainervirus/workit-cursor@latest workit-cursor-hook"
+      }
     ]
   }
 }

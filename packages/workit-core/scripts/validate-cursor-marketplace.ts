@@ -20,20 +20,12 @@
 // `continual-learning` and `third_party/gmail` with no `../` prefix, even though
 // `.cursor-plugin/` is a sibling of those directories. Therefore
 // `source: "packages/workit-cursor"` is correct and kept verbatim.
-import {
-  existsSync,
-  mkdtempSync,
-  readFileSync,
-  readdirSync,
-  rmSync,
-} from "node:fs";
-import os from "node:os";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import Ajv from "ajv";
 import addFormats from "ajv-formats";
-import { CANONICAL_SKILLS, validateSkillManifests } from "../src/core/skill-manifests";
-import { copySanitizedVendor } from "./vendor-assets";
+import { CURSOR_SKILLS, validateSkillManifests } from "../src/core/skill-manifests";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "..", "..", "..");
@@ -54,30 +46,6 @@ const frontmatterKeys = (file: string): Set<string> => {
   return keys;
 };
 
-const treesEqual = (a: string, b: string): string[] => {
-  const diffs: string[] = [];
-  // Thread the tree root so each file is keyed by its ROOT-relative path —
-  // otherwise every `SKILL.md` collapses to one map entry and only the
-  // last-read (readdir-order-dependent) skill is actually compared.
-  const walk = (rootDir: string, dir: string, into: Map<string, string>): void => {
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      const p = path.join(dir, entry.name);
-      if (entry.isDirectory()) walk(rootDir, p, into);
-      else into.set(path.relative(rootDir, p).split(path.sep).join("/"), readFileSync(p, "utf8"));
-    }
-  };
-  const left = new Map<string, string>();
-  const right = new Map<string, string>();
-  walk(a, a, left);
-  walk(b, b, right);
-  for (const [rel, content] of left) {
-    if (!right.has(rel)) diffs.push(`missing in rebuilt: ${rel}`);
-    else if (right.get(rel) !== content) diffs.push(`content drift: ${rel}`);
-  }
-  for (const rel of right.keys()) if (!left.has(rel)) diffs.push(`extra in rebuilt: ${rel}`);
-  return diffs;
-};
-
 export const validateMarketplace = (rootArg: string): string[] => {
   const errors: string[] = [];
 
@@ -90,9 +58,7 @@ export const validateMarketplace = (rootArg: string): string[] => {
   const validate = new Ajv({ strict: true, allErrors: true });
   addFormats(validate);
   const schemaDir = path.join(rootArg, "test/fixtures/cursor-schemas");
-  const pluginSchema = JSON.parse(
-    readFileSync(path.join(schemaDir, "plugin.schema.json"), "utf8"),
-  );
+  const pluginSchema = JSON.parse(readFileSync(path.join(schemaDir, "plugin.schema.json"), "utf8"));
   const marketSchema = JSON.parse(
     readFileSync(path.join(schemaDir, "marketplace.schema.json"), "utf8"),
   );
@@ -106,12 +72,13 @@ export const validateMarketplace = (rootArg: string): string[] => {
   // 2. Resolve each plugin source relative to the repo root; name must match.
   for (const entry of (market.plugins ?? []) as { name: string; source: string }[]) {
     const pluginDir = path.join(rootArg, entry.source);
-    const manifestRel = path.join(entry.source, ".cursor-plugin/plugin.json");
     if (!existsSync(path.join(pluginDir, ".cursor-plugin/plugin.json"))) {
       errors.push(`plugin ${entry.name}: source ${entry.source} has no .cursor-plugin/plugin.json`);
       continue;
     }
-    const plugin = JSON.parse(readFileSync(path.join(pluginDir, ".cursor-plugin/plugin.json"), "utf8"));
+    const plugin = JSON.parse(
+      readFileSync(path.join(pluginDir, ".cursor-plugin/plugin.json"), "utf8"),
+    );
     if (!validate.validate(pluginSchema, plugin)) {
       errors.push(
         `plugin ${entry.name} plugin.json invalid: ${(validate.errors ?? []).map((e) => e.message).join("; ")}`,
@@ -155,23 +122,25 @@ export const validateMarketplace = (rootArg: string): string[] => {
 
     // 5. Skills and rules carry valid frontmatter.
     const skillRoots: [string, readonly string[]][] = [
-      [path.join(pluginDir, "skills"), CANONICAL_SKILLS.workit],
-      [path.join(pluginDir, "vendor/superpowers/skills"), CANONICAL_SKILLS.superpowers],
+      [path.join(pluginDir, "skills"), CURSOR_SKILLS],
     ];
     for (const [dir, expected] of skillRoots) {
       const mismatch = validateSkillManifests(dir, expected, "skills");
       if (mismatch) errors.push(`plugin ${entry.name}: ${mismatch}`);
       for (const skill of expected) {
         const keys = frontmatterKeys(path.join(dir, skill, "SKILL.md"));
-        if (!keys.has("name")) errors.push(`plugin ${entry.name}: ${skill}/SKILL.md missing frontmatter name`);
-        if (!keys.has("description")) errors.push(`plugin ${entry.name}: ${skill}/SKILL.md missing frontmatter description`);
+        if (!keys.has("name"))
+          errors.push(`plugin ${entry.name}: ${skill}/SKILL.md missing frontmatter name`);
+        if (!keys.has("description"))
+          errors.push(`plugin ${entry.name}: ${skill}/SKILL.md missing frontmatter description`);
       }
     }
     const rulesDir = path.join(pluginDir, "rules");
     if (existsSync(rulesDir)) {
       for (const rule of readdirSync(rulesDir).filter((f) => f.endsWith(".mdc"))) {
         const keys = frontmatterKeys(path.join(rulesDir, rule));
-        if (!keys.has("description")) errors.push(`plugin ${entry.name}: ${rule} missing frontmatter description`);
+        if (!keys.has("description"))
+          errors.push(`plugin ${entry.name}: ${rule} missing frontmatter description`);
       }
     }
 
@@ -184,23 +153,6 @@ export const validateMarketplace = (rootArg: string): string[] => {
         errors.push(`plugin ${entry.name}: ${rel} references ignored runtime output`);
       }
     }
-
-    // 7. Rebuilding the sanitized vendor tree yields no diff.
-    const sourceVendor = path.join(rootArg, "packages/workit-core/vendor/superpowers/skills");
-    const trackedVendor = path.join(pluginDir, "vendor/superpowers/skills");
-    if (existsSync(sourceVendor) && existsSync(trackedVendor)) {
-      const rebuilt = mkdtempSync(path.join(os.tmpdir(), "wk-vendor-rebuild-"));
-      try {
-        copySanitizedVendor(sourceVendor, rebuilt);
-        for (const diff of treesEqual(rebuilt, trackedVendor)) {
-          errors.push(`plugin ${entry.name}: vendor drift: ${diff}`);
-        }
-      } finally {
-        rmSync(rebuilt, { recursive: true, force: true });
-      }
-    } else {
-      errors.push(`plugin ${entry.name}: missing vendor source or tracked tree`);
-    }
   }
 
   return errors;
@@ -210,7 +162,9 @@ if (import.meta.main) {
   const errors = validateMarketplace(root);
   if (errors.length > 0) {
     for (const e of errors) process.stderr.write(`${e}\n`);
-    process.stderr.write(`marketplace validation FAILED (${errors.length} error${errors.length === 1 ? "" : "s"})\n`);
+    process.stderr.write(
+      `marketplace validation FAILED (${errors.length} error${errors.length === 1 ? "" : "s"})\n`,
+    );
     process.exit(1);
   }
   console.log(`marketplace validation passed (root: ${root})`);

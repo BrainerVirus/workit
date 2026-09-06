@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { CANONICAL_SKILLS } from "../../packages/workit-core/src/core/skill-manifests";
+import { CURSOR_SKILLS } from "../../packages/workit-core/src/core/skill-manifests";
 import { SUPPORT_MATRIX } from "../../packages/workit-core/src/core/support-matrix";
 import {
   listTarball,
@@ -179,10 +179,11 @@ test(
 );
 
 test(
-  "cursor package.json declares the MCP and session-start npm executables (CA-16)",
+  "cursor package.json declares the MCP, hook, and session-start npm executables (CA-16)",
   () => {
     const pkg = json<{ bin?: Record<string, string> }>("packages/workit-cursor/package.json");
     expect(pkg.bin).toEqual({
+      "workit-cursor-hook": "./dist/workit-hook.js",
       "workit-cursor-mcp": "./dist/mcp-server.js",
       "workit-cursor-session-start": "./dist/cursor-session-start.js",
     });
@@ -210,7 +211,7 @@ test(
       if (source === "packed") packedPlugin = plugin;
       expect(plugin.version, source).toBe(pkg.version);
       expect(plugin.logo, source).toBe("assets/logo.svg");
-      expect(plugin.skills, source).toEqual(["skills/", "vendor/superpowers/skills/"]);
+      expect(plugin.skills, source).toBe("skills/");
       expect(plugin.rules, source).toBe("rules/");
       expect(plugin.mcpServers, source).toBe("mcp.json");
       expect(plugin.hooks, source).toBe("hooks/hooks-cursor.json");
@@ -242,17 +243,9 @@ test(
     }
 
     const packedSkills = [...entries].filter((entry) => entry.endsWith("/SKILL.md"));
-    expect(packedSkills).toHaveLength(26);
-    for (const [source, target] of [
-      ["packages/workit-cursor/skills", "skills"],
-      ["packages/workit-core/vendor/superpowers/skills", "vendor/superpowers/skills"],
-    ] as const) {
-      const skills = readdirSync(path.join(REPO_ROOT, source)).filter((name) =>
-        existsSync(path.join(REPO_ROOT, source, name, "SKILL.md")),
-      );
-      for (const skill of skills) {
-        expect(entries, `${target}/${skill}/SKILL.md`).toContain(`${target}/${skill}/SKILL.md`);
-      }
+    expect(packedSkills).toHaveLength(CURSOR_SKILLS.length);
+    for (const skill of CURSOR_SKILLS) {
+      expect(entries, `skills/${skill}/SKILL.md`).toContain(`skills/${skill}/SKILL.md`);
     }
   },
   { timeout: 60_000 },
@@ -306,7 +299,7 @@ test(
 );
 
 test(
-  "clean checkout tracks all 26 declared skills and four rules (CA-15)",
+  "clean checkout tracks all seven declared skills and four rules (CA-15)",
   () => {
     const tracked = spawnSync("git", ["ls-files", "--", "packages/workit-cursor"], {
       cwd: REPO_ROOT,
@@ -314,17 +307,11 @@ test(
     });
     expect(tracked.status).toBe(0);
     const files = new Set(tracked.stdout.trim().split("\n").filter(Boolean));
-    for (const skill of CANONICAL_SKILLS.workit) {
+    for (const skill of CURSOR_SKILLS) {
       expect(files.has(`packages/workit-cursor/skills/${skill}/SKILL.md`), skill).toBe(true);
     }
-    for (const skill of CANONICAL_SKILLS.superpowers) {
-      expect(
-        files.has(`packages/workit-cursor/vendor/superpowers/skills/${skill}/SKILL.md`),
-        skill,
-      ).toBe(true);
-    }
     for (const rule of [
-      "ask-question-only.mdc",
+      "workit-contract.mdc",
       "cursor-todowrite.mdc",
       "no-worktrees.mdc",
       "sdd-docs-path.mdc",

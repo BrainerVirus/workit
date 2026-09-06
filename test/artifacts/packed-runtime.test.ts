@@ -30,6 +30,7 @@ import {
 const CORE = "@brainervirus/workit-core";
 const OPENCODE = "@brainervirus/workit-opencode";
 const CURSOR = "@brainervirus/workit-cursor";
+const MCP = "@brainervirus/workit-mcp";
 const CLI = "@brainervirus/workit-cli";
 
 // The isolated npm-install gate fetches third-party runtime deps (zod/
@@ -181,8 +182,16 @@ test("cursor MCP server boots over stdio from the extracted package with node (n
       const names = ((listed.result as { tools?: { name: string }[] })?.tools ?? []).map(
         (t) => t.name,
       );
-      expect(names).toContain("workit_git_context");
-      expect(names).toContain("workit_init_apply");
+      expect(names).toEqual([
+        "workit_task",
+        "workit_policy",
+        "workit_evidence",
+        "workit_finding",
+        "workit_decision",
+        "workit_worker",
+        "workit_writer",
+        "workit_state",
+      ]);
     } finally {
       // win32 keeps deleted files/dirs locked until the child fully exits, so
       // wait for the kill to land before the outer finally rmSync's the tree.
@@ -222,11 +231,18 @@ test(
       child.stderr?.setEncoding("utf8");
       child.stdout?.on("data", (c: string) => (stdout += c));
       child.stderr?.on("data", (c: string) => (stderr += c));
+      child.stdin?.end(
+        JSON.stringify({
+          hook_event_name: "sessionStart",
+          conversation_id: "packed-session",
+          workspace_roots: [cursorDir],
+        }),
+      );
       const code = await new Promise<number | null>((resolve) => child.on("close", resolve));
       expect(code).toBe(0);
       const payload = JSON.parse(stdout);
-      expect(payload.additional_context).toContain("HARD-GATE");
-      expect(payload.additional_context).toContain("AskQuestion");
+      expect(payload.additional_context).toContain("<workit-contract>");
+      expect(payload.additional_context).toContain("one accountable lead");
     } finally {
       rmSync(install, { recursive: true, force: true });
       rmSync(home, { recursive: true, force: true });
@@ -254,6 +270,7 @@ test.skipIf(!npmRegistryOk)(
             version: "1.0.0",
             dependencies: {
               "@brainervirus/workit-cursor": pathToFileURL(byName(packs, CURSOR).tarball).href,
+              "@brainervirus/workit-mcp": pathToFileURL(byName(packs, MCP).tarball).href,
             },
             overrides: {
               "@brainervirus/workit-core": pathToFileURL(byName(packs, CORE).tarball).href,
@@ -309,8 +326,16 @@ test.skipIf(!npmRegistryOk)(
         const names = ((listed.result as { tools?: { name: string }[] })?.tools ?? []).map(
           (t) => t.name,
         );
-        expect(names).toContain("workit_git_context");
-        expect(names).toContain("workit_init_apply");
+        expect(names).toEqual([
+          "workit_task",
+          "workit_policy",
+          "workit_evidence",
+          "workit_finding",
+          "workit_decision",
+          "workit_worker",
+          "workit_writer",
+          "workit_state",
+        ]);
       } finally {
         child.kill();
         await Promise.race([
@@ -324,13 +349,18 @@ test.skipIf(!npmRegistryOk)(
         cwd: install,
         env: npmEnv,
         encoding: "utf8",
+        input: JSON.stringify({
+          hook_event_name: "sessionStart",
+          conversation_id: "packed-session",
+          workspace_roots: [install],
+        }),
         timeout: 60_000,
         shell: process.platform === "win32",
       });
       expect(session.status, session.stderr ?? "").toBe(0);
       const payload = JSON.parse(session.stdout);
-      expect(payload.additional_context).toContain("HARD-GATE");
-      expect(payload.additional_context).toContain("AskQuestion");
+      expect(payload.additional_context).toContain("<workit-contract>");
+      expect(payload.additional_context).toContain("one accountable lead");
     } finally {
       rmSync(install, { recursive: true, force: true });
       rmSync(home, { recursive: true, force: true });

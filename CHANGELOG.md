@@ -20,6 +20,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Cursor v1 now uses the shared MCP transport, one documented native hook
+  executable, and exactly seven canonical adaptive method skills. AskQuestion,
+  session-start/compaction, subagent stop identity, arbitrary shell writes, and
+  Tab edits are reported with their actual policy-only or unavailable assurance.
+
 - OpenCode v1 integration now exposes the eight shared Workit operation tools,
   native receipt/lineage hooks, compact task continuity, and only the seven
   policy-selected method skills; the plugin build targets OpenCode 1.18.29.
@@ -42,7 +47,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - SDD control metadata (flow state, briefs, ledgers, advisories) is coordinator-owned under the gitignored `docs/<slug>/sdd/`; a new `workit_sdd_append_advisory` tool and CLI `workit flow append-advisory --plan <path> --task <id> --text <text> [--confirm]` record advisory review findings in `advisories.md` without an unrestricted file edit.
 - The doctor gained a `stale_install` finding on the Cursor/CLI hosts that detects plugin auto-load rot before it breaks features: legacy `--package=` pins in the plugin's own `mcp.json`, a sessionStart hook running a legacy selector, or a local-dist install behind the current/published runtime all surface with the exact repair step; canonical `@latest` installs never fail on version metadata (the selector resolves fresh at launch), and the sole network probe (the npm registry) fails open as a `registry_unreachable` warning — never a false `stale_install` and never a hard doctor failure.
 - The release pipeline now syncs every tracked manifest (root, four platform packages, Cursor plugin manifest) to the released version through an auto-merged PR after each publish, ending the committed-version vs git-tag drift; the root workspace is renamed `workflow-toolkit` → `workit` and pre-aligned to v0.8.9.
-- Cursor subagent-driven execution: an accepted `workit_plan_menu` subagent-driven choice returns a one-time `coordinator_lease`; the new Cursor MCP tool `workit_delegate` mints a task-scoped `delegation_token` from it (fail-closed validation, only hashes persist), Cursor-native subagents pass the token as `delegation_token` on all mutation calls, and delegated SDD writes are slug-bound to the token (the task token is revoked when the worker's progress line lands). Inline runs `executing-plans` single-agent in the current session with no dispatch and no token minting.
+- Cursor subagent execution now uses documented native `subagentStart` and bounded product-write hooks. AskQuestion, compaction/session-start continuity, exact subagent stop identity, arbitrary shell writes, and Tab edits remain truthfully marked policy-only, agent-guided, or unavailable where Cursor cannot attest them.
 
 ### Changed
 

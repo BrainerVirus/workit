@@ -11,7 +11,7 @@ rmSync(dist, { recursive: true, force: true });
 mkdirSync(dist, { recursive: true });
 
 const build = spawnSync(
-  "bun",
+  process.execPath,
   [
     "build",
     path.join(packageDir, "src/index.ts"),
@@ -27,7 +27,7 @@ const build = spawnSync(
   { encoding: "utf8" },
 );
 if (build.status !== 0) {
-  process.stderr.write(build.stderr || build.stdout);
+  process.stderr.write(build.stderr || build.stdout || "MCP build failed\n");
   process.exit(1);
 }
 console.log(`mcp: built dist/index.js (${target})`);

@@ -44,6 +44,8 @@ export const WORKIT_METHOD_SKILLS = [
   "workit-handoff",
 ] as const;
 
+export const CURSOR_SKILLS = WORKIT_METHOD_SKILLS;
+
 export const skillManifestNames = (root: string): string[] =>
   existsSync(root)
     ? readdirSync(root)
@@ -67,19 +69,11 @@ export const validateSkillManifests = (
 export const validateCursorSkills = (pluginDir: string): string | null => {
   const workit = validateSkillManifests(
     path.join(pluginDir, "skills"),
-    CANONICAL_SKILLS.workit,
+    CURSOR_SKILLS,
     "Cursor Workit skills",
   );
   if (workit) return workit;
-  const vendor = path.join(pluginDir, "vendor/superpowers/skills");
-  const superpowers = validateSkillManifests(
-    vendor,
-    CANONICAL_SKILLS.superpowers,
-    "Cursor Superpowers skills",
-  );
-  if (superpowers) return superpowers;
-
-  const pending = [vendor];
+  const pending = [path.join(pluginDir, "skills")];
   while (pending.length > 0) {
     const dir = pending.pop()!;
     for (const entry of readdirSync(dir, { withFileTypes: true })) {

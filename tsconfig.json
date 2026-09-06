@@ -17,6 +17,7 @@
     "packages/workit-core/src/**/*.ts",
     "packages/workit-mcp/src/**/*.ts",
     "packages/workit-mcp/scripts/**/*.ts",
+    "packages/workit-cursor/hooks/**/*.ts",
     "packages/workit-opencode/src/**/*.ts",
     "packages/workit-cli/src/**/*.tsx",
     "packages/workit-cursor/mcp/**/*.ts"

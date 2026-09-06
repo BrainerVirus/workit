@@ -32,6 +32,7 @@ import {
 // Pack-only: no publish, tag, or marketplace operation anywhere in this gate.
 
 const CORE = "@brainervirus/workit-core";
+const MCP = "@brainervirus/workit-mcp";
 const OPENCODE = "@brainervirus/workit-opencode";
 const CURSOR = "@brainervirus/workit-cursor";
 const CLI = "@brainervirus/workit-cli";
@@ -85,7 +86,7 @@ test(
   "packs all workspace packages into local tarballs without publishing",
   () => {
     const packs = packWorkspacePackages();
-    expect(packs.map((p) => p.packageName)).toEqual([CORE, OPENCODE, CURSOR, CLI]);
+    expect(packs.map((p) => p.packageName)).toEqual([CORE, MCP, OPENCODE, CURSOR, CLI]);
     for (const pack of packs) {
       expect(existsSync(pack.tarball), pack.packageName).toBe(true);
       expect(pack.sha256).toMatch(/^[0-9a-f]{64}$/);
@@ -153,13 +154,13 @@ test(
 
     const opencode = byName(OPENCODE).tarball;
     expect(hasEntry(opencode, "dist/plugin.js")).toBe(true);
-    expect(hasEntry(opencode, "assets/commands/")).toBe(true);
     expect(hasEntry(opencode, "assets/skills/")).toBe(true);
 
     const cursor = byName(CURSOR).tarball;
     for (const f of [
       "dist/mcp-server.js",
       "dist/cursor-session-start.js",
+      "dist/workit-hook.js",
       "mcp.json",
       "assets/logo.svg",
       ".cursor-plugin/plugin.json",
@@ -172,6 +173,7 @@ test(
     const cursorPkg = JSON.parse(readTarballFile(cursor, "package.json"));
     expect(cursorPkg.bin["workit-cursor-mcp"]).toBe("./dist/mcp-server.js");
     expect(cursorPkg.bin["workit-cursor-session-start"]).toBe("./dist/cursor-session-start.js");
+    expect(cursorPkg.bin["workit-cursor-hook"]).toBe("./dist/workit-hook.js");
 
     const core = byName(CORE).tarball;
     for (const f of [
@@ -295,8 +297,16 @@ test("Cursor MCP launcher starts the server from the extracted package, repo-fre
       const names = ((listed.result as { tools?: { name: string }[] })?.tools ?? []).map(
         (t) => t.name,
       );
-      expect(names).toContain("workit_git_context");
-      expect(names).toContain("workit_init_apply");
+      expect(names).toEqual([
+        "workit_task",
+        "workit_policy",
+        "workit_evidence",
+        "workit_finding",
+        "workit_decision",
+        "workit_worker",
+        "workit_writer",
+        "workit_state",
+      ]);
     } finally {
       // win32 keeps deleted files/dirs locked until the child fully exits, so
       // wait for the kill to land before the outer finally rmSync's the tree.
@@ -478,6 +488,7 @@ test.skipIf(!npmRegistryOk)(
               "@brainervirus/workit-core": pathToFileURL(byName(CORE).tarball).href,
               "@brainervirus/workit-cursor": pathToFileURL(byName(CURSOR).tarball).href,
               "@brainervirus/workit-opencode": pathToFileURL(byName(OPENCODE).tarball).href,
+              "@brainervirus/workit-mcp": pathToFileURL(byName(MCP).tarball).href,
             },
           },
           null,

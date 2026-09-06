@@ -9,12 +9,16 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-const root = process.argv[2] ? resolve(process.argv[2]) : resolve(import.meta.dir, "..", "..", "..");
+const root = process.argv[2]
+  ? resolve(process.argv[2])
+  : resolve(import.meta.dir, "..", "..", "..");
 const core = JSON.parse(readFileSync(resolve(root, "packages/workit-core/package.json"), "utf8"));
 if (!core.version || typeof core.version !== "string") {
-  throw new Error(`workit-core version missing in ${resolve(root, "packages/workit-core/package.json")}`);
+  throw new Error(
+    `workit-core version missing in ${resolve(root, "packages/workit-core/package.json")}`,
+  );
 }
-for (const pkg of ["workit-opencode", "workit-cursor", "workit-cli"]) {
+for (const pkg of ["workit-mcp", "workit-opencode", "workit-cursor", "workit-cli"]) {
   const file = resolve(root, `packages/${pkg}/package.json`);
   const data = JSON.parse(readFileSync(file, "utf8"));
   const deps = data.dependencies;
@@ -26,12 +30,15 @@ for (const pkg of ["workit-opencode", "workit-cursor", "workit-cli"]) {
 }
 // The root marketplace index carries no release version; only the package
 // plugin manifest is versioned at release time.
-for (const file of [
-  resolve(root, "packages/workit-cursor/.cursor-plugin/plugin.json"),
-]) {
+for (const file of [resolve(root, "packages/workit-cursor/.cursor-plugin/plugin.json")]) {
   const data = JSON.parse(readFileSync(file, "utf8"));
   data.version = core.version;
-  if (data.homepage) data.homepage = data.homepage.replace("BrainerVirus/workflow-toolkit", "BrainerVirus/workit");
-  if (data.repository) data.repository = data.repository.replace("BrainerVirus/workflow-toolkit", "BrainerVirus/workit");
+  if (data.homepage)
+    data.homepage = data.homepage.replace("BrainerVirus/workflow-toolkit", "BrainerVirus/workit");
+  if (data.repository)
+    data.repository = data.repository.replace(
+      "BrainerVirus/workflow-toolkit",
+      "BrainerVirus/workit",
+    );
   writeFileSync(file, `${JSON.stringify(data, null, 2)}\n`);
 }

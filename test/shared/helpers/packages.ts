@@ -20,6 +20,7 @@ export type PackedPackage = {
 
 const WORKSPACE_PACKAGES = [
   "workit-core",
+  "workit-mcp",
   "workit-opencode",
   "workit-cursor",
   "workit-cli",
@@ -64,7 +65,7 @@ export function packWorkspacePackages(options: { force?: boolean } = {}): Packed
     // Deterministic adapter dist + assets: run each adapter's own build script
     // against the sandbox copy. dist/ is gitignored, so a fresh checkout packs an
     // empty tarball without this build.
-    for (const pkg of ["workit-opencode", "workit-cursor", "workit-cli"]) {
+    for (const pkg of ["workit-mcp", "workit-opencode", "workit-cursor", "workit-cli"]) {
       const buildScript = path.join(REPO_ROOT, "packages", pkg, "scripts", "build.ts");
       const target = path.join(sandbox, "packages", pkg);
       const build = spawnSync("bun", [buildScript, target], { encoding: "utf8" });

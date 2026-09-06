@@ -14,6 +14,7 @@ import {
   DESTINATION_MENU_LABELS,
   HANDOFF_DESTINATION_MARKER,
 } from "../../packages/workit-core/src/core/menu";
+import { OPERATION_FAMILIES } from "../../packages/workit-core/src/core";
 import { assertOpencodeWorkitNamespace } from "../shared/helpers/opencode-namespace";
 
 // Task 6 (CA-19, CA-21): the CLI flow/handoff surface maps argv + a
@@ -779,31 +780,16 @@ test(
       path.join(repoRoot, "packages/workit-cursor/mcp/server.ts"),
       "utf8",
     );
-    const registered = [...server.matchAll(/registerTool\(\s*\n?\s*"([a-z0-9_]+)"/g)].map(
-      (m) => m[1],
-    );
-    const lifecycle = [...server.matchAll(/lifecycleTool\(\s*\n?\s*"([a-z]+)"/g)].map(
-      (m) => `workit_plan_${m[1]}`,
-    );
-    const cursor = [...registered, ...lifecycle].sort();
-    expect(cursor.length).toBeGreaterThan(0);
-    for (const name of cursor) {
-      expect(name).toMatch(/^workit_[a-z0-9_]+$/);
-    }
-    expect(cursor).toContain("workit_handoff_prompt");
-    expect(cursor).not.toContain("workit_commit");
-    expect(cursor).not.toContain("workit_handoff_session");
+    expect(server).toContain("@brainervirus/workit-mcp");
+    const cursor = OPERATION_FAMILIES.map((family) => `workit_${family}`).sort();
 
-    for (const shared of [
-      "workit_verify",
-      "workit_spec_approve",
-      "workit_plan_approve",
-      "workit_plan_complete",
-      "workit_sdd_context",
-    ]) {
+    for (const shared of cursor) {
       expect(opencode, shared).toContain(shared);
       expect(cursor, shared).toContain(shared);
     }
+    expect(cursor).toHaveLength(8);
+    expect(cursor).not.toContain("workit_commit");
+    expect(cursor).not.toContain("workit_handoff_session");
   },
   { timeout: 60_000 },
 );
