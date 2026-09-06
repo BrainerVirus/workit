@@ -13,6 +13,7 @@ import {
   nativeWorkerFor,
   observeQuestion,
   sameWorkspace,
+  sessionParent,
   type DirectChildren,
 } from "./tools/workit";
 import { compactContextFor, loadProvenance, workerContextFor } from "./runtime";
@@ -49,7 +50,8 @@ const trustedSession = (
   session !== null &&
   (session as SessionInfo).id === sessionID &&
   typeof (session as SessionInfo).directory === "string" &&
-  sameWorkspace(directory, (session as SessionInfo).directory);
+  sameWorkspace(directory, (session as SessionInfo).directory) &&
+  sessionParent(session) !== null;
 
 const mutationSurface = new Set(["write", "edit", "apply_patch", "patch"]);
 const shellMutation =

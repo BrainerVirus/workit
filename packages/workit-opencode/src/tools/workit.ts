@@ -25,6 +25,13 @@ type SessionLookup = {
 
 type SessionInfo = { id?: string; parentID?: string; directory?: string };
 
+export const sessionParent = (session: unknown): string | undefined | null => {
+  if (typeof session !== "object" || session === null) return null;
+  if (!Object.prototype.hasOwnProperty.call(session, "parentID")) return undefined;
+  const parentID = (session as SessionInfo).parentID;
+  return typeof parentID === "string" && parentID.length > 0 ? parentID : null;
+};
+
 export type DirectChildren = Map<string, string>;
 export type ReceiptExpectation = Partial<
   Pick<
@@ -350,7 +357,8 @@ const workerIdFor = async (
   directChildren: DirectChildren,
 ): Promise<string | null> => {
   const current = await sessionData(client, actor);
-  if (!current?.parentID) return null;
+  const parentID = sessionParent(current);
+  if (!current || !parentID) return null;
   const tasks = store.listTasks();
   if (!tasks.ok) return null;
   for (const task of tasks.data) {
@@ -392,9 +400,12 @@ export const createWorkitTools = ({
         const data = await sessionData(client, context.sessionID);
         if (data === null || !sameWorkspace(context.directory, data.directory ?? ""))
           return output(failure("permission_denied", "OpenCode session observation unavailable"));
+        const parentID = sessionParent(data);
+        if (parentID === null)
+          return output(failure("permission_denied", "OpenCode session parentage is malformed"));
         const store = new TaskStore(context.directory);
         const workerId = await workerIdFor(store, client, context.sessionID, directChildren);
-        if (data.parentID && workerId === null)
+        if (parentID !== undefined && workerId === null)
           return output(
             failure("permission_denied", "OpenCode child session has no validated Workit worker"),
           );

@@ -129,6 +129,20 @@ test("partial session observations cannot launch native tasks", async () => {
   ).rejects.toThrow("delegation_lineage_denied");
 });
 
+test("empty present parentage cannot launch native tasks", async () => {
+  const hooks = await plugin(
+    input("/repo", {
+      session: { get: async () => ({ data: { id: "root", directory: "/repo", parentID: "" } }) },
+    }) as never,
+  );
+  await expect(
+    hooks["tool.execute.before"]?.(
+      { tool: "task", sessionID: "root", callID: "call" },
+      { args: {} },
+    ),
+  ).rejects.toThrow("delegation_lineage_denied");
+});
+
 test("partial session observations cannot operate Workit control tools", async () => {
   const root = mkdtempSync(join(tmpdir(), "workit-task11-tool-session-"));
   try {
@@ -163,6 +177,27 @@ test("observed child sessions without a persisted worker cannot use Workit tools
     const raw = await hooks.tool?.workit_task.execute({ schemaVersion: 1, action: "list" }, {
       directory: root,
       sessionID: "child",
+    } as never);
+    expect(JSON.parse(raw as string)).toMatchObject({ ok: false, code: "permission_denied" });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("empty present parentage cannot operate Workit tools", async () => {
+  const root = mkdtempSync(join(tmpdir(), "workit-task11-empty-parent-tool-"));
+  try {
+    start(root, "owner");
+    const hooks = await plugin(
+      input(root, {
+        session: {
+          get: async () => ({ data: { id: "owner", directory: root, parentID: "" } }),
+        },
+      }) as never,
+    );
+    const raw = await hooks.tool?.workit_task.execute({ schemaVersion: 1, action: "list" }, {
+      directory: root,
+      sessionID: "owner",
     } as never);
     expect(JSON.parse(raw as string)).toMatchObject({ ok: false, code: "permission_denied" });
   } finally {
@@ -489,6 +524,37 @@ test("active writes reject a trusted session with mismatched parentage", async (
       input(root, {
         session: {
           get: async () => ({ data: { id: "owner", directory: root, parentID: "other" } }),
+        },
+      }) as never,
+    );
+    await expect(
+      hooks["tool.execute.before"]?.(
+        { tool: "write", sessionID: "owner", callID: "write" },
+        { args: { path: "src/file.ts" } },
+      ),
+    ).rejects.toThrow("permission_denied");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("active writes reject empty present parentage", async () => {
+  const root = mkdtempSync(join(tmpdir(), "workit-task11-empty-parent-write-"));
+  try {
+    const active = start(root, "owner");
+    const acquired = active.core.writer({
+      schemaVersion: 1,
+      action: "acquire",
+      taskId: active.task.id,
+      expectedRevision: active.task.revision,
+      expectedWorkspaceRevision: active.workspace.revision,
+      workerId: null,
+    });
+    expect(acquired.ok).toBe(true);
+    const hooks = await plugin(
+      input(root, {
+        session: {
+          get: async () => ({ data: { id: "owner", directory: root, parentID: "" } }),
         },
       }) as never,
     );
