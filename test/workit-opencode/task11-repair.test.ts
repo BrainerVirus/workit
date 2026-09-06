@@ -163,6 +163,37 @@ test("partial session observations cannot operate Workit control tools", async (
   }
 });
 
+test("Workit tools bind authority to one session observation", async () => {
+  const root = mkdtempSync(join(tmpdir(), "workit-task11-one-session-observation-"));
+  try {
+    start(root, "owner");
+    let lookups = 0;
+    const hooks = await plugin(
+      input(root, {
+        session: {
+          get: async () => {
+            lookups += 1;
+            return {
+              data:
+                lookups === 1
+                  ? { id: "owner", directory: root }
+                  : { id: "owner", directory: root, parentID: "child" },
+            };
+          },
+        },
+      }) as never,
+    );
+    const raw = await hooks.tool?.workit_task.execute({ schemaVersion: 1, action: "list" }, {
+      directory: root,
+      sessionID: "owner",
+    } as never);
+    expect(JSON.parse(raw as string).ok).toBe(true);
+    expect(lookups).toBe(1);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("observed child sessions without a persisted worker cannot use Workit tools", async () => {
   const root = mkdtempSync(join(tmpdir(), "workit-task11-unbound-child-"));
   try {

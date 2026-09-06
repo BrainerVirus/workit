@@ -350,15 +350,14 @@ export const nativeWorkerFor = (
   },
 });
 
-const workerIdFor = async (
+const workerIdFor = (
   store: TaskStore,
-  client: SessionLookup | undefined,
   actor: string,
+  current: SessionInfo,
   directChildren: DirectChildren,
-): Promise<string | null> => {
-  const current = await sessionData(client, actor);
+): string | null => {
   const parentID = sessionParent(current);
-  if (!current || !parentID) return null;
+  if (!parentID) return null;
   const tasks = store.listTasks();
   if (!tasks.ok) return null;
   const matches = tasks.data.flatMap((task) => {
@@ -411,7 +410,7 @@ export const createWorkitTools = ({
         if (parentID === null)
           return output(failure("permission_denied", "OpenCode session parentage is malformed"));
         const store = new TaskStore(context.directory);
-        const workerId = await workerIdFor(store, client, context.sessionID, directChildren);
+        const workerId = workerIdFor(store, context.sessionID, data, directChildren);
         if (parentID !== undefined && workerId === null)
           return output(
             failure("permission_denied", "OpenCode child session has no validated Workit worker"),
