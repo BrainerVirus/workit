@@ -361,18 +361,25 @@ const workerIdFor = async (
   if (!current || !parentID) return null;
   const tasks = store.listTasks();
   if (!tasks.ok) return null;
-  for (const task of tasks.data) {
-    for (const worker of task.workers) {
-      if (
+  const matches = tasks.data.flatMap((task) => {
+    if (task.status !== "active") return [];
+    const coordinator = task.intent.provenance.session;
+    if (
+      coordinator?.kind !== "host" ||
+      coordinator.host !== "opencode" ||
+      coordinator.handle !== parentID ||
+      directChildren.get(actor) !== parentID
+    )
+      return [];
+    return task.workers.filter(
+      (worker) =>
+        worker.data.state === "running" &&
         worker.data.session?.kind === "host" &&
-        worker.data.session.handle === actor &&
-        typeof current.parentID === "string" &&
-        directChildren.get(actor) === current.parentID
-      )
-        return worker.id;
-    }
-  }
-  return null;
+        worker.data.session.host === "opencode" &&
+        worker.data.session.handle === actor,
+    );
+  });
+  return matches.length === 1 ? matches[0].id : null;
 };
 
 export type WorkitToolOptions = {

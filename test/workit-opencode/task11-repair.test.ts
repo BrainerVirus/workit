@@ -433,6 +433,193 @@ test("restart lifecycle events reject ambiguous persisted child handles", async 
   }
 });
 
+test("Workit mutations reject ambiguous persisted worker handles", async () => {
+  const root = mkdtempSync(join(tmpdir(), "workit-task11-ambiguous-worker-tool-"));
+  try {
+    const active = start(root, "coordinator");
+    const assign = () => {
+      const task = active.store.readTask(active.task.id);
+      const workspace = active.store.readWorkspace();
+      if (!task.ok || !workspace.ok || !workspace.data) throw new Error("fixture missing");
+      return active.core.worker({
+        schemaVersion: 1,
+        action: "assign",
+        taskId: active.task.id,
+        expectedRevision: task.data.revision,
+        expectedWorkspaceRevision: workspace.data.revision,
+        assignment: {
+          role: "reviewer",
+          objective: "review",
+          scope: scope({ paths: ["review"] }),
+          decisionIds: [],
+          requirementIds: [],
+          candidateId: null,
+          stoppingCondition: "report",
+        },
+      });
+    };
+    const observe = (workerId: string) => {
+      const task = active.store.readTask(active.task.id);
+      const workspace = active.store.readWorkspace();
+      if (!task.ok || !workspace.ok || !workspace.data) throw new Error("fixture missing");
+      return new WorkitCore(active.store, {
+        root,
+        caller: { host: "opencode", actor: "coordinator" },
+        capabilities: [],
+        constraints: [],
+        now: () => "2026-01-01T00:00:00Z",
+        nativeWorker: {
+          verifyWorker: ({ expected }) =>
+            success(null, null, {
+              kind: "host_observed",
+              host: "opencode",
+              session: expected.session,
+              workerId: expected.workerId,
+              receipts: [{ kind: "host", host: "opencode", handle: "lifecycle" }],
+            }),
+        },
+      }).observeWorkerLifecycle({
+        taskId: active.task.id,
+        workerId,
+        expectedRevision: task.data.revision,
+        expectedWorkspaceRevision: workspace.data.revision,
+        state: "running",
+        session: { kind: "host", host: "opencode", handle: "child" },
+        observation: { event: "created" },
+      });
+    };
+    const first = assign();
+    expect(first.ok).toBe(true);
+    if (!first.ok) throw new Error(first.error);
+    expect(observe(first.data.id).ok).toBe(true);
+    const second = assign();
+    expect(second.ok).toBe(true);
+    if (!second.ok) throw new Error(second.error);
+    expect(observe(second.data.id).ok).toBe(true);
+    const hooks = await plugin(
+      input(root, {
+        session: {
+          get: async ({ path: { id } }: { path: { id: string } }) => ({
+            data: { id, directory: root, parentID: "coordinator" },
+          }),
+        },
+      }) as never,
+    );
+    await hooks["tool.execute.after"]?.(
+      { tool: "task", sessionID: "coordinator", callID: "launch", args: {} },
+      { title: "task", output: "started", metadata: { sessionID: "child" } },
+    );
+    const task = active.store.readTask(active.task.id);
+    const workspace = active.store.readWorkspace();
+    if (!task.ok || !workspace.ok || !workspace.data) throw new Error("fixture missing");
+    const raw = await hooks.tool?.workit_worker.execute(
+      {
+        schemaVersion: 1,
+        action: "report",
+        taskId: active.task.id,
+        expectedRevision: task.data.revision,
+        expectedWorkspaceRevision: workspace.data.revision,
+        workerId: first.data.id,
+        report: { outcome: "completed", summary: "done", evidenceIds: [], findingIds: [] },
+      },
+      { directory: root, sessionID: "child" } as never,
+    );
+    expect(JSON.parse(raw as string)).toMatchObject({ ok: false, code: "permission_denied" });
+    const unchanged = active.store.readTask(active.task.id);
+    expect(
+      unchanged.ok && unchanged.data.workers.every((worker) => worker.data.report === null),
+    ).toBe(true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Workit mutations accept one validated persisted worker handle", async () => {
+  const root = mkdtempSync(join(tmpdir(), "workit-task11-single-worker-tool-"));
+  try {
+    const active = start(root, "coordinator");
+    const assigned = active.core.worker({
+      schemaVersion: 1,
+      action: "assign",
+      taskId: active.task.id,
+      expectedRevision: active.task.revision,
+      expectedWorkspaceRevision: active.workspace.revision,
+      assignment: {
+        role: "reviewer",
+        objective: "review",
+        scope: scope({ paths: ["review"] }),
+        decisionIds: [],
+        requirementIds: [],
+        candidateId: null,
+        stoppingCondition: "report",
+      },
+    });
+    expect(assigned.ok).toBe(true);
+    if (!assigned.ok) throw new Error(assigned.error);
+    const task = active.store.readTask(active.task.id);
+    const workspace = active.store.readWorkspace();
+    if (!task.ok || !workspace.ok || !workspace.data) throw new Error("fixture missing");
+    const observed = new WorkitCore(active.store, {
+      root,
+      caller: { host: "opencode", actor: "coordinator" },
+      capabilities: [],
+      constraints: [],
+      now: () => "2026-01-01T00:00:00Z",
+      nativeWorker: {
+        verifyWorker: ({ expected }) =>
+          success(null, null, {
+            kind: "host_observed",
+            host: "opencode",
+            session: expected.session,
+            workerId: expected.workerId,
+            receipts: [{ kind: "host", host: "opencode", handle: "lifecycle" }],
+          }),
+      },
+    }).observeWorkerLifecycle({
+      taskId: active.task.id,
+      workerId: assigned.data.id,
+      expectedRevision: task.data.revision,
+      expectedWorkspaceRevision: workspace.data.revision,
+      state: "running",
+      session: { kind: "host", host: "opencode", handle: "child" },
+      observation: { event: "created" },
+    });
+    expect(observed.ok).toBe(true);
+    const hooks = await plugin(
+      input(root, {
+        session: {
+          get: async ({ path: { id } }: { path: { id: string } }) => ({
+            data: { id, directory: root, parentID: "coordinator" },
+          }),
+        },
+      }) as never,
+    );
+    await hooks["tool.execute.after"]?.(
+      { tool: "task", sessionID: "coordinator", callID: "launch", args: {} },
+      { title: "task", output: "started", metadata: { sessionID: "child" } },
+    );
+    const currentTask = active.store.readTask(active.task.id);
+    const currentWorkspace = active.store.readWorkspace();
+    if (!currentTask.ok || !currentWorkspace.ok || !currentWorkspace.data)
+      throw new Error("fixture missing");
+    const raw = await hooks.tool?.workit_worker.execute(
+      {
+        schemaVersion: 1,
+        action: "report",
+        taskId: active.task.id,
+        expectedRevision: currentTask.data.revision,
+        expectedWorkspaceRevision: currentWorkspace.data.revision,
+        workerId: assigned.data.id,
+        report: { outcome: "completed", summary: "done", evidenceIds: [], findingIds: [] },
+      },
+      { directory: root, sessionID: "child" } as never,
+    );
+    expect(JSON.parse(raw as string).ok).toBe(true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("known bash mutations bind actual targets and reject absolute targets", async () => {
   const root = mkdtempSync(join(tmpdir(), "workit-task11-bash-"));
   try {
