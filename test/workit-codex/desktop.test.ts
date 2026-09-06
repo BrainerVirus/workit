@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import {
   codexContextProvider,
   codexQualification,
+  resolveCodexWorkspaceRoot,
 } from "../../packages/workit-codex/scripts/launch-mcp";
 import { handleCodexHook } from "../../packages/workit-codex/hooks/workit-hook";
 
@@ -23,6 +24,9 @@ test("desktop hook emits native SessionStart JSON with developer context", () =>
     hook_event_name: "SessionStart",
     session_id: "desktop-session",
     cwd: root,
+    model: "gpt-5",
+    permission_mode: "default",
+    transcript_path: null,
     source: "resume",
   });
   expect(result).toMatchObject({
@@ -43,4 +47,11 @@ test("Codex MCP provider keeps caller identity empty on both surfaces", async ()
     expect(context.caller).toEqual({ host, actor: "" });
     expect(context.callerAttested).toBe(false);
   }
+  const pluginRoot = path.resolve(import.meta.dir, "../../packages/workit-codex");
+  expect(resolveCodexWorkspaceRoot(pluginRoot, { PWD: pluginRoot })).toBeNull();
+  expect(
+    resolveCodexWorkspaceRoot(pluginRoot, {
+      PWD: mkdtempSync(path.join(tmpdir(), "workit-codex-workspace-")),
+    }),
+  ).not.toBe(pluginRoot);
 });

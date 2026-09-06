@@ -431,7 +431,11 @@ export function reducer(draft: WizardDraft, action: WizardAction): WizardDraft {
           // strips issues linking from already-added entries and the
           // in-progress draft, so the applied config can never link issues for
           // a tracker that is not GitHub.
-          const stripIssues = ({ issues: _, ...rest }: WorkspaceConfig): WorkspaceConfig => rest;
+          const stripIssues = (workspace: WorkspaceConfig): WorkspaceConfig => {
+            const rest = { ...workspace };
+            delete rest.issues;
+            return rest;
+          };
           const needsStrip =
             next !== "github" &&
             (draft.values.workspaces.some((w) => w.issues !== undefined) ||

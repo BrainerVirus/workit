@@ -12,19 +12,25 @@ import {
 export type CodexHost = "codex_cli" | "codex_desktop";
 export type CodexHookEvent = "SessionStart" | "PreToolUse" | "SubagentStart" | "SubagentStop";
 type SessionSource = "startup" | "resume" | "clear" | "compact";
+type PermissionMode = "default" | "acceptEdits" | "plan" | "dontAsk" | "bypassPermissions";
 
 export type CodexHookInput = {
   hook_event_name: CodexHookEvent;
   session_id: string;
   cwd: string;
+  model: string;
+  permission_mode: PermissionMode;
+  transcript_path: string | null;
   source?: SessionSource;
+  turn_id?: string;
   tool_name?: string;
   tool_input?: unknown;
+  tool_use_id?: string;
   agent_id?: string;
   agent_type?: string;
-  status?: "completed" | "error" | "aborted";
-  last_message?: string;
-  needs_user_decision?: boolean;
+  agent_transcript_path?: string | null;
+  last_assistant_message?: string | null;
+  stop_hook_active?: boolean;
 };
 
 export type HookParseResult = { ok: true; data: CodexHookInput } | { ok: false; error: string };
@@ -41,9 +47,11 @@ export function detectCodexSurface(env: NodeJS.ProcessEnv): CodexHost {
     : "codex_cli";
 }
 
-export const codexCapabilities = (availability: Availability = {}): Capability[] => {
+export const codexCapabilities = (
+  host: CodexHost,
+  availability: Availability = {},
+): Capability[] => {
   const has = (key: keyof Availability) => availability[key] === true;
-  const host = detectCodexSurface(process.env);
   return [
     {
       name: "interactive_decision",
@@ -113,6 +121,15 @@ export const parseCodexHookInput = (value: unknown): HookParseResult => {
   if (!record(value) || !events.has(value.hook_event_name as CodexHookEvent))
     return { ok: false, error: "hook_event_name is required" };
   if (!nonEmpty(value.session_id)) return { ok: false, error: "session_id is required" };
+  if (!nonEmpty(value.model)) return { ok: false, error: "model is required" };
+  if (
+    !["default", "acceptEdits", "plan", "dontAsk", "bypassPermissions"].includes(
+      String(value.permission_mode),
+    )
+  )
+    return { ok: false, error: "permission_mode is invalid" };
+  if (!(value.transcript_path === null || nonEmpty(value.transcript_path)))
+    return { ok: false, error: "transcript_path must be a string or null" };
   if (!nonEmpty(value.cwd) || !path.isAbsolute(value.cwd) || !existsSync(value.cwd))
     return { ok: false, error: "cwd must be an existing absolute path" };
   try {
@@ -126,34 +143,60 @@ export const parseCodexHookInput = (value: unknown): HookParseResult => {
     !["startup", "resume", "clear", "compact"].includes(String(value.source))
   )
     return { ok: false, error: "SessionStart source is required" };
-  if (event === "PreToolUse" && (!nonEmpty(value.tool_name) || value.tool_input === undefined))
-    return { ok: false, error: "tool_name and tool_input are required" };
+  if (
+    event === "PreToolUse" &&
+    (!nonEmpty(value.turn_id) ||
+      !nonEmpty(value.tool_name) ||
+      value.tool_input === undefined ||
+      !nonEmpty(value.tool_use_id))
+  )
+    return { ok: false, error: "turn_id, tool_name, tool_input, and tool_use_id are required" };
   if (
     event === "PreToolUse" &&
     ["bash", "unified-exec"].includes(String(value.tool_name).toLowerCase()) &&
     (!record(value.tool_input) || !nonEmpty(value.tool_input.command))
   )
     return { ok: false, error: "tool_input.command is required for shell tools" };
-  if (event === "SubagentStart" && (!nonEmpty(value.agent_id) || !nonEmpty(value.agent_type)))
-    return { ok: false, error: "agent_id and agent_type are required" };
-  if (event === "SubagentStop" && !nonEmpty(value.agent_id))
-    return { ok: false, error: "agent_id is required" };
+  if (
+    event === "SubagentStart" &&
+    (!nonEmpty(value.turn_id) || !nonEmpty(value.agent_id) || !nonEmpty(value.agent_type))
+  )
+    return { ok: false, error: "turn_id, agent_id, and agent_type are required" };
+  if (
+    event === "SubagentStop" &&
+    (!nonEmpty(value.turn_id) ||
+      !nonEmpty(value.agent_id) ||
+      !nonEmpty(value.agent_type) ||
+      !(value.agent_transcript_path === null || nonEmpty(value.agent_transcript_path)) ||
+      !(
+        value.last_assistant_message === null || typeof value.last_assistant_message === "string"
+      ) ||
+      typeof value.stop_hook_active !== "boolean")
+  )
+    return { ok: false, error: "SubagentStop fields are required" };
   return {
     ok: true,
     data: {
       hook_event_name: event,
       session_id: value.session_id,
+      model: value.model,
+      permission_mode: value.permission_mode as PermissionMode,
+      transcript_path: value.transcript_path as string | null,
       cwd: realpathSync(value.cwd),
       ...(event === "SessionStart" ? { source: value.source as SessionSource } : {}),
+      ...(nonEmpty(value.turn_id) ? { turn_id: value.turn_id } : {}),
       ...(nonEmpty(value.tool_name) ? { tool_name: value.tool_name } : {}),
       ...(event === "PreToolUse" ? { tool_input: value.tool_input } : {}),
+      ...(nonEmpty(value.tool_use_id) ? { tool_use_id: value.tool_use_id } : {}),
       ...(nonEmpty(value.agent_id) ? { agent_id: value.agent_id } : {}),
       ...(nonEmpty(value.agent_type) ? { agent_type: value.agent_type } : {}),
-      ...(value.status === "completed" || value.status === "error" || value.status === "aborted"
-        ? { status: value.status }
+      ...(event === "SubagentStop"
+        ? {
+            agent_transcript_path: value.agent_transcript_path as string | null,
+            last_assistant_message: value.last_assistant_message as string | null,
+            stop_hook_active: value.stop_hook_active as boolean,
+          }
         : {}),
-      ...(nonEmpty(value.last_message) ? { last_message: value.last_message } : {}),
-      ...(value.needs_user_decision === true ? { needs_user_decision: true } : {}),
     },
   };
 };
@@ -238,24 +281,43 @@ const output = (event: CodexHookEvent, extra: Record<string, unknown> = {}) => (
 const denied = (event: CodexHookEvent, reason: string) =>
   output(event, { permissionDecision: "deny", permissionDecisionReason: reason });
 
+const activeTask = (store: TaskStore) => {
+  const workspace = store.readWorkspace();
+  if (!workspace.ok) return { ok: false as const, reason: workspace.error };
+  if (!workspace.data) return { ok: false as const, reason: "workspace is unavailable" };
+  const tasks = store.listTasks();
+  if (!tasks.ok) return { ok: false as const, reason: tasks.error };
+  const active = tasks.data.filter((task) => task.status === "active");
+  if (active.length !== 1)
+    return {
+      ok: false as const,
+      reason: active.length === 0 ? "no active task" : "active task is ambiguous",
+    };
+  return { ok: true as const, task: active[0], workspace: workspace.data };
+};
+
+const persistedCodexHost = (session: unknown): CodexHost | undefined => {
+  if (!record(session) || session.kind !== "host" || !nonEmpty(session.host)) return undefined;
+  return session.host as CodexHost;
+};
+
 const sessionContext = (input: CodexHookInput): string => {
   let compact = "";
   try {
     const store = new TaskStore(input.cwd);
-    const tasks = store.listTasks();
-    const active = tasks.ok ? tasks.data.find((task) => task.status !== "closed") : undefined;
-    if (active) {
+    const state = activeTask(store);
+    if (state.ok) {
       const view = new WorkitCore(store, {
         root: input.cwd,
-        caller: { host: detectCodexSurface(process.env), actor: "" },
+        caller: { host: detectCodexSurface(process.env), actor: input.session_id },
         callerAttested: false,
-        capabilities: codexCapabilities({ sessionStart: true }),
+        capabilities: codexCapabilities(detectCodexSurface(process.env), { sessionStart: true }),
         constraints: [],
         now: new Date().toISOString().replace(/\.\d{3}Z$/, "Z"),
       } as OperationContext).task({
         schemaVersion: 1,
         action: "inspect",
-        taskId: active.id,
+        taskId: state.task.id,
         view: "full",
       });
       if (view.ok)
@@ -274,16 +336,15 @@ export const handleCodexHook = (raw: unknown): Record<string, unknown> => {
       record(raw) && events.has(raw.hook_event_name as CodexHookEvent)
         ? (raw.hook_event_name as CodexHookEvent)
         : "PreToolUse";
-    return event === "PreToolUse"
+    return event === "PreToolUse" || event === "SubagentStart"
       ? denied(event, parsed.error)
-      : output(event, { additionalContext: `[workit diagnostic: ${parsed.error}]` });
+      : event === "SubagentStop"
+        ? {}
+        : output(event, { additionalContext: `[workit diagnostic: ${parsed.error}]` });
   }
   const input = parsed.data;
   if (input.hook_event_name === "SessionStart") {
-    const context = input.needs_user_decision
-      ? `${sessionContext(input)}\n[workit needs_input: required user decision]`
-      : sessionContext(input);
-    return output("SessionStart", { additionalContext: context });
+    return output("SessionStart", { additionalContext: sessionContext(input) });
   }
   if (input.hook_event_name === "PreToolUse") {
     const targets = writeTargets(input);
@@ -293,15 +354,46 @@ export const handleCodexHook = (raw: unknown): Record<string, unknown> => {
         "covered product write target is outside, unavailable, or ambiguous",
       );
     if (!targets.intent) return output("PreToolUse", { permissionDecision: "allow" });
-    return output("PreToolUse", { permissionDecision: "allow" });
+    try {
+      const store = new TaskStore(input.cwd);
+      const state = activeTask(store);
+      if (!state.ok) return denied("PreToolUse", state.reason);
+      // The persisted writer/worker session is the authority. Surface detection
+      // is diagnostic only and must not grant a caller a host identity.
+      const worker = state.task.workers.find(
+        (entry) =>
+          entry.data.session?.kind === "host" && entry.data.session.handle === input.session_id,
+      );
+      const ownerSession = state.workspace.writer?.owner.session;
+      const host = persistedCodexHost(worker?.data.session) ?? persistedCodexHost(ownerSession);
+      if (host !== "codex_cli" && host !== "codex_desktop")
+        return denied("PreToolUse", "Codex writer identity is unavailable or unmatched");
+      const core = new WorkitCore(store, {
+        root: input.cwd,
+        caller: { host, actor: input.session_id },
+        callerAttested: false,
+        workerId: worker?.id ?? null,
+        capabilities: codexCapabilities(host, { preToolUse: true }),
+        constraints: [],
+        now: new Date().toISOString().replace(/\.\d{3}Z$/, "Z"),
+      });
+      const checked = core.assertProductWriteAllowed({
+        task: state.task,
+        workspace: state.workspace,
+        paths: targets.paths,
+      });
+      return checked.ok
+        ? output("PreToolUse", { permissionDecision: "allow" })
+        : denied("PreToolUse", checked.error);
+    } catch {
+      return denied("PreToolUse", "product write authorization is unavailable");
+    }
   }
   if (input.hook_event_name === "SubagentStart")
     return output("SubagentStart", {
       additionalContext: `Workit observed Codex subagent ${input.agent_id} (${input.agent_type}) as read-only/agent-guided; writer delegation is unavailable.`,
     });
-  return output("SubagentStop", {
-    additionalContext: `Workit observed Codex subagent ${input.agent_id} ${input.status ?? "without a terminal status"}; cancellation/error remains observational.`,
-  });
+  return {};
 };
 
 export const runCodexHook = async (): Promise<void> => {
@@ -312,17 +404,10 @@ export const runCodexHook = async (): Promise<void> => {
     raw = JSON.parse(text || "{}");
   } catch {
     process.stdout.write(`${JSON.stringify(denied("PreToolUse", "invalid JSON hook input"))}\n`);
-    process.exitCode = 2;
     return;
   }
   const result = handleCodexHook(raw);
   process.stdout.write(`${JSON.stringify(result)}\n`);
-  const event = record(raw) ? raw.hook_event_name : undefined;
-  if (
-    event === "PreToolUse" &&
-    (result.hookSpecificOutput as Record<string, unknown>)?.permissionDecision === "deny"
-  )
-    process.exitCode = 2;
 };
 
 if (import.meta.main) await runCodexHook();
