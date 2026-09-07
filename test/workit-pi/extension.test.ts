@@ -4,6 +4,7 @@ import { spawn, spawnSync } from "node:child_process";
 import path from "node:path";
 import { tmpdir } from "node:os";
 import { TaskStore, WorkitCore, type OperationContext } from "../../packages/workit-core/src/core";
+import { SUPPORT_MATRIX } from "../../packages/workit-core/src/core/support-matrix";
 import extension from "../../packages/workit-pi/extensions/workit";
 import { piCapabilities } from "../../packages/workit-pi/src/context";
 import { taskStartRequest } from "../workit-core/task-fixtures";
@@ -82,8 +83,13 @@ const decisionInput = (root: string) => {
   };
 };
 
-const node24 =
-  "/home/cristhofer-pincetti/.local/share/fnm/node-versions/v24.20.0/installation/bin/node";
+const nodeExecutable = "node";
+
+const assertCurrentNode = () => {
+  const result = spawnSync(nodeExecutable, ["--version"], { encoding: "utf8" });
+  if (result.status !== 0) throw new Error(result.stderr || result.stdout);
+  expect(result.stdout.trim()).toBe(`v${SUPPORT_MATRIX.node.current}`);
+};
 
 test("clean Pi package declares stock discovery and exactly eight core tools", async () => {
   const manifest = JSON.parse(
@@ -168,98 +174,6 @@ test("interactive Pi decisions use the native answer and reject untrusted writes
   expect(denied.details).toMatchObject({ ok: false, code: "permission_denied" });
 });
 
-test("stock Pi activates the extracted package without a companion extension", async () => {
-  const repoRoot = path.resolve(import.meta.dir, "../..");
-  const packageRoot = path.join(repoRoot, "packages/workit-pi");
-  const stage = mkdtempSync(path.join(tmpdir(), "workit-pi-pack-"));
-  const packed = spawnSync(
-    "npm",
-    ["pack", "--json", "--workspace", packageRoot, "--pack-destination", stage],
-    { cwd: repoRoot, encoding: "utf8" },
-  );
-  if (packed.status !== 0) throw new Error(packed.stderr || packed.stdout);
-  const filename = (JSON.parse(packed.stdout) as Array<{ filename: string }>)[0].filename;
-  const extracted = path.join(stage, "extract");
-  mkdirSync(extracted);
-  const unpacked = spawnSync("tar", ["-xzf", path.join(stage, filename), "-C", extracted], {
-    cwd: repoRoot,
-    encoding: "utf8",
-  });
-  if (unpacked.status !== 0) throw new Error(unpacked.stderr || unpacked.stdout);
-  const piBin = path.join(
-    repoRoot,
-    "node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js",
-  );
-  const child = spawn(
-    node24,
-    [
-      piBin,
-      "--mode",
-      "rpc",
-      "--no-session",
-      "--offline",
-      "--no-context-files",
-      "--no-extensions",
-      "--extension",
-      path.join(extracted, "package/dist/workit.js"),
-      "--skill",
-      path.join(extracted, "package/skills"),
-    ],
-    { cwd: repoRoot, stdio: ["pipe", "pipe", "pipe"] },
-  );
-  let stdout = "";
-  let stderr = "";
-  const responses = new Map<string, any>();
-  child.stdout.setEncoding("utf8");
-  child.stderr.setEncoding("utf8");
-  child.stdout.on("data", (chunk) => {
-    stdout += chunk;
-    for (;;) {
-      const end = stdout.indexOf("\n");
-      if (end < 0) break;
-      const line = stdout.slice(0, end).trim();
-      stdout = stdout.slice(end + 1);
-      if (!line) continue;
-      const message = JSON.parse(line);
-      if (message.type === "response" && typeof message.command === "string")
-        responses.set(message.command, message);
-    }
-  });
-  child.stderr.on("data", (chunk) => (stderr += chunk));
-  try {
-    child.stdin.write('{"id":"commands","type":"get_commands"}\n');
-    await new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error(`Pi activation timeout: ${stderr}`)), 10000);
-      const poll = () => {
-        if (responses.has("get_commands")) {
-          clearTimeout(timer);
-          resolve();
-        } else setTimeout(poll, 10);
-      };
-      poll();
-    });
-    const commands = responses.get("get_commands").data.commands as Array<{ name: string }>;
-    expect(
-      commands
-        .filter((command) => command.name.startsWith("skill:workit-"))
-        .map((command) => command.name)
-        .sort(),
-    ).toEqual([
-      "skill:workit-behavioral-tdd",
-      "skill:workit-challenge",
-      "skill:workit-debug",
-      "skill:workit-handoff",
-      "skill:workit-implement",
-      "skill:workit-plan",
-      "skill:workit-review",
-    ]);
-    expect(stderr).toBe("");
-  } finally {
-    child.kill();
-    rmSync(stage, { recursive: true, force: true });
-  }
-});
-
 test("npm installs the packed package without workspace protocol dependencies", async () => {
   const repoRoot = path.resolve(import.meta.dir, "../..");
   const packageRoot = path.join(repoRoot, "packages/workit-pi");
@@ -313,14 +227,33 @@ test("stock Pi discovers the package manifest through its local package manager"
     "node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js",
   );
   const env = { ...process.env, PI_CODING_AGENT_DIR: agentDir };
-  const installed = spawnSync(node24, [piBin, "install", packageRoot, "-l", "--approve"], {
-    cwd: isolated,
-    env,
+  assertCurrentNode();
+  const packed = spawnSync(
+    "npm",
+    ["pack", "--json", "--workspace", packageRoot, "--pack-destination", stage],
+    { cwd: repoRoot, encoding: "utf8" },
+  );
+  if (packed.status !== 0) throw new Error(packed.stderr || packed.stdout);
+  const filename = (JSON.parse(packed.stdout) as Array<{ filename: string }>)[0].filename;
+  const extracted = path.join(stage, "extract");
+  mkdirSync(extracted);
+  const unpacked = spawnSync("tar", ["-xzf", path.join(stage, filename), "-C", extracted], {
+    cwd: repoRoot,
     encoding: "utf8",
   });
+  if (unpacked.status !== 0) throw new Error(unpacked.stderr || unpacked.stdout);
+  const installed = spawnSync(
+    nodeExecutable,
+    [piBin, "install", path.join(extracted, "package"), "-l", "--approve"],
+    {
+      cwd: isolated,
+      env,
+      encoding: "utf8",
+    },
+  );
   if (installed.status !== 0) throw new Error(installed.stderr || installed.stdout);
   const child = spawn(
-    node24,
+    nodeExecutable,
     [piBin, "--mode", "rpc", "--no-session", "--approve", "--offline", "--no-context-files"],
     {
       cwd: isolated,
