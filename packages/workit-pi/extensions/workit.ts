@@ -92,6 +92,9 @@ const runtimeFor = (ctx: ExtensionContext) => ({
   cli: process.argv[1] ?? "",
   workitExtension: fileURLToPath(import.meta.url),
   root: ctx.cwd,
+  extensions: process.env.WORKIT_PI_TEST_PROVIDER_EXTENSION
+    ? [process.env.WORKIT_PI_TEST_PROVIDER_EXTENSION]
+    : undefined,
 });
 
 const contextMessage = (ctx: ExtensionContext) => ({
@@ -162,12 +165,20 @@ export default function extension(pi: ExtensionAPI): void {
         return failure("recovery_required", "worker process is not live in this session");
       const parent = new WorkitCore(store, piContext(ctx));
       const binding = bindings.get(worker.id);
+      const latestTask = store.readTask(task.id);
+      const latestWorkspace = store.readWorkspace();
+      if (!latestTask.ok || !latestWorkspace.ok || !latestWorkspace.data)
+        return failure("recovery_required", "worker state could not be refreshed");
+      if (binding) {
+        binding.expectedRevision = latestTask.data.revision;
+        binding.expectedWorkspaceRevision = latestWorkspace.data.revision;
+      }
       const cancelled = cancelWorkerAssignment(
         parent,
         task.id,
         worker.id,
-        binding?.expectedRevision ?? task.revision,
-        binding?.expectedWorkspaceRevision ?? workspace.revision,
+        latestTask.data.revision,
+        latestWorkspace.data.revision,
       );
       if (!cancelled.ok) return cancelled;
       if (binding) {
@@ -226,6 +237,10 @@ export default function extension(pi: ExtensionAPI): void {
       nativeWorker: nativeWorkerForEvidence(() => child),
     };
     const childCore = new WorkitCore(store, childContext);
+    let resolveReady: ((ready: boolean) => void) | undefined;
+    const readyPromise = new Promise<boolean>((resolve) => {
+      resolveReady = resolve;
+    });
     const handle = launchSupervisedWorker(worker.data.assignment as WorkerAssignment, {
       runtime: runtimeFor(ctx),
       binding,
@@ -235,25 +250,46 @@ export default function extension(pi: ExtensionAPI): void {
         child = spawned;
         return true;
       },
-      beforeExit: (exited) => {
-        if (exited.report) {
-          const freshTask = store.readTask(task.id);
-          const freshWorkspace = store.readWorkspace();
-          if (freshTask.ok && freshWorkspace.ok && freshWorkspace.data)
-            advanceWorkerBinding(
-              binding,
-              reportWorker(
-                childCore,
-                task.id,
-                worker.id,
-                exited.report,
-                freshTask.data.revision,
-                freshWorkspace.data.revision,
-              ),
-            );
+      onReady: (ready) => {
+        resolveReady?.(
+          ready.ready && (worker.data.assignment.role !== "implementer" || ready.writerReady),
+        );
+      },
+      onError: () => resolveReady?.(false),
+      onReport: (_reported, report) => {
+        const freshTask = store.readTask(task.id);
+        const freshWorkspace = store.readWorkspace();
+        if (!freshTask.ok || !freshWorkspace.ok || !freshWorkspace.data) return false;
+        const existing = freshTask.data.workers.find((entry) => entry.id === worker.id)?.data
+          .report;
+        if (existing) return true;
+        const persisted = reportWorker(
+          childCore,
+          task.id,
+          worker.id,
+          report,
+          freshTask.data.revision,
+          freshWorkspace.data.revision,
+        );
+        if (!persisted.ok && persisted.code === "revision_conflict") {
+          const racedTask = store.readTask(task.id);
+          const racedWorker = racedTask.ok
+            ? racedTask.data.workers.find((entry) => entry.id === worker.id)
+            : undefined;
+          if (racedWorker?.data.report) return true;
+        }
+        return advanceWorkerBinding(binding, persisted);
+      },
+      beforeExit: () => {
+        const freshTask = store.readTask(task.id);
+        const freshWorkspace = store.readWorkspace();
+        if (freshTask.ok && freshWorkspace.ok && freshWorkspace.data) {
+          binding.expectedRevision = freshTask.data.revision;
+          binding.expectedWorkspaceRevision = freshWorkspace.data.revision;
         }
       },
       onExit: (exited) => {
+        resolveReady?.(exited.ready && exited.writerReady);
         workers.delete(exited.id);
         bindings.delete(worker.id);
       },
@@ -261,6 +297,14 @@ export default function extension(pi: ExtensionAPI): void {
     child = handle;
     if (handle.state !== "running")
       return failure("recovery_required", "worker launch was not observed");
+    const ready = await Promise.race([
+      readyPromise,
+      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 10_000)),
+    ]);
+    if (!ready) {
+      if (handle.state === "running") await cancelWorker(handle, { graceMs: 50, killWaitMs: 50 });
+      return failure("recovery_required", "worker readiness was not observed");
+    }
     workers.set(handle.id, handle);
     bindings.set(worker.id, binding);
     return success(binding.expectedRevision, binding.expectedWorkspaceRevision, {

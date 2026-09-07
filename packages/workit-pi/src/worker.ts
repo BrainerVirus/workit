@@ -15,7 +15,7 @@ import {
 import {
   appendBoundedStderr,
   MAX_WORKER_LINE_BYTES,
-  parseWorkerLines,
+  parseWorkerLine,
   parseWorkerResult,
   type WorkerProtocolEvent,
 } from "./worker-protocol";
@@ -28,6 +28,7 @@ export type PiRuntime = {
   cli: string;
   workitExtension: string;
   root: string;
+  extensions?: string[];
 };
 export type SpawnSpec = {
   command: string;
@@ -80,6 +81,8 @@ export type WorkerHandle = {
   protocolError: string | null;
   pendingPrompt?: string;
   onReady?: (handle: WorkerHandle) => void;
+  onError?: (handle: WorkerHandle) => void;
+  onReport?: (handle: WorkerHandle, report: WorkerReport) => boolean;
   onExit?: (handle: WorkerHandle, exit: ObservedExit) => void;
 };
 
@@ -92,7 +95,9 @@ export type LaunchOptions = {
   env?: NodeJS.ProcessEnv;
   spawn?: SpawnFn;
   onSpawn?: (handle: WorkerHandle) => boolean;
+  onError?: (handle: WorkerHandle) => void;
   onReady?: (handle: WorkerHandle) => void;
+  onReport?: (handle: WorkerHandle, report: WorkerReport) => boolean;
   onExit?: (handle: WorkerHandle, exit: ObservedExit) => void;
   pendingPrompt?: string;
 };
@@ -136,10 +141,14 @@ export function workerCommand(runtime: PiRuntime, assignment: WorkerAssignment):
       "--mode",
       "rpc",
       "--no-session",
+      "--approve",
+      "--offline",
+      "--no-context-files",
       "--tools",
       roleTools(assignment.role).join(","),
       "--extension",
       runtime.workitExtension,
+      ...(runtime.extensions ?? []).flatMap((extension) => ["--extension", extension]),
     ],
     cwd: runtime.root,
   };
@@ -157,13 +166,17 @@ const attach = (handle: WorkerHandle): void => {
     const text = String(chunk);
     handle.stderr = appendBoundedStderr(handle.stderr, text);
   });
+  child.stdin?.write(JSON.stringify({ id: "workit-ready", type: "get_state" }) + "\n");
   child.once("exit", (...args: unknown[]) => {
     const code = typeof args[0] === "number" ? args[0] : null;
     const signal = typeof args[1] === "string" ? (args[1] as NodeJS.Signals) : null;
     observeExit(handle, code, signal);
   });
   child.once("error", () => {
-    if (!handle.exit) handle.state = "assigned";
+    if (!handle.exit) {
+      handle.state = "assigned";
+      handle.onError?.(handle);
+    }
   });
 };
 
@@ -193,6 +206,8 @@ export function launchWorker(assignment: WorkerAssignment, options: LaunchOption
     protocolError: null,
     pendingPrompt: options.pendingPrompt,
     onReady: options.onReady,
+    onError: options.onError,
+    onReport: options.onReport,
     onExit: options.onExit,
   };
   if (nested) return handle;
@@ -257,10 +272,44 @@ export const consumeWorkerOutput = (handle: WorkerHandle, chunk: string): void =
     handle.protocolError = "worker stdout line exceeded the protocol limit";
     return;
   }
-  const events = parseWorkerLines(lines.join("\n"));
-  if (lines.some((line) => line.trim() && parseWorkerLines(line).length === 0)) {
-    handle.protocolError = "worker emitted malformed protocol output";
-    return;
+  const events: WorkerProtocolEvent[] = [];
+  let nativeReady = false;
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    if (Buffer.byteLength(line, "utf8") > MAX_WORKER_LINE_BYTES) {
+      handle.protocolError = "worker stdout line exceeded the protocol limit";
+      return;
+    }
+    let value: unknown;
+    try {
+      value = JSON.parse(line);
+    } catch {
+      handle.protocolError = "worker emitted malformed protocol output";
+      return;
+    }
+    const type =
+      typeof value === "object" && value !== null && "type" in value
+        ? (value as { type?: unknown }).type
+        : undefined;
+    if (
+      type === "response" &&
+      typeof value === "object" &&
+      value !== null &&
+      "command" in value &&
+      (value as { command?: unknown }).command === "get_state" &&
+      "data" in value &&
+      typeof (value as { data?: unknown }).data === "object" &&
+      (value as { data: { sessionId?: unknown } }).data.sessionId
+    )
+      nativeReady = true;
+    if (typeof type === "string" && type.startsWith("workit_")) {
+      const event = parseWorkerLine(line);
+      if (!event) {
+        handle.protocolError = "worker emitted an invalid Workit protocol event";
+        return;
+      }
+      events.push(event);
+    }
   }
   if (
     events.some(
@@ -278,8 +327,12 @@ export const consumeWorkerOutput = (handle: WorkerHandle, chunk: string): void =
     return;
   }
   handle.events.push(...events);
-  if (events.some((event) => event.type === "workit_worker_ready")) handle.ready = true;
-  if (handle.ready && events.some((event) => event.type === "workit_worker_ready")) {
+  if (events.some((event) => event.type === "workit_worker_ready") || nativeReady)
+    handle.ready = true;
+  if (
+    handle.ready &&
+    (events.some((event) => event.type === "workit_worker_ready") || nativeReady)
+  ) {
     handle.onReady?.(handle);
     handle.onReady = undefined;
     if (handle.pendingPrompt) {
@@ -289,7 +342,15 @@ export const consumeWorkerOutput = (handle: WorkerHandle, chunk: string): void =
     }
   }
   const report = parseWorkerResult(events);
-  if (report.ok) handle.report = report.data;
+  if (report.ok && !handle.report) {
+    handle.report = report.data;
+    if (handle.onReport && !handle.onReport(handle, report.data)) {
+      handle.protocolError = "worker report could not be persisted";
+      handle.onReport = undefined;
+      handle.child?.kill("SIGTERM");
+    }
+    handle.onReport = undefined;
+  }
 };
 
 export function sendWorkerPrompt(handle: WorkerHandle, prompt: string): boolean {
@@ -396,6 +457,7 @@ export const cancelWorkerAssignment = (
   workerId: string,
   expectedRevision: string,
   expectedWorkspaceRevision: string,
+  reason = "Pi host requested cancellation",
 ): Result<unknown> =>
   core.worker({
     schemaVersion: 1,
@@ -404,6 +466,7 @@ export const cancelWorkerAssignment = (
     workerId,
     expectedRevision,
     expectedWorkspaceRevision,
+    reason,
   });
 
 export const releaseWorkerWriter = (
@@ -447,6 +510,16 @@ export const launchSupervisedWorker = (
       if (!observed.ok) return false;
       return true;
     },
+    onError: (errored) => {
+      observeWorkerExit(options.binding, errored, {
+        state: "unknown",
+        observed: false,
+        code: null,
+        signal: null,
+        stderr: errored.stderr,
+      });
+      options.onError?.(errored);
+    },
     onReady: (readyHandle) => {
       if (assignment.role === "implementer") {
         const writer = acquireWorkerWriter(
@@ -458,6 +531,12 @@ export const launchSupervisedWorker = (
         );
         readyHandle.writerReady = writer.ok;
         advanceBinding(options.binding, writer);
+        if (!writer.ok) {
+          readyHandle.protocolError = "worker writer acquisition failed";
+          readyHandle.pendingPrompt = undefined;
+          readyHandle.child?.kill("SIGTERM");
+          return;
+        }
       }
       options.onReady?.(readyHandle);
     },

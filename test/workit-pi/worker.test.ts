@@ -111,6 +111,45 @@ test("worker stdout accepts JSON split across process chunks", () => {
   expect(worker.report).toMatchObject({ summary: "chunked" });
 });
 
+test("worker stdout tolerates valid Pi RPC events around Workit protocol events", () => {
+  const worker = launchWorker(assignment("reviewer"), {
+    runtime: runtime(),
+    workerId: "worker-rpc",
+    sessionId: "session-rpc",
+    spawn: () =>
+      ({ pid: 44, stdout: null, stderr: null, once: () => undefined, kill: () => true }) as never,
+  });
+  const report = {
+    outcome: "completed" as const,
+    summary: "rpc interleave",
+    evidenceIds: [],
+    findingIds: [],
+  };
+  consumeWorkerOutput(
+    worker,
+    [
+      JSON.stringify({ type: "response", command: "prompt", success: true }),
+      JSON.stringify({ type: "agent_start", sessionId: "pi" }),
+      JSON.stringify({
+        type: "workit_worker_ready",
+        workerId: "worker-rpc",
+        sessionId: "session-rpc",
+      }),
+      JSON.stringify({ type: "message_start", message: { role: "assistant" } }),
+      JSON.stringify({
+        type: "workit_worker_result",
+        workerId: "worker-rpc",
+        sessionId: "session-rpc",
+        report,
+      }),
+      "",
+    ].join("\n"),
+  );
+  expect(worker.protocolError).toBeNull();
+  expect(worker.ready).toBe(true);
+  expect(worker.report).toEqual(report);
+});
+
 test("stderr is diagnostics only and protocol identity is strict", () => {
   const stderrListeners = new Map<string, (chunk?: string | Buffer) => void>();
   const worker = launchWorker(assignment("reviewer"), {
@@ -238,7 +277,7 @@ test("implementer process is bound before prompt and receives scoped environment
     onSpawn: (handle) => {
       expect(handle.pid).toBe(9001);
       expect(handle.sessionId).toBe("session-1");
-      expect(writes).toBe(0);
+      expect(writes).toBe(1);
       return true;
     },
   });
@@ -252,7 +291,7 @@ test("implementer process is bound before prompt and receives scoped environment
   expect(sendWorkerPrompt(worker, "before writer")).toBe(false);
   worker.writerReady = true;
   expect(sendWorkerPrompt(worker, "after writer")).toBe(true);
-  expect(writes).toBe(1);
+  expect(writes).toBe(2);
   expect(observedPid).toBe(9001);
   expect(observedEnv).toMatchObject({
     WORKIT_PI_TASK_ID: "task-1",
@@ -424,9 +463,11 @@ test("supervised implementer observes the child before acquiring writer or sendi
     stderr: { on: () => undefined, setEncoding: () => undefined },
     once: () => undefined,
     stdin: {
-      write: () => {
-        order.push("prompt");
-        writes += 1;
+      write: (value: string) => {
+        if (value.includes('"type":"prompt"')) {
+          order.push("prompt");
+          writes += 1;
+        }
         return true;
       },
       end: () => undefined,
@@ -527,6 +568,21 @@ test("core-backed supervisor refreshes revisions through report and observed exi
       child = spawned;
       return true;
     },
+    onReport: (_handle, report) => {
+      const freshTask = store.readTask(taskId);
+      const freshWorkspace = store.readWorkspace();
+      if (!freshTask.ok || !freshWorkspace.ok || !freshWorkspace.data) return false;
+      const result = reportWorker(
+        childCore,
+        taskId,
+        assigned.data.id,
+        report,
+        freshTask.data.revision,
+        freshWorkspace.data.revision,
+      );
+      advanceWorkerBinding(binding, result);
+      return result.ok;
+    },
     spawn: () =>
       ({
         pid: 777,
@@ -559,27 +615,24 @@ test("core-backed supervisor refreshes revisions through report and observed exi
   ).toBe("running");
   expect(held.ok && held.data?.writer?.state).toBe("held");
   expect(prompt).toContain('"type":"prompt"');
-  const report = {
-    outcome: "completed" as const,
-    summary: "reviewed",
-    evidenceIds: [],
-    findingIds: [],
-  };
-  const freshTask = store.readTask(taskId);
-  const freshWorkspace = store.readWorkspace();
-  if (!freshTask.ok || !freshWorkspace.ok || !freshWorkspace.data)
-    throw new Error("missing running state");
-  const reported = reportWorker(
-    childCore,
-    taskId,
-    assigned.data.id,
-    report,
-    freshTask.data.revision,
-    freshWorkspace.data.revision,
+  stdoutListener?.(
+    JSON.stringify({
+      type: "workit_worker_result",
+      workerId: assigned.data.id,
+      sessionId,
+      report: { outcome: "completed", summary: "reviewed", evidenceIds: [], findingIds: [] },
+    }) + "\n",
   );
-  expect(reported.ok).toBe(true);
-  advanceWorkerBinding(binding, reported);
-  expect(store.readTask(taskId).ok).toBe(true);
+  const reportedTask = store.readTask(taskId);
+  expect(
+    reportedTask.ok &&
+      reportedTask.data.workers.find((entry) => entry.id === assigned.data.id)?.data.report
+        ?.summary,
+  ).toBe("reviewed");
+  expect(
+    reportedTask.ok &&
+      reportedTask.data.workers.find((entry) => entry.id === assigned.data.id)?.data.state,
+  ).toBe("running");
   observeExit(handle, 0);
   const stoppedWorkspace = store.readWorkspace();
   const stoppedTask = store.readTask(taskId);
@@ -588,4 +641,73 @@ test("core-backed supervisor refreshes revisions through report and observed exi
     stoppedTask.ok &&
       stoppedTask.data.workers.find((entry) => entry.id === assigned.data.id)?.data.state,
   ).toBe("stopped");
+});
+
+test("supervised asynchronous spawn failure is persisted as unknown by core", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "workit-pi-spawn-error-"));
+  const store = new TaskStore(root);
+  let child: import("../../packages/workit-pi/src/worker").WorkerHandle | null = null;
+  const base: OperationContext = {
+    root,
+    caller: { host: "pi", actor: "coordinator" },
+    callerAttested: true,
+    capabilities: [],
+    constraints: [],
+    now: "2026-01-01T00:00:00Z",
+    nativeWorker: nativeWorkerForEvidence(() => child),
+  };
+  const core = new WorkitCore(store, base);
+  const started = core.task(taskStartRequest());
+  if (!started.ok) throw new Error(started.error);
+  const taskId = (started.data as { id: string }).id;
+  const task = store.readTask(taskId);
+  const workspace = store.readWorkspace();
+  if (!task.ok || !workspace.ok || !workspace.data) throw new Error("missing fixture");
+  const assigned = core.worker({
+    schemaVersion: 1,
+    action: "assign",
+    taskId,
+    expectedRevision: task.data.revision,
+    expectedWorkspaceRevision: workspace.data.revision,
+    assignment: assignment("reviewer"),
+  });
+  if (!assigned.ok) throw new Error(assigned.error);
+  const afterTask = store.readTask(taskId);
+  const afterWorkspace = store.readWorkspace();
+  if (!afterTask.ok || !afterWorkspace.ok || !afterWorkspace.data)
+    throw new Error("missing assignment");
+  const binding = {
+    core,
+    taskId,
+    workerId: assigned.data.id,
+    expectedRevision: afterTask.data.revision,
+    expectedWorkspaceRevision: afterWorkspace.data.revision,
+    sessionId: "async-error-session",
+  };
+  const listeners = new Map<string, (...args: unknown[]) => void>();
+  const handle = launchSupervisedWorker(assignment("reviewer"), {
+    runtime: runtime(root),
+    binding,
+    onSpawn: (spawned) => {
+      child = spawned;
+      return true;
+    },
+    spawn: () =>
+      ({
+        pid: 812,
+        stdout: null,
+        stderr: null,
+        once: (event: string, listener: (...args: unknown[]) => void) =>
+          listeners.set(event, listener),
+        kill: () => true,
+      }) as never,
+  });
+  expect(handle.state).toBe("running");
+  listeners.get("error")?.(new Error("late spawn failure"));
+  const failed = store.readTask(taskId);
+  expect(
+    failed.ok && failed.data.workers.find((entry) => entry.id === assigned.data.id)?.data.state,
+  ).toBe("unknown");
+  const failedWorkspace = store.readWorkspace();
+  expect(failedWorkspace.ok && failedWorkspace.data?.writer).toBeNull();
 });
