@@ -105,7 +105,11 @@ test("clean Pi package declares stock discovery and exactly eight core tools", a
   expect(manifest.peerDependencies["@earendil-works/pi-coding-agent"]).toBe("^0.85.1");
   const pi = makePi();
   await extension(pi as any);
-  expect(pi.tools.map((tool) => tool.name)).toEqual([
+  expect(
+    pi.tools
+      .map((tool) => tool.name)
+      .filter((name) => name.startsWith("workit_") && name !== "workit_worker_control"),
+  ).toEqual([
     "workit_task",
     "workit_policy",
     "workit_evidence",
@@ -115,6 +119,7 @@ test("clean Pi package declares stock discovery and exactly eight core tools", a
     "workit_writer",
     "workit_state",
   ]);
+  expect(pi.tools.map((tool) => tool.name)).toContain("workit_worker_control");
   expect(pi.tools.every((tool) => tool.parameters.type === "object")).toBe(true);
   expect(pi.commands.map((command) => command.name)).toContain("workit-worker");
 });

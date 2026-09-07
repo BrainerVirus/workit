@@ -30,7 +30,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   continuity, and truthful UI/trust/sandbox capability boundaries. The bundled
   coordinator now supervises fresh stock-Pi reviewer/investigator processes and
   explicitly scoped implementers with observed lifecycle and uncertain
-  cancellation boundaries.
+  cancellation boundaries. A child-disabled `workit_worker_control` host
+  orchestration tool does not expand the eight shared core families.
 
 - Cursor v1 now uses the shared MCP transport, one documented native hook
   executable, and exactly seven canonical adaptive method skills. AskQuestion,

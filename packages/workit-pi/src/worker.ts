@@ -14,6 +14,7 @@ import {
 } from "@brainervirus/workit-core/src/core";
 import {
   appendBoundedStderr,
+  MAX_WORKER_LINE_BYTES,
   parseWorkerLines,
   parseWorkerResult,
   type WorkerProtocolEvent,
@@ -76,6 +77,7 @@ export type WorkerHandle = {
   exit: ObservedExit | null;
   writerReady: boolean;
   ready: boolean;
+  protocolError: string | null;
   pendingPrompt?: string;
   onReady?: (handle: WorkerHandle) => void;
   onExit?: (handle: WorkerHandle, exit: ObservedExit) => void;
@@ -108,7 +110,16 @@ export type SupervisedLaunchOptions = LaunchOptions & {
   binding: WorkerLifecycleBinding;
   prompt?: string;
   writerCore?: WorkitCore;
+  beforeExit?: (handle: WorkerHandle, exit: ObservedExit) => void;
 };
+
+const advanceBinding = (binding: WorkerLifecycleBinding, result: Result<unknown>): boolean => {
+  if (!result.ok || !result.revision || !result.workspaceRevision) return false;
+  binding.expectedRevision = result.revision;
+  binding.expectedWorkspaceRevision = result.workspaceRevision;
+  return true;
+};
+export const advanceWorkerBinding = advanceBinding;
 
 const familyTools = OPERATION_FAMILIES.map((family) => "workit_" + family);
 const roleTools = (role: WorkerAssignment["role"]): string[] => {
@@ -145,7 +156,6 @@ const attach = (handle: WorkerHandle): void => {
   child.stderr?.on("data", (chunk) => {
     const text = String(chunk);
     handle.stderr = appendBoundedStderr(handle.stderr, text);
-    consumeWorkerOutput(handle, text);
   });
   child.once("exit", (...args: unknown[]) => {
     const code = typeof args[0] === "number" ? args[0] : null;
@@ -180,6 +190,7 @@ export function launchWorker(assignment: WorkerAssignment, options: LaunchOption
     exit: null,
     writerReady: options.writerReady === true,
     ready: false,
+    protocolError: null,
     pendingPrompt: options.pendingPrompt,
     onReady: options.onReady,
     onExit: options.onExit,
@@ -238,20 +249,37 @@ export function observeExit(
 }
 
 export const consumeWorkerOutput = (handle: WorkerHandle, chunk: string): void => {
+  if (handle.protocolError) return;
   const lines = (handle.stdoutBuffer + chunk).split(/\r?\n/);
   handle.stdoutBuffer = lines.pop() ?? "";
+  if (Buffer.byteLength(handle.stdoutBuffer, "utf8") > MAX_WORKER_LINE_BYTES) {
+    handle.stdoutBuffer = "";
+    handle.protocolError = "worker stdout line exceeded the protocol limit";
+    return;
+  }
   const events = parseWorkerLines(lines.join("\n"));
-  handle.events.push(...events);
+  if (lines.some((line) => line.trim() && parseWorkerLines(line).length === 0)) {
+    handle.protocolError = "worker emitted malformed protocol output";
+    return;
+  }
   if (
     events.some(
-      (event) =>
-        event.type === "workit_worker_ready" &&
-        (event.workerId === undefined || event.workerId === handle.workerId) &&
-        (event.sessionId === undefined || event.sessionId === handle.sessionId),
+      (event) => event.workerId !== handle.workerId || event.sessionId !== handle.sessionId,
     )
-  )
-    handle.ready = true;
-  if (handle.ready) {
+  ) {
+    handle.protocolError = "worker protocol identity did not match the assigned session";
+    return;
+  }
+  if (
+    handle.events.some((event) => event.type === "workit_worker_result") &&
+    events.some((event) => event.type === "workit_worker_result")
+  ) {
+    handle.protocolError = "worker emitted multiple results";
+    return;
+  }
+  handle.events.push(...events);
+  if (events.some((event) => event.type === "workit_worker_ready")) handle.ready = true;
+  if (handle.ready && events.some((event) => event.type === "workit_worker_ready")) {
     handle.onReady?.(handle);
     handle.onReady = undefined;
     if (handle.pendingPrompt) {
@@ -275,8 +303,8 @@ export function sendWorkerPrompt(handle: WorkerHandle, prompt: string): boolean 
 export const observeWorkerStart = (
   binding: WorkerLifecycleBinding,
   handle: WorkerHandle,
-): Result<unknown> =>
-  binding.core.observeWorkerLifecycle({
+): Result<unknown> => {
+  const result = binding.core.observeWorkerLifecycle({
     taskId: binding.taskId,
     workerId: binding.workerId,
     expectedRevision: binding.expectedRevision,
@@ -285,13 +313,16 @@ export const observeWorkerStart = (
     session: { kind: "host", host: "pi", handle: binding.sessionId },
     observation: binding.observation ?? { pid: handle.pid, sessionId: handle.sessionId },
   });
+  advanceBinding(binding, result);
+  return result;
+};
 
 export const observeWorkerExit = (
   binding: WorkerLifecycleBinding,
   handle: WorkerHandle,
   exit: ObservedExit,
-): Result<unknown> =>
-  binding.core.observeWorkerLifecycle({
+): Result<unknown> => {
+  const result = binding.core.observeWorkerLifecycle({
     taskId: binding.taskId,
     workerId: binding.workerId,
     expectedRevision: binding.expectedRevision,
@@ -305,6 +336,9 @@ export const observeWorkerExit = (
       signal: exit.signal,
     },
   });
+  advanceBinding(binding, result);
+  return result;
+};
 
 export const acquireWorkerWriter = (
   core: WorkitCore,
@@ -408,9 +442,10 @@ export const launchSupervisedWorker = (
     writerReady: assignment.role !== "implementer",
     pendingPrompt: options.prompt,
     onSpawn: (spawned) => {
+      if (options.onSpawn && !options.onSpawn(spawned)) return false;
       const observed = observeWorkerStart(options.binding, spawned);
       if (!observed.ok) return false;
-      return options.onSpawn?.(spawned) ?? true;
+      return true;
     },
     onReady: (readyHandle) => {
       if (assignment.role === "implementer") {
@@ -422,10 +457,12 @@ export const launchSupervisedWorker = (
           options.binding.expectedWorkspaceRevision,
         );
         readyHandle.writerReady = writer.ok;
+        advanceBinding(options.binding, writer);
       }
       options.onReady?.(readyHandle);
     },
     onExit: (stopped, exit) => {
+      options.beforeExit?.(stopped, exit);
       observeWorkerExit(options.binding, stopped, exit);
       options.onExit?.(stopped, exit);
     },
@@ -434,9 +471,16 @@ export const launchSupervisedWorker = (
   return handle;
 };
 
-export const nativeWorkerFor = (handle: WorkerHandle): NativeWorkerVerifier => ({
+export const nativeWorkerFor = (handle: WorkerHandle): NativeWorkerVerifier =>
+  nativeWorkerForEvidence(() => handle);
+
+export const nativeWorkerForEvidence = (
+  getHandle: () => Pick<WorkerHandle, "pid" | "workerId" | "sessionId"> | null,
+): NativeWorkerVerifier => ({
   verifyWorker: ({ expected, caller, observation }) => {
+    const handle = getHandle();
     if (
+      !handle ||
       caller.host !== "pi" ||
       expected.workerId !== handle.workerId ||
       expected.session?.kind !== "host" ||
@@ -458,6 +502,34 @@ export const nativeWorkerFor = (handle: WorkerHandle): NativeWorkerVerifier => (
         session: expected.session,
         workerId: expected.workerId,
         receipts: [{ kind: "host", host: "pi", handle: "pid:" + String(handle.pid ?? "unknown") }],
+      },
+    };
+  },
+});
+
+export const nativeLostWorker = (): NativeWorkerVerifier => ({
+  verifyWorker: ({ expected, caller, observation }) => {
+    if (
+      caller.host !== "pi" ||
+      expected.session?.kind !== "host" ||
+      expected.session.host !== "pi" ||
+      typeof observation !== "object" ||
+      observation === null ||
+      (observation as { lost?: unknown }).lost !== true ||
+      (observation as { sessionId?: unknown }).sessionId !== expected.session.handle
+    )
+      return failure("permission_denied", "Pi worker loss was not observed by the host");
+    return {
+      ok: true,
+      schemaVersion: 1,
+      revision: null,
+      workspaceRevision: null,
+      data: {
+        kind: "host_observed",
+        host: "pi",
+        session: expected.session,
+        workerId: expected.workerId,
+        receipts: [{ kind: "host", host: "pi", handle: "lost:" + expected.session.handle }],
       },
     };
   },

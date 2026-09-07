@@ -61,6 +61,9 @@ are not an OS sandbox. Its bundled coordinator can launch fresh stock-Pi
 reviewer/investigator processes and explicitly scoped implementers; writer
 ownership is acquired only after native process observation, and cancellation
 timeouts remain uncertain until an exit is observed.
+Pi also exposes one child-disabled `workit_worker_control` host-orchestration
+tool for launch/cancel/reconcile; the shared core surface remains exactly eight
+`workit_*` operation tools.
 
 ## Manual setup
 

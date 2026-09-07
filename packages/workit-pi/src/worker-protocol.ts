@@ -10,8 +10,8 @@ export const MAX_WORKER_LINE_BYTES = 64 * 1024;
 export const MAX_WORKER_STDERR_BYTES = 64 * 1024;
 
 export type WorkerProtocolEvent =
-  | { type: "workit_worker_result"; report: WorkerReport }
-  | { type: "workit_worker_ready"; workerId?: string; sessionId?: string };
+  | { type: "workit_worker_result"; workerId: string; sessionId: string; report: WorkerReport }
+  | { type: "workit_worker_ready"; workerId: string; sessionId: string };
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
@@ -19,20 +19,20 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const parseEvent = (value: unknown): WorkerProtocolEvent | null => {
   if (!isRecord(value) || typeof value.type !== "string") return null;
   if (value.type === "workit_worker_ready") {
-    if (
-      (value.workerId !== undefined && typeof value.workerId !== "string") ||
-      (value.sessionId !== undefined && typeof value.sessionId !== "string")
-    )
-      return null;
-    return {
-      type: value.type,
-      ...(value.workerId ? { workerId: value.workerId } : {}),
-      ...(value.sessionId ? { sessionId: value.sessionId } : {}),
-    };
+    if (typeof value.workerId !== "string" || typeof value.sessionId !== "string") return null;
+    return { type: value.type, workerId: value.workerId, sessionId: value.sessionId };
   }
   if (value.type !== "workit_worker_result") return null;
+  if (typeof value.workerId !== "string" || typeof value.sessionId !== "string") return null;
   const parsed = workerReportSchema.safeParse(value.report);
-  return parsed.success ? { type: value.type, report: parsed.data } : null;
+  return parsed.success
+    ? {
+        type: value.type,
+        workerId: value.workerId,
+        sessionId: value.sessionId,
+        report: parsed.data,
+      }
+    : null;
 };
 
 export const parseWorkerLine = (line: string): WorkerProtocolEvent | null => {

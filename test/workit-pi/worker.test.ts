@@ -10,11 +10,14 @@ import {
 } from "../../packages/workit-core/src/core";
 import {
   cancelWorker,
+  advanceWorkerBinding,
   consumeWorkerOutput,
   launchWorker,
   launchSupervisedWorker,
+  nativeWorkerForEvidence,
   observeExit,
   observeWorkerStart,
+  reportWorker,
   reconcileWorker,
   sendWorkerPrompt,
   parseWorkerResult,
@@ -69,7 +72,7 @@ test("worker protocol accepts only explicit structured reports and rejects assis
         type: "message_end",
         message: { role: "assistant", content: [{ type: "text", text: "done" }] },
       },
-      { type: "workit_worker_result", report },
+      { type: "workit_worker_result", workerId: "worker-1", sessionId: "session-1", report },
     ]),
   ).toMatchObject({ ok: true, data: report });
   expect(
@@ -84,6 +87,9 @@ test("worker protocol accepts only explicit structured reports and rejects assis
 test("worker stdout accepts JSON split across process chunks", () => {
   const worker = launchWorker(assignment("reviewer"), {
     runtime: runtime(),
+    taskId: "task-1",
+    workerId: "worker-1",
+    sessionId: "session-1",
     spawn: () =>
       ({
         pid: 41,
@@ -95,6 +101,8 @@ test("worker stdout accepts JSON split across process chunks", () => {
   });
   const line = JSON.stringify({
     type: "workit_worker_result",
+    workerId: "worker-1",
+    sessionId: "session-1",
     report: { outcome: "completed", summary: "chunked", evidenceIds: [], findingIds: [] },
   });
   consumeWorkerOutput(worker, line.slice(0, 17));
@@ -103,11 +111,83 @@ test("worker stdout accepts JSON split across process chunks", () => {
   expect(worker.report).toMatchObject({ summary: "chunked" });
 });
 
+test("stderr is diagnostics only and protocol identity is strict", () => {
+  const stderrListeners = new Map<string, (chunk?: string | Buffer) => void>();
+  const worker = launchWorker(assignment("reviewer"), {
+    runtime: runtime(),
+    workerId: "worker-1",
+    sessionId: "session-1",
+    spawn: () =>
+      ({
+        pid: 51,
+        stdout: null,
+        stderr: {
+          on: (event: string, listener: (chunk?: string | Buffer) => void) =>
+            stderrListeners.set(event, listener),
+          setEncoding: () => undefined,
+        },
+        once: () => undefined,
+        kill: () => true,
+      }) as never,
+  });
+  stderrListeners.get("data")?.(
+    JSON.stringify({ type: "workit_worker_ready", workerId: "worker-1", sessionId: "session-1" }) +
+      "\n",
+  );
+  expect(worker.ready).toBe(false);
+  expect(worker.protocolError).toBeNull();
+  consumeWorkerOutput(
+    worker,
+    JSON.stringify({ type: "workit_worker_ready", workerId: "other", sessionId: "session-1" }) +
+      "\n",
+  );
+  expect(worker.protocolError).toContain("identity");
+});
+
+test("stdout protocol rejects duplicate reports and bounded unterminated lines", () => {
+  const worker = launchWorker(assignment("reviewer"), {
+    runtime: runtime(),
+    workerId: "worker-1",
+    sessionId: "session-1",
+    spawn: () =>
+      ({
+        pid: 52,
+        stdout: null,
+        stderr: null,
+        once: () => undefined,
+        kill: () => true,
+      }) as never,
+  });
+  const event = JSON.stringify({
+    type: "workit_worker_result",
+    workerId: "worker-1",
+    sessionId: "session-1",
+    report: { outcome: "completed", summary: "ok", evidenceIds: [], findingIds: [] },
+  });
+  consumeWorkerOutput(worker, event + "\n");
+  consumeWorkerOutput(worker, event + "\n");
+  expect(worker.protocolError).toContain("multiple");
+  const oversized = launchWorker(assignment("reviewer"), {
+    runtime: runtime(),
+    workerId: "worker-2",
+    sessionId: "session-2",
+    spawn: () =>
+      ({
+        pid: 53,
+        stdout: null,
+        stderr: null,
+        once: () => undefined,
+        kill: () => true,
+      }) as never,
+  });
+  consumeWorkerOutput(oversized, "x".repeat(64 * 1024 + 1));
+  expect(oversized.protocolError).toContain("limit");
+});
+
 test("cancellation escalates and remains unknown until an observed exit", async () => {
   const signals: string[] = [];
   const worker = launchWorker(assignment("implementer"), {
     runtime: runtime(),
-    writerReady: true,
     spawn: () => {
       return {
         pid: 4123,
@@ -185,14 +265,33 @@ test("implementer process is bound before prompt and receives scoped environment
 test("launch failure remains assigned and has no writer-ready state", () => {
   const worker = launchWorker(assignment("implementer"), {
     runtime: runtime(),
-    writerReady: true,
     spawn: () => {
       throw new Error("spawn failed");
     },
   });
   expect(worker.state).toBe("assigned");
   expect(worker.child).toBeNull();
-  expect(worker.writerReady).toBe(true);
+  expect(worker.writerReady).toBe(false);
+});
+
+test("an asynchronous spawn error never grants readiness or a writer", () => {
+  const listeners = new Map<string, (...args: unknown[]) => void>();
+  const worker = launchWorker(assignment("implementer"), {
+    runtime: runtime(),
+    spawn: () =>
+      ({
+        pid: 600,
+        stdout: null,
+        stderr: null,
+        once: (event: string, listener: (...args: unknown[]) => void) =>
+          listeners.set(event, listener),
+        kill: () => true,
+      }) as never,
+  });
+  listeners.get("error")?.(new Error("spawn failed after return"));
+  expect(worker.state).toBe("assigned");
+  expect(worker.ready).toBe(false);
+  expect(worker.writerReady).toBe(false);
 });
 
 test("report is not exit, and only observed exit reconciles", () => {
@@ -367,4 +466,126 @@ test("supervised implementer observes the child before acquiring writer or sendi
   expect(order).toEqual(["observe", "writer", "prompt"]);
   expect(order).toEqual(["observe", "writer", "prompt"]);
   expect(writes).toBe(1);
+});
+
+test("core-backed supervisor refreshes revisions through report and observed exit", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "workit-pi-supervised-"));
+  const store = new TaskStore(root);
+  let child: import("../../packages/workit-pi/src/worker").WorkerHandle | null = null;
+  let stdoutListener: ((chunk?: string | Buffer) => void) | undefined;
+  let prompt = "";
+  const base: OperationContext = {
+    root,
+    caller: { host: "pi", actor: "coordinator" },
+    callerAttested: true,
+    capabilities: [],
+    constraints: [],
+    now: "2026-01-01T00:00:00Z",
+    nativeWorker: nativeWorkerForEvidence(() => child),
+  };
+  const core = new WorkitCore(store, base);
+  const started = core.task(taskStartRequest());
+  if (!started.ok) throw new Error(started.error);
+  const taskId = (started.data as { id: string }).id;
+  const initialTask = store.readTask(taskId);
+  const initialWorkspace = store.readWorkspace();
+  if (!initialTask.ok || !initialWorkspace.ok || !initialWorkspace.data)
+    throw new Error("missing fixture");
+  const assigned = core.worker({
+    schemaVersion: 1,
+    action: "assign",
+    taskId,
+    expectedRevision: initialTask.data.revision,
+    expectedWorkspaceRevision: initialWorkspace.data.revision,
+    assignment: assignment("implementer"),
+  });
+  if (!assigned.ok) throw new Error(assigned.error);
+  const task = store.readTask(taskId);
+  const workspace = store.readWorkspace();
+  if (!task.ok || !workspace.ok || !workspace.data) throw new Error("missing assignment");
+  const sessionId = "child-session";
+  const binding = {
+    core,
+    taskId,
+    workerId: assigned.data.id,
+    expectedRevision: task.data.revision,
+    expectedWorkspaceRevision: workspace.data.revision,
+    sessionId,
+  };
+  const childCore = new WorkitCore(store, {
+    ...base,
+    caller: { host: "pi", actor: sessionId },
+    workerId: assigned.data.id,
+    nativeWorker: nativeWorkerForEvidence(() => child),
+  });
+  const handle = launchSupervisedWorker(assignment("implementer"), {
+    runtime: runtime(root),
+    binding,
+    writerCore: childCore,
+    prompt: "implement",
+    onSpawn: (spawned) => {
+      child = spawned;
+      return true;
+    },
+    spawn: () =>
+      ({
+        pid: 777,
+        stdout: {
+          on: (event: string, listener: (chunk?: string | Buffer) => void) => {
+            if (event === "data") stdoutListener = listener;
+          },
+          setEncoding: () => undefined,
+        },
+        stderr: { on: () => undefined, setEncoding: () => undefined },
+        once: () => undefined,
+        stdin: {
+          write: (value: string) => {
+            prompt += value;
+            return true;
+          },
+          end: () => undefined,
+        },
+        kill: () => true,
+      }) as never,
+  });
+  expect(handle.state).toBe("running");
+  stdoutListener?.(
+    JSON.stringify({ type: "workit_worker_ready", workerId: assigned.data.id, sessionId }) + "\n",
+  );
+  const running = store.readTask(taskId);
+  const held = store.readWorkspace();
+  expect(
+    running.ok && running.data.workers.find((entry) => entry.id === assigned.data.id)?.data.state,
+  ).toBe("running");
+  expect(held.ok && held.data?.writer?.state).toBe("held");
+  expect(prompt).toContain('"type":"prompt"');
+  const report = {
+    outcome: "completed" as const,
+    summary: "reviewed",
+    evidenceIds: [],
+    findingIds: [],
+  };
+  const freshTask = store.readTask(taskId);
+  const freshWorkspace = store.readWorkspace();
+  if (!freshTask.ok || !freshWorkspace.ok || !freshWorkspace.data)
+    throw new Error("missing running state");
+  const reported = reportWorker(
+    childCore,
+    taskId,
+    assigned.data.id,
+    report,
+    freshTask.data.revision,
+    freshWorkspace.data.revision,
+  );
+  expect(reported.ok).toBe(true);
+  advanceWorkerBinding(binding, reported);
+  expect(store.readTask(taskId).ok).toBe(true);
+  observeExit(handle, 0);
+  const stoppedWorkspace = store.readWorkspace();
+  const stoppedTask = store.readTask(taskId);
+  expect(stoppedWorkspace.ok && stoppedWorkspace.data?.writer).toBeNull();
+  expect(
+    stoppedTask.ok &&
+      stoppedTask.data.workers.find((entry) => entry.id === assigned.data.id)?.data.state,
+  ).toBe("stopped");
 });

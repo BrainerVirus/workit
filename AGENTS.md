@@ -26,7 +26,9 @@ bundles a coordinator for fresh stock-Pi reviewer/investigator and scoped
 implementer processes. Only an observed child process may acquire the shared
 writer; cancellation or restart uncertainty blocks replacement ownership.
 Pi extensions remain workflow controls, not an OS sandbox, and shell writes are
-agent-guided.
+agent-guided. The parent extension additionally exposes a child-disabled
+`workit_worker_control` orchestration tool; it is not a ninth core family and
+is never available to supervised children.
 
 ## Parity rules
 

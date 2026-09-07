@@ -41,7 +41,14 @@ export const piCapabilities = (ctx?: Pick<ExtensionContext, "hasUI">): Capabilit
 
 export const piContext = (ctx: ExtensionContext): OperationContext => ({
   root: ctx.cwd,
-  caller: { host: "pi", actor: ctx.sessionManager.getSessionId() },
+  caller: {
+    host: "pi",
+    actor: process.env.WORKIT_PI_WORKER_SESSION || ctx.sessionManager.getSessionId(),
+  },
+  workerId:
+    process.env.WORKIT_PI_WORKER_ID && process.env.WORKIT_PI_WORKER_SESSION
+      ? process.env.WORKIT_PI_WORKER_ID
+      : null,
   callerAttested: true,
   provenanceKind: "host_observed",
   capabilities: piCapabilities(ctx),
