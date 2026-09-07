@@ -95,9 +95,6 @@
     "packages/workit-pi": {
       "name": "@brainervirus/workit-pi",
       "version": "0.11.0",
-      "dependencies": {
-        "@brainervirus/workit-core": "workspace:*",
-      },
       "devDependencies": {
         "@earendil-works/pi-coding-agent": "0.85.1",
       },

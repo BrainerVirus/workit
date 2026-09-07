@@ -1,7 +1,7 @@
 # Workit
 
 Multi-platform Workit workflow support for Cursor, OpenCode, Codex CLI/desktop,
-and the CLI. The
+Pi, and the CLI. The
 hosts share one task contract and eight operation families while adapting
 authority and lifecycle behavior to the native surfaces each host documents.
 
@@ -10,6 +10,7 @@ authority and lifecycle behavior to the native surfaces each host documents.
 | OpenCode    | Native plugin with seven method skills and eight tools                          |
 | Cursor      | MCP transport, one native hook dispatcher, one contract rule, and seven skills  |
 | Codex       | Native plugin manifest, shared MCP transport, and documented lifecycle hooks     |
+| Pi          | Native npm extension with eight tools, seven skills, and session continuity      |
 | Shared MCP  | Low-level transport for the eight core operation families                       |
 | Shared core | Task, policy, evidence, finding, decision, worker, writer, and continuity state |
 | CLI         | Setup wizard (`workit`)                                                         |
@@ -51,6 +52,13 @@ their surface qualification remains separate. Codex hooks provide bounded
 known-write guardrails and read-only/agent-guided subagent observations, but no
 native arbitrary-question receipt or attested writer delegation.
 
+Pi loads `@brainervirus/workit-pi` through its native package manager and reads
+the package's `pi.extensions` and `pi.skills` manifest entries. The extension
+uses Pi's native session identity, confirmation UI, and known write/edit tool
+boundary with the shared core. Headless required decisions return
+`needs_input`; arbitrary shell writes remain agent-guided because Pi extensions
+are not an OS sandbox, and Task 15 worker/coordinator support is not included.
+
 ## Manual setup
 
 OpenCode loads the package from its plugin configuration:
@@ -61,6 +69,15 @@ OpenCode loads the package from its plugin configuration:
   "plugin": ["@brainervirus/workit-opencode"]
 }
 ```
+
+Pi package discovery uses the stock package manager (local development example):
+
+```bash
+pi install ./packages/workit-pi -l --approve
+```
+
+The packaged runtime is self-contained apart from its Pi `^0.85.1` peer and
+requires Node.js 24 or newer.
 
 Cursor's plugin manifest registers the MCP server, hook manifest, one contract
 rule, and seven skills. For a direct MCP entry, use the package's published
@@ -122,6 +139,7 @@ workit/
 │   ├── workit-opencode/    # OpenCode plugin
 │   ├── workit-cursor/      # Cursor MCP, hooks, rule, and skills
 │   ├── workit-codex/       # Codex CLI/desktop MCP, hooks, and skills
+│   ├── workit-pi/          # Pi native extension, bundled core, and skills
 │   └── workit-cli/         # CLI setup wizard
 ├── .cursor-plugin/         # Marketplace metadata
 └── test/                   # repository verification

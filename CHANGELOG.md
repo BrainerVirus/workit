@@ -25,6 +25,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   CLI/desktop qualification records. Unsupported receipts and writer delegation
   remain explicitly unavailable.
 
+- Pi v1 native extension with the stock package manifest, eight shared
+  operation tools, seven canonical method skills, native session/compaction
+  continuity, and truthful UI/trust/sandbox capability boundaries. Worker and
+  coordinator support remain deferred to Task 15.
+
 - Cursor v1 now uses the shared MCP transport, one documented native hook
   executable, and exactly seven canonical adaptive method skills. AskQuestion,
   session-start/compaction, subagent stop identity, arbitrary shell writes, and

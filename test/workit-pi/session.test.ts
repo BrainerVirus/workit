@@ -3,6 +3,7 @@ import { mkdtempSync } from "node:fs";
 import path from "node:path";
 import { tmpdir } from "node:os";
 import extension from "../../packages/workit-pi/extensions/workit";
+import { workitContext } from "../../packages/workit-pi/src/context";
 import { TaskStore, WorkitCore, type OperationContext } from "../../packages/workit-core/src/core";
 import { taskStartRequest } from "../workit-core/task-fixtures";
 
@@ -47,7 +48,7 @@ test("Pi session events retain native session identity across startup, reload, r
   expect(first.message.content).toContain("Workit keeps one accountable lead");
 });
 
-test("Pi compaction preserves one Workit context and shutdown clears it", async () => {
+test("Pi compaction leaves the host summary intact and restores once only after success", async () => {
   const { handlers, ctx } = await setup();
   const before: any = await handlers.get("before_agent_start")!(
     { type: "before_agent_start", prompt: "", systemPrompt: "", systemPromptOptions: {} },
@@ -60,7 +61,7 @@ test("Pi compaction preserves one Workit context and shutdown clears it", async 
       ctx,
     ),
   ).toBeUndefined();
-  const compact: any = await handlers.get("session_before_compact")!(
+  const compact = await handlers.get("session_before_compact")!(
     {
       type: "session_before_compact",
       preparation: { firstKeptEntryId: "entry", tokensBefore: 1 },
@@ -71,14 +72,98 @@ test("Pi compaction preserves one Workit context and shutdown clears it", async 
     },
     ctx,
   );
-  expect(compact.compaction.summary).toContain("Workit keeps one accountable lead");
-  await handlers.get("session_compact")!({ type: "session_compact" }, ctx);
+  expect(compact).toBeUndefined();
+  await handlers.get("session_compact")!(
+    {
+      type: "session_compact",
+      compactionEntry: {},
+      fromExtension: false,
+      reason: "manual",
+      willRetry: false,
+    },
+    ctx,
+  );
   const restored: any = await handlers.get("before_agent_start")!(
     { type: "before_agent_start", prompt: "", systemPrompt: "", systemPromptOptions: {} },
     ctx,
   );
   expect(restored.message.content).toContain("Workit keeps one accountable lead");
+  expect(
+    await handlers.get("before_agent_start")!(
+      { type: "before_agent_start", prompt: "", systemPrompt: "", systemPromptOptions: {} },
+      ctx,
+    ),
+  ).toBeUndefined();
   await handlers.get("session_shutdown")!({ type: "session_shutdown", reason: "quit" }, ctx);
+});
+
+test("Pi failed compaction does not trigger a restoration injection", async () => {
+  const { handlers, ctx } = await setup();
+  await handlers.get("before_agent_start")!(
+    { type: "before_agent_start", prompt: "", systemPrompt: "", systemPromptOptions: {} },
+    ctx,
+  );
+  await handlers.get("session_before_compact")!(
+    {
+      type: "session_before_compact",
+      preparation: { firstKeptEntryId: "entry", tokensBefore: 1 },
+      branchEntries: [],
+      reason: "manual",
+      willRetry: false,
+      signal: new AbortController().signal,
+    },
+    ctx,
+  );
+  await handlers.get("session_compact_failed")!(
+    {
+      type: "session_compact_failed",
+      reason: "manual",
+      aborted: true,
+      willRetry: false,
+      fromExtension: false,
+    },
+    ctx,
+  );
+  expect(
+    await handlers.get("before_agent_start")!(
+      { type: "before_agent_start", prompt: "", systemPrompt: "", systemPromptOptions: {} },
+      ctx,
+    ),
+  ).toBeUndefined();
+});
+
+test("Pi context is static when untrusted and selects the latest non-closed task for this session", async () => {
+  const { ctx, root } = await setup();
+  const untrusted = { ...ctx, isProjectTrusted: () => false } as any;
+  expect(workitContext(untrusted)).toContain("unavailable until Pi trusts this project");
+  expect(workitContext(untrusted)).not.toContain("Current task context:");
+
+  const store = new TaskStore(root);
+  const operationContext: OperationContext = {
+    root,
+    caller: { host: "pi", actor: "pi-session" },
+    callerAttested: true,
+    capabilities: [],
+    constraints: [],
+    now: "2026-01-01T00:00:00Z",
+  };
+  const first = new WorkitCore(store, operationContext).task(
+    taskStartRequest({
+      intent: { ...taskStartRequest().intent, objective: "older objective" },
+    }),
+  );
+  if (!first.ok) throw new Error(first.error);
+  const workspace = store.readWorkspace();
+  if (!workspace.ok || !workspace.data) throw new Error("workspace missing");
+  const second = new WorkitCore(store, { ...operationContext, now: "2026-01-02T00:00:00Z" }).task(
+    taskStartRequest({
+      expectedWorkspaceRevision: workspace.data.revision,
+      intent: { ...taskStartRequest().intent, objective: "latest objective" },
+    }),
+  );
+  if (!second.ok) throw new Error(second.error);
+  expect(workitContext(ctx)).toContain('"objective":"latest objective"');
+  expect(workitContext(ctx)).not.toContain("older objective");
 });
 
 test("Pi write interception uses the shared writer gate and discloses sandbox limits", async () => {

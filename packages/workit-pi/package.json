@@ -25,9 +25,6 @@
   "scripts": {
     "build": "bun scripts/build.ts"
   },
-  "dependencies": {
-    "@brainervirus/workit-core": "workspace:*"
-  },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "0.85.1"
   },

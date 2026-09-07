@@ -7,10 +7,19 @@ import {
   TaskStore,
   WorkitCore,
   type OperationFamily,
+  type NativeActionVerification,
+  type NativeDecisionVerification,
+  type NativeAuthorityVerifier,
   type ContractResult as Result,
 } from "@brainervirus/workit-core/src/core";
+import type { Provenance } from "@brainervirus/workit-core/src/core/task-contract";
 import { assertProductWriteAllowed } from "@brainervirus/workit-core/src/core/workers";
-import type { ExtensionContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import type {
+  ExtensionContext,
+  AgentToolResult,
+  ToolCallEvent,
+  ToolDefinition,
+} from "@earendil-works/pi-coding-agent";
 import { piContext } from "./context";
 
 const readOnlyActions = new Set(["list", "inspect", "preview", "explain", "export"]);
@@ -19,19 +28,36 @@ const decisionReceipt = (actor: string, callId: string, approved: boolean) => ({
   callId,
   approved,
 });
+type PiDecisionObservation = { actor: string; approved: boolean; callId: string };
+const readDecisionObservation = (value: unknown): PiDecisionObservation | null => {
+  if (typeof value !== "object" || value === null) return null;
+  const candidate = value as Record<string, unknown>;
+  return typeof candidate.actor === "string" &&
+    typeof candidate.approved === "boolean" &&
+    typeof candidate.callId === "string"
+    ? { actor: candidate.actor, approved: candidate.approved, callId: candidate.callId }
+    : null;
+};
 
 const output = (result: Result<unknown>) => ({
   content: [{ type: "text" as const, text: JSON.stringify(result) }],
   details: result,
 });
+type PiToolResult = AgentToolResult<Result<unknown>>;
 
-const nativeAuthority = (actor: string) => ({
-  verifyDecision: ({ observation, expected, caller }: any): Result<any> => {
+const nativeAuthority = (actor: string): NativeAuthorityVerifier => ({
+  verifyDecision: ({
+    observation,
+    expected,
+    caller,
+  }: NativeDecisionVerification): Result<Provenance> => {
+    const receipt = readDecisionObservation(observation);
     if (
+      !receipt ||
       caller.host !== "pi" ||
       caller.actor !== actor ||
-      observation?.actor !== actor ||
-      observation?.approved !== (expected.response === "approved")
+      receipt.actor !== actor ||
+      receipt.approved !== (expected.response === "approved")
     )
       return failure(
         "permission_denied",
@@ -42,10 +68,11 @@ const nativeAuthority = (actor: string) => ({
       host: "pi",
       session: { kind: "host", host: "pi", handle: actor },
       workerId: null,
-      receipts: [{ kind: "host", host: "pi", handle: `decision:${observation.callId}` }],
+      receipts: [{ kind: "host", host: "pi", handle: `decision:${receipt.callId}` }],
     });
   },
-  verifyAction: () => failure("permission_denied", "native Pi action observation is unavailable"),
+  verifyAction: (_input: NativeActionVerification) =>
+    failure("permission_denied", "native Pi action observation is unavailable"),
 });
 
 const schemaFor = (family: OperationFamily) =>
@@ -62,7 +89,7 @@ const executeFamily = async (
   toolCallId: string,
   input: unknown,
   ctx: ExtensionContext,
-): Promise<any> => {
+): Promise<PiToolResult> => {
   const parsed = parseOperation(family, input);
   if (!parsed.ok) return output(parsed);
   const trust = trustedForMutation(ctx, (parsed.data as { action?: unknown }).action);
@@ -101,9 +128,7 @@ const executeFamily = async (
   return output(run.call(core, parsed.data));
 };
 
-export const registerWorkitTools = (pi: {
-  registerTool(tool: ToolDefinition<any>): void;
-}): void => {
+export const registerWorkitTools = (pi: { registerTool(tool: ToolDefinition): void }): void => {
   for (const family of OPERATION_FAMILIES)
     pi.registerTool({
       name: `workit_${family}`,
@@ -120,7 +145,7 @@ const writePaths = (toolName: string, input: Record<string, unknown>): string[] 
   toolName === "write" || toolName === "edit" ? [String(input.path ?? input.filePath ?? "")] : [];
 
 export const enforceNativeWriter = (
-  event: any,
+  event: ToolCallEvent,
   ctx: ExtensionContext,
 ): { block: true; reason: string } | undefined => {
   if (event.toolName !== "write" && event.toolName !== "edit") return undefined;
