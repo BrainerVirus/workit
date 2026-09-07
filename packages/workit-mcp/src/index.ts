@@ -6,6 +6,7 @@ import type { McpHost } from "./server";
 export {
   assertMcpHost,
   createMcpServer,
+  McpCapabilityUnavailableError,
   runStdioServer,
   sanitizeTransportText,
   type McpHost,

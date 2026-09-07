@@ -12,6 +12,7 @@ import {
 import type { Host } from "../../packages/workit-core/src/core/task-contract";
 import {
   createMcpServer,
+  McpCapabilityUnavailableError,
   sanitizeTransportText,
   type NativeContextProvider,
 } from "../../packages/workit-mcp/src/index";
@@ -208,6 +209,32 @@ test("MCP contains thrown context errors without secrets or stacks", async () =>
     expect(text).not.toContain("super-secret");
     expect(text).not.toContain("stack:");
     expect(text).not.toContain("/home/private");
+  } finally {
+    await client.close();
+    await server.close();
+  }
+});
+
+test("MCP reports unavailable context as a structured capability result", async () => {
+  const { client, server } = await connect("codex_cli", {
+    current: async () => {
+      throw new McpCapabilityUnavailableError("workspace");
+    },
+  });
+  try {
+    const result = await client.callTool({
+      name: "workit_task",
+      arguments: { schemaVersion: 1, action: "list" },
+    });
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent).toEqual({
+      ok: false,
+      schemaVersion: 1,
+      code: "capability_unavailable",
+      error: "workspace unavailable",
+      details: { capability: "workspace" },
+    });
+    expect(JSON.stringify(result.structuredContent)).not.toContain("/home");
   } finally {
     await client.close();
     await server.close();

@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { spawn } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
 import path from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -13,6 +13,7 @@ import { TaskStore, WorkitCore, type OperationContext } from "../../packages/wor
 import { taskStartRequest } from "../workit-core/task-fixtures";
 
 const packageRoot = path.resolve(import.meta.dir, "../../packages/workit-codex");
+const repoRoot = path.resolve(import.meta.dir, "../..");
 
 const initializedRoot = () => {
   const root = mkdtempSync(path.join(tmpdir(), "workit-codex-packed-"));
@@ -76,7 +77,7 @@ test("Codex MCP provider keeps caller identity empty on both surfaces", async ()
       "codex_cli",
       mkdtempSync(path.join(tmpdir(), "workit-codex-no-state-")),
     ).current(),
-  ).rejects.toThrow("workspace root is unavailable");
+  ).rejects.toThrow("workspace unavailable");
   expect(
     resolveCodexWorkspaceRoot(pluginRoot, {
       PWD: mkdtempSync(path.join(tmpdir(), "workit-codex-workspace-")),
@@ -92,24 +93,44 @@ test("Codex MCP provider keeps caller identity empty on both surfaces", async ()
   ).toBeNull();
 });
 
-test("packed Codex launcher initializes once and lists the shared eight families", async () => {
-  const root = initializedRoot();
-  const config = JSON.parse(readFileSync(path.join(packageRoot, ".mcp.json"), "utf8"));
-  const server = config.mcpServers.workit;
-  const child = spawn(
-    process.execPath,
-    server.args.map((arg: string) => path.resolve(packageRoot, arg)),
-    {
-      cwd: path.resolve(packageRoot, server.cwd),
-      env: {
-        ...process.env,
-        WORKFLOW_WORKSPACE_ROOT: root,
-        CODEX_INTERNAL_ORIGINATOR_OVERRIDE: "",
-        CODEX_ELECTRON_RESOURCES_PATH: "",
-      },
-      stdio: ["pipe", "pipe", "pipe"],
-    },
+const packCodex = () => {
+  const packRoot = mkdtempSync(path.join(tmpdir(), "workit-codex-package-"));
+  const packed = spawnSync(
+    "npm",
+    ["pack", "--json", "--workspace", packageRoot, "--pack-destination", packRoot],
+    { cwd: repoRoot, encoding: "utf8" },
   );
+  if (packed.status !== 0) throw new Error(packed.stderr || packed.stdout);
+  const filename = (JSON.parse(packed.stdout) as Array<{ filename: string }>)[0]?.filename;
+  if (!filename) throw new Error(`npm pack returned no filename: ${packed.stdout}`);
+  const extractRoot = path.join(packRoot, "extract");
+  mkdirSync(extractRoot);
+  const extracted = spawnSync("tar", ["-xzf", path.join(packRoot, filename), "-C", extractRoot], {
+    cwd: repoRoot,
+    encoding: "utf8",
+  });
+  if (extracted.status !== 0) throw new Error(extracted.stderr || extracted.stdout);
+  return {
+    root: path.join(extractRoot, "package"),
+    cleanup: () => rmSync(packRoot, { recursive: true, force: true }),
+  };
+};
+
+const startPackedMcp = (workspaceRoot: string) => {
+  const packed = packCodex();
+  const config = JSON.parse(readFileSync(path.join(packed.root, ".mcp.json"), "utf8"));
+  const server = config.mcpServers.workit;
+  if (server.command !== "node") throw new Error(`unexpected MCP command: ${server.command}`);
+  const child = spawn(server.command, server.args, {
+    cwd: path.resolve(packed.root, server.cwd),
+    env: {
+      ...process.env,
+      WORKFLOW_WORKSPACE_ROOT: workspaceRoot,
+      CODEX_INTERNAL_ORIGINATOR_OVERRIDE: "",
+      CODEX_ELECTRON_RESOURCES_PATH: "",
+    },
+    stdio: ["pipe", "pipe", "pipe"],
+  });
   let stdout = "";
   let stderr = "";
   const responses: Record<number, any> = {};
@@ -143,16 +164,21 @@ test("packed Codex launcher initializes once and lists the shared eight families
       child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`);
       check();
     });
+  return { child, packed, responses, request, getStderr: () => stderr };
+};
+
+test("packed Codex launcher uses the shipped node command and lists eight families once", async () => {
+  const launcher = startPackedMcp(initializedRoot());
   try {
-    await request(1, "initialize", {
+    await launcher.request(1, "initialize", {
       protocolVersion: "2024-11-05",
       capabilities: {},
       clientInfo: { name: "codex-packed-test", version: "1.0.0" },
     });
-    child.stdin.write('{"jsonrpc":"2.0","method":"notifications/initialized"}\n');
-    await request(2, "tools/list", {});
-    expect(responses[1].result.serverInfo.name).toBe("workit");
-    expect(responses[2].result.tools.map((tool: { name: string }) => tool.name)).toEqual([
+    launcher.child.stdin.write('{"jsonrpc":"2.0","method":"notifications/initialized"}\n');
+    await launcher.request(2, "tools/list", {});
+    expect(launcher.responses[1].result.serverInfo.name).toBe("workit");
+    expect(launcher.responses[2].result.tools.map((tool: { name: string }) => tool.name)).toEqual([
       "workit_task",
       "workit_policy",
       "workit_evidence",
@@ -162,9 +188,40 @@ test("packed Codex launcher initializes once and lists the shared eight families
       "workit_writer",
       "workit_state",
     ]);
-    expect(Object.keys(responses)).toEqual(["1", "2"]);
-    expect(stderr).toBe("");
+    expect(Object.keys(launcher.responses)).toEqual(["1", "2"]);
+    expect(launcher.getStderr()).toBe("");
   } finally {
-    child.kill();
+    launcher.child.kill();
+    launcher.packed.cleanup();
+  }
+});
+
+test("packed Codex launcher reports unavailable workspaces without leaking paths", async () => {
+  const unavailableRoot = mkdtempSync(path.join(tmpdir(), "workit-codex-unavailable-"));
+  const launcher = startPackedMcp(unavailableRoot);
+  try {
+    await launcher.request(1, "initialize", {
+      protocolVersion: "2024-11-05",
+      capabilities: {},
+      clientInfo: { name: "codex-packed-unavailable-test", version: "1.0.0" },
+    });
+    launcher.child.stdin.write('{"jsonrpc":"2.0","method":"notifications/initialized"}\n');
+    await launcher.request(2, "tools/call", {
+      name: "workit_task",
+      arguments: { schemaVersion: 1, action: "list" },
+    });
+    expect(launcher.responses[2].result.structuredContent).toEqual({
+      ok: false,
+      schemaVersion: 1,
+      code: "capability_unavailable",
+      error: "workspace unavailable",
+      details: { capability: "workspace" },
+    });
+    expect(JSON.stringify(launcher.responses[2])).not.toContain(unavailableRoot);
+    expect(launcher.getStderr()).not.toContain(unavailableRoot);
+  } finally {
+    launcher.child.kill();
+    launcher.packed.cleanup();
+    rmSync(unavailableRoot, { recursive: true, force: true });
   }
 });

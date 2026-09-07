@@ -1,7 +1,7 @@
 import { existsSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 import { TaskStore, type OperationContext } from "@brainervirus/workit-core/src/core";
-import { runStdioServer } from "@brainervirus/workit-mcp/src/server";
+import { McpCapabilityUnavailableError, runStdioServer } from "@brainervirus/workit-mcp/src/server";
 import { codexCapabilities, detectCodexSurface, type CodexHost } from "../hooks/workit-hook";
 
 export const codexQualification = (host: CodexHost) =>
@@ -40,7 +40,7 @@ export const codexContextProvider = (
       root === undefined
         ? resolveCodexWorkspaceRoot(process.cwd(), process.env)
         : resolveCodexWorkspaceRoot(process.cwd(), { WORKFLOW_WORKSPACE_ROOT: root });
-    if (!workspaceRoot) throw new Error("Codex workspace root is unavailable");
+    if (!workspaceRoot) throw new McpCapabilityUnavailableError("workspace");
     return {
       root: workspaceRoot,
       caller: { host, actor: "" },

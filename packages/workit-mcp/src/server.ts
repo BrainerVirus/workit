@@ -22,6 +22,16 @@ import { redactSecrets } from "@brainervirus/workit-core/src/core/logger";
 export type McpHost = Extract<Host, "cursor" | "codex_cli" | "codex_desktop">;
 export type NativeContextProvider = { current(): Promise<OperationContext> };
 
+export class McpCapabilityUnavailableError extends Error {
+  readonly capability: string;
+
+  constructor(capability: string) {
+    super(`${capability} unavailable`);
+    this.name = "McpCapabilityUnavailableError";
+    this.capability = capability;
+  }
+}
+
 const MCP_HOSTS = new Set<McpHost>(["cursor", "codex_cli", "codex_desktop"]);
 const VERSION = (() => {
   try {
@@ -116,6 +126,18 @@ const resultForClient = (result: Result<unknown>, workspaceRoot?: string): CallT
 
 const thrownResult = (tool: string, error: unknown, workspaceRoot?: string): CallToolResult => {
   reportError(tool, error, workspaceRoot);
+  if (error instanceof McpCapabilityUnavailableError) {
+    return resultForClient(
+      {
+        ok: false,
+        schemaVersion: 1,
+        code: "capability_unavailable",
+        error: `${error.capability} unavailable`,
+        details: { capability: error.capability },
+      },
+      workspaceRoot,
+    );
+  }
   const result = {
     ok: false as const,
     schemaVersion: 1 as const,
