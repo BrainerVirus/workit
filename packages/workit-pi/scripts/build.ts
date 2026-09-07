@@ -3,7 +3,10 @@ import { cpSync, mkdirSync, rmSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
-import { WORKIT_METHOD_SKILLS, validateSkillManifests } from "../../workit-core/src/core/skill-manifests";
+import {
+  WORKIT_METHOD_SKILLS,
+  validateSkillManifests,
+} from "../../workit-core/src/core/skill-manifests";
 
 const packageDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const coreDir = path.resolve(packageDir, "..", "workit-core");
@@ -13,10 +16,34 @@ rmSync(dist, { recursive: true, force: true });
 mkdirSync(dist, { recursive: true });
 const build = spawnSync(
   process.execPath,
-  ["build", path.join(packageDir, "extensions/workit.ts"), "--outfile", path.join(dist, "workit.js"), "--target", "node", "--format", "esm"],
+  [
+    "build",
+    path.join(packageDir, "extensions/workit.ts"),
+    "--outfile",
+    path.join(dist, "workit.js"),
+    "--target",
+    "node",
+    "--format",
+    "esm",
+  ],
   { encoding: "utf8" },
 );
 if (build.status !== 0) throw new Error(build.stderr || build.stdout);
+const workerBuild = spawnSync(
+  process.execPath,
+  [
+    "build",
+    path.join(packageDir, "src/worker.ts"),
+    "--outfile",
+    path.join(dist, "worker.js"),
+    "--target",
+    "node",
+    "--format",
+    "esm",
+  ],
+  { encoding: "utf8" },
+);
+if (workerBuild.status !== 0) throw new Error(workerBuild.stderr || workerBuild.stdout);
 const skills = path.join(target, "skills");
 rmSync(skills, { recursive: true, force: true });
 mkdirSync(skills, { recursive: true });

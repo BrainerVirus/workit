@@ -27,8 +27,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Pi v1 native extension with the stock package manifest, eight shared
   operation tools, seven canonical method skills, native session/compaction
-  continuity, and truthful UI/trust/sandbox capability boundaries. Worker and
-  coordinator support remain deferred to Task 15.
+  continuity, and truthful UI/trust/sandbox capability boundaries. The bundled
+  coordinator now supervises fresh stock-Pi reviewer/investigator processes and
+  explicitly scoped implementers with observed lifecycle and uncertain
+  cancellation boundaries.
 
 - Cursor v1 now uses the shared MCP transport, one documented native hook
   executable, and exactly seven canonical adaptive method skills. AskQuestion,

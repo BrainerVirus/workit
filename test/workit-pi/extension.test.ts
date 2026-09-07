@@ -12,14 +12,19 @@ import { taskStartRequest } from "../workit-core/task-fixtures";
 const makePi = () => {
   const tools: any[] = [];
   const handlers = new Map<string, (event: any, ctx: any) => unknown>();
+  const commands: any[] = [];
   const pi = {
     registerTool(tool: any) {
       tools.push(tool);
+    },
+    registerCommand(command: any, options: any) {
+      commands.push({ name: command, ...options });
     },
     on(name: string, handler: (event: any, ctx: any) => unknown) {
       handlers.set(name, handler);
     },
     tools,
+    commands,
     handlers,
   };
   return pi;
@@ -111,6 +116,7 @@ test("clean Pi package declares stock discovery and exactly eight core tools", a
     "workit_state",
   ]);
   expect(pi.tools.every((tool) => tool.parameters.type === "object")).toBe(true);
+  expect(pi.commands.map((command) => command.name)).toContain("workit-worker");
 });
 
 test("Pi tool payloads use the shared parser and headless decisions need input", async () => {

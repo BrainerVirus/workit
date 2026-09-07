@@ -57,7 +57,10 @@ the package's `pi.extensions` and `pi.skills` manifest entries. The extension
 uses Pi's native session identity, confirmation UI, and known write/edit tool
 boundary with the shared core. Headless required decisions return
 `needs_input`; arbitrary shell writes remain agent-guided because Pi extensions
-are not an OS sandbox, and Task 15 worker/coordinator support is not included.
+are not an OS sandbox. Its bundled coordinator can launch fresh stock-Pi
+reviewer/investigator processes and explicitly scoped implementers; writer
+ownership is acquired only after native process observation, and cancellation
+timeouts remain uncertain until an exit is observed.
 
 ## Manual setup
 

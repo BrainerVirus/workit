@@ -8,8 +8,8 @@ Multi-platform workit: OpenCode, Cursor, Codex CLI/desktop, Pi, and the CLI shar
 | --- | --- | --- | --- | --- |
 | Approval | native `question` tool receipts | AskQuestion policy-only (`attested: false`) | native `ctx.ui.confirm`; headless `needs_input` | `--confirm` flags / TTY prompts |
 | Implementation | subagent-driven via native `task`, delegated status from session parentage (`parentID` = recorded `coordinator_session_id`) | native `subagentStart` assignment and recognized Write/Edit/Delete interception; exact stop identity, AskQuestion answers, arbitrary shell writes, and Tab edits remain agent_guided/unavailable | known write/edit `tool_call` guard through shared core; shell writes remain agent_guided and no OS sandbox is provided | n/a (`workit flow` lifecycle only) |
-| Lifecycle | `workit_plan_pause`/`resume`/`complete` (receipts) | `workit_plan_pause`/`resume`/`complete` (policy-only) | session start/compaction/shutdown continuity; no Task 15 workers yet | `workit flow pause\|resume\|complete` |
-| Handoff | spawns a native OpenCode session | seeds a handoff prompt for the next agent | no native handoff/worker primitive in Task 14 | `workit handoff` (prints the destination prompt) |
+| Lifecycle | `workit_plan_pause`/`resume`/`complete` (receipts) | `workit_plan_pause`/`resume`/`complete` (policy-only) | session start/compaction/shutdown continuity; supervised stock-Pi worker lifecycle | `workit flow pause\|resume\|complete` |
+| Handoff | spawns a native OpenCode session | seeds a handoff prompt for the next agent | fresh stock-Pi review/worker processes; no nested worker launch | `workit handoff` (prints the destination prompt) |
 | Tools | exact eight native core-backed `workit_<family>` tools | MCP server (`workit_*`) | exact eight native core-backed `workit_<family>` tools | `workit` commands |
 | Shared MCP transport | n/a (native tools remain host-owned) | `@brainervirus/workit-mcp`; host wiring remains adapter-owned | n/a (native tools remain host-owned) | n/a |
 | Skills | `skills.paths` + seven canonical policy-selected method skills (no vendored Superpowers dirs) | plugin `skills/` dirs | package `pi.skills` + seven canonical method skills | n/a |
@@ -22,8 +22,11 @@ does not expose arbitrary-question receipts or attested writer delegation.
 
 Pi uses the stock 0.85.1 package contract. Its extension is self-contained
 apart from the Pi peer, reports native session/UI provenance truthfully, and
-does not claim Task 15 worker, coordinator, cancellation, or fresh-review
-support.
+bundles a coordinator for fresh stock-Pi reviewer/investigator and scoped
+implementer processes. Only an observed child process may acquire the shared
+writer; cancellation or restart uncertainty blocks replacement ownership.
+Pi extensions remain workflow controls, not an OS sandbox, and shell writes are
+agent-guided.
 
 ## Parity rules
 
