@@ -30,6 +30,7 @@ import {
   observeWorkerExit,
   reportWorker,
   workerCanLaunchNested,
+  type ObservedExit,
   type WorkerHandle,
   type WorkerAssignment,
   type WorkerLifecycleBinding,
@@ -92,9 +93,6 @@ const runtimeFor = (ctx: ExtensionContext) => ({
   cli: process.argv[1] ?? "",
   workitExtension: fileURLToPath(import.meta.url),
   root: ctx.cwd,
-  extensions: process.env.WORKIT_PI_TEST_PROVIDER_EXTENSION
-    ? [process.env.WORKIT_PI_TEST_PROVIDER_EXTENSION]
-    : undefined,
 });
 
 const contextMessage = (ctx: ExtensionContext) => ({
@@ -108,6 +106,7 @@ export default function extension(pi: ExtensionAPI): void {
   const sessions = new Set<string>();
   const workers = new Map<string, WorkerHandle>();
   const bindings = new Map<string, WorkerLifecycleBinding>();
+  const childWorker = process.env.WORKIT_PI_WORKER_ID;
   registerWorkitTools(pi);
 
   const reconcileLostWorkers = (ctx: ExtensionContext): void => {
@@ -149,6 +148,23 @@ export default function extension(pi: ExtensionAPI): void {
         });
       }
     }
+  };
+
+  const persistUncertain = (
+    store: TaskStore,
+    binding: WorkerLifecycleBinding,
+    handle: WorkerHandle,
+    exit: ObservedExit,
+  ): boolean => {
+    if (handle.exit?.observed) return true;
+    const freshTask = store.readTask(binding.taskId);
+    const freshWorkspace = store.readWorkspace();
+    if (!freshTask.ok || !freshWorkspace.ok || !freshWorkspace.data) return false;
+    binding.expectedRevision = freshTask.data.revision;
+    binding.expectedWorkspaceRevision = freshWorkspace.data.revision;
+    const observed = observeWorkerExit(binding, handle, exit);
+    advanceWorkerBinding(binding, observed);
+    return observed.ok;
   };
 
   const control = async (
@@ -256,6 +272,7 @@ export default function extension(pi: ExtensionAPI): void {
         );
       },
       onError: () => resolveReady?.(false),
+      onUncertain: (uncertain, exit) => persistUncertain(store, binding, uncertain, exit),
       onReport: (_reported, report) => {
         const freshTask = store.readTask(task.id);
         const freshWorkspace = store.readWorkspace();
@@ -302,7 +319,11 @@ export default function extension(pi: ExtensionAPI): void {
       new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 10_000)),
     ]);
     if (!ready) {
-      if (handle.state === "running") await cancelWorker(handle, { graceMs: 50, killWaitMs: 50 });
+      if (handle.state === "running") {
+        const terminated = await cancelWorker(handle, { graceMs: 50, killWaitMs: 50 });
+        if (!terminated.observed && !persistUncertain(store, binding, handle, terminated))
+          return failure("recovery_required", "worker uncertainty could not be persisted");
+      }
       return failure("recovery_required", "worker readiness was not observed");
     }
     workers.set(handle.id, handle);
@@ -341,19 +362,15 @@ export default function extension(pi: ExtensionAPI): void {
       });
   }
 
-  const childWorker = process.env.WORKIT_PI_WORKER_ID;
-  if (childWorker) {
-    pi.on("session_start", () => {
+  pi.on("session_start", (_event, ctx) => {
+    if (childWorker)
       process.stdout.write(
         JSON.stringify({
           type: "workit_worker_ready",
           workerId: childWorker,
-          sessionId: process.env.WORKIT_PI_WORKER_SESSION ?? "",
+          sessionId: ctx.sessionManager.getSessionId(),
         }) + "\n",
       );
-    });
-  }
-  pi.on("session_start", (_event, ctx) => {
     sessions.delete(ctx.sessionManager.getSessionId());
     reconcileLostWorkers(ctx);
   });
@@ -383,7 +400,7 @@ export default function extension(pi: ExtensionAPI): void {
           JSON.stringify({
             type: "workit_worker_result",
             workerId: childWorker,
-            sessionId: process.env.WORKIT_PI_WORKER_SESSION ?? "",
+            sessionId: ctx.sessionManager.getSessionId(),
             report,
           }) + "\n",
         );

@@ -204,7 +204,6 @@ export default (pi) => pi.registerProvider("workit-test", {
     const env = {
       ...process.env,
       PI_CODING_AGENT_DIR: agentDir,
-      WORKIT_PI_TEST_PROVIDER_EXTENSION: fakeProvider,
     };
     const installed = spawnSync(
       node,

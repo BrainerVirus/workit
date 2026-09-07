@@ -5,6 +5,7 @@ import path from "node:path";
 import {
   TaskStore,
   WorkitCore,
+  failure,
   success,
   type OperationContext,
 } from "../../packages/workit-core/src/core";
@@ -109,6 +110,79 @@ test("worker stdout accepts JSON split across process chunks", () => {
   expect(worker.report).toBeNull();
   consumeWorkerOutput(worker, line.slice(17) + "\n");
   expect(worker.report).toMatchObject({ summary: "chunked" });
+});
+
+test("native readiness requires the correlated get_state response and assigned session", () => {
+  let stdoutListener: ((chunk?: string | Buffer) => void) | undefined;
+  const writes: string[] = [];
+  const worker = launchWorker(assignment("reviewer"), {
+    runtime: runtime(),
+    taskId: "task-ready",
+    workerId: "worker-ready",
+    sessionId: "session-ready",
+    spawn: () =>
+      ({
+        pid: 43,
+        stdout: {
+          on: (event: string, listener: (chunk?: string | Buffer) => void) => {
+            if (event === "data") stdoutListener = listener;
+          },
+          setEncoding: () => undefined,
+        },
+        stderr: null,
+        once: () => undefined,
+        stdin: { write: (value: string) => (writes.push(value), true), end: () => undefined },
+        kill: () => true,
+      }) as never,
+  });
+  expect(writes[0]).toContain('"id":"workit-ready"');
+  stdoutListener?.(
+    JSON.stringify({
+      id: "wrong-id",
+      type: "response",
+      command: "get_state",
+      success: true,
+      data: { sessionId: "session-ready" },
+    }) + "\n",
+  );
+  expect(worker.ready).toBe(false);
+  stdoutListener?.(
+    JSON.stringify({
+      id: "workit-ready",
+      type: "response",
+      command: "get_state",
+      success: false,
+      data: { sessionId: "session-ready" },
+    }) + "\n",
+  );
+  expect(worker.ready).toBe(false);
+  stdoutListener?.(
+    JSON.stringify({
+      id: "workit-ready",
+      type: "response",
+      command: "get_state",
+      success: true,
+      data: { sessionId: "other-session" },
+    }) + "\n",
+  );
+  expect(worker.ready).toBe(false);
+  stdoutListener?.(
+    JSON.stringify({
+      id: "workit-ready",
+      type: "response",
+      command: "get_state",
+      success: true,
+      data: { sessionId: "session-ready" },
+    }) + "\n",
+  );
+  expect(worker.ready).toBe(true);
+});
+
+test("worker command passes the coordinator session id to stock Pi", () => {
+  const spec = workerCommand({ ...runtime(), sessionId: "coordinator-session" }, assignment());
+  const index = spec.args.indexOf("--session-id");
+  expect(index).toBeGreaterThan(-1);
+  expect(spec.args[index + 1]).toBe("coordinator-session");
 });
 
 test("worker stdout tolerates valid Pi RPC events around Workit protocol events", () => {
@@ -507,6 +581,123 @@ test("supervised implementer observes the child before acquiring writer or sendi
   expect(order).toEqual(["observe", "writer", "prompt"]);
   expect(order).toEqual(["observe", "writer", "prompt"]);
   expect(writes).toBe(1);
+});
+
+test("writer failure persists unknown before termination and reconciles only on observed exit", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "workit-pi-writer-failure-"));
+  const store = new TaskStore(root);
+  let child: import("../../packages/workit-pi/src/worker").WorkerHandle | null = null;
+  let stdoutListener: ((chunk?: string | Buffer) => void) | undefined;
+  let killed = 0;
+  const base: OperationContext = {
+    root,
+    caller: { host: "pi", actor: "coordinator" },
+    callerAttested: true,
+    capabilities: [],
+    constraints: [],
+    now: "2026-01-01T00:00:00Z",
+    nativeWorker: nativeWorkerForEvidence(() => child),
+  };
+  const core = new WorkitCore(store, base);
+  const started = core.task(taskStartRequest());
+  if (!started.ok) throw new Error(started.error);
+  const taskId = (started.data as { id: string }).id;
+  const initialTask = store.readTask(taskId);
+  const initialWorkspace = store.readWorkspace();
+  if (!initialTask.ok || !initialWorkspace.ok || !initialWorkspace.data)
+    throw new Error("missing fixture");
+  const assigned = core.worker({
+    schemaVersion: 1,
+    action: "assign",
+    taskId,
+    expectedRevision: initialTask.data.revision,
+    expectedWorkspaceRevision: initialWorkspace.data.revision,
+    assignment: assignment("implementer"),
+  });
+  if (!assigned.ok) throw new Error(assigned.error);
+  const task = store.readTask(taskId);
+  const workspace = store.readWorkspace();
+  if (!task.ok || !workspace.ok || !workspace.data) throw new Error("missing assignment");
+  const binding = {
+    core,
+    taskId,
+    workerId: assigned.data.id,
+    expectedRevision: task.data.revision,
+    expectedWorkspaceRevision: workspace.data.revision,
+    sessionId: "writer-failure-session",
+  };
+  const writerCore = {
+    writer: () => failure("permission_denied", "writer rejected"),
+  } as unknown as WorkitCore;
+  const handle = launchSupervisedWorker(assignment("implementer"), {
+    runtime: runtime(root),
+    binding,
+    writerCore,
+    prompt: "must not be sent",
+    onSpawn: (spawned) => {
+      child = spawned;
+      return true;
+    },
+    onUncertain: (uncertainHandle, _exit) => {
+      const freshTask = store.readTask(taskId);
+      const freshWorkspace = store.readWorkspace();
+      if (!freshTask.ok || !freshWorkspace.ok || !freshWorkspace.data) return false;
+      binding.expectedRevision = freshTask.data.revision;
+      binding.expectedWorkspaceRevision = freshWorkspace.data.revision;
+      const observed = core.observeWorkerLifecycle({
+        taskId,
+        workerId: assigned.data.id,
+        expectedRevision: binding.expectedRevision,
+        expectedWorkspaceRevision: binding.expectedWorkspaceRevision,
+        state: "unknown",
+        session: { kind: "host", host: "pi", handle: binding.sessionId },
+        observation: { pid: uncertainHandle.pid, sessionId: binding.sessionId },
+      });
+      advanceWorkerBinding(binding, observed);
+      return observed.ok;
+    },
+    spawn: () =>
+      ({
+        pid: 813,
+        stdout: {
+          on: (event: string, listener: (chunk?: string | Buffer) => void) => {
+            if (event === "data") stdoutListener = listener;
+          },
+          setEncoding: () => undefined,
+        },
+        stderr: { on: () => undefined, setEncoding: () => undefined },
+        once: () => undefined,
+        stdin: {
+          write: (value: string) => {
+            expect(value).not.toContain('"type":"prompt"');
+            return true;
+          },
+          end: () => undefined,
+        },
+        kill: () => {
+          killed += 1;
+          return true;
+        },
+      }) as never,
+  });
+  stdoutListener?.(
+    JSON.stringify({
+      type: "workit_worker_ready",
+      workerId: assigned.data.id,
+      sessionId: binding.sessionId,
+    }) + "\n",
+  );
+  expect(killed).toBe(1);
+  const uncertain = store.readTask(taskId);
+  expect(
+    uncertain.ok &&
+      uncertain.data.workers.find((entry) => entry.id === assigned.data.id)?.data.state,
+  ).toBe("unknown");
+  observeExit(handle, 0);
+  const stopped = store.readTask(taskId);
+  expect(
+    stopped.ok && stopped.data.workers.find((entry) => entry.id === assigned.data.id)?.data.state,
+  ).toBe("stopped");
 });
 
 test("core-backed supervisor refreshes revisions through report and observed exit", () => {

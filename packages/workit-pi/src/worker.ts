@@ -28,7 +28,7 @@ export type PiRuntime = {
   cli: string;
   workitExtension: string;
   root: string;
-  extensions?: string[];
+  sessionId?: string;
 };
 export type SpawnSpec = {
   command: string;
@@ -116,6 +116,7 @@ export type SupervisedLaunchOptions = LaunchOptions & {
   prompt?: string;
   writerCore?: WorkitCore;
   beforeExit?: (handle: WorkerHandle, exit: ObservedExit) => void;
+  onUncertain?: (handle: WorkerHandle, exit: ObservedExit) => boolean;
 };
 
 const advanceBinding = (binding: WorkerLifecycleBinding, result: Result<unknown>): boolean => {
@@ -141,6 +142,7 @@ export function workerCommand(runtime: PiRuntime, assignment: WorkerAssignment):
       "--mode",
       "rpc",
       "--no-session",
+      ...(runtime.sessionId ? ["--session-id", runtime.sessionId] : []),
       "--approve",
       "--offline",
       "--no-context-files",
@@ -148,7 +150,6 @@ export function workerCommand(runtime: PiRuntime, assignment: WorkerAssignment):
       roleTools(assignment.role).join(","),
       "--extension",
       runtime.workitExtension,
-      ...(runtime.extensions ?? []).flatMap((extension) => ["--extension", extension]),
     ],
     cwd: runtime.root,
   };
@@ -185,7 +186,7 @@ export function launchWorker(assignment: WorkerAssignment, options: LaunchOption
   const taskId = options.taskId ?? null;
   const workerId = options.workerId ?? null;
   const sessionId = options.sessionId ?? "pi-worker-" + randomUUID();
-  const spec = workerCommand(options.runtime, assignment);
+  const spec = workerCommand({ ...options.runtime, sessionId }, assignment);
   const handle: WorkerHandle = {
     id: randomUUID(),
     taskId,
@@ -295,11 +296,16 @@ export const consumeWorkerOutput = (handle: WorkerHandle, chunk: string): void =
       type === "response" &&
       typeof value === "object" &&
       value !== null &&
+      "id" in value &&
+      (value as { id?: unknown }).id === "workit-ready" &&
       "command" in value &&
       (value as { command?: unknown }).command === "get_state" &&
+      "success" in value &&
+      (value as { success?: unknown }).success === true &&
       "data" in value &&
       typeof (value as { data?: unknown }).data === "object" &&
-      (value as { data: { sessionId?: unknown } }).data.sessionId
+      typeof (value as { data: { sessionId?: unknown } }).data.sessionId === "string" &&
+      (value as { data: { sessionId: string } }).data.sessionId === handle.sessionId
     )
       nativeReady = true;
     if (typeof type === "string" && type.startsWith("workit_")) {
@@ -511,13 +517,14 @@ export const launchSupervisedWorker = (
       return true;
     },
     onError: (errored) => {
-      observeWorkerExit(options.binding, errored, {
+      const observed = observeWorkerExit(options.binding, errored, {
         state: "unknown",
         observed: false,
         code: null,
         signal: null,
         stderr: errored.stderr,
       });
+      advanceBinding(options.binding, observed);
       options.onError?.(errored);
     },
     onReady: (readyHandle) => {
@@ -534,6 +541,15 @@ export const launchSupervisedWorker = (
         if (!writer.ok) {
           readyHandle.protocolError = "worker writer acquisition failed";
           readyHandle.pendingPrompt = undefined;
+          const uncertaintyPersisted = options.onUncertain?.(readyHandle, {
+            state: "unknown",
+            observed: false,
+            code: null,
+            signal: null,
+            stderr: readyHandle.stderr,
+          });
+          if (options.onUncertain && !uncertaintyPersisted)
+            readyHandle.protocolError = "worker uncertainty could not be persisted";
           readyHandle.child?.kill("SIGTERM");
           return;
         }
@@ -542,7 +558,8 @@ export const launchSupervisedWorker = (
     },
     onExit: (stopped, exit) => {
       options.beforeExit?.(stopped, exit);
-      observeWorkerExit(options.binding, stopped, exit);
+      const observed = observeWorkerExit(options.binding, stopped, exit);
+      advanceBinding(options.binding, observed);
       options.onExit?.(stopped, exit);
     },
   });
