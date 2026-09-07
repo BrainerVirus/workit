@@ -6,6 +6,7 @@ import { TaskStore, WorkitCore } from "../../packages/workit-core/src/core";
 import { scope, taskStartRequest } from "../workit-core/task-fixtures";
 import plugin from "../../packages/workit-opencode/src/plugin";
 import { NativeReceiptStore } from "../../packages/workit-opencode/src/tools/workit";
+import { tool } from "@opencode-ai/plugin";
 
 const context = {
   directory: "/repo",
@@ -25,6 +26,26 @@ test("OpenCode exposes exactly the eight shared Workit operation families", asyn
     "workit_writer",
     "workit_state",
   ]);
+});
+
+const schemaDepth = (value: unknown, depth = 0): number => {
+  if (Array.isArray(value))
+    return Math.max(depth, ...value.map((item) => schemaDepth(item, depth)));
+  if (typeof value !== "object" || value === null) return depth;
+  return Math.max(depth, ...Object.values(value).map((item) => schemaDepth(item, depth + 1)));
+};
+
+test("advertised native operation schemas stay within OpenCode provider depth limits", async () => {
+  const hooks = await plugin(context as never);
+  for (const [name, definition] of Object.entries(hooks.tool ?? {})) {
+    const schema = tool.schema.toJSONSchema(tool.schema.object(definition.args), {
+      target: "draft-2020-12",
+    });
+    expect(schemaDepth(schema), name).toBeLessThanOrEqual(10);
+    const properties = (schema as { properties?: Record<string, unknown> }).properties ?? {};
+    expect(properties.schemaVersion, name).toBeDefined();
+    expect(properties.action, name).toBeDefined();
+  }
 });
 
 test("native receipts reject unrelated questions and are consumed once per purpose", () => {
@@ -159,6 +180,68 @@ test("native operation arguments cannot supply caller or provenance", async () =
     { directory: "/repo", sessionID: "native-session" } as never,
   );
   expect(JSON.parse(raw as string)).toMatchObject({ ok: false, code: "invalid_input" });
+});
+
+test("valid nested operation arguments reach the shared core outcome", async () => {
+  const root = mkdtempSync(join(tmpdir(), "workit-opencode-nested-"));
+  const directRoot = mkdtempSync(join(tmpdir(), "workit-opencode-nested-direct-"));
+  try {
+    const request = taskStartRequest({
+      intent: {
+        objective: "nested objective",
+        scope: { description: "source", paths: ["src"], exclusions: ["dist"] },
+        authorityRefs: [{ kind: "external", url: "https://example.test/reference" }],
+      },
+    });
+    const direct = new WorkitCore(new TaskStore(directRoot), {
+      root: directRoot,
+      caller: { host: "opencode", actor: "lead" },
+      capabilities: [],
+      constraints: [],
+      now: () => "2026-01-01T00:00:00Z",
+    }).task(request);
+    const hooks = await plugin({
+      directory: root,
+      worktree: root,
+      serverUrl: new URL("http://localhost"),
+      client: { session: { get: async () => ({ data: { id: "lead", directory: root } }) } },
+    } as never);
+    const raw = await hooks.tool?.workit_task.execute(request, {
+      directory: root,
+      sessionID: "lead",
+    } as never);
+    const native = JSON.parse(raw as string);
+    expect(native.ok).toBe(direct.ok);
+    expect(native.data).toMatchObject({ objective: "nested objective", status: "active" });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(directRoot, { recursive: true, force: true });
+  }
+});
+
+test("malformed nested operation arguments remain invalid_input", async () => {
+  const root = mkdtempSync(join(tmpdir(), "workit-opencode-malformed-"));
+  try {
+    const hooks = await plugin({
+      directory: root,
+      worktree: root,
+      serverUrl: new URL("http://localhost"),
+      client: { session: { get: async () => ({ data: { id: "lead", directory: root } }) } },
+    } as never);
+    const raw = await hooks.tool?.workit_task.execute(
+      {
+        ...taskStartRequest(),
+        intent: {
+          ...taskStartRequest().intent,
+          scope: { ...taskStartRequest().intent.scope, paths: [42] },
+        },
+      },
+      { directory: root, sessionID: "lead" } as never,
+    );
+    expect(JSON.parse(raw as string)).toMatchObject({ ok: false, code: "invalid_input" });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("the decision tool consumes only the matching native question receipt", async () => {

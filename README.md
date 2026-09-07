@@ -7,7 +7,7 @@ authority and lifecycle behavior to the native surfaces each host documents.
 
 | Package     | Purpose                                                                         |
 | ----------- | ------------------------------------------------------------------------------- |
-| OpenCode    | Native plugin with seven method skills and eight tools                          |
+| OpenCode    | Native plugin with seven method skills, eight tools, and provider-safe schemas |
 | Cursor      | MCP transport, one native hook dispatcher, one contract rule, and seven skills  |
 | Codex       | Native plugin manifest, shared MCP transport, and documented lifecycle hooks     |
 | Pi          | Native npm extension with eight tools, seven skills, and session continuity      |

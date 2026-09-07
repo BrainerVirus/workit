@@ -16,6 +16,8 @@ Multi-platform workit: OpenCode, Cursor, Codex CLI/desktop, Pi, and the CLI shar
 | Branch policy init | `workit_init_apply action=branch_policy` | same MCP tool | same native core-backed tool family | wizard screen |
 | Distribution | npm plugin entry (`opencode.json`) | Cursor Marketplace (git-discovered `.cursor-plugin/plugin.json`) | npm package manifest (`pi.extensions`/`pi.skills`) | npm bin (`npx`) |
 
+OpenCode's native adapter keeps the eight shared operation contracts authoritative while projecting advertised nested schemas to the provider's supported depth; runtime parsing remains core-owned.
+
 Codex CLI and desktop use the native plugin manifest, hooks, and shared MCP
 transport. Hook enforcement is limited to documented covered events; the host
 does not expose arbitrary-question receipts or attested writer delegation.

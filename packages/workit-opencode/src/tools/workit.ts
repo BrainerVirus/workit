@@ -217,6 +217,55 @@ export class NativeReceiptStore {
   }
 }
 
+const MAX_OPERATION_OBJECT_DEPTH = 1;
+
+const schemaDef = (schema: any): Record<string, any> => schema?.def ?? schema?._def ?? {};
+
+const shallowSchema = (schema: any, field: string): any => {
+  const def = schemaDef(schema);
+  if (def.type === "optional")
+    return tool.schema
+      .any()
+      .optional()
+      .describe(`Canonical nested value for ${field}; Workit validates it.`);
+  if (def.type === "nullable")
+    return tool.schema.any().describe(`Canonical nested value for ${field}; Workit validates it.`);
+  if (def.type === "array" && schemaDef(def.element).type !== "object")
+    return tool.schema.array(shallowSchema(def.element, field));
+  if (def.type === "object" || def.type === "array" || def.type === "union")
+    return tool.schema.any().describe(`Canonical nested value for ${field}; Workit validates it.`);
+  return schema;
+};
+
+const boundedSchema = (schema: any, depth: number, field: string): any => {
+  const def = schemaDef(schema);
+  if (def.type === "object") {
+    const canonicalShape = def.shape ?? {};
+    const shape = Object.fromEntries(
+      Object.entries(canonicalShape).map(([key, child]) => [
+        key,
+        depth >= MAX_OPERATION_OBJECT_DEPTH
+          ? shallowSchema(child, `${field}.${key}`)
+          : boundedSchema(child, depth + 1, `${field}.${key}`),
+      ]),
+    );
+    const description =
+      depth >= MAX_OPERATION_OBJECT_DEPTH
+        ? `Canonical object fields: ${Object.keys(canonicalShape).join(", ")}. Workit validates the complete nested value.`
+        : undefined;
+    const object = tool.schema.object(shape).strict();
+    return description ? object.describe(description) : object;
+  }
+  if (def.type === "array") return tool.schema.array(boundedSchema(def.element, depth, field));
+  if (def.type === "union")
+    return tool.schema.union(
+      def.options.map((option: any) => boundedSchema(option, depth, field)) as [any, any, ...any[]],
+    );
+  if (def.type === "optional") return boundedSchema(def.innerType, depth, field).optional();
+  if (def.type === "nullable") return boundedSchema(def.innerType, depth, field).nullable();
+  return schema;
+};
+
 const operationShapeFor = (family: OperationFamily): Record<string, any> => {
   const options = (
     operationSchemas[family] as unknown as {
@@ -229,10 +278,11 @@ const operationShapeFor = (family: OperationFamily): Record<string, any> => {
     const schemas = options.map((option) => option.shape[key]).filter(Boolean);
     const schema =
       schemas.length === 1 ? schemas[0] : tool.schema.union(schemas as [any, any, ...any[]]);
+    const bounded = boundedSchema(schema, 0, key);
     shape[key] =
       options.every((option) => key in option.shape) && !schema.isOptional()
-        ? schema
-        : schema.optional();
+        ? bounded
+        : bounded.optional();
   }
   return shape;
 };
