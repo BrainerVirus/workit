@@ -304,6 +304,7 @@ export const consumeWorkerOutput = (handle: WorkerHandle, chunk: string): void =
       (value as { success?: unknown }).success === true &&
       "data" in value &&
       typeof (value as { data?: unknown }).data === "object" &&
+      (value as { data?: unknown }).data !== null &&
       typeof (value as { data: { sessionId?: unknown } }).data.sessionId === "string" &&
       (value as { data: { sessionId: string } }).data.sessionId === handle.sessionId
     )

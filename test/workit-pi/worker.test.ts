@@ -146,6 +146,18 @@ test("native readiness requires the correlated get_state response and assigned s
     }) + "\n",
   );
   expect(worker.ready).toBe(false);
+  expect(() =>
+    stdoutListener?.(
+      JSON.stringify({
+        id: "workit-ready",
+        type: "response",
+        command: "get_state",
+        success: true,
+        data: null,
+      }) + "\n",
+    ),
+  ).not.toThrow();
+  expect(worker.ready).toBe(false);
   stdoutListener?.(
     JSON.stringify({
       id: "workit-ready",
