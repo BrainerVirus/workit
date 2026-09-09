@@ -752,6 +752,20 @@ export class WorkitCore {
     };
   }
 
+  /**
+   * Omitted revisions default to the records read for this call; explicit values
+   * stay CAS-enforced downstream. Call after loading task/workspace records.
+   */
+  private fillRevisions(
+    input: { expectedRevision?: string; expectedWorkspaceRevision?: string | null },
+    task?: { revision: string },
+    workspace?: { revision: string } | null,
+  ): void {
+    if (input.expectedRevision === undefined && task) input.expectedRevision = task.revision;
+    if (input.expectedWorkspaceRevision === undefined)
+      input.expectedWorkspaceRevision = workspace ? workspace.revision : null;
+  }
+
   private helperEntry(
     task: TaskRecord,
     requireSession = false,
@@ -839,6 +853,7 @@ export class WorkitCore {
       const workspace = this.store.readWorkspace();
       if (!workspace.ok) return workspace as Result<never>;
       const destinationWorkspaceId = workspace.data?.id ?? newId();
+      this.fillRevisions(input, undefined, workspace.data ?? null);
       const timestamp = trustedNow(this.context);
       const task = importedTask(
         bundle.task,
@@ -880,6 +895,11 @@ export class WorkitCore {
     const workspace = this.store.readWorkspace();
     if (!workspace.ok) return workspace as Result<never>;
     if (!workspace.data) return failure("not_found", "workspace not found");
+    this.fillRevisions(input, undefined, workspace.data);
+    if (input.target === "workspace" && input.taskId !== undefined)
+      return failure("invalid_input", "workspace recovery takes no task ID");
+    if (input.target === "task" && input.taskId === undefined)
+      return failure("invalid_input", "task recovery requires a task ID");
     return this.store.recoverTask(input.taskId, {
       expectedBytes: input.expectedBytes,
       snapshotDigest: input.snapshotDigest,
@@ -902,6 +922,11 @@ export class WorkitCore {
     }
     switch (input.action) {
       case "start": {
+        if (input.expectedWorkspaceRevision === undefined) {
+          const workspace = this.store.readWorkspace();
+          if (!workspace.ok) return workspace as Result<never>;
+          input.expectedWorkspaceRevision = workspace.data?.revision ?? null;
+        }
         const created = this.store.create({
           intent: input.intent,
           provenance: provenance(this.context),
@@ -956,6 +981,7 @@ export class WorkitCore {
     if (input.action === "explain") return success(task.data.revision, null, task.data.policy);
     if ((this.context.workerId ?? null) !== null)
       return failure("permission_denied", "helpers cannot change task requirements");
+    this.fillRevisions(input, task.data);
     const resolved = this.resolve(task.data, input.assessment);
     if (!resolved.ok) return resolved;
     if (input.action === "preview") return success(null, null, resolved.data);
@@ -1006,6 +1032,7 @@ export class WorkitCore {
     if (!task.ok) return task as Result<never>;
     if (task.data.status === "closed")
       return failure("invalid_transition", "closed task cannot record evidence");
+    this.fillRevisions(input, task.data);
     const helper =
       (this.context.workerId ?? null) === null ? null : this.helperEntry(task.data, true, true);
     if (helper && !helper.ok) return helper as Result<never>;
@@ -1037,6 +1064,16 @@ export class WorkitCore {
       environment(),
     );
     if (!currentCandidate.ok) return currentCandidate as Result<never>;
+    if (evidence.kind === "check" || evidence.kind === "review") {
+      // Checks run against the tree as observed now; bind them to the captured
+      // candidate so callers never hand-compute digests. Later tree changes
+      // still mark this evidence stale through the normal evaluation.
+      evidence.beforeCandidateId ??= currentCandidate.data.id;
+      evidence.candidateId ??= currentCandidate.data.id;
+    } else {
+      evidence.beforeCandidateId ??= null;
+      evidence.candidateId ??= null;
+    }
     const knownCandidates = new Set(task.data.candidates.map((candidate) => candidate.id));
     for (const candidateId of [evidence.beforeCandidateId, evidence.candidateId]) {
       if (
@@ -1111,6 +1148,7 @@ export class WorkitCore {
     if (!task.ok) return task as Result<never>;
     if ((this.context.workerId ?? null) !== null)
       return failure("permission_denied", "helpers cannot record or revoke decisions");
+    this.fillRevisions(input, task.data);
     if (input.action === "record") {
       if (task.data.status === "closed")
         return failure("invalid_transition", "closed task cannot record a decision");
@@ -1242,6 +1280,7 @@ export class WorkitCore {
     if (!task.ok) return task as Result<never>;
     if (task.data.status === "closed")
       return failure("invalid_transition", "closed task cannot mutate findings");
+    this.fillRevisions(input, task.data);
     const helper =
       (this.context.workerId ?? null) === null ? null : this.helperEntry(task.data, true, true);
     if (helper && !helper.ok) return helper as Result<never>;
@@ -1274,7 +1313,7 @@ export class WorkitCore {
               claim: input.claim,
               consequence: input.consequence,
               scope: input.scope,
-              candidateId: input.candidateId,
+              candidateId: input.candidateId ?? null,
               refs: input.refs,
               disposition: "open",
               resolution: null,
@@ -1357,7 +1396,10 @@ export class WorkitCore {
           ),
       );
       if (!allowed)
-        return failure("permission_denied", "deferred findings require an applicable limitation");
+        return failure(
+          "permission_denied",
+          "deferred findings require an approved limitation decision that references an acceptanceAllowed requirement and covers the finding scope",
+        );
     }
     const changed = this.store.mutateTask(
       task.data.id,
@@ -1405,6 +1447,7 @@ export class WorkitCore {
     const workspace = this.store.readWorkspace();
     if (!workspace.ok) return workspace as Result<never>;
     if (!workspace.data) return failure("not_found", "workspace not found");
+    this.fillRevisions(input, task.data, workspace.data);
     const helperId = this.context.workerId ?? null;
     if (input.action === "assign") {
       if (helperId !== null) return failure("permission_denied", "helpers cannot assign workers");
@@ -1430,6 +1473,7 @@ export class WorkitCore {
         !task.data.candidates.some((candidate) => candidate.id === input.assignment.candidateId)
       )
         return failure("invalid_input", "worker assignment references an unknown candidate");
+      input.assignment.candidateId ??= null;
       const workerId = newId();
       const changed = this.store.mutateTaskAndWorkspace({
         taskId: task.data.id,
@@ -1788,8 +1832,10 @@ export class WorkitCore {
     if (!workspace.data) return failure("not_found", "workspace not found");
     if (task.data.status !== "active")
       return failure("invalid_transition", "paused or closed tasks cannot own product writes");
+    this.fillRevisions(input, task.data, workspace.data);
     const helperId = this.context.workerId ?? null;
     if (input.action === "acquire") {
+      if (input.workerId === undefined) input.workerId = helperId;
       if (input.workerId !== helperId)
         return failure("permission_denied", "writer identity does not match the caller");
       if (workspace.data.writer) {
@@ -2231,6 +2277,7 @@ export class WorkitCore {
     const workspace = this.store.readWorkspace();
     if (!workspace.ok) return workspace as Result<never>;
     if (!workspace.data) return failure("not_found", "workspace not found");
+    this.fillRevisions(input, task.data, workspace.data);
     let resumeCandidate: import("./task-contract").Candidate | null = null;
     if (status === "active" && task.data.origin) {
       if (!task.data.policy)
@@ -2307,6 +2354,7 @@ export class WorkitCore {
     if (!helper.ok) return helper as Result<never>;
     if (task.data.status === "closed")
       return failure("invalid_transition", "closed task cannot update progress");
+    this.fillRevisions(input, task.data);
     const changed = this.store.mutateTask(
       task.data.id,
       input.expectedRevision,
@@ -2333,6 +2381,7 @@ export class WorkitCore {
         "recovery_required",
         "scope revision requires worker ownership reconciliation",
       );
+    this.fillRevisions(input, task.data, workspace.data);
     const changed = this.store.mutateTaskAndWorkspace({
       taskId: task.data.id,
       expectedTaskRevision: input.expectedRevision,
@@ -2368,6 +2417,7 @@ export class WorkitCore {
     if (!workspace.data) return failure("not_found", "workspace not found");
     const blocker = this.activeWorkerBlocker(task.data, workspace.data);
     if (blocker) return blocker as Result<never>;
+    this.fillRevisions(input, task.data, workspace.data);
     const current = captureCandidate(this.store.root, task.data.intent.data.scope, environment());
     if (!current.ok) return current as Result<never>;
     const withCandidate = current.data;

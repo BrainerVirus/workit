@@ -89,7 +89,7 @@ test("signals require unknown values to use unknown basis and booleans to use kn
   ).toBe(false);
 });
 
-test("workspace-sensitive mutations require both revisions", () => {
+test("omitted revisions parse and default inside the engine", () => {
   const common = { schemaVersion: 1, taskId: id, expectedRevision: id };
   const report = {
     ...common,
@@ -97,7 +97,7 @@ test("workspace-sensitive mutations require both revisions", () => {
     workerId: id,
     report: { outcome: "completed", summary: "x", evidenceIds: [], findingIds: [] },
   };
-  expect(parseOperation("worker", report).ok).toBe(false);
+  expect(parseOperation("worker", report).ok).toBe(true);
   expect(parseOperation("worker", { ...report, expectedWorkspaceRevision: id }).ok).toBe(true);
   const release = {
     schemaVersion: 1,
@@ -106,8 +106,24 @@ test("workspace-sensitive mutations require both revisions", () => {
     expectedWorkspaceRevision: id,
     reason: "x",
   };
-  expect(parseOperation("writer", release).ok).toBe(false);
+  expect(parseOperation("writer", release).ok).toBe(true);
   expect(parseOperation("writer", { ...release, expectedRevision: id }).ok).toBe(true);
+  // Explicit null is still rejected where a current revision is required.
+  expect(
+    parseOperation("writer", { ...release, expectedRevision: id, expectedWorkspaceRevision: null })
+      .ok,
+  ).toBe(false);
+  expect(
+    parseOperation("task", {
+      schemaVersion: 1,
+      action: "start",
+      intent: {
+        objective: "x",
+        scope: { description: "x", paths: [], exclusions: [] },
+        authorityRefs: [],
+      },
+    }).ok,
+  ).toBe(true);
 });
 
 test("canonical JSON rejects invalid Unicode keys and impossible timestamps", () => {

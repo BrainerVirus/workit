@@ -422,8 +422,8 @@ export const evidenceSchema = z
     kind: z.enum(["check", "review", "investigation", "artifact"]),
     claim: text,
     requirementIds: z.array(digest),
-    beforeCandidateId: nullableDigest,
-    candidateId: nullableDigest,
+    beforeCandidateId: nullableDigest.optional(),
+    candidateId: nullableDigest.optional(),
     result: z.enum(["passed", "failed", "missing", "skipped"]),
     summary: text,
     refs: z.array(refSchema),
@@ -490,7 +490,7 @@ export const assignmentSchema = z
     scope: scopeSchema,
     decisionIds: z.array(id),
     requirementIds: z.array(digest),
-    candidateId: nullableDigest,
+    candidateId: nullableDigest.optional(),
     stoppingCondition: text,
   })
   .strict();
@@ -661,13 +661,19 @@ export const callerSchema = z.object({ host: hostSchema, actor: text }).strict()
 export type Caller = z.infer<typeof callerSchema>;
 
 const base = { schemaVersion: z.literal(1) };
-const revisions = { expectedRevision: revision, expectedWorkspaceRevision: revision.nullable() };
+const revisions = {
+  expectedRevision: revision.optional(),
+  expectedWorkspaceRevision: revision.optional(),
+};
+// Omitted revisions default to the current records inside the engine; explicit
+// values are still CAS-enforced. This keeps single-call flows friction-free
+// without weakening concurrent-write protection.
 const taskId = { taskId: id };
 const operation = <T extends z.ZodRawShape>(shape: T) => z.object({ ...base, ...shape }).strict();
 const taskOperations = {
   start: operation({
     action: z.literal("start"),
-    expectedWorkspaceRevision: revision.nullable(),
+    expectedWorkspaceRevision: revision.nullable().optional(),
     intent: intentSchema,
   }),
   list: operation({ action: z.literal("list") }),
@@ -680,35 +686,35 @@ const taskOperations = {
     action: z.literal("revise"),
     ...taskId,
     ...revisions,
-    expectedWorkspaceRevision: revision,
+    expectedWorkspaceRevision: revision.optional(),
     intent: intentSchema,
     reason: text,
   }),
   progress: operation({
     action: z.literal("progress"),
     ...taskId,
-    expectedRevision: revision,
+    expectedRevision: revision.optional(),
     progress: progressSchema,
   }),
   pause: operation({
     action: z.literal("pause"),
     ...taskId,
     ...revisions,
-    expectedWorkspaceRevision: revision,
+    expectedWorkspaceRevision: revision.optional(),
     reason: text,
   }),
   resume: operation({
     action: z.literal("resume"),
     ...taskId,
     ...revisions,
-    expectedWorkspaceRevision: revision,
+    expectedWorkspaceRevision: revision.optional(),
     authorityRefs: z.array(refSchema),
   }),
   close: operation({
     action: z.literal("close"),
     ...taskId,
     ...revisions,
-    expectedWorkspaceRevision: revision,
+    expectedWorkspaceRevision: revision.optional(),
     outcome: outcomeSchema,
     summary: text,
     decisionIds: z.array(id),
@@ -718,7 +724,7 @@ const policyOperations = {
   assess: operation({
     action: z.literal("assess"),
     ...taskId,
-    expectedRevision: revision,
+    expectedRevision: revision.optional(),
     assessment: assessmentSchema,
   }),
   preview: operation({ action: z.literal("preview"), ...taskId, assessment: assessmentSchema }),
@@ -728,7 +734,7 @@ const evidenceOperations = {
   record: operation({
     action: z.literal("record"),
     ...taskId,
-    expectedRevision: revision,
+    expectedRevision: revision.optional(),
     evidence: evidenceSchema,
   }),
 };
@@ -736,17 +742,17 @@ const findingOperations = {
   record: operation({
     action: z.literal("record"),
     ...taskId,
-    expectedRevision: revision,
+    expectedRevision: revision.optional(),
     claim: text,
     consequence: text,
     scope: scopeSchema,
-    candidateId: nullableDigest,
+    candidateId: nullableDigest.optional(),
     refs: z.array(refSchema),
   }),
   resolve: operation({
     action: z.literal("resolve"),
     ...taskId,
-    expectedRevision: revision,
+    expectedRevision: revision.optional(),
     findingId: id,
     disposition: z.enum(["open", "fixed", "dismissed", "deferred"]),
     reason: text,
@@ -758,7 +764,7 @@ const decisionOperations = {
   record: operation({
     action: z.literal("record"),
     ...taskId,
-    expectedRevision: revision,
+    expectedRevision: revision.optional(),
     purpose: decisionSchema.shape.purpose,
     binding: decisionSchema.shape.binding,
     response: decisionSchema.shape.response,
@@ -767,7 +773,7 @@ const decisionOperations = {
   revoke: operation({
     action: z.literal("revoke"),
     ...taskId,
-    expectedRevision: revision,
+    expectedRevision: revision.optional(),
     decisionId: id,
     reason: text,
   }),
@@ -777,14 +783,14 @@ const workerOperations = {
     action: z.literal("assign"),
     ...taskId,
     ...revisions,
-    expectedWorkspaceRevision: revision,
+    expectedWorkspaceRevision: revision.optional(),
     assignment: assignmentSchema,
   }),
   report: operation({
     action: z.literal("report"),
     ...taskId,
-    expectedRevision: revision,
-    expectedWorkspaceRevision: revision,
+    expectedRevision: revision.optional(),
+    expectedWorkspaceRevision: revision.optional(),
     workerId: id,
     report: workerReportSchema,
   }),
@@ -792,7 +798,7 @@ const workerOperations = {
     action: z.literal("cancel"),
     ...taskId,
     ...revisions,
-    expectedWorkspaceRevision: revision,
+    expectedWorkspaceRevision: revision.optional(),
     workerId: id,
     reason: text,
   }),
@@ -801,15 +807,15 @@ const writerOperations = {
   acquire: operation({
     action: z.literal("acquire"),
     ...taskId,
-    expectedRevision: revision,
-    expectedWorkspaceRevision: revision,
-    workerId: nullableId,
+    expectedRevision: revision.optional(),
+    expectedWorkspaceRevision: revision.optional(),
+    workerId: nullableId.optional(),
   }),
   release: operation({
     action: z.literal("release"),
     ...taskId,
-    expectedRevision: revision,
-    expectedWorkspaceRevision: revision,
+    expectedRevision: revision.optional(),
+    expectedWorkspaceRevision: revision.optional(),
     reason: text,
   }),
 };
@@ -817,14 +823,14 @@ const stateOperations = {
   export: operation({ action: z.literal("export"), ...taskId }),
   import: operation({
     action: z.literal("import"),
-    expectedWorkspaceRevision: revision.nullable(),
+    expectedWorkspaceRevision: revision.nullable().optional(),
     bundle: exportBundleSchema,
     authorityRefs: z.array(refSchema),
   }),
   recover: operation({
     action: z.literal("recover"),
-    ...taskId,
-    expectedWorkspaceRevision: revision,
+    taskId: id.optional(),
+    expectedWorkspaceRevision: revision.optional(),
     target: z.enum(["task", "workspace"]),
     expectedBytes: digest,
     snapshotDigest: digest,
