@@ -79,7 +79,7 @@ const compareCodeUnits = (left: string, right: string): number => {
   return left.length - right.length;
 };
 
-type Inventory = { paths: string[]; uncertain: boolean };
+type Inventory = { paths: string[]; uncertain: boolean; git: boolean };
 const gitPaths = (root: string): Inventory => {
   const result = spawnSync(
     "git",
@@ -91,7 +91,11 @@ const gitPaths = (root: string): Inventory => {
   );
   if (result.status !== 0) {
     const stderr = result.stderr?.toString("utf8") ?? "";
-    return { paths: [], uncertain: !/not a git repository/i.test(stderr) };
+    return {
+      paths: [],
+      uncertain: !/not a git repository/i.test(stderr),
+      git: /not a git repository/i.test(stderr) ? false : true,
+    };
   }
   const paths = result.stdout
     ? result.stdout
@@ -107,7 +111,7 @@ const gitPaths = (root: string): Inventory => {
   );
   if (stagedDeleted.status !== 0) {
     const stderr = stagedDeleted.stderr?.toString("utf8") ?? "";
-    if (!/not a git repository/i.test(stderr)) return { paths, uncertain: true };
+    if (!/not a git repository/i.test(stderr)) return { paths, uncertain: true, git: true };
   } else if (stagedDeleted.stdout) {
     paths.push(
       ...stagedDeleted.stdout
@@ -117,7 +121,7 @@ const gitPaths = (root: string): Inventory => {
         .map((item) => item.split(path.sep).join("/")),
     );
   }
-  return { paths: [...new Set(paths)], uncertain: false };
+  return { paths: [...new Set(paths)], uncertain: false, git: true };
 };
 
 const walk = (root: string, directory: string, output: Set<string>): boolean => {
@@ -179,8 +183,9 @@ export function captureCandidate(
   if (!normalizedScope) return failure("invalid_input", "candidate scope is invalid");
   const roots = scopeRoots(checkout, normalizedScope);
   if (!roots.ok) return roots;
+  const git = gitPaths(checkout);
   const names = new Set<string>();
-  let uncertain = false;
+  let uncertain = git.uncertain;
   for (const target of roots.data) {
     const item = relative(checkout, target);
     if (item === ".git" || item === ".workit") continue;
@@ -193,11 +198,9 @@ export function captureCandidate(
       uncertain = true;
       continue;
     }
-    if (stat.isDirectory() && !stat.isSymbolicLink())
+    if (!git.git && stat.isDirectory() && !stat.isSymbolicLink())
       uncertain = walk(checkout, target, names) || uncertain;
   }
-  const git = gitPaths(checkout);
-  uncertain = git.uncertain || uncertain;
   for (const item of git.paths) if (scopeMatches(item, normalizedScope)) names.add(item);
 
   const files: Candidate["files"] = [];
@@ -218,6 +221,10 @@ export function captureCandidate(
           executable: (stat.mode & 0o111) !== 0,
         });
       } else if (!stat.isDirectory()) {
+        completeness = "uncertain";
+      } else if (git.git && git.paths.includes(item)) {
+        // A Git link/submodule is an inventory boundary; its contents are not
+        // represented by the parent repository's path list.
         completeness = "uncertain";
       }
     } catch (error: any) {

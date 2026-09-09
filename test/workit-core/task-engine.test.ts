@@ -126,6 +126,118 @@ test("candidate capture preserves executable and symlink metadata without follow
   );
 });
 
+test("Git candidate capture ignores excluded trees while retaining tracked and relevant files", () => {
+  const root = mkdtempSync(join(tmpdir(), "workit-candidate-git-ignore-"));
+  mkdirSync(join(root, "node_modules", "large"), { recursive: true });
+  mkdirSync(join(root, "src"), { recursive: true });
+  writeFileSync(join(root, ".gitignore"), "node_modules/\ncoverage/\n");
+  writeFileSync(join(root, "node_modules", "large", "ignored.js"), "ignored");
+  writeFileSync(join(root, "src", "app.ts"), "source");
+  expect(spawnSync("git", ["init", "-q"], { cwd: root }).status).toBe(0);
+  expect(spawnSync("git", ["add", "."], { cwd: root }).status).toBe(0);
+  expect(
+    spawnSync(
+      "git",
+      [
+        "-c",
+        "user.name=Workit Test",
+        "-c",
+        "user.email=workit@example.test",
+        "commit",
+        "-qm",
+        "init",
+      ],
+      { cwd: root },
+    ).status,
+  ).toBe(0);
+  const candidate = captureCandidate(root, scope(), []);
+  expect(candidate.ok).toBe(true);
+  if (!candidate.ok) throw new Error(candidate.error);
+  expect(candidate.data.files.map((file) => file.path)).toContain("src/app.ts");
+  expect(candidate.data.files.map((file) => file.path)).not.toContain(
+    "node_modules/large/ignored.js",
+  );
+  expect(candidate.data.completeness).toBe("known");
+  const subdirectory = captureCandidate(root, scope({ paths: ["src"] }), []);
+  expect(subdirectory).toMatchObject({ ok: true, data: { files: [{ path: "src/app.ts" }] } });
+});
+
+test("Git candidate capture includes untracked non-ignored source files", () => {
+  const root = mkdtempSync(join(tmpdir(), "workit-candidate-git-untracked-"));
+  mkdirSync(join(root, "src"), { recursive: true });
+  writeFileSync(join(root, ".gitignore"), "dist/\n");
+  writeFileSync(join(root, "src", "tracked.ts"), "tracked");
+  expect(spawnSync("git", ["init", "-q"], { cwd: root }).status).toBe(0);
+  expect(spawnSync("git", ["add", "."], { cwd: root }).status).toBe(0);
+  expect(
+    spawnSync(
+      "git",
+      [
+        "-c",
+        "user.name=Workit Test",
+        "-c",
+        "user.email=workit@example.test",
+        "commit",
+        "-qm",
+        "init",
+      ],
+      { cwd: root },
+    ).status,
+  ).toBe(0);
+  writeFileSync(join(root, "src", "new.ts"), "untracked");
+  const candidate = captureCandidate(root, scope(), []);
+  expect(candidate.ok).toBe(true);
+  if (!candidate.ok) throw new Error(candidate.error);
+  expect(candidate.data.files.map((file) => file.path)).toContain("src/new.ts");
+  expect(candidate.data.completeness).toBe("known");
+});
+
+test("Git candidate capture keeps force-tracked files under ignore rules", () => {
+  const root = mkdtempSync(join(tmpdir(), "workit-candidate-git-forced-"));
+  mkdirSync(join(root, "node_modules", "pkg"), { recursive: true });
+  writeFileSync(join(root, ".gitignore"), "node_modules/\n");
+  writeFileSync(join(root, "node_modules", "pkg", "forced.js"), "forced");
+  expect(spawnSync("git", ["init", "-q"], { cwd: root }).status).toBe(0);
+  expect(spawnSync("git", ["add", "-f", "node_modules/pkg/forced.js"], { cwd: root }).status).toBe(
+    0,
+  );
+  expect(
+    spawnSync(
+      "git",
+      [
+        "-c",
+        "user.name=Workit Test",
+        "-c",
+        "user.email=workit@example.test",
+        "commit",
+        "-qm",
+        "init",
+      ],
+      { cwd: root },
+    ).status,
+  ).toBe(0);
+  writeFileSync(join(root, "node_modules", "pkg", "ignored.js"), "ignored");
+  const candidate = captureCandidate(root, scope(), []);
+  expect(candidate.ok).toBe(true);
+  if (!candidate.ok) throw new Error(candidate.error);
+  expect(candidate.data.files.map((file) => file.path)).toContain("node_modules/pkg/forced.js");
+  expect(candidate.data.files.map((file) => file.path)).not.toContain(
+    "node_modules/pkg/ignored.js",
+  );
+  expect(candidate.data.completeness).toBe("known");
+});
+
+test("non-Git candidate capture recursively walks nested files", () => {
+  const root = mkdtempSync(join(tmpdir(), "workit-candidate-nongit-walk-"));
+  mkdirSync(join(root, "nested", "deep"), { recursive: true });
+  writeFileSync(join(root, "nested", "deep", "leaf.txt"), "leaf");
+  const candidate = captureCandidate(root, scope(), []);
+  expect(candidate.ok).toBe(true);
+  if (!candidate.ok) throw new Error(candidate.error);
+  expect(candidate.data.files.map((file) => file.path)).toContain("nested/deep/leaf.txt");
+  expect(candidate.data.completeness).toBe("known");
+});
+
 test("candidate capture is deterministic, records absent scope paths, and rejects duplicate environments", () => {
   const root = mkdtempSync(join(tmpdir(), "workit-candidate-"));
   const captured = captureCandidate(root, scope({ paths: ["missing", "."] }), [

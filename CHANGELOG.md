@@ -20,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Candidate capture now uses Git's ignore-aware inventory in Git workspaces,
+  avoiding recursive scans of ignored dependency and build trees while keeping
+  tracked files, relevant untracked files, and staged deletions visible.
+
 - Codex CLI and desktop integration with a native plugin manifest, shared MCP
   transport, documented SessionStart/PreToolUse/subagent hooks, and separate
   CLI/desktop qualification records. Unsupported receipts and writer delegation

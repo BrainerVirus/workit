@@ -146,6 +146,10 @@ checkout or Workit metadata. Cursor and Codex receive the same contexts as
 read-only MCP resources under `workit://context/{kind}`; the workspace always
 comes from the host-owned session context.
 
+Candidate snapshots in Git workspaces use Git's ignore-aware file inventory, so
+ignored dependency/build trees are not recursively scanned; non-Git folders
+retain recursive inventory behavior.
+
 Cursor ships only `rules/workit-contract.mdc`. That rule documents the shared
 contract, exact workspace/session scope, read-only native delegation, and the
 surfaces Cursor cannot attest or block.
