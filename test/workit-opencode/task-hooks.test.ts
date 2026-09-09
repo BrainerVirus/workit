@@ -627,6 +627,207 @@ test("ambiguous implementer sessions cannot authorize product writes", async () 
   }
 });
 
+const coordinatorClient = (root: string, coordinator = "coord") => ({
+  session: {
+    get: async ({ path: { id } }: { path: { id: string } }) => ({
+      data:
+        id === coordinator
+          ? { id, directory: root }
+          : { id, directory: root, parentID: coordinator },
+    }),
+  },
+});
+
+const dispatchFixture = async (root: string, assignments = 1) => {
+  const active = activeTask(root, "coord");
+  const ids: string[] = [];
+  for (let index = 0; index < assignments; index += 1) {
+    const task = active.store.readTask(active.task.id);
+    const workspace = active.store.readWorkspace();
+    if (!task.ok || !workspace.ok || !workspace.data) throw new Error("state missing");
+    const assigned = workerAssignment(
+      active.core,
+      active.task.id,
+      task.data.revision,
+      workspace.data.revision,
+      "reviewer",
+    );
+    if (!assigned.ok) throw new Error(assigned.error);
+    ids.push(assigned.data.id);
+  }
+  const hooks = await plugin({
+    directory: root,
+    worktree: root,
+    serverUrl: new URL("http://localhost"),
+    client: coordinatorClient(root),
+  } as never);
+  return { active, ids, hooks };
+};
+
+const workerState = (
+  active: ReturnType<typeof activeTask>,
+  workerId: string,
+): { state: string; session: unknown } => {
+  const task = active.store.readTask(active.task.id);
+  if (!task.ok) throw new Error(task.error);
+  const worker = task.data.workers.find((entry) => entry.id === workerId);
+  if (!worker) throw new Error("worker missing");
+  return { state: worker.data.state, session: worker.data.session };
+};
+
+test("a prepared OpenCode dispatch binds the created child session", async () => {
+  const root = mkdtempSync(join(tmpdir(), "workit-opencode-dispatch-bind-"));
+  try {
+    const { active, ids, hooks } = await dispatchFixture(root);
+    await hooks["tool.execute.before"]?.(
+      { tool: "task", sessionID: "coord", callID: "launch" },
+      { args: {} },
+    );
+    const reserved = active.store.readTask(active.task.id);
+    expect(
+      reserved.ok && reserved.data.workers.find((entry) => entry.id === ids[0])?.provenance,
+    ).toMatchObject({
+      kind: "host_observed",
+      session: { handle: "coord" },
+      receipts: [{ kind: "host", host: "opencode", handle: "task:launch" }],
+    });
+    await hooks.event?.({
+      event: {
+        type: "session.created",
+        properties: { info: { id: "child-1", parentID: "coord", directory: root } },
+      },
+    } as never);
+    expect(workerState(active, ids[0])).toMatchObject({
+      state: "running",
+      session: { handle: "child-1" },
+    });
+    // The launch consumed the reservation, so a late "never started" claim cannot land.
+    await hooks["tool.execute.after"]?.(
+      { tool: "task", sessionID: "coord", callID: "launch", args: {} },
+      { title: "task", output: "cancelled", metadata: { childCreated: false } },
+    );
+    expect(workerState(active, ids[0]).state).toBe("running");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a task call that proves no child was created stops the worker as never started", async () => {
+  const root = mkdtempSync(join(tmpdir(), "workit-opencode-dispatch-nostart-"));
+  try {
+    const { active, ids, hooks } = await dispatchFixture(root);
+    await hooks["tool.execute.before"]?.(
+      { tool: "task", sessionID: "coord", callID: "launch" },
+      { args: {} },
+    );
+    expect(workerState(active, ids[0])).toMatchObject({ state: "assigned", session: null });
+    await hooks["tool.execute.after"]?.(
+      { tool: "task", sessionID: "coord", callID: "launch", args: {} },
+      {
+        title: "task",
+        output: "cancelled",
+        metadata: { childCreated: false, status: "cancelled" },
+      },
+    );
+    expect(workerState(active, ids[0])).toMatchObject({ state: "stopped", session: null });
+    await expect(
+      hooks["tool.execute.before"]?.(
+        { tool: "task", sessionID: "coord", callID: "next" },
+        { args: {} },
+      ),
+    ).resolves.toBeUndefined();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a generic cancellation or missing metadata never marks an unbound worker stopped", async () => {
+  const root = mkdtempSync(join(tmpdir(), "workit-opencode-dispatch-generic-"));
+  try {
+    const { active, ids, hooks } = await dispatchFixture(root);
+    await hooks["tool.execute.before"]?.(
+      { tool: "task", sessionID: "coord", callID: "launch" },
+      { args: {} },
+    );
+    await hooks["tool.execute.after"]?.(
+      { tool: "task", sessionID: "coord", callID: "launch", args: {} },
+      { title: "task", output: "worker cancellation is uncertain", metadata: {} },
+    );
+    expect(workerState(active, ids[0])).toMatchObject({ state: "assigned", session: null });
+    await expect(
+      hooks["tool.execute.before"]?.(
+        { tool: "task", sessionID: "coord", callID: "next" },
+        { args: {} },
+      ),
+    ).rejects.toThrow("recovery_required");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("ambiguous assignments refuse dispatch recovery", async () => {
+  const root = mkdtempSync(join(tmpdir(), "workit-opencode-dispatch-ambiguous-"));
+  try {
+    const { active, ids, hooks } = await dispatchFixture(root, 2);
+    await hooks["tool.execute.before"]?.(
+      { tool: "task", sessionID: "coord", callID: "launch" },
+      { args: {} },
+    );
+    await hooks["tool.execute.after"]?.(
+      { tool: "task", sessionID: "coord", callID: "launch", args: {} },
+      {
+        title: "task",
+        output: "cancelled",
+        metadata: { childCreated: false, status: "cancelled" },
+      },
+    );
+    for (const id of ids)
+      expect(workerState(active, id)).toMatchObject({ state: "assigned", session: null });
+    await expect(
+      hooks["tool.execute.before"]?.(
+        { tool: "task", sessionID: "coord", callID: "next" },
+        { args: {} },
+      ),
+    ).rejects.toThrow("recovery_required");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a restarted plugin loses the reservation and stays blocked", async () => {
+  const root = mkdtempSync(join(tmpdir(), "workit-opencode-dispatch-restart-"));
+  try {
+    const { active, ids, hooks } = await dispatchFixture(root);
+    await hooks["tool.execute.before"]?.(
+      { tool: "task", sessionID: "coord", callID: "launch" },
+      { args: {} },
+    );
+    const restarted = await plugin({
+      directory: root,
+      worktree: root,
+      serverUrl: new URL("http://localhost"),
+      client: coordinatorClient(root),
+    } as never);
+    await restarted["tool.execute.after"]?.(
+      { tool: "task", sessionID: "coord", callID: "launch", args: {} },
+      {
+        title: "task",
+        output: "cancelled",
+        metadata: { childCreated: false, status: "cancelled" },
+      },
+    );
+    expect(workerState(active, ids[0])).toMatchObject({ state: "assigned", session: null });
+    await expect(
+      restarted["tool.execute.before"]?.(
+        { tool: "task", sessionID: "coord", callID: "next" },
+        { args: {} },
+      ),
+    ).rejects.toThrow("recovery_required");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("OpenCode native write shapes normalize filePath and apply_patch targets", async () => {
   const root = mkdtempSync(join(tmpdir(), "workit-opencode-native-writes-"));
   try {

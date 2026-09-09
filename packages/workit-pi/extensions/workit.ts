@@ -202,7 +202,7 @@ export default function extension(pi: ExtensionAPI): void {
         binding.expectedWorkspaceRevision =
           cancelled.workspaceRevision ?? binding.expectedWorkspaceRevision;
       }
-      const result = await cancelWorker(current);
+      const result = await cancelWorker(current, binding ? { binding } : {});
       if (!result.observed) {
         const freshTask = store.readTask(task.id);
         const freshWorkspace = store.readWorkspace();
@@ -262,6 +262,10 @@ export default function extension(pi: ExtensionAPI): void {
       binding,
       writerCore: childCore,
       prompt: request.prompt,
+      onPrepare: (pending) => {
+        child = pending;
+        return true;
+      },
       onSpawn: (spawned) => {
         child = spawned;
         return true;
@@ -320,7 +324,7 @@ export default function extension(pi: ExtensionAPI): void {
     ]);
     if (!ready) {
       if (handle.state === "running") {
-        const terminated = await cancelWorker(handle, { graceMs: 50, killWaitMs: 50 });
+        const terminated = await cancelWorker(handle, { graceMs: 50, killWaitMs: 50, binding });
         if (!terminated.observed && !persistUncertain(store, binding, handle, terminated))
           return failure("recovery_required", "worker uncertainty could not be persisted");
       }

@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import type {
   Assignment,
   NativeWorkerVerifier,
+  WorkerDispatch,
   WorkerReport,
   Worker,
   WorkitCore,
@@ -10,6 +11,7 @@ import type {
 import {
   OPERATION_FAMILIES,
   failure,
+  success,
   type ContractResult as Result,
 } from "@brainervirus/workit-core/src/core";
 import {
@@ -70,6 +72,10 @@ export type WorkerHandle = {
   spec: SpawnSpec;
   child: WorkerChild | null;
   pid: number | null;
+  /** True once a spawn was attempted: after that, no child can be ruled out. */
+  spawned: boolean;
+  /** Live launch reservation, held only while this handle has produced no child. */
+  dispatch: WorkerDispatch | null;
   state: WorkerState;
   report: WorkerReport | null;
   events: WorkerProtocolEvent[];
@@ -94,6 +100,8 @@ export type LaunchOptions = {
   writerReady?: boolean;
   env?: NodeJS.ProcessEnv;
   spawn?: SpawnFn;
+  /** Runs on the live handle before any spawn; a false result cancels the launch. */
+  onPrepare?: (handle: WorkerHandle) => boolean;
   onSpawn?: (handle: WorkerHandle) => boolean;
   onError?: (handle: WorkerHandle) => void;
   onReady?: (handle: WorkerHandle) => void;
@@ -101,7 +109,12 @@ export type LaunchOptions = {
   onExit?: (handle: WorkerHandle, exit: ObservedExit) => void;
   pendingPrompt?: string;
 };
-export type CancelOptions = { graceMs?: number; killWaitMs?: number };
+export type CancelOptions = {
+  graceMs?: number;
+  killWaitMs?: number;
+  /** Required to record a never-dispatched worker as stopped. */
+  binding?: WorkerLifecycleBinding;
+};
 export type WorkerLifecycleBinding = {
   core: WorkitCore;
   taskId: string;
@@ -196,6 +209,8 @@ export function launchWorker(assignment: WorkerAssignment, options: LaunchOption
     spec,
     child: null,
     pid: null,
+    spawned: false,
+    dispatch: null,
     state: "assigned",
     report: null,
     events: [],
@@ -212,6 +227,7 @@ export function launchWorker(assignment: WorkerAssignment, options: LaunchOption
     onExit: options.onExit,
   };
   if (nested) return handle;
+  if (options.onPrepare && !options.onPrepare(handle)) return handle;
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     ...options.env,
@@ -225,6 +241,7 @@ export function launchWorker(assignment: WorkerAssignment, options: LaunchOption
     const spawn =
       options.spawn ?? ((command, args, spawnOptions) => nodeSpawn(command, args, spawnOptions));
     handle.spec = { ...spec, env };
+    handle.spawned = true;
     handle.child = spawn(spec.command, spec.args, {
       cwd: spec.cwd,
       env,
@@ -368,19 +385,73 @@ export function sendWorkerPrompt(handle: WorkerHandle, prompt: string): boolean 
   );
 }
 
-export const observeWorkerStart = (
+/** Claim the launch slot before the process exists; the handle keeps the reservation. */
+export const prepareWorkerLaunch = (
   binding: WorkerLifecycleBinding,
   handle: WorkerHandle,
 ): Result<unknown> => {
-  const result = binding.core.observeWorkerLifecycle({
+  const result = binding.core.prepareWorkerDispatch({
     taskId: binding.taskId,
     workerId: binding.workerId,
     expectedRevision: binding.expectedRevision,
     expectedWorkspaceRevision: binding.expectedWorkspaceRevision,
-    state: "running",
-    session: { kind: "host", host: "pi", handle: binding.sessionId },
-    observation: binding.observation ?? { pid: handle.pid, sessionId: handle.sessionId },
+    observation: { stage: "prepare", sessionId: handle.sessionId },
   });
+  advanceBinding(binding, result);
+  if (result.ok) handle.dispatch = result.data;
+  return result;
+};
+
+/** Only this handle can prove that its own reservation never produced a child. */
+export const commitWorkerNotStarted = (
+  binding: WorkerLifecycleBinding,
+  handle: WorkerHandle,
+): Result<unknown> => {
+  const dispatch = handle.dispatch;
+  if (!dispatch) return failure("recovery_required", "worker launch reservation is not live");
+  const result = binding.core.commitWorkerDispatch({
+    dispatch,
+    taskId: binding.taskId,
+    workerId: binding.workerId,
+    expectedRevision: binding.expectedRevision,
+    expectedWorkspaceRevision: binding.expectedWorkspaceRevision,
+    outcome: "not_started",
+    session: null,
+    observation: { stage: "not_started", sessionId: handle.sessionId },
+  });
+  advanceBinding(binding, result);
+  if (result.ok) handle.dispatch = null;
+  return result;
+};
+
+export const observeWorkerStart = (
+  binding: WorkerLifecycleBinding,
+  handle: WorkerHandle,
+): Result<unknown> => {
+  const session = { kind: "host" as const, host: "pi" as const, handle: binding.sessionId };
+  const observation = binding.observation ?? { pid: handle.pid, sessionId: handle.sessionId };
+  const dispatch = handle.dispatch;
+  const result = dispatch
+    ? binding.core.commitWorkerDispatch({
+        dispatch,
+        taskId: binding.taskId,
+        workerId: binding.workerId,
+        expectedRevision: binding.expectedRevision,
+        expectedWorkspaceRevision: binding.expectedWorkspaceRevision,
+        outcome: "started",
+        session,
+        observation,
+      })
+    : binding.core.observeWorkerLifecycle({
+        taskId: binding.taskId,
+        workerId: binding.workerId,
+        expectedRevision: binding.expectedRevision,
+        expectedWorkspaceRevision: binding.expectedWorkspaceRevision,
+        state: "running",
+        session,
+        observation,
+      });
+  if (dispatch && result.ok) handle.dispatch = null;
   advanceBinding(binding, result);
   return result;
 };
@@ -511,6 +582,10 @@ export const launchSupervisedWorker = (
     sessionId: options.binding.sessionId,
     writerReady: assignment.role !== "implementer",
     pendingPrompt: options.prompt,
+    onPrepare: (pending) => {
+      if (options.onPrepare && !options.onPrepare(pending)) return false;
+      return prepareWorkerLaunch(options.binding, pending).ok;
+    },
     onSpawn: (spawned) => {
       if (options.onSpawn && !options.onSpawn(spawned)) return false;
       const observed = observeWorkerStart(options.binding, spawned);
@@ -571,9 +646,39 @@ export const launchSupervisedWorker = (
 export const nativeWorkerFor = (handle: WorkerHandle): NativeWorkerVerifier =>
   nativeWorkerForEvidence(() => handle);
 
+type DispatchEvidence = Pick<
+  WorkerHandle,
+  "pid" | "workerId" | "sessionId" | "child" | "spawned" | "exit"
+>;
+
 export const nativeWorkerForEvidence = (
-  getHandle: () => Pick<WorkerHandle, "pid" | "workerId" | "sessionId"> | null,
+  getHandle: () => DispatchEvidence | null,
 ): NativeWorkerVerifier => ({
+  verifyDispatch: ({ expected, caller, observation }) => {
+    const handle = getHandle();
+    const observed = observation as { stage?: unknown; sessionId?: unknown } | null;
+    if (
+      !handle ||
+      caller.host !== "pi" ||
+      expected.workerId !== handle.workerId ||
+      typeof observed !== "object" ||
+      observed === null ||
+      observed.stage !== expected.stage ||
+      observed.sessionId !== handle.sessionId ||
+      // A spawn attempt, a child object, or any observed exit all rule out "no child".
+      handle.spawned ||
+      handle.child !== null ||
+      handle.exit !== null
+    )
+      return failure("permission_denied", "Pi worker dispatch was not observed by the host");
+    return success(null, null, {
+      kind: "host_observed",
+      host: "pi",
+      session: { kind: "host", host: "pi", handle: caller.actor },
+      workerId: expected.workerId,
+      receipts: [{ kind: "host", host: "pi", handle: "dispatch:" + handle.sessionId }],
+    });
+  },
   verifyWorker: ({ expected, caller, observation }) => {
     const handle = getHandle();
     if (
@@ -637,9 +742,29 @@ export async function cancelWorker(
   options: CancelOptions = {},
 ): Promise<ObservedExit> {
   if (handle.exit?.observed) return handle.exit;
-  if (!handle.child || handle.state === "assigned") {
-    handle.state = "assigned";
-    return { state: "stopped", observed: false, code: null, signal: null, stderr: handle.stderr };
+  const uncertain = (): ObservedExit => {
+    handle.state = "unknown";
+    return { state: "unknown", observed: false, code: null, signal: null, stderr: handle.stderr };
+  };
+  if (!handle.child) {
+    // Only this handle can prove the child was never created; a spawn attempt or a
+    // reconstructed handle after a restart cannot, and stays unresolved.
+    if (
+      handle.spawned ||
+      !handle.dispatch ||
+      !options.binding ||
+      !commitWorkerNotStarted(options.binding, handle).ok
+    )
+      return uncertain();
+    handle.state = "stopped";
+    handle.exit = {
+      state: "stopped",
+      observed: true,
+      code: null,
+      signal: null,
+      stderr: handle.stderr,
+    };
+    return handle.exit;
   }
   handle.state = "cancelling";
   handle.child.kill("SIGTERM");
@@ -648,16 +773,9 @@ export async function cancelWorker(
   handle.child.kill("SIGKILL");
   await new Promise((resolve) => setTimeout(resolve, options.killWaitMs ?? 250));
   if (handle.exit?.observed) return handle.exit;
-  const uncertain: ObservedExit = {
-    state: "unknown",
-    observed: false,
-    code: null,
-    signal: null,
-    stderr: handle.stderr,
-  };
-  handle.state = "unknown";
-  handle.exit = uncertain;
-  return uncertain;
+  const lost = uncertain();
+  handle.exit = lost;
+  return lost;
 }
 
 export const reconcileWorker = (handle: WorkerHandle): Result<ObservedExit> => {

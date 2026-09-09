@@ -5,10 +5,12 @@ import { join } from "node:path";
 import {
   TaskStore,
   WorkitCore,
+  failure,
   success,
   type NativeWorkerVerifier,
   type OperationContext,
   type TaskRecord,
+  type WorkerDispatch,
   type WorkspaceRecord,
 } from "../../packages/workit-core/src/core";
 import * as coreApi from "../../packages/workit-core/src/core";
@@ -72,6 +74,28 @@ const observationVerifier = (): NativeWorkerVerifier => ({
       receipts: [{ kind: "host", host: actualCaller.host, handle: "native-event" }],
     }),
 });
+
+/** A host that can attest a dispatch reservation, as the OpenCode and Pi adapters do. */
+const dispatchVerifier = (): NativeWorkerVerifier => ({
+  ...observationVerifier(),
+  verifyDispatch: ({ expected, caller: actualCaller, observation }) =>
+    (observation as { stage?: unknown })?.stage === expected.stage
+      ? success(null, null, {
+          kind: "host_observed",
+          host: actualCaller.host,
+          session: { kind: "host", host: actualCaller.host, handle: actualCaller.actor },
+          workerId: expected.workerId,
+          receipts: [{ kind: "host", host: actualCaller.host, handle: "native-dispatch" }],
+        })
+      : failure("permission_denied", "dispatch was not observed"),
+});
+
+const current = (lead: ReturnType<typeof active>) => {
+  const task = lead.store.readTask(lead.task.id);
+  const workspace = lead.store.readWorkspace();
+  if (!task.ok || !workspace.ok || !workspace.data) throw new Error("state missing");
+  return { task: task.data, workspace: workspace.data };
+};
 
 const observeRunning = (
   core: WorkitCore,
@@ -392,6 +416,224 @@ test("write authorization ignores forged snapshots and rejects symlink escapes",
 test("raw worker authority is not part of the public core API", () => {
   expect((coreApi as Record<string, unknown>).verifyNativeWorker).toBeUndefined();
   expect((coreApi as Record<string, unknown>).observeWorkerLifecycle).toBeUndefined();
+  expect((coreApi as Record<string, unknown>).prepareWorkerDispatch).toBeUndefined();
+  expect((coreApi as Record<string, unknown>).commitWorkerDispatch).toBeUndefined();
+});
+
+const prepared = (lead: ReturnType<typeof active>) => {
+  const assigned = assign(lead.core, lead.task, lead.workspace);
+  if (!assigned.ok) throw new Error(assigned.error);
+  const state = current(lead);
+  const dispatch = lead.core.prepareWorkerDispatch({
+    taskId: lead.task.id,
+    workerId: assigned.data.id,
+    expectedRevision: state.task.revision,
+    expectedWorkspaceRevision: state.workspace.revision,
+    observation: { stage: "prepare" },
+  });
+  if (!dispatch.ok) throw new Error(dispatch.error);
+  return { workerId: assigned.data.id, dispatch: dispatch.data };
+};
+
+test("dispatch preparation keeps the worker assigned without inventing a session", () => {
+  const lead = active({ nativeWorker: dispatchVerifier() });
+  const { workerId } = prepared(lead);
+  const worker = current(lead).task.workers.find((entry) => entry.id === workerId);
+  expect(worker?.data).toMatchObject({ state: "assigned", session: null });
+  expect(worker?.provenance).toMatchObject({ kind: "host_observed", workerId });
+});
+
+test("preparation requires an assigned worker on an active task with host attestation", () => {
+  const unattested = active({ nativeWorker: observationVerifier() });
+  const assigned = assign(unattested.core, unattested.task, unattested.workspace);
+  if (!assigned.ok) throw new Error(assigned.error);
+  const state = current(unattested);
+  expect(
+    unattested.core.prepareWorkerDispatch({
+      taskId: unattested.task.id,
+      workerId: assigned.data.id,
+      expectedRevision: state.task.revision,
+      expectedWorkspaceRevision: state.workspace.revision,
+      observation: { stage: "prepare" },
+    }),
+  ).toMatchObject({ ok: false, code: "permission_denied" });
+
+  const lead = active({ nativeWorker: dispatchVerifier() });
+  const { workerId, dispatch } = prepared(lead);
+  const running = current(lead);
+  expect(
+    lead.core.commitWorkerDispatch({
+      dispatch,
+      taskId: lead.task.id,
+      workerId,
+      expectedRevision: running.task.revision,
+      expectedWorkspaceRevision: running.workspace.revision,
+      outcome: "started",
+      session: { kind: "host", host: "workit_cli", handle: "worker-session" },
+      observation: { event: "worker-started" },
+    }).ok,
+  ).toBe(true);
+  const after = current(lead);
+  expect(after.task.workers.find((entry) => entry.id === workerId)?.data).toMatchObject({
+    state: "running",
+    session: { handle: "worker-session" },
+  });
+  expect(
+    lead.core.prepareWorkerDispatch({
+      taskId: lead.task.id,
+      workerId,
+      expectedRevision: after.task.revision,
+      expectedWorkspaceRevision: after.workspace.revision,
+      observation: { stage: "prepare" },
+    }),
+  ).toMatchObject({ ok: false, code: "invalid_transition" });
+});
+
+test("cancellation and launch race one reservation and only the first commit wins", () => {
+  const cancelFirst = active({ nativeWorker: dispatchVerifier() });
+  const cancelled = prepared(cancelFirst);
+  const beforeCancel = current(cancelFirst);
+  expect(
+    cancelFirst.core.worker({
+      schemaVersion: 1,
+      action: "cancel",
+      taskId: cancelFirst.task.id,
+      workerId: cancelled.workerId,
+      expectedRevision: beforeCancel.task.revision,
+      expectedWorkspaceRevision: beforeCancel.workspace.revision,
+      reason: "cancelled before launch",
+    }),
+  ).toMatchObject({ ok: true, data: { data: { state: "cancelling" } } });
+  const cancelling = current(cancelFirst);
+  expect(
+    cancelFirst.core.commitWorkerDispatch({
+      dispatch: cancelled.dispatch,
+      taskId: cancelFirst.task.id,
+      workerId: cancelled.workerId,
+      expectedRevision: cancelling.task.revision,
+      expectedWorkspaceRevision: cancelling.workspace.revision,
+      outcome: "not_started",
+      session: null,
+      observation: { stage: "not_started" },
+    }),
+  ).toMatchObject({ ok: true, data: { data: { state: "stopped", session: null } } });
+  const stopped = current(cancelFirst);
+  expect(
+    cancelFirst.core.commitWorkerDispatch({
+      dispatch: cancelled.dispatch,
+      taskId: cancelFirst.task.id,
+      workerId: cancelled.workerId,
+      expectedRevision: stopped.task.revision,
+      expectedWorkspaceRevision: stopped.workspace.revision,
+      outcome: "started",
+      session: { kind: "host", host: "workit_cli", handle: "late-session" },
+      observation: { event: "worker-started" },
+    }),
+  ).toMatchObject({ ok: false, code: "permission_denied" });
+
+  const launchFirst = active({ nativeWorker: dispatchVerifier() });
+  const launched = prepared(launchFirst);
+  const beforeLaunch = current(launchFirst);
+  expect(
+    launchFirst.core.commitWorkerDispatch({
+      dispatch: launched.dispatch,
+      taskId: launchFirst.task.id,
+      workerId: launched.workerId,
+      expectedRevision: beforeLaunch.task.revision,
+      expectedWorkspaceRevision: beforeLaunch.workspace.revision,
+      outcome: "started",
+      session: { kind: "host", host: "workit_cli", handle: "child-session" },
+      observation: { event: "worker-started" },
+    }).ok,
+  ).toBe(true);
+  const afterLaunch = current(launchFirst);
+  expect(
+    launchFirst.core.commitWorkerDispatch({
+      dispatch: launched.dispatch,
+      taskId: launchFirst.task.id,
+      workerId: launched.workerId,
+      expectedRevision: afterLaunch.task.revision,
+      expectedWorkspaceRevision: afterLaunch.workspace.revision,
+      outcome: "not_started",
+      session: null,
+      observation: { stage: "not_started" },
+    }),
+  ).toMatchObject({ ok: false, code: "permission_denied" });
+  expect(afterLaunch.task.workers.find((entry) => entry.id === launched.workerId)?.data.state).toBe(
+    "running",
+  );
+});
+
+test("an assigned worker without a live reservation is never marked stopped", () => {
+  const lead = active({ nativeWorker: dispatchVerifier() });
+  const assigned = assign(lead.core, lead.task, lead.workspace);
+  if (!assigned.ok) throw new Error(assigned.error);
+  const state = current(lead);
+  expect(
+    lead.core.observeWorkerLifecycle({
+      taskId: lead.task.id,
+      workerId: assigned.data.id,
+      expectedRevision: state.task.revision,
+      expectedWorkspaceRevision: state.workspace.revision,
+      state: "stopped",
+      session: null,
+      observation: { event: "worker-stopped" },
+    }),
+  ).toMatchObject({ ok: false, code: "invalid_input" });
+  expect(
+    lead.core.commitWorkerDispatch({
+      dispatch: {} as WorkerDispatch,
+      taskId: lead.task.id,
+      workerId: assigned.data.id,
+      expectedRevision: state.task.revision,
+      expectedWorkspaceRevision: state.workspace.revision,
+      outcome: "not_started",
+      session: null,
+      observation: { stage: "not_started" },
+    }),
+  ).toMatchObject({ ok: false, code: "permission_denied" });
+  // A restart keeps the reservation out of reach: the same core state is unrecoverable.
+  const restarted = new WorkitCore(
+    lead.store,
+    context(lead.root, { nativeWorker: dispatchVerifier() }),
+  );
+  expect(
+    restarted.commitWorkerDispatch({
+      dispatch: {} as WorkerDispatch,
+      taskId: lead.task.id,
+      workerId: assigned.data.id,
+      expectedRevision: state.task.revision,
+      expectedWorkspaceRevision: state.workspace.revision,
+      outcome: "not_started",
+      session: null,
+      observation: { stage: "not_started" },
+    }),
+  ).toMatchObject({ ok: false, code: "permission_denied" });
+  expect(
+    current(lead).task.workers.find((entry) => entry.id === assigned.data.id)?.data,
+  ).toMatchObject({ state: "assigned", session: null });
+});
+
+test("a reservation issued by one core cannot be replayed through another", () => {
+  const lead = active({ nativeWorker: dispatchVerifier() });
+  const { workerId, dispatch } = prepared(lead);
+  const state = current(lead);
+  const other = new WorkitCore(
+    lead.store,
+    context(lead.root, { nativeWorker: dispatchVerifier() }),
+  );
+  expect(
+    other.commitWorkerDispatch({
+      dispatch,
+      taskId: lead.task.id,
+      workerId,
+      expectedRevision: state.task.revision,
+      expectedWorkspaceRevision: state.workspace.revision,
+      outcome: "not_started",
+      session: null,
+      observation: { stage: "not_started" },
+    }),
+  ).toMatchObject({ ok: false, code: "permission_denied" });
 });
 
 test("unobserved helpers cannot report metadata or escape assignment file scope", () => {

@@ -45,8 +45,47 @@ export type NativeWorkerVerification = {
   caller: Caller;
 };
 
+/**
+ * Host attestation for a worker that has no session yet: `prepare` claims the launch
+ * slot, `not_started` claims that no child was ever created for that same reservation.
+ */
+export type WorkerDispatchStage = "prepare" | "not_started";
+
+export type NativeWorkerDispatchVerification = {
+  observation: unknown;
+  expected: {
+    taskId: Id;
+    workspaceId: Id;
+    workerId: Id;
+    expectedRevision: Revision;
+    expectedWorkspaceRevision: Revision;
+    stage: WorkerDispatchStage;
+  };
+  caller: Caller;
+};
+
 export type NativeWorkerVerifier = {
   verifyWorker: (input: NativeWorkerVerification) => Result<Provenance>;
+  /** Hosts that can observe their own launch surface also attest dispatch stages. */
+  verifyDispatch?: (input: NativeWorkerDispatchVerification) => Result<Provenance>;
+};
+
+declare const workerDispatch: unique symbol;
+/** Opaque in-process launch reservation. Adapters hold it; it is never serialized. */
+export type WorkerDispatch = { readonly [workerDispatch]: true };
+
+export type WorkerDispatchRequest = {
+  taskId: Id;
+  workerId: Id;
+  expectedRevision: Revision;
+  expectedWorkspaceRevision: Revision;
+  observation: unknown;
+};
+
+export type WorkerDispatchCommit = WorkerDispatchRequest & {
+  dispatch: WorkerDispatch;
+  outcome: "started" | "not_started";
+  session: HostSession | null;
 };
 
 const same = (left: unknown, right: unknown): boolean => {

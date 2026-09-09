@@ -70,5 +70,15 @@ is never available to supervised children.
 - An ordinary post-plan session presents five choices; a handoff-destination session presents exactly four (never the originating Handoff option) and carries the handoff-destination marker.
 - Approval evidence: OpenCode records native-question receipts; Cursor is policy-only by design (never fabricate delegated identity). Receipt and menu labels are compared semantically: host qualifiers such as `(Recommended)` and `(new session only)` are normalized at comparison time, and the original label bytes are preserved. Receipts are purpose-bound: each gate consumes the newest unconsumed fresh receipt for exactly its purpose (`spec-approval`, `plan-approval`, `execution-menu`, `plan-pause`, `plan-resume`, `plan-complete`); unrelated questions never authorize or mask a gate.
 - Delegated authority is direct-child-only where the host exposes a trusted parent binding. OpenCode derives it from native session parentage; Cursor uses documented `subagentStart` identity for bounded assignment and never invents a cross-process token or receipt. Cursor `subagentStop` lacks a stable child identity, AskQuestion answers are policy-only, and arbitrary shell/Tab writes remain unavailable.
+- Worker launches are reservation-bound. `prepareWorkerDispatch` /
+  `commitWorkerDispatch` are host-only core methods (never a ninth family, never
+  caller-supplied receipts): a host claims the slot of an exactly-`assigned`
+  worker before spawning, and the in-process reservation settles once as either
+  `started` with the observed child session or `not_started` (host-attested
+  `stopped`, null session). OpenCode prepares at `tool.execute.before` for a
+  native `task` call with exactly one attributable assigned worker; Pi prepares
+  on the live handle immediately before spawn. Never mark a worker stopped from
+  a null session, missing metadata, a cancellation string, or a lost
+  reservation — those stay unresolved.
 - VCS routing is per-workspace: `workspaces.json` `resolveWorkspace` maps `work`-glob repos to GitLab/`develop`/gitflow and `personal`-glob repos to GitHub/`main`/github-flow, resolved in the order explicit workspace `vcs.defaultTargetBranch` → workspace branchPolicy default → global `vcs.json` → preset defaults. The active `vcs.json` carries no global `defaultTargetBranch`; a global default can no longer shadow a matched workspace's branchPolicy default. On GitHub, `prCreate` pushes the branch before `gh pr create` when `pr.pushBranch` is enabled (default), and a caller-supplied target equal to the resolved default is accepted even though protected. The runtime reads only the active `~/.config/workit/` config dir; legacy `~/.config/workflow-toolkit/` non-secret files were cleaned up once the active config passed status checks.
 - Never use worktrees; use guarded in-place branch setup.

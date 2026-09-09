@@ -65,6 +65,16 @@ Pi also exposes one child-disabled `workit_worker_control` host-orchestration
 tool for launch/cancel/reconcile; the shared core surface remains exactly eight
 `workit_*` operation tools.
 
+Hosts that can observe their own launch surface claim a worker's launch slot
+before spawning it, through the host-only core methods `prepareWorkerDispatch`
+and `commitWorkerDispatch`. The reservation lives in the adapter process, is
+never serialized, and settles exactly once: either the observed child session
+binds the worker as running, or the host attests that no child was ever created
+and the worker is recorded as stopped with no session. A cancelled launch is
+only resolved this way when the same reservation proves it; ambiguous
+assignments, generic cancellation text, and reservations lost to a restart stay
+unresolved rather than being guessed.
+
 ## Manual setup
 
 OpenCode loads the package from its plugin configuration:

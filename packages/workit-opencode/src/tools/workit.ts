@@ -474,6 +474,48 @@ export const nativeWorkerFor = (
   },
 });
 
+/**
+ * One coordinator `task` call. The record is in-memory only, so a plugin restart
+ * loses it and an unbound worker can never be resolved from persisted state alone.
+ */
+export type DispatchGeneration = {
+  coordinator: string;
+  callID: string;
+  childCreated: boolean;
+  noChild: boolean;
+};
+
+export const nativeDispatchFor = (
+  directChildren: DirectChildren,
+  actor: string,
+  generation: DispatchGeneration,
+): NativeWorkerVerifier => ({
+  ...nativeWorkerFor(directChildren, actor),
+  verifyDispatch: ({ expected, caller, observation }) => {
+    const observed = observation as { stage?: unknown; sessionID?: unknown; callID?: unknown };
+    if (
+      caller.host !== "opencode" ||
+      caller.actor !== actor ||
+      generation.coordinator !== actor ||
+      typeof observed !== "object" ||
+      observed === null ||
+      observed.stage !== expected.stage ||
+      observed.sessionID !== actor ||
+      observed.callID !== generation.callID
+    )
+      return failure("permission_denied", "OpenCode task dispatch was not observed");
+    if (expected.stage === "not_started" && (generation.childCreated || !generation.noChild))
+      return failure("permission_denied", "OpenCode task call did not prove that no child exists");
+    return success(null, null, {
+      kind: "host_observed",
+      host: "opencode",
+      session: hostRef(actor),
+      workerId: expected.workerId,
+      receipts: [hostRef(`task:${generation.callID}`)],
+    });
+  },
+});
+
 /** Bind concrete optional effects to one approved action decision in this session. */
 export const nativeExternalActionRunner = (
   root: string,

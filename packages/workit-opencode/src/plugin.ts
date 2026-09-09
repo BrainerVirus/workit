@@ -10,12 +10,15 @@ import { getWorkitBootstrap } from "./bootstrap";
 import {
   createWorkitTools,
   NativeReceiptStore,
+  nativeDispatchFor,
   nativeWorkerFor,
   observeQuestion,
   sameWorkspace,
   sessionParent,
   type DirectChildren,
+  type DispatchGeneration,
 } from "./tools/workit";
+import type { WorkerDispatch } from "@brainervirus/workit-core/src/core";
 import { compactContextFor, loadProvenance, workerContextFor } from "./runtime";
 
 const root = fileURLToPath(new URL("../assets/", import.meta.url));
@@ -198,6 +201,26 @@ const enforceWriter = async (
   if (!result.ok) throw new Error(`${result.code}: ${result.error}`);
 };
 
+type PreparedDispatch = {
+  generation: DispatchGeneration;
+  dispatch: WorkerDispatch;
+  core: WorkitCore;
+  taskId: string;
+  workerId: string;
+};
+
+/**
+ * The only recognized proof that a native task call produced no child session.
+ * A missing session id, a null session GET, or a cancellation string are all
+ * silence, not evidence, and leave the worker unresolved.
+ */
+const provesNoChild = (metadata: unknown): boolean =>
+  typeof metadata === "object" &&
+  metadata !== null &&
+  (metadata as { childCreated?: unknown }).childCreated === false &&
+  (metadata as { sessionID?: unknown }).sessionID === undefined &&
+  (metadata as { sessionId?: unknown }).sessionId === undefined;
+
 const plugin: Plugin = async ({ client, directory }) => {
   const receipts = new NativeReceiptStore();
   const directChildren: DirectChildren = new Map();
@@ -208,6 +231,7 @@ const plugin: Plugin = async ({ client, directory }) => {
   // Fallback only for a task result that names no session. Once a trusted
   // session exists, lifecycle authority is persisted in core state.
   const unresolvedTaskLaunches = new Set<string>();
+  const dispatches = new Map<string, PreparedDispatch>();
   const bootstrapped = new Set<string>();
   try {
     logger.info(EVENT.initialization, { host: "opencode", plugin_root: root });
@@ -219,6 +243,113 @@ const plugin: Plugin = async ({ client, directory }) => {
     logger.warn(EVENT.hooks, { boundary: "initialization", ...errorDetail(error) });
   }
   const tools = createWorkitTools({ client, receipts, directChildren });
+  const timestamp = () => new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+  const revisions = (taskId: string) => {
+    const store = new TaskStore(directory);
+    const task = store.readTask(taskId);
+    const workspace = store.readWorkspace();
+    return task.ok && workspace.ok && workspace.data
+      ? {
+          expectedRevision: task.data.revision,
+          expectedWorkspaceRevision: workspace.data.revision,
+        }
+      : null;
+  };
+  /** Claim the launch slot of the one worker this coordinator can be launching. */
+  const prepareDispatch = (coordinator: string, callID: string) => {
+    dispatches.delete(coordinator);
+    const store = new TaskStore(directory);
+    const workspace = store.readWorkspace();
+    const listed = store.listTasks();
+    if (!workspace.ok || !workspace.data || !listed.ok) return;
+    const eligible = listed.data.flatMap((task) =>
+      task.status === "active" && task.workspaceId === workspace.data?.id
+        ? task.workers
+            .filter(
+              (entry) =>
+                entry.data.state === "assigned" &&
+                entry.data.session === null &&
+                entry.provenance.session?.kind === "host" &&
+                entry.provenance.session.host === "opencode" &&
+                entry.provenance.session.handle === coordinator,
+            )
+            .map((entry) => ({ task, entry }))
+        : [],
+    );
+    // Ambiguity is left unrecoverable on purpose: guessing would forge a worker identity.
+    if (eligible.length !== 1) return;
+    const generation: DispatchGeneration = {
+      coordinator,
+      callID,
+      childCreated: false,
+      noChild: false,
+    };
+    const core = new WorkitCore(store, {
+      root: directory,
+      caller: { host: "opencode", actor: coordinator },
+      capabilities: [],
+      constraints: [],
+      now: timestamp,
+      nativeWorker: nativeDispatchFor(directChildren, coordinator, generation),
+    });
+    const prepared = core.prepareWorkerDispatch({
+      taskId: eligible[0].task.id,
+      workerId: eligible[0].entry.id,
+      expectedRevision: eligible[0].task.revision,
+      expectedWorkspaceRevision: workspace.data.revision,
+      observation: { stage: "prepare", sessionID: coordinator, callID },
+    });
+    if (!prepared.ok) return;
+    dispatches.set(coordinator, {
+      generation,
+      dispatch: prepared.data,
+      core,
+      taskId: eligible[0].task.id,
+      workerId: eligible[0].entry.id,
+    });
+  };
+  const commitDispatchStart = (coordinator: string, childID: string): boolean => {
+    const pending = dispatches.get(coordinator);
+    if (!pending) return false;
+    pending.generation.childCreated = true;
+    const current = revisions(pending.taskId);
+    if (!current) return false;
+    const committed = pending.core.commitWorkerDispatch({
+      ...current,
+      dispatch: pending.dispatch,
+      taskId: pending.taskId,
+      workerId: pending.workerId,
+      outcome: "started",
+      session: { kind: "host", host: "opencode", handle: childID },
+      observation: { event: "running", sessionID: childID },
+    });
+    if (!committed.ok) return false;
+    dispatches.delete(coordinator);
+    lifecycleBindings.set(childID, {
+      parentID: coordinator,
+      taskId: pending.taskId,
+      workerId: pending.workerId,
+    });
+    return true;
+  };
+  const commitDispatchNotStarted = (coordinator: string, callID: string): boolean => {
+    const pending = dispatches.get(coordinator);
+    if (!pending || pending.generation.childCreated) return false;
+    pending.generation.noChild = true;
+    const current = revisions(pending.taskId);
+    if (!current) return false;
+    const committed = pending.core.commitWorkerDispatch({
+      ...current,
+      dispatch: pending.dispatch,
+      taskId: pending.taskId,
+      workerId: pending.workerId,
+      outcome: "not_started",
+      session: null,
+      observation: { stage: "not_started", sessionID: coordinator, callID },
+    });
+    if (committed.ok) dispatches.delete(coordinator);
+    return committed.ok;
+  };
   const observeLifecycle = async (
     sessionID: string,
     parentID: string,
@@ -299,6 +430,10 @@ const plugin: Plugin = async ({ client, directory }) => {
       !sameWorkspace(directory, info.directory)
     )
       return;
+    // Any validated child of this coordinator ends the current generation's claim
+    // that no child exists, even when the session binds to no assigned worker.
+    const live = dispatches.get(info.parentID);
+    if (live) live.generation.childCreated = true;
     const store = new TaskStore(directory);
     const workspace = store.readWorkspace();
     const listed = store.listTasks();
@@ -319,6 +454,13 @@ const plugin: Plugin = async ({ client, directory }) => {
     );
     if (candidates.length !== 1) return;
     directChildren.set(info.id, info.parentID);
+    if (
+      live &&
+      live.taskId === candidates[0].task.id &&
+      live.workerId === candidates[0].entry.id &&
+      commitDispatchStart(info.parentID, info.id)
+    )
+      return;
     await observeLifecycle(
       info.id,
       info.parentID,
@@ -383,16 +525,28 @@ const plugin: Plugin = async ({ client, directory }) => {
         const metadata = output.metadata as
           | { sessionID?: unknown; sessionId?: unknown; status?: unknown; state?: unknown }
           | undefined;
+        const pending = dispatches.get(input.sessionID);
+        const generation =
+          pending?.generation.callID === input.callID ? pending.generation : undefined;
         const child = metadata?.sessionID ?? metadata?.sessionId;
         if (typeof child === "string") {
           const childSession = await sessionData(client, child);
-          if (childSession?.parentID === input.sessionID)
+          if (childSession?.parentID === input.sessionID) {
             directChildren.set(child, input.sessionID);
+            if (generation) commitDispatchStart(input.sessionID, child);
+          }
         }
+        const resolved =
+          generation !== undefined &&
+          !generation.childCreated &&
+          provesNoChild(metadata) &&
+          commitDispatchNotStarted(input.sessionID, input.callID);
+        // The reservation lives for exactly one task call; anything unsettled stays unresolved.
+        if (generation) dispatches.delete(input.sessionID);
         const state = String(
           metadata?.status ?? metadata?.state ?? output.output ?? "",
         ).toLowerCase();
-        if (/(?:cancel|interrupt|unknown|uncertain)/.test(state))
+        if (!resolved && /(?:cancel|interrupt|unknown|uncertain)/.test(state))
           unresolvedTaskLaunches.add(input.sessionID);
       }
     },
@@ -415,6 +569,7 @@ const plugin: Plugin = async ({ client, directory }) => {
           throw new Error(
             "delegation_lineage_denied: native task workers must be direct children of the coordinator",
           );
+        prepareDispatch(input.sessionID, input.callID);
       }
       await enforceWriter(client, directory, input.sessionID, input.tool, output.args ?? {});
     },

@@ -12,11 +12,13 @@ import {
 import {
   cancelWorker,
   advanceWorkerBinding,
+  commitWorkerNotStarted,
   consumeWorkerOutput,
   launchWorker,
   launchSupervisedWorker,
   nativeWorkerForEvidence,
   observeExit,
+  prepareWorkerLaunch,
   observeWorkerStart,
   reportWorker,
   reconcileWorker,
@@ -25,6 +27,7 @@ import {
   workerCommand,
   type PiRuntime,
   type WorkerAssignment,
+  type WorkerHandle,
 } from "../../packages/workit-pi/src/worker";
 import { parseWorkerLines } from "../../packages/workit-pi/src/worker-protocol";
 import { taskStartRequest } from "../workit-core/task-fixtures";
@@ -561,6 +564,17 @@ test("supervised implementer observes the child before acquiring writer or sendi
     kill: () => true,
   };
   const fakeCore = {
+    prepareWorkerDispatch: () => ({
+      ok: true,
+      schemaVersion: 1,
+      revision: "r",
+      workspaceRevision: "w",
+      data: {},
+    }),
+    commitWorkerDispatch: () => {
+      order.push("observe");
+      return { ok: true, schemaVersion: 1, revision: "r", workspaceRevision: "w", data: {} };
+    },
     observeWorkerLifecycle: () => {
       order.push("observe");
       return { ok: true, schemaVersion: 1, revision: "r", workspaceRevision: "w", data: {} };
@@ -646,6 +660,10 @@ test("writer failure persists unknown before termination and reconciles only on 
     binding,
     writerCore,
     prompt: "must not be sent",
+    onPrepare: (pending) => {
+      child = pending;
+      return true;
+    },
     onSpawn: (spawned) => {
       child = spawned;
       return true;
@@ -767,6 +785,10 @@ test("core-backed supervisor refreshes revisions through report and observed exi
     binding,
     writerCore: childCore,
     prompt: "implement",
+    onPrepare: (pending) => {
+      child = pending;
+      return true;
+    },
     onSpawn: (spawned) => {
       child = spawned;
       return true;
@@ -891,6 +913,10 @@ test("supervised asynchronous spawn failure is persisted as unknown by core", ()
   const handle = launchSupervisedWorker(assignment("reviewer"), {
     runtime: runtime(root),
     binding,
+    onPrepare: (pending) => {
+      child = pending;
+      return true;
+    },
     onSpawn: (spawned) => {
       child = spawned;
       return true;
@@ -913,4 +939,160 @@ test("supervised asynchronous spawn failure is persisted as unknown by core", ()
   ).toBe("unknown");
   const failedWorkspace = store.readWorkspace();
   expect(failedWorkspace.ok && failedWorkspace.data?.writer).toBeNull();
+});
+
+const dispatchFixture = () => {
+  const root = mkdtempSync(path.join(tmpdir(), "workit-pi-dispatch-"));
+  const store = new TaskStore(root);
+  let child: WorkerHandle | null = null;
+  const core = new WorkitCore(store, {
+    root,
+    caller: { host: "pi", actor: "coordinator" },
+    callerAttested: true,
+    capabilities: [],
+    constraints: [],
+    now: "2026-01-01T00:00:00Z",
+    nativeWorker: nativeWorkerForEvidence(() => child),
+  });
+  const started = core.task(taskStartRequest());
+  if (!started.ok) throw new Error(started.error);
+  const taskId = (started.data as { id: string }).id;
+  const task = store.readTask(taskId);
+  const workspace = store.readWorkspace();
+  if (!task.ok || !workspace.ok || !workspace.data) throw new Error("missing fixture");
+  const assigned = core.worker({
+    schemaVersion: 1,
+    action: "assign",
+    taskId,
+    expectedRevision: task.data.revision,
+    expectedWorkspaceRevision: workspace.data.revision,
+    assignment: assignment("reviewer"),
+  });
+  if (!assigned.ok) throw new Error(assigned.error);
+  const afterTask = store.readTask(taskId);
+  const afterWorkspace = store.readWorkspace();
+  if (!afterTask.ok || !afterWorkspace.ok || !afterWorkspace.data)
+    throw new Error("missing assignment");
+  const binding = {
+    core,
+    taskId,
+    workerId: assigned.data.id,
+    expectedRevision: afterTask.data.revision,
+    expectedWorkspaceRevision: afterWorkspace.data.revision,
+    sessionId: "pi-dispatch-session",
+  };
+  return {
+    root,
+    binding,
+    setChild: (value: WorkerHandle | null) => {
+      child = value;
+    },
+    state: () => {
+      const current = store.readTask(taskId);
+      if (!current.ok) throw new Error(current.error);
+      const worker = current.data.workers.find((entry) => entry.id === assigned.data.id);
+      return { state: worker?.data.state, session: worker?.data.session ?? null };
+    },
+  };
+};
+
+test("a prepared Pi launch that never spawned is cancelled as never started", async () => {
+  const fixture = dispatchFixture();
+  const handle = launchWorker(assignment("reviewer"), {
+    runtime: runtime(fixture.root),
+    taskId: fixture.binding.taskId,
+    workerId: fixture.binding.workerId,
+    sessionId: fixture.binding.sessionId,
+    onPrepare: (pending) => {
+      fixture.setChild(pending);
+      expect(prepareWorkerLaunch(fixture.binding, pending).ok).toBe(true);
+      // The coordinator withdrew the launch after the slot was claimed.
+      return false;
+    },
+    spawn: () => {
+      throw new Error("the withdrawn launch must not spawn");
+    },
+  });
+  expect(handle.spawned).toBe(false);
+  expect(handle.child).toBeNull();
+  expect(fixture.state()).toMatchObject({ state: "assigned", session: null });
+  expect(await cancelWorker(handle, { binding: fixture.binding })).toMatchObject({
+    state: "stopped",
+    observed: true,
+  });
+  expect(fixture.state()).toMatchObject({ state: "stopped", session: null });
+});
+
+test("a spawned Pi worker is never recorded as not started", async () => {
+  const fixture = dispatchFixture();
+  const handle = launchSupervisedWorker(assignment("reviewer"), {
+    runtime: runtime(fixture.root),
+    binding: fixture.binding,
+    onPrepare: (pending) => {
+      fixture.setChild(pending);
+      return true;
+    },
+    onSpawn: (spawned) => {
+      fixture.setChild(spawned);
+      return true;
+    },
+    spawn: () =>
+      ({
+        pid: 4242,
+        stdout: null,
+        stderr: null,
+        once: () => undefined,
+        kill: () => true,
+      }) as never,
+  });
+  expect(handle.state).toBe("running");
+  expect(handle.dispatch).toBeNull();
+  expect(fixture.state()).toMatchObject({
+    state: "running",
+    session: { handle: "pi-dispatch-session" },
+  });
+  expect(commitWorkerNotStarted(fixture.binding, handle).ok).toBe(false);
+  expect(
+    (await cancelWorker(handle, { binding: fixture.binding, graceMs: 1, killWaitMs: 1 })).state,
+  ).toBe("unknown");
+  expect(fixture.state().state).toBe("running");
+});
+
+test("a raced Pi spawn or a handle without a reservation stays unresolved", async () => {
+  const fixture = dispatchFixture();
+  const raced = launchWorker(assignment("reviewer"), {
+    runtime: runtime(fixture.root),
+    taskId: fixture.binding.taskId,
+    workerId: fixture.binding.workerId,
+    sessionId: fixture.binding.sessionId,
+    onPrepare: (pending) => {
+      fixture.setChild(pending);
+      return prepareWorkerLaunch(fixture.binding, pending).ok;
+    },
+    spawn: () => {
+      throw new Error("spawn raced");
+    },
+  });
+  expect(raced.spawned).toBe(true);
+  expect(raced.child).toBeNull();
+  expect(await cancelWorker(raced, { binding: fixture.binding })).toMatchObject({
+    state: "unknown",
+    observed: false,
+  });
+  expect(fixture.state()).toMatchObject({ state: "assigned", session: null });
+
+  // A handle rebuilt after a restart holds no reservation and cannot recover either.
+  const reconstructed = launchWorker(assignment("reviewer"), {
+    runtime: runtime(fixture.root),
+    taskId: fixture.binding.taskId,
+    workerId: fixture.binding.workerId,
+    sessionId: fixture.binding.sessionId,
+    onPrepare: () => false,
+    spawn: () => {
+      throw new Error("must not spawn");
+    },
+  });
+  expect(reconstructed.dispatch).toBeNull();
+  expect((await cancelWorker(reconstructed, { binding: fixture.binding })).state).toBe("unknown");
+  expect(fixture.state()).toMatchObject({ state: "assigned", session: null });
 });

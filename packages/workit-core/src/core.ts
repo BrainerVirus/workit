@@ -113,10 +113,15 @@ export { assertProductWriteAllowed } from "./core/workers";
 export type {
   CallerContext,
   HostSession,
+  NativeWorkerDispatchVerification,
   NativeWorkerObservation,
   NativeWorkerVerification,
   NativeWorkerVerifier,
   ProductWriteInput,
+  WorkerDispatch,
+  WorkerDispatchCommit,
+  WorkerDispatchRequest,
+  WorkerDispatchStage,
 } from "./core/workers";
 
 export type Result<T> =

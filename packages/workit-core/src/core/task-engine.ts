@@ -62,6 +62,10 @@ import {
   type NativeWorkerObservation,
   type NativeWorkerVerification,
   type NativeWorkerVerifier,
+  type WorkerDispatch,
+  type WorkerDispatchCommit,
+  type WorkerDispatchRequest,
+  type WorkerDispatchStage,
 } from "./workers";
 import {
   captureCandidate,
@@ -132,6 +136,22 @@ type WorkerAuthority = {
 type VerifiedWorker = object;
 const verifiedWorkers = new WeakMap<object, WorkerAuthority>();
 
+type DispatchReservation = {
+  owner: object;
+  store: TaskStore;
+  root: string;
+  caller: Caller;
+  taskId: string;
+  workspaceId: string;
+  workerId: string;
+};
+/**
+ * Live launch reservations. Only this module can create one, only the adapter that
+ * received it holds it, and a process restart loses it: a worker left `assigned`
+ * with no session and no live reservation can never be resolved by inference.
+ */
+const dispatchReservations = new WeakMap<object, DispatchReservation>();
+
 const sameValue = (left: unknown, right: unknown): boolean => {
   try {
     return canonicalJson(left) === canonicalJson(right);
@@ -152,6 +172,25 @@ const validNativeProvenance = (
     provenance.host === caller.host &&
     provenance.workerId === expected.workerId &&
     sameValue(provenance.session, expected.session) &&
+    provenance.receipts.some((receipt) => receipt.kind === "host" && receipt.host === caller.host)
+  );
+};
+
+/** A dispatch has no worker session yet, so it is bound to the attesting host session. */
+const validDispatchProvenance = (
+  value: unknown,
+  caller: Caller,
+  workerId: string,
+): value is Provenance => {
+  if (!provenanceSchema.safeParse(value).success) return false;
+  const provenance = value as Provenance;
+  return (
+    provenance.kind === "host_observed" &&
+    provenance.host === caller.host &&
+    provenance.workerId === workerId &&
+    provenance.session?.kind === "host" &&
+    provenance.session.host === caller.host &&
+    provenance.session.handle === caller.actor &&
     provenance.receipts.some((receipt) => receipt.kind === "host" && receipt.host === caller.host)
   );
 };
@@ -253,6 +292,8 @@ type ObserveWorkerLifecycleInput = NativeWorkerObservation & {
   authorityOwner: object;
   caller: Caller;
   now?: Utc;
+  /** Set only by commitWorkerDispatch for a reservation that produced no child. */
+  dispatch?: boolean;
 };
 
 const applyWorkerLifecycle = (input: ObserveWorkerLifecycleInput): Result<Entry<Worker>> => {
@@ -286,8 +327,17 @@ const applyWorkerLifecycle = (input: ObserveWorkerLifecycleInput): Result<Entry<
     return failure("invalid_transition", "closed task cannot observe workers");
   if (task.data.status === "paused" && (input.state === "running" || input.state === "cancelling"))
     return failure("invalid_transition", "paused task cannot run a worker");
+  const notStarted = input.dispatch === true;
+  if (notStarted && (input.state !== "stopped" || input.session !== null))
+    return failure("invalid_input", "a never-dispatched worker stops with no session");
+  if (notStarted && (entry.data.state === "stopped" || entry.data.state === "unknown"))
+    return failure("invalid_transition", "worker is no longer awaiting dispatch");
+  if (notStarted && (entry.data.session !== null || entry.data.state === "running"))
+    return failure("invalid_transition", "worker already has an observed session");
   if (
-    (input.state === "running" || input.state === "cancelling" || input.state === "stopped") &&
+    (input.state === "running" ||
+      input.state === "cancelling" ||
+      (input.state === "stopped" && !notStarted)) &&
     !input.session
   )
     return failure("invalid_input", "running worker observations require a session");
@@ -1537,12 +1587,192 @@ export class WorkitCore {
     if (!authority.ok) return authority as Result<never>;
     return applyWorkerLifecycle({
       ...input,
+      dispatch: false,
       store: this.store,
       authority: authority.data,
       authorityOwner: this.authorityOwner,
       caller: this.context.caller,
       now: trustedNow(this.context),
     });
+  }
+
+  /** Host-only launch bookkeeping; no operation family exposes these two methods. */
+  private verifyDispatch(
+    stage: WorkerDispatchStage,
+    input: WorkerDispatchRequest,
+    workspaceId: string,
+  ): Result<Provenance> {
+    const verifier = this.context.nativeWorker?.verifyDispatch;
+    if (!verifier)
+      return failure("permission_denied", "native worker dispatch attestation is unavailable");
+    let result: Result<Provenance>;
+    try {
+      result = verifier({
+        observation: input.observation,
+        expected: {
+          taskId: input.taskId,
+          workspaceId,
+          workerId: input.workerId,
+          expectedRevision: input.expectedRevision,
+          expectedWorkspaceRevision: input.expectedWorkspaceRevision,
+          stage,
+        },
+        caller: this.context.caller,
+      });
+    } catch (error) {
+      return failure("permission_denied", `native worker dispatch failed: ${String(error)}`);
+    }
+    if (!result.ok || !validDispatchProvenance(result.data, this.context.caller, input.workerId))
+      return failure("permission_denied", "worker dispatch was not attested by the host");
+    return result;
+  }
+
+  /**
+   * Claim the launch slot of an exactly-`assigned` worker before the host spawns it.
+   * The returned reservation is the only thing that can later record a truthful
+   * "never started" stop, so it stays in the adapter process and is never persisted.
+   */
+  prepareWorkerDispatch(input: WorkerDispatchRequest): Result<WorkerDispatch> {
+    const root = this.contextRootError();
+    if (!root.ok) return root as Result<never>;
+    if ((this.context.workerId ?? null) !== null)
+      return failure("permission_denied", "helpers cannot dispatch workers");
+    const task = this.store.readTask(input.taskId);
+    if (!task.ok) return task as Result<never>;
+    const workspace = this.store.readWorkspace();
+    if (!workspace.ok) return workspace as Result<never>;
+    if (!workspace.data) return failure("not_found", "workspace not found");
+    if (task.data.workspaceId !== workspace.data.id)
+      return failure("recovery_required", "worker workspace binding is invalid");
+    if (task.data.status !== "active")
+      return failure("invalid_transition", "paused or closed tasks cannot dispatch workers");
+    const entry = task.data.workers.find((candidate) => candidate.id === input.workerId);
+    if (!entry) return failure("not_found", "worker not found");
+    if (entry.data.state !== "assigned" || entry.data.session !== null)
+      return failure("invalid_transition", "worker is not awaiting dispatch");
+    const attested = this.verifyDispatch("prepare", input, workspace.data.id);
+    if (!attested.ok) return attested as Result<never>;
+    const changed = this.store.mutateTaskAndWorkspace({
+      taskId: task.data.id,
+      expectedTaskRevision: input.expectedRevision,
+      expectedWorkspaceRevision: input.expectedWorkspaceRevision,
+      now: trustedNow(this.context),
+      workspace: (current, mutation) => success(mutation.revision, mutation.revision, current),
+      task: (current, mutation) => {
+        const candidate = current.workers.find((item) => item.id === input.workerId);
+        if (!candidate) return failure("not_found", "worker not found");
+        if (candidate.data.state !== "assigned" || candidate.data.session !== null)
+          return failure("invalid_transition", "worker is not awaiting dispatch");
+        return success(mutation.revision, null, {
+          ...current,
+          workers: current.workers.map((item) =>
+            item.id === input.workerId
+              ? { ...item, recordedAt: mutation.now, provenance: attested.data }
+              : item,
+          ),
+        });
+      },
+    });
+    if (!changed.ok) return changed as Result<never>;
+    const dispatch = {} as WorkerDispatch;
+    dispatchReservations.set(dispatch, {
+      owner: this.authorityOwner,
+      store: this.store,
+      root: this.store.root,
+      caller: this.context.caller,
+      taskId: task.data.id,
+      workspaceId: workspace.data.id,
+      workerId: input.workerId,
+    });
+    return success(changed.data.task.revision, changed.data.workspace.revision, dispatch);
+  }
+
+  /**
+   * Settle a live reservation exactly once: `started` binds the observed child session,
+   * `not_started` records a host-attested stop with no session. Whichever lands first
+   * consumes the reservation, so a launch and a cancellation cannot both win.
+   */
+  commitWorkerDispatch(input: WorkerDispatchCommit): Result<Entry<Worker>> {
+    const root = this.contextRootError();
+    if (!root.ok) return root as Result<never>;
+    if ((this.context.workerId ?? null) !== null)
+      return failure("permission_denied", "helpers cannot dispatch workers");
+    const reservation = dispatchReservations.get(input.dispatch);
+    if (
+      !reservation ||
+      reservation.owner !== this.authorityOwner ||
+      reservation.store !== this.store ||
+      reservation.root !== this.store.root ||
+      !sameValue(reservation.caller, this.context.caller) ||
+      reservation.taskId !== input.taskId ||
+      reservation.workerId !== input.workerId
+    )
+      return failure("permission_denied", "worker dispatch reservation is not live");
+    const workspace = this.store.readWorkspace();
+    if (!workspace.ok) return workspace as Result<never>;
+    if (!workspace.data) return failure("not_found", "workspace not found");
+    if (workspace.data.id !== reservation.workspaceId)
+      return failure("recovery_required", "worker workspace binding is invalid");
+    const observation: NativeWorkerObservation = {
+      taskId: input.taskId,
+      workerId: input.workerId,
+      expectedRevision: input.expectedRevision,
+      expectedWorkspaceRevision: input.expectedWorkspaceRevision,
+      state: input.outcome === "started" ? "running" : "stopped",
+      session: input.session,
+      observation: input.observation,
+    };
+    let authority: VerifiedWorker;
+    if (input.outcome === "started") {
+      if (!input.session) return failure("invalid_input", "a started worker requires a session");
+      const verified = verifyNativeWorker(
+        this.context.nativeWorker,
+        {
+          observation: input.observation,
+          expected: { ...observation, workspaceId: workspace.data.id },
+          caller: this.context.caller,
+        },
+        {
+          owner: this.authorityOwner,
+          store: this.store,
+          root: this.store.root,
+          caller: this.context.caller,
+        },
+      );
+      if (!verified.ok) return verified as Result<never>;
+      authority = verified.data;
+    } else {
+      if (input.session !== null)
+        return failure("invalid_input", "a never-dispatched worker stops with no session");
+      const attested = this.verifyDispatch("not_started", input, workspace.data.id);
+      if (!attested.ok) return attested as Result<never>;
+      authority = {};
+      verifiedWorkers.set(authority, {
+        taskId: input.taskId,
+        workspaceId: workspace.data.id,
+        workerId: input.workerId,
+        expectedRevision: input.expectedRevision,
+        expectedWorkspaceRevision: input.expectedWorkspaceRevision,
+        state: "stopped",
+        session: null,
+        provenance: attested.data,
+        owner: this.authorityOwner,
+        store: this.store,
+        root: this.store.root,
+        caller: this.context.caller,
+      });
+    }
+    const applied = applyWorkerLifecycle({
+      ...observation,
+      dispatch: input.outcome === "not_started",
+      store: this.store,
+      authority,
+      authorityOwner: this.authorityOwner,
+      caller: this.context.caller,
+      now: trustedNow(this.context),
+    });
+    if (applied.ok) dispatchReservations.delete(input.dispatch);
+    return applied;
   }
 
   writer(request: unknown): Result<WorkspaceRecord> {
