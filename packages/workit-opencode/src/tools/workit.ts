@@ -4,7 +4,16 @@ import { tool } from "@opencode-ai/plugin";
 import {
   WorkitCore,
   TaskStore,
+  approvedExternalAction,
+  externalActionDescriptor,
+  externalActionHelp,
+  priorExternalAction,
+  externalActionRequest,
+  externalActionRef,
   canonicalJson,
+  createAuthorizedExternalActionRunner,
+  matchesNativeExternalAction,
+  nativeExternalActionObservation,
   failure,
   operationSchemas,
   parseOperation,
@@ -14,7 +23,16 @@ import {
   type OperationContext,
   type ContractResult as Result,
 } from "@brainervirus/workit-core/src/core";
-import type { NativeAuthorityVerifier } from "@brainervirus/workit-core/src/core/authority";
+import {
+  approvedResolvedExternalAction,
+  executeResolvedExternalAction,
+  readExternalAction,
+  resolveExternalActionRequest,
+} from "@brainervirus/workit-core/src/core/external-action-effects";
+import type {
+  NativeAuthorityVerifier,
+  NativeReconciliationVerification,
+} from "@brainervirus/workit-core/src/core/authority";
 import type { NativeWorkerVerifier } from "@brainervirus/workit-core/src/core/workers";
 
 type SessionLookup = {
@@ -344,7 +362,11 @@ export const opencodeCapabilities = () => [
   },
 ];
 
-const nativeAuthority = (receipts: NativeReceiptStore, actor: string): NativeAuthorityVerifier => ({
+const nativeAuthority = (
+  receipts: NativeReceiptStore,
+  actor: string,
+  reconciliationTokens = new WeakSet<object>(),
+): NativeAuthorityVerifier => ({
   verifyDecision: ({ observation, expected, caller }) => {
     const receipt = receipts.verify(observation, actor, "decision");
     if (
@@ -378,7 +400,59 @@ const nativeAuthority = (receipts: NativeReceiptStore, actor: string): NativeAut
       receipts: [hostRef(receipt.callID)],
     });
   },
-  verifyAction: () => failure("permission_denied", "native action observation is unavailable"),
+  verifyAction: ({ observation, expected, caller }) => {
+    if (
+      caller.host !== "opencode" ||
+      caller.actor !== actor ||
+      !matchesNativeExternalAction(observation, {
+        actor,
+        actionRef: expected.actionRef,
+        outcome: expected.outcome,
+        ...(expected.outcome === "reserve"
+          ? {}
+          : { taskRevision: expected.taskRevision, workspaceRevision: expected.workspaceRevision }),
+      })
+    )
+      return failure("permission_denied", "native action observation is not bound to this session");
+    const callId =
+      typeof observation === "object" &&
+      observation !== null &&
+      typeof (observation as { callId?: unknown }).callId === "string"
+        ? (observation as { callId: string }).callId
+        : expected.actionRef.kind === "host"
+          ? expected.actionRef.handle
+          : "external-action";
+    return success(null, null, {
+      kind: "host_observed",
+      host: "opencode",
+      session: hostRef(actor),
+      workerId: null,
+      receipts: [hostRef(`action:${callId}`)],
+    });
+  },
+  verifyReconciliation: ({ observation, expected, caller }: NativeReconciliationVerification) => {
+    const value = observation as Record<string, unknown>;
+    if (
+      typeof observation !== "object" ||
+      observation === null ||
+      caller.host !== "opencode" ||
+      caller.actor !== actor ||
+      !reconciliationTokens.has(observation) ||
+      value.kind !== "provider_read" ||
+      value.outcome !== "succeeded" ||
+      value.evidenceDigest !== expected.evidenceDigest ||
+      (expected.step !== undefined && value.step !== expected.step) ||
+      canonicalJson(value.actionRef) !== canonicalJson(expected.actionRef)
+    )
+      return failure("permission_denied", "native hosting reconciliation is not attested");
+    return success(null, null, {
+      kind: "host_observed",
+      host: "opencode",
+      session: hostRef(actor),
+      workerId: null,
+      receipts: [hostRef(`reconcile:${expected.evidenceDigest}`)],
+    });
+  },
 });
 
 export const nativeWorkerFor = (
@@ -399,6 +473,48 @@ export const nativeWorkerFor = (
     });
   },
 });
+
+/** Bind concrete optional effects to one approved action decision in this session. */
+export const nativeExternalActionRunner = (
+  root: string,
+  actor: string,
+  core: WorkitCore,
+  step?: string,
+) =>
+  createAuthorizedExternalActionRunner(core, (operation) => {
+    const store = new TaskStore(root);
+    const selected = approvedExternalAction(store, "opencode", actor, operation);
+    if (!selected.ok) return selected;
+    const actionRef = externalActionRef("opencode", actor, operation);
+    return {
+      taskId: selected.data.task.id,
+      decisionId: selected.data.entry.id,
+      actionRef,
+      expectedRevision: selected.data.task.revision,
+      expectedWorkspaceRevision: selected.data.workspace.revision,
+      binding: selected.data.entry.data.binding,
+      ...(step ? { step } : {}),
+      refresh: () => {
+        const task = store.readTask(selected.data.task.id);
+        const workspace = store.readWorkspace();
+        if (!task.ok || !workspace.ok || !workspace.data)
+          throw new Error("external action state changed");
+        return {
+          expectedRevision: task.data.revision,
+          expectedWorkspaceRevision: workspace.data.revision,
+        };
+      },
+      reserveObservation: nativeExternalActionObservation(actor, actionRef, "reserve"),
+      settleObservation: (outcome: "succeeded" | "not_started" | "unknown", revisions) =>
+        nativeExternalActionObservation(
+          actor,
+          actionRef,
+          outcome,
+          actionRef.kind === "host" ? actionRef.handle : "external-action",
+          revisions,
+        ),
+    };
+  });
 
 const workerIdFor = (
   store: TaskStore,
@@ -510,11 +626,145 @@ export const createWorkitTools = ({
         return output(result);
       },
     });
-  return Object.fromEntries(
+  const tools = Object.fromEntries(
     (
       ["task", "policy", "evidence", "finding", "decision", "worker", "writer", "state"] as const
     ).map((family) => [`workit_${family}`, make(family)]),
   );
+  return {
+    ...tools,
+    workit_external_action: tool({
+      description: `Run one fixed optional action. ${externalActionHelp}`,
+      args: {
+        operation: tool.schema.enum([
+          "git.branch_setup",
+          "git.commit",
+          "git.push",
+          "hosting.pull_request",
+          "youtrack.update",
+          "youtrack.time",
+          "youtrack.meeting",
+          "changelog.apply",
+          "context.read",
+        ]),
+        payload: tool.schema.record(tool.schema.string(), tool.schema.any()),
+      },
+      execute: async (args, context) => {
+        const parsed = externalActionRequest(args);
+        if (!parsed.ok) return output(parsed);
+        if (client && parsed.data.operation !== "context.read") {
+          const earlySession = await sessionData(client, context.sessionID);
+          if (earlySession !== null && sessionParent(earlySession) !== undefined)
+            return output(
+              failure("permission_denied", "child sessions cannot run external actions"),
+            );
+        }
+        const resolved = resolveExternalActionRequest(context.directory, parsed.data);
+        if (!resolved.ok) return output(resolved);
+        if (resolved.data.request.operation === "context.read")
+          return output(await executeResolvedExternalAction(resolved.data, context.directory));
+        if (!client)
+          return output(
+            failure("capability_unavailable", "OpenCode native session observation unavailable", {
+              capability: "external_action",
+            }),
+          );
+        const data = await sessionData(client, context.sessionID);
+        if (data === null || !sameWorkspace(context.directory, data.directory ?? ""))
+          return output(
+            failure("permission_denied", "OpenCode native session observation unavailable"),
+          );
+        if (sessionParent(data) !== undefined)
+          return output(failure("permission_denied", "child sessions cannot run external actions"));
+        const store = new TaskStore(context.directory);
+        const prior = priorExternalAction(
+          store,
+          "opencode",
+          context.sessionID,
+          resolved.data.request.operation,
+          resolved.data.request.payload,
+        );
+        if (
+          prior.ok &&
+          prior.data.entry.data.consumption !== null &&
+          prior.data.entry.data.consumption.state !== "uncertain"
+        )
+          return output(failure("permission_denied", "external action was already settled"));
+        const reconciliationTokens = new WeakSet<object>();
+        const core = new WorkitCore(store, {
+          root: context.directory,
+          caller: { host: "opencode", actor: context.sessionID },
+          capabilities: opencodeCapabilities(),
+          constraints: [],
+          now: () => new Date().toISOString().replace(/\.\d{3}Z$/, "Z"),
+          workerId: null,
+          nativeAuthority: nativeAuthority(receipts, context.sessionID, reconciliationTokens),
+        });
+        if (prior.ok && prior.data.entry.data.consumption?.state === "uncertain") {
+          const original = approvedResolvedExternalAction(
+            prior.data.entry.data.binding.approvedContent,
+          );
+          if (original.ok) {
+            const actionRef = prior.data.entry.data.consumption.actionRef;
+            const evidence = await readExternalAction(context.directory, original.data, actionRef);
+            if (evidence.ok && evidence.data.outcome === "succeeded") {
+              const freshTask = store.readTask(prior.data.task.id);
+              const freshWorkspace = store.readWorkspace();
+              if (freshTask.ok && freshWorkspace.ok && freshWorkspace.data) {
+                reconciliationTokens.add(evidence.data.observation);
+                const reconciled = core.reconcileAction({
+                  taskId: prior.data.task.id,
+                  decisionId: prior.data.entry.id,
+                  actionRef,
+                  expectedRevision: freshTask.data.revision,
+                  expectedWorkspaceRevision: freshWorkspace.data.revision,
+                  outcome: "succeeded",
+                  evidenceDigest: evidence.data.evidenceDigest,
+                  ...(evidence.data.step ? { step: evidence.data.step } : {}),
+                  observation: evidence.data.observation,
+                });
+                if (reconciled.ok) {
+                  if (evidence.data.step === "comment") {
+                    const remaining = await nativeExternalActionRunner(
+                      context.directory,
+                      context.sessionID,
+                      core,
+                      "time",
+                    )(prior.data.entry.data.binding.approvedContent, () =>
+                      executeResolvedExternalAction(original.data, context.directory, "time", {
+                        host: "opencode",
+                        actor: context.sessionID,
+                      }),
+                    );
+                    return output(remaining);
+                  }
+                  return output(reconciled);
+                }
+              }
+            }
+          }
+          return output(
+            failure("external_outcome_unknown", "previous external action outcome is unknown"),
+          );
+        }
+        const descriptor = externalActionDescriptor(
+          resolved.data.request.operation,
+          resolved.data.descriptorPayload,
+        );
+        const result = await nativeExternalActionRunner(
+          context.directory,
+          context.sessionID,
+          core,
+        )(descriptor, (step) =>
+          executeResolvedExternalAction(resolved.data, context.directory, step, {
+            host: "opencode",
+            actor: context.sessionID,
+          }),
+        );
+        return output(result);
+      },
+    }),
+  };
 };
 
 export const observeQuestion = (

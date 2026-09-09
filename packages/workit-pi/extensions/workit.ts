@@ -107,7 +107,7 @@ export default function extension(pi: ExtensionAPI): void {
   const workers = new Map<string, WorkerHandle>();
   const bindings = new Map<string, WorkerLifecycleBinding>();
   const childWorker = process.env.WORKIT_PI_WORKER_ID;
-  registerWorkitTools(pi);
+  registerWorkitTools(pi, { allowExternalActions: !childWorker });
 
   const reconcileLostWorkers = (ctx: ExtensionContext): void => {
     if (!ctx.isProjectTrusted() || process.env.WORKIT_PI_WORKER_ID) return;

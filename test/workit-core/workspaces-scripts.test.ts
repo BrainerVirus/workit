@@ -240,9 +240,19 @@ test(
           "workspaces.json": workspacesJson(`${base}/work/**`, "gitlab"),
         },
         { WORKFLOW_WORKSPACE_ROOT: path.join(base, "work", "repo") },
-        () => vcsConfig("resolve", elsewhere),
+        () => vcsConfig("resolve"),
       );
       expect(r.workspace_name).toBe("work");
+      const explicit = withConfigFiles(
+        {
+          "vcs.json": JSON.stringify(GLOBAL_VCS),
+          "workspaces.json": workspacesJson(`${base}/work/**`, "gitlab"),
+        },
+        { WORKFLOW_WORKSPACE_ROOT: path.join(base, "work", "repo") },
+        () => vcsConfig("resolve", elsewhere),
+      );
+      expect(explicit.workspace_name).toBeNull();
+      expect(explicit.provider).toBe("github");
     } finally {
       rmSync(base, { recursive: true, force: true });
       rmSync(elsewhere, { recursive: true, force: true });

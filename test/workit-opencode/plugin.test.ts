@@ -29,7 +29,10 @@ test("the plugin module only exports the default OpenCode plugin", async () => {
 
 test("registers exactly the eight native operation tools", async () => {
   const hooks = await plugin(pluginInput as never);
-  expect(Object.keys(hooks.tool ?? {})).toEqual(families.map((family) => `workit_${family}`));
+  expect(Object.keys(hooks.tool ?? {})).toEqual([
+    ...families.map((family) => `workit_${family}`),
+    "workit_external_action",
+  ]);
 });
 
 test("config registers only the seven policy-selected method skills", async () => {

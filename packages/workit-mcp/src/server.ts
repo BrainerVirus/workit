@@ -4,7 +4,10 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
   CallToolRequestSchema,
+  ListResourceTemplatesRequestSchema,
+  ListResourcesRequestSchema,
   ListToolsRequestSchema,
+  ReadResourceRequestSchema,
   type CallToolResult,
 } from "@modelcontextprotocol/sdk/types.js";
 import {
@@ -18,6 +21,7 @@ import {
 } from "@brainervirus/workit-core/src/core";
 import type { Host, Result } from "@brainervirus/workit-core/src/core/task-contract";
 import { redactSecrets } from "@brainervirus/workit-core/src/core/logger";
+import { readExternalContext } from "@brainervirus/workit-core/src/core/external-action-effects";
 
 export type McpHost = Extract<Host, "cursor" | "codex_cli" | "codex_desktop">;
 export type NativeContextProvider = { current(): Promise<OperationContext> };
@@ -32,7 +36,20 @@ export class McpCapabilityUnavailableError extends Error {
   }
 }
 
+class McpResourceInputError extends Error {}
+
 const MCP_HOSTS = new Set<McpHost>(["cursor", "codex_cli", "codex_desktop"]);
+const CONTEXT_KINDS = ["git", "pr", "youtrack", "changelog", "release", "affected"] as const;
+type ContextKind = (typeof CONTEXT_KINDS)[number];
+const CONTEXT_SELECTORS = ["range", "issueId"] as const;
+const safeCapability = (value: string, allowed: readonly string[]): string =>
+  allowed.includes(value) ? value : "context";
+const TOOL_CAPABILITIES = [
+  ...CONTEXT_KINDS,
+  "workspace",
+  "native_caller_identity",
+  "external_action",
+];
 const VERSION = (() => {
   try {
     const packageJson = JSON.parse(
@@ -127,13 +144,14 @@ const resultForClient = (result: Result<unknown>, workspaceRoot?: string): CallT
 const thrownResult = (tool: string, error: unknown, workspaceRoot?: string): CallToolResult => {
   reportError(tool, error, workspaceRoot);
   if (error instanceof McpCapabilityUnavailableError) {
+    const capability = safeCapability(error.capability, TOOL_CAPABILITIES);
     return resultForClient(
       {
         ok: false,
         schemaVersion: 1,
         code: "capability_unavailable",
-        error: `${error.capability} unavailable`,
-        details: { capability: error.capability },
+        error: `${capability} unavailable`,
+        details: { capability },
       },
       workspaceRoot,
     );
@@ -150,7 +168,10 @@ const thrownResult = (tool: string, error: unknown, workspaceRoot?: string): Cal
 
 export function createMcpServer(host: McpHost, contextProvider: NativeContextProvider): Server {
   assertMcpHost(host);
-  const server = new Server({ name: "workit", version: VERSION }, { capabilities: { tools: {} } });
+  const server = new Server(
+    { name: "workit", version: VERSION },
+    { capabilities: { tools: {}, resources: {} } },
+  );
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: OPERATION_FAMILIES.map((family) => ({
@@ -159,6 +180,97 @@ export function createMcpServer(host: McpHost, contextProvider: NativeContextPro
       inputSchema: toolInputSchema(family),
     })),
   }));
+
+  server.setRequestHandler(ListResourcesRequestSchema, async () => ({
+    resources: CONTEXT_KINDS.map((kind) => ({
+      uri: `workit://context/${kind}`,
+      name: `Workit ${kind} context`,
+      description: "Read-only context derived from the host-owned workspace.",
+      mimeType: "application/json",
+    })),
+  }));
+
+  server.setRequestHandler(ListResourceTemplatesRequestSchema, async () => ({
+    resourceTemplates: [
+      {
+        uriTemplate: "workit://context/{kind}{?range,issueId}",
+        name: "Workit context",
+        description: "Read-only context; workspace and caller come from the host session.",
+        mimeType: "application/json",
+      },
+    ],
+  }));
+
+  server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+    let workspaceRoot: string | undefined;
+    try {
+      const context = await contextProvider.current();
+      workspaceRoot = context.root;
+      if (context.caller.host !== host)
+        throw new Error("native context host does not match MCP host");
+      const parsed = new URL(request.params.uri);
+      if (parsed.protocol !== "workit:" || parsed.hostname !== "context")
+        throw new McpResourceInputError("unsupported Workit context URI");
+      const kind = parsed.pathname.replace(/^\//, "") as ContextKind;
+      if (!CONTEXT_KINDS.includes(kind))
+        throw new McpResourceInputError("unsupported Workit context kind");
+      for (const key of parsed.searchParams.keys())
+        if (!CONTEXT_SELECTORS.includes(key as (typeof CONTEXT_SELECTORS)[number]))
+          throw new McpResourceInputError("unsupported Workit context selector");
+      const result = readExternalContext(context.root, {
+        kind,
+        ...(parsed.searchParams.get("range") ? { range: parsed.searchParams.get("range")! } : {}),
+        ...(parsed.searchParams.get("issueId")
+          ? { issueId: parsed.searchParams.get("issueId")! }
+          : {}),
+      });
+      if (!result.ok) throw new McpCapabilityUnavailableError(result.details.capability ?? kind);
+      return {
+        contents: [
+          {
+            uri: request.params.uri,
+            mimeType: "application/json",
+            text: JSON.stringify(result.data),
+          },
+        ],
+      };
+    } catch (error) {
+      reportError("context.read", error, workspaceRoot);
+      const capability =
+        error instanceof McpCapabilityUnavailableError
+          ? safeCapability(error.capability, CONTEXT_KINDS)
+          : "context";
+      const safe =
+        error instanceof McpCapabilityUnavailableError
+          ? {
+              ok: false,
+              schemaVersion: 1,
+              code: "capability_unavailable",
+              error: `${capability} unavailable`,
+              details: { capability },
+            }
+          : error instanceof McpResourceInputError
+            ? {
+                ok: false,
+                schemaVersion: 1,
+                code: "invalid_input",
+                error: "invalid context resource request",
+                details: {},
+              }
+            : {
+                ok: false,
+                schemaVersion: 1,
+                code: "storage_error",
+                error: "MCP operation failed",
+                details: {},
+              };
+      return {
+        contents: [
+          { uri: request.params.uri, mimeType: "application/json", text: JSON.stringify(safe) },
+        ],
+      };
+    }
+  });
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const toolName = request.params.name;

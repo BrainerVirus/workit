@@ -1,10 +1,12 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { TaskStore, WorkitCore, success } from "../../packages/workit-core/src/core";
 import { scope, taskStartRequest } from "../workit-core/task-fixtures";
 import plugin from "../../packages/workit-opencode/src/plugin";
+import { createWorkitTools } from "../../packages/workit-opencode/src/tools/workit";
 
 const user = (text: string) => ({
   info: { role: "user" as const, id: "u", sessionID: "s", time: { created: 0, updated: 0 } },
@@ -34,7 +36,7 @@ const assistant = (text: string) => ({
   ],
 });
 
-const activeTask = (root: string, actor = "lead") => {
+const activeTask = (root: string, actor = "lead", paths = ["."]) => {
   const store = new TaskStore(root);
   const core = new WorkitCore(store, {
     root,
@@ -43,7 +45,11 @@ const activeTask = (root: string, actor = "lead") => {
     constraints: [],
     now: () => "2026-01-01T00:00:00Z",
   });
-  const started = core.task(taskStartRequest());
+  const started = core.task(
+    taskStartRequest({
+      intent: { objective: "test task", scope: scope({ paths }), authorityRefs: [] },
+    }),
+  );
   if (!started.ok) throw new Error(started.error);
   const taskId = (started.data as { id: string }).id;
   const task = store.readTask(taskId);
@@ -402,6 +408,118 @@ test("known write surfaces enforce the current writer while unknown shell writes
         { args: { command: 'python -c \'open("src/file.ts", "w").write("x")\'' } },
       ),
     ).resolves.toBeUndefined();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("OpenCode affected-doc context gates an edit and public evidence captures the changed candidate", async () => {
+  const root = mkdtempSync(join(tmpdir(), "workit-opencode-affected-docs-"));
+  try {
+    for (const args of [
+      ["init", "-q"],
+      ["config", "user.email", "test@example.invalid"],
+      ["config", "user.name", "Workit Test"],
+    ])
+      spawnSync("git", args, { cwd: root });
+    const doc = join(root, "docs", "guide.md");
+    const source = join(root, "src", "app.ts");
+    mkdirSync(join(root, "docs"));
+    mkdirSync(join(root, "src"));
+    writeFileSync(doc, "# Guide\n");
+    writeFileSync(source, "export const version = 1;\n");
+    spawnSync("git", ["add", "-A"], { cwd: root });
+    spawnSync("git", ["commit", "-qm", "fixture"], { cwd: root });
+    writeFileSync(source, "export const version = 2;\n");
+    spawnSync("git", ["add", source], { cwd: root });
+    spawnSync("git", ["commit", "-qm", "source change"], { cwd: root });
+
+    const contextResult = await (createWorkitTools() as any).workit_external_action.execute(
+      { operation: "context.read", payload: { kind: "affected", range: "HEAD~1...HEAD" } },
+      { directory: root, sessionID: "owner" },
+    );
+    const affected = JSON.parse(
+      typeof contextResult === "string" ? contextResult : contextResult.output,
+    );
+    expect(affected).toMatchObject({ ok: true, data: { kind: "affected" } });
+    expect(affected.data.context).toContain("docs/guide.md");
+    expect(affected.data.context).toContain("src/app.ts");
+
+    const active = activeTask(root, "owner", ["docs"]);
+    const acquired = active.core.writer({
+      schemaVersion: 1,
+      action: "acquire",
+      taskId: active.task.id,
+      expectedRevision: active.task.revision,
+      expectedWorkspaceRevision: active.workspace.revision,
+      workerId: null,
+    });
+    expect(acquired.ok).toBe(true);
+    const publicTools = createWorkitTools({
+      client: { session: { get: async () => ({ data: { id: "owner", directory: root } }) } },
+    }) as any;
+    const recordEvidence = async (claim: string) => {
+      const current = active.store.readTask(active.task.id);
+      if (!current.ok) throw new Error(current.error);
+      const result = await publicTools.workit_evidence.execute(
+        {
+          schemaVersion: 1,
+          action: "record",
+          taskId: current.data.id,
+          expectedRevision: current.data.revision,
+          evidence: {
+            kind: "check",
+            claim,
+            requirementIds: [],
+            beforeCandidateId: null,
+            candidateId: null,
+            result: "passed",
+            summary: claim,
+            refs: [],
+            exitCode: 0,
+            reviewContext: null,
+          },
+        },
+        { directory: root, sessionID: "owner" },
+      );
+      const value = JSON.parse(typeof result === "string" ? result : result.output);
+      expect(value).toMatchObject({ ok: true });
+    };
+    await recordEvidence("affected docs before edit");
+    const beforeTask = active.store.readTask(active.task.id);
+    if (!beforeTask.ok) throw new Error(beforeTask.error);
+    const beforeCandidate = beforeTask.data.candidates.at(-1);
+    if (!beforeCandidate) throw new Error("pre-edit candidate missing");
+    const hooks = await plugin({
+      directory: root,
+      worktree: root,
+      serverUrl: new URL("http://localhost"),
+      client: { session: { get: async () => ({ data: { id: "owner", directory: root } }) } },
+    } as never);
+    const before = readFileSync(doc, "utf8");
+    await expect(
+      hooks["tool.execute.before"]?.(
+        { tool: "edit", sessionID: "owner", callID: "in-scope" },
+        { args: { path: "docs/guide.md" } },
+      ),
+    ).resolves.toBeUndefined();
+    writeFileSync(doc, `${before}Updated from affected-doc evidence.\n`);
+    expect(readFileSync(doc, "utf8")).toContain("Updated from affected-doc evidence.");
+    await expect(
+      hooks["tool.execute.before"]?.(
+        { tool: "edit", sessionID: "owner", callID: "out-of-scope" },
+        { args: { path: "src/app.ts" } },
+      ),
+    ).rejects.toThrow("scope");
+    expect(readFileSync(source, "utf8")).toBe("export const version = 2;\n");
+    await recordEvidence("affected docs after edit");
+    const afterTask = active.store.readTask(active.task.id);
+    if (!afterTask.ok) throw new Error(afterTask.error);
+    const afterCandidate = afterTask.data.candidates.at(-1);
+    expect(afterCandidate?.id).not.toBe(beforeCandidate.id);
+    expect(afterCandidate?.files.find((file) => file.path === "docs/guide.md")?.digest).not.toBe(
+      beforeCandidate.files.find((file) => file.path === "docs/guide.md")?.digest,
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

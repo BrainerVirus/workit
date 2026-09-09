@@ -15,7 +15,7 @@ export const vcsConfigPath = (): string =>
 const workspacesPath = (): string => path.join(configDir(), "workspaces.json");
 
 const vcsCwd = (cwd?: string): string =>
-  process.env.WORKFLOW_WORKSPACE_ROOT ?? cwd ?? process.cwd();
+  cwd ?? process.env.WORKFLOW_WORKSPACE_ROOT ?? process.cwd();
 
 // RL-03b: the origin remote is the ground truth for PR creation. A stale global
 // provider (e.g. gitlab from another repo) must not drive glab on a

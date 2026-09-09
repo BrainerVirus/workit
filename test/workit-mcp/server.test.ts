@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -53,6 +54,99 @@ test("MCP exposes exactly the eight family tools with core-derived 2020-12 schem
       expect(tool.inputSchema.type).toBe("object");
       expect(tool.inputSchema.$schema).toBe("https://json-schema.org/draft/2020-12/schema");
     }
+  } finally {
+    await client.close();
+    await server.close();
+  }
+});
+
+test("MCP exposes a read-only context resource without adding a ninth tool", async () => {
+  const workspaceRoot = mkdtempSync(path.join(os.tmpdir(), "workit-mcp-context-"));
+  spawnSync("git", ["init", "-q"], { cwd: workspaceRoot });
+  spawnSync("git", ["config", "user.email", "test@example.invalid"], { cwd: workspaceRoot });
+  spawnSync("git", ["config", "user.name", "Workit Test"], { cwd: workspaceRoot });
+  writeFileSync(path.join(workspaceRoot, "fixture.txt"), "fixture\n");
+  spawnSync("git", ["add", "fixture.txt"], { cwd: workspaceRoot });
+  spawnSync("git", ["commit", "-qm", "fixture"], { cwd: workspaceRoot });
+  const { client, server } = await connect("cursor", {
+    current: async () => context("cursor", workspaceRoot),
+  });
+  try {
+    const listed = await client.listTools();
+    expect(listed.tools).toHaveLength(8);
+    const resources = await client.listResources();
+    expect(resources.resources.map((resource) => resource.uri)).toContain("workit://context/git");
+    const read = await client.readResource({ uri: "workit://context/git" });
+    expect(read.contents[0]).toMatchObject({ mimeType: "application/json" });
+    expect(String((read.contents[0] as { text?: string }).text)).toContain('"kind":"git"');
+    expect(String((read.contents[0] as { text?: string }).text)).toContain(workspaceRoot);
+  } finally {
+    await client.close();
+    await server.close();
+    rmSync(workspaceRoot, { recursive: true, force: true });
+  }
+});
+
+test("MCP resource failures use a sanitized structured envelope", async () => {
+  const { client, server } = await connect("cursor", {
+    current: async () => {
+      throw new Error("Bearer super-secret /home/private/workspace-secret/context.ts:1:2");
+    },
+  });
+  try {
+    const read = await client.readResource({ uri: "workit://context/git" });
+    const text = String((read.contents[0] as { text?: string }).text);
+    expect(JSON.parse(text)).toEqual({
+      ok: false,
+      schemaVersion: 1,
+      code: "storage_error",
+      error: "MCP operation failed",
+      details: {},
+    });
+    expect(text).not.toContain("super-secret");
+    expect(text).not.toContain("/home/private");
+  } finally {
+    await client.close();
+    await server.close();
+  }
+});
+
+test("MCP resource capability failures use an allowlisted capability name", async () => {
+  const { client, server } = await connect("cursor", {
+    current: async () => {
+      throw new McpCapabilityUnavailableError("Bearer TOPSECRET /tmp/secret");
+    },
+  });
+  try {
+    const read = await client.readResource({ uri: "workit://context/git" });
+    const value = JSON.parse(String((read.contents[0] as { text?: string }).text));
+    expect(value).toEqual({
+      ok: false,
+      schemaVersion: 1,
+      code: "capability_unavailable",
+      error: "context unavailable",
+      details: { capability: "context" },
+    });
+    expect(JSON.stringify(value)).not.toContain("TOPSECRET");
+    expect(JSON.stringify(value)).not.toContain("/tmp/secret");
+  } finally {
+    await client.close();
+    await server.close();
+  }
+});
+
+test("MCP context resources advertise and validate their query selectors", async () => {
+  const { client, server } = await connect("cursor", { current: async () => context("cursor") });
+  try {
+    const templates = await client.listResourceTemplates();
+    expect(templates.resourceTemplates[0]?.uriTemplate).toBe(
+      "workit://context/{kind}{?range,issueId}",
+    );
+    const read = await client.readResource({ uri: "workit://context/git?unsupported=value" });
+    expect(JSON.parse(String((read.contents[0] as { text?: string }).text))).toMatchObject({
+      ok: false,
+      code: "invalid_input",
+    });
   } finally {
     await client.close();
     await server.close();

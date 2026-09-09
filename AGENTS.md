@@ -18,6 +18,24 @@ Multi-platform workit: OpenCode, Cursor, Codex CLI/desktop, Pi, and the CLI shar
 
 OpenCode's native adapter keeps the eight shared operation contracts authoritative while projecting advertised nested schemas to the provider's supported depth; runtime parsing remains core-owned.
 
+Concrete optional Git, hosting, YouTrack, and documentation mutations remain
+adapter-owned on host surfaces that can attest the effect. They must run
+through the shared one-time action reservation and host-observed settlement,
+with an exact canonical operation/target/payload binding (never prose
+matching). Caller-unattested MCP keeps optional mutations unavailable. The CLI
+`workit action` route has a native terminal confirmation path; headless calls
+(including `--confirm` without a TTY) return `needs_input` and never fabricate
+an approval receipt.
+
+Read-only `context.read` is available on OpenCode, Pi, and the CLI for the
+enumerated git/PR/YouTrack/changelog/release/affected contexts without
+approval or writer ownership; release context includes a deterministic draft,
+and affected context identifies files only. Documentation edits continue
+through existing writer/scope-guarded native actions, with CLI identification
+remaining read-only. Cursor and Codex expose the same contexts as
+MCP resources (`workit://context/{kind}`); resource URIs cannot supply a
+workspace or caller identity.
+
 Codex CLI and desktop use the native plugin manifest, hooks, and shared MCP
 transport. Hook enforcement is limited to documented covered events; the host
 does not expose arbitrary-question receipts or attested writer delegation.

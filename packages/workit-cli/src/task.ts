@@ -2,6 +2,14 @@ import { readFileSync } from "node:fs";
 import { createInterface } from "node:readline/promises";
 import {
   OPERATION_FAMILIES,
+  approvedExternalAction,
+  externalActionState,
+  priorExternalAction,
+  externalActionDescriptor,
+  externalActionRequest,
+  externalActionRef,
+  nativeExternalActionObservation,
+  createAuthorizedExternalActionRunner,
   TaskStore,
   WorkitCore,
   compactTaskContext,
@@ -13,6 +21,17 @@ import {
   type OperationFamily,
   type OperationContext,
 } from "@brainervirus/workit-core/src/core";
+import {
+  approvedResolvedExternalAction,
+  executeResolvedExternalAction,
+  readExternalAction,
+  resolveExternalActionRequest,
+} from "@brainervirus/workit-core/src/core/external-action-effects";
+import type {
+  NativeAuthorityVerifier,
+  NativeReconciliationVerification,
+} from "@brainervirus/workit-core/src/core/authority";
+import type { Provenance } from "@brainervirus/workit-core/src/core/task-contract";
 import { canonicalJson, type Result } from "@brainervirus/workit-core/src/core/task-contract";
 
 export const TASK_FAMILIES = OPERATION_FAMILIES;
@@ -412,5 +431,323 @@ export async function runTaskCommand(argv: string[], deps: TaskCliDeps = {}): Pr
   } else result = dispatch(core, parsed.parsed.family, parsed.parsed.request);
   if (parsed.parsed.json) jsonResult(outOf(deps), result);
   else printHuman(result, deps, parsed.parsed.handoff);
+  return result.ok ? 0 : 1;
+}
+
+const cliActionProvenance = (actor: string): Provenance => ({
+  kind: "host_observed",
+  host: "workit_cli",
+  session: { kind: "host", host: "workit_cli", handle: actor },
+  workerId: null,
+  receipts: [{ kind: "host", host: "workit_cli", handle: `action:${actor}` }],
+});
+
+const cliActionAuthority = (
+  actor: string,
+  reconciliationTokens = new WeakSet<object>(),
+): NativeAuthorityVerifier => ({
+  verifyDecision: ({ observation, expected, caller }) => {
+    const value = observation as Record<string, unknown>;
+    return caller.host === "workit_cli" &&
+      caller.actor === actor &&
+      value?.actor === actor &&
+      value?.approved === (expected.response === "approved")
+      ? success(null, null, cliActionProvenance(actor))
+      : failure("permission_denied", "CLI confirmation is not attested");
+  },
+  verifyAction: ({ observation, expected, caller }) => {
+    const value = observation as Record<string, unknown>;
+    return caller.host === "workit_cli" &&
+      caller.actor === actor &&
+      value?.actor === actor &&
+      value?.outcome === expected.outcome &&
+      (expected.outcome === "reserve" ||
+        (value?.taskRevision === expected.taskRevision &&
+          value?.workspaceRevision === expected.workspaceRevision)) &&
+      canonicalJson(value?.actionRef) === canonicalJson(expected.actionRef)
+      ? success(null, null, cliActionProvenance(actor))
+      : failure("permission_denied", "CLI action observation is not attested");
+  },
+  verifyReconciliation: ({ observation, expected, caller }: NativeReconciliationVerification) => {
+    const value = observation as Record<string, unknown>;
+    return typeof observation === "object" &&
+      observation !== null &&
+      caller.host === "workit_cli" &&
+      caller.actor === actor &&
+      reconciliationTokens.has(observation) &&
+      value.kind === "provider_read" &&
+      value.outcome === "succeeded" &&
+      value.evidenceDigest === expected.evidenceDigest &&
+      (expected.step === undefined || value.step === expected.step) &&
+      canonicalJson(value.actionRef) === canonicalJson(expected.actionRef)
+      ? success(null, null, cliActionProvenance(actor))
+      : failure("permission_denied", "CLI hosting reconciliation is not attested");
+  },
+});
+
+const nativeExternalActionRunner = (root: string, actor: string, core: WorkitCore, step?: string) =>
+  createAuthorizedExternalActionRunner(core, (operationValue) => {
+    const store = new TaskStore(root);
+    const approved = approvedExternalAction(store, "workit_cli", actor, operationValue);
+    if (!approved.ok) return approved;
+    const actionRef = externalActionRef("workit_cli", actor, operationValue);
+    return {
+      taskId: approved.data.task.id,
+      decisionId: approved.data.entry.id,
+      actionRef,
+      expectedRevision: approved.data.task.revision,
+      expectedWorkspaceRevision: approved.data.workspace.revision,
+      binding: approved.data.entry.data.binding,
+      ...(step ? { step } : {}),
+      refresh: () => {
+        const freshTask = store.readTask(approved.data.task.id);
+        const freshWorkspace = store.readWorkspace();
+        if (!freshTask.ok || !freshWorkspace.ok || !freshWorkspace.data)
+          throw new Error("external action state changed");
+        return {
+          expectedRevision: freshTask.data.revision,
+          expectedWorkspaceRevision: freshWorkspace.data.revision,
+        };
+      },
+      reserveObservation: nativeExternalActionObservation(actor, actionRef, "reserve"),
+      settleObservation: (outcome: "succeeded" | "not_started" | "unknown", revisions) =>
+        nativeExternalActionObservation(
+          actor,
+          actionRef,
+          outcome,
+          actionRef.kind === "host" ? actionRef.handle : "external-action",
+          revisions,
+        ),
+    };
+  });
+
+export async function runActionCommand(argv: string[], deps: TaskCliDeps = {}): Promise<number> {
+  const json = argv.includes("--json");
+  const preview = argv.includes("--preview");
+  const operation = argv.find((value) => !value.startsWith("--")) ?? "";
+  const payloadIndex = argv.indexOf("--payload");
+  const taskIndex = argv.indexOf("--task");
+  if (!operation || payloadIndex < 0 || argv[payloadIndex + 1] === undefined) {
+    const result = failure("invalid_input", "action requires <operation> --payload <JSON>");
+    if (json) jsonResult(outOf(deps), result);
+    else printHuman(result, deps);
+    return 2;
+  }
+  let payload: unknown;
+  try {
+    payload = JSON.parse(argv[payloadIndex + 1]);
+  } catch {
+    payload = null;
+  }
+  const parsed = externalActionRequest({ operation, payload });
+  if (!parsed.ok) {
+    if (json) jsonResult(outOf(deps), parsed);
+    else printHuman(parsed, deps);
+    return 2;
+  }
+  const root = deps.root ?? process.env.WORKFLOW_WORKSPACE_ROOT ?? deps.cwd ?? process.cwd();
+  const resolved = resolveExternalActionRequest(root, parsed.data);
+  if (!resolved.ok) {
+    if (json) jsonResult(outOf(deps), resolved);
+    else printHuman(resolved, deps);
+    return 2;
+  }
+  const normalized = resolved.data.request;
+  const descriptor = externalActionDescriptor(
+    normalized.operation,
+    resolved.data.descriptorPayload,
+  );
+  if (preview) {
+    const result = success(null, null, {
+      operation: normalized.operation,
+      descriptor,
+      payload: normalized.payload,
+    });
+    if (json) jsonResult(outOf(deps), result);
+    else printHuman(result, deps);
+    return 0;
+  }
+  if (normalized.operation === "context.read") {
+    const result = await executeResolvedExternalAction(resolved.data, root);
+    if (json) jsonResult(outOf(deps), result);
+    else printHuman(result, deps);
+    return result.ok ? 0 : 1;
+  }
+  const tty = deps.stdinIsTTY ? deps.stdinIsTTY() : process.stdin.isTTY === true;
+  if (!tty || !argv.includes("--confirm")) {
+    const result = failure("needs_input", "TTY confirmation is required for external actions", {
+      operation: normalized.operation,
+    });
+    if (json) jsonResult(outOf(deps), result);
+    else printHuman(result, deps);
+    return 1;
+  }
+  const actor = deps.actor ?? "cli";
+  const store = new TaskStore(root);
+  const taskId = taskIndex >= 0 ? argv[taskIndex + 1] : undefined;
+  const listed = store.listTasks();
+  const workspace = store.readWorkspace();
+  if (!listed.ok || !workspace.ok || !workspace.data) {
+    const result = failure("storage_error", "external action state is unavailable");
+    if (json) jsonResult(outOf(deps), result);
+    else printHuman(result, deps);
+    return 1;
+  }
+  const tasks = listed.data.filter(
+    (task) =>
+      task.status === "active" &&
+      task.workspaceId === workspace.data!.id &&
+      (!taskId || task.id === taskId),
+  );
+  if (tasks.length !== 1) {
+    const result = failure("permission_denied", "external action requires exactly one active task");
+    if (json) jsonResult(outOf(deps), result);
+    else printHuman(result, deps);
+    return 1;
+  }
+  const task = tasks[0];
+  const prior = externalActionState(store, "workit_cli", actor, descriptor);
+  const priorRequest = priorExternalAction(
+    store,
+    "workit_cli",
+    actor,
+    normalized.operation,
+    normalized.payload,
+  );
+  if (
+    priorRequest.ok &&
+    priorRequest.data.entry.data.consumption !== null &&
+    priorRequest.data.entry.data.consumption.state !== "uncertain"
+  ) {
+    const result = failure("permission_denied", "external action was already settled");
+    if (json) jsonResult(outOf(deps), result);
+    else printHuman(result, deps);
+    return 1;
+  }
+  if (
+    prior.ok &&
+    prior.data.entry.data.consumption !== null &&
+    prior.data.entry.data.consumption.state !== "uncertain"
+  ) {
+    const result = failure("permission_denied", "external action was already settled");
+    if (json) jsonResult(outOf(deps), result);
+    else printHuman(result, deps);
+    return 1;
+  }
+  if (priorRequest.ok && priorRequest.data.entry.data.consumption?.state === "uncertain") {
+    const original = approvedResolvedExternalAction(
+      priorRequest.data.entry.data.binding.approvedContent,
+    );
+    if (original.ok) {
+      const actionRef = priorRequest.data.entry.data.consumption.actionRef;
+      const evidence = await readExternalAction(root, original.data, actionRef);
+      const freshTask = store.readTask(priorRequest.data.task.id);
+      const freshWorkspace = store.readWorkspace();
+      if (
+        evidence.ok &&
+        evidence.data.outcome === "succeeded" &&
+        freshTask.ok &&
+        freshWorkspace.ok &&
+        freshWorkspace.data
+      ) {
+        const reconciliationTokens = new WeakSet<object>();
+        const core = new WorkitCore(store, {
+          ...contextFor(root, { ...deps, actor }, "host_observed"),
+          nativeAuthority: cliActionAuthority(actor, reconciliationTokens),
+          workerId: null,
+        });
+        reconciliationTokens.add(evidence.data.observation);
+        const reconciled = core.reconcileAction({
+          taskId: priorRequest.data.task.id,
+          decisionId: priorRequest.data.entry.id,
+          actionRef,
+          expectedRevision: freshTask.data.revision,
+          expectedWorkspaceRevision: freshWorkspace.data.revision,
+          outcome: "succeeded",
+          evidenceDigest: evidence.data.evidenceDigest,
+          ...(evidence.data.step ? { step: evidence.data.step } : {}),
+          observation: evidence.data.observation,
+        });
+        if (reconciled.ok && evidence.data.step === "comment") {
+          const remaining = await nativeExternalActionRunner(
+            root,
+            actor,
+            core,
+            "time",
+          )(priorRequest.data.entry.data.binding.approvedContent, () =>
+            executeResolvedExternalAction(original.data, root, "time", {
+              host: "workit_cli",
+              actor,
+            }),
+          );
+          if (json) jsonResult(outOf(deps), remaining);
+          else printHuman(remaining, deps);
+          return remaining.ok ? 0 : 1;
+        }
+        if (json) jsonResult(outOf(deps), reconciled);
+        else printHuman(reconciled, deps);
+        return reconciled.ok ? 0 : 1;
+      }
+    }
+    const result = failure(
+      "external_outcome_unknown",
+      "previous external action outcome is unknown",
+    );
+    if (json) jsonResult(outOf(deps), result);
+    else printHuman(result, deps);
+    return 1;
+  }
+  if (!json) write(outOf(deps), `External action preview: ${descriptor}`);
+  const accepted = await observeConsent(deps);
+  if (!accepted.accepted || !accepted.observed) {
+    const result = failure(
+      "permission_denied",
+      "external action was not confirmed by the terminal",
+    );
+    if (json) jsonResult(outOf(deps), result);
+    else printHuman(result, deps);
+    return 1;
+  }
+  const core = new WorkitCore(store, {
+    ...contextFor(root, { ...deps, actor }, "host_observed"),
+    nativeAuthority: cliActionAuthority(actor),
+    workerId: null,
+  });
+  const stableActionRef = externalActionRef("workit_cli", actor, descriptor);
+  const decision = core.observeDecision(
+    {
+      schemaVersion: 1,
+      action: "record",
+      taskId: task.id,
+      expectedRevision: task.revision,
+      purpose: "action",
+      binding: {
+        taskId: task.id,
+        workspaceId: workspace.data.id,
+        scope: task.intent.data.scope,
+        presented: `Approve ${descriptor}`,
+        approvedContent: descriptor,
+        contentRefs: [],
+      },
+      response: "approved",
+      requirementIds: [],
+    },
+    {
+      actor,
+      approved: true,
+      callId: stableActionRef.kind === "host" ? stableActionRef.handle : "external-action",
+    },
+  );
+  if (!decision.ok) {
+    if (json) jsonResult(outOf(deps), decision);
+    else printHuman(decision, deps);
+    return 1;
+  }
+  const runner = nativeExternalActionRunner(root, actor, core);
+  const result = await runner(descriptor, (step) =>
+    executeResolvedExternalAction(resolved.data, root, step, { host: "workit_cli", actor }),
+  );
+  if (json) jsonResult(outOf(deps), result);
+  else printHuman(result, deps);
   return result.ok ? 0 : 1;
 }

@@ -1,16 +1,23 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { runTaskCommand, TASK_ACTIONS, TASK_FAMILIES } from "../../packages/workit-cli/src/task";
+import {
+  runActionCommand,
+  runTaskCommand,
+  TASK_ACTIONS,
+  TASK_FAMILIES,
+} from "../../packages/workit-cli/src/task";
 import { mkdirSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import {
   installPackedPackage,
   packWorkspacePackages,
   runInIsolation,
   isolatedEnv,
 } from "../shared/helpers/packages";
-import { TaskStore } from "../../packages/workit-core/src/core";
+import { TaskStore, WorkitCore } from "../../packages/workit-core/src/core";
+import { taskStartRequest } from "../workit-core/task-fixtures";
 
 const id = "00000000-0000-4000-8000-000000000001";
 const scope = { description: "checkout", paths: ["."], exclusions: [] };
@@ -44,6 +51,273 @@ test("the CLI exposes exactly the eight families and 24 actions", () => {
     "state",
   ]);
   expect(Object.values(TASK_ACTIONS).flat()).toHaveLength(24);
+});
+
+test("CLI external action previews its exact descriptor and refuses headless mutation", async () => {
+  const root = fixture();
+  try {
+    spawnSync("git", ["init", "-q"], { cwd: root });
+    spawnSync("git", ["config", "user.email", "test@example.invalid"], { cwd: root });
+    spawnSync("git", ["config", "user.name", "Workit Test"], { cwd: root });
+    writeFileSync(path.join(root, "tracked.txt"), "fixture\n");
+    spawnSync("git", ["add", "tracked.txt"], { cwd: root });
+    spawnSync("git", ["commit", "-qm", "fixture"], { cwd: root });
+    const preview = capture();
+    expect(
+      await runActionCommand(
+        ["git.commit", "--payload", JSON.stringify({ message: "commit" }), "--preview", "--json"],
+        {
+          cwd: root,
+          out: preview.out,
+          err: preview.err,
+          stdinIsTTY: () => false,
+        },
+      ),
+    ).toBe(0);
+    expect(JSON.parse(preview.read().stdout)).toMatchObject({
+      ok: true,
+      data: { operation: "git.commit" },
+    });
+    const denied = capture();
+    expect(
+      await runActionCommand(
+        ["git.commit", "--payload", JSON.stringify({ message: "commit" }), "--confirm", "--json"],
+        {
+          cwd: root,
+          out: denied.out,
+          err: denied.err,
+          stdinIsTTY: () => false,
+        },
+      ),
+    ).toBe(1);
+    expect(JSON.parse(denied.read().stdout)).toMatchObject({ ok: false, code: "needs_input" });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("CLI context.read returns Git context without confirmation or metadata writes", async () => {
+  const root = fixture();
+  try {
+    for (const args of [
+      ["init", "-q"],
+      ["config", "user.email", "test@example.invalid"],
+      ["config", "user.name", "Workit Test"],
+    ])
+      spawnSync("git", args, { cwd: root });
+    writeFileSync(path.join(root, "fixture.txt"), "fixture\n");
+    spawnSync("git", ["add", "fixture.txt"], { cwd: root });
+    spawnSync("git", ["commit", "-qm", "fixture"], { cwd: root });
+    const before = readFileSync(path.join(root, ".git/HEAD"), "utf8");
+    const out = capture();
+    expect(
+      await runActionCommand(
+        ["context.read", "--payload", JSON.stringify({ kind: "git" }), "--json"],
+        { cwd: root, out: out.out, err: out.err },
+      ),
+    ).toBe(0);
+    const value = JSON.parse(out.read().stdout);
+    expect(value).toMatchObject({
+      ok: true,
+      data: { kind: "git", context: { workspace_root: root } },
+    });
+    expect(readFileSync(path.join(root, ".git/HEAD"), "utf8")).toBe(before);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("CLI context.read rejects option-like ranges without creating files", async () => {
+  const root = fixture();
+  const injected = path.join(os.tmpdir(), `workit-cli-context-output-${process.pid}`);
+  rmSync(injected, { force: true });
+  try {
+    for (const args of [
+      ["init", "-q"],
+      ["config", "user.email", "test@example.invalid"],
+      ["config", "user.name", "Workit Test"],
+    ])
+      spawnSync("git", args, { cwd: root });
+    writeFileSync(path.join(root, "fixture.txt"), "fixture\n");
+    spawnSync("git", ["add", "fixture.txt"], { cwd: root });
+    spawnSync("git", ["commit", "-qm", "fixture"], { cwd: root });
+    const out = capture();
+    expect(
+      await runActionCommand(
+        [
+          "context.read",
+          "--payload",
+          JSON.stringify({ kind: "changelog", range: `--output=${injected}` }),
+          "--json",
+        ],
+        { cwd: root, out: out.out, err: out.err },
+      ),
+    ).toBe(1);
+    expect(JSON.parse(out.read().stdout)).toMatchObject({ ok: false, code: "invalid_input" });
+    expect(existsSync(injected)).toBe(false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(injected, { force: true });
+  }
+});
+
+test("CLI changelog.apply uses the writer for success and refuses an out-of-scope target", async () => {
+  const roots: string[] = [];
+  const setup = (assignedScope: { description: string; paths: string[]; exclusions: string[] }) => {
+    const root = fixture();
+    roots.push(root);
+    for (const args of [
+      ["init", "-q"],
+      ["config", "user.email", "test@example.invalid"],
+      ["config", "user.name", "Workit Test"],
+    ])
+      spawnSync("git", args, { cwd: root });
+    writeFileSync(path.join(root, "CHANGELOG.md"), "# Changelog\n\n## [Unreleased]\n\n");
+    spawnSync("git", ["add", "CHANGELOG.md"], { cwd: root });
+    spawnSync("git", ["commit", "-qm", "fixture"], { cwd: root });
+    const store = new TaskStore(root);
+    const core = new WorkitCore(store, {
+      root,
+      caller: { host: "workit_cli", actor: "cli" },
+      capabilities: [],
+      constraints: [],
+      now: "2026-01-01T00:00:00Z",
+    });
+    const started = core.task(
+      taskStartRequest({ intent: { ...taskStartRequest().intent, scope: assignedScope } }),
+    );
+    if (!started.ok) throw new Error(started.error);
+    const task = store.readTask((started.data as { id: string }).id);
+    const workspace = store.readWorkspace();
+    if (!task.ok || !workspace.ok || !workspace.data) throw new Error("task setup failed");
+    if (
+      !core.writer({
+        schemaVersion: 1,
+        action: "acquire",
+        taskId: task.data.id,
+        expectedRevision: task.data.revision,
+        expectedWorkspaceRevision: workspace.data.revision,
+        workerId: null,
+      }).ok
+    )
+      throw new Error("writer setup failed");
+    return root;
+  };
+  try {
+    const allowedRoot = setup(scope);
+    const successOut = capture();
+    expect(
+      await runActionCommand(
+        [
+          "changelog.apply",
+          "--payload",
+          JSON.stringify({ entries: [{ category: "Added", text: "CLI changelog action" }] }),
+          "--confirm",
+          "--json",
+        ],
+        {
+          cwd: allowedRoot,
+          actor: "cli",
+          out: successOut.out,
+          err: successOut.err,
+          stdinIsTTY: () => true,
+          confirm: async () => true,
+        },
+      ),
+    ).toBe(0);
+    expect(JSON.parse(successOut.read().stdout)).toMatchObject({ ok: true });
+    expect(readFileSync(path.join(allowedRoot, "CHANGELOG.md"), "utf8")).toContain(
+      "CLI changelog action",
+    );
+
+    const narrowRoot = setup({ description: "src only", paths: ["src"], exclusions: [] });
+    const deniedOut = capture();
+    expect(
+      await runActionCommand(
+        [
+          "changelog.apply",
+          "--payload",
+          JSON.stringify({ entries: [{ category: "Added", text: "must not apply" }] }),
+          "--confirm",
+          "--json",
+        ],
+        {
+          cwd: narrowRoot,
+          actor: "cli",
+          out: deniedOut.out,
+          err: deniedOut.err,
+          stdinIsTTY: () => true,
+          confirm: async () => true,
+        },
+      ),
+    ).toBe(1);
+    expect(JSON.parse(deniedOut.read().stdout)).toMatchObject({
+      ok: false,
+      code: "capability_unavailable",
+      details: { outcome: "not_started" },
+    });
+    expect(readFileSync(path.join(narrowRoot, "CHANGELOG.md"), "utf8")).not.toContain(
+      "must not apply",
+    );
+  } finally {
+    for (const root of roots) rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("CLI TTY route prints the bound descriptor before confirmation", async () => {
+  const root = fixture();
+  try {
+    spawnSync("git", ["init", "-q"], { cwd: root });
+    spawnSync("git", ["config", "user.email", "test@example.invalid"], { cwd: root });
+    spawnSync("git", ["config", "user.name", "Workit Test"], { cwd: root });
+    writeFileSync(path.join(root, "tracked.txt"), "fixture\n");
+    spawnSync("git", ["add", "tracked.txt"], { cwd: root });
+    spawnSync("git", ["commit", "-qm", "fixture"], { cwd: root });
+    const store = new TaskStore(root);
+    const core = new WorkitCore(store, {
+      root,
+      caller: { host: "workit_cli", actor: "cli" },
+      capabilities: [],
+      constraints: [],
+      now: "2026-01-01T00:00:00Z",
+    });
+    expect(core.task(taskStartRequest()).ok).toBe(true);
+    const started = store.listTasks();
+    const writerWorkspace = store.readWorkspace();
+    if (!started.ok || started.data.length !== 1 || !writerWorkspace.ok || !writerWorkspace.data)
+      throw new Error("writer state missing");
+    const writerTask = store.readTask(started.data[0].id);
+    if (!writerTask.ok) throw new Error("writer task missing");
+    expect(
+      core.writer({
+        schemaVersion: 1,
+        action: "acquire",
+        taskId: writerTask.data.id,
+        expectedRevision: writerTask.data.revision,
+        expectedWorkspaceRevision: writerWorkspace.data.revision,
+        workerId: null,
+      }),
+    ).toMatchObject({ ok: true });
+    writeFileSync(path.join(root, "change.txt"), "change\n");
+    spawnSync("git", ["add", "change.txt"], { cwd: root });
+    const out = capture();
+    expect(
+      await runActionCommand(
+        ["git.commit", "--payload", JSON.stringify({ message: "tty commit" }), "--confirm"],
+        {
+          cwd: root,
+          actor: "cli",
+          out: out.out,
+          err: out.err,
+          stdinIsTTY: () => true,
+          confirm: async () => true,
+        },
+      ),
+    ).toBe(0);
+    expect(out.read().stdout).toContain("External action preview:");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("every closed family/action pair reaches the structured core parser", async () => {

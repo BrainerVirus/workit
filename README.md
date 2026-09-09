@@ -118,6 +118,34 @@ MCP provider keeps read-only inspection usable without an attested caller and
 returns `capability_unavailable` for authority-sensitive mutations when the
 host cannot prove the caller boundary.
 
+Optional Git, hosting, YouTrack, and documentation effects use one-time
+approved action reservations and host-observed settlement on the existing
+host-owned effect surfaces. A concrete call must match the exact canonical
+operation/target/payload approved by the native host; prose or substring
+matches never authorize it. Missing credentials leave unrelated core work
+usable, while an uncertain remote outcome blocks blind retry. OpenCode and Pi
+use native approval receipts; the CLI `workit action` route shows the exact
+descriptor and requires an interactive TTY confirmation. A headless CLI call
+(including `--confirm` without a TTY) returns `needs_input`, while the
+caller-unattested MCP surface keeps optional mutations unavailable. Time
+entries require a duration supplied or confirmed by the user.
+
+Examples include `context.read` with `{ "kind": "release", "range": "HEAD~1...HEAD" }`,
+comment-only `youtrack.update` with `{ "issueId": "ABC-1", "markdown": "..." }`,
+and `changelog.apply` with `{ "entries": [{ "category": "Added", "text": "..." }] }`.
+
+All native adapters and the CLI also expose the read-only `context.read`
+operation for `git`, `pr`, `youtrack`, `changelog`, `release`, and `affected`
+context. Release context includes a deterministic Markdown draft derived from
+the selected commits and changed files. Affected context identifies documentation
+files; an actual edit still uses the existing native editor (for example
+`changelog.apply`) with writer/scope checks and host-observed evidence. The CLI
+can identify affected files but does not claim to edit them without its native
+action route. Context reads require no approval or writer and never change the
+checkout or Workit metadata. Cursor and Codex receive the same contexts as
+read-only MCP resources under `workit://context/{kind}`; the workspace always
+comes from the host-owned session context.
+
 Cursor ships only `rules/workit-contract.mdc`. That rule documents the shared
 contract, exact workspace/session scope, read-only native delegation, and the
 surfaces Cursor cannot attest or block.

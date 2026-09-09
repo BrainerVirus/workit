@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
 import path from "node:path";
 import { tmpdir } from "node:os";
@@ -48,7 +48,7 @@ const context = (root: string, hasUI = false, trusted = true) => {
   } as any;
 };
 
-const startedTask = (root: string) => {
+const startedTask = (root: string, paths = ["."]) => {
   const store = new TaskStore(root);
   const operationContext: OperationContext = {
     root,
@@ -58,7 +58,15 @@ const startedTask = (root: string) => {
     constraints: [],
     now: "2026-01-01T00:00:00Z",
   };
-  const result = new WorkitCore(store, operationContext).task(taskStartRequest());
+  const result = new WorkitCore(store, operationContext).task(
+    taskStartRequest({
+      intent: {
+        objective: "test task",
+        scope: { description: "the checkout", paths, exclusions: [] },
+        authorityRefs: [],
+      },
+    }),
+  );
   if (!result.ok) throw new Error(result.error);
   const workspace = store.readWorkspace();
   if (!workspace.ok || !workspace.data) throw new Error("workspace missing");
@@ -118,6 +126,7 @@ test("clean Pi package declares stock discovery and exactly eight core tools", a
     "workit_worker",
     "workit_writer",
     "workit_state",
+    "workit_external_action",
   ]);
   expect(pi.tools.map((tool) => tool.name)).toContain("workit_worker_control");
   expect(pi.tools.every((tool) => tool.parameters.type === "object")).toBe(true);
@@ -183,6 +192,273 @@ test("interactive Pi decisions use the native answer and reject untrusted writes
     context(root, true, false),
   );
   expect(denied.details).toMatchObject({ ok: false, code: "permission_denied" });
+});
+
+test("Pi optional actions use native UI and the exact resolved descriptor", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "workit-pi-action-"));
+  try {
+    spawnSync("git", ["init", "-q"], { cwd: root });
+    spawnSync("git", ["config", "user.email", "test@example.invalid"], { cwd: root });
+    spawnSync("git", ["config", "user.name", "Workit Test"], { cwd: root });
+    const file = path.join(root, "tracked.txt");
+    writeFileSync(file, "fixture\n");
+    spawnSync("git", ["add", "tracked.txt"], { cwd: root });
+    spawnSync("git", ["commit", "-qm", "fixture"], { cwd: root });
+    const started = startedTask(root);
+    const writerTask = started.store.readTask(started.task.id);
+    const writerWorkspace = started.store.readWorkspace();
+    if (!writerTask.ok || !writerWorkspace.ok || !writerWorkspace.data)
+      throw new Error("writer state missing");
+    expect(
+      new WorkitCore(started.store, {
+        root,
+        caller: { host: "pi", actor: "pi-session" },
+        capabilities: [],
+        constraints: [],
+        now: "2026-01-01T00:00:00Z",
+      }).writer({
+        schemaVersion: 1,
+        action: "acquire",
+        taskId: writerTask.data.id,
+        expectedRevision: writerTask.data.revision,
+        expectedWorkspaceRevision: writerWorkspace.data.revision,
+        workerId: null,
+      }),
+    ).toMatchObject({ ok: true });
+    writeFileSync(path.join(root, "first-change.txt"), "first\n");
+    spawnSync("git", ["add", "first-change.txt"], { cwd: root });
+    let confirms = 0;
+    const actionContext = context(root, true);
+    actionContext.ui = {
+      confirm: async () => {
+        confirms += 1;
+        if (confirms === 1) {
+          writeFileSync(path.join(root, "drift.txt"), "drift\n");
+          spawnSync("git", ["add", "drift.txt"], { cwd: root });
+        }
+        return true;
+      },
+    };
+    const pi = makePi();
+    await extension(pi as any);
+    const action = pi.tools.find((tool) => tool.name === "workit_external_action");
+    const result = await action.execute(
+      "native-action-call",
+      { operation: "git.commit", payload: { message: "no staged change" } },
+      undefined,
+      undefined,
+      actionContext,
+    );
+    expect(result.details).toMatchObject({ ok: false, code: "capability_unavailable" });
+    expect(
+      spawnSync("git", ["log", "-1", "--pretty=%s"], { cwd: root, encoding: "utf8" }).stdout.trim(),
+    ).toBe("fixture");
+    const retry = await action.execute(
+      "native-action-retry",
+      { operation: "git.commit", payload: { message: "no staged change" } },
+      undefined,
+      undefined,
+      actionContext,
+    );
+    expect(retry.details).toMatchObject({ ok: true });
+    expect(confirms).toBe(2);
+    expect(
+      spawnSync("git", ["log", "-1", "--pretty=%s"], { cwd: root, encoding: "utf8" }).stdout.trim(),
+    ).toBe("no staged change");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Pi child registration omits coordinator-only optional actions", async () => {
+  const previous = process.env.WORKIT_PI_WORKER_ID;
+  process.env.WORKIT_PI_WORKER_ID = "worker-child";
+  try {
+    const pi = makePi();
+    await extension(pi as any);
+    expect(pi.tools.map((tool) => tool.name)).not.toContain("workit_external_action");
+  } finally {
+    if (previous === undefined) delete process.env.WORKIT_PI_WORKER_ID;
+    else process.env.WORKIT_PI_WORKER_ID = previous;
+  }
+});
+
+test("Pi documentation context remains available headlessly without mutation approval", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "workit-pi-docs-action-"));
+  try {
+    spawnSync("git", ["init", "-q"], { cwd: root });
+    spawnSync("git", ["config", "user.email", "test@example.invalid"], { cwd: root });
+    spawnSync("git", ["config", "user.name", "Workit Test"], { cwd: root });
+    writeFileSync(path.join(root, "initial.txt"), "initial\n");
+    spawnSync("git", ["add", "initial.txt"], { cwd: root });
+    spawnSync("git", ["commit", "-qm", "initial"], { cwd: root });
+    const pi = makePi();
+    await extension(pi as any);
+    const action = pi.tools.find((tool) => tool.name === "workit_external_action");
+    const result = await action.execute(
+      "docs-headless",
+      { operation: "context.read", payload: { kind: "changelog" } },
+      undefined,
+      undefined,
+      context(root, false),
+    );
+    expect(result.details.code).not.toBe("needs_input");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Pi context.read returns Git context headlessly without project trust or Workit writes", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "workit-pi-context-read-"));
+  try {
+    for (const args of [
+      ["init", "-q"],
+      ["config", "user.email", "test@example.invalid"],
+      ["config", "user.name", "Workit Test"],
+    ])
+      spawnSync("git", args, { cwd: root });
+    writeFileSync(path.join(root, "fixture.txt"), "fixture\n");
+    spawnSync("git", ["add", "fixture.txt"], { cwd: root });
+    spawnSync("git", ["commit", "-qm", "fixture"], { cwd: root });
+    const before = readFileSync(path.join(root, ".git/HEAD"), "utf8");
+    const pi = makePi();
+    await extension(pi as any);
+    const action = pi.tools.find((tool) => tool.name === "workit_external_action");
+    const result = await action.execute(
+      "context-read",
+      { operation: "context.read", payload: { kind: "git" } },
+      undefined,
+      undefined,
+      context(root, false, false),
+    );
+    expect(result.details).toMatchObject({
+      ok: true,
+      data: { kind: "git", context: { workspace_root: root } },
+    });
+    expect(readFileSync(path.join(root, ".git/HEAD"), "utf8")).toBe(before);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Pi affected-doc context gates an edit and public evidence captures the changed candidate", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "workit-pi-affected-docs-"));
+  try {
+    for (const args of [
+      ["init", "-q"],
+      ["config", "user.email", "test@example.invalid"],
+      ["config", "user.name", "Workit Test"],
+    ])
+      spawnSync("git", args, { cwd: root });
+    const doc = path.join(root, "docs", "guide.md");
+    const source = path.join(root, "src", "app.ts");
+    mkdirSync(path.join(root, "docs"));
+    mkdirSync(path.join(root, "src"));
+    writeFileSync(doc, "# Guide\n");
+    writeFileSync(source, "export const version = 1;\n");
+    spawnSync("git", ["add", "-A"], { cwd: root });
+    spawnSync("git", ["commit", "-qm", "fixture"], { cwd: root });
+    writeFileSync(source, "export const version = 2;\n");
+    spawnSync("git", ["add", source], { cwd: root });
+    spawnSync("git", ["commit", "-qm", "source change"], { cwd: root });
+
+    const pi = makePi();
+    await extension(pi as any);
+    const action = pi.tools.find((tool) => tool.name === "workit_external_action");
+    const contextResult = await action.execute(
+      "affected-docs",
+      { operation: "context.read", payload: { kind: "affected", range: "HEAD~1...HEAD" } },
+      undefined,
+      undefined,
+      context(root, false),
+    );
+    expect(contextResult.details).toMatchObject({ ok: true, data: { kind: "affected" } });
+    expect(contextResult.details.data.context).toContain("docs/guide.md");
+    expect(contextResult.details.data.context).toContain("src/app.ts");
+
+    const active = startedTask(root, ["docs"]);
+    const evidenceTool = pi.tools.find((tool) => tool.name === "workit_evidence");
+    const recordEvidence = async (claim: string) => {
+      const current = active.store.readTask(active.task.id);
+      if (!current.ok) throw new Error(current.error);
+      const result = await evidenceTool.execute(
+        "evidence-call",
+        {
+          schemaVersion: 1,
+          action: "record",
+          taskId: current.data.id,
+          expectedRevision: current.data.revision,
+          evidence: {
+            kind: "check",
+            claim,
+            requirementIds: [],
+            beforeCandidateId: null,
+            candidateId: null,
+            result: "passed",
+            summary: claim,
+            refs: [],
+            exitCode: 0,
+            reviewContext: null,
+          },
+        },
+        undefined,
+        undefined,
+        context(root, true),
+      );
+      expect(result.details).toMatchObject({ ok: true });
+    };
+    await recordEvidence("affected docs before edit");
+    const beforeTask = active.store.readTask(active.task.id);
+    if (!beforeTask.ok) throw new Error(beforeTask.error);
+    const beforeCandidate = beforeTask.data.candidates.at(-1);
+    if (!beforeCandidate) throw new Error("pre-edit candidate missing");
+    const currentTask = active.store.readTask(active.task.id);
+    const currentWorkspace = active.store.readWorkspace();
+    if (!currentTask.ok || !currentWorkspace.ok || !currentWorkspace.data)
+      throw new Error("writer state missing");
+    const acquired = new WorkitCore(active.store, {
+      root,
+      caller: { host: "pi", actor: "pi-session" },
+      capabilities: [],
+      constraints: [],
+      now: "2026-01-01T00:00:00Z",
+    }).writer({
+      schemaVersion: 1,
+      action: "acquire",
+      taskId: currentTask.data.id,
+      expectedRevision: currentTask.data.revision,
+      expectedWorkspaceRevision: currentWorkspace.data.revision,
+      workerId: null,
+    });
+    expect(acquired.ok).toBe(true);
+    const before = readFileSync(doc, "utf8");
+    const guard = pi.handlers.get("tool_call");
+    expect(
+      guard?.(
+        { toolName: "edit", toolCallId: "in-scope", input: { path: "docs/guide.md" } },
+        context(root, true),
+      ),
+    ).toBeUndefined();
+    writeFileSync(doc, `${before}Updated from affected-doc evidence.\n`);
+    expect(readFileSync(doc, "utf8")).toContain("Updated from affected-doc evidence.");
+    expect(
+      guard?.(
+        { toolName: "edit", toolCallId: "out-of-scope", input: { path: "src/app.ts" } },
+        context(root, true),
+      ),
+    ).toMatchObject({ block: true });
+    expect(readFileSync(source, "utf8")).toBe("export const version = 2;\n");
+    await recordEvidence("affected docs after edit");
+    const afterTask = active.store.readTask(active.task.id);
+    if (!afterTask.ok) throw new Error(afterTask.error);
+    const afterCandidate = afterTask.data.candidates.at(-1);
+    expect(afterCandidate?.id).not.toBe(beforeCandidate.id);
+    expect(afterCandidate?.files.find((file) => file.path === "docs/guide.md")?.digest).not.toBe(
+      beforeCandidate.files.find((file) => file.path === "docs/guide.md")?.digest,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("npm installs the packed package without workspace protocol dependencies", async () => {

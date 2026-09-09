@@ -57,15 +57,33 @@ export type NativeActionVerification = {
   caller: Caller;
 };
 
+export type NativeReconciliationVerification = {
+  observation: unknown;
+  expected: {
+    taskId: Id;
+    workspaceId: Id;
+    decisionId: Id;
+    actionRef: Ref;
+    taskRevision: Revision;
+    workspaceRevision: Revision;
+    outcome: "succeeded" | "not_started";
+    evidenceDigest: Digest;
+    step?: string;
+    decision: Pick<Decision, "purpose" | "response" | "binding" | "digest" | "requirementIds">;
+  };
+  caller: Caller;
+};
+
 export type NativeAuthorityVerifier = {
   verifyDecision: (input: NativeDecisionVerification) => Result<Provenance>;
   verifyAction: (input: NativeActionVerification) => Result<Provenance>;
+  verifyReconciliation?: (input: NativeReconciliationVerification) => Result<Provenance>;
 };
 
-type VerifiedNativeAuthority = object;
+export type VerifiedNativeAuthority = object;
 
 type AuthorityRecord = {
-  kind: "decision" | "action";
+  kind: "decision" | "action" | "reconciliation";
   provenance: Provenance;
   taskId: Id;
   workspaceId: Id;
@@ -80,6 +98,8 @@ type AuthorityRecord = {
   taskRevision?: Revision;
   workspaceRevision?: Revision;
   outcome?: "reserve" | "succeeded" | "not_started" | "unknown";
+  evidenceDigest?: Digest;
+  step?: string;
   owner: object;
   store: TaskStore;
   root: string;
@@ -136,6 +156,22 @@ export type SettleActionInput = {
   taskRevision: Revision;
   workspaceRevision: Revision;
   outcome: "succeeded" | "not_started" | "unknown";
+  step?: string;
+  authority: VerifiedNativeAuthority;
+  authorityOwner: object;
+  authorityCaller: Caller;
+  native?: NativeAuthorityContext;
+};
+
+export type ReconcileActionInput = {
+  store: TaskStore;
+  taskId: Id;
+  decisionId: Id;
+  actionRef: Ref;
+  taskRevision: Revision;
+  workspaceRevision: Revision;
+  outcome: "succeeded" | "not_started";
+  evidenceDigest: Digest;
   step?: string;
   authority: VerifiedNativeAuthority;
   authorityOwner: object;
@@ -249,6 +285,44 @@ export const verifyNativeAction = (
         taskRevision: input.expected.taskRevision,
         workspaceRevision: input.expected.workspaceRevision,
         outcome: input.expected.outcome,
+        purpose: input.expected.decision.purpose,
+        response: input.expected.decision.response,
+        binding: input.expected.decision.binding,
+        digest: input.expected.decision.digest,
+        requirementIds: [...input.expected.decision.requirementIds],
+      },
+      binding,
+      input.caller,
+    ),
+  );
+};
+
+export const verifyNativeReconciliation = (
+  verifier: NativeAuthorityVerifier | undefined,
+  input: NativeReconciliationVerification,
+  binding: AuthorityBinding,
+): Result<VerifiedNativeAuthority> => {
+  if (!verifier?.verifyReconciliation)
+    return failure("permission_denied", "native reconciliation authority is unavailable");
+  const result = verifier.verifyReconciliation(input);
+  if (!result.ok || !validProvenance(result.data, input.caller))
+    return failure("permission_denied", "native reconciliation observation was not attested");
+  return success(
+    null,
+    null,
+    trustedAuthority(
+      "reconciliation",
+      result.data,
+      {
+        taskId: input.expected.taskId,
+        workspaceId: input.expected.workspaceId,
+        decisionId: input.expected.decisionId,
+        actionRef: input.expected.actionRef,
+        taskRevision: input.expected.taskRevision,
+        workspaceRevision: input.expected.workspaceRevision,
+        outcome: input.expected.outcome,
+        evidenceDigest: input.expected.evidenceDigest,
+        step: input.expected.step,
         purpose: input.expected.decision.purpose,
         response: input.expected.decision.response,
         binding: input.expected.decision.binding,
@@ -722,6 +796,119 @@ export function settleAction(input: SettleActionInput): Result<Entry<Decision>> 
   if (!entry) return failure("recovery_required", "settled decision disappeared");
   if (outcomeResult) return outcomeResult;
   return success(changed.data.revision, input.workspaceRevision, entry);
+}
+
+/** Apply one opaque, host-attested provider-read outcome to an uncertain action. */
+export function reconcileAction(input: ReconcileActionInput): Result<Entry<Decision>> {
+  if (!input.store || !input.taskRevision || !input.workspaceRevision || !input.evidenceDigest)
+    return failure("invalid_input", "action reconciliation preconditions are required");
+  const authority = takeAuthority(
+    input.authority,
+    { owner: input.authorityOwner, store: input.store, root: input.store.root },
+    input.authorityCaller,
+  );
+  if (!authority || authority.kind !== "reconciliation")
+    return failure("permission_denied", "native reconciliation authority is not verified");
+  if (
+    authority.taskId !== input.taskId ||
+    authority.decisionId !== input.decisionId ||
+    !sameRef(authority.actionRef!, input.actionRef) ||
+    authority.taskRevision !== input.taskRevision ||
+    authority.workspaceRevision !== input.workspaceRevision ||
+    authority.outcome !== input.outcome ||
+    authority.evidenceDigest !== input.evidenceDigest ||
+    authority.step !== input.step
+  )
+    return failure("permission_denied", "native reconciliation authority is not bound");
+  const changed = input.store.mutateTask(
+    input.taskId,
+    input.taskRevision,
+    (current, mutation) => {
+      const workspace = input.store.readWorkspace();
+      if (!workspace.ok) return workspace as Result<never>;
+      if (!workspace.data) return failure("not_found", "workspace not found");
+      if (authority.workspaceId !== workspace.data.id)
+        return failure("permission_denied", "native reconciliation workspace does not match");
+      if (workspace.data.revision !== input.workspaceRevision)
+        return failure("revision_conflict", "workspace revision does not match");
+      const entry = current.decisions.find((candidate) => candidate.id === input.decisionId);
+      if (!entry || entry.data.purpose !== "action")
+        return failure("not_found", "decision not found");
+      if (
+        !authorityDecisionMatches(authority, entry.data) ||
+        !provenanceMatches(entry.provenance, authority.provenance)
+      )
+        return failure("permission_denied", "native reconciliation caller does not match approval");
+      if (
+        entry.data.response !== "approved" ||
+        entry.data.revoked !== null ||
+        entry.data.digest !== decisionDigest(entry.data) ||
+        entry.data.binding.taskId !== current.id ||
+        entry.data.binding.workspaceId !== current.workspaceId ||
+        entry.data.binding.workspaceId !== workspace.data.id
+      )
+        return failure("permission_denied", "reconciliation decision binding is invalid");
+      if (entry.data.consumption?.state !== "uncertain")
+        return failure("external_outcome_unknown", "only an uncertain action can be reconciled");
+      if (!sameRef(entry.data.consumption.actionRef, input.actionRef))
+        return failure("permission_denied", "reconciliation reference does not match reservation");
+      const stored = current.actionProgress?.find(
+        (progress) => progress.decisionId === input.decisionId,
+      );
+      const workflow = stored
+        ? { steps: [...stored.steps], completed: [...stored.completedSteps] }
+        : { steps: [], completed: [] };
+      const currentStep = input.step ?? workflow.steps[workflow.completed.length];
+      if (
+        workflow.steps.length &&
+        (!currentStep || currentStep !== workflow.steps[workflow.completed.length])
+      )
+        return failure("permission_denied", "reconciliation step is outside the approved workflow");
+      if (input.outcome === "not_started") {
+        return success(mutation.revision, null, {
+          ...current,
+          decisions: current.decisions.map((candidate) =>
+            candidate.id === input.decisionId
+              ? { ...candidate, data: { ...candidate.data, consumption: null } }
+              : candidate,
+          ),
+        });
+      }
+      if (currentStep) workflow.completed.push(currentStep);
+      const complete = !workflow.steps.length || workflow.completed.length >= workflow.steps.length;
+      const nextDecision = {
+        ...entry.data,
+        consumption: complete
+          ? { ...entry.data.consumption, state: "consumed" as const, at: mutation.now }
+          : null,
+      };
+      const actionProgress = workflow.steps.length
+        ? [
+            ...(current.actionProgress ?? []).filter(
+              (progress) => progress.decisionId !== input.decisionId,
+            ),
+            {
+              decisionId: input.decisionId,
+              steps: workflow.steps,
+              completedSteps: workflow.completed,
+            },
+          ]
+        : (current.actionProgress ?? []);
+      return success(mutation.revision, null, {
+        ...current,
+        actionProgress,
+        decisions: current.decisions.map((candidate) =>
+          candidate.id === input.decisionId ? { ...candidate, data: nextDecision } : candidate,
+        ),
+      });
+    },
+    input.native?.now,
+  );
+  if (!changed.ok) return changed as Result<never>;
+  const entry = changed.data.decisions.find((candidate) => candidate.id === input.decisionId);
+  return entry
+    ? success(changed.data.revision, input.workspaceRevision, entry)
+    : failure("recovery_required", "reconciled decision disappeared");
 }
 
 export const bindingCovers = scopeCovers;

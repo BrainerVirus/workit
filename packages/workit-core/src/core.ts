@@ -62,15 +62,43 @@ export type {
 } from "./core/task-context";
 export { METHODS, invariantBootstrap, selectMethods } from "./core/methods";
 export type { MethodId, SelectedMethod } from "./core/methods";
-export { applicableDecision, reserveAction, settleAction } from "./core/authority";
+export { applicableDecision, reserveAction, settleAction, reconcileAction } from "./core/authority";
+export {
+  createAuthorizedExternalActionRunner,
+  runAuthorizedExternalAction,
+} from "./core/external-action";
+export type {
+  AuthorizedActionInput,
+  ExternalActionResult,
+  ExternalActionRunner,
+  ExternalActionEffect,
+  ExternalActionBinding,
+  NativeExternalActionObservation,
+  ExternalActionRequest,
+  ExternalActionOperation,
+} from "./core/external-action";
+export {
+  approvedExternalAction,
+  externalActionState,
+  priorExternalAction,
+  externalActionRef,
+  externalActionDescriptor,
+  externalActionHelp,
+  externalActionRequest,
+  matchesNativeExternalAction,
+  nativeExternalActionObservation,
+  readNativeExternalActionObservation,
+} from "./core/external-action";
 export type {
   ActionReservation,
   NativeAuthorityContext,
   NativeAuthorityVerifier,
   NativeActionVerification,
+  NativeReconciliationVerification,
   NativeDecisionVerification,
   ReserveActionInput,
   SettleActionInput,
+  ReconcileActionInput,
 } from "./core/authority";
 export {
   captureCandidate,

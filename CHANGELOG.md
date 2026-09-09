@@ -25,6 +25,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   CLI/desktop qualification records. Unsupported receipts and writer delegation
   remain explicitly unavailable.
 
+- Optional external-action wrappers now bind concrete host-owned Git, hosting,
+  YouTrack, time, and documentation effects to the exact canonical
+  operation/target/payload approved by one native action decision, and preserve
+  uncertain remote outcomes. OpenCode/Pi use native receipts, the CLI exposes
+  an interactive TTY confirmation route, and caller-unattested MCP mutation
+  requests remain unavailable.
+
+- Added the read-only `context.read` surface for git/PR/YouTrack/changelog,
+  release, and affected context across native adapters and the CLI, plus
+  equivalent Cursor/Codex MCP resources. Context reads require no approval or
+  writer and do not mutate the checkout or Workit metadata. Release reads now
+  include a deterministic Markdown draft; affected reads identify files while
+  edits remain existing writer/scope-guarded native actions.
+
 - Pi v1 native extension with the stock package manifest, eight shared
   operation tools, seven canonical method skills, native session/compaction
   continuity, and truthful UI/trust/sandbox capability boundaries. The bundled

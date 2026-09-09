@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { vcsConfig, mergedPrStyle } from "./vcs-config";
+import { gitRevisionParts, resolveGitRevision } from "../core";
 
 // Ports of scripts/_shared/common.sh + the four maintained context generators
 // (pr-ready-context.sh, changelog-context.sh, docs-refresh-context.sh,
@@ -9,6 +10,37 @@ import { vcsConfig, mergedPrStyle } from "./vcs-config";
 // the shell produced (## sections parsed by parse-sections.ts).
 
 export type ContextResult = { stdout: string; stderr: string; exitCode: number; cwd: string };
+
+// Range/revision values are passed as positional git arguments.  Reject option
+// syntax and control characters before any context generator invokes git; the
+// trailing `--` used for file paths cannot protect an earlier revision arg.
+export const isSafeContextRange = (value: string): boolean =>
+  value.length <= 4096 &&
+  (() => {
+    try {
+      gitRevisionParts(value);
+      return true;
+    } catch {
+      return false;
+    }
+  })();
+
+const isResolvableContextRange = (cwd: string, value: string): boolean => {
+  if (!isSafeContextRange(value)) return false;
+  try {
+    resolveGitRevision(cwd, value);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const invalidRange = (cwd: string): ContextResult => ({
+  stdout: "",
+  stderr: "ERROR: invalid revision range\n",
+  exitCode: 2,
+  cwd,
+});
 
 const runGit = (
   cwd: string,
@@ -238,6 +270,7 @@ const readTrimmed = (file: string, maxLines: number): string => {
 /** Port of pr-ready-context.sh — PR-ready repository context. */
 export function prReadyContext(root: string, range?: string): ContextResult {
   const cwd = path.resolve(repoRoot(root));
+  if (range !== undefined && !isResolvableContextRange(cwd, range)) return invalidRange(cwd);
   let stdout = "";
   const autoRange = range === undefined;
 
@@ -336,7 +369,9 @@ const CHANGELOG_RULES = `- Use an [Unreleased] section.
 /** Port of changelog-context.sh — changelog update context. */
 export function changelogContext(root: string, range?: string): ContextResult {
   const cwd = path.resolve(repoRoot(root));
+  if (range !== undefined && !isResolvableContextRange(cwd, range)) return invalidRange(cwd);
   const resolvedRange = rangeArgOrDefault(range, cwd);
+  if (!isResolvableContextRange(cwd, resolvedRange)) return invalidRange(cwd);
   let stdout = "";
 
   stdout += printSection("Repository");
@@ -370,7 +405,9 @@ export function changelogContext(root: string, range?: string): ContextResult {
 /** Port of docs-refresh-context.sh — documentation refresh context. */
 export function docsRefreshContext(root: string, range?: string): ContextResult {
   const cwd = path.resolve(repoRoot(root));
+  if (range !== undefined && !isResolvableContextRange(cwd, range)) return invalidRange(cwd);
   const resolvedRange = rangeArgOrDefault(range, cwd);
+  if (!isResolvableContextRange(cwd, resolvedRange)) return invalidRange(cwd);
   let stdout = "";
 
   stdout += printSection("Repository");
@@ -416,7 +453,9 @@ export function releaseNotesContext(root: string, rangeOrTag: string): ContextRe
   if (!rangeOrTag) {
     return { stdout: "", stderr: "ERROR: release tag or range required\n", exitCode: 1, cwd };
   }
+  if (!isResolvableContextRange(cwd, rangeOrTag)) return invalidRange(cwd);
   const resolvedRange = rangeArgOrDefault(rangeOrTag, cwd);
+  if (!isResolvableContextRange(cwd, resolvedRange)) return invalidRange(cwd);
   let stdout = "";
 
   stdout += printSection("Repository");
@@ -442,6 +481,25 @@ export function releaseNotesContext(root: string, rangeOrTag: string): ContextRe
   for (const rel of ["CHANGELOG.md", "RELEASE_NOTES.md", ".github/releases.md"]) {
     if (existsSync(path.join(cwd, rel))) stdout += rel + "\n";
   }
+
+  // A deterministic draft is useful to every read-only host surface. It is
+  // derived only from the already-resolved range; publication and file edits
+  // remain separate, writer-guarded actions.
+  stdout += printSection("Release Notes Draft");
+  stdout += `## Release notes (${resolvedRange})\n\n`;
+  const commits = commitLogForRange(cwd, resolvedRange)
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  stdout += commits.length
+    ? `${commits.map((line) => `- ${line}`).join("\n")}\n`
+    : "- No commits in range.\n";
+  stdout += "\n### Changed files\n\n";
+  const files = changedFilesForRange(cwd, resolvedRange)
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  stdout += files.length ? `${files.map((line) => `- ${line}`).join("\n")}\n` : "- None.\n";
 
   return { stdout, stderr: "", exitCode: 0, cwd };
 }

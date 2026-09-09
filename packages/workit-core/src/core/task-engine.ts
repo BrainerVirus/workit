@@ -37,7 +37,9 @@ import {
   storedDecisionApplicable,
   reserveAction as reserveBoundedAction,
   settleAction as settleBoundedAction,
+  reconcileAction as reconcileBoundedAction,
   verifyNativeAction,
+  verifyNativeReconciliation,
   verifyNativeDecision,
   verifyDecisionContent,
   retireNativeAuthority,
@@ -45,6 +47,7 @@ import {
   type NativeAuthorityVerifier,
   type ReserveActionInput,
   type SettleActionInput,
+  type ReconcileActionInput,
 } from "./authority";
 import { diffPolicy, resolvePolicy } from "./policy-resolver";
 import { TaskStore, type MetadataLock, type ProcessEvidence } from "./task-store";
@@ -673,6 +676,11 @@ export class WorkitCore {
     private readonly store: TaskStore,
     private readonly context: OperationContext,
   ) {}
+
+  /** Optional host actions are coordinator-owned; supervised worker contexts cannot invoke them. */
+  public isDelegatedCaller(): boolean {
+    return this.context.workerId !== null && this.context.workerId !== undefined;
+  }
 
   private contextRootError(): Result<null> {
     try {
@@ -1756,6 +1764,66 @@ export class WorkitCore {
     if (!authority.ok) return authority as Result<never>;
     return settleBoundedAction({
       ...input,
+      store: this.store,
+      authority: authority.data,
+      authorityOwner: this.authorityOwner,
+      authorityCaller: this.context.caller,
+      native: { now: trustedNow(this.context) },
+    });
+  }
+
+  reconcileAction(
+    input: Omit<
+      ReconcileActionInput,
+      | "store"
+      | "native"
+      | "authority"
+      | "authorityOwner"
+      | "authorityCaller"
+      | "taskRevision"
+      | "workspaceRevision"
+    > & {
+      expectedRevision: string;
+      expectedWorkspaceRevision: string;
+      observation: unknown;
+    },
+  ): Result<Entry<Decision>> {
+    const root = this.contextRootError();
+    if (!root.ok) return root as Result<never>;
+    if ((this.context.workerId ?? null) !== null)
+      return failure("permission_denied", "helpers cannot reconcile external actions");
+    const task = this.store.readTask(input.taskId);
+    if (!task.ok) return task as Result<never>;
+    const workspace = this.store.readWorkspace();
+    if (!workspace.ok) return workspace as Result<never>;
+    if (!workspace.data) return failure("not_found", "workspace not found");
+    const decision = task.data.decisions.find((entry) => entry.id === input.decisionId);
+    if (!decision) return failure("not_found", "decision not found");
+    const authority = verifyNativeReconciliation(
+      this.context.nativeAuthority,
+      {
+        observation: input.observation,
+        expected: {
+          taskId: task.data.id,
+          workspaceId: workspace.data.id,
+          decisionId: input.decisionId,
+          actionRef: input.actionRef,
+          taskRevision: input.expectedRevision,
+          workspaceRevision: input.expectedWorkspaceRevision,
+          outcome: input.outcome,
+          evidenceDigest: input.evidenceDigest,
+          ...(input.step ? { step: input.step } : {}),
+          decision: decision.data,
+        },
+        caller: this.context.caller,
+      },
+      { owner: this.authorityOwner, store: this.store, root: this.store.root },
+    );
+    if (!authority.ok) return authority as Result<never>;
+    return reconcileBoundedAction({
+      ...input,
+      taskRevision: input.expectedRevision,
+      workspaceRevision: input.expectedWorkspaceRevision,
       store: this.store,
       authority: authority.data,
       authorityOwner: this.authorityOwner,
