@@ -66,10 +66,13 @@ export const validateSkillManifests = (
     : `${label} mismatch at ${root} (missing: ${missing.join(", ") || "none"}; extra: ${extra.join(", ") || "none"})`;
 };
 
-export const validateCursorSkills = (pluginDir: string): string | null => {
+export const validateCursorSkills = (
+  pluginDir: string,
+  expected: readonly string[] = CURSOR_SKILLS,
+): string | null => {
   const workit = validateSkillManifests(
     path.join(pluginDir, "skills"),
-    CURSOR_SKILLS,
+    expected,
     "Cursor Workit skills",
   );
   if (workit) return workit;

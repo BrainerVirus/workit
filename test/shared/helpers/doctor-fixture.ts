@@ -2,13 +2,9 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import {
-  CANONICAL_SKILLS,
-  WORKIT_METHOD_SKILLS,
-} from "../../../packages/workit-core/src/core/skill-manifests";
+import { CANONICAL_SKILLS } from "../../../packages/workit-core/src/core/skill-manifests";
 
 // Shared fixture builder for the offline doctor (DG-07/DG-08). Builds an
-// isolated HOME + fake monorepo (dev) + config/state dirs so every check runs
 // against disposable files, never the real user config. Tests mutate files and
 // re-run; cleanup removes the whole tree.
 
@@ -52,7 +48,7 @@ export const makeDoctorFixture = (): DoctorFixture => {
   for (const skill of CANONICAL_SKILLS.superpowers) {
     mk(dev, "packages", "workit-core", "vendor", "superpowers", "skills", skill);
   }
-  for (const skill of WORKIT_METHOD_SKILLS) mk(pluginDir, "skills", skill);
+  for (const skill of CANONICAL_SKILLS.workit) mk(pluginDir, "skills", skill);
   mk(dev, "packages", "workit-opencode", "src");
   mk(dev, "packages", "workit-opencode", "assets", "commands");
   mk(dev, "packages", "workit-opencode", "assets", "skills", "wk-init");
@@ -85,7 +81,7 @@ export const makeDoctorFixture = (): DoctorFixture => {
       "# skill\n",
     );
   }
-  for (const skill of WORKIT_METHOD_SKILLS) {
+  for (const skill of CANONICAL_SKILLS.workit) {
     writeFileSync(path.join(pluginDir, "skills", skill, "SKILL.md"), "# skill\n");
   }
   mkdirSync(path.join(pluginDir, "dist"), { recursive: true });

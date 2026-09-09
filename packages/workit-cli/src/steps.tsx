@@ -29,6 +29,8 @@ import {
 } from "./wizard-state";
 import { LOCALE_LANGUAGE_MAP, SearchSelect } from "./search-select";
 
+// Platform selection stays limited to hosts the setup Apply path registers today.
+// Codex/Pi cutover uses the dedicated preview/apply flow exported from logic.ts.
 const PLATFORMS = [
   { label: "OpenCode", value: "opencode" },
   { label: "Cursor", value: "cursor" },

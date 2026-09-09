@@ -140,5 +140,6 @@ if [ -d "$LEGACY_PLUGIN_DIR" ] && [ "$LEGACY_PLUGIN_DIR" != "$PLUGIN_DIR" ]; the
 fi
 
 echo "Cursor plugin installed + auto-sync enabled (sessionStart)."
+echo "Generation switches require an explicit cutover preview/apply — install alone is not a cutover."
 echo "Share: $SHARE"
 ls "$HOME/.cursor/plugins/local/workit/skills" | grep '^wk-' || true

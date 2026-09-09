@@ -1231,3 +1231,28 @@ export function applyWorkspaceBranchPolicy(opts: {
     config_path: wsPath,
   };
 }
+
+export {
+  applyCutover,
+  applyRollback,
+  classifyHostGeneration,
+  detectCursorLatest,
+  detectSourceLinkedOpenCode,
+  previewCutover,
+  previewRollback,
+  readGenerationState,
+  type CutoverDecision,
+  type CutoverHost,
+  type CutoverPaths,
+  type CutoverPlan,
+  type CutoverReceipt,
+  type GenerationState,
+  type RollbackPreview,
+} from "./cutover";
+export {
+  previewConversion,
+  redactConversionPreview,
+  type ConversionInput,
+  type ConversionMapping,
+  type ConversionPreview,
+} from "./config-conversion";

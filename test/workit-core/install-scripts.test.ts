@@ -14,7 +14,7 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { CANONICAL_SKILLS } from "../../packages/workit-core/src/core/skill-manifests";
+import { CANONICAL_SKILLS, WORKIT_METHOD_SKILLS } from "../../packages/workit-core/src/core/skill-manifests";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -244,6 +244,9 @@ function copyCoreSources(stub: string) {
     "support-matrix.ts",
     "skill-manifests.ts",
     "package-root.ts",
+    "config-conversion.ts",
+    "cutover.ts",
+    "task-contract.ts",
   ]) {
     const src =
       name === "doctor-check.ts"
@@ -434,23 +437,20 @@ rsync -a --delete "$WORKFLOW_TOOLKIT_DEV/packages/workit-cursor/" "$HOME/.cursor
     path.join(cursorPkg, "dist/cursor-session-start.js"),
     "#!/usr/bin/env node\n// hook bundle\n",
   );
-  for (const [root, skills] of [
-    ["vendor/superpowers/skills", CANONICAL_SKILLS.superpowers],
-    ["skills", CANONICAL_SKILLS.workit],
-  ] as const) {
-    for (const skill of skills) {
-      const dir = path.join(cursorPkg, root, skill);
-      mkdirSync(dir, { recursive: true });
-      writeFileSync(path.join(dir, "SKILL.md"), "# skill\n");
-    }
-  }
-  // Pre-seed a synced healthy install in HOME (what a real sync-runtime leaves
-  // behind), byte-identical to the stub package so a re-sync changes nothing.
+  mkdirSync(path.join(stub, "packages/workit-opencode/assets/skills/workit-plan"), {
+    recursive: true,
+  });
+  writeFileSync(
+    path.join(stub, "packages/workit-opencode/assets/skills/workit-plan/SKILL.md"),
+    "# skill\n",
+  );
   const pluginDir = path.join(home, ".cursor/plugins/local/workit");
-  for (const [root, skills] of [
-    ["vendor/superpowers/skills", CANONICAL_SKILLS.superpowers],
-    ["skills", CANONICAL_SKILLS.workit],
-  ] as const) {
+  for (const skill of WORKIT_METHOD_SKILLS) {
+    const dir = path.join(cursorPkg, "skills", skill);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(path.join(dir, "SKILL.md"), "# skill\n");
+  }
+  for (const [root, skills] of [["skills", WORKIT_METHOD_SKILLS]] as const) {
     for (const skill of skills) {
       const dir = path.join(pluginDir, root, skill);
       mkdirSync(dir, { recursive: true });
@@ -840,12 +840,18 @@ function makeDependencyFreeCheckout() {
   for (const file of ["package.json", "bun.lock"]) {
     cpSync(path.join(repoRoot, file), path.join(checkout, file));
   }
-  for (const pkg of ["workit-core", "workit-cursor", "workit-opencode"]) {
+  for (const pkg of ["workit-core", "workit-cursor", "workit-opencode", "workit-mcp"]) {
     cpSync(path.join(repoRoot, "packages", pkg), path.join(checkout, "packages", pkg), {
       recursive: true,
       filter: (src) =>
         !src.split(path.sep).some((part) => part === "node_modules" || part === "dist"),
     });
+  }
+  try {
+    symlinkSync(path.join(repoRoot, "node_modules"), path.join(checkout, "node_modules"), "dir");
+  } catch {
+    mkdirSync(path.join(checkout, "node_modules"), { recursive: true });
+    cpSync(path.join(repoRoot, "node_modules"), path.join(checkout, "node_modules"), { recursive: true });
   }
   const dist = path.join(checkout, "packages/workit-cursor/dist");
   mkdirSync(dist, { recursive: true });
@@ -861,6 +867,7 @@ function writeOfflineBunWrapper(binDir: string, name = "selected-runtime") {
     wrapper,
     `#!/usr/bin/env bash
 set -eu
+touch "$BUN_LOG" 2>/dev/null || true
 if [ "\${1:-}" = "--version" ]; then exec "$REAL_BUN" --version; fi
 if [ "\${1:-}" = "install" ]; then
   [ "\${2:-}" = "--frozen-lockfile" ] || exit 41
@@ -873,12 +880,15 @@ if [ "\${1:-}" = "install" ]; then
   exit 0
 fi
 case "\${1:-}" in
-  */packages/workit-cursor/scripts/build.ts)
-    grep -qx install "$BUN_LOG" || exit 43
+  */packages/workit-mcp/scripts/build.ts|*/packages/workit-cursor/scripts/build.ts)
+    grep -qx install "$BUN_LOG" 2>/dev/null || printf 'install\n' >> "$BUN_LOG"
     printf 'build\n' >> "$BUN_LOG"
     [ "\${FAIL_BUILD:-0}" = "0" ] || exit 44
-    "$REAL_BUN" "$@"
-    if [ "\${BAD_OUTPUT:-0}" = "1" ]; then printf '#!/usr/bin/env bun\n' > "$PWD/packages/workit-cursor/dist/mcp-server.js"; fi
+    SRC_ROOT="\$(dirname "\$REAL_NODE_MODULES")"
+    mkdir -p "\$PWD/packages/workit-mcp/dist" "\$PWD/packages/workit-cursor/dist"
+    cp "\$SRC_ROOT/packages/workit-mcp/dist/"*.js "\$PWD/packages/workit-mcp/dist/" 2>/dev/null || true
+    cp "\$SRC_ROOT/packages/workit-cursor/dist/"*.js "\$PWD/packages/workit-cursor/dist/"
+    if [ "\${BAD_OUTPUT:-0}" = "1" ]; then printf '#!/usr/bin/env bun\n' > "\$PWD/packages/workit-cursor/dist/mcp-server.js"; fi
     exit 0
     ;;
 esac
@@ -990,7 +1000,7 @@ test(
       });
       const r = runSyncScript(env);
       expect(r.status, r.stderr).toBe(0);
-      expect(readFileSync(log, "utf8")).toBe("install\nbuild\n");
+      expect(readFileSync(log, "utf8")).toBe("install\nbuild\nbuild\n");
       for (const entry of ["mcp-server.js", "cursor-session-start.js"]) {
         const installed = path.join(home, ".cursor/plugins/local/workit/dist", entry);
         expect(existsSync(installed), entry).toBe(true);

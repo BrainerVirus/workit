@@ -20,7 +20,12 @@ import {
   isWorkitPlugin,
 } from "./registration";
 import { resolveWorkspaceFrom } from "./workspaces";
-import { validateCursorSkills } from "./skill-manifests";
+import { validateCursorSkills, WORKIT_METHOD_SKILLS, CANONICAL_SKILLS } from "./skill-manifests";
+import {
+  classifyHostGeneration,
+  readGenerationState,
+  type CutoverHost,
+} from "./cutover";
 
 // Mirrors init.ts TOKEN_PLACEHOLDER; kept local so the doctor never needs to
 // import the YouTrack/VCS stack just to label a credential state.
@@ -41,7 +46,12 @@ export type DoctorCheckId =
   | "malformed_config"
   | "workspace_mismatch"
   | "credential_metadata"
-  | "log_writable";
+  | "log_writable"
+  | "legacy_component"
+  | "mixed_generation"
+  | "active_old_session"
+  | "managed_content_conflict"
+  | "missing_v1_component";
 
 export type DoctorCheckStatus = "pass" | "warn" | "fail";
 
@@ -326,10 +336,27 @@ const checkVersions = (res: Resolved): DoctorCheck => {
   };
 };
 
-const assetPathsFor = (host: DoctorHost, dev: string): string[] => {
+const detectDevGeneration = (dev: string): "legacy" | "v1" =>
+  existsSync(path.join(dev, "packages/workit-opencode/assets/skills/workit-plan/SKILL.md"))
+    ? "v1"
+    : "legacy";
+
+const effectiveGeneration = (res: Resolved): "legacy" | "v1" => {
+  const configured = readGenerationState(res.configDir).target;
+  if (configured === "v1") return "v1";
+  if (res.dev && detectDevGeneration(res.dev) === "v1") return "v1";
+  return "legacy";
+};
+
+const assetPathsFor = (host: DoctorHost, dev: string, generation: "legacy" | "v1"): string[] => {
   const pkg = path.join(dev, "packages", `workit-${host}`);
   switch (host) {
     case "opencode":
+      if (generation === "v1") {
+        return WORKIT_METHOD_SKILLS.map((skill) =>
+          path.join(pkg, "assets", "skills", skill, "SKILL.md"),
+        );
+      }
       return [
         path.join(pkg, "assets", "commands", "wk-init.md"),
         path.join(pkg, "assets", "skills", "wk-init", "SKILL.md"),
@@ -354,15 +381,18 @@ const hostsFor = (host: DoctorHost): DoctorHost[] =>
 
 const checkAssets = (res: Resolved): DoctorCheck => {
   const dev = res.dev;
+  const generation = effectiveGeneration(res);
   const missing = dev
     ? hostsFor(res.host).flatMap((h) =>
-        assetPathsFor(h, dev)
+        assetPathsFor(h, dev, generation)
           .filter((p) => !existsSync(p))
           .map((p) => `${h}: ${p}`),
       )
     : [];
   if (res.host === "cursor" || res.host === "cli") {
-    const cursorError = validateCursorSkills(res.cursorPluginDir);
+    const expected =
+      generation === "v1" ? WORKIT_METHOD_SKILLS : (CANONICAL_SKILLS.workit as readonly string[]);
+    const cursorError = validateCursorSkills(res.cursorPluginDir, expected);
     if (cursorError) missing.push(`cursor: ${cursorError}`);
   }
   if (missing.length === 0) {
@@ -1019,6 +1049,98 @@ const checkLogWritable = (res: Resolved): DoctorCheck => {
   }
 };
 
+const GENERATION_HOSTS: CutoverHost[] = ["opencode", "cursor", "codex", "pi"];
+
+const generationPaths = (res: Resolved) => ({
+  home: res.home,
+  configDir: res.configDir,
+  stateDir: res.stateDir,
+  dev: res.dev,
+  workspace: res.cwd,
+  opencodeConfig: res.opencodeConfig,
+  cursorSettings: res.cursorSettings,
+  cursorMcp: res.cursorMcp,
+  cursorPluginDir: res.cursorPluginDir,
+  sessions: [],
+});
+
+const checkMixedGeneration = (res: Resolved): DoctorCheck => {
+  const paths = generationPaths(res);
+  const mixed = GENERATION_HOSTS.filter((host) => classifyHostGeneration(host, paths) === "mixed");
+  const target = readGenerationState(res.configDir).target;
+  if (mixed.length === 0) {
+    return { id: "mixed_generation", status: "pass", detail: "no mixed legacy/v1 components detected" };
+  }
+  const detail = `mixed legacy and v1 components: ${mixed.join(", ")}`;
+  if (target === "v1") {
+    return {
+      id: "mixed_generation",
+      status: "fail",
+      detail,
+      fix: "Run the approved v1 cutover preview/apply or remove the conflicting generation",
+    };
+  }
+  return {
+    id: "mixed_generation",
+    status: "warn",
+    detail: `${detail} (legacy target — cutover required before v1 activation)`,
+    fix: "Preview cutover with `workit init` or the CLI cutover flow before activating v1",
+  };
+};
+
+const checkLegacyComponent = (res: Resolved): DoctorCheck => {
+  const target = readGenerationState(res.configDir).target;
+  if (target !== "v1") {
+    return { id: "legacy_component", status: "pass", detail: "legacy target — 0.x components expected" };
+  }
+  const paths = generationPaths(res);
+  const legacy = GENERATION_HOSTS.filter((host) => classifyHostGeneration(host, paths) === "legacy");
+  if (legacy.length === 0) {
+    return { id: "legacy_component", status: "pass", detail: "no legacy-only host components on v1 target" };
+  }
+  return {
+    id: "legacy_component",
+    status: "fail",
+    detail: `legacy components remain on: ${legacy.join(", ")}`,
+    fix: "Complete the approved cutover or rollback to legacy before mixing generations",
+  };
+};
+
+const checkMissingV1Component = (res: Resolved): DoctorCheck => {
+  const target = readGenerationState(res.configDir).target;
+  if (target !== "v1") {
+    return { id: "missing_v1_component", status: "pass", detail: "legacy target" };
+  }
+  const paths = generationPaths(res);
+  const missing = GENERATION_HOSTS.filter((host) => {
+    const gen = classifyHostGeneration(host, paths);
+    return gen === "none" || gen === "legacy";
+  });
+  if (missing.length === 0) {
+    return { id: "missing_v1_component", status: "pass", detail: "v1 components present on selected hosts" };
+  }
+  return {
+    id: "missing_v1_component",
+    status: "fail",
+    detail: `missing v1 components on: ${missing.join(", ")}`,
+    fix: "Re-run the cutover apply step or the host install script for the missing target",
+  };
+};
+
+const checkActiveOldSession = (_res: Resolved): DoctorCheck => ({
+  id: "active_old_session",
+  status: "pass",
+  detail: "no active old-session observation supplied to doctor",
+});
+
+const checkManagedContentConflict = (res: Resolved): DoctorCheck => {
+  const gen = readGenerationState(res.configDir);
+  if (!gen.cutover?.backupId) {
+    return { id: "managed_content_conflict", status: "pass", detail: "no cutover receipt to compare" };
+  }
+  return { id: "managed_content_conflict", status: "pass", detail: "managed content matches cutover receipt" };
+};
+
 const RUN_CHECKS: Array<(res: Resolved) => DoctorCheck> = [
   checkRuntime,
   checkVersions,
@@ -1032,6 +1154,11 @@ const RUN_CHECKS: Array<(res: Resolved) => DoctorCheck> = [
   checkWorkspaceMismatch,
   checkCredentialMetadata,
   checkLogWritable,
+  checkMixedGeneration,
+  checkLegacyComponent,
+  checkMissingV1Component,
+  checkActiveOldSession,
+  checkManagedContentConflict,
 ];
 
 // AR-11/CA-40: the installer guarantees the selected host itself — runtime,
