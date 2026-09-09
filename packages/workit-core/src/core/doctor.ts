@@ -375,7 +375,7 @@ const assetPathsFor = (host: DoctorHost, dev: string, _generation: "legacy" | "v
       );
     case "cursor":
       return [
-        path.join(pkg, "assets", "templates", "spec-template.md"),
+        path.join(pkg, "assets", "templates", "workit-contract.md"),
         path.join(pkg, "mcp.json"),
         path.join(pkg, ".cursor-plugin"),
       ];

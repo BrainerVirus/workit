@@ -189,7 +189,7 @@ const syncEnv = (home: string, lockDir: string, repo: string): Record<string, st
 
 test(
   "sync-runtime installs seven method skills and no legacy vendor tree",
-  () => {
+  async () => {
     if (!syncToolsAvailable) return;
     const fixture = mkdtempSync(path.join(os.tmpdir(), "wk-sync-runtime-"));
     const home = path.join(fixture, "home");
@@ -197,9 +197,8 @@ test(
     const plugin = path.join(home, ".cursor/plugins/local/workit");
     mkdirSync(plugin, { recursive: true });
     try {
-      const result = syncRuntime({
+      const result = await syncRuntime({
         env: syncEnv(home, lockDir, REPO_ROOT),
-        hosts: ["cursor"],
       });
       expect(result.ok).toBe(true);
       expect(skillManifests(path.join(plugin, "skills"))).toEqual(WORKIT);

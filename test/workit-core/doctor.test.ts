@@ -189,9 +189,7 @@ test("offline flag reflects the registry probe: false for local-dist installs, t
   const pluginPkg = path.join(fixture.pluginDir, "package.json");
   const hooksFile = path.join(fixture.pluginDir, "hooks", "hooks-cursor.json");
   const originalHooks = readFileSync(hooksFile, "utf8");
-  writeConfig(pluginPkg, JSON.stringify({ name: "@brainervirus/workit-cursor", version: "0.4.0" }));
-  // A local-dist install (node hook, no mcp.json selector) is the only shape
-  // that consults the registry; the version seam keeps the probe spawn-free.
+  writeConfig(pluginPkg, JSON.stringify({ name: "@brainervirus/workit-cursor", version: "1.0.0" }));
   rmSync(path.join(fixture.pluginDir, "mcp.json"), { force: true });
   writeConfig(
     hooksFile,
@@ -214,7 +212,7 @@ test("offline flag reflects the registry probe: false for local-dist installs, t
       stateDir: fixture.stateDir,
       dev: fixture.dev,
       cwd: fixture.cwd,
-      env: { ...process.env, WORKIT_DOCTOR_STALE_REGISTRY_VERSION: "0.4.0" },
+      env: { ...process.env, WORKIT_DOCTOR_STALE_REGISTRY_VERSION: "1.0.0" },
     });
     expect(report.offline).toBe(false);
     expect(check(report, "stale_install").status).toBe("pass");
@@ -254,13 +252,13 @@ test("local-dist install behind the published runtime is stale_install fail when
       stateDir: fixture.stateDir,
       dev: fixture.dev,
       cwd: fixture.cwd,
-      env: { ...process.env, WORKIT_DOCTOR_STALE_REGISTRY_VERSION: "0.5.0" },
+      env: { ...process.env, WORKIT_DOCTOR_STALE_REGISTRY_VERSION: "1.0.0" },
     });
     expect(report.exitCode).not.toBe(0);
     const stale = check(report, "stale_install");
     expect(stale.status).toBe("fail");
     expect(stale.detail).toContain("0.4.0");
-    expect(stale.detail).toContain("0.5.0");
+    expect(stale.detail).toContain("1.0.0");
     expect(stale.fix).toBeTruthy();
   } finally {
     rmSync(pluginPkg, { force: true });
@@ -273,9 +271,7 @@ test("registry-unreachable staleness comparison yields registry_unreachable, not
   const pluginPkg = path.join(fixture.pluginDir, "package.json");
   const hooksFile = path.join(fixture.pluginDir, "hooks", "hooks-cursor.json");
   const originalHooks = readFileSync(hooksFile, "utf8");
-  writeConfig(pluginPkg, JSON.stringify({ name: "@brainervirus/workit-cursor", version: "0.4.0" }));
-  // A local-dist install (node hook, no mcp.json selector) is the only path
-  // that consults the registry; a canonical @latest install never probes.
+  writeConfig(pluginPkg, JSON.stringify({ name: "@brainervirus/workit-cursor", version: "1.0.0" }));
   rmSync(path.join(fixture.pluginDir, "mcp.json"), { force: true });
   writeConfig(
     hooksFile,
@@ -1242,6 +1238,8 @@ test("installer downgrades optional parity checks to warnings, not failures", ()
 });
 
 test("reports mixed_generation when legacy and v1 cursor skills coexist", () => {
+  mkdirSync(path.join(fixture.pluginDir, "skills", "wk-init"), { recursive: true });
+  writeFileSync(path.join(fixture.pluginDir, "skills", "wk-init", "SKILL.md"), "# legacy\n");
   installV1Skills(fixture.pluginDir);
   try {
     const report = run();

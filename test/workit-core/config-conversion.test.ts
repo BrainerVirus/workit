@@ -1,5 +1,4 @@
 import { afterAll, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
 import path from "node:path";
 import {
   previewConversion,

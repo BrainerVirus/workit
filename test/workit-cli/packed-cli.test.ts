@@ -100,6 +100,10 @@ async function loadSetup(nm: string): Promise<PackedSetup> {
   )) as PackedSetup;
 }
 
+function installPackedCore(nm: string, packs: ReturnType<typeof packWorkspacePackages>) {
+  installDeclaredClosure(nm, packs, byName(packs, CORE));
+}
+
 test("packed CLI setup flow configures OpenCode + Cursor and doctor verifies it", async () => {
   const packs = packWorkspacePackages();
   const install = tmp("wk-packedcli-");
@@ -204,7 +208,7 @@ test("packed CLI: identical workspaces emit no update-workspaces mutation", asyn
   try {
     const nm = path.join(install, "node_modules");
     mkdirSync(nm, { recursive: true });
-    installPackedPackage(nm, byName(packs, CORE));
+    installPackedCore(nm, packs);
     const setup = await loadSetup(nm);
 
     const home = path.join(install, "home");
@@ -242,6 +246,7 @@ test("packed CLI partial failure exits nonzero with a Failed entry", async () =>
     installPackedPackage(nm, byName(packs, CORE));
     installPackedPackage(nm, byName(packs, OPENCODE)); // cursor deliberately absent
     installPackedPackage(nm, byName(packs, CLI));
+    copyHoistedDeps(nm, ["zod"]);
     const setup = await loadSetup(nm);
 
     const home = path.join(install, "home");

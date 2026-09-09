@@ -4,8 +4,6 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { createRepoTools } from "../../packages/workit-opencode/src/tools/repo";
-import { createSddTools } from "../../packages/workit-opencode/src/tools/sdd";
-import { WorkflowStateStore } from "../../packages/workit-core/src/state";
 import {
   docsBranch,
   resolveBranch,
@@ -69,20 +67,14 @@ const repoWithDevelop = () => {
 };
 
 test(
-  "workit_docs_branch keeps current feature branch",
-  async () => {
+  "docsBranch keeps current feature branch",
+  () => {
     const { root, remote } = repoWithDevelop();
     git(root, ["checkout", "-q", "-b", "feature/current"]);
     try {
-      const raw = await createSddTools(new WorkflowStateStore()).workit_docs_branch.execute({}, {
-        directory: root,
-        worktree: root,
-        sessionID: "t",
-      } as never);
-      const result = JSON.parse(raw as string);
-      expect(result.ok).toBe(true);
-      expect(result.data.action).toBe("keep");
-      expect(result.data.branch).toBe("feature/current");
+      const result = docsBranch({ kind: "feature", workspace_root: root });
+      expect(result.action).toBe("keep");
+      expect(result.branch).toBe("feature/current");
     } finally {
       rmSync(root, { recursive: true, force: true });
       rmSync(remote, { recursive: true, force: true });
@@ -92,22 +84,17 @@ test(
 );
 
 test(
-  "workit_docs_branch proposes create_from_develop on main",
-  async () => {
+  "docsBranch proposes create_from_develop on main",
+  () => {
     const { root, remote } = repoWithDevelop();
     mkdirSync(path.join(root, "docs", "2026-08-04-gates"), { recursive: true });
     const plan = "docs/2026-08-04-gates/plan.md";
     writeFileSync(path.join(root, plan), "# Plan\n");
     try {
-      const raw = await createSddTools(new WorkflowStateStore()).workit_docs_branch.execute(
-        { plan_path: plan },
-        { directory: root, worktree: root, sessionID: "t" } as never,
-      );
-      const result = JSON.parse(raw as string);
-      expect(result.ok).toBe(true);
-      expect(result.data.action).toBe("create_from_develop");
-      expect(result.data.branch).toBe("feature/2026-08-04-gates");
-      expect(result.data.current_branch).toBe("main");
+      const result = docsBranch({ plan_path: plan, workspace_root: root });
+      expect(result.action).toBe("create_from_develop");
+      expect(result.branch).toBe("feature/2026-08-04-gates");
+      expect(result.current_branch).toBe("main");
     } finally {
       rmSync(root, { recursive: true, force: true });
       rmSync(remote, { recursive: true, force: true });

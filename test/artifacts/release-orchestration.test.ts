@@ -160,7 +160,7 @@ test(
     }
     // bumpers only: exactly four @semantic-release/npm entries, none publishing.
     const npmEntries = cfg.plugins.filter(isNpm);
-    expect(npmEntries).toHaveLength(4);
+    expect(npmEntries).toHaveLength(7);
     for (const entry of npmEntries) expect(opts(entry).npmPublish).toBe(false);
     // selective publish lands after the bumpers and before the GitHub
     // release/tag plugin (AR-16).

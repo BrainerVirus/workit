@@ -65,6 +65,7 @@ export const makeDoctorFixture = (): DoctorFixture => {
   for (const skill of WORKIT_METHOD_SKILLS) {
     writeFileSync(path.join(dev, "packages/workit-core/skills", skill, "SKILL.md"), "# skill\n");
     writeFileSync(path.join(pluginDir, "skills", skill, "SKILL.md"), "# skill\n");
+    mkdirSync(path.join(dev, "packages/workit-opencode/assets/skills", skill), { recursive: true });
     writeFileSync(
       path.join(dev, "packages/workit-opencode/assets/skills", skill, "SKILL.md"),
       "# skill\n",

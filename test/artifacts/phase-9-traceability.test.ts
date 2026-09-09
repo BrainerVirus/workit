@@ -105,14 +105,14 @@ const ROWS: Row[] = [
     row: "POST-12",
     requirement: "native-choice evidence is model-forgeable",
     evidence: [
-      "test/workit-opencode/flow-enforcement.test.ts::a caller-supplied evidence object is inert: no receipt means approval fails",
+      "test/workit-opencode/task-tools.test.ts::OpenCode action route consumes the exact native receipt before committing",
     ],
   },
   {
     row: "POST-13",
     requirement: "delegated identity and direct edits bypass coordinator gates",
     evidence: [
-      "test/workit-core/flow-concurrency.test.ts::CA-18/AR-13: root-session interception blocks write tools and mutating shell once subagent-driven is active",
+      "test/workit-opencode/task-hooks.test.ts::known write surfaces enforce the current writer while unknown shell writes stay agent-guided",
     ],
   },
   {
@@ -221,7 +221,7 @@ const ROWS: Row[] = [
     requirement:
       "approval, menu, and delegated identity come from host observations, not caller-created evidence, role, or taskIdentity",
     evidence: [
-      "test/workit-opencode/flow-enforcement.test.ts::a host-issued question receipt is consumed by the approval tool without evidence args",
+      "test/workit-opencode/task-tools.test.ts::the decision tool consumes only the matching native question receipt",
     ],
   },
   {
@@ -229,7 +229,7 @@ const ROWS: Row[] = [
     requirement:
       "OpenCode intercepts known file-write tools and denies coordinator shell mutation while subagent-driven mode is active",
     evidence: [
-      "test/workit-core/flow-concurrency.test.ts::CA-18/AR-13: root-session interception blocks write tools and mutating shell once subagent-driven is active",
+      "test/workit-opencode/task-hooks.test.ts::known write surfaces enforce the current writer while unknown shell writes stay agent-guided",
     ],
   },
   {
@@ -280,7 +280,7 @@ const ROWS: Row[] = [
       "Cursor tools called without workspace_root use the launcher workspace; all build/hook entry paths pass Windows process tests",
     evidence: [
       "test/workit-cursor/mcp-process.test.ts::run-server <workspace> from an unrelated cwd defaults omitted roots to the launcher workspace",
-      "test/workit-cursor/mcp-regressions.test.ts::cursor MCP manifests stay package-relative (mcp.json, marketplace.json, hooks-cursor.json)",
+      "test/workit-cursor/mcp-regressions.test.ts::cursor MCP manifests stay package-relative (mcp.json and hooks-cursor.json)",
     ],
   },
   {
@@ -326,8 +326,8 @@ const ROWS: Row[] = [
     requirement:
       "forged evidence, replayed receipts, mismatched sessions/labels, and caller-supplied delegated roles fail; a real host question plus child session succeeds",
     evidence: [
-      "test/workit-opencode/flow-enforcement.test.ts::receipt replay fails: one receipt approves exactly once",
-      "test/workit-opencode/flow-enforcement.test.ts::a real child session (host parentage) is delegated and denied control metadata",
+      "test/workit-opencode/task-tools.test.ts::native receipts reject unrelated questions and are consumed once per purpose",
+      "test/workit-opencode/task-hooks.test.ts::direct-child reviewer and implementer contexts are exact and lineage-bound",
     ],
   },
   {
@@ -335,8 +335,8 @@ const ROWS: Row[] = [
     requirement:
       "Cursor flow results expose unauthenticated confirmation provenance and an accepted subagent-driven selection returns a raw coordinator lease",
     evidence: [
-      "test/workit-cursor/flow-enforcement.test.ts::cursor MCP: subagent-driven menu is accepted and returns a raw coordinator lease",
-      "test/workit-cursor/flow-enforcement.test.ts::cursor MCP: no evidence argument exists — caller-supplied evidence is inert",
+      "test/workit-cursor/task-mcp.test.ts::Cursor MCP refuses authority without a native caller identity",
+      "test/workit-cursor/task-mcp.test.ts::Cursor adapter has no legacy token or embedded schema surface",
     ],
   },
   {

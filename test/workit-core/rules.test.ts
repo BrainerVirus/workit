@@ -137,7 +137,7 @@ test("writeCompiledCursorRules writes mdc files", () => {
   }
 });
 
-test("bootstrap appends compiled opencode rule sections", async () => {
+test("bootstrap is the static v1 contract without compiled rule sections", async () => {
   const dir = cfgDir();
   try {
     writeRule(
@@ -146,7 +146,8 @@ test("bootstrap appends compiled opencode rule sections", async () => {
     );
     const fresh = await import(`../../packages/workit-opencode/src/bootstrap?rules=${Date.now()}`);
     const bootstrap = fresh.getWorkitBootstrap();
-    expect(bootstrap).toContain("## zeta");
+    expect(bootstrap).toContain("<workit-contract>");
+    expect(bootstrap).not.toContain("## zeta");
   } finally {
     cleanupEnv();
     rmSync(dir, { recursive: true, force: true });

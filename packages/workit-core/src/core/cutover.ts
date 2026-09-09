@@ -393,7 +393,7 @@ const plannedAfterDigest = (
       : { version: 1, hooks: {} };
     const next = {
       ...base,
-      hooks: { ...(base.hooks ?? {}), sessionStart: [{ command: entry.command }] },
+      hooks: { ...base.hooks, sessionStart: [{ command: entry.command }] },
     };
     return createHash("sha256").update(JSON.stringify(next)).digest("hex");
   }
@@ -491,7 +491,7 @@ const applyHostCutover = (
     writeFileSync(
       hooksPath,
       JSON.stringify(
-        { ...hooks, hooks: { ...(hooks.hooks ?? {}), sessionStart: [{ command: entry.command }] } },
+        { ...hooks, hooks: { ...hooks.hooks, sessionStart: [{ command: entry.command }] } },
         null,
         2,
       ) + "\n",

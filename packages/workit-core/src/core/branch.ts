@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { gitContext } from "./git";
@@ -289,7 +289,11 @@ export const branchSetup = ({
   const manifestPath = path.isAbsolute(sdd)
     ? path.join(sdd, "manifest.json")
     : path.join(cwd, sdd, "manifest.json");
-  mkdirSync(path.dirname(manifestPath), { recursive: true, mode: 0o755 });
+  const ensureManifestDir = () => {
+    const dir = path.dirname(manifestPath);
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o755 });
+  };
+  ensureManifestDir();
   const readManifest = (): Record<string, unknown> => {
     try {
       return JSON.parse(readFileSync(manifestPath, "utf8"));
@@ -297,8 +301,10 @@ export const branchSetup = ({
       return {};
     }
   };
-  const writeManifest = (data: Record<string, unknown>) =>
+  const writeManifest = (data: Record<string, unknown>) => {
+    ensureManifestDir();
     writeFileSync(manifestPath, JSON.stringify(data, null, 2) + "\n", "utf8");
+  };
 
   const journal = (message: string) => log?.(`branch-setup: ${message}`);
 
@@ -443,7 +449,11 @@ export const branchSetup = ({
     if (stash_ref === undefined && gitContext(cwd).branch !== current) {
       try {
         exec(["checkout", current]);
-      } catch {}
+      } catch {
+        try {
+          exec(["checkout", "-m", current]);
+        } catch {}
+      }
     }
     return result;
   }

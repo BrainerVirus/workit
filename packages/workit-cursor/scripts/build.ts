@@ -7,6 +7,7 @@ import { spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, rmSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { validateSkillManifests } from "../../workit-core/src/core/skill-manifests";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const pkgDir = path.resolve(scriptDir, "..");
@@ -71,6 +72,40 @@ for (const name of [
   "workit-debug",
   "workit-handoff",
 ]) {
-  cpSync(path.join(coreDir, "skills", name), path.join(skills, name), { recursive: true });
+  const srcSkill = path.join(coreDir, "skills", name);
+  if (!existsSync(srcSkill)) {
+    console.error(`missing canonical Workit method skill in core: ${name}`);
+    process.exit(1);
+  }
+  cpSync(srcSkill, path.join(skills, name), { recursive: true });
+}
+const sourceSkills = path.join(pkgDir, "skills");
+if (existsSync(sourceSkills)) {
+  const extra = validateSkillManifests(sourceSkills, [
+    "workit-challenge",
+    "workit-behavioral-tdd",
+    "workit-review",
+    "workit-plan",
+    "workit-implement",
+    "workit-debug",
+    "workit-handoff",
+  ], "Cursor package skills");
+  if (extra) {
+    console.error(extra);
+    process.exit(1);
+  }
+}
+const built = validateSkillManifests(skills, [
+  "workit-challenge",
+  "workit-behavioral-tdd",
+  "workit-review",
+  "workit-plan",
+  "workit-implement",
+  "workit-debug",
+  "workit-handoff",
+], "Cursor built skills");
+if (built) {
+  console.error(built);
+  process.exit(1);
 }
 console.log(`cursor: built shared MCP, native hook, assets, and seven method skills (${target})`);

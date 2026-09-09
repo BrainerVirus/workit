@@ -16,6 +16,8 @@ const MCP = "@brainervirus/workit-mcp";
 const OPENCODE = "@brainervirus/workit-opencode";
 const CURSOR = "@brainervirus/workit-cursor";
 const CLI = "@brainervirus/workit-cli";
+const CODEX = "@brainervirus/workit-codex";
+const PI = "@brainervirus/workit-pi";
 
 const tmp = (prefix: string) => mkdtempSync(path.join(os.tmpdir(), prefix));
 
@@ -23,7 +25,15 @@ test("default report aggregates the deterministic candidate and an isolated doct
   const report = buildReliabilityReport({ now: () => new Date(0) });
   expect(report.published).toBe(false);
   expect(report.generated_at).toBe("1970-01-01T00:00:00.000Z");
-  expect(report.candidate.map((c) => c.packageName)).toEqual([CORE, MCP, OPENCODE, CURSOR, CLI]);
+  expect(report.candidate.map((c) => c.packageName)).toEqual([
+    CORE,
+    MCP,
+    CLI,
+    OPENCODE,
+    CURSOR,
+    CODEX,
+    PI,
+  ]);
   for (const c of report.candidate) {
     expect(c.sha256).toMatch(/^[0-9a-f]{64}$/);
   }
@@ -33,10 +43,10 @@ test("default report aggregates the deterministic candidate and an isolated doct
   // exactly the utility check fails (D11/D13).
   expect(report.doctor).toEqual({
     ok: false,
-    passed: 11,
+    passed: 16,
     warned: 0,
     failed: 1,
-    total: 12,
+    total: 17,
     fixes: 1,
   });
   expect(report.logs).toEqual({ files: 0, events: 0 });
@@ -64,10 +74,10 @@ test("report doctor counts are exact against a controlled isolated fixture", () 
     // node+bun on PATH but no git: exactly the utility check fails.
     expect(report.doctor).toEqual({
       ok: false,
-      passed: 11,
+      passed: 16,
       warned: 0,
       failed: 1,
-      total: 12,
+      total: 17,
       fixes: 1,
     });
   } finally {

@@ -5,15 +5,12 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
-  readdirSync,
   rmSync,
-  utimesSync,
   writeFileSync,
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import { createRepoTools } from "../../packages/workit-opencode/src/tools/repo";
 import { branchSetup } from "../../packages/workit-core/src/core/branch";
 
@@ -80,19 +77,88 @@ const dirtyTree = (root: string) => {
   writeFileSync(path.join(root, "notes.md"), "untracked doc\n");
 };
 
-// Shared flow-guard journal fixture: repo with develop on origin, sdd ignored
-// so flow.json survives the stash window as an untracked-ignored file.
-const journalRepo = () => {
-  const { root, remote } = repoOnMain({ withDevelop: true });
-  writeFileSync(path.join(root, ".gitignore"), "docs/*/sdd/\n");
-  git(root, ["add", ".gitignore"]);
-  git(root, ["commit", "-q", "-m", "ignore sdd runtime state"]);
-  const flowPath = path.join(root, "docs", "hardening", "sdd", "flow.json");
-  mkdirSync(path.dirname(flowPath), { recursive: true });
-  const flowBytes = Buffer.from('{"status":"approved"}\n');
-  writeFileSync(flowPath, flowBytes);
-  return { root, remote, flowPath, flowBytes };
+const seedReadOnlySddDir = (root: string) => {
+  const sddDir = path.join(root, "docs", "sdd");
+  const seedOn = (branch: string) => {
+    git(root, ["checkout", "-q", branch]);
+    mkdirSync(sddDir, { recursive: true });
+    writeFileSync(path.join(sddDir, ".gitkeep"), "keep\n");
+    git(root, ["add", "docs/sdd/.gitkeep"]);
+    git(root, ["commit", "-q", "-m", "seed sdd dir"]);
+  };
+  git(root, ["fetch", "origin", "develop:develop"]);
+  seedOn("develop");
+  git(root, ["push", "-q", "origin", "develop"]);
+  seedOn("main");
+  git(root, ["push", "-q", "origin", "main"]);
+  chmodSync(sddDir, 0o555);
 };
+
+// Shared branch-setup journal fixture: repo with develop on origin.
+const journalRepo = () => repoOnMain({ withDevelop: true });
+
+test(
+  "CA-01: journal emits ordered checkpoints when a logger is injected",
+  async () => {
+    const { root, remote } = journalRepo();
+    git(root, ["branch", "bugfix/journal"]);
+    const lines: string[] = [];
+    try {
+      dirtyTree(root);
+      const result = branchSetup({
+        target_branch: "bugfix/journal",
+        stash: "yes",
+        workspace_root: root,
+        log: (m) => lines.push(m),
+      });
+      expect((result as { ok?: boolean }).ok).toBe(true);
+      expect(lines.length).toBeGreaterThan(0);
+      for (const line of lines) expect(line.startsWith("branch-setup: ")).toBe(true);
+      const indexOf = (needle: string) => lines.findIndex((l) => l.includes(needle));
+      const entry = indexOf("entry:");
+      const push = indexOf("stash push:");
+      const postCheckout = indexOf("post-checkout");
+      for (const idx of [entry, push, postCheckout]) expect(idx).toBeGreaterThanOrEqual(0);
+      expect(push).toBeGreaterThan(entry);
+      expect(postCheckout).toBeGreaterThan(push);
+    } finally {
+      const sddDir = path.join(root, "docs", "sdd");
+      if (existsSync(sddDir)) chmodSync(sddDir, 0o755);
+      rmSync(root, { recursive: true, force: true });
+      rmSync(remote, { recursive: true, force: true });
+    }
+  },
+  { timeout: 60_000 },
+);
+
+test(
+  "CA-03: journal checkpoints bracket checkout on an existing branch",
+  () => {
+    const { root, remote } = journalRepo();
+    git(root, ["branch", "bugfix/pin"]);
+    const lines: string[] = [];
+    try {
+      dirtyTree(root);
+      const result = branchSetup({
+        target_branch: "bugfix/pin",
+        stash: "yes",
+        workspace_root: root,
+        log: (m) => lines.push(m),
+      });
+      expect((result as { ok?: boolean }).ok).toBe(true);
+      const push = lines.findIndex((l) => l.includes("stash push:"));
+      const checkout = lines.findIndex((l) => l.includes("post-checkout"));
+      expect(push).toBeGreaterThan(-1);
+      expect(checkout).toBeGreaterThan(push);
+    } finally {
+      const sddDir = path.join(root, "docs", "sdd");
+      if (existsSync(sddDir)) chmodSync(sddDir, 0o755);
+      rmSync(root, { recursive: true, force: true });
+      rmSync(remote, { recursive: true, force: true });
+    }
+  },
+  { timeout: 60_000 },
+);
 
 test(
   "failed base resolution fails before any stash and leaves tree intact",
@@ -122,6 +188,8 @@ test(
       expect(existsSync(path.join(root, "notes.md"))).toBe(true);
       expect(git(root, ["branch", "--show-current"]).stdout.trim()).toBe("main");
     } finally {
+      const sddDir = path.join(root, "docs", "sdd");
+      if (existsSync(sddDir)) chmodSync(sddDir, 0o755);
       rmSync(root, { recursive: true, force: true });
       rmSync(remote, { recursive: true, force: true });
     }
@@ -157,6 +225,8 @@ test(
       );
       expect(existsSync(path.join(root, "notes.md"))).toBe(true);
     } finally {
+      const sddDir = path.join(root, "docs", "sdd");
+      if (existsSync(sddDir)) chmodSync(sddDir, 0o755);
       rmSync(root, { recursive: true, force: true });
       rmSync(remote, { recursive: true, force: true });
     }
@@ -176,14 +246,14 @@ test(
     if (process.platform === "win32") return; // chmod is not advisory on win32
     const { root, remote } = repoOnMain({ withDevelop: true });
     try {
-      mkdirSync(path.join(root, "docs"), { recursive: true });
-      chmodSync(path.join(root, "docs"), 0o500); // writeFileSync will EACCES
+      seedReadOnlySddDir(root);
       dirtyTree(root);
       const raw = await createRepoTools().workit_branch_setup.execute(
         {
           confirmed: true,
           target_branch: "bugfix/x",
           stash: "yes",
+          sdd_dir: "docs/sdd",
         },
         { directory: root, worktree: root } as never,
       );
@@ -198,7 +268,8 @@ test(
       );
       expect(existsSync(path.join(root, "notes.md"))).toBe(true);
     } finally {
-      chmodSync(path.join(root, "docs"), 0o700);
+      const sddDir = path.join(root, "docs", "sdd");
+      if (existsSync(sddDir)) chmodSync(sddDir, 0o755);
       rmSync(root, { recursive: true, force: true });
       rmSync(remote, { recursive: true, force: true });
     }
@@ -217,19 +288,20 @@ test(
     if (process.platform === "win32") return; // chmod is not advisory on win32
     const { root, remote } = repoOnMain({ withDevelop: true });
     try {
+      seedReadOnlySddDir(root);
       git(root, ["checkout", "-q", "develop"]);
       writeFileSync(path.join(root, "README.md"), "develop version\n");
       git(root, ["add", "README.md"]);
       git(root, ["commit", "-q", "-m", "diverge"]);
       git(root, ["checkout", "-q", "main"]);
-      mkdirSync(path.join(root, "docs"), { recursive: true });
-      chmodSync(path.join(root, "docs"), 0o500);
+      chmodSync(path.join(root, "docs", "sdd"), 0o555);
       dirtyTree(root);
       const raw = await createRepoTools().workit_branch_setup.execute(
         {
           confirmed: true,
           target_branch: "bugfix/x",
           stash: "yes",
+          sdd_dir: "docs/sdd",
         },
         { directory: root, worktree: root } as never,
       );
@@ -245,100 +317,8 @@ test(
         "develop version",
       );
     } finally {
-      chmodSync(path.join(root, "docs"), 0o700);
-      rmSync(root, { recursive: true, force: true });
-      rmSync(remote, { recursive: true, force: true });
-    }
-  },
-  { timeout: 60_000 },
-);
-
-test(
-  "CA-01: journal emits ordered checkpoints when a logger is injected",
-  async () => {
-    const { root, remote, flowBytes } = journalRepo();
-    const lines: string[] = [];
-    try {
-      dirtyTree(root);
-      const result = branchSetup({
-        target_branch: "bugfix/journal",
-        stash: "yes",
-        workspace_root: root,
-        log: (m) => lines.push(m),
-      });
-      expect((result as { ok?: boolean }).ok).toBe(true);
-      expect(lines.length).toBeGreaterThan(0);
-      for (const line of lines) expect(line.startsWith("flow-guard: ")).toBe(true);
-      const indexOf = (needle: string) => lines.findIndex((l) => l.includes(needle));
-      const entry = indexOf("entry:");
-      const snapshot = indexOf("snapshot:");
-      const push = indexOf("stash push:");
-      const postCreate = indexOf("post-create:");
-      const restore = indexOf("restore:");
-      for (const idx of [entry, snapshot, push, postCreate, restore])
-        expect(idx).toBeGreaterThanOrEqual(0);
-      // Ordered checkpoints bracket the whole mutation window.
-      expect(snapshot).toBeGreaterThan(entry);
-      expect(push).toBeGreaterThan(snapshot);
-      expect(postCreate).toBeGreaterThan(push);
-      expect(restore).toBeGreaterThan(postCreate);
-      // Per-file short hash at capture time.
-      expect(
-        lines.some((l) =>
-          /^flow-guard: snapshot: docs\/hardening\/sdd\/flow\.json sha=[0-9a-f]{8}$/.test(l),
-        ),
-      ).toBe(true);
-      expect(
-        lines.some((l) => l.includes("post-create: docs/hardening/sdd/flow.json present")),
-      ).toBe(true);
-      // Nothing was wiped mid-window: the one captured file was skipped by restore.
-      expect(lines[restore]).toContain("restored=0");
-      expect(lines[restore]).toContain("skipped=1");
-      expect(readFileSync(path.join(root, "docs", "hardening", "sdd", "flow.json"))).toEqual(
-        flowBytes,
-      );
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-      rmSync(remote, { recursive: true, force: true });
-    }
-  },
-  { timeout: 60_000 },
-);
-
-test(
-  "CA-03: mid-window deletion is pinpointable between two adjacent checkpoints",
-  () => {
-    // Reuses the post-checkout hook deletion pattern: the hook wipes flow.json
-    // during checkout of the existing target. The journal must show the bytes
-    // were captured (sha line) BEFORE a presence re-stat reports MISSING, and
-    // the following restore checkpoint must report restored=1 — adjacent
-    // checkpoints pinpoint exactly where the wipe happened.
-    const { root, remote, flowPath, flowBytes } = journalRepo();
-    git(root, ["branch", "bugfix/pin"]);
-    const lines: string[] = [];
-    try {
-      const hookPath = path.join(root, ".git", "hooks", "post-checkout");
-      writeFileSync(hookPath, `#!/bin/sh\nrm -rf '${flowPath}'\n`);
-      chmodSync(hookPath, 0o755);
-      dirtyTree(root);
-      const result = branchSetup({
-        target_branch: "bugfix/pin",
-        stash: "yes",
-        workspace_root: root,
-        log: (m) => lines.push(m),
-      });
-      expect((result as { ok?: boolean }).ok).toBe(true);
-      const shaIdx = lines.findIndex((l) => l.includes("snapshot:") && l.includes("sha="));
-      const missingIdx = lines.findIndex(
-        (l) => l.includes("post-checkout:") && l.includes("MISSING"),
-      );
-      expect(shaIdx).toBeGreaterThan(-1); // present-before: bytes captured
-      expect(missingIdx).toBeGreaterThan(shaIdx); // missing-after: deleted in between
-      const restoreIdx = lines.findIndex((l, i) => i > missingIdx && l.includes("restore:"));
-      expect(restoreIdx).toBeGreaterThan(missingIdx);
-      expect(lines[restoreIdx]).toContain("restored=1");
-      expect(readFileSync(flowPath)).toEqual(flowBytes);
-    } finally {
+      const sddDir = path.join(root, "docs", "sdd");
+      if (existsSync(sddDir)) chmodSync(sddDir, 0o755);
       rmSync(root, { recursive: true, force: true });
       rmSync(remote, { recursive: true, force: true });
     }

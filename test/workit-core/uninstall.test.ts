@@ -78,7 +78,7 @@ test("plan reports both hosts installed with exact action paths", () => {
   const f = tracked();
   f.seedInstalled();
   const plan = planUninstall(f);
-  expect(plan.hosts.map((h) => h.host)).toEqual(["opencode", "cursor"]);
+  expect(plan.hosts.map((h) => h.host)).toEqual(["opencode", "cursor", "codex", "pi"]);
   const oc = plan.hosts.find((h) => h.host === "opencode")!;
   expect(oc.installed).toBe(true);
   expect(oc.actions).toEqual([

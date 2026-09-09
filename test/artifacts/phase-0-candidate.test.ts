@@ -13,6 +13,7 @@ import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import {
+  copyHoistedDeps,
   extractTarball,
   installPackedPackage,
   isolatedEnv,
@@ -356,6 +357,7 @@ test(
       const nm = path.join(install, "node_modules");
       mkdirSync(nm, { recursive: true });
       installPackedPackage(nm, core);
+      copyHoistedDeps(nm, ["zod"]);
       // The packed CLI ships its bundled dist only; the wizard's scaffold logic is
       // its source of truth, so run it against the PACKED core from this isolated
       // install (the repository node_modules are not on the resolution path).
@@ -420,13 +422,14 @@ test(
         path.join(stub, "packages", "workit-cursor", "scripts", "build.ts"),
         "// build\n",
       );
-      for (const entry of ["mcp-server.js", "cursor-session-start.js"]) {
+      for (const entry of ["mcp-server.js", "cursor-session-start.js", "workit-hook.js"]) {
         writeFileSync(
           path.join(stub, "packages", "workit-cursor", "dist", entry),
           "#!/usr/bin/env node\n",
         );
       }
       spawnSync("git", ["init", "-q"], { cwd: stub, stdio: "ignore" });
+      writeFileSync(path.join(stub, "bun.lock"), "# stub\n");
       // A failed required copy must never look like a successful install.
       writeFileSync(
         path.join(binDir, "rsync"),

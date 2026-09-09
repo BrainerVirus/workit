@@ -4,39 +4,47 @@ import { cpSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } f
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { RELEASE_PACKAGES } from "../../packages/workit-core/scripts/analyze-release-scope";
 
-// C1: the release rewrite script must replace workspace:* core deps with the
-// released version — a packed tarball with workspace:* silently drops the core
-// dependency (npm pack and bun publish both leave the protocol untouched).
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+const ADAPTERS = RELEASE_PACKAGES.filter((pkg) => pkg !== "workit-core");
 
 const core = (dir: string) =>
   JSON.parse(readFileSync(path.join(dir, "packages/workit-core/package.json"), "utf8"));
 
-test("rewrite-workspace-deps.ts: workspace:* → ^<core version> in all 3 platform packages", () => {
+test("rewrite-workspace-deps.ts: workspace:* → ^<core version> in all platform packages", () => {
   const sandbox = mkdtempSync(path.join(os.tmpdir(), "wf-rewrite-"));
-  for (const pkg of ["workit-core", "workit-opencode", "workit-cursor", "workit-cli"]) {
+  for (const pkg of RELEASE_PACKAGES) {
+    mkdirSync(path.join(sandbox, "packages", pkg), { recursive: true });
     cpSync(
       path.join(repoRoot, `packages/${pkg}/package.json`),
       path.join(sandbox, `packages/${pkg}/package.json`),
     );
   }
-  for (const f of [".cursor-plugin/plugin.json"]) {
-    cpSync(
-      path.join(repoRoot, `packages/workit-cursor/${f}`),
-      path.join(sandbox, `packages/workit-cursor/${f}`),
-    );
-  }
+  mkdirSync(path.join(sandbox, "packages/workit-cursor/.cursor-plugin"), { recursive: true });
+  cpSync(
+    path.join(repoRoot, "packages/workit-cursor/.cursor-plugin/plugin.json"),
+    path.join(sandbox, "packages/workit-cursor/.cursor-plugin/plugin.json"),
+  );
+  mkdirSync(path.join(sandbox, "packages/workit-codex/.codex-plugin"), { recursive: true });
+  cpSync(
+    path.join(repoRoot, "packages/workit-codex/.codex-plugin/plugin.json"),
+    path.join(sandbox, "packages/workit-codex/.codex-plugin/plugin.json"),
+  );
   const script = path.join(repoRoot, "packages/workit-core/scripts/rewrite-workspace-deps.ts");
   const run = spawnSync("bun", [script, sandbox], { encoding: "utf8" });
   expect(run.status, run.stderr).toBe(0);
 
   const version = core(sandbox).version;
-  for (const pkg of ["workit-opencode", "workit-cursor", "workit-cli"]) {
+  for (const pkg of ADAPTERS) {
     const data = JSON.parse(
       readFileSync(path.join(sandbox, `packages/${pkg}/package.json`), "utf8"),
     );
-    expect(data.dependencies["@brainervirus/workit-core"]).toBe(`^${version}`);
+    for (const name of Object.keys(data.dependencies ?? {})) {
+      if (name.startsWith("@brainervirus/")) {
+        expect(data.dependencies[name]).toBe(`^${version}`);
+      }
+    }
     expect(JSON.stringify(data)).not.toContain("workspace:*");
   }
   expect(JSON.stringify(core(sandbox))).not.toContain("workspace:*");
@@ -60,7 +68,7 @@ test("rewrite-workspace-deps.ts: every prepared adapter dependency equals the pr
       readFileSync(path.join(repoRoot, "packages/workit-core/package.json"), "utf8"),
     );
     coreData.version = "0.4.0";
-    for (const pkg of ["workit-core", "workit-opencode", "workit-cursor", "workit-cli"]) {
+    for (const pkg of RELEASE_PACKAGES) {
       const file = path.join(sandbox, `packages/${pkg}/package.json`);
       const data = JSON.parse(
         readFileSync(path.join(repoRoot, `packages/${pkg}/package.json`), "utf8"),
@@ -68,7 +76,9 @@ test("rewrite-workspace-deps.ts: every prepared adapter dependency equals the pr
       if (pkg === "workit-core") {
         data.version = coreData.version;
       } else {
-        data.dependencies["@brainervirus/workit-core"] = "^0.3.0";
+        for (const name of Object.keys(data.dependencies ?? {})) {
+          if (name.startsWith("@brainervirus/")) data.dependencies[name] = "^0.3.0";
+        }
       }
       mkdirSync(path.dirname(file), { recursive: true });
       writeFileSync(file, `${JSON.stringify(data, null, 2)}\n`);
@@ -81,14 +91,23 @@ test("rewrite-workspace-deps.ts: every prepared adapter dependency equals the pr
       data.version = "0.4.0";
       writeFileSync(dst, `${JSON.stringify(data, null, 2)}\n`);
     }
+    mkdirSync(path.join(sandbox, "packages/workit-codex/.codex-plugin"), { recursive: true });
+    writeFileSync(
+      path.join(sandbox, "packages/workit-codex/.codex-plugin/plugin.json"),
+      `${JSON.stringify({ version: "0.4.0" }, null, 2)}\n`,
+    );
     const script = path.join(repoRoot, "packages/workit-core/scripts/rewrite-workspace-deps.ts");
     const run = spawnSync("bun", [script, sandbox], { encoding: "utf8" });
     expect(run.status, run.stderr).toBe(0);
-    for (const pkg of ["workit-opencode", "workit-cursor", "workit-cli"]) {
+    for (const pkg of ADAPTERS) {
       const data = JSON.parse(
         readFileSync(path.join(sandbox, `packages/${pkg}/package.json`), "utf8"),
       );
-      expect(data.dependencies["@brainervirus/workit-core"]).toBe(`^${coreData.version}`);
+      for (const name of Object.keys(data.dependencies ?? {})) {
+        if (name.startsWith("@brainervirus/")) {
+          expect(data.dependencies[name]).toBe(`^${coreData.version}`);
+        }
+      }
     }
   } finally {
     rmSync(sandbox, { recursive: true, force: true });
@@ -96,20 +115,22 @@ test("rewrite-workspace-deps.ts: every prepared adapter dependency equals the pr
 });
 
 test("rewrite-workspace-deps.ts: repo package.jsons keep workspace:* for dev (script runs on sandbox only)", () => {
-  for (const pkg of ["workit-opencode", "workit-cursor", "workit-cli"]) {
+  for (const pkg of ADAPTERS) {
     const data = JSON.parse(
       readFileSync(path.join(repoRoot, `packages/${pkg}/package.json`), "utf8"),
     );
-    expect(data.dependencies["@brainervirus/workit-core"]).toBe("workspace:*");
+    for (const name of Object.keys(data.dependencies ?? {})) {
+      if (name === "@brainervirus/workit-core") {
+        expect(data.dependencies[name]).toBe("workspace:*");
+      }
+    }
   }
 });
 
-// AR-03: the CLI's adapter dependencies are internal workspace deps too; the
-// release rewrite must pin every @brainervirus dependency, not only workit-core.
 test("rewrite-workspace-deps.ts: pins every internal @brainervirus dependency including CLI adapter deps", () => {
   const sandbox = mkdtempSync(path.join(os.tmpdir(), "wf-rewrite-closure-"));
   try {
-    for (const pkg of ["workit-core", "workit-opencode", "workit-cursor", "workit-cli"]) {
+    for (const pkg of RELEASE_PACKAGES) {
       const file = path.join(sandbox, `packages/${pkg}/package.json`);
       const data = JSON.parse(
         readFileSync(path.join(repoRoot, `packages/${pkg}/package.json`), "utf8"),
@@ -126,6 +147,11 @@ test("rewrite-workspace-deps.ts: pins every internal @brainervirus dependency in
       mkdirSync(path.dirname(dst), { recursive: true });
       cpSync(path.join(repoRoot, `packages/workit-cursor/${f}`), dst);
     }
+    mkdirSync(path.join(sandbox, "packages/workit-codex/.codex-plugin"), { recursive: true });
+    cpSync(
+      path.join(repoRoot, "packages/workit-codex/.codex-plugin/plugin.json"),
+      path.join(sandbox, "packages/workit-codex/.codex-plugin/plugin.json"),
+    );
     const script = path.join(repoRoot, "packages/workit-core/scripts/rewrite-workspace-deps.ts");
     const run = spawnSync("bun", [script, sandbox], { encoding: "utf8" });
     expect(run.status, run.stderr).toBe(0);
@@ -134,12 +160,10 @@ test("rewrite-workspace-deps.ts: pins every internal @brainervirus dependency in
       readFileSync(path.join(sandbox, "packages/workit-cli/package.json"), "utf8"),
     );
     const version = core(sandbox).version;
-    for (const name of [
-      "@brainervirus/workit-core",
-      "@brainervirus/workit-opencode",
-      "@brainervirus/workit-cursor",
-    ]) {
-      expect(cli.dependencies[name], name).toBe(`^${version}`);
+    for (const name of Object.keys(cli.dependencies ?? {})) {
+      if (name.startsWith("@brainervirus/")) {
+        expect(cli.dependencies[name], name).toBe(`^${version}`);
+      }
     }
     expect(JSON.stringify(cli)).not.toContain("workspace:*");
   } finally {

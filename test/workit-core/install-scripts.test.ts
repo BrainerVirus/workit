@@ -15,6 +15,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { WORKIT_METHOD_SKILLS } from "../../packages/workit-core/src/core/skill-manifests";
+import { envWithSupportedNode } from "../shared/helpers/env";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -26,6 +27,8 @@ const writeJson = (p: string, value: unknown) =>
 // The legacy pin is assembled at runtime so the tracked-file selector scan
 // (test/artifacts/manifests.test.ts) never trips on the fixture bytes.
 const LEGACY_PIN = ["@brainervirus/workit-cursor@", "0.8.0"].join("");
+const installEnv = (home: string, stub: string, extra: Record<string, string> = {}) =>
+  envWithSupportedNode({ HOME: home, WORKFLOW_TOOLKIT_DEV: stub, ...extra });
 function makeStaleCursorHome(home: string, pluginDir: string) {
   mkdirSync(path.join(pluginDir, "dist"), { recursive: true });
   mkdirSync(path.join(pluginDir, "hooks"), { recursive: true });
@@ -94,11 +97,7 @@ test(
         ["packages/workit-core/scripts/install-cursor-plugin.sh"],
         {
           cwd: fixture.stub,
-          env: {
-            ...process.env,
-            HOME: fixture.home,
-            WORKFLOW_TOOLKIT_DEV: fixture.stub,
-          },
+          env: installEnv(fixture.home, fixture.stub),
           encoding: "utf8",
         },
       );
@@ -149,11 +148,7 @@ test(
           `bun "${path.join(fixture.stub, "packages/workit-core/scripts/doctor-check.ts")}" cursor`,
         ],
         {
-          env: {
-            ...process.env,
-            HOME: fixture.home,
-            WORKFLOW_TOOLKIT_DEV: fixture.stub,
-          },
+          env: installEnv(fixture.home, fixture.stub),
           encoding: "utf8",
         },
       );
@@ -181,11 +176,7 @@ test(
         ["packages/workit-core/scripts/install-cursor-plugin.sh"],
         {
           cwd: fixture.stub,
-          env: {
-            ...process.env,
-            HOME: fixture.home,
-            WORKFLOW_TOOLKIT_DEV: fixture.stub,
-          },
+          env: installEnv(fixture.home, fixture.stub),
           encoding: "utf8",
         },
       );
@@ -198,11 +189,7 @@ test(
           `bun "${path.join(fixture.stub, "packages/workit-core/scripts/doctor-check.ts")}" cursor`,
         ],
         {
-          env: {
-            ...process.env,
-            HOME: fixture.home,
-            WORKFLOW_TOOLKIT_DEV: fixture.stub,
-          },
+          env: installEnv(fixture.home, fixture.stub),
           encoding: "utf8",
         },
       );
@@ -304,7 +291,7 @@ function writeSyncedOpencodeAssets(stub: string) {
 function runInstall(s: ReturnType<typeof makeStub>) {
   return spawnSync("bash", ["packages/workit-core/scripts/install-opencode-plugin.sh"], {
     cwd: s.stub,
-    env: { ...process.env, HOME: s.home, WORKFLOW_TOOLKIT_DEV: s.stub },
+    env: installEnv(s.home, s.stub),
     encoding: "utf8",
   });
 }
@@ -384,7 +371,7 @@ rsync -a --delete "$WORKFLOW_TOOLKIT_DEV/packages/workit-cursor/" "$HOME/.cursor
   // into the plugin dir: assets, manifests, hooks, dist, skills, vendor).
   const cursorPkg = path.join(stub, "packages/workit-cursor");
   mkdirSync(path.join(cursorPkg, "assets/templates"), { recursive: true });
-  writeFileSync(path.join(cursorPkg, "assets/templates/spec-template.md"), "# spec\n");
+  writeFileSync(path.join(cursorPkg, "assets/templates/workit-contract.md"), "# contract\n");
   writeFileSync(
     path.join(cursorPkg, "mcp.json"),
     JSON.stringify({
@@ -510,11 +497,7 @@ test(
         ["packages/workit-core/scripts/install-opencode-plugin.sh"],
         {
           cwd: fixture.stub,
-          env: {
-            ...process.env,
-            HOME: fixture.home,
-            WORKFLOW_TOOLKIT_DEV: fixture.stub,
-          },
+          env: installEnv(fixture.home, fixture.stub),
           encoding: "utf8",
         },
       );
@@ -623,11 +606,7 @@ test(
         ["packages/workit-core/scripts/install-cursor-plugin.sh"],
         {
           cwd: fixture.stub,
-          env: {
-            ...process.env,
-            HOME: fixture.home,
-            WORKFLOW_TOOLKIT_DEV: fixture.stub,
-          },
+          env: installEnv(fixture.home, fixture.stub),
           encoding: "utf8",
         },
       );
@@ -681,11 +660,7 @@ test(
         ["packages/workit-core/scripts/install-cursor-plugin.sh"],
         {
           cwd: fixture.stub,
-          env: {
-            ...process.env,
-            HOME: fixture.home,
-            WORKFLOW_TOOLKIT_DEV: fixture.stub,
-          },
+          env: installEnv(fixture.home, fixture.stub),
           encoding: "utf8",
         },
       );
@@ -712,11 +687,7 @@ test(
         ["packages/workit-core/scripts/install-cursor-plugin.sh", "--local-dist"],
         {
           cwd: fixture.stub,
-          env: {
-            ...process.env,
-            HOME: fixture.home,
-            WORKFLOW_TOOLKIT_DEV: fixture.stub,
-          },
+          env: installEnv(fixture.home, fixture.stub),
           encoding: "utf8",
         },
       );
@@ -765,16 +736,13 @@ test(
         ["packages/workit-core/scripts/install-cursor-plugin.sh"],
         {
           cwd: fixture.stub,
-          env: {
-            ...process.env,
-            HOME: fixture.home,
-            WORKFLOW_TOOLKIT_DEV: fixture.stub,
+          env: installEnv(fixture.home, fixture.stub, {
             WORKIT_DOCTOR_STALE_REGISTRY_CMD: path.join(
               fixture.stub,
               "no-registry-bin",
               "npm-fail",
             ),
-          },
+          }),
           encoding: "utf8",
         },
       );
@@ -881,11 +849,11 @@ case "\${1:-}" in
     grep -qx install "$BUN_LOG" 2>/dev/null || printf 'install\n' >> "$BUN_LOG"
     printf 'build\n' >> "$BUN_LOG"
     [ "\${FAIL_BUILD:-0}" = "0" ] || exit 44
-    SRC_ROOT="\$(dirname "\$REAL_NODE_MODULES")"
-    mkdir -p "\$PWD/packages/workit-mcp/dist" "\$PWD/packages/workit-cursor/dist"
-    cp "\$SRC_ROOT/packages/workit-mcp/dist/"*.js "\$PWD/packages/workit-mcp/dist/" 2>/dev/null || true
-    cp "\$SRC_ROOT/packages/workit-cursor/dist/"*.js "\$PWD/packages/workit-cursor/dist/"
-    if [ "\${BAD_OUTPUT:-0}" = "1" ]; then printf '#!/usr/bin/env bun\n' > "\$PWD/packages/workit-cursor/dist/mcp-server.js"; fi
+    SRC_ROOT="$(dirname "$REAL_NODE_MODULES")"
+    mkdir -p "$PWD/packages/workit-mcp/dist" "$PWD/packages/workit-cursor/dist"
+    cp "$SRC_ROOT/packages/workit-mcp/dist/"*.js "$PWD/packages/workit-mcp/dist/" 2>/dev/null || true
+    cp "$SRC_ROOT/packages/workit-cursor/dist/"*.js "$PWD/packages/workit-cursor/dist/"
+    if [ "\${BAD_OUTPUT:-0}" = "1" ]; then printf '#!/usr/bin/env bun\n' > "$PWD/packages/workit-cursor/dist/mcp-server.js"; fi
     exit 0
     ;;
 esac
