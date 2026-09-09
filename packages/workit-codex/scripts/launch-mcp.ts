@@ -24,7 +24,11 @@ export const resolveCodexWorkspaceRoot = (
     const canonical = realpathSync(candidate);
     if (canonical === realpathSync(pluginRoot)) return null;
     const workspace = new TaskStore(canonical).readWorkspace();
-    if (!workspace.ok || !workspace.data || workspace.data.root !== canonical) return null;
+    if (!workspace.ok) return null;
+    // Fresh checkouts without state resolve so task.start can initialize them;
+    // a present-but-moved workspace still refuses to avoid operating on a
+    // directory the stored state no longer describes.
+    if (workspace.data && workspace.data.root !== canonical) return null;
     return canonical;
   } catch {
     return null;

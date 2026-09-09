@@ -72,17 +72,15 @@ test("Codex MCP provider keeps caller identity empty on both surfaces", async ()
   expect(resolveCodexWorkspaceRoot(pluginRoot, { WORKFLOW_WORKSPACE_ROOT: validRoot })).toBe(
     validRoot,
   );
-  await expect(
-    codexContextProvider(
-      "codex_cli",
-      mkdtempSync(path.join(tmpdir(), "workit-codex-no-state-")),
-    ).current(),
-  ).rejects.toThrow("workspace unavailable");
+  const freshRoot = mkdtempSync(path.join(tmpdir(), "workit-codex-no-state-"));
+  expect(await codexContextProvider("codex_cli", freshRoot).current()).toMatchObject({
+    root: freshRoot,
+  });
   expect(
     resolveCodexWorkspaceRoot(pluginRoot, {
       PWD: mkdtempSync(path.join(tmpdir(), "workit-codex-workspace-")),
     }),
-  ).toBeNull();
+  ).toContain("workit-codex-workspace-");
   const mismatchedRoot = initializedRoot();
   const workspacePath = path.join(mismatchedRoot, ".workit", "workspace.json");
   const workspace = JSON.parse(readFileSync(workspacePath, "utf8"));
@@ -196,9 +194,9 @@ test("packed Codex launcher uses the shipped node command and lists eight famili
   }
 });
 
-test("packed Codex launcher reports unavailable workspaces without leaking paths", async () => {
-  const unavailableRoot = mkdtempSync(path.join(tmpdir(), "workit-codex-unavailable-"));
-  const launcher = startPackedMcp(unavailableRoot);
+test("packed Codex launcher lists empty on fresh checkouts without leaking paths", async () => {
+  const freshRoot = mkdtempSync(path.join(tmpdir(), "workit-codex-fresh-"));
+  const launcher = startPackedMcp(freshRoot);
   try {
     await launcher.request(1, "initialize", {
       protocolVersion: "2024-11-05",
@@ -211,17 +209,17 @@ test("packed Codex launcher reports unavailable workspaces without leaking paths
       arguments: { schemaVersion: 1, action: "list" },
     });
     expect(launcher.responses[2].result.structuredContent).toEqual({
-      ok: false,
+      ok: true,
       schemaVersion: 1,
-      code: "capability_unavailable",
-      error: "workspace unavailable",
-      details: { capability: "workspace" },
+      revision: null,
+      workspaceRevision: null,
+      data: [],
     });
-    expect(JSON.stringify(launcher.responses[2])).not.toContain(unavailableRoot);
-    expect(launcher.getStderr()).not.toContain(unavailableRoot);
+    expect(JSON.stringify(launcher.responses[2])).not.toContain(freshRoot);
+    expect(launcher.getStderr()).not.toContain(freshRoot);
   } finally {
     launcher.child.kill();
     launcher.packed.cleanup();
-    rmSync(unavailableRoot, { recursive: true, force: true });
+    rmSync(freshRoot, { recursive: true, force: true });
   }
 });

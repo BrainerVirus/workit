@@ -186,15 +186,16 @@ const scopeEqual = (
   right: Decision["binding"]["scope"],
 ): boolean => canonicalJson(left) === canonicalJson(right);
 
-const parseSteps = (content: string): string[] => {
+const parseSteps = (content: string): string[] | null => {
+  let value: unknown;
   try {
-    const value = JSON.parse(content) as { steps?: unknown };
-    return Array.isArray(value.steps) && value.steps.every((step) => typeof step === "string")
-      ? value.steps
-      : [];
+    value = JSON.parse(content) as unknown;
   } catch {
     return [];
   }
+  if (typeof value !== "object" || value === null || !("steps" in value)) return [];
+  const steps = (value as { steps?: unknown }).steps;
+  return Array.isArray(steps) && steps.every((step) => typeof step === "string") ? steps : null;
 };
 
 const decisionMatches = (
@@ -522,6 +523,8 @@ const validateAction = (
   const content = verifyContentRefs(store, decision.binding);
   if (!content.ok) return content as Result<never>;
   const requestedSteps = parseSteps(decision.binding.approvedContent);
+  if (requestedSteps === null)
+    return failure("invalid_input", "bounded action steps must be a string array");
   if (input.steps && canonicalJson(input.steps) !== canonicalJson(requestedSteps))
     return failure("permission_denied", "bounded action steps do not match approved content");
   if (
@@ -720,7 +723,7 @@ export function settleAction(input: SettleActionInput): Result<Entry<Decision>> 
       if (
         entry.data.binding.approvedContent &&
         !stored &&
-        parseSteps(entry.data.binding.approvedContent).length
+        (parseSteps(entry.data.binding.approvedContent) ?? []).length
       )
         return failure("recovery_required", "bounded action progress is missing");
       const currentStep = input.step ?? workflow.steps[workflow.completed.length];

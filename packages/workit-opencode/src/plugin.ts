@@ -181,7 +181,15 @@ const enforceWriter = async (
       activeTasks.find((candidate) => candidate.id === workspace.data?.writer?.owner.taskId)) ||
     (workerMatches.length === 1 ? workerMatches[0].task : null) ||
     (activeTasks.length === 1 ? activeTasks[0] : null);
-  if (!task) return;
+  if (!task) {
+    // Fail closed like Cursor and Pi: with several active tasks and no writer
+    // or worker match, the write cannot be attributed to one accountable task.
+    if (activeTasks.length > 1)
+      throw new Error(
+        "permission_denied: multiple active tasks require writer ownership for product writes",
+      );
+    return;
+  }
   const worker = workerMatches.find((candidate) => candidate.task.id === task.id)?.entry;
   if (worker && worker.data.assignment.role !== "implementer")
     throw new Error("permission_denied: read-only worker cannot write product files");

@@ -887,3 +887,52 @@ test("OpenCode native write shapes normalize filePath and apply_patch targets", 
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("lead writes with several active tasks require writer ownership", async () => {
+  const root = mkdtempSync(join(tmpdir(), "workit-opencode-multi-task-"));
+  try {
+    const first = activeTask(root, "coord");
+    const core = new WorkitCore(new TaskStore(root), {
+      root,
+      caller: { host: "opencode", actor: "coord" },
+      capabilities: [],
+      constraints: [],
+      now: () => "2026-01-01T00:00:00Z",
+    });
+    const started = core.task(
+      taskStartRequest({
+        intent: { objective: "second task", scope: scope({ paths: ["."] }), authorityRefs: [] },
+        expectedWorkspaceRevision: undefined,
+      }),
+    );
+    if (!started.ok) throw new Error(started.error);
+    expect((started.data as { id: string }).id).not.toBe(first.task.id);
+    const hooks = await plugin({
+      directory: root,
+      worktree: root,
+      serverUrl: new URL("http://localhost"),
+      client: coordinatorClient(root),
+    } as never);
+    await expect(
+      hooks["tool.execute.before"]?.(
+        { tool: "write", sessionID: "coord", callID: "multi" },
+        { args: { filePath: join(root, "src/file.ts") } },
+      ),
+    ).rejects.toThrow("multiple active tasks require writer ownership");
+    const acquired = first.core.writer({
+      schemaVersion: 1,
+      action: "acquire",
+      taskId: first.task.id,
+      workerId: null,
+    });
+    if (!acquired.ok) throw new Error(acquired.error);
+    await expect(
+      hooks["tool.execute.before"]?.(
+        { tool: "write", sessionID: "coord", callID: "owned" },
+        { args: { filePath: join(root, "src/file.ts") } },
+      ),
+    ).resolves.toBeUndefined();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

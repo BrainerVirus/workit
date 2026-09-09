@@ -6,7 +6,7 @@
 
 **Architecture:** Build the v1 core as small, independently testable modules beside the old flow, then connect one native surface at a time through the eight closed operation families. Keep runtime truth in project-local atomic JSON snapshots, keep model execution in the native hosts, and remove the 0.x workflow only after every v1 surface passes the shared contract. Compatibility work is limited to an explicit preview/apply/rollback cutover at the end.
 
-**Tech Stack:** TypeScript 7.0.2, Node.js 24 LTS, Bun 1.4.1 and Bun test, Zod 4.5.4 compiled strict schemas, MCP SDK 1.30.0 for Cursor/Codex tools, OpenCode 1.18.29 native plugins, Codex CLI 0.153.2 plugins/hooks, and Pi 0.85.0 extensions and stock-Pi subprocesses.
+**Tech Stack:** TypeScript 7.0.2, Node.js 24 LTS, Bun 1.4.1 and Bun test, Zod 4.5.4 compiled strict schemas, MCP SDK 1.30.0 for Cursor/Codex tools, OpenCode 1.18.29 native plugins, Codex CLI 0.153.4 plugins/hooks, and Pi 0.85.1 extensions and stock-Pi subprocesses.
 
 **Spec:** [docs/workit-v1/spec.md](spec.md), with the normative wire contract in [docs/workit-v1/contracts.md](contracts.md).
 
@@ -37,8 +37,8 @@ version was already the newest compatible stable release; it is still pinned.
 | Shared contract    | Add Zod `4.5.4`; use `z.compile()` for the eight closed operation schemas and `z.toJSONSchema()` for MCP publication                                                               |
 | Shared MCP         | Pin `@modelcontextprotocol/sdk` `1.30.0` and Zod `4.5.4`; use the low-level `Server`, not the draft-07-emitting high-level conversion path                                         |
 | OpenCode           | Pin build-only `@opencode-ai/plugin` `1.18.29`; validate host `1.18.29`; ship no OpenCode SDK runtime dependency                                                                   |
-| Pi                 | Pin development `@earendil-works/pi-coding-agent` `0.85.0`; peer `^0.85.0`; do not bundle Pi                                                                                       |
-| Codex              | Qualify Codex CLI `0.153.2`; do not add it as a Workit runtime dependency; record the separate desktop build                                                                       |
+| Pi                 | Pin development `@earendil-works/pi-coding-agent` `0.85.1`; peer `^0.85.1`; do not bundle Pi                                                                                       |
+| Codex              | Qualify Codex CLI `0.153.4`; do not add it as a Workit runtime dependency; record the separate desktop build                                                                       |
 | CLI UI             | Keep Ink `7.1.1`, `@inkjs/ui` `2.0.0`, React `19.2.8`, `@types/react` `19.2.18`, and `react-devtools-core` `7.0.1`                                                                 |
 | Validation/release | Keep AJV `8.20.0`, `ajv-formats` `3.0.1`, semantic-release `25.0.9`, exec `7.1.0`, GitHub `12.0.9`, npm `13.1.5`, and release-notes generator `14.1.1`                             |
 
@@ -1100,7 +1100,7 @@ test.each(["codex_cli", "codex_desktop"] as const)(
 );
 ```
 
-Cover manifest loading, MCP launch, hook event parsing, native question provenance when available, subagent launch/result/cancellation, writer enforcement scope, restart/compaction restore, missing hook/tool diagnostics, CLI headless needs-input, and desktop activation independently. Qualify CLI behavior on `0.153.2`; record the tested desktop build separately because it is not the CLI npm package. A test may record a capability unavailable; it may not silently skip a required baseline.
+Cover manifest loading, MCP launch, hook event parsing, native question provenance when available, subagent launch/result/cancellation, writer enforcement scope, restart/compaction restore, missing hook/tool diagnostics, CLI headless needs-input, and desktop activation independently. Qualify CLI behavior on `0.153.4`; record the tested desktop build separately because it is not the CLI npm package. A test may record a capability unavailable; it may not silently skip a required baseline.
 
 - [ ] **Step 2: Run Codex tests and observe the missing package failure**
 
@@ -1118,7 +1118,7 @@ export function detectCodexSurface(env: NodeJS.ProcessEnv): CodexHost {
 await runStdioServer(detectCodexSurface(process.env), codexContextProvider());
 ```
 
-The manifest points at the shared skills, `.mcp.json`, and hook bundle. Codex CLI `0.153.2` is a qualification host, not a Workit dependency; do not add `@openai/codex` to the published package. Treat surface detection as adapter evidence and include it in diagnostics. Hook coverage and subagent lineage are tested against the actual supported Codex versions before claiming enforcement; instruction-only behavior remains `agent_guided`.
+The manifest points at the shared skills, `.mcp.json`, and hook bundle. Codex CLI `0.153.4` is a qualification host, not a Workit dependency; do not add `@openai/codex` to the published package. Treat surface detection as adapter evidence and include it in diagnostics. Hook coverage and subagent lineage are tested against the actual supported Codex versions before claiming enforcement; instruction-only behavior remains `agent_guided`.
 
 - [ ] **Step 4: Build and run both Codex suites**
 
@@ -1153,7 +1153,7 @@ git commit -m "feat(codex): add CLI and desktop integration"
 - Consumes: Pi extension `registerTool`, `session_start`, `session_shutdown`, `before_agent_start`, `session_before_compact`, `session_compact`, `tool_call`, `tool_result`, `ctx.hasUI`, `ctx.ui`, and `ctx.sessionManager`; all shared core operations and skills.
 - Produces: a Pi package manifest with `pi.extensions` and `pi.skills`, eight Workit tools, native session provenance, compact context restoration, interactive decisions, and headless `needs_input`.
 
-- [ ] **Step 1: Write extension behavior tests against Pi 0.85.0 APIs**
+- [ ] **Step 1: Write extension behavior tests against Pi 0.85.1 APIs**
 
 ```typescript
 test("clean stock Pi loads Workit without a companion subagent package", async () => {
@@ -1191,7 +1191,7 @@ export default function extension(pi: ExtensionAPI) {
 }
 ```
 
-Declare `@earendil-works/pi-coding-agent` `^0.85.0` as the peer range and pin `0.85.0` as the development fixture; bundle Workit's own runtime so a clean Pi installation needs no hidden companion. Do not bundle or fork Pi itself.
+Declare `@earendil-works/pi-coding-agent` `^0.85.1` as the peer range and pin `0.85.1` as the development fixture; bundle Workit's own runtime so a clean Pi installation needs no hidden companion. Do not bundle or fork Pi itself.
 
 - [ ] **Step 4: Build and run Pi activation checks**
 

@@ -1295,3 +1295,38 @@ test("new candidate evidence reopens a resolved finding", () => {
   if (!latest.ok) throw new Error(latest.error);
   expect(latest.data.findings[0]?.data.disposition).toBe("open");
 });
+
+test("malformed JSON steps reject reservation while prose stays unbounded", () => {
+  const reserve = (approvedContent: string) => {
+    const { core, store, task, workspace } = active();
+    const recorded = recordNativeDecision(
+      core,
+      {
+        schemaVersion: 1,
+        action: "record" as const,
+        taskId: task.id,
+        purpose: "action" as const,
+        binding: { ...actionBinding(task, workspace.id), approvedContent },
+        response: "approved" as const,
+        requirementIds: [],
+      },
+      `steps-${approvedContent.length}`,
+    );
+    if (!recorded.ok) throw new Error(recorded.error);
+    const current = store.readTask(task.id);
+    if (!current.ok) throw new Error(current.error);
+    return core.reserveAction({
+      taskId: task.id,
+      decisionId: recorded.data.id,
+      actionRef: { kind: "host", host: "workit_cli", handle: "step-one" },
+      expectedRevision: current.data.revision,
+      expectedWorkspaceRevision: workspace.revision,
+      observation: nativeObservation(`reserve-${approvedContent.length}`),
+    });
+  };
+  expect(reserve(JSON.stringify({ steps: "all" }))).toMatchObject({
+    ok: false,
+    code: "invalid_input",
+  });
+  expect(reserve("run the approved maintenance window")).toMatchObject({ ok: true });
+});
