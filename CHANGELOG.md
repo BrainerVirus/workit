@@ -20,6 +20,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Acceptance fixtures, observable-action judge, 90-run evaluation plan, adapter
+  capability matrix generator, and stable-release gate for Workit v1 qualification.
+  Deterministic CA-31/CA-32 checks run in `verify:release-candidate`; the live
+  batch remains behind explicit authorization (`docs/workit-v1/qualification.md`).
+
 - Candidate capture now uses Git's ignore-aware inventory in Git workspaces,
   avoiding recursive scans of ignored dependency and build trees while keeping
   tracked files, relevant untracked files, and staged deletions visible.

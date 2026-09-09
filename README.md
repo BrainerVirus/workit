@@ -169,9 +169,15 @@ surfaces Cursor cannot attest or block.
 ```bash
 bun run build
 bun run check
+bun run test:acceptance
 bun run verify:release-candidate
 bun run validate:cursor-marketplace
 ```
+
+Release qualification uses frozen CA/E fixtures (`test/acceptance/`), a generated
+host capability matrix (`docs/workit-v1/capabilities.md`), and a stable gate that
+blocks publication on missing deterministic or live evidence. The 90-run live batch
+requires explicit authorization; see `docs/workit-v1/qualification.md`.
 
 Published bundles are built with Bun and run on Node. The Cursor and OpenCode
 package builds copy the seven canonical skills from `packages/workit-core`; no

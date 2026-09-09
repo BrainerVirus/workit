@@ -15,6 +15,7 @@
   "scripts": {
     "build": "bun packages/workit-mcp/scripts/build.ts && bun packages/workit-opencode/scripts/build.ts && bun packages/workit-cursor/scripts/build.ts && bun packages/workit-codex/scripts/build.ts && bun packages/workit-pi/scripts/build.ts && bun packages/workit-cli/scripts/build.ts",
     "verify:release-candidate": "bun scripts/verify-release-candidate.ts",
+    "test:acceptance": "bun test test/acceptance/deterministic.test.ts",
     "validate:cursor-marketplace": "bun packages/workit-core/scripts/validate-cursor-marketplace.ts",
     "lint": "oxlint --deny-warnings packages/workit-core/src packages/workit-mcp/src packages/workit-opencode/src packages/workit-cli/src packages/workit-cursor/mcp/server.ts packages/workit-codex/hooks packages/workit-codex/scripts packages/workit-pi/src packages/workit-pi/extensions test",
     "lint:fix": "oxlint --fix packages/workit-core/src packages/workit-mcp/src packages/workit-opencode/src packages/workit-cli/src packages/workit-cursor/mcp/server.ts packages/workit-codex/hooks packages/workit-codex/scripts packages/workit-pi/src packages/workit-pi/extensions test",
