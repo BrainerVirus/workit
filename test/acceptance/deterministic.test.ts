@@ -20,7 +20,7 @@ import {
   stableReleaseGate,
   targetedRerunSet,
   verifyCompiledSchemaParity,
-  verifyDeterministicQualification,
+  verifyReleaseCandidateDeterministicSlice,
   verifyMcpSchemaDialect,
 } from "./harness";
 import { compareAgainstBaseline, createRunArtifact, judgeRun } from "./judge";
@@ -325,8 +325,8 @@ test("CLI command-level acceptance inspects task and action surfaces without mod
   }
 });
 
-test("deterministic qualification passes while live runs remain authorized separately", () => {
-  const result = verifyDeterministicQualification();
+test("release-candidate deterministic slice passes while live runs remain authorized separately", () => {
+  const result = verifyReleaseCandidateDeterministicSlice();
   expect(result.ok).toBe(true);
 });
 

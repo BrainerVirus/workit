@@ -12,6 +12,7 @@ import {
   legacyFlowRecordDigests,
   previewCutover,
   previewRollback,
+  readGenerationState,
 } from "../../packages/workit-core/src/core/cutover";
 import { installV1Skills, removeLegacySkills } from "../shared/helpers/cutover-fixture";
 import { applyFxCutover, approve, makeFx, resolvePathsForTest } from "./cutover-test-helpers";
@@ -237,6 +238,8 @@ test("partial activation when a host apply fails", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.data.partial).toBe(true);
+    expect(result.data.generation).toBe("legacy");
+    expect(readGenerationState(fx.configDir).target).toBe("legacy");
     expect(result.data.hosts).toEqual(["cursor"]);
   } finally {
     fx.cleanup();

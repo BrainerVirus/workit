@@ -438,7 +438,8 @@ export const verifyCompiledSchemaParity = (): string[] => {
   return failures;
 };
 
-export const verifyDeterministicQualification = (): GateResult => {
+/** CA-31/CA-32 release-candidate slice only; live 90-run qualification is separate. */
+export const verifyReleaseCandidateDeterministicSlice = (): GateResult => {
   assertFixturesFrozen();
   const deterministicFailures = [...verifyMcpSchemaDialect(), ...verifyCompiledSchemaParity()];
   const toolchain = collectToolchainEvidence();

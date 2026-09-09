@@ -49,7 +49,7 @@ export type CutoverPlan = {
 export type CutoverReceipt = {
   backupId: Id;
   planId: Id;
-  generation: "v1";
+  generation: "legacy" | "v1";
   hosts: CutoverHost[];
   managedFiles: { path: string; installedDigest: Digest }[];
   partial: boolean;
@@ -612,10 +612,12 @@ export function applyCutover(
     else partial = true;
   }
 
-  writeGenerationState(paths.configDir, {
-    target: "v1",
-    cutover: { backupId, planId: plan.id, at: new Date().toISOString() },
-  });
+  if (!partial) {
+    writeGenerationState(paths.configDir, {
+      target: "v1",
+      cutover: { backupId, planId: plan.id, at: new Date().toISOString() },
+    });
+  }
 
   const managedFiles = expandBackupTargets(backupTargets)
     .filter((f) => existsSync(f))
@@ -624,7 +626,7 @@ export function applyCutover(
   const receipt: CutoverReceipt = {
     backupId,
     planId: plan.id,
-    generation: "v1",
+    generation: partial ? "legacy" : "v1",
     hosts: applied,
     managedFiles,
     partial,
