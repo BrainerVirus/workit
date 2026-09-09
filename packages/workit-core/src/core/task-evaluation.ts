@@ -584,7 +584,7 @@ export function evaluateClosure(
         if (!valid)
           return failure(
             "requirements_unsatisfied",
-            "deferred findings require an applicable limitation",
+            "deferred findings require an approved limitation decision that references an acceptanceAllowed requirement and covers the finding scope",
           );
       }
     }

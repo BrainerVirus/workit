@@ -483,12 +483,16 @@ shared operation names and meanings remain the same. These are direct core
 operations, not a network service or general command-dispatch language.
 
 Every request includes `schemaVersion: 1` and `action`. Existing-task operations
-include `taskId`. Mutations include `expectedRevision`; workspace-sensitive
-operations also include `expectedWorkspaceRevision`. New task/import requests
-have no task revision, but bind the expected workspace revision. Explicit initial
-task creation can initialize an absent workspace using an expected workspace
-revision of `null`; explicit import has the same initialization allowance. Read
-operations cannot initialize state. Caller context identifies the actual
+include `taskId`. Mutations accept `expectedRevision`; workspace-sensitive
+operations also accept `expectedWorkspaceRevision`. Omitted revisions default to
+the records read for the call (the current task and workspace revisions, or
+`null` when no workspace exists yet), and omitted writer `workerId`,
+finding/assignment `candidateId`, and check/review evidence candidate bindings
+default the same way (checks bind the tree captured at record time). Explicit
+values are still concurrency-checked, so callers that copy revisions between
+calls keep full CAS protection. Explicit initial task creation can initialize an
+absent workspace using an expected workspace revision of `null`; explicit import
+has the same initialization allowance. Read operations cannot initialize state. Caller context identifies the actual
 workspace, actor, native evidence, and constraints outside the model payload.
 
 The following table supplies the remaining payload fields and success data.
@@ -519,7 +523,7 @@ There are no unspecified generic object payloads or arbitrary state patches.
 | writer.release  | `reason: string`                                                                                                                   | `WorkspaceRecord`                           |
 | state.export    | None; read-only bundle returned to caller                                                                                          | `ExportBundle`                              |
 | state.import    | `bundle: ExportBundle, authorityRefs: Ref[]`; no task ID                                                                           | `TaskSummary`                               |
-| state.recover   | `target: "task" \| "workspace", expectedBytes: Digest, snapshotDigest: Digest, reason: string, authorityRefs: Ref[]`               | Recovered `TaskRecord` or `WorkspaceRecord` |
+| state.recover | `target: "task" \| "workspace", expectedBytes: Digest, snapshotDigest: Digest, reason: string, authorityRefs: Ref[]`; `taskId` is required for task recovery and forbidden for workspace recovery | Recovered `TaskRecord` or `WorkspaceRecord` |
 
 The workspace-sensitive set is task start/revise/pause/resume/close, worker
 assign/report/cancel, writer acquire/release, and state import/recover. A valid

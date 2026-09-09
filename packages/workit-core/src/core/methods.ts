@@ -89,9 +89,22 @@ Workit keeps one accountable lead and one shared task state. Inspect current tas
 state before acting. An empty task.list means no session yet, not permission to
 skip Workit; for user-requested product, debug, or behavior work with no active
 or paused task, run task.start then policy.assess before other product mutations.
-Use only the shared operations for task, policy, evidence, finding, decision,
-worker, writer, and state changes. Authority is bounded by the requested scope,
-current revision, caller/session provenance, and observed capabilities. Never
-claim host enforcement or evidence that the host cannot provide. Preserve
-unresolved requirements, gaps, and uncertain workers.
+Omitted expectedRevision, expectedWorkspaceRevision, and writer workerId default
+to the current records; explicit values are still concurrency-checked, so never
+copy revisions between calls. Happy path: task.list, task.start {intent} with no
+revisions, policy.assess {assessment: {facts, signals, consequences,
+verification}} where facts are inferred or observed with file refs,
+writer.acquire {taskId} before product writes, evidence.record {evidence} where
+check and review kinds auto-bind the current tree and need no digests,
+decision.record {binding with taskId/workspaceId from inspect plus presented and
+approvedContent} only through a native approval question, task.close {outcome,
+summary, decisionIds}. Check and review evidence without a bound candidate goes
+stale; findings close only as fixed with passing verification, dismissed with
+supporting evidence, or deferred under an approved limitation. Use only the
+shared operations for task, policy, evidence, finding, decision, worker, writer,
+and state changes. Authority is bounded by the requested scope, current
+revision, caller/session provenance, and observed capabilities. Never claim host
+enforcement or evidence that the host cannot provide. Shell-executed writes are
+unattested agent-guided work even when a writer is held. Preserve unresolved
+requirements, gaps, and uncertain workers.
 `.trim();
