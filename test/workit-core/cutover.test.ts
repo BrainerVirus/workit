@@ -197,6 +197,50 @@ test("coherent host replacement removes legacy cursor skills", () => {
   }
 });
 
+test("records resolutions and writes converted config during apply", () => {
+  const fx = makeFx();
+  try {
+    removeLegacySkills(fx.pluginDir);
+    installV1Skills(fx.pluginDir);
+    const result = applyCutover(
+      previewCutover(resolvePathsForTest(fx)),
+      approve(["cursor"]),
+      resolvePathsForTest(fx),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const config = JSON.parse(readFileSync(path.join(fx.configDir, "config.json"), "utf8"));
+    expect(config.workflowMode).toBeUndefined();
+    expect(
+      JSON.parse(readFileSync(path.join(fx.configDir, "cutover-choices.json"), "utf8")).resolutions,
+    ).toMatchObject({
+      legacyWorkflowMode: "fresh-v1-task",
+    });
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test("partial activation when a host apply fails", () => {
+  const fx = makeFx();
+  try {
+    removeLegacySkills(fx.pluginDir);
+    installV1Skills(fx.pluginDir);
+    const paths = { ...resolvePathsForTest(fx), dev: null };
+    const result = applyCutover(
+      previewCutover(paths, ["cursor", "pi"]),
+      approve(["cursor", "pi"]),
+      paths,
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.partial).toBe(true);
+    expect(result.data.hosts).toEqual(["cursor"]);
+  } finally {
+    fx.cleanup();
+  }
+});
+
 test("previewCutover is read-only", () => {
   const fx = makeFx();
   try {

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { isConfigObject, mergePreset, type BranchPreset, type ToolkitConfig } from "./config";
 
@@ -118,3 +118,60 @@ export function previewConversion(input: ConversionInput): ConversionPreview {
 
 export const conversionDigest = (preview: ConversionPreview): string =>
   createHash("sha256").update(JSON.stringify(redactConversionPreview(preview))).digest("hex");
+
+export type ConversionApplyResult = {
+  configPath: string;
+  choicesPath: string;
+};
+
+/** Apply approved conversion mappings and record explicit resolution choices. */
+export function applyConversionConfig(
+  configDir: string,
+  preview: ConversionPreview,
+  resolutions: Record<string, string>,
+): ConversionApplyResult {
+  const configFile = path.join(configDir, "config.json");
+  const raw = readJsonObject(configFile) ?? {};
+  const next: Record<string, unknown> = { ...raw };
+
+  for (const mapping of preview.mappings) {
+    if (mapping.key === "locale" || mapping.key === "timezone") {
+      next[mapping.key] = mapping.to;
+    }
+    if (mapping.key === "branchPolicy" && !resolutions["branchPolicy.allowed"]) {
+      next.branchPolicy = mapping.to;
+    }
+  }
+
+  if (resolutions["branchPolicy.allowed"]) {
+    const bp = isConfigObject(next.branchPolicy)
+      ? (next.branchPolicy as ToolkitConfig["branchPolicy"])
+      : { preset: "custom" as BranchPreset, allowed: [], protected: [] };
+    const preset = bp.preset ?? "custom";
+    next.branchPolicy = mergePreset(
+      preset,
+      {
+        allowed: resolutions["branchPolicy.allowed"]
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean),
+      },
+      { branchPolicy: bp },
+    );
+  }
+
+  if (resolutions["legacyWorkflowMode"]) {
+    delete next.workflowMode;
+  }
+
+  mkdirSync(configDir, { recursive: true });
+  writeFileSync(configFile, JSON.stringify(next, null, 2) + "\n");
+
+  const choicesPath = path.join(configDir, "cutover-choices.json");
+  writeFileSync(
+    choicesPath,
+    JSON.stringify({ resolutions, applied_at: new Date().toISOString() }, null, 2) + "\n",
+  );
+
+  return { configPath: configFile, choicesPath };
+}

@@ -12,7 +12,7 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { failure, success, type Digest, type Id, type Result } from "./task-contract";
-import { previewConversion, type ConversionPreview } from "./config-conversion";
+import { applyConversionConfig, previewConversion, type ConversionPreview } from "./config-conversion";
 import {
   CURSOR_RUNTIME_PACKAGE,
   cursorHooksEntry,
@@ -69,7 +69,7 @@ export type CutoverPaths = {
   home?: string;
   configDir?: string;
   stateDir?: string;
-  dev?: string;
+  dev?: string | null;
   workspace?: string;
   opencodeConfig?: string;
   cursorSettings?: string;
@@ -248,11 +248,55 @@ const managedCutoverFiles = (paths: ReturnType<typeof resolvePaths>): string[] =
   path.join(paths.configDir, "youtrack.json"),
   path.join(paths.configDir, "vcs.json"),
   path.join(paths.configDir, "workspaces.json"),
+  path.join(paths.configDir, "cutover-choices.json"),
   paths.opencodeConfig,
   paths.cursorSettings,
   paths.cursorMcp,
   path.join(paths.cursorPluginDir, "hooks", "hooks-cursor.json"),
 ];
+
+const hostMutationTargets = (
+  paths: ReturnType<typeof resolvePaths>,
+  hosts: CutoverHost[],
+): string[] => {
+  const targets: string[] = [];
+  for (const host of hosts) {
+    if (host === "cursor") {
+      targets.push(path.join(paths.cursorPluginDir, "skills"));
+      const vendor = path.join(paths.cursorPluginDir, "vendor");
+      if (existsSync(vendor)) targets.push(vendor);
+    }
+    if (host === "codex") targets.push(path.join(paths.home, ".codex", "plugins", "workit"));
+    if (host === "pi") targets.push(path.join(paths.home, ".pi", "config.json"));
+  }
+  return targets;
+};
+
+const expandBackupTargets = (targets: string[]): string[] => {
+  const files: string[] = [];
+  for (const target of targets) {
+    if (!existsSync(target)) continue;
+    const st = statSync(target);
+    if (st.isDirectory()) {
+      const walk = (dir: string) => {
+        for (const name of readdirSync(dir)) {
+          const p = path.join(dir, name);
+          if (statSync(p).isDirectory()) walk(p);
+          else files.push(p);
+        }
+      };
+      walk(target);
+    } else {
+      files.push(target);
+    }
+  }
+  return files;
+};
+
+const cutoverBackupTargets = (
+  paths: ReturnType<typeof resolvePaths>,
+  hosts: CutoverHost[],
+): string[] => [...new Set([...managedCutoverFiles(paths), ...hostMutationTargets(paths, hosts)])];
 
 const backupRoot = (stateDir: string, backupId: Id) => path.join(stateDir, "cutover", "backups", backupId);
 
@@ -285,7 +329,7 @@ const writeReceipt = (receipt: CutoverReceipt, stateDir: string): void => {
   writeFileSync(receiptPath(stateDir, receipt.backupId), JSON.stringify(receipt, null, 2) + "\n");
 };
 
-const readReceipt = (backupId: Id, stateDir: string): CutoverReceipt | null => {
+export const readCutoverReceipt = (backupId: Id, stateDir: string): CutoverReceipt | null => {
   const file = receiptPath(stateDir, backupId);
   if (!existsSync(file)) return null;
   try {
@@ -482,17 +526,33 @@ export function applyCutover(plan: CutoverPlan, decision: CutoverDecision, optio
       return failure("revision_conflict", `managed file changed since preview: ${entry.path}`, { path: entry.path });
     }
   }
-  for (const session of plan.sessions) {
+  for (const session of paths.sessions) {
     if (session.state === "active" || session.state === "unknown") {
       return failure("requirements_unsatisfied", `old session still ${session.state}: ${session.handle}`);
     }
   }
+  for (const host of decision.hosts) {
+    if (classifyHostGeneration(host, paths) === "mixed") {
+      return failure("requirements_unsatisfied", `mixed legacy and v1 components on ${host}`);
+    }
+  }
 
   const backupId = randomUUID();
-  const files = managedCutoverFiles(paths);
-  writeBackup(backupId, paths, files);
+  const backupTargets = cutoverBackupTargets(paths, decision.hosts);
+  const backupFiles = expandBackupTargets(backupTargets);
+  writeBackup(backupId, paths, backupFiles);
 
-  const notes: string[] = [];
+  const conversionNotes: string[] = [];
+  if (plan.unresolved.length > 0 || plan.conversion.mappings.length > 0) {
+    const applied = applyConversionConfig(
+      paths.configDir,
+      plan.conversion,
+      decision.resolutions ?? {},
+    );
+    conversionNotes.push(`config: wrote ${applied.configPath} and recorded choices at ${applied.choicesPath}`);
+  }
+
+  const notes: string[] = [...conversionNotes];
   let partial = false;
   const applied: CutoverHost[] = [];
   for (const host of decision.hosts) {
@@ -506,7 +566,7 @@ export function applyCutover(plan: CutoverPlan, decision: CutoverDecision, optio
     cutover: { backupId, planId: plan.id, at: new Date().toISOString() },
   });
 
-  const managedFiles = files
+  const managedFiles = expandBackupTargets(backupTargets)
     .filter((f) => existsSync(f))
     .map((f) => ({ path: f, installedDigest: digestFile(f)! }));
 
@@ -527,7 +587,7 @@ export function applyCutover(plan: CutoverPlan, decision: CutoverDecision, optio
 export function previewRollback(backupId: Id, options: CutoverPaths = {}): RollbackPreview {
   const paths = resolvePaths(options);
   const root = backupRoot(paths.stateDir, backupId);
-  const receipt = readReceipt(backupId, paths.stateDir);
+  const receipt = readCutoverReceipt(backupId, paths.stateDir);
   const restorable: RollbackPreview["restorable"] = [];
   const conflicts: RollbackPreview["conflicts"] = [];
   const preserved: string[] = [];

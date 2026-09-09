@@ -23,8 +23,11 @@ import { resolveWorkspaceFrom } from "./workspaces";
 import { validateCursorSkills, WORKIT_METHOD_SKILLS, CANONICAL_SKILLS } from "./skill-manifests";
 import {
   classifyHostGeneration,
+  digestFile,
+  readCutoverReceipt,
   readGenerationState,
   type CutoverHost,
+  type SessionObservation,
 } from "./cutover";
 
 // Mirrors init.ts TOKEN_PLACEHOLDER; kept local so the doctor never needs to
@@ -99,6 +102,8 @@ export type DoctorOptions = {
   env?: NodeJS.ProcessEnv;
   /** Installer run: only registration/config checks count toward exitCode. */
   installer?: boolean;
+  /** Observed host sessions used by generation-aware cutover checks. */
+  sessions?: SessionObservation[];
 };
 
 type Resolved = {
@@ -114,6 +119,18 @@ type Resolved = {
   cursorPluginDir: string;
   env: NodeJS.ProcessEnv;
   installer: boolean;
+  sessions: SessionObservation[];
+};
+
+const parseSessionsFromEnv = (env: NodeJS.ProcessEnv): SessionObservation[] => {
+  const raw = env.WORKFLOW_TOOLKIT_SESSIONS;
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as SessionObservation[]) : [];
+  } catch {
+    return [];
+  }
 };
 
 const findDevFromCwd = (cwd: string): string | null => {
@@ -153,6 +170,7 @@ const resolve = (options: DoctorOptions): Resolved => {
       options.cursorPluginDir ?? path.join(home, ".cursor", "plugins", "local", "workit"),
     env,
     installer: options.installer ?? false,
+    sessions: options.sessions ?? parseSessionsFromEnv(env),
   };
 };
 
@@ -1061,7 +1079,7 @@ const generationPaths = (res: Resolved) => ({
   cursorSettings: res.cursorSettings,
   cursorMcp: res.cursorMcp,
   cursorPluginDir: res.cursorPluginDir,
-  sessions: [],
+  sessions: res.sessions,
 });
 
 const checkMixedGeneration = (res: Resolved): DoctorCheck => {
@@ -1127,18 +1145,67 @@ const checkMissingV1Component = (res: Resolved): DoctorCheck => {
   };
 };
 
-const checkActiveOldSession = (_res: Resolved): DoctorCheck => ({
-  id: "active_old_session",
-  status: "pass",
-  detail: "no active old-session observation supplied to doctor",
-});
+const checkActiveOldSession = (res: Resolved): DoctorCheck => {
+  if (res.sessions.length === 0) {
+    return {
+      id: "active_old_session",
+      status: "pass",
+      detail: "no session observations supplied to doctor",
+    };
+  }
+  const blocking = res.sessions.filter((s) => s.state === "active" || s.state === "unknown");
+  if (blocking.length === 0) {
+    return {
+      id: "active_old_session",
+      status: "pass",
+      detail: "no active or unknown old sessions observed",
+    };
+  }
+  const detail = blocking.map((s) => `${s.host}:${s.handle} (${s.state})`).join(", ");
+  const target = readGenerationState(res.configDir).target;
+  if (target === "v1") {
+    return {
+      id: "active_old_session",
+      status: "fail",
+      detail: `active or unknown sessions block v1 activation: ${detail}`,
+      fix: "Stop or account for old sessions before cutover apply",
+    };
+  }
+  return {
+    id: "active_old_session",
+    status: "warn",
+    detail: `old sessions still observed: ${detail}`,
+    fix: "Stop old sessions before previewing or applying v1 cutover",
+  };
+};
 
 const checkManagedContentConflict = (res: Resolved): DoctorCheck => {
   const gen = readGenerationState(res.configDir);
   if (!gen.cutover?.backupId) {
     return { id: "managed_content_conflict", status: "pass", detail: "no cutover receipt to compare" };
   }
-  return { id: "managed_content_conflict", status: "pass", detail: "managed content matches cutover receipt" };
+  const receipt = readCutoverReceipt(gen.cutover.backupId, res.stateDir);
+  if (!receipt) {
+    return {
+      id: "managed_content_conflict",
+      status: "fail",
+      detail: `cutover receipt missing for backup ${gen.cutover.backupId}`,
+      fix: "Re-run cutover apply or rollback to a known state",
+    };
+  }
+  const conflicts = receipt.managedFiles.filter((entry) => {
+    const current = digestFile(entry.path);
+    return current !== null && current !== entry.installedDigest;
+  });
+  if (conflicts.length === 0) {
+    return { id: "managed_content_conflict", status: "pass", detail: "managed content matches cutover receipt" };
+  }
+  return {
+    id: "managed_content_conflict",
+    status: "fail",
+    detail: `managed content drifted since cutover on: ${conflicts.map((c) => c.path).join(", ")}`,
+    fix: "Reconcile managed files with the cutover receipt or roll back before re-applying",
+  };
 };
 
 const RUN_CHECKS: Array<(res: Resolved) => DoctorCheck> = [

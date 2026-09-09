@@ -426,6 +426,7 @@ export {
   type CutoverReceipt,
   type CutoverDecision,
   type CutoverHost,
+  type CutoverPaths,
 } from "@brainervirus/workit-core/src/core/setup.ts";
 export type { VcsProvider };
 

@@ -1236,6 +1236,7 @@ export {
   applyCutover,
   applyRollback,
   classifyHostGeneration,
+  readCutoverReceipt,
   detectCursorLatest,
   detectSourceLinkedOpenCode,
   previewCutover,
@@ -1250,8 +1251,10 @@ export {
   type RollbackPreview,
 } from "./cutover";
 export {
+  applyConversionConfig,
   previewConversion,
   redactConversionPreview,
+  type ConversionApplyResult,
   type ConversionInput,
   type ConversionMapping,
   type ConversionPreview,

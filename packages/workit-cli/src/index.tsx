@@ -23,6 +23,7 @@ import {
 } from "@brainervirus/workit-core/src/core/uninstall";
 import { applyWizardBranchPolicy } from "./logic";
 import { COMMANDS, runFlowCommand, runHandoffCommand } from "./flow";
+import { runCutoverCommand } from "./cutover-cli";
 import { runActionCommand, runTaskCommand, TASK_FAMILIES } from "./task";
 import { externalActionHelp } from "@brainervirus/workit-core/src/core";
 
@@ -53,6 +54,7 @@ const COMMAND_DESCRIPTIONS: readonly (readonly [string, string])[] = [
   ["workit task <family> <action> [options]", "Inspect and control a Workit task"],
   ["workit action <operation> --payload <JSON>", "Preview or run one approved external action"],
   ["workit handoff --task <id>", "Export task state and compact destination context"],
+  ["workit cutover preview|apply|rollback ...", "Preview-first v1 cutover and rollback (apply requires --confirm)"],
 ];
 
 const helpColumn = Math.max(...COMMAND_DESCRIPTIONS.map(([cmd]) => cmd.length)) + 2;
@@ -63,6 +65,7 @@ Usage:
   workit init      Run the interactive setup wizard
   workit doctor    Verify the offline installation health (add --json for a machine-readable report)
   workit uninstall Remove workit host registrations interactively (~/.config/workit is kept)
+  workit cutover   Preview or apply an explicit v1 cutover (apply requires --confirm)
 ${COMMAND_DESCRIPTIONS.map(([cmd, desc]) => `  ${cmd.padEnd(helpColumn)}${desc}`).join("\n")}
   action payloads: ${externalActionHelp}
   workit           Show this help
@@ -358,6 +361,8 @@ if (import.meta.main) {
     );
   } else if (subcommand === "uninstall") {
     await runUninstall();
+  } else if (subcommand === "cutover") {
+    process.exit(await runCutoverCommand(args.slice(1)));
   } else {
     console.log(HELP);
     process.exit(0);
