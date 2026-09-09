@@ -20,16 +20,12 @@ npx @brainervirus/workit-cli init
 workit init              # interactive setup wizard
 workit doctor            # offline installation health report
 workit doctor --json     # machine-readable report
-workit flow status --plan docs/<slug>/plan.md        # read the effective flow state
-workit flow pause --plan docs/<slug>/plan.md [--confirm]     # active -> paused
-workit flow resume --plan docs/<slug>/plan.md [--confirm]    # paused -> active
-workit flow complete --plan docs/<slug>/plan.md [--confirm]  # complete (ledger + verification gated)
-workit flow review-package --plan docs/<slug>/plan.md --base <sha> --head <sha> [--confirm]  # write a review diff
-workit flow append-advisory --plan docs/<slug>/plan.md --task <id> --text <text> [--confirm]  # record an advisory review finding
-workit handoff --message "docs/<slug>/plan.md"      # print the destination handoff prompt
 workit task <family> <action> [--payload <json|@file|->] [--task <id>] [--revision <uuid>] [--workspace-revision <uuid|null>] [--json]
-workit handoff --task <id>                           # export state + compact destination context
-workit                   # help
+workit action <operation> --payload <JSON>   # preview or run one approved external action
+workit handoff --task <id>                   # export task state and compact destination context
+workit cutover preview|apply|rollback ...    # v1 cutover (apply requires --confirm)
+workit uninstall                           # remove host registrations (keeps ~/.config/workit)
+workit                                     # help
 ```
 
 `workit init` guides you through: platform selection (OpenCode/Cursor), global config (locale, timezone, branch policy), YouTrack, VCS, workspaces (path globs → provider), and project hygiene files. The wizard is a TTY application — `workit init` requires an interactive terminal and prints guidance (exiting nonzero) when stdin is not a TTY.
@@ -40,12 +36,9 @@ The task surface exposes the eight shared operation families (`task`, `policy`,
 `evidence`, `finding`, `decision`, `worker`, `writer`, and `state`) and their 24
 closed actions. Payloads can be inline JSON, a UTF-8 `@file`, or UTF-8 stdin
 with `-`; `--json` preserves the structured Result shape and exits nonzero for
-failures. Headless lifecycle control requires explicit consent: `--confirm` is
-agent-reported, while an observed TTY prompt is the only host-observed CLI
-confirmation. `workit handoff --task` is read-only and refuses to emit a
-handoff when export and inspection revisions differ.
-
-`workit flow` maps the shared-core execution lifecycle (`pending`/`active`/`paused`/`completed`) to the CLI: `status` reads the effective flow state (approval digests, drift, execution, handoff-destination flag); `pause`/`resume`/`complete` mutate it with `--confirm` (or a TTY prompt when stdin is a TTY, exit 2 when neither applies); `review-package` writes the review diff for a `--base..--head` range through the shared core guard, which rejects empty ranges. `workit handoff` prints the core destination handoff prompt (four-choice menu, never the originating Handoff option) and marks the flow as a handoff destination; a second handoff on an already-marked destination is rejected. Domain/verification failures exit 1 with structured JSON on stderr; usage errors exit 2.
+failures. Headless mutations that require consent use `--confirm` (agent-reported)
+or an observed TTY prompt; `workit handoff --task` is read-only and refuses to
+emit a handoff when export and inspection revisions differ.
 
 ## Behavior
 
