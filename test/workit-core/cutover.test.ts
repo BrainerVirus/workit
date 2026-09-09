@@ -95,18 +95,20 @@ test("refuses mixed host components during preview", () => {
   const fx = makeFx();
   try {
     installV1Skills(fx.pluginDir);
-    expect(classifyHostGeneration("cursor", {
-      home: fx.home,
-      configDir: fx.configDir,
-      stateDir: fx.stateDir,
-      dev: fx.dev,
-      workspace: fx.workspace,
-      opencodeConfig: fx.opencodeConfig,
-      cursorSettings: fx.cursorSettings,
-      cursorMcp: fx.cursorMcp,
-      cursorPluginDir: fx.pluginDir,
-      sessions: [],
-    })).toBe("mixed");
+    expect(
+      classifyHostGeneration("cursor", {
+        home: fx.home,
+        configDir: fx.configDir,
+        stateDir: fx.stateDir,
+        dev: fx.dev,
+        workspace: fx.workspace,
+        opencodeConfig: fx.opencodeConfig,
+        cursorSettings: fx.cursorSettings,
+        cursorMcp: fx.cursorMcp,
+        cursorPluginDir: fx.pluginDir,
+        sessions: [],
+      }),
+    ).toBe("mixed");
     expect(previewCutover(resolvePathsForTest(fx)).blocked.some((b) => b.includes("mixed"))).toBe(
       true,
     );

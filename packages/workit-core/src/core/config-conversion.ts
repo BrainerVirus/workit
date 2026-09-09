@@ -68,7 +68,10 @@ export function previewConversion(input: ConversionInput): ConversionPreview {
       mappings.push({ key: "timezone", from: config.timezone, to: config.timezone });
     }
     if (config.branchPolicy !== undefined && isConfigObject(config.branchPolicy)) {
-      const bp = config.branchPolicy as ToolkitConfig["branchPolicy"] & { allowed?: string[]; protected?: string[] };
+      const bp = config.branchPolicy as ToolkitConfig["branchPolicy"] & {
+        allowed?: string[];
+        protected?: string[];
+      };
       const preset = (bp.preset ?? "gitflow") as BranchPreset;
       const merged = mergePreset(
         preset,
@@ -105,7 +108,8 @@ export function previewConversion(input: ConversionInput): ConversionPreview {
     const file = path.join(input.configDir, name);
     if (!existsSync(file)) continue;
     const parsed = readJsonObject(file);
-    if (parsed) mappings.push({ key: name, from: parsed, to: parsed, note: "carry forward unchanged" });
+    if (parsed)
+      mappings.push({ key: name, from: parsed, to: parsed, note: "carry forward unchanged" });
   }
 
   for (const token of ["youtrack.token", "gitlab.token", "github.token"]) {
@@ -117,7 +121,9 @@ export function previewConversion(input: ConversionInput): ConversionPreview {
 }
 
 export const conversionDigest = (preview: ConversionPreview): string =>
-  createHash("sha256").update(JSON.stringify(redactConversionPreview(preview))).digest("hex");
+  createHash("sha256")
+    .update(JSON.stringify(redactConversionPreview(preview)))
+    .digest("hex");
 
 export type ConversionApplyResult = {
   configPath: string;

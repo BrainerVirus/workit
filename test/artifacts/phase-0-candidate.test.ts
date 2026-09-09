@@ -35,7 +35,10 @@ const CORE = "@brainervirus/workit-core";
 const MCP = "@brainervirus/workit-mcp";
 const OPENCODE = "@brainervirus/workit-opencode";
 const CURSOR = "@brainervirus/workit-cursor";
+const CODEX = "@brainervirus/workit-codex";
+const PI = "@brainervirus/workit-pi";
 const CLI = "@brainervirus/workit-cli";
+const V1_PACKAGES = [CORE, MCP, CLI, OPENCODE, CURSOR, CODEX, PI];
 
 // The isolated npm-install gate fetches third-party runtime deps (ink/react/
 // @inkjs/ui) from the public registry, so an offline/registry-outage CI run
@@ -86,7 +89,7 @@ test(
   "packs all workspace packages into local tarballs without publishing",
   () => {
     const packs = packWorkspacePackages();
-    expect(packs.map((p) => p.packageName)).toEqual([CORE, MCP, OPENCODE, CURSOR, CLI]);
+    expect(packs.map((p) => p.packageName)).toEqual(V1_PACKAGES);
     for (const pack of packs) {
       expect(existsSync(pack.tarball), pack.packageName).toBe(true);
       expect(pack.sha256).toMatch(/^[0-9a-f]{64}$/);
@@ -117,7 +120,7 @@ test(
     const coreVersion = JSON.parse(
       readTarballFile(packs.find((p) => p.packageName === CORE)!.tarball, "package.json"),
     ).version;
-    for (const name of [OPENCODE, CURSOR, CLI]) {
+    for (const name of [MCP, OPENCODE, CURSOR, CODEX, CLI]) {
       const pack = packs.find((p) => p.packageName === name)!;
       const pkg = JSON.parse(readTarballFile(pack.tarball, "package.json"));
       expect(pkg.dependencies["@brainervirus/workit-core"], name).toBe(`^${coreVersion}`);
@@ -183,7 +186,6 @@ test(
       "scripts/sync-runtime.sh",
       "templates/",
       "skills/",
-      "vendor/superpowers/skills/",
     ]) {
       expect(hasEntry(core, f), f).toBe(true);
     }

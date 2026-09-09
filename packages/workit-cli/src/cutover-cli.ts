@@ -46,14 +46,8 @@ const writeJSON = (stream: { write: (chunk: string) => void }, value: unknown) =
 
 const usage = (err: { write: (chunk: string) => void }, message: string): number => {
   write(err, message);
-  write(
-    err,
-    "usage: workit cutover preview [--json] [--hosts opencode,cursor,codex,pi]",
-  );
-  write(
-    err,
-    "       workit cutover apply [--confirm] [--hosts ...] [--resolution key=value]...",
-  );
+  write(err, "usage: workit cutover preview [--json] [--hosts opencode,cursor,codex,pi]");
+  write(err, "       workit cutover apply [--confirm] [--hosts ...] [--resolution key=value]...");
   write(err, "       workit cutover rollback preview <backupId> [--json]");
   write(err, "       workit cutover rollback apply <backupId> [--confirm]");
   return 2;
@@ -97,11 +91,16 @@ const requireConfirm = async (
     write(err, `--confirm required for cutover ${action} when stdin is not a TTY`);
     return false;
   }
-  const confirm = deps.confirm ?? ((out?: { write: (chunk: string) => void }) => defaultConfirm(out));
+  const confirm =
+    deps.confirm ?? ((out?: { write: (chunk: string) => void }) => defaultConfirm(out));
   return confirm(outStream(deps));
 };
 
-const printPlan = (deps: CutoverCliDeps, plan: ReturnType<typeof previewCutover>, json: boolean) => {
+const printPlan = (
+  deps: CutoverCliDeps,
+  plan: ReturnType<typeof previewCutover>,
+  json: boolean,
+) => {
   const out = outStream(deps);
   if (json) {
     writeJSON(out, plan);
@@ -120,7 +119,10 @@ const printPlan = (deps: CutoverCliDeps, plan: ReturnType<typeof previewCutover>
   write(out, `sessions: ${plan.sessions.length}`);
 };
 
-export async function runCutoverCommand(argv: string[], deps: CutoverCliDeps = {}): Promise<number> {
+export async function runCutoverCommand(
+  argv: string[],
+  deps: CutoverCliDeps = {},
+): Promise<number> {
   const err = errStream(deps);
   const [action, subaction, backupId, ...rest] = argv;
   if (!action) return usage(err, "missing cutover action");
@@ -153,7 +155,10 @@ export async function runCutoverCommand(argv: string[], deps: CutoverCliDeps = {
       writeJSON(err, result);
       return result.code === "needs_input" ? 2 : 1;
     }
-    write(outStream(deps), `cutover applied backupId=${result.data.backupId} partial=${result.data.partial}`);
+    write(
+      outStream(deps),
+      `cutover applied backupId=${result.data.backupId} partial=${result.data.partial}`,
+    );
     for (const note of result.data.notes) write(outStream(deps), note);
     return result.data.partial ? 1 : 0;
   }

@@ -15,7 +15,7 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { runDoctor } from "../../packages/workit-core/src/core/doctor";
-import { CANONICAL_SKILLS } from "../../packages/workit-core/src/core/skill-manifests";
+import { WORKIT_METHOD_SKILLS } from "../../packages/workit-core/src/core/skill-manifests";
 import { syncRuntime } from "../../packages/workit-core/src/core/sync-runtime";
 import {
   extractTarball,
@@ -27,8 +27,7 @@ import {
 
 const CURSOR = "@brainervirus/workit-cursor";
 const CLI = "@brainervirus/workit-cli";
-const SUPERPOWERS = [...CANONICAL_SKILLS.superpowers].sort();
-const WORKIT = [...CANONICAL_SKILLS.workit].sort();
+const WORKIT = [...WORKIT_METHOD_SKILLS].sort();
 
 const skillManifests = (root: string): string[] =>
   readdirSync(root)
@@ -68,36 +67,13 @@ const byName = (packs: ReturnType<typeof packWorkspacePackages>, name: string) =
   packs.find((pack) => pack.packageName === name)!;
 
 test(
-  "Cursor build, package, and packed CLI doctor enforce exact canonical inert skills and Workit identity",
+  "Cursor build, package, and packed CLI doctor enforce exact canonical method skills and Workit identity",
   () => {
-    expect(SUPERPOWERS).toHaveLength(14);
-    expect(WORKIT).toHaveLength(12);
+    expect(WORKIT).toHaveLength(7);
     const fixture = mkdtempSync(path.join(os.tmpdir(), "wk-cursor-invariants-"));
     try {
-      const missingRepo = copyBuildFixture(path.join(fixture, "missing"));
-      rmSync(
-        path.join(missingRepo, "packages/workit-core/vendor/superpowers/skills/brainstorming"),
-        {
-          recursive: true,
-        },
-      );
-      const missingBuild = buildCursor(missingRepo, path.join(fixture, "missing-output"));
-      expect(missingBuild.status).not.toBe(0);
-      expect(missingBuild.stderr).toContain("brainstorming");
-
-      const extraRepo = copyBuildFixture(path.join(fixture, "extra"));
-      const extraSkill = path.join(
-        extraRepo,
-        "packages/workit-core/vendor/superpowers/skills/not-canonical",
-      );
-      mkdirSync(extraSkill, { recursive: true });
-      writeFileSync(path.join(extraSkill, "SKILL.md"), "# extra\n");
-      const extraBuild = buildCursor(extraRepo, path.join(fixture, "extra-output"));
-      expect(extraBuild.status).not.toBe(0);
-      expect(extraBuild.stderr).toContain("not-canonical");
-
       const missingWorkitRepo = copyBuildFixture(path.join(fixture, "missing-workit"));
-      rmSync(path.join(missingWorkitRepo, "packages/workit-cursor/skills/wk-init"), {
+      rmSync(path.join(missingWorkitRepo, "packages/workit-core/skills/workit-plan"), {
         recursive: true,
       });
       const missingWorkitBuild = buildCursor(
@@ -117,17 +93,14 @@ test(
         path.join(fixture, "extra-workit-output"),
       );
       expect([missingWorkitBuild.status, extraWorkitBuild.status]).toEqual([1, 1]);
-      expect(missingWorkitBuild.stderr).toContain("wk-init");
+      expect(missingWorkitBuild.stderr).toContain("workit-plan");
       expect(extraWorkitBuild.stderr).toContain("not-canonical");
 
       const packs = packWorkspacePackages();
       const extracted = extractTarball(byName(packs, CURSOR).tarball);
       try {
-        expect(
-          skillManifests(path.join(extracted.packageDir, "vendor/superpowers/skills")),
-        ).toEqual(SUPERPOWERS);
         expect(skillManifests(path.join(extracted.packageDir, "skills"))).toEqual(WORKIT);
-        walkFiles(path.join(extracted.packageDir, "vendor/superpowers/skills"), (file) => {
+        walkFiles(path.join(extracted.packageDir, "skills"), (file) => {
           expect(statSync(file).mode & 0o111, file).toBe(0);
           expect(readFileSync(file).subarray(0, 2).toString("latin1"), file).not.toBe("#!");
         });
@@ -175,10 +148,7 @@ test(
       const opencode = runDoctor({ host: "opencode", home, cwd: fixture, env: isolatedEnv(home) });
       expect(opencode.checks.find((check) => check.id === "assets")?.status).toBe("warn");
 
-      for (const damaged of [
-        path.join(plugin, "skills/wk-init/SKILL.md"),
-        path.join(plugin, "vendor/superpowers/skills/brainstorming/SKILL.md"),
-      ]) {
+      for (const damaged of [path.join(plugin, "skills/workit-plan/SKILL.md")]) {
         const contents = readFileSync(damaged);
         rmSync(damaged);
         const missing = runPackedDoctor();
@@ -189,7 +159,7 @@ test(
         writeFileSync(damaged, contents);
       }
 
-      const rogue = path.join(plugin, "vendor/superpowers/skills/not-canonical");
+      const rogue = path.join(plugin, "skills/not-canonical");
       mkdirSync(rogue);
       writeFileSync(path.join(rogue, "SKILL.md"), "# rogue\n");
       const extra = runPackedDoctor();
@@ -198,8 +168,6 @@ test(
     } finally {
       rmSync(fixture, { recursive: true, force: true });
     }
-    // The packed doctor spawns the CLI under node four times; Windows node cold
-    // starts exceed the default 5s per-test budget.
   },
   { timeout: 300_000 },
 );
@@ -212,90 +180,33 @@ const syncToolsAvailable =
 
 const syncEnv = (home: string, lockDir: string, repo: string): Record<string, string> => ({
   ...Object.fromEntries(
-    Object.entries(process.env).filter(
-      ([key, value]) =>
-        value !== undefined && !key.startsWith("WORKFLOW_") && key !== "XDG_RUNTIME_DIR",
-    ),
+    Object.entries(process.env).filter(([key]) => !key.startsWith("WORKFLOW_") && key !== "HOME"),
   ),
   HOME: home,
-  XDG_RUNTIME_DIR: lockDir,
   WORKFLOW_TOOLKIT_DEV: repo,
-  BUN: process.execPath,
+  WORKIT_SYNC_LOCK_DIR: lockDir,
 });
 
-test.skipIf(!syncToolsAvailable)(
-  "shell and TypeScript sync reject damaged canonical source and preserve exact inert live skills",
-  async () => {
-    const fixture = mkdtempSync(path.join(os.tmpdir(), "wk-cursor-sync-invariants-"));
+test(
+  "sync-runtime installs seven method skills and no legacy vendor tree",
+  () => {
+    if (!syncToolsAvailable) return;
+    const fixture = mkdtempSync(path.join(os.tmpdir(), "wk-sync-runtime-"));
+    const home = path.join(fixture, "home");
+    const lockDir = path.join(fixture, "lock");
+    const plugin = path.join(home, ".cursor/plugins/local/workit");
+    mkdirSync(plugin, { recursive: true });
     try {
-      const damagedRepo = copyBuildFixture(path.join(fixture, "damaged"));
-      rmSync(
-        path.join(damagedRepo, "packages/workit-core/vendor/superpowers/skills/brainstorming"),
-        { recursive: true },
-      );
-      const installHome = path.join(fixture, "install-damaged-home");
-      const installLock = path.join(fixture, "install-damaged-lock");
-      mkdirSync(installHome);
-      mkdirSync(installLock);
-      const install = spawnSync(
-        "bash",
-        [path.join(damagedRepo, "packages/workit-core/scripts/install-cursor-plugin.sh")],
-        {
-          cwd: damagedRepo,
-          env: syncEnv(installHome, installLock, damagedRepo),
-          encoding: "utf8",
-        },
-      );
-      expect(install.status).not.toBe(0);
-      expect(install.stderr).toContain("brainstorming");
-
-      for (const implementation of ["shell", "typescript"] as const) {
-        const home = path.join(fixture, `${implementation}-damaged-home`);
-        const lock = path.join(fixture, `${implementation}-damaged-lock`);
-        mkdirSync(home);
-        mkdirSync(lock);
-        const env = syncEnv(home, lock, damagedRepo);
-        if (implementation === "shell") {
-          const result = spawnSync(
-            "bash",
-            [path.join(REPO_ROOT, "packages/workit-core/scripts/sync-runtime.sh")],
-            { env, encoding: "utf8" },
-          );
-          expect(result.status).not.toBe(0);
-          expect(result.stderr).toContain("brainstorming");
-        } else {
-          const result = await syncRuntime({ env });
-          expect(result.ok).toBe(false);
-          expect("error" in result && result.error).toContain("brainstorming");
-        }
-      }
-
-      for (const implementation of ["shell", "typescript"] as const) {
-        const home = path.join(fixture, `${implementation}-home`);
-        const lock = path.join(fixture, `${implementation}-lock`);
-        mkdirSync(home);
-        mkdirSync(lock);
-        const env = syncEnv(home, lock, REPO_ROOT);
-        if (implementation === "shell") {
-          const result = spawnSync(
-            "bash",
-            [path.join(REPO_ROOT, "packages/workit-core/scripts/sync-runtime.sh")],
-            { env, encoding: "utf8" },
-          );
-          expect(result.status, result.stderr).toBe(0);
-        } else {
-          expect(await syncRuntime({ env })).toEqual({ ok: true });
-        }
-        const plugin = path.join(home, ".cursor/plugins/local/workit");
-        expect(skillManifests(path.join(plugin, "skills"))).toEqual(WORKIT);
-        expect(skillManifests(path.join(plugin, "vendor/superpowers/skills"))).toEqual(SUPERPOWERS);
-        walkFiles(path.join(plugin, "vendor/superpowers/skills"), (file) => {
-          expect(statSync(file).mode & 0o111, file).toBe(0);
-          expect(readFileSync(file).subarray(0, 2).toString("latin1"), file).not.toBe("#!");
-        });
-      }
+      const result = syncRuntime({
+        env: syncEnv(home, lockDir, REPO_ROOT),
+        hosts: ["cursor"],
+      });
+      expect(result.ok).toBe(true);
+      expect(skillManifests(path.join(plugin, "skills"))).toEqual(WORKIT);
+      expect(existsSync(path.join(plugin, "vendor"))).toBe(false);
     } finally {
       rmSync(fixture, { recursive: true, force: true });
     }
   },
+  { timeout: 120_000 },
 );

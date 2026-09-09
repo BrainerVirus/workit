@@ -73,7 +73,9 @@ const writeLegacyFlowRecords = (workspace: string, count: number) => {
   }
 };
 
-export function makeCutoverFixture(opts: { legacyFlows?: number; secret?: string } = {}): CutoverFixture {
+export function makeCutoverFixture(
+  opts: { legacyFlows?: number; secret?: string } = {},
+): CutoverFixture {
   const root = mkdtempSync(path.join(os.tmpdir(), "wk-cutover-"));
   const home = mk(root, "home");
   const configDir = mk(root, "config");
@@ -95,7 +97,10 @@ export function makeCutoverFixture(opts: { legacyFlows?: number; secret?: string
   mk(dev, "packages", "workit-pi");
 
   writeFileSync(path.join(dev, "packages/workit-opencode/src/plugin.ts"), "export default {};\n");
-  writeFileSync(path.join(dev, "packages/workit-opencode/assets/commands/wk-init.md"), "# wk-init\n");
+  writeFileSync(
+    path.join(dev, "packages/workit-opencode/assets/commands/wk-init.md"),
+    "# wk-init\n",
+  );
   writeFileSync(
     path.join(dev, "packages/workit-cursor/dist/mcp-server.js"),
     "#!/usr/bin/env node\n// bundle\n",
@@ -201,7 +206,8 @@ export function makeCutoverFixture(opts: { legacyFlows?: number; secret?: string
   mk(workspace, ".workit", "tasks");
   writeFileSync(
     path.join(workspace, ".workit", "tasks", "task-1.json"),
-    JSON.stringify({ id: "task-1", title: "v1 task referencing docs/legacy-flow-0/spec.md" }) + "\n",
+    JSON.stringify({ id: "task-1", title: "v1 task referencing docs/legacy-flow-0/spec.md" }) +
+      "\n",
   );
 
   return {
@@ -228,6 +234,7 @@ export function installV1Skills(pluginDir: string) {
 
 export function removeLegacySkills(pluginDir: string) {
   for (const name of readdirSync(path.join(pluginDir, "skills"))) {
-    if (name.startsWith("wk-")) rmSync(path.join(pluginDir, "skills", name), { recursive: true, force: true });
+    if (name.startsWith("wk-"))
+      rmSync(path.join(pluginDir, "skills", name), { recursive: true, force: true });
   }
 }

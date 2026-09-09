@@ -14,7 +14,7 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { CANONICAL_SKILLS, WORKIT_METHOD_SKILLS } from "../../packages/workit-core/src/core/skill-manifests";
+import { WORKIT_METHOD_SKILLS } from "../../packages/workit-core/src/core/skill-manifests";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -294,12 +294,7 @@ function makeStub(pluginTs: string) {
 // the post-install doctor (AR-11/CA-40) can pass on a healthy stub install.
 function writeSyncedOpencodeAssets(stub: string) {
   const base = path.join(stub, "packages/workit-opencode/assets");
-  const files = [
-    "commands/wk-init.md",
-    "skills/wk-init/SKILL.md",
-    "templates/spec-template.md",
-    "vendor/superpowers/skills/brainstorming/SKILL.md",
-  ];
+  const files = WORKIT_METHOD_SKILLS.map((skill) => `skills/${skill}/SKILL.md`);
   for (const rel of files) {
     mkdirSync(path.dirname(path.join(base, rel)), { recursive: true });
     writeFileSync(path.join(base, rel), "# stub\n");
@@ -851,7 +846,9 @@ function makeDependencyFreeCheckout() {
     symlinkSync(path.join(repoRoot, "node_modules"), path.join(checkout, "node_modules"), "dir");
   } catch {
     mkdirSync(path.join(checkout, "node_modules"), { recursive: true });
-    cpSync(path.join(repoRoot, "node_modules"), path.join(checkout, "node_modules"), { recursive: true });
+    cpSync(path.join(repoRoot, "node_modules"), path.join(checkout, "node_modules"), {
+      recursive: true,
+    });
   }
   const dist = path.join(checkout, "packages/workit-cursor/dist");
   mkdirSync(dist, { recursive: true });

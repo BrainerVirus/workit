@@ -2,7 +2,7 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { CANONICAL_SKILLS } from "../../../packages/workit-core/src/core/skill-manifests";
+import { WORKIT_METHOD_SKILLS } from "../../../packages/workit-core/src/core/skill-manifests";
 
 // Shared fixture builder for the offline doctor (DG-07/DG-08). Builds an
 // against disposable files, never the real user config. Tests mutate files and
@@ -43,26 +43,13 @@ export const makeDoctorFixture = (): DoctorFixture => {
   mkdirSync(path.dirname(opencodeConfig), { recursive: true });
   mkdirSync(path.dirname(cursorSettings), { recursive: true });
 
-  // Fake monorepo: core + three adapters with version/asset/launcher layout.
   mk(dev, "packages", "workit-core");
-  for (const skill of CANONICAL_SKILLS.superpowers) {
-    mk(dev, "packages", "workit-core", "vendor", "superpowers", "skills", skill);
+  for (const skill of WORKIT_METHOD_SKILLS) {
+    mk(dev, "packages", "workit-core", "skills", skill);
+    mk(pluginDir, "skills", skill);
   }
-  for (const skill of CANONICAL_SKILLS.workit) mk(pluginDir, "skills", skill);
   mk(dev, "packages", "workit-opencode", "src");
-  mk(dev, "packages", "workit-opencode", "assets", "commands");
-  mk(dev, "packages", "workit-opencode", "assets", "skills", "wk-init");
-  mk(dev, "packages", "workit-opencode", "assets", "templates");
-  mk(
-    dev,
-    "packages",
-    "workit-opencode",
-    "assets",
-    "vendor",
-    "superpowers",
-    "skills",
-    "brainstorming",
-  );
+  mk(dev, "packages", "workit-opencode", "assets", "skills");
   mk(dev, "packages", "workit-cursor", "dist");
   mk(dev, "packages", "workit-cursor", "assets", "templates");
   mk(dev, "packages", "workit-cursor", "mcp");
@@ -73,16 +60,15 @@ export const makeDoctorFixture = (): DoctorFixture => {
 
   writeFileSync(
     path.join(dev, "packages", "workit-core", "package.json"),
-    JSON.stringify({ name: "@brainervirus/workit-core", version: "0.4.0" }),
+    JSON.stringify({ name: "@brainervirus/workit-core", version: "1.0.0" }),
   );
-  for (const skill of CANONICAL_SKILLS.superpowers) {
+  for (const skill of WORKIT_METHOD_SKILLS) {
+    writeFileSync(path.join(dev, "packages/workit-core/skills", skill, "SKILL.md"), "# skill\n");
+    writeFileSync(path.join(pluginDir, "skills", skill, "SKILL.md"), "# skill\n");
     writeFileSync(
-      path.join(dev, "packages/workit-core/vendor/superpowers/skills", skill, "SKILL.md"),
+      path.join(dev, "packages/workit-opencode/assets/skills", skill, "SKILL.md"),
       "# skill\n",
     );
-  }
-  for (const skill of CANONICAL_SKILLS.workit) {
-    writeFileSync(path.join(pluginDir, "skills", skill, "SKILL.md"), "# skill\n");
   }
   mkdirSync(path.join(pluginDir, "dist"), { recursive: true });
   writeFileSync(
@@ -111,12 +97,12 @@ export const makeDoctorFixture = (): DoctorFixture => {
   const adapter = (name: string, extra: Record<string, string> = {}) =>
     JSON.stringify({
       name,
-      version: "0.4.0",
+      version: "1.0.0",
       dependencies: { "@brainervirus/workit-core": "workspace:*", ...extra },
     });
   writeFileSync(
     path.join(dev, "packages", "workit-opencode", "package.json"),
-    adapter("@brainervirus/workit-opencode", { "@opencode-ai/plugin": "1.17.7" }),
+    adapter("@brainervirus/workit-opencode", { "@opencode-ai/plugin": "1.18.29" }),
   );
   writeFileSync(
     path.join(dev, "packages", "workit-cursor", "package.json"),
@@ -132,32 +118,6 @@ export const makeDoctorFixture = (): DoctorFixture => {
     "export default {};\n",
   );
   writeFileSync(
-    path.join(dev, "packages", "workit-opencode", "assets", "commands", "wk-init.md"),
-    "# wk-init\n",
-  );
-  writeFileSync(
-    path.join(dev, "packages", "workit-opencode", "assets", "skills", "wk-init", "SKILL.md"),
-    "# skill\n",
-  );
-  writeFileSync(
-    path.join(dev, "packages", "workit-opencode", "assets", "templates", "spec-template.md"),
-    "# spec\n",
-  );
-  writeFileSync(
-    path.join(
-      dev,
-      "packages",
-      "workit-opencode",
-      "assets",
-      "vendor",
-      "superpowers",
-      "skills",
-      "brainstorming",
-      "SKILL.md",
-    ),
-    "# b\n",
-  );
-  writeFileSync(
     path.join(dev, "packages", "workit-cursor", "dist", "mcp-server.js"),
     "// bundle\n",
   );
@@ -166,8 +126,8 @@ export const makeDoctorFixture = (): DoctorFixture => {
     "// bundle\n",
   );
   writeFileSync(
-    path.join(dev, "packages", "workit-cursor", "assets", "templates", "spec-template.md"),
-    "# spec\n",
+    path.join(dev, "packages", "workit-cursor", "assets", "templates", "workit-contract.md"),
+    "# contract\n",
   );
   writeFileSync(
     path.join(dev, "packages", "workit-cursor", "mcp.json"),
@@ -188,7 +148,7 @@ export const makeDoctorFixture = (): DoctorFixture => {
   );
   writeFileSync(
     path.join(dev, "packages", "workit-cursor", "marketplace.json"),
-    JSON.stringify({ name: "workit", version: "0.4.0" }),
+    JSON.stringify({ name: "workit", version: "1.0.0" }),
   );
   writeFileSync(
     path.join(dev, "packages", "workit-cursor", ".cursor-plugin", "manifest.json"),
@@ -200,7 +160,6 @@ export const makeDoctorFixture = (): DoctorFixture => {
     "# spec\n",
   );
 
-  // Healthy registration surfaces: one opencode pin, one cursor identity.
   writeFileSync(
     opencodeConfig,
     JSON.stringify({ plugin: [`file://${dev}/packages/workit-opencode/src/plugin.ts`] }),
@@ -251,10 +210,6 @@ export const binDirWithRuntimes = (root: string): string => {
   const bin = mk(root, "path-bin");
   for (const name of ["node", "bun"]) {
     if (process.platform === "win32") {
-      // git-bash `command -v` yields msys paths symlinks cannot use; resolve
-      // via `where` and symlink the real executable (copy as a fallback when
-      // symlink creation is unavailable — copying node+bun is ~200MB, so it
-      // is the last resort).
       const which = spawnSync("where", [name], { encoding: "utf8" });
       const target = which.stdout?.split("\n")[0]?.trim();
       if (target && existsSync(target)) {

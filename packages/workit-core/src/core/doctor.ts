@@ -20,7 +20,7 @@ import {
   isWorkitPlugin,
 } from "./registration";
 import { resolveWorkspaceFrom } from "./workspaces";
-import { validateCursorSkills, WORKIT_METHOD_SKILLS, CANONICAL_SKILLS } from "./skill-manifests";
+import { validateCursorSkills, WORKIT_METHOD_SKILLS } from "./skill-manifests";
 import {
   classifyHostGeneration,
   digestFile,
@@ -366,21 +366,13 @@ const effectiveGeneration = (res: Resolved): "legacy" | "v1" => {
   return "legacy";
 };
 
-const assetPathsFor = (host: DoctorHost, dev: string, generation: "legacy" | "v1"): string[] => {
+const assetPathsFor = (host: DoctorHost, dev: string, _generation: "legacy" | "v1"): string[] => {
   const pkg = path.join(dev, "packages", `workit-${host}`);
   switch (host) {
     case "opencode":
-      if (generation === "v1") {
-        return WORKIT_METHOD_SKILLS.map((skill) =>
-          path.join(pkg, "assets", "skills", skill, "SKILL.md"),
-        );
-      }
-      return [
-        path.join(pkg, "assets", "commands", "wk-init.md"),
-        path.join(pkg, "assets", "skills", "wk-init", "SKILL.md"),
-        path.join(pkg, "assets", "templates", "spec-template.md"),
-        path.join(pkg, "assets", "vendor", "superpowers", "skills", "brainstorming", "SKILL.md"),
-      ];
+      return WORKIT_METHOD_SKILLS.map((skill) =>
+        path.join(pkg, "assets", "skills", skill, "SKILL.md"),
+      );
     case "cursor":
       return [
         path.join(pkg, "assets", "templates", "spec-template.md"),
@@ -408,9 +400,7 @@ const checkAssets = (res: Resolved): DoctorCheck => {
       )
     : [];
   if (res.host === "cursor" || res.host === "cli") {
-    const expected =
-      generation === "v1" ? WORKIT_METHOD_SKILLS : (CANONICAL_SKILLS.workit as readonly string[]);
-    const cursorError = validateCursorSkills(res.cursorPluginDir, expected);
+    const cursorError = validateCursorSkills(res.cursorPluginDir, WORKIT_METHOD_SKILLS);
     if (cursorError) missing.push(`cursor: ${cursorError}`);
   }
   if (missing.length === 0) {
@@ -1087,7 +1077,11 @@ const checkMixedGeneration = (res: Resolved): DoctorCheck => {
   const mixed = GENERATION_HOSTS.filter((host) => classifyHostGeneration(host, paths) === "mixed");
   const target = readGenerationState(res.configDir).target;
   if (mixed.length === 0) {
-    return { id: "mixed_generation", status: "pass", detail: "no mixed legacy/v1 components detected" };
+    return {
+      id: "mixed_generation",
+      status: "pass",
+      detail: "no mixed legacy/v1 components detected",
+    };
   }
   const detail = `mixed legacy and v1 components: ${mixed.join(", ")}`;
   if (target === "v1") {
@@ -1109,12 +1103,22 @@ const checkMixedGeneration = (res: Resolved): DoctorCheck => {
 const checkLegacyComponent = (res: Resolved): DoctorCheck => {
   const target = readGenerationState(res.configDir).target;
   if (target !== "v1") {
-    return { id: "legacy_component", status: "pass", detail: "legacy target — 0.x components expected" };
+    return {
+      id: "legacy_component",
+      status: "pass",
+      detail: "legacy target — 0.x components expected",
+    };
   }
   const paths = generationPaths(res);
-  const legacy = GENERATION_HOSTS.filter((host) => classifyHostGeneration(host, paths) === "legacy");
+  const legacy = GENERATION_HOSTS.filter(
+    (host) => classifyHostGeneration(host, paths) === "legacy",
+  );
   if (legacy.length === 0) {
-    return { id: "legacy_component", status: "pass", detail: "no legacy-only host components on v1 target" };
+    return {
+      id: "legacy_component",
+      status: "pass",
+      detail: "no legacy-only host components on v1 target",
+    };
   }
   return {
     id: "legacy_component",
@@ -1135,7 +1139,11 @@ const checkMissingV1Component = (res: Resolved): DoctorCheck => {
     return gen === "none" || gen === "legacy";
   });
   if (missing.length === 0) {
-    return { id: "missing_v1_component", status: "pass", detail: "v1 components present on selected hosts" };
+    return {
+      id: "missing_v1_component",
+      status: "pass",
+      detail: "v1 components present on selected hosts",
+    };
   }
   return {
     id: "missing_v1_component",
@@ -1182,7 +1190,11 @@ const checkActiveOldSession = (res: Resolved): DoctorCheck => {
 const checkManagedContentConflict = (res: Resolved): DoctorCheck => {
   const gen = readGenerationState(res.configDir);
   if (!gen.cutover?.backupId) {
-    return { id: "managed_content_conflict", status: "pass", detail: "no cutover receipt to compare" };
+    return {
+      id: "managed_content_conflict",
+      status: "pass",
+      detail: "no cutover receipt to compare",
+    };
   }
   const receipt = readCutoverReceipt(gen.cutover.backupId, res.stateDir);
   if (!receipt) {
@@ -1198,7 +1210,11 @@ const checkManagedContentConflict = (res: Resolved): DoctorCheck => {
     return current !== null && current !== entry.installedDigest;
   });
   if (conflicts.length === 0) {
-    return { id: "managed_content_conflict", status: "pass", detail: "managed content matches cutover receipt" };
+    return {
+      id: "managed_content_conflict",
+      status: "pass",
+      detail: "managed content matches cutover receipt",
+    };
   }
   return {
     id: "managed_content_conflict",

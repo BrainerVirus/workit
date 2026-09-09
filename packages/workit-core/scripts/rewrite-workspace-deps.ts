@@ -18,7 +18,14 @@ if (!core.version || typeof core.version !== "string") {
     `workit-core version missing in ${resolve(root, "packages/workit-core/package.json")}`,
   );
 }
-for (const pkg of ["workit-mcp", "workit-opencode", "workit-cursor", "workit-cli"]) {
+for (const pkg of [
+  "workit-mcp",
+  "workit-cli",
+  "workit-opencode",
+  "workit-cursor",
+  "workit-codex",
+  "workit-pi",
+]) {
   const file = resolve(root, `packages/${pkg}/package.json`);
   const data = JSON.parse(readFileSync(file, "utf8"));
   const deps = data.dependencies;
@@ -30,7 +37,10 @@ for (const pkg of ["workit-mcp", "workit-opencode", "workit-cursor", "workit-cli
 }
 // The root marketplace index carries no release version; only the package
 // plugin manifest is versioned at release time.
-for (const file of [resolve(root, "packages/workit-cursor/.cursor-plugin/plugin.json")]) {
+for (const file of [
+  resolve(root, "packages/workit-cursor/.cursor-plugin/plugin.json"),
+  resolve(root, "packages/workit-codex/.codex-plugin/plugin.json"),
+]) {
   const data = JSON.parse(readFileSync(file, "utf8"));
   data.version = core.version;
   if (data.homepage)

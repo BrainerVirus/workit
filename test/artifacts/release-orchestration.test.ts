@@ -13,7 +13,14 @@ import { REPO_ROOT } from "../shared/helpers/packages";
 const read = (rel: string) => readFileSync(path.join(REPO_ROOT, rel), "utf8");
 const json = <T>(rel: string) => JSON.parse(read(rel)) as T;
 
-const ADAPTERS = ["workit-opencode", "workit-cursor", "workit-cli"] as const;
+const ADAPTERS = [
+  "workit-mcp",
+  "workit-opencode",
+  "workit-cursor",
+  "workit-codex",
+  "workit-pi",
+  "workit-cli",
+] as const;
 
 test(
   "a clean checkout tracks no generated adapter dist/ files (CA-33)",

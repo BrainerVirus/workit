@@ -158,7 +158,15 @@ describe("analyzeReleaseScope", () => {
       r.commit("fix(cli): first", { "packages/workit-cli/src/f.ts": "f\n" });
       expect(analyzeReleaseScope(r.root)).toEqual({
         level: "minor",
-        productPkgs: ["workit-core", "workit-opencode", "workit-cursor", "workit-cli"],
+        productPkgs: [
+          "workit-core",
+          "workit-mcp",
+          "workit-cli",
+          "workit-opencode",
+          "workit-cursor",
+          "workit-codex",
+          "workit-pi",
+        ],
       });
     } finally {
       r.cleanup();

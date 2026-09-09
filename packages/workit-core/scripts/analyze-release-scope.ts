@@ -7,9 +7,12 @@ import { resolve } from "node:path";
 
 export const RELEASE_PACKAGES = [
   "workit-core",
+  "workit-mcp",
+  "workit-cli",
   "workit-opencode",
   "workit-cursor",
-  "workit-cli",
+  "workit-codex",
+  "workit-pi",
 ] as const;
 
 const g = (root: string, args: string[]): string =>

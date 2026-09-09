@@ -8,7 +8,6 @@ import type {
 } from "../../packages/workit-core/src/core/task-contract";
 import { invariantBootstrap, selectMethods } from "../../packages/workit-core/src/core/methods";
 import {
-  CANONICAL_SKILLS,
   WORKIT_METHOD_SKILLS,
   skillManifestNames,
 } from "../../packages/workit-core/src/core/skill-manifests";
@@ -193,7 +192,7 @@ test("debug and behavioral-tdd do not wait for pre-assess policy selection", () 
   }
 });
 
-test("method manifest lists exactly seven core skills without removing legacy skills", () => {
+test("method manifest lists exactly seven core skills", () => {
   expect(WORKIT_METHOD_SKILLS).toEqual([
     "workit-challenge",
     "workit-behavioral-tdd",
@@ -203,8 +202,7 @@ test("method manifest lists exactly seven core skills without removing legacy sk
     "workit-debug",
     "workit-handoff",
   ]);
-  expect(CANONICAL_SKILLS.workit).toContain("wk-implement");
-  expect(
-    skillManifestNames("packages/workit-core/skills").filter((name) => name.startsWith("workit-")),
-  ).toEqual([...[...WORKIT_METHOD_SKILLS].sort()]);
+  expect(skillManifestNames("packages/workit-core/skills")).toEqual([
+    ...[...WORKIT_METHOD_SKILLS].sort(),
+  ]);
 });

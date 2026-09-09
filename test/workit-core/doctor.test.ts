@@ -15,11 +15,14 @@ import { binDirWithRuntimes, makeDoctorFixture } from "../shared/helpers/doctor-
 import {
   applyCutover,
   previewCutover,
-  readGenerationState,
   writeGenerationState,
 } from "../../packages/workit-core/src/core/cutover";
 import { WORKIT_METHOD_SKILLS } from "../../packages/workit-core/src/core/skill-manifests";
-import { installV1Skills, makeCutoverFixture, removeLegacySkills } from "../shared/helpers/cutover-fixture";
+import {
+  installV1Skills,
+  makeCutoverFixture,
+  removeLegacySkills,
+} from "../shared/helpers/cutover-fixture";
 
 // The offline doctor engine (DG-07/DG-08, CA-09): one fixture tree, one broken
 // surface at a time, assert the typed check + nonzero exitCode, then repair the
@@ -30,7 +33,9 @@ const check = (report: DoctorReport, id: string): DoctorCheck =>
 
 const fixture = makeDoctorFixture();
 
-const run = (overrides: { env?: NodeJS.ProcessEnv; cwd?: string; sessions?: SessionObservation[] } = {}) =>
+const run = (
+  overrides: { env?: NodeJS.ProcessEnv; cwd?: string; sessions?: SessionObservation[] } = {},
+) =>
   runDoctor({
     host: "cli",
     home: fixture.home,
@@ -468,7 +473,10 @@ test("detects an out-of-matrix opencode SDK pin as mixed versions", () => {
 });
 
 test("detects missing assets and clears once restored", () => {
-  const asset = path.join(fixture.dev, "packages/workit-opencode/assets/commands/wk-init.md");
+  const asset = path.join(
+    fixture.dev,
+    "packages/workit-opencode/assets/skills/workit-plan/SKILL.md",
+  );
   rmSync(asset, { force: true });
   try {
     const report = run();
@@ -476,7 +484,7 @@ test("detects missing assets and clears once restored", () => {
     expect(check(report, "assets").status).toBe("fail");
     expect(check(report, "assets").fix).toBeTruthy();
   } finally {
-    writeConfig(asset, "# wk-init\n");
+    writeConfig(asset, "# workit-plan\n");
   }
   expect(check(run(), "assets").status).toBe("pass");
 });
@@ -1126,12 +1134,15 @@ const expectInstallerFailure = (id: string, fixKeyword: string) => {
 };
 
 test("installer fails when a selected-host asset is missing", () => {
-  const asset = path.join(fixture.dev, "packages/workit-opencode/assets/commands/wk-init.md");
+  const asset = path.join(
+    fixture.dev,
+    "packages/workit-opencode/assets/skills/workit-plan/SKILL.md",
+  );
   rmSync(asset, { force: true });
   try {
     expectInstallerFailure("assets", "Reinstall or rebuild");
   } finally {
-    writeConfig(asset, "# wk-init\n");
+    writeConfig(asset, "# workit-plan\n");
   }
   expect(check(runInstaller(), "assets").status).toBe("pass");
 });

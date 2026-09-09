@@ -12,11 +12,15 @@ import { resolve } from "node:path";
 export const SYNC_MANIFEST_PATHS = [
   "package.json",
   "packages/workit-core/package.json",
+  "packages/workit-mcp/package.json",
+  "packages/workit-cli/package.json",
   "packages/workit-opencode/package.json",
   "packages/workit-cursor/package.json",
-  "packages/workit-cli/package.json",
+  "packages/workit-codex/package.json",
+  "packages/workit-pi/package.json",
   // Kept in lockstep with packages/workit-core/package.json by contract test.
   "packages/workit-cursor/.cursor-plugin/plugin.json",
+  "packages/workit-codex/.codex-plugin/plugin.json",
 ];
 
 export type ManifestSyncResult = { version: string; changed: string[] };

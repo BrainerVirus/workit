@@ -22,7 +22,6 @@ import {
   type UninstallPlan,
 } from "@brainervirus/workit-core/src/core/uninstall";
 import { applyWizardBranchPolicy } from "./logic";
-import { COMMANDS, runFlowCommand, runHandoffCommand } from "./flow";
 import { runCutoverCommand } from "./cutover-cli";
 import { runActionCommand, runTaskCommand, TASK_FAMILIES } from "./task";
 import { externalActionHelp } from "@brainervirus/workit-core/src/core";
@@ -38,23 +37,14 @@ export const logger = createLogger({
   },
 });
 
-// Help derives the flow/handoff command surface from the same COMMANDS table
-// the CLI's usage errors use, so the exact command strings cannot drift
-// (packed-cli asserts each string appears verbatim). Descriptions line up in a
-// command column sized to the longest command (2-space indent), so a command
-// longer than a fixed 49 chars does not overflow its description.
 const COMMAND_DESCRIPTIONS: readonly (readonly [string, string])[] = [
-  [COMMANDS.status, "Read the effective flow state for a plan"],
-  [COMMANDS.pause, "Pause an active plan"],
-  [COMMANDS.resume, "Resume a paused plan"],
-  [COMMANDS.complete, "Complete a plan (ledger and verification gated)"],
-  [COMMANDS["review-package"], "Write a review diff for a base..head range"],
-  [COMMANDS["append-advisory"], "Append an advisory line to docs/<slug>/sdd/advisories.md"],
-  [COMMANDS.handoff, "Emit the destination handoff prompt for a plan"],
   ["workit task <family> <action> [options]", "Inspect and control a Workit task"],
   ["workit action <operation> --payload <JSON>", "Preview or run one approved external action"],
   ["workit handoff --task <id>", "Export task state and compact destination context"],
-  ["workit cutover preview|apply|rollback ...", "Preview-first v1 cutover and rollback (apply requires --confirm)"],
+  [
+    "workit cutover preview|apply|rollback ...",
+    "Preview-first v1 cutover and rollback (apply requires --confirm)",
+  ],
 ];
 
 const helpColumn = Math.max(...COMMAND_DESCRIPTIONS.map(([cmd]) => cmd.length)) + 2;
@@ -349,16 +339,12 @@ if (import.meta.main) {
     await runInit();
   } else if (subcommand === "doctor") {
     runDoctorCommand(args);
-  } else if (subcommand === "flow") {
-    process.exit(await runFlowCommand(args.slice(1)));
   } else if ((TASK_FAMILIES as readonly string[]).includes(subcommand)) {
     process.exit(await runTaskCommand(args));
   } else if (subcommand === "action") {
     process.exit(await runActionCommand(args.slice(1)));
   } else if (subcommand === "handoff") {
-    process.exit(
-      args.includes("--task") ? await runTaskCommand(args) : await runHandoffCommand(args.slice(1)),
-    );
+    process.exit(await runTaskCommand(args));
   } else if (subcommand === "uninstall") {
     await runUninstall();
   } else if (subcommand === "cutover") {

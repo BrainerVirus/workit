@@ -1,13 +1,8 @@
 import { expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
-import os from "node:os";
+import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 
 import { resolveWorkspaceRoot } from "../../packages/workit-core/src/core/scripts";
-import {
-  readEffectiveFlowState,
-  slugFromPath,
-} from "../../packages/workit-core/src/core/flow-state";
 const REPO_ROOT = path.resolve(import.meta.dir, "..", "..");
 const CORE_SRC = path.join(REPO_ROOT, "packages", "workit-core", "src");
 const CURSOR_SERVER = path.join(REPO_ROOT, "packages", "workit-cursor", "mcp", "server.ts");
@@ -79,60 +74,12 @@ test("cursor delegates workspace root context to the shared transport", () => {
   expect(resolveWorkspaceRoot("/workspace")).toBe("/workspace");
 });
 
-test("cursor does not duplicate host flow or schema registrations", async () => {
+test("cursor does not duplicate legacy flow registrations", () => {
   const server = readFileSync(CURSOR_SERVER, "utf8");
   expect(server).not.toContain("resolveCanonicalLayout");
   expect(server).not.toContain("readFlowState");
   expect(server).not.toContain("registerTool");
-
-  const { createFlowTools } = await import("../../packages/workit-opencode/src/tools/flow");
-  const { HostReceiptStore } = await import("../../packages/workit-core/src/core/flow-state");
-  const root = mkdtempSync(path.join(os.tmpdir(), "wf-boundary-"));
-  try {
-    mkdirSync(path.join(root, "docs", "x", "sdd"), { recursive: true });
-    writeFileSync(path.join(root, "docs/x/spec.md"), "# X\n\n**Branch:** `feature/x`\n");
-    writeFileSync(
-      path.join(root, "docs/x/plan.md"),
-      "# X\n\n**Spec:** `docs/x/spec.md`\n**Branch:** `feature/x`\n\n### Task 1: One\n\n- [ ] **Step 1:** Work\n",
-    );
-    writeFileSync(
-      path.join(root, "docs/x/sdd/flow.json"),
-      JSON.stringify({
-        slug: "x",
-        spec: { path: "docs/x/spec.md", status: "approved" },
-        plan: { path: "docs/x/plan.md", status: "approved" },
-        menu: { presented: true, chosen: "handoff" },
-        updated_at: 1,
-      }),
-    );
-
-    const raw = await createFlowTools(new HostReceiptStore(), {
-      session: { get: async () => ({ data: {} }) },
-    }).workit_flow_status.execute({ plan_path: "docs/x/plan.md" }, { directory: root } as never);
-    const result = JSON.parse(raw as string);
-    expect(result.ok).toBe(true);
-    const slug = slugFromPath("docs/x/plan.md");
-    // The status tool reads the EFFECTIVE (reconciled) state: the fixture's
-    // undigested approvals surface as digest_missing drift, the drift reset is
-    // persisted, and the execution lifecycle is reported alongside spec/plan/menu.
-    // Drift is reported on the reconciling read only — after the reset is
-    // persisted, a fresh read is clean.
-    const effective = readEffectiveFlowState(root, slug);
-    expect(effective.ok).toBe(true);
-    if (effective.ok) {
-      expect(result.data).toEqual({
-        slug,
-        spec: effective.state.spec,
-        plan: effective.state.plan,
-        menu: effective.state.menu,
-        execution: effective.state.execution,
-        drift: [{ document: "spec", code: "digest_missing", path: "docs/x/spec.md" }],
-        flow_path: `docs/${slug}/sdd/flow.json`,
-      });
-    }
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
+  expect(server).not.toContain("flow-state");
 });
 
 test("Cursor publishes only the shared eight operation families", async () => {

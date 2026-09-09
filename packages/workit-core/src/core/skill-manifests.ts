@@ -1,39 +1,6 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 
-export const CANONICAL_SKILLS = {
-  superpowers: [
-    "brainstorming",
-    "dispatching-parallel-agents",
-    "executing-plans",
-    "finishing-a-development-branch",
-    "receiving-code-review",
-    "requesting-code-review",
-    "subagent-driven-development",
-    "systematic-debugging",
-    "test-driven-development",
-    "using-git-worktrees",
-    "using-superpowers",
-    "verification-before-completion",
-    "writing-plans",
-    "writing-skills",
-  ],
-  workit: [
-    "wk-changelog",
-    "wk-commit",
-    "wk-docs-refresh",
-    "wk-handoff",
-    "wk-implement",
-    "wk-init",
-    "wk-issue-update",
-    "wk-meetings",
-    "wk-pr",
-    "wk-release-notes",
-    "wk-status",
-    "wk-verify",
-  ],
-} as const;
-
 export const WORKIT_METHOD_SKILLS = [
   "workit-challenge",
   "workit-behavioral-tdd",

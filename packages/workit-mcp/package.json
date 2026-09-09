@@ -1,6 +1,6 @@
 {
   "name": "@brainervirus/workit-mcp",
-  "version": "0.11.0",
+  "version": "1.0.0",
   "private": false,
   "description": "Workit shared MCP transport for Cursor and Codex",
   "keywords": [

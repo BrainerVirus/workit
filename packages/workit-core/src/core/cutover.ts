@@ -12,7 +12,11 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { failure, success, type Digest, type Id, type Result } from "./task-contract";
-import { applyConversionConfig, previewConversion, type ConversionPreview } from "./config-conversion";
+import {
+  applyConversionConfig,
+  previewConversion,
+  type ConversionPreview,
+} from "./config-conversion";
 import {
   CURSOR_RUNTIME_PACKAGE,
   cursorHooksEntry,
@@ -93,7 +97,9 @@ const resolvePaths = (options: CutoverPaths = {}) => {
     options.env?.WORKFLOW_TOOLKIT_CONFIG ??
     path.join(home, ".config", "workit");
   const stateDir =
-    options.stateDir ?? options.env?.WORKFLOW_TOOLKIT_STATE ?? path.join(home, ".local", "state", "workit");
+    options.stateDir ??
+    options.env?.WORKFLOW_TOOLKIT_STATE ??
+    path.join(home, ".local", "state", "workit");
   return {
     home,
     configDir,
@@ -171,7 +177,10 @@ export const classifyHostGeneration = (
         paths.dev &&
         existsSync(path.join(paths.dev, "packages/workit-opencode/assets/commands/wk-init.md"));
       const legacy = hasLegacyPin || Boolean(devAssets);
-      const v1 = hasWorkit && paths.dev && existsSync(path.join(paths.dev, "packages/workit-opencode/dist/plugin.js"));
+      const v1 =
+        hasWorkit &&
+        paths.dev &&
+        existsSync(path.join(paths.dev, "packages/workit-opencode/dist/plugin.js"));
       if (legacy && v1) return "mixed";
       if (v1) return "v1";
       if (legacy || hasWorkit) return "legacy";
@@ -192,7 +201,9 @@ export const classifyHostGeneration = (
     try {
       const cfg = JSON.parse(readFileSync(piConfig, "utf8"));
       const exts = cfg?.extensions ?? cfg?.pi?.extensions ?? [];
-      const has = (Array.isArray(exts) ? exts : []).some((e: unknown) => String(e).includes("workit"));
+      const has = (Array.isArray(exts) ? exts : []).some((e: unknown) =>
+        String(e).includes("workit"),
+      );
       return has ? "v1" : "none";
     } catch {
       return "none";
@@ -298,7 +309,8 @@ const cutoverBackupTargets = (
   hosts: CutoverHost[],
 ): string[] => [...new Set([...managedCutoverFiles(paths), ...hostMutationTargets(paths, hosts)])];
 
-const backupRoot = (stateDir: string, backupId: Id) => path.join(stateDir, "cutover", "backups", backupId);
+const backupRoot = (stateDir: string, backupId: Id) =>
+  path.join(stateDir, "cutover", "backups", backupId);
 
 const backupRelPath = (file: string, paths: ReturnType<typeof resolvePaths>): string => {
   if (file.startsWith(paths.configDir + path.sep) || file === paths.configDir) {
@@ -307,7 +319,11 @@ const backupRelPath = (file: string, paths: ReturnType<typeof resolvePaths>): st
   return path.join("home", path.relative(paths.home, file));
 };
 
-const writeBackup = (backupId: Id, paths: ReturnType<typeof resolvePaths>, files: string[]): void => {
+const writeBackup = (
+  backupId: Id,
+  paths: ReturnType<typeof resolvePaths>,
+  files: string[],
+): void => {
   const root = backupRoot(paths.stateDir, backupId);
   mkdirSync(root, { recursive: true });
   const manifest: CutoverReceipt["managedFiles"] = [];
@@ -318,7 +334,10 @@ const writeBackup = (backupId: Id, paths: ReturnType<typeof resolvePaths>, files
     cpSync(file, dest);
     manifest.push({ path: file, installedDigest: digestFile(file)! });
   }
-  writeFileSync(path.join(root, "manifest.json"), JSON.stringify({ backupId, files: manifest }, null, 2) + "\n");
+  writeFileSync(
+    path.join(root, "manifest.json"),
+    JSON.stringify({ backupId, files: manifest }, null, 2) + "\n",
+  );
 };
 
 const receiptPath = (stateDir: string, backupId: Id) =>
@@ -339,7 +358,11 @@ export const readCutoverReceipt = (backupId: Id, stateDir: string): CutoverRecei
   }
 };
 
-const plannedAfterDigest = (file: string, host: CutoverHost, paths: ReturnType<typeof resolvePaths>): Digest => {
+const plannedAfterDigest = (
+  file: string,
+  host: CutoverHost,
+  paths: ReturnType<typeof resolvePaths>,
+): Digest => {
   if (file === paths.opencodeConfig && paths.dev) {
     const pin = `file://${paths.dev}/packages/workit-opencode/dist/plugin.js`;
     const merged = mergeOpenCodeConfig(
@@ -365,7 +388,9 @@ const plannedAfterDigest = (file: string, host: CutoverHost, paths: ReturnType<t
   }
   if (file.endsWith("hooks-cursor.json")) {
     const entry = cursorHooksEntry(paths.cursorPluginDir);
-    const base = existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : { version: 1, hooks: {} };
+    const base = existsSync(file)
+      ? JSON.parse(readFileSync(file, "utf8"))
+      : { version: 1, hooks: {} };
     const next = {
       ...base,
       hooks: { ...(base.hooks ?? {}), sessionStart: [{ command: entry.command }] },
@@ -375,7 +400,10 @@ const plannedAfterDigest = (file: string, host: CutoverHost, paths: ReturnType<t
   return createHash("sha256").update(readFileSync(file)).digest("hex");
 };
 
-export function previewCutover(options: CutoverPaths = {}, hosts: CutoverHost[] = ["opencode", "cursor"]): CutoverPlan {
+export function previewCutover(
+  options: CutoverPaths = {},
+  hosts: CutoverHost[] = ["opencode", "cursor"],
+): CutoverPlan {
   const paths = resolvePaths(options);
   const conversion = previewConversion({ configDir: paths.configDir });
   const blocked: string[] = [];
@@ -414,15 +442,17 @@ export function previewCutover(options: CutoverPaths = {}, hosts: CutoverHost[] 
 const syncV1CursorSkills = (pluginDir: string, dev: string | null) => {
   mkdirSync(path.join(pluginDir, "skills"), { recursive: true });
   for (const skill of WORKIT_METHOD_SKILLS) {
-    const src = dev
-      ? path.join(dev, "packages/workit-cursor/skills", skill, "SKILL.md")
-      : null;
+    const src = dev ? path.join(dev, "packages/workit-cursor/skills", skill, "SKILL.md") : null;
     const destDir = path.join(pluginDir, "skills", skill);
     mkdirSync(destDir, { recursive: true });
-    writeFileSync(path.join(destDir, "SKILL.md"), src && existsSync(src) ? readFileSync(src, "utf8") : "# v1\n");
+    writeFileSync(
+      path.join(destDir, "SKILL.md"),
+      src && existsSync(src) ? readFileSync(src, "utf8") : "# v1\n",
+    );
   }
   for (const name of readdirSync(path.join(pluginDir, "skills"))) {
-    if (name.startsWith("wk-")) rmSync(path.join(pluginDir, "skills", name), { recursive: true, force: true });
+    if (name.startsWith("wk-"))
+      rmSync(path.join(pluginDir, "skills", name), { recursive: true, force: true });
   }
   const vendor = path.join(pluginDir, "vendor");
   if (existsSync(vendor)) rmSync(vendor, { recursive: true, force: true });
@@ -454,7 +484,9 @@ const applyHostCutover = (
       ) + "\n",
     );
     const hooksPath = path.join(paths.cursorPluginDir, "hooks", "hooks-cursor.json");
-    const hooks = existsSync(hooksPath) ? JSON.parse(readFileSync(hooksPath, "utf8")) : { version: 1, hooks: {} };
+    const hooks = existsSync(hooksPath)
+      ? JSON.parse(readFileSync(hooksPath, "utf8"))
+      : { version: 1, hooks: {} };
     const entry = cursorHooksEntry(paths.cursorPluginDir);
     writeFileSync(
       hooksPath,
@@ -464,7 +496,9 @@ const applyHostCutover = (
         2,
       ) + "\n",
     );
-    notes.push("cursor: replaced legacy skills with v1 method skills and canonical @latest registration");
+    notes.push(
+      "cursor: replaced legacy skills with v1 method skills and canonical @latest registration",
+    );
     return true;
   }
   if (host === "opencode" && paths.dev) {
@@ -486,9 +520,13 @@ const applyHostCutover = (
   if (host === "codex" && paths.dev) {
     const pluginDir = path.join(paths.home, ".codex", "plugins", "workit");
     mkdirSync(pluginDir, { recursive: true });
-    cpSync(path.join(paths.dev, "packages/workit-codex/.codex-plugin"), path.join(pluginDir, ".codex-plugin"), {
-      recursive: true,
-    });
+    cpSync(
+      path.join(paths.dev, "packages/workit-codex/.codex-plugin"),
+      path.join(pluginDir, ".codex-plugin"),
+      {
+        recursive: true,
+      },
+    );
     notes.push("codex: installed v1 plugin scaffold");
     return true;
   }
@@ -508,10 +546,16 @@ const applyHostCutover = (
   return false;
 };
 
-export function applyCutover(plan: CutoverPlan, decision: CutoverDecision, options: CutoverPaths = {}): Result<CutoverReceipt> {
+export function applyCutover(
+  plan: CutoverPlan,
+  decision: CutoverDecision,
+  options: CutoverPaths = {},
+): Result<CutoverReceipt> {
   if (!decision.approve) return failure("permission_denied", "cutover not approved");
   if (plan.blocked.length > 0) {
-    return failure("requirements_unsatisfied", "cutover blocked", { fields: plan.blocked.map((b) => ({ path: b, reason: "blocked" })) });
+    return failure("requirements_unsatisfied", "cutover blocked", {
+      fields: plan.blocked.map((b) => ({ path: b, reason: "blocked" })),
+    });
   }
   for (const item of plan.unresolved) {
     if (!decision.resolutions?.[item.key]) {
@@ -523,12 +567,17 @@ export function applyCutover(plan: CutoverPlan, decision: CutoverDecision, optio
   for (const entry of plan.managedFiles) {
     const current = digestFile(entry.path);
     if (entry.beforeDigest !== null && current !== entry.beforeDigest) {
-      return failure("revision_conflict", `managed file changed since preview: ${entry.path}`, { path: entry.path });
+      return failure("revision_conflict", `managed file changed since preview: ${entry.path}`, {
+        path: entry.path,
+      });
     }
   }
   for (const session of paths.sessions) {
     if (session.state === "active" || session.state === "unknown") {
-      return failure("requirements_unsatisfied", `old session still ${session.state}: ${session.handle}`);
+      return failure(
+        "requirements_unsatisfied",
+        `old session still ${session.state}: ${session.handle}`,
+      );
     }
   }
   for (const host of decision.hosts) {
@@ -549,7 +598,9 @@ export function applyCutover(plan: CutoverPlan, decision: CutoverDecision, optio
       plan.conversion,
       decision.resolutions ?? {},
     );
-    conversionNotes.push(`config: wrote ${applied.configPath} and recorded choices at ${applied.choicesPath}`);
+    conversionNotes.push(
+      `config: wrote ${applied.configPath} and recorded choices at ${applied.choicesPath}`,
+    );
   }
 
   const notes: string[] = [...conversionNotes];
@@ -598,9 +649,17 @@ export function previewRollback(backupId: Id, options: CutoverPaths = {}): Rollb
     const current = digestFile(entry.path);
     if (current === null) continue;
     if (current === entry.installedDigest) {
-      restorable.push({ path: entry.path, currentDigest: current, installedDigest: entry.installedDigest });
+      restorable.push({
+        path: entry.path,
+        currentDigest: current,
+        installedDigest: entry.installedDigest,
+      });
     } else {
-      conflicts.push({ path: entry.path, currentDigest: current, installedDigest: entry.installedDigest });
+      conflicts.push({
+        path: entry.path,
+        currentDigest: current,
+        installedDigest: entry.installedDigest,
+      });
     }
   }
 
@@ -610,13 +669,20 @@ export function previewRollback(backupId: Id, options: CutoverPaths = {}): Rollb
   return { backupId, restorable, conflicts, preserved };
 }
 
-export function applyRollback(backupId: Id, options: CutoverPaths = {}): Result<{ restored: string[] }> {
+export function applyRollback(
+  backupId: Id,
+  options: CutoverPaths = {},
+): Result<{ restored: string[] }> {
   const paths = resolvePaths(options);
   const preview = previewRollback(backupId, options);
   if (preview.conflicts.length > 0) {
-    return failure("revision_conflict", "managed files changed after cutover; reconcile before rollback", {
-      path: preview.conflicts[0]?.path,
-    });
+    return failure(
+      "revision_conflict",
+      "managed files changed after cutover; reconcile before rollback",
+      {
+        path: preview.conflicts[0]?.path,
+      },
+    );
   }
 
   const root = backupRoot(paths.stateDir, backupId);
@@ -635,7 +701,8 @@ export function applyRollback(backupId: Id, options: CutoverPaths = {}): Result<
   return success(null, null, { restored });
 }
 
-export const countLegacyFlowRecords = (workspace: string): number => legacyFlowFiles(workspace).length;
+export const countLegacyFlowRecords = (workspace: string): number =>
+  legacyFlowFiles(workspace).length;
 
 export const legacyFlowRecordDigests = (workspace: string): Digest[] =>
   legacyFlowFiles(workspace).map((f) => digestFile(f)!);

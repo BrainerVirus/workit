@@ -5,7 +5,12 @@ import {
   previewCutover,
   type CutoverPaths,
 } from "../../packages/workit-core/src/core/cutover";
-import { type CutoverFixture, makeCutoverFixture, removeLegacySkills, installV1Skills } from "../shared/helpers/cutover-fixture";
+import {
+  type CutoverFixture,
+  makeCutoverFixture,
+  removeLegacySkills,
+  installV1Skills,
+} from "../shared/helpers/cutover-fixture";
 
 export const makeFx = () => makeCutoverFixture();
 

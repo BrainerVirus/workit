@@ -5,10 +5,7 @@ import {
   previewConversion,
   redactConversionPreview,
 } from "../../packages/workit-core/src/core/config-conversion";
-import {
-  makeCutoverFixture,
-  managedBytes,
-} from "../shared/helpers/cutover-fixture";
+import { makeCutoverFixture, managedBytes } from "../shared/helpers/cutover-fixture";
 
 const fixture = makeCutoverFixture({ secret: "secret-value" });
 afterAll(() => fixture.cleanup());
