@@ -5,8 +5,14 @@ description: Use when dependencies, sequencing, coordination, or resumption make
 
 # Plan useful coordination
 
-Use a compact plan only when policy selects `artifacts` or `continuity`. A plan
+Use a compact plan when assessment selects `artifacts` or `continuity`. A plan
 organizes work; it is not a second lifecycle or a prerequisite for implementation.
+
+## Before method work
+
+If there is no active or paused task, run shared `task.start` then `policy.assess`
+before relying on selected policy rules or other product mutations. Assessment
+selects requirements; do not wait for a rule that can only exist after assess.
 
 ## Method
 

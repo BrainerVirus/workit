@@ -107,6 +107,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- OpenCode Workit bootstrap and method skills now require `task.start` then
+  `policy.assess` when `task.list` is empty, so ordinary product/debug work no
+  longer skips Workit because no policy rule was pre-selected.
+
 - Branch setup mutation windows now emit `flow-guard:` diagnostics; flow-state snapshots use unique per-invocation temp roots with 24-hour garbage collection, so concurrent setups cannot collide and failed runs stop leaking roots.
 - Bind spec/plan approvals to exact-byte SHA-256 digests so edited documents invalidate stale approvals and require fresh reapproval; reject recursive handoffs; and restrict subagent-driven reminders and interception to active execution.
 - OpenCode development installation now pins the active checkout and removes stale Workit plugin identities.

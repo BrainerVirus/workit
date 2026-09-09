@@ -1,4 +1,6 @@
 import { expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import type {
   Capability,
   Policy,
@@ -10,6 +12,12 @@ import {
   WORKIT_METHOD_SKILLS,
   skillManifestNames,
 } from "../../packages/workit-core/src/core/skill-manifests";
+
+const skillText = (name: string) =>
+  readFileSync(
+    path.join(import.meta.dir, "../../packages/workit-core/skills", name, "SKILL.md"),
+    "utf8",
+  );
 
 const digest = "a".repeat(64);
 const requirement = (overrides: Partial<Requirement>): Requirement => ({
@@ -149,6 +157,40 @@ test("bootstrap contains invariant authority, state, and tool guidance only", ()
   expect(bootstrap).not.toContain("workit-behavioral-tdd");
   expect(bootstrap).not.toContain("workit-review");
   expect(bootstrap).not.toContain("workit-plan");
+});
+
+test("bootstrap tells lead to start and assess when task list is empty", () => {
+  const bootstrap = invariantBootstrap();
+  expect(bootstrap.toLowerCase()).toContain("task.start");
+  expect(bootstrap.toLowerCase()).toContain("policy.assess");
+  expect(bootstrap.toLowerCase()).toMatch(/empty|no session/);
+  for (const operation of [
+    "task",
+    "policy",
+    "evidence",
+    "finding",
+    "decision",
+    "worker",
+    "writer",
+    "state",
+  ])
+    expect(bootstrap).toContain(operation);
+});
+
+test("method skills require start and assess before relying on selected policy", () => {
+  for (const name of WORKIT_METHOD_SKILLS) {
+    const skill = skillText(name);
+    expect(skill, name).toContain("task.start");
+    expect(skill, name).toContain("policy.assess");
+  }
+});
+
+test("debug and behavioral-tdd do not wait for pre-assess policy selection", () => {
+  for (const name of ["workit-debug", "workit-behavioral-tdd"] as const) {
+    const skill = skillText(name);
+    expect(skill, name).not.toMatch(/only when policy selects/i);
+    expect(skill, name).not.toMatch(/when the `[^`]+` rule is selected/i);
+  }
 });
 
 test("method manifest lists exactly seven core skills without removing legacy skills", () => {

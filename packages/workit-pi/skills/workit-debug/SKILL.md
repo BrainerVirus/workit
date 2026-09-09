@@ -5,8 +5,15 @@ description: Use when behavior is failing, surprising, contradictory, or regress
 
 # Debug the root cause
 
-Debugging is investigation, not a fast symptom patch. Use this method when the
-`root-cause-investigation` rule is selected.
+Debugging is investigation, not a fast symptom patch. Use this method when
+assessment selects `root-cause-investigation` or behavior is failing without an
+established root cause.
+
+## Before method work
+
+If there is no active or paused task, run shared `task.start` then `policy.assess`
+before relying on selected policy rules or other product mutations. Assessment
+selects requirements; do not wait for a rule that can only exist after assess.
 
 ## Method
 

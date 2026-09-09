@@ -8,6 +8,12 @@ description: Use when scoped implementation, helper delegation, or checkout writ
 Implement only inside the current task scope and writer boundary. Assignment is
 not launch authority, and a timeout is not proof that a worker stopped.
 
+## Before method work
+
+If there is no active or paused task, run shared `task.start` then `policy.assess`
+before relying on selected policy rules or other product mutations. Assessment
+selects requirements; do not wait for a rule that can only exist after assess.
+
 ## Method
 
 1. Inspect task state, requirements, decisions, candidate, capabilities, and
@@ -35,6 +41,6 @@ otherwise report the capability gap.
 
 | Mistake                                        | Correction                                          |
 | ---------------------------------------------- | --------------------------------------------------- |
-| “The helper timed out, so the writer is free”  | Observe exit or perform explicit recovery.          |
+| "The helper timed out, so the writer is free"  | Observe exit or perform explicit recovery.          |
 | Letting a helper approve its own exception     | Return the decision to the lead/user.               |
 | Running a build while another writer is active | Treat builds and tests that mutate state as writes. |

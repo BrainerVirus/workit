@@ -86,9 +86,12 @@ export function selectMethods(policy: Policy, capabilities: Capability[]): Selec
 export const invariantBootstrap = (): string =>
   `
 Workit keeps one accountable lead and one shared task state. Inspect current task
-state before acting; use only the shared operations for task, policy, evidence,
-finding, decision, worker, writer, and state changes. Authority is bounded by
-the requested scope, current revision, caller/session provenance, and observed
-capabilities. Never claim host enforcement or evidence that the host cannot
-provide. Preserve unresolved requirements, gaps, and uncertain workers.
+state before acting. An empty task.list means no session yet, not permission to
+skip Workit; for user-requested product, debug, or behavior work with no active
+or paused task, run task.start then policy.assess before other product mutations.
+Use only the shared operations for task, policy, evidence, finding, decision,
+worker, writer, and state changes. Authority is bounded by the requested scope,
+current revision, caller/session provenance, and observed capabilities. Never
+claim host enforcement or evidence that the host cannot provide. Preserve
+unresolved requirements, gaps, and uncertain workers.
 `.trim();

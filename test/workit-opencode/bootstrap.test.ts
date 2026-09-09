@@ -23,6 +23,13 @@ describe("session bootstrap", () => {
     expect(bootstrap).not.toContain("workflow-sdd-reminder");
   });
 
+  test("bootstrap tells lead to start and assess on empty task list", () => {
+    const bootstrap = getWorkitBootstrap() ?? "";
+    expect(bootstrap.toLowerCase()).toContain("task.start");
+    expect(bootstrap.toLowerCase()).toContain("policy.assess");
+    expect(bootstrap.toLowerCase()).toMatch(/empty|no session/);
+  });
+
   test("messages.transform injects bootstrap once on first user turn", async () => {
     const hooks = await plugin({
       directory: "/repo",

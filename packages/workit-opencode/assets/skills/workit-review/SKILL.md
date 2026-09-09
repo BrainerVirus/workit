@@ -8,6 +8,12 @@ description: Use when policy requires fresh-context review of a candidate or whe
 Review the real candidate in a stable context. A review is evidence about the
 current candidate, not an author's success summary.
 
+## Before method work
+
+If there is no active or paused task, run shared `task.start` then `policy.assess`
+before relying on selected policy rules or other product mutations. Assessment
+selects requirements; do not wait for a rule that can only exist after assess.
+
 ## Method
 
 1. Pin or identify the candidate revision before reading conclusions. Inspect the

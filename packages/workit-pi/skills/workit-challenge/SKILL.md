@@ -6,7 +6,13 @@ description: Use when a proposal is ambiguous, consequential, disputed, or may h
 # Challenge a proposal
 
 Treat the proposal as a hypothesis to test, not a position to defend. Use this
-method only when policy selects the `challenge` or `decisions` dimension.
+method when assessment selects the `challenge` or `decisions` dimension.
+
+## Before method work
+
+If there is no active or paused task, run shared `task.start` then `policy.assess`
+before relying on selected policy rules or other product mutations. Assessment
+selects requirements; do not wait for a rule that can only exist after assess.
 
 ## Method
 
@@ -37,4 +43,4 @@ method only when policy selects the `challenge` or `decisions` dimension.
 | --- | --- |
 | Agreeing because the change is small or urgent | Check consequences, not line count or deadline. |
 | Listing every hypothetical objection | Cover material coupling and failure modes, then stop. |
-| Asking “what do you think?” without a recommendation | Recommend an option and explain the tradeoff. |
+| Asking "what do you think?" without a recommendation | Recommend an option and explain the tradeoff. |
