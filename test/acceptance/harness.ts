@@ -2,11 +2,17 @@
 
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { codexQualification } from "../../packages/workit-codex/scripts/launch-mcp";
 import { OPERATION_FAMILIES, operationJsonSchema } from "../../packages/workit-core/src/core";
+import {
+  operationSchemas,
+  parseOperation,
+} from "../../packages/workit-core/src/core/task-contract";
 import { codexCapabilities } from "../../packages/workit-codex/hooks/workit-hook";
 import { cursorCapabilities } from "../../packages/workit-cursor/hooks/workit-hook";
 import { opencodeCapabilities } from "../../packages/workit-opencode/src/tools/workit";
 import { piCapabilities } from "../../packages/workit-pi/src/context";
+import { operationCorpus } from "../workit-core/task-fixtures";
 import type { Capability } from "../../packages/workit-core/src/core/task-contract";
 import {
   EVALUATION_SCENARIO_IDS,
@@ -53,6 +59,8 @@ export type EvaluationPlan = {
 export type QualificationReport = {
   fixtureRevision: string;
   liveRunsComplete: boolean;
+  /** Passed live-run identities; required for exact coverage when liveRunsComplete is true. */
+  completed: string[];
   missing: string[];
   discarded: string[];
   failed: string[];
@@ -169,6 +177,7 @@ export const qualificationReport = (
 ): QualificationReport => ({
   fixtureRevision: FIXTURE_REVISION,
   liveRunsComplete: partial.liveRunsComplete ?? false,
+  completed: partial.completed ?? [],
   missing: partial.missing ?? [],
   discarded: partial.discarded ?? [],
   failed: partial.failed ?? [],
@@ -184,6 +193,10 @@ export const stableReleaseGate = (report: QualificationReport): GateResult => {
   if (!report.toolchain) {
     reasons.push("toolchain evidence missing");
   }
+  const matrix = collectCapabilityMatrix();
+  if (matrix.some((cell) => !baselinePassesCapability(cell))) {
+    reasons.push("capability_matrix_untested");
+  }
   if (report.missing.length > 0) {
     reasons.push(...report.missing.map((id) => `missing run:${id}`));
   }
@@ -193,7 +206,25 @@ export const stableReleaseGate = (report: QualificationReport): GateResult => {
   if (report.failed.length > 0) {
     reasons.push(...report.failed.map((id) => `failed run:${id}`));
   }
-  if (!report.liveRunsComplete) {
+  if (report.liveRunsComplete) {
+    const required = buildEvaluationPlan().runs.map((run) => run.identity);
+    const requiredSet = new Set(required);
+    const accounted = new Set([
+      ...report.completed,
+      ...report.missing,
+      ...report.failed,
+      ...report.discarded,
+    ]);
+    if (accounted.size === 0) {
+      reasons.push("live runs marked complete but no run identities recorded");
+    }
+    for (const id of required) {
+      if (!accounted.has(id)) reasons.push(`unaccounted run:${id}`);
+    }
+    for (const id of accounted) {
+      if (!requiredSet.has(id)) reasons.push(`unexpected run:${id}`);
+    }
+  } else {
     reasons.push("live qualification runs incomplete");
   }
   return { ok: reasons.length === 0, reasons };
@@ -202,22 +233,53 @@ export const stableReleaseGate = (report: QualificationReport): GateResult => {
 const readPkgJson = (pkg: string) =>
   JSON.parse(readFileSync(path.join(REPO_ROOT, "packages", pkg, "package.json"), "utf8"));
 
+const HOST_VERSION_PLACEHOLDERS = new Set([
+  "native-plugin",
+  "mcp+hooks",
+  "recorded-at-qualification",
+  "unknown",
+]);
+
+/** True when a host version string came from an installed/pinned probe, not a placeholder. */
+export const hostVersionIsProbed = (version: string): boolean =>
+  version.length > 0 && !HOST_VERSION_PLACEHOLDERS.has(version);
+
+const probeHostVersions = (): Record<CodingHost, string> => {
+  const opencodePkg = readPkgJson("workit-opencode");
+  const cursorPkg = readPkgJson("workit-cursor");
+  const piPkg = readPkgJson("workit-pi");
+  const codexCli = codexQualification("codex_cli");
+  const codexDesktop = codexQualification("codex_desktop");
+  const rootPkg = JSON.parse(readFileSync(path.join(REPO_ROOT, "package.json"), "utf8"));
+  const piVersion =
+    rootPkg.devDependencies?.["@earendil-works/pi-coding-agent"] ??
+    piPkg.devDependencies?.["@earendil-works/pi-coding-agent"] ??
+    piPkg.peerDependencies?.["@earendil-works/pi-coding-agent"];
+  return {
+    opencode: `@opencode-ai/plugin@${opencodePkg.devDependencies["@opencode-ai/plugin"]}`,
+    cursor: `@brainervirus/workit-cursor@${cursorPkg.version}`,
+    codex_cli: `codex-cli@${codexCli.cli}`,
+    codex_desktop: `codex-desktop@${codexDesktop.desktopPackage};bundled-cli@${codexDesktop.bundledCodexCli}`,
+    pi: `@earendil-works/pi-coding-agent@${piVersion}`,
+  };
+};
+
 export const collectToolchainEvidence = (): ToolchainEvidence => {
   const mcpPkg = readPkgJson("workit-mcp");
   const rootPkg = JSON.parse(readFileSync(path.join(REPO_ROOT, "package.json"), "utf8"));
+  const hosts = probeHostVersions();
+  for (const host of CODING_HOSTS) {
+    if (!hostVersionIsProbed(hosts[host])) {
+      throw new Error(`host version placeholder remains for ${host}: ${hosts[host]}`);
+    }
+  }
   return {
     node: process.version,
     bun: process.versions.bun ?? "unknown",
     typescript: rootPkg.devDependencies.typescript,
     zod: mcpPkg.dependencies.zod,
     mcpSdk: mcpPkg.dependencies["@modelcontextprotocol/sdk"],
-    hosts: {
-      opencode: "native-plugin",
-      cursor: "mcp+hooks",
-      codex_cli: "0.153.2",
-      codex_desktop: "recorded-at-qualification",
-      pi: "0.85.1",
-    },
+    hosts,
   };
 };
 
@@ -261,10 +323,8 @@ const adapterCapabilities = (host: CodingHost): Capability[] => {
 
 export const collectCapabilityMatrix = (): CapabilityCell[] => {
   const cells: CapabilityCell[] = [];
-  const names = new Set<string>();
   for (const host of CODING_HOSTS) {
     for (const cap of adapterCapabilities(host)) {
-      names.add(cap.name);
       cells.push({
         host,
         capability: cap.name,
@@ -334,9 +394,53 @@ export const verifyMcpSchemaDialect = (): string[] => {
   return failures;
 };
 
+const normalizedSchemaIssues = (
+  issues: {
+    code: string;
+    keys?: PropertyKey[];
+    path: PropertyKey[];
+    message: string;
+  }[],
+) =>
+  issues.map((issue) => ({
+    path: issue.code === "unrecognized_keys" ? String(issue.keys?.join(".")) : issue.path.join("."),
+    reason: issue.message,
+  }));
+
+/** CA-32: compiled z.compile() paths must agree with canonical operationSchemas on the shared corpus. */
+export const verifyCompiledSchemaParity = (): string[] => {
+  const failures: string[] = [];
+  const corpus = [
+    ...operationCorpus(),
+    ...operationCorpus()
+      .filter(
+        (fixture, index, all) =>
+          all.findIndex((other) => other.family === fixture.family) === index,
+      )
+      .map((fixture) => ({ ...fixture, input: { ...fixture.input, action: "unknown" } as never })),
+  ];
+  for (const fixture of corpus) {
+    const raw = operationSchemas[fixture.family].safeParse(fixture.input);
+    const compiled = parseOperation(fixture.family, fixture.input);
+    if (raw.success) {
+      if (!compiled.ok) failures.push(`compiled_schema_parity:${fixture.family}:success_mismatch`);
+      continue;
+    }
+    if (compiled.ok) {
+      failures.push(`compiled_schema_parity:${fixture.family}:failure_mismatch`);
+      continue;
+    }
+    const expected = normalizedSchemaIssues(raw.error.issues);
+    if (JSON.stringify(compiled.details.fields) !== JSON.stringify(expected)) {
+      failures.push(`compiled_schema_parity:${fixture.family}:issue_mismatch`);
+    }
+  }
+  return failures;
+};
+
 export const verifyDeterministicQualification = (): GateResult => {
   assertFixturesFrozen();
-  const deterministicFailures = verifyMcpSchemaDialect();
+  const deterministicFailures = [...verifyMcpSchemaDialect(), ...verifyCompiledSchemaParity()];
   const toolchain = collectToolchainEvidence();
   const matrix = collectCapabilityMatrix();
   const untested = matrix.filter((c) => !baselinePassesCapability(c));

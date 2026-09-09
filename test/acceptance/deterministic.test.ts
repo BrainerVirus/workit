@@ -1,6 +1,9 @@
 import { expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
+import { runActionCommand, runTaskCommand } from "../../packages/workit-cli/src/task";
 import {
   authorizeLiveEvaluation,
   authorizedBudget,
@@ -10,11 +13,13 @@ import {
   collectCapabilityMatrix,
   collectToolchainEvidence,
   enforceBudget,
+  hostVersionIsProbed,
   qualificationReport,
   renderCapabilitiesMarkdown,
   runIdentity,
   stableReleaseGate,
   targetedRerunSet,
+  verifyCompiledSchemaParity,
   verifyDeterministicQualification,
   verifyMcpSchemaDialect,
 } from "./harness";
@@ -74,14 +79,50 @@ test("safety repeats cover E-02, E-05, and E-06 twice per host with Workit only"
 });
 
 test("a missing or discarded failed run blocks stable release", () => {
-  const report = qualificationReport({ missing: ["pi/E-05/workit/repeat-2"] });
+  const report = qualificationReport({
+    missing: ["pi/E-05/workit/repeat-2"],
+    toolchain: collectToolchainEvidence(),
+  });
   expect(stableReleaseGate(report)).toMatchObject({ ok: false });
 
-  const discarded = qualificationReport({ discarded: ["cursor/E-02/workit"] });
+  const discarded = qualificationReport({
+    discarded: ["cursor/E-02/workit"],
+    toolchain: collectToolchainEvidence(),
+  });
   expect(stableReleaseGate(discarded)).toMatchObject({ ok: false });
 
-  const failed = qualificationReport({ failed: ["opencode/E-01/native"] });
+  const failed = qualificationReport({
+    failed: ["opencode/E-01/native"],
+    toolchain: collectToolchainEvidence(),
+  });
   expect(stableReleaseGate(failed)).toMatchObject({ ok: false });
+});
+
+test("live complete with empty disposition lists blocks stable release", () => {
+  const report = qualificationReport({
+    liveRunsComplete: true,
+    toolchain: collectToolchainEvidence(),
+  });
+  const gate = stableReleaseGate(report);
+  expect(gate).toMatchObject({ ok: false });
+  expect(gate.reasons).toContain("live runs marked complete but no run identities recorded");
+});
+
+test("live complete requires exact evaluation-plan run identity coverage", () => {
+  const plan = buildEvaluationPlan();
+  const partial = qualificationReport({
+    liveRunsComplete: true,
+    completed: plan.runs.slice(0, 89).map((run) => run.identity),
+    toolchain: collectToolchainEvidence(),
+  });
+  expect(stableReleaseGate(partial)).toMatchObject({ ok: false });
+
+  const complete = qualificationReport({
+    liveRunsComplete: true,
+    completed: plan.runs.map((run) => run.identity),
+    toolchain: collectToolchainEvidence(),
+  });
+  expect(stableReleaseGate(complete)).toMatchObject({ ok: true });
 });
 
 test("an unqualified toolchain or schema publication blocks stable release", () => {
@@ -125,17 +166,26 @@ test("external writes are denied unless separately authorized", () => {
 test("CA-31 toolchain evidence records actual Node, Bun, compiler, schema, and SDK versions", () => {
   const evidence = collectToolchainEvidence();
   expect(evidence.node).toMatch(/^v\d+/);
-  expect(evidence.bun).toBeTruthy();
+  expect(evidence.bun).toMatch(/^\d+\.\d+/);
   expect(evidence.typescript).toBe("7.0.2");
   expect(evidence.zod).toBe("4.5.4");
   expect(evidence.mcpSdk).toBe("1.30.0");
   for (const host of CODING_HOSTS) {
-    expect(evidence.hosts[host]).toBeTruthy();
+    expect(hostVersionIsProbed(evidence.hosts[host])).toBe(true);
   }
+  expect(evidence.hosts.opencode).toContain("@opencode-ai/plugin@1.18.29");
+  expect(evidence.hosts.cursor).toContain("@brainervirus/workit-cursor@");
+  expect(evidence.hosts.codex_cli).toContain("codex-cli@0.153.");
+  expect(evidence.hosts.codex_desktop).toContain("codex-desktop@");
+  expect(evidence.hosts.pi).toContain("@earendil-works/pi-coding-agent@0.85.1");
 });
 
 test("CA-32 MCP schemas publish draft-2020-12 from core definitions", () => {
   expect(verifyMcpSchemaDialect()).toEqual([]);
+});
+
+test("CA-32 compiled and uncompiled operation schemas agree on the shared corpus", () => {
+  expect(verifyCompiledSchemaParity()).toEqual([]);
 });
 
 test("capability matrix is generated from adapter fixtures", () => {
@@ -150,6 +200,15 @@ test("capability matrix is generated from adapter fixtures", () => {
   for (const cell of cells) {
     expect(baselinePassesCapability(cell)).toBe(true);
   }
+});
+
+test("stable release gate enforces the capability matrix baseline", () => {
+  const report = qualificationReport({
+    toolchain: collectToolchainEvidence(),
+    liveRunsComplete: true,
+    completed: buildEvaluationPlan().runs.map((run) => run.identity),
+  });
+  expect(stableReleaseGate(report)).toMatchObject({ ok: true });
 });
 
 test("unknown or untested capability cells fail the baseline", () => {
@@ -205,6 +264,65 @@ test("targeted rerun includes affected scenarios and identities", () => {
   const reruns = targetedRerunSet(["E-05"]);
   expect(reruns.some((id) => id.includes("E-05"))).toBe(true);
   expect(reruns.length).toBeGreaterThan(5);
+});
+
+test("CLI command-level acceptance inspects task and action surfaces without model sessions", async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "wk-accept-cli-"));
+  const scope = { description: "acceptance", paths: ["."], exclusions: [] };
+  const intent = { objective: "CA acceptance", scope, authorityRefs: [] };
+  const capture = () => {
+    let stdout = "";
+    let stderr = "";
+    return {
+      out: { write: (chunk: string) => void (stdout += chunk) },
+      err: { write: (chunk: string) => void (stderr += chunk) },
+      read: () => ({ stdout, stderr }),
+    };
+  };
+  try {
+    spawnSync("git", ["init", "-q"], { cwd: root });
+    spawnSync("git", ["config", "user.email", "test@example.invalid"], { cwd: root });
+    spawnSync("git", ["config", "user.name", "Workit Test"], { cwd: root });
+    writeFileSync(path.join(root, "fixture.txt"), "fixture\n");
+    spawnSync("git", ["add", "fixture.txt"], { cwd: root });
+    spawnSync("git", ["commit", "-qm", "fixture"], { cwd: root });
+    const started = capture();
+    expect(
+      await runTaskCommand(
+        [
+          "task",
+          "start",
+          "--payload",
+          JSON.stringify({ expectedWorkspaceRevision: null, intent }),
+          "--json",
+        ],
+        { cwd: root, out: started.out, err: started.err },
+      ),
+    ).toBe(0);
+    const taskId = JSON.parse(started.read().stdout).data.id as string;
+    const inspected = capture();
+    expect(
+      await runTaskCommand(["task", "inspect", "--task", taskId, "--view", "summary", "--json"], {
+        cwd: root,
+        out: inspected.out,
+        err: inspected.err,
+      }),
+    ).toBe(0);
+    expect(JSON.parse(inspected.read().stdout)).toMatchObject({ ok: true, schemaVersion: 1 });
+    const preview = capture();
+    expect(
+      await runActionCommand(
+        ["context.read", "--payload", JSON.stringify({ kind: "git" }), "--json"],
+        { cwd: root, out: preview.out, err: preview.err, stdinIsTTY: () => false },
+      ),
+    ).toBe(0);
+    expect(JSON.parse(preview.read().stdout)).toMatchObject({
+      ok: true,
+      data: { kind: "git", context: { workspace_root: root } },
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("deterministic qualification passes while live runs remain authorized separately", () => {
