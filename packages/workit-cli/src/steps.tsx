@@ -27,14 +27,40 @@ import {
   type WizardDraft,
   type WizardScreen,
 } from "./wizard-state";
+import {
+  emptyDetection,
+  preselectedPlatforms,
+  type HostDetection,
+  type HostId,
+} from "@brainervirus/workit-core/src/core/detect-hosts.ts";
 import { LOCALE_LANGUAGE_MAP, SearchSelect } from "./search-select";
 
 // Platform selection stays limited to hosts the setup Apply path registers today.
 // Codex/Pi cutover uses the dedicated preview/apply flow exported from logic.ts.
-const PLATFORMS = [
+const PLATFORM_LABELS: { label: string; value: string }[] = [
   { label: "OpenCode", value: "opencode" },
   { label: "Cursor", value: "cursor" },
 ];
+
+/** Wizard platform options with auto-detect tags (pure: takes the detection). */
+export function platformOptions(
+  detection: Record<HostId, HostDetection>,
+): { label: string; value: string }[] {
+  return PLATFORM_LABELS.map(({ label, value }) => {
+    const found = detection[value as HostId];
+    const tag = found.configured ? " · already configured" : found.detected ? " · detected" : "";
+    return { label: `${label}${tag}`, value };
+  });
+}
+
+const EXTERNAL_HOST_LABELS: Record<string, string> = { codex: "Codex", pi: "Pi" };
+
+/** Detected hosts the wizard does not register (set up via `workit cutover`). */
+export function externalDetectedHosts(detection: Record<HostId, HostDetection>): string[] {
+  return (Object.keys(EXTERNAL_HOST_LABELS) as HostId[])
+    .filter((host) => detection[host].detected)
+    .map((host) => EXTERNAL_HOST_LABELS[host]);
+}
 
 const BRANCH_PRESETS: { label: string; value: BranchPreset }[] = [
   { label: "GitFlow", value: "gitflow" },
@@ -165,6 +191,9 @@ function workspacePreviewTargets(cwd: string): string[] {
 type ScreenProps = {
   draft: WizardDraft;
   dispatch: Dispatch<WizardAction>;
+  // Optional so sub-screens that never read it (branch policy, base path)
+  // keep their call sites unchanged; Screen defaults it when absent.
+  detection?: Record<HostId, HostDetection>;
   onSearchQueryChange?: (query: string) => void;
 };
 
@@ -335,10 +364,21 @@ function BranchPolicyScreen({ draft, dispatch }: ScreenProps): JSX.Element {
 
 export function Wizard({
   onExit,
+  // Hermetic-by-default: runInit passes the live detectHosts(); tests render
+  // without it and get no preselection, so ambient machine state can never
+  // leak into a test run.
+  detection = emptyDetection(),
 }: {
   onExit: (complete: boolean, values?: SetupValues) => void;
+  detection?: Record<HostId, HostDetection>;
 }): JSX.Element {
-  const [draft, dispatch] = useReducer(reducer, undefined, createInitialDraft);
+  const [draft, dispatch] = useReducer(reducer, detection, (found) => {
+    const initial = createInitialDraft();
+    const platforms = preselectedPlatforms(found);
+    return platforms.length > 0
+      ? { ...initial, values: { ...initial.values, platforms } }
+      : initial;
+  });
   const exitedRef = useRef(false);
   // Consumed-key policy for the locale SearchSelect: it reports every query
   // change synchronously, and this screen-level handler observes the value
@@ -389,6 +429,7 @@ export function Wizard({
         key={draft.screen}
         draft={draft}
         dispatch={dispatch}
+        detection={detection}
         onSearchQueryChange={(query) => {
           const search = searchRef.current;
           search.q = query;
@@ -450,7 +491,13 @@ function BasePathScreen({ draft, dispatch }: ScreenProps): JSX.Element {
   );
 }
 
-function Screen({ draft, dispatch, onSearchQueryChange }: ScreenProps): JSX.Element {
+function Screen({
+  draft,
+  dispatch,
+  detection = emptyDetection(),
+  onSearchQueryChange,
+}: ScreenProps): JSX.Element {
+  const externalDetected = externalDetectedHosts(detection);
   switch (draft.screen) {
     case "platforms":
       return (
@@ -458,7 +505,7 @@ function Screen({ draft, dispatch, onSearchQueryChange }: ScreenProps): JSX.Elem
           <Text bold>Step 1 — Platforms</Text>
           <Text dimColor>Select the tools to configure (space to toggle):</Text>
           <MultiSelect
-            options={PLATFORMS}
+            options={platformOptions(detection)}
             defaultValue={draft.values.platforms}
             onChange={(values) => dispatch({ type: "set", field: "platforms", value: values })}
             onSubmit={(values) => {
@@ -466,6 +513,11 @@ function Screen({ draft, dispatch, onSearchQueryChange }: ScreenProps): JSX.Elem
               dispatch({ type: "next" });
             }}
           />
+          {externalDetected.length > 0 && (
+            <Text dimColor>
+              Detected: {externalDetected.join(", ")} — set up via `workit cutover`.
+            </Text>
+          )}
           {draft.errors.platforms && <Text color="red">{draft.errors.platforms}</Text>}
           <Text dimColor>Enter to continue · Esc Cancel</Text>
         </Box>

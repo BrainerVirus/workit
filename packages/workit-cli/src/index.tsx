@@ -14,6 +14,7 @@ import {
   setupCompletionGuidance,
   type SetupResult,
 } from "@brainervirus/workit-core/src/core/setup.ts";
+import { detectHosts } from "@brainervirus/workit-core/src/core/detect-hosts.ts";
 import { readSetupState, type SetupState } from "@brainervirus/workit-core/src/core/setup-state";
 import {
   applyUninstall,
@@ -121,6 +122,9 @@ export async function runInit() {
   process.stdout.write("\x1b[2J\x1b[H");
   const instance = render(
     <Wizard
+      // Live auto-detect: installed hosts preselect, registered ones are
+      // tagged, detected Codex/Pi point at cutover.
+      detection={detectHosts()}
       onExit={(complete, values) => {
         exits.push({ complete, values });
         done();

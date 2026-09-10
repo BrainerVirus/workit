@@ -38,8 +38,15 @@ import { LOCALE_LANGUAGE_MAP, filterOptions } from "@/packages/workit-cli/src/se
 import {
   BRANCH_PRESET_DESCRIPTIONS,
   SCREEN_PLACEHOLDERS,
+  externalDetectedHosts,
+  platformOptions,
   timezonePickerOptions,
 } from "@/packages/workit-cli/src/steps";
+import {
+  emptyDetection,
+  type HostDetection,
+  type HostId,
+} from "@/packages/workit-core/src/core/detect-hosts";
 import { REPO_ROOT } from "@/test/shared/helpers/packages";
 import { cleanupLiveInkInstances } from "@/test/shared/helpers/ink-clean-probe";
 
@@ -1198,3 +1205,29 @@ test("runInit apply resolves its cwd from the base path, never the process cwd",
     rmSync(base, { recursive: true, force: true });
   }
 }, 30_000);
+
+test("platform options tag detection state; externals list wizard-external hosts", () => {
+  const detection: Record<HostId, HostDetection> = {
+    ...emptyDetection(),
+    opencode: { detected: true, configured: true },
+    cursor: { detected: true, configured: false },
+    codex: { detected: true, configured: false },
+  };
+  expect(platformOptions(detection)).toEqual([
+    { label: "OpenCode · already configured", value: "opencode" },
+    { label: "Cursor · detected", value: "cursor" },
+  ]);
+  expect(platformOptions(emptyDetection())).toEqual([
+    { label: "OpenCode", value: "opencode" },
+    { label: "Cursor", value: "cursor" },
+  ]);
+  expect(externalDetectedHosts(detection)).toEqual(["Codex"]);
+  expect(externalDetectedHosts(emptyDetection())).toEqual([]);
+});
+
+test("createInitialDraft seeds platforms from detection; empty by default", () => {
+  expect(createInitialDraft(config(), { platforms: ["cursor"] }).values.platforms).toEqual([
+    "cursor",
+  ]);
+  expect(createInitialDraft(config()).values.platforms).toEqual([]);
+});

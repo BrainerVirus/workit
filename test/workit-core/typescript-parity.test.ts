@@ -1057,6 +1057,9 @@ test.skipIf(!bashAvailable() || !flockAvailable() || !findOnPath("rsync"))(
       rmSync(binDir, { recursive: true, force: true });
     }
   },
+  // Heavyweight parity (spawns shells, a 30s lock holder, dep-free
+  // install+build): bun's 5s default timeout flakes it under full-suite load.
+  { timeout: 180_000 },
 );
 
 test.skipIf(!bashAvailable() || !flockAvailable())(
@@ -1156,6 +1159,8 @@ test.skipIf(!bashAvailable() || !flockAvailable())(
       rmSync(fakeRsyncDir, { recursive: true, force: true });
     }
   },
+  // Polls up to ~10s for lock state; same 5s-default flake rationale as above.
+  { timeout: 60_000 },
 );
 
 function findOnPath(tool: string): string | null {

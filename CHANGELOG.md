@@ -20,6 +20,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The CLI setup wizard now auto-detects installed hosts: detected OpenCode and
+  Cursor installs preselect on the platforms screen, existing workit
+  registrations are tagged "already configured", and detected Codex/Pi point at
+  `workit cutover`. Detection is presence-only (CLI on PATH or home config
+  marker, never a subprocess probe) via the shared `detect-hosts` core module.
+
 - Acceptance fixtures, observable-action judge, 90-run evaluation plan, adapter
   capability matrix generator, and stable-release gate for Workit v1 qualification.
   Deterministic CA-31/CA-32 checks run in `verify:release-candidate`; the live

@@ -51,18 +51,18 @@ test("desktop hook emits native SessionStart JSON with developer context", () =>
     transcript_path: null,
     source: "resume",
   });
-  // NOTE: read values BEFORE toMatchObject below: bun's matcher pass mutates
-  // asymmetric-matched properties on the received object.
-  const context = (result.hookSpecificOutput as { additionalContext: unknown }).additionalContext;
-  expect(typeof context).toBe("string");
-  expect(context).toContain("workit-codex-mutations");
-  expect(context).toContain("workit CLI");
-  expect(result).toMatchObject({
-    hookSpecificOutput: {
-      hookEventName: "SessionStart",
-      additionalContext: expect.stringContaining("<workit-contract>"),
-    },
-  });
+  // Direct field assertions (never toMatchObject with asymmetric matchers:
+  // bun's matcher pass replaces asymmetrically-matched properties on the
+  // received object with {} — proven by repro: {x:"hello-world"} became {x:{}}).
+  const output = result.hookSpecificOutput as {
+    hookEventName: string;
+    additionalContext: unknown;
+  };
+  expect(output.hookEventName).toBe("SessionStart");
+  expect(typeof output.additionalContext).toBe("string");
+  expect(output.additionalContext).toContain("workit-codex-mutations");
+  expect(output.additionalContext).toContain("workit CLI");
+  expect(output.additionalContext).toContain("<workit-contract>");
 });
 
 test("Codex MCP mutation refusal points at the CLI path", async () => {

@@ -20,6 +20,7 @@ import {
   type WizardScreen,
 } from "../../packages/workit-cli/src/wizard-state";
 import type { BranchPreset, ToolkitConfig } from "../../packages/workit-core/src/core/config";
+import { emptyDetection } from "../../packages/workit-core/src/core/detect-hosts";
 
 const ENTER = "\r";
 // Ink defers a lone \x1b for 20ms to disambiguate escape sequences (a wall-clock
@@ -1054,4 +1055,30 @@ test("malformed configuration blocks Apply in the TTY flow (WZ-06)", async () =>
       rmSync(base, { recursive: true, force: true });
     }
   });
+});
+
+test("platforms screen preselects detected hosts and tags configured ones", async () => {
+  const cleanup = withSeedConfig(seedConfig);
+  try {
+    const tty = await renderInk(
+      <Wizard
+        onExit={noop}
+        detection={{
+          ...emptyDetection(),
+          opencode: { detected: true, configured: true },
+          codex: { detected: true, configured: false },
+        }}
+      />,
+    );
+    const first = tty.lastFrame();
+    expect(first).toContain("already configured");
+    expect(first).toContain("Detected: Codex");
+    expect(first).toContain("cutover");
+    // The opencode preselection satisfies validation: ENTER advances with no toggle.
+    await tty.keys(ENTER);
+    expect(tty.lastFrame()).toContain("Locale");
+    tty.unmount();
+  } finally {
+    cleanup();
+  }
 });

@@ -371,14 +371,19 @@ function setTextValue(
   return { ...draft, values: { ...draft.values, [field]: value }, errors };
 }
 
-export function createInitialDraft(config: ToolkitConfig = readConfig()): WizardDraft {
+export function createInitialDraft(
+  config: ToolkitConfig = readConfig(),
+  // Auto-detect seeding: runInit passes the detected platforms so the
+  // platforms screen opens preselected; empty by default keeps tests hermetic.
+  opts: { platforms?: string[] } = {},
+): WizardDraft {
   // RL-02/CA-23: the draft's allowed/protected values always derive from the
   // preset (one shared merge), never from divergent persisted values.
   const policy = mergePreset(config.branchPolicy.preset, {}, config);
   return {
     screen: "platforms",
     values: {
-      platforms: [],
+      platforms: opts.platforms ?? [],
       locale: config.locale,
       timezone: config.timezone,
       branchPreset: config.branchPolicy.preset,

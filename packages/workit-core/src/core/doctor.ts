@@ -203,7 +203,7 @@ const pluginEntries = (cfg: Record<string, any> | null): string[] => {
   return list.map(String).filter(isWorkitPlugin);
 };
 
-const commandOnPath = (name: string, env: NodeJS.ProcessEnv): boolean => {
+export const commandOnPath = (name: string, env: NodeJS.ProcessEnv): boolean => {
   const dirs = (env.PATH ?? process.env.PATH ?? "").split(path.delimiter);
   // win32 executables carry an .exe suffix (bun.exe, git.exe), so probe both
   // names — statSync with the bare name would never find them.
