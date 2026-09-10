@@ -1003,8 +1003,7 @@ export function boundedOperationJsonSchema(
         ),
       });
     }
-    if (record.items)
-      return tolerate({ ...record, items: collapse(record.items, currentDepth) });
+    if (record.items) return tolerate({ ...record, items: collapse(record.items, currentDepth) });
     const composed = (["anyOf", "oneOf", "allOf"] as const).filter((key) =>
       Array.isArray(record[key]),
     );

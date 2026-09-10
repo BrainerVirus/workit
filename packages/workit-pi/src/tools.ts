@@ -210,7 +210,8 @@ const decodeStrings = (value: unknown): unknown => {
   return value;
 };
 
-const trustedForMutation = (ctx: ExtensionContext, action: unknown): Result<null> => {  if (ctx.isProjectTrusted() || readOnlyActions.has(String(action)))
+const trustedForMutation = (ctx: ExtensionContext, action: unknown): Result<null> => {
+  if (ctx.isProjectTrusted() || readOnlyActions.has(String(action)))
     return success(null, null, null);
   return failure("permission_denied", "Pi project is not trusted for Workit mutations");
 };
