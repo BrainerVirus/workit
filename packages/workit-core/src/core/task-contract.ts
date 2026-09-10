@@ -956,20 +956,44 @@ export const canonicalFieldsDescription = (fields: string[]): string =>
  * maxDepth collapse to a described generic object that still names the
  * canonical fields, so models know what to send while providers accept the
  * shape. The full contract in operationJsonSchema is unchanged.
+ *
+ * With stringifiedObjects, every object, array, and primitive-const node also
+ * accepts its JSON-encoded string form. Pi's transport stringifies nested
+ * params before its own validation runs, so Pi publishes the tolerant shape
+ * and decodes after validation; transports that carry real JSON stay strict.
  */
 export function boundedOperationJsonSchema(
   family: OperationFamily,
   maxDepth: number = OPERATION_SCHEMA_DEPTH,
+  stringifiedObjects = false,
 ): Record<string, unknown> {
+  const tolerate = (projected: Record<string, unknown>): Record<string, unknown> => {
+    if (!stringifiedObjects) return projected;
+    if (projected.properties && typeof projected.properties === "object")
+      return { ...projected, type: ["object", "string"] };
+    if (projected.items) return { ...projected, type: ["array", "string"] };
+    if (
+      "const" in projected &&
+      (typeof projected.const === "number" || typeof projected.const === "boolean")
+    )
+      return { anyOf: [projected, { const: String(projected.const) }] };
+    if (projected.type === "object") return { ...projected, type: ["object", "string"] };
+    if (projected.type === "array") return { ...projected, type: ["array", "string"] };
+    return projected;
+  };
   const collapse = (node: unknown, currentDepth: number): unknown => {
     if (Array.isArray(node)) return node.map((item) => collapse(item, currentDepth));
     if (typeof node !== "object" || node === null) return node;
     const record = node as Record<string, unknown>;
     if (record.properties && typeof record.properties === "object") {
       const fields = Object.keys(record.properties as Record<string, unknown>);
-      if (currentDepth >= maxDepth || fields.length === 0)
-        return { type: "object", description: canonicalFieldsDescription(fields) };
-      return {
+      if (currentDepth >= maxDepth || fields.length === 0) {
+        const description = stringifiedObjects
+          ? `${canonicalFieldsDescription(fields)} A JSON-encoded string is also accepted.`
+          : canonicalFieldsDescription(fields);
+        return tolerate({ type: "object", description });
+      }
+      return tolerate({
         ...record,
         properties: Object.fromEntries(
           Object.entries(record.properties as Record<string, unknown>).map(([key, child]) => [
@@ -977,9 +1001,10 @@ export function boundedOperationJsonSchema(
             collapse(child, currentDepth + 1),
           ]),
         ),
-      };
+      });
     }
-    if (record.items) return { ...record, items: collapse(record.items, currentDepth) };
+    if (record.items)
+      return tolerate({ ...record, items: collapse(record.items, currentDepth) });
     const composed = (["anyOf", "oneOf", "allOf"] as const).filter((key) =>
       Array.isArray(record[key]),
     );
@@ -989,6 +1014,7 @@ export function boundedOperationJsonSchema(
         projected[key] = (record[key] as unknown[]).map((item) => collapse(item, currentDepth));
       return projected;
     }
+    if ("const" in record) return tolerate({ ...record });
     return node;
   };
   return collapse(operationJsonSchema(family), 0) as Record<string, unknown>;

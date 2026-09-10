@@ -57,6 +57,23 @@ test("bounded schemas keep routable top-level actions", () => {
   for (const action of ["start", "close"]) expect(text).toContain(`"${action}"`);
 });
 
+test("stringified mode accepts JSON-encoded strings without growing past the limit", () => {
+  let sawTolerantDescription = false;
+  for (const family of OPERATION_FAMILIES) {
+    const tolerant = boundedOperationJsonSchema(family as OperationFamily, 1, true);
+    expect(depth(tolerant), family).toBeLessThanOrEqual(10);
+    sawTolerantDescription =
+      sawTolerantDescription ||
+      JSON.stringify(tolerant).includes("A JSON-encoded string is also accepted");
+    expect(JSON.stringify(boundedOperationJsonSchema(family as OperationFamily))).not.toContain(
+      "A JSON-encoded string is also accepted",
+    );
+  }
+  expect(sawTolerantDescription).toBe(true);
+  const task = JSON.stringify(boundedOperationJsonSchema("task", 1, true));
+  expect(task).toContain('"const":"1"');
+});
+
 test("shared projection depth matches the documented host bound", () => {
   expect(OPERATION_SCHEMA_DEPTH).toBe(1);
 });

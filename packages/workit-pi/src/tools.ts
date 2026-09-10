@@ -11,6 +11,7 @@ import {
   matchesNativeExternalAction,
   nativeExternalActionObservation,
   boundedOperationJsonSchema,
+  OPERATION_SCHEMA_DEPTH,
   OPERATION_FAMILIES,
   parseOperation,
   success,
@@ -190,10 +191,26 @@ export const nativeExternalActionRunner = (
   });
 
 const schemaFor = (family: OperationFamily) =>
-  ({ type: "object", ...boundedOperationJsonSchema(family) }) as any;
+  ({ type: "object", ...boundedOperationJsonSchema(family, OPERATION_SCHEMA_DEPTH, true) }) as any;
 
-const trustedForMutation = (ctx: ExtensionContext, action: unknown): Result<null> => {
-  if (ctx.isProjectTrusted() || readOnlyActions.has(String(action)))
+const decodeStrings = (value: unknown): unknown => {
+  if (typeof value === "string") {
+    try {
+      const decoded: unknown = JSON.parse(value);
+      return typeof decoded === "string" ? value : decoded;
+    } catch {
+      return value;
+    }
+  }
+  if (Array.isArray(value)) return value.map(decodeStrings);
+  if (typeof value === "object" && value !== null)
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => [key, decodeStrings(entry)]),
+    );
+  return value;
+};
+
+const trustedForMutation = (ctx: ExtensionContext, action: unknown): Result<null> => {  if (ctx.isProjectTrusted() || readOnlyActions.has(String(action)))
     return success(null, null, null);
   return failure("permission_denied", "Pi project is not trusted for Workit mutations");
 };
@@ -204,8 +221,12 @@ const executeFamily = async (
   input: unknown,
   ctx: ExtensionContext,
 ): Promise<PiToolResult> => {
-  const parsed = parseOperation(family, input);
-  if (!parsed.ok) return output(parsed);
+  // Pi may deliver structured params as JSON strings (host transport quirk).
+  // Strict input wins; a decoded retry only rescues stringified payloads, and
+  // the original failure stands when decoding changes nothing.
+  const parsedStrict = parseOperation(family, input);
+  const parsed = parsedStrict.ok ? parsedStrict : parseOperation(family, decodeStrings(input));
+  if (!parsed.ok) return output(parsedStrict);
   const trust = trustedForMutation(ctx, (parsed.data as { action?: unknown }).action);
   if (!trust.ok) return output(trust);
   const context = piContext(ctx);

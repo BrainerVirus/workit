@@ -232,6 +232,34 @@ test("Pi tools transport nested payloads and arrays intact", async () => {
   expect(closed.details).toMatchObject({ ok: true });
 });
 
+test("Pi tools accept JSON-stringified nested payloads", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "workit-pi-stringified-"));
+  const pi = makePi();
+  await extension(pi as any);
+  const taskTool = pi.tools.find((tool) => tool.name === "workit_task");
+  const started = await taskTool.execute(
+    "call",
+    {
+      schemaVersion: "1",
+      action: "start",
+      intent: JSON.stringify({
+        objective: "stringified transport probe",
+        scope: { description: "probe", paths: [], exclusions: [] },
+        authorityRefs: [],
+      }),
+    },
+    undefined,
+    undefined,
+    context(root),
+  );
+  expect(started.details).toMatchObject({ ok: true });
+  const taskId = (started.details as { data: { id: string } }).data.id;
+  const stored = new TaskStore(root).readTask(taskId);
+  expect(stored.ok).toBe(true);
+  if (!stored.ok) throw new Error(stored.error);
+  expect(stored.data.intent.data.objective).toBe("stringified transport probe");
+});
+
 test("interactive Pi decisions use the native answer and reject untrusted writes", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "workit-pi-decision-"));
   const pi = makePi();
