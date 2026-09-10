@@ -8,6 +8,7 @@ import {
   type DoctorReport,
 } from "@/packages/workit-core/src/core/doctor";
 import type { SessionObservation } from "@/packages/workit-core/src/core/cutover";
+import { SUPPORT_MATRIX } from "@/packages/workit-core/src/core/support-matrix";
 import { readVcsConfig } from "@/packages/workit-core/src/core/vcs-config";
 import { readSetupState } from "@/packages/workit-core/src/core/setup-state";
 import { readWorkspacesResult } from "@/packages/workit-core/src/core/workspaces";
@@ -1399,3 +1400,32 @@ test(
   },
   { timeout: 300_000 },
 );
+
+test("codex pin passes when absent, warns on drift, passes on match", () => {
+  const emptyBin = path.join(fixture.root, "codex-empty-bin");
+  mkdirSync(emptyBin, { recursive: true });
+  expect(check(run({ env: { ...process.env, PATH: emptyBin } }), "codex_pin").status).toBe("pass");
+  // Stub executables only run on POSIX; Windows asserts the absent case above.
+  if (process.platform === "win32") return;
+  const bin = path.join(fixture.root, "codex-stub-bin");
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(
+    path.join(bin, "codex"),
+    '#!/usr/bin/env bash\necho "codex-cli ${CODEX_STUB_VERSION:-0.154.0}"\n',
+    { mode: 0o755 },
+  );
+  const drifted = run({
+    env: { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}` },
+  });
+  expect(check(drifted, "codex_pin").status).toBe("warn");
+  expect(check(drifted, "codex_pin").detail).toContain(SUPPORT_MATRIX.codex.cli);
+  expect(check(drifted, "codex_pin").fix).toBeTruthy();
+  const matched = run({
+    env: {
+      ...process.env,
+      PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`,
+      CODEX_STUB_VERSION: SUPPORT_MATRIX.codex.cli,
+    },
+  });
+  expect(check(matched, "codex_pin").status).toBe("pass");
+});

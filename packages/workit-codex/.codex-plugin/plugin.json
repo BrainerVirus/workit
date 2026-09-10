@@ -14,7 +14,7 @@
     "longDescription": "Shared task policy, evidence, and truthful host capability reporting for Codex CLI and desktop.",
     "developerName": "BrainerVirus",
     "category": "Developer Tools",
-    "capabilities": ["MCP", "Hooks", "Task continuity"],
+    "capabilities": ["MCP", "Task continuity"],
     "defaultPrompt": ["Inspect the current Workit task state."]
   }
 }

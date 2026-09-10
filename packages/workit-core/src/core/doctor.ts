@@ -40,6 +40,7 @@ export type DoctorHost = "cli" | "opencode" | "cursor";
 export type DoctorCheckId =
   | "runtime"
   | "versions"
+  | "codex_pin"
   | "assets"
   | "launcher"
   | "utility"
@@ -352,6 +353,40 @@ const checkVersions = (res: Resolved): DoctorCheck => {
     status: "fail",
     detail: problems.join("; "),
     fix: "Align every adapter to the same @brainervirus/workit-core version (rewrite-workspace-deps.ts) or reinstall",
+  };
+};
+
+// The Codex CLI is a qualification host, not a runtime dependency: evidence
+// covers exactly SUPPORT_MATRIX.codex.cli. A drifted install keeps working,
+// but warns so a fresh install never silently outruns the qualification pin.
+const checkCodexPin = (res: Resolved): DoctorCheck => {
+  const qualified = SUPPORT_MATRIX.codex.cli;
+  if (!commandOnPath("codex", res.env))
+    return {
+      id: "codex_pin",
+      status: "pass",
+      detail: "codex CLI not on PATH — skipping pin check",
+    };
+  const raw = versionOf("codex", res.env);
+  const installed = raw ? ((raw.match(/\d+\.\d+\.\d+/) ?? [])[0] ?? null) : null;
+  if (installed === null)
+    return {
+      id: "codex_pin",
+      status: "warn",
+      detail: `could not parse the installed codex version — cannot confirm the qualified ${qualified}`,
+      fix: `Reinstall the qualified Codex CLI ${qualified} or record fresh qualification evidence`,
+    };
+  if (installed === qualified)
+    return {
+      id: "codex_pin",
+      status: "pass",
+      detail: `codex CLI ${installed} matches the qualified pin`,
+    };
+  return {
+    id: "codex_pin",
+    status: "warn",
+    detail: `codex CLI ${installed} differs from the qualified ${qualified}`,
+    fix: `Reinstall the qualified Codex CLI ${qualified} or record fresh qualification evidence`,
   };
 };
 
@@ -1240,6 +1275,7 @@ const checkManagedContentConflict = (res: Resolved): DoctorCheck => {
 const RUN_CHECKS: Array<(res: Resolved) => DoctorCheck> = [
   checkRuntime,
   checkVersions,
+  checkCodexPin,
   checkAssets,
   checkLauncher,
   checkUtility,

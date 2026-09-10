@@ -131,16 +131,43 @@ const purposeForQuestion = (question: Question): Receipt["purpose"] | undefined 
   return undefined;
 };
 
-/** Host-only receipt queue. The only writer is the native question after-hook. */
+/** Host-only receipt queue. Writers are the native question after-hook and
+ * the question.asked/question.replied session events (opencode delivers
+ * answers out-of-band, so the after-hook alone never sees them). */
 export class NativeReceiptStore {
   #receipts = new Map<string, Receipt[]>();
   #observations = new WeakSet<object>();
+  #pending = new Map<string, { sessionID: string; callID: string; questions: unknown }>();
 
-  record(
-    input: { sessionID: string; callID: string; args?: unknown },
-    output: { metadata?: unknown },
-  ): void {
-    const answers = (output.metadata as { answers?: unknown } | undefined)?.answers;
+  /** Stash an asked native question until its out-of-band reply arrives. */
+  recordRequest(requestID: string, sessionID: string, callID: string, questions: unknown): void {
+    if (typeof requestID !== "string" || !requestID) return;
+    this.#pending.set(requestID, { sessionID, callID, questions });
+    if (this.#pending.size > 16) {
+      const oldest = this.#pending.keys().next();
+      if (!oldest.done) this.#pending.delete(oldest.value);
+    }
+  }
+
+  /** Drop a stashed question whose reply will never arrive. */
+  recordRejected(requestID: string): void {
+    this.#pending.delete(requestID);
+  }
+
+  /**
+   * Mint a receipt from an out-of-band question reply. Returns false when the
+   * stashed question is missing or the reply does not select exactly one
+   * presented Workit option — never throws, so event delivery keeps flowing.
+   */
+  recordReply(requestID: string, sessionID: string, answers: unknown): boolean {
+    const pending = this.#pending.get(requestID);
+    this.#pending.delete(requestID);
+    if (!pending || pending.sessionID !== sessionID) return false;
+    if (!Array.isArray(answers) || answers.length !== 1) return false;
+    return this.mint(pending.sessionID, pending.callID, pending.questions, answers);
+  }
+
+  private mint(sessionID: string, callID: string, questions: unknown, answers: unknown): boolean {
     const answer =
       Array.isArray(answers) &&
       answers.length === 1 &&
@@ -149,31 +176,29 @@ export class NativeReceiptStore {
       typeof answers[0][0] === "string"
         ? answers[0][0]
         : undefined;
-    if (typeof answer !== "string" || !answer.trim()) return;
-    const args = input.args as { questions?: unknown } | undefined;
-    const questions = args?.questions;
-    if (!Array.isArray(questions) || questions.length !== 1) return;
+    if (typeof answer !== "string" || !answer.trim()) return false;
+    if (!Array.isArray(questions) || questions.length !== 1) return false;
     const question = questions[0] as Question;
-    if (!question || typeof question !== "object") return;
+    if (!question || typeof question !== "object") return false;
     const purpose = purposeForQuestion(question);
-    if (!purpose) return;
+    if (!purpose) return false;
     const options = decisionOptions(question.options);
-    if (!options) return;
+    if (!options) return false;
     const selected = options?.find((option) => option.label === answer);
-    if (!selected) return;
+    if (!selected) return false;
     const decisionPurpose =
       typeof question.header === "string"
         ? question.header.match(/^Workit decision: (design|action|limitation|preference)$/)?.[1]
         : undefined;
-    if (!decisionPurpose) return;
+    if (!decisionPurpose) return false;
     const content = decisionContent(
       decisionPurpose as Receipt["decisionPurpose"],
       typeof question.question === "string" ? question.question : "",
       options[0].description,
     );
     const receipt: Receipt = {
-      sessionID: input.sessionID,
-      callID: input.callID,
+      sessionID,
+      callID,
       selectedLabel: answer,
       selectedDescription: selected.description,
       decisionPurpose: decisionPurpose as Receipt["decisionPurpose"],
@@ -182,10 +207,20 @@ export class NativeReceiptStore {
       contentDigest: sha256(canonicalJson(content)),
       recordedAt: Date.now(),
     };
-    const queue = this.#receipts.get(input.sessionID) ?? [];
+    const queue = this.#receipts.get(sessionID) ?? [];
     queue.push(receipt);
     if (queue.length > 16) queue.shift();
-    this.#receipts.set(input.sessionID, queue);
+    this.#receipts.set(sessionID, queue);
+    return true;
+  }
+
+  record(
+    input: { sessionID: string; callID: string; args?: unknown },
+    output: { metadata?: unknown },
+  ): void {
+    const answers = (output.metadata as { answers?: unknown } | undefined)?.answers;
+    const args = input.args as { questions?: unknown } | undefined;
+    this.mint(input.sessionID, input.callID, args?.questions, answers);
   }
 
   consume(
@@ -825,6 +860,43 @@ export const observeQuestion = (
   outputValue: { metadata?: unknown },
 ): void => {
   if (input.tool === "question") receipts.record(input, outputValue);
+};
+
+/**
+ * Native question replies arrive as session events, not tool output. Stash
+ * asked questions by request id and mint receipts on reply; anything
+ * unrecognized is ignored so event delivery never breaks.
+ */
+export const observeQuestionEvent = (
+  receipts: NativeReceiptStore,
+  event: { type: string; properties?: unknown },
+): void => {
+  const properties =
+    event.properties !== null && typeof event.properties === "object"
+      ? (event.properties as {
+          id?: unknown;
+          sessionID?: unknown;
+          questions?: unknown;
+          requestID?: unknown;
+          answers?: unknown;
+          tool?: { callID?: unknown };
+        })
+      : null;
+  if (!properties) return;
+  if (event.type === "question.asked") {
+    if (typeof properties.id !== "string" || typeof properties.sessionID !== "string") return;
+    const callID =
+      typeof properties.tool?.callID === "string" ? properties.tool.callID : properties.id;
+    receipts.recordRequest(properties.id, properties.sessionID, callID, properties.questions);
+    return;
+  }
+  if (event.type === "question.rejected") {
+    if (typeof properties.requestID === "string") receipts.recordRejected(properties.requestID);
+    return;
+  }
+  if (event.type !== "question.replied") return;
+  if (typeof properties.requestID !== "string" || typeof properties.sessionID !== "string") return;
+  receipts.recordReply(properties.requestID, properties.sessionID, properties.answers);
 };
 
 export type { Receipt };

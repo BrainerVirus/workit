@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
 import path from "node:path";
 import { tmpdir } from "node:os";
@@ -10,7 +10,8 @@ import {
   type OperationContext,
 } from "@/packages/workit-core/src/core";
 import { SUPPORT_MATRIX } from "@/packages/workit-core/src/core/support-matrix";
-import extension from "@/packages/workit-pi/extensions/workit";
+import extension, { persistUncertainCancel } from "@/packages/workit-pi/extensions/workit";
+import { nativeWorkerForEvidence } from "@/packages/workit-pi/src/worker";
 import { piCapabilities } from "@/packages/workit-pi/src/context";
 import { taskStartRequest } from "@/test/workit-core/task-fixtures";
 
@@ -155,6 +156,20 @@ test("clean Pi package declares stock discovery and the eight families plus exte
     expect(depth(tool.parameters), tool.name).toBeLessThanOrEqual(OPERATION_SCHEMA_MAX_DEPTH);
   }
   expect(pi.commands.map((command) => command.name)).toContain("workit-worker");
+});
+
+test("Pi package ships exactly the seven canonical method skills", () => {
+  expect(readdirSync(path.join(import.meta.dir, "../../packages/workit-pi/skills")).sort()).toEqual(
+    [
+      "workit-behavioral-tdd",
+      "workit-challenge",
+      "workit-debug",
+      "workit-handoff",
+      "workit-implement",
+      "workit-plan",
+      "workit-review",
+    ],
+  );
 });
 
 test("Pi tool payloads use the shared parser and headless decisions need input", async () => {
@@ -759,4 +774,117 @@ test("reconcile without a live handle fails recovery_required instead of pretend
   );
   expect(result.details).toMatchObject({ ok: false, code: "recovery_required" });
   rmSync(root, { recursive: true, force: true });
+});
+
+const assignPiReviewer = (
+  root: string,
+  store: TaskStore,
+  taskId: string,
+  taskRev: string,
+  wsRev: string,
+) => {
+  const core = new WorkitCore(store, {
+    root,
+    caller: { host: "pi", actor: "pi-session" },
+    callerAttested: true,
+    capabilities: [],
+    constraints: [],
+    now: "2026-01-01T00:00:00Z",
+  });
+  const assigned = core.worker({
+    schemaVersion: 1,
+    action: "assign",
+    taskId,
+    expectedRevision: taskRev,
+    expectedWorkspaceRevision: wsRev,
+    assignment: {
+      role: "reviewer",
+      objective: "offline review",
+      scope: { description: "src", paths: ["src"], exclusions: [] },
+      decisionIds: [],
+      requirementIds: [],
+      candidateId: null,
+      stoppingCondition: "report",
+    },
+  });
+  expect(assigned.ok).toBe(true);
+  if (!assigned.ok) throw new Error(assigned.error);
+  return (assigned.data as { id: string }).id;
+};
+
+test("uncertain cancel persists unknown state, and a missing task fails distinctly", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "workit-pi-cancel-"));
+  try {
+    const { store, task, workspace } = startedTask(root);
+    const workerId = assignPiReviewer(root, store, task.id, task.revision, workspace.revision);
+    const handle = {
+      sessionId: `pi-worker-${workerId}`,
+      pid: 4242,
+      workerId,
+      child: null,
+      spawned: true,
+      exit: null,
+    } as any;
+    // The real cancel path only reaches uncertainty for a launched worker.
+    const freshTask = store.readTask(task.id);
+    const freshWorkspace = store.readWorkspace();
+    if (!freshTask.ok || !freshWorkspace.ok || !freshWorkspace.data)
+      throw new Error("task refresh failed");
+    const running = new WorkitCore(store, {
+      root,
+      caller: { host: "pi", actor: "pi-session" },
+      callerAttested: true,
+      capabilities: [],
+      constraints: [],
+      now: "2026-01-01T00:00:00Z",
+      nativeWorker: nativeWorkerForEvidence(() => handle),
+    }).observeWorkerLifecycle({
+      taskId: task.id,
+      workerId,
+      expectedRevision: freshTask.data.revision,
+      expectedWorkspaceRevision: freshWorkspace.data.revision,
+      state: "running",
+      session: { kind: "host", host: "pi", handle: handle.sessionId },
+      observation: { pid: handle.pid },
+    });
+    expect(running.ok).toBe(true);
+    const exit = { state: "unknown", observed: false, code: null, signal: null, stderr: "" } as any;
+    expect(persistUncertainCancel(store, context(root), task.id, workerId, handle, exit)).toBe(
+      true,
+    );
+    const current = store.readTask(task.id);
+    expect(
+      current.ok && current.data.workers.find((entry) => entry.id === workerId)?.data.state,
+    ).toBe("unknown");
+    expect(
+      persistUncertainCancel(store, context(root), "missing-task", workerId, handle, exit),
+    ).toBe(false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("cancel without a live handle fails recovery_required instead of pretending", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "workit-pi-cancel-control-"));
+  try {
+    const pi = makePi();
+    await extension(pi as any);
+    const { store, task, workspace } = startedTask(root);
+    const workerId = assignPiReviewer(root, store, task.id, task.revision, workspace.revision);
+    const control = pi.tools.find((tool) => tool.name === "workit_worker_control");
+    const result = await control.execute(
+      "control",
+      { action: "cancel", taskId: task.id, workerId },
+      undefined,
+      undefined,
+      context(root),
+    );
+    expect(result.details).toMatchObject({
+      ok: false,
+      code: "recovery_required",
+      error: "worker process is not live in this session",
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

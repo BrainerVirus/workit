@@ -10,6 +10,7 @@ import {
   parseCodexHookInput,
   warnOnSurfaceFallback,
 } from "@/packages/workit-codex/hooks/workit-hook";
+import { resolveCodexWorkspaceRoot } from "@/packages/workit-codex/scripts/launch-mcp";
 import { taskStartRequest } from "@/test/workit-core/task-fixtures";
 
 const cwd = () => mkdtempSync(path.join(tmpdir(), "workit-codex-cli-"));
@@ -439,4 +440,28 @@ test("human-bound CLI ownership allows the matching Codex session", () => {
     ).hookSpecificOutput,
   ).toMatchObject({ permissionDecision: "deny" });
   rmSync(root, { recursive: true, force: true });
+});
+
+test("workspace root resolution honors explicit root and refuses the plugin dir", () => {
+  const pluginRoot = cwd();
+  const workspace = cwd();
+  try {
+    // Fresh checkouts without state resolve so task.start can initialize them.
+    expect(resolveCodexWorkspaceRoot(pluginRoot, { WORKFLOW_WORKSPACE_ROOT: workspace })).toBe(
+      workspace,
+    );
+    // The plugin root itself never resolves (would operate on shipped files).
+    expect(
+      resolveCodexWorkspaceRoot(pluginRoot, { WORKFLOW_WORKSPACE_ROOT: pluginRoot }),
+    ).toBeNull();
+    // Relative and missing candidates refuse.
+    expect(resolveCodexWorkspaceRoot(pluginRoot, { WORKFLOW_WORKSPACE_ROOT: "rel" })).toBeNull();
+    expect(resolveCodexWorkspaceRoot(pluginRoot, {})).toBeNull();
+    // PWD inherits only when it points outside the plugin root.
+    expect(resolveCodexWorkspaceRoot(pluginRoot, { PWD: workspace })).toBe(workspace);
+    expect(resolveCodexWorkspaceRoot(pluginRoot, { PWD: pluginRoot })).toBeNull();
+  } finally {
+    rmSync(pluginRoot, { recursive: true, force: true });
+    rmSync(workspace, { recursive: true, force: true });
+  }
 });

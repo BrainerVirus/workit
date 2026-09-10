@@ -14,6 +14,9 @@ test("Codex plugin ships current manifest layout and exactly seven synchronized 
   expect(packageJson.publishConfig).toEqual({ access: "public" });
   expect(manifest.skills).toBe("./skills/");
   expect(manifest.hooks).toBeUndefined();
+  // The manifest wires skills and MCP only; hooks ship as the separate
+  // hooks.json bundle, so the manifest must not advertise a Hooks capability.
+  expect(manifest.interface.capabilities).toEqual(["MCP", "Task continuity"]);
   expect(manifest.mcpServers).toBe("./.mcp.json");
   expect(readdirSync(path.join(packageRoot, "skills")).sort()).toEqual([
     "workit-behavioral-tdd",

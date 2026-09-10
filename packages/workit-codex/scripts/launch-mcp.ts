@@ -1,13 +1,18 @@
 import { existsSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 import { TaskStore, type OperationContext } from "@brainervirus/workit-core/src/core";
+import { SUPPORT_MATRIX } from "@brainervirus/workit-core/src/core/support-matrix.ts";
 import { McpCapabilityUnavailableError, runStdioServer } from "@brainervirus/workit-mcp/src/server";
 import { codexCapabilities, detectCodexSurface, type CodexHost } from "../hooks/workit-hook";
 
 export const codexQualification = (host: CodexHost) =>
   host === "codex_cli"
-    ? { surface: host, cli: "0.153.4" }
-    : { surface: host, desktopPackage: "26.901.20858", bundledCodexCli: "0.153.0-alpha.5" };
+    ? { surface: host, cli: SUPPORT_MATRIX.codex.cli }
+    : {
+        surface: host,
+        desktopPackage: SUPPORT_MATRIX.codex.desktopPackage,
+        bundledCodexCli: SUPPORT_MATRIX.codex.bundledCodexCli,
+      };
 
 export const resolveCodexWorkspaceRoot = (
   pluginRoot: string,

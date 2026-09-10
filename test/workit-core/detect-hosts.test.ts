@@ -88,6 +88,30 @@ test("cursor plugin dir alone marks cursor configured", () => {
   }
 });
 
+test("version-manager CLIs detect without a PATH entry", () => {
+  const home = tmp("wf-detect-fnm-");
+  const bins = tmp("wf-detect-fnm-bin-");
+  try {
+    // fnm layout: node-versions/<v>/installation/bin/<tool>.
+    const fnmBin = path.join(home, ".local", "share", "fnm", "node-versions", "v22.19.0");
+    mkdirSync(path.join(fnmBin, "installation", "bin"), { recursive: true });
+    writeFileSync(path.join(fnmBin, "installation", "bin", "codex"), "#!/usr/bin/env bash\n", {
+      mode: 0o755,
+    });
+    // nvm layout: versions/node/<v>/bin/<tool>.
+    const nvmBin = path.join(home, ".nvm", "versions", "node", "v22.19.0", "bin");
+    mkdirSync(nvmBin, { recursive: true });
+    writeFileSync(path.join(nvmBin, "pi"), "#!/usr/bin/env bash\n", { mode: 0o755 });
+    const found = detectHosts({ home, env: envWith(home, bins) });
+    expect(found.codex).toEqual({ detected: true, configured: false });
+    expect(found.pi).toEqual({ detected: true, configured: false });
+    expect(found.opencode.detected).toBe(false);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(bins, { recursive: true, force: true });
+  }
+});
+
 test("preselectedPlatforms keeps detected wizard hosts only", () => {
   const found = {
     ...emptyDetection(),

@@ -16,7 +16,11 @@ import { TaskStore, WorkitCore, externalActionDescriptor } from "@/packages/work
 import { scope, taskStartRequest } from "@/test/workit-core/task-fixtures";
 import { resolveExternalActionRequest } from "@/packages/workit-core/src/core/external-action-effects";
 import plugin from "@/packages/workit-opencode/src/plugin";
-import { NativeReceiptStore, createWorkitTools } from "@/packages/workit-opencode/src/tools/workit";
+import {
+  NativeReceiptStore,
+  createWorkitTools,
+  observeQuestionEvent,
+} from "@/packages/workit-opencode/src/tools/workit";
 import { tool } from "@opencode-ai/plugin";
 
 const context = {
@@ -166,6 +170,101 @@ test("OpenCode exposes the eight shared families plus init_apply", async () => {
     "workit_external_action",
     "workit_init_apply",
   ]);
+});
+
+const workitQuestion = (question: string, approvedContent: string) => ({
+  header: "Workit decision: action",
+  question,
+  options: [
+    { label: "approved", description: approvedContent },
+    { label: "rejected", description: "Reject this decision" },
+  ],
+});
+
+test("out-of-band question replies mint consumable decision receipts", () => {
+  const receipts = new NativeReceiptStore();
+  observeQuestionEvent(receipts, {
+    type: "question.asked",
+    properties: {
+      id: "req-1",
+      sessionID: "lead",
+      questions: [workitQuestion("Ship it?", "ship-it-content")],
+      tool: { messageID: "m", callID: "call-1" },
+    },
+  });
+  expect(receipts.recordReply("req-1", "lead", [["approved"]])).toBe(true);
+  const consumed = receipts.consume("lead", "decision", {
+    question: "Ship it?",
+    selectedLabel: "approved",
+    selectedDescription: "ship-it-content",
+  });
+  expect(consumed.ok).toBe(true);
+});
+
+test("question event receipts reject mismatched or missing questions", () => {
+  const receipts = new NativeReceiptStore();
+  // Reply with no asked question mints nothing.
+  expect(receipts.recordReply("req-missing", "lead", [["approved"]])).toBe(false);
+  observeQuestionEvent(receipts, {
+    type: "question.asked",
+    properties: {
+      id: "req-2",
+      sessionID: "lead",
+      questions: [workitQuestion("Ship it?", "ship-it-content")],
+    },
+  });
+  // Wrong session, multiple answers, and unknown labels all fail closed.
+  expect(receipts.recordReply("req-2", "other", [["approved"]])).toBe(false);
+  observeQuestionEvent(receipts, {
+    type: "question.asked",
+    properties: {
+      id: "req-3",
+      sessionID: "lead",
+      questions: [workitQuestion("Ship it?", "ship-it-content")],
+    },
+  });
+  expect(receipts.recordReply("req-3", "lead", [["approved"], ["rejected"]])).toBe(false);
+  observeQuestionEvent(receipts, {
+    type: "question.asked",
+    properties: {
+      id: "req-4",
+      sessionID: "lead",
+      questions: [workitQuestion("Ship it?", "ship-it-content")],
+    },
+  });
+  expect(receipts.recordReply("req-4", "lead", [["maybe"]])).toBe(false);
+  // Non-Workit questions never mint.
+  observeQuestionEvent(receipts, {
+    type: "question.asked",
+    properties: {
+      id: "req-5",
+      sessionID: "lead",
+      questions: [
+        { header: "Other", question: "Huh?", options: [{ label: "a", description: "b" }] },
+      ],
+    },
+  });
+  expect(receipts.recordReply("req-5", "lead", [["a"]])).toBe(false);
+  // Rejected questions leave nothing to consume.
+  observeQuestionEvent(receipts, {
+    type: "question.asked",
+    properties: {
+      id: "req-6",
+      sessionID: "lead",
+      questions: [workitQuestion("Ship it?", "ship-it-content")],
+    },
+  });
+  observeQuestionEvent(receipts, { type: "question.rejected", properties: { requestID: "req-6" } });
+  expect(receipts.recordReply("req-6", "lead", [["approved"]])).toBe(false);
+  expect(receipts.consume("lead", "decision").ok).toBe(false);
+});
+
+test("plugin question events never break event delivery", async () => {
+  const hooks = await plugin(context as never);
+  await hooks.event?.({ event: { type: "question.replied", properties: {} } } as never);
+  await hooks.event?.({
+    event: { type: "question.asked", properties: { id: 42, sessionID: "lead" } },
+  } as never);
 });
 
 test("OpenCode invokes the host-owned documentation context headlessly through the shared effect", async () => {

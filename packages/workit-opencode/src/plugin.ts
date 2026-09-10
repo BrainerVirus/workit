@@ -19,6 +19,7 @@ import {
   nativeDispatchFor,
   nativeWorkerFor,
   observeQuestion,
+  observeQuestionEvent,
   sameWorkspace,
   sessionParent,
   type DirectChildren,
@@ -624,6 +625,18 @@ const plugin: Plugin = async ({ client, directory }) => {
   return {
     tool: tools,
     event: async ({ event }) => {
+      // Question events ride the runtime bus but predate the plugin SDK's
+      // Event union, so match on a widened type. Unrecognized shapes are
+      // ignored inside observeQuestionEvent; delivery never breaks.
+      const busEvent = event as unknown as { type: string; properties?: unknown };
+      if (
+        busEvent.type === "question.asked" ||
+        busEvent.type === "question.replied" ||
+        busEvent.type === "question.rejected"
+      ) {
+        observeQuestionEvent(receipts, busEvent);
+        return;
+      }
       if (event.type === "session.created") {
         await bindCreatedSession(event.properties.info);
         return;

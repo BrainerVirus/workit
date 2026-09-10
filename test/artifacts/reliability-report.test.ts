@@ -40,13 +40,13 @@ test("default report aggregates the deterministic candidate and an isolated doct
   const packs = packReleaseCandidate();
   expect(report.candidate.map((c) => c.sha256)).toEqual(packs.map((p) => p.sha256));
   // The default env-isolated doctor (node+bun on PATH, no git) is deterministic:
-  // exactly the utility check fails (D11/D13).
+  // exactly the utility check fails (D11/D13); codex_pin passes (absent).
   expect(report.doctor).toEqual({
     ok: false,
-    passed: 16,
+    passed: 17,
     warned: 0,
     failed: 1,
-    total: 17,
+    total: 18,
     fixes: 1,
   });
   expect(report.logs).toEqual({ files: 0, events: 0 });
@@ -71,13 +71,13 @@ test("report doctor counts are exact against a controlled isolated fixture", () 
         env: { ...process.env, PATH: bin },
       },
     });
-    // node+bun on PATH but no git: exactly the utility check fails.
+    // node+bun on PATH but no git: exactly the utility check fails; codex_pin passes (absent).
     expect(report.doctor).toEqual({
       ok: false,
-      passed: 16,
+      passed: 17,
       warned: 0,
       failed: 1,
-      total: 17,
+      total: 18,
       fixes: 1,
     });
   } finally {

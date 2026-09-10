@@ -148,6 +148,10 @@ const roleTools = (role: WorkerAssignment["role"]): string[] => {
 };
 
 export function workerCommand(runtime: PiRuntime, assignment: WorkerAssignment): SpawnSpec {
+  // No --model/--provider by product decision (Document-ambient): supervised
+  // workers inherit the coordinator's ambient model from settings.json, so a
+  // review runs under the same model the user already trusts. Pinning a model
+  // here would silently override that choice per role.
   return {
     command: runtime.node,
     args: [

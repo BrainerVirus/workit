@@ -103,6 +103,37 @@ const contextMessage = (ctx: ExtensionContext) => ({
   details: { session: piContext(ctx).caller.actor },
 });
 
+/**
+ * Persist an unobservable cancel as worker-state unknown, attested by the
+ * live handle's own process evidence. Mirrors the launch path's
+ * persistUncertain contract: true means the uncertainty itself is recorded,
+ * false means even the record failed and the caller must say so distinctly.
+ */
+export const persistUncertainCancel = (
+  store: TaskStore,
+  ctx: ExtensionContext,
+  taskId: string,
+  workerId: string,
+  handle: WorkerHandle,
+  exit: ObservedExit,
+): boolean => {
+  const freshTask = store.readTask(taskId);
+  const freshWorkspace = store.readWorkspace();
+  if (!freshTask.ok || !freshWorkspace.ok || !freshWorkspace.data) return false;
+  const lostBinding: WorkerLifecycleBinding = {
+    core: new WorkitCore(store, {
+      ...piContext(ctx),
+      nativeWorker: nativeWorkerForEvidence(() => handle),
+    }),
+    taskId,
+    workerId,
+    expectedRevision: freshTask.data.revision,
+    expectedWorkspaceRevision: freshWorkspace.data.revision,
+    sessionId: handle.sessionId,
+  };
+  return observeWorkerExit(lostBinding, handle, exit).ok;
+};
+
 export default function extension(pi: ExtensionAPI): void {
   const sessions = new Set<string>();
   const workers = new Map<string, WorkerHandle>();
@@ -205,22 +236,10 @@ export default function extension(pi: ExtensionAPI): void {
       }
       const result = await cancelWorker(current, binding ? { binding } : {});
       if (!result.observed) {
-        const freshTask = store.readTask(task.id);
-        const freshWorkspace = store.readWorkspace();
-        if (freshTask.ok && freshWorkspace.ok && freshWorkspace.data) {
-          const lostBinding: WorkerLifecycleBinding = {
-            core: new WorkitCore(store, {
-              ...piContext(ctx),
-              nativeWorker: nativeWorkerForEvidence(() => current),
-            }),
-            taskId: task.id,
-            workerId: worker.id,
-            expectedRevision: freshTask.data.revision,
-            expectedWorkspaceRevision: freshWorkspace.data.revision,
-            sessionId: current.sessionId,
-          };
-          observeWorkerExit(lostBinding, current, result);
-        }
+        // Same two-tier signal as the launch path: the exit is uncertain, and
+        // persisting that uncertainty can fail independently.
+        if (!persistUncertainCancel(store, ctx, task.id, worker.id, current, result))
+          return failure("recovery_required", "worker uncertainty could not be persisted");
         return failure("recovery_required", "worker termination is uncertain");
       }
       return success(cancelled.revision, cancelled.workspaceRevision, {
