@@ -381,7 +381,7 @@ const sessionContext = (input: CodexHookInput): string => {
   } catch {
     compact = "\n[workit diagnostic: task state unavailable]";
   }
-  return `<workit-contract>\n${invariantBootstrap()}${compact}\n</workit-contract>`;
+  return `<workit-contract>\n${invariantBootstrap()}${compact}\n<workit-codex-mutations>Codex MCP is read-only: unattested callers cannot mutate. Run the workit CLI for task mutations (start, policy, evidence, close, writer) with --confirm non-interactively; binding decisions and external actions need a human.</workit-codex-mutations>\n</workit-contract>`;
 };
 
 export const handleCodexHook = (raw: unknown): Record<string, unknown> => {

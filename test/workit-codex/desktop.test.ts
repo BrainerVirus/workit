@@ -7,10 +7,10 @@ import {
   codexContextProvider,
   codexQualification,
   resolveCodexWorkspaceRoot,
-} from "../../packages/workit-codex/scripts/launch-mcp";
-import { handleCodexHook } from "../../packages/workit-codex/hooks/workit-hook";
-import { TaskStore, WorkitCore, type OperationContext } from "../../packages/workit-core/src/core";
-import { taskStartRequest } from "../workit-core/task-fixtures";
+} from "@/packages/workit-codex/scripts/launch-mcp";
+import { handleCodexHook } from "@/packages/workit-codex/hooks/workit-hook";
+import { TaskStore, WorkitCore, type OperationContext } from "@/packages/workit-core/src/core";
+import { taskStartRequest } from "@/test/workit-core/task-fixtures";
 
 const packageRoot = path.resolve(import.meta.dir, "../../packages/workit-codex");
 const repoRoot = path.resolve(import.meta.dir, "../..");
@@ -51,12 +51,51 @@ test("desktop hook emits native SessionStart JSON with developer context", () =>
     transcript_path: null,
     source: "resume",
   });
+  // NOTE: read values BEFORE toMatchObject below: bun's matcher pass mutates
+  // asymmetric-matched properties on the received object.
+  const context = (result.hookSpecificOutput as { additionalContext: unknown }).additionalContext;
+  expect(typeof context).toBe("string");
+  expect(context).toContain("workit-codex-mutations");
+  expect(context).toContain("workit CLI");
   expect(result).toMatchObject({
     hookSpecificOutput: {
       hookEventName: "SessionStart",
       additionalContext: expect.stringContaining("<workit-contract>"),
     },
   });
+});
+
+test("Codex MCP mutation refusal points at the CLI path", async () => {
+  const { createMcpServer } = await import("@/packages/workit-mcp/src/server");
+  const { InMemoryTransport } = await import("@modelcontextprotocol/sdk/inMemory.js");
+  const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
+  const root = mkdtempSync(path.join(tmpdir(), "workit-codex-refusal-"));
+  const server = createMcpServer("codex_cli", codexContextProvider("codex_cli", root));
+  const client = new Client({ name: "workit-test", version: "1.0.0" });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+  try {
+    const result = await client.callTool({
+      name: "workit_task",
+      arguments: {
+        schemaVersion: 1,
+        action: "start",
+        intent: {
+          objective: "x",
+          scope: { description: "x", paths: [], exclusions: [] },
+          authorityRefs: [],
+        },
+      },
+    });
+    const structured = result.structuredContent as { ok: boolean; code?: string; error?: string };
+    expect(structured.ok).toBe(false);
+    expect(structured.code).toBe("capability_unavailable");
+    expect(structured.error ?? "").toContain("workit CLI");
+  } finally {
+    await client.close();
+    await server.close();
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("Codex MCP provider keeps caller identity empty on both surfaces", async () => {
