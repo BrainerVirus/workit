@@ -6,7 +6,7 @@ Load resolved method skills through the host skill loader when policy selects th
 
 ## Hard gates
 
-- Inspect task state before acting. On OpenCode, Cursor, Codex, and Pi use the eight shared `workit_*` families (`workit_task`, `workit_policy`, `workit_evidence`, `workit_finding`, `workit_decision`, `workit_worker`, `workit_writer`, `workit_state`). On the CLI host use `workit task <family> <action>` with the same actions (hyphenated on the CLI).
+- Inspect task state before acting. On OpenCode, Cursor, Codex, and Pi use the eight shared `workit_*` families (`workit_task`, `workit_policy`, `workit_evidence`, `workit_finding`, `workit_decision`, `workit_worker`, `workit_writer`, `workit_state`). On the CLI host use `workit <family> <action>` with the same actions (hyphenated on the CLI).
 - Never use a worktree. Branch changes are in-place through the approved `git.branch_setup` external action (CLI: `workit action git.branch_setup --payload …`).
 - Task metadata lives under `.workit/`; never edit it directly. Record progress, evidence, findings, decisions, and worker state only through the shared operations.
 - Helpers cannot widen scope, record binding decisions, close or pause the task, assign further helpers, or resolve blockers for the lead.
@@ -14,7 +14,7 @@ Load resolved method skills through the host skill loader when policy selects th
 
 ## Setup
 
-1. If there is no active or paused task, call `workit_task` with `action: "start"` then `workit_policy` with `action: "assess"` (CLI: `workit task task start …` then `workit task policy assess …`).
+1. If there is no active or paused task, call `workit_task` with `action: "start"` then `workit_policy` with `action: "assess"` (CLI: `workit task start …` then `workit policy assess …`).
 2. Load `workit-plan`, list tasks with `workit_task` `action: "list"`, and mirror visible todo state to the host UI.
 3. When policy requires a feature branch, resolve it with read-only `context.read` and apply `git.branch_setup` only after native approval.
 
@@ -29,7 +29,7 @@ For each bounded plan task:
 
 ## Final gate
 
-Run repository verification (CLI: `workit doctor`; hosts: approved project verify when policy requires it). **Mandatory:** close the lead task with `workit_task` `action: "close"` (CLI: `workit task task close --payload … [--confirm]`) once requirements are satisfied and verification passes — never finish while the task is still `active` or `paused`.
+Run repository verification (CLI: `workit doctor`; hosts: approved project verify when policy requires it). **Mandatory:** close the lead task with `workit_task` `action: "close"` (CLI: `workit task close --payload … [--confirm]`) once requirements are satisfied and verification passes — never finish while the task is still `active` or `paused`.
 
 ## Task order
 

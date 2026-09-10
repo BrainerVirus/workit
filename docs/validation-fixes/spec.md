@@ -72,9 +72,9 @@ receipts in this environment, see finding `b611654d`)
 
 ## Slice D — architecture
 
-- Codex session binding: CLI accepts `--session-id` (and
-  `WORKFLOW_SESSION_ID` env), stamps `{ host: workit_cli, actor, session }`
-  on acquire; hook matches session id; `cli.test.ts`/`desktop.test.ts`
+- Codex session binding: CLI accepts `--actor <session-id>` (which stamps
+  the owner session handle the hook matches; provenance receipts carry the
+  same actor), the hook honors human-bound workit_cli ownership; `cli.test.ts`/`desktop.test.ts`
   forged callers replaced with bound ones; hook guidance + MCP refusal print
   the exact `node_modules/.bin/workit --json --confirm` invocation.
 - `init_apply`: register **only** the `workit_init_apply` tool (not the
