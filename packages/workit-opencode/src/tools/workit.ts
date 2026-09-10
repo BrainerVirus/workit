@@ -279,7 +279,7 @@ const boundedSchema = (schema: any, depth: number, field: string): any => {
     );
     const description =
       depth >= MAX_OPERATION_OBJECT_DEPTH
-        ? `Canonical object fields: ${Object.keys(canonicalShape).join(", ")}. Workit validates the complete nested value.`
+        ? canonicalFieldsDescription(Object.keys(canonicalShape))
         : undefined;
     const object = tool.schema.object(shape).strict();
     return description ? object.describe(description) : object;

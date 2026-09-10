@@ -227,6 +227,9 @@ Requirement evaluations and capability mappings are separate from requirements.
 Agent submissions cannot set evaluations. A valid assessment can be recorded
 successfully while its resulting policy still requires input or blocks work.
 Do not misreport that successful recording as permission to proceed.
+Delegation-dimension requirements are satisfied by a completed worker report on
+an explicitly linked or scope-covering assignment; all other dimensions are
+satisfied only by matching evidence kinds, decisions, or accepted limitations.
 
 ## 3. Evidence, decisions, findings, and workers
 

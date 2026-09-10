@@ -58,6 +58,7 @@ export const workerContextFor = (
       const worker = task.workers.find(
         (entry) =>
           entry.data.session?.kind === "host" &&
+          entry.data.session.host === "opencode" &&
           entry.data.session.handle === sessionID &&
           directChildren?.get(sessionID) === parentID,
       );
