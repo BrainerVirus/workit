@@ -938,6 +938,56 @@ export function operationJsonSchema(family: OperationFamily): z.core.JSONSchema.
   return z.toJSONSchema(operationSchemas[family], { target: "draft-2020-12" });
 }
 
+/**
+ * Advertised object depth shared by every host projection. Runtime validation
+ * stays full-depth in parseOperation; this bound only keeps provider tool
+ * schemas (e.g. Pi, MCP) within model nesting limits.
+ */
+export const OPERATION_SCHEMA_DEPTH = 1;
+
+export const canonicalFieldsDescription = (fields: string[]): string =>
+  `Canonical object fields: ${fields.join(", ")}. Workit validates the complete nested value.`;
+
+/**
+ * Provider-safe projection of an operation JSON schema. Objects deeper than
+ * maxDepth collapse to a described generic object that still names the
+ * canonical fields, so models know what to send while providers accept the
+ * shape. The full contract in operationJsonSchema is unchanged.
+ */
+export function boundedOperationJsonSchema(
+  family: OperationFamily,
+  maxDepth: number = OPERATION_SCHEMA_DEPTH,
+): Record<string, unknown> {
+  const collapse = (node: unknown, currentDepth: number): unknown => {
+    if (Array.isArray(node)) return node.map((item) => collapse(item, currentDepth));
+    if (typeof node !== "object" || node === null) return node;
+    const record = node as Record<string, unknown>;
+    if (record.properties && typeof record.properties === "object") {
+      const fields = Object.keys(record.properties as Record<string, unknown>);
+      if (currentDepth >= maxDepth || fields.length === 0)
+        return { type: "object", description: canonicalFieldsDescription(fields) };
+      return {
+        ...record,
+        properties: Object.fromEntries(
+          Object.entries(record.properties as Record<string, unknown>).map(([key, child]) => [
+            key,
+            collapse(child, currentDepth + 1),
+          ]),
+        ),
+      };
+    }
+    if (record.items) return { ...record, items: collapse(record.items, currentDepth) };
+    for (const key of ["anyOf", "oneOf", "allOf"] as const)
+      if (Array.isArray(record[key]))
+        return {
+          ...record,
+          [key]: (record[key] as unknown[]).map((item) => collapse(item, currentDepth)),
+        };
+    return node;
+  };
+  return collapse(operationJsonSchema(family), 0) as Record<string, unknown>;
+}
+
 type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 function canonical(value: unknown, seen: Set<object>): JsonValue {
   if (value === null || typeof value === "boolean" || typeof value === "string") {

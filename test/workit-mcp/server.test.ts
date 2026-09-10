@@ -7,7 +7,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import {
   OPERATION_FAMILIES,
-  operationJsonSchema,
+  boundedOperationJsonSchema,
   type OperationContext,
 } from "../../packages/workit-core/src/core";
 import type { Host } from "../../packages/workit-core/src/core/task-contract";
@@ -50,7 +50,7 @@ test("MCP exposes exactly the eight family tools with core-derived 2020-12 schem
     );
     for (const family of OPERATION_FAMILIES) {
       const tool = listed.tools.find((candidate) => candidate.name === `workit_${family}`)!;
-      expect(tool.inputSchema).toMatchObject(operationJsonSchema(family));
+      expect(tool.inputSchema).toMatchObject(boundedOperationJsonSchema(family));
       expect(tool.inputSchema.type).toBe("object");
       expect(tool.inputSchema.$schema).toBe("https://json-schema.org/draft/2020-12/schema");
     }

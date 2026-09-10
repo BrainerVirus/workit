@@ -10,7 +10,7 @@ import {
   createAuthorizedExternalActionRunner,
   matchesNativeExternalAction,
   nativeExternalActionObservation,
-  operationJsonSchema,
+  boundedOperationJsonSchema,
   OPERATION_FAMILIES,
   parseOperation,
   success,
@@ -190,7 +190,7 @@ export const nativeExternalActionRunner = (
   });
 
 const schemaFor = (family: OperationFamily) =>
-  ({ type: "object", ...operationJsonSchema(family) }) as any;
+  ({ type: "object", ...boundedOperationJsonSchema(family) }) as any;
 
 const trustedForMutation = (ctx: ExtensionContext, action: unknown): Result<null> => {
   if (ctx.isProjectTrusted() || readOnlyActions.has(String(action)))

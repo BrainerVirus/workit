@@ -16,6 +16,7 @@ import {
   nativeExternalActionObservation,
   failure,
   operationSchemas,
+  OPERATION_SCHEMA_DEPTH,
   parseOperation,
   sha256,
   success,
@@ -235,7 +236,7 @@ export class NativeReceiptStore {
   }
 }
 
-const MAX_OPERATION_OBJECT_DEPTH = 1;
+const MAX_OPERATION_OBJECT_DEPTH = OPERATION_SCHEMA_DEPTH;
 
 const schemaDef = (schema: any): Record<string, any> => schema?.def ?? schema?._def ?? {};
 

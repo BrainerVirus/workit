@@ -130,6 +130,22 @@ test("clean Pi package declares stock discovery and exactly eight core tools", a
   ]);
   expect(pi.tools.map((tool) => tool.name)).toContain("workit_worker_control");
   expect(pi.tools.every((tool) => tool.parameters.type === "object")).toBe(true);
+  const depth = (node: unknown, current = 0): number => {
+    if (Array.isArray(node))
+      return node.reduce((max, item) => Math.max(max, depth(item, current)), current);
+    if (node && typeof node === "object") {
+      const keys = Object.keys(node);
+      if (!keys.length) return current;
+      return keys.reduce(
+        (max, key) => Math.max(max, depth((node as Record<string, unknown>)[key], current + 1)),
+        current,
+      );
+    }
+    return current;
+  };
+  for (const tool of pi.tools.filter((item) => item.name.startsWith("workit_"))) {
+    expect(depth(tool.parameters), tool.name).toBeLessThanOrEqual(8);
+  }
   expect(pi.commands.map((command) => command.name)).toContain("workit-worker");
 });
 

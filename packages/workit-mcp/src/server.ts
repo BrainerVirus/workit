@@ -14,7 +14,7 @@ import {
   OPERATION_FAMILIES,
   WorkitCore,
   TaskStore,
-  operationJsonSchema,
+  boundedOperationJsonSchema,
   parseOperation,
   type OperationContext,
   type OperationFamily,
@@ -113,7 +113,7 @@ const requiresCallerIdentity = (input: unknown): boolean =>
   !READ_ONLY_ACTIONS.has(String((input as { action?: unknown }).action));
 
 const toolInputSchema = (family: OperationFamily) => {
-  const schema = operationJsonSchema(family);
+  const schema = boundedOperationJsonSchema(family);
   // MCP requires an object at the root. The operation union remains entirely
   // core-derived; this envelope preserves it while satisfying that protocol rule.
   return { type: "object" as const, ...schema };
