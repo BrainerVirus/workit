@@ -10,6 +10,7 @@ export {
   operationJsonSchema,
   boundedOperationJsonSchema,
   OPERATION_SCHEMA_DEPTH,
+  OPERATION_SCHEMA_MAX_DEPTH,
   canonicalFieldsDescription,
   parseOperation,
   success,

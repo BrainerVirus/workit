@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { spawn, spawnSync } from "node:child_process";
 import path from "node:path";
 import { tmpdir } from "node:os";
-import { TaskStore, WorkitCore, type OperationContext } from "../../packages/workit-core/src/core";
+import { TaskStore, WorkitCore, OPERATION_SCHEMA_MAX_DEPTH, type OperationContext } from "../../packages/workit-core/src/core";
 import { SUPPORT_MATRIX } from "../../packages/workit-core/src/core/support-matrix";
 import extension from "../../packages/workit-pi/extensions/workit";
 import { piCapabilities } from "../../packages/workit-pi/src/context";
@@ -145,6 +145,11 @@ test("clean Pi package declares stock discovery and exactly eight core tools", a
   };
   for (const tool of pi.tools.filter((item) => item.name.startsWith("workit_"))) {
     expect(depth(tool.parameters), tool.name).toBeLessThanOrEqual(8);
+  }
+  for (const tool of pi.tools) {
+    expect(depth(tool.parameters), tool.name).toBeLessThanOrEqual(
+      OPERATION_SCHEMA_MAX_DEPTH,
+    );
   }
   expect(pi.commands.map((command) => command.name)).toContain("workit-worker");
 });

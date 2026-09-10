@@ -7,6 +7,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import {
   OPERATION_FAMILIES,
+  OPERATION_SCHEMA_MAX_DEPTH,
   boundedOperationJsonSchema,
   type OperationContext,
 } from "../../packages/workit-core/src/core";
@@ -53,12 +54,29 @@ test("MCP exposes exactly the eight family tools with core-derived 2020-12 schem
       expect(tool.inputSchema).toMatchObject(boundedOperationJsonSchema(family));
       expect(tool.inputSchema.type).toBe("object");
       expect(tool.inputSchema.$schema).toBe("https://json-schema.org/draft/2020-12/schema");
+      expect(jsonDepth(tool.inputSchema), `workit_${family}`).toBeLessThanOrEqual(
+        OPERATION_SCHEMA_MAX_DEPTH,
+      );
     }
   } finally {
     await client.close();
     await server.close();
   }
 });
+
+const jsonDepth = (node: unknown, current = 0): number => {
+  if (Array.isArray(node))
+    return node.reduce((max, item) => Math.max(max, jsonDepth(item, current)), current);
+  if (node && typeof node === "object") {
+    const keys = Object.keys(node);
+    if (!keys.length) return current;
+    return keys.reduce(
+      (max, key) => Math.max(max, jsonDepth((node as Record<string, unknown>)[key], current + 1)),
+      current,
+    );
+  }
+  return current;
+};
 
 test("MCP exposes a read-only context resource without adding a ninth tool", async () => {
   const workspaceRoot = mkdtempSync(path.join(os.tmpdir(), "workit-mcp-context-"));

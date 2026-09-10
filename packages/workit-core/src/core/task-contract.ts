@@ -945,6 +945,9 @@ export function operationJsonSchema(family: OperationFamily): z.core.JSONSchema.
  */
 export const OPERATION_SCHEMA_DEPTH = 1;
 
+/** Provider nesting limit every advertised Workit schema must stay within. */
+export const OPERATION_SCHEMA_MAX_DEPTH = 10;
+
 export const canonicalFieldsDescription = (fields: string[]): string =>
   `Canonical object fields: ${fields.join(", ")}. Workit validates the complete nested value.`;
 
