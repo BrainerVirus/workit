@@ -20,9 +20,8 @@
 - [ ] **Step 1: <action>**
 
 <!-- per-task criteria: how this task is verified -->
-
 **Criteria:** <verifiable check>
 
-| Status  | Task           |
-| ------- | -------------- |
+| Status | Task |
+| --- | --- |
 | pending | N: <Component> |
