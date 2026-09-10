@@ -193,6 +193,45 @@ test("Pi tool payloads use the shared parser and headless decisions need input",
   ).toBe("enforced");
 });
 
+test("Pi tools transport nested payloads and arrays intact", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "workit-pi-nested-"));
+  const pi = makePi();
+  await extension(pi as any);
+  const taskTool = pi.tools.find((tool) => tool.name === "workit_task");
+  const started = await taskTool.execute(
+    "call",
+    {
+      schemaVersion: 1,
+      action: "start",
+      intent: {
+        objective: "nested transport probe",
+        scope: { description: "probe", paths: [], exclusions: [] },
+        authorityRefs: [],
+      },
+    },
+    undefined,
+    undefined,
+    context(root),
+  );
+  expect(started.details).toMatchObject({ ok: true });
+  const taskId = (started.details as { data: { id: string } }).data.id;
+  const closed = await taskTool.execute(
+    "call",
+    {
+      schemaVersion: 1,
+      action: "close",
+      taskId,
+      outcome: "stopped",
+      summary: "transport probe done",
+      decisionIds: [],
+    },
+    undefined,
+    undefined,
+    context(root),
+  );
+  expect(closed.details).toMatchObject({ ok: true });
+});
+
 test("interactive Pi decisions use the native answer and reject untrusted writes", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "workit-pi-decision-"));
   const pi = makePi();
