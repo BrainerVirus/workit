@@ -27,7 +27,18 @@ export const resolveCodexWorkspaceRoot = (
   try {
     if (!statSync(candidate).isDirectory()) return null;
     const canonical = realpathSync(candidate);
-    if (canonical === realpathSync(pluginRoot)) return null;
+    if (canonical === realpathSync(pluginRoot)) {
+      // The shipped plugin dir must never initialize state: refuse unless the
+      // operator explicitly named a live workspace here. `codex exec` spawns
+      // the MCP server in the project directory (no plugin root exists), so
+      // an explicit live root is operator intent, not a plugin-dir accident.
+      // Recipe: run exec from the project and pass
+      // -c 'mcp_servers.workit.env={WORKFLOW_WORKSPACE_ROOT="<project>"}'.
+      if (!explicit) return null;
+      const workspace = new TaskStore(canonical).readWorkspace();
+      if (!workspace.ok || !workspace.data || workspace.data.root !== canonical) return null;
+      return canonical;
+    }
     const workspace = new TaskStore(canonical).readWorkspace();
     if (!workspace.ok) return null;
     // Fresh checkouts without state resolve so task.start can initialize them;

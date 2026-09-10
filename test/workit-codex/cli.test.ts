@@ -442,6 +442,40 @@ test("human-bound CLI ownership allows the matching Codex session", () => {
   rmSync(root, { recursive: true, force: true });
 });
 
+test("explicit root at the server directory resolves only for a live workspace", () => {
+  const live = cwd();
+  const fresh = cwd();
+  try {
+    const started = new WorkitCore(new TaskStore(live), {
+      root: live,
+      caller: { host: "pi", actor: "seed" },
+      callerAttested: true,
+      capabilities: [],
+      constraints: [],
+      now: "2026-01-01T00:00:00Z",
+    }).task(
+      taskStartRequest({
+        intent: {
+          objective: "live workspace",
+          scope: { description: "scratch", paths: ["."], exclusions: [] },
+          authorityRefs: [],
+        },
+      }),
+    );
+    expect(started.ok).toBe(true);
+    // codex exec spawns the MCP server in the project dir: an explicit live
+    // root is operator intent and resolves.
+    expect(resolveCodexWorkspaceRoot(live, { WORKFLOW_WORKSPACE_ROOT: live })).toBe(
+      path.resolve(live),
+    );
+    // Without live state the same setup still refuses (never init plugin dirs).
+    expect(resolveCodexWorkspaceRoot(fresh, { WORKFLOW_WORKSPACE_ROOT: fresh })).toBeNull();
+  } finally {
+    rmSync(live, { recursive: true, force: true });
+    rmSync(fresh, { recursive: true, force: true });
+  }
+});
+
 test("workspace root resolution honors explicit root and refuses the plugin dir", () => {
   const pluginRoot = cwd();
   const workspace = cwd();
