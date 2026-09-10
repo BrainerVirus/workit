@@ -5,7 +5,12 @@ import type { Plugin } from "@opencode-ai/plugin";
 import { TaskStore, WorkitCore } from "@brainervirus/workit-core/src/core";
 import { assertProductWriteAllowed } from "@brainervirus/workit-core/src/core/workers";
 import { createLogger } from "@brainervirus/workit-core/src/core/logger";
-import { EVENT, errorDetail } from "@brainervirus/workit-core/src/core/boundary";
+import {
+  EVENT,
+  changedSourcesSinceLoad,
+  errorDetail,
+  markSourcesLoaded,
+} from "@brainervirus/workit-core/src/core/boundary";
 import { getWorkitBootstrap } from "./bootstrap";
 import {
   createWorkitTools,
@@ -26,6 +31,43 @@ const skillsPath = path.join(root, "skills");
 const logger = createLogger({
   appLog: () => undefined,
 });
+
+// Long-lived sessions load workit sources once. Warn once (never block) when
+// the checkout moves underneath the live process so stale behavior is visible
+// instead of silently running old code after local fixes.
+const sourceMarker = markSourcesLoaded(
+  [
+    fileURLToPath(import.meta.url),
+    fileURLToPath(new URL("./tools/workit.ts", import.meta.url)),
+    ...[
+      "task-contract.ts",
+      "task-engine.ts",
+      "task-evaluation.ts",
+      "task-store.ts",
+      "workers.ts",
+      "authority.ts",
+      "methods.ts",
+    ].map((file) =>
+      fileURLToPath(new URL(`../../../workit-core/src/core/${file}`, import.meta.url)),
+    ),
+  ].filter((file) => existsSync(file)),
+);
+let staleSourcesWarned = false;
+const warnStaleSources = (): void => {
+  if (staleSourcesWarned) return;
+  const changed = changedSourcesSinceLoad(sourceMarker);
+  if (changed.length === 0) return;
+  staleSourcesWarned = true;
+  try {
+    logger.warn(EVENT.hooks, {
+      boundary: "stale_sources",
+      reason: "workit sources changed after plugin load; restart the session for latest behavior",
+      files: changed.map((file) => path.basename(file)),
+    });
+  } catch {
+    // Diagnostics must never break event delivery.
+  }
+};
 
 type SessionClient = {
   session?: {
@@ -653,6 +695,7 @@ const plugin: Plugin = async ({ client, directory }) => {
       }
     },
     "tool.execute.before": async (input, output) => {
+      warnStaleSources();
       if (input.tool === "task") {
         const listed = new TaskStore(directory).listTasks();
         if (

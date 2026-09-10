@@ -13,7 +13,7 @@ import {
   newId,
   success,
   type OperationContext,
-} from "../../packages/workit-core/src/core";
+} from "@/packages/workit-core/src/core";
 import { assessment, caller, ref, scope, taskStartRequest } from "./task-fixtures";
 
 const context = (root: string): OperationContext => ({
@@ -789,6 +789,159 @@ test("verified closure remains blocked while a finding is open", () => {
     code: "requirements_unsatisfied",
     error: "open findings must be resolved before closure",
   });
+});
+
+const recordFinding = (core: WorkitCore, taskId: string, expectedRevision: string) => {
+  const recorded = core.finding({
+    schemaVersion: 1,
+    action: "record",
+    taskId,
+    expectedRevision,
+    claim: "regression risk",
+    consequence: "unsafe change",
+    scope: scope({ paths: ["."] }),
+    candidateId: null,
+    refs: [ref()],
+  });
+  expect(recorded.ok).toBe(true);
+  if (!recorded.ok) throw new Error(recorded.error);
+  return recorded.data as { id: string };
+};
+
+const recordCheck = (core: WorkitCore, taskId: string, expectedRevision: string, claim: string) => {
+  const recorded = core.evidence({
+    schemaVersion: 1,
+    action: "record",
+    taskId,
+    expectedRevision,
+    evidence: {
+      kind: "check",
+      claim,
+      requirementIds: [],
+      result: "passed",
+      summary: claim,
+      refs: [],
+      exitCode: 0,
+      reviewContext: null,
+    },
+  });
+  expect(recorded.ok).toBe(true);
+  if (!recorded.ok) throw new Error(recorded.error);
+  return recorded.data as { id: string };
+};
+
+const resolveFixed = (
+  core: WorkitCore,
+  taskId: string,
+  expectedRevision: string,
+  findingId: string,
+  evidenceId: string,
+) => {
+  const resolved = core.finding({
+    schemaVersion: 1,
+    action: "resolve",
+    taskId,
+    expectedRevision,
+    findingId,
+    disposition: "fixed",
+    reason: "verified by passing check",
+    evidenceIds: [evidenceId],
+    decisionIds: [],
+  });
+  expect(resolved).toMatchObject({ ok: true, data: { data: { disposition: "fixed" } } });
+};
+
+const findingDisposition = (store: TaskStore, taskId: string, findingId: string) => {
+  const task = store.readTask(taskId);
+  if (!task.ok) throw new Error(task.error);
+  return task.data.findings.find((entry) => entry.id === findingId)?.data.disposition;
+};
+
+test("unrelated evidence keeps a verified fix fixed", () => {
+  const root = mkdtempSync(join(tmpdir(), "workit-engine-reopen-keep-"));
+  const store = new TaskStore(root);
+  const core = new WorkitCore(store, context(root));
+  const started = core.task(taskStartRequest());
+  if (!started.ok) throw new Error(started.error);
+  const taskId = (started.data as any).id as string;
+  let task = store.readTask(taskId);
+  if (!task.ok) throw new Error(task.error);
+  const finding = recordFinding(core, taskId, task.data.revision);
+  task = store.readTask(taskId);
+  if (!task.ok) throw new Error(task.error);
+  const check = recordCheck(core, taskId, task.data.revision, "fix verified");
+  task = store.readTask(taskId);
+  if (!task.ok) throw new Error(task.error);
+  resolveFixed(core, taskId, task.data.revision, finding.id, check.id);
+  task = store.readTask(taskId);
+  if (!task.ok) throw new Error(task.error);
+  const noted = core.evidence({
+    schemaVersion: 1,
+    action: "record",
+    taskId,
+    expectedRevision: task.data.revision,
+    evidence: {
+      kind: "artifact",
+      claim: "sequencing note",
+      requirementIds: [],
+      result: "passed",
+      summary: "unrelated artifact",
+      refs: [],
+      exitCode: null,
+      reviewContext: null,
+    },
+  });
+  expect(noted.ok).toBe(true);
+  expect(findingDisposition(store, taskId, finding.id)).toBe("fixed");
+});
+
+test("evidence after a tree move reopens a fix whose verification lapsed", () => {
+  const root = mkdtempSync(join(tmpdir(), "workit-engine-reopen-lapse-"));
+  const store = new TaskStore(root);
+  const core = new WorkitCore(store, context(root));
+  const started = core.task(
+    taskStartRequest({
+      intent: {
+        objective: "test task",
+        scope: scope({ paths: ["src"] }),
+        authorityRefs: [ref()],
+      },
+    }),
+  );
+  if (!started.ok) throw new Error(started.error);
+  const taskId = (started.data as any).id as string;
+  mkdirSync(join(root, "src"), { recursive: true });
+  writeFileSync(join(root, "src", "a.ts"), "v1\n");
+  let task = store.readTask(taskId);
+  if (!task.ok) throw new Error(task.error);
+  const finding = recordFinding(core, taskId, task.data.revision);
+  task = store.readTask(taskId);
+  if (!task.ok) throw new Error(task.error);
+  const check = recordCheck(core, taskId, task.data.revision, "fix verified");
+  task = store.readTask(taskId);
+  if (!task.ok) throw new Error(task.error);
+  resolveFixed(core, taskId, task.data.revision, finding.id, check.id);
+  writeFileSync(join(root, "src", "a.ts"), "v2\n");
+  task = store.readTask(taskId);
+  if (!task.ok) throw new Error(task.error);
+  const noted = core.evidence({
+    schemaVersion: 1,
+    action: "record",
+    taskId,
+    expectedRevision: task.data.revision,
+    evidence: {
+      kind: "artifact",
+      claim: "note after the tree moved",
+      requirementIds: [],
+      result: "passed",
+      summary: "unrelated artifact",
+      refs: [],
+      exitCode: null,
+      reviewContext: null,
+    },
+  });
+  expect(noted.ok).toBe(true);
+  expect(findingDisposition(store, taskId, finding.id)).toBe("open");
 });
 
 test("an unsupported stored policy version fails verified closure even with no requirements", () => {

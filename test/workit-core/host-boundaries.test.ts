@@ -1,8 +1,13 @@
 import { expect, test } from "bun:test";
-import { readFileSync, readdirSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, utimesSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { resolveWorkspaceRoot } from "../../packages/workit-core/src/core/scripts";
+import { resolveWorkspaceRoot } from "@/packages/workit-core/src/core/scripts";
+import {
+  changedSourcesSinceLoad,
+  markSourcesLoaded,
+} from "@/packages/workit-core/src/core/boundary";
 const REPO_ROOT = path.resolve(import.meta.dir, "..", "..");
 const CORE_SRC = path.join(REPO_ROOT, "packages", "workit-core", "src");
 const CURSOR_SERVER = path.join(REPO_ROOT, "packages", "workit-cursor", "mcp", "server.ts");
@@ -85,6 +90,25 @@ test("cursor does not duplicate legacy flow registrations", () => {
 test("Cursor publishes only the shared eight operation families", async () => {
   const server = readFileSync(CURSOR_SERVER, "utf8");
   expect(server).toContain("createMcpServer");
-  const { OPERATION_FAMILIES } = await import("../../packages/workit-core/src/core");
+  const { OPERATION_FAMILIES } = await import("@/packages/workit-core/src/core");
   expect(OPERATION_FAMILIES).toHaveLength(8);
+});
+
+test("source markers report only files edited after process load", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "workit-source-marker-"));
+  const oldFile = path.join(dir, "old.ts");
+  const newFile = path.join(dir, "new.ts");
+  writeFileSync(oldFile, "v1\n");
+  writeFileSync(newFile, "v1\n");
+  const past = new Date("2020-01-01T00:00:00Z");
+  utimesSync(oldFile, past, past);
+  utimesSync(newFile, past, past);
+  const marker = markSourcesLoaded(
+    [oldFile, newFile, path.join(dir, "missing.ts")],
+    new Date("2020-06-01T00:00:00Z").getTime(),
+  );
+  expect(changedSourcesSinceLoad(marker)).toEqual([]);
+  const later = new Date("2021-01-01T00:00:00Z");
+  utimesSync(newFile, later, later);
+  expect(changedSourcesSinceLoad(marker)).toEqual([newFile]);
 });

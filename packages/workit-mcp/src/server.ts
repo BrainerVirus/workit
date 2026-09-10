@@ -1,4 +1,4 @@
-import { readFileSync, realpathSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -10,6 +10,7 @@ import {
   ReadResourceRequestSchema,
   type CallToolResult,
 } from "@modelcontextprotocol/sdk/types.js";
+import { fileURLToPath } from "node:url";
 import {
   OPERATION_FAMILIES,
   WorkitCore,
@@ -19,6 +20,10 @@ import {
   type OperationContext,
   type OperationFamily,
 } from "@brainervirus/workit-core/src/core";
+import {
+  changedSourcesSinceLoad,
+  markSourcesLoaded,
+} from "@brainervirus/workit-core/src/core/boundary";
 import type { Host, Result } from "@brainervirus/workit-core/src/core/task-contract";
 import { redactSecrets } from "@brainervirus/workit-core/src/core/logger";
 import { readExternalContext } from "@brainervirus/workit-core/src/core/external-action-effects";
@@ -168,6 +173,17 @@ const thrownResult = (tool: string, error: unknown, workspaceRoot?: string): Cal
 
 export function createMcpServer(host: McpHost, contextProvider: NativeContextProvider): Server {
   assertMcpHost(host);
+  // Long-lived MCP servers load core once; warn once (never block) when the
+  // checkout sources move underneath, mirroring the OpenCode plugin guard.
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const sourceMarker = markSourcesLoaded(
+    [
+      path.join(here, "server.ts"),
+      path.join(here, "..", "..", "workit-core", "src", "core", "task-contract.ts"),
+      path.join(here, "..", "..", "workit-core", "src", "core", "task-engine.ts"),
+    ].filter((file) => existsSync(file)),
+  );
+  let staleWarned = false;
   const server = new Server(
     { name: "workit", version: VERSION },
     { capabilities: { tools: {}, resources: {} } },
@@ -273,6 +289,16 @@ export function createMcpServer(host: McpHost, contextProvider: NativeContextPro
   });
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    if (!staleWarned && changedSourcesSinceLoad(sourceMarker).length > 0) {
+      staleWarned = true;
+      try {
+        process.stderr.write(
+          `${JSON.stringify({ level: "warn", message: "workit sources changed after MCP load; restart the server for latest behavior" })}\n`,
+        );
+      } catch {
+        // Diagnostics must never break the protocol response.
+      }
+    }
     const toolName = request.params.name;
     let workspaceRoot: string | undefined;
     try {
@@ -309,7 +335,7 @@ export function createMcpServer(host: McpHost, contextProvider: NativeContextPro
             ok: false,
             schemaVersion: 1,
             code: "capability_unavailable",
-            error: "native caller identity is unavailable",
+            error: "native caller identity is unavailable; run the workit CLI for mutations",
             details: { capability: "native_caller_identity", operation: family },
           },
           workspaceRoot,

@@ -367,7 +367,12 @@ Finding resolution requires a reason and the relevant evidence or decision.
 `fixed` requires supporting verification; unsupported findings can be dismissed
 with evidence-backed reasoning. Deferring an in-scope blocking finding needs an
 applicable permitted acceptance, not just `disposition: "deferred"`. Resolved
-findings remain visible, and new evidence can reopen them.
+findings remain visible, and new evidence reopens a `fixed` finding only when
+its verification lapsed on the current tree (or directly contradicts it);
+dismissed and deferred findings never auto-reopen. Record verification
+evidence last: any tree move between verification and close reopens the fix
+for re-verification, so verify, resolve, then close with no product edits or
+evidence in between.
 
 Only implementers may receive helper writer ownership. The lead is represented
 by `workerId: null` and an observed session reference. Assignment is not launch,
@@ -456,7 +461,9 @@ New tasks start active, with no closure and no policy conclusion until assessed.
 An unresolved assessment/policy does not authorize dependent product writes;
 safe authorized investigation may continue. Only closed tasks have a closure.
 Closed tasks are not silently reopened; further
-work starts a new task referring to the previous context. Ordinary scope,
+work starts a new task referring to the previous context. Never-started
+assignments persist on the closed task as audit history; only running,
+cancelling, or unknown workers block lifecycle moves. Ordinary scope,
 progress, assessment, evidence, finding, and worker mutations require an unclosed
 task. Explicit decision revocation or state recovery can update a closed record
 without reopening it or rewriting its historical closure. Paused tasks allow

@@ -1101,13 +1101,32 @@ export class WorkitCore {
           candidates,
           evidence: [...current.evidence, entry],
           findings: current.findings.map((finding) => {
-            const relevant =
-              finding.data.candidateId === null ||
-              evidence.candidateId !== finding.data.candidateId ||
+            if (finding.data.disposition === "open" || evidence.result === "skipped")
+              return finding;
+            if (finding.data.disposition !== "fixed") return finding;
+            // A fix stands while its verification still passes on the current
+            // tree; it reopens only on lapse or direct contradiction. Judged
+            // dispositions never auto-reopen.
+            const withEntry = { ...current, candidates, evidence: [...current.evidence, entry] };
+            const statuses = new Map(
+              evaluateEvidence(withEntry, currentCandidate.data).map((item) => [
+                item.evidenceId,
+                item.status,
+              ]),
+            );
+            const verified = withEntry.evidence.some(
+              (item) =>
+                statuses.get(item.id) === "passed" &&
+                (item.data.kind === "check" || item.data.kind === "review") &&
+                (finding.data.candidateId === null ||
+                  item.data.candidateId === finding.data.candidateId),
+            );
+            const contradicted =
+              evidence.result === "failed" &&
               finding.data.refs.some((left: Ref) =>
                 evidence.refs.some((right: Ref) => JSON.stringify(left) === JSON.stringify(right)),
               );
-            return finding.data.disposition === "open" || evidence.result === "skipped" || !relevant
+            return verified && !contradicted
               ? finding
               : { ...finding, data: { ...finding.data, disposition: "open", resolution: null } };
           }),

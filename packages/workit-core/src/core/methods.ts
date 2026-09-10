@@ -95,7 +95,9 @@ copy revisions between calls. Happy path: task.list, task.start {intent} with no
 revisions, policy.assess {assessment: {facts, signals, consequences,
 verification}} where facts are inferred or observed with file refs,
 writer.acquire {taskId} before product writes, evidence.record {evidence} where
-check and review kinds auto-bind the current tree and need no digests,
+check and review kinds auto-bind the current tree and need no digests. Record
+verification evidence last: later evidence or commits can reopen fixed findings
+for re-verification, so verify, resolve, then close with nothing in between.
 decision.record {binding with taskId/workspaceId from inspect plus presented and
 approvedContent} only through a native approval question, task.close {outcome,
 summary, decisionIds}. A completed native subagent run stops its bound worker
