@@ -84,6 +84,13 @@ is never available to supervised children.
   native `task` call with exactly one attributable assigned worker; Pi prepares
   on the live handle immediately before spawn. Never mark a worker stopped from
   a null session, missing metadata, a cancellation string, or a lost
-  reservation — those stay unresolved.
+  reservation — those stay unresolved. Serial native `task` calls consume
+  the oldest still-unbound worker first, but only within a single task:
+  workers spread across tasks bind nothing, because no observed child can
+  prove which task the coordinator intends. A `cancelling` worker vetoes
+  launches from its own coordinator until a repeated cancel on the ended
+  worker confirms its stop; other coordinators proceed. Review evidence
+  only counts from a session that is neither the task creator's nor any
+  other evidence recorder's.
 - VCS routing is per-workspace: `workspaces.json` `resolveWorkspace` maps `work`-glob repos to GitLab/`develop`/gitflow and `personal`-glob repos to GitHub/`main`/github-flow, resolved in the order explicit workspace `vcs.defaultTargetBranch` → workspace branchPolicy default → global `vcs.json` → preset defaults. The active `vcs.json` carries no global `defaultTargetBranch`; a global default can no longer shadow a matched workspace's branchPolicy default. On GitHub, `prCreate` pushes the branch before `gh pr create` when `pr.pushBranch` is enabled (default), and a caller-supplied target equal to the resolved default is accepted even though protected. The runtime reads only the active `~/.config/workit/` config dir; legacy `~/.config/workflow-toolkit/` non-secret files were cleaned up once the active config passed status checks.
 - Never use worktrees; use guarded in-place branch setup.

@@ -339,6 +339,28 @@ const plugin: Plugin = async ({ client, directory }) => {
       : null;
   };
   /** Claim the launch slot of the one worker this coordinator can be launching. */
+  // Queue rule (shared with bindCreatedSession): serial launches consume the
+  // oldest unbound worker first, but only within a single task — cross-task
+  // ambiguity stays unbound because no observed child can prove which task
+  // the coordinator intends. Guessing across tasks would forge identity.
+  const oldestOfSingleTask = <
+    T extends { id: string },
+    E extends { id: string; recordedAt: string },
+  >(
+    items: { task: T; entry: E }[],
+  ): { task: T; entry: E } | null => {
+    const tasks = new Set(items.map((item) => item.task.id));
+    if (tasks.size !== 1 || items.length === 0) return null;
+    return [...items].sort((a, b) =>
+      a.entry.recordedAt < b.entry.recordedAt
+        ? -1
+        : a.entry.recordedAt > b.entry.recordedAt
+          ? 1
+          : a.entry.id < b.entry.id
+            ? -1
+            : 1,
+    )[0];
+  };
   const prepareDispatch = (coordinator: string, callID: string) => {
     dispatches.delete(coordinator);
     const store = new TaskStore(directory);
@@ -359,8 +381,10 @@ const plugin: Plugin = async ({ client, directory }) => {
             .map((entry) => ({ task, entry }))
         : [],
     );
-    // Ambiguity is left unrecoverable on purpose: guessing would forge a worker identity.
-    if (eligible.length !== 1) return;
+    // Queue: the oldest unbound worker of a single task. Zero eligible, or
+    // eligible workers spread across tasks, prepares nothing.
+    const next = oldestOfSingleTask(eligible);
+    if (!next) return;
     const generation: DispatchGeneration = {
       coordinator,
       callID,
@@ -376,9 +400,9 @@ const plugin: Plugin = async ({ client, directory }) => {
       nativeWorker: nativeDispatchFor(directChildren, coordinator, generation),
     });
     const prepared = core.prepareWorkerDispatch({
-      taskId: eligible[0].task.id,
-      workerId: eligible[0].entry.id,
-      expectedRevision: eligible[0].task.revision,
+      taskId: next.task.id,
+      workerId: next.entry.id,
+      expectedRevision: next.task.revision,
       expectedWorkspaceRevision: workspace.data.revision,
       observation: { stage: "prepare", sessionID: coordinator, callID },
     });
@@ -387,8 +411,8 @@ const plugin: Plugin = async ({ client, directory }) => {
       generation,
       dispatch: prepared.data,
       core,
-      taskId: eligible[0].task.id,
-      workerId: eligible[0].entry.id,
+      taskId: next.task.id,
+      workerId: next.entry.id,
     });
   };
   const commitDispatchStart = (coordinator: string, childID: string): boolean => {
@@ -574,12 +598,15 @@ const plugin: Plugin = async ({ client, directory }) => {
             .map((entry) => ({ task, entry }))
         : [],
     );
-    if (candidates.length !== 1) return;
+    // Same queue rule as prepareDispatch: oldest unbound worker of a single
+    // task; cross-task ambiguity binds nothing.
+    const next = oldestOfSingleTask(candidates);
+    if (!next) return;
     directChildren.set(info.id, info.parentID);
     if (
       live &&
-      live.taskId === candidates[0].task.id &&
-      live.workerId === candidates[0].entry.id &&
+      live.taskId === next.task.id &&
+      live.workerId === next.entry.id &&
       commitDispatchStart(info.parentID, info.id)
     )
       return;
@@ -588,8 +615,8 @@ const plugin: Plugin = async ({ client, directory }) => {
       info.parentID,
       "running",
       {
-        taskId: candidates[0].task.id,
-        workerId: candidates[0].entry.id,
+        taskId: next.task.id,
+        workerId: next.entry.id,
       },
       true,
     );
@@ -704,11 +731,19 @@ const plugin: Plugin = async ({ client, directory }) => {
       warnStaleSources();
       if (input.tool === "task") {
         const listed = new TaskStore(directory).listTasks();
+        // Scoped veto: only workers attributable to the launching coordinator
+        // block its launch. An uncertain worker elsewhere is that
+        // coordinator's problem, not a global stop-the-world switch — the
+        // slot claim below can only ever bind this coordinator's observed
+        // child, so cross-coordinator forgery stays impossible.
         if (
           listed.ok &&
           listed.data.some((task) =>
             task.workers.some(
-              (worker) => worker.data.state === "cancelling" || worker.data.state === "unknown",
+              (worker) =>
+                (worker.data.state === "cancelling" || worker.data.state === "unknown") &&
+                worker.provenance.session?.kind === "host" &&
+                worker.provenance.session.handle === input.sessionID,
             ),
           )
         )

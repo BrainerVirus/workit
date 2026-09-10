@@ -766,10 +766,20 @@ test("a generic cancellation or missing metadata never marks an unbound worker s
   }
 });
 
-test("ambiguous assignments refuse dispatch recovery", async () => {
+test("a cancelled launch settles the oldest slot as not started and frees the next", async () => {
   const root = mkdtempSync(join(tmpdir(), "workit-opencode-dispatch-ambiguous-"));
   try {
     const { active, ids, hooks } = await dispatchFixture(root, 2);
+    const listed = active.store.readTask(active.task.id);
+    if (!listed.ok) throw new Error(listed.error);
+    // Bind order mirrors the implementation: oldest recordedAt, id breaks
+    // ties (the fixed test clock ties recordedAt).
+    const [older, newer] = [...listed.data.workers]
+      .sort((a, b) =>
+        a.recordedAt < b.recordedAt ? -1 : a.recordedAt > b.recordedAt ? 1 : a.id < b.id ? -1 : 1,
+      )
+      .map((entry) => entry.id);
+    expect(new Set([older, newer])).toEqual(new Set(ids));
     await hooks["tool.execute.before"]?.(
       { tool: "task", sessionID: "coord", callID: "launch" },
       { args: {} },
@@ -782,14 +792,16 @@ test("ambiguous assignments refuse dispatch recovery", async () => {
         metadata: { childCreated: false, status: "cancelled" },
       },
     );
-    for (const id of ids)
-      expect(workerState(active, id)).toMatchObject({ state: "assigned", session: null });
+    // The claimed slot settles not_started (the host proved no child); the
+    // other worker stays assignable instead of stranding the queue.
+    expect(workerState(active, older)).toMatchObject({ state: "stopped", session: null });
+    expect(workerState(active, newer)).toMatchObject({ state: "assigned", session: null });
     await expect(
       hooks["tool.execute.before"]?.(
         { tool: "task", sessionID: "coord", callID: "next" },
         { args: {} },
       ),
-    ).rejects.toThrow("recovery_required");
+    ).resolves.toBeUndefined();
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -1021,6 +1033,163 @@ test("lead writes with several active tasks require writer ownership", async () 
       hooks["tool.execute.before"]?.(
         { tool: "write", sessionID: "coord", callID: "owned" },
         { args: { filePath: join(root, "src/file.ts") } },
+      ),
+    ).resolves.toBeUndefined();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+const assignReviewer = (core: WorkitCore, store: TaskStore, taskId: string): string => {
+  const task = store.readTask(taskId);
+  const workspace = store.readWorkspace();
+  if (!task.ok || !workspace.ok || !workspace.data) throw new Error("state missing");
+  const assigned = core.worker({
+    schemaVersion: 1,
+    action: "assign",
+    taskId,
+    expectedRevision: task.data.revision,
+    expectedWorkspaceRevision: workspace.data.revision,
+    assignment: {
+      role: "reviewer",
+      objective: "review",
+      scope: scope({ paths: ["review"] }),
+      decisionIds: [],
+      requirementIds: [],
+      candidateId: null,
+      stoppingCondition: "report",
+    },
+  });
+  if (!assigned.ok) throw new Error(assigned.error);
+  return (assigned.data as { id: string }).id;
+};
+
+const createdEvent = (hooks: any, root: string, id: string, parentID: string) =>
+  hooks.event?.({
+    event: { type: "session.created", properties: { info: { id, directory: root, parentID } } },
+  } as never);
+
+const sessionOf = (root: string, taskId: string, workerId: string) => {
+  const task = new TaskStore(root).readTask(taskId);
+  if (!task.ok) throw new Error("task missing");
+  const worker = task.data.workers.find((entry) => entry.id === workerId);
+  if (!worker) throw new Error("worker missing");
+  return { state: worker.data.state, session: worker.data.session };
+};
+
+test("serial session.created events bind successive same-task workers oldest-first", async () => {
+  const root = mkdtempSync(join(tmpdir(), "workit-dispatch-queue-"));
+  try {
+    const { store, core, task } = activeTask(root);
+    const first = assignReviewer(core, store, task.id);
+    const second = assignReviewer(core, store, task.id);
+    // Expected bind order mirrors the implementation: oldest recordedAt,
+    // worker id breaks ties (the fixed test clock ties recordedAt).
+    const listed = store.readTask(task.id);
+    if (!listed.ok) throw new Error("task missing");
+    const ordered = [...listed.data.workers]
+      .sort((a, b) =>
+        a.recordedAt < b.recordedAt ? -1 : a.recordedAt > b.recordedAt ? 1 : a.id < b.id ? -1 : 1,
+      )
+      .map((entry) => entry.id);
+    expect(new Set(ordered)).toEqual(new Set([first, second]));
+    const hooks = await plugin({
+      directory: root,
+      worktree: root,
+      serverUrl: new URL("http://localhost"),
+    } as never);
+    await createdEvent(hooks, root, "child-1", "lead");
+    await createdEvent(hooks, root, "child-2", "lead");
+    expect(sessionOf(root, task.id, ordered[0])).toEqual({
+      state: "running",
+      session: { kind: "host", host: "opencode", handle: "child-1" },
+    });
+    expect(sessionOf(root, task.id, ordered[1])).toEqual({
+      state: "running",
+      session: { kind: "host", host: "opencode", handle: "child-2" },
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("workers spread across tasks bind nothing on a shared coordinator event", async () => {
+  const root = mkdtempSync(join(tmpdir(), "workit-dispatch-fanout-"));
+  try {
+    const first = activeTask(root);
+    const workspace = first.store.readWorkspace();
+    if (!workspace.ok || !workspace.data) throw new Error("workspace missing");
+    const second = new WorkitCore(first.store, {
+      root,
+      caller: { host: "opencode", actor: "lead" },
+      capabilities: [],
+      constraints: [],
+      now: () => "2026-01-01T00:00:00Z",
+    }).task(
+      taskStartRequest({
+        intent: {
+          objective: "second task",
+          scope: scope({ paths: ["."] }),
+          authorityRefs: [],
+        },
+        expectedWorkspaceRevision: workspace.data.revision,
+      }),
+    );
+    if (!second.ok) throw new Error(second.error);
+    const secondId = (second.data as { id: string }).id;
+    const w1 = assignReviewer(first.core, first.store, first.task.id);
+    const w2 = assignReviewer(first.core, first.store, secondId);
+    const hooks = await plugin({
+      directory: root,
+      worktree: root,
+      serverUrl: new URL("http://localhost"),
+    } as never);
+    await createdEvent(hooks, root, "child-1", "lead");
+    expect(sessionOf(root, first.task.id, w1)).toEqual({ state: "assigned", session: null });
+    expect(sessionOf(root, secondId, w2)).toEqual({ state: "assigned", session: null });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a cancelling worker vetoes its own coordinator but not another session", async () => {
+  const root = mkdtempSync(join(tmpdir(), "workit-dispatch-veto-"));
+  try {
+    const { store, core, task } = activeTask(root);
+    const workerId = assignReviewer(core, store, task.id);
+    const fresh = store.readTask(task.id);
+    const freshWorkspace = store.readWorkspace();
+    if (!fresh.ok || !freshWorkspace.ok || !freshWorkspace.data) throw new Error("state missing");
+    const cancelled = core.worker({
+      schemaVersion: 1,
+      action: "cancel",
+      taskId: task.id,
+      expectedRevision: fresh.data.revision,
+      expectedWorkspaceRevision: freshWorkspace.data.revision,
+      workerId,
+      reason: "superseded",
+    });
+    expect(cancelled.ok).toBe(true);
+    const hooks = await plugin({
+      directory: root,
+      worktree: root,
+      serverUrl: new URL("http://localhost"),
+      client: {
+        session: {
+          get: async ({ path: { id } }: any) => ({ data: { id, directory: root } }),
+        },
+      },
+    } as never);
+    await expect(
+      hooks["tool.execute.before"]?.(
+        { tool: "task", sessionID: "lead", callID: "blocked" },
+        { args: {} },
+      ),
+    ).rejects.toThrow("recovery_required");
+    await expect(
+      hooks["tool.execute.before"]?.(
+        { tool: "task", sessionID: "other", callID: "allowed" },
+        { args: {} },
       ),
     ).resolves.toBeUndefined();
   } finally {
