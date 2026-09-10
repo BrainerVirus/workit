@@ -12,6 +12,7 @@ import {
   markSourcesLoaded,
 } from "@brainervirus/workit-core/src/core/boundary";
 import { getWorkitBootstrap } from "./bootstrap";
+import { createRepoTools } from "./tools/repo";
 import {
   createWorkitTools,
   NativeReceiptStore,
@@ -319,7 +320,12 @@ const plugin: Plugin = async ({ client, directory }) => {
   } catch (error) {
     logger.warn(EVENT.hooks, { boundary: "initialization", ...errorDetail(error) });
   }
-  const tools = createWorkitTools({ client, receipts, directChildren });
+  const tools = {
+    ...createWorkitTools({ client, receipts, directChildren }),
+    // Narrow registration: only the init surface the contract claims, not
+    // the whole repo factory (commit/branch_setup stay unwired by design).
+    workit_init_apply: createRepoTools().workit_init_apply,
+  };
   const timestamp = () => new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
   const revisions = (taskId: string) => {
     const store = new TaskStore(directory);

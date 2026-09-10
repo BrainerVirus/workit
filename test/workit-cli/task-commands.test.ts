@@ -656,3 +656,54 @@ test("packed task list runs on Node without a Bun runtime", () => {
     rmSync(install, { recursive: true, force: true });
   }
 }, 120_000);
+
+test("writer acquire --actor stamps the session handle a hook can match", async () => {
+  const root = fixture();
+  try {
+    const store = new TaskStore(root);
+    const core = new WorkitCore(store, {
+      root,
+      caller: { host: "workit_cli", actor: "cli" },
+      capabilities: [],
+      constraints: [],
+      now: "2026-01-01T00:00:00Z",
+    });
+    const started = core.task(taskStartRequest());
+    expect(started.ok).toBe(true);
+    if (!started.ok) throw new Error(started.error);
+    const id = (started.data as { id: string }).id;
+    const task = store.readTask(id);
+    const workspace = store.readWorkspace();
+    if (!task.ok || !workspace.ok || !workspace.data) throw new Error("state missing");
+    const io = capture();
+    const code = await runTaskCommand(
+      [
+        "writer",
+        "acquire",
+        "--task",
+        id,
+        "--revision",
+        task.data.revision,
+        "--workspace-revision",
+        workspace.data.revision,
+        "--payload",
+        JSON.stringify({ workerId: null }),
+        "--actor",
+        "session-9",
+        "--confirm",
+        "--json",
+      ],
+      { cwd: root, out: io.out, err: io.err, stdinIsTTY: () => false },
+    );
+    expect(code).toBe(0);
+    expect(JSON.parse(io.read().stdout)).toMatchObject({ ok: true });
+    const owner = store.readWorkspace();
+    expect(owner.ok && owner.data?.writer?.owner).toMatchObject({
+      taskId: id,
+      workerId: null,
+      session: { host: "workit_cli", handle: "session-9" },
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

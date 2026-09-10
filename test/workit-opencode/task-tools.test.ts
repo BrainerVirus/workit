@@ -152,7 +152,7 @@ const approveChangelogAction = async (
   );
 };
 
-test("OpenCode exposes exactly the eight shared Workit operation families", async () => {
+test("OpenCode exposes the eight shared families plus init_apply", async () => {
   const hooks = await plugin(context as never);
   expect(Object.keys(hooks.tool ?? {})).toEqual([
     "workit_task",
@@ -164,6 +164,7 @@ test("OpenCode exposes exactly the eight shared Workit operation families", asyn
     "workit_writer",
     "workit_state",
     "workit_external_action",
+    "workit_init_apply",
   ]);
 });
 
@@ -1413,6 +1414,9 @@ test("advertised native operation schemas stay within OpenCode provider depth li
       target: "draft-2020-12",
     });
     expect(schemaDepth(schema), name).toBeLessThanOrEqual(10);
+    // Host-owned init tool: same depth budget, different envelope from the
+    // eight schemaVersion/action operation families.
+    if (name === "workit_init_apply") continue;
     const properties = (schema as { properties?: Record<string, unknown> }).properties ?? {};
     expect(properties.schemaVersion, name).toBeDefined();
     expect(properties.action, name).toBeDefined();

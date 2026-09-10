@@ -25,11 +25,12 @@ test("the plugin module only exports the default OpenCode plugin", async () => {
   expect(Object.keys(await import("@/packages/workit-opencode/src/plugin"))).toEqual(["default"]);
 });
 
-test("registers exactly the eight native operation tools", async () => {
+test("registers the eight native operation tools plus init_apply", async () => {
   const hooks = await plugin(pluginInput as never);
   expect(Object.keys(hooks.tool ?? {})).toEqual([
     ...families.map((family) => `workit_${family}`),
     "workit_external_action",
+    "workit_init_apply",
   ]);
 });
 

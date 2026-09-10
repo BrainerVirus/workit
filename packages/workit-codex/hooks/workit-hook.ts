@@ -396,7 +396,7 @@ const sessionContext = (input: CodexHookInput): string => {
   } catch {
     compact = "\n[workit diagnostic: task state unavailable]";
   }
-  return `<workit-contract>\n${invariantBootstrap()}${compact}\n<workit-codex-mutations>Codex MCP is read-only: unattested callers cannot mutate. Run the workit CLI for task mutations (start, policy, evidence, close, writer) with --confirm non-interactively; binding decisions and external actions need a human.</workit-codex-mutations>\n</workit-contract>`;
+  return `<workit-contract>\n${invariantBootstrap()}${compact}\n<workit-codex-mutations>Codex MCP is read-only: unattested callers cannot mutate. Run the workit CLI for task mutations: node_modules/.bin/workit <family> <action> --json --confirm; bind the writer to this session with node_modules/.bin/workit writer acquire --task <id> --revision <rev> --actor ${input.session_id} --confirm. Binding decisions and external actions need a human.</workit-codex-mutations>\n</workit-contract>`;
 };
 
 export const handleCodexHook = (raw: unknown): Record<string, unknown> => {
@@ -435,23 +435,39 @@ export const handleCodexHook = (raw: unknown): Record<string, unknown> => {
           : denied("PreToolUse", state.reason);
       // The persisted writer/worker session is the authority. Surface detection
       // is diagnostic only and must not grant a caller a host identity.
+      // Human-bound CLI ownership also passes: `workit writer acquire
+      // --actor <session-id>` stamps a workit_cli session whose handle is
+      // exactly this Codex session id — an explicit human binding made on
+      // the same machine, not a forged delegation.
       const worker = state.task.workers.find(
         (entry) =>
           entry.data.session?.kind === "host" && entry.data.session.handle === input.session_id,
       );
       const ownerSession = state.workspace.writer?.owner.session;
-      const host = persistedCodexHost(worker?.data.session) ?? persistedCodexHost(ownerSession);
-      if (host !== "codex_cli" && host !== "codex_desktop")
+      const persisted =
+        persistedCodexHost(worker?.data.session) ?? persistedCodexHost(ownerSession);
+      const humanBound =
+        ownerSession !== null &&
+        ownerSession !== undefined &&
+        (ownerSession as { kind?: unknown; host?: unknown; handle?: unknown }).kind === "host" &&
+        (ownerSession as { host?: unknown }).host === "workit_cli" &&
+        (ownerSession as { handle?: unknown }).handle === input.session_id;
+      if (persisted !== "codex_cli" && persisted !== "codex_desktop" && !humanBound)
         return denied("PreToolUse", "Codex writer identity is unavailable or unmatched");
+      // Caller identity for the ownership check: the persisted host when
+      // known, otherwise the human-bound workit_cli session. capabilities
+      // stay Codex-shaped: this process is a Codex hook either way.
+      const callerHost = persisted ?? (humanBound ? "workit_cli" : undefined);
+      if (!callerHost) return denied("PreToolUse", "Codex writer identity is unavailable");
       const core = new WorkitCore(store, {
         root: input.cwd,
-        caller: { host, actor: input.session_id },
+        caller: { host: callerHost, actor: input.session_id },
         // Stdin hook input is unsigned: any local process can emit it, so a
         // hook-minted context is never attested. Ownership still enforces
         // through the persisted host session match, not this flag.
         callerAttested: false,
         workerId: worker?.id ?? null,
-        capabilities: codexCapabilities(host, { preToolUse: true }),
+        capabilities: codexCapabilities(persisted ?? "codex_cli", { preToolUse: true }),
         constraints: [],
         now: new Date().toISOString().replace(/\.\d{3}Z$/, "Z"),
       });

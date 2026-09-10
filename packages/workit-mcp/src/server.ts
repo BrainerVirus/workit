@@ -335,7 +335,8 @@ export function createMcpServer(host: McpHost, contextProvider: NativeContextPro
             ok: false,
             schemaVersion: 1,
             code: "capability_unavailable",
-            error: "native caller identity is unavailable; run the workit CLI for mutations",
+            error:
+              "native caller identity is unavailable; run the workit CLI for mutations: node_modules/.bin/workit <family> <action> --json --confirm (bind a writer with --actor <session-id>)",
             details: { capability: "native_caller_identity", operation: family },
           },
           workspaceRoot,

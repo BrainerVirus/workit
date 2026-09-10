@@ -20,6 +20,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Validation fix program: the CLI documents and implements `workit <family>
+<action>` (help, READMEs, contract, pinned help test), `workit writer
+acquire --actor <id>` binds a writer to a Codex session the hook matches,
+  and `workit_init_apply` is registered on OpenCode with the `branch_policy`
+  action. Cutover failures are loud (unknown hosts, malformed resolutions),
+  rollback parses flags anywhere, apply honors `--json`, and the uninstall
+  picker covers all four hosts. Both hooks share one fail-closed shell parser
+  with symlink resolution, the Cursor preToolUse matcher covers the guard set
+  with doctor drift detection, and hook attestation no longer claims unsigned
+  input.
+
 - The CLI setup wizard now auto-detects installed hosts: detected OpenCode and
   Cursor installs preselect on the platforms screen, existing workit
   registrations are tagged "already configured", and detected Codex/Pi point at

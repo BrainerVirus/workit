@@ -717,3 +717,46 @@ test("stock Pi discovers the package manifest through its local package manager"
     rmSync(stage, { recursive: true, force: true });
   }
 });
+
+test("reconcile without a live handle fails recovery_required instead of pretending", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "workit-pi-reconcile-"));
+  const pi = makePi();
+  await extension(pi as any);
+  const { store, task, workspace } = startedTask(root);
+  const core = new WorkitCore(store, {
+    root,
+    caller: { host: "pi", actor: "pi-session" },
+    callerAttested: true,
+    capabilities: [],
+    constraints: [],
+    now: "2026-01-01T00:00:00Z",
+  });
+  const assigned = core.worker({
+    schemaVersion: 1,
+    action: "assign",
+    taskId: task.id,
+    expectedRevision: task.revision,
+    expectedWorkspaceRevision: workspace.revision,
+    assignment: {
+      role: "reviewer",
+      objective: "offline review",
+      scope: { description: "src", paths: ["src"], exclusions: [] },
+      decisionIds: [],
+      requirementIds: [],
+      candidateId: null,
+      stoppingCondition: "report",
+    },
+  });
+  expect(assigned.ok).toBe(true);
+  if (!assigned.ok) throw new Error(assigned.error);
+  const control = pi.tools.find((tool) => tool.name === "workit_worker_control");
+  const result = await control.execute(
+    "control",
+    { action: "reconcile", taskId: task.id, workerId: (assigned.data as { id: string }).id },
+    undefined,
+    undefined,
+    context(root),
+  );
+  expect(result.details).toMatchObject({ ok: false, code: "recovery_required" });
+  rmSync(root, { recursive: true, force: true });
+});

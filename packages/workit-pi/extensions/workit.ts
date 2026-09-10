@@ -28,6 +28,7 @@ import {
   nativeLostWorker,
   nativeWorkerForEvidence,
   observeWorkerExit,
+  reconcileWorker,
   reportWorker,
   workerCanLaunchNested,
   type ObservedExit,
@@ -227,8 +228,14 @@ export default function extension(pi: ExtensionAPI): void {
         exit: result,
       });
     }
-    if (request.action === "reconcile")
-      return failure("recovery_required", "worker process is not live in this session");
+    // Reconcile runs against the live handle when this session still tracks
+    // it; a process from another session stays recovery_required because its
+    // exit was never observed here.
+    if (request.action === "reconcile") {
+      if (!current)
+        return failure("recovery_required", "worker process is not live in this session");
+      return reconcileWorker(current);
+    }
     if (worker.data.state !== "assigned")
       return failure("invalid_transition", "only an assigned worker can be launched");
     if (!request.prompt) return failure("invalid_input", "launch requires a prompt");

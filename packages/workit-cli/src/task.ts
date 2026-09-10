@@ -75,6 +75,7 @@ type Parsed = {
   observedConfirmation: boolean;
   handoff: boolean;
   taskId?: string;
+  actor?: string;
 };
 
 type ParseResult =
@@ -179,6 +180,7 @@ async function parseTaskArgs(argv: string[], deps: TaskCliDeps): Promise<ParseRe
   let revision: string | undefined;
   let workspaceRevision: string | null | undefined;
   let view: string | undefined;
+  let actor: string | undefined;
   let json = jsonRequested;
   let confirmed = false;
   const seen = new Set<string>();
@@ -191,7 +193,11 @@ async function parseTaskArgs(argv: string[], deps: TaskCliDeps): Promise<ParseRe
       else confirmed = true;
       continue;
     }
-    if (!["--payload", "--task", "--revision", "--workspace-revision", "--view"].includes(token))
+    if (
+      !["--payload", "--task", "--revision", "--workspace-revision", "--view", "--actor"].includes(
+        token,
+      )
+    )
       return parseUsage(`unknown argument: ${token}`, json);
     const value = argv[++i];
     if (value === undefined || (value.trim() === "" && token !== "--workspace-revision"))
@@ -202,6 +208,7 @@ async function parseTaskArgs(argv: string[], deps: TaskCliDeps): Promise<ParseRe
     else if (token === "--task") taskId = value;
     else if (token === "--revision") revision = value;
     else if (token === "--workspace-revision") workspaceRevision = value === "null" ? null : value;
+    else if (token === "--actor") actor = value;
     else view = value;
   }
   const loaded = await payloadValue(payload, deps);
@@ -230,6 +237,7 @@ async function parseTaskArgs(argv: string[], deps: TaskCliDeps): Promise<ParseRe
       confirmed,
       observedConfirmation: false,
       handoff: false,
+      actor,
     },
   };
 }
@@ -387,7 +395,13 @@ export async function runTaskCommand(argv: string[], deps: TaskCliDeps = {}): Pr
   }
   const core = new WorkitCore(
     new TaskStore(root),
-    contextFor(root, deps, observedConfirmation ? "host_observed" : "agent_reported"),
+    // --actor overrides the provenance actor (e.g. binding a writer to a
+    // Codex session id the hook can match); otherwise the ambient actor.
+    contextFor(
+      root,
+      parsed.parsed.actor !== undefined ? { ...deps, actor: parsed.parsed.actor } : deps,
+      observedConfirmation ? "host_observed" : "agent_reported",
+    ),
   );
   let result: Result<unknown>;
   if (parsed.parsed.handoff) {

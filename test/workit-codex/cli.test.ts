@@ -378,3 +378,65 @@ test("bash intent is shared: quoted echo allows, unlisted verbs and escapes deny
     rmSync(outside, { force: true });
   }
 });
+
+test("human-bound CLI ownership allows the matching Codex session", () => {
+  const root = cwd();
+  const store = new TaskStore(root);
+  const bound = new WorkitCore(store, {
+    root,
+    caller: { host: "workit_cli", actor: "session-1" },
+    callerAttested: false,
+    capabilities: [],
+    constraints: [],
+    now: "2026-01-01T00:00:00Z",
+  });
+  const started = bound.task(taskStartRequest());
+  expect(started.ok).toBe(true);
+  if (!started.ok) throw new Error(started.error);
+  const id = (started.data as { id: string }).id;
+  const task = store.readTask(id);
+  const workspace = store.readWorkspace();
+  if (!task.ok || !workspace.ok || !workspace.data) throw new Error("state missing");
+  expect(
+    bound.writer({
+      schemaVersion: 1,
+      action: "acquire",
+      taskId: id,
+      expectedRevision: task.data.revision,
+      expectedWorkspaceRevision: workspace.data.revision,
+      workerId: null,
+    }).ok,
+  ).toBe(true);
+  // Owner session {workit_cli, session-1} matches the hook's session id.
+  expect(
+    handleCodexHook(
+      official(
+        {
+          hook_event_name: "PreToolUse",
+          turn_id: "turn-1",
+          tool_use_id: "tool-1",
+          tool_name: "Write",
+          tool_input: { file_path: "src/ok.ts" },
+        },
+        root,
+      ),
+    ).hookSpecificOutput,
+  ).toMatchObject({ permissionDecision: "allow" });
+  // A different session id stays denied.
+  expect(
+    handleCodexHook(
+      official(
+        {
+          hook_event_name: "PreToolUse",
+          turn_id: "turn-1",
+          tool_use_id: "tool-1",
+          tool_name: "Write",
+          tool_input: { file_path: "src/ok.ts" },
+          session_id: "session-2",
+        },
+        root,
+      ),
+    ).hookSpecificOutput,
+  ).toMatchObject({ permissionDecision: "deny" });
+  rmSync(root, { recursive: true, force: true });
+});
