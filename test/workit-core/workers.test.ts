@@ -854,3 +854,74 @@ test("stopped helpers cannot mutate metadata after a task scope revision", () =>
     }),
   ).toMatchObject({ ok: false, code: "permission_denied" });
 });
+
+test("cancel on a worker that already reported stops it instead of stranding it", () => {
+  const lead = active({ nativeWorker: observationVerifier() });
+  const assigned = assign(lead.core, lead.task, lead.workspace);
+  expect(assigned.ok).toBe(true);
+  if (!assigned.ok) throw new Error(assigned.error);
+  let state = current(lead);
+  expect(
+    observeRunning(
+      lead.core,
+      lead.task.id,
+      assigned.data.id,
+      state.task.revision,
+      state.workspace.revision,
+    ),
+  ).toMatchObject({ ok: true });
+  state = current(lead);
+  const helper = new WorkitCore(
+    lead.store,
+    context(lead.root, {
+      caller: caller({ actor: "worker-session" }),
+      workerId: assigned.data.id,
+    }),
+  );
+  expect(
+    helper.worker({
+      schemaVersion: 1,
+      action: "report",
+      taskId: lead.task.id,
+      expectedRevision: state.task.revision,
+      expectedWorkspaceRevision: state.workspace.revision,
+      workerId: assigned.data.id,
+      report: { outcome: "completed", summary: "file written", evidenceIds: [], findingIds: [] },
+    }),
+  ).toMatchObject({ ok: true });
+  // The child session end is never observed (missed host event). The lead
+  // cancel that a reasonable agent tries must settle the reported worker.
+  state = current(lead);
+  const cancelled = lead.core.worker({
+    schemaVersion: 1,
+    action: "cancel",
+    taskId: lead.task.id,
+    expectedRevision: state.task.revision,
+    expectedWorkspaceRevision: state.workspace.revision,
+    workerId: assigned.data.id,
+    reason: "session ended without an observed stop",
+  });
+  expect(cancelled).toMatchObject({ ok: true, data: { data: { state: "stopped" } } });
+  state = current(lead);
+  expect(
+    lead.core.worker({
+      schemaVersion: 1,
+      action: "cancel",
+      taskId: lead.task.id,
+      expectedRevision: state.task.revision,
+      expectedWorkspaceRevision: state.workspace.revision,
+      workerId: assigned.data.id,
+      reason: "already stopped",
+    }),
+  ).toMatchObject({ ok: false, code: "invalid_transition" });
+  expect(
+    lead.core.task({
+      schemaVersion: 1,
+      action: "pause",
+      taskId: lead.task.id,
+      expectedRevision: state.task.revision,
+      expectedWorkspaceRevision: state.workspace.revision,
+      reason: "lifecycle gates see no reconciliation",
+    }),
+  ).toMatchObject({ ok: true });
+});

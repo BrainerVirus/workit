@@ -405,6 +405,58 @@ test("session.deleted trusts its full session payload when lookup disappears", a
   }
 });
 
+test("bound deleted events accept sparse payloads for the bound worker", async () => {
+  const root = mkdtempSync(join(tmpdir(), "workit-task11-sparse-deleted-"));
+  try {
+    const active = start(root, "coordinator");
+    const assigned = active.core.worker({
+      schemaVersion: 1,
+      action: "assign",
+      taskId: active.task.id,
+      expectedRevision: active.task.revision,
+      expectedWorkspaceRevision: active.workspace.revision,
+      assignment: {
+        role: "reviewer",
+        objective: "review",
+        scope: scope({ paths: ["review"] }),
+        decisionIds: [],
+        requirementIds: [],
+        candidateId: null,
+        stoppingCondition: "report",
+      },
+    });
+    expect(assigned.ok).toBe(true);
+    if (!assigned.ok) throw new Error(assigned.error);
+    const hooks = await plugin(input(root) as never);
+    await hooks.event?.({
+      event: {
+        type: "session.created",
+        properties: { info: { id: "child", directory: root, parentID: "coordinator" } },
+      },
+    } as never);
+    const running = active.store.readTask(active.task.id);
+    expect(running.ok && running.data.workers[0].data.state).toBe("running");
+    // The launch binding is live in this process; a sparse deleted payload
+    // (id only, as emitted when the session row is already gone) still ends it.
+    await hooks.event?.({
+      event: { type: "session.deleted", properties: { info: { id: "child" } } },
+    } as never);
+    const stopped = active.store.readTask(active.task.id);
+    expect(stopped.ok && stopped.data.workers[0].data.state).toBe("stopped");
+    // A contradictory payload still drops instead of moving lifecycle.
+    await hooks.event?.({
+      event: {
+        type: "session.deleted",
+        properties: { info: { id: "child", parentID: "other-coordinator" } },
+      },
+    } as never);
+    const settled = active.store.readTask(active.task.id);
+    expect(settled.ok && settled.data.workers[0].data.state).toBe("stopped");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("bound lifecycle events reject ambiguous child worker handles", async () => {
   const root = mkdtempSync(join(tmpdir(), "workit-task11-bound-ambiguity-"));
   try {

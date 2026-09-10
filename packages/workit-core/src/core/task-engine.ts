@@ -1572,6 +1572,11 @@ export class WorkitCore {
       return failure("recovery_required", "worker state requires recovery");
     if (entry.data.state === "stopped")
       return failure("invalid_transition", "stopped worker cannot be cancelled");
+    // A reported worker already made its terminal session-authenticated
+    // statement, so cancel settles it instead of stranding it in cancelling
+    // when the session end was never observed. Unreported workers still go
+    // through cancelling and need an observed stop.
+    const settles = entry.data.report !== null;
     const changed = this.store.mutateTaskAndWorkspace({
       taskId: task.data.id,
       expectedTaskRevision: input.expectedRevision,
@@ -1586,7 +1591,10 @@ export class WorkitCore {
               ? {
                   ...candidate,
                   recordedAt: mutation.now,
-                  data: { ...candidate.data, state: "cancelling" as const },
+                  data: {
+                    ...candidate.data,
+                    state: settles ? ("stopped" as const) : ("cancelling" as const),
+                  },
                 }
               : candidate,
           ),

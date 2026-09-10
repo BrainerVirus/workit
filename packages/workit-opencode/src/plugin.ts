@@ -56,6 +56,33 @@ const trustedSession = (
   sameWorkspace(directory, (session as SessionInfo).directory) &&
   sessionParent(session) !== null;
 
+/** Dropped end-events strand workers, so every silent return here is logged. */
+const droppedLifecycle = (sessionID: string, reason: string): void => {
+  try {
+    logger.warn(EVENT.hooks, { boundary: "worker_lifecycle", sessionID, reason });
+  } catch {
+    // Diagnostics must never break event delivery.
+  }
+};
+
+/**
+ * A session.deleted payload is the final host word on a session that is gone
+ * by definition: the id must match, while directory and parentID are enforced
+ * only when present. The persisted worker-session binding carries the rest.
+ */
+const deletedSessionEnd = (
+  directory: string,
+  sessionID: string,
+  parentID: string,
+  info: unknown,
+): info is SessionInfo =>
+  typeof info === "object" &&
+  info !== null &&
+  (info as SessionInfo).id === sessionID &&
+  (typeof (info as SessionInfo).directory !== "string" ||
+    sameWorkspace(directory, (info as SessionInfo).directory)) &&
+  ((info as SessionInfo).parentID == null || (info as SessionInfo).parentID === parentID);
+
 const mutationSurface = new Set(["write", "edit", "apply_patch", "patch"]);
 const shellMutation =
   /(?:^|[;&|]\s*|\s)(?:rm|mv|cp|mkdir|rmdir|touch|install|tee|chmod|chown|git\s+add)\b|>>?|<<?/;
@@ -382,7 +409,12 @@ const plugin: Plugin = async ({ client, directory }) => {
         : [],
     );
     const matches = persisted.filter(({ entry }) => entry.data.session?.kind === "host");
-    if (binding && !initial && matches.length !== 1) return;
+    // A bound child handle shared by several workers stays unresolved: moving
+    // one of them would forge the other's lifecycle.
+    if (binding && !initial && matches.length !== 1) {
+      droppedLifecycle(sessionID, "bound child worker handle is ambiguous");
+      return;
+    }
     const selected = binding
       ? persisted.find(
           ({ task, entry }) => task.id === binding.taskId && entry.id === binding.workerId,
@@ -390,20 +422,49 @@ const plugin: Plugin = async ({ client, directory }) => {
       : matches.length === 1
         ? matches[0]
         : undefined;
-    if (!selected) return;
-    if (selected.entry.provenance.session?.kind !== "host") return;
+    if (!selected) {
+      droppedLifecycle(
+        sessionID,
+        binding ? "bound worker is missing from persisted state" : "worker session is ambiguous",
+      );
+      return;
+    }
+    if (!initial && selected.entry.data.session?.kind !== "host") {
+      droppedLifecycle(sessionID, "selected worker has no bound host session");
+      return;
+    }
+    if (selected.entry.provenance.session?.kind !== "host") {
+      droppedLifecycle(sessionID, "selected worker provenance is not host-observed");
+      return;
+    }
     if (!binding) {
       // ponytail: running lifecycle overwrites worker provenance with the child
       // session; task intent is the persisted coordinator parent after restart.
       const coordinator = selected.task.intent.provenance.session;
-      if (coordinator?.kind !== "host" || coordinator.host !== "opencode") return;
+      if (coordinator?.kind !== "host" || coordinator.host !== "opencode") {
+        droppedLifecycle(sessionID, "coordinator session is not validated");
+        return;
+      }
       parentID = coordinator.handle;
     }
     if (!initial) {
       // OpenCode deletes the session before the follow-up GET can succeed;
       // only session.deleted may use its full, independently validated payload.
+      // With a live launch binding, a sparse deleted payload (id only) still
+      // ends the bound worker; without one, the full payload stays required.
       const observed = eventInfo ?? (await sessionData(client, sessionID));
-      if (!trustedSession(directory, sessionID, observed) || observed.parentID !== parentID) return;
+      if (binding && eventInfo) {
+        if (!deletedSessionEnd(directory, sessionID, parentID, observed)) {
+          droppedLifecycle(sessionID, "deleted session payload contradicts the binding");
+          return;
+        }
+      } else if (
+        !trustedSession(directory, sessionID, observed) ||
+        observed.parentID !== parentID
+      ) {
+        droppedLifecycle(sessionID, "live session observation is not trusted");
+        return;
+      }
     }
     directChildren.set(sessionID, parentID);
     const core = new WorkitCore(store, {
@@ -423,13 +484,15 @@ const plugin: Plugin = async ({ client, directory }) => {
       session: { kind: "host", host: "opencode", handle: sessionID },
       observation: { event: state, sessionID },
     });
-    if (result.ok) {
-      lifecycleBindings.set(sessionID, {
-        parentID,
-        taskId: selected.task.id,
-        workerId: selected.entry.id,
-      });
+    if (!result.ok) {
+      droppedLifecycle(sessionID, `worker observation was rejected: ${result.code}`);
+      return;
     }
+    lifecycleBindings.set(sessionID, {
+      parentID,
+      taskId: selected.task.id,
+      workerId: selected.entry.id,
+    });
   };
   const bindCreatedSession = async (info: SessionInfo) => {
     if (
