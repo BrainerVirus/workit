@@ -14,7 +14,7 @@ import {
   type WorkspaceRecord,
 } from "../../packages/workit-core/src/core";
 import * as coreApi from "../../packages/workit-core/src/core";
-import { caller, scope, taskStartRequest } from "./task-fixtures";
+import { assessment, caller, scope, taskStartRequest } from "./task-fixtures";
 
 const now = "2026-01-01T00:00:00Z";
 
@@ -853,6 +853,98 @@ test("stopped helpers cannot mutate metadata after a task scope revision", () =>
       report: { outcome: "completed", summary: "stale", evidenceIds: [], findingIds: [] },
     }),
   ).toMatchObject({ ok: false, code: "permission_denied" });
+});
+
+test("a completed worker report satisfies its delegation requirement", () => {
+  const lead = active({ nativeWorker: observationVerifier() });
+  const assessed = lead.core.policy({
+    schemaVersion: 1,
+    action: "assess",
+    taskId: lead.task.id,
+    expectedRevision: lead.task.revision,
+    assessment: assessment({
+      signals: {
+        approachUnknown: { value: false, basis: "inferred", reason: "known", refs: [] },
+        productChoiceOpen: { value: false, basis: "inferred", reason: "known", refs: [] },
+        behaviorChange: { value: false, basis: "inferred", reason: "mechanical", refs: [] },
+        mechanicalLowRisk: { value: true, basis: "inferred", reason: "fixture", refs: [] },
+        durableAgreementNeeded: { value: false, basis: "inferred", reason: "none", refs: [] },
+        coordinationPlanNeeded: { value: false, basis: "inferred", reason: "none", refs: [] },
+        helperUseful: { value: true, basis: "inferred", reason: "probe", refs: [] },
+        testFirstPractical: { value: false, basis: "inferred", reason: "none", refs: [] },
+      },
+    }),
+  });
+  expect(assessed.ok).toBe(true);
+  if (!assessed.ok) throw new Error(assessed.error);
+  const delegationId = (
+    assessed.data as { requirements: Array<{ id: string; ruleId: string }> }
+  ).requirements.find((requirement) => requirement.ruleId === "helper-usefulness")?.id;
+  expect(delegationId).toBeDefined();
+  const statusOf = (): string | undefined => {
+    const view = lead.core.task({
+      schemaVersion: 1,
+      action: "inspect",
+      taskId: lead.task.id,
+      view: "full",
+    });
+    if (!view.ok) throw new Error(view.error);
+    return (
+      view.data as {
+        requirements: Array<{ requirementId: string; status: string }>;
+      }
+    ).requirements.find((entry) => entry.requirementId === delegationId)?.status;
+  };
+  expect(statusOf()).toBe("unsatisfied");
+  const fresh = current(lead);
+  const assigned = lead.core.worker({
+    schemaVersion: 1,
+    action: "assign",
+    taskId: lead.task.id,
+    expectedRevision: fresh.task.revision,
+    expectedWorkspaceRevision: fresh.workspace.revision,
+    assignment: {
+      role: "implementer",
+      objective: "inspect the assigned area",
+      scope: scope({ paths: ["src"] }),
+      decisionIds: [],
+      requirementIds: [],
+      candidateId: null,
+      stoppingCondition: "report the result",
+    },
+  });
+  expect(assigned.ok).toBe(true);
+  if (!assigned.ok) throw new Error(assigned.error);
+  let state = current(lead);
+  expect(
+    observeRunning(
+      lead.core,
+      lead.task.id,
+      assigned.data.id,
+      state.task.revision,
+      state.workspace.revision,
+    ),
+  ).toMatchObject({ ok: true });
+  state = current(lead);
+  const helper = new WorkitCore(
+    lead.store,
+    context(lead.root, {
+      caller: caller({ actor: "worker-session" }),
+      workerId: assigned.data.id,
+    }),
+  );
+  expect(
+    helper.worker({
+      schemaVersion: 1,
+      action: "report",
+      taskId: lead.task.id,
+      expectedRevision: state.task.revision,
+      expectedWorkspaceRevision: state.workspace.revision,
+      workerId: assigned.data.id,
+      report: { outcome: "completed", summary: "probe done", evidenceIds: [], findingIds: [] },
+    }),
+  ).toMatchObject({ ok: true });
+  expect(statusOf()).toBe("satisfied");
 });
 
 test("a repeat cancel confirms an ended worker when no observation arrives", () => {

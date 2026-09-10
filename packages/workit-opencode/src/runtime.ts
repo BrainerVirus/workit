@@ -64,6 +64,8 @@ export const workerContextFor = (
       if (!worker) continue;
       return JSON.stringify({
         taskId: task.id,
+        workerId: worker.id,
+        session: { kind: "host", host: "opencode", handle: sessionID },
         role: worker.data.assignment.role,
         scope: worker.data.assignment.scope,
         readOnly: worker.data.assignment.role !== "implementer",

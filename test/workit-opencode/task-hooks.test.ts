@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { TaskStore, WorkitCore, success } from "../../packages/workit-core/src/core";
 import { scope, taskStartRequest } from "../workit-core/task-fixtures";
 import plugin from "../../packages/workit-opencode/src/plugin";
+import { workerContextFor } from "../../packages/workit-opencode/src/runtime";
 import { createWorkitTools } from "../../packages/workit-opencode/src/tools/workit";
 
 const user = (text: string) => ({
@@ -933,6 +934,46 @@ test("OpenCode native write shapes normalize filePath and apply_patch targets", 
         { args: { patchText: "*** Begin Patch\nplain content\n*** End Patch" } },
       ),
     ).rejects.toThrow("invalid_input");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("worker context names the worker identity for self-references", async () => {
+  const root = mkdtempSync(join(tmpdir(), "workit-opencode-worker-context-"));
+  try {
+    const active = activeTask(root, "coord");
+    const first = workerAssignment(
+      active.core,
+      active.task.id,
+      active.task.revision,
+      active.workspace.revision,
+      "reviewer",
+    );
+    expect(first.ok).toBe(true);
+    if (!first.ok) throw new Error(first.error);
+    let task = active.store.readTask(active.task.id);
+    let workspace = active.store.readWorkspace();
+    if (!task.ok || !workspace.ok || !workspace.data) throw new Error("assigned state missing");
+    expect(
+      observeWorker(
+        root,
+        "coord",
+        first.data.id,
+        active.task.id,
+        "child",
+        task.data.revision,
+        workspace.data.revision,
+      ).ok,
+    ).toBe(true);
+    const directChildren = new Map([["child", "coord"]]);
+    const raw = workerContextFor(root, "child", "coord", directChildren);
+    expect(raw).not.toBeNull();
+    const context = JSON.parse(raw!);
+    expect(context.workerId).toBe(first.data.id);
+    expect(context.session).toEqual({ kind: "host", host: "opencode", handle: "child" });
+    expect(context.taskId).toBe(active.task.id);
+    expect(workerContextFor(root, "unknown", "coord", directChildren)).toBeNull();
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

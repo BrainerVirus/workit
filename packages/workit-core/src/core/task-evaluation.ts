@@ -480,6 +480,27 @@ export function evaluateRequirements(
         decisionIds: [],
         reason: "fresh applicable evidence passed",
       };
+    if (requirement.dimension === "delegation") {
+      // A bounded helper used for the requirement whose completed report is
+      // recorded reconciles the delegation: the lead closes on that result.
+      // Empty scope paths mean the whole checkout on both sides.
+      const dot = (scope: Scope): Scope =>
+        scope.paths.length > 0 ? scope : { ...scope, paths: ["."] };
+      const reconciled = task.workers.some(
+        (worker) =>
+          worker.data.report?.outcome === "completed" &&
+          (worker.data.assignment.requirementIds.includes(requirement.id) ||
+            scopeCovers(dot(requirement.scope), dot(worker.data.assignment.scope))),
+      );
+      if (reconciled)
+        return {
+          requirementId: requirement.id,
+          status: "satisfied" as const,
+          evidenceIds: [],
+          decisionIds: [],
+          reason: "bounded helper completed and its result is recorded",
+        };
+    }
     const decisions =
       requirement.dimension === "decisions"
         ? applicableRequirementDecision(task, workspace, requirement, checkoutRoot)
