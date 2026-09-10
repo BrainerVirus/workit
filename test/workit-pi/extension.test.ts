@@ -109,7 +109,7 @@ const assertCurrentNode = () => {
   expect(result.stdout.trim()).toBe(`v${SUPPORT_MATRIX.node.current}`);
 };
 
-test("clean Pi package declares stock discovery and exactly eight core tools", async () => {
+test("clean Pi package declares stock discovery and the eight families plus external action", async () => {
   const manifest = JSON.parse(
     readFileSync(path.join(import.meta.dir, "../../packages/workit-pi/package.json"), "utf8"),
   );

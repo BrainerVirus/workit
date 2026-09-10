@@ -59,7 +59,7 @@ flowchart TD
 | Detection rules | `develop` present → gitflow; only `main` → github-flow; only `master` → trunk-based |
 | Resolution order | workspace `branchPolicy` > global `config.json` `branchPolicy` > preset defaults |
 | `resolveBranchPolicy(workspace_root)` | The single shared resolver every policy consumer calls |
-| Init action | `workit_init_apply action="branch_policy"` + wizard screen with the same proposal/write path |
+| Init action | wizard screen with the proposal/write path (host `workit_init_apply` surface pending on OpenCode/Cursor) |
 
 | Detection input | Proposed preset | Proposed developBranch | Proposed integration | Proposed protected |
 | --- | --- | --- | --- | --- |
