@@ -529,7 +529,9 @@ The workspace-sensitive set is task start/revise/pause/resume/close, worker
 assign/report/cancel, writer acquire/release, and state import/recover. A valid
 task revision is also checked where an existing task participates. Ownership is
 rechecked for every controlled product-write action, not only explicit writer
-calls. All helpers, including implementers, are prohibited from recording or
+calls. A lead-held writer transfers across lead sessions of the same checkout
+on acquire (session succession after restarts); worker-held writers never
+transfer this way and keep full session strictness. All helpers, including implementers, are prohibited from recording or
 revoking user decisions, changing task scope/lifecycle, accepting exceptions,
 assigning further helpers, or closing the lead's task. Helpers can inspect their
 assigned context, report evidence/findings, and submit their own worker report;

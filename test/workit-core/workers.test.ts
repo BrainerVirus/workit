@@ -907,6 +907,94 @@ test("a repeat cancel confirms an ended worker when no observation arrives", () 
   ).toMatchObject({ ok: true });
 });
 
+test("a new lead session succeeds a dead lead-held writer instead of bricking", () => {
+  const first = active();
+  const acquired = first.core.writer({
+    schemaVersion: 1,
+    action: "acquire",
+    taskId: first.task.id,
+    workerId: null,
+  });
+  expect(acquired.ok).toBe(true);
+  if (!acquired.ok) throw new Error(acquired.error);
+  // The owning session ends (restart). The next lead session on the same
+  // checkout takes over checkout ownership atomically; per-write checks still
+  // bind every write to the owning task.
+  const second = new WorkitCore(
+    first.store,
+    context(first.root, { caller: caller({ actor: "successor-session" }) }),
+  );
+  const takeover = second.writer({
+    schemaVersion: 1,
+    action: "acquire",
+    taskId: first.task.id,
+    workerId: null,
+  });
+  expect(takeover.ok).toBe(true);
+  if (!takeover.ok) throw new Error(takeover.error);
+  const workspace = (
+    takeover.data as unknown as { writer: { owner: { handle?: string; taskId: string } } | null }
+  ).writer;
+  void workspace;
+  const reread = first.store.readWorkspace();
+  if (!reread.ok || !reread.data?.writer) throw new Error("writer missing after takeover");
+  expect(reread.data.writer.owner.session).toMatchObject({
+    kind: "host",
+    handle: "successor-session",
+  });
+  expect(reread.data.writer.owner.taskId).toBe(first.task.id);
+});
+
+test("a lead session cannot take over a worker-held writer", () => {
+  const lead = active({ nativeWorker: observationVerifier() });
+  const assigned = assign(lead.core, lead.task, lead.workspace);
+  expect(assigned.ok).toBe(true);
+  if (!assigned.ok) throw new Error(assigned.error);
+  let state = current(lead);
+  expect(
+    observeRunning(
+      lead.core,
+      lead.task.id,
+      assigned.data.id,
+      state.task.revision,
+      state.workspace.revision,
+    ),
+  ).toMatchObject({ ok: true });
+  state = current(lead);
+  const helper = new WorkitCore(
+    lead.store,
+    context(lead.root, {
+      caller: caller({ actor: "worker-session" }),
+      workerId: assigned.data.id,
+    }),
+  );
+  expect(
+    helper.writer({
+      schemaVersion: 1,
+      action: "acquire",
+      taskId: lead.task.id,
+      expectedRevision: state.task.revision,
+      expectedWorkspaceRevision: state.workspace.revision,
+      workerId: assigned.data.id,
+    }),
+  ).toMatchObject({ ok: true });
+  const other = new WorkitCore(
+    lead.store,
+    context(lead.root, { caller: caller({ actor: "successor-session" }) }),
+  );
+  state = current(lead);
+  expect(
+    other.writer({
+      schemaVersion: 1,
+      action: "acquire",
+      taskId: lead.task.id,
+      expectedRevision: state.task.revision,
+      expectedWorkspaceRevision: state.workspace.revision,
+      workerId: null,
+    }),
+  ).toMatchObject({ ok: false, code: "writer_conflict" });
+});
+
 test("cancel on a worker that already reported stops it instead of stranding it", () => {
   const lead = active({ nativeWorker: observationVerifier() });
   const assigned = assign(lead.core, lead.task, lead.workspace);

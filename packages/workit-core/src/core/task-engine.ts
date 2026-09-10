@@ -1862,7 +1862,14 @@ export class WorkitCore {
               owner: currentOwner,
             });
         }
-        return failure("writer_conflict", "checkout already has a writer", { owner: currentOwner });
+        // A lead-held writer transfers across lead sessions of the same
+        // checkout: restarts end the owning session, and per-write ownership
+        // checks keep concurrent sessions from both believing they hold it.
+        // Worker-held writers never transfer this way.
+        if (currentOwner.workerId !== null || helperId !== null)
+          return failure("writer_conflict", "checkout already has a writer", {
+            owner: currentOwner,
+          });
       }
       if (helperId !== null) {
         const helper = this.helperEntry(task.data);
