@@ -12,6 +12,7 @@ import {
   type NativeWorkerObservation,
   type NativeWorkerVerifier,
 } from "@brainervirus/workit-core/src/core";
+import { shellWriteIntent } from "@brainervirus/workit-core/src/core/shell-intent.ts";
 
 type HookEvent =
   | "sessionStart"
@@ -38,6 +39,23 @@ export type CursorHookInput = {
 };
 
 export type HookParseResult = { ok: true; data: CursorHookInput } | { ok: false; error: string };
+
+/** Every tool name the hook treats as a write. The committed preToolUse
+ *  matcher must cover all of these (pinned by task-hooks tests) or matching
+ *  tools bypass enforcement silently. */
+export const CURSOR_WRITE_TOOL_NAMES = [
+  "write",
+  "edit",
+  "delete",
+  "remove",
+  "apply_patch",
+  "patch",
+  "rename",
+  "mkdir",
+  "mv",
+  "cp",
+  "touch",
+] as const;
 
 type HookAvailability = Partial<
   Record<
@@ -206,9 +224,20 @@ const activeTask = (store: TaskStore) => {
 
 const normalizePath = (root: string, value: string, cwd = root): string | null => {
   const candidate = path.isAbsolute(value) ? value : path.resolve(cwd, value);
-  const relative = path.relative(root, candidate);
+  // Resolve symlinks when the operand exists: a link inside the root that
+  // points outside must not pass containment on its lexical form.
+  let resolved = candidate;
+  try {
+    resolved = realpathSync(candidate);
+  } catch {
+    /* missing path: lexical check only */
+  }
+  const relative = path.relative(root, resolved);
   if (!relative) return ".";
-  if (relative.startsWith("..") || path.isAbsolute(relative)) return null;
+  // win32 filesystems compare case-insensitively; the check must too (the
+  // returned path keeps its on-disk form — only the comparison folds case).
+  const escaped = process.platform === "win32" ? relative.toLowerCase() : relative;
+  if (escaped.startsWith("..") || path.isAbsolute(relative)) return null;
   return relative;
 };
 
@@ -226,40 +255,18 @@ const resolveCwd = (root: string, value: string): string | null => {
 };
 
 const shellWritePaths = (root: string, command: string, cwd = root) => {
-  const writeIntent =
-    /(?:\d*>>?|&>)/.test(command) ||
-    /(?:^|[\s;&|])(?:rm|mv|cp|mkdir|touch|install)(?:\s|$)/.test(command);
-  if (!writeIntent) return { paths: [], writeIntent: false, invalid: false };
-  // Quoted, chained, or multiline commands are deliberately not interpreted:
-  // the documented hook cannot prove which file an arbitrary shell expands.
-  if (/['"\n;|`$*?()\\]/.test(command) || /&(?!>)/.test(command))
-    return { paths: [], writeIntent: true, invalid: true };
-  const tokens = command.trim().split(/\s+/);
-  const values: string[] = [];
-  let invalid = false;
-  let commandSeen = false;
-  for (let index = 0; index < tokens.length; index += 1) {
-    const token = tokens[index];
-    const attached = token.match(/^(?:\d*>>?|&>)(.*)$/);
-    if (attached) {
-      const value = attached[1] || tokens[++index];
-      if (!value || value.startsWith("-") || value.startsWith("&")) invalid = true;
-      else values.push(value);
-      continue;
-    }
-    if (/^(?:rm|mv|cp|mkdir|touch|install)$/.test(token)) {
-      commandSeen = true;
-      continue;
-    }
-    if (commandSeen && !token.startsWith("-")) values.push(token);
-  }
-  const paths = values
+  // One shared parser for both hooks (core/shell-intent): redirects, quotes,
+  // chains, globs and unparseable shapes deny instead of guessing.
+  const intent = shellWriteIntent(command);
+  if (!intent.intent) return { paths: [], writeIntent: false, invalid: false };
+  if (intent.invalid) return { paths: [], writeIntent: true, invalid: true };
+  const paths = intent.values
     .map((value) => normalizePath(root, value, cwd))
     .filter((value): value is string => value !== null);
   return {
     paths,
     writeIntent: true,
-    invalid: invalid || values.length === 0 || paths.length !== values.length,
+    invalid: paths.length !== intent.values.length,
   };
 };
 
@@ -275,13 +282,16 @@ const writeTargets = (root: string, input: CursorHookInput) => {
         .filter((value): value is string => value !== null);
       return { paths, writeIntent: true, invalid: paths.length !== values.length };
     }
+    // A structured write tool with no extractable target cannot be scoped —
+    // deny instead of letting it fall through to the shell parser as allow.
+    if (isWriteTool(input.tool_name ?? "")) return { paths: [], writeIntent: true, invalid: true };
     return shellWritePaths(root, nonEmpty(args.command) ? args.command : "", cwd);
   }
   return shellWritePaths(root, input.command ?? "", cwd);
 };
 
 const isWriteTool = (name: string): boolean =>
-  /^(write|edit|delete|remove|apply_patch|patch|rename|mkdir|mv|cp|touch)$/i.test(name);
+  CURSOR_WRITE_TOOL_NAMES.some((tool) => tool.toLowerCase() === name.toLowerCase());
 
 const deny = (reason: string) => ({
   permission: "deny" as const,

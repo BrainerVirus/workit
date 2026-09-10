@@ -9,7 +9,7 @@
     "preToolUse": [
       {
         "command": "npx -y --prefer-online --package=@brainervirus/workit-cursor@latest workit-cursor-hook",
-        "matcher": "Write|Edit|Delete|Shell",
+        "matcher": "Write|Edit|Delete|Shell|Remove|ApplyPatch|Apply_Patch|Patch|Rename|Mkdir|Mv|Cp|Touch",
         "failClosed": true
       }
     ],

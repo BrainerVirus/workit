@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, symlinkSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { TaskStore, WorkitCore, type OperationContext } from "@/packages/workit-core/src/core";
@@ -8,6 +8,7 @@ import {
   detectCodexSurface,
   handleCodexHook,
   parseCodexHookInput,
+  warnOnSurfaceFallback,
 } from "@/packages/workit-codex/hooks/workit-hook";
 import { taskStartRequest } from "@/test/workit-core/task-fixtures";
 
@@ -299,4 +300,81 @@ test("SubagentStop is observational and denial exits zero with JSON", () => {
   );
   expect(child.status).toBe(0);
   expect(JSON.parse(child.stdout).hookSpecificOutput.permissionDecision).toBe("deny");
+});
+
+test("unknown surface override warns but keeps the CLI fallback", () => {
+  const prev = process.stderr.write;
+  const chunks: string[] = [];
+  process.stderr.write = ((chunk: unknown) => {
+    chunks.push(String(chunk));
+    return true;
+  }) as typeof process.stderr.write;
+  try {
+    warnOnSurfaceFallback({ CODEX_INTERNAL_ORIGINATOR_OVERRIDE: "bogus" });
+    expect(chunks.join("")).toContain("codex_cli");
+    chunks.length = 0;
+    warnOnSurfaceFallback({ CODEX_INTERNAL_ORIGINATOR_OVERRIDE: "Codex Desktop" });
+    warnOnSurfaceFallback({});
+    expect(chunks.join("")).toBe("");
+  } finally {
+    process.stderr.write = prev;
+  }
+});
+
+const bashRoot = () => {
+  const root = cwd();
+  const store = new TaskStore(root);
+  const context: OperationContext = {
+    root,
+    caller: { host: detectCodexSurface(process.env), actor: "session-1" },
+    callerAttested: false,
+    capabilities: [],
+    constraints: [],
+    now: "2026-01-01T00:00:00Z",
+  };
+  const started = new WorkitCore(store, context).task(taskStartRequest());
+  if (!started.ok) throw new Error(started.error);
+  return root;
+};
+
+const bash = (root: string, command: string) =>
+  handleCodexHook(
+    official(
+      {
+        hook_event_name: "PreToolUse",
+        turn_id: "turn-1",
+        tool_use_id: "tool-1",
+        tool_name: "bash",
+        tool_input: { command },
+      },
+      root,
+    ),
+  );
+
+test("bash intent is shared: quoted echo allows, unlisted verbs and escapes deny", () => {
+  const root = bashRoot();
+  const outside = path.join(tmpdir(), `wk-codex-outside-${process.pid}.txt`);
+  try {
+    // Active task, no writer: intent+paths denies, no-intent allows.
+    expect(bash(root, 'echo "rm -rf /"').hookSpecificOutput).toMatchObject({
+      permissionDecision: "allow",
+    });
+    expect(bash(root, "echo hi").hookSpecificOutput).toMatchObject({
+      permissionDecision: "allow",
+    });
+    expect(bash(root, "pip install requests").hookSpecificOutput).toMatchObject({
+      permissionDecision: "deny",
+    });
+    expect(bash(root, `tee ${outside}`).hookSpecificOutput).toMatchObject({
+      permissionDecision: "deny",
+    });
+    writeFileSync(outside, "outside\n");
+    symlinkSync(outside, path.join(root, "link"));
+    expect(bash(root, "tee link").hookSpecificOutput).toMatchObject({
+      permissionDecision: "deny",
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(outside, { force: true });
+  }
 });

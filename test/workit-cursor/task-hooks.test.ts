@@ -1,11 +1,13 @@
 import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
-import { mkdirSync, mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { TaskStore, WorkitCore } from "@/packages/workit-core/src/core";
+import { CURSOR_PRETOOLUSE_MATCHER } from "@/packages/workit-core/src/core/registration";
 import { caller, taskStartRequest } from "@/test/workit-core/task-fixtures";
 import {
+  CURSOR_WRITE_TOOL_NAMES,
   cursorCapabilities,
   handleCursorHook,
   parseCursorHookInput,
@@ -272,4 +274,85 @@ test("session start remains advisory and restores compact context once", () => {
   });
   expect(result).toHaveProperty("additional_context");
   expect(result).not.toHaveProperty("permission");
+});
+
+test("committed preToolUse matcher covers every write-tool guard name", () => {
+  const re = new RegExp(`^(?:${CURSOR_PRETOOLUSE_MATCHER})$`, "i");
+  expect(CURSOR_WRITE_TOOL_NAMES.length).toBeGreaterThan(8);
+  for (const name of CURSOR_WRITE_TOOL_NAMES) expect(name, name).toMatch(re);
+});
+
+const shellRoot = () => {
+  const root = mkdtempSync(path.join(tmpdir(), "workit-cursor-shell-"));
+  mkdirSync(path.join(root, "sub"), { recursive: true });
+  return root;
+};
+
+const shell = (root: string, command: string) =>
+  handleCursorHook({
+    hook_event_name: "beforeShellExecution",
+    conversation_id: "conv-1",
+    workspace_roots: [root],
+    cwd: root,
+    command,
+  });
+
+test("shell intent captures unlisted verbs and skips env assignments", () => {
+  const root = shellRoot();
+  try {
+    // No active task: intent+paths allows, invalid denies — so denial proves
+    // the parser saw write intent plus a containment failure.
+    expect(shell(root, 'echo "rm -rf /"')).toEqual({ permission: "allow" });
+    expect(shell(root, "echo hi")).toEqual({ permission: "allow" });
+    expect(shell(root, 'echo "hi" > out.txt')).toMatchObject({ permission: "deny" });
+    expect(shell(root, "mkdir a && mkdir b")).toMatchObject({ permission: "deny" });
+    expect(
+      shell(root, `tee ${path.join(tmpdir(), `wk-outside-${process.pid}.txt`)}`),
+    ).toMatchObject({ permission: "deny" });
+    expect(
+      shell(root, `FOO=1 rm ${path.join(tmpdir(), `wk-outside-${process.pid}.txt`)}`),
+    ).toMatchObject({ permission: "deny" });
+    expect(shell(root, "pip install requests")).toMatchObject({ permission: "allow" });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("shell containment resolves symlinks before comparing", () => {
+  const root = shellRoot();
+  const outside = path.join(tmpdir(), `wk-escape-${process.pid}.txt`);
+  try {
+    writeFileSync(outside, "outside\n");
+    symlinkSync(outside, path.join(root, "link"));
+    // Intent on `link`, but it resolves outside the root: deny.
+    expect(shell(root, "tee link")).toMatchObject({ permission: "deny" });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(outside, { force: true });
+  }
+});
+
+test("a structured write tool with no extractable target denies inside a task", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "workit-cursor-hook-"));
+  const core = new WorkitCore(new TaskStore(root), {
+    root,
+    caller: caller({ host: "cursor", actor: "parent" }),
+    capabilities: [],
+    constraints: [],
+    now: "2026-01-01T00:00:00Z",
+  });
+  expect(core.task(taskStartRequest()).ok).toBe(true);
+  try {
+    expect(
+      handleCursorHook({
+        hook_event_name: "preToolUse",
+        conversation_id: "parent",
+        workspace_roots: [root],
+        tool_name: "Write",
+        tool_input: {},
+      }),
+    ).toMatchObject({ permission: "deny" });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

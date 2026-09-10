@@ -15,6 +15,7 @@ import { getDiagnosticLogger, isConfigObject } from "./config";
 import { packageRoot } from "./package-root";
 import {
   CURSOR_RUNTIME_PACKAGE,
+  cursorHookDrift,
   cursorHooksEntry,
   cursorMcpServerEntry,
   isWorkitPlugin,
@@ -778,6 +779,18 @@ const checkStaleInstall = (res: Resolved): DoctorCheck & { registryProbed?: bool
       status: "fail",
       detail: `stale_install: sessionStart hook runs a legacy selector (canonical: ${canonicalHook})`,
       fix: "Re-run install-cursor-plugin.sh — it rewrites the sessionStart hook to the canonical @latest selector",
+    };
+  }
+  // Enforcement-event drift: a present-but-divergent preToolUse matcher (or
+  // beforeShellExecution command) silently narrows what the hook intercepts.
+  // Absent events are filled by the installer merge, so only divergence fails.
+  const hookDrift = existsSync(hooksFile) ? cursorHookDrift(readJson(hooksFile)) : [];
+  if (hookDrift.length > 0) {
+    return {
+      id: "stale_install",
+      status: "fail",
+      detail: `stale_install: cursor hook drift on ${hookDrift.join(", ")} (differs from the canonical hook entries)`,
+      fix: "Re-run install-cursor-plugin.sh — it rewrites the workit hook entries to canonical",
     };
   }
   const installed = installedPluginVersion(res);

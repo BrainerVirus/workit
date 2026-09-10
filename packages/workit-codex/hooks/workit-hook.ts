@@ -8,6 +8,7 @@ import {
   type Capability,
   type OperationContext,
 } from "@brainervirus/workit-core/src/core";
+import { shellWriteIntent } from "@brainervirus/workit-core/src/core/shell-intent.ts";
 
 export type CodexHost = "codex_cli" | "codex_desktop";
 export type CodexHookEvent = "SessionStart" | "PreToolUse" | "SubagentStart" | "SubagentStop";
@@ -45,6 +46,17 @@ export function detectCodexSurface(env: NodeJS.ProcessEnv): CodexHost {
     Boolean(env.CODEX_ELECTRON_RESOURCES_PATH)
     ? "codex_desktop"
     : "codex_cli";
+}
+
+// An override value that is neither Desktop-shaped nor absent is almost
+// certainly a spoofed or stale environment: warn loudly on stderr and fall
+// back to CLI provenance instead of misclassifying silently.
+export function warnOnSurfaceFallback(env: NodeJS.ProcessEnv = process.env): void {
+  const override = env.CODEX_INTERNAL_ORIGINATOR_OVERRIDE;
+  if (override !== undefined && override !== "Codex Desktop" && !env.CODEX_ELECTRON_RESOURCES_PATH)
+    process.stderr.write(
+      `[workit] unrecognized CODEX_INTERNAL_ORIGINATOR_OVERRIDE=${JSON.stringify(override)} — treating surface as codex_cli\n`,
+    );
 }
 
 export const codexCapabilities = (
@@ -255,12 +267,18 @@ export const parseCodexHookInput = (value: unknown): HookParseResult => {
 
 const normalizePath = (root: string, value: string, cwd: string): string | null => {
   const target = path.resolve(cwd, value);
-  const relative = path.relative(root, target);
-  return relative === ""
-    ? "."
-    : relative.startsWith("..") || path.isAbsolute(relative)
-      ? null
-      : relative;
+  // Resolve symlinks when the operand exists so a link inside the root that
+  // points outside cannot pass on its lexical form.
+  let resolved = target;
+  try {
+    resolved = realpathSync(target);
+  } catch {
+    /* missing path: lexical check only */
+  }
+  const relative = path.relative(root, resolved);
+  if (relative === "") return ".";
+  const escaped = process.platform === "win32" ? relative.toLowerCase() : relative;
+  return escaped.startsWith("..") || path.isAbsolute(relative) ? null : relative;
 };
 
 const writeTargets = (
@@ -301,17 +319,12 @@ const writeTargets = (
     }
   }
   if (tool === "bash" || tool === "unified-exec") {
-    const command = typeof args.command === "string" ? args.command : "";
-    const intent = /(?:\d*>>?|&>|\b(?:rm|mv|cp|mkdir|touch|install)\b)/.test(command);
-    if (!intent) return { paths: [], invalid: false, intent: false };
-    // ponytail: simple token scan; shell expansion stays unavailable until a
-    // native structured command target exists.
-    if (/[;'"`$*?()\\\n|]/.test(command)) return { paths: [], invalid: true, intent: true };
-    for (const match of command.matchAll(/(?:\d*>>?|&>)\s*([^\s]+)/g)) values.push(match[1]);
-    const parts = command.trim().split(/\s+/);
-    const commandIndex = parts.findIndex((part) => /^(rm|mv|cp|mkdir|touch|install)$/.test(part));
-    if (commandIndex >= 0)
-      values.push(...parts.slice(commandIndex + 1).filter((part) => !part.startsWith("-")));
+    // Same shared parser as the Cursor hook (core/shell-intent): intent,
+    // invalid, and raw operands — containment stays hook-local below.
+    const parsed = shellWriteIntent(typeof args.command === "string" ? args.command : "");
+    if (!parsed.intent) return { paths: [], invalid: false, intent: false };
+    if (parsed.invalid) return { paths: [], invalid: true, intent: true };
+    values.push(...parsed.values);
   }
   if (!values.length)
     return {
@@ -365,7 +378,9 @@ const sessionContext = (input: CodexHookInput): string => {
       const view = new WorkitCore(store, {
         root: input.cwd,
         caller: { host: detectCodexSurface(process.env), actor: input.session_id },
-        callerAttested: true,
+        // Unsigned stdin (see PreToolUse below): read-only context minting
+        // stays unattested as well.
+        callerAttested: false,
         capabilities: codexCapabilities(detectCodexSurface(process.env), { sessionStart: true }),
         constraints: [],
         now: new Date().toISOString().replace(/\.\d{3}Z$/, "Z"),
@@ -431,7 +446,10 @@ export const handleCodexHook = (raw: unknown): Record<string, unknown> => {
       const core = new WorkitCore(store, {
         root: input.cwd,
         caller: { host, actor: input.session_id },
-        callerAttested: true,
+        // Stdin hook input is unsigned: any local process can emit it, so a
+        // hook-minted context is never attested. Ownership still enforces
+        // through the persisted host session match, not this flag.
+        callerAttested: false,
         workerId: worker?.id ?? null,
         capabilities: codexCapabilities(host, { preToolUse: true }),
         constraints: [],
@@ -457,6 +475,7 @@ export const handleCodexHook = (raw: unknown): Record<string, unknown> => {
 };
 
 export const runCodexHook = async (): Promise<void> => {
+  warnOnSurfaceFallback();
   let text = "";
   for await (const chunk of process.stdin) text += String(chunk);
   let raw: unknown;

@@ -167,6 +167,44 @@ test("healthy fixture: canonical install yields no stale_install finding", () =>
   expect(stale.detail).not.toMatch(/stale/i);
 });
 
+test("reports stale_install when the installed preToolUse matcher drifts from canonical", () => {
+  const hooksFile = path.join(fixture.pluginDir, "hooks", "hooks-cursor.json");
+  const originalHooks = readFileSync(hooksFile, "utf8");
+  writeConfig(
+    hooksFile,
+    JSON.stringify({
+      version: 1,
+      hooks: {
+        sessionStart: [
+          {
+            command:
+              "npx -y --prefer-online --package=@brainervirus/workit-cursor@latest workit-cursor-session-start",
+          },
+        ],
+        preToolUse: [
+          {
+            command:
+              "npx -y --prefer-online --package=@brainervirus/workit-cursor@latest workit-cursor-hook",
+            matcher: "Write|Edit|Delete|Shell",
+            failClosed: true,
+          },
+        ],
+      },
+    }),
+  );
+  try {
+    const report = run();
+    expect(report.exitCode).not.toBe(0);
+    const stale = check(report, "stale_install");
+    expect(stale.status).toBe("fail");
+    expect(stale.detail).toContain("preToolUse");
+    expect(stale.fix).toBeTruthy();
+  } finally {
+    writeConfig(hooksFile, originalHooks);
+  }
+  expect(check(run(), "stale_install").status).toBe("pass");
+});
+
 test("canonical @latest install with an old plugin package.json version is not stale", () => {
   // CA-01/CA-04: a canonical `@latest` install resolves fresh at launch, so the
   // installed package.json version is metadata — never a `stale_install` fail.
