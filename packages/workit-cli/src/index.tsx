@@ -39,7 +39,7 @@ export const logger = createLogger({
 });
 
 const COMMAND_DESCRIPTIONS: readonly (readonly [string, string])[] = [
-  ["workit task <family> <action> [options]", "Inspect and control a Workit task"],
+  ["workit <family> <action> [options]", "Inspect and control a Workit task"],
   ["workit action <operation> --payload <JSON>", "Preview or run one approved external action"],
   ["workit handoff --task <id>", "Export task state and compact destination context"],
   [

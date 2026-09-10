@@ -20,7 +20,7 @@ npx @brainervirus/workit-cli init
 workit init              # interactive setup wizard
 workit doctor            # offline installation health report
 workit doctor --json     # machine-readable report
-workit task <family> <action> [--payload <json|@file|->] [--task <id>] [--revision <uuid>] [--workspace-revision <uuid|null>] [--view full] [--confirm] [--json]
+workit <family> <action> [--payload <json|@file|->] [--task <id>] [--revision <uuid>] [--workspace-revision <uuid|null>] [--view full] [--confirm] [--json]
 workit action <operation> --payload <JSON> [--preview] [--confirm] [--task <id>] [--json]   # preview or run one approved external action
 workit handoff --task <id> [--json]                   # export task state and compact destination context
 workit cutover preview [--hosts ..] [--json] | apply [--hosts ..] [--resolution k=v] [--confirm] | rollback preview|apply <backupId> [--json] [--confirm]

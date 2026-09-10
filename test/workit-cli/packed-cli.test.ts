@@ -437,7 +437,7 @@ test("packed CLI: help lists v1 task, action, handoff, cutover, and uninstall co
     const help = runInIsolation(install, "node", [entry, "--help"], env);
     expect(help.status, help.stderr).toBe(0);
     for (const command of [
-      "workit task <family> <action> [options]",
+      "workit <family> <action> [options]",
       "workit action <operation> --payload <JSON>",
       "workit handoff --task <id>",
       "workit cutover preview|apply|rollback ...",
