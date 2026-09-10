@@ -25,7 +25,8 @@ const depthOf = (schema: unknown, current = 0): number => {
     return Math.max(...keys.map((key) => depthOf(shape[key], current + 1)));
   }
   if (type === "array") return depthOf(def.element, current + 1);
-  if (type === "record") return Math.max(depthOf(def.keyType, current + 1), depthOf(def.valueType, current + 1));
+  if (type === "record")
+    return Math.max(depthOf(def.keyType, current + 1), depthOf(def.valueType, current + 1));
   if (type === "union")
     return Array.isArray(def.options) && def.options.length > 0
       ? Math.max(...def.options.map((option: unknown) => depthOf(option, current + 1)))
