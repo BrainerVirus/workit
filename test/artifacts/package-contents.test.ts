@@ -1,6 +1,14 @@
 import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -350,5 +358,18 @@ test("adapter tarballs ship no legacy vendor trees", () => {
       entries.some((e) => e.startsWith("assets/vendor/")),
       pack.packageName,
     ).toBe(false);
+  }
+});
+
+test("tracked CLI template mirrors stay byte-identical to the core templates", () => {
+  // The CLI package tracks copies of the execution templates (shipped to
+  // projects by hygiene scaffolding); a fix in one copy must land in both.
+  for (const name of ["execution-contract.md", "plan-template.md"]) {
+    const core = readFileSync(path.join(REPO_ROOT, "packages/workit-core/templates", name), "utf8");
+    const mirror = readFileSync(
+      path.join(REPO_ROOT, "packages/workit-cli/assets/templates", name),
+      "utf8",
+    );
+    expect(mirror, name).toBe(core);
   }
 });
