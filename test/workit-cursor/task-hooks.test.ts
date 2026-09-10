@@ -3,13 +3,13 @@ import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { TaskStore, WorkitCore } from "../../packages/workit-core/src/core";
-import { caller, taskStartRequest } from "../workit-core/task-fixtures";
+import { TaskStore, WorkitCore } from "@/packages/workit-core/src/core";
+import { caller, taskStartRequest } from "@/test/workit-core/task-fixtures";
 import {
   cursorCapabilities,
   handleCursorHook,
   parseCursorHookInput,
-} from "../../packages/workit-cursor/hooks/workit-hook";
+} from "@/packages/workit-cursor/hooks/workit-hook";
 
 test("Cursor hook capabilities are honest about documented surfaces", () => {
   expect(cursorCapabilities()).toContainEqual(

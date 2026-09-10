@@ -3,9 +3,9 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { detectBranchPolicy } from "../../packages/workit-core/src/core/branch-policy";
-import type { BranchPreset } from "../../packages/workit-core/src/core/config";
-import type { IntegrationMode } from "../../packages/workit-core/src/core/workspaces";
+import { detectBranchPolicy } from "@/packages/workit-core/src/core/branch-policy";
+import type { BranchPreset } from "@/packages/workit-core/src/core/config";
+import type { IntegrationMode } from "@/packages/workit-core/src/core/workspaces";
 
 const repoWith = (branches: string[]) => {
   const root = mkdtempSync(path.join(os.tmpdir(), "wf-detect-"));

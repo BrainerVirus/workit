@@ -12,7 +12,7 @@ import {
   verifyYouTrackToken,
   youTrackApi,
   type YouTrackScripts,
-} from "../../packages/workit-core/src/core/youtrack";
+} from "@/packages/workit-core/src/core/youtrack";
 
 const cfg = (overrides: Record<string, unknown> = {}) => ({
   baseUrl: "https://yt.example.test",

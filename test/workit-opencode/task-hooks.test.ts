@@ -3,11 +3,11 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { TaskStore, WorkitCore, success } from "../../packages/workit-core/src/core";
-import { scope, taskStartRequest } from "../workit-core/task-fixtures";
-import plugin from "../../packages/workit-opencode/src/plugin";
-import { workerContextFor } from "../../packages/workit-opencode/src/runtime";
-import { createWorkitTools } from "../../packages/workit-opencode/src/tools/workit";
+import { TaskStore, WorkitCore, success } from "@/packages/workit-core/src/core";
+import { scope, taskStartRequest } from "@/test/workit-core/task-fixtures";
+import plugin from "@/packages/workit-opencode/src/plugin";
+import { workerContextFor } from "@/packages/workit-opencode/src/runtime";
+import { createWorkitTools } from "@/packages/workit-opencode/src/tools/workit";
 
 const user = (text: string) => ({
   info: { role: "user" as const, id: "u", sessionID: "s", time: { created: 0, updated: 0 } },

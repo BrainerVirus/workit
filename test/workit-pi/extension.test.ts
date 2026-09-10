@@ -8,11 +8,11 @@ import {
   WorkitCore,
   OPERATION_SCHEMA_MAX_DEPTH,
   type OperationContext,
-} from "../../packages/workit-core/src/core";
-import { SUPPORT_MATRIX } from "../../packages/workit-core/src/core/support-matrix";
-import extension from "../../packages/workit-pi/extensions/workit";
-import { piCapabilities } from "../../packages/workit-pi/src/context";
-import { taskStartRequest } from "../workit-core/task-fixtures";
+} from "@/packages/workit-core/src/core";
+import { SUPPORT_MATRIX } from "@/packages/workit-core/src/core/support-matrix";
+import extension from "@/packages/workit-pi/extensions/workit";
+import { piCapabilities } from "@/packages/workit-pi/src/context";
+import { taskStartRequest } from "@/test/workit-core/task-fixtures";
 
 const makePi = () => {
   const tools: any[] = [];

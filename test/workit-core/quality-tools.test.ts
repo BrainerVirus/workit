@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { docsValidate } from "../../packages/workit-core/src/core/docs-validate";
+import { docsValidate } from "@/packages/workit-core/src/core/docs-validate";
 
 test("docsValidate includes quality findings", () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "wf-quality-"));

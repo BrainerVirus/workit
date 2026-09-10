@@ -3,8 +3,8 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import os from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
-import { retryOnce } from "../shared/helpers/retry-once";
-import { cleanupLiveInkInstances } from "../shared/helpers/ink-clean-probe";
+import { retryOnce } from "@/test/shared/helpers/retry-once";
+import { cleanupLiveInkInstances } from "@/test/shared/helpers/ink-clean-probe";
 
 // Task 9 (`workit uninstall`): TTY-only interactive host picker + reviewable
 // action summary BEFORE mutation (D-08); non-TTY stdin prints guidance and
@@ -159,7 +159,7 @@ async function driveUninstall(
       throw new ExitSentinel(code);
     }) as typeof process.exit;
 
-    const { runUninstall } = await import("../../packages/workit-cli/src/index");
+    const { runUninstall } = await import("@/packages/workit-cli/src/index");
     // Real-timer beat per step: ink throttles frame writes on wall-clock timers.
     const flush = async (): Promise<void> => {
       await new Promise((resolve) => setTimeout(resolve, 50));

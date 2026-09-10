@@ -17,8 +17,8 @@ import {
   probeLegacyDocs,
   resolveCanonicalLayout,
   resolveDocsPath,
-} from "../../packages/workit-core/src/core/docs-layout";
-import { createDocsRepoTools } from "../../packages/workit-opencode/src/tools/docs-repo";
+} from "@/packages/workit-core/src/core/docs-layout";
+import { createDocsRepoTools } from "@/packages/workit-opencode/src/tools/docs-repo";
 
 const posix = (p: string) => p.split(path.sep).join("/");
 

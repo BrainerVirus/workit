@@ -3,8 +3,8 @@ import {
   diffPolicy,
   resolvePolicy,
   type ResolverInput,
-} from "../../packages/workit-core/src/core/policy-resolver";
-import type { Constraint } from "../../packages/workit-core/src/core/task-contract";
+} from "@/packages/workit-core/src/core/policy-resolver";
+import type { Constraint } from "@/packages/workit-core/src/core/task-contract";
 import { assessment, digest, id, ref, scope } from "./task-fixtures";
 
 const input = (overrides: Partial<ResolverInput> = {}): ResolverInput => ({

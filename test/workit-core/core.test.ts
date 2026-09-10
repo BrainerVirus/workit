@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { fail, ok, resolveInside, run } from "../../packages/workit-core/src/core";
+import { fail, ok, resolveInside, run } from "@/packages/workit-core/src/core";
 
 test("result envelope is stable", () => {
   expect(ok({ value: 1 })).toEqual({ ok: true, data: { value: 1 }, error: null });

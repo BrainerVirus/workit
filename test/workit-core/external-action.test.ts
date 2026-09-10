@@ -10,20 +10,20 @@ import {
   success,
   type NativeAuthorityVerifier,
   type OperationContext,
-} from "../../packages/workit-core/src/core";
-import type { Provenance } from "../../packages/workit-core/src/core/task-contract";
-import { success as contractSuccess } from "../../packages/workit-core/src/core/task-contract";
+} from "@/packages/workit-core/src/core";
+import type { Provenance } from "@/packages/workit-core/src/core/task-contract";
+import { success as contractSuccess } from "@/packages/workit-core/src/core/task-contract";
 import {
   priorExternalAction,
   runAuthorizedExternalAction,
-} from "../../packages/workit-core/src/core/external-action";
+} from "@/packages/workit-core/src/core/external-action";
 import {
   executeResolvedExternalAction,
   readHostingAction,
   readYouTrackAction,
   resolveExternalActionRequest,
-} from "../../packages/workit-core/src/core/external-action-effects";
-import { nativeExternalActionRunner } from "../../packages/workit-opencode/src/tools/workit";
+} from "@/packages/workit-core/src/core/external-action-effects";
+import { nativeExternalActionRunner } from "@/packages/workit-opencode/src/tools/workit";
 import { scope, taskStartRequest } from "./task-fixtures";
 
 const provenance = (actor: string, host: Provenance["host"] = "workit_cli"): Provenance => ({

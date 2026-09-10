@@ -10,9 +10,9 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { docsValidate } from "../../packages/workit-core/src/core/docs-validate";
-import { createDocsRepoTools } from "../../packages/workit-opencode/src/tools/docs-repo";
-import { resolveCanonicalLayout } from "../../packages/workit-core/src/core/docs-layout";
+import { docsValidate } from "@/packages/workit-core/src/core/docs-validate";
+import { createDocsRepoTools } from "@/packages/workit-opencode/src/tools/docs-repo";
+import { resolveCanonicalLayout } from "@/packages/workit-core/src/core/docs-layout";
 
 const fixture = () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "wf-layout-"));

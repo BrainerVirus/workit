@@ -24,7 +24,7 @@ import {
   readTarballFile,
   REPO_ROOT,
   runInIsolation,
-} from "../shared/helpers/packages";
+} from "@/test/shared/helpers/packages";
 
 // Phase 0 corrective-candidate gate (RR-11, CA-30): pack every package WITHOUT
 // publishing and verify the candidate installs and starts in isolation — packed

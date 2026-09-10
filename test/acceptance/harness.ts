@@ -2,18 +2,15 @@
 
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { codexQualification } from "../../packages/workit-codex/scripts/launch-mcp";
-import { OPERATION_FAMILIES, operationJsonSchema } from "../../packages/workit-core/src/core";
-import {
-  operationSchemas,
-  parseOperation,
-} from "../../packages/workit-core/src/core/task-contract";
-import { codexCapabilities } from "../../packages/workit-codex/hooks/workit-hook";
-import { cursorCapabilities } from "../../packages/workit-cursor/hooks/workit-hook";
-import { opencodeCapabilities } from "../../packages/workit-opencode/src/tools/workit";
-import { piCapabilities } from "../../packages/workit-pi/src/context";
-import { operationCorpus } from "../workit-core/task-fixtures";
-import type { Capability } from "../../packages/workit-core/src/core/task-contract";
+import { codexQualification } from "@/packages/workit-codex/scripts/launch-mcp";
+import { OPERATION_FAMILIES, operationJsonSchema } from "@/packages/workit-core/src/core";
+import { operationSchemas, parseOperation } from "@/packages/workit-core/src/core/task-contract";
+import { codexCapabilities } from "@/packages/workit-codex/hooks/workit-hook";
+import { cursorCapabilities } from "@/packages/workit-cursor/hooks/workit-hook";
+import { opencodeCapabilities } from "@/packages/workit-opencode/src/tools/workit";
+import { piCapabilities } from "@/packages/workit-pi/src/context";
+import { operationCorpus } from "@/test/workit-core/task-fixtures";
+import type { Capability } from "@/packages/workit-core/src/core/task-contract";
 import {
   EVALUATION_SCENARIO_IDS,
   FIXTURE_REVISION,

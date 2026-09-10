@@ -12,13 +12,13 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { configDir } from "../../packages/workit-core/src/core/config";
+import { configDir } from "@/packages/workit-core/src/core/config";
 import {
   readVcsConfig,
   vcsConfig,
   vcsTokenCreateUrls,
-} from "../../packages/workit-core/src/core/vcs-config";
-import { configPath } from "../../packages/workit-core/src/core/youtrack-tools";
+} from "@/packages/workit-core/src/core/vcs-config";
+import { configPath } from "@/packages/workit-core/src/core/youtrack-tools";
 
 const savedEnv = new Map<string, string | undefined>();
 

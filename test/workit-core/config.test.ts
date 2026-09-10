@@ -12,7 +12,7 @@ import {
   LOCALE_RE,
   PRESETS,
   type ToolkitConfig,
-} from "../../packages/workit-core/src/core/config";
+} from "@/packages/workit-core/src/core/config";
 
 const savedEnv = new Map<string, string | undefined>();
 

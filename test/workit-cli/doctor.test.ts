@@ -3,8 +3,8 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { DoctorReport } from "../../packages/workit-core/src/core/doctor";
-import { makeDoctorFixture } from "../shared/helpers/doctor-fixture";
+import type { DoctorReport } from "@/packages/workit-core/src/core/doctor";
+import { makeDoctorFixture } from "@/test/shared/helpers/doctor-fixture";
 
 // `workit doctor` and `workit doctor --json` (DG-07): JSON parses, the report's
 // exitCode is reflected in the process exit status, broken fixtures fail, and no

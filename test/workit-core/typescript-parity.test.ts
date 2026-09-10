@@ -23,16 +23,13 @@ import {
   currentBranch,
   isProtectedBranch,
   isPrBranch,
-} from "../../packages/workit-core/src/core/repo-context";
-import { runVerifyProject } from "../../packages/workit-core/src/core/verify-project";
-import { parseVerifyOutput } from "../../packages/workit-core/src/core/verify-parse";
-import {
-  parseKeyValueLines,
-  parseSections,
-} from "../../packages/workit-core/src/core/parse-sections";
-import { gitContext } from "../../packages/workit-core/src/core/git";
-import { syncRuntime } from "../../packages/workit-core/src/core/sync-runtime";
-import { youTrackApi } from "../../packages/workit-core/src/core/youtrack";
+} from "@/packages/workit-core/src/core/repo-context";
+import { runVerifyProject } from "@/packages/workit-core/src/core/verify-project";
+import { parseVerifyOutput } from "@/packages/workit-core/src/core/verify-parse";
+import { parseKeyValueLines, parseSections } from "@/packages/workit-core/src/core/parse-sections";
+import { gitContext } from "@/packages/workit-core/src/core/git";
+import { syncRuntime } from "@/packages/workit-core/src/core/sync-runtime";
+import { youTrackApi } from "@/packages/workit-core/src/core/youtrack";
 
 // Parity between the TS runtime ports and the maintained shell behavior they
 // replaced. Fixtures below were captured from the real scripts before the shell

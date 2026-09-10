@@ -14,16 +14,16 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { runDoctor } from "../../packages/workit-core/src/core/doctor";
-import { WORKIT_METHOD_SKILLS } from "../../packages/workit-core/src/core/skill-manifests";
-import { syncRuntime } from "../../packages/workit-core/src/core/sync-runtime";
+import { runDoctor } from "@/packages/workit-core/src/core/doctor";
+import { WORKIT_METHOD_SKILLS } from "@/packages/workit-core/src/core/skill-manifests";
+import { syncRuntime } from "@/packages/workit-core/src/core/sync-runtime";
 import {
   extractTarball,
   installPackedPackage,
   isolatedEnv,
   packWorkspacePackages,
   REPO_ROOT,
-} from "../shared/helpers/packages";
+} from "@/test/shared/helpers/packages";
 
 const CURSOR = "@brainervirus/workit-cursor";
 const CLI = "@brainervirus/workit-cli";

@@ -2,10 +2,10 @@ import { expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import path from "node:path";
 import { tmpdir } from "node:os";
-import extension from "../../packages/workit-pi/extensions/workit";
-import { workitContext } from "../../packages/workit-pi/src/context";
-import { TaskStore, WorkitCore, type OperationContext } from "../../packages/workit-core/src/core";
-import { taskStartRequest } from "../workit-core/task-fixtures";
+import extension from "@/packages/workit-pi/extensions/workit";
+import { workitContext } from "@/packages/workit-pi/src/context";
+import { TaskStore, WorkitCore, type OperationContext } from "@/packages/workit-core/src/core";
+import { taskStartRequest } from "@/test/workit-core/task-fixtures";
 
 const setup = async () => {
   const tools: any[] = [];

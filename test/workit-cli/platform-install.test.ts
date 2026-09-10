@@ -19,8 +19,8 @@ import {
   TOKEN_PLACEHOLDER,
   type SetupPreviewInput,
   type SetupResult,
-} from "../../packages/workit-core/src/core/setup";
-import { isolatedEnv } from "../shared/helpers/packages";
+} from "@/packages/workit-core/src/core/setup";
+import { isolatedEnv } from "@/test/shared/helpers/packages";
 
 // Task 14 apply/verify (WZ-09, WZ-10, WZ-13-WZ-15; CA-08, CA-13, CA-14, CA-31):
 // applySetupPreview applies ONLY the reviewed mutations with package-native

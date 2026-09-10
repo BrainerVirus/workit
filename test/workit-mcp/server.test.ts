@@ -10,15 +10,15 @@ import {
   OPERATION_SCHEMA_MAX_DEPTH,
   boundedOperationJsonSchema,
   type OperationContext,
-} from "../../packages/workit-core/src/core";
-import type { Host } from "../../packages/workit-core/src/core/task-contract";
+} from "@/packages/workit-core/src/core";
+import type { Host } from "@/packages/workit-core/src/core/task-contract";
 import {
   createMcpServer,
   McpCapabilityUnavailableError,
   sanitizeTransportText,
   type NativeContextProvider,
-} from "../../packages/workit-mcp/src/index";
-import { operationCorpus, taskStartRequest } from "../workit-core/task-fixtures";
+} from "@/packages/workit-mcp/src/index";
+import { operationCorpus, taskStartRequest } from "@/test/workit-core/task-fixtures";
 
 const id = "00000000-0000-4000-8000-000000000001";
 const root = process.cwd();

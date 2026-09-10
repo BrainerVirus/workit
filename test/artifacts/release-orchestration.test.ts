@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { REPO_ROOT } from "../shared/helpers/packages";
+import { REPO_ROOT } from "@/test/shared/helpers/packages";
 
 // Task 24 release-orchestration gate (AR-01/AR-02, CA-33/CA-44): the real
 // release job must build every adapter and pass the pack-only candidate gate

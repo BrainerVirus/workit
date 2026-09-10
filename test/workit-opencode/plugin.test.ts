@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { readdirSync } from "node:fs";
 import path from "node:path";
-import plugin from "../../packages/workit-opencode/src/plugin";
+import plugin from "@/packages/workit-opencode/src/plugin";
 
 const packageSkills = path.resolve(import.meta.dir, "../../packages/workit-opencode/assets/skills");
 const families = [
@@ -22,9 +22,7 @@ const pluginInput = {
 };
 
 test("the plugin module only exports the default OpenCode plugin", async () => {
-  expect(Object.keys(await import("../../packages/workit-opencode/src/plugin"))).toEqual([
-    "default",
-  ]);
+  expect(Object.keys(await import("@/packages/workit-opencode/src/plugin"))).toEqual(["default"]);
 });
 
 test("registers exactly the eight native operation tools", async () => {

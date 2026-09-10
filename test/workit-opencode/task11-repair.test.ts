@@ -2,11 +2,11 @@ import { expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { TaskStore, WorkitCore, success } from "../../packages/workit-core/src/core";
-import { runDoctor } from "../../packages/workit-core/src/core/doctor";
-import { scope, taskStartRequest } from "../workit-core/task-fixtures";
-import plugin from "../../packages/workit-opencode/src/plugin";
-import { NativeReceiptStore } from "../../packages/workit-opencode/src/tools/workit";
+import { TaskStore, WorkitCore, success } from "@/packages/workit-core/src/core";
+import { runDoctor } from "@/packages/workit-core/src/core/doctor";
+import { scope, taskStartRequest } from "@/test/workit-core/task-fixtures";
+import plugin from "@/packages/workit-opencode/src/plugin";
+import { NativeReceiptStore } from "@/packages/workit-opencode/src/tools/workit";
 
 const input = (directory: string, client?: unknown) => ({
   directory,

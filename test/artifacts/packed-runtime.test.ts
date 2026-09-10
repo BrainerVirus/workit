@@ -12,7 +12,7 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { SUPPORT_MATRIX } from "../../packages/workit-core/src/core/support-matrix";
+import { SUPPORT_MATRIX } from "@/packages/workit-core/src/core/support-matrix";
 import {
   extractTarball,
   installPackedPackage,
@@ -21,7 +21,7 @@ import {
   packReleaseCandidate,
   packWorkspacePackages,
   REPO_ROOT,
-} from "../shared/helpers/packages";
+} from "@/test/shared/helpers/packages";
 
 // Task 7 packed-runtime gate: from EXTRACTED tarballs with repository node_modules
 // unavailable, the packaged adapters load/boot under plain Node without Bun or a

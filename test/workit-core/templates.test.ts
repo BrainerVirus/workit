@@ -6,7 +6,7 @@ import {
   readTemplate,
   writeTemplate,
   listTemplates,
-} from "../../packages/workit-core/src/core/templates";
+} from "@/packages/workit-core/src/core/templates";
 
 const savedEnv = new Map<string, string | undefined>();
 

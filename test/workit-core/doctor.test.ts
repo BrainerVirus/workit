@@ -6,23 +6,23 @@ import {
   runDoctor,
   type DoctorCheck,
   type DoctorReport,
-} from "../../packages/workit-core/src/core/doctor";
-import type { SessionObservation } from "../../packages/workit-core/src/core/cutover";
-import { readVcsConfig } from "../../packages/workit-core/src/core/vcs-config";
-import { readSetupState } from "../../packages/workit-core/src/core/setup-state";
-import { readWorkspacesResult } from "../../packages/workit-core/src/core/workspaces";
-import { binDirWithRuntimes, makeDoctorFixture } from "../shared/helpers/doctor-fixture";
+} from "@/packages/workit-core/src/core/doctor";
+import type { SessionObservation } from "@/packages/workit-core/src/core/cutover";
+import { readVcsConfig } from "@/packages/workit-core/src/core/vcs-config";
+import { readSetupState } from "@/packages/workit-core/src/core/setup-state";
+import { readWorkspacesResult } from "@/packages/workit-core/src/core/workspaces";
+import { binDirWithRuntimes, makeDoctorFixture } from "@/test/shared/helpers/doctor-fixture";
 import {
   applyCutover,
   previewCutover,
   writeGenerationState,
-} from "../../packages/workit-core/src/core/cutover";
-import { WORKIT_METHOD_SKILLS } from "../../packages/workit-core/src/core/skill-manifests";
+} from "@/packages/workit-core/src/core/cutover";
+import { WORKIT_METHOD_SKILLS } from "@/packages/workit-core/src/core/skill-manifests";
 import {
   installV1Skills,
   makeCutoverFixture,
   removeLegacySkills,
-} from "../shared/helpers/cutover-fixture";
+} from "@/test/shared/helpers/cutover-fixture";
 
 // The offline doctor engine (DG-07/DG-08, CA-09): one fixture tree, one broken
 // surface at a time, assert the typed check + nonzero exitCode, then repair the

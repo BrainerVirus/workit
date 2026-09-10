@@ -2,14 +2,14 @@ import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { CURSOR_SKILLS } from "../../packages/workit-core/src/core/skill-manifests";
-import { SUPPORT_MATRIX } from "../../packages/workit-core/src/core/support-matrix";
+import { CURSOR_SKILLS } from "@/packages/workit-core/src/core/skill-manifests";
+import { SUPPORT_MATRIX } from "@/packages/workit-core/src/core/support-matrix";
 import {
   listTarball,
   packWorkspacePackages,
   readTarballFile,
   REPO_ROOT,
-} from "../shared/helpers/packages";
+} from "@/test/shared/helpers/packages";
 
 // Task 8 manifest gate (RR-07 / PT-10 / RR-10 / PT-11 / PT-12): the shipped
 // OpenCode + Cursor manifests are package-relative and invoke Node explicitly,

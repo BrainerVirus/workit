@@ -3,8 +3,8 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import plugin from "../../packages/workit-opencode/src/plugin";
-import { assertOpencodeWorkitNamespace } from "../shared/helpers/opencode-namespace";
+import plugin from "@/packages/workit-opencode/src/plugin";
+import { assertOpencodeWorkitNamespace } from "@/test/shared/helpers/opencode-namespace";
 
 const repository = (branch: string) => {
   const root = mkdtempSync(path.join(os.tmpdir(), "wf-smoke-"));

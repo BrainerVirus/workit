@@ -6,8 +6,8 @@ import path from "node:path";
 import {
   changedPackages,
   publishChanged,
-} from "../../packages/workit-core/scripts/publish-changed-packages";
-import { RELEASE_PACKAGES } from "../../packages/workit-core/scripts/analyze-release-scope";
+} from "@/packages/workit-core/scripts/publish-changed-packages";
+import { RELEASE_PACKAGES } from "@/packages/workit-core/scripts/analyze-release-scope";
 
 function repo({ tagged = true }: { tagged?: boolean } = {}) {
   const root = mkdtempSync(path.join(os.tmpdir(), "wf-pubchg-"));

@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { runVerifyProject } from "../../packages/workit-core/src/core/verify-project";
+import { runVerifyProject } from "@/packages/workit-core/src/core/verify-project";
 
 test("verify passes with valid changelog, fails without", () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "wf-hygiene-verify-"));

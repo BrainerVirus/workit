@@ -1,11 +1,8 @@
 import { expect, test } from "bun:test";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
-import { OPERATION_FAMILIES } from "../../packages/workit-core/src/core";
-import {
-  codexCapabilities,
-  detectCodexSurface,
-} from "../../packages/workit-codex/hooks/workit-hook";
+import { OPERATION_FAMILIES } from "@/packages/workit-core/src/core";
+import { codexCapabilities, detectCodexSurface } from "@/packages/workit-codex/hooks/workit-hook";
 
 const packageRoot = path.resolve(import.meta.dir, "../../packages/workit-codex");
 

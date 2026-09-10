@@ -12,8 +12,8 @@ import {
   type TaskRecord,
   type WorkerDispatch,
   type WorkspaceRecord,
-} from "../../packages/workit-core/src/core";
-import * as coreApi from "../../packages/workit-core/src/core";
+} from "@/packages/workit-core/src/core";
+import * as coreApi from "@/packages/workit-core/src/core";
 import { assessment, caller, scope, taskStartRequest } from "./task-fixtures";
 
 const now = "2026-01-01T00:00:00Z";

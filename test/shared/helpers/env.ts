@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { SUPPORT_MATRIX } from "../../../packages/workit-core/src/core/support-matrix";
+import { SUPPORT_MATRIX } from "@/packages/workit-core/src/core/support-matrix";
 
 // Temp HOME with ~/.config/workflow-toolkit populated from the given files, so
 // config.sh defaults ($HOME/.config/workflow-toolkit/*) stay isolated.

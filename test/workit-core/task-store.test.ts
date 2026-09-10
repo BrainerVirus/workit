@@ -11,13 +11,13 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { TaskStore } from "../../packages/workit-core/src/core/task-store";
+import { TaskStore } from "@/packages/workit-core/src/core/task-store";
 import {
   failure,
   sha256,
   success,
   type TaskRecord,
-} from "../../packages/workit-core/src/core/task-contract";
+} from "@/packages/workit-core/src/core/task-contract";
 import { ref, scope } from "./task-fixtures";
 
 const fixtureRoot = () => mkdtempSync(join(tmpdir(), "workit-store-"));

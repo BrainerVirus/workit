@@ -7,7 +7,7 @@ import {
   runTaskCommand,
   TASK_ACTIONS,
   TASK_FAMILIES,
-} from "../../packages/workit-cli/src/task";
+} from "@/packages/workit-cli/src/task";
 import { mkdirSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import {
@@ -15,9 +15,9 @@ import {
   packWorkspacePackages,
   runInIsolation,
   isolatedEnv,
-} from "../shared/helpers/packages";
-import { TaskStore, WorkitCore } from "../../packages/workit-core/src/core";
-import { taskStartRequest } from "../workit-core/task-fixtures";
+} from "@/test/shared/helpers/packages";
+import { TaskStore, WorkitCore } from "@/packages/workit-core/src/core";
+import { taskStartRequest } from "@/test/workit-core/task-fixtures";
 
 const id = "00000000-0000-4000-8000-000000000001";
 const scope = { description: "checkout", paths: ["."], exclusions: [] };

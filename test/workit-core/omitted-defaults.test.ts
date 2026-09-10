@@ -9,7 +9,7 @@ import {
   sha256,
   success,
   type OperationContext,
-} from "../../packages/workit-core/src/core";
+} from "@/packages/workit-core/src/core";
 import { assessment, caller, scope, taskStartRequest } from "./task-fixtures";
 
 const root = () => mkdtempSync(join(tmpdir(), "workit-defaults-"));

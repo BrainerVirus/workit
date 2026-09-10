@@ -10,8 +10,8 @@ import {
   readTarballFile,
   REPO_ROOT,
   runInIsolation,
-} from "../shared/helpers/packages";
-import { RELEASE_PACKAGES } from "../../packages/workit-core/scripts/analyze-release-scope";
+} from "@/test/shared/helpers/packages";
+import { RELEASE_PACKAGES } from "@/packages/workit-core/scripts/analyze-release-scope";
 
 // Task 23 release-candidate gate (RL-08/RL-10, CA-30): the FINAL packed
 // candidate is deterministic, self-contained, safe, and never published.

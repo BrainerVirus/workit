@@ -4,13 +4,13 @@ import {
   type CutoverReceipt,
   previewCutover,
   type CutoverPaths,
-} from "../../packages/workit-core/src/core/cutover";
+} from "@/packages/workit-core/src/core/cutover";
 import {
   type CutoverFixture,
   makeCutoverFixture,
   removeLegacySkills,
   installV1Skills,
-} from "../shared/helpers/cutover-fixture";
+} from "@/test/shared/helpers/cutover-fixture";
 
 export const makeFx = () => makeCutoverFixture();
 

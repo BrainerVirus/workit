@@ -11,7 +11,7 @@ import {
   compiledOpenCodeSections,
   writeCompiledCursorRules,
   type CanonicalRule,
-} from "../../packages/workit-core/src/core/rules";
+} from "@/packages/workit-core/src/core/rules";
 
 const savedEnv = new Map<string, string | undefined>();
 

@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { runActionCommand, runTaskCommand } from "../../packages/workit-cli/src/task";
+import { runActionCommand, runTaskCommand } from "@/packages/workit-cli/src/task";
 import {
   authorizeLiveEvaluation,
   authorizedBudget,

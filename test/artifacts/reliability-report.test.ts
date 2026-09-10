@@ -2,10 +2,10 @@ import { expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createLogger } from "../../packages/workit-core/src/core/logger";
-import { binDirWithRuntimes, makeDoctorFixture } from "../shared/helpers/doctor-fixture";
-import { packReleaseCandidate } from "../shared/helpers/packages";
-import { buildReliabilityReport } from "../shared/helpers/report";
+import { createLogger } from "@/packages/workit-core/src/core/logger";
+import { binDirWithRuntimes, makeDoctorFixture } from "@/test/shared/helpers/doctor-fixture";
+import { packReleaseCandidate } from "@/test/shared/helpers/packages";
+import { buildReliabilityReport } from "@/test/shared/helpers/report";
 
 // Task 23 reliability-report gate: buildReliabilityReport() aggregates the
 // doctor checks/fixes, logger event/file counts, install results, and the

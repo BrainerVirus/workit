@@ -8,7 +8,7 @@ import {
   packWorkspacePackages,
   readTarballFile,
   REPO_ROOT,
-} from "../shared/helpers/packages";
+} from "@/test/shared/helpers/packages";
 
 // Task 7 package-content gate: every adapter tarball ships ONE package-local JS
 // entry plus deterministic package-local assets, and carries NO raw TypeScript,

@@ -1,5 +1,5 @@
 import { expect } from "bun:test";
-import { createTools } from "../../../packages/workit-opencode/src/tools";
+import { createTools } from "@/packages/workit-opencode/src/tools";
 
 export function assertOpencodeWorkitNamespace(): string[] {
   const names = Object.keys(createTools());

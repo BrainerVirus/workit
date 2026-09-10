@@ -12,11 +12,11 @@ import {
   decisionDigest,
   type NativeAuthorityVerifier,
   type OperationContext,
-} from "../../packages/workit-core/src/core";
+} from "@/packages/workit-core/src/core";
 import {
   reserveAction as reserveBoundedAction,
   verifyNativeAction,
-} from "../../packages/workit-core/src/core/authority";
+} from "@/packages/workit-core/src/core/authority";
 import { assessment, caller, ref, scope, taskStartRequest } from "./task-fixtures";
 
 const context = (root: string, authority = verifier()): OperationContext =>

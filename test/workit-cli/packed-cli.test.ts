@@ -10,7 +10,7 @@ import {
   packWorkspacePackages,
   readTarballFile,
   runInIsolation,
-} from "../shared/helpers/packages";
+} from "@/test/shared/helpers/packages";
 
 // Task 14 packed gate: the CLI setup flow runs against EXTRACTED tarballs with
 // the repository node_modules unavailable. buildSetupPreview/applySetupPreview

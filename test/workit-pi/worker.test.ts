@@ -8,7 +8,7 @@ import {
   failure,
   success,
   type OperationContext,
-} from "../../packages/workit-core/src/core";
+} from "@/packages/workit-core/src/core";
 import {
   cancelWorker,
   advanceWorkerBinding,
@@ -28,9 +28,9 @@ import {
   type PiRuntime,
   type WorkerAssignment,
   type WorkerHandle,
-} from "../../packages/workit-pi/src/worker";
-import { parseWorkerLines } from "../../packages/workit-pi/src/worker-protocol";
-import { taskStartRequest } from "../workit-core/task-fixtures";
+} from "@/packages/workit-pi/src/worker";
+import { parseWorkerLines } from "@/packages/workit-pi/src/worker-protocol";
+import { taskStartRequest } from "@/test/workit-core/task-fixtures";
 
 const runtime = (root = mkdtempSync(path.join(tmpdir(), "workit-pi-worker-"))): PiRuntime => ({
   node: "node",
@@ -612,7 +612,7 @@ test("supervised implementer observes the child before acquiring writer or sendi
 test("writer failure persists unknown before termination and reconciles only on observed exit", () => {
   const root = mkdtempSync(path.join(tmpdir(), "workit-pi-writer-failure-"));
   const store = new TaskStore(root);
-  let child: import("../../packages/workit-pi/src/worker").WorkerHandle | null = null;
+  let child: import("@/packages/workit-pi/src/worker").WorkerHandle | null = null;
   let stdoutListener: ((chunk?: string | Buffer) => void) | undefined;
   let killed = 0;
   const base: OperationContext = {
@@ -733,7 +733,7 @@ test("writer failure persists unknown before termination and reconciles only on 
 test("core-backed supervisor refreshes revisions through report and observed exit", () => {
   const root = mkdtempSync(path.join(tmpdir(), "workit-pi-supervised-"));
   const store = new TaskStore(root);
-  let child: import("../../packages/workit-pi/src/worker").WorkerHandle | null = null;
+  let child: import("@/packages/workit-pi/src/worker").WorkerHandle | null = null;
   let stdoutListener: ((chunk?: string | Buffer) => void) | undefined;
   let prompt = "";
   const base: OperationContext = {
@@ -871,7 +871,7 @@ test("core-backed supervisor refreshes revisions through report and observed exi
 test("supervised asynchronous spawn failure is persisted as unknown by core", () => {
   const root = mkdtempSync(path.join(tmpdir(), "workit-pi-spawn-error-"));
   const store = new TaskStore(root);
-  let child: import("../../packages/workit-pi/src/worker").WorkerHandle | null = null;
+  let child: import("@/packages/workit-pi/src/worker").WorkerHandle | null = null;
   const base: OperationContext = {
     root,
     caller: { host: "pi", actor: "coordinator" },

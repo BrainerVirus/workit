@@ -17,7 +17,7 @@ import {
   redact,
   resolveStateDir,
   type JsonValue,
-} from "../../packages/workit-core/src/core/logger";
+} from "@/packages/workit-core/src/core/logger";
 
 const tempDirs: string[] = [];
 const tempDir = (): string => {

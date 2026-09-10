@@ -10,7 +10,7 @@ import {
   operationJsonSchema,
   operationSchemas,
   parseOperation,
-} from "../../packages/workit-core/src/core/task-contract";
+} from "@/packages/workit-core/src/core/task-contract";
 import { id, operationCorpus, taskStartRequest } from "./task-fixtures";
 
 const normalizedIssues = (issues: any[]) =>

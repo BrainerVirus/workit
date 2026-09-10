@@ -4,7 +4,7 @@ import { cpSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } f
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { RELEASE_PACKAGES } from "../../packages/workit-core/scripts/analyze-release-scope";
+import { RELEASE_PACKAGES } from "@/packages/workit-core/scripts/analyze-release-scope";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const ADAPTERS = RELEASE_PACKAGES.filter((pkg) => pkg !== "workit-core");

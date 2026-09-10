@@ -3,9 +3,9 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { spawn, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { SUPPORT_MATRIX } from "../../packages/workit-core/src/core/support-matrix";
-import { TaskStore, WorkitCore, type OperationContext } from "../../packages/workit-core/src/core";
-import { taskStartRequest } from "../workit-core/task-fixtures";
+import { SUPPORT_MATRIX } from "@/packages/workit-core/src/core/support-matrix";
+import { TaskStore, WorkitCore, type OperationContext } from "@/packages/workit-core/src/core";
+import { taskStartRequest } from "@/test/workit-core/task-fixtures";
 
 const node = "node";
 

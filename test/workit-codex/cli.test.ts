@@ -3,13 +3,13 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { TaskStore, WorkitCore, type OperationContext } from "../../packages/workit-core/src/core";
+import { TaskStore, WorkitCore, type OperationContext } from "@/packages/workit-core/src/core";
 import {
   detectCodexSurface,
   handleCodexHook,
   parseCodexHookInput,
-} from "../../packages/workit-codex/hooks/workit-hook";
-import { taskStartRequest } from "../workit-core/task-fixtures";
+} from "@/packages/workit-codex/hooks/workit-hook";
+import { taskStartRequest } from "@/test/workit-core/task-fixtures";
 
 const cwd = () => mkdtempSync(path.join(tmpdir(), "workit-codex-cli-"));
 const official = (event: Record<string, unknown>, root = cwd()) => ({

@@ -3,18 +3,18 @@ import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { createRepoTools } from "../../packages/workit-opencode/src/tools/repo";
+import { createRepoTools } from "@/packages/workit-opencode/src/tools/repo";
 import {
   docsBranch,
   resolveBranch,
   resolveBranchPolicyFor,
-} from "../../packages/workit-core/src/core/branch";
-import { vcsConfig } from "../../packages/workit-core/src/core/vcs-config";
-import { resolveWorkspace } from "../../packages/workit-core/src/core/workspaces";
-import { resolvePrBranchContext } from "../../packages/workit-core/src/core/repo-context";
-import { prCreate } from "../../packages/workit-core/src/core/pr-create";
-import { writeConfig } from "../../packages/workit-core/src/core/config";
-import { stubCli, stubPath } from "../shared/helpers/stub-cli";
+} from "@/packages/workit-core/src/core/branch";
+import { vcsConfig } from "@/packages/workit-core/src/core/vcs-config";
+import { resolveWorkspace } from "@/packages/workit-core/src/core/workspaces";
+import { resolvePrBranchContext } from "@/packages/workit-core/src/core/repo-context";
+import { prCreate } from "@/packages/workit-core/src/core/pr-create";
+import { writeConfig } from "@/packages/workit-core/src/core/config";
+import { stubCli, stubPath } from "@/test/shared/helpers/stub-cli";
 
 const git = (cwd: string, args: string[]) => spawnSync("git", args, { cwd, encoding: "utf8" });
 

@@ -2,7 +2,7 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { WORKIT_METHOD_SKILLS } from "../../../packages/workit-core/src/core/skill-manifests";
+import { WORKIT_METHOD_SKILLS } from "@/packages/workit-core/src/core/skill-manifests";
 
 // Shared fixture builder for the offline doctor (DG-07/DG-08). Builds an
 // against disposable files, never the real user config. Tests mutate files and

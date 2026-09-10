@@ -14,8 +14,8 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { WORKIT_METHOD_SKILLS } from "../../packages/workit-core/src/core/skill-manifests";
-import { envWithSupportedNode } from "../shared/helpers/env";
+import { WORKIT_METHOD_SKILLS } from "@/packages/workit-core/src/core/skill-manifests";
+import { envWithSupportedNode } from "@/test/shared/helpers/env";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 

@@ -6,7 +6,7 @@ import {
   OPERATION_SCHEMA_DEPTH,
   operationJsonSchema,
   type OperationFamily,
-} from "../../packages/workit-core/src/core";
+} from "@/packages/workit-core/src/core";
 
 const depth = (node: unknown, current = 0): number => {
   if (Array.isArray(node))

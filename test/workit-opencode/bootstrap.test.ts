@@ -1,9 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import {
-  getWorkitBootstrap,
-  isWorkitBootstrap,
-} from "../../packages/workit-opencode/src/bootstrap";
-import plugin from "../../packages/workit-opencode/src/plugin";
+import { getWorkitBootstrap, isWorkitBootstrap } from "@/packages/workit-opencode/src/bootstrap";
+import plugin from "@/packages/workit-opencode/src/plugin";
 
 describe("session bootstrap", () => {
   test("bootstrap contract names the native operation families", () => {

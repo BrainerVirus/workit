@@ -17,9 +17,9 @@ import addFormats from "ajv-formats";
 import {
   CURSOR_SKILLS,
   validateSkillManifests,
-} from "../../packages/workit-core/src/core/skill-manifests";
-import { validateMarketplace } from "../../packages/workit-core/scripts/validate-cursor-marketplace";
-import { REPO_ROOT } from "../shared/helpers/packages";
+} from "@/packages/workit-core/src/core/skill-manifests";
+import { validateMarketplace } from "@/packages/workit-core/scripts/validate-cursor-marketplace";
+import { REPO_ROOT } from "@/test/shared/helpers/packages";
 
 // Task 9 Marketplace gate (CA-13/CA-15/CA-17/CA-21): the tracked Marketplace
 // artifact validates against the official Cursor JSON schemas and every

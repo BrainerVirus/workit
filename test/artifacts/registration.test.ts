@@ -14,7 +14,7 @@ import {
   mergeCursorSettings,
   mergeOpenCodeConfig,
   mergeOpenCodePlugins,
-} from "../../packages/workit-core/src/core/registration";
+} from "@/packages/workit-core/src/core/registration";
 
 // Task 8 registration gate (RR-06): the installer registration merges accept an
 // existing user config, deduplicate every current + legacy Workit identity, and

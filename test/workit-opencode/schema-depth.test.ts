@@ -1,11 +1,11 @@
 import { expect, test } from "bun:test";
-import { OPERATION_SCHEMA_MAX_DEPTH } from "../../packages/workit-core/src/core";
-import { createWorkitTools } from "../../packages/workit-opencode/src/tools/workit";
-import { createDocsRepoTools } from "../../packages/workit-opencode/src/tools/docs-repo";
-import { createRepoTools } from "../../packages/workit-opencode/src/tools/repo";
-import { createRuleTools } from "../../packages/workit-opencode/src/tools/rules";
-import { createTemplateTools } from "../../packages/workit-opencode/src/tools/templates";
-import { createYouTrackTools } from "../../packages/workit-opencode/src/tools/youtrack";
+import { OPERATION_SCHEMA_MAX_DEPTH } from "@/packages/workit-core/src/core";
+import { createWorkitTools } from "@/packages/workit-opencode/src/tools/workit";
+import { createDocsRepoTools } from "@/packages/workit-opencode/src/tools/docs-repo";
+import { createRepoTools } from "@/packages/workit-opencode/src/tools/repo";
+import { createRuleTools } from "@/packages/workit-opencode/src/tools/rules";
+import { createTemplateTools } from "@/packages/workit-opencode/src/tools/templates";
+import { createYouTrackTools } from "@/packages/workit-opencode/src/tools/youtrack";
 
 const defOf = (schema: unknown): Record<string, any> =>
   (schema as any)?.def ?? (schema as any)?._def ?? {};

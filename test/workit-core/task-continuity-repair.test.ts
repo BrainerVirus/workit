@@ -17,8 +17,8 @@ import {
   type ExportBundle,
   type Ref,
   type TaskView,
-} from "../../packages/workit-core/src/core";
-import { captureCandidate } from "../../packages/workit-core/src/core/task-evaluation";
+} from "@/packages/workit-core/src/core";
+import { captureCandidate } from "@/packages/workit-core/src/core/task-evaluation";
 import { assessment, caller, ref, scope, taskStartRequest } from "./task-fixtures";
 
 const makeRoot = () => mkdtempSync(join(tmpdir(), "workit-continuity-repair-"));

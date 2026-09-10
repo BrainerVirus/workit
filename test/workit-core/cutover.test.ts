@@ -13,8 +13,8 @@ import {
   previewCutover,
   previewRollback,
   readGenerationState,
-} from "../../packages/workit-core/src/core/cutover";
-import { installV1Skills, removeLegacySkills } from "../shared/helpers/cutover-fixture";
+} from "@/packages/workit-core/src/core/cutover";
+import { installV1Skills, removeLegacySkills } from "@/test/shared/helpers/cutover-fixture";
 import { applyFxCutover, approve, makeFx, resolvePathsForTest } from "./cutover-test-helpers";
 
 test("rollback refuses to overwrite a subsequent user edit", () => {

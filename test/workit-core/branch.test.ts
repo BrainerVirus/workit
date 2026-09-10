@@ -11,8 +11,8 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { createRepoTools } from "../../packages/workit-opencode/src/tools/repo";
-import { branchSetup } from "../../packages/workit-core/src/core/branch";
+import { createRepoTools } from "@/packages/workit-opencode/src/tools/repo";
+import { branchSetup } from "@/packages/workit-core/src/core/branch";
 
 const git = (cwd: string, args: string[]) => spawnSync("git", args, { cwd, encoding: "utf8" });
 

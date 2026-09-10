@@ -6,7 +6,7 @@ import path from "node:path";
 import {
   analyzeReleaseScope,
   latestTag,
-} from "../../packages/workit-core/scripts/analyze-release-scope";
+} from "@/packages/workit-core/scripts/analyze-release-scope";
 
 type Repo = {
   root: string;

@@ -4,12 +4,9 @@ import path from "node:path";
 import { tmpdir } from "node:os";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { OPERATION_FAMILIES } from "../../packages/workit-core/src/core";
-import { createMcpServer } from "../../packages/workit-mcp/src/index";
-import {
-  cursorCapabilities,
-  cursorContextProvider,
-} from "../../packages/workit-cursor/mcp/run-server";
+import { OPERATION_FAMILIES } from "@/packages/workit-core/src/core";
+import { createMcpServer } from "@/packages/workit-mcp/src/index";
+import { cursorCapabilities, cursorContextProvider } from "@/packages/workit-cursor/mcp/run-server";
 
 test("Cursor uses the shared MCP transport with truthful native capabilities", async () => {
   expect(cursorCapabilities().find((item) => item.name === "interactive_decision")).toMatchObject({

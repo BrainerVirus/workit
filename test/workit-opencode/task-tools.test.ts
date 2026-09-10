@@ -12,18 +12,11 @@ import {
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import {
-  TaskStore,
-  WorkitCore,
-  externalActionDescriptor,
-} from "../../packages/workit-core/src/core";
-import { scope, taskStartRequest } from "../workit-core/task-fixtures";
-import { resolveExternalActionRequest } from "../../packages/workit-core/src/core/external-action-effects";
-import plugin from "../../packages/workit-opencode/src/plugin";
-import {
-  NativeReceiptStore,
-  createWorkitTools,
-} from "../../packages/workit-opencode/src/tools/workit";
+import { TaskStore, WorkitCore, externalActionDescriptor } from "@/packages/workit-core/src/core";
+import { scope, taskStartRequest } from "@/test/workit-core/task-fixtures";
+import { resolveExternalActionRequest } from "@/packages/workit-core/src/core/external-action-effects";
+import plugin from "@/packages/workit-opencode/src/plugin";
+import { NativeReceiptStore, createWorkitTools } from "@/packages/workit-opencode/src/tools/workit";
 import { tool } from "@opencode-ai/plugin";
 
 const context = {

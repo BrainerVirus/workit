@@ -3,8 +3,8 @@ import { spawnSync } from "node:child_process";
 import { cpSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { WORKIT_METHOD_SKILLS } from "../../packages/workit-core/src/core/skill-manifests";
-import { listTarball, packWorkspacePackages, REPO_ROOT } from "../shared/helpers/packages";
+import { WORKIT_METHOD_SKILLS } from "@/packages/workit-core/src/core/skill-manifests";
+import { listTarball, packWorkspacePackages, REPO_ROOT } from "@/test/shared/helpers/packages";
 
 const OPENCODE = "@brainervirus/workit-opencode";
 const WORKIT = [...WORKIT_METHOD_SKILLS].sort();

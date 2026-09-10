@@ -12,7 +12,7 @@ import {
 import os from "node:os";
 import path from "node:path";
 import * as fsMod from "node:fs";
-import { applyUninstall, planUninstall } from "../../packages/workit-core/src/core/uninstall";
+import { applyUninstall, planUninstall } from "@/packages/workit-core/src/core/uninstall";
 
 // Uninstall planning/apply tests run ONLY on temp fixture homes (D-07): every
 // home/config path is injected, no default may resolve to the real HOME, and

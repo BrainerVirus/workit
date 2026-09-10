@@ -12,7 +12,7 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { WORKIT_METHOD_SKILLS } from "../../../packages/workit-core/src/core/skill-manifests";
+import { WORKIT_METHOD_SKILLS } from "@/packages/workit-core/src/core/skill-manifests";
 
 export type CutoverFixture = {
   root: string;

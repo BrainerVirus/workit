@@ -3,8 +3,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
-import { retryOnce } from "../shared/helpers/retry-once";
-import { cleanupLiveInkInstances } from "../shared/helpers/ink-clean-probe";
+import { retryOnce } from "@/test/shared/helpers/retry-once";
+import { cleanupLiveInkInstances } from "@/test/shared/helpers/ink-clean-probe";
 
 // CA-02 (clean screen): runInit must open with exactly one clear
 // (\x1b[2J\x1b[H) before the wizard renders and emit exactly one more after
@@ -135,7 +135,7 @@ async function driveRunInit(keys: DriveStep[], options: DriveOptions = {}): Prom
       throw new ExitSentinel(code);
     }) as typeof process.exit;
 
-    const { runInit } = await import("../../packages/workit-cli/src/index");
+    const { runInit } = await import("@/packages/workit-cli/src/index");
     // A real-timer beat per step: ink throttles frame writes on wall-clock
     // timers, so setImmediate-only flushing observes stale screens.
     const flush = async () => {

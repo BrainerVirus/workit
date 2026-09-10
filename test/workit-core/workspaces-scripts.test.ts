@@ -12,16 +12,16 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { vcsConfig } from "../../packages/workit-core/src/core/vcs-config";
-import { parseSections } from "../../packages/workit-core/src/core/parse-sections";
-import { prBuildBody, prCreate } from "../../packages/workit-core/src/core/pr-create";
-import { validateWorkspaceGlob } from "../../packages/workit-core/src/core/workspaces";
+import { vcsConfig } from "@/packages/workit-core/src/core/vcs-config";
+import { parseSections } from "@/packages/workit-core/src/core/parse-sections";
+import { prBuildBody, prCreate } from "@/packages/workit-core/src/core/pr-create";
+import { validateWorkspaceGlob } from "@/packages/workit-core/src/core/workspaces";
 import {
   prReadyContext,
   resolvePrBranchContext,
-} from "../../packages/workit-core/src/core/repo-context";
-import { writeWorkspaces } from "../../packages/workit-cli/src/logic";
-import { stubCli } from "../shared/helpers/stub-cli";
+} from "@/packages/workit-core/src/core/repo-context";
+import { writeWorkspaces } from "@/packages/workit-cli/src/logic";
+import { stubCli } from "@/test/shared/helpers/stub-cli";
 
 // Parity tests for the TS ports of scripts/vcs/config.sh resolve/load, pr-create.sh
 // missing-CLI guard, pr-create.sh --build-body issue linking, and pr-ready-context.sh

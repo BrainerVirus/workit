@@ -5,12 +5,12 @@ import type {
   Capability,
   Policy,
   Requirement,
-} from "../../packages/workit-core/src/core/task-contract";
-import { invariantBootstrap, selectMethods } from "../../packages/workit-core/src/core/methods";
+} from "@/packages/workit-core/src/core/task-contract";
+import { invariantBootstrap, selectMethods } from "@/packages/workit-core/src/core/methods";
 import {
   WORKIT_METHOD_SKILLS,
   skillManifestNames,
-} from "../../packages/workit-core/src/core/skill-manifests";
+} from "@/packages/workit-core/src/core/skill-manifests";
 
 const skillText = (name: string) =>
   readFileSync(

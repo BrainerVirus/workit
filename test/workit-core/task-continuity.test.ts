@@ -11,13 +11,13 @@ import {
   success,
   type OperationContext,
   type TaskView,
-} from "../../packages/workit-core/src/core";
+} from "@/packages/workit-core/src/core";
 import {
   compactTaskContext,
   reconcileResume,
   type ResumeObservation,
-} from "../../packages/workit-core/src/core/task-context";
-import { captureCandidate } from "../../packages/workit-core/src/core/task-evaluation";
+} from "@/packages/workit-core/src/core/task-context";
+import { captureCandidate } from "@/packages/workit-core/src/core/task-evaluation";
 import { caller, ref, scope, taskStartRequest } from "./task-fixtures";
 
 const root = () => mkdtempSync(join(tmpdir(), "workit-continuity-"));

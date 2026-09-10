@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { syncManifests } from "../../packages/workit-core/scripts/sync-release-manifests";
+import { syncManifests } from "@/packages/workit-core/scripts/sync-release-manifests";
 
 const manifestPaths = [
   "package.json",

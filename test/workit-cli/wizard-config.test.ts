@@ -18,9 +18,9 @@ import {
   mergePreset,
   readConfigFromDir,
   type ToolkitConfig,
-} from "../../packages/workit-core/src/core/config";
-import { readSetupState } from "../../packages/workit-core/src/core/setup-state";
-import { planHygieneFiles, ensureHygieneFiles } from "../../packages/workit-core/src/core/hygiene";
+} from "@/packages/workit-core/src/core/config";
+import { readSetupState } from "@/packages/workit-core/src/core/setup-state";
+import { planHygieneFiles, ensureHygieneFiles } from "@/packages/workit-core/src/core/hygiene";
 import {
   buildSetupPreview,
   TOKEN_PLACEHOLDER,
@@ -28,20 +28,20 @@ import {
   validateTimezone,
   type SetupMutation,
   type SetupPreviewInput,
-} from "../../packages/workit-cli/src/logic";
+} from "@/packages/workit-cli/src/logic";
 import {
   createInitialDraft,
   reducer,
   resolveBasePath,
-} from "../../packages/workit-cli/src/wizard-state";
-import { LOCALE_LANGUAGE_MAP, filterOptions } from "../../packages/workit-cli/src/search-select";
+} from "@/packages/workit-cli/src/wizard-state";
+import { LOCALE_LANGUAGE_MAP, filterOptions } from "@/packages/workit-cli/src/search-select";
 import {
   BRANCH_PRESET_DESCRIPTIONS,
   SCREEN_PLACEHOLDERS,
   timezonePickerOptions,
-} from "../../packages/workit-cli/src/steps";
-import { REPO_ROOT } from "../shared/helpers/packages";
-import { cleanupLiveInkInstances } from "../shared/helpers/ink-clean-probe";
+} from "@/packages/workit-cli/src/steps";
+import { REPO_ROOT } from "@/test/shared/helpers/packages";
+import { cleanupLiveInkInstances } from "@/test/shared/helpers/ink-clean-probe";
 
 // WZ-04-WZ-06, WZ-08, RL-02, RL-06 wizard scope; CA-12, CA-14, CA-22, CA-23.
 // readSetupState / mergePreset / buildSetupPreview must be pure readers: preview
@@ -1150,7 +1150,7 @@ test("runInit apply resolves its cwd from the base path, never the process cwd",
 
     const ENTER = "\r";
     const SPACE = " ";
-    const { runInit } = await import("../../packages/workit-cli/src/index");
+    const { runInit } = await import("@/packages/workit-cli/src/index");
     const flush = async (): Promise<void> => {
       await new Promise((resolve) => setTimeout(resolve, 50));
       await new Promise((resolve) => setImmediate(resolve));

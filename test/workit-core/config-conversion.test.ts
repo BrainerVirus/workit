@@ -3,8 +3,8 @@ import path from "node:path";
 import {
   previewConversion,
   redactConversionPreview,
-} from "../../packages/workit-core/src/core/config-conversion";
-import { makeCutoverFixture, managedBytes } from "../shared/helpers/cutover-fixture";
+} from "@/packages/workit-core/src/core/config-conversion";
+import { makeCutoverFixture, managedBytes } from "@/test/shared/helpers/cutover-fixture";
 
 const fixture = makeCutoverFixture({ secret: "secret-value" });
 afterAll(() => fixture.cleanup());

@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
-import { docsValidate } from "../../packages/workit-core/src/core/docs-validate";
+import { docsValidate } from "@/packages/workit-core/src/core/docs-validate";
 
 const fixture = () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "wf-docs-validate-"));
