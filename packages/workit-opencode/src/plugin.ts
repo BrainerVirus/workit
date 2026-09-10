@@ -396,7 +396,10 @@ const plugin: Plugin = async ({ client, directory }) => {
     const store = new TaskStore(directory);
     const listed = store.listTasks();
     const workspace = store.readWorkspace();
-    if (!listed.ok || !workspace.ok || !workspace.data) return;
+    if (!listed.ok || !workspace.ok || !workspace.data) {
+      droppedLifecycle(sessionID, "task store is unreadable during reconciliation");
+      return;
+    }
     const persisted = listed.data.flatMap((task) =>
       task.status === "active"
         ? task.workers
@@ -594,7 +597,13 @@ const plugin: Plugin = async ({ client, directory }) => {
       observeQuestion(receipts, input, output);
       if (input.tool === "task") {
         const metadata = output.metadata as
-          | { sessionID?: unknown; sessionId?: unknown; status?: unknown; state?: unknown }
+          | {
+              sessionID?: unknown;
+              sessionId?: unknown;
+              parentSessionId?: unknown;
+              status?: unknown;
+              state?: unknown;
+            }
           | undefined;
         const pending = dispatches.get(input.sessionID);
         const generation =
@@ -614,10 +623,32 @@ const plugin: Plugin = async ({ client, directory }) => {
           commitDispatchNotStarted(input.sessionID, input.callID);
         // The reservation lives for exactly one task call; anything unsettled stays unresolved.
         if (generation) dispatches.delete(input.sessionID);
+        // The host's own task result attests the run ended: a completed child
+        // stops its bound worker now instead of waiting for an end event that
+        // background sessions may never emit. Anything else keeps the
+        // conservative path below.
+        const outputText = typeof output.output === "string" ? output.output : "";
+        const completedChild =
+          typeof child === "string" &&
+          metadata?.parentSessionId === input.sessionID &&
+          /<task\b[^>]*\bstate="completed"/.test(outputText)
+            ? child
+            : null;
         const state = String(
           metadata?.status ?? metadata?.state ?? output.output ?? "",
         ).toLowerCase();
-        if (!resolved && /(?:cancel|interrupt|unknown|uncertain)/.test(state))
+        if (completedChild) {
+          const completionBinding = lifecycleBindings.get(completedChild);
+          if (completionBinding)
+            await observeLifecycle(
+              completedChild,
+              input.sessionID,
+              "stopped",
+              completionBinding,
+              false,
+              undefined,
+            );
+        } else if (!resolved && /(?:cancel|interrupt|unknown|uncertain)/.test(state))
           unresolvedTaskLaunches.add(input.sessionID);
       }
     },
@@ -632,7 +663,9 @@ const plugin: Plugin = async ({ client, directory }) => {
             ),
           )
         )
-          throw new Error("recovery_required: a cancelled worker remains uncertain");
+          throw new Error(
+            "recovery_required: a cancelled worker remains uncertain; repeat worker.cancel on the ended worker to confirm its stop, then retry",
+          );
         if (unresolvedTaskLaunches.delete(input.sessionID))
           throw new Error("recovery_required: a cancelled worker remains uncertain");
         const session = await sessionData(client, input.sessionID);

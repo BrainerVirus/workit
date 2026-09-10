@@ -17,6 +17,7 @@ import {
   failure,
   operationSchemas,
   OPERATION_SCHEMA_DEPTH,
+  canonicalFieldsDescription,
   parseOperation,
   sha256,
   success,
@@ -251,8 +252,16 @@ const shallowSchema = (schema: any, field: string): any => {
     return tool.schema.any().describe(`Canonical nested value for ${field}; Workit validates it.`);
   if (def.type === "array" && schemaDef(def.element).type !== "object")
     return tool.schema.array(shallowSchema(def.element, field));
-  if (def.type === "object" || def.type === "array" || def.type === "union")
-    return tool.schema.any().describe(`Canonical nested value for ${field}; Workit validates it.`);
+  if (def.type === "object" || def.type === "array" || def.type === "union") {
+    // Same canonical-fields wording as the shared JSON projector; the field
+    // path is kept when the collapsed shape names nothing.
+    const fields = Object.keys(schemaDef(schema).shape ?? {});
+    const description =
+      fields.length > 0
+        ? canonicalFieldsDescription(fields)
+        : `Canonical nested value for ${field}; Workit validates it.`;
+    return tool.schema.any().describe(description);
+  }
   return schema;
 };
 

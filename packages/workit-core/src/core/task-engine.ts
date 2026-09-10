@@ -1573,10 +1573,11 @@ export class WorkitCore {
     if (entry.data.state === "stopped")
       return failure("invalid_transition", "stopped worker cannot be cancelled");
     // A reported worker already made its terminal session-authenticated
-    // statement, so cancel settles it instead of stranding it in cancelling
-    // when the session end was never observed. Unreported workers still go
-    // through cancelling and need an observed stop.
-    const settles = entry.data.report !== null;
+    // statement, and a repeat cancel is the lead's explicit confirmation that
+    // an unconfirmed worker ended. Both settle instead of stranding the worker
+    // in cancelling when the session end was never observed. A first cancel of
+    // a live unreported worker still waits for an observed stop.
+    const settles = entry.data.report !== null || entry.data.state === "cancelling";
     const changed = this.store.mutateTaskAndWorkspace({
       taskId: task.data.id,
       expectedTaskRevision: input.expectedRevision,

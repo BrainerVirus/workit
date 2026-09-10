@@ -794,6 +794,56 @@ test("ambiguous assignments refuse dispatch recovery", async () => {
   }
 });
 
+test("a completed task result stops the bound worker without waiting for end events", async () => {
+  const root = mkdtempSync(join(tmpdir(), "workit-opencode-dispatch-completed-"));
+  try {
+    const { active, ids, hooks } = await dispatchFixture(root);
+    await hooks.event?.({
+      event: {
+        type: "session.created",
+        properties: { info: { id: "child", directory: root, parentID: "coord" } },
+      },
+    } as never);
+    expect(workerState(active, ids[0]).state).toBe("running");
+    await hooks["tool.execute.after"]?.(
+      { tool: "task", sessionID: "coord", callID: "launch", args: {} },
+      {
+        title: "task",
+        output: '<task id="child" state="completed"><task_result>done</task_result></task>',
+        metadata: { sessionId: "child", parentSessionId: "coord" },
+      },
+    );
+    expect(workerState(active, ids[0])).toMatchObject({ state: "stopped" });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a non-completed task result leaves the bound worker running", async () => {
+  const root = mkdtempSync(join(tmpdir(), "workit-opencode-dispatch-error-"));
+  try {
+    const { active, ids, hooks } = await dispatchFixture(root);
+    await hooks.event?.({
+      event: {
+        type: "session.created",
+        properties: { info: { id: "child", directory: root, parentID: "coord" } },
+      },
+    } as never);
+    expect(workerState(active, ids[0]).state).toBe("running");
+    await hooks["tool.execute.after"]?.(
+      { tool: "task", sessionID: "coord", callID: "launch", args: {} },
+      {
+        title: "task",
+        output: '<task id="child" state="error"><task_result>boom</task_result></task>',
+        metadata: { sessionId: "child", parentSessionId: "coord" },
+      },
+    );
+    expect(workerState(active, ids[0])).toMatchObject({ state: "running" });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("a restarted plugin loses the reservation and stays blocked", async () => {
   const root = mkdtempSync(join(tmpdir(), "workit-opencode-dispatch-restart-"));
   try {

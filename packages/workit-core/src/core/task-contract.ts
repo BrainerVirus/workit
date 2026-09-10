@@ -977,12 +977,15 @@ export function boundedOperationJsonSchema(
       };
     }
     if (record.items) return { ...record, items: collapse(record.items, currentDepth) };
-    for (const key of ["anyOf", "oneOf", "allOf"] as const)
-      if (Array.isArray(record[key]))
-        return {
-          ...record,
-          [key]: (record[key] as unknown[]).map((item) => collapse(item, currentDepth)),
-        };
+    const composed = (["anyOf", "oneOf", "allOf"] as const).filter((key) =>
+      Array.isArray(record[key]),
+    );
+    if (composed.length > 0) {
+      const projected: Record<string, unknown> = { ...record };
+      for (const key of composed)
+        projected[key] = (record[key] as unknown[]).map((item) => collapse(item, currentDepth));
+      return projected;
+    }
     return node;
   };
   return collapse(operationJsonSchema(family), 0) as Record<string, unknown>;

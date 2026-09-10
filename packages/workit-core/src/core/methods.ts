@@ -98,9 +98,12 @@ writer.acquire {taskId} before product writes, evidence.record {evidence} where
 check and review kinds auto-bind the current tree and need no digests,
 decision.record {binding with taskId/workspaceId from inspect plus presented and
 approvedContent} only through a native approval question, task.close {outcome,
-summary, decisionIds}. Check and review evidence without a bound candidate goes
-stale; findings close only as fixed with passing verification, dismissed with
-supporting evidence, or deferred under an approved limitation. Use only the
+summary, decisionIds}. A completed native subagent run stops its bound worker
+by itself; if a worker strands in cancelling with its run verifiably over,
+repeat worker.cancel {reason} to confirm the stop. Check and review evidence
+without a bound candidate goes stale; findings close only as fixed with passing
+verification, dismissed with supporting evidence, or deferred under an approved
+limitation. Use only the
 shared operations for task, policy, evidence, finding, decision, worker, writer,
 and state changes. Authority is bounded by the requested scope, current
 revision, caller/session provenance, and observed capabilities. Never claim host

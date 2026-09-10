@@ -436,6 +436,16 @@ test("bound deleted events accept sparse payloads for the bound worker", async (
     } as never);
     const running = active.store.readTask(active.task.id);
     expect(running.ok && running.data.workers[0].data.state).toBe("running");
+    // A contradictory payload drops even with a live binding: the strict
+    // posture holds while the worker is still running.
+    await hooks.event?.({
+      event: {
+        type: "session.deleted",
+        properties: { info: { id: "child", parentID: "other-coordinator" } },
+      },
+    } as never);
+    const unmoved = active.store.readTask(active.task.id);
+    expect(unmoved.ok && unmoved.data.workers[0].data.state).toBe("running");
     // The launch binding is live in this process; a sparse deleted payload
     // (id only, as emitted when the session row is already gone) still ends it.
     await hooks.event?.({
@@ -443,15 +453,6 @@ test("bound deleted events accept sparse payloads for the bound worker", async (
     } as never);
     const stopped = active.store.readTask(active.task.id);
     expect(stopped.ok && stopped.data.workers[0].data.state).toBe("stopped");
-    // A contradictory payload still drops instead of moving lifecycle.
-    await hooks.event?.({
-      event: {
-        type: "session.deleted",
-        properties: { info: { id: "child", parentID: "other-coordinator" } },
-      },
-    } as never);
-    const settled = active.store.readTask(active.task.id);
-    expect(settled.ok && settled.data.workers[0].data.state).toBe("stopped");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

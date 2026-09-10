@@ -855,6 +855,58 @@ test("stopped helpers cannot mutate metadata after a task scope revision", () =>
   ).toMatchObject({ ok: false, code: "permission_denied" });
 });
 
+test("a repeat cancel confirms an ended worker when no observation arrives", () => {
+  const lead = active({ nativeWorker: observationVerifier() });
+  const assigned = assign(lead.core, lead.task, lead.workspace);
+  expect(assigned.ok).toBe(true);
+  if (!assigned.ok) throw new Error(assigned.error);
+  let state = current(lead);
+  expect(
+    observeRunning(
+      lead.core,
+      lead.task.id,
+      assigned.data.id,
+      state.task.revision,
+      state.workspace.revision,
+    ),
+  ).toMatchObject({ ok: true });
+  // The session end is never observed (missed host event). The first cancel
+  // still waits for confirmation; the repeat cancel is the lead's explicit
+  // confirmation that the worker ended.
+  state = current(lead);
+  const cancel = (reason: string) => {
+    const fresh = current(lead);
+    return lead.core.worker({
+      schemaVersion: 1,
+      action: "cancel",
+      taskId: lead.task.id,
+      expectedRevision: fresh.task.revision,
+      expectedWorkspaceRevision: fresh.workspace.revision,
+      workerId: assigned.data.id,
+      reason,
+    });
+  };
+  expect(cancel("session silent, asking it to stop")).toMatchObject({
+    ok: true,
+    data: { data: { state: "cancelling" } },
+  });
+  expect(cancel("session ended without an observed stop, confirmed")).toMatchObject({
+    ok: true,
+    data: { data: { state: "stopped" } },
+  });
+  state = current(lead);
+  expect(
+    lead.core.task({
+      schemaVersion: 1,
+      action: "pause",
+      taskId: lead.task.id,
+      expectedRevision: state.task.revision,
+      expectedWorkspaceRevision: state.workspace.revision,
+      reason: "lifecycle gates see no reconciliation",
+    }),
+  ).toMatchObject({ ok: true });
+});
+
 test("cancel on a worker that already reported stops it instead of stranding it", () => {
   const lead = active({ nativeWorker: observationVerifier() });
   const assigned = assign(lead.core, lead.task, lead.workspace);
