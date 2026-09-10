@@ -14,11 +14,11 @@ export type ShellIntent = {
 
 const ASSIGN_RE = /^[A-Za-z_][A-Za-z0-9_]*=/;
 
-// First-token write commands (argv[0] basename, lowercase). Package-manager
-// installs are included deliberately: install scripts execute arbitrary code,
-// so `pip install <pkg>` must not sail through as a bare word — the package
-// name becomes the scope value and ownership decides, exactly like any other
-// operand.
+// Bare write verbs matched anywhere in the argv stream (case-sensitive).
+// `install` covers every package manager uniformly — npm, pip, cargo, go,
+// dotnet, gem, composer and future ones all spell it the same way, so no
+// per-manager list can go stale: the package names become scope values and
+// ownership decides, exactly like any other operand.
 const WRITE_COMMANDS = new Set([
   "rm",
   "mv",
@@ -35,11 +35,29 @@ const WRITE_COMMANDS = new Set([
   "apply",
 ]);
 
-const GIT_WRITE_SUBCOMMANDS = new Set(["apply", "mv", "rm"]);
+// Destructive git subcommands. `checkout` is deliberately absent: branch
+// switches rewrite the tree but are routine agent workflow, and paths vs
+// branches are indistinguishable lexically — flagging it would deny everyday
+// `git checkout main`. `clean`/`restore` have no such routine use.
+const GIT_WRITE_SUBCOMMANDS = new Set(["apply", "mv", "rm", "clean", "restore"]);
 
-// Package-manager installs execute lifecycle scripts, so they write even
-// though no argv token is a path: the package names become scope values.
-const PACKAGE_MANAGERS = new Set(["npm", "pip", "pip3", "bun", "yarn", "pnpm"]);
+// Managers whose write verb is not `install` (those are covered generically
+// above). Deliberately small: `git add`/`checkout` stay out because staging
+// and branch switches are routine agent workflow, not smuggled writes.
+const ADD_STYLE_MANAGERS: Record<string, string[]> = {
+  dotnet: ["add"],
+  composer: ["require"],
+  poetry: ["add"],
+  cargo: ["add"],
+  go: ["get"],
+  npm: ["ci", "update"],
+  yarn: ["upgrade"],
+  pnpm: ["upgrade"],
+  bun: ["update"],
+};
+
+// Dry-run probes never write, even for destructive subcommands.
+const DRY_RUN_RE = /^(?:-n|--dry-run)$/;
 
 const REDIRECT_RE = /(?:\d*>>?|&>)/;
 const REDIRECT_TARGET_RE = /(?:\d*>>?|&>)\s*([^\s]+)/g;
@@ -87,12 +105,14 @@ export function shellWriteIntent(command: string): ShellIntent {
     return { intent: true, invalid: false, values };
   }
   if (head === "git" && GIT_WRITE_SUBCOMMANDS.has(basename(rest[0] ?? ""))) {
+    if (rest.some((token) => DRY_RUN_RE.test(token))) return none;
     if (unparseable(command)) return { intent: true, invalid: true, values: [] };
     const values = rest.slice(1).filter((token) => !token.startsWith("-"));
     if (values.length === 0) return { intent: true, invalid: true, values: [] };
     return { intent: true, invalid: false, values };
   }
-  if (PACKAGE_MANAGERS.has(head) && basename(rest[0] ?? "") === "install") {
+  const addVerbs = ADD_STYLE_MANAGERS[head];
+  if (addVerbs !== undefined && addVerbs.includes(basename(rest[0] ?? ""))) {
     if (unparseable(command)) return { intent: true, invalid: true, values: [] };
     const values = rest.slice(1).filter((token) => !token.startsWith("-"));
     if (values.length === 0) return { intent: true, invalid: true, values: [] };

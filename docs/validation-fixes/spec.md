@@ -56,8 +56,12 @@ receipts in this environment, see finding `b611654d`)
 - Doctor + installer cover **all** hook events, not just sessionStart
   (matcher drift becomes a `stale_install`-class finding).
 - Shell containment (both hooks): extend verb coverage
-  (`tee`, `sed -i`, `ln`/`unlink`, `rmdir`, `dd`, `truncate`);
-  resolve symlinks before containment (realpath on the operand when it
+  (`tee`, `sed -i`, `ln`/`unlink`, `rmdir`, `dd`, `truncate`, `git clean` /
+  `restore` with a dry-run carve-out); the `install` token covers every
+  package manager uniformly with a small table for non-install verbs
+  (`dotnet add`, `composer require`, `poetry/cargo add`, `go get`,
+  `npm ci`); `checkout`/`add` stay out as routine workflow; resolve symlinks
+  before containment (realpath on the operand when it
   exists); case-insensitive compare on win32; unparseable non-`command`
   shapes deny instead of allow.
 - Codex matcher precision: quote-aware verb scan (quoted mentions never
