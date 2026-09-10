@@ -36,7 +36,7 @@ Unknown or untested cells fail the applicable baseline rather than reading as su
 ### codex_cli
 
 - **interactive_decision** (agent_guided): Codex hooks expose no native arbitrary-question answer receipt
-- **known_product_writes** (enforced): PreToolUse can deny covered Bash/apply_patch and local write targets
+- **known_product_writes** (enforced): PreToolUse can deny covered Bash/apply_patch and local write targets (requires the installed hook bundle)
 - **native_subagents** (agent_guided): Codex reports stable child identities, but cannot block creation or bind a writer
 - **native_subagent_start** (agent_guided): SubagentStart supplies identity and bounded read-only guidance; continue:false cannot stop creation
 - **arbitrary_shell_write** (unavailable): Only covered known tool inputs are interceptable; specialized and write_stdin paths are not complete
@@ -45,7 +45,7 @@ Unknown or untested cells fail the applicable baseline rather than reading as su
 ### codex_desktop
 
 - **interactive_decision** (agent_guided): Codex hooks expose no native arbitrary-question answer receipt
-- **known_product_writes** (enforced): PreToolUse can deny covered Bash/apply_patch and local write targets
+- **known_product_writes** (enforced): PreToolUse can deny covered Bash/apply_patch and local write targets (requires the installed hook bundle)
 - **native_subagents** (agent_guided): Codex reports stable child identities, but cannot block creation or bind a writer
 - **native_subagent_start** (agent_guided): SubagentStart supplies identity and bounded read-only guidance; continue:false cannot stop creation
 - **arbitrary_shell_write** (unavailable): Only covered known tool inputs are interceptable; specialized and write_stdin paths are not complete

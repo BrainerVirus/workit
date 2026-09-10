@@ -65,7 +65,7 @@ export const codexCapabilities = (
       surface: "PreToolUse",
       assurance: has("preToolUse") ? "enforced" : "unavailable",
       reason: has("preToolUse")
-        ? "PreToolUse can deny covered Bash/apply_patch and local write targets"
+        ? "PreToolUse can deny covered Bash/apply_patch and local write targets (requires the installed hook bundle)"
         : "PreToolUse hook is untrusted or unavailable",
       refs: [ref(host, "PreToolUse")],
     },

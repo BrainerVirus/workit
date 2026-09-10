@@ -62,8 +62,8 @@ reviewer/investigator processes and explicitly scoped implementers; writer
 ownership is acquired only after native process observation, and cancellation
 timeouts remain uncertain until an exit is observed.
 Pi also exposes one child-disabled `workit_worker_control` host-orchestration
-tool for launch/cancel/reconcile; the shared core surface remains exactly eight
-`workit_*` operation tools.
+tool for launch/cancel/reconcile; the shared core surface remains the eight
+`workit_*` operation families (the host orchestration tool is adapter-owned, not a ninth family).
 
 Hosts that can observe their own launch surface claim a worker's launch slot
 before spawning it, through the host-only core methods `prepareWorkerDispatch`
@@ -179,8 +179,8 @@ host capability matrix (`docs/workit-v1/capabilities.md`), and a stable gate tha
 blocks publication on missing deterministic or live evidence. The 90-run live batch
 requires explicit authorization; see `docs/workit-v1/qualification.md`.
 
-Published bundles are built with Bun and run on Node. The Cursor and OpenCode
-package builds copy the seven canonical skills from `packages/workit-core`; no
+Published bundles are built with Bun and run on Node. The Cursor, OpenCode,
+Codex, and Pi package builds copy the seven canonical skills from `packages/workit-core`; no
 host-specific skill forks are maintained.
 
 ## Repository layout
