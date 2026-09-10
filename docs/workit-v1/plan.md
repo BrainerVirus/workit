@@ -6,7 +6,7 @@
 
 **Architecture:** Build the v1 core as small, independently testable modules beside the old flow, then connect one native surface at a time through the eight closed operation families. Keep runtime truth in project-local atomic JSON snapshots, keep model execution in the native hosts, and remove the 0.x workflow only after every v1 surface passes the shared contract. Compatibility work is limited to an explicit preview/apply/rollback cutover at the end.
 
-**Tech Stack:** TypeScript 7.0.2, Node.js 24 LTS, Bun 1.4.1 and Bun test, Zod 4.5.4 compiled strict schemas, MCP SDK 1.30.0 for Cursor/Codex tools, OpenCode 1.18.29 native plugins, Codex CLI 0.153.4 plugins/hooks, and Pi 0.85.1 extensions and stock-Pi subprocesses.
+**Tech Stack:** TypeScript 7.0.2, Node.js 24 LTS, Bun 1.4.1 and Bun test, Zod 4.5.4 compiled strict schemas, MCP SDK 1.30.0 for Cursor/Codex tools, OpenCode 1.18.30 native plugins, Codex CLI 0.153.4 plugins/hooks, and Pi 0.85.1 extensions and stock-Pi subprocesses.
 
 **Spec:** [docs/workit-v1/spec.md](spec.md), with the normative wire contract in [docs/workit-v1/contracts.md](contracts.md).
 
@@ -36,7 +36,7 @@ version was already the newest compatible stable release; it is still pinned.
 | Root toolchain     | Node CI/release `24.20.0`, package engines `>=24`, Bun/package manager `1.4.1`, `@types/bun` `1.4.1`, `@types/node` `24.13.3`, TypeScript `7.0.2`, oxfmt `0.66.0`, oxlint `1.81.0` |
 | Shared contract    | Add Zod `4.5.4`; use `z.compile()` for the eight closed operation schemas and `z.toJSONSchema()` for MCP publication                                                               |
 | Shared MCP         | Pin `@modelcontextprotocol/sdk` `1.30.0` and Zod `4.5.4`; use the low-level `Server`, not the draft-07-emitting high-level conversion path                                         |
-| OpenCode           | Pin build-only `@opencode-ai/plugin` `1.18.29`; validate host `1.18.29`; ship no OpenCode SDK runtime dependency                                                                   |
+| OpenCode           | Pin build-only `@opencode-ai/plugin` `1.18.30`; validate host `1.18.30`; ship no OpenCode SDK runtime dependency                                                                   |
 | Pi                 | Pin development `@earendil-works/pi-coding-agent` `0.85.1`; peer `^0.85.1`; do not bundle Pi                                                                                       |
 | Codex              | Qualify Codex CLI `0.153.4`; do not add it as a Workit runtime dependency; record the separate desktop build                                                                       |
 | CLI UI             | Keep Ink `7.1.1`, `@inkjs/ui` `2.0.0`, React `19.2.8`, `@types/react` `19.2.18`, and `react-devtools-core` `7.0.1`                                                                 |
@@ -944,7 +944,7 @@ test("the lead is blocked from writes while an implementer owns the checkout", a
 });
 ```
 
-Cover native task tools rather than MCP, task discovery on session start, first-turn bootstrap once, compaction restoration once, purpose-specific receipt consumption, exact direct-child parentage, nested worker denial, reviewer read-only context, implementer scoped context, write interception for known edit/write/bash surfaces, cancellation observation, and truthful `agent_guided` labels for paths OpenCode cannot intercept. Compile and type-check against `@opencode-ai/plugin` `1.18.29` and run the packed smoke against OpenCode `1.18.29`.
+Cover native task tools rather than MCP, task discovery on session start, first-turn bootstrap once, compaction restoration once, purpose-specific receipt consumption, exact direct-child parentage, nested worker denial, reviewer read-only context, implementer scoped context, write interception for known edit/write/bash surfaces, cancellation observation, and truthful `agent_guided` labels for paths OpenCode cannot intercept. Compile and type-check against `@opencode-ai/plugin` `1.18.30` and run the packed smoke against OpenCode `1.18.30`.
 
 - [ ] **Step 2: Run OpenCode tests and observe old-flow mismatches**
 
@@ -967,13 +967,13 @@ return {
 
 Do not carry forward phrase detectors such as “implementation without design” or a universal TDD/brainstorm reminder. Policy selects methods from structured task state. OpenCode receipts are host-observed only when the native question event, session, call, purpose, exact label/content, and time are actually available.
 
-Pin `@opencode-ai/plugin` `1.18.29` as a development dependency, update the support matrix's tested OpenCode version, and keep it out of the published runtime dependency set.
+Pin `@opencode-ai/plugin` `1.18.30` as a development dependency, update the support matrix's tested OpenCode version, and keep it out of the published runtime dependency set.
 
 - [ ] **Step 4: Run OpenCode, core, and packed-plugin checks**
 
 Run: `bun test test/workit-opencode/task-tools.test.ts test/workit-opencode/task-hooks.test.ts test/workit-opencode/plugin.test.ts test/workit-opencode/smoke.ts.test.ts && bun run packages/workit-opencode/scripts/build.ts && bunx tsc --noEmit && opencode --version`
 
-Expected: PASS; the host reports `1.18.29`, and the packed plugin loads without a runtime `@opencode-ai/plugin` dependency.
+Expected: PASS; the host reports `1.18.30`, and the packed plugin loads without a runtime `@opencode-ai/plugin` dependency.
 
 - [ ] **Step 5: Commit OpenCode parity**
 

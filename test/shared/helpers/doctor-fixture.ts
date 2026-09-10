@@ -103,7 +103,7 @@ export const makeDoctorFixture = (): DoctorFixture => {
     });
   writeFileSync(
     path.join(dev, "packages", "workit-opencode", "package.json"),
-    adapter("@brainervirus/workit-opencode", { "@opencode-ai/plugin": "1.18.29" }),
+    adapter("@brainervirus/workit-opencode", { "@opencode-ai/plugin": "1.18.30" }),
   );
   writeFileSync(
     path.join(dev, "packages", "workit-cursor", "package.json"),

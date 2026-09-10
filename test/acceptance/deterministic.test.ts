@@ -173,7 +173,7 @@ test("CA-31 toolchain evidence records actual Node, Bun, compiler, schema, and S
   for (const host of CODING_HOSTS) {
     expect(hostVersionIsProbed(evidence.hosts[host])).toBe(true);
   }
-  expect(evidence.hosts.opencode).toContain("@opencode-ai/plugin@1.18.29");
+  expect(evidence.hosts.opencode).toContain("@opencode-ai/plugin@1.18.30");
   expect(evidence.hosts.cursor).toContain("@brainervirus/workit-cursor@");
   expect(evidence.hosts.codex_cli).toContain("codex-cli@0.153.");
   expect(evidence.hosts.codex_desktop).toContain("codex-desktop@");

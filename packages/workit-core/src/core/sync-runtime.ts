@@ -313,7 +313,7 @@ export async function syncRuntime(options: SyncRuntimeOptions = {}): Promise<Syn
           dependencies?: Record<string, string>;
         };
         data.dependencies = data.dependencies ?? {};
-        data.dependencies["@opencode-ai/plugin"] ??= "1.18.29";
+        data.dependencies["@opencode-ai/plugin"] ??= "1.18.30";
         writeFileSync(pkg, JSON.stringify(data, null, 2) + "\n");
       } catch {
         /* best-effort */

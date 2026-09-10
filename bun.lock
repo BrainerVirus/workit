@@ -24,7 +24,7 @@
     },
     "packages/workit-cli": {
       "name": "@brainervirus/workit-cli",
-      "version": "0.11.0",
+      "version": "1.0.0",
       "bin": {
         "workit": "./dist/index.js",
       },
@@ -39,7 +39,7 @@
     },
     "packages/workit-codex": {
       "name": "@brainervirus/workit-codex",
-      "version": "0.11.0",
+      "version": "1.0.0",
       "bin": {
         "workit-codex-hook": "./dist/workit-hook.js",
         "workit-codex-mcp": "./dist/launch-mcp.js",
@@ -51,7 +51,7 @@
     },
     "packages/workit-core": {
       "name": "@brainervirus/workit-core",
-      "version": "0.11.0",
+      "version": "1.0.0",
       "dependencies": {
         "@openclaw/fs-safe": "0.8.1",
         "zod": "4.5.4",
@@ -59,7 +59,7 @@
     },
     "packages/workit-cursor": {
       "name": "@brainervirus/workit-cursor",
-      "version": "0.11.0",
+      "version": "1.0.0",
       "bin": {
         "workit-cursor-hook": "./dist/workit-hook.js",
         "workit-cursor-mcp": "./dist/mcp-server.js",
@@ -72,7 +72,7 @@
     },
     "packages/workit-mcp": {
       "name": "@brainervirus/workit-mcp",
-      "version": "0.11.0",
+      "version": "1.0.0",
       "bin": {
         "workit-mcp": "./dist/index.js",
       },
@@ -84,17 +84,17 @@
     },
     "packages/workit-opencode": {
       "name": "@brainervirus/workit-opencode",
-      "version": "0.11.0",
+      "version": "1.0.0",
       "dependencies": {
         "@brainervirus/workit-core": "workspace:*",
       },
       "devDependencies": {
-        "@opencode-ai/plugin": "1.18.29",
+        "@opencode-ai/plugin": "1.18.30",
       },
     },
     "packages/workit-pi": {
       "name": "@brainervirus/workit-pi",
-      "version": "0.11.0",
+      "version": "1.0.0",
       "devDependencies": {
         "@earendil-works/pi-coding-agent": "0.85.1",
       },
@@ -334,9 +334,9 @@
 
     "@openclaw/fs-safe-win32-x64-msvc": ["@openclaw/fs-safe-win32-x64-msvc@0.8.1", "", { "os": "win32", "cpu": "x64" }, "sha512-rOkDKnLx61xvio+slHc8kG0IzpVVxt6JIJu9Q+1CrBmKSyf9YPZYqVJcjXReqA+J/c4vvVLHp5sbwQerOAqT/w=="],
 
-    "@opencode-ai/plugin": ["@opencode-ai/plugin@1.18.29", "", { "dependencies": { "@ai-sdk/provider": "3.0.8", "@opencode-ai/sdk": "1.18.29", "effect": "4.0.0-beta.83", "zod": "4.1.8" }, "peerDependencies": { "@opentui/core": ">=0.4.5", "@opentui/keymap": ">=0.4.5", "@opentui/solid": ">=0.4.5" }, "optionalPeers": ["@opentui/core", "@opentui/keymap", "@opentui/solid"] }, "sha512-IhF83EU4I/ASgWwvm0FIh1O3a8ZVuCLqPrCbmSHdSYq7GHxIYe773i6dHqcbrzCzvlG/lP2H+dyTQ+xPAwFpbw=="],
+    "@opencode-ai/plugin": ["@opencode-ai/plugin@1.18.30", "", { "dependencies": { "@ai-sdk/provider": "3.0.8", "@opencode-ai/sdk": "1.18.30", "effect": "4.0.0-beta.83", "zod": "4.1.8" }, "peerDependencies": { "@opentui/core": ">=0.4.5", "@opentui/keymap": ">=0.4.5", "@opentui/solid": ">=0.4.5" }, "optionalPeers": ["@opentui/core", "@opentui/keymap", "@opentui/solid"] }, "sha512-bXWcA2VD478PXXke1qAYANTq58fCcbgY0GAUqZIFZqPpo48FoG8RH37nNZ78eHtz+ddiKIhFTBZJRaHF3IgFqw=="],
 
-    "@opencode-ai/sdk": ["@opencode-ai/sdk@1.18.29", "", { "dependencies": { "cross-spawn": "7.0.6" } }, "sha512-4CS+FoLPkymTlcga8jxivGDDb2AbWMIIl3b8+myoe2wtv/1ANYCErslgz1xy5hTVHymWE6CtVNKzRuPU0ED57A=="],
+    "@opencode-ai/sdk": ["@opencode-ai/sdk@1.18.30", "", { "dependencies": { "cross-spawn": "7.0.6" } }, "sha512-uviJ+PZLc/D1szt33WGzzt/rqJ+IaNmRGBb+UcOXrcQANl8XXKJrp4CNQQ2UAnUJ3Ek+VqcamIwjtKHUW/OjOQ=="],
 
     "@oxfmt/binding-android-arm-eabi": ["@oxfmt/binding-android-arm-eabi@0.66.0", "", { "os": "android", "cpu": "arm" }, "sha512-2Me9eoptv6ERdEuI2P8AOlYdHHraXebJaM6SC0kc2Dfb+mLrep2db+fedBPKaYn673h/vBgvP4tkOdAbaudX6w=="],
 

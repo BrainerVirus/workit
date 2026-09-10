@@ -372,7 +372,7 @@ test("session.deleted trusts its full session payload when lookup disappears", a
       directory: root,
       parentID: "coordinator",
       title: "child",
-      version: "1.18.29",
+      version: "1.18.30",
       time: { created: 0, updated: 0 },
     };
     let deleted = false;
@@ -439,7 +439,7 @@ test("bound lifecycle events reject ambiguous child worker handles", async () =>
       directory: root,
       parentID: "coordinator",
       title: "child",
-      version: "1.18.29",
+      version: "1.18.30",
       time: { created: 0, updated: 0 },
     };
     const hooks = await plugin(

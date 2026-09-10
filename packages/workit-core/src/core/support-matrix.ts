@@ -7,6 +7,6 @@
 export const SUPPORT_MATRIX = {
   bun: "1.4.1",
   node: { minimum: "24", current: "24.20.0" },
-  opencode: { minimum: "1.15.0", current: "1.18.29" },
+  opencode: { minimum: "1.15.0", current: "1.18.30" },
   os: ["ubuntu-latest", "macos-latest", "windows-latest"],
 } as const;
