@@ -533,12 +533,24 @@ export async function runActionCommand(argv: string[], deps: TaskCliDeps = {}): 
     else printHuman(result, deps);
     return 2;
   }
-  let payload: unknown;
-  try {
-    payload = JSON.parse(argv[payloadIndex + 1]);
-  } catch {
-    payload = null;
+  if (
+    taskIndex >= 0 &&
+    (argv[taskIndex + 1] === undefined || argv[taskIndex + 1].startsWith("--"))
+  ) {
+    const result = failure("invalid_input", "--task requires a value");
+    if (json) jsonResult(outOf(deps), result);
+    else printHuman(result, deps);
+    return 2;
   }
+  // Same @file/stdin parity as the task surface: inline JSON, a UTF-8
+  // @file, or UTF-8 stdin with -.
+  const loaded = await payloadValue(argv[payloadIndex + 1], deps);
+  if (!loaded.ok) {
+    if (json) jsonResult(outOf(deps), loaded.result);
+    else printHuman(loaded.result, deps);
+    return 2;
+  }
+  const payload: unknown = loaded.value;
   const parsed = externalActionRequest({ operation, payload });
   if (!parsed.ok) {
     if (json) jsonResult(outOf(deps), parsed);

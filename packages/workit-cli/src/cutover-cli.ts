@@ -53,25 +53,35 @@ const usage = (err: { write: (chunk: string) => void }, message: string): number
   return 2;
 };
 
-const parseHosts = (value: string | undefined): CutoverHost[] => {
-  if (!value) return ["opencode", "cursor"];
-  const hosts = value
+const parseHosts = (value: string | undefined): { hosts: CutoverHost[]; unknown: string[] } => {
+  // An absent or empty --hosts keeps the historical opencode/cursor default.
+  if (!value) return { hosts: ["opencode", "cursor"], unknown: [] };
+  const names = value
     .split(",")
     .map((h) => h.trim())
-    .filter(Boolean) as CutoverHost[];
-  return hosts.filter((h) => CUTOVER_HOSTS.includes(h));
+    .filter(Boolean);
+  return {
+    hosts: names.filter((h): h is CutoverHost => (CUTOVER_HOSTS as readonly string[]).includes(h)),
+    unknown: names.filter((h) => !(CUTOVER_HOSTS as readonly string[]).includes(h)),
+  };
 };
 
-const parseResolutions = (argv: string[]): Record<string, string> => {
-  const out: Record<string, string> = {};
+const parseResolutions = (
+  argv: string[],
+): { resolutions: Record<string, string>; malformed: string[] } => {
+  const resolutions: Record<string, string> = {};
+  const malformed: string[] = [];
   for (const token of argv) {
     if (!token.startsWith("--resolution=")) continue;
     const body = token.slice("--resolution=".length);
     const idx = body.indexOf("=");
-    if (idx <= 0) continue;
-    out[body.slice(0, idx)] = body.slice(idx + 1);
+    if (idx <= 0) {
+      malformed.push(token);
+      continue;
+    }
+    resolutions[body.slice(0, idx)] = body.slice(idx + 1);
   }
-  return out;
+  return { resolutions, malformed };
 };
 
 const cutoverPaths = (deps: CutoverCliDeps): CutoverPaths => ({
@@ -124,22 +134,31 @@ export async function runCutoverCommand(
   deps: CutoverCliDeps = {},
 ): Promise<number> {
   const err = errStream(deps);
-  const [action, subaction, backupId, ...rest] = argv;
+  const [action] = argv;
   if (!action) return usage(err, "missing cutover action");
 
   if (action === "preview") {
     const json = argv.includes("--json");
-    const hosts = parseHosts(argv.find((t) => t.startsWith("--hosts="))?.slice("--hosts=".length));
+    const { hosts, unknown } = parseHosts(
+      argv.find((t) => t.startsWith("--hosts="))?.slice("--hosts=".length),
+    );
+    if (unknown.length > 0) return usage(err, `unknown cutover host(s): ${unknown.join(", ")}`);
     const plan = previewCutover(cutoverPaths(deps), hosts);
     printPlan(deps, plan, json);
     return plan.blocked.length > 0 ? 1 : 0;
   }
 
   if (action === "apply") {
-    const hosts = parseHosts(argv.find((t) => t.startsWith("--hosts="))?.slice("--hosts=".length));
-    const resolutions = parseResolutions(argv);
+    const json = argv.includes("--json");
+    const { hosts, unknown } = parseHosts(
+      argv.find((t) => t.startsWith("--hosts="))?.slice("--hosts=".length),
+    );
+    if (unknown.length > 0) return usage(err, `unknown cutover host(s): ${unknown.join(", ")}`);
+    const { resolutions, malformed } = parseResolutions(argv);
+    if (malformed.length > 0)
+      return usage(err, `malformed --resolution flag(s): ${malformed.join(", ")}`);
     const plan = previewCutover(cutoverPaths(deps), hosts);
-    printPlan(deps, plan, false);
+    printPlan(deps, plan, json);
     if (plan.blocked.length > 0) {
       write(err, "cutover apply blocked — resolve preview findings first");
       return 1;
@@ -164,6 +183,11 @@ export async function runCutoverCommand(
   }
 
   if (action === "rollback") {
+    // Flags ride anywhere: the backup id is the first positional after the
+    // subaction, so `rollback apply --json <id>` and `rollback apply <id>
+    // --json` parse identically instead of mistaking a flag for the id.
+    const [, subaction, ...rest] = argv;
+    const backupId = rest.find((t) => !t.startsWith("--"));
     if (!subaction || !backupId) {
       return usage(err, "rollback requires preview|apply and a backup id");
     }
@@ -184,7 +208,7 @@ export async function runCutoverCommand(
         write(err, "rollback blocked — managed files changed after cutover");
         return 1;
       }
-      if (!(await requireConfirm([...rest, backupId], deps, "rollback apply"))) return 2;
+      if (!(await requireConfirm(rest, deps, "rollback apply"))) return 2;
       const result = applyRollback(backupId, cutoverPaths(deps));
       if (!result.ok) {
         writeJSON(err, result);

@@ -202,6 +202,8 @@ type UninstallOutcome = { confirmed: boolean; hosts: UninstallHost[]; plan: Unin
 const UNINSTALL_HOST_OPTIONS = [
   { label: "OpenCode", value: "opencode" as const },
   { label: "Cursor", value: "cursor" as const },
+  { label: "Codex", value: "codex" as const },
+  { label: "Pi", value: "pi" as const },
 ];
 
 function UninstallWizard({ onExit }: { onExit: (outcome: UninstallOutcome) => void }): JSX.Element {
@@ -256,7 +258,7 @@ export async function runUninstall() {
   if (process.stdin.isTTY !== true) {
     console.log("workit uninstall requires an interactive terminal (TTY).");
     console.log(
-      "It removes workit registrations from OpenCode and/or Cursor; your ~/.config/workit configuration is always kept.",
+      "It removes workit registrations from the selected hosts; your ~/.config/workit configuration is always kept.",
     );
     process.exit(2);
   }

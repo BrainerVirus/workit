@@ -44,6 +44,7 @@ import {
 } from "@/packages/workit-cli/src/steps";
 import {
   emptyDetection,
+  preselectedPlatforms,
   type HostDetection,
   type HostId,
 } from "@/packages/workit-core/src/core/detect-hosts";
@@ -1230,4 +1231,15 @@ test("createInitialDraft seeds platforms from detection; empty by default", () =
     "cursor",
   ]);
   expect(createInitialDraft(config()).values.platforms).toEqual([]);
+});
+
+test("external hosts list codex and pi; preselect keeps wizard hosts only", () => {
+  const detection: Record<HostId, HostDetection> = {
+    ...emptyDetection(),
+    cursor: { detected: true, configured: false },
+    codex: { detected: true, configured: false },
+    pi: { detected: true, configured: false },
+  };
+  expect(externalDetectedHosts(detection)).toEqual(["Codex", "Pi"]);
+  expect(preselectedPlatforms(detection)).toEqual(["cursor"]);
 });

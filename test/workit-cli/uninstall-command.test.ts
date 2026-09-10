@@ -347,3 +347,19 @@ test("non-TTY stdin prints guidance and exits 2 without touching anything (CA-10
     rmSync(fx.home, { recursive: true, force: true });
   }
 });
+
+e2e("the picker offers all four hosts and declining leaves everything intact", async () => {
+  const fx = makeFixture();
+  try {
+    const { chunks, exitCode } = await driveUninstall([DOWN, DOWN, SPACE, ENTER, "n"], fx.home);
+    expect(exitCode).toBe(0);
+    const joined = clean(chunks.join(""));
+    expect(joined).toContain("OpenCode");
+    expect(joined).toContain("Cursor");
+    expect(joined).toContain("Codex");
+    expect(joined).toContain("Pi");
+    expect(joined).toContain("nothing was changed");
+  } finally {
+    rmSync(fx.home, { recursive: true, force: true });
+  }
+});

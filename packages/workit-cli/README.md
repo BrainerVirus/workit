@@ -37,7 +37,9 @@ The task surface exposes the eight shared operation families (`task`, `policy`,
 closed actions. Payloads can be inline JSON, a UTF-8 `@file`, or UTF-8 stdin
 with `-`; `--json` preserves the structured Result shape and exits nonzero for
 failures. Headless mutations that require consent use `--confirm` (agent-reported)
-or an observed TTY prompt; `workit handoff --task` is read-only and refuses to
+or an observed TTY prompt; the action route additionally requires an
+interactive TTY — headless action calls return `needs_input` even with
+`--confirm`. `workit handoff --task` is read-only and refuses to
 emit a handoff when export and inspection revisions differ.
 
 ## Behavior

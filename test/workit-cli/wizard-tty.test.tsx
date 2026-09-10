@@ -1067,12 +1067,13 @@ test("platforms screen preselects detected hosts and tags configured ones", asyn
           ...emptyDetection(),
           opencode: { detected: true, configured: true },
           codex: { detected: true, configured: false },
+          pi: { detected: true, configured: false },
         }}
       />,
     );
     const first = tty.lastFrame();
     expect(first).toContain("already configured");
-    expect(first).toContain("Detected: Codex");
+    expect(first).toContain("Detected: Codex, Pi");
     expect(first).toContain("cutover");
     // The opencode preselection satisfies validation: ENTER advances with no toggle.
     await tty.keys(ENTER);
