@@ -808,7 +808,13 @@ const recordFinding = (core: WorkitCore, taskId: string, expectedRevision: strin
   return recorded.data as { id: string };
 };
 
-const recordCheck = (core: WorkitCore, taskId: string, expectedRevision: string, claim: string) => {
+const recordCheck = (
+  core: WorkitCore,
+  taskId: string,
+  expectedRevision: string,
+  claim: string,
+  refs: Array<ReturnType<typeof ref>> = [],
+) => {
   const recorded = core.evidence({
     schemaVersion: 1,
     action: "record",
@@ -820,7 +826,7 @@ const recordCheck = (core: WorkitCore, taskId: string, expectedRevision: string,
       requirementIds: [],
       result: "passed",
       summary: claim,
-      refs: [],
+      refs,
       exitCode: 0,
       reviewContext: null,
     },
@@ -1296,4 +1302,108 @@ test("a passing repository check does not satisfy an untested behavior requireme
       decisionIds: [],
     }),
   ).toMatchObject({ ok: false, code: "requirements_unsatisfied" });
+});
+
+test("failed evidence with overlapping refs reopens a fixed finding", () => {
+  const root = mkdtempSync(join(tmpdir(), "workit-engine-reopen-contradict-"));
+  const store = new TaskStore(root);
+  const core = new WorkitCore(store, context(root));
+  const started = core.task(taskStartRequest());
+  if (!started.ok) throw new Error(started.error);
+  const taskId = (started.data as any).id as string;
+  let task = store.readTask(taskId);
+  if (!task.ok) throw new Error(task.error);
+  const finding = recordFinding(core, taskId, task.data.revision);
+  task = store.readTask(taskId);
+  if (!task.ok) throw new Error(task.error);
+  const check = recordCheck(core, taskId, task.data.revision, "fix verified");
+  task = store.readTask(taskId);
+  if (!task.ok) throw new Error(task.error);
+  resolveFixed(core, taskId, task.data.revision, finding.id, check.id);
+  task = store.readTask(taskId);
+  if (!task.ok) throw new Error(task.error);
+  const failed = core.evidence({
+    schemaVersion: 1,
+    action: "record",
+    taskId,
+    expectedRevision: task.data.revision,
+    evidence: {
+      kind: "check",
+      claim: "regression check failed",
+      requirementIds: [],
+      result: "failed",
+      summary: "contradicting signal",
+      refs: [ref()],
+      exitCode: 1,
+      reviewContext: null,
+    },
+  });
+  expect(failed.ok).toBe(true);
+  expect(findingDisposition(store, taskId, finding.id)).toBe("open");
+});
+
+test("a dismissed finding stays dismissed without a tree move", () => {
+  const root = mkdtempSync(join(tmpdir(), "workit-engine-dismissed-stays-"));
+  const store = new TaskStore(root);
+  const core = new WorkitCore(store, context(root));
+  const started = core.task(taskStartRequest());
+  if (!started.ok) throw new Error(started.error);
+  const taskId = (started.data as any).id as string;
+  let task = store.readTask(taskId);
+  if (!task.ok) throw new Error(task.error);
+  const finding = recordFinding(core, taskId, task.data.revision);
+  task = store.readTask(taskId);
+  if (!task.ok) throw new Error(task.error);
+  const basis = core.evidence({
+    schemaVersion: 1,
+    action: "record",
+    taskId,
+    expectedRevision: task.data.revision,
+    evidence: {
+      kind: "investigation",
+      claim: "dismissal basis",
+      requirementIds: [],
+      result: "passed",
+      summary: "not reproducible",
+      refs: [ref()],
+      exitCode: null,
+      reviewContext: null,
+    },
+  });
+  expect(basis.ok).toBe(true);
+  if (!basis.ok) throw new Error(basis.error);
+  task = store.readTask(taskId);
+  if (!task.ok) throw new Error(task.error);
+  const dismissed = core.finding({
+    schemaVersion: 1,
+    action: "resolve",
+    taskId,
+    expectedRevision: task.data.revision,
+    findingId: finding.id,
+    disposition: "dismissed",
+    reason: "not an issue",
+    evidenceIds: [(basis.data as { id: string }).id],
+    decisionIds: [],
+  });
+  expect(dismissed).toMatchObject({ ok: true, data: { data: { disposition: "dismissed" } } });
+  task = store.readTask(taskId);
+  if (!task.ok) throw new Error(task.error);
+  const noted = core.evidence({
+    schemaVersion: 1,
+    action: "record",
+    taskId,
+    expectedRevision: task.data.revision,
+    evidence: {
+      kind: "artifact",
+      claim: "unrelated note",
+      requirementIds: [],
+      result: "passed",
+      summary: "no tree move",
+      refs: [],
+      exitCode: null,
+      reviewContext: null,
+    },
+  });
+  expect(noted.ok).toBe(true);
+  expect(findingDisposition(store, taskId, finding.id)).toBe("dismissed");
 });
