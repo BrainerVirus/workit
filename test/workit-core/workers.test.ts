@@ -1037,6 +1037,46 @@ test("a new lead session succeeds a dead lead-held writer instead of bricking", 
   expect(reread.data.writer.owner.taskId).toBe(first.task.id);
 });
 
+test("cross-task succession moves checkout ownership without corrupting writes", () => {
+  const first = active();
+  const acquired = first.core.writer({
+    schemaVersion: 1,
+    action: "acquire",
+    taskId: first.task.id,
+    workerId: null,
+  });
+  expect(acquired.ok).toBe(true);
+  if (!acquired.ok) throw new Error(acquired.error);
+  const second = new WorkitCore(
+    first.store,
+    context(first.root, { caller: caller({ actor: "successor-session" }) }),
+  );
+  const started = second.task(
+    taskStartRequest({
+      intent: {
+        objective: "second task",
+        scope: scope({ paths: ["."] }),
+        authorityRefs: [],
+      },
+      expectedWorkspaceRevision: undefined,
+    }),
+  );
+  expect(started.ok).toBe(true);
+  if (!started.ok) throw new Error(started.error);
+  const secondId = (started.data as { id: string }).id;
+  const takeover = second.writer({
+    schemaVersion: 1,
+    action: "acquire",
+    taskId: secondId,
+    workerId: null,
+  });
+  expect(takeover.ok).toBe(true);
+  if (!takeover.ok) throw new Error(takeover.error);
+  const workspace = first.store.readWorkspace();
+  if (!workspace.ok || !workspace.data?.writer) throw new Error("writer missing after takeover");
+  expect(workspace.data.writer.owner.taskId).toBe(secondId);
+});
+
 test("a lead session cannot take over a worker-held writer", () => {
   const lead = active({ nativeWorker: observationVerifier() });
   const assigned = assign(lead.core, lead.task, lead.workspace);

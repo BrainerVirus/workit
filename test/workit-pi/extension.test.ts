@@ -260,6 +260,41 @@ test("Pi tools accept JSON-stringified nested payloads", async () => {
   expect(stored.data.intent.data.objective).toBe("stringified transport probe");
 });
 
+test("Pi string decoding never masks the original contract failure", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "workit-pi-decode-error-"));
+  const pi = makePi();
+  await extension(pi as any);
+  const taskTool = pi.tools.find((tool) => tool.name === "workit_task");
+  // Literal free text that parses as JSON keeps its meaning: a valid call
+  // with a numeric-looking summary still succeeds without decoding.
+  const started = await taskTool.execute(
+    "call",
+    {
+      schemaVersion: 1,
+      action: "start",
+      intent: {
+        objective: "123",
+        scope: { description: "probe", paths: [], exclusions: [] },
+        authorityRefs: [],
+      },
+    },
+    undefined,
+    undefined,
+    context(root),
+  );
+  expect(started.details).toMatchObject({ ok: true });
+  // A genuinely bad call still reports the original failure, not a decoding
+  // artifact: unknown action stays unknown action.
+  const bad = await taskTool.execute(
+    "call",
+    { schemaVersion: 1, action: "frobnicate", intent: { objective: "x" } },
+    undefined,
+    undefined,
+    context(root),
+  );
+  expect(bad.details).toMatchObject({ ok: false, code: "invalid_input" });
+});
+
 test("interactive Pi decisions use the native answer and reject untrusted writes", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "workit-pi-decision-"));
   const pi = makePi();

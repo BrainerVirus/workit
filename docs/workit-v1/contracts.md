@@ -115,6 +115,12 @@ validated provenance or fail closed; an adapter must not self-attest by merely
 echoing agent-supplied observation JSON. Verified action authority is scoped to
 the owning core/store/context and is one-shot.
 
+Host worker briefings are adapter-owned text, not authority: OpenCode injects
+the bound worker's taskId, workerId, own session reference, role, scope, and
+stopping condition so helpers can self-reference (own reports, own review
+context). Other hosts brief workers through their own channels with the same
+rule: briefing content never grants scope, decisions, or lifecycle control.
+
 ## 2. Assessment, policy, and evaluation
 
 ```typescript
@@ -531,7 +537,11 @@ task revision is also checked where an existing task participates. Ownership is
 rechecked for every controlled product-write action, not only explicit writer
 calls. A lead-held writer transfers across lead sessions of the same checkout
 on acquire (session succession after restarts); worker-held writers never
-transfer this way and keep full session strictness. All helpers, including implementers, are prohibited from recording or
+transfer this way and keep full session strictness. Succession is CAS-atomic
+and every product write rechecks ownership, so two concurrent lead sessions
+cannot both believe they hold it: the loser gets writer_conflict naming the
+current owner. A lead-held writer still gates every task, so a second task
+waits for release before lifecycle moves. All helpers, including implementers, are prohibited from recording or
 revoking user decisions, changing task scope/lifecycle, accepting exceptions,
 assigning further helpers, or closing the lead's task. Helpers can inspect their
 assigned context, report evidence/findings, and submit their own worker report;

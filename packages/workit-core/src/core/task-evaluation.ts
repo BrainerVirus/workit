@@ -483,7 +483,9 @@ export function evaluateRequirements(
     if (requirement.dimension === "delegation") {
       // A bounded helper used for the requirement whose completed report is
       // recorded reconciles the delegation: the lead closes on that result.
-      // Empty scope paths mean the whole checkout on both sides.
+      // Empty scope paths mean the whole checkout on both sides. Explicit
+      // requirement linkage wins for narrow requirements; scope coverage is
+      // the usual path since assignments live inside the requirement scope.
       const dot = (scope: Scope): Scope =>
         scope.paths.length > 0 ? scope : { ...scope, paths: ["."] };
       const reconciled = task.workers.some(
