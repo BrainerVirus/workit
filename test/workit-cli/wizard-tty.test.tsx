@@ -60,6 +60,7 @@ const seedConfig: ToolkitConfig = {
     protected: ["main", "develop"],
   },
   commitPolicy: { preset: "conventional" },
+  trustedPaths: [],
 };
 
 function withSeedConfig(config: ToolkitConfig): () => void {
@@ -81,6 +82,7 @@ function draft(preset: BranchPreset): WizardDraft {
     timezone: "UTC",
     branchPolicy: { preset, allowed: [], protected: [] },
     commitPolicy: { preset: "conventional" },
+    trustedPaths: [],
   });
 }
 

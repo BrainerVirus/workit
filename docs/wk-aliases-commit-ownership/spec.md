@@ -43,6 +43,7 @@ N/A (reason) — four small core deltas plus adapter alias tables, no new flows.
 - CA-05 Every workit-created commit carries `Task: <id>`; squash path unaffected.
 - CA-06 Foreign `close`/`revise`/`evidence` fails closed; owner-labeled list; handoff transfers ownership.
 - CA-07 Full suite green; fresh-context review approved.
+- CA-08 Writes under configured `trustedPaths` pass the gate with writer held; unlisted outside paths still denied; adapters pass absolute trusted paths through instead of pre-denying.
 
 ## Decisions
 
@@ -50,6 +51,10 @@ N/A (reason) — four small core deltas plus adapter alias tables, no new flows.
 - D-02 All four slices, sequenced aliases → flavors → linkage → isolation.
 - D-03 Middle-path isolation (labels + destructive-op denial + handoff).
 - D-04 Thin linkage (trailer + skill rule) because squash erases branch history anyway.
+- D-05 Trusted-paths escape hatch (slice 5, user-reported block): user-config
+  `trustedPaths` allowlist; paths under it bypass inside-checkout and scope
+  denials but still require writer ownership; default empty preserves
+  fail-closed for everyone else.
 
 ## Review checklist
 

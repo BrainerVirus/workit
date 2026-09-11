@@ -17,7 +17,11 @@
 4. **Ownership.** Owner session on task list output; owner-check on close/revise/evidence (fail closed, handoff escape).
    Files: Modify `task-engine.ts`, `task-store.ts` list shape; Test foreign-mutation denials + handoff transfer.
    Steps: RED — denial tests; GREEN; commit.
-5. Full suite + lint/format/tsc; fresh-context reviewer; resolve; close.
+5. **Trusted paths.** `trustedPaths` in user config; core gate accepts absolute
+   paths under them with writer held; adapters pass through.
+   Files: Modify `config.ts`, `workers.ts`, adapter guards; Test allow/deny matrix.
+   Steps: RED — trusted passes, unlisted denied; GREEN; commit.
+6. Full suite + lint/format/tsc; fresh-context reviewer; resolve; close.
 
 ## Dependencies
 

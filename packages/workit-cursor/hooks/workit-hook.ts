@@ -13,6 +13,7 @@ import {
   type NativeWorkerVerifier,
 } from "@brainervirus/workit-core/src/core";
 import { shellWriteIntent } from "@brainervirus/workit-core/src/core/shell-intent.ts";
+import { isTrustedPath, resolveTrustedRoots } from "@brainervirus/workit-core/src/core/config.ts";
 
 type HookEvent =
   | "sessionStart"
@@ -222,8 +223,12 @@ const activeTask = (store: TaskStore) => {
   return { ok: true as const, workspace: workspace.data, task: tasks[0] };
 };
 
-const normalizePath = (root: string, value: string, cwd = root): string | null => {
-  const candidate = path.isAbsolute(value) ? value : path.resolve(cwd, value);
+const normalizePath = (root: string, value: string, cwd = root, trustedRoots: string[] = []): string | null => {
+  const absolute = path.isAbsolute(value) ? value : path.resolve(cwd, value);
+  // User-trusted absolute paths pass through for the core gate (writer still
+  // required); everything else must resolve inside the checkout root.
+  if (isTrustedPath(absolute, trustedRoots)) return absolute;
+  const candidate = absolute;
   // Resolve symlinks when the operand exists: a link inside the root that
   // points outside must not pass containment on its lexical form.
   let resolved = candidate;
@@ -254,14 +259,14 @@ const resolveCwd = (root: string, value: string): string | null => {
   }
 };
 
-const shellWritePaths = (root: string, command: string, cwd = root) => {
+const shellWritePaths = (root: string, command: string, cwd = root, trustedRoots: string[] = []) => {
   // One shared parser for both hooks (core/shell-intent): redirects, quotes,
   // chains, globs and unparseable shapes deny instead of guessing.
   const intent = shellWriteIntent(command);
   if (!intent.intent) return { paths: [], writeIntent: false, invalid: false };
   if (intent.invalid) return { paths: [], writeIntent: true, invalid: true };
   const paths = intent.values
-    .map((value) => normalizePath(root, value, cwd))
+    .map((value) => normalizePath(root, value, cwd, trustedRoots))
     .filter((value): value is string => value !== null);
   return {
     paths,
@@ -270,7 +275,7 @@ const shellWritePaths = (root: string, command: string, cwd = root) => {
   };
 };
 
-const writeTargets = (root: string, input: CursorHookInput) => {
+const writeTargets = (root: string, input: CursorHookInput, trustedRoots: string[] = []) => {
   const cwd = input.cwd ? resolveCwd(root, input.cwd) : root;
   if (!cwd) return { paths: [], writeIntent: true, invalid: true };
   if (input.hook_event_name === "preToolUse") {
@@ -278,16 +283,16 @@ const writeTargets = (root: string, input: CursorHookInput) => {
     const values = [args.file_path, args.path, args.target, args.filename].filter(nonEmpty);
     if (values.length) {
       const paths = values
-        .map((value) => normalizePath(root, value, cwd))
+        .map((value) => normalizePath(root, value, cwd, trustedRoots))
         .filter((value): value is string => value !== null);
       return { paths, writeIntent: true, invalid: paths.length !== values.length };
     }
     // A structured write tool with no extractable target cannot be scoped —
     // deny instead of letting it fall through to the shell parser as allow.
     if (isWriteTool(input.tool_name ?? "")) return { paths: [], writeIntent: true, invalid: true };
-    return shellWritePaths(root, nonEmpty(args.command) ? args.command : "", cwd);
+    return shellWritePaths(root, nonEmpty(args.command) ? args.command : "", cwd, trustedRoots);
   }
-  return shellWritePaths(root, input.command ?? "", cwd);
+  return shellWritePaths(root, input.command ?? "", cwd, trustedRoots);
 };
 
 const isWriteTool = (name: string): boolean =>
@@ -438,14 +443,15 @@ export const handleCursorHook = (raw: unknown): Record<string, unknown> => {
     };
   if (input.hook_event_name === "subagentStart") return handleSubagentStart(input, root);
   if (input.hook_event_name === "subagentStop") return handleSubagentStop();
+  const trustedRoots = resolveTrustedRoots();
   if (input.hook_event_name === "beforeShellExecution") {
-    const targets = writeTargets(root, input);
+    const targets = writeTargets(root, input, trustedRoots);
     if (targets.invalid) return deny("shell write target is outside or unavailable");
     if (!targets.paths.length && targets.writeIntent)
       return deny("shell write target is ambiguous or unavailable");
     if (!targets.paths.length) return allow;
   } else if (/^shell$/i.test(input.tool_name ?? "")) {
-    const parsed = writeTargets(root, input);
+    const parsed = writeTargets(root, input, trustedRoots);
     if (parsed.invalid) return deny("shell write target is outside or unavailable");
     if (!parsed.paths.length && parsed.writeIntent)
       return deny("shell write target is ambiguous or unavailable");
@@ -464,13 +470,14 @@ export const handleCursorHook = (raw: unknown): Record<string, unknown> => {
       beforeShellExecution: input.hook_event_name === "beforeShellExecution",
     }),
   );
-  const targets = writeTargets(root, input);
+  const targets = writeTargets(root, input, trustedRoots);
   if (targets.invalid) return deny("recognized product write target is outside or unavailable");
   if (!targets.paths.length) return deny("recognized product write has no parseable target");
   const checked = core.assertProductWriteAllowed({
     task: state.task,
     workspace: state.workspace,
     paths: targets.paths,
+    trustedRoots,
   });
   return checked.ok ? allow : deny(checked.error);
 };

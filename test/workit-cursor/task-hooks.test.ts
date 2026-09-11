@@ -356,3 +356,42 @@ test("a structured write tool with no extractable target denies inside a task", 
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("shell hooks allow user-trusted absolute operands and still deny unlisted ones", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "workit-cursor-hook-"));
+  const trusted = mkdtempSync(path.join(tmpdir(), "workit-trusted-"));
+  const configDir = mkdtempSync(path.join(tmpdir(), "workit-trusted-config-"));
+  const previous = process.env.WORKFLOW_TOOLKIT_CONFIG;
+  try {
+    writeFileSync(
+      path.join(configDir, "config.json"),
+      JSON.stringify({ trustedPaths: [trusted] }),
+      "utf8",
+    );
+    process.env.WORKFLOW_TOOLKIT_CONFIG = configDir;
+    expect(
+      handleCursorHook({
+        hook_event_name: "beforeShellExecution",
+        conversation_id: "conv-1",
+        workspace_roots: [root],
+        cwd: root,
+        command: `cp src/in-scope ${path.join(trusted, "out")}`,
+      }),
+    ).toEqual({ permission: "allow" });
+    expect(
+      handleCursorHook({
+        hook_event_name: "beforeShellExecution",
+        conversation_id: "conv-1",
+        workspace_roots: [root],
+        cwd: root,
+        command: "cp src/in-scope /tmp/workit-definitely-unlisted",
+      }),
+    ).toMatchObject({ permission: "deny" });
+  } finally {
+    if (previous === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+    else process.env.WORKFLOW_TOOLKIT_CONFIG = previous;
+    rmSync(configDir, { recursive: true, force: true });
+    rmSync(trusted, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+  }
+});

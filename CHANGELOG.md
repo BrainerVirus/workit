@@ -20,6 +20,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `wk-*` slash aliases for all fourteen method skills on OpenCode, Cursor,
+  and Pi (replacing the five bare aliases); Codex documents `$workit-*`.
+- `commitPolicy` config (conventional, gitmoji, ticket-prefix, freeform,
+  custom pattern, auto-detect from history) enforced at the `git.commit`
+  gate with fail-closed rejections that name the expected flavor.
+- `trustedPaths` user config: absolute paths under listed roots pass the
+  product-write gate with writer held on every host; unlisted outside
+  paths stay denied and the default stays fail-closed.
 - v1 pre-close batch: deterministic spec triage (`triageTier`/`triageSignals`
   with Large/Medium/Small tiers plus recorded override), five bare slash
   aliases (`/challenge`, `/babysit`, `/implement`, `/plan`, `/debug`) on

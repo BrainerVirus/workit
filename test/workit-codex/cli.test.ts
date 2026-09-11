@@ -499,3 +499,50 @@ test("workspace root resolution honors explicit root and refuses the plugin dir"
     rmSync(workspace, { recursive: true, force: true });
   }
 });
+
+test("trusted absolute paths pass the hook while unlisted outside paths deny", () => {
+  const root = cwd();
+  const trusted = mkdtempSync(path.join(tmpdir(), "workit-trusted-"));
+  const configDir = mkdtempSync(path.join(tmpdir(), "workit-trusted-config-"));
+  const previous = process.env.WORKFLOW_TOOLKIT_CONFIG;
+  try {
+    writeFileSync(
+      path.join(configDir, "config.json"),
+      JSON.stringify({ trustedPaths: [trusted] }),
+      "utf8",
+    );
+    process.env.WORKFLOW_TOOLKIT_CONFIG = configDir;
+    const allowed = handleCodexHook(
+      official(
+        {
+          hook_event_name: "PreToolUse",
+          turn_id: "turn-1",
+          tool_use_id: "tool-1",
+          tool_name: "Write",
+          tool_input: { file_path: path.join(trusted, "notes.md") },
+        },
+        root,
+      ),
+    );
+    expect(allowed.hookSpecificOutput).toMatchObject({ permissionDecision: "allow" });
+    const denied = handleCodexHook(
+      official(
+        {
+          hook_event_name: "PreToolUse",
+          turn_id: "turn-1",
+          tool_use_id: "tool-2",
+          tool_name: "Write",
+          tool_input: { file_path: "/tmp/workit-definitely-unlisted.md" },
+        },
+        root,
+      ),
+    );
+    expect(denied.hookSpecificOutput).not.toMatchObject({ permissionDecision: "allow" });
+  } finally {
+    if (previous === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+    else process.env.WORKFLOW_TOOLKIT_CONFIG = previous;
+    rmSync(configDir, { recursive: true, force: true });
+    rmSync(trusted, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+  }
+});

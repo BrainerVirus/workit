@@ -1053,6 +1053,7 @@ test(
           timezone: "UTC",
           branchPolicy: { preset: "custom", allowed: ["codex/*"], protected: ["main"] },
           commitPolicy: { preset: "conventional" },
+          trustedPaths: [],
         });
         const customRes = resolveBranch({
           spec_path: "docs/codex-feat/spec.md",

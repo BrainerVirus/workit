@@ -1197,3 +1197,47 @@ test("cancel on a worker that already reported stops it instead of stranding it"
     }),
   ).toMatchObject({ ok: true });
 });
+
+test("trusted roots allow absolute outside paths with writer held, others stay denied", () => {
+  const lead = active();
+  const acquired = lead.core.writer({
+    schemaVersion: 1,
+    action: "acquire",
+    taskId: lead.task.id,
+    expectedRevision: lead.task.revision,
+    expectedWorkspaceRevision: lead.workspace.revision,
+    workerId: null,
+  });
+  expect(acquired.ok).toBe(true);
+  if (!acquired.ok) throw new Error(acquired.error);
+  const task = lead.store.readTask(lead.task.id);
+  const workspace = lead.store.readWorkspace();
+  if (!task.ok || !workspace.ok || !workspace.data) throw new Error("state missing");
+  const trusted = mkdtempSync(join(tmpdir(), "workit-trusted-"));
+  const unlisted = mkdtempSync(join(tmpdir(), "workit-unlisted-"));
+  const check = (paths: string[], trustedRoots?: string[]) =>
+    (lead.core.assertProductWriteAllowed as (input: object) => { ok: boolean; code?: string })({
+      task: task.data,
+      workspace: workspace.data,
+      paths,
+      ...(trustedRoots ? { trustedRoots } : {}),
+    });
+  expect(check([join(trusted, "db.sql")], [trusted])).toMatchObject({ ok: true });
+  expect(check([join(unlisted, "x.sql")], [trusted])).toMatchObject({
+    ok: false,
+    code: "invalid_input",
+  });
+  expect(check([join(trusted, "db.sql")])).toMatchObject({ ok: false, code: "invalid_input" });
+  const cold = active();
+  const coldTask = cold.store.readTask(cold.task.id);
+  const coldWorkspace = cold.store.readWorkspace();
+  if (!coldTask.ok || !coldWorkspace.ok || !coldWorkspace.data) throw new Error("state missing");
+  expect(
+    (cold.core.assertProductWriteAllowed as (input: object) => { ok: boolean; code?: string })({
+      task: coldTask.data,
+      workspace: coldWorkspace.data,
+      paths: [join(trusted, "db.sql")],
+      trustedRoots: [trusted],
+    }),
+  ).toMatchObject({ ok: false, code: "permission_denied" });
+});

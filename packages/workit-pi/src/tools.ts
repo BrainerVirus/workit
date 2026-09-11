@@ -33,6 +33,7 @@ import {
 } from "@brainervirus/workit-core/src/core/external-action-effects";
 import type { Provenance } from "@brainervirus/workit-core/src/core/task-contract";
 import { assertProductWriteAllowed } from "@brainervirus/workit-core/src/core/workers";
+import { resolveTrustedRoots } from "@brainervirus/workit-core/src/core/config";
 import type {
   ExtensionContext,
   AgentToolResult,
@@ -485,6 +486,7 @@ export const enforceNativeWriter = (
     workspace: workspace.data,
     caller: { host: "pi", actor: ctx.sessionManager.getSessionId() },
     paths: writePaths(event.toolName, event.input),
+    trustedRoots: resolveTrustedRoots(),
     store,
   });
   return result.ok ? undefined : { block: true, reason: result.error };

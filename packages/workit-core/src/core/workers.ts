@@ -17,6 +17,7 @@ import {
   type WorkspaceRecord,
 } from "./task-contract";
 import { TaskStore } from "./task-store";
+import { isTrustedPath } from "./config";
 
 export type WorkerState = Worker["state"];
 export type HostSession = Extract<Ref, { kind: "host" }>;
@@ -140,11 +141,25 @@ export type ProductWriteInput = {
   caller: CallerContext;
   paths: string[];
   store?: TaskStore;
+  /** Canonical absolute user-trusted roots; paths under them bypass the
+   * inside-checkout and scope denials but still require writer ownership. */
+  trustedRoots?: string[];
 };
+
+/** Absolute path canonically under any trusted root, symlink-safe. */
+const underTrustedRoot = (value: string, roots: string[]): boolean => isTrustedPath(value, roots);
 
 /** Check the authoritative workspace owner and the caller's assigned scope. */
 export function assertProductWriteAllowed(input: ProductWriteInput): Result<Owner> {
-  if (!Array.isArray(input.paths) || input.paths.some((path) => !validPath(path)))
+  const trustedRoots = input.trustedRoots ?? [];
+  const trusted = (candidate: string): boolean => underTrustedRoot(candidate, trustedRoots);
+  if (
+    !Array.isArray(input.paths) ||
+    input.paths.some(
+      (path) =>
+        typeof path !== "string" || path.length === 0 || (!validPath(path) && !trusted(path)),
+    )
+  )
     return failure("invalid_input", "product write paths must stay inside the checkout");
   if (!input.store) return failure("permission_denied", "write authorization requires core state");
   const task = input.store.readTask(input.task.id);
@@ -157,7 +172,11 @@ export function assertProductWriteAllowed(input: ProductWriteInput): Result<Owne
     return failure("invalid_transition", "paused or closed tasks cannot own product writes");
   if (workspaceRecord.id !== task.data.workspaceId || workspaceRecord.root.length === 0)
     return failure("recovery_required", "task and workspace bindings are invalid");
-  if (input.paths.some((candidate) => !insideCanonicalRoot(workspaceRecord.root, candidate)))
+  if (
+    input.paths.some(
+      (candidate) => !trusted(candidate) && !insideCanonicalRoot(workspaceRecord.root, candidate),
+    )
+  )
     return failure("invalid_input", "product write paths must stay inside the checkout");
   const writer = workspaceRecord.writer;
   if (!writer) return failure("permission_denied", "checkout has no writer owner");
@@ -196,6 +215,7 @@ export function assertProductWriteAllowed(input: ProductWriteInput): Result<Owne
     !assignedScope ||
     input.paths.some(
       (path) =>
+        !trusted(path) &&
         !scopeCovers(assignedScope, {
           ...assignedScope,
           paths: [path],

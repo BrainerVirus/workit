@@ -73,6 +73,7 @@ const config = (over: Partial<ToolkitConfig["branchPolicy"]> = {}): ToolkitConfi
     ...over,
   },
   commitPolicy: { preset: "conventional" },
+  trustedPaths: [],
 });
 
 const values = (over: Partial<SetupPreviewInput> = {}): SetupPreviewInput => ({

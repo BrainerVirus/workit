@@ -50,6 +50,7 @@ const seedConfig: ToolkitConfig = {
     protected: ["main", "develop"],
   },
   commitPolicy: { preset: "conventional" },
+  trustedPaths: [],
 };
 
 const tmp = (prefix: string) => mkdtempSync(path.join(os.tmpdir(), prefix));
