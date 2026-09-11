@@ -26,7 +26,8 @@ Requirements: OpenCode 1.18.30, Node ≥ 24 (the published plugin is a self-cont
 ## What it provides
 
 - **Eight native operation tools** — `workit_task`, `workit_policy`, `workit_evidence`, `workit_finding`, `workit_decision`, `workit_worker`, `workit_writer`, and `workit_state`.
-- **Seven policy-selected method skills** — challenge, behavioral TDD, review, plan, implement, debug, and handoff.
+- **Fourteen policy-selected method skills** — challenge, behavioral TDD, review, plan, implement, debug, handoff,
+  babysit, blast-radius, deslop, diagram, mockup, green-run, and steer.
 - **Native lifecycle hooks** — host-observed question receipts, direct-child task workers, compact task bootstrap/restoration, and known-surface writer checks.
 
 ## Host-native behavior
@@ -37,7 +38,7 @@ Requirements: OpenCode 1.18.30, Node ≥ 24 (the published plugin is a self-cont
 
 ## Bundle / runtime model
 
-The build bundles the `@opencode-ai/plugin` SDK surface used by the adapter into `dist/plugin.js`, so the published plugin has **no** runtime `@opencode-ai/plugin` dependency (it stays a development/build-only pinned dependency). The plugin loads through its real package entry `dist/plugin.js`; only the seven method skills ship under `assets/`.
+The build bundles the `@opencode-ai/plugin` SDK surface used by the adapter into `dist/plugin.js`, so the published plugin has **no** runtime `@opencode-ai/plugin` dependency (it stays a development/build-only pinned dependency). The plugin loads through its real package entry `dist/plugin.js`; only the fourteen method skills ship under `assets/`.
 
 ## Package scripts
 

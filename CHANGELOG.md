@@ -20,6 +20,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- v1 pre-close batch: deterministic spec triage (`triageTier`/`triageSignals`
+  with Large/Medium/Small tiers plus recorded override), five bare slash
+  aliases (`/challenge`, `/babysit`, `/implement`, `/plan`, `/debug`) on
+  OpenCode/Cursor/Pi with `$workit-*` documented for Codex CLI, auto-start
+  PR babysitting (`hosting.pull_request` `babysit?` flag, default on) that
+  merges per `pr` settings after green, seven new method skills (babysit,
+  blast-radius, deslop, diagram, mockup, green-run, steer) with upgrades to
+  debug/review/challenge/plan/behavioral-tdd, spec-template tightening
+  (Change line, SHALL/GIVEN-WHEN-THEN, skip marker, review checklist),
+  `context.read` YouTrack bodies (summary plus description, fail-closed),
+  and `scopeCovers` trailing-slash normalization.
 - Validation fix program: the CLI documents and implements `workit <family>
 <action>` (help, READMEs, contract, pinned help test), `workit writer
 acquire --actor <id>` binds a writer to a Codex session the hook matches,

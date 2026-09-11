@@ -42,7 +42,7 @@ npx @brainervirus/workit-cli init
 
 - MCP server exposing exactly the eight shared operation families: `workit_task`, `workit_policy`, `workit_evidence`, `workit_finding`, `workit_decision`, `workit_worker`, `workit_writer`, and `workit_state`.
 - One bounded native hook executable for session context, recognized product-write and shell interception, and native subagent lifecycle observations.
-- Seven canonical `workit-*` method skills and the `workit-contract` rule.
+- Fourteen canonical `workit-*` method skills and the `workit-contract` rule.
 
 ## Host limitations
 
@@ -54,7 +54,7 @@ Cursor maps shared Workit operations through the shared MCP transport. AskQuesti
 - MCP server: `mcp.json`.
 - Session-start hook: `hooks/hooks-cursor.json`.
 - Rule: `rules/workit-contract.mdc`.
-- Skills: `skills/` (seven canonical Workit methods).
+- Skills: `skills/` (fourteen canonical Workit methods).
 
 ## Runtime
 
@@ -78,13 +78,13 @@ The runtime runs from `@latest` with the mandatory `--prefer-online` flag: Curso
 | `mcp/` + `dist/mcp-server.js` | MCP server entry (built).                                     |
 | `hooks/`                      | session-start hook manifest.                                  |
 | `rules/workit-contract.mdc`   | Adaptive task contract and truthful Cursor capability limits. |
-| `skills/`                     | Seven canonical adaptive Workit method skills.                |
+| `skills/`                     | Fourteen canonical adaptive Workit method skills.               |
 | `.cursor-plugin/plugin.json`  | authoritative plugin manifest.                                |
 
 ## Package scripts
 
 ```bash
-  bun run build   # bundle MCP + native hook entries and copy seven method skills
+  bun run build   # bundle MCP + native hook entries and copy fourteen method skills
 ```
 
 From the repository root, `bun run validate:cursor-marketplace` validates the tracked Marketplace artifact against the official Cursor JSON schemas and clean-checkout invariants (component paths, frontmatter, logo, sanitized vendor parity, no ignored-`dist` runtime references).

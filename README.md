@@ -7,10 +7,10 @@ authority and lifecycle behavior to the native surfaces each host documents.
 
 | Package     | Purpose                                                                         |
 | ----------- | ------------------------------------------------------------------------------- |
-| OpenCode    | Native plugin with seven method skills, eight tools, and provider-safe schemas |
-| Cursor      | MCP transport, one native hook dispatcher, one contract rule, and seven skills  |
-| Codex       | Native plugin manifest, shared MCP transport, documented lifecycle hooks, and seven skills |
-| Pi          | Native npm extension with eight tools, seven skills, and session continuity      |
+| OpenCode    | Native plugin with fourteen method skills, eight tools, and provider-safe schemas |
+| Cursor      | MCP transport, one native hook dispatcher, one contract rule, and fourteen skills  |
+| Codex       | Native plugin manifest, shared MCP transport, documented lifecycle hooks, and fourteen skills |
+| Pi          | Native npm extension with eight tools, fourteen skills, and session continuity      |
 | Shared MCP  | Low-level transport for the eight core operation families                       |
 | Shared core | Task, policy, evidence, finding, decision, worker, writer, and continuity state |
 | CLI         | Setup wizard (`workit`)                                                         |
@@ -34,11 +34,19 @@ bun i
 
 - Eight shared `workit_*` operation families: task, policy, evidence, finding,
   decision, worker, writer, and state.
-- Seven canonical method skills: behavioral TDD, challenge, debug, handoff,
-  implement, plan, and review.
+- Fourteen canonical method skills: behavioral TDD, challenge, debug, handoff,
+  implement, plan, review, babysit, blast-radius, deslop, diagram, mockup,
+  green-run, and steer.
 - A `<workit-contract>` bootstrap marker carrying shared invariants.
 - Host-native capability reporting that never fabricates authority, receipts,
   delegation tokens, or cross-process identity.
+
+Skills are reachable two ways: model-invoked automatically when the task fits,
+or explicitly via five bare aliases — `/challenge`, `/babysit`, `/implement`,
+`/plan`, `/debug` — on OpenCode, Cursor, and Pi. An alias routes through
+policy to the method skills and never calls another alias. Codex CLI has no
+slash path: invoke skills explicitly as `$workit-<name>` or from the `/skills`
+picker.
 
 Cursor uses the shared MCP transport and one bounded native hook executable.
 AskQuestion is policy-only (`agent_guided`); session start and compaction are
@@ -96,7 +104,7 @@ The packaged runtime is self-contained apart from its Pi `^0.85.1` peer and
 requires Node.js 24 or newer.
 
 Cursor's plugin manifest registers the MCP server, hook manifest, one contract
-rule, and seven skills. For a direct MCP entry, use the package's published
+rule, and fourteen skills. For a direct MCP entry, use the package's published
 launcher:
 
 ```json
@@ -180,7 +188,7 @@ blocks publication on missing deterministic or live evidence. The 90-run live ba
 requires explicit authorization; see `docs/workit-v1/qualification.md`.
 
 Published bundles are built with Bun and run on Node. The Cursor, OpenCode,
-Codex, and Pi package builds copy the seven canonical skills from `packages/workit-core`; no
+Codex, and Pi package builds copy the fourteen canonical skills from `packages/workit-core`; no
 host-specific skill forks are maintained.
 
 ## Repository layout
