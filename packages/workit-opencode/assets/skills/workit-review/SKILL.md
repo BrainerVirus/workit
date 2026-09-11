@@ -35,6 +35,22 @@ review and must not be relabeled as verified.
 Use shared `evidence` and `finding` operations. Do not create a parallel review
 lifecycle, universal review panel, or direct metadata files.
 
+## Two axes, pinned
+
+Pin the fixed point first (`git diff <base>...HEAD` plus log); review that
+candidate only. Judge on two axes, never merged or reranked:
+
+- **Standards:** repo standards plus a smell baseline (mysterious name, long
+  method, duplicated logic, refused bequest, and kin); repo rules override
+  the baseline; judgement calls only, never tooling-enforced nits.
+- **Spec:** does the diff implement the originating spec/requirement
+  faithfully — missing, creep, or wrong, quoting the spec line.
+
+Every finding needs proof: the changed hunk, a failing/passing test ref, or
+a before/after. Causal disposition decides the outcome: introduced or
+worsened behavior gets fixed; pre-existing issues become follow-ups;
+inconclusive claims escalate, never silently pass.
+
 ## Common mistakes
 
 | Mistake | Correction |

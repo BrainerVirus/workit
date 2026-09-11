@@ -33,6 +33,21 @@ Honor task status, scope, revisions, and native authority gates. Do not bypass
 them for an incident, create a second lifecycle, or claim a fix from a green
 command that did not exercise the affected behavior.
 
+## Red-capable gate
+
+Never hypothesize without a loop that goes red on this exact failure. Build
+the loop first, in this order: failing test → CLI command + fixture →
+request replay → trace. Tighten it until fast, sharp, deterministic, and
+agent-runnable. No loop → stop, list what was tried, ask for the
+environment or artifact; never theorize without it.
+
+Minimise: cut one element at a time until every remainder is load-bearing;
+the minimised case becomes the regression test. State hypotheses ranked and
+falsifiable (`If <X> then changing <Y> removes it`), probe one variable at
+a time, tag debug logs for grep cleanup. Write the regression at the seam
+where the real pattern occurs — no correct seam means the finding is the
+architecture, so flag it instead of patching around it.
+
 When the host reports writer capability unavailable, do not mutate or delegate
 mutation. Continue inline only if policy and lead authority permit it;
 otherwise report the capability gap.

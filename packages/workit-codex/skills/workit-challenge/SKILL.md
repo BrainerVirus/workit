@@ -29,6 +29,16 @@ selects requirements; do not wait for a rule that can only exist after assess.
 5. Stop when the consequential choices are settled. Do not invent objections or
    keep debating to optimize for agreement.
 
+## Frontier rounds (bounded interview)
+
+When the proposal needs user input, run frontier rounds: each round asks the
+whole currently-askable set at once (`Qn — title: body` plus a
+recommendation each), then recomputes. Facts are the agent's job — look up
+what can be looked up, never ask it, and never block independent questions
+on each other. Decisions are the user's. Stop at an empty frontier or three
+rounds; confirm explicitly before acting. One native question, one receipt —
+ask once, record, never re-ask to mint agreement.
+
 ## Guardrails
 
 - Do not create a universal spec, plan, approval chain, or second lifecycle.

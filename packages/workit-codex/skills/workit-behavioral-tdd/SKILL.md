@@ -35,6 +35,10 @@ selects requirements; do not wait for a rule that can only exist after assess.
 - Duplicate assertions and tests that add no distinct failure signal are noise;
   delete them.
 - Do not claim a passing test satisfies a different requirement.
+- Banned: tautologies (asserts what the code says, not what it must do),
+  ghost loops (assert inside a possibly-empty loop), smoke-only renders,
+  type-only or CSS-class coupling. If the test still passes when every
+  imported function returns undefined, rewrite the assertion or delete it.
 
 Use shared `evidence` operations for RED/GREEN results. Do not add a second
 lifecycle, approval chain, or test workflow outside the current task state.
