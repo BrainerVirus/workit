@@ -234,7 +234,8 @@ test("apply path: first chunk clears, exactly one post-exit clear precedes the f
       ENTER, // platforms -> locale
       ENTER, // locale -> timezone
       ENTER, // timezone -> branchPreset
-      ENTER, // branchPreset -> issueTracker
+      ENTER, // branchPreset -> trustedPaths
+      ENTER, // trustedPaths (empty) -> issueTracker
       ENTER, // issueTracker (YouTrack) -> youtrack
       "https://yt.example.com",
       ENTER, // youtrack -> vcs

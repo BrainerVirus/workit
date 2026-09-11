@@ -101,6 +101,7 @@ test("next advances through the sequential screens", async () => {
       "locale",
       "timezone",
       "branchPreset",
+      "trustedPaths",
       "issueTracker",
       "youtrack",
       "vcs",
@@ -119,7 +120,7 @@ test("next advances through the sequential screens", async () => {
 
 test("next skips the custom branch screens when the preset is not custom", () => {
   const d = at("gitflow", "branchPreset");
-  expect(reducer(d, { type: "next" }).screen).toBe("issueTracker");
+  expect(reducer(d, { type: "next" }).screen).toBe("trustedPaths");
 });
 
 test("next visits the custom branch screens when the preset is custom", () => {
@@ -130,14 +131,21 @@ test("next visits the custom branch screens when the preset is custom", () => {
   d = reducer(d, { type: "next" });
   expect(d.screen).toBe("branchProtected");
   d = reducer(d, { type: "set", field: "branchProtected", value: "main" });
-  expect(reducer(d, { type: "next" }).screen).toBe("issueTracker");
+  d = reducer(d, { type: "next" });
+  expect(d.screen).toBe("trustedPaths");
+  d = reducer(d, { type: "next" });
+  expect(d.screen).toBe("issueTracker");
 });
 
 test("back reverses through screens and skips custom branch screens when not custom", async () => {
   await withNonGitRoot(() => {
     let d = at("gitflow", "youtrack");
     expect(reducer(d, { type: "back" }).screen).toBe("issueTracker"); // never skipped itself
-    d = reducer(reducer(d, { type: "back" }), { type: "back" }); // skips the custom screens
+    d = reducer(d, { type: "back" });
+    expect(d.screen).toBe("issueTracker");
+    d = reducer(d, { type: "back" });
+    expect(d.screen).toBe("trustedPaths");
+    d = reducer(d, { type: "back" }); // skips the custom screens
     expect(d.screen).toBe("branchPreset");
     d = at("gitflow", "summary");
     d = reducer(d, { type: "back" });
@@ -386,7 +394,8 @@ test("exactly one input control is mounted on every screen", async () => {
       await tty.keys(ENTER); // locale -> timezone
       expect(tty.inputListenerCount()).toBe(3);
       await tty.keys(ENTER); // timezone -> branchPreset
-      await tty.keys(DOWN, ENTER); // github-flow -> issueTracker
+      await tty.keys(DOWN, ENTER); // github-flow -> trustedPaths
+      await tty.keys(ENTER); // trustedPaths (empty) -> issueTracker
       await tty.keys(ENTER); // YouTrack -> youtrack
       await tty.keys(ENTER); // youtrack -> vcs
       expect(tty.inputListenerCount()).toBe(3);
@@ -486,7 +495,10 @@ test("custom branch policy requires nonempty allowed and protected patterns", as
     expect(tty.lastFrame()).toContain(SCREEN_PLACEHOLDERS.branchProtected); // CA-09 wiring
     await tty.keys(ENTER); // empty -> validation error
     expect(tty.lastFrame()).toContain("at least one protected branch name");
-    await tty.keys("main", ENTER); // -> issueTracker (select)
+    await tty.keys("main", ENTER); // -> trustedPaths
+    expect(tty.lastFrame()).toContain("Trusted paths");
+    expect(tty.lastFrame()).toContain(SCREEN_PLACEHOLDERS.trustedPaths); // CA-09 wiring
+    await tty.keys(ENTER); // empty -> issueTracker (select)
     expect(tty.lastFrame()).toContain("Issue tracker");
     await tty.keys(ENTER); // YouTrack -> youtrack
     expect(tty.lastFrame()).toContain("Base URL");
@@ -504,16 +516,23 @@ test("Back preserves the draft values entered so far", async () => {
       await tty.keys(SPACE, ENTER); // -> locale
       await tty.keys("mx", ENTER); // search narrows to Español (México) -> timezone
       await tty.keys(ENTER); // -> branchPreset
-      await tty.keys(DOWN, ENTER); // github-flow -> issueTracker
+      await tty.keys(DOWN, ENTER); // github-flow -> trustedPaths
+      await tty.keys(ENTER); // trustedPaths (empty) -> issueTracker
       await tty.keys(ENTER); // YouTrack -> youtrack
       await tty.keys(ENTER); // -> vcs
       await tty.keys(DOWN, ENTER); // github -> workspaces
       await tty.keys("b"); // back -> vcs
       expect(tty.lastFrame()).toContain("GitHub");
       await tty.keys("b"); // back -> youtrack
-      await tty.keys(ESC); // back from a text screen -> issueTracker
+      // A lone ESC leaves a pending byte that resolves ~20ms later as cancel,
+      // so ESC followed by more keys races. burst() lands every byte in one
+      // stdin chunk: the back fires and the trailing byte is swallowed with
+      // no residue, making the chain deterministic.
+      await tty.burst(ESC, "b"); // back from a text screen -> issueTracker
       expect(tty.lastFrame()).toContain("Issue tracker");
-      await tty.keys("b"); // back -> branchPreset (custom screens skipped)
+      await tty.keys("b"); // back -> trustedPaths
+      expect(tty.lastFrame()).toContain("Trusted paths");
+      await tty.burst(ESC, "b"); // back from a text screen -> branchPreset (custom screens skipped)
       expect(tty.lastFrame()).toContain("GitHub Flow");
       await tty.keys("b"); // back -> timezone
       await tty.keys("b", BACKSPACE); // cold 'b' searches; clearing hands it back…
@@ -550,7 +569,7 @@ test("no competing Enter/provider race — one submit path per screen", async ()
     const cleanup = withSeedConfig(seedConfig);
     try {
       const tty = await renderInk(<Wizard onExit={noop} />);
-      await tty.keys(SPACE, ENTER, ENTER, ENTER, ENTER, ENTER); // -> youtrack
+      await tty.keys(SPACE, ENTER, ENTER, ENTER, ENTER, ENTER, ENTER); // -> youtrack
       expect(tty.lastFrame()).toContain(SCREEN_PLACEHOLDERS.youtrack); // CA-09 wiring
       await tty.keys(ENTER); // -> vcs
       expect(tty.lastFrame()).toContain("Step 4");
@@ -949,7 +968,7 @@ test("the develop-branch editor carries its example placeholder (CA-09 wiring)",
   try {
     const tty = await renderInk(<Wizard onExit={noop} />);
     await tty.keys(SPACE, ENTER); // -> locale
-    await tty.keys(ENTER, ENTER, ENTER, ENTER, ENTER, ENTER); // -> workspaces
+    await tty.keys(ENTER, ENTER, ENTER, ENTER, ENTER, ENTER, ENTER); // -> workspaces
     await tty.keys(ENTER); // Done -> branchPolicy (repo is git)
     expect(tty.lastFrame()).toContain("Step 5 — Branch policy");
     await tty.keys(DOWN, DOWN, ENTER); // Edit develop -> text editor screen
@@ -989,6 +1008,7 @@ test("summary shows the authoritative preview and Apply completes with it", asyn
       await tty.keys(SPACE, ENTER); // -> locale
       await tty.keys(ENTER); // -> timezone
       await tty.keys(ENTER); // -> branchPreset
+      await tty.keys(ENTER); // -> trustedPaths
       await tty.keys(ENTER); // -> issueTracker
       await tty.keys(ENTER); // YouTrack -> youtrack
       await tty.keys("https://yt.example.com", ENTER); // -> vcs
@@ -1039,6 +1059,7 @@ test("malformed configuration blocks Apply in the TTY flow (WZ-06)", async () =>
       await tty.keys(SPACE, ENTER); // -> locale
       await tty.keys(ENTER); // -> timezone
       await tty.keys(ENTER); // -> branchPreset
+      await tty.keys(ENTER); // -> trustedPaths
       await tty.keys(ENTER); // -> issueTracker
       await tty.keys(ENTER); // YouTrack -> youtrack
       await tty.keys(ENTER); // -> vcs

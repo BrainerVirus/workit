@@ -28,6 +28,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `trustedPaths` user config: absolute paths under listed roots pass the
   product-write gate with writer held on every host; unlisted outside
   paths stay denied and the default stays fail-closed.
+- `commitPolicy` per-workspace override in `workspaces.json` (workspace wins,
+  else global), resolved through `resolveCommitPolicyFor` at the `git.commit`
+  gate; new `trustedPaths` wizard screen (comma-separated absolute dirs,
+  empty means none) with the value merged into `config.json` on Apply.
+- `workit-challenge` added to the bootstrap moment-based skill routing so
+  ambiguous proposals trigger it without an explicit alias call.
 - v1 pre-close batch: deterministic spec triage (`triageTier`/`triageSignals`
   with Large/Medium/Small tiers plus recorded override), five bare slash
   aliases (`/challenge`, `/babysit`, `/implement`, `/plan`, `/debug`) on

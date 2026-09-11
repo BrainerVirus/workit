@@ -36,6 +36,7 @@ export type WizardScreen =
   | "branchPreset"
   | "branchAllowed"
   | "branchProtected"
+  | "trustedPaths"
   | "issueTracker"
   | "youtrack"
   | "vcs"
@@ -70,6 +71,8 @@ export type SetupValues = {
   branchPreset: BranchPreset;
   branchAllowed: string;
   branchProtected: string;
+  /** Comma-separated absolute dirs allowed outside the checkout (empty = none). */
+  trustedPaths: string;
   /** Where issues live: YouTrack scaffolds youtrack.json, GitHub Issues links
    *  new workspaces via WorkspaceConfig.issues, none skips both. */
   issueTracker: IssueTracker;
@@ -110,7 +113,14 @@ export type WizardAction =
   | { type: "set"; field: "branchPolicyDevelop"; value: string }
   | {
       type: "set";
-      field: "locale" | "timezone" | "branchAllowed" | "branchProtected" | "baseUrl" | "basePath";
+      field:
+        | "locale"
+        | "timezone"
+        | "branchAllowed"
+        | "branchProtected"
+        | "trustedPaths"
+        | "baseUrl"
+        | "basePath";
       value: string;
     }
   | { type: "pickOther" }
@@ -136,7 +146,8 @@ const NEXT: Record<WizardScreen, WizardScreen | null> = {
   timezoneOther: "branchPreset",
   branchPreset: "branchAllowed",
   branchAllowed: "branchProtected",
-  branchProtected: "issueTracker",
+  branchProtected: "trustedPaths",
+  trustedPaths: "issueTracker",
   issueTracker: "youtrack",
   youtrack: "vcs",
   vcs: "basePath",
@@ -161,7 +172,8 @@ const PREV: Record<WizardScreen, WizardScreen | null> = {
   branchPreset: "timezone",
   branchAllowed: "branchPreset",
   branchProtected: "branchAllowed",
-  issueTracker: "branchProtected",
+  trustedPaths: "branchProtected",
+  issueTracker: "trustedPaths",
   youtrack: "issueTracker",
   vcs: "youtrack",
   basePath: "vcs",
@@ -294,6 +306,10 @@ function validateScreen(draft: WizardDraft): { field: string; message: string } 
       return parseList(values.branchProtected).length > 0
         ? null
         : { field: "branchProtected", message: "at least one protected branch name is required" };
+    case "trustedPaths": {
+      const message = trustedPathsMessage(values.trustedPaths);
+      return message ? { field: "trustedPaths", message } : null;
+    }
     case "youtrack": {
       // WZ-04: YouTrack is optional — an empty base URL means "skip this
       // integration" and produces no youtrack mutations in the preview.
@@ -335,7 +351,14 @@ const decodeIssueTracker = (value: string, fallback: IssueTracker): IssueTracker
 
 function setTextValue(
   draft: WizardDraft,
-  field: "locale" | "timezone" | "branchAllowed" | "branchProtected" | "baseUrl" | "basePath",
+  field:
+    | "locale"
+    | "timezone"
+    | "branchAllowed"
+    | "branchProtected"
+    | "trustedPaths"
+    | "baseUrl"
+    | "basePath",
   value: string,
 ): WizardDraft {
   const message =
@@ -351,11 +374,13 @@ function setTextValue(
             ? parseList(value).length > 0
               ? null
               : "at least one protected branch name is required"
-            : field === "basePath"
-              ? basePathMessage(value)
-              : value.trim() === ""
-                ? null
-                : validateBaseUrl(value);
+            : field === "trustedPaths"
+              ? trustedPathsMessage(value)
+              : field === "basePath"
+                ? basePathMessage(value)
+                : value.trim() === ""
+                  ? null
+                  : validateBaseUrl(value);
   // D-02: an unchanged value whose validation message is also unchanged is a
   // no-op — return the same draft so useReducer bails out instead of re-rendering
   // the control and re-firing its onChange (the update-depth feedback loop).
@@ -370,6 +395,15 @@ function setTextValue(
   else delete errors[field];
   return { ...draft, values: { ...draft.values, [field]: value }, errors };
 }
+
+// Trusted paths: comma-separated absolute directories allowed outside the
+// checkout with writer held. Empty means none (fail-closed default).
+const trustedPathsMessage = (value: string): string | null => {
+  const bad = parseList(value).find((p) => !path.isAbsolute(p));
+  return bad
+    ? `trusted path ${JSON.stringify(bad)} is not absolute — enter existing absolute directories`
+    : null;
+};
 
 export function createInitialDraft(
   config: ToolkitConfig = readConfig(),
@@ -389,6 +423,7 @@ export function createInitialDraft(
       branchPreset: config.branchPolicy.preset,
       branchAllowed: policy.allowed.join(", "),
       branchProtected: policy.protected.join(", "),
+      trustedPaths: config.trustedPaths.join(", "),
       // WZ-04/CA-14: no organization-specific default base URL — empty means
       // the YouTrack integration is not selected.
       baseUrl: "",
