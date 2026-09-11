@@ -6,7 +6,7 @@ import { codexCapabilities, detectCodexSurface } from "@/packages/workit-codex/h
 
 const packageRoot = path.resolve(import.meta.dir, "../../packages/workit-codex");
 
-test("Codex plugin ships current manifest layout and exactly seven synchronized skills", () => {
+test("Codex plugin ships current manifest layout and fourteen synchronized skills", () => {
   const manifest = JSON.parse(
     readFileSync(path.join(packageRoot, ".codex-plugin/plugin.json"), "utf8"),
   );
@@ -19,13 +19,20 @@ test("Codex plugin ships current manifest layout and exactly seven synchronized 
   expect(manifest.interface.capabilities).toEqual(["MCP", "Task continuity"]);
   expect(manifest.mcpServers).toBe("./.mcp.json");
   expect(readdirSync(path.join(packageRoot, "skills")).sort()).toEqual([
+    "workit-babysit",
     "workit-behavioral-tdd",
+    "workit-blast-radius",
     "workit-challenge",
     "workit-debug",
+    "workit-deslop",
+    "workit-diagram",
+    "workit-green-run",
     "workit-handoff",
     "workit-implement",
+    "workit-mockup",
     "workit-plan",
     "workit-review",
+    "workit-steer",
   ]);
   expect(existsSync(path.join(packageRoot, "hooks/hooks.json"))).toBe(true);
   expect(existsSync(path.join(packageRoot, ".mcp.json"))).toBe(true);

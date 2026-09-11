@@ -192,7 +192,7 @@ test("debug and behavioral-tdd do not wait for pre-assess policy selection", () 
   }
 });
 
-test("method manifest lists exactly seven core skills", () => {
+test("method manifest lists exactly fourteen core skills", () => {
   expect(WORKIT_METHOD_SKILLS).toEqual([
     "workit-challenge",
     "workit-behavioral-tdd",
@@ -201,6 +201,13 @@ test("method manifest lists exactly seven core skills", () => {
     "workit-implement",
     "workit-debug",
     "workit-handoff",
+    "workit-babysit",
+    "workit-blast-radius",
+    "workit-deslop",
+    "workit-diagram",
+    "workit-mockup",
+    "workit-green-run",
+    "workit-steer",
   ]);
   expect(skillManifestNames("packages/workit-core/skills")).toEqual([
     ...[...WORKIT_METHOD_SKILLS].sort(),

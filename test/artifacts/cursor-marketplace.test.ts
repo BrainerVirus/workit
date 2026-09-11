@@ -122,7 +122,7 @@ test(
   () => {
     const plugin = json<Record<string, string | string[]>>(PLUGIN_MANIFEST_REL);
     const root = path.join(REPO_ROOT, PLUGIN_DIR_REL);
-    const fields = ["skills", "rules", "mcpServers", "hooks"] as const;
+    const fields = ["skills", "commands", "rules", "mcpServers", "hooks"] as const;
     for (const field of fields) {
       const value = plugin[field];
       for (const rel of Array.isArray(value) ? value : [value]) {

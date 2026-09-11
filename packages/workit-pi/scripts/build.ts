@@ -51,4 +51,4 @@ for (const name of WORKIT_METHOD_SKILLS)
   cpSync(path.join(coreDir, "skills", name), path.join(skills, name), { recursive: true });
 const error = validateSkillManifests(skills, WORKIT_METHOD_SKILLS, "Pi Workit skills");
 if (error) throw new Error(error);
-console.log(`pi: built extension and seven method skills (${target})`);
+console.log(`pi: built extension and ${WORKIT_METHOD_SKILLS.length} method skills (${target})`);

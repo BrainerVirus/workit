@@ -69,7 +69,7 @@ const byName = (packs: ReturnType<typeof packWorkspacePackages>, name: string) =
 test(
   "Cursor build, package, and packed CLI doctor enforce exact canonical method skills and Workit identity",
   () => {
-    expect(WORKIT).toHaveLength(7);
+    expect(WORKIT).toHaveLength(14);
     const fixture = mkdtempSync(path.join(os.tmpdir(), "wk-cursor-invariants-"));
     try {
       const missingWorkitRepo = copyBuildFixture(path.join(fixture, "missing-workit"));
@@ -188,7 +188,7 @@ const syncEnv = (home: string, lockDir: string, repo: string): Record<string, st
 });
 
 test(
-  "sync-runtime installs seven method skills and no legacy vendor tree",
+  "sync-runtime installs the canonical method skills and no legacy vendor tree",
   async () => {
     if (!syncToolsAvailable) return;
     const fixture = mkdtempSync(path.join(os.tmpdir(), "wk-sync-runtime-"));

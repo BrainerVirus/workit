@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 // Build the self-contained OpenCode plugin entry (dist/plugin.js) and copy the
-// deterministic assets root containing the seven canonical method skills.
+// deterministic assets root containing the canonical method skills.
 // Runs from the repo (where workspace deps resolve); target dir defaults to the
 // package dir and can be overridden for the pack sandbox.
 import { spawnSync } from "node:child_process";
@@ -45,7 +45,7 @@ if (build.status !== 0) {
   process.exit(1);
 }
 
-// Deterministic assets: only the seven policy-selected method skills.
+// Deterministic assets: only the policy-selected method skills.
 const assets = path.join(target, "assets");
 rmSync(assets, { recursive: true, force: true });
 const skills = path.join(assets, "skills");
@@ -61,4 +61,6 @@ const packagedWorkitError = validateSkillManifests(
   "opencode Workit packaged skills",
 );
 if (packagedWorkitError) throw new Error(packagedWorkitError);
-console.log(`opencode: built dist/plugin.js + seven method skills (${target})`);
+console.log(
+  `opencode: built dist/plugin.js + ${WORKIT_METHOD_SKILLS.length} method skills (${target})`,
+);

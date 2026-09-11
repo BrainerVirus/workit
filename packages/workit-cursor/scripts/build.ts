@@ -7,7 +7,11 @@ import { spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, rmSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { validateSkillManifests } from "../../workit-core/src/core/skill-manifests";
+import {
+  validateSkillManifests,
+  WORKIT_METHOD_SKILLS,
+  WORKIT_SKILL_ALIASES,
+} from "../../workit-core/src/core/skill-manifests";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const pkgDir = path.resolve(scriptDir, "..");
@@ -63,15 +67,7 @@ const skills = path.join(target, "skills");
 rmSync(skills, { recursive: true, force: true });
 rmSync(path.join(target, "vendor"), { recursive: true, force: true });
 mkdirSync(skills, { recursive: true });
-for (const name of [
-  "workit-challenge",
-  "workit-behavioral-tdd",
-  "workit-review",
-  "workit-plan",
-  "workit-implement",
-  "workit-debug",
-  "workit-handoff",
-]) {
+for (const name of WORKIT_METHOD_SKILLS) {
   const srcSkill = path.join(coreDir, "skills", name);
   if (!existsSync(srcSkill)) {
     console.error(`missing canonical Workit method skill in core: ${name}`);
@@ -81,29 +77,13 @@ for (const name of [
 }
 const sourceSkills = path.join(pkgDir, "skills");
 if (existsSync(sourceSkills)) {
-  const extra = validateSkillManifests(sourceSkills, [
-    "workit-challenge",
-    "workit-behavioral-tdd",
-    "workit-review",
-    "workit-plan",
-    "workit-implement",
-    "workit-debug",
-    "workit-handoff",
-  ], "Cursor package skills");
+  const extra = validateSkillManifests(sourceSkills, WORKIT_METHOD_SKILLS, "Cursor package skills");
   if (extra) {
     console.error(extra);
     process.exit(1);
   }
 }
-const built = validateSkillManifests(skills, [
-  "workit-challenge",
-  "workit-behavioral-tdd",
-  "workit-review",
-  "workit-plan",
-  "workit-implement",
-  "workit-debug",
-  "workit-handoff",
-], "Cursor built skills");
+const built = validateSkillManifests(skills, WORKIT_METHOD_SKILLS, "Cursor built skills");
 if (built) {
   console.error(built);
   process.exit(1);

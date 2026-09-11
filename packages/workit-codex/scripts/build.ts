@@ -3,6 +3,7 @@ import { cpSync, mkdirSync, rmSync } from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { WORKIT_METHOD_SKILLS } from "../../workit-core/src/core/skill-manifests";
 
 const packageDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const coreDir = path.resolve(packageDir, "..", "workit-core");
@@ -40,15 +41,9 @@ for (const [entry, output] of [
 const skills = path.join(target, "skills");
 rmSync(skills, { recursive: true, force: true });
 mkdirSync(skills, { recursive: true });
-for (const name of [
-  "workit-challenge",
-  "workit-behavioral-tdd",
-  "workit-review",
-  "workit-plan",
-  "workit-implement",
-  "workit-debug",
-  "workit-handoff",
-])
+for (const name of WORKIT_METHOD_SKILLS)
   cpSync(path.join(coreDir, "skills", name), path.join(skills, name), { recursive: true });
 
-console.log(`codex: built Node entries and seven method skills (${target})`);
+console.log(
+  `codex: built Node entries and ${WORKIT_METHOD_SKILLS.length} method skills (${target})`,
+);

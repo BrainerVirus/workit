@@ -9,9 +9,26 @@ export const WORKIT_METHOD_SKILLS = [
   "workit-implement",
   "workit-debug",
   "workit-handoff",
+  "workit-babysit",
+  "workit-blast-radius",
+  "workit-deslop",
+  "workit-diagram",
+  "workit-mockup",
+  "workit-green-run",
+  "workit-steer",
 ] as const;
 
 export const CURSOR_SKILLS = WORKIT_METHOD_SKILLS;
+
+/** Bare slash aliases (max five): alias → method skill. An alias routes
+ * through policy to model skills; an alias never calls another alias. */
+export const WORKIT_SKILL_ALIASES = {
+  challenge: "workit-challenge",
+  babysit: "workit-babysit",
+  implement: "workit-implement",
+  plan: "workit-plan",
+  debug: "workit-debug",
+} as const;
 
 export const skillManifestNames = (root: string): string[] =>
   existsSync(root)

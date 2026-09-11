@@ -43,20 +43,27 @@ const tsEntries = (tarball: string) =>
 const distJs = (tarball: string, prefix = "dist/") =>
   listTarball(tarball).filter((e) => e.startsWith(prefix) && e.endsWith(".js"));
 
-test("opencode tarball ships one bundled dist entry plus seven method skills (RR-02/PT-06/PT-07)", () => {
+test("opencode tarball ships one bundled dist entry plus fourteen method skills (RR-02/PT-06/PT-07)", () => {
   const packs = packWorkspacePackages();
   const tarball = byName(packs, OPENCODE).tarball;
   const entries = listTarball(tarball);
 
   expect(entries).toContain("dist/plugin.js");
   expect(entries.filter((e) => e.startsWith("assets/skills/") && e.endsWith("/SKILL.md"))).toEqual([
+    "assets/skills/workit-babysit/SKILL.md",
     "assets/skills/workit-behavioral-tdd/SKILL.md",
+    "assets/skills/workit-blast-radius/SKILL.md",
     "assets/skills/workit-challenge/SKILL.md",
     "assets/skills/workit-debug/SKILL.md",
+    "assets/skills/workit-deslop/SKILL.md",
+    "assets/skills/workit-diagram/SKILL.md",
+    "assets/skills/workit-green-run/SKILL.md",
     "assets/skills/workit-handoff/SKILL.md",
     "assets/skills/workit-implement/SKILL.md",
+    "assets/skills/workit-mockup/SKILL.md",
     "assets/skills/workit-plan/SKILL.md",
     "assets/skills/workit-review/SKILL.md",
+    "assets/skills/workit-steer/SKILL.md",
   ]);
   expect(entries.some((e) => e.startsWith("assets/commands/"))).toBe(false);
   expect(entries.some((e) => e.startsWith("assets/templates/"))).toBe(false);
