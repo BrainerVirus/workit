@@ -192,9 +192,7 @@ const parseConfigResult = (raw: string | null, file: string): ReaderResult<Toolk
       : "gitflow"
   ) as BranchPreset;
   const commitPreset = (
-    ["conventional", "gitmoji", "ticket-prefix", "freeform", "custom", "auto"].includes(
-      String(input.commitPolicy?.preset ?? ""),
-    )
+    COMMIT_PRESETS.includes(String(input.commitPolicy?.preset ?? ""))
       ? input.commitPolicy?.preset
       : "conventional"
   ) as CommitFlavorPreset;
@@ -403,4 +401,30 @@ export const resolveBranchPolicy = (
     defaultTargetBranch:
       preset === "github-flow" ? "main" : preset === "trunk-based" ? "master" : "develop",
   };
+};
+
+const COMMIT_PRESETS: readonly string[] = [
+  "conventional",
+  "gitmoji",
+  "ticket-prefix",
+  "freeform",
+  "custom",
+  "auto",
+];
+
+/** Workspace commitPolicy override wins, else global — mirrors
+ * resolveBranchPolicy's workspace > global order, including the invalid-preset
+ * fallback instead of a crash. */
+export const resolveCommitPolicy = (
+  config: ToolkitConfig,
+  workspace?: { commitPolicy?: Record<string, any> } | null,
+): { preset: CommitFlavorPreset; pattern?: string } => {
+  const wp = (workspace?.commitPolicy ?? {}) as Record<string, any>;
+  if (COMMIT_PRESETS.includes(String(wp.preset ?? ""))) {
+    return {
+      preset: wp.preset as CommitFlavorPreset,
+      ...(typeof wp.pattern === "string" ? { pattern: wp.pattern } : {}),
+    };
+  }
+  return config.commitPolicy ?? ({ preset: "conventional" } as ToolkitConfig["commitPolicy"]);
 };

@@ -8,6 +8,34 @@ import {
   matchCommitFlavor,
 } from "@/packages/workit-core/src/core/commit-flavors";
 import { resolveExternalActionRequest } from "@/packages/workit-core/src/core/external-action-effects";
+import { resolveCommitPolicy } from "@/packages/workit-core/src/core/config";
+import type { ToolkitConfig } from "@/packages/workit-core/src/core/config";
+
+const baseConfig = (over: Partial<ToolkitConfig> = {}): ToolkitConfig => ({
+  locale: "en",
+  localeOptions: ["en"],
+  timezone: "UTC",
+  branchPolicy: { preset: "gitflow", allowed: [], protected: [] },
+  commitPolicy: { preset: "conventional" },
+  trustedPaths: [],
+  ...over,
+});
+
+test("resolveCommitPolicy prefers workspace override, falls back to global", () => {
+  expect(resolveCommitPolicy(baseConfig(), { commitPolicy: { preset: "gitmoji" } }).preset).toBe(
+    "gitmoji",
+  );
+  expect(resolveCommitPolicy(baseConfig(), null).preset).toBe("conventional");
+  expect(resolveCommitPolicy(baseConfig(), {}).preset).toBe("conventional");
+  expect(resolveCommitPolicy(baseConfig(), { commitPolicy: { preset: "nope" } }).preset).toBe(
+    "conventional",
+  );
+  expect(
+    resolveCommitPolicy(baseConfig({ commitPolicy: { preset: "custom", pattern: "^JIRA-" } }), {
+      commitPolicy: { preset: "ticket-prefix" },
+    }),
+  ).toEqual({ preset: "ticket-prefix" });
+});
 
 test("matchCommitFlavor accepts each flavor and rejects the rest", () => {
   expect(matchCommitFlavor("feat(auth): add login", "conventional")).toBe(true);
@@ -33,7 +61,7 @@ test("detectCommitFlavor picks majority above threshold, else null", () => {
   const mixed = ["feat(a): x", "random words here", "another free line", "✨ emoji"];
   expect(detectCommitFlavor(mixed).flavor).toBeNull();
   expect(detectCommitFlavor([]).flavor).toBeNull();
-  const tickets = ["NSAT-1 a", "NSAT-2 b", "NSAT-3 c", "free line"];
+  const tickets = ["TST-1 a", "TST-2 b", "TST-3 c", "free line"];
   expect(detectCommitFlavor(tickets).flavor).toBe("ticket-prefix");
 });
 
@@ -70,6 +98,42 @@ const withConfig = (preset: string, extra: Record<string, unknown>, run: () => v
     rmSync(dir, { recursive: true, force: true });
   }
 };
+
+test("git.commit resolve honors workspace commitPolicy override over global", () => {
+  const root = repoWithStaged(["feat(a): seed"]);
+  const dir = mkdtempSync(join(tmpdir(), "workit-commit-config-"));
+  const previous = process.env.WORKFLOW_TOOLKIT_CONFIG;
+  try {
+    writeFileSync(
+      join(dir, "config.json"),
+      JSON.stringify({ commitPolicy: { preset: "conventional" } }),
+    );
+    writeFileSync(
+      join(dir, "workspaces.json"),
+      JSON.stringify({
+        workspaces: [{ name: "t", glob: `${root}/**`, commitPolicy: { preset: "gitmoji" } }],
+      }),
+    );
+    process.env.WORKFLOW_TOOLKIT_CONFIG = dir;
+    expect(
+      resolveExternalActionRequest(root, {
+        operation: "git.commit",
+        payload: { message: "✨ emoji wins here" },
+      }).ok,
+    ).toBe(true);
+    const bad = resolveExternalActionRequest(root, {
+      operation: "git.commit",
+      payload: { message: "fix(auth): global flavor loses here" },
+    });
+    expect(bad.ok).toBe(false);
+    if (!bad.ok) expect((bad as { error: string }).error).toContain("gitmoji");
+  } finally {
+    if (previous === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+    else process.env.WORKFLOW_TOOLKIT_CONFIG = previous;
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test("git.commit resolve rejects messages outside the configured flavor", () => {
   const root = repoWithStaged(["feat(a): seed"]);

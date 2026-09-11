@@ -1,4 +1,4 @@
-import { branchSetup, resolveBranchPolicyFor } from "./branch";
+import { branchSetup, resolveBranchPolicyFor, resolveCommitPolicyFor } from "./branch";
 import { hostingCliAvailable, prCreate } from "./pr-create";
 import {
   changelogContext,
@@ -25,7 +25,6 @@ import type { ExternalActionRequest } from "./external-action";
 import { externalActionDescriptor, externalActionRequest } from "./external-action";
 import { resolveInside, run as coreRun } from "../core";
 import { vcsConfig } from "./vcs-config";
-import { readConfig } from "./config";
 import { detectCommitFlavor, matchCommitFlavor, type CommitFlavor } from "./commit-flavors";
 import { assertProductWriteAllowed } from "./workers";
 import { TaskStore } from "./task-store";
@@ -722,7 +721,7 @@ export const resolveExternalActionRequest = (
           return failure("storage_error", "Git state could not be resolved");
         let policy: { preset: string; pattern?: string };
         try {
-          policy = readConfig().commitPolicy;
+          policy = resolveCommitPolicyFor(root);
         } catch (error) {
           return failure(
             "invalid_input",

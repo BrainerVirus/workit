@@ -2,13 +2,17 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { gitContext } from "./git";
-import { readConfig, resolveBranchPolicy } from "./config";
+import { readConfig, resolveBranchPolicy, resolveCommitPolicy } from "./config";
 import { resolveWorkspace } from "./workspaces";
 import { vcsConfig } from "./vcs-config";
 
 /** CA-09: the one policy resolver every consumer calls. */
 export const resolveBranchPolicyFor = (workspaceRoot: string) =>
   resolveBranchPolicy(readConfig(), resolveWorkspace(workspaceRoot));
+
+/** Commit-flavor equivalent: workspace commitPolicy override, else global. */
+export const resolveCommitPolicyFor = (workspaceRoot: string) =>
+  resolveCommitPolicy(readConfig(), resolveWorkspace(workspaceRoot));
 
 const policy = (root: string) => resolveBranchPolicyFor(root);
 const allowedBranch = (root: string, name: string) =>
