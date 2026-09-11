@@ -8,6 +8,7 @@ import {
   releaseNotesContext,
 } from "./repo-context";
 import { gitContext } from "./git";
+import { fetchGitHubIssueBody } from "./tracker-issues";
 import { defaultOperations, ISSUE_RE, logTimeUpdate, postUpdate } from "./youtrack-tools";
 import {
   context as youTrackContext,
@@ -163,6 +164,17 @@ export const readExternalContext = async (
             : { issueBody: null, issueBodyError: body.error }),
         },
       });
+    }
+    case "github_issue": {
+      const ref = payload.issueId ?? payload.issueUrl ?? payload.issueRef;
+      if (!ref)
+        return failure("invalid_input", "github_issue needs issueId, issueUrl, or issueRef");
+      const body = await fetchGitHubIssueBody(ref, root);
+      if ("error" in body)
+        return failure("capability_unavailable", `GitHub issue is unavailable: ${body.error}`, {
+          capability: "github_issue",
+        });
+      return success(null, null, { kind: payload.kind, context: { issueBody: body.data } });
     }
   }
 };

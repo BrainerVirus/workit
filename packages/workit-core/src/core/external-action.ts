@@ -135,7 +135,7 @@ const externalActionSchema = z.discriminatedUnion("operation", [
       operation: z.literal("context.read"),
       payload: z
         .object({
-          kind: z.enum(["git", "pr", "youtrack", "changelog", "release", "affected"]),
+          kind: z.enum(["git", "pr", "youtrack", "github_issue", "changelog", "release", "affected"]),
           range: z.string().optional(),
           issueId: z.string().optional(),
           issueUrl: z.string().optional(),
