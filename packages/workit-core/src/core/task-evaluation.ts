@@ -472,14 +472,39 @@ export function evaluateRequirements(
         !sameEvidenceSession
       );
     });
-    if (passed.length)
-      return {
-        requirementId: requirement.id,
-        status: "satisfied" as const,
-        evidenceIds: passed.map(({ entry }) => entry.id),
-        decisionIds: [],
-        reason: "fresh applicable evidence passed",
-      };
+    if (passed.length) {
+      // RED-first: a testing requirement is only satisfied by a pass that was
+      // preceded by a recorded failure on the same requirement. A GREEN with
+      // no RED is indistinguishable from code-then-tests.
+      const withRed =
+        requirement.dimension === "testing"
+          ? passed.filter(({ entry }) =>
+              related.some(
+                (other) =>
+                  other.entry.data.kind === "check" &&
+                  other.evaluation.status === "failed" &&
+                  other.entry.data.requirementIds.includes(requirement.id) &&
+                  other.entry.recordedAt <= entry.recordedAt,
+              ),
+            )
+          : passed;
+      if (withRed.length)
+        return {
+          requirementId: requirement.id,
+          status: "satisfied" as const,
+          evidenceIds: withRed.map(({ entry }) => entry.id),
+          decisionIds: [],
+          reason: "fresh applicable evidence passed",
+        };
+      if (requirement.dimension === "testing")
+        return {
+          requirementId: requirement.id,
+          status: "unsatisfied" as const,
+          evidenceIds: [],
+          decisionIds: [],
+          reason: "testing requirement has GREEN evidence but no preceding RED",
+        };
+    }
     if (requirement.dimension === "delegation") {
       // A bounded helper used for the requirement whose completed report is
       // recorded reconciles the delegation: the lead closes on that result.
