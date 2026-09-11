@@ -25,13 +25,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `commitPolicy` config (conventional, gitmoji, ticket-prefix, freeform,
   custom pattern, auto-detect from history) enforced at the `git.commit`
   gate with fail-closed rejections that name the expected flavor.
-- `trustedPaths` user config: absolute paths under listed roots pass the
-  product-write gate with writer held on every host; unlisted outside
-  paths stay denied and the default stays fail-closed.
+- Close enforces RED-first ordering on testing requirements: a testing
+  requirement with GREEN evidence but no preceding RED failure stays
+  unsatisfied, closing the code-then-tests loophole; the behavioral-TDD
+  skill text mirrors the rule on all hosts.
+- Spec-only docs: GitHub + GitLab issue reads (`docs/trackers/spec.md`,
+  read-only title/body/state mirroring YouTrack) and a parallel-delegation
+  proposal (`docs/parallel-delegation/proposal.md`, disjoint-scope fan-out
+  with single-writer lead mutations).
 - `commitPolicy` per-workspace override in `workspaces.json` (workspace wins,
   else global), resolved through `resolveCommitPolicyFor` at the `git.commit`
-  gate; new `trustedPaths` wizard screen (comma-separated absolute dirs,
-  empty means none) with the value merged into `config.json` on Apply.
+  gate.
 - `workit-challenge` added to the bootstrap moment-based skill routing so
   ambiguous proposals trigger it without an explicit alias call.
 - v1 pre-close batch: deterministic spec triage (`triageTier`/`triageSignals`
@@ -125,6 +129,11 @@ acquire --actor <id>` binds a writer to a Codex session the hook matches,
 
 ### Changed
 
+- Removed path confinement (`trustedPaths`) across core and all four
+  adapters plus the CLI wizard: absolute scope paths are valid and only
+  traversal escapes are rejected; writer ownership, role, session, scope,
+  and approvals remain the bound. The `trustedPaths` wizard screen is gone
+  and the setup preview no longer merges it.
 - OpenCode's advertised operation schemas now use bounded provider-safe projections for deeply nested inputs while preserving core-owned validation and the complete eight-family tool surface.
 
 - Cancelling a worker that was assigned but never launched no longer leaves the coordinator blocked with no truthful way out. The core gained two host-only methods, `prepareWorkerDispatch` and `commitWorkerDispatch` (no new operation family, no new serialized field, no caller-supplied receipt): a host claims the launch slot of an exactly-`assigned` worker before spawning, and the resulting in-process reservation is settled exactly once — either `started` with the observed child session, or `not_started`, which records a host-attested `stopped` with a null session. OpenCode prepares in `tool.execute.before` for a native `task` call when exactly one assigned worker is attributable to that coordinator and only claims "never started" when that same task call explicitly proves no child session exists; Pi prepares immediately before spawn on the live handle and only settles "never started" while that same handle proves no spawn was attempted. Ambiguous assignments, generic cancellation strings, missing child metadata, and reservations lost to a restart all stay unresolved and are never inferred to be stopped.
@@ -145,6 +154,10 @@ acquire --actor <id>` binds a writer to a Codex session the hook matches,
 
 ### Fixed
 
+- The deterministic Ink TTY harness now drains Ink's lone-ESC disambiguation
+  timer (~20ms) at every key boundary, so ESC-cancel races in wizard
+  back-navigation tests are gone; `burst()` remains for atomic ESC-prefixed
+  sequences.
 - OpenCode Workit bootstrap and method skills now require `task.start` then
   `policy.assess` when `task.list` is empty, so ordinary product/debug work no
   longer skips Workit because no policy rule was pre-selected.
