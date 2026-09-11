@@ -154,6 +154,12 @@ acquire --actor <id>` binds a writer to a Codex session the hook matches,
 
 ### Fixed
 
+- Worker lifecycle observations that change nothing (same state, same
+  session, no writer side-effect) no longer rewrite the worker entry or bump
+  task revisions. Hosts observe on every session event, so the old
+  rewrite-per-event storm invalidated the revision each call returned and
+  worker sessions could never chain two calls (e.g. a reviewer could never
+  record review evidence). Genuine transitions still mutate.
 - The deterministic Ink TTY harness now drains Ink's lone-ESC disambiguation
   timer (~20ms) at every key boundary, so ESC-cancel races in wizard
   back-navigation tests are gone; `burst()` remains for atomic ESC-prefixed
