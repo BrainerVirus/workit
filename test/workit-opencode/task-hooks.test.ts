@@ -939,7 +939,7 @@ test("OpenCode native write shapes normalize filePath and apply_patch targets", 
         { tool: "write", sessionID: "owner", callID: "outside" },
         { args: { filePath: "/tmp/outside.ts" } },
       ),
-    ).rejects.toThrow("invalid_input");
+    ).resolves.toBeUndefined();
     await expect(
       hooks["tool.execute.before"]?.(
         { tool: "apply_patch", sessionID: "owner", callID: "opaque" },

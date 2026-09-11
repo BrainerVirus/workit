@@ -65,19 +65,14 @@ const utc = utcSchema;
 const safeInteger = z.number().int().safe();
 const nonEmpty = text.min(1);
 const pathValue = nonEmpty.check((ctx) => {
-  if (
-    ctx.value !== "." &&
-    (ctx.value.startsWith("/") ||
-      /^[A-Za-z]:[\\/]/.test(ctx.value) ||
-      ctx.value.includes("\\") ||
-      ctx.value.split("/").includes(".."))
-  )
+  if (ctx.value !== "." && (ctx.value.includes("\\") || ctx.value.split("/").includes(".."))) {
     ctx.issues.push({
       code: "custom",
       input: ctx.value,
-      message: "path must stay inside checkout",
+      message: "invalid path",
       path: [],
     });
+  }
 });
 const nullableDigest = digest.nullable();
 const nullableId = id.nullable();

@@ -229,9 +229,16 @@ test("canonical JSON rejects arrays with missing indices", () => {
 
 test("rejects malformed versions, paths, numbers, Unicode, duplicates, UUIDs, digests, and timestamps", () => {
   const base = taskStartRequest();
+  // Confinement removed (reference stacks carry no trustedPaths): absolute
+  // paths like /tmp are valid scopes; only traversal escapes are rejected.
+  expect(
+    parseOperation("task", {
+      ...base,
+      intent: { ...base.intent, scope: { ...base.intent.scope, paths: ["/tmp"] } },
+    }).ok,
+  ).toBe(true);
   for (const input of [
     { ...base, schemaVersion: 2 },
-    { ...base, intent: { ...base.intent, scope: { ...base.intent.scope, paths: ["/tmp"] } } },
     { ...base, intent: { ...base.intent, scope: { ...base.intent.scope, paths: ["../escape"] } } },
     { ...base, intent: { ...base.intent, objective: Number.MAX_SAFE_INTEGER + 1 } },
     { ...base, intent: { ...base.intent, objective: "\ud800" } },

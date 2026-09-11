@@ -56,7 +56,6 @@ test("writeConfig + readConfig round trip", () => {
       timezone: "America/Santiago",
       branchPolicy: { preset: "custom", allowed: ["feature/*", "codex/*"], protected: ["main"] },
       commitPolicy: { preset: "conventional" },
-      trustedPaths: [],
     };
     writeConfig(cfg);
     expect(readConfig()).toEqual(cfg);
@@ -121,7 +120,6 @@ test("resolveBranchPolicy honors preset and custom overrides", () => {
       timezone: "UTC",
       branchPolicy: { preset: "custom", allowed: ["codex/*"], protected: ["main"] },
       commitPolicy: { preset: "conventional" },
-      trustedPaths: [],
     });
     const custom = resolveBranchPolicy(readConfig());
     expect(custom.allowed.some((r) => r.test("codex/feature/x"))).toBe(true);
@@ -231,7 +229,6 @@ test("RL-02/CA-23: mergeConfigValues routes every consumer through mergePreset",
     timezone: "UTC",
     branchPolicy: { preset: "gitflow", allowed: ["feature/*"], protected: ["main"] },
     commitPolicy: { preset: "conventional" },
-    trustedPaths: [],
   };
   const github = mergeConfigValues({ preset: "github-flow" }, current);
   expect(github.branchPolicy).toEqual({
@@ -254,43 +251,4 @@ test("RL-02/CA-23: mergeConfigValues routes every consumer through mergePreset",
     allowed: ["codex/*"],
     protected: ["main", "develop"],
   });
-});
-
-test("trustedPaths defaults empty, parses string arrays, and survives merge", () => {
-  const dir = cfgDir();
-  try {
-    expect(readConfig().trustedPaths).toEqual([]);
-    writeFileSync(
-      path.join(dir, "config.json"),
-      JSON.stringify({ trustedPaths: ["/srv/repos/db", 42, "/srv/repos/db"] }),
-      "utf8",
-    );
-    expect(readConfig().trustedPaths).toEqual(["/srv/repos/db", "/srv/repos/db"]);
-    const merged = mergeConfigValues({ trustedPaths: ["/srv/repos/api"] }, readConfig());
-    expect(merged.trustedPaths).toEqual(["/srv/repos/api"]);
-    const kept = mergeConfigValues({}, merged);
-    expect(kept.trustedPaths).toEqual(["/srv/repos/api"]);
-  } finally {
-    cleanupEnv();
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-test("resolveTrustedRoots canonicalizes absolute dirs and never throws", async () => {
-  const { resolveTrustedRoots } = await import("@/packages/workit-core/src/core/config");
-  const dir = cfgDir();
-  try {
-    expect(resolveTrustedRoots()).toEqual([]);
-    writeFileSync(
-      path.join(dir, "config.json"),
-      JSON.stringify({ trustedPaths: [dir, "relative/nope"] }),
-      "utf8",
-    );
-    expect(resolveTrustedRoots()).toEqual([dir]);
-    writeFileSync(path.join(dir, "config.json"), "{nope", "utf8");
-    expect(resolveTrustedRoots()).toEqual([]);
-  } finally {
-    cleanupEnv();
-    rmSync(dir, { recursive: true, force: true });
-  }
 });

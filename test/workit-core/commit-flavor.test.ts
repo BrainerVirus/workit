@@ -17,7 +17,6 @@ const baseConfig = (over: Partial<ToolkitConfig> = {}): ToolkitConfig => ({
   timezone: "UTC",
   branchPolicy: { preset: "gitflow", allowed: [], protected: [] },
   commitPolicy: { preset: "conventional" },
-  trustedPaths: [],
   ...over,
 });
 

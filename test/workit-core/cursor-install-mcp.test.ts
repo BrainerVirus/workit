@@ -32,7 +32,6 @@ const values = (over: Partial<SetupPreviewInput> = {}): SetupPreviewInput => ({
   vcsProvider: "skip",
   workspaces: [],
   applyProject: false,
-  trustedPaths: "",
   ...over,
 });
 

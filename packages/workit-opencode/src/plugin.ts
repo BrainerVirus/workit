@@ -5,7 +5,6 @@ import type { Plugin } from "@opencode-ai/plugin";
 import { TaskStore, WorkitCore } from "@brainervirus/workit-core/src/core";
 import { WORKIT_SKILL_ALIASES } from "@brainervirus/workit-core/src/core/skill-manifests";
 import { assertProductWriteAllowed } from "@brainervirus/workit-core/src/core/workers";
-import { resolveTrustedRoots } from "@brainervirus/workit-core/src/core/config";
 import { createLogger } from "@brainervirus/workit-core/src/core/logger";
 import {
   EVENT,
@@ -277,7 +276,6 @@ const enforceWriter = async (
       workerId,
     },
     paths,
-    trustedRoots: resolveTrustedRoots(),
     store,
   });
   if (!result.ok) throw new Error(`${result.code}: ${result.error}`);

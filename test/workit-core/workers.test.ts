@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, symlinkSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -357,7 +357,7 @@ test("product writes require the current writer and assigned paths", () => {
   ).toMatchObject({ ok: false, code: "invalid_input" });
 });
 
-test("write authorization ignores forged snapshots and rejects symlink escapes", () => {
+test("write authorization ignores forged snapshots", () => {
   const lead = active();
   const assigned = assign(lead.core, lead.task, lead.workspace, "implementer", ["src"]);
   expect(assigned.ok).toBe(true);
@@ -366,9 +366,6 @@ test("write authorization ignores forged snapshots and rejects symlink escapes",
   const task = lead.store.readTask(lead.task.id);
   const workspace = lead.store.readWorkspace();
   if (!task.ok || !workspace.ok || !workspace.data) throw new Error("state missing");
-  const outside = mkdtempSync(join(tmpdir(), "workit-outside-"));
-  mkdirSync(join(lead.root, "links"));
-  symlinkSync(outside, join(lead.root, "links", "outside"), "dir");
   try {
     const forgedTask = {
       ...task.data,
@@ -405,9 +402,9 @@ test("write authorization ignores forged snapshots and rejects symlink escapes",
       helper.assertProductWriteAllowed({
         task: task.data,
         workspace: workspace.data,
-        paths: ["links/outside/new.ts"],
+        paths: [join(tmpdir(), "workit-elsewhere", "new.ts")],
       }),
-    ).toMatchObject({ ok: false, code: "invalid_input" });
+    ).toMatchObject({ ok: false, code: "permission_denied" });
   } finally {
     // The fixture directory is process-scoped and cleaned by the test runner.
   }
@@ -1198,7 +1195,7 @@ test("cancel on a worker that already reported stops it instead of stranding it"
   ).toMatchObject({ ok: true });
 });
 
-test("trusted roots allow absolute outside paths with writer held, others stay denied", () => {
+test("outside-checkout absolute paths are allowed with writer held, denied without", () => {
   const lead = active();
   const acquired = lead.core.writer({
     schemaVersion: 1,
@@ -1213,21 +1210,16 @@ test("trusted roots allow absolute outside paths with writer held, others stay d
   const task = lead.store.readTask(lead.task.id);
   const workspace = lead.store.readWorkspace();
   if (!task.ok || !workspace.ok || !workspace.data) throw new Error("state missing");
-  const trusted = mkdtempSync(join(tmpdir(), "workit-trusted-"));
-  const unlisted = mkdtempSync(join(tmpdir(), "workit-unlisted-"));
-  const check = (paths: string[], trustedRoots?: string[]) =>
+  const elsewhere = mkdtempSync(join(tmpdir(), "workit-elsewhere-"));
+  const check = (paths: string[]) =>
     (lead.core.assertProductWriteAllowed as (input: object) => { ok: boolean; code?: string })({
       task: task.data,
       workspace: workspace.data,
       paths,
-      ...(trustedRoots ? { trustedRoots } : {}),
     });
-  expect(check([join(trusted, "db.sql")], [trusted])).toMatchObject({ ok: true });
-  expect(check([join(unlisted, "x.sql")], [trusted])).toMatchObject({
-    ok: false,
-    code: "invalid_input",
-  });
-  expect(check([join(trusted, "db.sql")])).toMatchObject({ ok: false, code: "invalid_input" });
+  expect(check([join(elsewhere, "db.sql")])).toMatchObject({ ok: true });
+  expect(check(["../secret"])).toMatchObject({ ok: false, code: "invalid_input" });
+  expect(check([""])).toMatchObject({ ok: false, code: "invalid_input" });
   const cold = active();
   const coldTask = cold.store.readTask(cold.task.id);
   const coldWorkspace = cold.store.readWorkspace();
@@ -1236,8 +1228,7 @@ test("trusted roots allow absolute outside paths with writer held, others stay d
     (cold.core.assertProductWriteAllowed as (input: object) => { ok: boolean; code?: string })({
       task: coldTask.data,
       workspace: coldWorkspace.data,
-      paths: [join(trusted, "db.sql")],
-      trustedRoots: [trusted],
+      paths: [join(elsewhere, "db.sql")],
     }),
   ).toMatchObject({ ok: false, code: "permission_denied" });
 });

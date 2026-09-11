@@ -896,7 +896,7 @@ test("Workit mutations accept one validated persisted worker handle", async () =
   }
 });
 
-test("known bash mutations bind actual targets and reject absolute targets", async () => {
+test("known bash mutations bind actual targets and enforce scope", async () => {
   const root = mkdtempSync(join(tmpdir(), "workit-task11-bash-"));
   try {
     const active = start(root, "owner", ["src"]);
@@ -925,13 +925,13 @@ test("known bash mutations bind actual targets and reject absolute targets", asy
         { tool: "bash", sessionID: "owner", callID: "outside" },
         { args: { command: "echo changed > /tmp/file.ts" } },
       ),
-    ).rejects.toThrow("invalid_input");
+    ).rejects.toThrow("permission_denied");
     await expect(
       hooks["tool.execute.before"]?.(
         { tool: "bash", sessionID: "owner", callID: "later" },
         { args: { command: "echo changed > src/file.ts && rm -rf /tmp/out" } },
       ),
-    ).rejects.toThrow("invalid_input");
+    ).rejects.toThrow("permission_denied");
     await expect(
       hooks["tool.execute.before"]?.(
         { tool: "write", sessionID: "owner", callID: "out-of-scope" },

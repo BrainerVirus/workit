@@ -9,7 +9,6 @@ import {
   type OperationContext,
 } from "@brainervirus/workit-core/src/core";
 import { shellWriteIntent } from "@brainervirus/workit-core/src/core/shell-intent.ts";
-import { isTrustedPath, resolveTrustedRoots } from "@brainervirus/workit-core/src/core/config.ts";
 
 export type CodexHost = "codex_cli" | "codex_desktop";
 export type CodexHookEvent = "SessionStart" | "PreToolUse" | "SubagentStart" | "SubagentStop";
@@ -266,18 +265,11 @@ export const parseCodexHookInput = (value: unknown): HookParseResult => {
   };
 };
 
-const normalizePath = (
-  root: string,
-  value: string,
-  cwd: string,
-  trustedRoots: string[] = [],
-): string | null => {
+const normalizePath = (root: string, value: string, cwd: string): string | null => {
   const target = path.resolve(cwd, value);
-  // User-trusted absolute paths pass through for the core gate (writer still
-  // required); everything else must resolve inside the checkout root.
-  if (path.isAbsolute(target) && isTrustedPath(target, trustedRoots)) return target;
-  // Resolve symlinks when the operand exists so a link inside the root that
-  // points outside cannot pass on its lexical form.
+  // Outside-checkout absolute paths pass through for the core gate (writer
+  // plus scope still required); inside-checkout paths relativize so lexical
+  // scope matching keeps working.
   let resolved = target;
   try {
     resolved = realpathSync(target);
@@ -287,12 +279,11 @@ const normalizePath = (
   const relative = path.relative(root, resolved);
   if (relative === "") return ".";
   const escaped = process.platform === "win32" ? relative.toLowerCase() : relative;
-  return escaped.startsWith("..") || path.isAbsolute(relative) ? null : relative;
+  return escaped.startsWith("..") || path.isAbsolute(relative) ? target : relative;
 };
 
 const writeTargets = (
   input: CodexHookInput,
-  trustedRoots: string[] = [],
 ): { paths: string[]; invalid: boolean; intent: boolean } => {
   const root = input.cwd;
   const tool = input.tool_name?.toLowerCase() ?? "";
@@ -342,7 +333,7 @@ const writeTargets = (
       invalid: input.tool_name !== undefined && tool !== "bash" && tool !== "unified-exec",
       intent: tool !== "",
     };
-  const paths = values.map((value) => normalizePath(root, value, root, trustedRoots));
+  const paths = values.map((value) => normalizePath(root, value, root));
   return {
     paths: paths.filter((value): value is string => value !== null),
     invalid: paths.some((value) => value === null),
@@ -429,13 +420,9 @@ export const handleCodexHook = (raw: unknown): Record<string, unknown> => {
     return output("SessionStart", { additionalContext: sessionContext(input) });
   }
   if (input.hook_event_name === "PreToolUse") {
-    const trustedRoots = resolveTrustedRoots();
-    const targets = writeTargets(input, trustedRoots);
+    const targets = writeTargets(input);
     if (targets.invalid || (targets.intent && targets.paths.length === 0))
-      return denied(
-        "PreToolUse",
-        "covered product write target is outside, unavailable, or ambiguous",
-      );
+      return denied("PreToolUse", "covered product write target is unavailable or ambiguous");
     if (!targets.intent) return output("PreToolUse", { permissionDecision: "allow" });
     try {
       const store = new TaskStore(input.cwd);
@@ -486,7 +473,6 @@ export const handleCodexHook = (raw: unknown): Record<string, unknown> => {
         task: state.task,
         workspace: state.workspace,
         paths: targets.paths,
-        trustedRoots,
       });
       return checked.ok
         ? output("PreToolUse", { permissionDecision: "allow" })

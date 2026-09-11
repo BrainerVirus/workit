@@ -1970,7 +1970,6 @@ export class WorkitCore {
     task: TaskRecord;
     workspace: WorkspaceRecord;
     paths: string[];
-    trustedRoots?: string[];
   }) {
     return assertProductWriteAllowed({ ...input, caller: this.callerContext(), store: this.store });
   }

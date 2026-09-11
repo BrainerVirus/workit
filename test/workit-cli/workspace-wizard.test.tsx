@@ -50,7 +50,6 @@ const seedConfig: ToolkitConfig = {
     protected: ["main", "develop"],
   },
   commitPolicy: { preset: "conventional" },
-  trustedPaths: [],
 };
 
 const tmp = (prefix: string) => mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -79,7 +78,6 @@ function draftWith(workspaces: WorkspaceConfig[]): WizardDraft {
       branchPreset: "gitflow",
       branchAllowed: "",
       branchProtected: "",
-      trustedPaths: "",
       baseUrl: "",
       vcsProvider: "gitlab",
       issueTracker: "youtrack",
@@ -111,15 +109,14 @@ const previewValues = (over: Partial<SetupPreviewInput> = {}): SetupPreviewInput
   vcsProvider: "skip",
   workspaces: [],
   applyProject: false,
-  trustedPaths: "",
   ...over,
 });
 
 async function gotoWorkspaces(tty: Awaited<ReturnType<typeof renderInk>>) {
   // platforms SPACE+ENTER, locale/timezone ENTERs, branchPreset ENTER (gitflow
-  // skips the custom screens), trustedPaths ENTER (empty), issueTracker ENTER
-  // (YouTrack default), youtrack ENTER on the empty base URL.
-  await tty.keys(SPACE, ENTER, ENTER, ENTER, ENTER, ENTER, ENTER, ENTER, ENTER);
+  // skips the custom screens), issueTracker ENTER (YouTrack default),
+  // youtrack ENTER on the empty base URL.
+  await tty.keys(SPACE, ENTER, ENTER, ENTER, ENTER, ENTER, ENTER, ENTER);
   expect(tty.lastFrame()).toContain("Step 5 — Workspaces");
 }
 
@@ -615,15 +612,16 @@ test("back and cancel inside the workspace flow preserve state and write nothing
     // provider is a select screen: 'b' walks back; Esc on a text screen backs up
     await tty.keys("b");
     expect(tty.lastFrame()).toContain("Workspaces · Pattern");
-    await tty.keys(ESC);
+    // Single-chunk ESC (not keys(ESC)): a lone ESC would leave a pending byte
+    // resolving ~20ms later as cancel, racing the keys after it.
+    await tty.burst(ESC);
     expect(tty.lastFrame()).toContain("Workspaces · Name");
     expect(tty.lastFrame()).toContain("work");
-    // A triple-ESC is one sync back plus a pending byte that resolves ~20ms
-    // later as a second back/cancel, so any keys sent next race it. Draining
-    // it with a sleep is deterministic: lone ESC on a text screen is back,
-    // landing exactly on the menu here.
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    expect(tty.lastFrame()).toContain("No workspaces configured yet.");
+    // Esc alone can only back out of the name editor while the draft lives;
+    // discarding the draft is asserted by the exit-path checks below instead
+    // of racing the harness ESC timer here. The frame may still show the
+    // editor mid-transition, so only assert we have not exited.
+    await tty.keys(ESC);
     // Esc on a select screen cancels the whole wizard with no writes
     await tty.keys(ESC);
     expect(exitCalls).toEqual([false]);
@@ -737,7 +735,7 @@ test("choosing None skips the baseUrl screen: summary shows — and applies no y
     withConfigDir(configDir);
     const exitCalls: boolean[] = [];
     const tty = await renderInk(<Wizard onExit={(ok) => exitCalls.push(ok)} />);
-    await tty.keys(SPACE, ENTER, ENTER, ENTER, ENTER, ENTER); // -> issueTracker
+    await tty.keys(SPACE, ENTER, ENTER, ENTER, ENTER); // -> issueTracker
     await tty.keys(DOWN, DOWN, ENTER); // None -> vcs (youtrack skipped)
     await tty.keys(ENTER); // gitlab -> workspaces
     await tty.keys(ENTER); // Done -> project
@@ -782,7 +780,7 @@ test("choosing GitHub Issues defaults new workspaces to github with issues linke
         }}
       />,
     );
-    await tty.keys(SPACE, ENTER, ENTER, ENTER, ENTER, ENTER); // -> issueTracker
+    await tty.keys(SPACE, ENTER, ENTER, ENTER, ENTER); // -> issueTracker
     await tty.keys(DOWN, ENTER); // GitHub Issues -> vcs
     await tty.keys(DOWN, ENTER); // github provider -> workspaces
     await tty.keys(UP, ENTER); // Use current project -> entry added
@@ -825,8 +823,8 @@ test("without env the wizard prompts for the workspace root and blocks invalid i
   try {
     withConfigDir(configDir);
     const tty = await renderInk(<Wizard onExit={noop} />);
-    // platforms SPACE+ENTER, then ENTERs to vcs (locale/timezone/preset/trustedPaths/tracker/youtrack)
-    await tty.keys(SPACE, ENTER, ENTER, ENTER, ENTER, ENTER, ENTER, ENTER); // -> vcs
+    // platforms SPACE+ENTER, then ENTERs to vcs (locale/timezone/preset/tracker/youtrack)
+    await tty.keys(SPACE, ENTER, ENTER, ENTER, ENTER, ENTER, ENTER); // -> vcs
     await tty.keys(ENTER); // vcs -> base-path prompt (env unset)
     expect(tty.lastFrame()).toContain("Workspace root");
     await tty.keys(ENTER); // empty submit refuses to advance

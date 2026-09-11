@@ -32,7 +32,7 @@ test("SessionStart restores one context for startup, resume, and compact", () =>
   }
 });
 
-test("official payloads validate and malformed or outside writes deny", () => {
+test("official payloads validate and malformed writes deny", () => {
   const root = cwd();
   expect(parseCodexHookInput(official({ hook_event_name: "PreToolUse" }, root))).toMatchObject({
     ok: false,
@@ -92,7 +92,7 @@ test("official payloads validate and malformed or outside writes deny", () => {
       ),
     ),
   ).toMatchObject({ ok: false });
-  const denied = handleCodexHook(
+  const outside = handleCodexHook(
     official(
       {
         hook_event_name: "PreToolUse",
@@ -104,9 +104,11 @@ test("official payloads validate and malformed or outside writes deny", () => {
       root,
     ),
   );
-  expect(denied.hookSpecificOutput).toMatchObject({
+  // No confinement: an outside absolute target passes through, and with no
+  // active task the hook stays transparent.
+  expect(outside.hookSpecificOutput).toMatchObject({
     hookEventName: "PreToolUse",
-    permissionDecision: "deny",
+    permissionDecision: "allow",
   });
 });
 
@@ -259,7 +261,9 @@ test("PreToolUse delegates every recognized product write to shared core", () =>
       root,
     ),
   );
-  expect(escaped.hookSpecificOutput).toMatchObject({ permissionDecision: "deny" });
+  // No confinement: the symlink resolves to its canonical absolute target and
+  // passes through; with no active task the hook stays transparent.
+  expect(escaped.hookSpecificOutput).toMatchObject({ permissionDecision: "allow" });
 });
 
 test("SubagentStop is observational and denial exits zero with JSON", () => {
@@ -300,7 +304,9 @@ test("SubagentStop is observational and denial exits zero with JSON", () => {
     },
   );
   expect(child.status).toBe(0);
-  expect(JSON.parse(child.stdout).hookSpecificOutput.permissionDecision).toBe("deny");
+  // No confinement: an outside absolute target passes through, and with no
+  // active task the hook stays transparent while still exiting zero with JSON.
+  expect(JSON.parse(child.stdout).hookSpecificOutput.permissionDecision).toBe("allow");
 });
 
 test("unknown surface override warns but keeps the CLI fallback", () => {
@@ -500,32 +506,23 @@ test("workspace root resolution honors explicit root and refuses the plugin dir"
   }
 });
 
-test("trusted absolute paths pass the hook while unlisted outside paths deny", () => {
+test("outside absolute paths pass through without an active task", () => {
   const root = cwd();
-  const trusted = mkdtempSync(path.join(tmpdir(), "workit-trusted-"));
-  const configDir = mkdtempSync(path.join(tmpdir(), "workit-trusted-config-"));
-  const previous = process.env.WORKFLOW_TOOLKIT_CONFIG;
   try {
-    writeFileSync(
-      path.join(configDir, "config.json"),
-      JSON.stringify({ trustedPaths: [trusted] }),
-      "utf8",
-    );
-    process.env.WORKFLOW_TOOLKIT_CONFIG = configDir;
-    const allowed = handleCodexHook(
+    const first = handleCodexHook(
       official(
         {
           hook_event_name: "PreToolUse",
           turn_id: "turn-1",
           tool_use_id: "tool-1",
           tool_name: "Write",
-          tool_input: { file_path: path.join(trusted, "notes.md") },
+          tool_input: { file_path: path.join(tmpdir(), "workit-elsewhere-notes.md") },
         },
         root,
       ),
     );
-    expect(allowed.hookSpecificOutput).toMatchObject({ permissionDecision: "allow" });
-    const denied = handleCodexHook(
+    expect(first.hookSpecificOutput).toMatchObject({ permissionDecision: "allow" });
+    const second = handleCodexHook(
       official(
         {
           hook_event_name: "PreToolUse",
@@ -537,12 +534,8 @@ test("trusted absolute paths pass the hook while unlisted outside paths deny", (
         root,
       ),
     );
-    expect(denied.hookSpecificOutput).not.toMatchObject({ permissionDecision: "allow" });
+    expect(second.hookSpecificOutput).toMatchObject({ permissionDecision: "allow" });
   } finally {
-    if (previous === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
-    else process.env.WORKFLOW_TOOLKIT_CONFIG = previous;
-    rmSync(configDir, { recursive: true, force: true });
-    rmSync(trusted, { recursive: true, force: true });
     rmSync(root, { recursive: true, force: true });
   }
 });

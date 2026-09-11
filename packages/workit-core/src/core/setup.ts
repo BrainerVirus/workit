@@ -70,7 +70,6 @@ export type SetupPreviewInput = {
   branchPreset: BranchPreset;
   branchAllowed: string;
   branchProtected: string;
-  trustedPaths: string;
   baseUrl: string;
   vcsProvider: VcsProvider | "skip";
   workspaces: WorkspaceConfig[];
@@ -273,7 +272,6 @@ export function buildSetupPreview(
           },
           current,
         ),
-        trustedPaths: parseList(values.trustedPaths ?? ""),
       },
     });
 

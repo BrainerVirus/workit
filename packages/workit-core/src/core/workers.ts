@@ -1,5 +1,3 @@
-import { existsSync, lstatSync, realpathSync } from "node:fs";
-import path from "node:path";
 import {
   canonicalJson,
   failure,
@@ -17,7 +15,6 @@ import {
   type WorkspaceRecord,
 } from "./task-contract";
 import { TaskStore } from "./task-store";
-import { isTrustedPath } from "./config";
 
 export type WorkerState = Worker["state"];
 export type HostSession = Extract<Ref, { kind: "host" }>;
@@ -100,34 +97,10 @@ const same = (left: unknown, right: unknown): boolean => {
 const callerSession = (caller: CallerContext): HostSession =>
   caller.session ?? { kind: "host", host: caller.host, handle: caller.actor };
 
-const insideCanonicalRoot = (root: string, value: string): boolean => {
-  try {
-    const base = realpathSync(root);
-    const target = path.resolve(base, value);
-    if (target !== base && !target.startsWith(`${base}${path.sep}`)) return false;
-    let ancestor = target;
-    while (!existsSync(ancestor)) {
-      try {
-        if (lstatSync(ancestor).isSymbolicLink()) return false;
-      } catch {
-        // Continue toward the nearest existing ancestor.
-      }
-      const parent = path.dirname(ancestor);
-      if (parent === ancestor) return false;
-      ancestor = parent;
-    }
-    const canonicalAncestor = realpathSync(ancestor);
-    return canonicalAncestor === base || canonicalAncestor.startsWith(`${base}${path.sep}`);
-  } catch {
-    return false;
-  }
-};
-
 const validPath = (value: unknown): value is string =>
   typeof value === "string" &&
   value.length > 0 &&
   value !== "/" &&
-  !value.startsWith("/") &&
   !/^[A-Za-z]:[\\/]/.test(value) &&
   !value.includes("\\") &&
   !value.split("/").includes("..");
@@ -141,26 +114,12 @@ export type ProductWriteInput = {
   caller: CallerContext;
   paths: string[];
   store?: TaskStore;
-  /** Canonical absolute user-trusted roots; paths under them bypass the
-   * inside-checkout and scope denials but still require writer ownership. */
-  trustedRoots?: string[];
 };
-
-/** Absolute path canonically under any trusted root, symlink-safe. */
-const underTrustedRoot = (value: string, roots: string[]): boolean => isTrustedPath(value, roots);
 
 /** Check the authoritative workspace owner and the caller's assigned scope. */
 export function assertProductWriteAllowed(input: ProductWriteInput): Result<Owner> {
-  const trustedRoots = input.trustedRoots ?? [];
-  const trusted = (candidate: string): boolean => underTrustedRoot(candidate, trustedRoots);
-  if (
-    !Array.isArray(input.paths) ||
-    input.paths.some(
-      (path) =>
-        typeof path !== "string" || path.length === 0 || (!validPath(path) && !trusted(path)),
-    )
-  )
-    return failure("invalid_input", "product write paths must stay inside the checkout");
+  if (!Array.isArray(input.paths) || input.paths.some((path) => !validPath(path)))
+    return failure("invalid_input", "invalid product write path");
   if (!input.store) return failure("permission_denied", "write authorization requires core state");
   const task = input.store.readTask(input.task.id);
   if (!task.ok) return task as Result<never>;
@@ -172,12 +131,6 @@ export function assertProductWriteAllowed(input: ProductWriteInput): Result<Owne
     return failure("invalid_transition", "paused or closed tasks cannot own product writes");
   if (workspaceRecord.id !== task.data.workspaceId || workspaceRecord.root.length === 0)
     return failure("recovery_required", "task and workspace bindings are invalid");
-  if (
-    input.paths.some(
-      (candidate) => !trusted(candidate) && !insideCanonicalRoot(workspaceRecord.root, candidate),
-    )
-  )
-    return failure("invalid_input", "product write paths must stay inside the checkout");
   const writer = workspaceRecord.writer;
   if (!writer) return failure("permission_denied", "checkout has no writer owner");
   if (writer.state === "uncertain")
@@ -215,7 +168,6 @@ export function assertProductWriteAllowed(input: ProductWriteInput): Result<Owne
     !assignedScope ||
     input.paths.some(
       (path) =>
-        !trusted(path) &&
         !scopeCovers(assignedScope, {
           ...assignedScope,
           paths: [path],

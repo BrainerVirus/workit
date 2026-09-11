@@ -73,7 +73,6 @@ const config = (over: Partial<ToolkitConfig["branchPolicy"]> = {}): ToolkitConfi
     ...over,
   },
   commitPolicy: { preset: "conventional" },
-  trustedPaths: [],
 });
 
 const values = (over: Partial<SetupPreviewInput> = {}): SetupPreviewInput => ({
@@ -86,7 +85,6 @@ const values = (over: Partial<SetupPreviewInput> = {}): SetupPreviewInput => ({
   vcsProvider: "skip",
   workspaces: [],
   applyProject: false,
-  trustedPaths: "",
   ...over,
 });
 
@@ -762,56 +760,13 @@ const startCustom = (): ReturnType<typeof createInitialDraft> => {
   return d;
 };
 
-test("trustedPaths screen sits between branchProtected and issueTracker, validates absolute dirs", () => {
-  let d = startCustom();
-  d = reducer(d, { type: "next" });
-  expect(d.screen).toBe("trustedPaths");
-  expect(reducer(d, { type: "back" }).screen).toBe("branchProtected");
-  d = reducer(d, { type: "set", field: "trustedPaths", value: "relative/nope" });
-  d = reducer(d, { type: "next" });
-  expect(d.screen).toBe("trustedPaths");
-  expect(d.errors.trustedPaths).toContain("absolute");
-  d = reducer(d, { type: "set", field: "trustedPaths", value: "/srv/repos/db, /srv/repos/api" });
-  expect(d.errors.trustedPaths).toBeUndefined();
-  d = reducer(d, { type: "next" });
-  expect(d.screen).toBe("issueTracker");
-});
-
-test("trustedPaths preview merges absolute dirs into config.json, empty stays empty", () => {
-  const dir = tempDir();
-  try {
-    const withPaths = buildSetupPreview(values({ trustedPaths: "/srv/repos/db, /srv/repos/api" }), {
-      dir,
-      cwd: dir,
-      env: {},
-    });
-    expect(withPaths.ok).toBe(true);
-    const cfg = withPaths.mutations
-      .filter((m) => m.type === "merge-json")
-      .find((m) => m.path.endsWith("config.json"));
-    expect((cfg as { value: { trustedPaths: string[] } }).value.trustedPaths).toEqual([
-      "/srv/repos/db",
-      "/srv/repos/api",
-    ]);
-    const empty = buildSetupPreview(values({ trustedPaths: "" }), { dir, cwd: dir, env: {} });
-    const emptyCfg = empty.mutations
-      .filter((m) => m.type === "merge-json")
-      .find((m) => m.path.endsWith("config.json"));
-    expect((emptyCfg as { value: { trustedPaths: string[] } }).value.trustedPaths).toEqual([]);
-  } finally {
-    clean(dir);
-  }
-});
-
-test("issueTracker defaults to youtrack and sits between trustedPaths and youtrack", () => {
+test("issueTracker defaults to youtrack and sits between branchProtected and youtrack", () => {
   expect(createInitialDraft(config()).values.issueTracker).toBe("youtrack");
 
   let d = startCustom();
   d = reducer(d, { type: "next" });
-  expect(d.screen).toBe("trustedPaths");
-  expect(reducer(d, { type: "back" }).screen).toBe("branchProtected");
-  d = reducer(d, { type: "next" });
   expect(d.screen).toBe("issueTracker");
+  expect(reducer(d, { type: "back" }).screen).toBe("branchProtected");
 
   // Default selection YouTrack keeps the base-url screen in the flow.
   d = reducer(d, { type: "next" });
@@ -822,20 +777,17 @@ test("issueTracker defaults to youtrack and sits between trustedPaths and youtra
   expect(reducer(d, { type: "back" }).screen).toBe("youtrack");
 });
 
-test("none/github skip the youtrack screen in both directions; non-custom presets reach issueTracker via trustedPaths", () => {
-  // gitflow preset: branch screens skip straight to the trusted-paths screen
+test("none/github skip the youtrack screen in both directions; non-custom presets reach issueTracker", () => {
+  // gitflow preset: branch screens skip straight to the new select screen
   let g = createInitialDraft(config());
   g = reducer(g, { type: "set", field: "platforms", value: ["opencode"] });
   g = reducer(g, { type: "next" }); // -> locale
   g = reducer(g, { type: "next" }); // -> timezone
   g = reducer(g, { type: "next" }); // -> branchPreset
   g = reducer(g, { type: "next" }); // skips branchAllowed/branchProtected
-  expect(g.screen).toBe("trustedPaths");
-  g = reducer(g, { type: "next" });
   expect(g.screen).toBe("issueTracker");
 
-  const atIssueTracker = reducer(reducer(startCustom(), { type: "next" }), { type: "next" });
-  expect(atIssueTracker.screen).toBe("issueTracker");
+  const atIssueTracker = reducer(startCustom(), { type: "next" });
   for (const tracker of ["none", "github"] as const) {
     let t = reducer(atIssueTracker, { type: "set", field: "issueTracker", value: tracker });
     t = reducer(t, { type: "next" });
@@ -962,12 +914,11 @@ test("youtrack mode stays byte-identical: preview equals the legacy literal inpu
 // ---------------------------------------------------------------------------
 
 // gitflow preset walk to the vcs screen: platforms → locale → timezone →
-// branchPreset → trustedPaths → issueTracker → youtrack → vcs (seven `next`s
-// after platforms).
+// branchPreset → issueTracker → youtrack → vcs (six `next`s after platforms).
 const walkToVcs = (): ReturnType<typeof createInitialDraft> => {
   let d = createInitialDraft(config());
   d = reducer(d, { type: "set", field: "platforms", value: ["opencode"] });
-  for (let i = 0; i < 7; i++) d = reducer(d, { type: "next" });
+  for (let i = 0; i < 6; i++) d = reducer(d, { type: "next" });
   return d;
 };
 

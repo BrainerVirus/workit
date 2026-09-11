@@ -67,7 +67,6 @@ const PREVIEW_VALUES = {
   vcsProvider: "skip",
   workspaces: [],
   applyProject: true,
-  trustedPaths: "",
 } as const;
 
 type PackedPreview = {

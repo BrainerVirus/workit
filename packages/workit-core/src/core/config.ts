@@ -2,11 +2,9 @@ import {
   copyFileSync,
   cpSync,
   existsSync,
-  lstatSync,
   mkdirSync,
   readFileSync,
   readdirSync,
-  realpathSync,
   writeFileSync,
 } from "node:fs";
 import os from "node:os";
@@ -31,8 +29,6 @@ export type ToolkitConfig = {
   timezone: string;
   branchPolicy: { preset: BranchPreset; allowed: string[]; protected: string[] };
   commitPolicy: { preset: CommitFlavorPreset; pattern?: string };
-  /** Absolute user-owned dirs where product writes are allowed with writer held. */
-  trustedPaths: string[];
 };
 
 export const PRESETS: Record<BranchPreset, { allowed: string[]; protected: string[] }> = {
@@ -142,7 +138,6 @@ const DEFAULTS: ToolkitConfig = {
     protected: [...PRESETS.gitflow.protected],
   },
   commitPolicy: { preset: "conventional" },
-  trustedPaths: [],
 };
 
 const readSafe = (p: string): string | null => {
@@ -225,9 +220,6 @@ const parseConfigResult = (raw: string | null, file: string): ReaderResult<Toolk
           ? { pattern: input.commitPolicy.pattern }
           : {}),
       },
-      trustedPaths: Array.isArray(input.trustedPaths)
-        ? input.trustedPaths.filter((value): value is string => typeof value === "string")
-        : [],
     },
   };
 };
@@ -235,67 +227,6 @@ const parseConfigResult = (raw: string | null, file: string): ReaderResult<Toolk
 export const readConfigTyped = (dir?: string): ReaderResult<ToolkitConfig> => {
   const file = path.join(dir ?? configDir(), "config.json");
   return parseConfigResult(readSafe(file), file);
-};
-
-/** Canonical absolute trusted roots. Never throws: missing or malformed
- * config means no trusted paths (fail-closed = today's behavior). */
-export const resolveTrustedRoots = (): string[] => {
-  let entries: unknown;
-  try {
-    entries = readConfig().trustedPaths;
-  } catch {
-    return [];
-  }
-  if (!Array.isArray(entries)) return [];
-  const roots = new Set<string>();
-  for (const entry of entries) {
-    if (typeof entry !== "string" || !path.isAbsolute(entry)) continue;
-    try {
-      roots.add(realpathSync(entry));
-    } catch {
-      roots.add(path.normalize(entry));
-    }
-  }
-  return [...roots];
-};
-
-/** Absolute path canonically under any trusted root, symlink-safe. */
-export const isTrustedPath = (value: string, roots: string[]): boolean => {
-  if (!path.isAbsolute(value)) return false;
-  try {
-    for (const root of roots) {
-      let base: string;
-      try {
-        base = realpathSync(root);
-      } catch {
-        base = path.normalize(root);
-      }
-      const target = path.resolve(value);
-      if (target !== base && !target.startsWith(`${base}${path.sep}`)) continue;
-      let ancestor = target;
-      while (!existsSync(ancestor)) {
-        try {
-          if (lstatSync(ancestor).isSymbolicLink()) break;
-        } catch {
-          // Continue toward the nearest existing ancestor.
-        }
-        const parent = path.dirname(ancestor);
-        if (parent === ancestor) break;
-        ancestor = parent;
-      }
-      let canonicalAncestor: string;
-      try {
-        canonicalAncestor = realpathSync(ancestor);
-      } catch {
-        canonicalAncestor = ancestor;
-      }
-      if (canonicalAncestor === base || canonicalAncestor.startsWith(`${base}${path.sep}`))
-        return true;
-    }
-    return false;
-  } catch {
-    return false;
-  }
 };
 
 // RL-01: no silent fallback on malformed config — every consumer gets an
@@ -320,7 +251,6 @@ export type ConfigInput = {
   allowed?: string[];
   protectedNames?: string[];
   commitPolicy?: ToolkitConfig["commitPolicy"];
-  trustedPaths?: string[];
 };
 
 // RL-02: the single authoritative ToolkitConfig merge. CLI, OpenCode, and Cursor
@@ -332,7 +262,6 @@ export const mergeConfigValues = (input: ConfigInput, current: ToolkitConfig): T
   timezone: input.timezone ?? current.timezone,
   branchPolicy: mergePreset(input.preset ?? current.branchPolicy.preset, input, current),
   commitPolicy: input.commitPolicy ?? current.commitPolicy,
-  trustedPaths: input.trustedPaths ?? current.trustedPaths,
 });
 
 export const writeConfig = (config: ToolkitConfig): void => {

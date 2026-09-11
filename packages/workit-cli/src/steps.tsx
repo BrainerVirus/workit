@@ -90,7 +90,6 @@ export const SCREEN_PLACEHOLDERS = {
   timezoneOther: "e.g. America/Santiago",
   branchAllowed: "e.g. feature/*, bugfix/*",
   branchProtected: "e.g. main, develop",
-  trustedPaths: "e.g. /srv/repos/db, /srv/repos/api (empty = none)",
   workspaceName: "e.g. work",
   workspaceGlob: "e.g. /work/**",
   branchPolicyDevelop: "e.g. develop",
@@ -167,7 +166,6 @@ const TEXT_SCREENS: ReadonlySet<WizardScreen> = new Set([
   "timezoneOther",
   "branchAllowed",
   "branchProtected",
-  "trustedPaths",
   "youtrack",
   "basePath",
   "workspaceName",
@@ -666,23 +664,6 @@ function Screen({
             onSubmit={() => dispatch({ type: "next" })}
           />
           {draft.errors.branchProtected && <Text color="red">{draft.errors.branchProtected}</Text>}
-          <Text dimColor>Enter to continue · Esc Back</Text>
-        </Box>
-      );
-    case "trustedPaths":
-      return (
-        <Box flexDirection="column" gap={1}>
-          <Text bold>Step 2 — Global config · Trusted paths</Text>
-          <Text dimColor>
-            Absolute dirs writable outside the checkout (comma-separated, empty = none):
-          </Text>
-          <TextInput
-            placeholder={SCREEN_PLACEHOLDERS.trustedPaths}
-            defaultValue={draft.values.trustedPaths}
-            onChange={(value) => dispatch({ type: "set", field: "trustedPaths", value })}
-            onSubmit={() => dispatch({ type: "next" })}
-          />
-          {draft.errors.trustedPaths && <Text color="red">{draft.errors.trustedPaths}</Text>}
           <Text dimColor>Enter to continue · Esc Back</Text>
         </Box>
       );

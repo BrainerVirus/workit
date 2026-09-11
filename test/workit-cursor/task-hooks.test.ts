@@ -50,7 +50,7 @@ test("Cursor hook rejects malformed trust-boundary inputs", () => {
   ).toMatchObject({ ok: false, error: "conversation_id and session_id must match" });
 });
 
-test("shell hooks resolve cwd and deny any outside-root write operand", () => {
+test("shell hooks resolve cwd and pass outside-root operands through without a task", () => {
   const root = mkdtempSync(path.join(tmpdir(), "workit-cursor-hook-"));
   const nested = path.join(root, "nested");
   mkdirSync(nested);
@@ -62,10 +62,7 @@ test("shell hooks resolve cwd and deny any outside-root write operand", () => {
       cwd: root,
       command: "cp src/in-scope /tmp/outside",
     }),
-  ).toMatchObject({
-    permission: "deny",
-    agent_message: "shell write target is outside or unavailable",
-  });
+  ).toEqual({ permission: "allow" });
   expect(
     handleCursorHook({
       hook_event_name: "beforeShellExecution",
@@ -83,12 +80,14 @@ test("shell hooks resolve cwd and deny any outside-root write operand", () => {
       cwd: "/tmp",
       command: "touch file",
     }),
-  ).toMatchObject({ permission: "deny" });
+  ).toEqual({ permission: "allow" });
 });
 
 test("shell hooks reject unavailable cwd and attached output redirections", () => {
   const root = mkdtempSync(path.join(tmpdir(), "workit-cursor-hook-"));
-  for (const command of [">/tmp/out", "2>/tmp/err", "2>&1"]) {
+  // Absolute redirect targets pass through now (no confinement); without a
+  // task they allow. Bare fd duplication stays denied as unparseable.
+  for (const command of [">/tmp/out", "2>/tmp/err"]) {
     expect(
       handleCursorHook({
         hook_event_name: "beforeShellExecution",
@@ -97,8 +96,17 @@ test("shell hooks reject unavailable cwd and attached output redirections", () =
         cwd: root,
         command,
       }),
-    ).toMatchObject({ permission: "deny" });
+    ).toEqual({ permission: "allow" });
   }
+  expect(
+    handleCursorHook({
+      hook_event_name: "beforeShellExecution",
+      conversation_id: "conv-1",
+      workspace_roots: [root],
+      cwd: root,
+      command: "2>&1",
+    }),
+  ).toMatchObject({ permission: "deny" });
   for (const command of [">>file", "&>file"]) {
     expect(
       handleCursorHook({
@@ -306,26 +314,27 @@ test("shell intent captures unlisted verbs and skips env assignments", () => {
     expect(shell(root, "echo hi")).toEqual({ permission: "allow" });
     expect(shell(root, 'echo "hi" > out.txt')).toMatchObject({ permission: "deny" });
     expect(shell(root, "mkdir a && mkdir b")).toMatchObject({ permission: "deny" });
-    expect(
-      shell(root, `tee ${path.join(tmpdir(), `wk-outside-${process.pid}.txt`)}`),
-    ).toMatchObject({ permission: "deny" });
-    expect(
-      shell(root, `FOO=1 rm ${path.join(tmpdir(), `wk-outside-${process.pid}.txt`)}`),
-    ).toMatchObject({ permission: "deny" });
+    expect(shell(root, `tee ${path.join(tmpdir(), `wk-outside-${process.pid}.txt`)}`)).toEqual({
+      permission: "allow",
+    });
+    expect(shell(root, `FOO=1 rm ${path.join(tmpdir(), `wk-outside-${process.pid}.txt`)}`)).toEqual(
+      { permission: "allow" },
+    );
     expect(shell(root, "pip install requests")).toMatchObject({ permission: "allow" });
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });
 
-test("shell containment resolves symlinks before comparing", () => {
+test("shell paths pass through canonical absolute targets without a task", () => {
   const root = shellRoot();
   const outside = path.join(tmpdir(), `wk-escape-${process.pid}.txt`);
   try {
     writeFileSync(outside, "outside\n");
     symlinkSync(outside, path.join(root, "link"));
-    // Intent on `link`, but it resolves outside the root: deny.
-    expect(shell(root, "tee link")).toMatchObject({ permission: "deny" });
+    // Intent on `link`: resolves to the canonical absolute target outside the
+    // root and passes through (no confinement); without a task it allows.
+    expect(shell(root, "tee link")).toEqual({ permission: "allow" });
   } finally {
     rmSync(root, { recursive: true, force: true });
     rmSync(outside, { force: true });
@@ -357,41 +366,28 @@ test("a structured write tool with no extractable target denies inside a task", 
   }
 });
 
-test("shell hooks allow user-trusted absolute operands and still deny unlisted ones", () => {
+test("outside absolute paths reach the writer check instead of denying for containment", () => {
   const root = mkdtempSync(path.join(tmpdir(), "workit-cursor-hook-"));
-  const trusted = mkdtempSync(path.join(tmpdir(), "workit-trusted-"));
-  const configDir = mkdtempSync(path.join(tmpdir(), "workit-trusted-config-"));
-  const previous = process.env.WORKFLOW_TOOLKIT_CONFIG;
+  const core = new WorkitCore(new TaskStore(root), {
+    root,
+    caller: caller({ host: "cursor", actor: "parent" }),
+    capabilities: [],
+    constraints: [],
+    now: "2026-01-01T00:00:00Z",
+  });
+  expect(core.task(taskStartRequest()).ok).toBe(true);
   try {
-    writeFileSync(
-      path.join(configDir, "config.json"),
-      JSON.stringify({ trustedPaths: [trusted] }),
-      "utf8",
-    );
-    process.env.WORKFLOW_TOOLKIT_CONFIG = configDir;
+    // No writer held: denies, but for missing ownership — never containment.
     expect(
       handleCursorHook({
-        hook_event_name: "beforeShellExecution",
-        conversation_id: "conv-1",
+        hook_event_name: "preToolUse",
+        conversation_id: "parent",
         workspace_roots: [root],
-        cwd: root,
-        command: `cp src/in-scope ${path.join(trusted, "out")}`,
+        tool_name: "Write",
+        tool_input: { file_path: path.join(tmpdir(), "workit-elsewhere-x.ts") },
       }),
-    ).toEqual({ permission: "allow" });
-    expect(
-      handleCursorHook({
-        hook_event_name: "beforeShellExecution",
-        conversation_id: "conv-1",
-        workspace_roots: [root],
-        cwd: root,
-        command: "cp src/in-scope /tmp/workit-definitely-unlisted",
-      }),
-    ).toMatchObject({ permission: "deny" });
+    ).toMatchObject({ permission: "deny", agent_message: "checkout has no writer owner" });
   } finally {
-    if (previous === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
-    else process.env.WORKFLOW_TOOLKIT_CONFIG = previous;
-    rmSync(configDir, { recursive: true, force: true });
-    rmSync(trusted, { recursive: true, force: true });
     rmSync(root, { recursive: true, force: true });
   }
 });

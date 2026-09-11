@@ -69,7 +69,6 @@ test("CA-06: wizard branch-policy apply equals the host init action write", asyn
       ENTER,
       ENTER,
       ENTER,
-      ENTER,
       "y",
       "y",
     );
