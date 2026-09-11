@@ -8,7 +8,7 @@ import {
   releaseNotesContext,
 } from "./repo-context";
 import { gitContext } from "./git";
-import { fetchGitHubIssueBody } from "./tracker-issues";
+import { fetchGitHubIssueBody, fetchGitLabIssueBody } from "./tracker-issues";
 import { defaultOperations, ISSUE_RE, logTimeUpdate, postUpdate } from "./youtrack-tools";
 import {
   context as youTrackContext,
@@ -173,6 +173,17 @@ export const readExternalContext = async (
       if ("error" in body)
         return failure("capability_unavailable", `GitHub issue is unavailable: ${body.error}`, {
           capability: "github_issue",
+        });
+      return success(null, null, { kind: payload.kind, context: { issueBody: body.data } });
+    }
+    case "gitlab_issue": {
+      const ref = payload.issueId ?? payload.issueUrl ?? payload.issueRef;
+      if (!ref)
+        return failure("invalid_input", "gitlab_issue needs issueId, issueUrl, or issueRef");
+      const body = await fetchGitLabIssueBody(ref, root);
+      if ("error" in body)
+        return failure("capability_unavailable", `GitLab issue is unavailable: ${body.error}`, {
+          capability: "gitlab_issue",
         });
       return success(null, null, { kind: payload.kind, context: { issueBody: body.data } });
     }

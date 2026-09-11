@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import {
   fetchGitHubIssueBody,
+  fetchGitLabIssueBody,
   repoPathFromRemote,
 } from "@/packages/workit-core/src/core/tracker-issues";
 
@@ -63,11 +64,49 @@ test("fetchGitHubIssueBody fails closed on bad refs, missing remote, creds, and 
   ).toMatchObject({ kind: "request" });
 });
 
-test("repoPathFromRemote keeps subgroups and handles scp, https, and bare forms", () => {
-  expect(repoPathFromRemote("git@github.com:owner/repo.git")).toBe("owner/repo");
+test("repoPathFromRemote keeps subgroups and handles scp, https, and bare forms", () => {  expect(repoPathFromRemote("git@github.com:owner/repo.git")).toBe("owner/repo");
   expect(repoPathFromRemote("https://github.com/owner/repo")).toBe("owner/repo");
   expect(repoPathFromRemote("git@gitlab.com:group/sub/repo.git")).toBe("group/sub/repo");
   expect(repoPathFromRemote("https://gitlab.example.com/group/repo/")).toBe("group/repo");
   expect(repoPathFromRemote("")).toBe(null);
   expect(repoPathFromRemote("not a url at all !!!")).toBe(null);
+});
+
+const glDeps = {
+  creds: () => ({ token: "t", api: "https://gitlab.com/api/v4" }),
+  remote: () => "git@gitlab.com:group/sub/repo.git",
+} as const;
+
+test("fetchGitLabIssueBody returns the triple with PRIVATE-TOKEN auth on stubbed fetch", async () => {
+  const seen: { url: string; headers: Record<string, string> }[] = [];
+  const result = await fetchGitLabIssueBody("13", "/root", {
+    ...glDeps,
+    request: (async (url: string, init: { headers: Record<string, string> }) => {
+      seen.push({ url, headers: init.headers });
+      return stubRequest({ iid: 13, title: "Plan release", description: "Scope", state: "opened" })(
+        url,
+      );
+    }) as never,
+  });
+  expect(seen[0].url).toBe("https://gitlab.com/api/v4/projects/group%2Fsub%2Frepo/issues/13");
+  expect(seen[0].headers).toMatchObject({ "PRIVATE-TOKEN": "t" });
+  expect(result).toEqual({
+    data: { id: "13", title: "Plan release", body: "Scope", state: "opened" },
+  });
+});
+
+test("fetchGitLabIssueBody fails closed on bad refs, missing remote, creds, and requests", async () => {
+  expect(await fetchGitLabIssueBody("abc!!", "/root", glDeps)).toMatchObject({ kind: "input" });
+  expect(await fetchGitLabIssueBody("13", "/root", { ...glDeps, remote: () => null })).toMatchObject(
+    { kind: "input" },
+  );
+  expect(
+    await fetchGitLabIssueBody("13", "/root", {
+      ...glDeps,
+      creds: () => ({ error: "unconfigured gitlab provider" }),
+    }),
+  ).toMatchObject({ kind: "creds" });
+  expect(
+    await fetchGitLabIssueBody("13", "/root", { ...glDeps, request: stubRequest({}, 404) as never }),
+  ).toMatchObject({ kind: "request" });
 });

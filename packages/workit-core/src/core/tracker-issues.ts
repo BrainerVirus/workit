@@ -131,3 +131,38 @@ export const fetchGitHubIssueBody = async (
     return { error: "invalid GitHub issue response", kind: "request" };
   }
 };
+
+/** Fetch a GitLab issue triple for context.read. Fail-closed without a token. */
+export const fetchGitLabIssueBody = async (
+  ref: string,
+  root: string,
+  deps: {
+    creds?: (root: string) => TrackerCreds;
+    request?: TrackerRequest;
+    remote?: (root: string) => string | null;
+  } = {},
+): Promise<{ data: TrackerIssueBody } | TrackerIssueFailure> => {
+  const id = parseGhIssue(ref);
+  if (!/^\d+$/.test(id)) return { error: `invalid GitLab issue ref "${ref}"`, kind: "input" };
+  const repo = repoPathFromRemote((deps.remote ?? originRemote)(root) ?? "");
+  if (!repo) return { error: "no origin remote to resolve the project", kind: "input" };
+  const credentials = (deps.creds ?? ((r) => trackerCreds(r, "gitlab")))(root);
+  if ("error" in credentials) return { ...credentials, kind: "creds" as const };
+  const out = await (deps.request ?? trackerRequest)(
+    `${credentials.api}/projects/${encodeURIComponent(repo)}/issues/${id}`,
+    { method: "GET", headers: { "PRIVATE-TOKEN": credentials.token } },
+  );
+  if (out.status !== 0) return { error: out.stderr || "GitLab issue fetch failed", kind: "request" };
+  try {
+    const triple = parseTriple(
+      JSON.parse(out.stdout) as Record<string, unknown>,
+      id,
+      ["iid"],
+      ["description"],
+    );
+    if (!triple) return { error: "unexpected GitLab issue shape", kind: "request" };
+    return { data: triple };
+  } catch {
+    return { error: "invalid GitLab issue response", kind: "request" };
+  }
+};
