@@ -23,7 +23,8 @@ selects requirements; do not wait for a rule that can only exist after assess.
    representations.
 3. Write one vertical RED slice that fails for the missing behavior, run it, and
    preserve the actual failure as evidence. Implement the smallest change, then
-   run the same slice GREEN and record its result.
+   run the same slice GREEN and record its result. Close enforces the order: a
+   testing requirement with GREEN but no preceding RED evidence stays unsatisfied.
 4. Add only another slice for a distinct behavior or risk. Reconcile stale
    evidence if the candidate changes.
 
