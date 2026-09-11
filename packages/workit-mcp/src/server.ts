@@ -233,7 +233,7 @@ export function createMcpServer(host: McpHost, contextProvider: NativeContextPro
       for (const key of parsed.searchParams.keys())
         if (!CONTEXT_SELECTORS.includes(key as (typeof CONTEXT_SELECTORS)[number]))
           throw new McpResourceInputError("unsupported Workit context selector");
-      const result = readExternalContext(context.root, {
+      const result = await readExternalContext(context.root, {
         kind,
         ...(parsed.searchParams.get("range") ? { range: parsed.searchParams.get("range")! } : {}),
         ...(parsed.searchParams.get("issueId")

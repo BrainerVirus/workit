@@ -11,6 +11,7 @@ import { gitContext } from "./git";
 import { defaultOperations, ISSUE_RE, logTimeUpdate, postUpdate } from "./youtrack-tools";
 import {
   context as youTrackContext,
+  fetchYouTrackIssueBody,
   youTrackConfigPath,
   youTrackRequest,
   youTrackToken,
@@ -102,7 +103,10 @@ const unknown = (operation: string) =>
 type ContextReadPayload = Extract<ExternalActionRequest, { operation: "context.read" }>["payload"];
 
 /** Read one fixed repository/provider context without approval or mutation. */
-export const readExternalContext = (root: string, payload: ContextReadPayload): Result<unknown> => {
+export const readExternalContext = async (
+  root: string,
+  payload: ContextReadPayload,
+): Promise<Result<unknown>> => {
   if (payload.range !== undefined && !isSafeContextRange(payload.range))
     return failure("invalid_input", "revision range is invalid", {
       fields: [{ path: "range", reason: "option-like or control characters are not allowed" }],
@@ -138,11 +142,26 @@ export const readExternalContext = (root: string, payload: ContextReadPayload): 
         ...(payload.issueRef ? { issue_ref: payload.issueRef } : {}),
         ...(payload.mode ? { mode: payload.mode } : {}),
       });
-      return value && typeof value === "object" && "error" in value
-        ? failure("capability_unavailable", "YouTrack context is unavailable", {
-            capability: "youtrack",
-          })
-        : success(null, null, { kind: payload.kind, context: value });
+      if (value && typeof value === "object" && "error" in value)
+        return failure("capability_unavailable", "YouTrack context is unavailable", {
+          capability: "youtrack",
+        });
+      if (value.requiresMeetingChoice || !value.issueId)
+        return success(null, null, { kind: payload.kind, context: value });
+      const body = await fetchYouTrackIssueBody(value.issueId);
+      if ("error" in body && body.kind === "request")
+        return failure("capability_unavailable", "YouTrack issue body is unavailable", {
+          capability: "youtrack",
+        });
+      return success(null, null, {
+        kind: payload.kind,
+        context: {
+          ...value,
+          ...("data" in body
+            ? { issueBody: body.data }
+            : { issueBody: null, issueBodyError: body.error }),
+        },
+      });
     }
   }
 };

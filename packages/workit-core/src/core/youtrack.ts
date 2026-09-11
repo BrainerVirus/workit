@@ -656,6 +656,65 @@ export function context(
   };
 }
 
+/** Fetch a YouTrack issue body for context.read (titles alone mislead).
+ * Creds failure degrades (offline keeps the link shape); request failure
+ * with creds fails closed so sessions never mistake titles for bodies. */
+export const fetchYouTrackIssueBody = async (
+  issue: string,
+  creds: () => { token: string; base: string } | { error: string } = youTrackToken,
+  request: typeof youTrackRequest = youTrackRequest,
+): Promise<
+  | {
+      data: {
+        idReadable: string;
+        summary: string;
+        description: string | null;
+        state: string | null;
+      };
+    }
+  | { error: string; kind: "creds" | "request" }
+> => {
+  const credentials = creds();
+  if ("error" in credentials) return { error: credentials.error, kind: "creds" };
+  const { token, base } = credentials;
+  const out = await request(
+    `${base}/api/issues/${encodeURIComponent(issue)}?fields=idReadable,summary,description,customFields(name,value(name))`,
+    { method: "GET", token },
+  );
+  if (out.status !== 0)
+    return { error: out.stderr || "YouTrack issue fetch failed", kind: "request" };
+  try {
+    const parsed = JSON.parse(out.stdout) as Record<string, unknown>;
+    const customFields = Array.isArray(parsed.customFields) ? parsed.customFields : [];
+    const stateField = customFields.find(
+      (field): field is { name: unknown; value: unknown } =>
+        typeof field === "object" &&
+        field !== null &&
+        (field as { name: unknown }).name === "State",
+    );
+    const stateValue = stateField?.value;
+    const stateName =
+      typeof stateValue === "object" && stateValue !== null
+        ? (stateValue as { name?: unknown }).name
+        : undefined;
+    return {
+      data: {
+        idReadable: String(parsed.idReadable ?? issue),
+        summary: String(parsed.summary ?? ""),
+        description: typeof parsed.description === "string" ? parsed.description : null,
+        state:
+          typeof stateValue === "string"
+            ? stateValue
+            : typeof stateName === "string" && stateName
+              ? stateName
+              : null,
+      },
+    };
+  } catch {
+    return { error: "invalid JSON from YouTrack API", kind: "request" };
+  }
+};
+
 export function parseDuration(
   text: string,
   _workspace_root: string,
