@@ -116,6 +116,8 @@ always load on demand. Model-invoked: new instructions, interruptions, or
 forgotten items mid-task → load workit-steer before responding; about to open
 a PR or fresh from implementing → load workit-deslop; CI red → load
 workit-green-run; small-looking change before close or merge → load
-workit-blast-radius; spec or plan needs a flow diagram → load workit-diagram,
-a UI sketch → load workit-mockup. Load the skill; never act from memory of it.
+workit-blast-radius; ambiguous, consequential, or disputed proposal before
+recommending → load workit-challenge; spec or plan needs a flow diagram →
+load workit-diagram, a UI sketch → load workit-mockup. Load the skill; never
+act from memory of it.
 `.trim();

@@ -165,6 +165,7 @@ test("bootstrap routes moment-based skill loads by name", () => {
   expect(bootstrap).toContain("workit-deslop");
   expect(bootstrap).toContain("workit-green-run");
   expect(bootstrap).toContain("workit-blast-radius");
+  expect(bootstrap).toContain("workit-challenge");
   expect(bootstrap).not.toContain("## Method");
 });
 
