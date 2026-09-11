@@ -19,6 +19,7 @@ import {
   type Worker,
 } from "@brainervirus/workit-core/src/core";
 import { piContext, workitContext } from "../src/context";
+import { WORKIT_SKILL_ALIASES } from "@brainervirus/workit-core/src/core/skill-manifests";
 import { enforceNativeWriter, registerWorkitTools } from "../src/tools";
 import {
   cancelWorker,
@@ -391,6 +392,25 @@ export default function extension(pi: ExtensionAPI): void {
         },
       });
   }
+
+  // Bare slash aliases: route through the bundled skill commands so the
+  // model applies the method skill. An alias never calls another alias.
+  if (
+    typeof pi.registerCommand === "function" &&
+    typeof (pi as { sendUserMessage?: unknown }).sendUserMessage === "function"
+  )
+    for (const [alias, skill] of Object.entries(WORKIT_SKILL_ALIASES))
+      pi.registerCommand(alias, {
+        description: `Apply the ${skill} method skill to the current task.`,
+        handler: async (args) => {
+          const extra = String(args ?? "").trim();
+          (
+            pi as unknown as { sendUserMessage: (content: string, options: unknown) => void }
+          ).sendUserMessage(`/skill:${skill}${extra ? ` ${extra}` : ""}`, {
+            expandPromptTemplates: true,
+          });
+        },
+      });
 
   pi.on("session_start", (_event, ctx) => {
     if (childWorker)

@@ -99,7 +99,10 @@ test(
       ) as { data: { commands: Array<{ name: string; source: string }> } };
       const commands = response.data.commands;
       expect(commands.filter((command) => command.name.startsWith("skill:workit-"))).toHaveLength(
-        7,
+        14,
+      );
+      expect(commands.map((command) => command.name)).toEqual(
+        expect.arrayContaining(["challenge", "babysit", "implement", "plan", "debug"]),
       );
       expect(
         commands.some(

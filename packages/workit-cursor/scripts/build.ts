@@ -88,4 +88,17 @@ if (built) {
   console.error(built);
   process.exit(1);
 }
-console.log(`cursor: built shared MCP, native hook, assets, and seven method skills (${target})`);
+// Bare slash aliases ship next to skills so installs match the repo.
+const commands = path.join(target, "commands");
+mkdirSync(commands, { recursive: true });
+for (const alias of Object.keys(WORKIT_SKILL_ALIASES)) {
+  const src = path.join(pkgDir, "commands", `${alias}.md`);
+  if (!existsSync(src)) {
+    console.error(`missing Cursor command alias: ${alias}`);
+    process.exit(1);
+  }
+  cpSync(src, path.join(commands, `${alias}.md`));
+}
+console.log(
+  `cursor: built shared MCP, native hook, assets, and ${WORKIT_METHOD_SKILLS.length} method skills (${target})`,
+);

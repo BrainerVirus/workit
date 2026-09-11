@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Plugin } from "@opencode-ai/plugin";
 import { TaskStore, WorkitCore } from "@brainervirus/workit-core/src/core";
+import { WORKIT_SKILL_ALIASES } from "@brainervirus/workit-core/src/core/skill-manifests";
 import { assertProductWriteAllowed } from "@brainervirus/workit-core/src/core/workers";
 import { createLogger } from "@brainervirus/workit-core/src/core/logger";
 import {
@@ -784,6 +785,18 @@ const plugin: Plugin = async ({ client, directory }) => {
       if (existsSync(skillsPath) && !paths.includes(skillsPath)) paths.push(skillsPath);
       mutable.skills ??= {};
       mutable.skills.paths = paths;
+      // Bare slash aliases: user-invoked entry points that load the method
+      // skill through the skill tool and apply it. Never overwritten when
+      // the user defined their own command of the same name.
+      const commands: Record<string, unknown> = {
+        ...(mutable as { command?: Record<string, unknown> }).command,
+      };
+      for (const [alias, skill] of Object.entries(WORKIT_SKILL_ALIASES))
+        commands[alias] ??= {
+          description: `Apply the ${skill} method skill to the current task.`,
+          template: `Load the ${skill} skill with the skill tool and apply it to the current task. Arguments: $ARGUMENTS`,
+        };
+      (mutable as { command?: Record<string, unknown> }).command = commands;
       const permission = mutable.permission;
       const current: Record<string, any> =
         typeof permission === "string"

@@ -29,6 +29,7 @@
     ".cursor-plugin/",
     "rules/workit-contract.mdc",
     "skills/",
+    "commands/",
     "hooks/hooks-cursor.json"
   ],
   "type": "module",

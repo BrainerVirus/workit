@@ -19,6 +19,7 @@ const makePi = () => {
   const tools: any[] = [];
   const handlers = new Map<string, (event: any, ctx: any) => unknown>();
   const commands: any[] = [];
+  const sent: any[] = [];
   const pi = {
     registerTool(tool: any) {
       tools.push(tool);
@@ -26,11 +27,15 @@ const makePi = () => {
     registerCommand(command: any, options: any) {
       commands.push({ name: command, ...options });
     },
+    sendUserMessage(content: any, options: any) {
+      sent.push({ content, options });
+    },
     on(name: string, handler: (event: any, ctx: any) => unknown) {
       handlers.set(name, handler);
     },
     tools,
     commands,
+    sent,
     handlers,
   };
   return pi;
@@ -158,18 +163,45 @@ test("clean Pi package declares stock discovery and the eight families plus exte
   expect(pi.commands.map((command) => command.name)).toContain("workit-worker");
 });
 
-test("Pi package ships exactly the seven canonical method skills", () => {
+test("Pi package ships the fourteen canonical method skills", () => {
   expect(readdirSync(path.join(import.meta.dir, "../../packages/workit-pi/skills")).sort()).toEqual(
     [
+      "workit-babysit",
       "workit-behavioral-tdd",
+      "workit-blast-radius",
       "workit-challenge",
       "workit-debug",
+      "workit-deslop",
+      "workit-diagram",
+      "workit-green-run",
       "workit-handoff",
       "workit-implement",
+      "workit-mockup",
       "workit-plan",
       "workit-review",
+      "workit-steer",
     ],
   );
+});
+
+test("Pi registers bare slash aliases that expand the bundled skill commands", async () => {
+  const pi = makePi();
+  await extension(pi as any);
+  for (const [alias, skill] of [
+    ["challenge", "workit-challenge"],
+    ["babysit", "workit-babysit"],
+    ["implement", "workit-implement"],
+    ["plan", "workit-plan"],
+    ["debug", "workit-debug"],
+  ]) {
+    const command = pi.commands.find((entry: any) => entry.name === alias);
+    expect(command, alias).toBeDefined();
+    await command.handler("extra args", {});
+    expect(pi.sent.at(-1)).toEqual({
+      content: `/skill:${skill} extra args`,
+      options: { expandPromptTemplates: true },
+    });
+  }
 });
 
 test("Pi tool payloads use the shared parser and headless decisions need input", async () => {
@@ -725,7 +757,12 @@ test("stock Pi discovers the package manifest through its local package manager"
         .filter((command) => command.name.startsWith("skill:workit-"))
         .map((command) => command.name)
         .sort(),
-    ).toHaveLength(7);
+    ).toHaveLength(14);
+    expect(
+      (responses.get("get_commands").data.commands as Array<{ name: string }>).map(
+        (command) => command.name,
+      ),
+    ).toEqual(expect.arrayContaining(["challenge", "babysit", "implement", "plan", "debug"]));
     expect(stderr).toBe("");
   } finally {
     child.kill();

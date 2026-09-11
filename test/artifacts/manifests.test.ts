@@ -247,6 +247,9 @@ test(
     for (const skill of CURSOR_SKILLS) {
       expect(entries, `skills/${skill}/SKILL.md`).toContain(`skills/${skill}/SKILL.md`);
     }
+    for (const alias of ["babysit", "challenge", "debug", "implement", "plan"]) {
+      expect(entries, `commands/${alias}.md`).toContain(`commands/${alias}.md`);
+    }
     expect(
       [...entries].filter((entry) => entry.startsWith("rules/") && entry.endsWith(".mdc")),
     ).toEqual(["rules/workit-contract.mdc"]);
@@ -302,7 +305,7 @@ test(
 );
 
 test(
-  "clean checkout tracks all seven declared skills and the contract rule (CA-15)",
+  "clean checkout tracks all declared skills and the contract rule (CA-15)",
   () => {
     const tracked = spawnSync("git", ["ls-files", "--", "packages/workit-cursor"], {
       cwd: REPO_ROOT,

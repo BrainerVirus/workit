@@ -26,7 +26,7 @@ import {
   mergeCursorSettings,
   mergeOpenCodeConfig,
 } from "./registration";
-import { WORKIT_METHOD_SKILLS } from "./skill-manifests";
+import { WORKIT_METHOD_SKILLS, WORKIT_SKILL_ALIASES } from "./skill-manifests";
 
 export type CutoverHost = "opencode" | "cursor" | "codex" | "pi";
 
@@ -453,6 +453,15 @@ const syncV1CursorSkills = (pluginDir: string, dev: string | null) => {
   for (const name of readdirSync(path.join(pluginDir, "skills"))) {
     if (name.startsWith("wk-"))
       rmSync(path.join(pluginDir, "skills", name), { recursive: true, force: true });
+  }
+  // Bare slash aliases ship next to skills so installs match the repo.
+  mkdirSync(path.join(pluginDir, "commands"), { recursive: true });
+  for (const alias of Object.keys(WORKIT_SKILL_ALIASES)) {
+    const src = dev ? path.join(dev, "packages/workit-cursor/commands", `${alias}.md`) : null;
+    writeFileSync(
+      path.join(pluginDir, "commands", `${alias}.md`),
+      src && existsSync(src) ? readFileSync(src, "utf8") : `# /${alias}\n`,
+    );
   }
   const vendor = path.join(pluginDir, "vendor");
   if (existsSync(vendor)) rmSync(vendor, { recursive: true, force: true });

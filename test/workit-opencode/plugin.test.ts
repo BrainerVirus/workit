@@ -34,21 +34,36 @@ test("registers the eight native operation tools plus init_apply", async () => {
   ]);
 });
 
-test("config registers only the seven policy-selected method skills", async () => {
+test("config registers only the policy-selected method skills", async () => {
   const hooks = await plugin(pluginInput as never);
   const config: Record<string, any> = {};
   await hooks.config?.(config);
   expect(config.skills.paths).toEqual([packageSkills]);
   expect(readdirSync(packageSkills).sort()).toEqual([
+    "workit-babysit",
     "workit-behavioral-tdd",
+    "workit-blast-radius",
     "workit-challenge",
     "workit-debug",
+    "workit-deslop",
+    "workit-diagram",
+    "workit-green-run",
     "workit-handoff",
     "workit-implement",
+    "workit-mockup",
     "workit-plan",
     "workit-review",
+    "workit-steer",
   ]);
-  expect(config.command).toBeUndefined();
+  expect(Object.keys(config.command).sort()).toEqual([
+    "babysit",
+    "challenge",
+    "debug",
+    "implement",
+    "plan",
+  ]);
+  expect(config.command.challenge.description).toContain("workit-challenge");
+  expect(config.command.challenge.template).toContain("$ARGUMENTS");
 });
 
 test("skill registration is idempotent and worktree creation is denied", async () => {
@@ -78,4 +93,12 @@ test("each native tool returns a standard contract envelope for invalid input", 
     );
     expect(JSON.parse(raw as string), family).toMatchObject({ ok: false });
   }
+});
+
+test("config preserves user-defined commands of the same name", async () => {
+  const hooks = await plugin(pluginInput as never);
+  const config: Record<string, any> = { command: { challenge: { description: "mine" } } };
+  await hooks.config?.(config);
+  expect(config.command.challenge).toEqual({ description: "mine" });
+  expect(Object.keys(config.command)).toContain("debug");
 });
