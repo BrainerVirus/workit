@@ -740,7 +740,7 @@ export const resolveExternalActionRequest = (
           });
         const normalized = {
           operation: request.operation,
-          payload: { ...request.payload, target_branch },
+          payload: { ...request.payload, target_branch, babysit: request.payload.babysit ?? true },
         } as ExternalActionRequest;
         const marker = `<!-- workit-action:${sha256({ operation: request.operation, payload: normalized.payload, source_commit, remote: identity })} -->`;
         return success(null, null, {
@@ -948,7 +948,11 @@ export const executeConcreteExternalAction = async (
       );
       return result.error || result.ok === false
         ? unknown(request.operation)
-        : success(null, null, result);
+        : success(null, null, {
+            ...result,
+            babysit: request.payload.babysit ?? true,
+            babysitSkill: "workit-babysit",
+          });
     }
     case "changelog.apply": {
       const preview = changelogApplyPreview({ ...request.payload, workspace_root: root });

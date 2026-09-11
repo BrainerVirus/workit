@@ -932,3 +932,43 @@ test("native host action binding requires the exact canonical target and payload
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("pull_request resolve defaults babysit true and honors explicit decline", () => {
+  const root = mkdtempSync(join(tmpdir(), "workit-pr-babysit-"));
+  const previousConfig = process.env.WORKFLOW_VCS_CONFIG;
+  try {
+    spawnSync("git", ["init", "-q"], { cwd: root });
+    spawnSync("git", ["config", "user.email", "test@example.invalid"], { cwd: root });
+    spawnSync("git", ["config", "user.name", "Workit Test"], { cwd: root });
+    writeFileSync(join(root, "initial.txt"), "initial\n");
+    spawnSync("git", ["add", "initial.txt"], { cwd: root });
+    spawnSync("git", ["commit", "-qm", "initial"], { cwd: root });
+    spawnSync("git", ["remote", "add", "origin", "https://github.com/org/repo.git"], { cwd: root });
+    const tokenPath = join(root, "token");
+    const configPath = join(root, "vcs.json");
+    writeFileSync(tokenPath, "test-token\n");
+    writeFileSync(
+      configPath,
+      JSON.stringify({ provider: "github", github: { tokenFile: tokenPath } }),
+    );
+    process.env.WORKFLOW_VCS_CONFIG = configPath;
+    const auto = resolveExternalActionRequest(root, {
+      operation: "hosting.pull_request",
+      payload: { title: "Test", target_branch: "main" },
+    });
+    expect(auto).toMatchObject({ ok: true });
+    if (!auto.ok) return;
+    expect((auto.data.descriptorPayload as { babysit: boolean }).babysit).toBe(true);
+    const declined = resolveExternalActionRequest(root, {
+      operation: "hosting.pull_request",
+      payload: { title: "Test", target_branch: "main", babysit: false },
+    });
+    expect(declined).toMatchObject({ ok: true });
+    if (!declined.ok) return;
+    expect((declined.data.descriptorPayload as { babysit: boolean }).babysit).toBe(false);
+  } finally {
+    if (previousConfig === undefined) delete process.env.WORKFLOW_VCS_CONFIG;
+    else process.env.WORKFLOW_VCS_CONFIG = previousConfig;
+    rmSync(root, { recursive: true, force: true });
+  }
+});

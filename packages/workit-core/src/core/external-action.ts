@@ -71,6 +71,7 @@ const externalActionSchema = z.discriminatedUnion("operation", [
           body: z.string().optional(),
           draft: z.boolean().optional(),
           target_branch: z.string().optional(),
+          babysit: z.boolean().optional(),
         })
         .strict(),
     })
@@ -196,7 +197,7 @@ export const externalActionDescriptor = (operation: string, payload: unknown): s
 
 /** Compact host-facing help for the fixed optional-action surface. */
 export const externalActionHelp =
-  "Fixed actions: git.branch_setup {action?,sdd_dir?,target_branch?,stash?}; git.commit {message}; git.push {branch?}; hosting.pull_request {title,body?,draft?,target_branch?}; youtrack.update {issueId,markdown,minutes?}; youtrack.time {issueId,minutes,text?,dateMs?}; youtrack.meeting {issueId,minutes,text}; changelog.apply {entries?,path?,normalize_only?}; context.read {kind,range?,issueId?,issueUrl?,issueRef?,mode?,specPath?,planPath?}. context.read is read-only and needs no approval; all other operations require native approval (CLI uses a TTY; caller-unattested MCP cannot mutate).";
+  "Fixed actions: git.branch_setup {action?,sdd_dir?,target_branch?,stash?}; git.commit {message}; git.push {branch?}; hosting.pull_request {title,body?,draft?,target_branch?,babysit?}; youtrack.update {issueId,markdown,minutes?}; youtrack.time {issueId,minutes,text?,dateMs?}; youtrack.meeting {issueId,minutes,text}; changelog.apply {entries?,path?,normalize_only?}; context.read {kind,range?,issueId?,issueUrl?,issueRef?,mode?,specPath?,planPath?}. context.read is read-only and needs no approval; all other operations require native approval (CLI uses a TTY; caller-unattested MCP cannot mutate).";
 
 export const externalActionRef = (
   host: "opencode" | "pi" | "workit_cli",
