@@ -11,6 +11,7 @@ import os from "node:os";
 import path from "node:path";
 import type { Logger } from "./logger";
 import { EVENT, errorDetail } from "./boundary";
+import type { CommitFlavorPreset } from "./commit-flavors";
 
 // Optional diagnostic seam: adapters install their host logger so config
 // migration and provenance events land in the same sanitized log stream.
@@ -27,6 +28,7 @@ export type ToolkitConfig = {
   localeOptions: string[];
   timezone: string;
   branchPolicy: { preset: BranchPreset; allowed: string[]; protected: string[] };
+  commitPolicy: { preset: CommitFlavorPreset; pattern?: string };
 };
 
 export const PRESETS: Record<BranchPreset, { allowed: string[]; protected: string[] }> = {
@@ -135,6 +137,7 @@ const DEFAULTS: ToolkitConfig = {
     allowed: [...PRESETS.gitflow.allowed],
     protected: [...PRESETS.gitflow.protected],
   },
+  commitPolicy: { preset: "conventional" },
 };
 
 const readSafe = (p: string): string | null => {
@@ -183,6 +186,13 @@ const parseConfigResult = (raw: string | null, file: string): ReaderResult<Toolk
       ? input.branchPolicy?.preset
       : "gitflow"
   ) as BranchPreset;
+  const commitPreset = (
+    ["conventional", "gitmoji", "ticket-prefix", "freeform", "custom", "auto"].includes(
+      String(input.commitPolicy?.preset ?? ""),
+    )
+      ? input.commitPolicy?.preset
+      : "conventional"
+  ) as CommitFlavorPreset;
   return {
     status: "valid",
     path: file,
@@ -206,6 +216,12 @@ const parseConfigResult = (raw: string | null, file: string): ReaderResult<Toolk
         },
         DEFAULTS,
       ),
+      commitPolicy: {
+        preset: commitPreset,
+        ...(typeof input.commitPolicy?.pattern === "string"
+          ? { pattern: input.commitPolicy.pattern }
+          : {}),
+      },
     },
   };
 };
@@ -236,6 +252,7 @@ export type ConfigInput = {
   preset?: BranchPreset;
   allowed?: string[];
   protectedNames?: string[];
+  commitPolicy?: ToolkitConfig["commitPolicy"];
 };
 
 // RL-02: the single authoritative ToolkitConfig merge. CLI, OpenCode, and Cursor
@@ -246,6 +263,7 @@ export const mergeConfigValues = (input: ConfigInput, current: ToolkitConfig): T
   localeOptions: input.localeOptions ?? current.localeOptions,
   timezone: input.timezone ?? current.timezone,
   branchPolicy: mergePreset(input.preset ?? current.branchPolicy.preset, input, current),
+  commitPolicy: input.commitPolicy ?? current.commitPolicy,
 });
 
 export const writeConfig = (config: ToolkitConfig): void => {

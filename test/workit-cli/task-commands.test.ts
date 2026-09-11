@@ -65,7 +65,13 @@ test("CLI external action previews its exact descriptor and refuses headless mut
     const preview = capture();
     expect(
       await runActionCommand(
-        ["git.commit", "--payload", JSON.stringify({ message: "commit" }), "--preview", "--json"],
+        [
+          "git.commit",
+          "--payload",
+          JSON.stringify({ message: "chore(test): commit" }),
+          "--preview",
+          "--json",
+        ],
         {
           cwd: root,
           out: preview.out,
@@ -81,7 +87,13 @@ test("CLI external action previews its exact descriptor and refuses headless mut
     const denied = capture();
     expect(
       await runActionCommand(
-        ["git.commit", "--payload", JSON.stringify({ message: "commit" }), "--confirm", "--json"],
+        [
+          "git.commit",
+          "--payload",
+          JSON.stringify({ message: "chore(test): commit" }),
+          "--confirm",
+          "--json",
+        ],
         {
           cwd: root,
           out: denied.out,
@@ -303,7 +315,12 @@ test("CLI TTY route prints the bound descriptor before confirmation", async () =
     const out = capture();
     expect(
       await runActionCommand(
-        ["git.commit", "--payload", JSON.stringify({ message: "tty commit" }), "--confirm"],
+        [
+          "git.commit",
+          "--payload",
+          JSON.stringify({ message: "chore(test): tty commit" }),
+          "--confirm",
+        ],
         {
           cwd: root,
           actor: "cli",

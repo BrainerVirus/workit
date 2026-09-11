@@ -272,7 +272,7 @@ test("local external effects fail closed without the existing writer and do not 
     spawnSync("git", ["add", "change.txt"], { cwd: root });
     const resolved = resolveExternalActionRequest(root, {
       operation: "git.commit",
-      payload: { message: "must not commit" },
+      payload: { message: "chore(test): must not commit" },
     });
     expect(resolved).toMatchObject({ ok: true });
     if (!resolved.ok) return;
@@ -349,7 +349,7 @@ test("local commit guards every staged path against the existing writer scope", 
     spawnSync("git", ["add", "src/allowed.txt"], { cwd: narrow.root });
     const allowed = resolveExternalActionRequest(narrow.root, {
       operation: "git.commit",
-      payload: { message: "allowed scoped commit" },
+      payload: { message: "feat(test): allowed scoped commit" },
     });
     if (!allowed.ok) throw new Error(allowed.error);
     expect(
@@ -363,13 +363,13 @@ test("local commit guards every staged path against the existing writer scope", 
         cwd: narrow.root,
         encoding: "utf8",
       }).stdout.trim(),
-    ).toBe("allowed scoped commit");
+    ).toBe("feat(test): allowed scoped commit");
 
     writeFileSync(join(narrow.root, "outside.txt"), "outside\n");
     spawnSync("git", ["add", "outside.txt"], { cwd: narrow.root });
     const outside = resolveExternalActionRequest(narrow.root, {
       operation: "git.commit",
-      payload: { message: "must reject outside scope" },
+      payload: { message: "fix(test): must reject outside scope" },
     });
     if (!outside.ok) throw new Error(outside.error);
     expect(
@@ -387,7 +387,7 @@ test("local commit guards every staged path against the existing writer scope", 
         cwd: narrow.root,
         encoding: "utf8",
       }).stdout.trim(),
-    ).toBe("allowed scoped commit");
+    ).toBe("feat(test): allowed scoped commit");
 
     const excluded = setupScoped(scope({ paths: ["."], exclusions: ["secret"] }));
     mkdirSync(join(excluded.root, "secret"));
@@ -395,7 +395,7 @@ test("local commit guards every staged path against the existing writer scope", 
     spawnSync("git", ["add", "secret/blocked.txt"], { cwd: excluded.root });
     const rejected = resolveExternalActionRequest(excluded.root, {
       operation: "git.commit",
-      payload: { message: "must reject exclusion" },
+      payload: { message: "fix(test): must reject exclusion" },
     });
     if (!rejected.ok) throw new Error(rejected.error);
     expect(

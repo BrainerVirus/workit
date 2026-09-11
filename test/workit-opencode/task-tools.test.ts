@@ -826,7 +826,7 @@ test("OpenCode action route consumes the exact native receipt before committing"
       throw new Error("writer refresh failed");
     const resolved = resolveExternalActionRequest(root, {
       operation: "git.commit",
-      payload: { message: "native commit" },
+      payload: { message: "chore(test): native commit" },
     });
     if (!resolved.ok) throw new Error(resolved.error);
     const descriptor = externalActionDescriptor(
@@ -882,7 +882,7 @@ test("OpenCode action route consumes the exact native receipt before committing"
       JSON.parse(typeof decision === "string" ? decision : (decision as { output: string }).output),
     ).toMatchObject({ ok: true });
     const action = await nativeTools.workit_external_action.execute(
-      { operation: "git.commit", payload: { message: "native commit" } },
+      { operation: "git.commit", payload: { message: "chore(test): native commit" } },
       { directory: root, sessionID: actor } as never,
     );
     expect(
@@ -890,7 +890,7 @@ test("OpenCode action route consumes the exact native receipt before committing"
     ).toMatchObject({ ok: true });
     expect(
       spawnSync("git", ["log", "-1", "--pretty=%s"], { cwd: root, encoding: "utf8" }).stdout.trim(),
-    ).toBe("native commit");
+    ).toBe("chore(test): native commit");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

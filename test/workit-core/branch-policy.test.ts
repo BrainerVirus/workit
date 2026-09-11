@@ -1052,6 +1052,7 @@ test(
           localeOptions: ["en"],
           timezone: "UTC",
           branchPolicy: { preset: "custom", allowed: ["codex/*"], protected: ["main"] },
+          commitPolicy: { preset: "conventional" },
         });
         const customRes = resolveBranch({
           spec_path: "docs/codex-feat/spec.md",

@@ -30,6 +30,7 @@ const current: ToolkitConfig = {
     allowed: [...PRESETS.gitflow.allowed],
     protected: [...PRESETS.gitflow.protected],
   },
+  commitPolicy: { preset: "conventional" },
 };
 
 test("validateLocale accepts BCP-47, rejects bad formats", () => {

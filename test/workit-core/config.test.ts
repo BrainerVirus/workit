@@ -55,6 +55,7 @@ test("writeConfig + readConfig round trip", () => {
       localeOptions: ["en", "es-CL"],
       timezone: "America/Santiago",
       branchPolicy: { preset: "custom", allowed: ["feature/*", "codex/*"], protected: ["main"] },
+      commitPolicy: { preset: "conventional" },
     };
     writeConfig(cfg);
     expect(readConfig()).toEqual(cfg);
@@ -118,6 +119,7 @@ test("resolveBranchPolicy honors preset and custom overrides", () => {
       localeOptions: ["en"],
       timezone: "UTC",
       branchPolicy: { preset: "custom", allowed: ["codex/*"], protected: ["main"] },
+      commitPolicy: { preset: "conventional" },
     });
     const custom = resolveBranchPolicy(readConfig());
     expect(custom.allowed.some((r) => r.test("codex/feature/x"))).toBe(true);
@@ -226,6 +228,7 @@ test("RL-02/CA-23: mergeConfigValues routes every consumer through mergePreset",
     localeOptions: ["en"],
     timezone: "UTC",
     branchPolicy: { preset: "gitflow", allowed: ["feature/*"], protected: ["main"] },
+    commitPolicy: { preset: "conventional" },
   };
   const github = mergeConfigValues({ preset: "github-flow" }, current);
   expect(github.branchPolicy).toEqual({

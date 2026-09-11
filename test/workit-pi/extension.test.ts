@@ -426,7 +426,7 @@ test("Pi optional actions use native UI and the exact resolved descriptor", asyn
     const action = pi.tools.find((tool) => tool.name === "workit_external_action");
     const result = await action.execute(
       "native-action-call",
-      { operation: "git.commit", payload: { message: "no staged change" } },
+      { operation: "git.commit", payload: { message: "chore(test): stage drift" } },
       undefined,
       undefined,
       actionContext,
@@ -437,7 +437,7 @@ test("Pi optional actions use native UI and the exact resolved descriptor", asyn
     ).toBe("fixture");
     const retry = await action.execute(
       "native-action-retry",
-      { operation: "git.commit", payload: { message: "no staged change" } },
+      { operation: "git.commit", payload: { message: "chore(test): stage drift" } },
       undefined,
       undefined,
       actionContext,
@@ -446,7 +446,7 @@ test("Pi optional actions use native UI and the exact resolved descriptor", asyn
     expect(confirms).toBe(2);
     expect(
       spawnSync("git", ["log", "-1", "--pretty=%s"], { cwd: root, encoding: "utf8" }).stdout.trim(),
-    ).toBe("no staged change");
+    ).toBe("chore(test): stage drift");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

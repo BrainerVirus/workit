@@ -59,6 +59,7 @@ const seedConfig: ToolkitConfig = {
     allowed: ["feature/*", "bugfix/*", "hotfix/*", "release/*"],
     protected: ["main", "develop"],
   },
+  commitPolicy: { preset: "conventional" },
 };
 
 function withSeedConfig(config: ToolkitConfig): () => void {
@@ -79,6 +80,7 @@ function draft(preset: BranchPreset): WizardDraft {
     localeOptions: ["en", "es-CL"],
     timezone: "UTC",
     branchPolicy: { preset, allowed: [], protected: [] },
+    commitPolicy: { preset: "conventional" },
   });
 }
 

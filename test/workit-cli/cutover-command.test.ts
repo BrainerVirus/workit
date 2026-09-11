@@ -153,7 +153,7 @@ test("action accepts @file payloads like the task surface", async () => {
     spawnSync("git", ["config", "user.name", "Workit Test"], { cwd: root });
     spawnSync("git", ["commit", "-q", "--allow-empty", "-m", "fixture"], { cwd: root });
     const payloadFile = path.join(root, "payload.json");
-    writeFileSync(payloadFile, JSON.stringify({ message: "commit" }), "utf8");
+    writeFileSync(payloadFile, JSON.stringify({ message: "chore(test): commit" }), "utf8");
     const io = capture();
     const code = await runActionCommand(
       ["git.commit", "--payload", `@${payloadFile}`, "--preview", "--json"],
@@ -174,7 +174,13 @@ test("action with a valueless --task flag fails invalid_input instead of denying
   try {
     const io = capture();
     const code = await runActionCommand(
-      ["git.commit", "--payload", JSON.stringify({ message: "commit" }), "--preview", "--task"],
+      [
+        "git.commit",
+        "--payload",
+        JSON.stringify({ message: "chore(test): commit" }),
+        "--preview",
+        "--task",
+      ],
       { cwd: root, out: io.out, err: io.err, stdinIsTTY: () => false },
     );
     expect(code).toBe(2);

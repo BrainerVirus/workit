@@ -25,6 +25,8 @@ import type { ExternalActionRequest } from "./external-action";
 import { externalActionDescriptor, externalActionRequest } from "./external-action";
 import { resolveInside, run as coreRun } from "../core";
 import { vcsConfig } from "./vcs-config";
+import { readConfig } from "./config";
+import { detectCommitFlavor, matchCommitFlavor, type CommitFlavor } from "./commit-flavors";
 import { assertProductWriteAllowed } from "./workers";
 import { TaskStore } from "./task-store";
 
@@ -716,15 +718,35 @@ export const resolveExternalActionRequest = (
           "HEAD",
         ]);
         const paths = stagedPaths(root);
-        return head && staged !== null && paths !== null
-          ? success(null, null, {
-              request,
-              descriptorPayload: {
-                ...request.payload,
-                resolved: { head, staged: sha256(staged), paths },
-              },
-            })
-          : failure("storage_error", "Git state could not be resolved");
+        if (!head || staged === null || paths === null)
+          return failure("storage_error", "Git state could not be resolved");
+        let policy: { preset: string; pattern?: string };
+        try {
+          policy = readConfig().commitPolicy;
+        } catch (error) {
+          return failure(
+            "invalid_input",
+            `Commit policy config is malformed: ${error instanceof Error ? error.message : error}`,
+          );
+        }
+        let flavor = policy.preset;
+        if (flavor === "auto") {
+          const log = gitRaw(root, ["log", "--format=%s", "-30", "HEAD"]);
+          const detected = detectCommitFlavor((log ?? "").split("\n").filter(Boolean));
+          flavor = detected.flavor ?? "conventional";
+        }
+        if (!matchCommitFlavor(request.payload.message, flavor as CommitFlavor, policy.pattern))
+          return failure(
+            "invalid_input",
+            `Commit message does not match the ${flavor} flavor (commitPolicy.preset)`,
+          );
+        return success(null, null, {
+          request,
+          descriptorPayload: {
+            ...request.payload,
+            resolved: { head, staged: sha256(staged), paths },
+          },
+        });
       }
       case "hosting.pull_request": {
         const target_branch =

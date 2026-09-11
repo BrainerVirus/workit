@@ -72,6 +72,7 @@ const config = (over: Partial<ToolkitConfig["branchPolicy"]> = {}): ToolkitConfi
     protected: ["main", "develop"],
     ...over,
   },
+  commitPolicy: { preset: "conventional" },
 });
 
 const values = (over: Partial<SetupPreviewInput> = {}): SetupPreviewInput => ({

@@ -49,6 +49,7 @@ const seedConfig: ToolkitConfig = {
     allowed: ["feature/*", "bugfix/*", "hotfix/*", "release/*"],
     protected: ["main", "develop"],
   },
+  commitPolicy: { preset: "conventional" },
 };
 
 const tmp = (prefix: string) => mkdtempSync(path.join(os.tmpdir(), prefix));
