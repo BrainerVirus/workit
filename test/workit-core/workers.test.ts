@@ -1232,3 +1232,37 @@ test("outside-checkout absolute paths are allowed with writer held, denied witho
     }),
   ).toMatchObject({ ok: false, code: "permission_denied" });
 });
+
+test("a lifecycle transition bumps the revision but a repeated identical observation does not", () => {
+  const lead = active({ nativeWorker: observationVerifier() });
+  const assigned = assign(lead.core, lead.task, lead.workspace);
+  if (!assigned.ok) throw new Error(assigned.error);
+  const workerId = assigned.data.id;
+  const session = { kind: "host", host: "workit_cli", handle: "worker-session" } as const;
+  const observe = () => {
+    const state = current(lead);
+    return lead.core.observeWorkerLifecycle({
+      taskId: lead.task.id,
+      workerId,
+      expectedRevision: state.task.revision,
+      expectedWorkspaceRevision: state.workspace.revision,
+      state: "running",
+      session: { ...session },
+      observation: { event: "worker-started" },
+    });
+  };
+  const preRevision = current(lead).task.revision;
+  const first = observe();
+  expect(first.ok).toBe(true);
+  if (!first.ok) throw new Error(first.error);
+  // Genuine transition (assigned -> running) still mutates.
+  expect(first.revision).not.toBe(preRevision);
+  // A no-op observation (same state, same session) must not bump revisions,
+  // or worker sessions can never chain two calls: every observation would
+  // invalidate the revision the previous call returned.
+  const second = observe();
+  expect(second.ok).toBe(true);
+  if (!second.ok) throw new Error(second.error);
+  expect(second.revision).toBe(first.revision);
+  expect(second.workspaceRevision).toBe(first.workspaceRevision);
+});

@@ -363,6 +363,17 @@ const applyWorkerLifecycle = (input: ObserveWorkerLifecycleInput): Result<Entry<
     workspace.data.writer !== null &&
     workspace.data.writer.owner.taskId === task.data.id &&
     workspace.data.writer.owner.workerId === input.workerId;
+  // A no-op observation (same state, same session, no writer side-effect)
+  // must not rewrite the entry: hosts observe on every session event, and a
+  // revision bump per event livelocks worker sessions — each call would
+  // invalidate the revision the previous call returned.
+  if (
+    entry.data.state === input.state &&
+    sameValue(entry.data.session, input.session) &&
+    !shouldClear &&
+    !shouldUncertain
+  )
+    return success(task.data.revision, workspace.data.revision, entry);
   const changed = input.store.mutateTaskAndWorkspace({
     taskId: task.data.id,
     expectedTaskRevision: input.expectedRevision,
