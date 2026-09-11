@@ -34,11 +34,20 @@ test("OpenCode plugin registers native tools without Cursor assets", async () =>
     const config: Record<string, any> = {};
     await hooks.config?.(config);
     expect(Object.keys(config.command ?? {}).sort()).toEqual([
-      "babysit",
-      "challenge",
-      "debug",
-      "implement",
-      "plan",
+      "wk-babysit",
+      "wk-blast-radius",
+      "wk-challenge",
+      "wk-debug",
+      "wk-deslop",
+      "wk-diagram",
+      "wk-green-run",
+      "wk-handoff",
+      "wk-implement",
+      "wk-mockup",
+      "wk-plan",
+      "wk-review",
+      "wk-steer",
+      "wk-tdd",
     ]);
     expect(config.skills.paths).toEqual([
       path.resolve(import.meta.dir, "../../packages/workit-opencode/assets/skills"),

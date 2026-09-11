@@ -1,4 +1,4 @@
-# /babysit
+# /wk-babysit
 
 Load and apply the bundled `workit-babysit` skill to the current PR.
 

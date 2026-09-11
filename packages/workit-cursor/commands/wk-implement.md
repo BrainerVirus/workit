@@ -1,4 +1,4 @@
-# /implement
+# /wk-implement
 
 Load and apply the bundled `workit-implement` skill to carry out the scoped task.
 

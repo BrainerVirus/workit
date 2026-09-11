@@ -1,4 +1,4 @@
-# /debug
+# /wk-debug
 
 Load and apply the bundled `workit-debug` skill to the failing behavior.
 

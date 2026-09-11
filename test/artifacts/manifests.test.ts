@@ -247,7 +247,22 @@ test(
     for (const skill of CURSOR_SKILLS) {
       expect(entries, `skills/${skill}/SKILL.md`).toContain(`skills/${skill}/SKILL.md`);
     }
-    for (const alias of ["babysit", "challenge", "debug", "implement", "plan"]) {
+    for (const alias of [
+      "wk-babysit",
+      "wk-blast-radius",
+      "wk-challenge",
+      "wk-debug",
+      "wk-deslop",
+      "wk-diagram",
+      "wk-green-run",
+      "wk-handoff",
+      "wk-implement",
+      "wk-mockup",
+      "wk-plan",
+      "wk-review",
+      "wk-steer",
+      "wk-tdd",
+    ]) {
       expect(entries, `commands/${alias}.md`).toContain(`commands/${alias}.md`);
     }
     expect(

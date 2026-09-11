@@ -1,4 +1,4 @@
-# /challenge
+# /wk-challenge
 
 Load and apply the bundled `workit-challenge` skill to the current proposal or plan.
 

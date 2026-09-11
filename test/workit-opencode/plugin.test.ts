@@ -56,14 +56,23 @@ test("config registers only the policy-selected method skills", async () => {
     "workit-steer",
   ]);
   expect(Object.keys(config.command).sort()).toEqual([
-    "babysit",
-    "challenge",
-    "debug",
-    "implement",
-    "plan",
+    "wk-babysit",
+    "wk-blast-radius",
+    "wk-challenge",
+    "wk-debug",
+    "wk-deslop",
+    "wk-diagram",
+    "wk-green-run",
+    "wk-handoff",
+    "wk-implement",
+    "wk-mockup",
+    "wk-plan",
+    "wk-review",
+    "wk-steer",
+    "wk-tdd",
   ]);
-  expect(config.command.challenge.description).toContain("workit-challenge");
-  expect(config.command.challenge.template).toContain("$ARGUMENTS");
+  expect(config.command["wk-challenge"].description).toContain("workit-challenge");
+  expect(config.command["wk-challenge"].template).toContain("$ARGUMENTS");
 });
 
 test("skill registration is idempotent and worktree creation is denied", async () => {
@@ -97,8 +106,8 @@ test("each native tool returns a standard contract envelope for invalid input", 
 
 test("config preserves user-defined commands of the same name", async () => {
   const hooks = await plugin(pluginInput as never);
-  const config: Record<string, any> = { command: { challenge: { description: "mine" } } };
+  const config: Record<string, any> = { command: { "wk-challenge": { description: "mine" } } };
   await hooks.config?.(config);
-  expect(config.command.challenge).toEqual({ description: "mine" });
-  expect(Object.keys(config.command)).toContain("debug");
+  expect(config.command["wk-challenge"]).toEqual({ description: "mine" });
+  expect(Object.keys(config.command)).toContain("wk-debug");
 });

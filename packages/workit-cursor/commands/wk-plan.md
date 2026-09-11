@@ -1,4 +1,4 @@
-# /plan
+# /wk-plan
 
 Load and apply the bundled `workit-plan` skill to the current work.
 

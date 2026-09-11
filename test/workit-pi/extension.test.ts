@@ -184,15 +184,24 @@ test("Pi package ships the fourteen canonical method skills", () => {
   );
 });
 
-test("Pi registers bare slash aliases that expand the bundled skill commands", async () => {
+test("Pi registers wk- slash aliases that expand the bundled skill commands", async () => {
   const pi = makePi();
   await extension(pi as any);
   for (const [alias, skill] of [
-    ["challenge", "workit-challenge"],
-    ["babysit", "workit-babysit"],
-    ["implement", "workit-implement"],
-    ["plan", "workit-plan"],
-    ["debug", "workit-debug"],
+    ["wk-challenge", "workit-challenge"],
+    ["wk-babysit", "workit-babysit"],
+    ["wk-implement", "workit-implement"],
+    ["wk-plan", "workit-plan"],
+    ["wk-debug", "workit-debug"],
+    ["wk-review", "workit-review"],
+    ["wk-handoff", "workit-handoff"],
+    ["wk-tdd", "workit-behavioral-tdd"],
+    ["wk-blast-radius", "workit-blast-radius"],
+    ["wk-deslop", "workit-deslop"],
+    ["wk-diagram", "workit-diagram"],
+    ["wk-mockup", "workit-mockup"],
+    ["wk-green-run", "workit-green-run"],
+    ["wk-steer", "workit-steer"],
   ]) {
     const command = pi.commands.find((entry: any) => entry.name === alias);
     expect(command, alias).toBeDefined();
@@ -762,7 +771,24 @@ test("stock Pi discovers the package manifest through its local package manager"
       (responses.get("get_commands").data.commands as Array<{ name: string }>).map(
         (command) => command.name,
       ),
-    ).toEqual(expect.arrayContaining(["challenge", "babysit", "implement", "plan", "debug"]));
+    ).toEqual(
+      expect.arrayContaining([
+        "wk-challenge",
+        "wk-babysit",
+        "wk-implement",
+        "wk-plan",
+        "wk-debug",
+        "wk-review",
+        "wk-handoff",
+        "wk-tdd",
+        "wk-blast-radius",
+        "wk-deslop",
+        "wk-diagram",
+        "wk-mockup",
+        "wk-green-run",
+        "wk-steer",
+      ]),
+    );
     expect(stderr).toBe("");
   } finally {
     child.kill();

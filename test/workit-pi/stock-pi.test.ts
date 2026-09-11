@@ -102,7 +102,22 @@ test(
         14,
       );
       expect(commands.map((command) => command.name)).toEqual(
-        expect.arrayContaining(["challenge", "babysit", "implement", "plan", "debug"]),
+        expect.arrayContaining([
+          "wk-challenge",
+          "wk-babysit",
+          "wk-implement",
+          "wk-plan",
+          "wk-debug",
+          "wk-review",
+          "wk-handoff",
+          "wk-tdd",
+          "wk-blast-radius",
+          "wk-deslop",
+          "wk-diagram",
+          "wk-mockup",
+          "wk-green-run",
+          "wk-steer",
+        ]),
       );
       expect(
         commands.some(
