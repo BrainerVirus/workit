@@ -111,5 +111,11 @@ and state changes. Authority is bounded by the requested scope, current
 revision, caller/session provenance, and observed capabilities. Never claim host
 enforcement or evidence that the host cannot provide. Shell-executed writes are
 unattested agent-guided work even when a writer is held. Preserve unresolved
-requirements, gaps, and uncertain workers.
+requirements, gaps, and uncertain workers. Skill routing: slash aliases /wk-*
+always load on demand. Model-invoked: new instructions, interruptions, or
+forgotten items mid-task → load workit-steer before responding; about to open
+a PR or fresh from implementing → load workit-deslop; CI red → load
+workit-green-run; small-looking change before close or merge → load
+workit-blast-radius; spec or plan needs a flow diagram → load workit-diagram,
+a UI sketch → load workit-mockup. Load the skill; never act from memory of it.
 `.trim();

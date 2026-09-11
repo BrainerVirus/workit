@@ -158,6 +158,16 @@ test("bootstrap contains invariant authority, state, and tool guidance only", ()
   expect(bootstrap).not.toContain("workit-plan");
 });
 
+test("bootstrap routes moment-based skill loads by name", () => {
+  const bootstrap = invariantBootstrap();
+  expect(bootstrap).toContain("Skill routing");
+  expect(bootstrap).toContain("workit-steer");
+  expect(bootstrap).toContain("workit-deslop");
+  expect(bootstrap).toContain("workit-green-run");
+  expect(bootstrap).toContain("workit-blast-radius");
+  expect(bootstrap).not.toContain("## Method");
+});
+
 test("bootstrap tells lead to start and assess when task list is empty", () => {
   const bootstrap = invariantBootstrap();
   expect(bootstrap.toLowerCase()).toContain("task.start");
