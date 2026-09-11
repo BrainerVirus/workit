@@ -106,21 +106,29 @@ export const scopeSchema = z
 export type Scope = z.infer<typeof scopeSchema>;
 
 export const scopeCovers = (outer: Scope, inner: Scope): boolean => {
-  const innerPaths = inner.paths.length ? inner.paths : ["."];
+  // Scope paths may carry trailing slashes; normalize so `docs/` covers `docs/x`.
+  const strip = (value: string): string => (value.length > 1 ? value.replace(/\/+$/, "") : value);
+  const normOuter: Scope = {
+    ...outer,
+    paths: outer.paths.map(strip),
+    exclusions: outer.exclusions.map(strip),
+  };
+  const innerPaths = (inner.paths.length ? inner.paths : ["."]).map(strip);
+  const innerExclusions = inner.exclusions.map(strip);
   const excluded = (path: string, scope: Scope): boolean =>
     scope.exclusions.some(
       (excludedPath) => excludedPath === path || path.startsWith(`${excludedPath}/`),
     );
   const covers = (path: string): boolean =>
-    outer.paths.some((base) => base === "." || path === base || path.startsWith(`${base}/`)) &&
-    !excluded(path, outer);
+    normOuter.paths.some((base) => base === "." || path === base || path.startsWith(`${base}/`)) &&
+    !excluded(path, normOuter);
   const innerExcludes = (path: string): boolean =>
-    inner.exclusions.some(
+    innerExclusions.some(
       (excludedPath) => excludedPath === path || path.startsWith(`${excludedPath}/`),
     );
   return (
     innerPaths.every(covers) &&
-    !outer.exclusions.some((excludedPath) =>
+    !normOuter.exclusions.some((excludedPath) =>
       innerPaths.some(
         (base) =>
           (base === "." || excludedPath === base || excludedPath.startsWith(`${base}/`)) &&

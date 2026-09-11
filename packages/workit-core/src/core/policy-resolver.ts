@@ -38,6 +38,51 @@ export type ResolverPreferences = {
   thorough?: boolean;
 };
 
+/** Size facts for deterministic spec triage (op1 with override). */
+export type TriageFacts = {
+  /** New or changed observable behavior. */
+  newOrChangedBehavior: boolean;
+  /** Open ambiguity needing user resolution. */
+  ambiguityOpen: boolean;
+  /** Cross-package/host contract, auth/data/security surface, or irreversible migration. */
+  crossContract: boolean;
+  /** Subsystems touched. */
+  subsystems: number;
+  /** Packages touched (a 2-package change is Large even in one subsystem). */
+  packagesTouched: number;
+  /** Estimated implementation steps. */
+  steps: number;
+};
+
+export type TriageTier = "spec-plan" | "plan-only" | "neither";
+
+/** Large → spec + full plan; Medium → compact plan-only; Small → neither.
+ * Step count alone never escalates: a long but known, single-subsystem run
+ * stays plan-only. The lead may re-tier with a reason recorded in progress
+ * (override). */
+export const triageTier = (facts: TriageFacts): TriageTier => {
+  if (
+    facts.newOrChangedBehavior ||
+    facts.ambiguityOpen ||
+    facts.crossContract ||
+    facts.subsystems >= 3 ||
+    facts.packagesTouched >= 2
+  )
+    return "spec-plan";
+  if (facts.steps >= 2) return "plan-only";
+  return "neither";
+};
+
+/** Tier → assessor signal values (durableAgreementNeeded, coordinationPlanNeeded). */
+export const triageSignals = (
+  tier: TriageTier,
+): { durableAgreementNeeded: boolean; coordinationPlanNeeded: boolean } =>
+  tier === "spec-plan"
+    ? { durableAgreementNeeded: true, coordinationPlanNeeded: true }
+    : tier === "plan-only"
+      ? { durableAgreementNeeded: false, coordinationPlanNeeded: true }
+      : { durableAgreementNeeded: false, coordinationPlanNeeded: false };
+
 export type ResolverInput = {
   intent: Intent;
   assessment: Assessment;
