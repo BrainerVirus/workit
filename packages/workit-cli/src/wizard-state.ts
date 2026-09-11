@@ -401,7 +401,7 @@ function setTextValue(
 const trustedPathsMessage = (value: string): string | null => {
   const bad = parseList(value).find((p) => !path.isAbsolute(p));
   return bad
-    ? `trusted path ${JSON.stringify(bad)} is not absolute — enter existing absolute directories`
+    ? `trusted path ${JSON.stringify(bad)} is not absolute — enter absolute directory paths`
     : null;
 };
 
