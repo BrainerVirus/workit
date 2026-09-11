@@ -33,6 +33,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   read-only title/body/state mirroring YouTrack) and a parallel-delegation
   proposal (`docs/parallel-delegation/proposal.md`, disjoint-scope fan-out
   with single-writer lead mutations).
+- `context.read` gains `github_issue` and `gitlab_issue` kinds returning the
+  same read-only title/body/state triple as YouTrack: GitHub reuses the vcs
+  `github.tokenFile` bearer pattern with `gh` issue-ref parsing, GitLab uses
+  the vcs `gitlab.tokenFile` `PRIVATE-TOKEN` pattern with full-path project
+  resolution (subgroups kept). Both fail closed without a token, the CLI
+  wizard offers a GitLab Issues tracker, and Cursor/Codex expose both as MCP
+  resources (`workit://context/{kind}`).
 - `commitPolicy` per-workspace override in `workspaces.json` (workspace wins,
   else global), resolved through `resolveCommitPolicyFor` at the `git.commit`
   gate.

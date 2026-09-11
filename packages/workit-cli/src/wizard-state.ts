@@ -61,7 +61,7 @@ export type BranchPolicyProposal = {
   prefixes: { feature: string; bugfix: string; release: string; hotfix: string };
 };
 
-export type IssueTracker = "youtrack" | "github" | "none";
+export type IssueTracker = "youtrack" | "github" | "gitlab" | "none";
 
 export type SetupValues = {
   platforms: string[];
@@ -71,7 +71,8 @@ export type SetupValues = {
   branchAllowed: string;
   branchProtected: string;
   /** Where issues live: YouTrack scaffolds youtrack.json, GitHub Issues links
-   *  new workspaces via WorkspaceConfig.issues, none skips both. */
+   *  new workspaces via WorkspaceConfig.issues, GitLab Issues reads via the
+   *  vcs gitlab token, none skips all three. */
   issueTracker: IssueTracker;
   baseUrl: string;
   /** D-06: the workspace root every derived path uses. Seeded from
@@ -331,7 +332,9 @@ const decodeVcsProvider = (value: string, fallback: VcsProvider | "skip"): VcsPr
   value === "gitlab" || value === "github" || value === "skip" ? value : fallback;
 
 const decodeIssueTracker = (value: string, fallback: IssueTracker): IssueTracker =>
-  value === "youtrack" || value === "github" || value === "none" ? value : fallback;
+  value === "youtrack" || value === "github" || value === "gitlab" || value === "none"
+    ? value
+    : fallback;
 
 function setTextValue(
   draft: WizardDraft,
@@ -679,6 +682,7 @@ function defaultWorkspaceProvider(
   tracker: SetupValues["issueTracker"],
 ): VcsProvider {
   if (tracker === "github") return "github";
+  if (tracker === "gitlab") return "gitlab";
   return vcs === "gitlab" || vcs === "github" ? vcs : "gitlab";
 }
 

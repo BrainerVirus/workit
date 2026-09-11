@@ -94,6 +94,12 @@ test("MCP exposes a read-only context resource without adding a ninth tool", asy
     expect(listed.tools).toHaveLength(8);
     const resources = await client.listResources();
     expect(resources.resources.map((resource) => resource.uri)).toContain("workit://context/git");
+    expect(resources.resources.map((resource) => resource.uri)).toContain(
+      "workit://context/github_issue",
+    );
+    expect(resources.resources.map((resource) => resource.uri)).toContain(
+      "workit://context/gitlab_issue",
+    );
     const read = await client.readResource({ uri: "workit://context/git" });
     expect(read.contents[0]).toMatchObject({ mimeType: "application/json" });
     expect(String((read.contents[0] as { text?: string }).text)).toContain('"kind":"git"');

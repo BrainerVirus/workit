@@ -111,6 +111,7 @@ const LOCALE_PICKER_OPTIONS: { label: string; value: string }[] = [
 const ISSUE_TRACKERS: { label: string; value: SetupValues["issueTracker"] }[] = [
   { label: "YouTrack", value: "youtrack" },
   { label: "GitHub Issues", value: "github" },
+  { label: "GitLab Issues", value: "gitlab" },
   { label: "None", value: "none" },
 ];
 

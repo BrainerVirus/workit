@@ -64,6 +64,23 @@ test("fetchGitHubIssueBody fails closed on bad refs, missing remote, creds, and 
   ).toMatchObject({ kind: "request" });
 });
 
+test("parity: both providers return the identical triple shape", async () => {
+  const github = await fetchGitHubIssueBody("42", "/root", {
+    ...deps,
+    request: stubRequest({ number: 42, title: "T", body: "B", state: "open" }) as never,
+  });
+  const gitlab = await fetchGitLabIssueBody("42", "/root", {
+    ...glDeps,
+    request: stubRequest({ iid: 42, title: "T", description: "B", state: "opened" }) as never,
+  });
+  for (const result of [github, gitlab]) {
+    expect(result).toMatchObject({ data: { id: "42", title: "T", body: "B" } });
+    if (!("data" in result)) throw new Error("expected data");
+    expect(Object.keys(result.data).sort()).toEqual(["body", "id", "state", "title"]);
+    expect(typeof result.data.state).toBe("string");
+  }
+});
+
 test("repoPathFromRemote keeps subgroups and handles scp, https, and bare forms", () => {  expect(repoPathFromRemote("git@github.com:owner/repo.git")).toBe("owner/repo");
   expect(repoPathFromRemote("https://github.com/owner/repo")).toBe("owner/repo");
   expect(repoPathFromRemote("git@gitlab.com:group/sub/repo.git")).toBe("group/sub/repo");
