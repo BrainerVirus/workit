@@ -618,7 +618,11 @@ test("back and cancel inside the workspace flow preserve state and write nothing
     await tty.keys(ESC);
     expect(tty.lastFrame()).toContain("Workspaces · Name");
     expect(tty.lastFrame()).toContain("work");
-    await tty.keys(ESC); // back to the workspaces menu (draft discarded)
+    // A triple-ESC is one sync back plus a pending byte that resolves ~20ms
+    // later as a second back/cancel, so any keys sent next race it. Draining
+    // it with a sleep is deterministic: lone ESC on a text screen is back,
+    // landing exactly on the menu here.
+    await new Promise((resolve) => setTimeout(resolve, 100));
     expect(tty.lastFrame()).toContain("No workspaces configured yet.");
     // Esc on a select screen cancels the whole wizard with no writes
     await tty.keys(ESC);
