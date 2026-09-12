@@ -147,6 +147,13 @@ acquire --actor <id>` binds a writer to a Codex session the hook matches,
 
 ### Changed
 
+- Arbitrary file writes are host-policy on every adapter: the OpenCode,
+  Cursor, Codex, and Pi write interceptors no longer gate tools or shell
+  commands on task scopes, and the core product-write check keeps only
+  writer, role, and session ownership (path-scope enforcement is gone, along
+  with the now-dead shell-intent parser). Managed workit mutations (task
+  state, external actions, setup/cutover) keep writer ownership; capability
+  reports mark `known_product_writes` accordingly.
 - Removed path confinement (`trustedPaths`) across core and all four
   adapters plus the CLI wizard: absolute scope paths are valid and only
   traversal escapes are rejected; writer ownership, role, session, scope,

@@ -160,7 +160,7 @@ reuses the vcs token with `gh` issue-ref parsing and GitLab resolves the
 full project path (subgroups kept), both fail-closed without a token. Release context includes a deterministic Markdown draft derived from
 the selected commits and changed files. Affected context identifies documentation
 files; an actual edit still uses the existing native editor (for example
-`changelog.apply`) with writer/scope checks and host-observed evidence. The CLI
+`changelog.apply`) with writer checks and host-observed evidence. The CLI
 can identify affected files but does not claim to edit them without its native
 action route. Context reads require no approval or writer and never change the
 checkout or Workit metadata. Cursor and Codex receive the same contexts as
