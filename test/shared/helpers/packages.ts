@@ -6,28 +6,25 @@
 // stand-in) instead of the monorepo.
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import {
-  cpSync,
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  realpathSync,
-  rmSync,
-} from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 
 export const REPO_ROOT = path.resolve(import.meta.dir, "..", "..", "..");
 
 export type PackedPackage = {
   packageName: string;
   tarball: string;
-  /** Percent-safe `file:` spec for npm; expands Windows 8.3 short names so npm never sees `%7E`. */
-  tarballUrl: string;
   sha256: string;
 };
+
+/**
+ * Encoding-free `file:` spec for npm installs: a path relative to the consumer
+ * package avoids URL percent-encoding, which npm does not decode on Windows
+ * (8.3 `RUNNER~1` temp paths arrive as `%7E` and installs fail ENOENT).
+ */
+export const tarballSpec = (fromDir: string, pack: PackedPackage): string =>
+  `file:${path.relative(fromDir, pack.tarball).split(path.sep).join("/")}`;
 
 const WORKSPACE_PACKAGES = [
   "workit-core",
@@ -141,7 +138,6 @@ function packSandbox(sandbox: string, tarballs: string): PackedPackage[] {
     packs.push({
       packageName: pkgJson.name,
       tarball: file,
-      tarballUrl: pathToFileURL(file.includes("~") ? realpathSync(file) : file).href,
       sha256,
     });
   }

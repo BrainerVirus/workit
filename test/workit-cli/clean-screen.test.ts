@@ -66,7 +66,7 @@ function clean(raw: string): string {
 
 type DriveResult = { chunks: string[]; exitCode?: number };
 
-type DriveStep = string | { waitFor: string | RegExp };
+type DriveStep = string | { waitFor: string | RegExp; nudge?: string };
 
 type DriveOptions = {
   /** Drive a non-TTY stdin: exercises the pre-render no-TTY guard. */
@@ -160,6 +160,8 @@ async function driveRunInit(keys: DriveStep[], options: DriveOptions = {}): Prom
           // figures fallback) so a literal "✔" string never matches on CI
           // runners where figures chooses the fallback even with TTY stdout.
           const deadline = Date.now() + 2_000;
+          const started = Date.now();
+          let nudged = false;
           while (true) {
             const visible = clean(chunks.join(""));
             const matched =
@@ -167,6 +169,12 @@ async function driveRunInit(keys: DriveStep[], options: DriveOptions = {}): Prom
                 ? visible.includes(step.waitFor)
                 : step.waitFor.test(visible);
             if (matched) break;
+            if (step.nudge && !nudged && Date.now() - started > 300) {
+              // Slow runners can swallow the previous ENTER while the screen
+              // is still mounting; resend once before declaring the frame lost.
+              process.stdin.push(step.nudge);
+              nudged = true;
+            }
             if (Date.now() > deadline) {
               throw new Error(
                 `frame ${typeof step.waitFor === "string" ? `"${step.waitFor}"` : step.waitFor} never rendered`,
@@ -276,7 +284,7 @@ test("cancel path: still exactly two clears; exit output never sits atop stale f
       // before SPACE settles — the swallowed-ENTER race). The next wait
       // accepts any post-platforms wizard frame, not just "Locale", so
       // ESC always fires from inside a real wizard screen.
-      { waitFor: /Step 2|Step 3|Locale|Timezone/ }, // any non-platforms
+      { waitFor: /Step 2|Step 3|Locale|Timezone/, nudge: ENTER }, // any non-platforms
       // wizard heading already painted (post-ENTER settled)
       ESC, // cancel from the select screen
     ]);

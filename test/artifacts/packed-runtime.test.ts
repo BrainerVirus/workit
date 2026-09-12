@@ -20,6 +20,7 @@ import {
   npmRegistryReachable,
   packReleaseCandidate,
   packWorkspacePackages,
+  tarballSpec,
   REPO_ROOT,
 } from "@/test/shared/helpers/packages";
 
@@ -269,11 +270,11 @@ test.skipIf(!npmRegistryOk)(
             private: true,
             version: "1.0.0",
             dependencies: {
-              "@brainervirus/workit-cursor": byName(packs, CURSOR).tarballUrl,
-              "@brainervirus/workit-mcp": byName(packs, MCP).tarballUrl,
+              "@brainervirus/workit-cursor": tarballSpec(install, byName(packs, CURSOR)),
+              "@brainervirus/workit-mcp": tarballSpec(install, byName(packs, MCP)),
             },
             overrides: {
-              "@brainervirus/workit-core": byName(packs, CORE).tarballUrl,
+              "@brainervirus/workit-core": tarballSpec(install, byName(packs, CORE)),
             },
           },
           null,

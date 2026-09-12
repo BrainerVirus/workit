@@ -958,11 +958,16 @@ export class TaskStore {
   }
 
   private fsyncDirectory(directory: string) {
-    const fd = fs.openSync(directory, "r");
     try {
-      fs.fsyncSync(fd);
-    } finally {
-      fs.closeSync(fd);
+      const fd = fs.openSync(directory, "r");
+      try {
+        fs.fsyncSync(fd);
+      } finally {
+        fs.closeSync(fd);
+      }
+    } catch (error) {
+      // Windows rejects fsync on a directory handle; the rename is the durable step there.
+      if (process.platform !== "win32") throw error;
     }
   }
 
