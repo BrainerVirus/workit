@@ -40,6 +40,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   resolution (subgroups kept). Both fail closed without a token, the CLI
   wizard offers a GitLab Issues tracker, and Cursor/Codex expose both as MCP
   resources (`workit://context/{kind}`).
+- Token files are workspace-tight: a workspace `vcs.tokenFile` wins over the
+  global provider file so per-area accounts never collide. Issue reads prefer
+  the native CLI (`gh issue view`, `glab issue view`) when installed —
+  per-directory identity comes free — and fall back to the workspace-scoped
+  token. YouTrack stays token-only (no CLI exists).
 - The doctor reports a `github_identity` warning when the checkout's own
   GitHub surfaces disagree (gh CLI login, vcs token-file login, SSH login),
   so operations can never silently land under the wrong account. Only the
