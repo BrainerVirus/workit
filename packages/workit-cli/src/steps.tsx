@@ -222,10 +222,13 @@ export function SelectList<T extends string>({
   // Burst-input mirror (Task 1 advisory): two arrow keys can arrive in one
   // stdin chunk, both handled before React re-renders — a closure-read index
   // would collapse them into one step. The ref is updated synchronously in the
-  // handler and re-synced on every render. WZ-13 unchanged: no side effects
+  // handler; this effect only re-syncs after commits so render stays pure
+  // (react-doctor no-ref-current-in-render). WZ-13 unchanged: no side effects
   // inside setState updaters; onChange stays a sibling of setIndex.
   const indexRef = useRef(index);
-  indexRef.current = index;
+  useEffect(() => {
+    indexRef.current = index;
+  }, [index]);
 
   useInput((_input, key) => {
     if (key.downArrow || key.upArrow) {
@@ -415,7 +418,7 @@ export function Wizard({
       exitedRef.current = true;
       onExit(!draft.cancelled, draft.values);
     }
-  }, [draft.screen, draft.cancelled, onExit]);
+  }, [draft.screen, draft.cancelled, draft.values, onExit]);
 
   return (
     <Box flexDirection="column" gap={1}>

@@ -232,3 +232,18 @@ jobs:
       # pack gate so the candidate and the artifact gate are checked together.
       - name: Validate Cursor Marketplace artifact
         run: bun run validate:cursor-marketplace
+
+  react-doctor:
+    # React hygiene on the only React surface (the Ink CLI wizard):
+    # error-class diagnostics block, warnings stay advisory.
+    name: react-doctor (Ink wizard)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: React Doctor at latest, errors block
+        run: bun run doctor

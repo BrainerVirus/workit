@@ -19,6 +19,7 @@
     "validate:cursor-marketplace": "bun packages/workit-core/scripts/validate-cursor-marketplace.ts",
     "lint": "oxlint --deny-warnings packages/workit-core/src packages/workit-mcp/src packages/workit-opencode/src packages/workit-cli/src packages/workit-cursor/mcp/server.ts packages/workit-codex/hooks packages/workit-codex/scripts packages/workit-pi/src packages/workit-pi/extensions test",
     "lint:fix": "oxlint --fix packages/workit-core/src packages/workit-mcp/src packages/workit-opencode/src packages/workit-cli/src packages/workit-cursor/mcp/server.ts packages/workit-codex/hooks packages/workit-codex/scripts packages/workit-pi/src packages/workit-pi/extensions test",
+    "doctor": "npx -y react-doctor@latest packages/workit-cli/src -y --no-telemetry --blocking error",
     "format": "oxfmt packages/workit-core/src packages/workit-mcp/src packages/workit-opencode/src packages/workit-cli/src packages/workit-cursor/mcp/server.ts packages/workit-codex/hooks packages/workit-codex/scripts packages/workit-pi/src packages/workit-pi/extensions test '!test/fixtures/cursor-schemas/**' package.json packages/*/package.json tsconfig.json",
     "format:check": "oxfmt --check packages/workit-core/src packages/workit-mcp/src packages/workit-opencode/src packages/workit-cli/src packages/workit-cursor/mcp/server.ts packages/workit-codex/hooks packages/workit-codex/scripts packages/workit-pi/src packages/workit-pi/extensions test '!test/fixtures/cursor-schemas/**' package.json packages/*/package.json tsconfig.json",
     "test": "bun test",

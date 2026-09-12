@@ -1050,8 +1050,10 @@ test("summary shows the authoritative preview and Apply completes with it", asyn
       expect(exitCalls).toEqual([true]);
       tty.unmount();
     } finally {
-      delete process.env.WORKFLOW_TOOLKIT_CONFIG;
-      delete process.env.WORKFLOW_YT_BASE_URL;
+      if (prevCfg === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+      else process.env.WORKFLOW_TOOLKIT_CONFIG = prevCfg;
+      if (prevYt === undefined) delete process.env.WORKFLOW_YT_BASE_URL;
+      else process.env.WORKFLOW_YT_BASE_URL = prevYt;
       rmSync(base, { recursive: true, force: true });
     }
   });
