@@ -166,7 +166,7 @@ test("Pi context is static when untrusted and selects the latest non-closed task
   expect(workitContext(ctx)).not.toContain("older objective");
 });
 
-test("Pi write interception uses the shared writer gate and discloses sandbox limits", async () => {
+test("Pi write interception passes writes through and keeps the trust gate", async () => {
   const { handlers, observations, ctx, root } = await setup();
   const store = new TaskStore(root);
   const operationContext: OperationContext = {
@@ -197,11 +197,12 @@ test("Pi write interception uses the shared writer gate and discloses sandbox li
     ctx,
   );
   expect(allowed).toBeUndefined();
-  const blocked = await handlers.get("tool_call")!(
+  // File writes are host-policy: escapes pass through (Pi trust gate stays).
+  const escaped = await handlers.get("tool_call")!(
     { type: "tool_call", toolCallId: "2", toolName: "write", input: { path: "../escape.ts" } },
     ctx,
   );
-  expect(blocked).toMatchObject({ block: true });
+  expect(escaped).toBeUndefined();
   await handlers.get("tool_result")!(
     {
       type: "tool_result",

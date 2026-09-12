@@ -68,7 +68,7 @@ test("Codex MCP capabilities are conservative and surface detection is diagnosti
     codexCapabilities("codex_cli", { preToolUse: true }).find(
       (item) => item.name === "known_product_writes",
     ),
-  ).toMatchObject({ assurance: "enforced" });
+  ).toMatchObject({ assurance: "unavailable" });
   expect(codexCapabilities("codex_desktop", { preToolUse: true })[1].refs).toEqual([
     { kind: "host", host: "codex_desktop", handle: "PreToolUse" },
   ]);

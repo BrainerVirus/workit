@@ -294,7 +294,7 @@ test("direct-child reviewer and implementer contexts are exact and lineage-bound
         { tool: "write", sessionID: "reviewer-session", callID: "reviewer-write" },
         { args: { filePath: join(root, "review/file.ts") } },
       ),
-    ).rejects.toThrow("read-only worker");
+    ).resolves.toBeUndefined();
 
     const currentTask = active.store.readTask(active.task.id);
     const currentWorkspace = active.store.readWorkspace();
@@ -370,7 +370,7 @@ test("direct-child reviewer and implementer contexts are exact and lineage-bound
   }
 });
 
-test("known write surfaces enforce the current writer while unknown shell writes stay agent-guided", async () => {
+test("known write surfaces pass through while unknown shell writes stay agent-guided", async () => {
   const root = mkdtempSync(join(tmpdir(), "workit-opencode-writer-"));
   try {
     const active = activeTask(root, "owner");
@@ -396,13 +396,14 @@ test("known write surfaces enforce the current writer while unknown shell writes
       { tool: "edit", args: { path: "src/file.ts" } },
       { tool: "bash", args: { command: "echo changed > src/file.ts" } },
     ];
+    // File writes are host-policy: even a foreign session passes through.
     for (const input of calls)
       await expect(
         hooks["tool.execute.before"]?.(
           { ...input, sessionID: "other", callID: input.tool },
           { args: input.args },
         ),
-      ).rejects.toThrow("writer_conflict");
+      ).resolves.toBeUndefined();
     await expect(
       hooks["tool.execute.before"]?.(
         { tool: "bash", sessionID: "other", callID: "opaque" },
@@ -511,7 +512,7 @@ test("OpenCode affected-doc context gates an edit and public evidence captures t
         { tool: "edit", sessionID: "owner", callID: "out-of-scope" },
         { args: { path: "src/app.ts" } },
       ),
-    ).rejects.toThrow("scope");
+    ).resolves.toBeUndefined();
     expect(readFileSync(source, "utf8")).toBe("export const version = 2;\n");
     await recordEvidence("affected docs after edit");
     const afterTask = active.store.readTask(active.task.id);
@@ -526,7 +527,7 @@ test("OpenCode affected-doc context gates an edit and public evidence captures t
   }
 });
 
-test("ambiguous implementer sessions cannot authorize product writes", async () => {
+test("ambiguous implementer sessions pass file writes through", async () => {
   const root = mkdtempSync(join(tmpdir(), "workit-opencode-ambiguous-writer-"));
   try {
     const active = activeTask(root, "coord");
@@ -622,7 +623,7 @@ test("ambiguous implementer sessions cannot authorize product writes", async () 
         { tool: "write", sessionID: "child", callID: "ambiguous" },
         { args: { filePath: join(root, "src/file.ts") } },
       ),
-    ).rejects.toThrow("permission_denied");
+    ).resolves.toBeUndefined();
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -945,7 +946,7 @@ test("OpenCode native write shapes normalize filePath and apply_patch targets", 
         { tool: "apply_patch", sessionID: "owner", callID: "opaque" },
         { args: { patchText: "*** Begin Patch\nplain content\n*** End Patch" } },
       ),
-    ).rejects.toThrow("invalid_input");
+    ).resolves.toBeUndefined();
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -991,7 +992,7 @@ test("worker context names the worker identity for self-references", async () =>
   }
 });
 
-test("lead writes with several active tasks require writer ownership", async () => {
+test("lead writes pass through with several active tasks and no writer", async () => {
   const root = mkdtempSync(join(tmpdir(), "workit-opencode-multi-task-"));
   try {
     const first = activeTask(root, "coord");
@@ -1016,22 +1017,11 @@ test("lead writes with several active tasks require writer ownership", async () 
       serverUrl: new URL("http://localhost"),
       client: coordinatorClient(root),
     } as never);
+    // File writes are host-policy: several active tasks and no writer no
+    // longer gate writes.
     await expect(
       hooks["tool.execute.before"]?.(
         { tool: "write", sessionID: "coord", callID: "multi" },
-        { args: { filePath: join(root, "src/file.ts") } },
-      ),
-    ).rejects.toThrow("multiple active tasks require writer ownership");
-    const acquired = first.core.writer({
-      schemaVersion: 1,
-      action: "acquire",
-      taskId: first.task.id,
-      workerId: null,
-    });
-    if (!acquired.ok) throw new Error(acquired.error);
-    await expect(
-      hooks["tool.execute.before"]?.(
-        { tool: "write", sessionID: "coord", callID: "owned" },
         { args: { filePath: join(root, "src/file.ts") } },
       ),
     ).resolves.toBeUndefined();

@@ -18,7 +18,7 @@ test("Cursor hook capabilities are honest about documented surfaces", () => {
     expect.objectContaining({ name: "known_product_writes", assurance: "unavailable" }),
   );
   expect(cursorCapabilities({ preToolUse: true })).toContainEqual(
-    expect.objectContaining({ name: "known_product_writes", assurance: "enforced" }),
+    expect.objectContaining({ name: "known_product_writes", assurance: "unavailable" }),
   );
   expect(cursorCapabilities()).toContainEqual(
     expect.objectContaining({ name: "interactive_decision", assurance: "agent_guided" }),
@@ -83,10 +83,10 @@ test("shell hooks resolve cwd and pass outside-root operands through without a t
   ).toEqual({ permission: "allow" });
 });
 
-test("shell hooks reject unavailable cwd and attached output redirections", () => {
+test("shell hooks pass through when cwd is missing and redirections are opaque", () => {
   const root = mkdtempSync(path.join(tmpdir(), "workit-cursor-hook-"));
-  // Absolute redirect targets pass through now (no confinement); without a
-  // task they allow. Bare fd duplication stays denied as unparseable.
+  // File writes are host-policy: unparseable shapes and missing cwds pass
+  // through instead of denying.
   for (const command of [">/tmp/out", "2>/tmp/err"]) {
     expect(
       handleCursorHook({
@@ -106,7 +106,7 @@ test("shell hooks reject unavailable cwd and attached output redirections", () =
       cwd: root,
       command: "2>&1",
     }),
-  ).toMatchObject({ permission: "deny" });
+  ).toEqual({ permission: "allow" });
   for (const command of [">>file", "&>file"]) {
     expect(
       handleCursorHook({
@@ -126,10 +126,10 @@ test("shell hooks reject unavailable cwd and attached output redirections", () =
       cwd: path.join(root, "missing"),
       command: "touch file",
     }),
-  ).toMatchObject({ permission: "deny" });
+  ).toEqual({ permission: "allow" });
 });
 
-test("blocking shell hooks deny ambiguous writes while advisory events stay nonblocking", () => {
+test("blocking shell hooks pass ambiguous writes through while advisory events stay nonblocking", () => {
   expect(
     handleCursorHook({
       hook_event_name: "beforeShellExecution",
@@ -137,7 +137,7 @@ test("blocking shell hooks deny ambiguous writes while advisory events stay nonb
       workspace_roots: [process.cwd()],
       command: 'printf x > "src/${TARGET}"',
     }),
-  ).toMatchObject({ permission: "deny" });
+  ).toEqual({ permission: "allow" });
   expect(
     handleCursorHook({
       hook_event_name: "preCompact",
@@ -308,12 +308,11 @@ const shell = (root: string, command: string) =>
 test("shell intent captures unlisted verbs and skips env assignments", () => {
   const root = shellRoot();
   try {
-    // No active task: intent+paths allows, invalid denies — so denial proves
-    // the parser saw write intent plus a containment failure.
+    // File writes are host-policy: every shape passes through.
     expect(shell(root, 'echo "rm -rf /"')).toEqual({ permission: "allow" });
     expect(shell(root, "echo hi")).toEqual({ permission: "allow" });
-    expect(shell(root, 'echo "hi" > out.txt')).toMatchObject({ permission: "deny" });
-    expect(shell(root, "mkdir a && mkdir b")).toMatchObject({ permission: "deny" });
+    expect(shell(root, 'echo "hi" > out.txt')).toEqual({ permission: "allow" });
+    expect(shell(root, "mkdir a && mkdir b")).toEqual({ permission: "allow" });
     expect(shell(root, `tee ${path.join(tmpdir(), `wk-outside-${process.pid}.txt`)}`)).toEqual({
       permission: "allow",
     });
@@ -341,7 +340,7 @@ test("shell paths pass through canonical absolute targets without a task", () =>
   }
 });
 
-test("a structured write tool with no extractable target denies inside a task", () => {
+test("a structured write tool passes through inside a task", () => {
   const root = mkdtempSync(path.join(tmpdir(), "workit-cursor-hook-"));
   const core = new WorkitCore(new TaskStore(root), {
     root,
@@ -360,13 +359,13 @@ test("a structured write tool with no extractable target denies inside a task", 
         tool_name: "Write",
         tool_input: {},
       }),
-    ).toMatchObject({ permission: "deny" });
+    ).toEqual({ permission: "allow" });
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });
 
-test("outside absolute paths reach the writer check instead of denying for containment", () => {
+test("outside absolute paths pass through without writer ownership", () => {
   const root = mkdtempSync(path.join(tmpdir(), "workit-cursor-hook-"));
   const core = new WorkitCore(new TaskStore(root), {
     root,
@@ -377,7 +376,7 @@ test("outside absolute paths reach the writer check instead of denying for conta
   });
   expect(core.task(taskStartRequest()).ok).toBe(true);
   try {
-    // No writer held: denies, but for missing ownership — never containment.
+    // No writer held: passes through anyway — file writes are host-policy.
     expect(
       handleCursorHook({
         hook_event_name: "preToolUse",
@@ -386,7 +385,7 @@ test("outside absolute paths reach the writer check instead of denying for conta
         tool_name: "Write",
         tool_input: { file_path: path.join(tmpdir(), "workit-elsewhere-x.ts") },
       }),
-    ).toMatchObject({ permission: "deny", agent_message: "checkout has no writer owner" });
+    ).toEqual({ permission: "allow" });
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

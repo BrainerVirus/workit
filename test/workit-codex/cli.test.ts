@@ -168,7 +168,7 @@ test("recognized writes stay transparent without controlled active work", () => 
   expect(noActive.hookSpecificOutput).toMatchObject({ permissionDecision: "allow" });
 });
 
-test("ambiguous or corrupt controlled state denies recognized writes", () => {
+test("ambiguous controlled state stays transparent for recognized writes", () => {
   const root = cwd();
   const store = new TaskStore(root);
   const context: OperationContext = {
@@ -202,10 +202,11 @@ test("ambiguous or corrupt controlled state denies recognized writes", () => {
       root,
     ),
   );
-  expect(ambiguous.hookSpecificOutput).toMatchObject({ permissionDecision: "deny" });
+  // File writes are host-policy: several active tasks no longer gate writes.
+  expect(ambiguous.hookSpecificOutput).toMatchObject({ permissionDecision: "allow" });
 });
 
-test("PreToolUse delegates every recognized product write to shared core", () => {
+test("PreToolUse allows recognized product writes without writer ownership", () => {
   const root = cwd();
   const store = new TaskStore(root);
   const context: OperationContext = {
@@ -220,19 +221,8 @@ test("PreToolUse delegates every recognized product write to shared core", () =>
   const started = core.task(taskStartRequest());
   expect(started.ok).toBe(true);
   if (!started.ok) throw new Error(started.error);
-  const task = store.readTask((started.data as { id: string }).id);
-  const workspace = store.readWorkspace();
-  if (!task.ok || !workspace.ok || !workspace.data) throw new Error("state missing");
-  expect(
-    core.writer({
-      schemaVersion: 1,
-      action: "acquire",
-      taskId: task.data.id,
-      expectedRevision: task.data.revision,
-      expectedWorkspaceRevision: workspace.data.revision,
-      workerId: null,
-    }).ok,
-  ).toBe(true);
+  // No writer acquired on purpose: file writes are host-policy and pass
+  // through with an active task present.
   const allowed = handleCodexHook(
     official(
       {
@@ -358,11 +348,11 @@ const bash = (root: string, command: string) =>
     ),
   );
 
-test("bash intent is shared: quoted echo allows, unlisted verbs and escapes deny", () => {
+test("bash intent passes everything through; host policy owns shell writes", () => {
   const root = bashRoot();
   const outside = path.join(tmpdir(), `wk-codex-outside-${process.pid}.txt`);
   try {
-    // Active task, no writer: intent+paths denies, no-intent allows.
+    // No gating by intent, paths, or escapes — host policy owns shell writes.
     expect(bash(root, 'echo "rm -rf /"').hookSpecificOutput).toMatchObject({
       permissionDecision: "allow",
     });
@@ -370,15 +360,15 @@ test("bash intent is shared: quoted echo allows, unlisted verbs and escapes deny
       permissionDecision: "allow",
     });
     expect(bash(root, "pip install requests").hookSpecificOutput).toMatchObject({
-      permissionDecision: "deny",
+      permissionDecision: "allow",
     });
     expect(bash(root, `tee ${outside}`).hookSpecificOutput).toMatchObject({
-      permissionDecision: "deny",
+      permissionDecision: "allow",
     });
     writeFileSync(outside, "outside\n");
     symlinkSync(outside, path.join(root, "link"));
     expect(bash(root, "tee link").hookSpecificOutput).toMatchObject({
-      permissionDecision: "deny",
+      permissionDecision: "allow",
     });
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -386,7 +376,7 @@ test("bash intent is shared: quoted echo allows, unlisted verbs and escapes deny
   }
 });
 
-test("human-bound CLI ownership allows the matching Codex session", () => {
+test("any Codex session passes PreToolUse writes through", () => {
   const root = cwd();
   const store = new TaskStore(root);
   const bound = new WorkitCore(store, {
@@ -414,7 +404,8 @@ test("human-bound CLI ownership allows the matching Codex session", () => {
       workerId: null,
     }).ok,
   ).toBe(true);
-  // Owner session {workit_cli, session-1} matches the hook's session id.
+  // Owner session {workit_cli, session-1} and any other session both pass:
+  // file writes are host-policy, never hook-gated.
   expect(
     handleCodexHook(
       official(
@@ -429,7 +420,6 @@ test("human-bound CLI ownership allows the matching Codex session", () => {
       ),
     ).hookSpecificOutput,
   ).toMatchObject({ permissionDecision: "allow" });
-  // A different session id stays denied.
   expect(
     handleCodexHook(
       official(
@@ -444,7 +434,7 @@ test("human-bound CLI ownership allows the matching Codex session", () => {
         root,
       ),
     ).hookSpecificOutput,
-  ).toMatchObject({ permissionDecision: "deny" });
+  ).toMatchObject({ permissionDecision: "allow" });
   rmSync(root, { recursive: true, force: true });
 });
 

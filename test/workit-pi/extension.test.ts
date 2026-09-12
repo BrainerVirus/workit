@@ -523,7 +523,7 @@ test("Pi context.read returns Git context headlessly without project trust or Wo
   }
 });
 
-test("Pi affected-doc context gates an edit and public evidence captures the changed candidate", async () => {
+test("Pi affected-doc context passes edits through and public evidence captures the changed candidate", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "workit-pi-affected-docs-"));
   try {
     for (const args of [
@@ -628,7 +628,7 @@ test("Pi affected-doc context gates an edit and public evidence captures the cha
         { toolName: "edit", toolCallId: "out-of-scope", input: { path: "src/app.ts" } },
         context(root, true),
       ),
-    ).toMatchObject({ block: true });
+    ).toBeUndefined();
     expect(readFileSync(source, "utf8")).toBe("export const version = 2;\n");
     await recordEvidence("affected docs after edit");
     const afterTask = active.store.readTask(active.task.id);
