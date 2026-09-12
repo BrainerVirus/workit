@@ -15,13 +15,14 @@ context on its own issues.
 
 - New `context.read` kinds `github_issue` / `gitlab_issue` returning the same
   triple: `{ title, body, state }`. Same redaction rules as YouTrack reads.
-- GitHub: `GET /repos/{owner}/{repo}/issues/{n}` (fields `title`, `body`,
-  `state`); auth reuses the vcs `github.tokenFile` bearer pattern already in
-  `external-action-effects.ts`, falling back to the `gh` CLI guard when no
-  token file exists. Issue ref parsing reuses `parseGhIssue` /
+- GitHub: `gh issue view {n} --repo {owner}/{repo} --json
+  number,title,body,state` when the CLI is installed (per-directory identity
+  comes free), else `GET /repos/{owner}/{repo}/issues/{n}` with the vcs
+  `github.tokenFile` bearer pattern (workspace `vcs.tokenFile` wins, else the
+  global file). Issue ref parsing reuses `parseGhIssue` /
   `deriveGhIssueFromBranch` from `pr-create.ts` (3+-digit boundary rules stay).
-- GitLab: `GET {apiUrl}/projects/{id}/issues/{iid}` (fields `title`,
-  `description`, `state`); auth reuses the `PRIVATE-TOKEN` header pattern and
+- GitLab: `glab issue view {iid} -R {path} -F json` when installed, else `GET
+  {apiUrl}/projects/{id}/issues/{iid}` with the `PRIVATE-TOKEN` pattern and
   `gitlab.apiUrl` from `vcs.json`. Project id resolves from the workspace
   remote exactly like `parseGhRepo` (scp-style + `.git` suffix handling).
 - Token storage mirrors existing files: GitHub reuses `github.token`;

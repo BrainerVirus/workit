@@ -1,11 +1,12 @@
 import fs from "node:fs";
 import { spawnSync } from "node:child_process";
 import { vcsConfig } from "./vcs-config";
-import { parseGhIssue } from "./pr-create";
+import { hostingCliAvailable, parseGhIssue } from "./pr-create";
 
 // Read-only issue fetches for context.read (GitHub + GitLab), mirroring the
-// YouTrack triple shape. No writes, no new secret files: auth reuses the vcs
-// tokenFile pattern, and transports are injectable for stubbed tests.
+// YouTrack triple shape. CLI-first: the native gh/glab CLI serves the read
+// when installed (per-directory identity comes free); token files are the
+// fallback and fail closed without one. No writes, no new secret files.
 
 export type TrackerIssueBody = {
   id: string;
@@ -45,6 +46,51 @@ export const repoPathFromRemote = (remote: string): string | null => {
   try {
     const url = new URL(rest.includes("://") ? rest : `https://${rest}`);
     return url.pathname.replace(/^\//, "") || null;
+  } catch {
+    return null;
+  }
+};
+
+export type TrackerCli = (
+  args: string[],
+  root: string,
+) => Promise<{ status: number; stdout: string; stderr: string }> | null;
+
+export type TrackerDeps = {
+  creds?: (root: string) => TrackerCreds;
+  request?: TrackerRequest;
+  remote?: (root: string) => string | null;
+  cli?: TrackerCli;
+};
+
+/** Native CLI runner (gh/glab) when installed; null when absent. */
+const defaultCli = (bin: string, available: boolean): TrackerCli | null => {
+  if (!available) return null;
+  return (args, root) => {
+    const out = spawnSync(bin, args, { cwd: root, encoding: "utf8" });
+    return Promise.resolve({
+      status: out.status ?? 1,
+      stdout: out.stdout ?? "",
+      stderr: (out.error as Error | undefined)?.message ?? out.stderr ?? "",
+    });
+  };
+};
+
+const tryCliTriple = async (
+  cli: TrackerCli | null | undefined,
+  args: string[],
+  root: string,
+  id: string,
+  idKeys: string[],
+  bodyKeys: string[],
+): Promise<TrackerIssueBody | null> => {
+  if (!cli) return null;
+  const run = cli(args, root);
+  if (!run) return null;
+  const out = await run;
+  if (out.status !== 0) return null;
+  try {
+    return parseTriple(JSON.parse(out.stdout) as Record<string, unknown>, id, idKeys, bodyKeys);
   } catch {
     return null;
   }
@@ -99,20 +145,25 @@ const parseTriple = (
   return { id: foundId, title, body: pick(bodyKeys), state };
 };
 
-/** Fetch a GitHub issue triple for context.read. Fail-closed without a token. */
+/** Fetch a GitHub issue triple for context.read: gh CLI first, token fallback (fail-closed). */
 export const fetchGitHubIssueBody = async (
   ref: string,
   root: string,
-  deps: {
-    creds?: (root: string) => TrackerCreds;
-    request?: TrackerRequest;
-    remote?: (root: string) => string | null;
-  } = {},
+  deps: TrackerDeps = {},
 ): Promise<{ data: TrackerIssueBody } | TrackerIssueFailure> => {
   const id = parseGhIssue(ref);
   if (!/^\d+$/.test(id)) return { error: `invalid GitHub issue ref "${ref}"`, kind: "input" };
   const repo = repoPathFromRemote((deps.remote ?? originRemote)(root) ?? "");
   if (!repo) return { error: "no origin remote to resolve the repository", kind: "input" };
+  const viaCli = await tryCliTriple(
+    deps.cli ?? defaultCli("gh", hostingCliAvailable("github")),
+    ["issue", "view", id, "--repo", repo, "--json", "number,title,body,state"],
+    root,
+    id,
+    ["number"],
+    ["body"],
+  );
+  if (viaCli) return { data: viaCli };
   const credentials = (deps.creds ?? ((r) => trackerCreds(r, "github")))(root);
   if ("error" in credentials) return { ...credentials, kind: "creds" as const };
   const out = await (deps.request ?? trackerRequest)(
@@ -132,20 +183,25 @@ export const fetchGitHubIssueBody = async (
   }
 };
 
-/** Fetch a GitLab issue triple for context.read. Fail-closed without a token. */
+/** Fetch a GitLab issue triple for context.read: glab CLI first, token fallback (fail-closed). */
 export const fetchGitLabIssueBody = async (
   ref: string,
   root: string,
-  deps: {
-    creds?: (root: string) => TrackerCreds;
-    request?: TrackerRequest;
-    remote?: (root: string) => string | null;
-  } = {},
+  deps: TrackerDeps = {},
 ): Promise<{ data: TrackerIssueBody } | TrackerIssueFailure> => {
   const id = parseGhIssue(ref);
   if (!/^\d+$/.test(id)) return { error: `invalid GitLab issue ref "${ref}"`, kind: "input" };
   const repo = repoPathFromRemote((deps.remote ?? originRemote)(root) ?? "");
   if (!repo) return { error: "no origin remote to resolve the project", kind: "input" };
+  const viaCli = await tryCliTriple(
+    deps.cli ?? defaultCli("glab", hostingCliAvailable("gitlab")),
+    ["issue", "view", id, "-R", repo, "-F", "json"],
+    root,
+    id,
+    ["iid"],
+    ["description"],
+  );
+  if (viaCli) return { data: viaCli };
   const credentials = (deps.creds ?? ((r) => trackerCreds(r, "gitlab")))(root);
   if ("error" in credentials) return { ...credentials, kind: "creds" as const };
   const out = await (deps.request ?? trackerRequest)(

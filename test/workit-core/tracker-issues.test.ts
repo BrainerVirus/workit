@@ -64,8 +64,58 @@ test("fetchGitHubIssueBody fails closed on bad refs, missing remote, creds, and 
   ).toMatchObject({ kind: "request" });
 });
 
-test("parity: both providers return the identical triple shape", async () => {
-  const github = await fetchGitHubIssueBody("42", "/root", {
+test("CLI-first: gh serves the read without touching tokens", async () => {
+  const seen: string[][] = [];
+  const throwingCreds = (): never => {
+    throw new Error("token path must not run when the CLI serves");
+  };
+  const result = await fetchGitHubIssueBody("42", "/root", {
+    creds: throwingCreds,
+    remote: () => "git@github.com:owner/repo.git",
+    cli: (async (args: string[]) => {
+      seen.push(args);
+      return {
+        status: 0,
+        stdout: JSON.stringify({ number: 42, title: "T", body: "B", state: "open" }),
+        stderr: "",
+      };
+    }) as never,
+  });
+  expect(seen[0]).toEqual(["issue", "view", "42", "--repo", "owner/repo", "--json", "number,title,body,state"]);
+  expect(result).toEqual({ data: { id: "42", title: "T", body: "B", state: "open" } });
+});
+
+test("CLI failure falls back to the token path", async () => {
+  const result = await fetchGitHubIssueBody("42", "/root", {
+    ...deps,
+    cli: (async () => ({ status: 1, stdout: "", stderr: "no auth" })) as never,
+    request: stubRequest({ number: 42, title: "T", body: "B", state: "open" }) as never,
+  });
+  expect(result).toEqual({ data: { id: "42", title: "T", body: "B", state: "open" } });
+});
+
+test("CLI-first: glab serves the read without touching tokens", async () => {
+  const seen: string[][] = [];
+  const throwingCreds = (): never => {
+    throw new Error("token path must not run when the CLI serves");
+  };
+  const result = await fetchGitLabIssueBody("13", "/root", {
+    creds: throwingCreds,
+    remote: () => "git@gitlab.com:group/sub/repo.git",
+    cli: (async (args: string[]) => {
+      seen.push(args);
+      return {
+        status: 0,
+        stdout: JSON.stringify({ iid: 13, title: "T", description: "B", state: "opened" }),
+        stderr: "",
+      };
+    }) as never,
+  });
+  expect(seen[0]).toEqual(["issue", "view", "13", "-R", "group/sub/repo", "-F", "json"]);
+  expect(result).toEqual({ data: { id: "13", title: "T", body: "B", state: "opened" } });
+});
+
+test("parity: both providers return the identical triple shape", async () => {  const github = await fetchGitHubIssueBody("42", "/root", {
     ...deps,
     request: stubRequest({ number: 42, title: "T", body: "B", state: "open" }) as never,
   });
