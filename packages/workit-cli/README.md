@@ -1,5 +1,9 @@
 # @brainervirus/workit-cli
 
+[![CI](https://github.com/BrainerVirus/workit/actions/workflows/ci.yml/badge.svg)](https://github.com/BrainerVirus/workit/actions/workflows/ci.yml)
+[![npm version](https://img.shields.io/npm/v/@brainervirus/workit-cli.svg)](https://www.npmjs.com/package/@brainervirus/workit-cli)
+[![license: MIT](https://img.shields.io/badge/license-MIT-green.svg)](../../LICENSE)
+
 The workit CLI — an interactive Ink wizard that configures workit for OpenCode and/or Cursor, plus an offline installation doctor.
 
 ## Requirements

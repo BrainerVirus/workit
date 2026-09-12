@@ -1,5 +1,9 @@
 # @brainervirus/workit-cursor
 
+[![CI](https://github.com/BrainerVirus/workit/actions/workflows/ci.yml/badge.svg)](https://github.com/BrainerVirus/workit/actions/workflows/ci.yml)
+[![npm version](https://img.shields.io/npm/v/@brainervirus/workit-cursor.svg)](https://www.npmjs.com/package/@brainervirus/workit-cursor)
+[![license: MIT](https://img.shields.io/badge/license-MIT-green.svg)](../../LICENSE)
+
 Cursor plugin for workit — shared MCP tools, documented native hooks, compact continuity, and adaptive method skills.
 
 ## Install

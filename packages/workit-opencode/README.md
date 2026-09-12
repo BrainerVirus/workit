@@ -1,5 +1,9 @@
 # @brainervirus/workit-opencode
 
+[![CI](https://github.com/BrainerVirus/workit/actions/workflows/ci.yml/badge.svg)](https://github.com/BrainerVirus/workit/actions/workflows/ci.yml)
+[![npm version](https://img.shields.io/npm/v/@brainervirus/workit-opencode.svg)](https://www.npmjs.com/package/@brainervirus/workit-opencode)
+[![license: MIT](https://img.shields.io/badge/license-MIT-green.svg)](../../LICENSE)
+
 OpenCode plugin for workit — workflow rails for agentic coding (specs, plans, YouTrack, CI-gated commits), with host-native approval, delegation, handoff, and diagnostics.
 
 ## Install

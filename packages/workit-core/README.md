@@ -1,5 +1,9 @@
 # @brainervirus/workit-core
 
+[![CI](https://github.com/BrainerVirus/workit/actions/workflows/ci.yml/badge.svg)](https://github.com/BrainerVirus/workit/actions/workflows/ci.yml)
+[![npm version](https://img.shields.io/npm/v/@brainervirus/workit-core.svg)](https://www.npmjs.com/package/@brainervirus/workit-core)
+[![license: MIT](https://img.shields.io/badge/license-MIT-green.svg)](../../LICENSE)
+
 Shared core for the workit plugins — the single source of workflow logic that the OpenCode, Cursor, and CLI packages adapt to their native surfaces.
 
 ## When you need it directly
