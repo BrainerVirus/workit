@@ -243,7 +243,7 @@ jobs:
     # package WITHOUT publishing and verify the corrective candidate installs
     # and starts in isolation. bun pm pack only writes a local tarball — no
     # registry, no tags, no marketplace operations.
-    name: check (phase-0 candidate)
+    name: release candidate (pack + isolated install)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
