@@ -15,7 +15,7 @@ import path from "node:path";
 import Ajv from "ajv";
 import addFormats from "ajv-formats";
 import {
-  CURSOR_SKILLS,
+  WORKIT_METHOD_SKILLS,
   validateSkillManifests,
 } from "@/packages/workit-core/src/core/skill-manifests";
 import { validateMarketplace } from "@/packages/workit-core/scripts/validate-cursor-marketplace";
@@ -142,7 +142,7 @@ test(
   "all declared skills and rules have valid frontmatter (CA-15)",
   () => {
     const root = path.join(REPO_ROOT, PLUGIN_DIR_REL);
-    for (const [dir, skills] of [[path.join(root, "skills"), CURSOR_SKILLS]] as const) {
+    for (const [dir, skills] of [[path.join(root, "skills"), WORKIT_METHOD_SKILLS]] as const) {
       expect(validateSkillManifests(dir, skills, "skills")).toBeNull();
       for (const skill of skills) {
         const keys = frontmatterKeys(path.join(dir, skill, "SKILL.md"));

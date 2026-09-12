@@ -25,7 +25,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import Ajv from "ajv";
 import addFormats from "ajv-formats";
-import { CURSOR_SKILLS, validateSkillManifests } from "../src/core/skill-manifests";
+import { WORKIT_METHOD_SKILLS, validateSkillManifests } from "../src/core/skill-manifests";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "..", "..", "..");
@@ -122,7 +122,7 @@ export const validateMarketplace = (rootArg: string): string[] => {
 
     // 5. Skills and rules carry valid frontmatter.
     const skillRoots: [string, readonly string[]][] = [
-      [path.join(pluginDir, "skills"), CURSOR_SKILLS],
+      [path.join(pluginDir, "skills"), WORKIT_METHOD_SKILLS],
     ];
     for (const [dir, expected] of skillRoots) {
       const mismatch = validateSkillManifests(dir, expected, "skills");

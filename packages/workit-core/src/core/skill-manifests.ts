@@ -18,8 +18,6 @@ export const WORKIT_METHOD_SKILLS = [
   "workit-steer",
 ] as const;
 
-export const CURSOR_SKILLS = WORKIT_METHOD_SKILLS;
-
 /** wk- slash aliases (one per skill): alias → method skill. An alias routes
  * through policy to model skills; an alias never calls another alias. */
 export const WORKIT_SKILL_ALIASES = {
@@ -61,7 +59,7 @@ export const validateSkillManifests = (
 
 export const validateCursorSkills = (
   pluginDir: string,
-  expected: readonly string[] = CURSOR_SKILLS,
+  expected: readonly string[] = WORKIT_METHOD_SKILLS,
 ): string | null => {
   const workit = validateSkillManifests(
     path.join(pluginDir, "skills"),

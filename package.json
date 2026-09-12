@@ -20,6 +20,7 @@
     "lint": "oxlint --deny-warnings packages/workit-core/src packages/workit-mcp/src packages/workit-opencode/src packages/workit-cli/src packages/workit-cursor/mcp/server.ts packages/workit-codex/hooks packages/workit-codex/scripts packages/workit-pi/src packages/workit-pi/extensions test",
     "lint:fix": "oxlint --fix packages/workit-core/src packages/workit-mcp/src packages/workit-opencode/src packages/workit-cli/src packages/workit-cursor/mcp/server.ts packages/workit-codex/hooks packages/workit-codex/scripts packages/workit-pi/src packages/workit-pi/extensions test",
     "doctor": "npx -y react-doctor@latest packages/workit-cli/src -y --no-telemetry --blocking error",
+    "knip": "knip --no-progress",
     "format": "oxfmt packages/workit-core/src packages/workit-mcp/src packages/workit-opencode/src packages/workit-cli/src packages/workit-cursor/mcp/server.ts packages/workit-codex/hooks packages/workit-codex/scripts packages/workit-pi/src packages/workit-pi/extensions test '!test/fixtures/cursor-schemas/**' package.json packages/*/package.json tsconfig.json",
     "format:check": "oxfmt --check packages/workit-core/src packages/workit-mcp/src packages/workit-opencode/src packages/workit-cli/src packages/workit-cursor/mcp/server.ts packages/workit-codex/hooks packages/workit-codex/scripts packages/workit-pi/src packages/workit-pi/extensions test '!test/fixtures/cursor-schemas/**' package.json packages/*/package.json tsconfig.json",
     "test": "bun test",
@@ -28,6 +29,8 @@
   },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "0.85.1",
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "@opencode-ai/plugin": "1.18.30",
     "@semantic-release/exec": "7.1.0",
     "@semantic-release/github": "12.0.9",
     "@semantic-release/npm": "13.1.5",
@@ -37,8 +40,10 @@
     "@types/react": "19.2.18",
     "ajv": "8.20.0",
     "ajv-formats": "3.0.1",
+    "knip": "6.35.1",
     "oxfmt": "0.66.0",
     "oxlint": "1.81.0",
+    "react": "19.2.8",
     "react-devtools-core": "7.0.1",
     "semantic-release": "25.0.9",
     "typescript": "7.0.2"

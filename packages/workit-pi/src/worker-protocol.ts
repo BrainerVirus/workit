@@ -7,7 +7,7 @@ import {
 import { workerReportSchema } from "@brainervirus/workit-core/src/core/task-contract";
 
 export const MAX_WORKER_LINE_BYTES = 64 * 1024;
-export const MAX_WORKER_STDERR_BYTES = 64 * 1024;
+const MAX_WORKER_STDERR_BYTES = 64 * 1024;
 
 export type WorkerProtocolEvent =
   | { type: "workit_worker_result"; workerId: string; sessionId: string; report: WorkerReport }

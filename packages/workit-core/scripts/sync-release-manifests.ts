@@ -9,7 +9,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-export const SYNC_MANIFEST_PATHS = [
+const SYNC_MANIFEST_PATHS = [
   "package.json",
   "packages/workit-core/package.json",
   "packages/workit-mcp/package.json",
@@ -31,8 +31,7 @@ export type ManifestSyncResult = { version: string; changed: string[] };
  * are left byte-untouched and omitted from `changed`. Throws on a value that
  * is not a plain release version (`latest`, branches, ranges).
  */
-export function syncManifests(root: string, tagOrVersion: string): ManifestSyncResult {
-  const match = /^v?(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)$/.exec(tagOrVersion.trim());
+export function syncManifests(root: string, tagOrVersion: string): ManifestSyncResult {  const match = /^v?(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)$/.exec(tagOrVersion.trim());
   if (!match) throw new Error(`invalid version tag: ${JSON.stringify(tagOrVersion)}`);
   const version = match[1];
   const changed: string[] = [];
@@ -48,7 +47,7 @@ export function syncManifests(root: string, tagOrVersion: string): ManifestSyncR
 }
 
 /** The newest `v*` tag by descending semver refname order (empty repo throws). */
-export function latestReleaseTag(cwd?: string): string {
+function latestReleaseTag(cwd?: string): string {
   const out = execFileSync("git", ["tag", "--list", "v*", "--sort=-v:refname"], {
     cwd,
     encoding: "utf8",

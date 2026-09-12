@@ -483,7 +483,7 @@ export const observeWorkerExit = (
   return result;
 };
 
-export const acquireWorkerWriter = (
+const acquireWorkerWriter = (
   core: WorkitCore,
   taskId: string,
   workerId: string,
@@ -497,22 +497,6 @@ export const acquireWorkerWriter = (
     workerId,
     expectedRevision,
     expectedWorkspaceRevision,
-  });
-
-export const assignWorker = (
-  core: WorkitCore,
-  taskId: string,
-  assignment: WorkerAssignment,
-  expectedRevision: string,
-  expectedWorkspaceRevision: string,
-): Result<unknown> =>
-  core.worker({
-    schemaVersion: 1,
-    action: "assign",
-    taskId,
-    expectedRevision,
-    expectedWorkspaceRevision,
-    assignment,
   });
 
 export const reportWorker = (
@@ -550,30 +534,6 @@ export const cancelWorkerAssignment = (
     expectedWorkspaceRevision,
     reason,
   });
-
-export const releaseWorkerWriter = (
-  core: WorkitCore,
-  taskId: string,
-  workerId: string,
-  expectedRevision: string,
-  expectedWorkspaceRevision: string,
-): Result<unknown> =>
-  core.writer({
-    schemaVersion: 1,
-    action: "release",
-    taskId,
-    workerId,
-    expectedRevision,
-    expectedWorkspaceRevision,
-  });
-
-export const workerEnvironment = (handle: WorkerHandle): NodeJS.ProcessEnv => ({
-  WORKIT_PI_TASK_ID: handle.taskId ?? "",
-  WORKIT_PI_WORKER_ID: handle.workerId ?? "",
-  WORKIT_PI_WORKER_SESSION: handle.sessionId,
-  WORKIT_PI_WORKER_ROLE: handle.assignment.role,
-  WORKIT_PI_WORKER_SCOPE: JSON.stringify(handle.assignment.scope),
-});
 
 export const launchSupervisedWorker = (
   assignment: WorkerAssignment,
@@ -646,9 +606,6 @@ export const launchSupervisedWorker = (
   if (handle.state !== "running") return handle;
   return handle;
 };
-
-export const nativeWorkerFor = (handle: WorkerHandle): NativeWorkerVerifier =>
-  nativeWorkerForEvidence(() => handle);
 
 type DispatchEvidence = Pick<
   WorkerHandle,

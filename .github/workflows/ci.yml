@@ -247,3 +247,21 @@ jobs:
 
       - name: React Doctor at latest, errors block
         run: bun run doctor
+
+  knip:
+    # Dead code and unused dependencies: pinned knip runs on the installed
+    # tree (no extra install), ubuntu-only — static analysis needs no matrix.
+    name: knip (dead code)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Install deps
+        run: bun install --frozen-lockfile
+
+      - name: Knip gate (exit nonzero on new findings)
+        run: bun run knip

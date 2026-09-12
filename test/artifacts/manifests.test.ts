@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { CURSOR_SKILLS } from "@/packages/workit-core/src/core/skill-manifests";
+import { WORKIT_METHOD_SKILLS } from "@/packages/workit-core/src/core/skill-manifests";
 import { SUPPORT_MATRIX } from "@/packages/workit-core/src/core/support-matrix";
 import {
   listTarball,
@@ -243,8 +243,8 @@ test(
     }
 
     const packedSkills = [...entries].filter((entry) => entry.endsWith("/SKILL.md"));
-    expect(packedSkills).toHaveLength(CURSOR_SKILLS.length);
-    for (const skill of CURSOR_SKILLS) {
+    expect(packedSkills).toHaveLength(WORKIT_METHOD_SKILLS.length);
+    for (const skill of WORKIT_METHOD_SKILLS) {
       expect(entries, `skills/${skill}/SKILL.md`).toContain(`skills/${skill}/SKILL.md`);
     }
     for (const alias of [
@@ -328,7 +328,7 @@ test(
     });
     expect(tracked.status).toBe(0);
     const files = new Set(tracked.stdout.trim().split("\n").filter(Boolean));
-    for (const skill of CURSOR_SKILLS) {
+    for (const skill of WORKIT_METHOD_SKILLS) {
       expect(files.has(`packages/workit-cursor/skills/${skill}/SKILL.md`), skill).toBe(true);
     }
     expect(
