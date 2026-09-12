@@ -736,7 +736,7 @@ test("choosing None skips the baseUrl screen: summary shows — and applies no y
     const exitCalls: boolean[] = [];
     const tty = await renderInk(<Wizard onExit={(ok) => exitCalls.push(ok)} />);
     await tty.keys(SPACE, ENTER, ENTER, ENTER, ENTER); // -> issueTracker
-    await tty.keys(DOWN, DOWN, ENTER); // None -> vcs (youtrack skipped)
+    await tty.keys(DOWN, DOWN, DOWN, ENTER); // None -> vcs (youtrack skipped)
     await tty.keys(ENTER); // gitlab -> workspaces
     await tty.keys(ENTER); // Done -> project
     await tty.keys("y"); // -> summary
