@@ -1,10 +1,13 @@
-// Shared offline doctor (DG-07/DG-08, CA-09). One host-neutral engine checks the
+// Shared offline doctor (DG-07/CA-09). One host-neutral engine checks the
 // installed Workit surfaces — pins, versions, assets, launchers, runtimes,
 // utilities, registrations, config, workspace match, credential metadata, and
 // log writability — with no network access except the optional registry probe
-// behind the stale-install comparison (CA-04), which fails open. Never reads
-// credential values: only existence, mode, and a placeholder flag are evaluated;
-// token bytes never enter the report or any log event.
+// behind the stale-install comparison (CA-04) and the fail-open identity
+// probes behind github_identity, which fail open. Credential values are never
+// reported: only existence, mode, and a placeholder flag are evaluated, and
+// the identity check reads a token file solely to build an Authorization
+// header for a login lookup — token bytes never enter the report, any fix
+// text, or any log event.
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
@@ -51,6 +54,7 @@ export type DoctorCheckId =
   | "malformed_config"
   | "workspace_mismatch"
   | "credential_metadata"
+  | "github_identity"
   | "log_writable"
   | "legacy_component"
   | "mixed_generation"
@@ -1076,6 +1080,150 @@ const checkCredentialMetadata = (res: Resolved): DoctorCheck => {
   };
 };
 
+// Identity surfaces for the github_identity check. Logins are public
+// usernames (safe to report); the token itself only ever travels as an
+// Authorization header value and never enters details, fixes, or logs.
+export type IdentitySurface = { surface: string; login: string | null };
+
+export type IdentityProbes = {
+  origin: (cwd: string) => string | null;
+  ghLogin: (env: NodeJS.ProcessEnv) => string | null;
+  tokenLogin: (tokenFile: string, host: string) => string | null;
+  sshLogin: (host: string) => string | null;
+};
+
+export const githubHostFromRemote = (remote: string): string | null => {
+  const rest = (remote || "").trim();
+  if (!rest) return null;
+  const scp = /^[^@/]+@([^:]+):/.exec(rest);
+  if (scp) return scp[1].toLowerCase();
+  try {
+    const url = new URL(rest.includes("://") ? rest : `https://${rest}`);
+    return url.hostname.toLowerCase() || null;
+  } catch {
+    return null;
+  }
+};
+
+export const githubIdentityFinding = (surfaces: IdentitySurface[]): DoctorCheck => {
+  const resolved = surfaces.filter(
+    (entry): entry is { surface: string; login: string } => typeof entry.login === "string",
+  );
+  const distinct = [...new Set(resolved.map((entry) => entry.login.toLowerCase()))];
+  if (distinct.length < 2) {
+    return {
+      id: "github_identity",
+      status: "pass",
+      detail:
+        resolved.length === 0
+          ? "no GitHub identities configured"
+          : "single GitHub identity across configured surfaces",
+    };
+  }
+  return {
+    id: "github_identity",
+    status: "warn",
+    detail: `GitHub identities disagree across configured surfaces: ${resolved
+      .map((entry) => `${entry.surface} reports "${entry.login}"`)
+      .join("; ")}. Operations may land under the wrong account.`,
+    fix: "Align every surface on the intended account via your own git/gh configuration (gh auth login/switch plus the vcs token file at mode 0600) — workit never hardcodes accounts",
+  };
+};
+
+const defaultIdentityProbes = (env: NodeJS.ProcessEnv): IdentityProbes => ({
+  origin: (cwd) => {
+    try {
+      const out = spawnSync("git", ["remote", "get-url", "origin"], {
+        cwd,
+        encoding: "utf8",
+        env,
+      });
+      return out.status === 0 ? (out.stdout ?? "").trim() || null : null;
+    } catch {
+      return null;
+    }
+  },
+  ghLogin: (e) => {
+    try {
+      const out = spawnSync("gh", ["api", "user", "--jq", ".login"], { encoding: "utf8", env: e });
+      const login = (out.stdout ?? "").trim();
+      return out.status === 0 && login ? login : null;
+    } catch {
+      return null;
+    }
+  },
+  tokenLogin: (tokenFile, host) => {
+    let token = "";
+    try {
+      token = readFileSync(tokenFile, "utf8").trim();
+    } catch {
+      return null;
+    }
+    if (!token || token === TOKEN_PLACEHOLDER || token.startsWith(TOKEN_PLACEHOLDER)) return null;
+    try {
+      const out = spawnSync("gh", ["api", "user", "--jq", ".login"], {
+        encoding: "utf8",
+        env: { ...env, GH_TOKEN: token, ...(host === "github.com" ? {} : { GH_HOST: host }) },
+      });
+      const login = (out.stdout ?? "").trim();
+      return out.status === 0 && login ? login : null;
+    } catch {
+      return null;
+    }
+  },
+  sshLogin: (host) => {
+    try {
+      const out = spawnSync(
+        "ssh",
+        ["-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "-T", `git@${host}`],
+        {
+          encoding: "utf8",
+          env,
+        },
+      );
+      const text = `${out.stdout ?? ""}${out.stderr ?? ""}`;
+      const match = /^Hi ([^!]+)!/.exec(text);
+      return match ? match[1].trim() || null : null;
+    } catch {
+      return null;
+    }
+  },
+});
+
+const githubTokenFile = (res: Pick<Resolved, "configDir">): string | null => {
+  const vcsJson = readJson(path.join(res.configDir, "vcs.json"));
+  const provider = vcsJson?.github;
+  if (provider && typeof provider === "object") {
+    const tokenFile = (provider as Record<string, unknown>).tokenFile;
+    const raw =
+      typeof tokenFile === "string" ? tokenFile : path.join(res.configDir, "github.token");
+    return path.isAbsolute(raw) ? raw : path.resolve(res.configDir, raw);
+  }
+  if (!vcsJson) {
+    const fallback = path.join(res.configDir, "github.token");
+    return existsSync(fallback) ? fallback : null;
+  }
+  return null;
+};
+
+export const checkGithubIdentity = (
+  res: Pick<Resolved, "cwd" | "configDir" | "env">,
+  probes: IdentityProbes = defaultIdentityProbes(res.env),
+): DoctorCheck => {
+  const host = githubHostFromRemote(probes.origin(res.cwd) ?? "");
+  if (!host)
+    return { id: "github_identity", status: "pass", detail: "no GitHub remote configured" };
+  const surfaces: IdentitySurface[] = [{ surface: "gh CLI", login: probes.ghLogin(res.env) }];
+  const tokenFile = githubTokenFile(res);
+  if (tokenFile)
+    surfaces.push({
+      surface: `token file ${tokenFile}`,
+      login: probes.tokenLogin(tokenFile, host),
+    });
+  surfaces.push({ surface: "SSH", login: probes.sshLogin(host) });
+  return githubIdentityFinding(surfaces);
+};
+
 const checkLogWritable = (res: Resolved): DoctorCheck => {
   const logsDir = path.join(res.stateDir, "logs");
   // Fixed-name probe: even a killed process leaves at most one bounded file that
@@ -1285,6 +1433,7 @@ const RUN_CHECKS: Array<(res: Resolved) => DoctorCheck> = [
   checkMalformedConfig,
   checkWorkspaceMismatch,
   checkCredentialMetadata,
+  checkGithubIdentity,
   checkLogWritable,
   checkMixedGeneration,
   checkLegacyComponent,

@@ -40,6 +40,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   resolution (subgroups kept). Both fail closed without a token, the CLI
   wizard offers a GitLab Issues tracker, and Cursor/Codex expose both as MCP
   resources (`workit://context/{kind}`).
+- The doctor reports a `github_identity` warning when the checkout's own
+  GitHub surfaces disagree (gh CLI login, vcs token-file login, SSH login),
+  so operations can never silently land under the wrong account. Only the
+  login names are reported, tokens never appear in output, every probe fails
+  open, and no accounts are hardcoded — alignment stays in your own git/gh
+  configuration.
 - `commitPolicy` per-workspace override in `workspaces.json` (workspace wins,
   else global), resolved through `resolveCommitPolicyFor` at the `git.commit`
   gate.

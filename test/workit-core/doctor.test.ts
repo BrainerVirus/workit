@@ -1,8 +1,20 @@
 import { afterAll, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import {
+  checkGithubIdentity,
+  githubHostFromRemote,
+  githubIdentityFinding,
   runDoctor,
   type DoctorCheck,
   type DoctorReport,
@@ -1428,4 +1440,67 @@ test("codex pin passes when absent, warns on drift, passes on match", () => {
     },
   });
   expect(check(matched, "codex_pin").status).toBe("pass");
+});
+
+// github_identity: divergent authenticated identities warn naming logins only;
+// agreement, empty surfaces, and missing remotes pass without any probing.
+const identityProbes = (overrides: Record<string, () => string | null> = {}) => ({
+  origin: () => "git@github.com:owner/repo.git",
+  ghLogin: () => "personal",
+  tokenLogin: () => "work",
+  sshLogin: () => "personal",
+  ...overrides,
+});
+
+const identityConfigDir = (): string => {
+  const dir = mkdtempSync(path.join(tmpdir(), "workit-doctor-identity-"));
+  writeFileSync(
+    path.join(dir, "vcs.json"),
+    JSON.stringify({ provider: "github", github: { host: "github.com" } }),
+  );
+  return dir;
+};
+
+test("github_identity warns on divergent surfaces without leaking secrets", () => {
+  const found = githubIdentityFinding([
+    { surface: "gh CLI", login: "personal" },
+    { surface: "token file /cfg/github.token", login: "work" },
+    { surface: "SSH", login: "personal" },
+  ]);
+  expect(found).toMatchObject({ id: "github_identity", status: "warn" });
+  expect(found.detail).toContain('"personal"');
+  expect(found.detail).toContain('"work"');
+  expect(found.detail).not.toContain("secrettoken");
+  expect(found.fix).toContain("gh auth");
+  expect(found.fix).not.toContain('"personal"');
+  expect(found.fix).not.toContain('"work"');
+});
+
+test("github_identity passes on agreement, emptiness, and unparseable remotes", () => {
+  expect(githubIdentityFinding([{ surface: "gh CLI", login: "a" }]).status).toBe("pass");
+  expect(githubIdentityFinding([]).status).toBe("pass");
+  expect(githubHostFromRemote("git@github.com:o/r.git")).toBe("github.com");
+  expect(githubHostFromRemote("https://ghe.example.com/o/r")).toBe("ghe.example.com");
+  expect(githubHostFromRemote("not a remote")).toBe(null);
+});
+
+test("checkGithubIdentity passes without a remote and warns on stubbed divergence", () => {
+  const dir = identityConfigDir();
+  try {
+    const noRemote = checkGithubIdentity(
+      { cwd: dir, configDir: dir, env: {} },
+      { ...identityProbes(), origin: () => null },
+    );
+    expect(noRemote).toMatchObject({ id: "github_identity", status: "pass" });
+    const divergent = checkGithubIdentity({ cwd: dir, configDir: dir, env: {} }, identityProbes());
+    expect(divergent.status).toBe("warn");
+    expect(divergent.detail).toContain("token file");
+    const agreed = checkGithubIdentity(
+      { cwd: dir, configDir: dir, env: {} },
+      { ...identityProbes(), tokenLogin: () => "personal" },
+    );
+    expect(agreed.status).toBe("pass");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
