@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import { configDir, isConfigObject } from "./config";
 import { PLUGIN_ROOT } from "./scripts";
 import { writeFileExclusive } from "./safe-write";
@@ -26,6 +27,27 @@ const isPlaceholder = (text: string): boolean =>
 
 const modeOk = (p: string): boolean =>
   process.platform === "win32" || (fs.statSync(p).mode & 0o777) === 0o600;
+
+/** Provider for a fresh vcs.json: explicit env, else origin remote, else gitlab. */
+export const resolveInitProvider = (cwd?: string): string => {
+  const env = process.env.WORKFLOW_VCS_PROVIDER?.trim();
+  if (env) return env.toLowerCase();
+  const root = cwd ?? process.env.WORKFLOW_WORKSPACE_ROOT ?? process.cwd();
+  try {
+    const out = spawnSync("git", ["remote", "get-url", "origin"], {
+      cwd: root,
+      encoding: "utf8",
+    });
+    if (out.status === 0) {
+      const url = (out.stdout ?? "").trim();
+      if (/github\.com[:/]/.test(url)) return "github";
+      if (/gitlab\.com[:/]/.test(url)) return "gitlab";
+    }
+  } catch {
+    /* no git: fall through to the explicit default */
+  }
+  return "gitlab";
+};
 
 const resolvePath = (p: string): string => {
   try {
@@ -340,8 +362,11 @@ const youtrackJsonContent = (dir: string): Record<string, any> => ({
   },
 });
 
-const vcsJsonContent = (dir: string): Record<string, any> => ({
-  provider: process.env.WORKFLOW_VCS_PROVIDER ?? "gitlab",
+const vcsJsonContent = (dir: string, cwd?: string): Record<string, any> => ({
+  // Explicit provider at init: env wins, else the checkout's origin remote
+  // (same RL-03b rule as vcs-config), else gitlab as an explicit last
+  // resort — never a silent assumption downstream.
+  provider: resolveInitProvider(cwd),
   defaultTargetBranch: process.env.WORKFLOW_VCS_TARGET_BRANCH ?? "develop",
   gitlab: {
     host: process.env.WORKFLOW_GITLAB_HOST ?? "gitlab.com",
