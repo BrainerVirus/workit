@@ -207,10 +207,12 @@ acquire --actor <id>` binds a writer to a Codex session the hook matches,
 
 ### Fixed
 
-- Clean-checkout CI builds and typechecks again: the Cursor build skips the
-  in-place command-alias copy (Bun 1.4 `cpSync` rejects identical source and
-  destination), and `@brainervirus/workit-mcp` exports source `types` so the
-  shared-job typecheck resolves it without a prior build.
+- Clean-checkout CI builds, packs, and typechecks again: the Cursor MCP entry
+  imports the shared transport's source subpath (matching the Codex launcher)
+  instead of its gitignored `dist`, the Cursor build skips the in-place
+  command-alias copy (Bun 1.4 `cpSync` rejects identical source and
+  destination), and the check jobs fetch full history and run the declared
+  Node 24 runtime so revision-range and doctor tests behave.
 - Worker lifecycle observations that change nothing (same state, same
   session, no writer side-effect) no longer rewrite the worker entry or bump
   task revisions. Hosts observe on every session event, so the old

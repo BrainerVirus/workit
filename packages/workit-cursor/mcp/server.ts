@@ -4,5 +4,5 @@ export {
   createMcpServer,
   assertMcpHost,
   sanitizeTransportText,
-} from "@brainervirus/workit-mcp";
+} from "@brainervirus/workit-mcp/src/index";
 export { cursorContextProvider, cursorCapabilities } from "./run-server";

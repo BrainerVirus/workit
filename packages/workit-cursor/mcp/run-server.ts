@@ -1,4 +1,4 @@
-import { runStdioServer } from "@brainervirus/workit-mcp";
+import { runStdioServer } from "@brainervirus/workit-mcp/src/index";
 import { cursorCapabilities } from "../hooks/workit-hook";
 import type { OperationContext } from "@brainervirus/workit-core/src/core";
 
