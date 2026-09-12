@@ -99,10 +99,11 @@ const callerSession = (caller: CallerContext): HostSession =>
 const validPath = (value: unknown): value is string =>
   typeof value === "string" &&
   value.length > 0 &&
-  value !== "/" &&
-  !/^[A-Za-z]:[\\/]/.test(value) &&
-  !value.includes("\\") &&
-  !value.split("/").includes("..");
+  ![...value].some((char) => {
+    const code = char.charCodeAt(0);
+    return code < 32 || code === 127;
+  }) &&
+  !value.split(/[\\/]/).includes("..");
 
 const callerValue = (value: CallerContext): Caller => ({ host: value.host, actor: value.actor });
 const workerIdOf = (value: CallerContext): Id | null => value.workerId ?? null;

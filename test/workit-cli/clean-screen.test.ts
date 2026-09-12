@@ -161,7 +161,7 @@ async function driveRunInit(keys: DriveStep[], options: DriveOptions = {}): Prom
           // runners where figures chooses the fallback even with TTY stdout.
           const deadline = Date.now() + 2_000;
           const started = Date.now();
-          let nudged = false;
+          let nudges = 0;
           while (true) {
             const visible = clean(chunks.join(""));
             const matched =
@@ -169,15 +169,15 @@ async function driveRunInit(keys: DriveStep[], options: DriveOptions = {}): Prom
                 ? visible.includes(step.waitFor)
                 : step.waitFor.test(visible);
             if (matched) break;
-            if (step.nudge && !nudged && Date.now() - started > 300) {
+            if (step.nudge && nudges < 2 && Date.now() - started > 150 + nudges * 300) {
               // Slow runners can swallow the previous ENTER while the screen
-              // is still mounting; resend once before declaring the frame lost.
+              // is still mounting; resend twice before declaring the frame lost.
               process.stdin.push(step.nudge);
-              nudged = true;
+              nudges += 1;
             }
             if (Date.now() > deadline) {
               throw new Error(
-                `frame ${typeof step.waitFor === "string" ? `"${step.waitFor}"` : step.waitFor} never rendered`,
+                `frame ${typeof step.waitFor === "string" ? `"${step.waitFor}"` : step.waitFor} never rendered; visible: ${visible.slice(-300)}`,
               );
             }
             await new Promise((resolve) => setTimeout(resolve, 10));

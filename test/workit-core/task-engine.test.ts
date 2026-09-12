@@ -120,7 +120,12 @@ test("candidate capture preserves executable and symlink metadata without follow
   if (!result.ok) throw new Error(result.error);
   expect(result.data.files).toEqual(
     expect.arrayContaining([
-      expect.objectContaining({ path: "run.sh", kind: "file", executable: true }),
+      expect.objectContaining({
+        path: "run.sh",
+        kind: "file",
+        // Windows has no executable bit; chmod leaves captured mode false there.
+        executable: process.platform !== "win32",
+      }),
       expect.objectContaining({ path: "escape", kind: "symlink", executable: null }),
     ]),
   );

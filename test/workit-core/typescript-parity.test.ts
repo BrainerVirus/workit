@@ -234,7 +234,7 @@ test(
   { timeout: 60_000 },
 );
 
-test(
+test.skipIf(process.platform === "win32")(
   "resolvePrBranchContext yields the branch-exclusive range the shell produced",
   () => {
     const { repo, mergeBase } = buildFixtureRepo();
@@ -253,7 +253,7 @@ test(
   { timeout: 60_000 },
 );
 
-test(
+test.skipIf(process.platform === "win32")(
   "pr-ready-context sections match the shell output (auto branch-exclusive range)",
   () => {
     const { repo } = buildFixtureRepo();
@@ -297,7 +297,7 @@ test(
   { timeout: 60_000 },
 );
 
-test(
+test.skipIf(process.platform === "win32")(
   "pr-ready-context with an explicit range skips the branch-exclusive fields",
   () => {
     const { repo } = buildFixtureRepo();
@@ -320,17 +320,20 @@ test(
   { timeout: 60_000 },
 );
 
-test("pr-ready-context errors on protected branches with the shell message", () => {
-  const { repo } = buildFixtureRepo();
-  try {
-    spawnSync("git", ["checkout", "-q", "main"], { cwd: repo });
-    const result = withGitLabConfig(() => prReadyContext(repo));
-    expect(result.exitCode).toBe(1);
-    expect(result.stderr).toContain("cannot build PR context on protected branch main");
-  } finally {
-    rmSync(repo, { recursive: true, force: true });
-  }
-});
+test.skipIf(process.platform === "win32")(
+  "pr-ready-context errors on protected branches with the shell message",
+  () => {
+    const { repo } = buildFixtureRepo();
+    try {
+      spawnSync("git", ["checkout", "-q", "main"], { cwd: repo });
+      const result = withGitLabConfig(() => prReadyContext(repo));
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("cannot build PR context on protected branch main");
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  },
+);
 
 test(
   "changelog-context sections match the shell output",

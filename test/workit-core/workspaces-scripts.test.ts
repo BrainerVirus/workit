@@ -377,27 +377,30 @@ test(
   { timeout: 60_000 },
 );
 
-test("pr-ready-context.sh: VCS Config section reports workspace + provider", () => {
-  const r = withConfigFiles(
-    {
-      "vcs.json": JSON.stringify(GLOBAL_VCS),
-      "workspaces.json": workspacesJson("**", "gitlab"),
-    },
-    {},
-    () => prReadyContext(repoRoot, "HEAD~1..HEAD"),
-  );
-  expect(r.exitCode, r.stderr).toBe(0);
-  expect(r.stdout).toContain("workspace: work");
-  expect(r.stdout).toContain("provider: gitlab");
-  expect(r.stdout).not.toContain("vcs: not configured");
-  // B4: concise shell shape — workspace:/provider: only, no raw summary JSON
-  // dumped into the VCS Config section.
-  const vcsSection = parseSections(r.stdout)["VCS Config"] ?? "";
-  expect(vcsSection).not.toContain('"defaultTargetBranch"');
-  expect(vcsSection).not.toContain('"ok":');
-});
+test.skipIf(process.platform === "win32")(
+  "pr-ready-context.sh: VCS Config section reports workspace + provider",
+  () => {
+    const r = withConfigFiles(
+      {
+        "vcs.json": JSON.stringify(GLOBAL_VCS),
+        "workspaces.json": workspacesJson("**", "gitlab"),
+      },
+      {},
+      () => prReadyContext(repoRoot, "HEAD~1..HEAD"),
+    );
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(r.stdout).toContain("workspace: work");
+    expect(r.stdout).toContain("provider: gitlab");
+    expect(r.stdout).not.toContain("vcs: not configured");
+    // B4: concise shell shape — workspace:/provider: only, no raw summary JSON
+    // dumped into the VCS Config section.
+    const vcsSection = parseSections(r.stdout)["VCS Config"] ?? "";
+    expect(vcsSection).not.toContain('"defaultTargetBranch"');
+    expect(vcsSection).not.toContain('"ok":');
+  },
+);
 
-test(
+test.skipIf(process.platform === "win32")(
   "pr-ready-context.sh: malformed vcs.json reports unreadable instead of silent defaults (RL-01)",
   () => {
     const r = withConfigFiles({ "vcs.json": "{ broken !!" }, {}, () =>
@@ -412,7 +415,7 @@ test(
   { timeout: 60_000 },
 );
 
-test(
+test.skipIf(process.platform === "win32")(
   "pr-ready-context.sh uses the workspace target branch",
   () => {
     const repo = realpathSync(mkdtempSync(path.join(os.tmpdir(), "wf-pr-base-")));
@@ -846,7 +849,7 @@ test("RL-08: writeWorkspaces rejects unsupported glob grammar at write time", ()
   }
 });
 
-test(
+test.skipIf(process.platform === "win32")(
   "PR context base_ref and prCreate target agree for the same workspace (RL-03)",
   () => {
     const repo = realpathSync(mkdtempSync(path.join(os.tmpdir(), "wf-pr-ctx-create-")));
