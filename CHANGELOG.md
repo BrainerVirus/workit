@@ -21,8 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `workit init` writes the vcs provider explicitly (env override, else the
-  checkout's origin remote, else gitlab as a named last resort) so fresh
-  checkouts never inherit a silent default.
+  checkout's origin remote; omitted when neither resolves) so fresh
+  checkouts never inherit a silent default. An unconfigured provider is an
+  explicit state: `vcsConfig` resolve reports `provider: null` (branch
+  policy still resolves from presets) while credential loads fail closed.
 - `wk-*` slash aliases for all fourteen method skills on OpenCode, Cursor,
   and Pi (replacing the five bare aliases); Codex documents `$workit-*`.
 - `commitPolicy` config (conventional, gitmoji, ticket-prefix, freeform,

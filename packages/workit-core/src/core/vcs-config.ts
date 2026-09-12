@@ -81,9 +81,16 @@ export function vcsConfig(mode: "load" | "summary" | "resolve", cwd?: string): R
   // contaminate host-agnostic reads.
   const root = vcsCwd(cwd);
   const determinateRoot = cwd !== undefined || process.env.WORKFLOW_WORKSPACE_ROOT !== undefined;
-  const provider = String(
-    wsVcs.provider ?? (determinateRoot ? remoteProvider(root) : null) ?? cfg.provider ?? "gitlab",
-  ).toLowerCase();
+  // No silent default: a provider resolves from the workspace, the origin
+  // remote, or the global config — otherwise it is null, explicitly. Branch
+  // policy never needed a provider (preset defaults apply); credential and
+  // PR flows fail closed on null instead of assuming a host.
+  const rawProvider =
+    wsVcs.provider ?? (determinateRoot ? remoteProvider(root) : null) ?? cfg.provider ?? null;
+  const provider =
+    rawProvider === null || rawProvider === undefined
+      ? null
+      : String(rawProvider).toLowerCase() || null;
   // CA-05: workspace/global explicit target wins; when unset the resolved
   // branch-policy preset supplies the default (gitflow->develop,
   // github-flow->main, trunk-based->master, custom->develop). Shared by load
@@ -139,6 +146,15 @@ export function vcsConfig(mode: "load" | "summary" | "resolve", cwd?: string): R
   }
   if (cfgStatus === "missing") {
     return { ok: false, error: `vcs.json is missing: ${cfgPath}`, configPath: cfgPath };
+  }
+  // Credentials cannot resolve without a provider: fail closed instead of
+  // assuming a host. Branch policy (resolve mode above) never needed one.
+  if (provider === null) {
+    return {
+      ok: false,
+      error: `no vcs provider configured (set vcs.provider in ${cfgPath}, match a workspace entry, or run inside a checkout with a recognized origin remote)`,
+      configPath: cfgPath,
+    };
   }
 
   const prov = (cfg[provider] ?? {}) as Record<string, any>;
@@ -288,7 +304,14 @@ export function vcsTokenCreateUrls(): Record<string, any> {
     : ["repo"];
   const githubClassicUrl = `https://github.com/settings/tokens/new?${new URLSearchParams({ description: name, scopes: classicScopes.join(",") })}`;
 
-  const provider = String(cfg.provider ?? "gitlab").toLowerCase();
+  const rawProvider = cfg.provider;
+  // Display-only URL helper: both providers' URLs are always returned, so the
+  // active preselection assumes gitlab when unconfigured. Harmless by design —
+  // it builds links, never routes operations (load fails closed above).
+  const provider =
+    typeof rawProvider === "string" && rawProvider.trim()
+      ? rawProvider.toLowerCase()
+      : "gitlab";
   const active =
     {
       gitlab: {

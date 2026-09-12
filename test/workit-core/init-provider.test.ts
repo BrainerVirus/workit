@@ -15,7 +15,7 @@ const repoWithRemote = (url: string | null): string => {
   return root;
 };
 
-test("resolveInitProvider prefers env, then origin remote, then explicit gitlab", () => {
+test("resolveInitProvider prefers env, then origin remote, else null (no silent default)", () => {
   const gh = repoWithRemote("https://github.com/acme/workit.git");
   const gl = repoWithRemote("https://gitlab.com/acme/workit.git");
   const bare = repoWithRemote(null);
@@ -24,7 +24,7 @@ test("resolveInitProvider prefers env, then origin remote, then explicit gitlab"
     delete process.env.WORKFLOW_VCS_PROVIDER;
     expect(resolveInitProvider(gh)).toBe("github");
     expect(resolveInitProvider(gl)).toBe("gitlab");
-    expect(resolveInitProvider(bare)).toBe("gitlab");
+    expect(resolveInitProvider(bare)).toBe(null);
     process.env.WORKFLOW_VCS_PROVIDER = "GitHub";
     expect(resolveInitProvider(gl)).toBe("github");
   } finally {

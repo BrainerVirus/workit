@@ -339,7 +339,7 @@ export function prReadyContext(root: string, range?: string): ContextResult {
   const vc = vcsConfig("resolve", cwd);
   if (vc.ok) {
     stdout += `workspace: ${String(vc.workspace_name ?? "none")}\n`;
-    stdout += `provider: ${String(vc.provider ?? "gitlab")}\n`;
+    stdout += `provider: ${String(vc.provider ?? "unconfigured")}\n`;
   } else {
     // RL-01: never report silent defaults for malformed vcs.json — surface the
     // exact-path diagnostic instead.

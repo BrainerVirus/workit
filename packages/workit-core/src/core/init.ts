@@ -28,8 +28,9 @@ const isPlaceholder = (text: string): boolean =>
 const modeOk = (p: string): boolean =>
   process.platform === "win32" || (fs.statSync(p).mode & 0o777) === 0o600;
 
-/** Provider for a fresh vcs.json: explicit env, else origin remote, else gitlab. */
-export const resolveInitProvider = (cwd?: string): string => {
+/** Provider for a fresh vcs.json: explicit env, else origin remote, else null
+ *  (no silent default — a tool for everyone must not assume a provider). */
+export const resolveInitProvider = (cwd?: string): string | null => {
   const env = process.env.WORKFLOW_VCS_PROVIDER?.trim();
   if (env) return env.toLowerCase();
   const root = cwd ?? process.env.WORKFLOW_WORKSPACE_ROOT ?? process.cwd();
@@ -44,9 +45,9 @@ export const resolveInitProvider = (cwd?: string): string => {
       if (/gitlab\.com[:/]/.test(url)) return "gitlab";
     }
   } catch {
-    /* no git: fall through to the explicit default */
+    /* no git: unresolvable, caller omits the field */
   }
-  return "gitlab";
+  return null;
 };
 
 const resolvePath = (p: string): string => {
@@ -183,7 +184,11 @@ export function initStatusData(configDirPath = configDir()): Record<string, any>
   let tokenCreateUrls: Record<string, any> | null = null;
   const vcsParsed = readJson(vcsJson);
   if (vcsParsed) {
-    const provider = String(vcsParsed.provider ?? "gitlab").toLowerCase();
+    const rawProvider = vcsParsed.provider;
+    const provider =
+      typeof rawProvider === "string" && rawProvider.trim()
+        ? rawProvider.toLowerCase()
+        : null;
     const tokenFiles: Record<string, string> = {};
     for (const k of ["gitlab", "github"]) {
       tokenFiles[k] = String(vcsParsed[k]?.tokenFile ?? path.join(configDirPath, `${k}.token`));
@@ -283,18 +288,26 @@ export async function toolkitStatusData(configDirPath = configDir()): Promise<Re
   const placeholder = Boolean(tokenItem.placeholder);
 
   const vcsCfg = (status.vcs_config ?? {}) as Record<string, any>;
-  const provider = String(vcsCfg.provider ?? "gitlab").toLowerCase();
-  const vcsTokenId = provider === "gitlab" ? "gitlab_token" : "github_token";
-  const vcsTokenItem = status.items.find((i: Record<string, any>) => i.id === vcsTokenId) ?? {};
-  const vcsPlaceholder = vcsTokenItem.placeholder ?? true;
+  const provider =
+    typeof vcsCfg.provider === "string" && vcsCfg.provider.trim()
+      ? vcsCfg.provider.toLowerCase()
+      : null;
+  const vcsTokenId =
+    provider === "gitlab" ? "gitlab_token" : provider === "github" ? "github_token" : null;
+  const vcsTokenItem =
+    (vcsTokenId ? status.items.find((i: Record<string, any>) => i.id === vcsTokenId) : null) ?? {};
+  const vcsPlaceholder = vcsTokenId ? (vcsTokenItem.placeholder ?? true) : true;
   const vcsJsonOk = Boolean(status.items.find((i: Record<string, any>) => i.id === "vcs_json")?.ok);
 
   const verify = placeholder
     ? { ok: false, error: "token still placeholder YOUR_TOKEN_HERE" }
     : await youTrackVerifyToken();
-  const vcsVerify = vcsPlaceholder
-    ? { ok: false, error: "vcs token still placeholder YOUR_TOKEN_HERE" }
-    : await vcsVerifyToken();
+  const vcsVerify =
+    provider === null
+      ? { ok: false, error: "vcs provider unconfigured — set provider to gitlab or github in vcs.json" }
+      : vcsPlaceholder
+        ? { ok: false, error: "vcs token still placeholder YOUR_TOKEN_HERE" }
+        : await vcsVerifyToken();
   const youTrackHealth = ("data" in verify ? verify.data : verify) as Record<string, any>;
 
   status.youtrack_verify = verify;
@@ -362,12 +375,14 @@ const youtrackJsonContent = (dir: string): Record<string, any> => ({
   },
 });
 
-const vcsJsonContent = (dir: string, cwd?: string): Record<string, any> => ({
+const vcsJsonContent = (dir: string, cwd?: string): Record<string, any> => {
   // Explicit provider at init: env wins, else the checkout's origin remote
-  // (same RL-03b rule as vcs-config), else gitlab as an explicit last
-  // resort — never a silent assumption downstream.
-  provider: resolveInitProvider(cwd),
-  defaultTargetBranch: process.env.WORKFLOW_VCS_TARGET_BRANCH ?? "develop",
+  // (same RL-03b rule as vcs-config). Unresolvable means the field is
+  // omitted — never a silent assumption downstream.
+  const provider = resolveInitProvider(cwd);
+  return {
+    ...(provider ? { provider } : {}),
+    defaultTargetBranch: process.env.WORKFLOW_VCS_TARGET_BRANCH ?? "develop",
   gitlab: {
     host: process.env.WORKFLOW_GITLAB_HOST ?? "gitlab.com",
     apiUrl: process.env.WORKFLOW_GITLAB_API_URL ?? "https://gitlab.com/api/v4",
@@ -384,8 +399,9 @@ const vcsJsonContent = (dir: string, cwd?: string): Record<string, any> => ({
     gitlabScopes: ["api"],
     githubPermissions: { pull_requests: "write", contents: "write", metadata: "read" },
     githubClassicScopes: ["repo"],
-  },
-});
+    },
+  };
+};
 
 /** Port of scripts/init/apply.sh — confirmed scaffold actions. */
 export function initApplyData(
@@ -491,10 +507,17 @@ export function initApplyData(
       process.env.WORKFLOW_VCS_CONFIG = configPath;
       try {
         const cfg = readJson(configPath) ?? {};
-        const provider = String(cfg.provider ?? "gitlab");
+        const rawProvider = cfg.provider;
+        const provider =
+          typeof rawProvider === "string" && rawProvider.trim() ? rawProvider : null;
         const tokenUrls = vcsTokenCreateUrls();
         const active = tokenUrls.active ?? {};
-        const activePath = provider === "gitlab" ? path.resolve(glPath) : path.resolve(ghPath);
+        const activePath =
+          provider === "gitlab"
+            ? path.resolve(glPath)
+            : provider === "github"
+              ? path.resolve(ghPath)
+              : null;
         return {
           action,
           ok: true,
@@ -516,7 +539,10 @@ export function initApplyData(
             switchHint: 'Change "provider" to "github" when you migrate — token files are separate',
             skill: "/wk-pr",
           },
-          instruction: `Open the create-token URL for ${provider}, click Create, paste into ${activePath}, then /wk-status.`,
+          instruction:
+            provider === null
+              ? `No provider resolved — set provider to gitlab or github in ${configPath}, then /wk-status.`
+              : `Open the create-token URL for ${provider}, click Create, paste into ${activePath}, then /wk-status.`,
         };
       } finally {
         if (prev === undefined) delete process.env.WORKFLOW_VCS_CONFIG;

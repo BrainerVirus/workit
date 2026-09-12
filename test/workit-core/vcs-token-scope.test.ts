@@ -68,3 +68,27 @@ test("missing or empty workspace tokenFile falls back to global then default", (
     t.cleanup();
   }
 });
+
+test("unresolvable provider is explicit: resolve reports null, load fails closed", () => {
+  const cfgDir = mkdtempSync(path.join(tmpdir(), "wk-vcnoprov-cfg-"));
+  const repo = mkdtempSync(path.join(tmpdir(), "wk-vcnoprov-repo-"));
+  const prevConfig = process.env.WORKFLOW_TOOLKIT_CONFIG;
+  process.env.WORKFLOW_TOOLKIT_CONFIG = cfgDir;
+  try {
+    writeFileSync(path.join(cfgDir, "vcs.json"), JSON.stringify({ pr: {} }));
+    writeFileSync(path.join(cfgDir, "workspaces.json"), JSON.stringify({ workspaces: [] }));
+    const resolved = vcsConfig("resolve", repo);
+    expect(resolved.ok).toBe(true);
+    expect(resolved.provider).toBe(null);
+    // Branch policy still resolves from the preset without a provider.
+    expect(typeof resolved.defaultTargetBranch).toBe("string");
+    const loaded = vcsConfig("load", repo);
+    expect(loaded.ok).toBe(false);
+    expect(String(loaded.error)).toContain("no vcs provider");
+  } finally {
+    if (prevConfig === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+    else process.env.WORKFLOW_TOOLKIT_CONFIG = prevConfig;
+    rmSync(cfgDir, { recursive: true, force: true });
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
