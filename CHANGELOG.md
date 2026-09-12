@@ -167,6 +167,14 @@ acquire --actor <id>` binds a writer to a Codex session the hook matches,
 
 ### Changed
 
+- `workit-challenge` is now a grounded grill loop: ground-first facts, one
+  bounded 3-5 direction diverge burst when the approach is unknown,
+  one-question-at-a-time recommendations each with a rejected alternative, a
+  receipt funnel that binds choices the moment they resolve, counter-case
+  discipline, and the hard three-round cap. A choice already stated without a
+  receipt is recorded in progress and reassessed instead of re-asked, so close
+  never demands a stale receipt. Durability still comes only from the
+  `durable-spec` requirement.
 - Arbitrary file writes are host-policy on every adapter: the OpenCode,
   Cursor, Codex, and Pi write interceptors no longer gate tools or shell
   commands on task scopes, and the core product-write check keeps only

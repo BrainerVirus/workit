@@ -195,6 +195,17 @@ test("bootstrap tells lead to start and assess when task list is empty", () => {
     expect(bootstrap).toContain(operation);
 });
 
+test("challenge pins the grounded grill loop", () => {
+  const skill = skillText("workit-challenge");
+  expect(skill).toContain("Diverge once");
+  expect(skill).toContain("rejected alternative");
+  expect(skill).toContain("Funnel every resolution");
+  expect(skill).toContain("three rounds");
+  expect(skill).toContain("durable-spec");
+  expect(skill).toContain("counter-case");
+  expect(skill).not.toContain("Frontier rounds");
+});
+
 test("method skills require start and assess before relying on selected policy", () => {
   for (const name of WORKIT_METHOD_SKILLS) {
     const skill = skillText(name);
