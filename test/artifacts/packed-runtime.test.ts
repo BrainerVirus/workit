@@ -12,7 +12,7 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { SUPPORT_MATRIX } from "../../packages/workit-core/src/core/support-matrix";
+import { SUPPORT_MATRIX } from "@/packages/workit-core/src/core/support-matrix";
 import {
   extractTarball,
   installPackedPackage,
@@ -20,8 +20,9 @@ import {
   npmRegistryReachable,
   packReleaseCandidate,
   packWorkspacePackages,
+  tarballSpec,
   REPO_ROOT,
-} from "../shared/helpers/packages";
+} from "@/test/shared/helpers/packages";
 
 // Task 7 packed-runtime gate: from EXTRACTED tarballs with repository node_modules
 // unavailable, the packaged adapters load/boot under plain Node without Bun or a
@@ -30,6 +31,7 @@ import {
 const CORE = "@brainervirus/workit-core";
 const OPENCODE = "@brainervirus/workit-opencode";
 const CURSOR = "@brainervirus/workit-cursor";
+const MCP = "@brainervirus/workit-mcp";
 const CLI = "@brainervirus/workit-cli";
 
 // The isolated npm-install gate fetches third-party runtime deps (zod/
@@ -51,6 +53,11 @@ type McpClient = {
   request: (method: string, params: unknown) => Promise<{ result?: unknown; error?: unknown }>;
 };
 
+type PendingRequest = {
+  resolve: (value: { result?: unknown; error?: unknown }) => void;
+  reject: (reason: Error) => void;
+};
+
 function startNodeMcp(
   cwd: string,
   bin: string,
@@ -60,7 +67,8 @@ function startNodeMcp(
 ): McpClient {
   const child = spawn(bin, args, { cwd, env, stdio: ["pipe", "pipe", "pipe"], ...options });
   let buffer = "";
-  const pending = new Map<number, (value: { result?: unknown; error?: unknown }) => void>();
+  let stderr = "";
+  const pending = new Map<number, PendingRequest>();
   child.stdout?.setEncoding("utf8");
   child.stdout?.on("data", (chunk: string) => {
     buffer += chunk;
@@ -76,15 +84,25 @@ function startNodeMcp(
         newline = buffer.indexOf("\n");
         continue;
       }
-      const resolve = pending.get(msg.id);
-      if (resolve) {
+      const request = pending.get(msg.id);
+      if (request) {
         pending.delete(msg.id);
-        resolve(msg);
+        request.resolve(msg);
       }
       newline = buffer.indexOf("\n");
     }
   });
-  child.stderr?.on("data", () => {});
+  child.stderr?.setEncoding("utf8");
+  child.stderr?.on("data", (chunk: string) => {
+    stderr += chunk;
+  });
+  child.once("exit", (code, signal) => {
+    const reason = new Error(
+      `child exited before response (code=${code}, signal=${signal ?? "none"}); stderr=${stderr.slice(-4000)}; pid=${child.pid}`,
+    );
+    for (const request of pending.values()) request.reject(reason);
+    pending.clear();
+  });
   const nextId = { id: 0 };
   const request = (method: string, params: unknown) => {
     const id = ++nextId.id;
@@ -92,11 +110,18 @@ function startNodeMcp(
     return new Promise<{ result?: unknown; error?: unknown }>((resolve, reject) => {
       const timer = setTimeout(() => {
         pending.delete(id);
-        reject(new Error(`timeout waiting for ${method}`));
+        reject(
+          new Error(
+            `timeout waiting for ${method}; stderr=${stderr.slice(-4000)}; pid=${child.pid}`,
+          ),
+        );
       }, 15000);
-      pending.set(id, (msg) => {
-        clearTimeout(timer);
-        resolve(msg);
+      pending.set(id, {
+        resolve: (msg) => {
+          clearTimeout(timer);
+          resolve(msg);
+        },
+        reject,
       });
     });
   };
@@ -158,8 +183,16 @@ test("cursor MCP server boots over stdio from the extracted package with node (n
       const names = ((listed.result as { tools?: { name: string }[] })?.tools ?? []).map(
         (t) => t.name,
       );
-      expect(names).toContain("workit_git_context");
-      expect(names).toContain("workit_init_apply");
+      expect(names).toEqual([
+        "workit_task",
+        "workit_policy",
+        "workit_evidence",
+        "workit_finding",
+        "workit_decision",
+        "workit_worker",
+        "workit_writer",
+        "workit_state",
+      ]);
     } finally {
       // win32 keeps deleted files/dirs locked until the child fully exits, so
       // wait for the kill to land before the outer finally rmSync's the tree.
@@ -199,11 +232,18 @@ test(
       child.stderr?.setEncoding("utf8");
       child.stdout?.on("data", (c: string) => (stdout += c));
       child.stderr?.on("data", (c: string) => (stderr += c));
+      child.stdin?.end(
+        JSON.stringify({
+          hook_event_name: "sessionStart",
+          conversation_id: "packed-session",
+          workspace_roots: [cursorDir],
+        }),
+      );
       const code = await new Promise<number | null>((resolve) => child.on("close", resolve));
       expect(code).toBe(0);
       const payload = JSON.parse(stdout);
-      expect(payload.additional_context).toContain("HARD-GATE");
-      expect(payload.additional_context).toContain("AskQuestion");
+      expect(payload.additional_context).toContain("<workit-contract>");
+      expect(payload.additional_context).toContain("one accountable lead");
     } finally {
       rmSync(install, { recursive: true, force: true });
       rmSync(home, { recursive: true, force: true });
@@ -230,10 +270,11 @@ test.skipIf(!npmRegistryOk)(
             private: true,
             version: "1.0.0",
             dependencies: {
-              "@brainervirus/workit-cursor": pathToFileURL(byName(packs, CURSOR).tarball).href,
+              "@brainervirus/workit-cursor": tarballSpec(install, byName(packs, CURSOR)),
+              "@brainervirus/workit-mcp": tarballSpec(install, byName(packs, MCP)),
             },
             overrides: {
-              "@brainervirus/workit-core": pathToFileURL(byName(packs, CORE).tarball).href,
+              "@brainervirus/workit-core": tarballSpec(install, byName(packs, CORE)),
             },
           },
           null,
@@ -242,6 +283,7 @@ test.skipIf(!npmRegistryOk)(
         "utf8",
       );
       const env = isolatedEnv(home);
+      const npmEnv = { ...env, npm_config_offline: "true", npm_config_min_release_age: "0" };
       const installRes = spawnSync(
         "npm",
         ["install", "--no-audit", "--no-fund", "--no-package-lock", "--ignore-scripts"],
@@ -265,8 +307,8 @@ test.skipIf(!npmRegistryOk)(
       const { child, request } = startNodeMcp(
         install,
         "npm",
-        ["exec", "--", "workit-cursor-mcp"],
-        env,
+        ["exec", "-c", "workit-cursor-mcp"],
+        npmEnv,
         { shell: process.platform === "win32" },
       );
       try {
@@ -285,8 +327,16 @@ test.skipIf(!npmRegistryOk)(
         const names = ((listed.result as { tools?: { name: string }[] })?.tools ?? []).map(
           (t) => t.name,
         );
-        expect(names).toContain("workit_git_context");
-        expect(names).toContain("workit_init_apply");
+        expect(names).toEqual([
+          "workit_task",
+          "workit_policy",
+          "workit_evidence",
+          "workit_finding",
+          "workit_decision",
+          "workit_worker",
+          "workit_writer",
+          "workit_state",
+        ]);
       } finally {
         child.kill();
         await Promise.race([
@@ -296,17 +346,22 @@ test.skipIf(!npmRegistryOk)(
       }
 
       // Session-start executable: emits the protocol JSON contract on stdout.
-      const session = spawnSync("npm", ["exec", "--", "workit-cursor-session-start"], {
+      const session = spawnSync("npm", ["exec", "-c", "workit-cursor-session-start"], {
         cwd: install,
-        env,
+        env: npmEnv,
         encoding: "utf8",
+        input: JSON.stringify({
+          hook_event_name: "sessionStart",
+          conversation_id: "packed-session",
+          workspace_roots: [install],
+        }),
         timeout: 60_000,
         shell: process.platform === "win32",
       });
       expect(session.status, session.stderr ?? "").toBe(0);
       const payload = JSON.parse(session.stdout);
-      expect(payload.additional_context).toContain("HARD-GATE");
-      expect(payload.additional_context).toContain("AskQuestion");
+      expect(payload.additional_context).toContain("<workit-contract>");
+      expect(payload.additional_context).toContain("one accountable lead");
     } finally {
       rmSync(install, { recursive: true, force: true });
       rmSync(home, { recursive: true, force: true });

@@ -11,8 +11,8 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 import {
+  copyHoistedDeps,
   extractTarball,
   installPackedPackage,
   isolatedEnv,
@@ -20,10 +20,11 @@ import {
   npmRegistryReachable,
   packReleaseCandidate,
   packWorkspacePackages,
+  tarballSpec,
   readTarballFile,
   REPO_ROOT,
   runInIsolation,
-} from "../shared/helpers/packages";
+} from "@/test/shared/helpers/packages";
 
 // Phase 0 corrective-candidate gate (RR-11, CA-30): pack every package WITHOUT
 // publishing and verify the candidate installs and starts in isolation — packed
@@ -32,9 +33,13 @@ import {
 // Pack-only: no publish, tag, or marketplace operation anywhere in this gate.
 
 const CORE = "@brainervirus/workit-core";
+const MCP = "@brainervirus/workit-mcp";
 const OPENCODE = "@brainervirus/workit-opencode";
 const CURSOR = "@brainervirus/workit-cursor";
+const CODEX = "@brainervirus/workit-codex";
+const PI = "@brainervirus/workit-pi";
 const CLI = "@brainervirus/workit-cli";
+const V1_PACKAGES = [CORE, MCP, CLI, OPENCODE, CURSOR, CODEX, PI];
 
 // The isolated npm-install gate fetches third-party runtime deps (ink/react/
 // @inkjs/ui) from the public registry, so an offline/registry-outage CI run
@@ -85,7 +90,7 @@ test(
   "packs all workspace packages into local tarballs without publishing",
   () => {
     const packs = packWorkspacePackages();
-    expect(packs.map((p) => p.packageName)).toEqual([CORE, OPENCODE, CURSOR, CLI]);
+    expect(packs.map((p) => p.packageName)).toEqual(V1_PACKAGES);
     for (const pack of packs) {
       expect(existsSync(pack.tarball), pack.packageName).toBe(true);
       expect(pack.sha256).toMatch(/^[0-9a-f]{64}$/);
@@ -116,7 +121,7 @@ test(
     const coreVersion = JSON.parse(
       readTarballFile(packs.find((p) => p.packageName === CORE)!.tarball, "package.json"),
     ).version;
-    for (const name of [OPENCODE, CURSOR, CLI]) {
+    for (const name of [MCP, OPENCODE, CURSOR, CODEX, CLI]) {
       const pack = packs.find((p) => p.packageName === name)!;
       const pkg = JSON.parse(readTarballFile(pack.tarball, "package.json"));
       expect(pkg.dependencies["@brainervirus/workit-core"], name).toBe(`^${coreVersion}`);
@@ -153,13 +158,13 @@ test(
 
     const opencode = byName(OPENCODE).tarball;
     expect(hasEntry(opencode, "dist/plugin.js")).toBe(true);
-    expect(hasEntry(opencode, "assets/commands/")).toBe(true);
     expect(hasEntry(opencode, "assets/skills/")).toBe(true);
 
     const cursor = byName(CURSOR).tarball;
     for (const f of [
       "dist/mcp-server.js",
       "dist/cursor-session-start.js",
+      "dist/workit-hook.js",
       "mcp.json",
       "assets/logo.svg",
       ".cursor-plugin/plugin.json",
@@ -172,6 +177,7 @@ test(
     const cursorPkg = JSON.parse(readTarballFile(cursor, "package.json"));
     expect(cursorPkg.bin["workit-cursor-mcp"]).toBe("./dist/mcp-server.js");
     expect(cursorPkg.bin["workit-cursor-session-start"]).toBe("./dist/cursor-session-start.js");
+    expect(cursorPkg.bin["workit-cursor-hook"]).toBe("./dist/workit-hook.js");
 
     const core = byName(CORE).tarball;
     for (const f of [
@@ -181,7 +187,6 @@ test(
       "scripts/sync-runtime.sh",
       "templates/",
       "skills/",
-      "vendor/superpowers/skills/",
     ]) {
       expect(hasEntry(core, f), f).toBe(true);
     }
@@ -295,8 +300,16 @@ test("Cursor MCP launcher starts the server from the extracted package, repo-fre
       const names = ((listed.result as { tools?: { name: string }[] })?.tools ?? []).map(
         (t) => t.name,
       );
-      expect(names).toContain("workit_git_context");
-      expect(names).toContain("workit_init_apply");
+      expect(names).toEqual([
+        "workit_task",
+        "workit_policy",
+        "workit_evidence",
+        "workit_finding",
+        "workit_decision",
+        "workit_worker",
+        "workit_writer",
+        "workit_state",
+      ]);
     } finally {
       // win32 keeps deleted files/dirs locked until the child fully exits, so
       // wait for the kill to land before the outer finally rmSync's the tree.
@@ -344,6 +357,7 @@ test(
       const nm = path.join(install, "node_modules");
       mkdirSync(nm, { recursive: true });
       installPackedPackage(nm, core);
+      copyHoistedDeps(nm, ["zod"]);
       // The packed CLI ships its bundled dist only; the wizard's scaffold logic is
       // its source of truth, so run it against the PACKED core from this isolated
       // install (the repository node_modules are not on the resolution path).
@@ -408,13 +422,14 @@ test(
         path.join(stub, "packages", "workit-cursor", "scripts", "build.ts"),
         "// build\n",
       );
-      for (const entry of ["mcp-server.js", "cursor-session-start.js"]) {
+      for (const entry of ["mcp-server.js", "cursor-session-start.js", "workit-hook.js"]) {
         writeFileSync(
           path.join(stub, "packages", "workit-cursor", "dist", entry),
           "#!/usr/bin/env node\n",
         );
       }
       spawnSync("git", ["init", "-q"], { cwd: stub, stdio: "ignore" });
+      writeFileSync(path.join(stub, "bun.lock"), "# stub\n");
       // A failed required copy must never look like a successful install.
       writeFileSync(
         path.join(binDir, "rsync"),
@@ -472,12 +487,13 @@ test.skipIf(!npmRegistryOk)(
             private: true,
             version: "1.0.0",
             dependencies: {
-              "@brainervirus/workit-cli": pathToFileURL(byName(CLI).tarball).href,
+              "@brainervirus/workit-cli": tarballSpec(install, byName(CLI)),
             },
             overrides: {
-              "@brainervirus/workit-core": pathToFileURL(byName(CORE).tarball).href,
-              "@brainervirus/workit-cursor": pathToFileURL(byName(CURSOR).tarball).href,
-              "@brainervirus/workit-opencode": pathToFileURL(byName(OPENCODE).tarball).href,
+              "@brainervirus/workit-core": tarballSpec(install, byName(CORE)),
+              "@brainervirus/workit-cursor": tarballSpec(install, byName(CURSOR)),
+              "@brainervirus/workit-opencode": tarballSpec(install, byName(OPENCODE)),
+              "@brainervirus/workit-mcp": tarballSpec(install, byName(MCP)),
             },
           },
           null,

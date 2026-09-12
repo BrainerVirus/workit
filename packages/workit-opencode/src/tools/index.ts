@@ -1,30 +1,8 @@
-import { createRepoTools } from "./repo";
-import { WorkflowStateStore } from "@brainervirus/workit-core/src/state";
-import { createSddTools } from "./sdd";
-import { createHandoffTools, type HandoffClient } from "./handoff";
-import { createYouTrackTools } from "./youtrack";
-import { createPresentTools } from "./present";
-import { createFlowTools, type SessionLookup } from "./flow";
-import { createDocsRepoTools } from "./docs-repo";
-import { createTemplateTools } from "./templates";
-import { createRuleTools } from "./rules";
-import { createDoctorTool } from "./doctor";
-import { HostReceiptStore } from "@brainervirus/workit-core/src/core/flow-state";
+import { createWorkitTools } from "./workit";
 
-export const createTools = (
-  client: HandoffClient,
-  state: WorkflowStateStore,
-  sdkClient?: SessionLookup,
-  receipts: HostReceiptStore = new HostReceiptStore(),
-) => ({
-  ...createRepoTools(),
-  ...createSddTools(state, sdkClient),
-  ...createHandoffTools(client, state),
-  ...createYouTrackTools(),
-  ...createPresentTools(),
-  ...createFlowTools(receipts, sdkClient),
-  ...createDocsRepoTools(),
-  ...createTemplateTools(),
-  ...createRuleTools(),
-  ...createDoctorTool(),
-});
+export { createWorkitTools, NativeReceiptStore, observeQuestion } from "./workit";
+export type { WorkitToolOptions } from "./workit";
+
+/** OpenCode's native surface includes the eight core families and host-owned optional actions. */
+export const createTools = (options: import("./workit").WorkitToolOptions = {}) =>
+  createWorkitTools(options);

@@ -18,9 +18,12 @@ module.exports = {
     // AR-16: bumpers only — selective publishing is owned by publish-changed
     // below, so identical-content packages stop reaching the registry.
     ["@semantic-release/npm", { pkgRoot: "packages/workit-core", npmPublish: false }],
+    ["@semantic-release/npm", { pkgRoot: "packages/workit-mcp", npmPublish: false }],
+    ["@semantic-release/npm", { pkgRoot: "packages/workit-cli", npmPublish: false }],
     ["@semantic-release/npm", { pkgRoot: "packages/workit-opencode", npmPublish: false }],
     ["@semantic-release/npm", { pkgRoot: "packages/workit-cursor", npmPublish: false }],
-    ["@semantic-release/npm", { pkgRoot: "packages/workit-cli", npmPublish: false }],
+    ["@semantic-release/npm", { pkgRoot: "packages/workit-codex", npmPublish: false }],
+    ["@semantic-release/npm", { pkgRoot: "packages/workit-pi", npmPublish: false }],
     // AR-02/RR-01: prepare-time rewrite AFTER version bumps (unchanged).
     ["@semantic-release/exec", {
       prepareCmd: "bun packages/workit-core/scripts/rewrite-workspace-deps.ts",

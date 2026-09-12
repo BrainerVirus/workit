@@ -18,7 +18,7 @@ import {
   detectLegacyDocs,
   migrateLegacyDocs,
   MIGRATION_CHOICES,
-} from "../../packages/workit-core/src/core/docs-migration";
+} from "@/packages/workit-core/src/core/docs-migration";
 
 const posix = (p: string) => p.split(path.sep).join("/");
 

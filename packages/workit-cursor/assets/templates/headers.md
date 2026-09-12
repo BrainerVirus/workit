@@ -1,3 +1,0 @@
-## Adjunto capturas
-
-## Archivos adjuntos

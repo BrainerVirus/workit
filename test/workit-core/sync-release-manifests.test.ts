@@ -2,15 +2,19 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { syncManifests } from "../../packages/workit-core/scripts/sync-release-manifests";
+import { syncManifests } from "@/packages/workit-core/scripts/sync-release-manifests";
 
 const manifestPaths = [
   "package.json",
   "packages/workit-core/package.json",
+  "packages/workit-mcp/package.json",
+  "packages/workit-cli/package.json",
   "packages/workit-opencode/package.json",
   "packages/workit-cursor/package.json",
-  "packages/workit-cli/package.json",
+  "packages/workit-codex/package.json",
+  "packages/workit-pi/package.json",
   "packages/workit-cursor/.cursor-plugin/plugin.json",
+  "packages/workit-codex/.codex-plugin/plugin.json",
 ];
 
 const fixtureRoot = (versions: Record<string, string>, name = "workflow-toolkit") => {
@@ -67,9 +71,13 @@ describe("syncManifests", () => {
       expect(result.version).toBe("0.8.9");
       expect(result.changed).toEqual([
         "packages/workit-core/package.json",
+        "packages/workit-mcp/package.json",
         "packages/workit-opencode/package.json",
         "packages/workit-cursor/package.json",
+        "packages/workit-codex/package.json",
+        "packages/workit-pi/package.json",
         "packages/workit-cursor/.cursor-plugin/plugin.json",
+        "packages/workit-codex/.codex-plugin/plugin.json",
       ]);
       expect(JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")).version).toBe(
         "0.8.9",

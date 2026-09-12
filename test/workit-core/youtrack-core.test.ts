@@ -5,6 +5,7 @@ import path from "node:path";
 import {
   buildDraft,
   context,
+  fetchYouTrackIssueBody,
   logTime,
   parseDuration,
   parseIssueRef,
@@ -12,7 +13,7 @@ import {
   verifyYouTrackToken,
   youTrackApi,
   type YouTrackScripts,
-} from "../../packages/workit-core/src/core/youtrack";
+} from "@/packages/workit-core/src/core/youtrack";
 
 const cfg = (overrides: Record<string, unknown> = {}) => ({
   baseUrl: "https://yt.example.test",
@@ -349,4 +350,89 @@ test("no test may reach the real YouTrack API (write-guard structural scan)", ()
     }
   }
   expect(offenders).toEqual([]);
+});
+
+test("fetchYouTrackIssueBody returns summary plus description plus state on stubbed fetch", async () => {
+  const seen: string[] = [];
+  const result = await fetchYouTrackIssueBody(
+    "TST-123",
+    () => ({ token: "t", base: "https://yt.example.test" }),
+    (async (url: string) => {
+      seen.push(url);
+      return {
+        status: 0,
+        stdout: JSON.stringify({
+          idReadable: "TST-123",
+          summary: "Cambia nombre",
+          description: "Detalle de la issue",
+          customFields: [{ name: "State", value: { name: "Open" } }],
+        }),
+        stderr: "",
+      };
+    }) as never,
+  );
+  expect(seen[0]).toContain(
+    "/api/issues/TST-123?fields=idReadable,summary,description,customFields(name,value(name))",
+  );
+  expect(result).toEqual({
+    data: {
+      idReadable: "TST-123",
+      summary: "Cambia nombre",
+      description: "Detalle de la issue",
+      state: "Open",
+    },
+  });
+  const noState = await fetchYouTrackIssueBody(
+    "TST-123",
+    () => ({ token: "t", base: "https://yt.example.test" }),
+    (async () => ({
+      status: 0,
+      stdout: JSON.stringify({ idReadable: "TST-123", summary: "S", customFields: [] }),
+      stderr: "",
+    })) as never,
+  );
+  expect(noState).toEqual({
+    data: { idReadable: "TST-123", summary: "S", description: null, state: null },
+  });
+  const malformedState = await fetchYouTrackIssueBody(
+    "TST-123",
+    () => ({ token: "t", base: "https://yt.example.test" }),
+    (async () => ({
+      status: 0,
+      stdout: JSON.stringify({
+        idReadable: "TST-123",
+        summary: "S",
+        customFields: [{ name: "State", value: { $type: "StateBundleElement" } }],
+      }),
+      stderr: "",
+    })) as never,
+  );
+  expect(malformedState).toEqual({
+    data: { idReadable: "TST-123", summary: "S", description: null, state: null },
+  });
+});
+
+test("fetchYouTrackIssueBody degrades on creds failure, fails closed on request failure", async () => {
+  const credsDown = await fetchYouTrackIssueBody(
+    "TST-123",
+    () => ({ error: "no token" }),
+    (async () => {
+      throw new Error("must not fetch without creds");
+    }) as never,
+  );
+  expect(credsDown).toEqual({ error: "no token", kind: "creds" });
+
+  const requestDown = await fetchYouTrackIssueBody(
+    "TST-123",
+    () => ({ token: "t", base: "https://yt.example.test" }),
+    (async () => ({ status: 1, stdout: "", stderr: "boom" })) as never,
+  );
+  expect(requestDown).toEqual({ error: "boom", kind: "request" });
+
+  const badJson = await fetchYouTrackIssueBody(
+    "TST-123",
+    () => ({ token: "t", base: "https://yt.example.test" }),
+    (async () => ({ status: 0, stdout: "not json", stderr: "" })) as never,
+  );
+  expect(badJson).toEqual({ error: "invalid JSON from YouTrack API", kind: "request" });
 });

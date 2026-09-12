@@ -1,16 +1,41 @@
 import { afterAll, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import {
+  checkGithubIdentity,
+  githubHostFromRemote,
+  githubIdentityFinding,
   runDoctor,
   type DoctorCheck,
   type DoctorReport,
-} from "../../packages/workit-core/src/core/doctor";
-import { readVcsConfig } from "../../packages/workit-core/src/core/vcs-config";
-import { readSetupState } from "../../packages/workit-core/src/core/setup-state";
-import { readWorkspacesResult } from "../../packages/workit-core/src/core/workspaces";
-import { binDirWithRuntimes, makeDoctorFixture } from "../shared/helpers/doctor-fixture";
+} from "@/packages/workit-core/src/core/doctor";
+import type { SessionObservation } from "@/packages/workit-core/src/core/cutover";
+import { SUPPORT_MATRIX } from "@/packages/workit-core/src/core/support-matrix";
+import { readVcsConfig } from "@/packages/workit-core/src/core/vcs-config";
+import { readSetupState } from "@/packages/workit-core/src/core/setup-state";
+import { readWorkspacesResult } from "@/packages/workit-core/src/core/workspaces";
+import { binDirWithRuntimes, makeDoctorFixture } from "@/test/shared/helpers/doctor-fixture";
+import {
+  applyCutover,
+  previewCutover,
+  writeGenerationState,
+} from "@/packages/workit-core/src/core/cutover";
+import { WORKIT_METHOD_SKILLS } from "@/packages/workit-core/src/core/skill-manifests";
+import {
+  installV1Skills,
+  makeCutoverFixture,
+  removeLegacySkills,
+} from "@/test/shared/helpers/cutover-fixture";
 
 // The offline doctor engine (DG-07/DG-08, CA-09): one fixture tree, one broken
 // surface at a time, assert the typed check + nonzero exitCode, then repair the
@@ -21,7 +46,9 @@ const check = (report: DoctorReport, id: string): DoctorCheck =>
 
 const fixture = makeDoctorFixture();
 
-const run = (overrides: { env?: NodeJS.ProcessEnv; cwd?: string } = {}) =>
+const run = (
+  overrides: { env?: NodeJS.ProcessEnv; cwd?: string; sessions?: SessionObservation[] } = {},
+) =>
   runDoctor({
     host: "cli",
     home: fixture.home,
@@ -30,6 +57,7 @@ const run = (overrides: { env?: NodeJS.ProcessEnv; cwd?: string } = {}) =>
     dev: fixture.dev,
     cwd: overrides.cwd ?? fixture.cwd,
     env: overrides.env,
+    sessions: overrides.sessions,
   });
 
 // Installer mode (DG-09/AR-11): the installers enforce an explicit required set
@@ -152,6 +180,44 @@ test("healthy fixture: canonical install yields no stale_install finding", () =>
   expect(stale.detail).not.toMatch(/stale/i);
 });
 
+test("reports stale_install when the installed preToolUse matcher drifts from canonical", () => {
+  const hooksFile = path.join(fixture.pluginDir, "hooks", "hooks-cursor.json");
+  const originalHooks = readFileSync(hooksFile, "utf8");
+  writeConfig(
+    hooksFile,
+    JSON.stringify({
+      version: 1,
+      hooks: {
+        sessionStart: [
+          {
+            command:
+              "npx -y --prefer-online --package=@brainervirus/workit-cursor@latest workit-cursor-session-start",
+          },
+        ],
+        preToolUse: [
+          {
+            command:
+              "npx -y --prefer-online --package=@brainervirus/workit-cursor@latest workit-cursor-hook",
+            matcher: "Write|Edit|Delete|Shell",
+            failClosed: true,
+          },
+        ],
+      },
+    }),
+  );
+  try {
+    const report = run();
+    expect(report.exitCode).not.toBe(0);
+    const stale = check(report, "stale_install");
+    expect(stale.status).toBe("fail");
+    expect(stale.detail).toContain("preToolUse");
+    expect(stale.fix).toBeTruthy();
+  } finally {
+    writeConfig(hooksFile, originalHooks);
+  }
+  expect(check(run(), "stale_install").status).toBe("pass");
+});
+
 test("canonical @latest install with an old plugin package.json version is not stale", () => {
   // CA-01/CA-04: a canonical `@latest` install resolves fresh at launch, so the
   // installed package.json version is metadata — never a `stale_install` fail.
@@ -174,9 +240,7 @@ test("offline flag reflects the registry probe: false for local-dist installs, t
   const pluginPkg = path.join(fixture.pluginDir, "package.json");
   const hooksFile = path.join(fixture.pluginDir, "hooks", "hooks-cursor.json");
   const originalHooks = readFileSync(hooksFile, "utf8");
-  writeConfig(pluginPkg, JSON.stringify({ name: "@brainervirus/workit-cursor", version: "0.4.0" }));
-  // A local-dist install (node hook, no mcp.json selector) is the only shape
-  // that consults the registry; the version seam keeps the probe spawn-free.
+  writeConfig(pluginPkg, JSON.stringify({ name: "@brainervirus/workit-cursor", version: "1.0.0" }));
   rmSync(path.join(fixture.pluginDir, "mcp.json"), { force: true });
   writeConfig(
     hooksFile,
@@ -199,7 +263,7 @@ test("offline flag reflects the registry probe: false for local-dist installs, t
       stateDir: fixture.stateDir,
       dev: fixture.dev,
       cwd: fixture.cwd,
-      env: { ...process.env, WORKIT_DOCTOR_STALE_REGISTRY_VERSION: "0.4.0" },
+      env: { ...process.env, WORKIT_DOCTOR_STALE_REGISTRY_VERSION: "1.0.0" },
     });
     expect(report.offline).toBe(false);
     expect(check(report, "stale_install").status).toBe("pass");
@@ -239,13 +303,13 @@ test("local-dist install behind the published runtime is stale_install fail when
       stateDir: fixture.stateDir,
       dev: fixture.dev,
       cwd: fixture.cwd,
-      env: { ...process.env, WORKIT_DOCTOR_STALE_REGISTRY_VERSION: "0.5.0" },
+      env: { ...process.env, WORKIT_DOCTOR_STALE_REGISTRY_VERSION: "1.0.0" },
     });
     expect(report.exitCode).not.toBe(0);
     const stale = check(report, "stale_install");
     expect(stale.status).toBe("fail");
     expect(stale.detail).toContain("0.4.0");
-    expect(stale.detail).toContain("0.5.0");
+    expect(stale.detail).toContain("1.0.0");
     expect(stale.fix).toBeTruthy();
   } finally {
     rmSync(pluginPkg, { force: true });
@@ -258,9 +322,7 @@ test("registry-unreachable staleness comparison yields registry_unreachable, not
   const pluginPkg = path.join(fixture.pluginDir, "package.json");
   const hooksFile = path.join(fixture.pluginDir, "hooks", "hooks-cursor.json");
   const originalHooks = readFileSync(hooksFile, "utf8");
-  writeConfig(pluginPkg, JSON.stringify({ name: "@brainervirus/workit-cursor", version: "0.4.0" }));
-  // A local-dist install (node hook, no mcp.json selector) is the only path
-  // that consults the registry; a canonical @latest install never probes.
+  writeConfig(pluginPkg, JSON.stringify({ name: "@brainervirus/workit-cursor", version: "1.0.0" }));
   rmSync(path.join(fixture.pluginDir, "mcp.json"), { force: true });
   writeConfig(
     hooksFile,
@@ -458,7 +520,10 @@ test("detects an out-of-matrix opencode SDK pin as mixed versions", () => {
 });
 
 test("detects missing assets and clears once restored", () => {
-  const asset = path.join(fixture.dev, "packages/workit-opencode/assets/commands/wk-init.md");
+  const asset = path.join(
+    fixture.dev,
+    "packages/workit-opencode/assets/skills/workit-plan/SKILL.md",
+  );
   rmSync(asset, { force: true });
   try {
     const report = run();
@@ -466,7 +531,7 @@ test("detects missing assets and clears once restored", () => {
     expect(check(report, "assets").status).toBe("fail");
     expect(check(report, "assets").fix).toBeTruthy();
   } finally {
-    writeConfig(asset, "# wk-init\n");
+    writeConfig(asset, "# workit-plan\n");
   }
   expect(check(run(), "assets").status).toBe("pass");
 });
@@ -1116,12 +1181,15 @@ const expectInstallerFailure = (id: string, fixKeyword: string) => {
 };
 
 test("installer fails when a selected-host asset is missing", () => {
-  const asset = path.join(fixture.dev, "packages/workit-opencode/assets/commands/wk-init.md");
+  const asset = path.join(
+    fixture.dev,
+    "packages/workit-opencode/assets/skills/workit-plan/SKILL.md",
+  );
   rmSync(asset, { force: true });
   try {
     expectInstallerFailure("assets", "Reinstall or rebuild");
   } finally {
-    writeConfig(asset, "# wk-init\n");
+    writeConfig(asset, "# workit-plan\n");
   }
   expect(check(runInstaller(), "assets").status).toBe("pass");
 });
@@ -1220,6 +1288,110 @@ test("installer downgrades optional parity checks to warnings, not failures", ()
   expect(check(runInstaller(), "versions").status).toBe("pass");
 });
 
+test("reports mixed_generation when legacy and v1 cursor skills coexist", () => {
+  mkdirSync(path.join(fixture.pluginDir, "skills", "wk-init"), { recursive: true });
+  writeFileSync(path.join(fixture.pluginDir, "skills", "wk-init", "SKILL.md"), "# legacy\n");
+  installV1Skills(fixture.pluginDir);
+  try {
+    const report = run();
+    const mixed = check(report, "mixed_generation");
+    expect(mixed.status).toBe("warn");
+    expect(mixed.detail).toContain("cursor");
+  } finally {
+    for (const skill of WORKIT_METHOD_SKILLS) {
+      rmSync(path.join(fixture.pluginDir, "skills", skill), { recursive: true, force: true });
+    }
+  }
+  expect(check(run(), "mixed_generation").status).toBe("pass");
+});
+
+test("reports legacy_component when v1 target still has legacy host assets", () => {
+  writeGenerationState(fixture.configDir, { target: "v1" });
+  try {
+    const report = run();
+    const legacy = check(report, "legacy_component");
+    expect(legacy.status).toBe("fail");
+    expect(legacy.detail).toMatch(/legacy components remain/i);
+  } finally {
+    writeGenerationState(fixture.configDir, { target: "legacy" });
+  }
+  expect(check(run(), "legacy_component").status).toBe("pass");
+});
+
+test("reports missing_v1_component when v1 target lacks v1 host assets", () => {
+  writeGenerationState(fixture.configDir, { target: "v1" });
+  try {
+    const report = run();
+    const missing = check(report, "missing_v1_component");
+    expect(missing.status).toBe("fail");
+    expect(missing.detail).toMatch(/missing v1 components/i);
+  } finally {
+    writeGenerationState(fixture.configDir, { target: "legacy" });
+  }
+  expect(check(run(), "missing_v1_component").status).toBe("pass");
+});
+
+test("reports active_old_session when active or unknown sessions are observed", () => {
+  const report = run({
+    sessions: [
+      { host: "opencode", handle: "ses_live", state: "active" },
+      { host: "cursor", handle: "ses_x", state: "unknown" },
+    ],
+  });
+  const session = check(report, "active_old_session");
+  expect(session.status).toBe("warn");
+  expect(session.detail).toContain("ses_live");
+  expect(check(run(), "active_old_session").status).toBe("pass");
+});
+
+test("reports managed_content_conflict when managed bytes drift from cutover receipt", () => {
+  const fx = makeCutoverFixture();
+  try {
+    removeLegacySkills(fx.pluginDir);
+    installV1Skills(fx.pluginDir);
+    const paths = {
+      home: fx.home,
+      configDir: fx.configDir,
+      stateDir: fx.stateDir,
+      dev: fx.dev,
+      workspace: fx.workspace,
+      opencodeConfig: fx.opencodeConfig,
+      cursorSettings: fx.cursorSettings,
+      cursorMcp: fx.cursorMcp,
+      cursorPluginDir: fx.pluginDir,
+      sessions: [{ host: "opencode" as const, handle: "ses_old", state: "stopped" as const }],
+    };
+    const applied = applyCutover(
+      previewCutover(paths, ["cursor"]),
+      {
+        approve: true,
+        hosts: ["cursor"],
+        resolutions: { legacyWorkflowMode: "fresh-v1-task", "branchPolicy.allowed": "feature/*" },
+      },
+      paths,
+    );
+    expect(applied.ok).toBe(true);
+    writeConfig(fx.cursorMcp, readFileSync(fx.cursorMcp, "utf8") + "\n");
+    const report = runDoctor({
+      host: "cli",
+      home: fx.home,
+      configDir: fx.configDir,
+      stateDir: fx.stateDir,
+      dev: fx.dev,
+      cwd: fx.workspace,
+      opencodeConfig: fx.opencodeConfig,
+      cursorSettings: fx.cursorSettings,
+      cursorMcp: fx.cursorMcp,
+      cursorPluginDir: fx.pluginDir,
+    });
+    const conflict = check(report, "managed_content_conflict");
+    expect(conflict.status).toBe("fail");
+    expect(conflict.detail).toMatch(/drifted since cutover/i);
+  } finally {
+    fx.cleanup();
+  }
+});
+
 test(
   "AR-14: negative fixtures never leak raw git usage/fatal dumps into the suite output",
   () => {
@@ -1240,3 +1412,95 @@ test(
   },
   { timeout: 300_000 },
 );
+
+test("codex pin passes when absent, warns on drift, passes on match", () => {
+  const emptyBin = path.join(fixture.root, "codex-empty-bin");
+  mkdirSync(emptyBin, { recursive: true });
+  expect(check(run({ env: { ...process.env, PATH: emptyBin } }), "codex_pin").status).toBe("pass");
+  // Stub executables only run on POSIX; Windows asserts the absent case above.
+  if (process.platform === "win32") return;
+  const bin = path.join(fixture.root, "codex-stub-bin");
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(
+    path.join(bin, "codex"),
+    '#!/usr/bin/env bash\necho "codex-cli ${CODEX_STUB_VERSION:-0.154.0}"\n',
+    { mode: 0o755 },
+  );
+  const drifted = run({
+    env: { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}` },
+  });
+  expect(check(drifted, "codex_pin").status).toBe("warn");
+  expect(check(drifted, "codex_pin").detail).toContain(SUPPORT_MATRIX.codex.cli);
+  expect(check(drifted, "codex_pin").fix).toBeTruthy();
+  const matched = run({
+    env: {
+      ...process.env,
+      PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`,
+      CODEX_STUB_VERSION: SUPPORT_MATRIX.codex.cli,
+    },
+  });
+  expect(check(matched, "codex_pin").status).toBe("pass");
+});
+
+// github_identity: divergent authenticated identities warn naming logins only;
+// agreement, empty surfaces, and missing remotes pass without any probing.
+const identityProbes = (overrides: Record<string, () => string | null> = {}) => ({
+  origin: () => "git@github.com:owner/repo.git",
+  ghLogin: () => "personal",
+  tokenLogin: () => "work",
+  sshLogin: () => "personal",
+  ...overrides,
+});
+
+const identityConfigDir = (): string => {
+  const dir = mkdtempSync(path.join(tmpdir(), "workit-doctor-identity-"));
+  writeFileSync(
+    path.join(dir, "vcs.json"),
+    JSON.stringify({ provider: "github", github: { host: "github.com" } }),
+  );
+  return dir;
+};
+
+test("github_identity warns on divergent surfaces without leaking secrets", () => {
+  const found = githubIdentityFinding([
+    { surface: "gh CLI", login: "personal" },
+    { surface: "token file /cfg/github.token", login: "work" },
+    { surface: "SSH", login: "personal" },
+  ]);
+  expect(found).toMatchObject({ id: "github_identity", status: "warn" });
+  expect(found.detail).toContain('"personal"');
+  expect(found.detail).toContain('"work"');
+  expect(found.detail).not.toContain("secrettoken");
+  expect(found.fix).toContain("gh auth");
+  expect(found.fix).not.toContain('"personal"');
+  expect(found.fix).not.toContain('"work"');
+});
+
+test("github_identity passes on agreement, emptiness, and unparseable remotes", () => {
+  expect(githubIdentityFinding([{ surface: "gh CLI", login: "a" }]).status).toBe("pass");
+  expect(githubIdentityFinding([]).status).toBe("pass");
+  expect(githubHostFromRemote("git@github.com:o/r.git")).toBe("github.com");
+  expect(githubHostFromRemote("https://ghe.example.com/o/r")).toBe("ghe.example.com");
+  expect(githubHostFromRemote("not a remote")).toBe(null);
+});
+
+test("checkGithubIdentity passes without a remote and warns on stubbed divergence", () => {
+  const dir = identityConfigDir();
+  try {
+    const noRemote = checkGithubIdentity(
+      { cwd: dir, configDir: dir, env: {} },
+      { ...identityProbes(), origin: () => null },
+    );
+    expect(noRemote).toMatchObject({ id: "github_identity", status: "pass" });
+    const divergent = checkGithubIdentity({ cwd: dir, configDir: dir, env: {} }, identityProbes());
+    expect(divergent.status).toBe("warn");
+    expect(divergent.detail).toContain("token file");
+    const agreed = checkGithubIdentity(
+      { cwd: dir, configDir: dir, env: {} },
+      { ...identityProbes(), tokenLogin: () => "personal" },
+    );
+    expect(agreed.status).toBe("pass");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

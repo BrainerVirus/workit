@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { resolveWorkspaceRoot } from "./scripts";
 
 const CATEGORIES = ["Added", "Changed", "Deprecated", "Removed", "Fixed", "Security"];
@@ -22,6 +23,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 `;
+
+const digestBytes = (value: Buffer | string): string =>
+  createHash("sha256").update(value).digest("hex");
+
+type ChangelogSource = { exists: boolean; bytes: Buffer; text: string } | { error: string };
+
+const readChangelogSource = (target: string): ChangelogSource => {
+  if (!fs.existsSync(target)) {
+    const bytes = Buffer.from(SKELETON, "utf8");
+    return { exists: false, bytes, text: SKELETON };
+  }
+  try {
+    const bytes = fs.readFileSync(target);
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    return { exists: true, bytes, text };
+  } catch {
+    return { error: "changelog file must contain valid UTF-8" };
+  }
+};
 
 function normalizeBullet(text: string): string {
   text = text.trim();
@@ -184,13 +204,6 @@ function mergeSections(
   return [output, counts, added, null];
 }
 
-function ensureFile(target: string): string {
-  if (fs.existsSync(target)) return fs.readFileSync(target, "utf8");
-  fs.mkdirSync(path.dirname(target), { recursive: true });
-  fs.writeFileSync(target, SKELETON, "utf8");
-  return SKELETON;
-}
-
 function hasUnreleasedHeading(text: string): boolean {
   return text.split("\n").some((line) => UNRELEASED_RE.test(line.replace(/\n$/, "")));
 }
@@ -200,7 +213,21 @@ function applyChangelog(
   entries: Record<string, string[]>,
   normalizeOnly: boolean,
 ): Record<string, any> {
-  let text = ensureFile(target);
+  const source = readChangelogSource(target);
+  if ("error" in source) return { error: source.error };
+  const rendered = renderChangelog(source.text, entries, normalizeOnly);
+  if ("error" in rendered) return { error: rendered.error };
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.writeFileSync(target, rendered.text, "utf8");
+  return { ...rendered.result, path: target };
+}
+
+function renderChangelog(
+  source: string,
+  entries: Record<string, string[]>,
+  normalizeOnly: boolean,
+): { text: string; result: Record<string, any> } | { error: string } {
+  let text = source;
   if (!hasUnreleasedHeading(text)) {
     const lines = text.split(/(?<=\n)/);
     let insertAt = lines.length;
@@ -220,13 +247,65 @@ function applyChangelog(
   if (error) return { error };
   // before already includes "## [Unreleased]\n"
   const out = (before.endsWith("\n") ? before : before + "\n") + newBody + after;
-  fs.writeFileSync(target, out, "utf8");
+  return {
+    text: out,
+    result: { ok: true, normalize_only: normalizeOnly, added: addedCounts, categories: counts },
+  };
+}
+
+const changelogTarget = (
+  workspaceRoot: string,
+  changelogPath: string,
+): { cwd: string; target: string } | { error: string } => {
+  try {
+    const cwd = fs.realpathSync(resolveWorkspaceRoot(workspaceRoot));
+    const target = path.resolve(cwd, changelogPath || "CHANGELOG.md");
+    if (target !== cwd && !target.startsWith(cwd + path.sep))
+      return { error: "changelog path must be inside workspace_root" };
+    let ancestor = target;
+    while (!fs.existsSync(ancestor)) ancestor = path.dirname(ancestor);
+    const canonicalAncestor = fs.realpathSync(ancestor);
+    if (canonicalAncestor !== cwd && !canonicalAncestor.startsWith(cwd + path.sep))
+      return { error: "changelog path must be inside workspace_root" };
+    return { cwd, target: fs.existsSync(target) ? fs.realpathSync(target) : target };
+  } catch {
+    return { error: "changelog path must be inside workspace_root" };
+  }
+};
+
+export function changelogApplyPreview({
+  entries,
+  path: changelogPath,
+  normalize_only,
+  workspace_root,
+}: {
+  entries?: unknown;
+  path?: string;
+  normalize_only?: boolean;
+  workspace_root: string;
+}): Record<string, any> {
+  const normalized = normalize_only
+    ? { data: {} as Record<string, string[]> }
+    : normalizeEntries(entries);
+  if ("error" in normalized) return { error: normalized.error };
+  if (!normalize_only && Object.keys(normalized.data).length === 0)
+    return { error: "entries required unless normalize_only" };
+  const location = changelogTarget(workspace_root, changelogPath || "CHANGELOG.md");
+  if ("error" in location) return location;
+  const source = readChangelogSource(location.target);
+  if ("error" in source) return source;
+  const rendered = renderChangelog(source.text, normalized.data, Boolean(normalize_only));
+  if ("error" in rendered) return rendered;
   return {
     ok: true,
-    path: target,
-    normalize_only: normalizeOnly,
-    added: addedCounts,
-    categories: counts,
+    path: location.target,
+    entries: normalized.data,
+    normalize_only: Boolean(normalize_only),
+    beforeDigest: digestBytes(source.bytes),
+    beforeExists: source.exists,
+    afterDigest: digestBytes(Buffer.from(rendered.text, "utf8")),
+    after: rendered.text,
+    ...rendered.result,
   };
 }
 
@@ -280,11 +359,9 @@ export function changelogApply({
   }
 
   const rel = changelogPath || "CHANGELOG.md";
-  const target = path.resolve(cwd, rel);
-  const root = path.resolve(cwd);
-  if (target !== root && !target.startsWith(root + path.sep)) {
-    return { error: "changelog path must be inside workspace_root" };
-  }
+  const location = changelogTarget(cwd, rel);
+  if ("error" in location) return location;
+  const target = location.target;
 
   try {
     return applyChangelog(target, normalized.data, Boolean(normalize_only));

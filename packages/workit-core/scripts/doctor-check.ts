@@ -10,7 +10,9 @@
 // failures are left to the post-install gate.
 import { runDoctor } from "../src/core/doctor";
 
-const host = process.argv[2] === "cursor" ? "cursor" : "opencode";
+const hostArg = process.argv[2];
+const host =
+  hostArg === "cursor" ? "cursor" : hostArg === "cli" ? "cli" : "opencode";
 const staleOnly = process.argv.includes("--stale");
 const report = runDoctor({ host, installer: true });
 

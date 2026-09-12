@@ -1,0 +1,46 @@
+{
+  "name": "@brainervirus/workit-mcp",
+  "version": "1.0.0",
+  "private": false,
+  "description": "Workit shared MCP transport for Cursor and Codex",
+  "keywords": [
+    "agent",
+    "codex",
+    "cursor",
+    "mcp",
+    "workflow"
+  ],
+  "license": "MIT",
+  "bin": {
+    "workit-mcp": "./dist/index.js"
+  },
+  "files": [
+    "dist/",
+    "src/",
+    "scripts/",
+    "package.json",
+    "README.md",
+    "LICENSE"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "exports": {
+    ".": "./dist/index.js",
+    "./src/*.ts": "./src/*.ts",
+    "./src/*": "./src/*.ts"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "bun scripts/build.ts"
+  },
+  "dependencies": {
+    "@brainervirus/workit-core": "workspace:*",
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "zod": "4.5.4"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

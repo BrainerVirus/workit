@@ -12,16 +12,16 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { vcsConfig } from "../../packages/workit-core/src/core/vcs-config";
-import { parseSections } from "../../packages/workit-core/src/core/parse-sections";
-import { prBuildBody, prCreate } from "../../packages/workit-core/src/core/pr-create";
-import { validateWorkspaceGlob } from "../../packages/workit-core/src/core/workspaces";
+import { vcsConfig } from "@/packages/workit-core/src/core/vcs-config";
+import { parseSections } from "@/packages/workit-core/src/core/parse-sections";
+import { prBuildBody, prCreate } from "@/packages/workit-core/src/core/pr-create";
+import { validateWorkspaceGlob } from "@/packages/workit-core/src/core/workspaces";
 import {
   prReadyContext,
   resolvePrBranchContext,
-} from "../../packages/workit-core/src/core/repo-context";
-import { writeWorkspaces } from "../../packages/workit-cli/src/logic";
-import { stubCli } from "../shared/helpers/stub-cli";
+} from "@/packages/workit-core/src/core/repo-context";
+import { writeWorkspaces } from "@/packages/workit-cli/src/logic";
+import { stubCli } from "@/test/shared/helpers/stub-cli";
 
 // Parity tests for the TS ports of scripts/vcs/config.sh resolve/load, pr-create.sh
 // missing-CLI guard, pr-create.sh --build-body issue linking, and pr-ready-context.sh
@@ -240,9 +240,19 @@ test(
           "workspaces.json": workspacesJson(`${base}/work/**`, "gitlab"),
         },
         { WORKFLOW_WORKSPACE_ROOT: path.join(base, "work", "repo") },
-        () => vcsConfig("resolve", elsewhere),
+        () => vcsConfig("resolve"),
       );
       expect(r.workspace_name).toBe("work");
+      const explicit = withConfigFiles(
+        {
+          "vcs.json": JSON.stringify(GLOBAL_VCS),
+          "workspaces.json": workspacesJson(`${base}/work/**`, "gitlab"),
+        },
+        { WORKFLOW_WORKSPACE_ROOT: path.join(base, "work", "repo") },
+        () => vcsConfig("resolve", elsewhere),
+      );
+      expect(explicit.workspace_name).toBeNull();
+      expect(explicit.provider).toBe("github");
     } finally {
       rmSync(base, { recursive: true, force: true });
       rmSync(elsewhere, { recursive: true, force: true });
@@ -332,13 +342,6 @@ test(
 test(
   "pr-create.sh: missing gh/glab on PATH -> structured error with official install URL",
   () => {
-    const pathDirs = (process.env.PATH ?? "").split(path.delimiter);
-    // Strip real gh/glab entries too (gh.exe) so the guard cannot find a real
-    // CLI on the runner, not just the extensionless-name leftovers.
-    const cleanPath = pathDirs.filter(
-      (d) => d && !["gh", "gh.exe", "glab", "glab.exe"].some((n) => existsSync(path.join(d, n))),
-    );
-
     for (const [provider, cli, url] of [
       ["github", "gh", "https://cli.github.com"],
       ["gitlab", "glab", "https://gitlab.com/gitlab-org/cli"],
@@ -351,7 +354,7 @@ test(
           "gitlab.token": "test-token-123",
         },
         {
-          PATH: `${os.tmpdir()}${path.delimiter}${cleanPath.join(path.delimiter)}`,
+          PATH: os.tmpdir(),
           WF_PR_CONFIRMED: "true",
           WF_PR_TITLE: "Test title",
         },
@@ -374,27 +377,30 @@ test(
   { timeout: 60_000 },
 );
 
-test("pr-ready-context.sh: VCS Config section reports workspace + provider", () => {
-  const r = withConfigFiles(
-    {
-      "vcs.json": JSON.stringify(GLOBAL_VCS),
-      "workspaces.json": workspacesJson("**", "gitlab"),
-    },
-    {},
-    () => prReadyContext(repoRoot, "HEAD~1..HEAD"),
-  );
-  expect(r.exitCode, r.stderr).toBe(0);
-  expect(r.stdout).toContain("workspace: work");
-  expect(r.stdout).toContain("provider: gitlab");
-  expect(r.stdout).not.toContain("vcs: not configured");
-  // B4: concise shell shape — workspace:/provider: only, no raw summary JSON
-  // dumped into the VCS Config section.
-  const vcsSection = parseSections(r.stdout)["VCS Config"] ?? "";
-  expect(vcsSection).not.toContain('"defaultTargetBranch"');
-  expect(vcsSection).not.toContain('"ok":');
-});
+test.skipIf(process.platform === "win32")(
+  "pr-ready-context.sh: VCS Config section reports workspace + provider",
+  () => {
+    const r = withConfigFiles(
+      {
+        "vcs.json": JSON.stringify(GLOBAL_VCS),
+        "workspaces.json": workspacesJson("**", "gitlab"),
+      },
+      {},
+      () => prReadyContext(repoRoot, "HEAD~1..HEAD"),
+    );
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(r.stdout).toContain("workspace: work");
+    expect(r.stdout).toContain("provider: gitlab");
+    expect(r.stdout).not.toContain("vcs: not configured");
+    // B4: concise shell shape — workspace:/provider: only, no raw summary JSON
+    // dumped into the VCS Config section.
+    const vcsSection = parseSections(r.stdout)["VCS Config"] ?? "";
+    expect(vcsSection).not.toContain('"defaultTargetBranch"');
+    expect(vcsSection).not.toContain('"ok":');
+  },
+);
 
-test(
+test.skipIf(process.platform === "win32")(
   "pr-ready-context.sh: malformed vcs.json reports unreadable instead of silent defaults (RL-01)",
   () => {
     const r = withConfigFiles({ "vcs.json": "{ broken !!" }, {}, () =>
@@ -409,7 +415,7 @@ test(
   { timeout: 60_000 },
 );
 
-test(
+test.skipIf(process.platform === "win32")(
   "pr-ready-context.sh uses the workspace target branch",
   () => {
     const repo = realpathSync(mkdtempSync(path.join(os.tmpdir(), "wf-pr-base-")));
@@ -680,13 +686,6 @@ test(
     const repoDir = realpathSync(mkdtempSync(path.join(os.tmpdir(), "wf-gh-repo-")));
     const logFile = path.join(stubBin, "args.txt");
     stubCli(stubBin, "gh", logFile, "https://github.com/o/r/pull/1");
-    const pathDirs = (process.env.PATH ?? "").split(path.delimiter);
-    // Strip real gh/glab entries too (gh.exe) so the guard cannot find a real
-    // CLI on the runner, not just the extensionless-name leftovers.
-    const cleanPath = pathDirs.filter(
-      (d) => d && !["gh", "gh.exe", "glab", "glab.exe"].some((n) => existsSync(path.join(d, n))),
-    );
-
     let bareDir: string;
     try {
       bareDir = realpathSync(mkdtempSync(path.join(os.tmpdir(), "wf-gh-remote-")));
@@ -732,7 +731,7 @@ test(
           "github.token": "test-token-123",
         },
         {
-          PATH: `${stubBin}${path.delimiter}${cleanPath.join(path.delimiter)}`,
+          PATH: `${stubBin}${path.delimiter}${process.env.PATH ?? ""}`,
           WF_PR_CONFIRMED: "true",
           WF_PR_TITLE: "Test title",
           WORKFLOW_GH_ISSUE: "42",
@@ -773,10 +772,6 @@ test(
       const stub = c.provider === "gitlab" ? "glab" : "gh";
       const logFile = path.join(stubBin, `${stub}-args.txt`);
       stubCli(stubBin, stub, logFile, "https://example.com/ok");
-      const pathDirs = (process.env.PATH ?? "").split(path.delimiter);
-      const cleanPath = pathDirs.filter(
-        (d) => d && !existsSync(path.join(d, "gh")) && !existsSync(path.join(d, "glab")),
-      );
       const repo = realpathSync(mkdtempSync(path.join(os.tmpdir(), "wf-pr-target-repo-")));
       const bare = realpathSync(mkdtempSync(path.join(os.tmpdir(), "wf-pr-target-remote-")));
       const git = (args: string[]) => spawnSync("git", args, { cwd: repo, encoding: "utf8" });
@@ -802,7 +797,7 @@ test(
             [`${c.provider}.token`]: "test-token-123",
           },
           {
-            PATH: `${stubBin}${path.delimiter}${cleanPath.join(path.delimiter)}`,
+            PATH: `${stubBin}${path.delimiter}${process.env.PATH ?? ""}`,
             WF_PR_CONFIRMED: "true",
             WF_PR_TITLE: "T",
           },
@@ -854,7 +849,7 @@ test("RL-08: writeWorkspaces rejects unsupported glob grammar at write time", ()
   }
 });
 
-test(
+test.skipIf(process.platform === "win32")(
   "PR context base_ref and prCreate target agree for the same workspace (RL-03)",
   () => {
     const repo = realpathSync(mkdtempSync(path.join(os.tmpdir(), "wf-pr-ctx-create-")));

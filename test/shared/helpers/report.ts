@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { runDoctor, type DoctorOptions } from "../../../packages/workit-core/src/core/doctor";
+import { runDoctor, type DoctorOptions } from "@/packages/workit-core/src/core/doctor";
 import { binDirWithRuntimes, makeDoctorFixture } from "./doctor-fixture";
 import { isolatedEnv, packReleaseCandidate, type PackedPackage } from "./packages";
 

@@ -161,22 +161,42 @@ export function mergeCursorMcp(
   return { config: base, changed };
 }
 
-/** Swap the sessionStart hook command, preserving other hooks and fields. */
+/** Swap the sessionStart hook command and normalize the enforcement events to
+ *  canonical (missing or divergent preToolUse/beforeShellExecution entries are
+ *  rewritten so the installer heals exactly what the doctor flags). Other
+ *  hooks and fields are preserved. */
 export function mergeCursorHooks(
   hooks: unknown,
   sessionStartEntry: Record<string, unknown>,
 ): MergeResult<Record<string, unknown>> {
   const base: Record<string, unknown> = isRecord(hooks) ? { ...hooks } : { version: 1 };
   const hooksMap = isRecord(base.hooks) ? { ...(base.hooks as Record<string, unknown>) } : {};
+  const changed: string[] = [];
   const list = Array.isArray(hooksMap.sessionStart) ? hooksMap.sessionStart : [];
   const same =
     list.length === 1 &&
     isRecord(list[0]) &&
     JSON.stringify(list[0]) === JSON.stringify(sessionStartEntry);
-  if (same) return { config: base, changed: [] };
-  hooksMap.sessionStart = [sessionStartEntry];
+  if (!same) {
+    hooksMap.sessionStart = [sessionStartEntry];
+    changed.push("hooks.sessionStart");
+  }
+  for (const event of ["preToolUse", "beforeShellExecution"] as const) {
+    const canonical = canonicalHookEntry(event);
+    const current = hooksMap[event];
+    if (
+      !Array.isArray(current) ||
+      current.length !== 1 ||
+      !isRecord(current[0]) ||
+      JSON.stringify({ ...current[0], failClosed: true }) !==
+        JSON.stringify({ ...canonical, failClosed: true })
+    ) {
+      hooksMap[event] = [canonical];
+      changed.push(`hooks.${event}`);
+    }
+  }
   base.hooks = hooksMap;
-  return { config: base, changed: ["hooks.sessionStart"] };
+  return { config: base, changed };
 }
 
 /**
@@ -187,6 +207,51 @@ export function mergeCursorHooks(
  * the registry so a stale cached `latest` resolution is never reused.
  */
 export const CURSOR_RUNTIME_PACKAGE = "@brainervirus/workit-cursor@latest";
+
+/**
+ * Canonical Cursor hook launcher (single source of truth for the shipped
+ * hooks-cursor.json, the installer merge, and the doctor drift check).
+ */
+export const CURSOR_HOOK_RUN_COMMAND = `npx -y --prefer-online --package=${CURSOR_RUNTIME_PACKAGE} workit-cursor-hook`;
+
+/**
+ * preToolUse matcher covering every name the hook's write-tool guard treats
+ * as a write (see CURSOR_WRITE_TOOL_NAMES in the Cursor hook). A narrower
+ * installed matcher lets write tools bypass enforcement silently.
+ */
+export const CURSOR_PRETOOLUSE_MATCHER =
+  "Write|Edit|Delete|Shell|Remove|ApplyPatch|Apply_Patch|Patch|Rename|Mkdir|Mv|Cp|Touch";
+
+const canonicalHookEntry = (
+  event: "preToolUse" | "beforeShellExecution",
+): Record<string, unknown> =>
+  event === "preToolUse"
+    ? { command: CURSOR_HOOK_RUN_COMMAND, matcher: CURSOR_PRETOOLUSE_MATCHER, failClosed: true }
+    : { command: CURSOR_HOOK_RUN_COMMAND, failClosed: true };
+
+/**
+ * Drift between an installed hooks file and the canonical event entries.
+ * Only present-but-divergent entries count: absent events are filled in by
+ * the installer merge on the next run, and minimal installs predate them.
+ */
+export function cursorHookDrift(installed: unknown): string[] {
+  if (!isRecord(installed) || !isRecord(installed.hooks)) return ["hooks file is not a hook map"];
+  const hooks = installed.hooks as Record<string, unknown>;
+  const drift: string[] = [];
+  for (const event of ["preToolUse", "beforeShellExecution"] as const) {
+    const list = hooks[event];
+    if (list === undefined) continue;
+    const canonical = canonicalHookEntry(event);
+    const entry = Array.isArray(list) ? list[0] : undefined;
+    if (
+      !isRecord(entry) ||
+      entry.command !== canonical.command ||
+      (event === "preToolUse" && entry.matcher !== canonical.matcher)
+    )
+      drift.push(event);
+  }
+  return drift;
+}
 
 /**
  * Portable Cursor MCP server entry (CA-16/CA-17): launch the published package

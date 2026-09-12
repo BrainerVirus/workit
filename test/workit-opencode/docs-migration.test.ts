@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createDocsRepoTools } from "../../packages/workit-opencode/src/tools/docs-repo";
+import { createDocsRepoTools } from "@/packages/workit-opencode/src/tools/docs-repo";
 
 const tmp = () => mkdtempSync(path.join(os.tmpdir(), "wf-migrate-open-"));
 const cleanup = (root: string) => rmSync(root, { recursive: true, force: true });

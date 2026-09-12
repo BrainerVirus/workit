@@ -8,8 +8,8 @@ import {
   buildSetupPreview,
   type SetupPreviewInput,
   type SetupResult,
-} from "../../packages/workit-core/src/core/setup";
-import { isolatedEnv } from "../shared/helpers/packages";
+} from "@/packages/workit-core/src/core/setup";
+import { isolatedEnv } from "@/test/shared/helpers/packages";
 
 // PT-10 + cursor cwd semantics: the SHIPPED plugin manifest stays
 // package-relative, but Cursor spawns plugin MCP servers with the workspace as

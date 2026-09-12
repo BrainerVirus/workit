@@ -2,19 +2,22 @@ import { expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createLogger } from "../../packages/workit-core/src/core/logger";
-import { binDirWithRuntimes, makeDoctorFixture } from "../shared/helpers/doctor-fixture";
-import { packReleaseCandidate } from "../shared/helpers/packages";
-import { buildReliabilityReport } from "../shared/helpers/report";
+import { createLogger } from "@/packages/workit-core/src/core/logger";
+import { binDirWithRuntimes, makeDoctorFixture } from "@/test/shared/helpers/doctor-fixture";
+import { packReleaseCandidate } from "@/test/shared/helpers/packages";
+import { buildReliabilityReport } from "@/test/shared/helpers/report";
 
 // Task 23 reliability-report gate: buildReliabilityReport() aggregates the
 // doctor checks/fixes, logger event/file counts, install results, and the
 // candidate checksums into one deterministic, pack-only evidence document.
 
 const CORE = "@brainervirus/workit-core";
+const MCP = "@brainervirus/workit-mcp";
 const OPENCODE = "@brainervirus/workit-opencode";
 const CURSOR = "@brainervirus/workit-cursor";
 const CLI = "@brainervirus/workit-cli";
+const CODEX = "@brainervirus/workit-codex";
+const PI = "@brainervirus/workit-pi";
 
 const tmp = (prefix: string) => mkdtempSync(path.join(os.tmpdir(), prefix));
 
@@ -22,20 +25,29 @@ test("default report aggregates the deterministic candidate and an isolated doct
   const report = buildReliabilityReport({ now: () => new Date(0) });
   expect(report.published).toBe(false);
   expect(report.generated_at).toBe("1970-01-01T00:00:00.000Z");
-  expect(report.candidate.map((c) => c.packageName)).toEqual([CORE, OPENCODE, CURSOR, CLI]);
+  expect(report.candidate.map((c) => c.packageName)).toEqual([
+    CORE,
+    MCP,
+    CLI,
+    OPENCODE,
+    CURSOR,
+    CODEX,
+    PI,
+  ]);
   for (const c of report.candidate) {
     expect(c.sha256).toMatch(/^[0-9a-f]{64}$/);
   }
   const packs = packReleaseCandidate();
   expect(report.candidate.map((c) => c.sha256)).toEqual(packs.map((p) => p.sha256));
   // The default env-isolated doctor (node+bun on PATH, no git) is deterministic:
-  // exactly the utility check fails (D11/D13).
+  // exactly the utility check fails (D11/D13); codex_pin passes (absent).
+  // Counts include the github_identity check (passes with no git remote).
   expect(report.doctor).toEqual({
     ok: false,
-    passed: 11,
+    passed: 18,
     warned: 0,
     failed: 1,
-    total: 12,
+    total: 19,
     fixes: 1,
   });
   expect(report.logs).toEqual({ files: 0, events: 0 });
@@ -60,13 +72,14 @@ test("report doctor counts are exact against a controlled isolated fixture", () 
         env: { ...process.env, PATH: bin },
       },
     });
-    // node+bun on PATH but no git: exactly the utility check fails.
+    // node+bun on PATH but no git: exactly the utility check fails; codex_pin passes (absent).
+    // Counts include the github_identity check (passes with no git remote).
     expect(report.doctor).toEqual({
       ok: false,
-      passed: 11,
+      passed: 18,
       warned: 0,
       failed: 1,
-      total: 12,
+      total: 19,
       fixes: 1,
     });
   } finally {

@@ -2,6 +2,132 @@ import { spawnSync } from "node:child_process";
 import { existsSync, realpathSync } from "node:fs";
 import path from "node:path";
 
+export {
+  SCHEMA_VERSION,
+  POLICY_VERSION,
+  OPERATION_FAMILIES,
+  operationSchemas,
+  operationJsonSchema,
+  boundedOperationJsonSchema,
+  OPERATION_SCHEMA_DEPTH,
+  OPERATION_SCHEMA_MAX_DEPTH,
+  canonicalFieldsDescription,
+  parseOperation,
+  success,
+  failure,
+  canonicalJson,
+  sha256,
+  newId,
+  newRevision,
+  decisionDigest,
+  candidateDigest,
+  requirementId,
+} from "./core/task-contract";
+export type {
+  OperationFamily,
+  OperationRequest,
+  TaskStartRequest,
+  Caller,
+  Scope,
+  Ref,
+  Assessment,
+  Dimension,
+  Requirement,
+  Constraint,
+  Intent,
+  Progress,
+  Policy,
+  Candidate,
+  Capability,
+  Entry,
+  EvidenceEvaluation,
+  Evidence,
+  Outcome,
+  Decision,
+  Finding,
+  Assignment,
+  WorkerReport,
+  Worker,
+  TaskRecord,
+  WorkspaceRecord,
+  TaskView,
+  TaskSummary,
+  ExportBundle,
+  Result as ContractResult,
+} from "./core/task-contract";
+export { TaskStore } from "./core/task-store";
+export type { MetadataLock, ProcessEvidence, RecoveryInput } from "./core/task-store";
+export { compactTaskContext, reconcileResume } from "./core/task-context";
+export type {
+  CompactTaskContext,
+  ResumeObservation,
+  ResumeObservationInput,
+  ResumeReconciliation,
+} from "./core/task-context";
+export { METHODS, invariantBootstrap, selectMethods } from "./core/methods";
+export type { MethodId, SelectedMethod } from "./core/methods";
+export { applicableDecision, reserveAction, settleAction, reconcileAction } from "./core/authority";
+export {
+  createAuthorizedExternalActionRunner,
+  runAuthorizedExternalAction,
+} from "./core/external-action";
+export type {
+  AuthorizedActionInput,
+  ExternalActionResult,
+  ExternalActionRunner,
+  ExternalActionEffect,
+  ExternalActionBinding,
+  NativeExternalActionObservation,
+  ExternalActionRequest,
+  ExternalActionOperation,
+} from "./core/external-action";
+export {
+  approvedExternalAction,
+  externalActionState,
+  priorExternalAction,
+  externalActionRef,
+  externalActionDescriptor,
+  externalActionHelp,
+  externalActionRequest,
+  matchesNativeExternalAction,
+  nativeExternalActionObservation,
+  readNativeExternalActionObservation,
+} from "./core/external-action";
+export type {
+  ActionReservation,
+  NativeAuthorityContext,
+  NativeAuthorityVerifier,
+  NativeActionVerification,
+  NativeReconciliationVerification,
+  NativeDecisionVerification,
+  ReserveActionInput,
+  SettleActionInput,
+  ReconcileActionInput,
+} from "./core/authority";
+export {
+  captureCandidate,
+  evaluateEvidence,
+  evaluateRequirements,
+  evaluateClosure,
+} from "./core/task-evaluation";
+export type { CandidateEnvironment, ClosureEvaluation } from "./core/task-evaluation";
+export { WorkitCore } from "./core/task-engine";
+export type { OperationContext } from "./core/task-engine";
+export { assertProductWriteAllowed } from "./core/workers";
+export type {
+  CallerContext,
+  HostSession,
+  NativeWorkerDispatchVerification,
+  NativeWorkerObservation,
+  NativeWorkerVerification,
+  NativeWorkerVerifier,
+  ProductWriteInput,
+  WorkerDispatch,
+  WorkerDispatchCommit,
+  WorkerDispatchRequest,
+  WorkerDispatchStage,
+} from "./core/workers";
+
 export type Result<T> =
   | { ok: true; data: T; error: null }
   | { ok: false; data: T | null; error: string };

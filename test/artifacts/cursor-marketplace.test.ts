@@ -1,7 +1,6 @@
 import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import {
-  appendFileSync,
   cpSync,
   existsSync,
   mkdirSync,
@@ -16,11 +15,11 @@ import path from "node:path";
 import Ajv from "ajv";
 import addFormats from "ajv-formats";
 import {
-  CANONICAL_SKILLS,
+  WORKIT_METHOD_SKILLS,
   validateSkillManifests,
-} from "../../packages/workit-core/src/core/skill-manifests";
-import { validateMarketplace } from "../../packages/workit-core/scripts/validate-cursor-marketplace";
-import { REPO_ROOT } from "../shared/helpers/packages";
+} from "@/packages/workit-core/src/core/skill-manifests";
+import { validateMarketplace } from "@/packages/workit-core/scripts/validate-cursor-marketplace";
+import { REPO_ROOT } from "@/test/shared/helpers/packages";
 
 // Task 9 Marketplace gate (CA-13/CA-15/CA-17/CA-21): the tracked Marketplace
 // artifact validates against the official Cursor JSON schemas and every
@@ -123,7 +122,7 @@ test(
   () => {
     const plugin = json<Record<string, string | string[]>>(PLUGIN_MANIFEST_REL);
     const root = path.join(REPO_ROOT, PLUGIN_DIR_REL);
-    const fields = ["skills", "rules", "mcpServers", "hooks"] as const;
+    const fields = ["skills", "commands", "rules", "mcpServers", "hooks"] as const;
     for (const field of fields) {
       const value = plugin[field];
       for (const rel of Array.isArray(value) ? value : [value]) {
@@ -143,10 +142,7 @@ test(
   "all declared skills and rules have valid frontmatter (CA-15)",
   () => {
     const root = path.join(REPO_ROOT, PLUGIN_DIR_REL);
-    for (const [dir, skills] of [
-      [path.join(root, "skills"), CANONICAL_SKILLS.workit],
-      [path.join(root, "vendor/superpowers/skills"), CANONICAL_SKILLS.superpowers],
-    ] as const) {
+    for (const [dir, skills] of [[path.join(root, "skills"), WORKIT_METHOD_SKILLS]] as const) {
       expect(validateSkillManifests(dir, skills, "skills")).toBeNull();
       for (const skill of skills) {
         const keys = frontmatterKeys(path.join(dir, skill, "SKILL.md"));
@@ -183,26 +179,6 @@ test(
   "rebuilding the sanitized vendor tree yields no diff (CA-15)",
   () => {
     expect(validateMarketplace(REPO_ROOT)).toEqual([]);
-  },
-  { timeout: 60_000 },
-);
-
-test(
-  "vendor content drift in a non-last skill is detected (regression)",
-  () => {
-    const dir = cleanCheckoutCopy();
-    try {
-      const skill = path.join(
-        dir,
-        PLUGIN_DIR_REL,
-        "vendor/superpowers/skills/brainstorming/SKILL.md",
-      );
-      appendFileSync(skill, "\n// sentinel drift line\n");
-      const errors = validateMarketplace(dir);
-      expect(errors.some((e) => e.includes("vendor drift"))).toBe(true);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
   },
   { timeout: 60_000 },
 );

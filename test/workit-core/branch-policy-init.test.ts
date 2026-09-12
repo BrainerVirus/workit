@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { initApplyData } from "../../packages/workit-core/src/core/init";
+import { initApplyData } from "@/packages/workit-core/src/core/init";
 
 const repoWith = (branches: string[]) => {
   const root = mkdtempSync(path.join(os.tmpdir(), "wf-bpi-"));

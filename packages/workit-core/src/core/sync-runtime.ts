@@ -165,10 +165,15 @@ export async function syncRuntime(options: SyncRuntimeOptions = {}): Promise<Syn
     }
 
     const cursorSrc = path.join(src, "packages/workit-cursor");
-    const cursorEntries = ["mcp-server.js", "cursor-session-start.js"];
+    const cursorEntries = ["mcp-server.js", "cursor-session-start.js", "workit-hook.js"];
     const bun = resolveBun(env, home);
     if (!bun.ok) return bun;
-    const dependencies = ["@brainervirus/workit-core", "@modelcontextprotocol/sdk", "zod"];
+    const dependencies = [
+      "@brainervirus/workit-core",
+      "@brainervirus/workit-mcp",
+      "@modelcontextprotocol/sdk",
+      "zod",
+    ];
     if (
       dependencies.some((dependency) => !existsSync(path.join(src, "node_modules", dependency)))
     ) {
@@ -182,6 +187,13 @@ export async function syncRuntime(options: SyncRuntimeOptions = {}): Promise<Syn
           error: `FATAL: root dependency install failed in ${src}: ${install.stderr}`,
         };
       }
+    }
+    const mcpBuild = run(bun.path, [path.join(src, "packages/workit-mcp/scripts/build.ts")], {
+      cwd: src,
+      env: { ...env, PATH: `${path.dirname(bun.path)}${path.delimiter}${env.PATH ?? ""}` },
+    });
+    if (mcpBuild.exitCode !== 0) {
+      return { ok: false, error: `FATAL: shared MCP build failed in ${src}: ${mcpBuild.stderr}` };
     }
     const build = run(bun.path, [path.join(cursorSrc, "scripts/build.ts")], {
       cwd: src,
@@ -301,7 +313,7 @@ export async function syncRuntime(options: SyncRuntimeOptions = {}): Promise<Syn
           dependencies?: Record<string, string>;
         };
         data.dependencies = data.dependencies ?? {};
-        data.dependencies["@opencode-ai/plugin"] ??= "1.17.7";
+        data.dependencies["@opencode-ai/plugin"] ??= "1.18.30";
         writeFileSync(pkg, JSON.stringify(data, null, 2) + "\n");
       } catch {
         /* best-effort */

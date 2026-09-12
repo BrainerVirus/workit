@@ -15,7 +15,7 @@ export const vcsConfigPath = (): string =>
 const workspacesPath = (): string => path.join(configDir(), "workspaces.json");
 
 const vcsCwd = (cwd?: string): string =>
-  process.env.WORKFLOW_WORKSPACE_ROOT ?? cwd ?? process.cwd();
+  cwd ?? process.env.WORKFLOW_WORKSPACE_ROOT ?? process.cwd();
 
 // RL-03b: the origin remote is the ground truth for PR creation. A stale global
 // provider (e.g. gitlab from another repo) must not drive glab on a
@@ -81,9 +81,16 @@ export function vcsConfig(mode: "load" | "summary" | "resolve", cwd?: string): R
   // contaminate host-agnostic reads.
   const root = vcsCwd(cwd);
   const determinateRoot = cwd !== undefined || process.env.WORKFLOW_WORKSPACE_ROOT !== undefined;
-  const provider = String(
-    wsVcs.provider ?? (determinateRoot ? remoteProvider(root) : null) ?? cfg.provider ?? "gitlab",
-  ).toLowerCase();
+  // No silent default: a provider resolves from the workspace, the origin
+  // remote, or the global config — otherwise it is null, explicitly. Branch
+  // policy never needed a provider (preset defaults apply); credential and
+  // PR flows fail closed on null instead of assuming a host.
+  const rawProvider =
+    wsVcs.provider ?? (determinateRoot ? remoteProvider(root) : null) ?? cfg.provider ?? null;
+  const provider =
+    rawProvider === null || rawProvider === undefined
+      ? null
+      : String(rawProvider).toLowerCase() || null;
   // CA-05: workspace/global explicit target wins; when unset the resolved
   // branch-policy preset supplies the default (gitflow->develop,
   // github-flow->main, trunk-based->master, custom->develop). Shared by load
@@ -140,9 +147,26 @@ export function vcsConfig(mode: "load" | "summary" | "resolve", cwd?: string): R
   if (cfgStatus === "missing") {
     return { ok: false, error: `vcs.json is missing: ${cfgPath}`, configPath: cfgPath };
   }
+  // Credentials cannot resolve without a provider: fail closed instead of
+  // assuming a host. Branch policy (resolve mode above) never needed one.
+  if (provider === null) {
+    return {
+      ok: false,
+      error: `no vcs provider configured (set vcs.provider in ${cfgPath}, match a workspace entry, or run inside a checkout with a recognized origin remote)`,
+      configPath: cfgPath,
+    };
+  }
 
   const prov = (cfg[provider] ?? {}) as Record<string, any>;
-  const tokenFile = String(prov.tokenFile ?? path.join(configDir(), `${provider}.token`));
+  // Workspace-tight tokens: an explicit workspace vcs.tokenFile wins (per-area
+  // accounts without collisions), else the global provider tokenFile, else the
+  // default <provider>.token path. Same order as the per-workspace
+  // commitPolicy/branchPolicy overrides.
+  const wsTokenFile =
+    typeof wsVcs.tokenFile === "string" && wsVcs.tokenFile.trim() !== "" ? wsVcs.tokenFile : null;
+  const tokenFile = String(
+    wsTokenFile ?? prov.tokenFile ?? path.join(configDir(), `${provider}.token`),
+  );
   const tokenPath = path.resolve(tokenFile);
   let tokenOk = false;
   if (fs.existsSync(tokenPath)) {
@@ -281,24 +305,31 @@ export function vcsTokenCreateUrls(): Record<string, any> {
     : ["repo"];
   const githubClassicUrl = `https://github.com/settings/tokens/new?${new URLSearchParams({ description: name, scopes: classicScopes.join(",") })}`;
 
-  const provider = String(cfg.provider ?? "gitlab").toLowerCase();
+  const rawProvider = cfg.provider;
+  // Display-only URL helper: both providers' URLs are always returned, but
+  // nothing is preselected without an explicit provider — no silent default.
+  const provider =
+    typeof rawProvider === "string" && rawProvider.trim() ? rawProvider.toLowerCase() : null;
   const active =
-    {
-      gitlab: {
-        tokenFile: gitlab.tokenFile ?? path.join(configDir(), "gitlab.token"),
-        createUrl: gitlabUrl,
-        scopes: gitlabScopes,
-        name,
-      },
-      github: {
-        tokenFile:
-          (cfg.github as Record<string, any>)?.tokenFile ?? path.join(configDir(), "github.token"),
-        createUrl: githubFineUrl,
-        createUrlClassic: githubClassicUrl,
-        permissions: githubPerms,
-        name,
-      },
-    }[provider] ?? {};
+    provider === null
+      ? undefined
+      : ({
+          gitlab: {
+            tokenFile: gitlab.tokenFile ?? path.join(configDir(), "gitlab.token"),
+            createUrl: gitlabUrl,
+            scopes: gitlabScopes,
+            name,
+          },
+          github: {
+            tokenFile:
+              (cfg.github as Record<string, any>)?.tokenFile ??
+              path.join(configDir(), "github.token"),
+            createUrl: githubFineUrl,
+            createUrlClassic: githubClassicUrl,
+            permissions: githubPerms,
+            name,
+          },
+        }[provider] ?? {});
 
   return {
     tokenName: name,

@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { initStatus } from "../../packages/workit-core/src/core/init";
+import { initStatus } from "@/packages/workit-core/src/core/init";
 import {
   matchWorkspace,
   readWorkspacesResult,
@@ -10,8 +10,8 @@ import {
   validateWorkspaceGlob,
   workspacesPath,
   type WorkspaceConfig,
-} from "../../packages/workit-core/src/core/workspaces";
-import { withIsolatedConfig } from "../shared/helpers/env";
+} from "@/packages/workit-core/src/core/workspaces";
+import { withIsolatedConfig } from "@/test/shared/helpers/env";
 
 const WORKSPACES = {
   workspaces: [

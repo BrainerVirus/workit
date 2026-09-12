@@ -16,10 +16,10 @@ import {
   validateLocale,
   validateTimezone,
   writeWorkspaces,
-} from "../../packages/workit-cli/src/logic";
-import { resolveWorkspace } from "../../packages/workit-core/src/core/workspaces";
-import { PRESETS, type ToolkitConfig } from "../../packages/workit-core/src/core/config";
-import { withTempConfigDir as withConfigDir } from "../shared/helpers/env";
+} from "@/packages/workit-cli/src/logic";
+import { resolveWorkspace } from "@/packages/workit-core/src/core/workspaces";
+import { PRESETS, type ToolkitConfig } from "@/packages/workit-core/src/core/config";
+import { withTempConfigDir as withConfigDir } from "@/test/shared/helpers/env";
 
 const current: ToolkitConfig = {
   locale: "en",
@@ -30,6 +30,7 @@ const current: ToolkitConfig = {
     allowed: [...PRESETS.gitflow.allowed],
     protected: [...PRESETS.gitflow.protected],
   },
+  commitPolicy: { preset: "conventional" },
 };
 
 test("validateLocale accepts BCP-47, rejects bad formats", () => {

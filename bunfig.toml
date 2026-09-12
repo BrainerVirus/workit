@@ -1,2 +1,7 @@
 [install]
 linker = "hoisted"
+# Release-age gate off for this checkout: bun offers no per-package exclude,
+# and exact pins + bun.lock already make installs deterministic. The gate only
+# fires when a pin is deliberately moved to a fresh release. Machine-global
+# `min-release-age` in ~/.npmrc still guards every other project.
+minimumReleaseAge = 0

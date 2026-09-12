@@ -14,6 +14,7 @@ import {
   setupCompletionGuidance,
   type SetupResult,
 } from "@brainervirus/workit-core/src/core/setup.ts";
+import { detectHosts } from "@brainervirus/workit-core/src/core/detect-hosts.ts";
 import { readSetupState, type SetupState } from "@brainervirus/workit-core/src/core/setup-state";
 import {
   applyUninstall,
@@ -22,7 +23,9 @@ import {
   type UninstallPlan,
 } from "@brainervirus/workit-core/src/core/uninstall";
 import { applyWizardBranchPolicy } from "./logic";
-import { COMMANDS, runFlowCommand, runHandoffCommand } from "./flow";
+import { runCutoverCommand } from "./cutover-cli";
+import { runActionCommand, runTaskCommand, TASK_FAMILIES } from "./task";
+import { externalActionHelp } from "@brainervirus/workit-core/src/core";
 
 // Secret-safe diagnostic logger (DG-01-DG-03, DG-05, DG-10). Sink injection
 // only: CLI events mirror to stderr, never the Ink-rendered stdout. Routine
@@ -35,19 +38,14 @@ export const logger = createLogger({
   },
 });
 
-// Help derives the flow/handoff command surface from the same COMMANDS table
-// the CLI's usage errors use, so the exact command strings cannot drift
-// (packed-cli asserts each string appears verbatim). Descriptions line up in a
-// command column sized to the longest command (2-space indent), so a command
-// longer than a fixed 49 chars does not overflow its description.
 const COMMAND_DESCRIPTIONS: readonly (readonly [string, string])[] = [
-  [COMMANDS.status, "Read the effective flow state for a plan"],
-  [COMMANDS.pause, "Pause an active plan"],
-  [COMMANDS.resume, "Resume a paused plan"],
-  [COMMANDS.complete, "Complete a plan (ledger and verification gated)"],
-  [COMMANDS["review-package"], "Write a review diff for a base..head range"],
-  [COMMANDS["append-advisory"], "Append an advisory line to docs/<slug>/sdd/advisories.md"],
-  [COMMANDS.handoff, "Emit the destination handoff prompt for a plan"],
+  ["workit <family> <action> [options]", "Inspect and control a Workit task"],
+  ["workit action <operation> --payload <JSON>", "Preview or run one approved external action"],
+  ["workit handoff --task <id>", "Export task state and compact destination context"],
+  [
+    "workit cutover preview|apply|rollback ...",
+    "Preview-first v1 cutover and rollback (apply requires --confirm)",
+  ],
 ];
 
 const helpColumn = Math.max(...COMMAND_DESCRIPTIONS.map(([cmd]) => cmd.length)) + 2;
@@ -58,7 +56,9 @@ Usage:
   workit init      Run the interactive setup wizard
   workit doctor    Verify the offline installation health (add --json for a machine-readable report)
   workit uninstall Remove workit host registrations interactively (~/.config/workit is kept)
+  workit cutover   Preview or apply an explicit v1 cutover (apply requires --confirm)
 ${COMMAND_DESCRIPTIONS.map(([cmd, desc]) => `  ${cmd.padEnd(helpColumn)}${desc}`).join("\n")}
+  action payloads: ${externalActionHelp}
   workit           Show this help
 
 Run \`npx workit init\` to configure platforms, YouTrack, VCS and project hygiene.
@@ -122,6 +122,9 @@ export async function runInit() {
   process.stdout.write("\x1b[2J\x1b[H");
   const instance = render(
     <Wizard
+      // Live auto-detect: installed hosts preselect, registered ones are
+      // tagged, detected Codex/Pi point at cutover.
+      detection={detectHosts()}
       onExit={(complete, values) => {
         exits.push({ complete, values });
         done();
@@ -199,6 +202,8 @@ type UninstallOutcome = { confirmed: boolean; hosts: UninstallHost[]; plan: Unin
 const UNINSTALL_HOST_OPTIONS = [
   { label: "OpenCode", value: "opencode" as const },
   { label: "Cursor", value: "cursor" as const },
+  { label: "Codex", value: "codex" as const },
+  { label: "Pi", value: "pi" as const },
 ];
 
 function UninstallWizard({ onExit }: { onExit: (outcome: UninstallOutcome) => void }): JSX.Element {
@@ -253,7 +258,7 @@ export async function runUninstall() {
   if (process.stdin.isTTY !== true) {
     console.log("workit uninstall requires an interactive terminal (TTY).");
     console.log(
-      "It removes workit registrations from OpenCode and/or Cursor; your ~/.config/workit configuration is always kept.",
+      "It removes workit registrations from the selected hosts; your ~/.config/workit configuration is always kept.",
     );
     process.exit(2);
   }
@@ -340,12 +345,16 @@ if (import.meta.main) {
     await runInit();
   } else if (subcommand === "doctor") {
     runDoctorCommand(args);
-  } else if (subcommand === "flow") {
-    process.exit(await runFlowCommand(args.slice(1)));
+  } else if ((TASK_FAMILIES as readonly string[]).includes(subcommand)) {
+    process.exit(await runTaskCommand(args));
+  } else if (subcommand === "action") {
+    process.exit(await runActionCommand(args.slice(1)));
   } else if (subcommand === "handoff") {
-    process.exit(await runHandoffCommand(args.slice(1)));
+    process.exit(await runTaskCommand(args));
   } else if (subcommand === "uninstall") {
     await runUninstall();
+  } else if (subcommand === "cutover") {
+    process.exit(await runCutoverCommand(args.slice(1)));
   } else {
     console.log(HELP);
     process.exit(0);

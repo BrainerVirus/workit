@@ -11,7 +11,7 @@ import os from "node:os";
 import path from "node:path";
 import { isWorkitPlugin } from "./registration";
 
-export type UninstallHost = "opencode" | "cursor";
+export type UninstallHost = "opencode" | "cursor" | "codex" | "pi";
 
 export type UninstallAction =
   | { kind: "edit-json-remove"; path: string; detail: string }
@@ -56,6 +56,8 @@ type ResolvedUninstall = {
   cursorSettings: string;
   cursorMcp: string;
   cursorPluginDir: string;
+  codexPluginDir: string;
+  piConfig: string;
 };
 
 const resolveUninstallPaths = (options: UninstallPaths = {}): ResolvedUninstall => {
@@ -70,6 +72,8 @@ const resolveUninstallPaths = (options: UninstallPaths = {}): ResolvedUninstall 
     cursorMcp: options.cursorMcp ?? path.join(home, ".cursor", "mcp.json"),
     cursorPluginDir:
       options.cursorPluginDir ?? path.join(home, ".cursor", "plugins", "local", "workit"),
+    codexPluginDir: path.join(home, ".codex", "plugins", "workit"),
+    piConfig: path.join(home, ".pi", "config.json"),
   };
 };
 
@@ -192,10 +196,38 @@ type JsonCleaner = (record: Record<string, unknown>) => {
   changed: boolean;
 };
 
+function cleanPiConfig(config: Record<string, unknown>): {
+  next: Record<string, unknown>;
+  changed: boolean;
+} {
+  const next = { ...config };
+  let changed = false;
+  for (const key of ["extensions", "skills"] as const) {
+    const value = next[key];
+    if (!Array.isArray(value)) continue;
+    const kept = value.filter((entry) => !String(entry).includes("workit"));
+    if (kept.length !== value.length) {
+      next[key] = kept;
+      changed = true;
+    }
+  }
+  const pi = isRecord(next.pi) ? { ...(next.pi as Record<string, unknown>) } : null;
+  if (pi && Array.isArray(pi.extensions)) {
+    const kept = pi.extensions.filter((entry) => !String(entry).includes("workit"));
+    if (kept.length !== pi.extensions.length) {
+      pi.extensions = kept;
+      next.pi = pi;
+      changed = true;
+    }
+  }
+  return { next, changed };
+}
+
 const jsonCleanerFor = (target: string, res: ResolvedUninstall): JsonCleaner | null => {
   if (target === res.opencodeConfig) return cleanOpenCodeConfig;
   if (target === res.cursorSettings) return (r) => cleanCursorSettings(r, res.cursorPluginDir);
   if (target === res.cursorMcp) return cleanCursorMcp;
+  if (target === res.piConfig) return cleanPiConfig;
   return null;
 };
 
@@ -262,7 +294,34 @@ export function planUninstall(paths: UninstallPaths = {}): UninstallPlan {
     actions,
   };
 
-  return { hosts: [opencode, cursor] };
+  const codexInstalled = existsSync(res.codexPluginDir);
+  const codex: UninstallHostPlan = {
+    host: "codex",
+    installed: codexInstalled,
+    actions: codexInstalled
+      ? [{ kind: "remove-dir", path: res.codexPluginDir, detail: "remove Codex workit plugin dir" }]
+      : [],
+  };
+
+  const piExisting = readJsonRecord(res.piConfig);
+  const piDirty =
+    piExisting.kind === "malformed" ||
+    (piExisting.kind === "record" && cleanPiConfig(piExisting.value).changed);
+  const pi: UninstallHostPlan = {
+    host: "pi",
+    installed: piDirty,
+    actions: piDirty
+      ? [
+          {
+            kind: "edit-json-remove",
+            path: res.piConfig,
+            detail: "remove workit pi extension/skills entries",
+          },
+        ]
+      : [],
+  };
+
+  return { hosts: [opencode, cursor, codex, pi] };
 }
 
 // CA-14 traversal guard: rm -rf is permitted ONLY on the exact resolved
@@ -344,7 +403,12 @@ export function applyUninstall(plan: UninstallPlan, paths: UninstallPaths = {}):
       if (action.kind === "remove-dir") {
         // Resolve before comparing so ".."/symlink tricks can never widen the rm.
         const resolved = path.resolve(action.path);
-        if (!canonicalRemoveDirAllowed(resolved, res)) {
+        const allowed =
+          canonicalRemoveDirAllowed(resolved, res) ||
+          (resolved === path.resolve(res.codexPluginDir) &&
+            path.basename(resolved) === "workit" &&
+            path.basename(path.dirname(resolved)) === "plugins");
+        if (!allowed) {
           status = "failed";
           detail = `refusing to remove non-canonical plugin directory: ${resolved}`;
         } else if (!existsSync(resolved)) {

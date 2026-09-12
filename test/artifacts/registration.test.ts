@@ -1,7 +1,10 @@
 import { expect, test } from "bun:test";
 import path from "node:path";
 import {
+  CURSOR_HOOK_RUN_COMMAND,
+  CURSOR_PRETOOLUSE_MATCHER,
   CURSOR_RUNTIME_PACKAGE,
+  cursorHookDrift,
   cursorHookLocalDistEntry,
   cursorHooksEntry,
   cursorMcpLocalDistEntry,
@@ -14,7 +17,7 @@ import {
   mergeCursorSettings,
   mergeOpenCodeConfig,
   mergeOpenCodePlugins,
-} from "../../packages/workit-core/src/core/registration";
+} from "@/packages/workit-core/src/core/registration";
 
 // Task 8 registration gate (RR-06): the installer registration merges accept an
 // existing user config, deduplicate every current + legacy Workit identity, and
@@ -327,6 +330,8 @@ test("mergeCursorHooks swaps the sessionStart command and keeps unrelated hook c
   });
   const hooks = config.hooks as {
     sessionStart?: { command: string; args?: string[] }[];
+    preToolUse?: { command: string; matcher: string; failClosed: boolean }[];
+    beforeShellExecution?: { command: string; failClosed: boolean }[];
     otherHook?: { command: string }[];
   };
   expect(hooks.sessionStart).toEqual([
@@ -334,8 +339,68 @@ test("mergeCursorHooks swaps the sessionStart command and keeps unrelated hook c
       command: `npx -y --prefer-online --package=${CURSOR_RUNTIME_PACKAGE} workit-cursor-session-start`,
     },
   ]);
+  // Missing enforcement events are filled with the canonical entries so the
+  // installer heals exactly what the doctor flags.
+  expect(hooks.preToolUse).toEqual([
+    { command: CURSOR_HOOK_RUN_COMMAND, matcher: CURSOR_PRETOOLUSE_MATCHER, failClosed: true },
+  ]);
+  expect(hooks.beforeShellExecution).toEqual([
+    { command: CURSOR_HOOK_RUN_COMMAND, failClosed: true },
+  ]);
   expect(hooks.otherHook).toEqual([{ command: "echo hi" }]);
-  expect(changed).toEqual(["hooks.sessionStart"]);
+  expect(changed).toEqual(["hooks.sessionStart", "hooks.preToolUse", "hooks.beforeShellExecution"]);
+});
+
+test("mergeCursorHooks is idempotent on canonical input", () => {
+  const canonical = {
+    version: 1,
+    hooks: {
+      sessionStart: [
+        {
+          command: `npx -y --prefer-online --package=${CURSOR_RUNTIME_PACKAGE} workit-cursor-session-start`,
+        },
+      ],
+      preToolUse: [
+        {
+          command: CURSOR_HOOK_RUN_COMMAND,
+          matcher: CURSOR_PRETOOLUSE_MATCHER,
+          failClosed: true,
+        },
+      ],
+      beforeShellExecution: [{ command: CURSOR_HOOK_RUN_COMMAND, failClosed: true }],
+    },
+  };
+  const { config, changed } = mergeCursorHooks(canonical, {
+    command: `npx -y --prefer-online --package=${CURSOR_RUNTIME_PACKAGE} workit-cursor-session-start`,
+  });
+  expect(changed).toEqual([]);
+  expect(config).toEqual(canonical);
+});
+
+test("cursorHookDrift flags divergent enforcement events, not absent ones", () => {
+  expect(cursorHookDrift({ version: 1, hooks: {} })).toEqual([]);
+  expect(
+    cursorHookDrift({
+      version: 1,
+      hooks: { preToolUse: [{ command: CURSOR_HOOK_RUN_COMMAND, matcher: "Write" }] },
+    }),
+  ).toEqual(["preToolUse"]);
+  expect(
+    cursorHookDrift({
+      version: 1,
+      hooks: {
+        preToolUse: [
+          {
+            command: CURSOR_HOOK_RUN_COMMAND,
+            matcher: CURSOR_PRETOOLUSE_MATCHER,
+            failClosed: true,
+          },
+        ],
+        beforeShellExecution: [{ command: "echo stale", failClosed: true }],
+      },
+    }),
+  ).toEqual(["beforeShellExecution"]);
+  expect(cursorHookDrift(null)).toEqual(["hooks file is not a hook map"]);
 });
 
 test("cursorMcpServerEntry launches the published package via npx", () => {

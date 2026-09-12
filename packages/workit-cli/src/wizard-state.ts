@@ -61,7 +61,7 @@ export type BranchPolicyProposal = {
   prefixes: { feature: string; bugfix: string; release: string; hotfix: string };
 };
 
-export type IssueTracker = "youtrack" | "github" | "none";
+export type IssueTracker = "youtrack" | "github" | "gitlab" | "none";
 
 export type SetupValues = {
   platforms: string[];
@@ -71,7 +71,8 @@ export type SetupValues = {
   branchAllowed: string;
   branchProtected: string;
   /** Where issues live: YouTrack scaffolds youtrack.json, GitHub Issues links
-   *  new workspaces via WorkspaceConfig.issues, none skips both. */
+   *  new workspaces via WorkspaceConfig.issues, GitLab Issues reads via the
+   *  vcs gitlab token, none skips all three. */
   issueTracker: IssueTracker;
   baseUrl: string;
   /** D-06: the workspace root every derived path uses. Seeded from
@@ -331,7 +332,9 @@ const decodeVcsProvider = (value: string, fallback: VcsProvider | "skip"): VcsPr
   value === "gitlab" || value === "github" || value === "skip" ? value : fallback;
 
 const decodeIssueTracker = (value: string, fallback: IssueTracker): IssueTracker =>
-  value === "youtrack" || value === "github" || value === "none" ? value : fallback;
+  value === "youtrack" || value === "github" || value === "gitlab" || value === "none"
+    ? value
+    : fallback;
 
 function setTextValue(
   draft: WizardDraft,
@@ -371,14 +374,19 @@ function setTextValue(
   return { ...draft, values: { ...draft.values, [field]: value }, errors };
 }
 
-export function createInitialDraft(config: ToolkitConfig = readConfig()): WizardDraft {
+export function createInitialDraft(
+  config: ToolkitConfig = readConfig(),
+  // Auto-detect seeding: runInit passes the detected platforms so the
+  // platforms screen opens preselected; empty by default keeps tests hermetic.
+  opts: { platforms?: string[] } = {},
+): WizardDraft {
   // RL-02/CA-23: the draft's allowed/protected values always derive from the
   // preset (one shared merge), never from divergent persisted values.
   const policy = mergePreset(config.branchPolicy.preset, {}, config);
   return {
     screen: "platforms",
     values: {
-      platforms: [],
+      platforms: opts.platforms ?? [],
       locale: config.locale,
       timezone: config.timezone,
       branchPreset: config.branchPolicy.preset,
@@ -391,7 +399,9 @@ export function createInitialDraft(config: ToolkitConfig = readConfig()): Wizard
       // prompt gate the flow instead of silently inheriting process.cwd().
       basePath: process.env.WORKFLOW_WORKSPACE_ROOT ?? "",
       issueTracker: "youtrack",
-      vcsProvider: "gitlab",
+      // No silent provider default: "skip" is an explicit configure-later
+      // choice, never an assumed host.
+      vcsProvider: "skip",
       workspaces: loadWorkspaces(),
       applyProject: false,
     },
@@ -431,7 +441,11 @@ export function reducer(draft: WizardDraft, action: WizardAction): WizardDraft {
           // strips issues linking from already-added entries and the
           // in-progress draft, so the applied config can never link issues for
           // a tracker that is not GitHub.
-          const stripIssues = ({ issues: _, ...rest }: WorkspaceConfig): WorkspaceConfig => rest;
+          const stripIssues = (workspace: WorkspaceConfig): WorkspaceConfig => {
+            const rest = { ...workspace };
+            delete rest.issues;
+            return rest;
+          };
           const needsStrip =
             next !== "github" &&
             (draft.values.workspaces.some((w) => w.issues !== undefined) ||
@@ -557,12 +571,7 @@ export function reducer(draft: WizardDraft, action: WizardAction): WizardDraft {
           {
             name: "",
             glob: "",
-            vcs: {
-              provider: defaultWorkspaceProvider(
-                draft.values.vcsProvider,
-                draft.values.issueTracker,
-              ),
-            },
+            vcs: workspaceVcs(draft.values.vcsProvider, draft.values.issueTracker),
           },
           draft.values.issueTracker,
         ),
@@ -586,12 +595,7 @@ export function reducer(draft: WizardDraft, action: WizardAction): WizardDraft {
               {
                 name,
                 glob: `${p}/**`,
-                vcs: {
-                  provider: defaultWorkspaceProvider(
-                    draft.values.vcsProvider,
-                    draft.values.issueTracker,
-                  ),
-                },
+                vcs: workspaceVcs(draft.values.vcsProvider, draft.values.issueTracker),
               },
               draft.values.issueTracker,
             ),
@@ -628,15 +632,20 @@ export function reducer(draft: WizardDraft, action: WizardAction): WizardDraft {
     case "workspaceDraftProvider": {
       const base = draft.workspaceDraft ?? { name: "", glob: "" };
       const vcs = draft.workspaceDraft?.vcs;
-      const provider: VcsProvider =
-        action.value === "gitlab" || action.value === "github"
+      const provider: VcsProvider | "skip" =
+        action.value === "gitlab" || action.value === "github" || action.value === "skip"
           ? action.value
-          : (vcs?.provider ?? "gitlab");
+          : (vcs?.provider ?? "skip");
       return {
         ...draft,
         workspaceDraft: {
           ...base,
-          vcs: { provider, defaultTargetBranch: vcs?.defaultTargetBranch },
+          // "skip" omits the section: an unconfigured provider fails closed
+          // downstream instead of silently assuming a host.
+          vcs:
+            provider === "skip"
+              ? undefined
+              : { provider, defaultTargetBranch: vcs?.defaultTargetBranch },
         },
       };
     }
@@ -662,15 +671,27 @@ export function reducer(draft: WizardDraft, action: WizardAction): WizardDraft {
   }
 }
 
-/** A workspace's provider defaults from the wizard's VCS selection (gitlab when
- *  skipped); GitHub Issues mode forces github so the linked WorkspaceConfig.issues
+/** A workspace's provider follows the wizard's VCS selection; "skip" omits
+ *  the section so an unconfigured provider fails closed downstream.
+ *  GitHub Issues mode forces github so the linked WorkspaceConfig.issues
  *  entry passes writeWorkspaces validation (github provider required). */
 function defaultWorkspaceProvider(
   vcs: SetupValues["vcsProvider"],
   tracker: SetupValues["issueTracker"],
-): VcsProvider {
+): VcsProvider | null {
   if (tracker === "github") return "github";
-  return vcs === "gitlab" || vcs === "github" ? vcs : "gitlab";
+  if (tracker === "gitlab") return "gitlab";
+  return vcs === "gitlab" || vcs === "github" ? vcs : null;
+}
+
+/** Workspace vcs section from the wizard selection; undefined when skipped
+ *  so the entry carries no assumed provider. */
+function workspaceVcs(
+  vcs: SetupValues["vcsProvider"],
+  tracker: SetupValues["issueTracker"],
+): WorkspaceConfig["vcs"] {
+  const provider = defaultWorkspaceProvider(vcs, tracker);
+  return provider ? { provider } : undefined;
 }
 
 /** Issue linking carried by every workspace created under GitHub Issues mode. */

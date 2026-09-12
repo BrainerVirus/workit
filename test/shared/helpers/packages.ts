@@ -18,11 +18,22 @@ export type PackedPackage = {
   sha256: string;
 };
 
+/**
+ * Encoding-free `file:` spec for npm installs: a path relative to the consumer
+ * package avoids URL percent-encoding, which npm does not decode on Windows
+ * (8.3 `RUNNER~1` temp paths arrive as `%7E` and installs fail ENOENT).
+ */
+export const tarballSpec = (fromDir: string, pack: PackedPackage): string =>
+  `file:${path.relative(fromDir, pack.tarball).split(path.sep).join("/")}`;
+
 const WORKSPACE_PACKAGES = [
   "workit-core",
+  "workit-mcp",
+  "workit-cli",
   "workit-opencode",
   "workit-cursor",
-  "workit-cli",
+  "workit-codex",
+  "workit-pi",
 ] as const;
 
 let cached: PackedPackage[] | null = null;
@@ -64,7 +75,14 @@ export function packWorkspacePackages(options: { force?: boolean } = {}): Packed
     // Deterministic adapter dist + assets: run each adapter's own build script
     // against the sandbox copy. dist/ is gitignored, so a fresh checkout packs an
     // empty tarball without this build.
-    for (const pkg of ["workit-opencode", "workit-cursor", "workit-cli"]) {
+    for (const pkg of [
+      "workit-mcp",
+      "workit-opencode",
+      "workit-cursor",
+      "workit-codex",
+      "workit-pi",
+      "workit-cli",
+    ]) {
       const buildScript = path.join(REPO_ROOT, "packages", pkg, "scripts", "build.ts");
       const target = path.join(sandbox, "packages", pkg);
       const build = spawnSync("bun", [buildScript, target], { encoding: "utf8" });
@@ -117,7 +135,11 @@ function packSandbox(sandbox: string, tarballs: string): PackedPackage[] {
     const file = path.join(tarballs, fileName);
     if (!existsSync(file)) throw new Error(`expected tarball ${file}`);
     const sha256 = createHash("sha256").update(readFileSync(file)).digest("hex");
-    packs.push({ packageName: pkgJson.name, tarball: file, sha256 });
+    packs.push({
+      packageName: pkgJson.name,
+      tarball: file,
+      sha256,
+    });
   }
   return packs;
 }

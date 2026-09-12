@@ -11,13 +11,13 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { createRepoTools } from "../../packages/workit-opencode/src/tools/repo";
+import { createRepoTools } from "@/packages/workit-opencode/src/tools/repo";
 import {
   normalizeLegacyResult,
   type RepoRuntime,
-} from "../../packages/workit-core/src/core/repo-tools";
-import { initStatusData, initApplyData } from "../../packages/workit-core/src/core/init";
-import { PLUGIN_ROOT } from "../../packages/workit-core/src/core/scripts";
+} from "@/packages/workit-core/src/core/repo-tools";
+import { initStatusData, initApplyData } from "@/packages/workit-core/src/core/init";
+import { PLUGIN_ROOT } from "@/packages/workit-core/src/core/scripts";
 
 // Isolate from the developer's global config: tests assume gitflow semantics
 // (PRESETS.gitflow in src/core/config.ts), like CI with no global config.

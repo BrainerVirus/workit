@@ -1,10 +1,8 @@
 import { expect, test } from "bun:test";
-import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { HANDOFF_DESTINATION_MARKER } from "../../packages/workit-core/src/core/menu";
 import {
   copyHoistedDeps,
   installPackedPackage,
@@ -12,7 +10,7 @@ import {
   packWorkspacePackages,
   readTarballFile,
   runInIsolation,
-} from "../shared/helpers/packages";
+} from "@/test/shared/helpers/packages";
 
 // Task 14 packed gate: the CLI setup flow runs against EXTRACTED tarballs with
 // the repository node_modules unavailable. buildSetupPreview/applySetupPreview
@@ -100,6 +98,10 @@ async function loadSetup(nm: string): Promise<PackedSetup> {
   return (await import(
     pathToFileURL(path.join(nm, CORE, "src/core/setup.ts")).href
   )) as PackedSetup;
+}
+
+function installPackedCore(nm: string, packs: ReturnType<typeof packWorkspacePackages>) {
+  installDeclaredClosure(nm, packs, byName(packs, CORE));
 }
 
 test("packed CLI setup flow configures OpenCode + Cursor and doctor verifies it", async () => {
@@ -206,7 +208,7 @@ test("packed CLI: identical workspaces emit no update-workspaces mutation", asyn
   try {
     const nm = path.join(install, "node_modules");
     mkdirSync(nm, { recursive: true });
-    installPackedPackage(nm, byName(packs, CORE));
+    installPackedCore(nm, packs);
     const setup = await loadSetup(nm);
 
     const home = path.join(install, "home");
@@ -244,6 +246,7 @@ test("packed CLI partial failure exits nonzero with a Failed entry", async () =>
     installPackedPackage(nm, byName(packs, CORE));
     installPackedPackage(nm, byName(packs, OPENCODE)); // cursor deliberately absent
     installPackedPackage(nm, byName(packs, CLI));
+    copyHoistedDeps(nm, ["zod"]);
     const setup = await loadSetup(nm);
 
     const home = path.join(install, "home");
@@ -419,18 +422,7 @@ test("packed CLI ships completion guidance and hygiene templates", () => {
   }
 }, 120_000);
 
-const COMPLIANT_SPEC = (slug: string) =>
-  `# ${slug}\n\n**Branch:** \`feature/${slug}\`\n\n## Context\n\n## Goals\n\n## Non-goals\n\n## Architecture\n\n## Acceptance criteria\n\n- CA-01: test\n`;
-
-const COMPLIANT_PLAN = (slug: string) =>
-  `# ${slug}\n\n**Spec:** \`docs/${slug}/spec.md\`\n**Branch:** \`feature/${slug}\`\n\n## Context\n\n### Task 1: Do the thing\n\n- [ ] **Step 1:** do it\n`;
-
-const fileSha256 = (file: string) => createHash("sha256").update(readFileSync(file)).digest("hex");
-
-// Task 6 (CA-19, CA-21): the packed flow/handoff surface. The bundled CLI is
-// run as a subprocess against a real extracted-package fixture so resolution,
-// confirmation, and core-generated output all survive the packed Node bundle.
-test("packed CLI: help lists every flow, handoff, and uninstall command", () => {
+test("packed CLI: help lists v1 task, action, handoff, cutover, and uninstall commands", () => {
   const packs = packWorkspacePackages();
   const install = tmp("wk-packedcli-help-");
   try {
@@ -445,159 +437,16 @@ test("packed CLI: help lists every flow, handoff, and uninstall command", () => 
     const help = runInIsolation(install, "node", [entry, "--help"], env);
     expect(help.status, help.stderr).toBe(0);
     for (const command of [
-      "workit flow status --plan <path>",
-      "workit flow pause --plan <path> [--confirm]",
-      "workit flow resume --plan <path> [--confirm]",
-      "workit flow complete --plan <path> [--confirm]",
-      "workit flow review-package --plan <path> --base <sha> --head <sha> [--confirm]",
-      "workit handoff --message <text>",
+      "workit <family> <action> [options]",
+      "workit action <operation> --payload <JSON>",
+      "workit handoff --task <id>",
+      "workit cutover preview|apply|rollback ...",
       "workit uninstall",
     ]) {
       expect(help.stdout, command).toContain(command);
     }
+    expect(help.stdout).not.toContain("workit flow");
     expect(help.stderr).toBe("");
-  } finally {
-    rmSync(install, { recursive: true, force: true });
-  }
-}, 120_000);
-
-test("packed CLI: non-TTY mutation without --confirm exits 2 with the exact message", () => {
-  const packs = packWorkspacePackages();
-  const install = tmp("wk-packedcli-non-tty-");
-  try {
-    const nm = path.join(install, "node_modules");
-    mkdirSync(nm, { recursive: true });
-    const cliDir = installPackedPackage(nm, byName(packs, CLI));
-    const home = path.join(install, "home");
-    mkdirSync(home, { recursive: true });
-    const env = isolatedEnv(home);
-    const entry = path.join(cliDir, "dist", "index.js");
-
-    const run = runInIsolation(
-      install,
-      "node",
-      [entry, "flow", "pause", "--plan", "docs/x/plan.md"],
-      env,
-    );
-    expect(run.status, run.stdout + run.stderr).toBe(2);
-    expect(run.stdout).toBe("");
-    expect(run.stderr).toContain("--confirm required when stdin is not a TTY");
-  } finally {
-    rmSync(install, { recursive: true, force: true });
-  }
-}, 120_000);
-
-test("packed CLI: flow status and handoff work from an extracted package with stdout-only success", () => {
-  const packs = packWorkspacePackages();
-  const install = tmp("wk-packedcli-flow-");
-  try {
-    const nm = path.join(install, "node_modules");
-    mkdirSync(nm, { recursive: true });
-    const cliDir = installPackedPackage(nm, byName(packs, CLI));
-    const home = path.join(install, "home");
-    mkdirSync(home, { recursive: true });
-    const project = path.join(install, "project");
-    mkdirSync(project, { recursive: true });
-    const env = isolatedEnv(home, { WORKFLOW_WORKSPACE_ROOT: project });
-    const entry = path.join(cliDir, "dist", "index.js");
-
-    const slug = "packed-flow";
-    mkdirSync(path.join(project, "docs", slug), { recursive: true });
-    writeFileSync(path.join(project, "docs", slug, "spec.md"), COMPLIANT_SPEC(slug), "utf8");
-    writeFileSync(path.join(project, "docs", slug, "plan.md"), COMPLIANT_PLAN(slug), "utf8");
-    const sdd = path.join(project, "docs", slug, "sdd");
-    mkdirSync(sdd, { recursive: true });
-    writeFileSync(
-      path.join(sdd, "flow.json"),
-      `${JSON.stringify(
-        {
-          slug,
-          activated: true,
-          spec: {
-            path: `docs/${slug}/spec.md`,
-            status: "approved",
-            evidence: null,
-            approved_digest: fileSha256(path.join(project, "docs", slug, "spec.md")),
-          },
-          plan: {
-            path: `docs/${slug}/plan.md`,
-            status: "approved",
-            evidence: null,
-            approved_digest: fileSha256(path.join(project, "docs", slug, "plan.md")),
-          },
-          menu: { presented: true, chosen: "handoff", evidence: null },
-          execution: { status: "active", mode: "subagent-driven", evidence: null },
-          handoff_destination: false,
-          updated_at: Date.now(),
-        },
-        null,
-        2,
-      )}\n`,
-      "utf8",
-    );
-
-    const status = runInIsolation(
-      install,
-      "node",
-      [entry, "flow", "status", "--plan", `docs/${slug}/plan.md`],
-      env,
-    );
-    expect(status.status, status.stderr).toBe(0);
-    expect(status.stderr).toBe("");
-    const statusData = JSON.parse(status.stdout);
-    expect(statusData.ok).toBe(true);
-    expect(statusData.slug).toBe(slug);
-    expect(statusData.spec.path).toBe(`docs/${slug}/spec.md`);
-    expect(statusData.plan.path).toBe(`docs/${slug}/plan.md`);
-    expect(statusData.menu.chosen).toBe("handoff");
-    expect(statusData.drift).toEqual([]);
-
-    const handoff = runInIsolation(
-      install,
-      "node",
-      [entry, "handoff", "--message", `docs/${slug}/plan.md`],
-      env,
-    );
-    expect(handoff.status, handoff.stderr).toBe(0);
-    expect(handoff.stderr).toBe("");
-    expect(handoff.stdout).toContain(HANDOFF_DESTINATION_MARKER);
-    const state = JSON.parse(readFileSync(path.join(sdd, "flow.json"), "utf8")) as {
-      handoff_destination: boolean;
-    };
-    expect(state.handoff_destination).toBe(true);
-  } finally {
-    rmSync(install, { recursive: true, force: true });
-  }
-}, 120_000);
-
-test("packed CLI: domain and usage diagnostics are stderr with the documented exit codes", () => {
-  const packs = packWorkspacePackages();
-  const install = tmp("wk-packedcli-diag-");
-  try {
-    const nm = path.join(install, "node_modules");
-    mkdirSync(nm, { recursive: true });
-    const cliDir = installPackedPackage(nm, byName(packs, CLI));
-    const home = path.join(install, "home");
-    mkdirSync(home, { recursive: true });
-    const entry = path.join(cliDir, "dist", "index.js");
-
-    const usage = runInIsolation(install, "node", [entry, "flow", "status"], isolatedEnv(home));
-    expect(usage.status, usage.stdout + usage.stderr).toBe(2);
-    expect(usage.stdout).toBe("");
-    expect(usage.stderr).toContain("--plan");
-
-    const project = path.join(install, "domain-project");
-    mkdirSync(project, { recursive: true });
-    const env = isolatedEnv(home, { WORKFLOW_WORKSPACE_ROOT: project });
-    const domain = runInIsolation(
-      install,
-      "node",
-      [entry, "flow", "status", "--plan", "docs/x/plan.md"],
-      env,
-    );
-    expect(domain.status, domain.stdout + domain.stderr).toBe(1);
-    expect(domain.stdout).toBe("");
-    expect(domain.stderr).toContain("flow_not_activated");
   } finally {
     rmSync(install, { recursive: true, force: true });
   }

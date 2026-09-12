@@ -27,12 +27,40 @@ import {
   type WizardDraft,
   type WizardScreen,
 } from "./wizard-state";
+import {
+  emptyDetection,
+  preselectedPlatforms,
+  type HostDetection,
+  type HostId,
+} from "@brainervirus/workit-core/src/core/detect-hosts.ts";
 import { LOCALE_LANGUAGE_MAP, SearchSelect } from "./search-select";
 
-const PLATFORMS = [
+// Platform selection stays limited to hosts the setup Apply path registers today.
+// Codex/Pi cutover uses the dedicated preview/apply flow exported from logic.ts.
+const PLATFORM_LABELS: { label: string; value: string }[] = [
   { label: "OpenCode", value: "opencode" },
   { label: "Cursor", value: "cursor" },
 ];
+
+/** Wizard platform options with auto-detect tags (pure: takes the detection). */
+export function platformOptions(
+  detection: Record<HostId, HostDetection>,
+): { label: string; value: string }[] {
+  return PLATFORM_LABELS.map(({ label, value }) => {
+    const found = detection[value as HostId];
+    const tag = found.configured ? " · already configured" : found.detected ? " · detected" : "";
+    return { label: `${label}${tag}`, value };
+  });
+}
+
+const EXTERNAL_HOST_LABELS: Record<string, string> = { codex: "Codex", pi: "Pi" };
+
+/** Detected hosts the wizard does not register (set up via `workit cutover`). */
+export function externalDetectedHosts(detection: Record<HostId, HostDetection>): string[] {
+  return (Object.keys(EXTERNAL_HOST_LABELS) as HostId[])
+    .filter((host) => detection[host].detected)
+    .map((host) => EXTERNAL_HOST_LABELS[host]);
+}
 
 const BRANCH_PRESETS: { label: string; value: BranchPreset }[] = [
   { label: "GitFlow", value: "gitflow" },
@@ -83,6 +111,7 @@ const LOCALE_PICKER_OPTIONS: { label: string; value: string }[] = [
 const ISSUE_TRACKERS: { label: string; value: SetupValues["issueTracker"] }[] = [
   { label: "YouTrack", value: "youtrack" },
   { label: "GitHub Issues", value: "github" },
+  { label: "GitLab Issues", value: "gitlab" },
   { label: "None", value: "none" },
 ];
 
@@ -163,6 +192,9 @@ function workspacePreviewTargets(cwd: string): string[] {
 type ScreenProps = {
   draft: WizardDraft;
   dispatch: Dispatch<WizardAction>;
+  // Optional so sub-screens that never read it (branch policy, base path)
+  // keep their call sites unchanged; Screen defaults it when absent.
+  detection?: Record<HostId, HostDetection>;
   onSearchQueryChange?: (query: string) => void;
 };
 
@@ -190,10 +222,13 @@ export function SelectList<T extends string>({
   // Burst-input mirror (Task 1 advisory): two arrow keys can arrive in one
   // stdin chunk, both handled before React re-renders — a closure-read index
   // would collapse them into one step. The ref is updated synchronously in the
-  // handler and re-synced on every render. WZ-13 unchanged: no side effects
+  // handler; this effect only re-syncs after commits so render stays pure
+  // (react-doctor no-ref-current-in-render). WZ-13 unchanged: no side effects
   // inside setState updaters; onChange stays a sibling of setIndex.
   const indexRef = useRef(index);
-  indexRef.current = index;
+  useEffect(() => {
+    indexRef.current = index;
+  }, [index]);
 
   useInput((_input, key) => {
     if (key.downArrow || key.upArrow) {
@@ -333,10 +368,21 @@ function BranchPolicyScreen({ draft, dispatch }: ScreenProps): JSX.Element {
 
 export function Wizard({
   onExit,
+  // Hermetic-by-default: runInit passes the live detectHosts(); tests render
+  // without it and get no preselection, so ambient machine state can never
+  // leak into a test run.
+  detection = emptyDetection(),
 }: {
   onExit: (complete: boolean, values?: SetupValues) => void;
+  detection?: Record<HostId, HostDetection>;
 }): JSX.Element {
-  const [draft, dispatch] = useReducer(reducer, undefined, createInitialDraft);
+  const [draft, dispatch] = useReducer(reducer, detection, (found) => {
+    const initial = createInitialDraft();
+    const platforms = preselectedPlatforms(found);
+    return platforms.length > 0
+      ? { ...initial, values: { ...initial.values, platforms } }
+      : initial;
+  });
   const exitedRef = useRef(false);
   // Consumed-key policy for the locale SearchSelect: it reports every query
   // change synchronously, and this screen-level handler observes the value
@@ -372,7 +418,7 @@ export function Wizard({
       exitedRef.current = true;
       onExit(!draft.cancelled, draft.values);
     }
-  }, [draft.screen, draft.cancelled, onExit]);
+  }, [draft.screen, draft.cancelled, draft.values, onExit]);
 
   return (
     <Box flexDirection="column" gap={1}>
@@ -387,6 +433,7 @@ export function Wizard({
         key={draft.screen}
         draft={draft}
         dispatch={dispatch}
+        detection={detection}
         onSearchQueryChange={(query) => {
           const search = searchRef.current;
           search.q = query;
@@ -448,7 +495,13 @@ function BasePathScreen({ draft, dispatch }: ScreenProps): JSX.Element {
   );
 }
 
-function Screen({ draft, dispatch, onSearchQueryChange }: ScreenProps): JSX.Element {
+function Screen({
+  draft,
+  dispatch,
+  detection = emptyDetection(),
+  onSearchQueryChange,
+}: ScreenProps): JSX.Element {
+  const externalDetected = externalDetectedHosts(detection);
   switch (draft.screen) {
     case "platforms":
       return (
@@ -456,7 +509,7 @@ function Screen({ draft, dispatch, onSearchQueryChange }: ScreenProps): JSX.Elem
           <Text bold>Step 1 — Platforms</Text>
           <Text dimColor>Select the tools to configure (space to toggle):</Text>
           <MultiSelect
-            options={PLATFORMS}
+            options={platformOptions(detection)}
             defaultValue={draft.values.platforms}
             onChange={(values) => dispatch({ type: "set", field: "platforms", value: values })}
             onSubmit={(values) => {
@@ -464,6 +517,11 @@ function Screen({ draft, dispatch, onSearchQueryChange }: ScreenProps): JSX.Elem
               dispatch({ type: "next" });
             }}
           />
+          {externalDetected.length > 0 && (
+            <Text dimColor>
+              Detected: {externalDetected.join(", ")} — set up via `workit cutover`.
+            </Text>
+          )}
           {draft.errors.platforms && <Text color="red">{draft.errors.platforms}</Text>}
           <Text dimColor>Enter to continue · Esc Cancel</Text>
         </Box>
@@ -767,8 +825,8 @@ function Screen({ draft, dispatch, onSearchQueryChange }: ScreenProps): JSX.Elem
           <Text bold>Step 5 — Workspaces · Provider</Text>
           <Text dimColor>Version control provider for this workspace:</Text>
           <SelectList
-            options={VCS_PROVIDERS.filter((option) => option.value !== "skip")}
-            value={draft.workspaceDraft?.vcs?.provider ?? "gitlab"}
+            options={VCS_PROVIDERS}
+            value={draft.workspaceDraft?.vcs?.provider ?? "skip"}
             onChange={(value) => dispatch({ type: "workspaceDraftProvider", value })}
             onSelect={(value) => {
               dispatch({ type: "workspaceDraftProvider", value });

@@ -9,14 +9,24 @@
     "allowImportingTsExtensions": true,
     "skipLibCheck": true,
     "types": ["node", "bun"],
-    "jsx": "react-jsx"
+    "jsx": "react-jsx",
+    "paths": {
+      "@/*": ["./*"]
+    }
   },
   "include": [
     "test/**/*.ts",
     "test/**/*.tsx",
     "packages/workit-core/src/**/*.ts",
+    "packages/workit-mcp/src/**/*.ts",
+    "packages/workit-mcp/scripts/**/*.ts",
+    "packages/workit-cursor/hooks/**/*.ts",
+    "packages/workit-codex/hooks/**/*.ts",
+    "packages/workit-codex/scripts/**/*.ts",
     "packages/workit-opencode/src/**/*.ts",
     "packages/workit-cli/src/**/*.tsx",
-    "packages/workit-cursor/mcp/**/*.ts"
+    "packages/workit-cursor/mcp/**/*.ts",
+    "packages/workit-pi/src/**/*.ts",
+    "packages/workit-pi/extensions/**/*.ts"
   ]
 }
