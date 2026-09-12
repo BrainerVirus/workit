@@ -97,7 +97,9 @@ for (const alias of Object.keys(WORKIT_SKILL_ALIASES)) {
     console.error(`missing Cursor command alias: ${alias}`);
     process.exit(1);
   }
-  cpSync(src, path.join(commands, `${alias}.md`));
+  const dest = path.join(commands, `${alias}.md`);
+  if (path.resolve(src) === path.resolve(dest)) continue;
+  cpSync(src, dest);
 }
 console.log(
   `cursor: built shared MCP, native hook, assets, and ${WORKIT_METHOD_SKILLS.length} method skills (${target})`,

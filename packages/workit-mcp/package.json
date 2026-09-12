@@ -24,8 +24,13 @@
   ],
   "type": "module",
   "main": "./dist/index.js",
+  "types": "./src/index.ts",
   "exports": {
-    ".": "./dist/index.js",
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
     "./src/*.ts": "./src/*.ts",
     "./src/*": "./src/*.ts"
   },
