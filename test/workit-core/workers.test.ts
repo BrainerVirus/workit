@@ -1233,8 +1233,7 @@ test("outside-checkout absolute paths are allowed with writer held, denied witho
   ).toMatchObject({ ok: false, code: "permission_denied" });
 });
 
-test("a lifecycle transition bumps the revision but a repeated identical observation does not", () => {
-  const lead = active({ nativeWorker: observationVerifier() });
+test("a lifecycle transition bumps the revision but a repeated identical observation does not", () => {  const lead = active({ nativeWorker: observationVerifier() });
   const assigned = assign(lead.core, lead.task, lead.workspace);
   if (!assigned.ok) throw new Error(assigned.error);
   const workerId = assigned.data.id;
@@ -1265,4 +1264,49 @@ test("a lifecycle transition bumps the revision but a repeated identical observa
   if (!second.ok) throw new Error(second.error);
   expect(second.revision).toBe(first.revision);
   expect(second.workspaceRevision).toBe(first.workspaceRevision);
+});
+
+test("out-of-scope paths pass with writer held; task scopes no longer gate files", () => {
+  const lead = active();
+  const state = current(lead);
+  const narrowed = lead.core.task(
+    taskStartRequest({
+      intent: {
+        objective: "narrow task",
+        scope: scope({ paths: ["src"] }),
+        authorityRefs: [],
+      },
+      expectedWorkspaceRevision: state.workspace.revision,
+    }),
+  );
+  expect(narrowed.ok).toBe(true);
+  if (!narrowed.ok) throw new Error(narrowed.error);
+  const narrowId = (narrowed.data as { id: string }).id;
+  const fresh = current(lead);
+  const narrowTask = lead.store.readTask(narrowId);
+  if (!narrowTask.ok) throw new Error(narrowTask.error);
+  const acquired = lead.core.writer({
+    schemaVersion: 1,
+    action: "acquire",
+    taskId: narrowId,
+    expectedRevision: narrowTask.data.revision,
+    expectedWorkspaceRevision: fresh.workspace.revision,
+    workerId: null,
+  });
+  expect(acquired.ok).toBe(true);
+  if (!acquired.ok) throw new Error(acquired.error);
+  const task = lead.store.readTask(narrowId);
+  const workspace = lead.store.readWorkspace();
+  if (!task.ok || !workspace.ok || !workspace.data) throw new Error("state missing");
+  const check = (paths: string[]) =>
+    (lead.core.assertProductWriteAllowed as (input: object) => { ok: boolean; code?: string })({
+      task: task.data,
+      workspace: workspace.data,
+      paths,
+    });
+  // Outside ["src"] scope: allowed now (host policy owns file placement).
+  expect(check(["docs/guide.md"])).toMatchObject({ ok: true });
+  expect(check(["/tmp/elsewhere/db.sql"])).toMatchObject({ ok: true });
+  // Malformed paths still reject in both worlds.
+  expect(check(["../secret"])).toMatchObject({ ok: false, code: "invalid_input" });
 });
