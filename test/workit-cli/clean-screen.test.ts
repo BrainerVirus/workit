@@ -78,10 +78,16 @@ type DriveOptions = {
 async function driveRunInit(keys: DriveStep[], options: DriveOptions = {}): Promise<DriveResult> {
   const { isTTY = true, malformedConfig = false } = options;
   const base = mkdtempSync(path.join(os.tmpdir(), "workit-clean-"));
+  const home = mkdtempSync(path.join(os.tmpdir(), "workit-clean-home-"));
   const configPath = path.join(base, "config");
   mkdirSync(configPath, { recursive: true });
   const prevToolkitConfig = process.env.WORKFLOW_TOOLKIT_CONFIG;
   process.env.WORKFLOW_TOOLKIT_CONFIG = configPath;
+  // Hermetic host detection: an empty HOME means no platforms are preselected,
+  // so SPACE always selects the first option instead of toggling a detected
+  // one off (CI runners detect an already-configured OpenCode).
+  const prevHome = process.env.HOME;
+  process.env.HOME = home;
   if (malformedConfig) writeFileSync(path.join(configPath, "config.json"), "{ not json", "utf8");
   const prevWorkspaceRoot = process.env.WORKFLOW_WORKSPACE_ROOT;
   // Non-git resolution root keeps the branch-policy screen out of the walk.
@@ -204,6 +210,9 @@ async function driveRunInit(keys: DriveStep[], options: DriveOptions = {}): Prom
     cleanupLiveInkInstances();
     if (prevToolkitConfig === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
     else process.env.WORKFLOW_TOOLKIT_CONFIG = prevToolkitConfig;
+    if (prevHome === undefined) delete process.env.HOME;
+    else process.env.HOME = prevHome;
+    rmSync(home, { recursive: true, force: true });
     if (prevWorkspaceRoot === undefined) delete process.env.WORKFLOW_WORKSPACE_ROOT;
     else process.env.WORKFLOW_WORKSPACE_ROOT = prevWorkspaceRoot;
     process.exit = prevExit;
