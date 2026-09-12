@@ -162,10 +162,11 @@ export function vcsConfig(mode: "load" | "summary" | "resolve", cwd?: string): R
   // accounts without collisions), else the global provider tokenFile, else the
   // default <provider>.token path. Same order as the per-workspace
   // commitPolicy/branchPolicy overrides.
-  const wsTokenFile = typeof wsVcs.tokenFile === "string" && wsVcs.tokenFile.trim() !== ""
-    ? wsVcs.tokenFile
-    : null;
-  const tokenFile = String(wsTokenFile ?? prov.tokenFile ?? path.join(configDir(), `${provider}.token`));
+  const wsTokenFile =
+    typeof wsVcs.tokenFile === "string" && wsVcs.tokenFile.trim() !== "" ? wsVcs.tokenFile : null;
+  const tokenFile = String(
+    wsTokenFile ?? prov.tokenFile ?? path.join(configDir(), `${provider}.token`),
+  );
   const tokenPath = path.resolve(tokenFile);
   let tokenOk = false;
   if (fs.existsSync(tokenPath)) {
@@ -305,30 +306,30 @@ export function vcsTokenCreateUrls(): Record<string, any> {
   const githubClassicUrl = `https://github.com/settings/tokens/new?${new URLSearchParams({ description: name, scopes: classicScopes.join(",") })}`;
 
   const rawProvider = cfg.provider;
-  // Display-only URL helper: both providers' URLs are always returned, so the
-  // active preselection assumes gitlab when unconfigured. Harmless by design —
-  // it builds links, never routes operations (load fails closed above).
+  // Display-only URL helper: both providers' URLs are always returned, but
+  // nothing is preselected without an explicit provider — no silent default.
   const provider =
-    typeof rawProvider === "string" && rawProvider.trim()
-      ? rawProvider.toLowerCase()
-      : "gitlab";
+    typeof rawProvider === "string" && rawProvider.trim() ? rawProvider.toLowerCase() : null;
   const active =
-    {
-      gitlab: {
-        tokenFile: gitlab.tokenFile ?? path.join(configDir(), "gitlab.token"),
-        createUrl: gitlabUrl,
-        scopes: gitlabScopes,
-        name,
-      },
-      github: {
-        tokenFile:
-          (cfg.github as Record<string, any>)?.tokenFile ?? path.join(configDir(), "github.token"),
-        createUrl: githubFineUrl,
-        createUrlClassic: githubClassicUrl,
-        permissions: githubPerms,
-        name,
-      },
-    }[provider] ?? {};
+    provider === null
+      ? undefined
+      : ({
+          gitlab: {
+            tokenFile: gitlab.tokenFile ?? path.join(configDir(), "gitlab.token"),
+            createUrl: gitlabUrl,
+            scopes: gitlabScopes,
+            name,
+          },
+          github: {
+            tokenFile:
+              (cfg.github as Record<string, any>)?.tokenFile ??
+              path.join(configDir(), "github.token"),
+            createUrl: githubFineUrl,
+            createUrlClassic: githubClassicUrl,
+            permissions: githubPerms,
+            name,
+          },
+        }[provider] ?? {});
 
   return {
     tokenName: name,

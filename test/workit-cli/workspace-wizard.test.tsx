@@ -218,7 +218,8 @@ test("workspaceAddCurrent provider follows the wizard VCS selection", () => {
     { ...draftWith([]), values: { ...draftWith([]).values, vcsProvider: "skip" } },
     { type: "workspaceAddCurrent", path: "/home/u/proj" },
   );
-  expect(skip.values.workspaces[0].vcs?.provider).toBe("gitlab");
+  // Skipped selection omits the section: no silent provider assumption.
+  expect(skip.values.workspaces[0].vcs).toBeUndefined();
 });
 
 test("empty workspace name and glob block next with per-field errors", () => {

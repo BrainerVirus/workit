@@ -186,9 +186,7 @@ export function initStatusData(configDirPath = configDir()): Record<string, any>
   if (vcsParsed) {
     const rawProvider = vcsParsed.provider;
     const provider =
-      typeof rawProvider === "string" && rawProvider.trim()
-        ? rawProvider.toLowerCase()
-        : null;
+      typeof rawProvider === "string" && rawProvider.trim() ? rawProvider.toLowerCase() : null;
     const tokenFiles: Record<string, string> = {};
     for (const k of ["gitlab", "github"]) {
       tokenFiles[k] = String(vcsParsed[k]?.tokenFile ?? path.join(configDirPath, `${k}.token`));
@@ -304,7 +302,10 @@ export async function toolkitStatusData(configDirPath = configDir()): Promise<Re
     : await youTrackVerifyToken();
   const vcsVerify =
     provider === null
-      ? { ok: false, error: "vcs provider unconfigured — set provider to gitlab or github in vcs.json" }
+      ? {
+          ok: false,
+          error: "vcs provider unconfigured — set provider to gitlab or github in vcs.json",
+        }
       : vcsPlaceholder
         ? { ok: false, error: "vcs token still placeholder YOUR_TOKEN_HERE" }
         : await vcsVerifyToken();
@@ -383,22 +384,22 @@ const vcsJsonContent = (dir: string, cwd?: string): Record<string, any> => {
   return {
     ...(provider ? { provider } : {}),
     defaultTargetBranch: process.env.WORKFLOW_VCS_TARGET_BRANCH ?? "develop",
-  gitlab: {
-    host: process.env.WORKFLOW_GITLAB_HOST ?? "gitlab.com",
-    apiUrl: process.env.WORKFLOW_GITLAB_API_URL ?? "https://gitlab.com/api/v4",
-    tokenFile: path.join(dir, "gitlab.token"),
-  },
-  github: {
-    host: process.env.WORKFLOW_GITHUB_HOST ?? "github.com",
-    tokenFile: path.join(dir, "github.token"),
-  },
-  pr: { squashOnMerge: true, removeSourceBranch: true, pushBranch: true, confirmSkip: true },
-  tokenDefaults: {
-    name: "workit",
-    description: "OpenCode workit — /wk-pr and glab/gh",
-    gitlabScopes: ["api"],
-    githubPermissions: { pull_requests: "write", contents: "write", metadata: "read" },
-    githubClassicScopes: ["repo"],
+    gitlab: {
+      host: process.env.WORKFLOW_GITLAB_HOST ?? "gitlab.com",
+      apiUrl: process.env.WORKFLOW_GITLAB_API_URL ?? "https://gitlab.com/api/v4",
+      tokenFile: path.join(dir, "gitlab.token"),
+    },
+    github: {
+      host: process.env.WORKFLOW_GITHUB_HOST ?? "github.com",
+      tokenFile: path.join(dir, "github.token"),
+    },
+    pr: { squashOnMerge: true, removeSourceBranch: true, pushBranch: true, confirmSkip: true },
+    tokenDefaults: {
+      name: "workit",
+      description: "OpenCode workit — /wk-pr and glab/gh",
+      gitlabScopes: ["api"],
+      githubPermissions: { pull_requests: "write", contents: "write", metadata: "read" },
+      githubClassicScopes: ["repo"],
     },
   };
 };
@@ -508,8 +509,7 @@ export function initApplyData(
       try {
         const cfg = readJson(configPath) ?? {};
         const rawProvider = cfg.provider;
-        const provider =
-          typeof rawProvider === "string" && rawProvider.trim() ? rawProvider : null;
+        const provider = typeof rawProvider === "string" && rawProvider.trim() ? rawProvider : null;
         const tokenUrls = vcsTokenCreateUrls();
         const active = tokenUrls.active ?? {};
         const activePath =

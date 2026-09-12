@@ -825,8 +825,8 @@ function Screen({
           <Text bold>Step 5 — Workspaces · Provider</Text>
           <Text dimColor>Version control provider for this workspace:</Text>
           <SelectList
-            options={VCS_PROVIDERS.filter((option) => option.value !== "skip")}
-            value={draft.workspaceDraft?.vcs?.provider ?? "gitlab"}
+            options={VCS_PROVIDERS}
+            value={draft.workspaceDraft?.vcs?.provider ?? "skip"}
             onChange={(value) => dispatch({ type: "workspaceDraftProvider", value })}
             onSelect={(value) => {
               dispatch({ type: "workspaceDraftProvider", value });

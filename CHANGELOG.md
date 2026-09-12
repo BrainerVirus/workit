@@ -25,6 +25,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   checkouts never inherit a silent default. An unconfigured provider is an
   explicit state: `vcsConfig` resolve reports `provider: null` (branch
   policy still resolves from presets) while credential loads fail closed.
+  Token-creation URLs preselect nothing without a configured provider, and
+  the setup wizard defaults to Skip (configure later) instead of gitlab —
+  including per-workspace entries, whose `vcs` section is omitted on skip.
 - `wk-*` slash aliases for all fourteen method skills on OpenCode, Cursor,
   and Pi (replacing the five bare aliases); Codex documents `$workit-*`.
 - `commitPolicy` config (conventional, gitmoji, ticket-prefix, freeform,
