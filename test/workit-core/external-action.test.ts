@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import {
   TaskStore,
   WorkitCore,
@@ -418,8 +418,15 @@ test("local commit checks writer ownership, not scopes", async () => {
 
 test("hosting reconciliation reads one exact GitHub result and preserves unknown ambiguity", async () => {
   const root = mkdtempSync(join(tmpdir(), "workit-hosting-read-"));
+  const tools = mkdtempSync(join(tmpdir(), "workit-hosting-tools-"));
   const previousConfig = process.env.WORKFLOW_VCS_CONFIG;
   const previousFetch = globalThis.fetch;
+  const previousPath = process.env.PATH;
+  for (const name of ["gh", "glab"]) {
+    writeFileSync(join(tools, name), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+    writeFileSync(join(tools, `${name}.cmd`), "@exit /b 0\r\n");
+  }
+  process.env.PATH = `${tools}${delimiter}${previousPath ?? ""}`;
   try {
     spawnSync("git", ["init", "-q"], { cwd: root });
     spawnSync("git", ["config", "user.email", "test@example.invalid"], { cwd: root });
@@ -584,8 +591,11 @@ test("hosting reconciliation reads one exact GitHub result and preserves unknown
     });
   } finally {
     globalThis.fetch = previousFetch;
+    if (previousPath === undefined) delete process.env.PATH;
+    else process.env.PATH = previousPath;
     if (previousConfig === undefined) delete process.env.WORKFLOW_VCS_CONFIG;
     else process.env.WORKFLOW_VCS_CONFIG = previousConfig;
+    rmSync(tools, { recursive: true, force: true });
     rmSync(root, { recursive: true, force: true });
   }
 });

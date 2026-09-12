@@ -11,7 +11,6 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 import {
   copyHoistedDeps,
   extractTarball,
@@ -487,13 +486,13 @@ test.skipIf(!npmRegistryOk)(
             private: true,
             version: "1.0.0",
             dependencies: {
-              "@brainervirus/workit-cli": pathToFileURL(byName(CLI).tarball).href,
+              "@brainervirus/workit-cli": byName(CLI).tarballUrl,
             },
             overrides: {
-              "@brainervirus/workit-core": pathToFileURL(byName(CORE).tarball).href,
-              "@brainervirus/workit-cursor": pathToFileURL(byName(CURSOR).tarball).href,
-              "@brainervirus/workit-opencode": pathToFileURL(byName(OPENCODE).tarball).href,
-              "@brainervirus/workit-mcp": pathToFileURL(byName(MCP).tarball).href,
+              "@brainervirus/workit-core": byName(CORE).tarballUrl,
+              "@brainervirus/workit-cursor": byName(CURSOR).tarballUrl,
+              "@brainervirus/workit-opencode": byName(OPENCODE).tarballUrl,
+              "@brainervirus/workit-mcp": byName(MCP).tarballUrl,
             },
           },
           null,

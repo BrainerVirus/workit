@@ -269,11 +269,11 @@ test.skipIf(!npmRegistryOk)(
             private: true,
             version: "1.0.0",
             dependencies: {
-              "@brainervirus/workit-cursor": pathToFileURL(byName(packs, CURSOR).tarball).href,
-              "@brainervirus/workit-mcp": pathToFileURL(byName(packs, MCP).tarball).href,
+              "@brainervirus/workit-cursor": byName(packs, CURSOR).tarballUrl,
+              "@brainervirus/workit-mcp": byName(packs, MCP).tarballUrl,
             },
             overrides: {
-              "@brainervirus/workit-core": pathToFileURL(byName(packs, CORE).tarball).href,
+              "@brainervirus/workit-core": byName(packs, CORE).tarballUrl,
             },
           },
           null,
