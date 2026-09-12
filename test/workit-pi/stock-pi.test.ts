@@ -28,7 +28,11 @@ test(
       repoRoot,
       "node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js",
     );
-    const env = { ...process.env, PI_CODING_AGENT_DIR: agentDir };
+    // Hermetic HOME: stock Pi auto-discovers user-level agent skills
+    // (~/.agents/skills) — see extension.test.ts discovery test.
+    const home = path.join(stage, "home");
+    mkdirSync(home);
+    const env = { ...process.env, PI_CODING_AGENT_DIR: agentDir, HOME: home };
     const packed = spawnSync(
       "npm",
       [

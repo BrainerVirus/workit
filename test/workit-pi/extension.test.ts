@@ -695,7 +695,12 @@ test("stock Pi discovers the package manifest through its local package manager"
     repoRoot,
     "node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js",
   );
-  const env = { ...process.env, PI_CODING_AGENT_DIR: agentDir };
+  // Hermetic HOME: stock Pi auto-discovers user-level agent skills
+  // (~/.agents/skills), so ambient user skills would pollute the exact
+  // command count. The fake home keeps discovery limited to the package.
+  const home = path.join(stage, "home");
+  mkdirSync(home);
+  const env = { ...process.env, PI_CODING_AGENT_DIR: agentDir, HOME: home };
   assertCurrentNode();
   const packed = spawnSync(
     "npm",
