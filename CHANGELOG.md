@@ -20,6 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Reviewer worker assignments with no requirement ids now fail at assign time
+  on assessed tasks and return the review requirement ids, instead of letting
+  the worker discover later that its evidence is rejected.
 - The pre-PR deslop gate: behavior and mechanical-low-risk assessments now
   add a `pre-pr-cleanup` requirement that gates `hosting.pull_request` (and
   close) until a fresh passing deslop check is recorded or the user approves

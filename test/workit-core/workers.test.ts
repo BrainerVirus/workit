@@ -852,6 +852,74 @@ test("stopped helpers cannot mutate metadata after a task scope revision", () =>
   ).toMatchObject({ ok: false, code: "permission_denied" });
 });
 
+test("a reviewer assignment without requirement ids fails on an assessed task", () => {
+  const lead = active();
+  const assessed = lead.core.policy({
+    schemaVersion: 1,
+    action: "assess",
+    taskId: lead.task.id,
+    expectedRevision: lead.task.revision,
+    assessment: assessment({
+      signals: {
+        approachUnknown: { value: false, basis: "inferred", reason: "known", refs: [] },
+        productChoiceOpen: { value: false, basis: "inferred", reason: "known", refs: [] },
+        behaviorChange: { value: true, basis: "inferred", reason: "review required", refs: [] },
+        mechanicalLowRisk: { value: false, basis: "inferred", reason: "not mechanical", refs: [] },
+        durableAgreementNeeded: { value: false, basis: "inferred", reason: "none", refs: [] },
+        coordinationPlanNeeded: { value: false, basis: "inferred", reason: "none", refs: [] },
+        helperUseful: { value: false, basis: "inferred", reason: "none", refs: [] },
+        testFirstPractical: { value: true, basis: "inferred", reason: "yes", refs: [] },
+      },
+    }),
+  });
+  expect(assessed.ok).toBe(true);
+  if (!assessed.ok) throw new Error(assessed.error);
+  const reviewId = (
+    assessed.data as { requirements: Array<{ id: string; dimension: string }> }
+  ).requirements.find((requirement) => requirement.dimension === "review")?.id;
+  expect(reviewId).toBeDefined();
+  const state = current(lead);
+  const denied = lead.core.worker({
+    schemaVersion: 1,
+    action: "assign",
+    taskId: lead.task.id,
+    expectedRevision: state.task.revision,
+    expectedWorkspaceRevision: state.workspace.revision,
+    assignment: {
+      role: "reviewer",
+      objective: "verify the change",
+      scope: scope({ paths: ["src"] }),
+      decisionIds: [],
+      requirementIds: [],
+      candidateId: null,
+      stoppingCondition: "report the result",
+    },
+  });
+  expect(denied).toMatchObject({
+    ok: false,
+    code: "invalid_input",
+    details: { requirementIds: [reviewId] },
+  });
+  const fresh = current(lead);
+  const allowed = lead.core.worker({
+    schemaVersion: 1,
+    action: "assign",
+    taskId: lead.task.id,
+    expectedRevision: fresh.task.revision,
+    expectedWorkspaceRevision: fresh.workspace.revision,
+    assignment: {
+      role: "reviewer",
+      objective: "verify the change",
+      scope: scope({ paths: ["src"] }),
+      decisionIds: [],
+      requirementIds: [reviewId!],
+      candidateId: null,
+      stoppingCondition: "report the result",
+    },
+  });
+  expect(allowed.ok).toBe(true);
+});
+
 test("a completed worker report satisfies its delegation requirement", () => {
   const lead = active({ nativeWorker: observationVerifier() });
   const assessed = lead.core.policy({

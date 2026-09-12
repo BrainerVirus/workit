@@ -1511,6 +1511,19 @@ export class WorkitCore {
         )
       )
         return failure("invalid_input", "worker assignment references an unknown requirement");
+      const reviewRequirements = (task.data.policy?.requirements ?? []).filter(
+        (requirement) => requirement.dimension === "review",
+      );
+      if (
+        input.assignment.role === "reviewer" &&
+        input.assignment.requirementIds.length === 0 &&
+        reviewRequirements.length
+      )
+        return failure(
+          "invalid_input",
+          "reviewer assignment needs the review requirement ids it will evidence",
+          { requirementIds: reviewRequirements.map((requirement) => requirement.id) },
+        );
       if (
         input.assignment.candidateId &&
         !task.data.candidates.some((candidate) => candidate.id === input.assignment.candidateId)
