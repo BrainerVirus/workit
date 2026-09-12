@@ -44,7 +44,16 @@ export class McpCapabilityUnavailableError extends Error {
 class McpResourceInputError extends Error {}
 
 const MCP_HOSTS = new Set<McpHost>(["cursor", "codex_cli", "codex_desktop"]);
-const CONTEXT_KINDS = ["git", "pr", "youtrack", "github_issue", "gitlab_issue", "changelog", "release", "affected"] as const;
+const CONTEXT_KINDS = [
+  "git",
+  "pr",
+  "youtrack",
+  "github_issue",
+  "gitlab_issue",
+  "changelog",
+  "release",
+  "affected",
+] as const;
 type ContextKind = (typeof CONTEXT_KINDS)[number];
 const CONTEXT_SELECTORS = ["range", "issueId"] as const;
 const safeCapability = (value: string, allowed: readonly string[]): string =>

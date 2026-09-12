@@ -121,7 +121,10 @@ const trackerCreds = (root: string, provider: "github" | "gitlab"): TrackerCreds
   }
   const github = cfg.github as Record<string, unknown> | undefined;
   const host = String(github?.host ?? "github.com").toLowerCase();
-  return { token, api: host === "github.com" ? "https://api.github.com" : `https://${host}/api/v3` };
+  return {
+    token,
+    api: host === "github.com" ? "https://api.github.com" : `https://${host}/api/v3`,
+  };
 };
 
 const parseTriple = (
@@ -170,12 +173,21 @@ export const fetchGitHubIssueBody = async (
     `${credentials.api}/repos/${repo}/issues/${id}`,
     {
       method: "GET",
-      headers: { Authorization: `Bearer ${credentials.token}`, Accept: "application/vnd.github+json" },
+      headers: {
+        Authorization: `Bearer ${credentials.token}`,
+        Accept: "application/vnd.github+json",
+      },
     },
   );
-  if (out.status !== 0) return { error: out.stderr || "GitHub issue fetch failed", kind: "request" };
+  if (out.status !== 0)
+    return { error: out.stderr || "GitHub issue fetch failed", kind: "request" };
   try {
-    const triple = parseTriple(JSON.parse(out.stdout) as Record<string, unknown>, id, ["number"], ["body"]);
+    const triple = parseTriple(
+      JSON.parse(out.stdout) as Record<string, unknown>,
+      id,
+      ["number"],
+      ["body"],
+    );
     if (!triple) return { error: "unexpected GitHub issue shape", kind: "request" };
     return { data: triple };
   } catch {
@@ -208,7 +220,8 @@ export const fetchGitLabIssueBody = async (
     `${credentials.api}/projects/${encodeURIComponent(repo)}/issues/${id}`,
     { method: "GET", headers: { "PRIVATE-TOKEN": credentials.token } },
   );
-  if (out.status !== 0) return { error: out.stderr || "GitLab issue fetch failed", kind: "request" };
+  if (out.status !== 0)
+    return { error: out.stderr || "GitLab issue fetch failed", kind: "request" };
   try {
     const triple = parseTriple(
       JSON.parse(out.stdout) as Record<string, unknown>,

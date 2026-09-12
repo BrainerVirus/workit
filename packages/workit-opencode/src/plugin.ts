@@ -125,7 +125,7 @@ const deletedSessionEnd = (
   (info as SessionInfo).id === sessionID &&
   (typeof (info as SessionInfo).directory !== "string" ||
     sameWorkspace(directory, (info as SessionInfo).directory)) &&
-    ((info as SessionInfo).parentID == null || (info as SessionInfo).parentID === parentID);
+  ((info as SessionInfo).parentID == null || (info as SessionInfo).parentID === parentID);
 
 type PreparedDispatch = {
   generation: DispatchGeneration;

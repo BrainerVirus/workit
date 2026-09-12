@@ -244,13 +244,13 @@ export class NativeReceiptStore {
           receipt.contentDigest !== expected.contentDigest) ||
         (expected.question !== undefined && receipt.question !== expected.question)
       )
-      return {
-        ok: false,
-        error:
-          "permission_denied: native question receipt does not match the requested content " +
-          "(binding questions must be asked receipt-shaped: header `Workit decision: <purpose>` " +
-          "with exactly approved/rejected options)",
-      };
+        return {
+          ok: false,
+          error:
+            "permission_denied: native question receipt does not match the requested content " +
+            "(binding questions must be asked receipt-shaped: header `Workit decision: <purpose>` " +
+            "with exactly approved/rejected options)",
+        };
       queue.splice(i, 1);
       if (!queue.length) this.#receipts.delete(sessionID);
       if (Date.now() - receipt.recordedAt > freshMs)
@@ -404,7 +404,8 @@ export const opencodeCapabilities = () => [
     name: "known_product_writes",
     surface: "write/edit/bash",
     assurance: "unavailable" as const,
-    reason: "file writes are host-policy; OpenCode native permissions govern them, workit no longer gates write tools",
+    reason:
+      "file writes are host-policy; OpenCode native permissions govern them, workit no longer gates write tools",
     refs: [hostRef("tool.execute.before")],
   },
   {

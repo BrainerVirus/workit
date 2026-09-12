@@ -1301,7 +1301,8 @@ test("outside-checkout absolute paths are allowed with writer held, denied witho
   ).toMatchObject({ ok: false, code: "permission_denied" });
 });
 
-test("a lifecycle transition bumps the revision but a repeated identical observation does not", () => {  const lead = active({ nativeWorker: observationVerifier() });
+test("a lifecycle transition bumps the revision but a repeated identical observation does not", () => {
+  const lead = active({ nativeWorker: observationVerifier() });
   const assigned = assign(lead.core, lead.task, lead.workspace);
   if (!assigned.ok) throw new Error(assigned.error);
   const workerId = assigned.data.id;

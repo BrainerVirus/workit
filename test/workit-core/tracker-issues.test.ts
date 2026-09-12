@@ -5,12 +5,14 @@ import {
   repoPathFromRemote,
 } from "@/packages/workit-core/src/core/tracker-issues";
 
-const stubRequest = (payload: unknown, status = 0) => async (url: string) => ({
-  status,
-  stdout: status === 0 ? JSON.stringify(payload) : "",
-  stderr: status === 0 ? "" : "not found",
-  url,
-});
+const stubRequest =
+  (payload: unknown, status = 0) =>
+  async (url: string) => ({
+    status,
+    stdout: status === 0 ? JSON.stringify(payload) : "",
+    stderr: status === 0 ? "" : "not found",
+    url,
+  });
 
 const deps = {
   creds: () => ({ token: "t", api: "https://api.github.com" }),
@@ -27,7 +29,9 @@ test("fetchGitHubIssueBody returns the title/body/state triple on stubbed fetch"
     }) as never,
   });
   expect(seen[0]).toBe("https://api.github.com/repos/owner/repo/issues/42");
-  expect(result).toEqual({ data: { id: "42", title: "Fix login", body: "Details", state: "open" } });
+  expect(result).toEqual({
+    data: { id: "42", title: "Fix login", body: "Details", state: "open" },
+  });
 });
 
 test("fetchGitHubIssueBody accepts # and URL refs and tolerates missing body", async () => {
@@ -44,9 +48,9 @@ test("fetchGitHubIssueBody fails closed on bad refs, missing remote, creds, and 
   expect(await fetchGitHubIssueBody("not-an-issue!!", "/root", deps)).toMatchObject({
     kind: "input",
   });
-  expect(
-    await fetchGitHubIssueBody("42", "/root", { ...deps, remote: () => null }),
-  ).toMatchObject({ kind: "input" });
+  expect(await fetchGitHubIssueBody("42", "/root", { ...deps, remote: () => null })).toMatchObject({
+    kind: "input",
+  });
   expect(
     await fetchGitHubIssueBody("42", "/root", {
       ...deps,
@@ -81,7 +85,15 @@ test("CLI-first: gh serves the read without touching tokens", async () => {
       };
     }) as never,
   });
-  expect(seen[0]).toEqual(["issue", "view", "42", "--repo", "owner/repo", "--json", "number,title,body,state"]);
+  expect(seen[0]).toEqual([
+    "issue",
+    "view",
+    "42",
+    "--repo",
+    "owner/repo",
+    "--json",
+    "number,title,body,state",
+  ]);
   expect(result).toEqual({ data: { id: "42", title: "T", body: "B", state: "open" } });
 });
 
@@ -115,7 +127,8 @@ test("CLI-first: glab serves the read without touching tokens", async () => {
   expect(result).toEqual({ data: { id: "13", title: "T", body: "B", state: "opened" } });
 });
 
-test("parity: both providers return the identical triple shape", async () => {  const github = await fetchGitHubIssueBody("42", "/root", {
+test("parity: both providers return the identical triple shape", async () => {
+  const github = await fetchGitHubIssueBody("42", "/root", {
     ...deps,
     request: stubRequest({ number: 42, title: "T", body: "B", state: "open" }) as never,
   });
@@ -131,7 +144,8 @@ test("parity: both providers return the identical triple shape", async () => {  
   }
 });
 
-test("repoPathFromRemote keeps subgroups and handles scp, https, and bare forms", () => {  expect(repoPathFromRemote("git@github.com:owner/repo.git")).toBe("owner/repo");
+test("repoPathFromRemote keeps subgroups and handles scp, https, and bare forms", () => {
+  expect(repoPathFromRemote("git@github.com:owner/repo.git")).toBe("owner/repo");
   expect(repoPathFromRemote("https://github.com/owner/repo")).toBe("owner/repo");
   expect(repoPathFromRemote("git@gitlab.com:group/sub/repo.git")).toBe("group/sub/repo");
   expect(repoPathFromRemote("https://gitlab.example.com/group/repo/")).toBe("group/repo");
@@ -164,9 +178,9 @@ test("fetchGitLabIssueBody returns the triple with PRIVATE-TOKEN auth on stubbed
 
 test("fetchGitLabIssueBody fails closed on bad refs, missing remote, creds, and requests", async () => {
   expect(await fetchGitLabIssueBody("abc!!", "/root", glDeps)).toMatchObject({ kind: "input" });
-  expect(await fetchGitLabIssueBody("13", "/root", { ...glDeps, remote: () => null })).toMatchObject(
-    { kind: "input" },
-  );
+  expect(
+    await fetchGitLabIssueBody("13", "/root", { ...glDeps, remote: () => null }),
+  ).toMatchObject({ kind: "input" });
   expect(
     await fetchGitLabIssueBody("13", "/root", {
       ...glDeps,
@@ -174,6 +188,9 @@ test("fetchGitLabIssueBody fails closed on bad refs, missing remote, creds, and 
     }),
   ).toMatchObject({ kind: "creds" });
   expect(
-    await fetchGitLabIssueBody("13", "/root", { ...glDeps, request: stubRequest({}, 404) as never }),
+    await fetchGitLabIssueBody("13", "/root", {
+      ...glDeps,
+      request: stubRequest({}, 404) as never,
+    }),
   ).toMatchObject({ kind: "request" });
 });
