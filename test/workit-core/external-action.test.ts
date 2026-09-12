@@ -24,7 +24,7 @@ import {
   resolveExternalActionRequest,
 } from "@/packages/workit-core/src/core/external-action-effects";
 import { nativeExternalActionRunner } from "@/packages/workit-opencode/src/tools/workit";
-import { scope, taskStartRequest } from "./task-fixtures";
+import { assessment, scope, taskStartRequest } from "./task-fixtures";
 
 const provenance = (actor: string, host: Provenance["host"] = "workit_cli"): Provenance => ({
   kind: "host_observed",
@@ -34,11 +34,16 @@ const provenance = (actor: string, host: Provenance["host"] = "workit_cli"): Pro
   receipts: [{ kind: "host", host, handle: `receipt:${actor}` }],
 });
 
+let decisionReceipt = 0;
 const verifier = (
   actor: string,
   host: Provenance["host"] = "workit_cli",
 ): NativeAuthorityVerifier => ({
-  verifyDecision: () => success(null, null, provenance(actor, host)),
+  verifyDecision: () =>
+    success(null, null, {
+      ...provenance(actor, host),
+      receipts: [{ kind: "host", host, handle: `receipt:${actor}:${(decisionReceipt += 1)}` }],
+    }),
   verifyAction: ({ caller, expected, observation }) => {
     if (
       caller.actor !== actor ||
@@ -962,5 +967,149 @@ test("pull_request resolve defaults babysit true and honors explicit decline", (
     if (previousConfig === undefined) delete process.env.WORKFLOW_VCS_CONFIG;
     else process.env.WORKFLOW_VCS_CONFIG = previousConfig;
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+const assessedGateSetup = () => {
+  const state = setup();
+  const assessed = state.core.policy({
+    schemaVersion: 1,
+    action: "assess",
+    taskId: state.task.id,
+    expectedRevision: state.task.revision,
+    assessment: assessment({
+      signals: {
+        ...assessment().signals,
+        behaviorChange: { value: true, basis: "inferred", reason: "gate fixture", refs: [] },
+        mechanicalLowRisk: { value: false, basis: "inferred", reason: "gate fixture", refs: [] },
+      },
+    }),
+  });
+  if (!assessed.ok) throw new Error(assessed.error);
+  const current = state.store.readTask(state.task.id);
+  if (!current.ok || !current.data.policy) throw new Error("assessed task missing policy");
+  const requirementId = current.data.policy.requirements.find(
+    (requirement) => requirement.ruleId === "pre-pr-cleanup",
+  )?.id;
+  if (!requirementId) throw new Error("pre-pr-cleanup requirement missing");
+  return { ...state, task: current.data, requirementId };
+};
+
+const recordGateDecision = (
+  state: ReturnType<typeof assessedGateSetup>,
+  purpose: "action" | "limitation",
+  approvedContent: string,
+  requirementIds: string[],
+) => {
+  const workspace = state.store.readWorkspace();
+  if (!workspace.ok || !workspace.data) throw new Error("workspace missing");
+  const recorded = state.core.observeDecision(
+    {
+      schemaVersion: 1,
+      action: "record",
+      taskId: state.task.id,
+      expectedRevision: state.task.revision,
+      purpose,
+      binding: {
+        taskId: state.task.id,
+        workspaceId: workspace.data.id,
+        scope: state.task.intent.data.scope,
+        presented: purpose === "action" ? "open the pull request" : "waive deslop",
+        approvedContent,
+        contentRefs: [],
+      },
+      response: "approved",
+      requirementIds,
+    },
+    { kind: "decision", actor: "cli-action" },
+  );
+  if (!recorded.ok) throw new Error(recorded.error);
+  const current = state.store.readTask(state.task.id);
+  if (!current.ok) throw new Error(current.error);
+  state.task = current.data;
+  return recorded.data;
+};
+
+test("pull request reservation is gated by pre-pr-cleanup evidence", async () => {
+  const state = assessedGateSetup();
+  try {
+    const decision = recordGateDecision(
+      state,
+      "action",
+      externalActionDescriptor("hosting.pull_request", { title: "Gate" }),
+      [],
+    );
+    let effects = 0;
+    const denied = await runAuthorizedExternalAction(
+      { ...inputFor(state), decisionId: decision.id },
+      async () => {
+        effects += 1;
+        return "pr";
+      },
+    );
+    expect(denied).toMatchObject({ ok: false, code: "requirements_unsatisfied" });
+    expect(effects).toBe(0);
+
+    const recorded = state.core.evidence({
+      schemaVersion: 1,
+      action: "record",
+      taskId: state.task.id,
+      expectedRevision: state.task.revision,
+      evidence: {
+        kind: "check",
+        claim: "deslop pass",
+        requirementIds: [state.requirementId],
+        beforeCandidateId: null,
+        candidateId: null,
+        result: "passed",
+        summary: "no slop found",
+        refs: [],
+        exitCode: 0,
+        reviewContext: null,
+      },
+    });
+    expect(recorded.ok).toBe(true);
+
+    const current = state.store.readTask(state.task.id);
+    const workspace = state.store.readWorkspace();
+    if (!current.ok || !workspace.ok || !workspace.data) throw new Error("state missing");
+    const allowed = await runAuthorizedExternalAction(
+      {
+        ...inputFor(state),
+        decisionId: decision.id,
+        expectedRevision: current.data.revision,
+        expectedWorkspaceRevision: workspace.data.revision,
+      },
+      async () => {
+        effects += 1;
+        return "pr";
+      },
+    );
+    expect(allowed).toMatchObject({ ok: true, data: "pr" });
+    expect(effects).toBe(1);
+  } finally {
+    rmSync(state.root, { recursive: true, force: true });
+  }
+});
+
+test("pull request reservation accepts an approved limitation waiver", async () => {
+  const state = assessedGateSetup();
+  try {
+    const decision = recordGateDecision(
+      state,
+      "action",
+      externalActionDescriptor("hosting.pull_request", { title: "Gate" }),
+      [],
+    );
+    recordGateDecision(state, "limitation", "waive deslop cleanup for this change", [
+      state.requirementId,
+    ]);
+    const allowed = await runAuthorizedExternalAction(
+      { ...inputFor(state), decisionId: decision.id },
+      async () => "pr",
+    );
+    expect(allowed).toMatchObject({ ok: true, data: "pr" });
+  } finally {
+    rmSync(state.root, { recursive: true, force: true });
   }
 });

@@ -106,6 +106,19 @@ const provenance = (
   receipts: [],
 });
 const environment = (): CandidateEnvironment => [];
+/**
+ * The operation a decision authorizes: canonical descriptors carry it as JSON,
+ * legacy single-operation approvals are the bare operation string.
+ */
+const decisionOperation = (approvedContent: string): string | null => {
+  try {
+    const parsed = JSON.parse(approvedContent) as { operation?: unknown };
+    if (typeof parsed?.operation === "string") return parsed.operation;
+  } catch {
+    // a bare operation string is not JSON
+  }
+  return /^[a-z][a-z_]*\.[a-z_]+$/.test(approvedContent) ? approvedContent : null;
+};
 const sameSession = (value: unknown, context: OperationContext): boolean =>
   typeof value === "object" &&
   value !== null &&
@@ -2036,6 +2049,26 @@ export class WorkitCore {
       { owner: this.authorityOwner, store: this.store, root: this.store.root },
     );
     if (!authority.ok) return authority as Result<never>;
+    const operation = decisionOperation(decision.data.binding.approvedContent);
+    if (operation) {
+      const view = this.view(task.data);
+      if (!view.ok) return view as Result<never>;
+      const evaluations = new Map(
+        view.data.requirements.map((entry) => [entry.requirementId, entry.status]),
+      );
+      const blocked = (view.data.task.policy?.requirements ?? []).filter(
+        (requirement) =>
+          requirement.dependentAction === operation &&
+          (evaluations.get(requirement.id) === "unsatisfied" ||
+            evaluations.get(requirement.id) === "unavailable"),
+      );
+      if (blocked.length)
+        return failure(
+          "requirements_unsatisfied",
+          `${operation} is gated by unsatisfied requirements; record their evidence or an approved limitation waiver first`,
+          { operation, requirementIds: blocked.map((requirement) => requirement.id) },
+        );
+    }
     return reserveBoundedAction({
       ...input,
       store: this.store,

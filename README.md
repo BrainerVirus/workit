@@ -35,8 +35,8 @@ bun i
 - Eight shared `workit_*` operation families: task, policy, evidence, finding,
   decision, worker, writer, and state.
 - Fourteen canonical method skills: behavioral TDD, challenge, debug, handoff,
-  implement, plan, review, babysit, blast-radius, deslop, diagram, mockup,
-  green-run, and steer.
+  implement, plan, review, babysit, blast-radius, deslop (policy-gated before
+  pull requests), diagram, mockup, green-run, and steer.
 - A `<workit-contract>` bootstrap marker carrying shared invariants.
 - Host-native capability reporting that never fabricates authority, receipts,
   delegation tokens, or cross-process identity.

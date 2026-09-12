@@ -28,3 +28,9 @@ selects requirements; do not wait for a rule that can only exist after assess.
 
 A smaller diff with identical behavior and green checks. Report lines
 removed, not lines written.
+
+Record passing check evidence linked to the `pre-pr-cleanup` requirement id
+from the current policy (`kind: check`, `result: passed`, summary naming what
+was removed). That requirement gates `hosting.pull_request` and close. If the
+change genuinely has nothing to clean, ask for an approved limitation
+decision instead of recording evidence that did not happen.

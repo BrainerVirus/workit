@@ -123,6 +123,14 @@ test("missing independent review capability remains an unavailable gap", () => {
   expect(review).toMatchObject({ id: "workit-review", assurance: "unavailable" });
 });
 
+test("pre-pr-cleanup selects the deslop method", () => {
+  const result = selectMethods(
+    policy(requirement({ ruleId: "pre-pr-cleanup", dimension: "verification" })),
+    [],
+  );
+  expect(result.map((method) => method.id)).toEqual(["workit-deslop"]);
+});
+
 test("selection has stable registry order and no duplicate methods", () => {
   const selected = selectMethods(
     policy(

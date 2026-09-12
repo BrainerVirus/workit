@@ -70,7 +70,7 @@ const decision = (
 
 test("mechanical work only requires relevant existing checks and self-review", () => {
   const result = resolvePolicy(input());
-  expect(rules(result)).toEqual(["mechanical-existing-checks", "self-review"]);
+  expect(rules(result)).toEqual(["mechanical-existing-checks", "self-review", "pre-pr-cleanup"]);
   expect(rules(result)).not.toContain("durable-spec");
   expect(rules(result)).not.toContain("coordination-plan");
 });
@@ -79,7 +79,7 @@ test("a broad behavior-preserving rename does not escalate by size", () => {
   const result = resolvePolicy(
     input({ intent: { ...input().intent, scope: scope({ paths: ["src", "test"] }) } }),
   );
-  expect(rules(result)).toEqual(["mechanical-existing-checks", "self-review"]);
+  expect(rules(result)).toEqual(["mechanical-existing-checks", "self-review", "pre-pr-cleanup"]);
 });
 
 test("behavior changes require behavioral verification and fresh-context review", () => {
@@ -111,7 +111,11 @@ test("behavior changes require behavioral verification and fresh-context review"
       }),
     }),
   );
-  expect(rules(result)).toEqual(["behavioral-verification", "fresh-context-review"]);
+  expect(rules(result)).toEqual([
+    "behavioral-verification",
+    "fresh-context-review",
+    "pre-pr-cleanup",
+  ]);
 });
 
 test("contradictory mechanical and behavioral signals fail reconciliation", () => {
@@ -196,7 +200,12 @@ test("helper usefulness is independent of formal documents", () => {
       }),
     }),
   );
-  expect(rules(result)).toEqual(["mechanical-existing-checks", "self-review", "helper-usefulness"]);
+  expect(rules(result)).toEqual([
+    "mechanical-existing-checks",
+    "self-review",
+    "pre-pr-cleanup",
+    "helper-usefulness",
+  ]);
 });
 
 test("consequential unknowns block only their dependent action", () => {
@@ -262,10 +271,12 @@ test("preferences adjust only the permitted helper/review process", () => {
   expect(rules(resolvePolicy(input({ ...helperInput, preferences: { fast: true } })))).toEqual([
     "mechanical-existing-checks",
     "self-review",
+    "pre-pr-cleanup",
   ]);
   expect(rules(resolvePolicy(input({ ...helperInput, preferences: { thorough: true } })))).toEqual([
     "mechanical-existing-checks",
     "fresh-context-review",
+    "pre-pr-cleanup",
     "helper-usefulness",
   ]);
 

@@ -20,6 +20,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The pre-PR deslop gate: behavior and mechanical-low-risk assessments now
+  add a `pre-pr-cleanup` requirement that gates `hosting.pull_request` (and
+  close) until a fresh passing deslop check is recorded or the user approves
+  a limitation waiver. Enforcement lives in core (`reserveAction`), so
+  OpenCode, Cursor, Codex, Pi, and the CLI block identically; the method
+  registry routes `workit-deslop` whenever the requirement is present, and a
+  failed reservation leaves the approved action retryable.
+- Knip dead-code and unused-dependency gate pinned at 6.35.1 (`bun run knip`)
+  with a triaged baseline and an Ubuntu CI job reusing installed dependencies.
 - `workit init` writes the vcs provider explicitly (env override, else the
   checkout's origin remote; omitted when neither resolves) so fresh
   checkouts never inherit a silent default. An unconfigured provider is an

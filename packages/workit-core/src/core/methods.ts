@@ -7,7 +7,8 @@ export type MethodId =
   | "workit-plan"
   | "workit-implement"
   | "workit-debug"
-  | "workit-handoff";
+  | "workit-handoff"
+  | "workit-deslop";
 
 type MethodDefinition = {
   dimensions?: readonly Dimension[];
@@ -22,6 +23,7 @@ export const METHODS: Readonly<Record<MethodId, MethodDefinition>> = {
   "workit-implement": { dimensions: ["delegation"] },
   "workit-debug": { ruleIds: ["root-cause-investigation"] },
   "workit-handoff": { ruleIds: ["durable-handoff"] },
+  "workit-deslop": { ruleIds: ["pre-pr-cleanup"] },
 };
 
 export type SelectedMethod = {

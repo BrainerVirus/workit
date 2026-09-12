@@ -380,6 +380,21 @@ function resolveRequirements(input: NormalizedResolverInput): Requirement[] {
       }),
     );
 
+  if (signals.behaviorChange.value === true || signals.mechanicalLowRisk.value === true)
+    requirements.push(
+      requirement({
+        ruleId: "pre-pr-cleanup",
+        dimension: "verification",
+        scope,
+        reason: "Implementation output must be deslopped before it is delivered.",
+        satisfaction:
+          "Run the workit-deslop pass and record passing check evidence, or record an approved limitation decision waiving cleanup.",
+        before: "dependent_action",
+        dependentAction: "hosting.pull_request",
+        acceptanceAllowed: true,
+      }),
+    );
+
   if (signals.durableAgreementNeeded.value === true)
     requirements.push(
       requirement({
