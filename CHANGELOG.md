@@ -32,7 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Spec-only docs: GitHub + GitLab issue reads (`docs/trackers/spec.md`,
   read-only title/body/state mirroring YouTrack) and a parallel-delegation
   proposal (`docs/parallel-delegation/proposal.md`, disjoint-scope fan-out
-  with single-writer lead mutations).
+  with single-writer lead mutations — deferred to 1.1.0).
 - `context.read` gains `github_issue` and `gitlab_issue` kinds returning the
   same read-only title/body/state triple as YouTrack: GitHub reuses the vcs
   `github.tokenFile` bearer pattern with `gh` issue-ref parsing, GitLab uses

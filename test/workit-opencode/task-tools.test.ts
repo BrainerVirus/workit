@@ -259,6 +259,29 @@ test("question event receipts reject mismatched or missing questions", () => {
   expect(receipts.consume("lead", "decision").ok).toBe(false);
 });
 
+test("receipt failures name the receipt-shaped question contract", () => {
+  const receipts = new NativeReceiptStore();
+  const missing = receipts.consume("lead", "decision");
+  expect(missing.ok).toBe(false);
+  if (missing.ok) throw new Error("expected failure");
+  expect(missing.error).toContain("Workit decision: <purpose>");
+  expect(missing.error).toContain("approved/rejected");
+  observeQuestionEvent(receipts, {
+    type: "question.asked",
+    properties: {
+      id: "req-shape",
+      sessionID: "lead",
+      questions: [workitQuestion("Ship it?", "ship-it-content")],
+    },
+  });
+  expect(receipts.recordReply("req-shape", "lead", [["approved"]])).toBe(true);
+  const mismatched = receipts.consume("lead", "decision", { question: "Something else?" });
+  expect(mismatched.ok).toBe(false);
+  if (mismatched.ok) throw new Error("expected failure");
+  expect(mismatched.error).toContain("Workit decision: <purpose>");
+  expect(mismatched.error).toContain("approved/rejected");
+});
+
 test("plugin question events never break event delivery", async () => {
   const hooks = await plugin(context as never);
   await hooks.event?.({ event: { type: "question.replied", properties: {} } } as never);

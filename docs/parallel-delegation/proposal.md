@@ -1,6 +1,8 @@
 # Proposal: parallel delegation (scoped fan-out)
 
-**Status:** proposal only — no implementation in this task.
+**Status:** deferred to 1.1.0 — proposal only, no implementation. Read-only
+fan-out (parallel explore/search) already parallelizes freely; only parallel
+product writes need this design.
 **Branch:** `feature/workit-v1`
 
 ## Problem

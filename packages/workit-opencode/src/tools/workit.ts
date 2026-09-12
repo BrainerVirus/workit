@@ -244,10 +244,13 @@ export class NativeReceiptStore {
           receipt.contentDigest !== expected.contentDigest) ||
         (expected.question !== undefined && receipt.question !== expected.question)
       )
-        return {
-          ok: false,
-          error: "permission_denied: native question receipt does not match the requested content",
-        };
+      return {
+        ok: false,
+        error:
+          "permission_denied: native question receipt does not match the requested content " +
+          "(binding questions must be asked receipt-shaped: header `Workit decision: <purpose>` " +
+          "with exactly approved/rejected options)",
+      };
       queue.splice(i, 1);
       if (!queue.length) this.#receipts.delete(sessionID);
       if (Date.now() - receipt.recordedAt > freshMs)
@@ -256,7 +259,13 @@ export class NativeReceiptStore {
       this.#observations.add(observation);
       return { ok: true, receipt, observation };
     }
-    return { ok: false, error: "permission_denied: no native question receipt for this purpose" };
+    return {
+      ok: false,
+      error:
+        "permission_denied: no native question receipt for this purpose " +
+        "(ordinary multi-option questions mint no receipt; ask binding questions receipt-shaped: " +
+        "header `Workit decision: <purpose>` with exactly approved/rejected options)",
+    };
   }
 
   verify(observation: unknown, sessionID: string, purpose: Receipt["purpose"]): Receipt | null {
