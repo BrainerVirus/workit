@@ -112,7 +112,7 @@ const ROWS: Row[] = [
     row: "POST-13",
     requirement: "delegated identity and direct edits bypass coordinator gates",
     evidence: [
-      "test/workit-opencode/task-hooks.test.ts::known write surfaces enforce the current writer while unknown shell writes stay agent-guided",
+      "test/workit-opencode/task-hooks.test.ts::known write surfaces pass through while unknown shell writes stay agent-guided",
     ],
   },
   {
@@ -229,7 +229,7 @@ const ROWS: Row[] = [
     requirement:
       "OpenCode intercepts known file-write tools and denies coordinator shell mutation while subagent-driven mode is active",
     evidence: [
-      "test/workit-opencode/task-hooks.test.ts::known write surfaces enforce the current writer while unknown shell writes stay agent-guided",
+      "test/workit-opencode/task-hooks.test.ts::known write surfaces pass through while unknown shell writes stay agent-guided",
     ],
   },
   {

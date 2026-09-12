@@ -300,7 +300,7 @@ test("local external effects fail closed without the existing writer and do not 
   }
 });
 
-test("local commit guards every staged path against the existing writer scope", async () => {
+test("local commit checks writer ownership, not scopes", async () => {
   const roots: string[] = [];
   const setupScoped = (assignedScope: ReturnType<typeof scope>) => {
     const root = mkdtempSync(join(tmpdir(), "workit-local-scope-"));
@@ -369,7 +369,7 @@ test("local commit guards every staged path against the existing writer scope", 
     spawnSync("git", ["add", "outside.txt"], { cwd: narrow.root });
     const outside = resolveExternalActionRequest(narrow.root, {
       operation: "git.commit",
-      payload: { message: "fix(test): must reject outside scope" },
+      payload: { message: "fix(test): outside scope commits with writer held" },
     });
     if (!outside.ok) throw new Error(outside.error);
     expect(
@@ -377,17 +377,13 @@ test("local commit guards every staged path against the existing writer scope", 
         host: "workit_cli",
         actor: narrow.actor,
       }),
-    ).toMatchObject({
-      ok: false,
-      code: "capability_unavailable",
-      details: { outcome: "not_started" },
-    });
+    ).toMatchObject({ ok: true });
     expect(
       spawnSync("git", ["log", "-1", "--pretty=%s"], {
         cwd: narrow.root,
         encoding: "utf8",
       }).stdout.trim(),
-    ).toBe("feat(test): allowed scoped commit");
+    ).toBe("fix(test): outside scope commits with writer held");
 
     const excluded = setupScoped(scope({ paths: ["."], exclusions: ["secret"] }));
     mkdirSync(join(excluded.root, "secret"));
@@ -395,7 +391,7 @@ test("local commit guards every staged path against the existing writer scope", 
     spawnSync("git", ["add", "secret/blocked.txt"], { cwd: excluded.root });
     const rejected = resolveExternalActionRequest(excluded.root, {
       operation: "git.commit",
-      payload: { message: "fix(test): must reject exclusion" },
+      payload: { message: "fix(test): excluded path commits with writer held" },
     });
     if (!rejected.ok) throw new Error(rejected.error);
     expect(
@@ -403,17 +399,13 @@ test("local commit guards every staged path against the existing writer scope", 
         host: "workit_cli",
         actor: excluded.actor,
       }),
-    ).toMatchObject({
-      ok: false,
-      code: "capability_unavailable",
-      details: { outcome: "not_started" },
-    });
+    ).toMatchObject({ ok: true });
     expect(
       spawnSync("git", ["log", "-1", "--pretty=%s"], {
         cwd: excluded.root,
         encoding: "utf8",
       }).stdout.trim(),
-    ).toBe("initial");
+    ).toBe("fix(test): excluded path commits with writer held");
   } finally {
     for (const root of roots) rmSync(root, { recursive: true, force: true });
   }

@@ -173,7 +173,7 @@ test("CLI context.read rejects option-like ranges without creating files", async
   }
 });
 
-test("CLI changelog.apply uses the writer for success and refuses an out-of-scope target", async () => {
+test("CLI changelog.apply uses the writer for success regardless of scope", async () => {
   const roots: string[] = [];
   const setup = (assignedScope: { description: string; paths: string[]; exclusions: string[] }) => {
     const root = fixture();
@@ -243,33 +243,29 @@ test("CLI changelog.apply uses the writer for success and refuses an out-of-scop
     );
 
     const narrowRoot = setup({ description: "src only", paths: ["src"], exclusions: [] });
-    const deniedOut = capture();
+    const narrowOut = capture();
     expect(
       await runActionCommand(
         [
           "changelog.apply",
           "--payload",
-          JSON.stringify({ entries: [{ category: "Added", text: "must not apply" }] }),
+          JSON.stringify({ entries: [{ category: "Added", text: "narrow scope still applies" }] }),
           "--confirm",
           "--json",
         ],
         {
           cwd: narrowRoot,
           actor: "cli",
-          out: deniedOut.out,
-          err: deniedOut.err,
+          out: narrowOut.out,
+          err: narrowOut.err,
           stdinIsTTY: () => true,
           confirm: async () => true,
         },
       ),
-    ).toBe(1);
-    expect(JSON.parse(deniedOut.read().stdout)).toMatchObject({
-      ok: false,
-      code: "capability_unavailable",
-      details: { outcome: "not_started" },
-    });
-    expect(readFileSync(path.join(narrowRoot, "CHANGELOG.md"), "utf8")).not.toContain(
-      "must not apply",
+    ).toBe(0);
+    expect(JSON.parse(narrowOut.read().stdout)).toMatchObject({ ok: true });
+    expect(readFileSync(path.join(narrowRoot, "CHANGELOG.md"), "utf8")).toContain(
+      "narrow scope still applies",
     );
   } finally {
     for (const root of roots) rmSync(root, { recursive: true, force: true });

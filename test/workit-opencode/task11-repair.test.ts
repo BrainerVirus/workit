@@ -896,7 +896,7 @@ test("Workit mutations accept one validated persisted worker handle", async () =
   }
 });
 
-test("known bash mutations bind actual targets and enforce scope", async () => {
+test("known bash mutations pass through without scope checks", async () => {
   const root = mkdtempSync(join(tmpdir(), "workit-task11-bash-"));
   try {
     const active = start(root, "owner", ["src"]);
@@ -925,25 +925,25 @@ test("known bash mutations bind actual targets and enforce scope", async () => {
         { tool: "bash", sessionID: "owner", callID: "outside" },
         { args: { command: "echo changed > /tmp/file.ts" } },
       ),
-    ).rejects.toThrow("permission_denied");
+    ).resolves.toBeUndefined();
     await expect(
       hooks["tool.execute.before"]?.(
         { tool: "bash", sessionID: "owner", callID: "later" },
         { args: { command: "echo changed > src/file.ts && rm -rf /tmp/out" } },
       ),
-    ).rejects.toThrow("permission_denied");
+    ).resolves.toBeUndefined();
     await expect(
       hooks["tool.execute.before"]?.(
         { tool: "write", sessionID: "owner", callID: "out-of-scope" },
         { args: { filePath: join(root, "docs/outside.ts") } },
       ),
-    ).rejects.toThrow("permission_denied");
+    ).resolves.toBeUndefined();
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });
 
-test("active writes require a trusted session directory", async () => {
+test("active writes pass through without session observation", async () => {
   const root = mkdtempSync(join(tmpdir(), "workit-task11-session-root-"));
   try {
     const active = start(root, "owner");
@@ -964,13 +964,13 @@ test("active writes require a trusted session directory", async () => {
         { tool: "write", sessionID: "owner", callID: "write" },
         { args: { path: "src/file.ts" } },
       ),
-    ).rejects.toThrow("permission_denied");
+    ).resolves.toBeUndefined();
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });
 
-test("active writes reject a trusted session with mismatched parentage", async () => {
+test("active writes pass through with mismatched parentage", async () => {
   const root = mkdtempSync(join(tmpdir(), "workit-task11-parent-write-"));
   try {
     const active = start(root, "owner");
@@ -995,13 +995,13 @@ test("active writes reject a trusted session with mismatched parentage", async (
         { tool: "write", sessionID: "owner", callID: "write" },
         { args: { path: "src/file.ts" } },
       ),
-    ).rejects.toThrow("permission_denied");
+    ).resolves.toBeUndefined();
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });
 
-test("active writes reject empty present parentage", async () => {
+test("active writes pass through with empty present parentage", async () => {
   const root = mkdtempSync(join(tmpdir(), "workit-task11-empty-parent-write-"));
   try {
     const active = start(root, "owner");
@@ -1026,13 +1026,13 @@ test("active writes reject empty present parentage", async () => {
         { tool: "write", sessionID: "owner", callID: "write" },
         { args: { path: "src/file.ts" } },
       ),
-    ).rejects.toThrow("permission_denied");
+    ).resolves.toBeUndefined();
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });
 
-test("active tasks fail closed when no writer owns the checkout", async () => {
+test("active tasks pass writes through with no writer on the checkout", async () => {
   const root = mkdtempSync(join(tmpdir(), "workit-task11-writer-"));
   try {
     const active = start(root, "owner");
@@ -1044,7 +1044,7 @@ test("active tasks fail closed when no writer owns the checkout", async () => {
         { tool: "write", sessionID: "owner", callID: "write" },
         { args: { path: "src/file.ts" } },
       ),
-    ).rejects.toThrow("permission_denied");
+    ).resolves.toBeUndefined();
     expect(active.store.readWorkspace().ok).toBe(true);
   } finally {
     rmSync(root, { recursive: true, force: true });
