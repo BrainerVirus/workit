@@ -142,7 +142,14 @@ export function vcsConfig(mode: "load" | "summary" | "resolve", cwd?: string): R
   }
 
   const prov = (cfg[provider] ?? {}) as Record<string, any>;
-  const tokenFile = String(prov.tokenFile ?? path.join(configDir(), `${provider}.token`));
+  // Workspace-tight tokens: an explicit workspace vcs.tokenFile wins (per-area
+  // accounts without collisions), else the global provider tokenFile, else the
+  // default <provider>.token path. Same order as the per-workspace
+  // commitPolicy/branchPolicy overrides.
+  const wsTokenFile = typeof wsVcs.tokenFile === "string" && wsVcs.tokenFile.trim() !== ""
+    ? wsVcs.tokenFile
+    : null;
+  const tokenFile = String(wsTokenFile ?? prov.tokenFile ?? path.join(configDir(), `${provider}.token`));
   const tokenPath = path.resolve(tokenFile);
   let tokenOk = false;
   if (fs.existsSync(tokenPath)) {

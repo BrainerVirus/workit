@@ -19,7 +19,7 @@ export type WorkspaceBranchPolicy = {
 export type WorkspaceConfig = {
   name: string;
   glob: string;
-  vcs?: { provider: VcsProvider; defaultTargetBranch?: string };
+  vcs?: { provider: VcsProvider; defaultTargetBranch?: string; tokenFile?: string };
   youtrack?: { baseUrl?: string; link_issues?: boolean };
   issues?: { provider?: "github"; link_on_pr?: boolean };
   branchPolicy?: WorkspaceBranchPolicy;
