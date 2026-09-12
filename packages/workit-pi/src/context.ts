@@ -18,7 +18,8 @@ export const piCapabilities = (ctx?: Pick<ExtensionContext, "hasUI">): Capabilit
     name: "product_write_interception",
     surface: "write/edit tool_call",
     assurance: "enforced",
-    reason: "Pi exposes a before-tool boundary for known built-in write tools.",
+    reason:
+      "Pi exposes a before-tool boundary for known built-in write tools; it enforces project trust while file targets stay host-policy.",
     refs: [hostRef("tool_call")],
   },
   {

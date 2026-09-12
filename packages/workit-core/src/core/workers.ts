@@ -1,7 +1,6 @@
 import {
   canonicalJson,
   failure,
-  scopeCovers,
   success,
   type Caller,
   type Id,
@@ -116,7 +115,9 @@ export type ProductWriteInput = {
   store?: TaskStore;
 };
 
-/** Check the authoritative workspace owner and the caller's assigned scope. */
+/** Check the authoritative workspace owner and the caller's role. File paths
+ *  are host-policy territory: only malformed paths are rejected here, never
+ *  out-of-scope ones. */
 export function assertProductWriteAllowed(input: ProductWriteInput): Result<Owner> {
   if (!Array.isArray(input.paths) || input.paths.some((path) => !validPath(path)))
     return failure("invalid_input", "invalid product write path");
@@ -147,10 +148,6 @@ export function assertProductWriteAllowed(input: ProductWriteInput): Result<Owne
     owner.session.handle !== caller.actor
   )
     return failure("writer_conflict", "checkout is owned by another validated actor", { owner });
-  const assignedScope =
-    workerId === null
-      ? task.data.intent.data.scope
-      : task.data.workers.find((entry) => entry.id === workerId)?.data.assignment.scope;
   const worker =
     workerId === null ? null : task.data.workers.find((entry) => entry.id === workerId);
   if (workerId !== null && (!worker || worker.data.assignment.role !== "implementer"))
@@ -164,16 +161,5 @@ export function assertProductWriteAllowed(input: ProductWriteInput): Result<Owne
       !same(worker.data.session, callerSession(input.caller)))
   )
     return failure("recovery_required", "worker session is not an active writer");
-  if (
-    !assignedScope ||
-    input.paths.some(
-      (path) =>
-        !scopeCovers(assignedScope, {
-          ...assignedScope,
-          paths: [path],
-        }),
-    )
-  )
-    return failure("permission_denied", "product write is outside the assigned scope");
   return success(null, workspaceRecord.revision, owner);
 }

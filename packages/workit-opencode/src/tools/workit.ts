@@ -403,8 +403,8 @@ export const opencodeCapabilities = () => [
   {
     name: "known_product_writes",
     surface: "write/edit/bash",
-    assurance: "enforced" as const,
-    reason: "known write surfaces check the authoritative core writer before execution",
+    assurance: "unavailable" as const,
+    reason: "file writes are host-policy; OpenCode native permissions govern them, workit no longer gates write tools",
     refs: [hostRef("tool.execute.before")],
   },
   {

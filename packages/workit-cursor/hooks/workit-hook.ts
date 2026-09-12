@@ -12,7 +12,6 @@ import {
   type NativeWorkerObservation,
   type NativeWorkerVerifier,
 } from "@brainervirus/workit-core/src/core";
-import { shellWriteIntent } from "@brainervirus/workit-core/src/core/shell-intent.ts";
 
 type HookEvent =
   | "sessionStart"
@@ -83,10 +82,8 @@ export const cursorCapabilities = (availability: HookAvailability = {}): Capabil
     {
       name: "known_product_writes",
       surface: "preToolUse",
-      assurance: has("preToolUse") ? "enforced" : "unavailable",
-      reason: has("preToolUse")
-        ? "Cursor preToolUse can synchronously deny recognized Write/Edit/Delete targets"
-        : "Cursor preToolUse is absent",
+      assurance: "unavailable",
+      reason: "file writes are host-policy; the Cursor hook no longer gates write tools or shell commands",
       refs: [hostRef("preToolUse")],
     },
     {
@@ -221,73 +218,6 @@ const activeTask = (store: TaskStore) => {
     };
   return { ok: true as const, workspace: workspace.data, task: tasks[0] };
 };
-
-const normalizePath = (root: string, value: string, cwd = root): string | null => {
-  const absolute = path.isAbsolute(value) ? value : path.resolve(cwd, value);
-  // Outside-checkout absolute paths pass through for the core gate (writer
-  // plus scope still required); inside-checkout paths relativize so lexical
-  // scope matching keeps working.
-  let resolved = absolute;
-  try {
-    resolved = realpathSync(absolute);
-  } catch {
-    /* missing path: lexical check only */
-  }
-  const relative = path.relative(root, resolved);
-  if (!relative) return ".";
-  const escaped = process.platform === "win32" ? relative.toLowerCase() : relative;
-  if (escaped.startsWith("..") || path.isAbsolute(relative)) return absolute;
-  return relative;
-};
-
-const resolveCwd = (root: string, value: string): string | null => {
-  try {
-    const candidate = path.resolve(root, value);
-    if (!statSync(candidate).isDirectory()) return null;
-    return realpathSync(candidate);
-  } catch {
-    return null;
-  }
-};
-
-const shellWritePaths = (root: string, command: string, cwd = root) => {
-  // One shared parser for both hooks (core/shell-intent): redirects, quotes,
-  // chains, globs and unparseable shapes deny instead of guessing.
-  const intent = shellWriteIntent(command);
-  if (!intent.intent) return { paths: [], writeIntent: false, invalid: false };
-  if (intent.invalid) return { paths: [], writeIntent: true, invalid: true };
-  const paths = intent.values
-    .map((value) => normalizePath(root, value, cwd))
-    .filter((value): value is string => value !== null);
-  return {
-    paths,
-    writeIntent: true,
-    invalid: paths.length !== intent.values.length,
-  };
-};
-
-const writeTargets = (root: string, input: CursorHookInput) => {
-  const cwd = input.cwd ? resolveCwd(root, input.cwd) : root;
-  if (!cwd) return { paths: [], writeIntent: true, invalid: true };
-  if (input.hook_event_name === "preToolUse") {
-    const args = isRecord(input.tool_input) ? input.tool_input : {};
-    const values = [args.file_path, args.path, args.target, args.filename].filter(nonEmpty);
-    if (values.length) {
-      const paths = values
-        .map((value) => normalizePath(root, value, cwd))
-        .filter((value): value is string => value !== null);
-      return { paths, writeIntent: true, invalid: paths.length !== values.length };
-    }
-    // A structured write tool with no extractable target cannot be scoped —
-    // deny instead of letting it fall through to the shell parser as allow.
-    if (isWriteTool(input.tool_name ?? "")) return { paths: [], writeIntent: true, invalid: true };
-    return shellWritePaths(root, nonEmpty(args.command) ? args.command : "", cwd);
-  }
-  return shellWritePaths(root, input.command ?? "", cwd);
-};
-
-const isWriteTool = (name: string): boolean =>
-  CURSOR_WRITE_TOOL_NAMES.some((tool) => tool.toLowerCase() === name.toLowerCase());
 
 const deny = (reason: string) => ({
   permission: "deny" as const,
@@ -434,41 +364,10 @@ export const handleCursorHook = (raw: unknown): Record<string, unknown> => {
     };
   if (input.hook_event_name === "subagentStart") return handleSubagentStart(input, root);
   if (input.hook_event_name === "subagentStop") return handleSubagentStop();
-  if (input.hook_event_name === "beforeShellExecution") {
-    const targets = writeTargets(root, input);
-    if (targets.invalid) return deny("shell write target is unavailable or ambiguous");
-    if (!targets.paths.length && targets.writeIntent)
-      return deny("shell write target is ambiguous or unavailable");
-    if (!targets.paths.length) return allow;
-  } else if (/^shell$/i.test(input.tool_name ?? "")) {
-    const parsed = writeTargets(root, input);
-    if (parsed.invalid) return deny("shell write target is unavailable or ambiguous");
-    if (!parsed.paths.length && parsed.writeIntent)
-      return deny("shell write target is ambiguous or unavailable");
-    if (!parsed.paths.length) return allow;
-  } else if (!isWriteTool(input.tool_name ?? "")) return allow;
-  const state = activeTask(new TaskStore(root));
-  if (!state.ok) return state.reason === "no active task" ? allow : deny(state.reason);
-  const actor = input.conversation_id ?? input.session_id!;
-  const worker = state.task.workers.find(
-    (entry) => entry.data.session?.kind === "host" && entry.data.session.handle === actor,
-  );
-  const core = new WorkitCore(
-    new TaskStore(root),
-    contextFor(root, actor, worker?.id ?? null, {
-      preToolUse: input.hook_event_name === "preToolUse",
-      beforeShellExecution: input.hook_event_name === "beforeShellExecution",
-    }),
-  );
-  const targets = writeTargets(root, input);
-  if (targets.invalid) return deny("recognized product write target is unavailable or ambiguous");
-  if (!targets.paths.length) return deny("recognized product write has no parseable target");
-  const checked = core.assertProductWriteAllowed({
-    task: state.task,
-    workspace: state.workspace,
-    paths: targets.paths,
-  });
-  return checked.ok ? allow : deny(checked.error);
+  // File writes are host-policy territory: the hook no longer gates write
+  // tools or shell commands on task scopes. Managed workit mutations keep
+  // their core-side writer ownership checks.
+  return allow;
 };
 
 export const runCursorHook = async (): Promise<void> => {

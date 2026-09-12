@@ -4,7 +4,6 @@ import { fileURLToPath } from "node:url";
 import type { Plugin } from "@opencode-ai/plugin";
 import { TaskStore, WorkitCore } from "@brainervirus/workit-core/src/core";
 import { WORKIT_SKILL_ALIASES } from "@brainervirus/workit-core/src/core/skill-manifests";
-import { assertProductWriteAllowed } from "@brainervirus/workit-core/src/core/workers";
 import { createLogger } from "@brainervirus/workit-core/src/core/logger";
 import {
   EVENT,
@@ -126,160 +125,7 @@ const deletedSessionEnd = (
   (info as SessionInfo).id === sessionID &&
   (typeof (info as SessionInfo).directory !== "string" ||
     sameWorkspace(directory, (info as SessionInfo).directory)) &&
-  ((info as SessionInfo).parentID == null || (info as SessionInfo).parentID === parentID);
-
-const mutationSurface = new Set(["write", "edit", "apply_patch", "patch"]);
-const shellMutation =
-  /(?:^|[;&|]\s*|\s)(?:rm|mv|cp|mkdir|rmdir|touch|install|tee|chmod|chown|git\s+add)\b|>>?|<<?/;
-
-const unquote = (value: string): string => value.replace(/^(["'])(.*)\1$/, "$2");
-
-const shellWritePaths = (command: string): string[] => {
-  const paths: string[] = [];
-  const segments = command.split(/&&|\|\||[;|]/);
-  for (const segment of segments) {
-    for (const match of segment.matchAll(/(?:^|\s)(?:>>|>)\s*([^\s;&|]+)/g))
-      paths.push(unquote(match[1]));
-    const tokens = segment.split(/\s+/).map(unquote).filter(Boolean);
-    const head = tokens[0]?.split("/").pop() ?? "";
-    const commandNames = new Set([
-      "rm",
-      "mv",
-      "cp",
-      "mkdir",
-      "rmdir",
-      "touch",
-      "install",
-      "tee",
-      "chmod",
-      "chown",
-    ]);
-    if (commandNames.has(head))
-      paths.push(...tokens.slice(1).filter((token) => !token.startsWith("-") && token !== "--"));
-    if (head === "git" && tokens[1] === "add")
-      paths.push(...tokens.slice(2).filter((token) => !token.startsWith("-") && token !== "--"));
-  }
-  return [...new Set(paths)];
-};
-
-const normalizeWritePath = (directory: string, value: string): string => {
-  if (!path.isAbsolute(value)) return value;
-  const relative = path.relative(path.resolve(directory), path.resolve(value));
-  return relative && !relative.startsWith("..") && !path.isAbsolute(relative) ? relative : value;
-};
-
-const patchWritePaths = (patchText: unknown): string[] => {
-  if (typeof patchText !== "string") return [];
-  const paths: string[] = [];
-  for (const line of patchText.split(/\r?\n/)) {
-    const match = line.match(/^\*\*\* (?:Add|Update|Delete) File: (.+)$/);
-    const move = line.match(/^\*\*\* Move to: (.+)$/);
-    if (match?.[1]) paths.push(match[1].trim());
-    else if (move?.[1]) paths.push(move[1].trim());
-  }
-  return paths;
-};
-
-const writePaths = (directory: string, tool: string, args: Record<string, unknown>): string[] => {
-  if (tool === "bash") return shellWritePaths(String(args.command ?? ""));
-  if (tool === "apply_patch")
-    return patchWritePaths(args.patchText).map((value) => normalizeWritePath(directory, value));
-  const values = [args.path, args.file, args.filename, args.target, args.paths].flatMap((value) =>
-    Array.isArray(value) ? value : [value],
-  );
-  if (tool === "write" || tool === "edit") values.push(args.filePath);
-  const paths = values.filter(
-    (value): value is string => typeof value === "string" && value.length > 0,
-  );
-  return paths.map((value) => normalizeWritePath(directory, value));
-};
-
-const enforceWriter = async (
-  client: SessionClient,
-  directory: string,
-  sessionID: string,
-  toolName: string,
-  args: Record<string, unknown>,
-): Promise<void> => {
-  const known =
-    mutationSurface.has(toolName) ||
-    (toolName === "bash" && shellMutation.test(String(args.command ?? "")));
-  if (!known) return;
-  const paths = writePaths(directory, toolName, args);
-  // A shell command is only in the enforced class when a simple target can be
-  // identified. Opaque shell writes remain agent-guided by design.
-  if (toolName !== "bash" && paths.length === 0)
-    throw new Error("invalid_input: product write target is required");
-  if (toolName === "bash" && paths.length === 0) return;
-  const store = new TaskStore(directory);
-  const workspace = store.readWorkspace();
-  if (!workspace.ok) throw new Error(`${workspace.code}: ${workspace.error}`);
-  if (!workspace.data) return;
-  const listed = store.listTasks();
-  if (!listed.ok) throw new Error(`${listed.code}: ${listed.error}`);
-  const observed = await sessionData(client, sessionID);
-  if (observed === null)
-    throw new Error("permission_denied: OpenCode session observation unavailable");
-  const workerMatches = listed.data.flatMap((task) =>
-    task.status === "active"
-      ? task.workers
-          .filter(
-            (entry) =>
-              entry.data.session?.kind === "host" && entry.data.session.handle === sessionID,
-          )
-          .map((entry) => ({ task, entry }))
-      : [],
-  );
-  const activeTasks = listed.data.filter(
-    (task) => task.status === "active" && task.workspaceId === workspace.data?.id,
-  );
-  if (activeTasks.length > 0 && !trustedSession(directory, sessionID, observed))
-    throw new Error("permission_denied: trusted OpenCode session observation is required");
-  if (workerMatches.length > 1)
-    throw new Error("permission_denied: OpenCode worker session is ambiguous");
-  if (workerMatches.length === 0 && observed.parentID)
-    throw new Error("permission_denied: OpenCode session parentage is not a coordinator");
-  if (workerMatches.length === 1) {
-    const coordinator = workerMatches[0].task.intent.provenance.session;
-    if (
-      coordinator?.kind !== "host" ||
-      coordinator.host !== "opencode" ||
-      observed.parentID !== coordinator.handle
-    )
-      throw new Error("permission_denied: OpenCode worker parentage is not validated");
-  }
-  const task =
-    (workspace.data.writer &&
-      activeTasks.find((candidate) => candidate.id === workspace.data?.writer?.owner.taskId)) ||
-    (workerMatches.length === 1 ? workerMatches[0].task : null) ||
-    (activeTasks.length === 1 ? activeTasks[0] : null);
-  if (!task) {
-    // Fail closed like Cursor and Pi: with several active tasks and no writer
-    // or worker match, the write cannot be attributed to one accountable task.
-    if (activeTasks.length > 1)
-      throw new Error(
-        "permission_denied: multiple active tasks require writer ownership for product writes",
-      );
-    return;
-  }
-  const worker = workerMatches.find((candidate) => candidate.task.id === task.id)?.entry;
-  if (worker && worker.data.assignment.role !== "implementer")
-    throw new Error("permission_denied: read-only worker cannot write product files");
-  const workerId = worker?.id ?? null;
-  const result = assertProductWriteAllowed({
-    task,
-    workspace: workspace.data,
-    caller: {
-      host: "opencode",
-      actor: sessionID,
-      session: { kind: "host", host: "opencode", handle: sessionID },
-      workerId,
-    },
-    paths,
-    store,
-  });
-  if (!result.ok) throw new Error(`${result.code}: ${result.error}`);
-};
+    ((info as SessionInfo).parentID == null || (info as SessionInfo).parentID === parentID);
 
 type PreparedDispatch = {
   generation: DispatchGeneration;
@@ -741,7 +587,7 @@ const plugin: Plugin = async ({ client, directory }) => {
           unresolvedTaskLaunches.add(input.sessionID);
       }
     },
-    "tool.execute.before": async (input, output) => {
+    "tool.execute.before": async (input, _output) => {
       warnStaleSources();
       if (input.tool === "task") {
         const listed = new TaskStore(directory).listTasks();
@@ -773,7 +619,6 @@ const plugin: Plugin = async ({ client, directory }) => {
           );
         prepareDispatch(input.sessionID, input.callID);
       }
-      await enforceWriter(client, directory, input.sessionID, input.tool, output.args ?? {});
     },
     config: async (config) => {
       const mutable = config as typeof config & {

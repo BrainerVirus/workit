@@ -32,7 +32,6 @@ import {
   resolveExternalActionRequest,
 } from "@brainervirus/workit-core/src/core/external-action-effects";
 import type { Provenance } from "@brainervirus/workit-core/src/core/task-contract";
-import { assertProductWriteAllowed } from "@brainervirus/workit-core/src/core/workers";
 import type {
   ExtensionContext,
   AgentToolResult,
@@ -460,32 +459,14 @@ export const registerWorkitTools = (
   });
 };
 
-const writePaths = (toolName: string, input: Record<string, unknown>): string[] =>
-  toolName === "write" || toolName === "edit" ? [String(input.path ?? input.filePath ?? "")] : [];
-
 export const enforceNativeWriter = (
   event: ToolCallEvent,
   ctx: ExtensionContext,
 ): { block: true; reason: string } | undefined => {
   if (event.toolName !== "write" && event.toolName !== "edit") return undefined;
+  // Pi project trust is host policy and stays enforced. Workit task scopes no
+  // longer gate file writes; managed workit mutations keep core-side writer
+  // ownership checks.
   if (!ctx.isProjectTrusted()) return { block: true, reason: "Pi project is not trusted" };
-  const store = new TaskStore(ctx.cwd);
-  const workspace = store.readWorkspace();
-  if (!workspace.ok) return { block: true, reason: workspace.error };
-  if (!workspace.data) return undefined;
-  const tasks = store.listTasks();
-  if (!tasks.ok) return { block: true, reason: tasks.error };
-  const active = tasks.data.filter(
-    (task) => task.status === "active" && task.workspaceId === workspace.data?.id,
-  );
-  if (active.length === 0) return undefined;
-  if (active.length !== 1) return { block: true, reason: "Workit writer state is ambiguous" };
-  const result = assertProductWriteAllowed({
-    task: active[0],
-    workspace: workspace.data,
-    caller: { host: "pi", actor: ctx.sessionManager.getSessionId() },
-    paths: writePaths(event.toolName, event.input),
-    store,
-  });
-  return result.ok ? undefined : { block: true, reason: result.error };
+  return undefined;
 };

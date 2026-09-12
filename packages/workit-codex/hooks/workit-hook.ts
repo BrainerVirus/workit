@@ -8,7 +8,6 @@ import {
   type Capability,
   type OperationContext,
 } from "@brainervirus/workit-core/src/core";
-import { shellWriteIntent } from "@brainervirus/workit-core/src/core/shell-intent.ts";
 
 export type CodexHost = "codex_cli" | "codex_desktop";
 export type CodexHookEvent = "SessionStart" | "PreToolUse" | "SubagentStart" | "SubagentStop";
@@ -75,10 +74,8 @@ export const codexCapabilities = (
     {
       name: "known_product_writes",
       surface: "PreToolUse",
-      assurance: has("preToolUse") ? "enforced" : "unavailable",
-      reason: has("preToolUse")
-        ? "PreToolUse denies covered Bash/apply_patch and local write targets only when the hooks.json bundle is installed; uncovered inputs stay agent_guided"
-        : "PreToolUse hook is untrusted or unavailable",
+      assurance: "unavailable",
+      reason: "file writes are host-policy; PreToolUse allows write tools",
       refs: [ref(host, "PreToolUse")],
     },
     {
@@ -265,82 +262,6 @@ export const parseCodexHookInput = (value: unknown): HookParseResult => {
   };
 };
 
-const normalizePath = (root: string, value: string, cwd: string): string | null => {
-  const target = path.resolve(cwd, value);
-  // Outside-checkout absolute paths pass through for the core gate (writer
-  // plus scope still required); inside-checkout paths relativize so lexical
-  // scope matching keeps working.
-  let resolved = target;
-  try {
-    resolved = realpathSync(target);
-  } catch {
-    /* missing path: lexical check only */
-  }
-  const relative = path.relative(root, resolved);
-  if (relative === "") return ".";
-  const escaped = process.platform === "win32" ? relative.toLowerCase() : relative;
-  return escaped.startsWith("..") || path.isAbsolute(relative) ? target : relative;
-};
-
-const writeTargets = (
-  input: CodexHookInput,
-): { paths: string[]; invalid: boolean; intent: boolean } => {
-  const root = input.cwd;
-  const tool = input.tool_name?.toLowerCase() ?? "";
-  const args = record(input.tool_input) ? input.tool_input : {};
-  const writeTools = new Set([
-    "write",
-    "edit",
-    "delete",
-    "remove",
-    "rename",
-    "mkdir",
-    "mv",
-    "cp",
-    "touch",
-    "apply_patch",
-    "bash",
-    "unified-exec",
-  ]);
-  if (!writeTools.has(tool)) return { paths: [], invalid: false, intent: false };
-  const values: string[] = [];
-  if (["write", "edit", "delete", "remove", "rename", "mkdir", "mv", "cp", "touch"].includes(tool))
-    for (const key of ["file_path", "path", "target", "filename"])
-      if (nonEmpty(args[key])) values.push(args[key]);
-  if (tool === "apply_patch") {
-    const patch =
-      typeof args.command === "string"
-        ? args.command
-        : typeof args.patch === "string"
-          ? args.patch
-          : "";
-    for (const line of patch.split(/\r?\n/)) {
-      const match = line.match(/^\*\*\* (?:Add|Update|Delete) File: (.+)$/);
-      if (match) values.push(match[1].trim());
-    }
-  }
-  if (tool === "bash" || tool === "unified-exec") {
-    // Same shared parser as the Cursor hook (core/shell-intent): intent,
-    // invalid, and raw operands — containment stays hook-local below.
-    const parsed = shellWriteIntent(typeof args.command === "string" ? args.command : "");
-    if (!parsed.intent) return { paths: [], invalid: false, intent: false };
-    if (parsed.invalid) return { paths: [], invalid: true, intent: true };
-    values.push(...parsed.values);
-  }
-  if (!values.length)
-    return {
-      paths: [],
-      invalid: input.tool_name !== undefined && tool !== "bash" && tool !== "unified-exec",
-      intent: tool !== "",
-    };
-  const paths = values.map((value) => normalizePath(root, value, root));
-  return {
-    paths: paths.filter((value): value is string => value !== null),
-    invalid: paths.some((value) => value === null),
-    intent: true,
-  };
-};
-
 const output = (event: CodexHookEvent, extra: Record<string, unknown> = {}) => ({
   hookSpecificOutput: { hookEventName: event, ...extra },
 });
@@ -363,11 +284,6 @@ const activeTask = (store: TaskStore) => {
       reason: active.length === 0 ? "no active task" : "active task is ambiguous",
     };
   return { ok: true as const, task: active[0], workspace: workspace.data };
-};
-
-const persistedCodexHost = (session: unknown): CodexHost | undefined => {
-  if (!record(session) || session.kind !== "host" || !nonEmpty(session.host)) return undefined;
-  return session.host as CodexHost;
 };
 
 const sessionContext = (input: CodexHookInput): string => {
@@ -420,66 +336,10 @@ export const handleCodexHook = (raw: unknown): Record<string, unknown> => {
     return output("SessionStart", { additionalContext: sessionContext(input) });
   }
   if (input.hook_event_name === "PreToolUse") {
-    const targets = writeTargets(input);
-    if (targets.invalid || (targets.intent && targets.paths.length === 0))
-      return denied("PreToolUse", "covered product write target is unavailable or ambiguous");
-    if (!targets.intent) return output("PreToolUse", { permissionDecision: "allow" });
-    try {
-      const store = new TaskStore(input.cwd);
-      const state = activeTask(store);
-      if (!state.ok)
-        return state.kind === "absent"
-          ? output("PreToolUse", { permissionDecision: "allow" })
-          : denied("PreToolUse", state.reason);
-      // The persisted writer/worker session is the authority. Surface detection
-      // is diagnostic only and must not grant a caller a host identity.
-      // Human-bound CLI ownership also passes: `workit writer acquire
-      // --actor <session-id>` stamps a workit_cli session whose handle is
-      // exactly this Codex session id — an explicit human binding made on
-      // the same machine, not a forged delegation.
-      const worker = state.task.workers.find(
-        (entry) =>
-          entry.data.session?.kind === "host" && entry.data.session.handle === input.session_id,
-      );
-      const ownerSession = state.workspace.writer?.owner.session;
-      const persisted =
-        persistedCodexHost(worker?.data.session) ?? persistedCodexHost(ownerSession);
-      const humanBound =
-        ownerSession !== null &&
-        ownerSession !== undefined &&
-        (ownerSession as { kind?: unknown; host?: unknown; handle?: unknown }).kind === "host" &&
-        (ownerSession as { host?: unknown }).host === "workit_cli" &&
-        (ownerSession as { handle?: unknown }).handle === input.session_id;
-      if (persisted !== "codex_cli" && persisted !== "codex_desktop" && !humanBound)
-        return denied("PreToolUse", "Codex writer identity is unavailable or unmatched");
-      // Caller identity for the ownership check: the persisted host when
-      // known, otherwise the human-bound workit_cli session. capabilities
-      // stay Codex-shaped: this process is a Codex hook either way.
-      const callerHost = persisted ?? (humanBound ? "workit_cli" : undefined);
-      if (!callerHost) return denied("PreToolUse", "Codex writer identity is unavailable");
-      const core = new WorkitCore(store, {
-        root: input.cwd,
-        caller: { host: callerHost, actor: input.session_id },
-        // Stdin hook input is unsigned: any local process can emit it, so a
-        // hook-minted context is never attested. Ownership still enforces
-        // through the persisted host session match, not this flag.
-        callerAttested: false,
-        workerId: worker?.id ?? null,
-        capabilities: codexCapabilities(persisted ?? "codex_cli", { preToolUse: true }),
-        constraints: [],
-        now: new Date().toISOString().replace(/\.\d{3}Z$/, "Z"),
-      });
-      const checked = core.assertProductWriteAllowed({
-        task: state.task,
-        workspace: state.workspace,
-        paths: targets.paths,
-      });
-      return checked.ok
-        ? output("PreToolUse", { permissionDecision: "allow" })
-        : denied("PreToolUse", checked.error);
-    } catch {
-      return denied("PreToolUse", "product write authorization is unavailable");
-    }
+    // File writes are host-policy territory: the hook no longer gates covered
+    // write tools on task scopes. Managed workit mutations keep core-side
+    // writer ownership checks.
+    return output("PreToolUse", { permissionDecision: "allow" });
   }
   if (input.hook_event_name === "SubagentStart")
     return output("SubagentStart", {
