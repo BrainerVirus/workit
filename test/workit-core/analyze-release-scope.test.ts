@@ -192,6 +192,33 @@ describe("analyzeReleaseScope", () => {
     }
   });
 
+  test("payload-only docs commits release as patch", () => {
+    const r = repo();
+    r.tag("v0.8.11");
+    try {
+      r.commit("docs(skills): pause parked leads", {
+        "packages/workit-core/skills/workit-steer/SKILL.md": "# steer\n",
+      });
+      expect(analyzeReleaseScope(r.root)).toEqual({ level: "patch", productPkgs: ["workit-core"] });
+    } finally {
+      r.cleanup();
+    }
+  });
+
+  test("release manifest sync alone yields no release", () => {
+    const r = repo();
+    r.tag("v0.8.11");
+    try {
+      r.commit("chore(release): sync manifests to v0.8.12 (#99)", {
+        "packages/workit-cli/package.json": '{ "version": "0.8.12" }\n',
+        "packages/workit-core/package.json": '{ "version": "0.8.12" }\n',
+      });
+      expect(analyzeReleaseScope(r.root).level).toBeNull();
+    } finally {
+      r.cleanup();
+    }
+  });
+
   test("non-ASCII paths survive collection without C-quoting", () => {
     const r = repo();
     r.tag("v0.8.11");

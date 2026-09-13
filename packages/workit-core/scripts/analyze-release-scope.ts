@@ -1,7 +1,9 @@
 #!/usr/bin/env bun
-// AR-16: path-gated releases. Replaces message-only commit analysis: a
-// releasable commit counts only when it touches a PRODUCT PATH (any of the
-// four package dirs). Tooling-only merges produce no release at all.
+// AR-16: path-gated releases. A releasable commit counts only when it touches
+// a PRODUCT PATH (any of the four package dirs). Tooling-only merges produce no
+// release at all. A payload change typed docs/chore still publishes as patch —
+// skills and metadata live in the tarball, so installed users must receive
+// them; merge-backs and the release's own manifest sync never do.
 import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
 
@@ -14,6 +16,9 @@ export const RELEASE_PACKAGES = [
   "workit-codex",
   "workit-pi",
 ] as const;
+
+/** The release pipeline's own version-sync commit: never a release trigger. */
+const RELEASE_SYNC = /^chore\(release\): sync manifests\b/;
 
 const g = (root: string, args: string[]): string =>
   execFileSync("git", args, { cwd: root, encoding: "utf8" }).trim();
@@ -64,9 +69,10 @@ const commitsSince = (root: string, from: string): { message: string; files: str
   }));
 };
 
-export function analyzeReleaseScope(
-  root = process.cwd(),
-): { level: Level | null; productPkgs: string[] } {
+export function analyzeReleaseScope(root = process.cwd()): {
+  level: Level | null;
+  productPkgs: string[];
+} {
   const from = latestTag(root);
   if (from === null) {
     return { level: "minor", productPkgs: [...RELEASE_PACKAGES] };
@@ -74,18 +80,27 @@ export function analyzeReleaseScope(
   const commits = commitsSince(root, from);
   const levels: Level[] = [];
   const pkgs = new Set<string>();
+  let payloadOnly = false;
   for (const { message, files } of commits) {
-    const touched = files.filter((f) => RELEASE_PACKAGES.some((p) => f.startsWith(`packages/${p}/`)));
+    const subject = (message.split("\n")[0] ?? "").trim();
+    if (RELEASE_SYNC.test(subject)) continue;
+    const touched = files.filter((f) =>
+      RELEASE_PACKAGES.some((p) => f.startsWith(`packages/${p}/`)),
+    );
     if (touched.length === 0) continue;
     const lvl = subjectLevel(message);
     if (lvl) levels.push(lvl);
+    else if (!subject.startsWith("Merge ")) payloadOnly = true;
     for (const f of touched) {
       const pkg = RELEASE_PACKAGES.find((p) => f.startsWith(`packages/${p}/`));
       if (pkg) pkgs.add(pkg);
     }
   }
-  if (levels.length === 0) return { level: null, productPkgs: [...pkgs] };
-  const level = levels.reduce<Level>((best, l) => (LEVEL_RANK[l] > LEVEL_RANK[best] ? l : best), "patch");
+  if (levels.length === 0) return { level: payloadOnly ? "patch" : null, productPkgs: [...pkgs] };
+  const level = levels.reduce<Level>(
+    (best, l) => (LEVEL_RANK[l] > LEVEL_RANK[best] ? l : best),
+    "patch",
+  );
   return { level, productPkgs: [...pkgs] };
 }
 
