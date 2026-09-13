@@ -167,6 +167,9 @@ acquire --actor <id>` binds a writer to a Codex session the hook matches,
 
 ### Changed
 
+- The repository README opens with a per-tool install guide (collapsible
+  sections for OpenCode, Cursor, Codex CLI/desktop, Pi, and the CLI) and a
+  dedicated host-surfaces section.
 - `workit-challenge` is now a grounded grill loop: ground-first facts, one
   bounded 3-5 direction diverge burst when the approach is unknown,
   one-question-at-a-time recommendations each with a rejected alternative, a
