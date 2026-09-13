@@ -1,12 +1,17 @@
 {
   "name": "@brainervirus/workit-pi",
-  "version": "1.0.0",
-  "description": "Workit native extension for Pi",
+  "version": "1.0.1",
+  "description": "Workit native extension for Pi — tools, method skills, and session continuity",
   "keywords": [
+    "agentic-coding",
+    "ai-agents",
     "coding-agent",
+    "extension",
+    "pi",
     "pi-package",
     "workflow"
   ],
+  "homepage": "https://github.com/BrainerVirus/workit#readme",
   "license": "MIT",
   "repository": {
     "type": "git",

@@ -1,9 +1,24 @@
 {
   "name": "workit",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
-  "description": "Monorepo for workit — workflow rails for agentic coding",
+  "description": "Workit — workflow rails for agentic coding: one shared task and policy core with native OpenCode, Cursor, Codex, Pi, and CLI surfaces",
+  "keywords": [
+    "agentic-coding",
+    "ai-agents",
+    "cursor",
+    "mcp",
+    "opencode",
+    "policy-engine",
+    "task-management",
+    "workflow"
+  ],
+  "homepage": "https://github.com/BrainerVirus/workit#readme",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/BrainerVirus/workit.git"
+  },
   "workspaces": [
     "packages/*"
   ],

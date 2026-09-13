@@ -170,6 +170,9 @@ acquire --actor <id>` binds a writer to a Codex session the hook matches,
 - AGENTS.md maps where agent-facing rules live (invariant bootstrap, method
   skills, adapter messages, repository docs) so future fixes are proposed for
   the distributed surface first.
+- Repository and package metadata now use v1 wording and search-friendly
+  keywords; the GitHub About gains description, homepage, and topics so the
+  project and its packages index better.
 - The repository README opens with a per-tool install guide (collapsible
   sections for OpenCode, Cursor, Codex CLI/desktop, Pi, and the CLI) and a
   dedicated host-surfaces section.

@@ -1,16 +1,22 @@
 {
   "name": "@brainervirus/workit-mcp",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": false,
-  "description": "Workit shared MCP transport for Cursor and Codex",
+  "description": "Workit shared MCP transport for the eight task and policy operation families",
   "keywords": [
-    "agent",
-    "codex",
-    "cursor",
+    "agentic-coding",
+    "ai-agents",
     "mcp",
+    "model-context-protocol",
+    "server",
     "workflow"
   ],
+  "homepage": "https://github.com/BrainerVirus/workit#readme",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/BrainerVirus/workit.git"
+  },
   "bin": {
     "workit-mcp": "./dist/index.js"
   },

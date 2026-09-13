@@ -1,14 +1,18 @@
 {
   "name": "@brainervirus/workit-cursor",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": false,
-  "description": "Workit Cursor plugin: shared MCP transport and native adaptive hooks",
+  "description": "Workit Cursor plugin — shared MCP transport, native hooks, and fourteen method skills",
   "keywords": [
-    "agent",
+    "agentic-coding",
+    "ai-agents",
     "cursor",
     "mcp",
+    "model-context-protocol",
+    "plugin",
     "workflow"
   ],
+  "homepage": "https://github.com/BrainerVirus/workit#readme",
   "bugs": {
     "url": "https://github.com/BrainerVirus/workit/issues"
   },
