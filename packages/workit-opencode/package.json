@@ -2,13 +2,17 @@
   "name": "@brainervirus/workit-opencode",
   "version": "1.0.0",
   "private": false,
-  "description": "Workit OpenCode plugin (thin wrapper over @brainervirus/workit-core)",
+  "description": "Workit OpenCode plugin — native tools, adaptive policy, and fourteen method skills",
   "keywords": [
-    "agent",
+    "agentic-coding",
+    "ai-agents",
     "mcp",
     "opencode",
+    "plugin",
+    "typescript",
     "workflow"
   ],
+  "homepage": "https://github.com/BrainerVirus/workit#readme",
   "bugs": {
     "url": "https://github.com/BrainerVirus/workit/issues"
   },
