@@ -1,5 +1,13 @@
 import { expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -477,6 +485,92 @@ test("a context rooted at another checkout cannot read or mutate the store", () 
   expect(store.readWorkspace()).toEqual(success(null, null, null));
 });
 
+test.each(["workit_cli", "opencode", "cursor", "codex_cli", "codex_desktop", "pi"] as const)(
+  "%s: mechanical self-review stays fresh and permits verified closure",
+  (host) => {
+    const root = mkdtempSync(join(tmpdir(), "workit-self-review-"));
+    try {
+      writeFileSync(join(root, "a.ts"), "before");
+      const store = new TaskStore(root);
+      const core = new WorkitCore(store, { ...context(root), caller: caller({ host }) });
+      const started = core.task(taskStartRequest());
+      if (!started.ok) throw new Error(started.error);
+      const taskId = (started.data as { id: string }).id;
+      const assessed = core.policy({
+        schemaVersion: 1,
+        action: "assess",
+        taskId,
+        assessment: assessment({
+          signals: {
+            ...assessment().signals,
+            approachUnknown: { value: false, basis: "inferred", reason: "known", refs: [] },
+            productChoiceOpen: { value: false, basis: "inferred", reason: "settled", refs: [] },
+          },
+        }),
+      });
+      if (!assessed.ok) throw new Error(assessed.error);
+      const task = store.readTask(taskId);
+      if (!task.ok || !task.data.policy) throw new Error("policy missing");
+      const review = task.data.policy.requirements.find((item) => item.ruleId === "self-review")!;
+      const record = () => {
+        for (const requirement of task.data.policy!.requirements) {
+          expect(
+            core.evidence({
+              schemaVersion: 1,
+              action: "record",
+              taskId,
+              evidence: {
+                kind: requirement.dimension === "review" ? "review" : "check",
+                claim: requirement.ruleId,
+                requirementIds: [requirement.id],
+                result: "passed",
+                summary: "lead checked the current candidate",
+                refs: [],
+                exitCode: 0,
+                reviewContext:
+                  requirement.dimension === "review"
+                    ? { kind: "host", host, handle: "test" }
+                    : null,
+              },
+            }).ok,
+          ).toBe(true);
+        }
+      };
+      const inspect = (status: string) => {
+        for (const view of ["summary", "full"] as const) {
+          expect(core.task({ schemaVersion: 1, action: "inspect", taskId, view })).toMatchObject({
+            ok: true,
+            data: {
+              requirements: expect.arrayContaining([
+                expect.objectContaining({ requirementId: review.id, status }),
+              ]),
+            },
+          });
+        }
+      };
+      const close = () =>
+        core.task({
+          schemaVersion: 1,
+          action: "close",
+          taskId,
+          outcome: "verified",
+          summary: "mechanical change reviewed",
+          decisionIds: [],
+        });
+      inspect("unsatisfied");
+      record();
+      inspect("satisfied");
+      writeFileSync(join(root, "a.ts"), "after");
+      inspect("unsatisfied");
+      expect(close()).toMatchObject({ ok: false, code: "requirements_unsatisfied" });
+      record();
+      expect(close()).toMatchObject({ ok: true, data: { closure: { outcome: "verified" } } });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
+
 test("review evidence uses the trusted caller session and requires an independent session", () => {
   const root = mkdtempSync(join(tmpdir(), "workit-review-"));
   const store = new TaskStore(root);
@@ -576,6 +670,17 @@ test("review evidence uses the trusted caller session and requires an independen
     kind: "agent_reported",
     session: { kind: "host", host: "workit_cli", handle: "reviewer" },
   });
+  expect(
+    lead.evidence({
+      schemaVersion: 1,
+      action: "record",
+      taskId,
+      evidence: {
+        ...recorded.data.data,
+        reviewContext: { kind: "host", host: "workit_cli", handle: "test" },
+      },
+    }).ok,
+  ).toBe(true);
   const view = reviewer.task({ schemaVersion: 1, action: "inspect", taskId, view: "full" });
   expect(view).toMatchObject({
     ok: true,
@@ -616,6 +721,29 @@ test("review evidence uses the trusted caller session and requires an independen
     },
   });
   expect(forged).toMatchObject({ ok: false, code: "invalid_input" });
+  const independent = new WorkitCore(store, {
+    ...leadContext,
+    caller: caller({ actor: "independent" }),
+  });
+  expect(
+    independent.evidence({
+      schemaVersion: 1,
+      action: "record",
+      taskId,
+      evidence: {
+        ...recorded.data.data,
+        reviewContext: { kind: "host", host: "workit_cli", handle: "independent" },
+      },
+    }).ok,
+  ).toBe(true);
+  expect(lead.task({ schemaVersion: 1, action: "inspect", taskId, view: "full" })).toMatchObject({
+    ok: true,
+    data: {
+      requirements: expect.arrayContaining([
+        expect.objectContaining({ requirementId: reviewRequirement.id, status: "satisfied" }),
+      ]),
+    },
+  });
 });
 
 test("summary and full inspection recapture candidates so scoped freshness agrees", () => {

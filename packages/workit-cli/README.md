@@ -34,6 +34,11 @@ workit                                     # help
 
 `workit init` guides you through: platform selection (OpenCode/Cursor), global config (locale, timezone, branch policy), YouTrack, VCS, workspaces (path globs → provider), and project hygiene files. The wizard is a TTY application — `workit init` requires an interactive terminal and prints guidance (exiting nonzero) when stdin is not a TTY.
 
+The platforms step also always lists Codex and Pi with their detected/configured
+status and separate setup instructions. Init registers only OpenCode/Cursor;
+Codex uses plugin/hooks setup and Pi uses `pi install @brainervirus/workit-pi`.
+Use `workit cutover` for legacy migration.
+
 `workit doctor` checks the offline installation health and exits nonzero when problems are found; `--json` prints the full report as JSON instead of the human-readable table.
 
 The task surface exposes the eight shared operation families (`task`, `policy`,

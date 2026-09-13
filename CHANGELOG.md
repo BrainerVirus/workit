@@ -224,6 +224,14 @@ acquire --actor <id>` binds a writer to a Codex session the hook matches,
 
 ### Fixed
 
+- Mechanical `self-review` requirements now accept the lead's fresh review
+  evidence on every host. Independent reviews correctly reject the task creator's
+  session even when it has not recorded any other evidence.
+
+- Init always shows Codex and Pi status and separate setup guidance, clarifies
+  that Apply configures only OpenCode/Cursor, and reserves cutover guidance for
+  legacy migration.
+
 - Doctor `stale_install` now detects when OpenCode's frozen npm `@latest`
   package cache (`~/.cache/opencode/packages/@brainervirus/workit-opencode@latest`)
   lags the published `@brainervirus/workit-opencode`. Bare / `@latest` pins

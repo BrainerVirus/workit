@@ -18,7 +18,7 @@ host documents.
 ## Install
 
 Requires **Node.js 24 or newer**. The wizard detects your hosts, configures the
-ones you pick, and writes your global config and optional project files:
+OpenCode/Cursor installations you pick, and writes your global config and optional project files:
 
 ```bash
 npx @brainervirus/workit-cli init
@@ -32,6 +32,11 @@ only to add hygiene files and gitignore entries to the displayed directory.
 Re-running init preserves existing credentials and files; it does not remove
 templates created by an earlier install. Locale and timezone selectors keep
 the current selection until you choose another value.
+
+The platforms step always shows Codex and Pi with detection/configuration status
+and separate setup guidance. Init does not register these hosts: use the Codex
+plugin/hooks instructions below or `pi install @brainervirus/workit-pi`.
+`workit cutover` is for migrating legacy installations.
 
 Manual setup per tool:
 
@@ -181,6 +186,11 @@ workit cutover rollback preview|apply <backupId> [--json] [--confirm]
 - A `<workit-contract>` bootstrap marker carrying shared invariants.
 - Host-native capability reporting that never fabricates authority, receipts,
   delegation tokens, or cross-process identity.
+
+Mechanical tasks with a `self-review` requirement accept the lead's own fresh
+review evidence, with `reviewContext` matching the recording session. Independent
+review requirements still need a session distinct from the task creator and
+other evidence recorders.
 
 Skills are reachable two ways: model-invoked automatically when the task fits,
 or explicitly via five bare aliases — `/challenge`, `/babysit`, `/implement`,

@@ -1160,8 +1160,12 @@ test("platforms screen preselects detected hosts and tags configured ones", asyn
     );
     const first = tty.lastFrame();
     expect(first).toContain("already configured");
-    expect(first).toContain("Detected: Codex, Pi");
-    expect(first).toContain("cutover");
+    expect(first).toContain("This wizard configures OpenCode and Cursor only.");
+    expect(first).toContain("Codex · detected — plugin/hooks setup:");
+    expect(first).toContain(
+      "Pi · detected — install separately: pi install @brainervirus/workit-pi",
+    );
+    expect(first).toContain("For legacy installations, use `workit cutover`");
     // The opencode preselection satisfies validation: ENTER advances with no toggle.
     await tty.keys(ENTER);
     expect(tty.lastFrame()).toContain("Locale");

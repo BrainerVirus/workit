@@ -86,6 +86,10 @@ process around it.
 
 ## Workflow contract
 
+- Init always shows Codex and Pi with detection/configuration status and host-native
+  setup guidance; only OpenCode/Cursor are selectable for Apply. Cutover guidance
+  is secondary and explicitly for legacy migration.
+
 - CLI init project hygiene is optional: `n` advances without project writes,
   including after revisiting an accepted project step. Search selectors retain
   the current value and scroll their five-row viewport across all matches.
@@ -115,9 +119,11 @@ process around it.
   workers spread across tasks bind nothing, because no observed child can
   prove which task the coordinator intends. A `cancelling` worker vetoes
   launches from its own coordinator until a repeated cancel on the ended
-  worker confirms its stop; other coordinators proceed. Review evidence
+  worker confirms its stop; other coordinators proceed. Independent-review evidence
   only counts from a session that is neither the task creator's nor any
-  other evidence recorder's.
+  other evidence recorder's. A policy-selected `self-review` accepts the lead's
+  own review session, including when the lead recorded checks; freshness and
+  matching review-context provenance remain required on every host.
 - VCS routing is per-workspace: `workspaces.json` `resolveWorkspace` maps `work`-glob repos to GitLab/`develop`/gitflow and `personal`-glob repos to GitHub/`main`/github-flow, resolved in the order explicit workspace `vcs.defaultTargetBranch` → workspace branchPolicy default → global `vcs.json` → preset defaults. The active `vcs.json` carries no global `defaultTargetBranch`; a global default can no longer shadow a matched workspace's branchPolicy default. On GitHub, `prCreate` pushes the branch before `gh pr create` when `pr.pushBranch` is enabled (default), and a caller-supplied target equal to the resolved default is accepted even though protected. The runtime reads only the active `~/.config/workit/` config dir; legacy `~/.config/workflow-toolkit/` non-secret files were cleaned up once the active config passed status checks.
 - Never use worktrees; use guarded in-place branch setup.
 - Before any GitHub remote mutation (push, PR create/close, branch delete), verify the effective identity with `gh api user --jq .login` and confirm it matches the checkout's area account — `gh auth status` shows config metadata and can disagree with the credential actually used (keyring vs hosts file). Never trust the status display for this check.
