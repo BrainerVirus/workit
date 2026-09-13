@@ -224,6 +224,18 @@ acquire --actor <id>` binds a writer to a Codex session the hook matches,
 
 ### Fixed
 
+- Published `workit init` OpenCode registration pins `@brainervirus/workit-opencode`
+  instead of a fragile `file://` path into the pnpm dlx/`_npx` cache. Checkout
+  installs still use `file://`. Doctor fails cache-path pins and only requires
+  the active `vcs.json` provider token (GitHub-only no longer fails on a missing
+  unused `gitlab.token`). Cursor plugin install now materializes a real
+  directory under `~/.cursor/plugins/local/workit` when the adapter root is a
+  pnpm symlink (previously `cpSync` left a cache symlink); doctor fails that
+  fragile shape. MCP/hook launchers were already the canonical
+  `@latest` + `--prefer-online` form.
+- Post-release manifest-sync branches (`chore/manifest-sync-v*`) are deleted
+  automatically after the sync PR merges. Deferred auto-merge was leaving those
+  heads on the remote even with `gh pr merge --delete-branch`.
 - Init project setup now defaults to No and `n` advances without adding files.
   Locale and timezone selectors scroll beyond five rows, preserving the current
   value instead of silently clamping English to `es-AR`.

@@ -47,6 +47,11 @@ Run the wizard and select OpenCode, or add the plugin to `opencode.json`:
 }
 ```
 
+`workit init` writes that same npm package pin for published installs. A
+checkout/dev install may pin `file://…/packages/workit-opencode/…` instead.
+Do not pin into pnpm dlx or `_npx` cache paths — those break when the cache is
+cleared.
+
 Requires OpenCode 1.18.30 and Node.js 24+. The published plugin is a
 self-contained Node bundle (no runtime `@opencode-ai/plugin` dependency) and
 ships the eight native tools plus the fourteen method skills.
@@ -79,9 +84,11 @@ Or add the published launcher to the Cursor MCP config:
 ```
 
 `@latest` plus `--prefer-online` are intentional: the runtime resolves from npm
-at launch and never depends on a checkout-local `dist/`. Requires Node.js 24+
-and network access on first run. Plugin metadata lives under `.cursor-plugin/`
-and is submission-ready for the Cursor Marketplace; it is not published there.
+at launch and never depends on a checkout-local `dist/`. The wizard also copies
+the plugin into `~/.cursor/plugins/local/workit` as a **real directory** (not a
+symlink into pnpm dlx/`_npx` caches). Requires Node.js 24+ and network access on
+first run. Plugin metadata lives under `.cursor-plugin/` and is
+submission-ready for the Cursor Marketplace; it is not published there.
 
 </details>
 

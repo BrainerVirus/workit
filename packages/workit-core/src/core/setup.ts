@@ -2,10 +2,12 @@ import {
   copyFileSync,
   cpSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   renameSync,
   rmSync,
   statSync,
@@ -38,6 +40,7 @@ import {
   mergeCursorMcp,
   mergeCursorSettings,
   mergeOpenCodeConfig,
+  OPENCODE_NPM_PIN,
 } from "./registration";
 import { runDoctor, type DoctorReport } from "./doctor";
 import { writeFileExclusive } from "./safe-write";
@@ -750,7 +753,19 @@ function adapterRoot(platform: Platform, res: ResolvedApply): string | null {
   return null;
 }
 
-const opencodePin = (root: string): string | null => {
+/** True when the adapter root is a monorepo checkout (dev pin), not a packed node_modules install. */
+export const isDevOpenCodeAdapterRoot = (root: string, dev: string | null | undefined): boolean => {
+  if (dev) return true;
+  const norm = root.replaceAll("\\", "/");
+  return /\/packages\/workit-opencode\/?$/.test(norm);
+};
+
+/** Published installs pin the npm package; checkout installs pin file:// entry. */
+export const resolveOpenCodePin = (
+  root: string,
+  opts: { dev?: string | null } = {},
+): string | null => {
+  if (!isDevOpenCodeAdapterRoot(root, opts.dev)) return OPENCODE_NPM_PIN;
   for (const rel of ["src/plugin.ts", "dist/plugin.js"]) {
     const entry = path.join(root, rel);
     if (existsSync(entry)) return `file://${entry}`;
@@ -758,8 +773,11 @@ const opencodePin = (root: string): string | null => {
   return null;
 };
 
+const opencodePin = (root: string, res: ResolvedApply): string | null =>
+  resolveOpenCodePin(root, { dev: res.dev });
+
 function applyOpenCode(root: string, res: ResolvedApply): SetupResultEntry {
-  const pin = opencodePin(root);
+  const pin = opencodePin(root, res);
   if (!pin) {
     return {
       platform: "opencode",
@@ -853,28 +871,41 @@ const preservedCursorRules = (src: string, dest: string): Map<string, Buffer> =>
   return preserved;
 };
 
-function copyPluginDir(src: string, dest: string): SetupResultStatus {
+/** Install Cursor plugin files as a real directory (never a symlink into a package cache). */
+export function copyPluginDir(src: string, dest: string): SetupResultStatus {
+  // pnpm dlx/pacquet (and similar) expose packages as symlinks into a content
+  // store. Node's cpSync copies a symlink *root* as a symlink, so the installed
+  // plugin would point into an ephemeral cache. Always materialize from the
+  // realpath so ~/.cursor/plugins/local/workit is a real directory.
+  const realSrc = realpathSync(src);
   const marker = path.join(dest, ".workit-root");
-  const synced = readFileSafe(marker)?.trim() === src && samePluginContent(src, dest);
+  const destIsLink = existsSync(dest) && lstatSync(dest).isSymbolicLink();
+  const synced =
+    !destIsLink &&
+    readFileSafe(marker)?.trim() === realSrc &&
+    samePluginContent(realSrc, dest);
   if (synced) return "Skipped";
   const hadDir = existsSync(dest);
-  const rules = preservedCursorRules(src, dest);
+  const rules = preservedCursorRules(realSrc, dest);
   const parent = path.dirname(dest);
   mkdirSync(parent, { recursive: true });
   const swap = mkdtempSync(path.join(parent, `.${path.basename(dest)}.swap-`));
   const stage = path.join(swap, "stage");
   const backup = path.join(swap, "backup");
   try {
-    cpSync(src, stage, {
+    cpSync(realSrc, stage, {
       recursive: true,
-      filter: (entry) => !path.relative(src, entry).split(path.sep).includes("node_modules"),
+      filter: (entry) => !path.relative(realSrc, entry).split(path.sep).includes("node_modules"),
     });
     for (const [name, content] of rules) {
       mkdirSync(path.join(stage, "rules"), { recursive: true });
       writeFileSync(path.join(stage, "rules", name), content);
     }
-    writeFileSync(path.join(stage, ".workit-root"), src + "\n", "utf8");
-    if (!samePluginContent(src, stage)) throw new Error("staged adapter content is incomplete");
+    writeFileSync(path.join(stage, ".workit-root"), realSrc + "\n", "utf8");
+    if (!samePluginContent(realSrc, stage)) throw new Error("staged adapter content is incomplete");
+    if (lstatSync(stage).isSymbolicLink()) {
+      throw new Error("staged adapter resolved to a symlink — refusing fragile cache install");
+    }
     if (hadDir) renameSync(dest, backup);
     try {
       renameSync(stage, dest);

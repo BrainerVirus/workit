@@ -100,7 +100,14 @@ test(
     expect(syncRun).toContain("git checkout --");
     expect(syncRun).toContain("gh pr create");
     expect(syncRun).toContain("--auto --squash");
+    expect(syncRun).toContain("--delete-branch");
     expect(syncStep.env?.GH_TOKEN ?? "").toContain("RELEASE_SYNC_TOKEN");
+    // Deferred auto-merge does not reliably delete heads; a closed-PR cleanup
+    // workflow must remove chore/manifest-sync-* branches after merge.
+    const cleanup = read(".github/workflows/cleanup-manifest-sync-branch.yml");
+    expect(cleanup).toContain("chore/manifest-sync-");
+    expect(cleanup).toContain("pull_request");
+    expect(cleanup).toContain("git/refs/heads/");
   },
   { timeout: 60_000 },
 );

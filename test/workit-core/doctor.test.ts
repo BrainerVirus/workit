@@ -6,7 +6,9 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  renameSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -178,6 +180,24 @@ test("healthy fixture: canonical install yields no stale_install finding", () =>
   const stale = check(report, "stale_install");
   expect(stale.status).toBe("pass");
   expect(stale.detail).not.toMatch(/stale/i);
+});
+
+test("reports stale_install when the cursor plugin dir is a symlink into a package cache", () => {
+  const cachePkg = path.join(fixture.root, "Library", "Caches", "pnpm", "dlx", "abc", "pkg");
+  mkdirSync(cachePkg, { recursive: true });
+  writeFileSync(path.join(cachePkg, "package.json"), JSON.stringify({ version: "1.0.3" }));
+  const backup = `${fixture.pluginDir}.bak-real`;
+  rmSync(backup, { recursive: true, force: true });
+  renameSync(fixture.pluginDir, backup);
+  try {
+    symlinkSync(cachePkg, fixture.pluginDir);
+    const stale = check(run(), "stale_install");
+    expect(stale.status).toBe("fail");
+    expect(stale.detail).toMatch(/symlink.*cache/i);
+  } finally {
+    rmSync(fixture.pluginDir, { force: true });
+    renameSync(backup, fixture.pluginDir);
+  }
 });
 
 test("reports stale_install when the installed preToolUse matcher drifts from canonical", () => {
@@ -1137,6 +1157,46 @@ test("credential metadata only flags providers actually configured in vcs.json",
   expect(check(run(), "credential_metadata").status).toBe("pass");
 });
 
+test("credential metadata ignores inactive VCS provider token files", () => {
+  const vcsFile = path.join(fixture.configDir, "vcs.json");
+  const githubToken = path.join(fixture.configDir, "github.token");
+  writeConfig(
+    vcsFile,
+    JSON.stringify({
+      provider: "github",
+      github: { tokenFile: "github.token" },
+      gitlab: { tokenFile: "gitlab.token" },
+    }),
+  );
+  writeConfig(githubToken, "ghp-ok-11\n", 0o600);
+  // gitlab.token intentionally missing — must not fail when provider is github
+  try {
+    expect(check(run(), "credential_metadata").status).toBe("pass");
+  } finally {
+    rmSync(vcsFile, { force: true });
+    rmSync(githubToken, { force: true });
+  }
+});
+
+test("stale_pin fails fragile pnpm dlx file:// pins", () => {
+  writeConfig(
+    fixture.opencodeConfig,
+    JSON.stringify({
+      plugin: [
+        "file:///Users/me/Library/Caches/pnpm/dlx/abc/node_modules/@brainervirus/workit-opencode/dist/plugin.js",
+      ],
+    }),
+  );
+  const report = run();
+  expect(check(report, "stale_pin").status).toBe("fail");
+  expect(check(report, "stale_pin").detail).toContain("cache path");
+  writeConfig(
+    fixture.opencodeConfig,
+    JSON.stringify({ plugin: ["@brainervirus/workit-opencode"] }),
+  );
+  expect(check(run(), "stale_pin").status).toBe("pass");
+});
+
 test("detects unwritable log dir and clears once writable", () => {
   const logsBlocker = path.join(fixture.stateDir, "logs");
   rmSync(logsBlocker, { recursive: true, force: true });
@@ -1241,7 +1301,7 @@ test("installer fails on a broken selected-host registration", () => {
     }),
   );
   try {
-    expectInstallerFailure("stale_pin", "install-opencode-plugin.sh");
+    expectInstallerFailure("stale_pin", "workit init");
   } finally {
     writeConfig(
       fixture.opencodeConfig,
