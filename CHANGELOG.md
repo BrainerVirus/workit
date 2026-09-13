@@ -167,6 +167,10 @@ acquire --actor <id>` binds a writer to a Codex session the hook matches,
 
 ### Changed
 
+- Package payload changes now cut a patch release even when their commit type
+  is `docs` or `chore` (skills and metadata live in the tarball, so installed
+  users must receive them); the release's own manifest sync is excluded and
+  merge-backs of already-released payloads stay unreleased.
 - `workit-steer` pauses the parked lead task before starting a new one (one
   active lead per session keeps external-action writer authority unambiguous),
   and `workit-babysit` re-records verification and review evidence after a
