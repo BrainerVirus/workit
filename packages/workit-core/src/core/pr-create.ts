@@ -100,6 +100,10 @@ function whichOnPath(tool: string): string | null {
   return null;
 }
 
+/** Whether the configured hosting provider's native CLI is available. */
+export const hostingCliAvailable = (provider: string): boolean =>
+  whichOnPath(provider === "gitlab" ? "glab" : "gh") !== null;
+
 function repoRoot(cwd: string): string {
   const result = spawnSync("git", ["rev-parse", "--show-toplevel"], { cwd, encoding: "utf8" });
   return result.status === 0 ? (result.stdout ?? "").trim() : cwd;
@@ -128,7 +132,9 @@ export function prBuildBody(env: NodeJS.ProcessEnv, cwd?: string): string {
 
 /** Port of scripts/pr-create.sh create mode — glab/gh MR/PR creation. */
 export function prCreate(env: NodeJS.ProcessEnv, cwd: string): Record<string, any> {
-  const root = process.env.WORKFLOW_WORKSPACE_ROOT ?? repoRoot(cwd);
+  // An explicitly supplied, already-approved checkout root outranks ambient
+  // process state; otherwise an unrelated env root could redirect the effect.
+  const root = cwd ? repoRoot(cwd) : (process.env.WORKFLOW_WORKSPACE_ROOT ?? process.cwd());
   const policy = resolveBranchPolicyFor(root);
   const cfg = vcsConfig("load", root);
   if (!cfg.ok) return { error: cfg.error ?? "vcs config missing" };

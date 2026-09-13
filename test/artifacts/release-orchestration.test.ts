@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { REPO_ROOT } from "../shared/helpers/packages";
+import { REPO_ROOT } from "@/test/shared/helpers/packages";
 
 // Task 24 release-orchestration gate (AR-01/AR-02, CA-33/CA-44): the real
 // release job must build every adapter and pass the pack-only candidate gate
@@ -13,7 +13,14 @@ import { REPO_ROOT } from "../shared/helpers/packages";
 const read = (rel: string) => readFileSync(path.join(REPO_ROOT, rel), "utf8");
 const json = <T>(rel: string) => JSON.parse(read(rel)) as T;
 
-const ADAPTERS = ["workit-opencode", "workit-cursor", "workit-cli"] as const;
+const ADAPTERS = [
+  "workit-mcp",
+  "workit-opencode",
+  "workit-cursor",
+  "workit-codex",
+  "workit-pi",
+  "workit-cli",
+] as const;
 
 test(
   "a clean checkout tracks no generated adapter dist/ files (CA-33)",
@@ -153,7 +160,7 @@ test(
     }
     // bumpers only: exactly four @semantic-release/npm entries, none publishing.
     const npmEntries = cfg.plugins.filter(isNpm);
-    expect(npmEntries).toHaveLength(4);
+    expect(npmEntries).toHaveLength(7);
     for (const entry of npmEntries) expect(opts(entry).npmPublish).toBe(false);
     // selective publish lands after the bumpers and before the GitHub
     // release/tag plugin (AR-16).

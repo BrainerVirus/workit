@@ -3,9 +3,11 @@ import { render as inkRender } from "ink";
 import React from "react";
 import StdinContext from "../../../node_modules/ink/build/components/StdinContext.js";
 
-// Deterministic Ink TTY harness. No real terminal, no timers: frames are the
-// written stdout chunks, input is injected synchronously through a fake stdin,
-// and renders are flushed with waitUntilRenderFlush (never wall-clock sleeps).
+// Deterministic Ink TTY harness. No real terminal: frames are the written
+// stdout chunks, input is injected synchronously through a fake stdin, and
+// renders are flushed with waitUntilRenderFlush. The one wall-clock sleep
+// lives in key(): Ink resolves a lone ESC byte ~20ms after arrival, so the
+// harness drains that timer at every key boundary (see key()).
 //
 // inputListenerCount() reports how many useInput handlers are mounted: it reads
 // Ink's internal input EventEmitter (StdinContext exposes it) one microtask
@@ -130,6 +132,13 @@ export async function renderInk(
     },
     async key(key: string) {
       stdin.write(key);
+      // Drain Ink's lone-ESC disambiguation timer before continuing: an ESC
+      // byte that arrives without follow-up input resolves ~20ms later as a
+      // cancel keypress, and any keys sent in that window race it (a key sent
+      // first can still lose to the queued cancel). Waiting here makes every
+      // key() boundary deterministic; use burst() to send ESC-prefixed
+      // sequences atomically instead.
+      await new Promise((resolve) => setTimeout(resolve, 30));
       await instance.waitUntilRenderFlush();
       await new Promise((resolve) => setImmediate(resolve));
     },

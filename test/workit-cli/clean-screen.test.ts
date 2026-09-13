@@ -3,8 +3,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
-import { retryOnce } from "../shared/helpers/retry-once";
-import { cleanupLiveInkInstances } from "../shared/helpers/ink-clean-probe";
+import { retryOnce } from "@/test/shared/helpers/retry-once";
+import { cleanupLiveInkInstances } from "@/test/shared/helpers/ink-clean-probe";
 
 // CA-02 (clean screen): runInit must open with exactly one clear
 // (\x1b[2J\x1b[H) before the wizard renders and emit exactly one more after
@@ -66,7 +66,7 @@ function clean(raw: string): string {
 
 type DriveResult = { chunks: string[]; exitCode?: number };
 
-type DriveStep = string | { waitFor: string | RegExp };
+type DriveStep = string | { waitFor: string | RegExp; nudge?: string };
 
 type DriveOptions = {
   /** Drive a non-TTY stdin: exercises the pre-render no-TTY guard. */
@@ -78,10 +78,16 @@ type DriveOptions = {
 async function driveRunInit(keys: DriveStep[], options: DriveOptions = {}): Promise<DriveResult> {
   const { isTTY = true, malformedConfig = false } = options;
   const base = mkdtempSync(path.join(os.tmpdir(), "workit-clean-"));
+  const home = mkdtempSync(path.join(os.tmpdir(), "workit-clean-home-"));
   const configPath = path.join(base, "config");
   mkdirSync(configPath, { recursive: true });
   const prevToolkitConfig = process.env.WORKFLOW_TOOLKIT_CONFIG;
   process.env.WORKFLOW_TOOLKIT_CONFIG = configPath;
+  // Hermetic host detection: an empty HOME means no platforms are preselected,
+  // so SPACE always selects the first option instead of toggling a detected
+  // one off (CI runners detect an already-configured OpenCode).
+  const prevHome = process.env.HOME;
+  process.env.HOME = home;
   if (malformedConfig) writeFileSync(path.join(configPath, "config.json"), "{ not json", "utf8");
   const prevWorkspaceRoot = process.env.WORKFLOW_WORKSPACE_ROOT;
   // Non-git resolution root keeps the branch-policy screen out of the walk.
@@ -135,7 +141,7 @@ async function driveRunInit(keys: DriveStep[], options: DriveOptions = {}): Prom
       throw new ExitSentinel(code);
     }) as typeof process.exit;
 
-    const { runInit } = await import("../../packages/workit-cli/src/index");
+    const { runInit } = await import("@/packages/workit-cli/src/index");
     // A real-timer beat per step: ink throttles frame writes on wall-clock
     // timers, so setImmediate-only flushing observes stale screens.
     const flush = async () => {
@@ -160,6 +166,8 @@ async function driveRunInit(keys: DriveStep[], options: DriveOptions = {}): Prom
           // figures fallback) so a literal "✔" string never matches on CI
           // runners where figures chooses the fallback even with TTY stdout.
           const deadline = Date.now() + 2_000;
+          const started = Date.now();
+          let nudges = 0;
           while (true) {
             const visible = clean(chunks.join(""));
             const matched =
@@ -167,9 +175,15 @@ async function driveRunInit(keys: DriveStep[], options: DriveOptions = {}): Prom
                 ? visible.includes(step.waitFor)
                 : step.waitFor.test(visible);
             if (matched) break;
+            if (step.nudge && nudges < 2 && Date.now() - started > 150 + nudges * 300) {
+              // Slow runners can swallow the previous ENTER while the screen
+              // is still mounting; resend twice before declaring the frame lost.
+              process.stdin.push(step.nudge);
+              nudges += 1;
+            }
             if (Date.now() > deadline) {
               throw new Error(
-                `frame ${typeof step.waitFor === "string" ? `"${step.waitFor}"` : step.waitFor} never rendered`,
+                `frame ${typeof step.waitFor === "string" ? `"${step.waitFor}"` : step.waitFor} never rendered; visible: ${visible.slice(-300)}`,
               );
             }
             await new Promise((resolve) => setTimeout(resolve, 10));
@@ -196,6 +210,9 @@ async function driveRunInit(keys: DriveStep[], options: DriveOptions = {}): Prom
     cleanupLiveInkInstances();
     if (prevToolkitConfig === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
     else process.env.WORKFLOW_TOOLKIT_CONFIG = prevToolkitConfig;
+    if (prevHome === undefined) delete process.env.HOME;
+    else process.env.HOME = prevHome;
+    rmSync(home, { recursive: true, force: true });
     if (prevWorkspaceRoot === undefined) delete process.env.WORKFLOW_WORKSPACE_ROOT;
     else process.env.WORKFLOW_WORKSPACE_ROOT = prevWorkspaceRoot;
     process.exit = prevExit;
@@ -276,7 +293,7 @@ test("cancel path: still exactly two clears; exit output never sits atop stale f
       // before SPACE settles — the swallowed-ENTER race). The next wait
       // accepts any post-platforms wizard frame, not just "Locale", so
       // ESC always fires from inside a real wizard screen.
-      { waitFor: /Step 2|Step 3|Locale|Timezone/ }, // any non-platforms
+      { waitFor: /Step 2|Step 3|Locale|Timezone/, nudge: ENTER }, // any non-platforms
       // wizard heading already painted (post-ENTER settled)
       ESC, // cancel from the select screen
     ]);

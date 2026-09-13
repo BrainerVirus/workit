@@ -7,11 +7,11 @@ import {
   configGuardError,
   CONFIG_GAP_MARKER,
   describeConfigGaps,
-} from "../../packages/workit-core/src/core/config-guard";
-import { createYouTrackTools } from "../../packages/workit-opencode/src/tools/youtrack";
-import { readCredentials } from "../../packages/workit-core/src/core/youtrack-tools";
-import { initStatus } from "../../packages/workit-core/src/core/init";
-import { withIsolatedXDG } from "../shared/helpers/env";
+} from "@/packages/workit-core/src/core/config-guard";
+import { createYouTrackTools } from "@/packages/workit-opencode/src/tools/youtrack";
+import { readCredentials } from "@/packages/workit-core/src/core/youtrack-tools";
+import { initStatus } from "@/packages/workit-core/src/core/init";
+import { withIsolatedXDG } from "@/test/shared/helpers/env";
 
 test("empty config dir reports all item ids missing without throwing", async () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "wf-guard-empty-"));

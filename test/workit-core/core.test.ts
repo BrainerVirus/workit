@@ -2,8 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { fail, ok, resolveInside, run } from "../../packages/workit-core/src/core";
-import { WorkflowStateStore } from "../../packages/workit-core/src/state";
+import { fail, ok, resolveInside, run } from "@/packages/workit-core/src/core";
 
 test("result envelope is stable", () => {
   expect(ok({ value: 1 })).toEqual({ ok: true, data: { value: 1 }, error: null });
@@ -46,36 +45,6 @@ test("process runner uses executable and argument array", () => {
   const result = run(os.tmpdir(), process.execPath, ["-e", "console.log(process.argv[1])", "a b"]);
   expect(result.exitCode).toBe(0);
   expect(result.stdout.trim()).toBe("a b");
-});
-
-test("session state emits compact path-only context", () => {
-  const state = new WorkflowStateStore();
-  state.set("s1", { spec: "docs/spec.md", plan: "docs/plan.md", sdd: "docs/sdd/x" });
-  expect(state.compactionContext("s1")).toContain("Plan: docs/plan.md");
-});
-
-test("session state retains only workflow paths", () => {
-  const state = new WorkflowStateStore();
-  const input = {
-    spec: "docs/spec.md",
-    plan: "docs/plan.md",
-    sdd: "docs/sdd/x",
-    extra: "discarded",
-  };
-  state.set("s1", input);
-  expect(state.get("s1")).toEqual({
-    spec: "docs/spec.md",
-    plan: "docs/plan.md",
-    sdd: "docs/sdd/x",
-  });
-});
-
-test("session state is unchanged by later caller mutation", () => {
-  const state = new WorkflowStateStore();
-  const input = { spec: "docs/spec.md", plan: "docs/plan.md", sdd: "docs/sdd/x" };
-  state.set("s1", input);
-  input.plan = "docs/changed.md";
-  expect(state.get("s1")?.plan).toBe("docs/plan.md");
 });
 
 test("copied runtime cannot redirect assets or workspace through Cursor environment", () => {

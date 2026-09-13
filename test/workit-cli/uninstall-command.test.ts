@@ -3,8 +3,8 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import os from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
-import { retryOnce } from "../shared/helpers/retry-once";
-import { cleanupLiveInkInstances } from "../shared/helpers/ink-clean-probe";
+import { retryOnce } from "@/test/shared/helpers/retry-once";
+import { cleanupLiveInkInstances } from "@/test/shared/helpers/ink-clean-probe";
 
 // Task 9 (`workit uninstall`): TTY-only interactive host picker + reviewable
 // action summary BEFORE mutation (D-08); non-TTY stdin prints guidance and
@@ -159,7 +159,7 @@ async function driveUninstall(
       throw new ExitSentinel(code);
     }) as typeof process.exit;
 
-    const { runUninstall } = await import("../../packages/workit-cli/src/index");
+    const { runUninstall } = await import("@/packages/workit-cli/src/index");
     // Real-timer beat per step: ink throttles frame writes on wall-clock timers.
     const flush = async (): Promise<void> => {
       await new Promise((resolve) => setTimeout(resolve, 50));
@@ -343,6 +343,22 @@ test("non-TTY stdin prints guidance and exits 2 without touching anything (CA-10
       expect(readFileSync(file, "utf8")).toBe(before);
     }
     expect(existsSync(fx.cursorPluginDir)).toBe(true);
+  } finally {
+    rmSync(fx.home, { recursive: true, force: true });
+  }
+});
+
+e2e("the picker offers all four hosts and declining leaves everything intact", async () => {
+  const fx = makeFixture();
+  try {
+    const { chunks, exitCode } = await driveUninstall([DOWN, DOWN, SPACE, ENTER, "n"], fx.home);
+    expect(exitCode).toBe(0);
+    const joined = clean(chunks.join(""));
+    expect(joined).toContain("OpenCode");
+    expect(joined).toContain("Cursor");
+    expect(joined).toContain("Codex");
+    expect(joined).toContain("Pi");
+    expect(joined).toContain("nothing was changed");
   } finally {
     rmSync(fx.home, { recursive: true, force: true });
   }

@@ -1,6 +1,6 @@
 # <Feature> Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. On Cursor the two paths are: **Subagent-driven** — Cursor-native subagents dispatched by the coordinator, each carrying a task-scoped `delegation_token` minted with `workit_delegate` from the one-time `coordinator_lease`; **Inline** — `executing-plans` in the current session, single-agent, no dispatch, no token minting. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** Load `workit-implement` when policy selects implementation. Use bounded `workit_worker` delegation when the host supports it; otherwise execute inline within writer scope. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Spec:** `docs/<slug>/spec.md`
 **Branch:** `feature/<slug>`
@@ -9,8 +9,8 @@
 
 ## Global Constraints
 
-- Each task lands exactly one contiguous non-empty commit range (`base..head`): fix rounds append commits to that range and never rewrite/amend an active review range; each progress line records the task's real base..head shas.
-- The final task ends execution with `workit_plan_complete` (or the CLI `workit flow complete`) once the SDD ledger is complete and repository verification passes — a run never finishes while the plan is still `active`.
+- Each task lands exactly one contiguous non-empty commit range (`base..head`): fix rounds append commits to that range and never rewrite/amend an active review range; record the real base..head shas in task progress.
+- The final task closes the lead Workit task with `workit_task` `action: "close"` (CLI: `workit task close --payload … [--confirm]`) once requirements are satisfied and repository verification passes — never finish while the task is still `active` or `paused`.
 - <project-wide requirements, one line each>
 
 ---

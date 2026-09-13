@@ -1,6 +1,6 @@
 {
   "name": "@brainervirus/workit-core",
-  "version": "0.11.0",
+  "version": "1.0.0",
   "private": false,
   "description": "Workit — workflow rails for agentic coding: specs, plans, YouTrack, CI-gated commits (shared core)",
   "keywords": [
@@ -23,8 +23,6 @@
     "src/",
     "scripts/",
     "skills/",
-    "commands/",
-    "vendor/superpowers/skills/",
     "templates/",
     "README.md",
     "LICENSE",
@@ -42,5 +40,12 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@openclaw/fs-safe": "0.8.1",
+    "zod": "4.5.4"
+  },
+  "engines": {
+    "node": ">=24"
   }
 }

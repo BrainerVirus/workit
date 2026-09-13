@@ -12,13 +12,13 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { configDir } from "../../packages/workit-core/src/core/config";
+import { configDir } from "@/packages/workit-core/src/core/config";
 import {
   readVcsConfig,
   vcsConfig,
   vcsTokenCreateUrls,
-} from "../../packages/workit-core/src/core/vcs-config";
-import { configPath } from "../../packages/workit-core/src/core/youtrack-tools";
+} from "@/packages/workit-core/src/core/vcs-config";
+import { configPath } from "@/packages/workit-core/src/core/youtrack-tools";
 
 const savedEnv = new Map<string, string | undefined>();
 
@@ -130,8 +130,12 @@ test("CA-05: derived paths resolve under the migrated workit dir", () => {
     expect(existsSync(expectedYt)).toBe(true);
 
     const urls = vcsTokenCreateUrls();
-    expect(urls.active.tokenFile).toBe(path.join(xdg, "workit", "gitlab.token"));
+    // No provider configured: nothing preselected (key absent), but both
+    // token URLs stay available for the explicit choice.
+    expect(urls.active).toBeUndefined();
+    expect(urls.activeProvider).toBe(null);
     expect(urls.gitlab.tokenFile).toBeUndefined();
+    expect(urls.github.createUrlClassic).toContain("github.com/settings/tokens/new");
   });
   rmSync(xdg, { recursive: true, force: true });
 });

@@ -3,12 +3,11 @@ import { spawnSync } from "node:child_process";
 import { cpSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { CANONICAL_SKILLS } from "../../packages/workit-core/src/core/skill-manifests";
-import { listTarball, packWorkspacePackages, REPO_ROOT } from "../shared/helpers/packages";
+import { WORKIT_METHOD_SKILLS } from "@/packages/workit-core/src/core/skill-manifests";
+import { listTarball, packWorkspacePackages, REPO_ROOT } from "@/test/shared/helpers/packages";
 
 const OPENCODE = "@brainervirus/workit-opencode";
-const SUPERPOWERS = [...CANONICAL_SKILLS.superpowers].sort();
-const WORKIT = [...CANONICAL_SKILLS.workit].sort();
+const WORKIT = [...WORKIT_METHOD_SKILLS].sort();
 
 const byName = (packs: ReturnType<typeof packWorkspacePackages>, name: string) =>
   packs.find((pack) => pack.packageName === name)!;
@@ -20,12 +19,11 @@ const tarballSkillNames = (tarball: string, prefix: string): string[] =>
     .map((entry) => entry.slice(prefix.length).split("/")[0])
     .sort();
 
-test("opencode packed tarball ships exactly the canonical Workit and Superpowers skills", () => {
-  expect(WORKIT).toHaveLength(12);
-  expect(SUPERPOWERS).toHaveLength(14);
+test("opencode packed tarball ships exactly the canonical method skills", () => {
+  expect(WORKIT).toHaveLength(14);
   const tarball = byName(packWorkspacePackages(), OPENCODE).tarball;
   expect(tarballSkillNames(tarball, "assets/skills/")).toEqual(WORKIT);
-  expect(tarballSkillNames(tarball, "assets/vendor/superpowers/skills/")).toEqual(SUPERPOWERS);
+  expect(tarballSkillNames(tarball, "assets/vendor/superpowers/skills/")).toEqual([]);
 });
 
 const copyFixture = (root: string): string => {
@@ -57,36 +55,12 @@ test("opencode build fails loudly on damaged canonical skill source before copyi
       );
     };
 
-    const vendorSkills = (repo: string) =>
-      path.join(repo, "packages/workit-core/vendor/superpowers/skills");
     const workitSkills = (repo: string) => path.join(repo, "packages/workit-core/skills");
-    const addRogue = (root: string) => {
-      const rogue = path.join(root, "not-canonical");
-      mkdirSync(rogue, { recursive: true });
-      writeFileSync(path.join(rogue, "SKILL.md"), "# rogue\n");
-    };
-
     const cases: { name: string; damage: (repo: string) => void; names: string[] }[] = [
       {
-        name: "vendor-missing",
-        damage: (repo) =>
-          rmSync(path.join(vendorSkills(repo), "brainstorming"), { recursive: true }),
-        names: ["brainstorming"],
-      },
-      {
-        name: "vendor-extra",
-        damage: (repo) => addRogue(vendorSkills(repo)),
-        names: ["not-canonical"],
-      },
-      {
         name: "workit-missing",
-        damage: (repo) => rmSync(path.join(workitSkills(repo), "wk-init"), { recursive: true }),
-        names: ["wk-init"],
-      },
-      {
-        name: "workit-extra",
-        damage: (repo) => addRogue(workitSkills(repo)),
-        names: ["not-canonical"],
+        damage: (repo) => rmSync(path.join(workitSkills(repo), "workit-plan"), { recursive: true }),
+        names: ["workit-plan"],
       },
     ];
 

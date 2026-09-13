@@ -2,7 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { readTemplate } from "./templates";
 import { resolveWorkspaceRoot } from "./scripts";
-import { configDir, isConfigObject } from "./config";
+import { configDir, isConfigObject, resolveConfigDir } from "./config";
+import { resolveInside } from "../core";
 
 const ISSUE_RE = /^[A-Z]+-\d+$/;
 const TOKEN_PLACEHOLDER = "YOUR_TOKEN_HERE";
@@ -11,6 +12,11 @@ const TOKEN_PLACEHOLDER = "YOUR_TOKEN_HERE";
 // configDir() (XDG_CONFIG_HOME / HOME .config + workit).
 export const youTrackConfigPath = (): string =>
   process.env.WORKFLOW_YOUTRACK_CONFIG ?? path.join(configDir(), "youtrack.json");
+
+/** Config path for read-only context.  Unlike youTrackConfigPath(), this never
+ * calls configDir() and therefore cannot trigger legacy-config migration. */
+export const youTrackReadOnlyConfigPath = (): string =>
+  process.env.WORKFLOW_YOUTRACK_CONFIG ?? path.join(resolveConfigDir(), "youtrack.json");
 
 const youTrackTokenModeOk = (p: string): boolean => {
   if (process.platform === "win32") return true;
@@ -41,6 +47,19 @@ function readYouTrackConfig(
   }
   return { config: parsed as Record<string, any>, path: cfgPath };
 }
+
+const readYouTrackContextConfig = (): { data: Record<string, any> } | { error: string } => {
+  const cfgPath = youTrackReadOnlyConfigPath();
+  if (!fs.existsSync(cfgPath)) return { data: {} };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(fs.readFileSync(cfgPath, "utf8"));
+  } catch {
+    return { error: "YouTrack configuration is unavailable" };
+  }
+  if (!isConfigObject(parsed)) return { error: "YouTrack configuration is unavailable" };
+  return { data: readOnlyYouTrackConfig(parsed as Record<string, any>) };
+};
 
 // RL-01: typed load result — malformed carries {ok:false, error, configPath}
 // mirroring vcsConfig, so risky consumers stop on the exact path.
@@ -211,7 +230,7 @@ export function youTrackWorkDateMs(
   }
 }
 
-const youTrackToken = (): { token: string; base: string } | { error: string } => {
+export const youTrackToken = (): { token: string; base: string } | { error: string } => {
   const loaded = readYouTrackConfig(true);
   if ("error" in loaded) return loaded;
   const tokenFile = String(loaded.config.tokenFile ?? "");
@@ -237,7 +256,7 @@ const youTrackToken = (): { token: string; base: string } | { error: string } =>
 
 // fetch replaces the previous curl -fsS request helper: check res.ok,
 // surface HTTP errors without a token-bearing body, parse JSON on success.
-async function youTrackRequest(
+export async function youTrackRequest(
   url: string,
   init: { method: string; token: string; body?: unknown },
 ): Promise<{ status: number; stdout: string; stderr: string }> {
@@ -462,6 +481,13 @@ const defaultScripts: YouTrackScripts = {
   api: (args) => youTrackApi(args, process.env.WORKFLOW_YT_WRITE ?? ""),
 };
 
+const contextScripts: YouTrackScripts = {
+  config: readYouTrackContextConfig,
+  greeting: () => youTrackGreeting(youTrackReadOnlyConfigPath()),
+  parseDuration: (text) => youTrackParseDuration(text),
+  api: () => ({ error: "YouTrack context is read-only" }),
+};
+
 export function verifyYouTrackToken(
   scripts: YouTrackScripts = defaultScripts,
 ): Record<string, any> {
@@ -475,7 +501,12 @@ function resolveYouTrackFromPaths(
 ): string | null {
   const root = resolveWorkspaceRoot(workspace_root);
   for (const rel of [spec_path, plan_path].filter(Boolean) as string[]) {
-    const full = path.isAbsolute(rel) ? rel : path.join(root, rel);
+    let full: string;
+    try {
+      full = resolveInside(root, rel);
+    } catch {
+      continue;
+    }
     if (!fs.existsSync(full)) continue;
     const text = fs.readFileSync(full, "utf8");
     const m = text.match(/^\*\*YouTrack:\*\*\s*`?([A-Z]+-\d+)`?/m);
@@ -507,6 +538,50 @@ function meetingOptionsFromConfig(cfg: any): Record<string, any>[] {
   ];
 }
 
+const readOnlyYouTrackConfig = (cfg: Record<string, any>): Record<string, any> => {
+  const publicUrl = (value: unknown): string | undefined => {
+    if (typeof value !== "string") return undefined;
+    try {
+      const url = new URL(value);
+      if (url.username || url.password)
+        return `${url.protocol}//${url.host}${url.pathname}${url.search}${url.hash}`;
+      return value;
+    } catch {
+      return undefined;
+    }
+  };
+  const safe: Record<string, any> = {};
+  const baseUrl = publicUrl(cfg.baseUrl);
+  if (baseUrl) safe.baseUrl = baseUrl;
+  for (const key of ["timezone", "greetingCutoff", "defaultMention", "meetingIssue"])
+    if (typeof cfg[key] === "string") safe[key] = cfg[key];
+  if (cfg.greetings && typeof cfg.greetings === "object" && !Array.isArray(cfg.greetings)) {
+    const greetings: Record<string, string> = {};
+    for (const key of ["morning", "afternoon"])
+      if (typeof cfg.greetings[key] === "string") greetings[key] = cfg.greetings[key];
+    if (Object.keys(greetings).length) safe.greetings = greetings;
+  }
+  if (
+    cfg.meetingIssues &&
+    typeof cfg.meetingIssues === "object" &&
+    !Array.isArray(cfg.meetingIssues)
+  ) {
+    safe.meetingIssues = Object.fromEntries(
+      Object.entries(cfg.meetingIssues).flatMap(([key, value]) => {
+        if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+        const item = value as Record<string, any>;
+        const safeItem: Record<string, string> = {};
+        for (const field of ["issue", "label", "workItemText"])
+          if (typeof item[field] === "string") safeItem[field] = item[field];
+        const url = publicUrl(item.url);
+        if (url) safeItem.url = url;
+        return [[key, safeItem]] as const;
+      }),
+    );
+  }
+  return safe;
+};
+
 export function context(
   {
     spec_path,
@@ -525,7 +600,7 @@ export function context(
     mode?: string;
     workspace_root: string;
   },
-  scripts: YouTrackScripts = defaultScripts,
+  scripts: YouTrackScripts = contextScripts,
 ): Record<string, any> {
   const cfg = scripts.config();
   if (cfg.error) return { error: cfg.error };
@@ -535,11 +610,12 @@ export function context(
     return { error: (greeting.stderr || greeting.stdout || "greeting failed").trim() };
   }
 
-  const meetingOptions = meetingOptionsFromConfig(cfg.data);
+  const safeConfig = readOnlyYouTrackConfig(cfg.data);
+  const meetingOptions = meetingOptionsFromConfig(safeConfig);
 
   if (mode === "meetings" && !issue_id && !issue_url && !issue_ref) {
     return {
-      config: cfg.data,
+      config: safeConfig,
       greeting: greeting.stdout.trim(),
       mode: "meetings",
       requiresMeetingChoice: true,
@@ -554,7 +630,7 @@ export function context(
     if ("error" in parsed) return { error: parsed.error };
     issue = parsed.issueId;
   }
-  if (!issue && mode === "meetings") issue = meetingOptions[0]?.issue ?? cfg.data.meetingIssue;
+  if (!issue && mode === "meetings") issue = meetingOptions[0]?.issue ?? safeConfig.meetingIssue;
   if (!issue) issue = resolveYouTrackFromPaths(spec_path, plan_path, workspace_root) ?? undefined;
   if (!issue || !ISSUE_RE.test(issue)) {
     return {
@@ -564,13 +640,13 @@ export function context(
     };
   }
 
-  const base = (cfg.data.baseUrl || "").replace(/\/$/, "");
+  const base = (safeConfig.baseUrl || "").replace(/\/$/, "");
   const issueUrl = base ? `${base}/issue/${issue}` : null;
 
   const selectedMeeting = meetingOptions.find((m) => m.issue === issue);
 
   return {
-    config: cfg.data,
+    config: safeConfig,
     greeting: greeting.stdout.trim(),
     issueId: issue,
     issueUrl,
@@ -579,6 +655,65 @@ export function context(
     workItemText: selectedMeeting?.workItemText ?? null,
   };
 }
+
+/** Fetch a YouTrack issue body for context.read (titles alone mislead).
+ * Creds failure degrades (offline keeps the link shape); request failure
+ * with creds fails closed so sessions never mistake titles for bodies. */
+export const fetchYouTrackIssueBody = async (
+  issue: string,
+  creds: () => { token: string; base: string } | { error: string } = youTrackToken,
+  request: typeof youTrackRequest = youTrackRequest,
+): Promise<
+  | {
+      data: {
+        idReadable: string;
+        summary: string;
+        description: string | null;
+        state: string | null;
+      };
+    }
+  | { error: string; kind: "creds" | "request" }
+> => {
+  const credentials = creds();
+  if ("error" in credentials) return { error: credentials.error, kind: "creds" };
+  const { token, base } = credentials;
+  const out = await request(
+    `${base}/api/issues/${encodeURIComponent(issue)}?fields=idReadable,summary,description,customFields(name,value(name))`,
+    { method: "GET", token },
+  );
+  if (out.status !== 0)
+    return { error: out.stderr || "YouTrack issue fetch failed", kind: "request" };
+  try {
+    const parsed = JSON.parse(out.stdout) as Record<string, unknown>;
+    const customFields = Array.isArray(parsed.customFields) ? parsed.customFields : [];
+    const stateField = customFields.find(
+      (field): field is { name: unknown; value: unknown } =>
+        typeof field === "object" &&
+        field !== null &&
+        (field as { name: unknown }).name === "State",
+    );
+    const stateValue = stateField?.value;
+    const stateName =
+      typeof stateValue === "object" && stateValue !== null
+        ? (stateValue as { name?: unknown }).name
+        : undefined;
+    return {
+      data: {
+        idReadable: String(parsed.idReadable ?? issue),
+        summary: String(parsed.summary ?? ""),
+        description: typeof parsed.description === "string" ? parsed.description : null,
+        state:
+          typeof stateValue === "string"
+            ? stateValue
+            : typeof stateName === "string" && stateName
+              ? stateName
+              : null,
+      },
+    };
+  } catch {
+    return { error: "invalid JSON from YouTrack API", kind: "request" };
+  }
+};
 
 export function parseDuration(
   text: string,

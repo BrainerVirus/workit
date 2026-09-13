@@ -1,42 +1,26 @@
 #!/usr/bin/env bun
 // Build the self-contained OpenCode plugin entry (dist/plugin.js) and copy the
-// deterministic assets root (commands, skills, templates, filtered vendor).
+// deterministic assets root containing the canonical method skills.
 // Runs from the repo (where workspace deps resolve); target dir defaults to the
 // package dir and can be overridden for the pack sandbox.
 import { spawnSync } from "node:child_process";
-import {
-  cpSync,
-  existsSync,
-  mkdirSync,
-  rmSync,
-} from "node:fs";
+import { cpSync, existsSync, mkdirSync, rmSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  CANONICAL_SKILLS,
+  WORKIT_METHOD_SKILLS,
+  skillManifestNames,
   validateSkillManifests,
 } from "../../workit-core/src/core/skill-manifests";
-import { copySanitizedVendor } from "../../workit-core/scripts/vendor-assets";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const pkgDir = path.resolve(scriptDir, "..");
 const coreDir = path.resolve(pkgDir, "..", "workit-core");
 const target = process.argv[2] ? path.resolve(process.argv[2]) : pkgDir;
-const vendorSkills = path.join(coreDir, "vendor/superpowers/skills");
-
-const sourceWorkitError = validateSkillManifests(
-  path.join(coreDir, "skills"),
-  CANONICAL_SKILLS.workit,
-  "opencode Workit source skills",
-);
-if (sourceWorkitError) throw new Error(sourceWorkitError);
-
-const sourceVendorError = validateSkillManifests(
-  vendorSkills,
-  CANONICAL_SKILLS.superpowers,
-  "core Superpowers vendor",
-);
-if (sourceVendorError) throw new Error(sourceVendorError);
+const sourceNames = skillManifestNames(path.join(coreDir, "skills"));
+const missingSource = WORKIT_METHOD_SKILLS.filter((name) => !sourceNames.includes(name));
+if (missingSource.length)
+  throw new Error(`missing Workit method skills: ${missingSource.join(", ")}`);
 
 const dist = path.join(target, "dist");
 rmSync(dist, { recursive: true, force: true });
@@ -61,16 +45,22 @@ if (build.status !== 0) {
   process.exit(1);
 }
 
-// Deterministic assets: commands, skills, templates, filtered vendor content.
+// Deterministic assets: only the policy-selected method skills.
 const assets = path.join(target, "assets");
 rmSync(assets, { recursive: true, force: true });
-for (const sub of ["commands", "skills", "templates"]) {
-  const src = path.join(coreDir, sub);
-  if (!existsSync(src)) continue;
-  cpSync(src, path.join(assets, sub), { recursive: true });
+const skills = path.join(assets, "skills");
+mkdirSync(skills, { recursive: true });
+for (const name of WORKIT_METHOD_SKILLS) {
+  const source = path.join(coreDir, "skills", name);
+  if (!existsSync(source)) throw new Error(`missing Workit method skill: ${source}`);
+  cpSync(source, path.join(skills, name), { recursive: true });
 }
-copySanitizedVendor(
-  vendorSkills,
-  path.join(assets, "vendor/superpowers/skills"),
+const packagedWorkitError = validateSkillManifests(
+  skills,
+  WORKIT_METHOD_SKILLS,
+  "opencode Workit packaged skills",
 );
-console.log(`opencode: built dist/plugin.js + assets/ (${target})`);
+if (packagedWorkitError) throw new Error(packagedWorkitError);
+console.log(
+  `opencode: built dist/plugin.js + ${WORKIT_METHOD_SKILLS.length} method skills (${target})`,
+);

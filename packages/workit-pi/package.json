@@ -1,0 +1,45 @@
+{
+  "name": "@brainervirus/workit-pi",
+  "version": "1.0.0",
+  "description": "Workit native extension for Pi",
+  "keywords": [
+    "coding-agent",
+    "pi-package",
+    "workflow"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/BrainerVirus/workit.git"
+  },
+  "files": [
+    "dist/",
+    "skills/",
+    "package.json"
+  ],
+  "type": "module",
+  "main": "./dist/workit.js",
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "bun scripts/build.ts"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "0.85.1"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "^0.85.1"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "pi": {
+    "extensions": [
+      "./dist/workit.js"
+    ],
+    "skills": [
+      "./skills"
+    ]
+  }
+}

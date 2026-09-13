@@ -3,9 +3,9 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { createRepoTools } from "../../packages/workit-opencode/src/tools/repo";
-import { prBuildBody, prCreate } from "../../packages/workit-core/src/core/pr-create";
-import { stubCli, stubPath as stubPathWith } from "../shared/helpers/stub-cli";
+import { createRepoTools } from "@/packages/workit-opencode/src/tools/repo";
+import { prBuildBody, prCreate } from "@/packages/workit-core/src/core/pr-create";
+import { stubCli, stubPath as stubPathWith } from "@/test/shared/helpers/stub-cli";
 
 // B1/B6 advisory coverage: WF_PR_TARGET override validation against the branch
 // policy, and env-driven issue linking through the OpenCode tool wrapper.

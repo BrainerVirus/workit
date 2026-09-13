@@ -1,26 +1,22 @@
 import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import {
-  chmodSync,
   cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
-  readdirSync,
   rmSync,
-  statSync,
   symlinkSync,
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
-  extractTarball,
   listTarball,
   packWorkspacePackages,
   readTarballFile,
   REPO_ROOT,
-} from "../shared/helpers/packages";
+} from "@/test/shared/helpers/packages";
 
 // Task 7 package-content gate: every adapter tarball ships ONE package-local JS
 // entry plus deterministic package-local assets, and carries NO raw TypeScript,
@@ -47,16 +43,31 @@ const tsEntries = (tarball: string) =>
 const distJs = (tarball: string, prefix = "dist/") =>
   listTarball(tarball).filter((e) => e.startsWith(prefix) && e.endsWith(".js"));
 
-test("opencode tarball ships one bundled dist entry plus its own assets (RR-02/PT-06/PT-07)", () => {
+test("opencode tarball ships one bundled dist entry plus fourteen method skills (RR-02/PT-06/PT-07)", () => {
   const packs = packWorkspacePackages();
   const tarball = byName(packs, OPENCODE).tarball;
   const entries = listTarball(tarball);
 
   expect(entries).toContain("dist/plugin.js");
-  expect(entries.some((e) => e.startsWith("assets/commands/"))).toBe(true);
-  expect(entries.some((e) => e.startsWith("assets/skills/"))).toBe(true);
-  expect(entries.some((e) => e.startsWith("assets/templates/"))).toBe(true);
-  expect(entries.some((e) => e.startsWith("assets/vendor/superpowers/skills/"))).toBe(true);
+  expect(entries.filter((e) => e.startsWith("assets/skills/") && e.endsWith("/SKILL.md"))).toEqual([
+    "assets/skills/workit-babysit/SKILL.md",
+    "assets/skills/workit-behavioral-tdd/SKILL.md",
+    "assets/skills/workit-blast-radius/SKILL.md",
+    "assets/skills/workit-challenge/SKILL.md",
+    "assets/skills/workit-debug/SKILL.md",
+    "assets/skills/workit-deslop/SKILL.md",
+    "assets/skills/workit-diagram/SKILL.md",
+    "assets/skills/workit-green-run/SKILL.md",
+    "assets/skills/workit-handoff/SKILL.md",
+    "assets/skills/workit-implement/SKILL.md",
+    "assets/skills/workit-mockup/SKILL.md",
+    "assets/skills/workit-plan/SKILL.md",
+    "assets/skills/workit-review/SKILL.md",
+    "assets/skills/workit-steer/SKILL.md",
+  ]);
+  expect(entries.some((e) => e.startsWith("assets/commands/"))).toBe(false);
+  expect(entries.some((e) => e.startsWith("assets/templates/"))).toBe(false);
+  expect(entries.some((e) => e.startsWith("assets/vendor/"))).toBe(false);
   expect(tsEntries(tarball)).toEqual([]);
 
   // CA-07: the SDK helper/schema runtime is bundled, so the packed entry has no
@@ -75,6 +86,7 @@ test("cursor tarball ships dist MCP + hook entries, manifests, assets and npm bi
   for (const required of [
     "dist/mcp-server.js",
     "dist/cursor-session-start.js",
+    "dist/workit-hook.js",
     "mcp.json",
     "assets/logo.svg",
     ".cursor-plugin/plugin.json",
@@ -95,6 +107,7 @@ test("cursor tarball ships dist MCP + hook entries, manifests, assets and npm bi
   expect(pkg.bin).toEqual({
     "workit-cursor-mcp": "./dist/mcp-server.js",
     "workit-cursor-session-start": "./dist/cursor-session-start.js",
+    "workit-cursor-hook": "./dist/workit-hook.js",
   });
 });
 
@@ -110,7 +123,7 @@ test("cli tarball ships a single nonsplitting dist entry plus bin (PT-10)", () =
   expect(tsEntries(tarball)).toEqual([]);
 });
 
-test("core tarball keeps its source package layout but drops the dead vendored shell (PT-08)", () => {
+test("core tarball keeps its source package layout without legacy vendor shell (PT-08)", () => {
   const packs = packWorkspacePackages();
   const tarball = byName(packs, CORE).tarball;
   const entries = listTarball(tarball);
@@ -122,13 +135,13 @@ test("core tarball keeps its source package layout but drops the dead vendored s
     "scripts/sync-runtime.sh",
     "templates/",
     "skills/",
-    "vendor/superpowers/skills/",
   ]) {
     expect(
       entries.some((e) => e.startsWith(required)),
       required,
     ).toBe(true);
   }
+  expect(entries.some((e) => e.includes("vendor/superpowers"))).toBe(false);
   expect(entries).not.toContain("scripts/verify-project.sh");
 });
 
@@ -247,59 +260,7 @@ test("adapter tarballs expose a top-level assets root and no runtime TypeScript"
 // point at files that the build filtered out (unless explicitly allowlisted as
 // intentionally filtered operational tools).
 
-const SOURCE_VENDOR = path.join(REPO_ROOT, "packages/workit-core/vendor");
-
-// References in shipped vendor markdown to files that ARE filtered out of the
-// package by policy (active vendored shell/executables) and intentionally left
-// documented upstream. These are the ONLY allowed dead references.
-const FILTERED_REF_ALLOWLIST: Record<string, string[]> = {
-  "superpowers/skills/subagent-driven-development/SKILL.md": [
-    "scripts/review-package",
-    "scripts/task-brief",
-  ],
-  "superpowers/skills/subagent-driven-development/task-reviewer-prompt.md": [
-    "scripts/review-package",
-    "scripts/task-brief",
-  ],
-  "superpowers/skills/systematic-debugging/root-cause-tracing.md": ["./find-polluter.sh"],
-  "superpowers/skills/writing-skills/SKILL.md": ["./render-graphs.js"],
-};
-
-const vendorRefRe = /(\bscripts\/|\.\/)([\w./-]+)/g;
-
-const walkFiles = (dir: string, visit: (file: string) => void): void => {
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const p = path.join(dir, entry.name);
-    if (entry.isDirectory()) walkFiles(p, visit);
-    else visit(p);
-  }
-};
-
-test("adapter vendor trees ship no executable or shebang files (finding)", () => {
-  const packs = packWorkspacePackages();
-  for (const pack of packs) {
-    if (pack.packageName === CORE) continue;
-    const roots = ["assets/vendor", "vendor"].filter((root) =>
-      listTarball(pack.tarball).some((entry) => entry.startsWith(`${root}/`)),
-    );
-    if (roots.length === 0) continue;
-    const { root, packageDir } = extractTarball(pack.tarball);
-    try {
-      for (const vendorRoot of roots) {
-        walkFiles(path.join(packageDir, vendorRoot), (file) => {
-          const rel = path.relative(packageDir, file).split(path.sep).join("/");
-          expect(statSync(file).mode & 0o111, `${pack.packageName}/${rel}`).toBe(0);
-          const head = readFileSync(file).subarray(0, 2).toString("latin1");
-          expect(head, `${pack.packageName}/${rel}`).not.toBe("#!");
-        });
-      }
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  }
-});
-
-test("cursor vendor filtering rejects shebang files when executable metadata is unavailable", () => {
+test("cursor build has no vendored legacy skills", () => {
   const fixture = mkdtempSync(path.join(os.tmpdir(), "wk-cursor-windows-mode-"));
   const target = path.join(fixture, "output");
   try {
@@ -315,21 +276,13 @@ test("cursor vendor filtering rejects shebang files when executable metadata is 
       path.join(fixture, "node_modules"),
       "junction",
     );
-    const source = path.join(
-      fixture,
-      "packages/workit-core/vendor/superpowers/skills/writing-skills/render-graphs.js",
-    );
-    chmodSync(source, 0o644);
     const build = spawnSync(
       "bun",
       [path.join(fixture, "packages/workit-cursor/scripts/build.ts"), target],
       { encoding: "utf8" },
     );
     expect(build.status, build.stderr).toBe(0);
-    walkFiles(path.join(target, "vendor"), (file) => {
-      const head = readFileSync(file).subarray(0, 2).toString("latin1");
-      expect(head, path.relative(target, file)).not.toBe("#!");
-    });
+    expect(existsSync(path.join(target, "vendor"))).toBe(false);
   } finally {
     rmSync(fixture, { recursive: true, force: true });
   }
@@ -351,6 +304,30 @@ const CONTENT_TREES = [
   "assets/vendor/",
 ];
 
+const RETIRED_CURSOR_ROUTE = /\bworkit_(?:sdd_[a-z0-9_]*|resolve_branch|branch_setup|doctor)\b/;
+
+test("Cursor ships one contract rule and no retired workflow routes", () => {
+  const tarball = byName(packWorkspacePackages(), CURSOR).tarball;
+  const offenders: string[] = [];
+  for (const entry of listTarball(tarball)) {
+    if (!entry.endsWith(".md") && !entry.endsWith(".mdc")) continue;
+    if (
+      !entry.startsWith("rules/") &&
+      !entry.startsWith("skills/") &&
+      !entry.startsWith("assets/skills/") &&
+      !entry.startsWith("assets/templates/") &&
+      entry !== "README.md"
+    )
+      continue;
+    const stale = RETIRED_CURSOR_ROUTE.exec(readTarballFile(tarball, entry));
+    if (stale) offenders.push(`${entry}: ${stale[0]}`);
+  }
+  expect(offenders).toEqual([]);
+  expect(
+    listTarball(tarball).filter((entry) => entry.startsWith("rules/") && entry.endsWith(".mdc")),
+  ).toEqual(["rules/workit-contract.mdc"]);
+});
+
 test("shipped skill/template/vendor markdown uses workit_ tool identifiers with no live workflow_ references", () => {
   const packs = packWorkspacePackages();
   for (const pack of packs) {
@@ -365,36 +342,41 @@ test("shipped skill/template/vendor markdown uses workit_ tool identifiers with 
       if (LIVE_WORKIT_TOOL.test(md)) sawWorkitTool = true;
     }
     expect(offenders, `${pack.packageName} ships stale workflow_ tool references`).toEqual([]);
-    expect(sawWorkitTool, `${pack.packageName} ships renamed workit_ tool references`).toBe(true);
+    if (
+      pack.packageName !== OPENCODE &&
+      pack.packageName !== CURSOR &&
+      pack.packageName !== "@brainervirus/workit-mcp" &&
+      pack.packageName !== "@brainervirus/workit-codex" &&
+      pack.packageName !== "@brainervirus/workit-pi"
+    )
+      expect(sawWorkitTool, `${pack.packageName} ships renamed workit_ tool references`).toBe(true);
   }
 });
 
-test("shipped vendor markdown references no filtered-out files (finding)", () => {
+test("adapter tarballs ship no legacy vendor trees", () => {
   const packs = packWorkspacePackages();
-  for (const [packageName, vendorRoot] of [
-    [OPENCODE, "assets/vendor"],
-    [CURSOR, "vendor"],
-  ] as const) {
-    const tarball = byName(packs, packageName).tarball;
-    const entries = new Set(listTarball(tarball));
-    for (const entry of entries) {
-      if (!entry.endsWith(".md") || !entry.startsWith(`${vendorRoot}/`)) continue;
-      const md = readTarballFile(tarball, entry);
-      const mdDir = entry.slice(0, entry.lastIndexOf("/"));
-      const canonicalEntry = entry.slice(`${vendorRoot}/`.length);
-      const allow = FILTERED_REF_ALLOWLIST[canonicalEntry] ?? [];
-      vendorRefRe.lastIndex = 0;
-      let m: RegExpExecArray | null;
-      while ((m = vendorRefRe.exec(md)) !== null) {
-        const ref = m[1] + m[2];
-        // `./x` resolves inside the same skill dir; `scripts/x` under its scripts/.
-        const target = m[1] === "./" ? `${mdDir}/${m[2]}` : `${mdDir}/${ref}`;
-        if (entries.has(target)) continue; // ships → consistent
-        const canonicalTarget = target.slice(`${vendorRoot}/`.length);
-        const source = path.join(SOURCE_VENDOR, canonicalTarget);
-        if (!existsSync(source)) continue; // illustrative prose, never existed upstream
-        expect(allow, `${packageName}/${entry}: ${ref}`).toContain(ref);
-      }
-    }
+  for (const pack of packs) {
+    const entries = listTarball(pack.tarball);
+    expect(
+      entries.some((e) => e.includes("vendor/superpowers")),
+      pack.packageName,
+    ).toBe(false);
+    expect(
+      entries.some((e) => e.startsWith("assets/vendor/")),
+      pack.packageName,
+    ).toBe(false);
+  }
+});
+
+test("tracked CLI template mirrors stay byte-identical to the core templates", () => {
+  // The CLI package tracks copies of the execution templates (shipped to
+  // projects by hygiene scaffolding); a fix in one copy must land in both.
+  for (const name of ["execution-contract.md", "plan-template.md"]) {
+    const core = readFileSync(path.join(REPO_ROOT, "packages/workit-core/templates", name), "utf8");
+    const mirror = readFileSync(
+      path.join(REPO_ROOT, "packages/workit-cli/assets/templates", name),
+      "utf8",
+    );
+    expect(mirror, name).toBe(core);
   }
 });

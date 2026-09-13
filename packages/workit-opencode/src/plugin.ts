@@ -1,518 +1,734 @@
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Plugin } from "@opencode-ai/plugin";
-
-import { getWorkitBootstrap } from "./bootstrap";
-import {
-  DETECTION_TEXT,
-  DOC_DELIVERY_TEXT,
-  DOC_RENDER_TEXT,
-  SDD_REMINDER_TEXT,
-  SDD_WORKER_REMINDER_TEXT,
-  CONFIG_GUARD_TEXT,
-  shouldInjectConfigGuard,
-  shouldInjectDocRender,
-  VERIFICATION_TEXT,
-  TDD_TEXT,
-  BRAINSTORM_TEXT,
-  DEBUG_TEXT,
-  REVIEW_RECEPTION_TEXT,
-  shouldInjectVerification,
-  shouldInjectTdd,
-  shouldInjectBrainstorm,
-  shouldInjectDebug,
-  shouldInjectReviewReception,
-  ISSUE_RAIL_TEXT,
-  shouldInjectIssueRail,
-  reminderTextFor,
-} from "@brainervirus/workit-core/src/core/reminder";
-import {
-  detectProseChoices,
-  detectBacktickDocRefs,
-  findActiveSubagentDrivenPlans,
-  detectConfigGapError,
-  detectRawDocDelivery,
-  detectVerificationClaim,
-  detectUntestedImplementation,
-  detectImplementationWithoutDesign,
-  detectFixWithoutRootCause,
-  detectBlindReviewAcceptance,
-  detectInstructionOption,
-} from "@brainervirus/workit-core/src/core/detector";
-import {
-  COORDINATOR_WRITE_TOOLS,
-  HostReceiptStore,
-  readEffectiveFlowState,
-  receiptPurposeForLabel,
-  subagentDrivenInterception,
-  findActiveSubagentDrivenContexts,
-} from "@brainervirus/workit-core/src/core/flow-state";
-import { createTools } from "./tools";
-import { adaptPluginHandoffClient } from "./tools/handoff";
-import { WorkflowStateStore } from "@brainervirus/workit-core/src/state";
+import { TaskStore, WorkitCore } from "@brainervirus/workit-core/src/core";
+import { WORKIT_SKILL_ALIASES } from "@brainervirus/workit-core/src/core/skill-manifests";
 import { createLogger } from "@brainervirus/workit-core/src/core/logger";
-import { EVENT, errorDetail } from "@brainervirus/workit-core/src/core/boundary";
 import {
-  describeConfigSource,
-  setDiagnosticLogger,
-} from "@brainervirus/workit-core/src/core/config";
-import { loadCommandTemplates, loadProvenance, reportUncaught } from "./runtime";
+  EVENT,
+  changedSourcesSinceLoad,
+  errorDetail,
+  markSourcesLoaded,
+} from "@brainervirus/workit-core/src/core/boundary";
+import { getWorkitBootstrap } from "./bootstrap";
+import { createRepoTools } from "./tools/repo";
+import {
+  createWorkitTools,
+  NativeReceiptStore,
+  nativeDispatchFor,
+  nativeWorkerFor,
+  observeQuestion,
+  observeQuestionEvent,
+  sameWorkspace,
+  sessionParent,
+  type DirectChildren,
+  type DispatchGeneration,
+} from "./tools/workit";
+import type { WorkerDispatch } from "@brainervirus/workit-core/src/core";
+import { compactContextFor, loadProvenance, workerContextFor } from "./runtime";
 
-// Secret-safe diagnostic logger (DG-01-DG-03, DG-05, DG-10). Sink injection
-// only: events mirror to OpenCode's native app log (JSONL journal still
-// persists every record) and never to the agent conversation or the process
-// terminal. MCP stdout/stderr are never written by the logger.
-type AppLogClient = {
-  app?: {
-    log?: (options: {
-      body: {
-        service: string;
-        level: "debug" | "info" | "warn" | "error";
-        message: string;
-        extra: Record<string, unknown>;
-      };
-    }) => Promise<unknown>;
-  };
-};
-
-let openCodeClient: AppLogClient | undefined;
-
+const root = fileURLToPath(new URL("../assets/", import.meta.url));
+const skillsPath = path.join(root, "skills");
 const logger = createLogger({
-  appLog: (event) => {
-    const result = openCodeClient?.app?.log?.({
-      body: {
-        service: "workit",
-        level: event.level,
-        message: event.message,
-        extra: event.context,
-      },
-    });
-    if (result) void result.catch(() => {});
-  },
+  appLog: () => undefined,
 });
 
-// Commands/skills/vendor/templates ship package-locally under assets/ so the
-// packaged plugin resolves them without a share/checkout or monorepo dependency
-// (PT-06/PT-07). src/ and dist/ are both one level below the package root.
-const root = fileURLToPath(new URL("../assets/", import.meta.url));
-
-let uncaughtHandlersInstalled = false;
-const installUncaughtHandlers = (): void => {
-  if (uncaughtHandlersInstalled) return;
-  uncaughtHandlersInstalled = true;
-  process.on("unhandledRejection", (reason) =>
-    reportUncaught(logger, "unhandledRejection", reason),
-  );
-};
-const descriptions: Record<string, string> = {
-  "wk-init": "Initialize workit configuration",
-  "wk-status": "Show workflow and repository status",
-  "wk-verify": "Discover and run repository verification",
-  "wk-commit": "Review and create a guarded commit",
-  "wk-pr": "Prepare or create a pull/merge request",
-  "wk-changelog": "Preview and update Keep a Changelog",
-  "wk-release-notes": "Draft notes for an explicit release range",
-  "wk-docs-refresh": "Refresh documentation affected by changes",
-  "wk-handoff": "Continue work in a new seeded OpenCode session",
-  "wk-implement": "Execute an approved Superpowers plan",
-  "wk-meetings": "Log confirmed meeting time in YouTrack",
-  "wk-issue-update": "Post a confirmed YouTrack work update",
-};
-
-type PermissionDecision = "allow" | "ask" | "deny";
-type MutablePermission = Record<string, unknown> & {
-  "*"?: PermissionDecision;
-  bash?: PermissionDecision | Record<string, PermissionDecision>;
-};
-
-const worktreeDenials = {
-  "*git *worktree*": "deny",
-} as const;
-
-/**
- * Marked handoff destination in the workspace (CA-07/CA-08): the effective
- * flow read of any `docs/<slug>/` flow that carries `handoff_destination: true`
- * (set atomically by `markHandoffDestination` after a genuine generated
- * destination prompt). Fail closed: an unreadable or non-destination flow never
- * selects destination wording, so ordinary sessions keep the source reminder.
- * Mirrors the Cursor session-start hook's workspace-level destination scan.
- */
-const hasMarkedDestination = (root: string): boolean => {
-  const docsDir = path.join(root, "docs");
-  if (!existsSync(docsDir)) return false;
-  let slugs: string[];
+// Long-lived sessions load workit sources once. Warn once (never block) when
+// the checkout moves underneath the live process so stale behavior is visible
+// instead of silently running old code after local fixes.
+const sourceMarker = markSourcesLoaded(
+  [
+    fileURLToPath(import.meta.url),
+    fileURLToPath(new URL("./tools/workit.ts", import.meta.url)),
+    ...[
+      "task-contract.ts",
+      "task-engine.ts",
+      "task-evaluation.ts",
+      "task-store.ts",
+      "workers.ts",
+      "authority.ts",
+      "methods.ts",
+    ].map((file) =>
+      fileURLToPath(new URL(`../../../workit-core/src/core/${file}`, import.meta.url)),
+    ),
+  ].filter((file) => existsSync(file)),
+);
+let staleSourcesWarned = false;
+const warnStaleSources = (): void => {
+  if (staleSourcesWarned) return;
+  const changed = changedSourcesSinceLoad(sourceMarker);
+  if (changed.length === 0) return;
+  staleSourcesWarned = true;
   try {
-    slugs = readdirSync(docsDir);
+    logger.warn(EVENT.hooks, {
+      boundary: "stale_sources",
+      reason: "workit sources changed after plugin load; restart the session for latest behavior",
+      files: changed.map((file) => path.basename(file)),
+    });
   } catch {
-    return false;
+    // Diagnostics must never break event delivery.
   }
-  for (const slug of slugs) {
-    if (!existsSync(path.join(docsDir, slug, "sdd", "flow.json"))) continue;
-    const effective = readEffectiveFlowState(root, slug);
-    if (effective.ok && effective.state.handoff_destination) return true;
-  }
-  return false;
 };
 
-const withWorktreeDenials = (configuredPermission: unknown): MutablePermission => {
-  const permission: MutablePermission =
-    typeof configuredPermission === "string"
-      ? { "*": configuredPermission as PermissionDecision }
-      : { ...((configuredPermission ?? {}) as MutablePermission) };
-  const bash = permission.bash;
-  const bashRules: Record<string, PermissionDecision> =
-    typeof bash === "string" ? { "*": bash } : { ...bash };
-  for (const pattern of Object.keys(worktreeDenials)) delete bashRules[pattern];
-  permission.bash = { ...bashRules, ...worktreeDenials };
-  return permission;
+type SessionClient = {
+  session?: {
+    get?: (input: { path: { id: string } }) => Promise<{ data?: SessionInfo }>;
+  };
+};
+
+type SessionInfo = { id?: string; parentID?: string; directory?: string };
+
+const sessionData = async (client: SessionClient | undefined, sessionID: string) => {
+  if (!client) return null;
+  try {
+    return (await client.session?.get?.({ path: { id: sessionID } }))?.data ?? {};
+  } catch {
+    return null;
+  }
+};
+
+const trustedSession = (
+  directory: string,
+  sessionID: string,
+  session: unknown,
+): session is SessionInfo =>
+  typeof session === "object" &&
+  session !== null &&
+  (session as SessionInfo).id === sessionID &&
+  typeof (session as SessionInfo).directory === "string" &&
+  sameWorkspace(directory, (session as SessionInfo).directory) &&
+  sessionParent(session) !== null;
+
+/** Dropped end-events strand workers, so every silent return here is logged. */
+const droppedLifecycle = (sessionID: string, reason: string): void => {
+  try {
+    logger.warn(EVENT.hooks, { boundary: "worker_lifecycle", sessionID, reason });
+  } catch {
+    // Diagnostics must never break event delivery.
+  }
 };
 
 /**
- * Extract the selected label from the answered `question` tool result
- * (AR-12). The host returns `metadata.answers` as an array of label arrays
- * (one per question); flow questions are single-select, so only a
- * one-element first answer yields a receipt. Multi-select or unanswered
- * questions produce no receipt and the approval tool then fails closed.
- * Also extracts the single question text for audit evidence.
+ * A session.deleted payload is the final host word on a session that is gone
+ * by definition: the id must match, while directory and parentID are enforced
+ * only when present. The persisted worker-session binding carries the rest.
  */
-const questionAnswerLabel = (result: { metadata?: unknown }): string | undefined => {
-  const answers = (result.metadata as { answers?: unknown } | undefined)?.answers;
-  if (!Array.isArray(answers)) return undefined;
-  const first = answers[0];
-  if (!Array.isArray(first) || first.length !== 1) return undefined;
-  const label = first[0];
-  return typeof label === "string" ? label : undefined;
+const deletedSessionEnd = (
+  directory: string,
+  sessionID: string,
+  parentID: string,
+  info: unknown,
+): info is SessionInfo =>
+  typeof info === "object" &&
+  info !== null &&
+  (info as SessionInfo).id === sessionID &&
+  (typeof (info as SessionInfo).directory !== "string" ||
+    sameWorkspace(directory, (info as SessionInfo).directory)) &&
+  ((info as SessionInfo).parentID == null || (info as SessionInfo).parentID === parentID);
+
+type PreparedDispatch = {
+  generation: DispatchGeneration;
+  dispatch: WorkerDispatch;
+  core: WorkitCore;
+  taskId: string;
+  workerId: string;
 };
 
-type QuestionInput = {
-  questions?: Array<{
-    question?: string;
-    header?: string;
-    options?: unknown;
-    multiple?: boolean;
-    custom?: boolean;
-  }>;
-};
-
-const classifyQuestion = (
-  input: unknown,
-  label: string,
-): {
-  purpose: ReturnType<
-    typeof import("@brainervirus/workit-core/src/core/flow-state").receiptPurposeForLabel
-  >;
-  questionText?: string;
-} | null => {
-  const args = input as QuestionInput | undefined;
-  const qs = args?.questions;
-  // When the host supplies the structured questions array, enforce strict
-  // single-question single-select classification
-  if (Array.isArray(qs)) {
-    if (qs.length !== 1) return null;
-    const q = qs[0];
-    if (!q || typeof q !== "object") return null;
-    if (q.multiple === true) return null;
-    const opts = q.options as unknown[] | undefined;
-    if (Array.isArray(opts) && opts.length === 0 && q.custom === true) return null;
-    if (!Array.isArray(opts) || opts.length === 0) return null;
-    const purpose = receiptPurposeForLabel(label);
-    if (purpose === undefined) return null;
-    return { purpose, questionText: typeof q.question === "string" ? q.question : undefined };
-  }
-  // No structured questions (legacy/test or non-question input): still
-  // classify by label purpose; unknown/near-miss labels are ignored (CA-01).
-  // Purposeless negatives (bare "No", "Cancel", stash questions) are NOT
-  // recorded as flow receipts — a stash "No" must never block a typed
-  // spec-approval or execution-menu receipt (CA-02 per-purpose isolation).
-  const purpose = receiptPurposeForLabel(label);
-  if (purpose !== undefined) return { purpose, questionText: undefined };
-  return null;
-};
-
-// AR-12: observe the answered native `question` and store a one-use
-// receipt bound to sessionID + callID + exact selected label + timestamp + purpose.
-// Correlation is by session + freshness + one-use + negative-label rejection + purpose
-// (see HostReceiptStore in flow-state.ts, FINDING 2) — no execution window
-// exists, because on a real host the model first calls the native `question`
-// (user answers), then calls the approval tool.
+/**
+ * The only recognized proof that a native task call produced no child session.
+ * A missing session id, a null session GET, or a cancellation string are all
+ * silence, not evidence, and leave the worker unresolved.
+ */
+const provesNoChild = (metadata: unknown): boolean =>
+  typeof metadata === "object" &&
+  metadata !== null &&
+  (metadata as { childCreated?: unknown }).childCreated === false &&
+  (metadata as { sessionID?: unknown }).sessionID === undefined &&
+  (metadata as { sessionId?: unknown }).sessionId === undefined;
 
 const plugin: Plugin = async ({ client, directory }) => {
-  openCodeClient = client as unknown as AppLogClient;
-  installUncaughtHandlers();
-  logger.info(EVENT.initialization, { host: "opencode", plugin_root: root });
-  logger.info(
-    EVENT.provenance,
-    loadProvenance(logger, new URL("../package.json", import.meta.url)),
-  );
-  logger.info(EVENT.configurationSource, describeConfigSource());
-  setDiagnosticLogger(logger);
-  const state = new WorkflowStateStore();
-  const receipts = new HostReceiptStore();
-  // CA-15/CA-16: a session is an authorized worker only when exactly one
-  // active subagent-driven flow has a recorded coordinator id and this
-  // session's host parentID is that exact id. Fail-closed on lookup errors.
-  const authorizedWorkerFor = async (sessionID: string): Promise<boolean> => {
-    const ids = findActiveSubagentDrivenContexts(directory)
-      .map((c) => c.coordinator_session_id)
-      .filter((id): id is string => typeof id === "string" && id !== "");
-    if (ids.length !== 1) return false;
-    try {
-      const session = await client.session.get({ path: { id: sessionID } });
-      return session?.data?.parentID === ids[0];
-    } catch {
-      return false;
+  const receipts = new NativeReceiptStore();
+  const directChildren: DirectChildren = new Map();
+  const lifecycleBindings = new Map<
+    string,
+    { parentID: string; taskId: string; workerId: string }
+  >();
+  // Fallback only for a task result that names no session. Once a trusted
+  // session exists, lifecycle authority is persisted in core state.
+  const unresolvedTaskLaunches = new Set<string>();
+  const dispatches = new Map<string, PreparedDispatch>();
+  const bootstrapped = new Set<string>();
+  try {
+    logger.info(EVENT.initialization, { host: "opencode", plugin_root: root });
+    logger.info(
+      EVENT.provenance,
+      loadProvenance(logger, new URL("../package.json", import.meta.url)),
+    );
+  } catch (error) {
+    logger.warn(EVENT.hooks, { boundary: "initialization", ...errorDetail(error) });
+  }
+  const tools = {
+    ...createWorkitTools({ client, receipts, directChildren }),
+    // Narrow registration: only the init surface the contract claims, not
+    // the whole repo factory (commit/branch_setup stay unwired by design).
+    workit_init_apply: createRepoTools().workit_init_apply,
+  };
+  const timestamp = () => new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+  const revisions = (taskId: string) => {
+    const store = new TaskStore(directory);
+    const task = store.readTask(taskId);
+    const workspace = store.readWorkspace();
+    return task.ok && workspace.ok && workspace.data
+      ? {
+          expectedRevision: task.data.revision,
+          expectedWorkspaceRevision: workspace.data.revision,
+        }
+      : null;
+  };
+  /** Claim the launch slot of the one worker this coordinator can be launching. */
+  // Queue rule (shared with bindCreatedSession): serial launches consume the
+  // oldest unbound worker first, but only within a single task — cross-task
+  // ambiguity stays unbound because no observed child can prove which task
+  // the coordinator intends. Guessing across tasks would forge identity.
+  const oldestOfSingleTask = <
+    T extends { id: string },
+    E extends { id: string; recordedAt: string },
+  >(
+    items: { task: T; entry: E }[],
+  ): { task: T; entry: E } | null => {
+    const tasks = new Set(items.map((item) => item.task.id));
+    if (tasks.size !== 1 || items.length === 0) return null;
+    return [...items].sort((a, b) =>
+      a.entry.recordedAt < b.entry.recordedAt
+        ? -1
+        : a.entry.recordedAt > b.entry.recordedAt
+          ? 1
+          : a.entry.id < b.entry.id
+            ? -1
+            : 1,
+    )[0];
+  };
+  const prepareDispatch = (coordinator: string, callID: string) => {
+    dispatches.delete(coordinator);
+    const store = new TaskStore(directory);
+    const workspace = store.readWorkspace();
+    const listed = store.listTasks();
+    if (!workspace.ok || !workspace.data || !listed.ok) return;
+    const eligible = listed.data.flatMap((task) =>
+      task.status === "active" && task.workspaceId === workspace.data?.id
+        ? task.workers
+            .filter(
+              (entry) =>
+                entry.data.state === "assigned" &&
+                entry.data.session === null &&
+                entry.provenance.session?.kind === "host" &&
+                entry.provenance.session.host === "opencode" &&
+                entry.provenance.session.handle === coordinator,
+            )
+            .map((entry) => ({ task, entry }))
+        : [],
+    );
+    // Queue: the oldest unbound worker of a single task. Zero eligible, or
+    // eligible workers spread across tasks, prepares nothing.
+    const next = oldestOfSingleTask(eligible);
+    if (!next) return;
+    const generation: DispatchGeneration = {
+      coordinator,
+      callID,
+      childCreated: false,
+      noChild: false,
+    };
+    const core = new WorkitCore(store, {
+      root: directory,
+      caller: { host: "opencode", actor: coordinator },
+      capabilities: [],
+      constraints: [],
+      now: timestamp,
+      nativeWorker: nativeDispatchFor(directChildren, coordinator, generation),
+    });
+    const prepared = core.prepareWorkerDispatch({
+      taskId: next.task.id,
+      workerId: next.entry.id,
+      expectedRevision: next.task.revision,
+      expectedWorkspaceRevision: workspace.data.revision,
+      observation: { stage: "prepare", sessionID: coordinator, callID },
+    });
+    if (!prepared.ok) return;
+    dispatches.set(coordinator, {
+      generation,
+      dispatch: prepared.data,
+      core,
+      taskId: next.task.id,
+      workerId: next.entry.id,
+    });
+  };
+  const commitDispatchStart = (coordinator: string, childID: string): boolean => {
+    const pending = dispatches.get(coordinator);
+    if (!pending) return false;
+    pending.generation.childCreated = true;
+    const current = revisions(pending.taskId);
+    if (!current) return false;
+    const committed = pending.core.commitWorkerDispatch({
+      ...current,
+      dispatch: pending.dispatch,
+      taskId: pending.taskId,
+      workerId: pending.workerId,
+      outcome: "started",
+      session: { kind: "host", host: "opencode", handle: childID },
+      observation: { event: "running", sessionID: childID },
+    });
+    if (!committed.ok) return false;
+    dispatches.delete(coordinator);
+    lifecycleBindings.set(childID, {
+      parentID: coordinator,
+      taskId: pending.taskId,
+      workerId: pending.workerId,
+    });
+    return true;
+  };
+  const commitDispatchNotStarted = (coordinator: string, callID: string): boolean => {
+    const pending = dispatches.get(coordinator);
+    if (!pending || pending.generation.childCreated) return false;
+    pending.generation.noChild = true;
+    const current = revisions(pending.taskId);
+    if (!current) return false;
+    const committed = pending.core.commitWorkerDispatch({
+      ...current,
+      dispatch: pending.dispatch,
+      taskId: pending.taskId,
+      workerId: pending.workerId,
+      outcome: "not_started",
+      session: null,
+      observation: { stage: "not_started", sessionID: coordinator, callID },
+    });
+    if (committed.ok) dispatches.delete(coordinator);
+    return committed.ok;
+  };
+  const observeLifecycle = async (
+    sessionID: string,
+    parentID: string,
+    state: "running" | "stopped" | "unknown",
+    binding?: { taskId: string; workerId: string },
+    initial = false,
+    eventInfo?: SessionInfo,
+  ) => {
+    const store = new TaskStore(directory);
+    const listed = store.listTasks();
+    const workspace = store.readWorkspace();
+    if (!listed.ok || !workspace.ok || !workspace.data) {
+      droppedLifecycle(sessionID, "task store is unreadable during reconciliation");
+      return;
     }
+    const persisted = listed.data.flatMap((task) =>
+      task.status === "active"
+        ? task.workers
+            .filter(
+              (entry) =>
+                entry.id === binding?.workerId ||
+                (entry.data.session?.kind === "host" && entry.data.session.handle === sessionID),
+            )
+            .map((entry) => ({ task, entry }))
+        : [],
+    );
+    const matches = persisted.filter(({ entry }) => entry.data.session?.kind === "host");
+    // A bound child handle shared by several workers stays unresolved: moving
+    // one of them would forge the other's lifecycle.
+    if (binding && !initial && matches.length !== 1) {
+      droppedLifecycle(sessionID, "bound child worker handle is ambiguous");
+      return;
+    }
+    const selected = binding
+      ? persisted.find(
+          ({ task, entry }) => task.id === binding.taskId && entry.id === binding.workerId,
+        )
+      : matches.length === 1
+        ? matches[0]
+        : undefined;
+    if (!selected) {
+      droppedLifecycle(
+        sessionID,
+        binding ? "bound worker is missing from persisted state" : "worker session is ambiguous",
+      );
+      return;
+    }
+    if (!initial && selected.entry.data.session?.kind !== "host") {
+      droppedLifecycle(sessionID, "selected worker has no bound host session");
+      return;
+    }
+    if (selected.entry.provenance.session?.kind !== "host") {
+      droppedLifecycle(sessionID, "selected worker provenance is not host-observed");
+      return;
+    }
+    if (!binding) {
+      // ponytail: running lifecycle overwrites worker provenance with the child
+      // session; task intent is the persisted coordinator parent after restart.
+      const coordinator = selected.task.intent.provenance.session;
+      if (coordinator?.kind !== "host" || coordinator.host !== "opencode") {
+        droppedLifecycle(sessionID, "coordinator session is not validated");
+        return;
+      }
+      parentID = coordinator.handle;
+    }
+    if (!initial) {
+      // OpenCode deletes the session before the follow-up GET can succeed;
+      // only session.deleted may use its full, independently validated payload.
+      // With a live launch binding, a sparse deleted payload (id only) still
+      // ends the bound worker; without one, the full payload stays required.
+      const observed = eventInfo ?? (await sessionData(client, sessionID));
+      if (binding && eventInfo) {
+        if (!deletedSessionEnd(directory, sessionID, parentID, observed)) {
+          droppedLifecycle(sessionID, "deleted session payload contradicts the binding");
+          return;
+        }
+      } else if (
+        !trustedSession(directory, sessionID, observed) ||
+        observed.parentID !== parentID
+      ) {
+        droppedLifecycle(sessionID, "live session observation is not trusted");
+        return;
+      }
+    }
+    directChildren.set(sessionID, parentID);
+    const core = new WorkitCore(store, {
+      root: directory,
+      caller: { host: "opencode", actor: parentID },
+      capabilities: [],
+      constraints: [],
+      now: () => new Date().toISOString().replace(/\.\d{3}Z$/, "Z"),
+      nativeWorker: nativeWorkerFor(directChildren, parentID),
+    });
+    const result = core.observeWorkerLifecycle({
+      taskId: selected.task.id,
+      workerId: selected.entry.id,
+      expectedRevision: selected.task.revision,
+      expectedWorkspaceRevision: workspace.data.revision,
+      state,
+      session: { kind: "host", host: "opencode", handle: sessionID },
+      observation: { event: state, sessionID },
+    });
+    if (!result.ok) {
+      droppedLifecycle(sessionID, `worker observation was rejected: ${result.code}`);
+      return;
+    }
+    lifecycleBindings.set(sessionID, {
+      parentID,
+      taskId: selected.task.id,
+      workerId: selected.entry.id,
+    });
+  };
+  const bindCreatedSession = async (info: SessionInfo) => {
+    if (
+      typeof info.id !== "string" ||
+      typeof info.parentID !== "string" ||
+      !sameWorkspace(directory, info.directory)
+    )
+      return;
+    // Any validated child of this coordinator ends the current generation's claim
+    // that no child exists, even when the session binds to no assigned worker.
+    const live = dispatches.get(info.parentID);
+    if (live) live.generation.childCreated = true;
+    const store = new TaskStore(directory);
+    const workspace = store.readWorkspace();
+    const listed = store.listTasks();
+    if (!workspace.ok || !workspace.data || !listed.ok) return;
+    const candidates = listed.data.flatMap((task) =>
+      task.status === "active" && task.workspaceId === workspace.data?.id
+        ? task.workers
+            .filter(
+              (entry) =>
+                entry.data.state === "assigned" &&
+                entry.data.session === null &&
+                entry.provenance.session?.kind === "host" &&
+                entry.provenance.session.host === "opencode" &&
+                entry.provenance.session.handle === info.parentID,
+            )
+            .map((entry) => ({ task, entry }))
+        : [],
+    );
+    // Same queue rule as prepareDispatch: oldest unbound worker of a single
+    // task; cross-task ambiguity binds nothing.
+    const next = oldestOfSingleTask(candidates);
+    if (!next) return;
+    directChildren.set(info.id, info.parentID);
+    if (
+      live &&
+      live.taskId === next.task.id &&
+      live.workerId === next.entry.id &&
+      commitDispatchStart(info.parentID, info.id)
+    )
+      return;
+    await observeLifecycle(
+      info.id,
+      info.parentID,
+      "running",
+      {
+        taskId: next.task.id,
+        workerId: next.entry.id,
+      },
+      true,
+    );
   };
   return {
-    tool: createTools(adaptPluginHandoffClient(client), state, client, receipts),
-    // AR-12: observe the answered native `question` and store a one-use
-    // receipt bound to sessionID + callID + exact selected label + timestamp
-    // (+ the question text, best effort). The approval/menu tools consume the
-    // session's most recent receipt (FINDING 2); their schemas expose no
-    // evidence object, so model-crafted evidence cannot be injected.
-    "tool.execute.after": async (input, output) => {
-      if (input.tool !== "question") return;
-      const label = questionAnswerLabel(output);
-      if (label === undefined) return; // multi-select/unanswered → no receipt
-      const classified = classifyQuestion(input.args, label);
-      if (!classified) return; // unrelated/unknown/multi-question/multi-select/branch/stash/free-text
-      const questionText =
-        classified.questionText ??
-        (input.args as { question?: string; title?: string } | undefined)?.question ??
-        (input.args as { question?: string; title?: string } | undefined)?.title;
-      receipts.record(
-        input.sessionID,
-        input.callID,
-        label,
-        Date.now(),
-        questionText,
-        classified.purpose,
+    tool: tools,
+    event: async ({ event }) => {
+      // Question events ride the runtime bus but predate the plugin SDK's
+      // Event union, so match on a widened type. Unrecognized shapes are
+      // ignored inside observeQuestionEvent; delivery never breaks.
+      const busEvent = event as unknown as { type: string; properties?: unknown };
+      if (
+        busEvent.type === "question.asked" ||
+        busEvent.type === "question.replied" ||
+        busEvent.type === "question.rejected"
+      ) {
+        observeQuestionEvent(receipts, busEvent);
+        return;
+      }
+      if (event.type === "session.created") {
+        await bindCreatedSession(event.properties.info);
+        return;
+      }
+      if (
+        event.type !== "session.status" &&
+        event.type !== "session.idle" &&
+        event.type !== "session.error" &&
+        event.type !== "session.deleted"
+      )
+        return;
+      const properties = event.properties as {
+        sessionID?: unknown;
+        info?: { id?: unknown };
+      };
+      const sessionID =
+        typeof properties.sessionID === "string"
+          ? properties.sessionID
+          : typeof properties.info?.id === "string"
+            ? properties.info.id
+            : undefined;
+      if (typeof sessionID !== "string") return;
+      const binding = lifecycleBindings.get(sessionID);
+      const state =
+        event.type === "session.status"
+          ? event.properties.status.type === "busy"
+            ? "running"
+            : event.properties.status.type === "idle"
+              ? "stopped"
+              : "unknown"
+          : event.type === "session.idle"
+            ? "stopped"
+            : event.type === "session.deleted"
+              ? "stopped"
+              : "unknown";
+      await observeLifecycle(
+        sessionID,
+        binding?.parentID ?? "",
+        state,
+        binding,
+        false,
+        event.type === "session.deleted" ? (properties.info as SessionInfo | undefined) : undefined,
       );
     },
-    // CA-18/AR-13: while a subagent-driven plan is active, the root
-    // (coordinator) session is denied known write tools and any shell command
-    // outside the bounded read/test/review allowlist. Delegated child sessions
-    // (host parentage) are the workers and are never intercepted. Fail-closed:
-    // an unverifiable session is treated as the root coordinator. Scope note
-    // (round 3): interception covers the SESSION's own workspace (its host
-    // `directory`); a root session living in a DIFFERENT workspace than the
-    // plan root is not that plan's coordinator and is not intercepted there —
-    // the coordinator session is the one in the plan's workspace.
-    "tool.execute.before": async (input, output) => {
-      if (input.tool !== "bash" && !COORDINATOR_WRITE_TOOLS.includes(input.tool)) return;
-      let parentID: string | undefined;
-      let sessionDirectory: string | undefined;
-      try {
-        const session = await client.session.get({ path: { id: input.sessionID } });
-        parentID = session?.data?.parentID;
-        sessionDirectory = session?.data?.directory;
-      } catch {
-        // fail closed: treated as the root coordinator
+    "tool.execute.after": async (input, output) => {
+      observeQuestion(receipts, input, output);
+      if (input.tool === "task") {
+        const metadata = output.metadata as
+          | {
+              sessionID?: unknown;
+              sessionId?: unknown;
+              parentSessionId?: unknown;
+              status?: unknown;
+              state?: unknown;
+            }
+          | undefined;
+        const pending = dispatches.get(input.sessionID);
+        const generation =
+          pending?.generation.callID === input.callID ? pending.generation : undefined;
+        const child = metadata?.sessionID ?? metadata?.sessionId;
+        if (typeof child === "string") {
+          const childSession = await sessionData(client, child);
+          if (childSession?.parentID === input.sessionID) {
+            directChildren.set(child, input.sessionID);
+            if (generation) commitDispatchStart(input.sessionID, child);
+          }
+        }
+        const resolved =
+          generation !== undefined &&
+          !generation.childCreated &&
+          provesNoChild(metadata) &&
+          commitDispatchNotStarted(input.sessionID, input.callID);
+        // The reservation lives for exactly one task call; anything unsettled stays unresolved.
+        if (generation) dispatches.delete(input.sessionID);
+        // The host's own task result attests the run ended: a completed child
+        // stops its bound worker now instead of waiting for an end event that
+        // background sessions may never emit. Anything else keeps the
+        // conservative path below.
+        const outputText = typeof output.output === "string" ? output.output : "";
+        const completedChild =
+          typeof child === "string" &&
+          metadata?.parentSessionId === input.sessionID &&
+          /<task\b[^>]*\bstate="completed"/.test(outputText)
+            ? child
+            : null;
+        const state = String(
+          metadata?.status ?? metadata?.state ?? output.output ?? "",
+        ).toLowerCase();
+        if (completedChild) {
+          const completionBinding = lifecycleBindings.get(completedChild);
+          if (completionBinding)
+            await observeLifecycle(
+              completedChild,
+              input.sessionID,
+              "stopped",
+              completionBinding,
+              false,
+              undefined,
+            );
+        } else if (!resolved && /(?:cancel|interrupt|unknown|uncertain)/.test(state))
+          unresolvedTaskLaunches.add(input.sessionID);
       }
-      // CA-13: interception is lineage-bound — only the exact direct child of
-      // a recorded activating coordinator escapes; flows with no recorded
-      // coordinator id (legacy/rejected) leave ids empty and fail closed.
-      const activeCoordinatorIds = findActiveSubagentDrivenContexts(sessionDirectory ?? directory)
-        .map((c) => c.coordinator_session_id)
-        .filter((id): id is string => typeof id === "string" && id !== "");
-      const decision = subagentDrivenInterception({
-        tool: input.tool,
-        command: (output.args as { command?: string } | undefined)?.command,
-        parentID,
-        activeCoordinatorIds,
-      });
-      if (!decision.ok) throw new Error(decision.error);
+    },
+    "tool.execute.before": async (input, _output) => {
+      warnStaleSources();
+      if (input.tool === "task") {
+        const listed = new TaskStore(directory).listTasks();
+        // Scoped veto: only workers attributable to the launching coordinator
+        // block its launch. An uncertain worker elsewhere is that
+        // coordinator's problem, not a global stop-the-world switch — the
+        // slot claim below can only ever bind this coordinator's observed
+        // child, so cross-coordinator forgery stays impossible.
+        if (
+          listed.ok &&
+          listed.data.some((task) =>
+            task.workers.some(
+              (worker) =>
+                (worker.data.state === "cancelling" || worker.data.state === "unknown") &&
+                worker.provenance.session?.kind === "host" &&
+                worker.provenance.session.handle === input.sessionID,
+            ),
+          )
+        )
+          throw new Error(
+            "recovery_required: a cancelled worker remains uncertain; repeat worker.cancel on the ended worker to confirm its stop, then retry",
+          );
+        if (unresolvedTaskLaunches.delete(input.sessionID))
+          throw new Error("recovery_required: a cancelled worker remains uncertain");
+        const session = await sessionData(client, input.sessionID);
+        if (!client || !trustedSession(directory, input.sessionID, session) || session.parentID)
+          throw new Error(
+            "delegation_lineage_denied: native task workers must be direct children of the coordinator",
+          );
+        prepareDispatch(input.sessionID, input.callID);
+      }
     },
     config: async (config) => {
       const mutable = config as typeof config & {
         skills?: { paths?: string[] };
+        permission?: unknown;
+        agent?: Record<string, { permission?: unknown }>;
       };
-      config.command ??= {};
-      const templates = loadCommandTemplates(logger, root, Object.keys(descriptions));
-      for (const [name, description] of Object.entries(descriptions)) {
-        const template = templates[name];
-        if (template === undefined) continue;
-        config.command[name] = {
-          description,
-          template,
-        };
-      }
+      const paths = [...(mutable.skills?.paths ?? [])];
+      if (existsSync(skillsPath) && !paths.includes(skillsPath)) paths.push(skillsPath);
       mutable.skills ??= {};
-      mutable.skills.paths ??= [];
-      const skillPath = path.join(root, "skills");
-      const vendoredSkillsPath = path.join(root, "vendor", "superpowers", "skills");
-      for (const p of [skillPath, vendoredSkillsPath]) {
-        if (existsSync(p) && !mutable.skills.paths.includes(p)) {
-          mutable.skills.paths.push(p);
-        }
-      }
-      // Current OpenCode accepts top-level shorthand before the installed SDK types do.
-      config.permission = withWorktreeDenials(config.permission) as typeof config.permission;
-      for (const agent of Object.values(config.agent ?? {})) {
+      mutable.skills.paths = paths;
+      // Bare slash aliases: user-invoked entry points that load the method
+      // skill through the skill tool and apply it. Never overwritten when
+      // the user defined their own command of the same name.
+      const commands: Record<string, unknown> = {
+        ...(mutable as { command?: Record<string, unknown> }).command,
+      };
+      for (const [alias, skill] of Object.entries(WORKIT_SKILL_ALIASES))
+        commands[alias] ??= {
+          description: `Apply the ${skill} method skill to the current task.`,
+          template: `Load the ${skill} skill with the skill tool and apply it to the current task. Arguments: $ARGUMENTS`,
+        };
+      (mutable as { command?: Record<string, unknown> }).command = commands;
+      const permission = mutable.permission;
+      const current: Record<string, any> =
+        typeof permission === "string"
+          ? { "*": permission }
+          : typeof permission === "object" && permission !== null
+            ? { ...(permission as Record<string, unknown>) }
+            : {};
+      const bash: Record<string, any> =
+        typeof current.bash === "string"
+          ? { "*": current.bash }
+          : typeof current.bash === "object" && current.bash !== null
+            ? { ...(current.bash as Record<string, unknown>) }
+            : {};
+      bash["*git *worktree*"] = "deny";
+      current.bash = bash;
+      mutable.permission = current;
+      for (const agent of Object.values(mutable.agent ?? {})) {
         if (!agent) continue;
-        agent.permission = withWorktreeDenials(agent.permission) as typeof agent.permission;
+        const agentPermission = agent.permission;
+        const agentConfig: Record<string, any> =
+          typeof agentPermission === "string"
+            ? { "*": agentPermission }
+            : typeof agentPermission === "object" && agentPermission !== null
+              ? { ...(agentPermission as Record<string, unknown>) }
+              : {};
+        const agentBash: Record<string, any> =
+          typeof agentConfig.bash === "string"
+            ? { "*": agentConfig.bash }
+            : typeof agentConfig.bash === "object" && agentConfig.bash !== null
+              ? { ...(agentConfig.bash as Record<string, unknown>) }
+              : {};
+        agentBash["*git *worktree*"] = "deny";
+        agentConfig.bash = agentBash;
+        agent.permission = agentConfig;
       }
-      logger.info(EVENT.assets, { commands_loaded: Object.keys(templates).length });
     },
     "experimental.session.compacting": async ({ sessionID }, output) => {
-      const context = state.compactionContext(sessionID);
-      if (context) output.context.push(context);
-    },
-    // ponytail: mirrors Superpowers bootstrap — inject once on the first user turn;
-    // plus a per-turn reminder and post-hoc prose-choice detection
-    "experimental.chat.messages.transform": async (_input, output) => {
-      try {
-        if (!output.messages.length) return;
-        const users = output.messages.filter((m) => m.info.role === "user");
-        const firstUser = users[0];
-        const currentUser = users[users.length - 1];
-        if (!currentUser?.parts.length) return;
-
-        // First turn only: full bootstrap anchored to the session's first user message
-        if (firstUser?.parts.length) {
-          const firstAnchor =
-            firstUser.parts.find((part) => part.type === "text") ?? firstUser.parts[0];
-          const firstText = firstUser.parts
-            .filter((part) => part.type === "text")
-            .map((part) => (part as { text?: string }).text ?? "")
-            .join("\n");
-          // CA-16: resolve host parentage BEFORE first-turn injection — an
-          // authorized direct child receives only the compact worker contract,
-          // never the coordinator bootstrap.
-          const workerAuthorized = await authorizedWorkerFor(firstAnchor.sessionID);
-          const bootstrap = workerAuthorized ? null : getWorkitBootstrap();
-          if (bootstrap && !firstText.includes("<workit-contract>")) {
-            firstUser.parts.unshift({
-              id: firstAnchor.id,
-              sessionID: firstAnchor.sessionID,
-              messageID: firstAnchor.messageID,
-              type: "text" as const,
-              text: bootstrap,
-            });
-          } else if (workerAuthorized && !firstText.includes("workflow-sdd-worker")) {
-            firstUser.parts.unshift({
-              id: firstAnchor.id,
-              sessionID: firstAnchor.sessionID,
-              messageID: firstAnchor.messageID,
-              type: "text" as const,
-              text: SDD_WORKER_REMINDER_TEXT,
-            });
-          }
-        }
-
-        // Every turn: compact reminder anchored to the CURRENT user message (idempotent).
-        const anchor =
-          currentUser.parts.find((part) => part.type === "text") ?? currentUser.parts[0];
-        const makePart = (text: string, tag = "r") => ({
-          id: `${anchor.id}-${tag}${Date.now()}`,
-          sessionID: anchor.sessionID,
-          messageID: anchor.messageID,
-          type: "text" as const,
-          text,
-        });
-        const currentText = currentUser.parts
-          .filter((part) => part.type === "text")
-          .map((part) => (part as { text?: string }).text ?? "")
-          .join("\n");
-        // CA-08: a marked-destination session gets the four-choice destination
-        // reminder (never the originating Handoff choice); everything else keeps
-        // the ordinary five-choice source reminder.
-        const reminder = reminderTextFor(hasMarkedDestination(directory));
-        if (!currentText.includes(reminder)) {
-          currentUser.parts.unshift(makePart(reminder));
-        }
-
-        // Post-hoc detection: last assistant message (before current user turn) used prose choices?
-        const beforeCurrent = output.messages.slice(0, output.messages.indexOf(currentUser));
-        const lastAssistant = [...beforeCurrent].reverse().find((m) => m.info.role === "assistant");
-        const assistantText = lastAssistant
-          ? lastAssistant.parts
-              .filter((p) => p.type === "text")
-              .map((p) => (p as { text?: string }).text ?? "")
-              .join("\n")
-          : "";
-        if (lastAssistant) {
-          const usedQuestionTool = lastAssistant.parts.some(
-            (p) => (p as { tool?: string }).tool === "question",
-          );
-          if (
-            detectProseChoices(assistantText) &&
-            !usedQuestionTool &&
-            !currentText.includes("workflow-detection")
-          ) {
-            currentUser.parts.unshift(makePart(DETECTION_TEXT, "d"));
-          }
-          const docRefs = detectBacktickDocRefs(assistantText);
-          if (docRefs && !currentText.includes("workflow-doc-delivery")) {
-            currentUser.parts.unshift(makePart(DOC_DELIVERY_TEXT, "dd"));
-          }
-          if (detectRawDocDelivery(assistantText) && shouldInjectDocRender(currentText)) {
-            currentUser.parts.unshift(makePart(DOC_RENDER_TEXT, "dr"));
-          }
-        }
-
-        // Every turn: subagent-driven rail — active approved plans get one reminder (idempotent)
-        // FG-06/CA-21: discovery scans the host session workspace, never process.cwd()
-        // CA-15/CA-16: an authorized direct child gets the compact worker
-        // contract; every other session keeps the coordinator reminder.
-        const activePlans = findActiveSubagentDrivenPlans(directory);
-        if (activePlans.length > 0) {
-          const workerAuthorized = await authorizedWorkerFor(anchor.sessionID);
-          const sddText = workerAuthorized ? SDD_WORKER_REMINDER_TEXT : SDD_REMINDER_TEXT;
-          if (!currentText.includes(sddText)) {
-            currentUser.parts.unshift(makePart(sddText, "sdd"));
-          }
-        }
-
-        // Every turn: config-gap rail — structured config errors get a three-option question (idempotent)
-        if (detectConfigGapError(assistantText) && shouldInjectConfigGuard(currentText)) {
-          currentUser.parts.unshift(makePart(CONFIG_GUARD_TEXT, "cg"));
-        }
-
-        // Every turn: verification rail — completion claims without fresh check evidence (idempotent)
-        if (detectVerificationClaim(assistantText) && shouldInjectVerification(currentText)) {
-          currentUser.parts.unshift(makePart(VERIFICATION_TEXT, "vf"));
-        }
-        // Every turn: TDD rail — implementation without failing-test-first evidence (idempotent)
-        if (detectUntestedImplementation(assistantText) && shouldInjectTdd(currentText)) {
-          currentUser.parts.unshift(makePart(TDD_TEXT, "tdd"));
-        }
-        // Every turn: brainstorm rail — implementation without a presented design (idempotent)
-        if (
-          detectImplementationWithoutDesign(assistantText) &&
-          shouldInjectBrainstorm(currentText)
-        ) {
-          currentUser.parts.unshift(makePart(BRAINSTORM_TEXT, "br"));
-        }
-        // Every turn: debugging rail — fixes without root-cause evidence (idempotent)
-        if (detectFixWithoutRootCause(assistantText) && shouldInjectDebug(currentText)) {
-          currentUser.parts.unshift(makePart(DEBUG_TEXT, "db"));
-        }
-        // Every turn: review-reception rail — feedback accepted without verification (idempotent)
-        if (
-          detectBlindReviewAcceptance(assistantText) &&
-          shouldInjectReviewReception(currentText)
-        ) {
-          currentUser.parts.unshift(makePart(REVIEW_RECEPTION_TEXT, "rc"));
-        }
-
-        // Every turn: issue rail — previous assistant asked for free text via a clickable question option (idempotent)
-        if (lastAssistant) {
-          const questionParts = lastAssistant.parts.filter(
-            (p) => (p as { tool?: string }).tool === "question",
-          );
-          const hasInstructionOption = questionParts.some((p) =>
-            detectInstructionOption((p as { state?: { input?: unknown } }).state?.input),
-          );
-          if (hasInstructionOption && shouldInjectIssueRail(currentText)) {
-            currentUser.parts.unshift(makePart(ISSUE_RAIL_TEXT, "ir"));
-          }
-        }
-      } catch (err) {
-        // never break the session from a hook, but report the failure (DG-05)
-        logger.warn(EVENT.hooks, { boundary: "chat.messages.transform", ...errorDetail(err) });
+      const context = compactContextFor(directory, sessionID);
+      if (context) {
+        if (output.context.some((entry) => entry.includes("<workit-task-context>"))) return;
+        output.context.push(`<workit-task-context>${context}</workit-task-context>`);
       }
+    },
+    "experimental.chat.messages.transform": async (_input, output) => {
+      const first = output.messages.find((message) => message.info.role === "user");
+      if (!first || !first.parts.length) return;
+      const sessionID = first.info.sessionID;
+      if (bootstrapped.has(sessionID)) return;
+      const anchor = first.parts[0];
+      const session = await sessionData(client, sessionID);
+      if (!trustedSession(directory, sessionID, session)) return;
+      const workerContext = session?.parentID
+        ? workerContextFor(directory, sessionID, session.parentID, directChildren)
+        : null;
+      const bootstrap = session && !session.parentID ? getWorkitBootstrap() : null;
+      const context = compactContextFor(directory, sessionID);
+      if (
+        bootstrap &&
+        !first.parts.some((part) => part.type === "text" && part.text.includes("<workit-contract>"))
+      ) {
+        first.parts.unshift({ ...anchor, type: "text", text: bootstrap } as never);
+      }
+      if (
+        context &&
+        !first.parts.some(
+          (part) => part.type === "text" && part.text.includes("<workit-task-context>"),
+        )
+      ) {
+        first.parts.unshift({
+          ...anchor,
+          type: "text",
+          text: `<workit-task-context>${context}</workit-task-context>`,
+        } as never);
+      }
+      if (
+        workerContext &&
+        !first.parts.some(
+          (part) => part.type === "text" && part.text.includes("<workit-worker-context>"),
+        )
+      ) {
+        first.parts.unshift({
+          ...anchor,
+          type: "text",
+          text: `<workit-worker-context>${workerContext}</workit-worker-context>`,
+        } as never);
+      }
+      bootstrapped.add(sessionID);
     },
   };
 };

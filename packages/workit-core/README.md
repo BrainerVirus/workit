@@ -1,5 +1,9 @@
 # @brainervirus/workit-core
 
+[![CI](https://github.com/BrainerVirus/workit/actions/workflows/ci.yml/badge.svg)](https://github.com/BrainerVirus/workit/actions/workflows/ci.yml)
+[![npm version](https://img.shields.io/npm/v/@brainervirus/workit-core.svg)](https://www.npmjs.com/package/@brainervirus/workit-core)
+[![license: MIT](https://img.shields.io/badge/license-MIT-green.svg)](../../LICENSE)
+
 Shared core for the workit plugins — the single source of workflow logic that the OpenCode, Cursor, and CLI packages adapt to their native surfaces.
 
 ## When you need it directly
@@ -17,11 +21,9 @@ You consume `@brainervirus/workit-core` directly only when:
 | --- | --- |
 | `src/core/` | Shared TS logic (setup, registration, doctor, logger, branch, PR, changelog, YouTrack, presentation, docs, SDD, support matrix). |
 | `src/core.ts` | Package entry; adapters import `@brainervirus/workit-core/src/*`. |
-| `skills/` | 12 OpenCode-native `wk-*` skills. |
-| `commands/` | 12 OpenCode `wk-*` command prompts. |
+| `skills/` | 14 `workit-*` method skills (single source; adapters ship byte-identical copies). |
 | `scripts/` | Shared shell installers/launchers and the release-time workspace-dep rewrite. |
 | `templates/` | Execution and Superpowers contract templates. |
-| `vendor/superpowers/skills/` | 14 vendored Superpowers skills. |
 
 Adapters map host-native surfaces to `src/core/`; they never re-implement core logic. Keep shared behavior here and host-specific presentation in each adapter.
 

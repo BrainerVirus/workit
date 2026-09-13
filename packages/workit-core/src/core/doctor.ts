@@ -1,10 +1,13 @@
-// Shared offline doctor (DG-07/DG-08, CA-09). One host-neutral engine checks the
+// Shared offline doctor (DG-07/CA-09). One host-neutral engine checks the
 // installed Workit surfaces — pins, versions, assets, launchers, runtimes,
 // utilities, registrations, config, workspace match, credential metadata, and
 // log writability — with no network access except the optional registry probe
-// behind the stale-install comparison (CA-04), which fails open. Never reads
-// credential values: only existence, mode, and a placeholder flag are evaluated;
-// token bytes never enter the report or any log event.
+// behind the stale-install comparison (CA-04) and the fail-open identity
+// probes behind github_identity, which fail open. Credential values are never
+// reported: only existence, mode, and a placeholder flag are evaluated, and
+// the identity check reads a token file solely to build an Authorization
+// header for a login lookup — token bytes never enter the report, any fix
+// text, or any log event.
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
@@ -15,12 +18,21 @@ import { getDiagnosticLogger, isConfigObject } from "./config";
 import { packageRoot } from "./package-root";
 import {
   CURSOR_RUNTIME_PACKAGE,
+  cursorHookDrift,
   cursorHooksEntry,
   cursorMcpServerEntry,
   isWorkitPlugin,
 } from "./registration";
 import { resolveWorkspaceFrom } from "./workspaces";
-import { validateCursorSkills } from "./skill-manifests";
+import { validateCursorSkills, WORKIT_METHOD_SKILLS } from "./skill-manifests";
+import {
+  classifyHostGeneration,
+  digestFile,
+  readCutoverReceipt,
+  readGenerationState,
+  type CutoverHost,
+  type SessionObservation,
+} from "./cutover";
 
 // Mirrors init.ts TOKEN_PLACEHOLDER; kept local so the doctor never needs to
 // import the YouTrack/VCS stack just to label a credential state.
@@ -31,6 +43,7 @@ export type DoctorHost = "cli" | "opencode" | "cursor";
 export type DoctorCheckId =
   | "runtime"
   | "versions"
+  | "codex_pin"
   | "assets"
   | "launcher"
   | "utility"
@@ -41,7 +54,13 @@ export type DoctorCheckId =
   | "malformed_config"
   | "workspace_mismatch"
   | "credential_metadata"
-  | "log_writable";
+  | "github_identity"
+  | "log_writable"
+  | "legacy_component"
+  | "mixed_generation"
+  | "active_old_session"
+  | "managed_content_conflict"
+  | "missing_v1_component";
 
 export type DoctorCheckStatus = "pass" | "warn" | "fail";
 
@@ -89,6 +108,8 @@ export type DoctorOptions = {
   env?: NodeJS.ProcessEnv;
   /** Installer run: only registration/config checks count toward exitCode. */
   installer?: boolean;
+  /** Observed host sessions used by generation-aware cutover checks. */
+  sessions?: SessionObservation[];
 };
 
 type Resolved = {
@@ -104,6 +125,18 @@ type Resolved = {
   cursorPluginDir: string;
   env: NodeJS.ProcessEnv;
   installer: boolean;
+  sessions: SessionObservation[];
+};
+
+const parseSessionsFromEnv = (env: NodeJS.ProcessEnv): SessionObservation[] => {
+  const raw = env.WORKFLOW_TOOLKIT_SESSIONS;
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as SessionObservation[]) : [];
+  } catch {
+    return [];
+  }
 };
 
 const findDevFromCwd = (cwd: string): string | null => {
@@ -143,6 +176,7 @@ const resolve = (options: DoctorOptions): Resolved => {
       options.cursorPluginDir ?? path.join(home, ".cursor", "plugins", "local", "workit"),
     env,
     installer: options.installer ?? false,
+    sessions: options.sessions ?? parseSessionsFromEnv(env),
   };
 };
 
@@ -175,7 +209,7 @@ const pluginEntries = (cfg: Record<string, any> | null): string[] => {
   return list.map(String).filter(isWorkitPlugin);
 };
 
-const commandOnPath = (name: string, env: NodeJS.ProcessEnv): boolean => {
+export const commandOnPath = (name: string, env: NodeJS.ProcessEnv): boolean => {
   const dirs = (env.PATH ?? process.env.PATH ?? "").split(path.delimiter);
   // win32 executables carry an .exe suffix (bun.exe, git.exe), so probe both
   // names — statSync with the bare name would never find them.
@@ -302,7 +336,9 @@ const checkVersions = (res: Resolved): DoctorCheck => {
     problems.push(`adapters pin different core versions: ${[...refs].join(", ")}`);
   }
   const opencodePkg = readJson(path.join(res.dev, "packages/workit-opencode/package.json"));
-  const sdk = opencodePkg?.dependencies?.["@opencode-ai/plugin"];
+  const sdk =
+    opencodePkg?.dependencies?.["@opencode-ai/plugin"] ??
+    opencodePkg?.devDependencies?.["@opencode-ai/plugin"];
   const sdkVersion = typeof sdk === "string" ? (sdk.match(/^\d+(?:\.\d+){0,2}/) ?? [])[0] : null;
   if (sdkVersion && !semverAtLeast(sdkVersion, SUPPORT_MATRIX.opencode.minimum)) {
     problems.push(
@@ -324,19 +360,62 @@ const checkVersions = (res: Resolved): DoctorCheck => {
   };
 };
 
-const assetPathsFor = (host: DoctorHost, dev: string): string[] => {
+// The Codex CLI is a qualification host, not a runtime dependency: evidence
+// covers exactly SUPPORT_MATRIX.codex.cli. A drifted install keeps working,
+// but warns so a fresh install never silently outruns the qualification pin.
+const checkCodexPin = (res: Resolved): DoctorCheck => {
+  const qualified = SUPPORT_MATRIX.codex.cli;
+  if (!commandOnPath("codex", res.env))
+    return {
+      id: "codex_pin",
+      status: "pass",
+      detail: "codex CLI not on PATH — skipping pin check",
+    };
+  const raw = versionOf("codex", res.env);
+  const installed = raw ? ((raw.match(/\d+\.\d+\.\d+/) ?? [])[0] ?? null) : null;
+  if (installed === null)
+    return {
+      id: "codex_pin",
+      status: "warn",
+      detail: `could not parse the installed codex version — cannot confirm the qualified ${qualified}`,
+      fix: `Reinstall the qualified Codex CLI ${qualified} or record fresh qualification evidence`,
+    };
+  if (installed === qualified)
+    return {
+      id: "codex_pin",
+      status: "pass",
+      detail: `codex CLI ${installed} matches the qualified pin`,
+    };
+  return {
+    id: "codex_pin",
+    status: "warn",
+    detail: `codex CLI ${installed} differs from the qualified ${qualified}`,
+    fix: `Reinstall the qualified Codex CLI ${qualified} or record fresh qualification evidence`,
+  };
+};
+
+const detectDevGeneration = (dev: string): "legacy" | "v1" =>
+  existsSync(path.join(dev, "packages/workit-opencode/assets/skills/workit-plan/SKILL.md"))
+    ? "v1"
+    : "legacy";
+
+const effectiveGeneration = (res: Resolved): "legacy" | "v1" => {
+  const configured = readGenerationState(res.configDir).target;
+  if (configured === "v1") return "v1";
+  if (res.dev && detectDevGeneration(res.dev) === "v1") return "v1";
+  return "legacy";
+};
+
+const assetPathsFor = (host: DoctorHost, dev: string, _generation: "legacy" | "v1"): string[] => {
   const pkg = path.join(dev, "packages", `workit-${host}`);
   switch (host) {
     case "opencode":
-      return [
-        path.join(pkg, "assets", "commands", "wk-init.md"),
-        path.join(pkg, "assets", "skills", "wk-init", "SKILL.md"),
-        path.join(pkg, "assets", "templates", "spec-template.md"),
-        path.join(pkg, "assets", "vendor", "superpowers", "skills", "brainstorming", "SKILL.md"),
-      ];
+      return WORKIT_METHOD_SKILLS.map((skill) =>
+        path.join(pkg, "assets", "skills", skill, "SKILL.md"),
+      );
     case "cursor":
       return [
-        path.join(pkg, "assets", "templates", "spec-template.md"),
+        path.join(pkg, "assets", "templates", "workit-contract.md"),
         path.join(pkg, "mcp.json"),
         path.join(pkg, ".cursor-plugin"),
       ];
@@ -352,15 +431,16 @@ const hostsFor = (host: DoctorHost): DoctorHost[] =>
 
 const checkAssets = (res: Resolved): DoctorCheck => {
   const dev = res.dev;
+  const generation = effectiveGeneration(res);
   const missing = dev
     ? hostsFor(res.host).flatMap((h) =>
-        assetPathsFor(h, dev)
+        assetPathsFor(h, dev, generation)
           .filter((p) => !existsSync(p))
           .map((p) => `${h}: ${p}`),
       )
     : [];
   if (res.host === "cursor" || res.host === "cli") {
-    const cursorError = validateCursorSkills(res.cursorPluginDir);
+    const cursorError = validateCursorSkills(res.cursorPluginDir, WORKIT_METHOD_SKILLS);
     if (cursorError) missing.push(`cursor: ${cursorError}`);
   }
   if (missing.length === 0) {
@@ -740,6 +820,18 @@ const checkStaleInstall = (res: Resolved): DoctorCheck & { registryProbed?: bool
       fix: "Re-run install-cursor-plugin.sh — it rewrites the sessionStart hook to the canonical @latest selector",
     };
   }
+  // Enforcement-event drift: a present-but-divergent preToolUse matcher (or
+  // beforeShellExecution command) silently narrows what the hook intercepts.
+  // Absent events are filled by the installer merge, so only divergence fails.
+  const hookDrift = existsSync(hooksFile) ? cursorHookDrift(readJson(hooksFile)) : [];
+  if (hookDrift.length > 0) {
+    return {
+      id: "stale_install",
+      status: "fail",
+      detail: `stale_install: cursor hook drift on ${hookDrift.join(", ")} (differs from the canonical hook entries)`,
+      fix: "Re-run install-cursor-plugin.sh — it rewrites the workit hook entries to canonical",
+    };
+  }
   const installed = installedPluginVersion(res);
   const source = res.dev
     ? ((readJson(path.join(res.dev, "packages/workit-cursor/package.json"))?.version as
@@ -988,6 +1080,150 @@ const checkCredentialMetadata = (res: Resolved): DoctorCheck => {
   };
 };
 
+// Identity surfaces for the github_identity check. Logins are public
+// usernames (safe to report); the token itself only ever travels as an
+// Authorization header value and never enters details, fixes, or logs.
+export type IdentitySurface = { surface: string; login: string | null };
+
+export type IdentityProbes = {
+  origin: (cwd: string) => string | null;
+  ghLogin: (env: NodeJS.ProcessEnv) => string | null;
+  tokenLogin: (tokenFile: string, host: string) => string | null;
+  sshLogin: (host: string) => string | null;
+};
+
+export const githubHostFromRemote = (remote: string): string | null => {
+  const rest = (remote || "").trim();
+  if (!rest) return null;
+  const scp = /^[^@/]+@([^:]+):/.exec(rest);
+  if (scp) return scp[1].toLowerCase();
+  try {
+    const url = new URL(rest.includes("://") ? rest : `https://${rest}`);
+    return url.hostname.toLowerCase() || null;
+  } catch {
+    return null;
+  }
+};
+
+export const githubIdentityFinding = (surfaces: IdentitySurface[]): DoctorCheck => {
+  const resolved = surfaces.filter(
+    (entry): entry is { surface: string; login: string } => typeof entry.login === "string",
+  );
+  const distinct = [...new Set(resolved.map((entry) => entry.login.toLowerCase()))];
+  if (distinct.length < 2) {
+    return {
+      id: "github_identity",
+      status: "pass",
+      detail:
+        resolved.length === 0
+          ? "no GitHub identities configured"
+          : "single GitHub identity across configured surfaces",
+    };
+  }
+  return {
+    id: "github_identity",
+    status: "warn",
+    detail: `GitHub identities disagree across configured surfaces: ${resolved
+      .map((entry) => `${entry.surface} reports "${entry.login}"`)
+      .join("; ")}. Operations may land under the wrong account.`,
+    fix: "Align every surface on the intended account via your own git/gh configuration (gh auth login/switch plus the vcs token file at mode 0600) — workit never hardcodes accounts",
+  };
+};
+
+const defaultIdentityProbes = (env: NodeJS.ProcessEnv): IdentityProbes => ({
+  origin: (cwd) => {
+    try {
+      const out = spawnSync("git", ["remote", "get-url", "origin"], {
+        cwd,
+        encoding: "utf8",
+        env,
+      });
+      return out.status === 0 ? (out.stdout ?? "").trim() || null : null;
+    } catch {
+      return null;
+    }
+  },
+  ghLogin: (e) => {
+    try {
+      const out = spawnSync("gh", ["api", "user", "--jq", ".login"], { encoding: "utf8", env: e });
+      const login = (out.stdout ?? "").trim();
+      return out.status === 0 && login ? login : null;
+    } catch {
+      return null;
+    }
+  },
+  tokenLogin: (tokenFile, host) => {
+    let token = "";
+    try {
+      token = readFileSync(tokenFile, "utf8").trim();
+    } catch {
+      return null;
+    }
+    if (!token || token === TOKEN_PLACEHOLDER || token.startsWith(TOKEN_PLACEHOLDER)) return null;
+    try {
+      const out = spawnSync("gh", ["api", "user", "--jq", ".login"], {
+        encoding: "utf8",
+        env: { ...env, GH_TOKEN: token, ...(host === "github.com" ? {} : { GH_HOST: host }) },
+      });
+      const login = (out.stdout ?? "").trim();
+      return out.status === 0 && login ? login : null;
+    } catch {
+      return null;
+    }
+  },
+  sshLogin: (host) => {
+    try {
+      const out = spawnSync(
+        "ssh",
+        ["-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "-T", `git@${host}`],
+        {
+          encoding: "utf8",
+          env,
+        },
+      );
+      const text = `${out.stdout ?? ""}${out.stderr ?? ""}`;
+      const match = /^Hi ([^!]+)!/.exec(text);
+      return match ? match[1].trim() || null : null;
+    } catch {
+      return null;
+    }
+  },
+});
+
+const githubTokenFile = (res: Pick<Resolved, "configDir">): string | null => {
+  const vcsJson = readJson(path.join(res.configDir, "vcs.json"));
+  const provider = vcsJson?.github;
+  if (provider && typeof provider === "object") {
+    const tokenFile = (provider as Record<string, unknown>).tokenFile;
+    const raw =
+      typeof tokenFile === "string" ? tokenFile : path.join(res.configDir, "github.token");
+    return path.isAbsolute(raw) ? raw : path.resolve(res.configDir, raw);
+  }
+  if (!vcsJson) {
+    const fallback = path.join(res.configDir, "github.token");
+    return existsSync(fallback) ? fallback : null;
+  }
+  return null;
+};
+
+export const checkGithubIdentity = (
+  res: Pick<Resolved, "cwd" | "configDir" | "env">,
+  probes: IdentityProbes = defaultIdentityProbes(res.env),
+): DoctorCheck => {
+  const host = githubHostFromRemote(probes.origin(res.cwd) ?? "");
+  if (!host)
+    return { id: "github_identity", status: "pass", detail: "no GitHub remote configured" };
+  const surfaces: IdentitySurface[] = [{ surface: "gh CLI", login: probes.ghLogin(res.env) }];
+  const tokenFile = githubTokenFile(res);
+  if (tokenFile)
+    surfaces.push({
+      surface: `token file ${tokenFile}`,
+      login: probes.tokenLogin(tokenFile, host),
+    });
+  surfaces.push({ surface: "SSH", login: probes.sshLogin(host) });
+  return githubIdentityFinding(surfaces);
+};
+
 const checkLogWritable = (res: Resolved): DoctorCheck => {
   const logsDir = path.join(res.stateDir, "logs");
   // Fixed-name probe: even a killed process leaves at most one bounded file that
@@ -1017,9 +1253,177 @@ const checkLogWritable = (res: Resolved): DoctorCheck => {
   }
 };
 
+const GENERATION_HOSTS: CutoverHost[] = ["opencode", "cursor", "codex", "pi"];
+
+const generationPaths = (res: Resolved) => ({
+  home: res.home,
+  configDir: res.configDir,
+  stateDir: res.stateDir,
+  dev: res.dev,
+  workspace: res.cwd,
+  opencodeConfig: res.opencodeConfig,
+  cursorSettings: res.cursorSettings,
+  cursorMcp: res.cursorMcp,
+  cursorPluginDir: res.cursorPluginDir,
+  sessions: res.sessions,
+});
+
+const checkMixedGeneration = (res: Resolved): DoctorCheck => {
+  const paths = generationPaths(res);
+  const mixed = GENERATION_HOSTS.filter((host) => classifyHostGeneration(host, paths) === "mixed");
+  const target = readGenerationState(res.configDir).target;
+  if (mixed.length === 0) {
+    return {
+      id: "mixed_generation",
+      status: "pass",
+      detail: "no mixed legacy/v1 components detected",
+    };
+  }
+  const detail = `mixed legacy and v1 components: ${mixed.join(", ")}`;
+  if (target === "v1") {
+    return {
+      id: "mixed_generation",
+      status: "fail",
+      detail,
+      fix: "Run the approved v1 cutover preview/apply or remove the conflicting generation",
+    };
+  }
+  return {
+    id: "mixed_generation",
+    status: "warn",
+    detail: `${detail} (legacy target — cutover required before v1 activation)`,
+    fix: "Preview cutover with `workit init` or the CLI cutover flow before activating v1",
+  };
+};
+
+const checkLegacyComponent = (res: Resolved): DoctorCheck => {
+  const target = readGenerationState(res.configDir).target;
+  if (target !== "v1") {
+    return {
+      id: "legacy_component",
+      status: "pass",
+      detail: "legacy target — 0.x components expected",
+    };
+  }
+  const paths = generationPaths(res);
+  const legacy = GENERATION_HOSTS.filter(
+    (host) => classifyHostGeneration(host, paths) === "legacy",
+  );
+  if (legacy.length === 0) {
+    return {
+      id: "legacy_component",
+      status: "pass",
+      detail: "no legacy-only host components on v1 target",
+    };
+  }
+  return {
+    id: "legacy_component",
+    status: "fail",
+    detail: `legacy components remain on: ${legacy.join(", ")}`,
+    fix: "Complete the approved cutover or rollback to legacy before mixing generations",
+  };
+};
+
+const checkMissingV1Component = (res: Resolved): DoctorCheck => {
+  const target = readGenerationState(res.configDir).target;
+  if (target !== "v1") {
+    return { id: "missing_v1_component", status: "pass", detail: "legacy target" };
+  }
+  const paths = generationPaths(res);
+  const missing = GENERATION_HOSTS.filter((host) => {
+    const gen = classifyHostGeneration(host, paths);
+    return gen === "none" || gen === "legacy";
+  });
+  if (missing.length === 0) {
+    return {
+      id: "missing_v1_component",
+      status: "pass",
+      detail: "v1 components present on selected hosts",
+    };
+  }
+  return {
+    id: "missing_v1_component",
+    status: "fail",
+    detail: `missing v1 components on: ${missing.join(", ")}`,
+    fix: "Re-run the cutover apply step or the host install script for the missing target",
+  };
+};
+
+const checkActiveOldSession = (res: Resolved): DoctorCheck => {
+  if (res.sessions.length === 0) {
+    return {
+      id: "active_old_session",
+      status: "pass",
+      detail: "no session observations supplied to doctor",
+    };
+  }
+  const blocking = res.sessions.filter((s) => s.state === "active" || s.state === "unknown");
+  if (blocking.length === 0) {
+    return {
+      id: "active_old_session",
+      status: "pass",
+      detail: "no active or unknown old sessions observed",
+    };
+  }
+  const detail = blocking.map((s) => `${s.host}:${s.handle} (${s.state})`).join(", ");
+  const target = readGenerationState(res.configDir).target;
+  if (target === "v1") {
+    return {
+      id: "active_old_session",
+      status: "fail",
+      detail: `active or unknown sessions block v1 activation: ${detail}`,
+      fix: "Stop or account for old sessions before cutover apply",
+    };
+  }
+  return {
+    id: "active_old_session",
+    status: "warn",
+    detail: `old sessions still observed: ${detail}`,
+    fix: "Stop old sessions before previewing or applying v1 cutover",
+  };
+};
+
+const checkManagedContentConflict = (res: Resolved): DoctorCheck => {
+  const gen = readGenerationState(res.configDir);
+  if (!gen.cutover?.backupId) {
+    return {
+      id: "managed_content_conflict",
+      status: "pass",
+      detail: "no cutover receipt to compare",
+    };
+  }
+  const receipt = readCutoverReceipt(gen.cutover.backupId, res.stateDir);
+  if (!receipt) {
+    return {
+      id: "managed_content_conflict",
+      status: "fail",
+      detail: `cutover receipt missing for backup ${gen.cutover.backupId}`,
+      fix: "Re-run cutover apply or rollback to a known state",
+    };
+  }
+  const conflicts = receipt.managedFiles.filter((entry) => {
+    const current = digestFile(entry.path);
+    return current !== null && current !== entry.installedDigest;
+  });
+  if (conflicts.length === 0) {
+    return {
+      id: "managed_content_conflict",
+      status: "pass",
+      detail: "managed content matches cutover receipt",
+    };
+  }
+  return {
+    id: "managed_content_conflict",
+    status: "fail",
+    detail: `managed content drifted since cutover on: ${conflicts.map((c) => c.path).join(", ")}`,
+    fix: "Reconcile managed files with the cutover receipt or roll back before re-applying",
+  };
+};
+
 const RUN_CHECKS: Array<(res: Resolved) => DoctorCheck> = [
   checkRuntime,
   checkVersions,
+  checkCodexPin,
   checkAssets,
   checkLauncher,
   checkUtility,
@@ -1029,7 +1433,13 @@ const RUN_CHECKS: Array<(res: Resolved) => DoctorCheck> = [
   checkMalformedConfig,
   checkWorkspaceMismatch,
   checkCredentialMetadata,
+  checkGithubIdentity,
   checkLogWritable,
+  checkMixedGeneration,
+  checkLegacyComponent,
+  checkMissingV1Component,
+  checkActiveOldSession,
+  checkManagedContentConflict,
 ];
 
 // AR-11/CA-40: the installer guarantees the selected host itself — runtime,

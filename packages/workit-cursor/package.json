@@ -1,8 +1,8 @@
 {
   "name": "@brainervirus/workit-cursor",
-  "version": "0.11.0",
+  "version": "1.0.0",
   "private": false,
-  "description": "Workit Cursor plugin: MCP server, hooks, rules, marketplace manifest (thin over @brainervirus/workit-core)",
+  "description": "Workit Cursor plugin: shared MCP transport and native adaptive hooks",
   "keywords": [
     "agent",
     "cursor",
@@ -18,6 +18,7 @@
     "url": "https://github.com/BrainerVirus/workit.git"
   },
   "bin": {
+    "workit-cursor-hook": "./dist/workit-hook.js",
     "workit-cursor-mcp": "./dist/mcp-server.js",
     "workit-cursor-session-start": "./dist/cursor-session-start.js"
   },
@@ -26,9 +27,9 @@
     "assets/",
     "mcp.json",
     ".cursor-plugin/",
-    "rules/",
+    "rules/workit-contract.mdc",
     "skills/",
-    "vendor/superpowers/skills/",
+    "commands/",
     "hooks/hooks-cursor.json"
   ],
   "type": "module",
@@ -40,10 +41,9 @@
   },
   "dependencies": {
     "@brainervirus/workit-core": "workspace:*",
-    "@modelcontextprotocol/sdk": "^1.12.0",
-    "zod": "^3.24.0"
+    "@brainervirus/workit-mcp": "workspace:*"
   },
   "engines": {
-    "node": ">=22"
+    "node": ">=24"
   }
 }

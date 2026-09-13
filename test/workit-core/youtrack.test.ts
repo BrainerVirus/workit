@@ -63,19 +63,19 @@ import {
   postUpdate,
   readCredentials,
   redact,
-} from "../../packages/workit-core/src/core/youtrack-tools";
+} from "@/packages/workit-core/src/core/youtrack-tools";
 import {
   youTrackApi,
   youTrackConfigLoad,
   youTrackTokenCreateUrl,
   youTrackWorkDateMs,
-} from "../../packages/workit-core/src/core/youtrack";
+} from "@/packages/workit-core/src/core/youtrack";
 import {
   initApplyData,
   initStatusData,
   toolkitStatusData,
-} from "../../packages/workit-core/src/core/init";
-import { createYouTrackTools } from "../../packages/workit-opencode/src/tools/youtrack";
+} from "@/packages/workit-core/src/core/init";
+import { createYouTrackTools } from "@/packages/workit-opencode/src/tools/youtrack";
 
 test("comment success plus ambiguous time failure does not recommend retry", async () => {
   const result = await postUpdate(

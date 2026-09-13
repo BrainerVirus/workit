@@ -18,9 +18,9 @@ import {
   mergePreset,
   readConfigFromDir,
   type ToolkitConfig,
-} from "../../packages/workit-core/src/core/config";
-import { readSetupState } from "../../packages/workit-core/src/core/setup-state";
-import { planHygieneFiles, ensureHygieneFiles } from "../../packages/workit-core/src/core/hygiene";
+} from "@/packages/workit-core/src/core/config";
+import { readSetupState } from "@/packages/workit-core/src/core/setup-state";
+import { planHygieneFiles, ensureHygieneFiles } from "@/packages/workit-core/src/core/hygiene";
 import {
   buildSetupPreview,
   TOKEN_PLACEHOLDER,
@@ -28,20 +28,28 @@ import {
   validateTimezone,
   type SetupMutation,
   type SetupPreviewInput,
-} from "../../packages/workit-cli/src/logic";
+} from "@/packages/workit-cli/src/logic";
 import {
   createInitialDraft,
   reducer,
   resolveBasePath,
-} from "../../packages/workit-cli/src/wizard-state";
-import { LOCALE_LANGUAGE_MAP, filterOptions } from "../../packages/workit-cli/src/search-select";
+} from "@/packages/workit-cli/src/wizard-state";
+import { LOCALE_LANGUAGE_MAP, filterOptions } from "@/packages/workit-cli/src/search-select";
 import {
   BRANCH_PRESET_DESCRIPTIONS,
   SCREEN_PLACEHOLDERS,
+  externalDetectedHosts,
+  platformOptions,
   timezonePickerOptions,
-} from "../../packages/workit-cli/src/steps";
-import { REPO_ROOT } from "../shared/helpers/packages";
-import { cleanupLiveInkInstances } from "../shared/helpers/ink-clean-probe";
+} from "@/packages/workit-cli/src/steps";
+import {
+  emptyDetection,
+  preselectedPlatforms,
+  type HostDetection,
+  type HostId,
+} from "@/packages/workit-core/src/core/detect-hosts";
+import { REPO_ROOT } from "@/test/shared/helpers/packages";
+import { cleanupLiveInkInstances } from "@/test/shared/helpers/ink-clean-probe";
 
 // WZ-04-WZ-06, WZ-08, RL-02, RL-06 wizard scope; CA-12, CA-14, CA-22, CA-23.
 // readSetupState / mergePreset / buildSetupPreview must be pure readers: preview
@@ -64,6 +72,7 @@ const config = (over: Partial<ToolkitConfig["branchPolicy"]> = {}): ToolkitConfi
     protected: ["main", "develop"],
     ...over,
   },
+  commitPolicy: { preset: "conventional" },
 });
 
 const values = (over: Partial<SetupPreviewInput> = {}): SetupPreviewInput => ({
@@ -1150,7 +1159,7 @@ test("runInit apply resolves its cwd from the base path, never the process cwd",
 
     const ENTER = "\r";
     const SPACE = " ";
-    const { runInit } = await import("../../packages/workit-cli/src/index");
+    const { runInit } = await import("@/packages/workit-cli/src/index");
     const flush = async (): Promise<void> => {
       await new Promise((resolve) => setTimeout(resolve, 50));
       await new Promise((resolve) => setImmediate(resolve));
@@ -1198,3 +1207,40 @@ test("runInit apply resolves its cwd from the base path, never the process cwd",
     rmSync(base, { recursive: true, force: true });
   }
 }, 30_000);
+
+test("platform options tag detection state; externals list wizard-external hosts", () => {
+  const detection: Record<HostId, HostDetection> = {
+    ...emptyDetection(),
+    opencode: { detected: true, configured: true },
+    cursor: { detected: true, configured: false },
+    codex: { detected: true, configured: false },
+  };
+  expect(platformOptions(detection)).toEqual([
+    { label: "OpenCode · already configured", value: "opencode" },
+    { label: "Cursor · detected", value: "cursor" },
+  ]);
+  expect(platformOptions(emptyDetection())).toEqual([
+    { label: "OpenCode", value: "opencode" },
+    { label: "Cursor", value: "cursor" },
+  ]);
+  expect(externalDetectedHosts(detection)).toEqual(["Codex"]);
+  expect(externalDetectedHosts(emptyDetection())).toEqual([]);
+});
+
+test("createInitialDraft seeds platforms from detection; empty by default", () => {
+  expect(createInitialDraft(config(), { platforms: ["cursor"] }).values.platforms).toEqual([
+    "cursor",
+  ]);
+  expect(createInitialDraft(config()).values.platforms).toEqual([]);
+});
+
+test("external hosts list codex and pi; preselect keeps wizard hosts only", () => {
+  const detection: Record<HostId, HostDetection> = {
+    ...emptyDetection(),
+    cursor: { detected: true, configured: false },
+    codex: { detected: true, configured: false },
+    pi: { detected: true, configured: false },
+  };
+  expect(externalDetectedHosts(detection)).toEqual(["Codex", "Pi"]);
+  expect(preselectedPlatforms(detection)).toEqual(["cursor"]);
+});

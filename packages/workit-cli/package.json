@@ -1,6 +1,6 @@
 {
   "name": "@brainervirus/workit-cli",
-  "version": "0.11.0",
+  "version": "1.0.0",
   "private": false,
   "description": "Workit interactive setup wizard (Ink TUI)",
   "keywords": [
@@ -42,6 +42,6 @@
     "react": "19.2.8"
   },
   "engines": {
-    "node": ">=22"
+    "node": ">=24"
   }
 }

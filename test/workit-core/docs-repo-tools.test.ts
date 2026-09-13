@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { createDocsRepoTools } from "../../packages/workit-opencode/src/tools/docs-repo";
+import { createDocsRepoTools } from "@/packages/workit-opencode/src/tools/docs-repo";
 
 const git = (cwd: string, args: string[]) => spawnSync("git", args, { cwd, encoding: "utf8" });
 const makeRepo = () => {
@@ -53,7 +53,7 @@ test(
         os.tmpdir(),
         "wf-docsrepo-tool-config2.json",
       );
-      const { writeDocsRepoConfig } = await import("../../packages/workit-core/src/core/docs-repo");
+      const { writeDocsRepoConfig } = await import("@/packages/workit-core/src/core/docs-repo");
       writeDocsRepoConfig(repo);
       mkdirSync(path.join(work, "docs", "zeta"), { recursive: true });
       writeFileSync(

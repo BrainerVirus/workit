@@ -93,6 +93,7 @@ type PostInput = {
   issueId: string;
   markdown: string;
   minutes?: number;
+  dateMs?: number;
   workspace_root?: string;
 };
 
@@ -147,6 +148,7 @@ export async function postUpdate(
       const time = await operations.logTime({
         issueId: input.issueId,
         minutes: input.minutes,
+        ...(input.dateMs === undefined ? {} : { dateMs: input.dateMs }),
         text: "workit update",
         workspace_root: input.workspace_root,
       });

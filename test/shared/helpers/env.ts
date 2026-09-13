@@ -1,6 +1,8 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
+import { SUPPORT_MATRIX } from "@/packages/workit-core/src/core/support-matrix";
 
 // Temp HOME with ~/.config/workflow-toolkit populated from the given files, so
 // config.sh defaults ($HOME/.config/workflow-toolkit/*) stay isolated.
@@ -72,4 +74,22 @@ export const withIsolatedXDG = (dir: string, fn: () => void | Promise<void>): Pr
     }
   };
   return Promise.resolve(run());
+};
+
+let node24Bin: string | null = null;
+
+// Prepend a node shim that reports the declared support-matrix current version.
+export const envWithSupportedNode = (base: Record<string, string> = {}): Record<string, string> => {
+  if (!node24Bin) {
+    node24Bin = mkdtempSync(path.join(os.tmpdir(), "wk-node24-bin-"));
+    const realNode =
+      spawnSync("bash", ["-c", "command -v node"], { encoding: "utf8" }).stdout.trim() || "node";
+    writeFileSync(
+      path.join(node24Bin, "node"),
+      `#!/bin/sh\nif [ "$1" = "--version" ]; then echo "v${SUPPORT_MATRIX.node.current}"; exit 0; fi\nexec ${JSON.stringify(realNode)} "$@"\n`,
+      { mode: 0o755 },
+    );
+  }
+  const pathPrefix = base.PATH ?? process.env.PATH ?? "";
+  return { ...process.env, ...base, PATH: `${node24Bin}:${pathPrefix}` };
 };

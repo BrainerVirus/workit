@@ -1,3 +1,4 @@
+import { statSync } from "node:fs";
 import type { JsonValue } from "./logger";
 
 // Named diagnostic boundary events (DG-04) shared by all adapters so event
@@ -24,4 +25,32 @@ export const errorDetail = (err: unknown): Record<string, JsonValue> => {
     return { error_name: err.name, error: err.message };
   }
   return { error_name: "unknown", error: String(err) };
+};
+
+export type SourceMarker = { loadedAt: number; files: string[] };
+
+/**
+ * Long-lived adapters (OpenCode plugin, MCP servers) load core once per
+ * process. A marker plus changedSourcesSinceLoad lets them warn once when the
+ * checkout sources move underneath the live process, instead of running stale
+ * behavior silently. Warning-only: it never blocks a call.
+ */
+export const markSourcesLoaded = (
+  files: string[],
+  loadedAt: number = Date.now(),
+): SourceMarker => ({
+  loadedAt,
+  files: [...files],
+});
+
+export const changedSourcesSinceLoad = (marker: SourceMarker): string[] => {
+  const changed: string[] = [];
+  for (const file of marker.files) {
+    try {
+      if (statSync(file).mtimeMs > marker.loadedAt) changed.push(file);
+    } catch {
+      // A missing source tells nothing; ignore it.
+    }
+  }
+  return changed;
 };

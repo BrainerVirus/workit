@@ -20,6 +20,7 @@ import {
   type WizardScreen,
 } from "../../packages/workit-cli/src/wizard-state";
 import type { BranchPreset, ToolkitConfig } from "../../packages/workit-core/src/core/config";
+import { emptyDetection } from "../../packages/workit-core/src/core/detect-hosts";
 
 const ENTER = "\r";
 // Ink defers a lone \x1b for 20ms to disambiguate escape sequences (a wall-clock
@@ -46,6 +47,7 @@ async function withNonGitRoot(run: () => void | Promise<void>): Promise<void> {
   } finally {
     if (prev === undefined) delete process.env.WORKFLOW_WORKSPACE_ROOT;
     else process.env.WORKFLOW_WORKSPACE_ROOT = prev;
+    delete process.env.WORKFLOW_TOOLKIT_CONFIG;
   }
 }
 
@@ -58,16 +60,19 @@ const seedConfig: ToolkitConfig = {
     allowed: ["feature/*", "bugfix/*", "hotfix/*", "release/*"],
     protected: ["main", "develop"],
   },
+  commitPolicy: { preset: "conventional" },
 };
 
 function withSeedConfig(config: ToolkitConfig): () => void {
   const base = mkdtempSync(path.join(os.tmpdir(), "workit-wiz-"));
   const configPath = path.join(base, "config");
+  const previous = process.env.WORKFLOW_TOOLKIT_CONFIG;
   process.env.WORKFLOW_TOOLKIT_CONFIG = configPath;
   mkdirSync(configPath, { recursive: true });
   writeFileSync(path.join(configPath, "config.json"), JSON.stringify(config, null, 2), "utf8");
   return () => {
-    delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+    if (previous === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+    else process.env.WORKFLOW_TOOLKIT_CONFIG = previous;
     rmSync(base, { recursive: true, force: true });
   };
 }
@@ -78,11 +83,16 @@ function draft(preset: BranchPreset): WizardDraft {
     localeOptions: ["en", "es-CL"],
     timezone: "UTC",
     branchPolicy: { preset, allowed: [], protected: [] },
+    commitPolicy: { preset: "conventional" },
   });
 }
 
 function at(preset: BranchPreset, screen: WizardScreen): WizardDraft {
-  return { ...draft(preset), screen };
+  // Teleporting the screen skips the selects that would commit values, so
+  // commit them explicitly — gated screens key on values, not the screen.
+  const d = draft(preset);
+  const committed = reducer(d, { type: "set", field: "branchPreset", value: preset });
+  return { ...committed, screen };
 }
 
 // ---------------------------------------------------------------------------
@@ -92,6 +102,8 @@ function at(preset: BranchPreset, screen: WizardScreen): WizardDraft {
 test("next advances through the sequential screens", async () => {
   await withNonGitRoot(() => {
     let d = reducer(draft("gitflow"), { type: "set", field: "platforms", value: ["opencode"] });
+    // Note: withNonGitRoot pins WORKFLOW_WORKSPACE_ROOT, so the basePath
+    // screen is skipped in both directions here (see the D-06 tests).
     const sequence: WizardScreen[] = [
       "locale",
       "timezone",
@@ -125,14 +137,25 @@ test("next visits the custom branch screens when the preset is custom", () => {
   d = reducer(d, { type: "next" });
   expect(d.screen).toBe("branchProtected");
   d = reducer(d, { type: "set", field: "branchProtected", value: "main" });
-  expect(reducer(d, { type: "next" }).screen).toBe("issueTracker");
+  d = reducer(d, { type: "next" });
+  expect(d.screen).toBe("issueTracker");
 });
 
 test("back reverses through screens and skips custom branch screens when not custom", async () => {
   await withNonGitRoot(() => {
-    let d = at("gitflow", "youtrack");
+    let d = at("custom", "youtrack");
     expect(reducer(d, { type: "back" }).screen).toBe("issueTracker"); // never skipped itself
-    d = reducer(reducer(d, { type: "back" }), { type: "back" }); // skips the custom screens
+    d = reducer(d, { type: "back" }); // -> issueTracker
+    d = reducer(d, { type: "back" });
+    expect(d.screen).toBe("branchProtected"); // custom preset visits every screen
+    d = reducer(d, { type: "back" });
+    expect(d.screen).toBe("branchAllowed");
+    d = reducer(d, { type: "back" });
+    expect(d.screen).toBe("branchPreset");
+    // Non-custom preset skips both custom screens in one hop.
+    d = at("gitflow", "youtrack");
+    d = reducer(d, { type: "back" });
+    d = reducer(d, { type: "back" });
     expect(d.screen).toBe("branchPreset");
     d = at("gitflow", "summary");
     d = reducer(d, { type: "back" });
@@ -506,7 +529,11 @@ test("Back preserves the draft values entered so far", async () => {
       await tty.keys("b"); // back -> vcs
       expect(tty.lastFrame()).toContain("GitHub");
       await tty.keys("b"); // back -> youtrack
-      await tty.keys(ESC); // back from a text screen -> issueTracker
+      // A lone ESC leaves a pending byte that resolves ~20ms later as cancel,
+      // so ESC followed by more keys races. burst() lands every byte in one
+      // stdin chunk: the back fires and the trailing byte is swallowed with
+      // no residue, making the chain deterministic.
+      await tty.burst(ESC, "b"); // back from a text screen -> issueTracker
       expect(tty.lastFrame()).toContain("Issue tracker");
       await tty.keys("b"); // back -> branchPreset (custom screens skipped)
       expect(tty.lastFrame()).toContain("GitHub Flow");
@@ -524,18 +551,20 @@ test("Back preserves the draft values entered so far", async () => {
 test("Escape cancels without writing anything", async () => {
   const base = mkdtempSync(path.join(os.tmpdir(), "workit-wiz-"));
   const configPath = path.join(base, "config");
+  const prevCfg = process.env.WORKFLOW_TOOLKIT_CONFIG;
   process.env.WORKFLOW_TOOLKIT_CONFIG = configPath;
   try {
     const exitCalls: boolean[] = [];
     const tty = await renderInk(<Wizard onExit={(complete) => exitCalls.push(complete)} />);
     await tty.keys(SPACE, ENTER); // -> locale
     await tty.keys("mx", ENTER); // -> timezone (searched pick)
-    await tty.keys(ESC); // cancel (select screen)
+    await tty.burst(ESC); // cancel (select screen): single chunk, no pending-byte race
     expect(exitCalls).toEqual([false]);
     expect(existsSync(configPath)).toBe(false);
     tty.unmount();
   } finally {
-    delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+    if (prevCfg === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+    else process.env.WORKFLOW_TOOLKIT_CONFIG = prevCfg;
     rmSync(base, { recursive: true, force: true });
   }
 });
@@ -545,7 +574,11 @@ test("no competing Enter/provider race — one submit path per screen", async ()
     const cleanup = withSeedConfig(seedConfig);
     try {
       const tty = await renderInk(<Wizard onExit={noop} />);
-      await tty.keys(SPACE, ENTER, ENTER, ENTER, ENTER, ENTER); // -> youtrack
+      // platforms, locale, timezone, branchPreset walks to issueTracker
+      // (custom screens skipped for the gitflow seed).
+      await tty.keys(SPACE, ENTER, ENTER, ENTER, ENTER); // -> issueTracker
+      expect(tty.lastFrame()).toContain("Issue tracker");
+      await tty.keys(ENTER); // issueTracker (YouTrack) -> youtrack
       expect(tty.lastFrame()).toContain(SCREEN_PLACEHOLDERS.youtrack); // CA-09 wiring
       await tty.keys(ENTER); // -> vcs
       expect(tty.lastFrame()).toContain("Step 4");
@@ -708,7 +741,9 @@ test("backspace-to-empty custom locale surfaces the block on the select screen",
     await tty.keys("other", ENTER); // -> Other
     await tty.keys("en_US"); // invalid BCP-47 stored while editing
     for (let i = 0; i < "en_US".length; i++) await tty.key(BACKSPACE);
-    await tty.keys(ESC); // back -> locale select, value now ""
+    // Lone ESC leaves a pending byte resolving ~20ms later as cancel, racing
+    // subsequent keys — burst() lands ESC deterministically with no residue.
+    await tty.burst(ESC); // back -> locale select, value now ""
     // the parent select screen must surface the block (the empty current value
     // and the validation error) instead of letting Enter commit an empty locale
     const frame = tty.lastFrame();
@@ -967,6 +1002,8 @@ test("summary shows the authoritative preview and Apply completes with it", asyn
   await withNonGitRoot(async () => {
     const base = mkdtempSync(path.join(os.tmpdir(), "workit-wiz-"));
     const configPath = path.join(base, "config");
+    const prevCfg = process.env.WORKFLOW_TOOLKIT_CONFIG;
+    const prevYt = process.env.WORKFLOW_YT_BASE_URL;
     process.env.WORKFLOW_TOOLKIT_CONFIG = configPath;
     process.env.WORKFLOW_YT_BASE_URL = "https://env.example.com";
     try {
@@ -1013,8 +1050,10 @@ test("summary shows the authoritative preview and Apply completes with it", asyn
       expect(exitCalls).toEqual([true]);
       tty.unmount();
     } finally {
-      delete process.env.WORKFLOW_TOOLKIT_CONFIG;
-      delete process.env.WORKFLOW_YT_BASE_URL;
+      if (prevCfg === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+      else process.env.WORKFLOW_TOOLKIT_CONFIG = prevCfg;
+      if (prevYt === undefined) delete process.env.WORKFLOW_YT_BASE_URL;
+      else process.env.WORKFLOW_YT_BASE_URL = prevYt;
       rmSync(base, { recursive: true, force: true });
     }
   });
@@ -1024,7 +1063,10 @@ test("malformed configuration blocks Apply in the TTY flow (WZ-06)", async () =>
   await withNonGitRoot(async () => {
     const base = mkdtempSync(path.join(os.tmpdir(), "workit-wiz-"));
     const configPath = path.join(base, "config");
+    const prevCfg = process.env.WORKFLOW_TOOLKIT_CONFIG;
+    const prevYt = process.env.WORKFLOW_YT_BASE_URL;
     process.env.WORKFLOW_TOOLKIT_CONFIG = configPath;
+    delete process.env.WORKFLOW_YT_BASE_URL;
     try {
       mkdirSync(configPath, { recursive: true });
       writeFileSync(path.join(configPath, "config.json"), JSON.stringify(seedConfig), "utf8");
@@ -1050,8 +1092,38 @@ test("malformed configuration blocks Apply in the TTY flow (WZ-06)", async () =>
       expect(exitCalls).toEqual([]);
       tty.unmount();
     } finally {
-      delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+      if (prevCfg === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+      else process.env.WORKFLOW_TOOLKIT_CONFIG = prevCfg;
+      if (prevYt === undefined) delete process.env.WORKFLOW_YT_BASE_URL;
+      else process.env.WORKFLOW_YT_BASE_URL = prevYt;
       rmSync(base, { recursive: true, force: true });
     }
   });
+});
+
+test("platforms screen preselects detected hosts and tags configured ones", async () => {
+  const cleanup = withSeedConfig(seedConfig);
+  try {
+    const tty = await renderInk(
+      <Wizard
+        onExit={noop}
+        detection={{
+          ...emptyDetection(),
+          opencode: { detected: true, configured: true },
+          codex: { detected: true, configured: false },
+          pi: { detected: true, configured: false },
+        }}
+      />,
+    );
+    const first = tty.lastFrame();
+    expect(first).toContain("already configured");
+    expect(first).toContain("Detected: Codex, Pi");
+    expect(first).toContain("cutover");
+    // The opencode preselection satisfies validation: ENTER advances with no toggle.
+    await tty.keys(ENTER);
+    expect(tty.lastFrame()).toContain("Locale");
+    tty.unmount();
+  } finally {
+    cleanup();
+  }
 });

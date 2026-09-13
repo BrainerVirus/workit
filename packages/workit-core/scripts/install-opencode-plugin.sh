@@ -77,3 +77,4 @@ if ! bun "$ROOT/packages/workit-core/scripts/doctor-check.ts" opencode; then
 fi
 
 echo "OpenCode install done. Fully quit all opencode processes, then restart."
+echo "Generation switches require an explicit cutover preview/apply — install alone is not a cutover."

@@ -1,6 +1,6 @@
 {
   "name": "@brainervirus/workit-opencode",
-  "version": "0.11.0",
+  "version": "1.0.0",
   "private": false,
   "description": "Workit OpenCode plugin (thin wrapper over @brainervirus/workit-core)",
   "keywords": [
@@ -37,9 +37,9 @@
     "@brainervirus/workit-core": "workspace:*"
   },
   "devDependencies": {
-    "@opencode-ai/plugin": "1.17.7"
+    "@opencode-ai/plugin": "1.18.30"
   },
   "engines": {
-    "node": ">=22"
+    "node": ">=24"
   }
 }

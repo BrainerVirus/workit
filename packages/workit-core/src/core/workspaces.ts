@@ -1,6 +1,7 @@
 import { readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { configDir, isConfigObject, type BranchPreset } from "./config";
+import type { CommitFlavorPreset } from "./commit-flavors";
 
 export type VcsProvider = "gitlab" | "github";
 
@@ -18,10 +19,11 @@ export type WorkspaceBranchPolicy = {
 export type WorkspaceConfig = {
   name: string;
   glob: string;
-  vcs?: { provider: VcsProvider; defaultTargetBranch?: string };
+  vcs?: { provider: VcsProvider; defaultTargetBranch?: string; tokenFile?: string };
   youtrack?: { baseUrl?: string; link_issues?: boolean };
   issues?: { provider?: "github"; link_on_pr?: boolean };
   branchPolicy?: WorkspaceBranchPolicy;
+  commitPolicy?: { preset: CommitFlavorPreset; pattern?: string };
 };
 
 export const workspacesPath = (): string => path.join(configDir(), "workspaces.json");

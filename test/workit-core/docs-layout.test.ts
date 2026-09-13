@@ -10,15 +10,9 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createSddTools } from "../../packages/workit-opencode/src/tools/sdd";
-import { WorkflowStateStore } from "../../packages/workit-core/src/state";
-import { createFlowTools } from "../../packages/workit-opencode/src/tools/flow";
-import { HostReceiptStore } from "../../packages/workit-core/src/core/flow-state";
-import { buildHandoffPrompt } from "../../packages/workit-core/src/core/handoff-tools";
-import { createDocsRepoTools } from "../../packages/workit-opencode/src/tools/docs-repo";
-import { resolveCanonicalLayout } from "../../packages/workit-core/src/core/docs-layout";
-
-const posix = (p: string) => p.split(path.sep).join("/");
+import { docsValidate } from "@/packages/workit-core/src/core/docs-validate";
+import { createDocsRepoTools } from "@/packages/workit-opencode/src/tools/docs-repo";
+import { resolveCanonicalLayout } from "@/packages/workit-core/src/core/docs-layout";
 
 const fixture = () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "wf-layout-"));
@@ -38,135 +32,49 @@ const fixture = () => {
 
 const cleanup = (root: string) => rmSync(root, { recursive: true, force: true });
 
-test("flow state lives at docs/<slug>/sdd/flow.json", async () => {
+test("docs validate passes on the new layout", () => {
   const { root, slug } = fixture();
   try {
-    const receipts = new HostReceiptStore();
-    const tools = createFlowTools(receipts, { session: { get: async () => ({ data: {} }) } });
-    const ctx = { directory: root, sessionID: "s1" } as any;
-    const spec = `docs/${slug}/spec.md`;
-    await tools.workit_flow_status.execute({ plan_path: `docs/${slug}/plan.md` }, ctx);
-    receipts.record("s1", "call-approve", "Approve spec", Date.now(), "", "spec-approval");
-    const raw = await tools.workit_spec_approve.execute({ spec_path: spec }, ctx);
-    const out = JSON.parse(raw as string);
-    expect(out.ok).toBe(true);
-    expect(existsSync(path.join(root, "docs", slug, "sdd", "flow.json"))).toBe(true);
-    expect(existsSync(path.join(root, "docs", slug, "flow.json"))).toBe(false);
+    expect(
+      docsValidate({
+        spec_path: `docs/${slug}/spec.md`,
+        plan_path: `docs/${slug}/plan.md`,
+        workspace_root: root,
+      }).ok,
+    ).toBe(true);
   } finally {
     cleanup(root);
   }
 });
 
-test("sdd context resolves docs/<slug>/sdd", async () => {
+test("docs validate rejects absolute paths through the shared resolver", () => {
   const { root, slug } = fixture();
   try {
-    const raw = await createSddTools(new WorkflowStateStore()).workit_sdd_context.execute(
-      { plan_path: `docs/${slug}/plan.md` },
-      { directory: root, worktree: root, sessionID: "s" } as never,
-    );
-    const out = JSON.parse(raw as string);
-    expect(out.ok).toBe(true);
-    expect(posix(out.data.sdd_dir)).toBe(`docs/${slug}/sdd`);
-  } finally {
-    cleanup(root);
-  }
-});
-
-test("handoff resolves docs/<slug>/plan.md and spec.md", () => {
-  const { root, slug } = fixture();
-  try {
-    const result = buildHandoffPrompt(root, `docs/${slug}/plan.md`);
-    expect("error" in result).toBe(false);
-    if (!("error" in result)) {
-      expect(posix(result.plan)).toBe(`docs/${slug}/plan.md`);
-      expect(posix(result.spec)).toBe(`docs/${slug}/spec.md`);
-      expect(posix(result.sdd)).toBe(`docs/${slug}/sdd`);
-    }
-  } finally {
-    cleanup(root);
-  }
-});
-
-test("docs validate passes on the new layout", async () => {
-  const { root, slug } = fixture();
-  try {
-    const raw = await createSddTools(new WorkflowStateStore()).workit_docs_validate.execute(
-      { spec_path: `docs/${slug}/spec.md`, plan_path: `docs/${slug}/plan.md` },
-      { directory: root, worktree: root, sessionID: "s" } as never,
-    );
-    expect(JSON.parse(raw as string).ok).toBe(true);
-  } finally {
-    cleanup(root);
-  }
-});
-
-test("docs validate rejects absolute paths through the shared resolver", async () => {
-  const { root, slug } = fixture();
-  try {
-    const raw = await createSddTools(new WorkflowStateStore()).workit_docs_validate.execute(
-      {
+    expect(
+      docsValidate({
         spec_path: path.join(root, "docs", slug, "spec.md"),
         plan_path: `docs/${slug}/plan.md`,
-      },
-      { directory: root, worktree: root, sessionID: "s" } as never,
-    );
-    expect(JSON.parse(raw as string).ok).toBe(false);
+        workspace_root: root,
+      }).ok,
+    ).toBe(false);
   } finally {
     cleanup(root);
   }
 });
 
-test("docs validate rejects cross-slug pairs through the shared resolver", async () => {
+test("docs validate rejects cross-slug pairs through the shared resolver", () => {
   const { root, slug } = fixture();
   try {
     mkdirSync(path.join(root, "docs", "other"), { recursive: true });
     writeFileSync(path.join(root, "docs/other/spec.md"), "# Other\n");
-    const raw = await createSddTools(new WorkflowStateStore()).workit_docs_validate.execute(
-      {
-        spec_path: `docs/${slug}/spec.md`,
-        plan_path: "docs/other/plan.md",
-      },
-      { directory: root, worktree: root, sessionID: "s" } as never,
-    );
-    const out = JSON.parse(raw as string);
+    const out = docsValidate({
+      spec_path: `docs/${slug}/spec.md`,
+      plan_path: "docs/other/plan.md",
+      workspace_root: root,
+    });
     expect(out.ok).toBe(false);
+    if (out.ok) return;
     expect(String(out.error)).toMatch(/cross-slug|docs\//i);
-  } finally {
-    cleanup(root);
-  }
-});
-
-test("flow tools reject wrong basenames through the shared resolver", async () => {
-  const { root, slug } = fixture();
-  try {
-    const tools = createFlowTools(new HostReceiptStore(), {
-      session: { get: async () => ({ data: {} }) },
-    });
-    const ctx = { directory: root } as never;
-    const out = await tools.workit_spec_approve.execute(
-      { spec_path: `docs/${slug}/spec.txt` },
-      ctx,
-    );
-    expect(JSON.parse(out as string).ok).toBe(false);
-    const planOut = await tools.workit_plan_approve.execute(
-      { plan_path: `docs/${slug}/notes.md` },
-      ctx,
-    );
-    expect(JSON.parse(planOut as string).ok).toBe(false);
-  } finally {
-    cleanup(root);
-  }
-});
-
-test("flow tools reject traversal through the shared resolver", async () => {
-  const { root } = fixture();
-  try {
-    const tools = createFlowTools(new HostReceiptStore(), {
-      session: { get: async () => ({ data: {} }) },
-    });
-    const ctx = { directory: root } as never;
-    const out = await tools.workit_spec_approve.execute({ spec_path: "../outside.md" }, ctx);
-    expect(JSON.parse(out as string).ok).toBe(false);
   } finally {
     cleanup(root);
   }
@@ -243,7 +151,7 @@ test("DC-01: resolveCanonicalLayout rejects absolute paths and traversal", () =>
 });
 
 test("DC-02: resolveCanonicalLayout rejects symlink escapes outside the workspace", () => {
-  if (process.platform === "win32") return; // symlink creation may require admin
+  if (process.platform === "win32") return;
   const { root, slug } = fixture();
   const outside = mkdtempSync(path.join(os.tmpdir(), "wf-outside-"));
   try {
@@ -260,7 +168,7 @@ test("DC-02: resolveCanonicalLayout rejects symlink escapes outside the workspac
 });
 
 test("DC-02: resolveCanonicalLayout accepts an unreadable canonical doc (macOS realpath EACCES)", () => {
-  if (process.platform === "win32") return; // chmod is not advisory on win32
+  if (process.platform === "win32") return;
   const { root, slug } = fixture();
   try {
     chmodSync(path.join(root, "docs", slug, "spec.md"), 0o000);

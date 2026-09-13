@@ -69,7 +69,7 @@ else
   exit 1
 fi
 
-for DEP in @brainervirus/workit-core @modelcontextprotocol/sdk zod; do
+for DEP in @brainervirus/workit-core @brainervirus/workit-mcp @modelcontextprotocol/sdk zod; do
   if [ ! -e "$SRC/node_modules/$DEP" ]; then
     if [ ! -f "$SRC/bun.lock" ]; then
       echo "FATAL: dependency install requires $SRC/bun.lock" >&2
@@ -83,11 +83,15 @@ for DEP in @brainervirus/workit-core @modelcontextprotocol/sdk zod; do
   fi
 done
 
+if ! (cd "$SRC" && PATH="$(dirname "$BUN_BIN"):$PATH" "$BUN_BIN" "$SRC/packages/workit-mcp/scripts/build.ts"); then
+  echo "FATAL: shared MCP build failed in $SRC" >&2
+  exit 1
+fi
 if ! (cd "$SRC" && PATH="$(dirname "$BUN_BIN"):$PATH" "$BUN_BIN" "$CURSOR_SRC/scripts/build.ts"); then
   echo "FATAL: Cursor adapter build failed in $CURSOR_SRC" >&2
   exit 1
 fi
-for ENTRY in mcp-server.js cursor-session-start.js; do
+for ENTRY in mcp-server.js cursor-session-start.js workit-hook.js; do
   DIST_ENTRY="$CURSOR_SRC/dist/$ENTRY"
   if [ ! -f "$DIST_ENTRY" ] || [ ! -s "$DIST_ENTRY" ] || [ "$(IFS= read -r LINE <"$DIST_ENTRY"; printf '%s' "$LINE")" != '#!/usr/bin/env node' ]; then
     echo "FATAL: Cursor adapter invalid dist entry: $DIST_ENTRY" >&2
@@ -153,7 +157,7 @@ import fs from "node:fs";
 const path = process.env.PKG_PATH!;
 const data = JSON.parse(fs.readFileSync(path, "utf8"));
 data.dependencies = data.dependencies ?? {};
-data.dependencies["@opencode-ai/plugin"] = data.dependencies["@opencode-ai/plugin"] ?? "1.17.7";
+data.dependencies["@opencode-ai/plugin"] = data.dependencies["@opencode-ai/plugin"] ?? "1.18.30";
 fs.writeFileSync(path, JSON.stringify(data, null, 2) + "\n");
 ' || true
 fi

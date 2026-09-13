@@ -20,50 +20,218 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Reviewer worker assignments with no requirement ids now fail at assign time
+  on assessed tasks and return the review requirement ids, instead of letting
+  the worker discover later that its evidence is rejected.
+- The pre-PR deslop gate: behavior and mechanical-low-risk assessments now
+  add a `pre-pr-cleanup` requirement that gates `hosting.pull_request` (and
+  close) until a fresh passing deslop check is recorded or the user approves
+  a limitation waiver. Enforcement lives in core (`reserveAction`), so
+  OpenCode, Cursor, Codex, Pi, and the CLI block identically; the method
+  registry routes `workit-deslop` whenever the requirement is present, and a
+  failed reservation leaves the approved action retryable.
+- Knip dead-code and unused-dependency gate pinned at 6.35.1 (`bun run knip`)
+  with a triaged baseline and an Ubuntu CI job reusing installed dependencies.
+- `workit init` writes the vcs provider explicitly (env override, else the
+  checkout's origin remote; omitted when neither resolves) so fresh
+  checkouts never inherit a silent default. An unconfigured provider is an
+  explicit state: `vcsConfig` resolve reports `provider: null` (branch
+  policy still resolves from presets) while credential loads fail closed.
+  Token-creation URLs preselect nothing without a configured provider, and
+  the setup wizard defaults to Skip (configure later) instead of gitlab —
+  including per-workspace entries, whose `vcs` section is omitted on skip.
+- `wk-*` slash aliases for all fourteen method skills on OpenCode, Cursor,
+  and Pi (replacing the five bare aliases); Codex documents `$workit-*`.
+- `commitPolicy` config (conventional, gitmoji, ticket-prefix, freeform,
+  custom pattern, auto-detect from history) enforced at the `git.commit`
+  gate with fail-closed rejections that name the expected flavor.
+- Close enforces RED-first ordering on testing requirements: a testing
+  requirement with GREEN evidence but no preceding RED failure stays
+  unsatisfied, closing the code-then-tests loophole; the behavioral-TDD
+  skill text mirrors the rule on all hosts.
+- Spec-only docs: GitHub + GitLab issue reads (`docs/trackers/spec.md`,
+  read-only title/body/state mirroring YouTrack) and a parallel-delegation
+  proposal (`docs/parallel-delegation/proposal.md`, disjoint-scope fan-out
+  with single-writer lead mutations — deferred to 1.1.0).
+- `context.read` gains `github_issue` and `gitlab_issue` kinds returning the
+  same read-only title/body/state triple as YouTrack: GitHub reuses the vcs
+  `github.tokenFile` bearer pattern with `gh` issue-ref parsing, GitLab uses
+  the vcs `gitlab.tokenFile` `PRIVATE-TOKEN` pattern with full-path project
+  resolution (subgroups kept). Both fail closed without a token, the CLI
+  wizard offers a GitLab Issues tracker, and Cursor/Codex expose both as MCP
+  resources (`workit://context/{kind}`).
+- Token files are workspace-tight: a workspace `vcs.tokenFile` wins over the
+  global provider file so per-area accounts never collide. Issue reads prefer
+  the native CLI (`gh issue view`, `glab issue view`) when installed —
+  per-directory identity comes free — and fall back to the workspace-scoped
+  token. YouTrack stays token-only (no CLI exists).
+- The doctor reports a `github_identity` warning when the checkout's own
+  GitHub surfaces disagree (gh CLI login, vcs token-file login, SSH login),
+  so operations can never silently land under the wrong account. Only the
+  login names are reported, tokens never appear in output, every probe fails
+  open, and no accounts are hardcoded — alignment stays in your own git/gh
+  configuration.
+- `commitPolicy` per-workspace override in `workspaces.json` (workspace wins,
+  else global), resolved through `resolveCommitPolicyFor` at the `git.commit`
+  gate.
+- `workit-challenge` added to the bootstrap moment-based skill routing so
+  ambiguous proposals trigger it without an explicit alias call.
+- v1 pre-close batch: deterministic spec triage (`triageTier`/`triageSignals`
+  with Large/Medium/Small tiers plus recorded override), five bare slash
+  aliases (`/challenge`, `/babysit`, `/implement`, `/plan`, `/debug`) on
+  OpenCode/Cursor/Pi with `$workit-*` documented for Codex CLI, auto-start
+  PR babysitting (`hosting.pull_request` `babysit?` flag, default on) that
+  merges per `pr` settings after green, seven new method skills (babysit,
+  blast-radius, deslop, diagram, mockup, green-run, steer) with upgrades to
+  debug/review/challenge/plan/behavioral-tdd, spec-template tightening
+  (Change line, SHALL/GIVEN-WHEN-THEN, skip marker, review checklist),
+  `context.read` YouTrack bodies (summary plus description, fail-closed),
+  and `scopeCovers` trailing-slash normalization.
+- Validation fix program: the CLI documents and implements `workit <family>
+<action>` (help, READMEs, contract, pinned help test), `workit writer
+acquire --actor <id>` binds a writer to a Codex session the hook matches,
+  and `workit_init_apply` is registered on OpenCode with the `branch_policy`
+  action. Cutover failures are loud (unknown hosts, malformed resolutions),
+  rollback parses flags anywhere, apply honors `--json`, and the uninstall
+  picker covers all four hosts. Both hooks share one fail-closed shell parser
+  with symlink resolution, the Cursor preToolUse matcher covers the guard set
+  with doctor drift detection, and hook attestation no longer claims unsigned
+  input.
+
+- The CLI setup wizard now auto-detects installed hosts: detected OpenCode and
+  Cursor installs preselect on the platforms screen, existing workit
+  registrations are tagged "already configured", and detected Codex/Pi point at
+  `workit cutover`. Detection is presence-only (CLI on PATH or home config
+  marker, never a subprocess probe) via the shared `detect-hosts` core module.
+
+- Acceptance fixtures, observable-action judge, 90-run evaluation plan, adapter
+  capability matrix generator, and stable-release gate for Workit v1 qualification.
+  Deterministic CA-31/CA-32 checks run in `verify:release-candidate`; the live
+  batch remains behind explicit authorization (`docs/workit-v1/qualification.md`).
+
+- Candidate capture now uses Git's ignore-aware inventory in Git workspaces,
+  avoiding recursive scans of ignored dependency and build trees while keeping
+  tracked files, relevant untracked files, and staged deletions visible.
+
+- Codex CLI and desktop integration with a native plugin manifest, shared MCP
+  transport, documented SessionStart/PreToolUse/subagent hooks, and separate
+  CLI/desktop qualification records. Unsupported receipts and writer delegation
+  remain explicitly unavailable.
+
+- Optional external-action wrappers now bind concrete host-owned Git, hosting,
+  YouTrack, time, and documentation effects to the exact canonical
+  operation/target/payload approved by one native action decision, and preserve
+  uncertain remote outcomes. OpenCode/Pi use native receipts, the CLI exposes
+  an interactive TTY confirmation route, and caller-unattested MCP mutation
+  requests remain unavailable.
+
+- Added the read-only `context.read` surface for git/PR/YouTrack/changelog,
+  release, and affected context across native adapters and the CLI, plus
+  equivalent Cursor/Codex MCP resources. Context reads require no approval or
+  writer and do not mutate the checkout or Workit metadata. Release reads now
+  include a deterministic Markdown draft; affected reads identify files while
+  edits remain existing writer/scope-guarded native actions.
+
+- Pi v1 native extension with the stock package manifest, eight shared
+  operation tools, seven canonical method skills, native session/compaction
+  continuity, and truthful UI/trust/sandbox capability boundaries. The bundled
+  coordinator now supervises fresh stock-Pi reviewer/investigator processes and
+  explicitly scoped implementers with observed lifecycle and uncertain
+  cancellation boundaries. A child-disabled `workit_worker_control` host
+  orchestration tool does not expand the eight shared core families.
+
+- Cursor v1 now uses the shared MCP transport, one documented native hook
+  executable, and exactly seven canonical adaptive method skills. AskQuestion,
+  session-start/compaction, subagent stop identity, arbitrary shell writes, and
+  Tab edits are reported with their actual policy-only or unavailable assurance.
+
+- OpenCode v1 integration now exposes the eight shared Workit operation tools,
+  native receipt/lineage hooks, compact task continuity, and only the seven
+  policy-selected method skills; the plugin build targets OpenCode 1.18.30.
+- Added the shared `@brainervirus/workit-mcp` low-level transport for the eight
+  core operation families, with trusted native context boundaries and
+  host-specific activation left to the adapter tasks.
+- Workit CLI task control over all eight shared operation families and 24
+  schema-owned actions, with inline/`@file`/stdin payloads, exact `--json`
+  Results, headless consent handling, and read-only `workit handoff --task`
+  export plus compact destination context.
 - Interactive `workit uninstall` CLI command: a TTY-only host picker (OpenCode/Cursor) with a reviewable action summary before any mutation; it applies the exact inverse of setup's registrations for the selected hosts only — unselected hosts and `~/.config/workit` are preserved byte-for-byte, malformed host files fail untouched, and exit codes are 0 ok / 1 partial failure / 2 non-TTY usage.
-- Expose plan lifecycle controls (`workit_plan_pause`/`resume`/`complete`) and CLI flow/handoff commands (`workit flow status|pause|resume|complete`, `workit handoff`), including a four-choice handoff-destination contract.
 - Added an approved reliability-overhaul specification with full requirement, audit, and Ponytail traceability.
 - Added pinned Oxlint and Oxfmt checks for first-party TypeScript and package metadata.
-- Per-workspace branch policy (`workspaces.json` `branchPolicy`) with git-flow-style detection init and `integration: pr|merge` on OpenCode, Cursor, and the CLI wizard.
+- Per-workspace branch policy (`workspaces.json` `branchPolicy`) with git-flow-style detection init and `integration: pr|merge` in the core and the CLI wizard (host init surfaces pending).
 - Added a `validate:cursor-marketplace` gate that validates the tracked Cursor Marketplace artifact against the official Cursor JSON schemas and clean-checkout invariants (component paths, skill/rule frontmatter, logo, sanitized vendor parity, no ignored-`dist` runtime references).
 - Added verbatim snapshots of the current official Cursor `plugin.json`/`marketplace.json` schemas with retrieval provenance.
-- Added a `workit flow review-package` CLI command that writes the review diff for a `--base..--head` range through the shared-core guard, which rejects empty ranges (`base == head` or a diff that is empty) with a structured error.
-- Codified atomic per-task commit ranges in the plan template and execution skills: each SDD task lands exactly one contiguous non-empty commit range, fix rounds append to that range without rewriting an active review range, and each progress line records the task's real `base..head` shas.
-- SDD control metadata (flow state, briefs, ledgers, advisories) is coordinator-owned under the gitignored `docs/<slug>/sdd/`; a new `workit_sdd_append_advisory` tool and CLI `workit flow append-advisory --plan <path> --task <id> --text <text> [--confirm]` record advisory review findings in `advisories.md` without an unrestricted file edit.
 - The doctor gained a `stale_install` finding on the Cursor/CLI hosts that detects plugin auto-load rot before it breaks features: legacy `--package=` pins in the plugin's own `mcp.json`, a sessionStart hook running a legacy selector, or a local-dist install behind the current/published runtime all surface with the exact repair step; canonical `@latest` installs never fail on version metadata (the selector resolves fresh at launch), and the sole network probe (the npm registry) fails open as a `registry_unreachable` warning — never a false `stale_install` and never a hard doctor failure.
 - The release pipeline now syncs every tracked manifest (root, four platform packages, Cursor plugin manifest) to the released version through an auto-merged PR after each publish, ending the committed-version vs git-tag drift; the root workspace is renamed `workflow-toolkit` → `workit` and pre-aligned to v0.8.9.
-- Cursor subagent-driven execution: an accepted `workit_plan_menu` subagent-driven choice returns a one-time `coordinator_lease`; the new Cursor MCP tool `workit_delegate` mints a task-scoped `delegation_token` from it (fail-closed validation, only hashes persist), Cursor-native subagents pass the token as `delegation_token` on all mutation calls, and delegated SDD writes are slug-bound to the token (the task token is revoked when the worker's progress line lands). Inline runs `executing-plans` single-agent in the current session with no dispatch and no token minting.
+- Cursor subagent execution now uses documented native `subagentStart` and bounded product-write hooks. AskQuestion, compaction/session-start continuity, exact subagent stop identity, arbitrary shell writes, and Tab edits remain truthfully marked policy-only, agent-guided, or unavailable where Cursor cannot attest them.
 
 ### Changed
 
+- `workit-challenge` is now a grounded grill loop: ground-first facts, one
+  bounded 3-5 direction diverge burst when the approach is unknown,
+  one-question-at-a-time recommendations each with a rejected alternative, a
+  receipt funnel that binds choices the moment they resolve, counter-case
+  discipline, and the hard three-round cap. A choice already stated without a
+  receipt is recorded in progress and reassessed instead of re-asked, so close
+  never demands a stale receipt. Durability still comes only from the
+  `durable-spec` requirement.
+- Arbitrary file writes are host-policy on every adapter: the OpenCode,
+  Cursor, Codex, and Pi write interceptors no longer gate tools or shell
+  commands on task scopes, and the core product-write check keeps only
+  writer, role, and session ownership (path-scope enforcement is gone, along
+  with the now-dead shell-intent parser). Managed workit mutations (task
+  state, external actions, setup/cutover) keep writer ownership; capability
+  reports mark `known_product_writes` accordingly.
+- Removed path confinement (`trustedPaths`) across core and all four
+  adapters plus the CLI wizard: absolute scope paths are valid and only
+  traversal escapes are rejected; writer ownership, role, session, scope,
+  and approvals remain the bound. The `trustedPaths` wizard screen is gone
+  and the setup preview no longer merges it.
+- OpenCode's advertised operation schemas now use bounded provider-safe projections for deeply nested inputs while preserving core-owned validation and the complete eight-family tool surface.
+
+- Cancelling a worker that was assigned but never launched no longer leaves the coordinator blocked with no truthful way out. The core gained two host-only methods, `prepareWorkerDispatch` and `commitWorkerDispatch` (no new operation family, no new serialized field, no caller-supplied receipt): a host claims the launch slot of an exactly-`assigned` worker before spawning, and the resulting in-process reservation is settled exactly once — either `started` with the observed child session, or `not_started`, which records a host-attested `stopped` with a null session. OpenCode prepares in `tool.execute.before` for a native `task` call when exactly one assigned worker is attributable to that coordinator and only claims "never started" when that same task call explicitly proves no child session exists; Pi prepares immediately before spawn on the live handle and only settles "never started" while that same handle proves no spawn was attempted. Ambiguous assignments, generic cancellation strings, missing child metadata, and reservations lost to a restart all stay unresolved and are never inferred to be stopped.
 - Releases are now path-gated and selectively published: tooling-only merges cut no release, and npm receives only packages whose payload changed since the previous tag. The publisher diffs against the previous release tag passed by semantic-release (`${lastRelease.gitTag}`) — the new release tag is created before publish plugins run, so diffing against the latest tag skipped every package.
 - Repository checks now run lint, format verification, tests, and TypeScript typechecking.
-- Spec/plan approval now needs a single confirmation per document; the self-review validation runs automatically during the transition.
 - The OpenCode package now bundles the `@opencode-ai/plugin` SDK surface into its build and pins the SDK as a build-only dependency, dropping the unused transitive `ini@7` install path.
-- Raised the Node support floor to 22 across the support matrix, package `engines`, CI, and documentation (Ink 7 requires Node ≥ 22).
+- Raised the Node support floor to 24 across the support matrix, package `engines`, CI, and documentation (the current toolchain requires Node ≥ 24).
 - The Cursor README now documents Marketplace and local installation, Node/network requirements, MCP/hook runtime execution, Git/VCS/YouTrack/filesystem interactions, persistent redacted logs, secret handling, `@latest` review drift, update behavior, and troubleshooting; CI runs the Marketplace validator in the Cursor and candidate jobs.
 - Two-workspace VCS routing: `resolveWorkspace` maps `work`-glob repos to GitLab/`develop`/gitflow and `personal`-glob repos to GitHub/`main`/github-flow; resolution order is explicit workspace `vcs.defaultTargetBranch` → workspace branchPolicy default → global `vcs.json` → preset defaults. The global `vcs.json` `defaultTargetBranch` is removed from the active config and can no longer shadow a matched workspace's branchPolicy default.
 - Legacy `~/.config/workflow-toolkit/` non-secret config files (config.json, vcs.json, youtrack.json, workspaces.json, templates/) were cleaned up once the active `~/.config/workit/` config passed status checks; the runtime reads only the active config dir.
-- The execution contract now mandates ending every run with `workit_plan_complete` (or the CLI `workit flow complete`) after the final task, once the SDD ledger is complete and repository verification passes — a run never finishes while the plan is still `active`.
-- The complete orchestration tool surface was renamed from `workflow_*` to `workit_*` across both host adapters (OpenCode native tools, Cursor MCP registrations), the shared core strings and mutation allowlist, shipped skills/templates/vendor content, and all tracked documentation. Host-only tools keep their host-only names: OpenCode `workit_commit`/`workit_handoff_session`, Cursor `workit_handoff_prompt`. Legacy brand strings (`workflow-toolkit`, `workflow_toolkit`, `workflow-toolkit-contract`) are unchanged for legacy-identity detection.
-- `sddReviewPackage` and the SDD progress-line validator now reject empty commit ranges (`base == head` or a diff that is empty) with a structured `empty_commit_range` error instead of writing empty review artifacts.
+- The complete orchestration tool surface was renamed from `workflow_*` to `workit_*` across both host adapters (OpenCode native tools, Cursor MCP registrations), the shared core strings and mutation allowlist, shipped skills/templates/vendor content, and all tracked documentation. Host-only tool names are unchanged by the rename. Legacy brand strings (`workflow-toolkit`, `workflow_toolkit`, `workflow-toolkit-contract`) are unchanged for legacy-identity detection.
 - User-facing surfaces were renamed from `workflow-toolkit`/`workflow_toolkit_*` to `workit`/`workit_*`: the bootstrap contract marker is now `<workit-contract>`, `workflow_toolkit_status`/`workflow_toolkit_init_status`/`workflow_toolkit_init_apply` became `workit_status`/`workit_init_status`/`workit_init_apply`, the share path is `~/.local/share/workit`, and the install-root marker is `.workit-root`; legacy-identity detection and migration from the old config directory are unchanged.
 - Installs made before the rename carry a stale `.workflow-toolkit-root` install-root marker that the runtime no longer reads (it falls back to environment/dev paths until then); the next sync rewrites the marker to `.workit-root`, so the transition resolves on re-sync.
 - `install-cursor-plugin.sh` gained a `--local-dist` mode that registers node-form MCP/hook launchers against the installed plugin's own built `dist/` (instead of the published npx pin), so a checkout install runs the current branch's code — rename included — without waiting for a release; the doctor accepts this local-dist hook alongside the canonical pin.
 - The Cursor runtime selector evolved in one step from an exact reviewed pin (`@brainervirus/workit-cursor@0.8.5`, the latest public at the time) to the `@latest` dist-tag with a mandatory `--prefer-online` flag (`npx -y --prefer-online --package=@brainervirus/workit-cursor@latest …`): `--prefer-online` forces fresh registry re-resolution so a stale `latest` in the `_npx` cache is never reused, the doctor enforces this exact launcher shape, the doctor's negative-rejection fixtures cover near-miss variants, and no per-release manual pin bump is required.
 - `install-cursor-plugin.sh` now self-heals stale plugin installs: a `doctor-check.ts cursor --stale` pre-check exits 2 on a `stale_install` failure and the installer then refreshes the plugin directory and rewrites the workit MCP/hook entries to the canonical `@latest` + `--prefer-online` selector, preserving unrelated MCP servers; a registry-unreachable comparison stays fail-open (warn, never stale, never install failure), and a healthy install is byte-untouched.
-- Native-question receipts are purpose-bound: each flow gate consumes the newest unconsumed fresh receipt for exactly its purpose (`spec-approval`, `plan-approval`, `execution-menu`, `plan-pause`, `plan-resume`, `plan-complete`), so unrelated questions never authorize a gate or mask the matching receipt.
-- The OpenCode/Cursor post-plan execution menus gained a display-only `Change model first` deferral that ends the turn without recording a menu choice and re-presents the menu next turn.
-- Delegated authority is direct-child-only: a worker's host `parentID` must equal the activating coordinator's recorded `coordinator_session_id`; mismatched or multi-owner lineage fails closed with `delegation_lineage_denied`, nested `opencode` launches are denied during active delegated work, and authorized children receive only compact worker-only context.
+- Delegated authority is direct-child-only: a worker's host `parentID` must equal the activating coordinator's session handle; mismatched or multi-owner lineage fails closed with `delegation_lineage_denied`, nested `opencode` launches are denied during active delegated work, and authorized children receive only compact worker-only context.
 
 ### Fixed
 
-- Branch setup mutation windows now emit `flow-guard:` diagnostics; flow-state snapshots use unique per-invocation temp roots with 24-hour garbage collection, so concurrent setups cannot collide and failed runs stop leaking roots.
+- Clean-checkout CI builds, packs, and typechecks again: the Cursor MCP entry
+  imports the shared transport's source subpath (matching the Codex launcher)
+  instead of its gitignored `dist`, the Cursor build skips the in-place
+  command-alias copy (Bun 1.4 `cpSync` rejects identical source and
+  destination), and the check jobs fetch full history and run the declared
+  Node 24 runtime so revision-range and doctor tests behave.
+- Worker lifecycle observations that change nothing (same state, same
+  session, no writer side-effect) no longer rewrite the worker entry or bump
+  task revisions. Hosts observe on every session event, so the old
+  rewrite-per-event storm invalidated the revision each call returned and
+  worker sessions could never chain two calls (e.g. a reviewer could never
+  record review evidence). Genuine transitions still mutate.
+- The deterministic Ink TTY harness now drains Ink's lone-ESC disambiguation
+  timer (~20ms) at every key boundary, so ESC-cancel races in wizard
+  back-navigation tests are gone; `burst()` remains for atomic ESC-prefixed
+  sequences.
+- OpenCode Workit bootstrap and method skills now require `task.start` then
+  `policy.assess` when `task.list` is empty, so ordinary product/debug work no
+  longer skips Workit because no policy rule was pre-selected.
+
 - Bind spec/plan approvals to exact-byte SHA-256 digests so edited documents invalidate stale approvals and require fresh reapproval; reject recursive handoffs; and restrict subagent-driven reminders and interception to active execution.
 - OpenCode development installation now pins the active checkout and removes stale Workit plugin identities.
 - The CLI initialization wizard no longer enters an unbounded render loop after an input change — unchanged controlled values now preserve state identity instead of constructing new drafts.
 - Routine structured `info` logs no longer leak into the CLI or OpenCode terminal UI — the CLI sinks only `warn`/`error` to stderr and OpenCode uses native app logging, while durable JSONL diagnostics are preserved.
-- CLI installation on Node 22.19 no longer reports an `ini@7` engine warning from workit's dependency tree.
+- CLI installation on Node 24.20 no longer reports an `ini@7` engine warning from workit's dependency tree.
 - A fresh local Cursor install now uses `~/.cursor/plugins/local/workit` with `enabled_plugins.workit = true`, and migrates exact legacy `workflow-toolkit` entries only after the replacement succeeds.
 - Feature branch creation and PR context now honor workspace/global target-branch policy instead of hardcoding `develop`.
 - Cursor install rewrites the plugin mcp.json to an absolute path so plugin MCP servers start in any project directory (package-relative shipped manifest unchanged).
@@ -78,8 +246,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A caller-supplied PR target equal to the resolved workspace default (`main` under github-flow, `develop` under gitflow) is accepted even though protected; genuine differing overrides to protected or disallowed branches are still rejected.
 - Menu receipt label matching now tolerates host qualifiers such as `(Recommended)` and `(new session only)`; original label bytes are preserved.
 - Windows CI flake: the RL-03 pr-create target test now gets the 60s per-test budget already used by sibling heavy-git tests (Windows git cold starts).
-- Handoff runs a preflight before creating the continuation session, so a logical failure creates no session; sessions are titled `Workit: <slug>` and selected automatically in the TUI, with native `Continue opencode -s <session-id>` as manual recovery only when selection fails.
-- Branch setup no longer strands the pre-checkout stash when base/checkout resolution fails — the working tree is restored exactly as it was. SDD flow state (`docs/*/sdd/flow.json`) is snapshotted before stash/checkout mutations and restored if lost; successful setups may include a `warnings` field when a flow-state snapshot could not be restored automatically.
+- Branch setup no longer strands the pre-checkout stash when base/checkout resolution fails — the working tree is restored exactly as it was.
 
 ## [0.6.0] - 2026-08-10
 

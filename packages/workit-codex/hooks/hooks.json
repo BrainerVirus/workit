@@ -1,0 +1,28 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "*",
+        "hooks": [{ "type": "command", "command": "node ${PLUGIN_ROOT}/dist/workit-hook.js" }]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [{ "type": "command", "command": "node ${PLUGIN_ROOT}/dist/workit-hook.js" }]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "matcher": "*",
+        "hooks": [{ "type": "command", "command": "node ${PLUGIN_ROOT}/dist/workit-hook.js" }]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "matcher": "*",
+        "hooks": [{ "type": "command", "command": "node ${PLUGIN_ROOT}/dist/workit-hook.js" }]
+      }
+    ]
+  }
+}
