@@ -6,6 +6,9 @@
 // there is exactly one source of truth for registration merging.
 import path from "node:path";
 
+/** Canonical published OpenCode plugin identity (OpenCode resolves from npm). */
+export const OPENCODE_NPM_PIN = "@brainervirus/workit-opencode";
+
 export interface MergeResult<T> {
   config: T;
   changed: string[];

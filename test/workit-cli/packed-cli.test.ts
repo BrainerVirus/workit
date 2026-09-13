@@ -1,5 +1,13 @@
 import { expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -142,10 +150,11 @@ test("packed CLI setup flow configures OpenCode + Cursor and doctor verifies it"
     const wsWritten = JSON.parse(readFileSync(path.join(configDir, "workspaces.json"), "utf8"));
     expect(wsWritten.workspaces).toEqual([wsEntry]);
 
-    // OpenCode: package-native file:// pin to the extracted adapter's dist entry
+    // OpenCode: published installs pin the npm package name (not a fragile
+    // file:// into node_modules / dlx cache).
     const opencodeCfg = path.join(home, ".config", "opencode", "opencode.json");
     const oc = JSON.parse(readFileSync(opencodeCfg, "utf8"));
-    expect(oc.plugin).toContain(`file://${path.join(nm, OPENCODE, "dist", "plugin.js")}`);
+    expect(oc.plugin).toContain("@brainervirus/workit-opencode");
 
     // Cursor: settings + mcp + the plugin package copied package-locally
     const pluginDir = path.join(home, ".cursor", "plugins", "local", "workit");
@@ -153,6 +162,7 @@ test("packed CLI setup flow configures OpenCode + Cursor and doctor verifies it"
     const settings = JSON.parse(readFileSync(cursorSettings, "utf8"));
     expect(settings.enabled_plugins?.["workit"]).toBe(true);
     expect(settings.plugin_dirs).toContain(pluginDir);
+    expect(lstatSync(pluginDir).isSymbolicLink()).toBe(false);
     for (const rel of ["package.json", "dist/mcp-server.js"]) {
       expect(existsSync(path.join(pluginDir, rel)), `${pluginDir}/${rel}`).toBe(true);
     }

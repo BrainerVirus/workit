@@ -94,4 +94,8 @@ jobs:
           # Required checks gate the merge; if auto-merge is unavailable the
           # PR stays open for manual merge — the release itself already
           # succeeded, so this is bookkeeping, not a release failure.
+          # --delete-branch is requested here, but deferred auto-merge often
+          # leaves the head ref when the repo has delete_branch_on_merge off.
+          # cleanup-manifest-sync-branch.yml deletes chore/manifest-sync-* heads
+          # once the PR actually merges.
           gh pr merge --auto --squash --delete-branch || echo "auto-merge unavailable — merge https://github.com/${GITHUB_REPOSITORY}/pull/$(gh pr view ${BRANCH} --json number -q .number) manually"

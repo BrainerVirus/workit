@@ -9,7 +9,16 @@
 // header for a login lookup — token bytes never enter the report, any fix
 // text, or any log event.
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  readlinkSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { SUPPORT_MATRIX } from "./support-matrix";
@@ -661,15 +670,28 @@ const checkUtility = (res: Resolved): DoctorCheck => {
   };
 };
 
-const staleEntry = (entry: string): "ok" | "stale" | "missing-file" => {
+/** file:// pins into package-manager ephemeral caches (pnpm dlx, npx). */
+const isFragileCachePin = (entry: string): boolean => {
+  const n = entry.replaceAll("\\", "/").toLowerCase();
+  if (!n.startsWith("file:")) return false;
+  return (
+    n.includes("/caches/pnpm/dlx/") ||
+    n.includes("/_npx/") ||
+    n.includes("/.pacquet/") ||
+    n.includes("/library/caches/pnpm/")
+  );
+};
+
+const staleEntry = (entry: string): "ok" | "stale" | "missing-file" | "fragile-cache" => {
   if (!entry) return "stale";
   if (entry.includes("git+file")) return "stale";
+  if (isFragileCachePin(entry)) return "fragile-cache";
   if (entry.startsWith("file:")) {
     const target = entry.replace(/^file:\/\//, "").replace(/^file:/, "");
     return existsSync(target) ? "ok" : "missing-file";
   }
-  // registry/ssh/git pins are not the canonical file pin, but are left to the
-  // duplicate/versions checks rather than being labelled stale.
+  // Registry package names (e.g. @brainervirus/workit-opencode) are the
+  // published pin shape — OpenCode resolves them; not labelled stale.
   return "ok";
 };
 
@@ -695,7 +717,7 @@ const checkStalePin = (res: Resolved): DoctorCheck => {
       id: "stale_pin",
       status: "fail",
       detail: "no workit plugin registered in the opencode config",
-      fix: "Run install-opencode-plugin.sh to pin the workit plugin entry",
+      fix: 'Run `workit init` and select OpenCode — pin "@brainervirus/workit-opencode"',
     };
   }
   const first = staleEntry(entries[0]);
@@ -704,7 +726,15 @@ const checkStalePin = (res: Resolved): DoctorCheck => {
       id: "stale_pin",
       status: "fail",
       detail: `stale workit pin: ${entries[0]}`,
-      fix: "Re-run install-opencode-plugin.sh — the pin points at a git+file or non-file source",
+      fix: "Run `workit init` (or install-opencode-plugin.sh for a checkout) — replace git+file pins",
+    };
+  }
+  if (first === "fragile-cache") {
+    return {
+      id: "stale_pin",
+      status: "fail",
+      detail: `workit pin points at a package-manager cache path: ${entries[0]}`,
+      fix: 'Run `workit init` and select OpenCode — pin should be "@brainervirus/workit-opencode"',
     };
   }
   if (first === "missing-file") {
@@ -712,7 +742,7 @@ const checkStalePin = (res: Resolved): DoctorCheck => {
       id: "stale_pin",
       status: "fail",
       detail: `workit pin points at a missing file: ${entries[0]}`,
-      fix: "Re-run install-opencode-plugin.sh after restoring the checkout the pin references",
+      fix: "Run `workit init` (or restore the checkout and re-run install-opencode-plugin.sh)",
     };
   }
   return { id: "stale_pin", status: "pass", detail: "opencode pin resolves" };
@@ -788,6 +818,30 @@ const checkStaleInstall = (res: Resolved): DoctorCheck & { registryProbed?: bool
       id: "stale_install",
       status: "pass",
       detail: "cursor plugin not inspected on the opencode host",
+    };
+  }
+  // Symlink installs into pnpm dlx / _npx caches break when the cache is cleared.
+  // MCP launchers may still be canonical; the plugin dir itself must be real.
+  if (existsSync(res.cursorPluginDir) && lstatSync(res.cursorPluginDir).isSymbolicLink()) {
+    let target = "";
+    try {
+      target = readlinkSync(res.cursorPluginDir);
+    } catch {
+      target = "(unreadable)";
+    }
+    const n = target.replaceAll("\\", "/").toLowerCase();
+    const fragile =
+      n.includes("/caches/pnpm/dlx/") ||
+      n.includes("/_npx/") ||
+      n.includes("/.pacquet/") ||
+      n.includes("/library/caches/pnpm/");
+    return {
+      id: "stale_install",
+      status: "fail",
+      detail: fragile
+        ? `stale_install: cursor plugin dir is a symlink into a package-manager cache (${target})`
+        : `stale_install: cursor plugin dir is a symlink (${target}) — expected a real directory copy`,
+      fix: "Run `workit init` and select Cursor — install must copy into ~/.cursor/plugins/local/workit",
     };
   }
   const canonicalMcp = cursorMcpServerEntry("").args.find((a) => a.startsWith("--package="));
@@ -1035,7 +1089,16 @@ const checkCredentialMetadata = (res: Resolved): DoctorCheck => {
   }
 
   const vcsJson = readJson(path.join(res.configDir, "vcs.json"));
-  for (const key of ["gitlab", "github"] as const) {
+  // Only the active VCS provider's token is required. vcs.json scaffolds both
+  // github and gitlab blocks for switching later — inactive tokenFile paths
+  // must not fail the doctor when provider is set to the other host.
+  const active =
+    typeof vcsJson?.provider === "string" ? vcsJson.provider.trim().toLowerCase() : null;
+  const vcsKeys =
+    active === "gitlab" || active === "github"
+      ? ([active] as const)
+      : (["gitlab", "github"] as const);
+  for (const key of vcsKeys) {
     const provider = vcsJson?.[key];
     if (provider && typeof provider === "object") {
       const tf = provider.tokenFile;

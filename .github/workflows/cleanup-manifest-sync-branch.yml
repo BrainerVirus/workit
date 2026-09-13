@@ -1,0 +1,40 @@
+# AR-15 follow-up: manifest sync PRs use `gh pr merge --auto --delete-branch`,
+# but deferred auto-merge (waiting on required checks) often leaves the head
+# branch on the remote when the repository does not enable
+# delete_branch_on_merge. Delete chore/manifest-sync-* heads after a successful
+# merge so release bookkeeping does not accumulate stale branches.
+name: Cleanup manifest-sync branch
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: write
+
+jobs:
+  delete-head:
+    if: >
+      github.event.pull_request.merged == true &&
+      startsWith(github.event.pull_request.head.ref, 'chore/manifest-sync-')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete merged chore/manifest-sync-* head branch
+        env:
+          # Same token family as the sync step — needs Contents: RW to delete refs.
+          GH_TOKEN: ${{ secrets.RELEASE_SYNC_TOKEN || secrets.GITHUB_TOKEN }}
+          BRANCH: ${{ github.event.pull_request.head.ref }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if gh api -X DELETE "repos/${REPO}/git/refs/heads/${BRANCH}"; then
+            echo "deleted origin/${BRANCH}"
+            exit 0
+          fi
+          # Already deleted (race with --delete-branch) is success.
+          if ! gh api "repos/${REPO}/git/ref/heads/${BRANCH}" >/dev/null 2>&1; then
+            echo "origin/${BRANCH} already absent"
+            exit 0
+          fi
+          echo "FATAL: could not delete origin/${BRANCH}" >&2
+          exit 1
