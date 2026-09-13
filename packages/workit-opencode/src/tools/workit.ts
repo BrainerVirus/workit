@@ -249,7 +249,7 @@ export class NativeReceiptStore {
           error:
             "permission_denied: native question receipt does not match the requested content " +
             "(binding questions must be asked receipt-shaped: header `Workit decision: <purpose>` " +
-            "with exactly approved/rejected options)",
+            "with the same label in the question text and exactly approved/rejected options)",
         };
       queue.splice(i, 1);
       if (!queue.length) this.#receipts.delete(sessionID);
@@ -264,7 +264,8 @@ export class NativeReceiptStore {
       error:
         "permission_denied: no native question receipt for this purpose " +
         "(ordinary multi-option questions mint no receipt; ask binding questions receipt-shaped: " +
-        "header `Workit decision: <purpose>` with exactly approved/rejected options)",
+        "header `Workit decision: <purpose>`, the same label in the question text, with exactly " +
+        "approved/rejected options)",
     };
   }
 

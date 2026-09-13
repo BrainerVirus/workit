@@ -101,7 +101,10 @@ check and review kinds auto-bind the current tree and need no digests. Record
 verification evidence last: later evidence or commits can reopen fixed findings
 for re-verification, so verify, resolve, then close with nothing in between.
 decision.record {binding with taskId/workspaceId from inspect plus presented and
-approvedContent} only through a native approval question, task.close {outcome,
+approvedContent} only through a native approval question asked receipt-shaped:
+header Workit decision: <purpose>, the same label repeated in the question
+text (some host UIs do not render headers), exactly two options approved and
+rejected; ask once, never re-ask to mint a receipt. task.close {outcome,
 summary, decisionIds}. A completed native subagent run stops its bound worker
 by itself; if a worker strands in cancelling with its run verifiably over,
 repeat worker.cancel {reason} to confirm the stop. Check and review evidence

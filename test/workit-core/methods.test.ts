@@ -161,6 +161,9 @@ test("bootstrap contains invariant authority, state, and tool guidance only", ()
   expect(bootstrap.toLowerCase()).toContain("authority");
   expect(bootstrap.toLowerCase()).toContain("state");
   expect(bootstrap.toLowerCase()).toContain("operation");
+  expect(bootstrap).toContain("Workit decision:");
+  expect(bootstrap).toContain("same label repeated");
+  expect(bootstrap).toContain("do not render headers");
   expect(bootstrap).not.toContain("workit-behavioral-tdd");
   expect(bootstrap).not.toContain("workit-review");
   expect(bootstrap).not.toContain("workit-plan");

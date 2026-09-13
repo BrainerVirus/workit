@@ -210,6 +210,10 @@ acquire --actor <id>` binds a writer to a Codex session the hook matches,
 
 ### Fixed
 
+- Binding approval questions repeat the `Workit decision: <purpose>` label in
+  the question text, so host UIs that do not render headers still show what is
+  being approved. The rule ships in the invariant bootstrap (all hosts), the
+  challenge skill, and adapter messages, not only in repository docs.
 - GitHub release notes now render breaking changes and features: the release
   pipeline loads the `conventionalcommits` preset (the angular default silently
   dropped `!` headers), and the v1.0.0 release body was backfilled.
