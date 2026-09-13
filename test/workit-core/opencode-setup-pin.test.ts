@@ -41,12 +41,15 @@ test("published node_modules adapter roots resolve to the npm OpenCode pin", () 
   }
 });
 
+const isCheckoutOpenCodePin = (pin: string | undefined): boolean =>
+  Boolean(pin?.startsWith("file://") && /[/\\]packages[/\\]workit-opencode[/\\]/.test(pin));
+
 test("monorepo adapter roots keep a file:// OpenCode pin", () => {
   const pin = resolveOpenCodePin(path.join(repoRoot, "packages", "workit-opencode"), {
     dev: repoRoot,
   });
   expect(pin).toMatch(/^file:\/\//);
-  expect(pin).toContain("/packages/workit-opencode/");
+  expect(isCheckoutOpenCodePin(pin ?? undefined)).toBe(true);
 });
 
 test("dev checkout Apply writes a file:// OpenCode pin", () => {
@@ -68,7 +71,7 @@ test("dev checkout Apply writes a file:// OpenCode pin", () => {
       readFileSync(path.join(home, ".config", "opencode", "opencode.json"), "utf8"),
     ) as { plugin: string[] };
     expect(cfg.plugin[0]).toMatch(/^file:\/\//);
-    expect(cfg.plugin[0]).toContain("/packages/workit-opencode/");
+    expect(isCheckoutOpenCodePin(cfg.plugin[0])).toBe(true);
   } finally {
     clean(home);
     clean(dir);
