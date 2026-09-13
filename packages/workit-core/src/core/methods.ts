@@ -98,6 +98,9 @@ revisions, policy.assess {assessment: {facts, signals, consequences,
 verification}} where facts are inferred or observed with file refs,
 writer.acquire {taskId} before product writes, evidence.record {evidence} where
 check and review kinds auto-bind the current tree and need no digests. Record
+self-review requirements with kind review and reviewContext matching your own
+host session; the lead may also record checks. Fresh-context review requires a
+session distinct from the task creator and every other evidence recorder. Record
 verification evidence last: later evidence or commits can reopen fixed findings
 for re-verification, so verify, resolve, then close with nothing in between.
 decision.record {binding with taskId/workspaceId from inspect plus presented and

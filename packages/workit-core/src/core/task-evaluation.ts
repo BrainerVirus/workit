@@ -459,8 +459,7 @@ export function evaluateRequirements(
         return false;
       if (requirement.dimension !== "review") return true;
       const reviewSession = sessionFromRef(entry.data.reviewContext);
-      const implementationSession = sessionFromRef(task.intent.provenance.session);
-      const sameImplementation = sameSession(reviewSession, implementationSession);
+      const sameImplementation = sameSession(reviewSession, task.intent.provenance.session);
       const sameEvidenceSession = task.evidence.some(
         (other) => other.id !== entry.id && sameSession(reviewSession, other.provenance.session),
       );
@@ -468,8 +467,7 @@ export function evaluateRequirements(
         entry.data.kind === "review" &&
         reviewSession !== null &&
         sameSession(reviewSession, entry.provenance.session) &&
-        !sameImplementation &&
-        !sameEvidenceSession
+        (requirement.ruleId === "self-review" || (!sameImplementation && !sameEvidenceSession))
       );
     });
     if (passed.length) {

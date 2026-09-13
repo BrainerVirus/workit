@@ -36,7 +36,7 @@ import {
 import { LOCALE_LANGUAGE_MAP, SearchSelect } from "./search-select";
 
 // Platform selection stays limited to hosts the setup Apply path registers today.
-// Codex/Pi cutover uses the dedicated preview/apply flow exported from logic.ts.
+// Codex/Pi use their host-native setup paths outside this wizard.
 const PLATFORM_LABELS: { label: string; value: string }[] = [
   { label: "OpenCode", value: "opencode" },
   { label: "Cursor", value: "cursor" },
@@ -53,13 +53,18 @@ export function platformOptions(
   });
 }
 
-const EXTERNAL_HOST_LABELS: Record<string, string> = { codex: "Codex", pi: "Pi" };
-
-/** Detected hosts the wizard does not register (set up via `workit cutover`). */
-export function externalDetectedHosts(detection: Record<HostId, HostDetection>): string[] {
-  return (Object.keys(EXTERNAL_HOST_LABELS) as HostId[])
-    .filter((host) => detection[host].detected)
-    .map((host) => EXTERNAL_HOST_LABELS[host]);
+export function externalHostGuidance(detection: Record<HostId, HostDetection>): string[] {
+  return (["codex", "pi"] as const).map((host) => {
+    const found = detection[host];
+    const status = found.configured
+      ? "already configured"
+      : found.detected
+        ? "detected"
+        : "not detected";
+    return host === "codex"
+      ? `Codex · ${status} — plugin/hooks setup: https://github.com/BrainerVirus/workit#readme (Codex CLI / desktop)`
+      : `Pi · ${status} — install separately: pi install @brainervirus/workit-pi`;
+  });
 }
 
 const BRANCH_PRESETS: { label: string; value: BranchPreset }[] = [
@@ -501,12 +506,12 @@ function Screen({
   detection = emptyDetection(),
   onSearchQueryChange,
 }: ScreenProps): JSX.Element {
-  const externalDetected = externalDetectedHosts(detection);
   switch (draft.screen) {
     case "platforms":
       return (
         <Box flexDirection="column" gap={1}>
           <Text bold>Step 1 — Platforms</Text>
+          <Text>This wizard configures OpenCode and Cursor only.</Text>
           <Text dimColor>Select the tools to configure (space to toggle):</Text>
           <MultiSelect
             options={platformOptions(detection)}
@@ -517,11 +522,10 @@ function Screen({
               dispatch({ type: "next" });
             }}
           />
-          {externalDetected.length > 0 && (
-            <Text dimColor>
-              Detected: {externalDetected.join(", ")} — set up via `workit cutover`.
-            </Text>
-          )}
+          {externalHostGuidance(detection).map((guidance) => (
+            <Text key={guidance}>{guidance}</Text>
+          ))}
+          <Text dimColor>For legacy installations, use `workit cutover` to preview migration.</Text>
           {draft.errors.platforms && <Text color="red">{draft.errors.platforms}</Text>}
           <Text dimColor>Enter to continue · Esc Cancel</Text>
         </Box>

@@ -38,7 +38,7 @@ import { LOCALE_LANGUAGE_MAP, filterOptions } from "@/packages/workit-cli/src/se
 import {
   BRANCH_PRESET_DESCRIPTIONS,
   SCREEN_PLACEHOLDERS,
-  externalDetectedHosts,
+  externalHostGuidance,
   platformOptions,
   timezonePickerOptions,
 } from "@/packages/workit-cli/src/steps";
@@ -1223,8 +1223,12 @@ test("platform options tag detection state; externals list wizard-external hosts
     { label: "OpenCode", value: "opencode" },
     { label: "Cursor", value: "cursor" },
   ]);
-  expect(externalDetectedHosts(detection)).toEqual(["Codex"]);
-  expect(externalDetectedHosts(emptyDetection())).toEqual([]);
+  expect(externalHostGuidance(detection)[0]).toContain("Codex · detected — plugin/hooks setup:");
+  expect(externalHostGuidance(detection)[1]).toContain(
+    "Pi · not detected — install separately: pi install @brainervirus/workit-pi",
+  );
+  expect(externalHostGuidance(emptyDetection())).toHaveLength(2);
+  expect(externalHostGuidance(emptyDetection())[0]).toContain("Codex · not detected");
 });
 
 test("createInitialDraft seeds platforms from detection; empty by default", () => {
@@ -1241,6 +1245,12 @@ test("external hosts list codex and pi; preselect keeps wizard hosts only", () =
     codex: { detected: true, configured: false },
     pi: { detected: true, configured: false },
   };
-  expect(externalDetectedHosts(detection)).toEqual(["Codex", "Pi"]);
+  expect(externalHostGuidance(detection)[0]).toContain("Codex · detected");
+  expect(externalHostGuidance(detection)[1]).toContain("Pi · detected");
+  detection.codex.configured = true;
+  detection.pi.configured = true;
+  expect(externalHostGuidance(detection).every((line) => line.includes("already configured"))).toBe(
+    true,
+  );
   expect(preselectedPlatforms(detection)).toEqual(["cursor"]);
 });
