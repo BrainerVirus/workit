@@ -21,6 +21,7 @@ import {
   type DoctorCheck,
   type DoctorReport,
 } from "@/packages/workit-core/src/core/doctor";
+import { OPENCODE_NPM_PIN } from "@/packages/workit-core/src/core/registration";
 import type { SessionObservation } from "@/packages/workit-core/src/core/cutover";
 import { SUPPORT_MATRIX } from "@/packages/workit-core/src/core/support-matrix";
 import { readVcsConfig } from "@/packages/workit-core/src/core/vcs-config";
@@ -380,6 +381,166 @@ test("registry-unreachable staleness comparison yields registry_unreachable, not
   } finally {
     rmSync(pluginPkg, { force: true });
     writeConfig(hooksFile, originalHooks);
+  }
+});
+
+test("opencode @latest cache behind published runtime is stale_install fail", () => {
+  const cacheRoot = path.join(
+    fixture.home,
+    ".cache",
+    "opencode",
+    "packages",
+    "@brainervirus",
+    "workit-opencode@latest",
+  );
+  const pkgDir = path.join(cacheRoot, "node_modules", "@brainervirus", "workit-opencode");
+  mkdirSync(pkgDir, { recursive: true });
+  writeConfig(
+    path.join(pkgDir, "package.json"),
+    JSON.stringify({ name: OPENCODE_NPM_PIN, version: "0.11.0" }),
+  );
+  writeConfig(fixture.opencodeConfig, JSON.stringify({ plugin: [OPENCODE_NPM_PIN] }));
+  try {
+    const report = runDoctor({
+      host: "opencode",
+      home: fixture.home,
+      configDir: fixture.configDir,
+      stateDir: fixture.stateDir,
+      cwd: fixture.cwd,
+      opencodePackageCacheDir: cacheRoot,
+      env: { ...process.env, WORKIT_DOCTOR_STALE_REGISTRY_VERSION: "1.0.4" },
+    });
+    expect(report.offline).toBe(false);
+    const stale = check(report, "stale_install");
+    expect(stale.status).toBe("fail");
+    expect(stale.detail).toContain("0.11.0");
+    expect(stale.detail).toContain("1.0.4");
+    expect(stale.fix).toContain(cacheRoot);
+  } finally {
+    rmSync(cacheRoot, { recursive: true, force: true });
+    writeConfig(
+      fixture.opencodeConfig,
+      JSON.stringify({ plugin: [`file://${fixture.dev}/packages/workit-opencode/src/plugin.ts`] }),
+    );
+  }
+});
+
+test("opencode @latest cache matching published runtime passes", () => {
+  const cacheRoot = path.join(fixture.root, "oc-cache-ok");
+  const pkgDir = path.join(cacheRoot, "node_modules", "@brainervirus", "workit-opencode");
+  mkdirSync(pkgDir, { recursive: true });
+  writeConfig(
+    path.join(pkgDir, "package.json"),
+    JSON.stringify({ name: OPENCODE_NPM_PIN, version: "1.0.4" }),
+  );
+  writeConfig(fixture.opencodeConfig, JSON.stringify({ plugin: [`${OPENCODE_NPM_PIN}@latest`] }));
+  try {
+    const report = runDoctor({
+      host: "opencode",
+      home: fixture.home,
+      configDir: fixture.configDir,
+      stateDir: fixture.stateDir,
+      cwd: fixture.cwd,
+      opencodePackageCacheDir: cacheRoot,
+      env: { ...process.env, WORKIT_DOCTOR_STALE_REGISTRY_VERSION: "1.0.4" },
+    });
+    const stale = check(report, "stale_install");
+    expect(stale.status).toBe("pass");
+    expect(stale.detail).toContain("1.0.4");
+  } finally {
+    rmSync(cacheRoot, { recursive: true, force: true });
+    writeConfig(
+      fixture.opencodeConfig,
+      JSON.stringify({ plugin: [`file://${fixture.dev}/packages/workit-opencode/src/plugin.ts`] }),
+    );
+  }
+});
+
+test("opencode exact version pin skips registry comparison", () => {
+  writeConfig(fixture.opencodeConfig, JSON.stringify({ plugin: [`${OPENCODE_NPM_PIN}@1.0.4`] }));
+  try {
+    const report = runDoctor({
+      host: "opencode",
+      home: fixture.home,
+      configDir: fixture.configDir,
+      stateDir: fixture.stateDir,
+      cwd: fixture.cwd,
+      env: { ...process.env, WORKIT_DOCTOR_STALE_REGISTRY_VERSION: "9.9.9" },
+    });
+    expect(report.offline).toBe(true);
+    const stale = check(report, "stale_install");
+    expect(stale.status).toBe("pass");
+    expect(stale.detail).toContain("exact version");
+  } finally {
+    writeConfig(
+      fixture.opencodeConfig,
+      JSON.stringify({ plugin: [`file://${fixture.dev}/packages/workit-opencode/src/plugin.ts`] }),
+    );
+  }
+});
+
+test("opencode cache registry-unreachable yields warning, not stale_install", () => {
+  const cacheRoot = path.join(fixture.root, "oc-cache-unreachable");
+  const pkgDir = path.join(cacheRoot, "node_modules", "@brainervirus", "workit-opencode");
+  mkdirSync(pkgDir, { recursive: true });
+  writeConfig(
+    path.join(pkgDir, "package.json"),
+    JSON.stringify({ name: OPENCODE_NPM_PIN, version: "0.11.0" }),
+  );
+  writeConfig(fixture.opencodeConfig, JSON.stringify({ plugin: [OPENCODE_NPM_PIN] }));
+  try {
+    const report = runDoctor({
+      host: "opencode",
+      home: fixture.home,
+      configDir: fixture.configDir,
+      stateDir: fixture.stateDir,
+      cwd: fixture.cwd,
+      opencodePackageCacheDir: cacheRoot,
+      env: {
+        ...process.env,
+        WORKIT_DOCTOR_STALE_REGISTRY_CMD: path.join(fixture.root, "no-registry-bin", "npm-fail"),
+      },
+    });
+    expect(check(report, "registry_unreachable").status).toBe("warn");
+    expect(report.checks.some((c) => c.id === "stale_install" && c.status === "fail")).toBe(false);
+  } finally {
+    rmSync(cacheRoot, { recursive: true, force: true });
+    writeConfig(
+      fixture.opencodeConfig,
+      JSON.stringify({ plugin: [`file://${fixture.dev}/packages/workit-opencode/src/plugin.ts`] }),
+    );
+  }
+});
+
+test("cli host reports OpenCode @latest cache lag after cursor checks pass", () => {
+  const cacheRoot = path.join(fixture.root, "oc-cache-cli");
+  const pkgDir = path.join(cacheRoot, "node_modules", "@brainervirus", "workit-opencode");
+  mkdirSync(pkgDir, { recursive: true });
+  writeConfig(
+    path.join(pkgDir, "package.json"),
+    JSON.stringify({ name: OPENCODE_NPM_PIN, version: "0.11.0" }),
+  );
+  writeConfig(fixture.opencodeConfig, JSON.stringify({ plugin: [OPENCODE_NPM_PIN] }));
+  try {
+    const report = runDoctor({
+      host: "cli",
+      home: fixture.home,
+      configDir: fixture.configDir,
+      stateDir: fixture.stateDir,
+      dev: fixture.dev,
+      cwd: fixture.cwd,
+      opencodePackageCacheDir: cacheRoot,
+      env: { ...process.env, WORKIT_DOCTOR_STALE_REGISTRY_VERSION: "1.0.4" },
+    });
+    const stale = check(report, "stale_install");
+    expect(stale.status).toBe("fail");
+    expect(stale.detail).toContain("OpenCode @latest cache");
+  } finally {
+    rmSync(cacheRoot, { recursive: true, force: true });
+    writeConfig(
+      fixture.opencodeConfig,
+      JSON.stringify({ plugin: [`file://${fixture.dev}/packages/workit-opencode/src/plugin.ts`] }),
+    );
   }
 });
 

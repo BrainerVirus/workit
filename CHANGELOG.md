@@ -224,6 +224,12 @@ acquire --actor <id>` binds a writer to a Codex session the hook matches,
 
 ### Fixed
 
+- Doctor `stale_install` now detects when OpenCode's frozen npm `@latest`
+  package cache (`~/.cache/opencode/packages/@brainervirus/workit-opencode@latest`)
+  lags the published `@brainervirus/workit-opencode`. Bare / `@latest` pins
+  are compared (exact `@version` and `file://` checkout pins are not); registry
+  unreachable stays fail-open as `registry_unreachable`. Fix text names the
+  cache directory to delete so the next OpenCode launch re-resolves.
 - Published `workit init` OpenCode registration pins `@brainervirus/workit-opencode`
   instead of a fragile `file://` path into the pnpm dlx/`_npx` cache. Checkout
   installs still use `file://`. Doctor fails cache-path pins and only requires
