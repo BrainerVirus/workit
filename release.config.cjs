@@ -9,7 +9,9 @@ module.exports = {
     ["@semantic-release/exec", {
       analyzeCommitsCmd: "bun packages/workit-core/scripts/analyze-release-scope.ts",
     }],
-    "@semantic-release/release-notes-generator",
+    // Conventional Commits preset: the angular default silently drops `!`
+    // breaking headers (the v1.0.0 release body shipped header-only).
+    ["@semantic-release/release-notes-generator", { preset: "conventionalcommits" }],
     // AR-02: verify-time rewrite runs FIRST — before any npm plugin's
     // verification — so package verification never sees a workspace:* manifest.
     ["@semantic-release/exec", {
