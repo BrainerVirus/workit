@@ -21,6 +21,7 @@ import {
 } from "../../packages/workit-cli/src/wizard-state";
 import type { BranchPreset, ToolkitConfig } from "../../packages/workit-core/src/core/config";
 import { emptyDetection } from "../../packages/workit-core/src/core/detect-hosts";
+import { SearchSelect, LOCALE_LANGUAGE_MAP } from "../../packages/workit-cli/src/search-select";
 
 const ENTER = "\r";
 // Ink defers a lone \x1b for 20ms to disambiguate escape sequences (a wall-clock
@@ -761,13 +762,53 @@ test("backspace-to-empty custom locale surfaces the block on the select screen",
 // filtered set, and Other… routing into the existing validated custom flow.
 // ---------------------------------------------------------------------------
 
+test("locale selection preserves English and scrolls beyond the first five options", async () => {
+  const selected: string[] = [];
+  const tty = await renderInk(
+    <SearchSelect
+      options={LOCALE_LANGUAGE_MAP.map(({ label, locale }) => ({ label, value: locale }))}
+      value="en"
+      onSelect={(value) => selected.push(value)}
+    />,
+  );
+  try {
+    expect(tty.lastFrame()).toContain("❯ English");
+    await tty.key(ENTER);
+    expect(selected).toEqual(["en"]);
+    await tty.keys(DOWN, ENTER);
+    expect(selected).toEqual(["en", "en-US"]);
+  } finally {
+    tty.unmount();
+  }
+});
+
+test("project setup can be skipped after previously selecting it", async () => {
+  await withNonGitRoot(async () => {
+    const cleanup = withSeedConfig(seedConfig);
+    const tty = await renderInk(<Wizard onExit={noop} />);
+    try {
+      await tty.keys(SPACE, ENTER, ENTER, ENTER, DOWN, ENTER, ENTER, ENTER, ENTER, ENTER);
+      expect(tty.lastFrame()).toContain("Step 6 — Project setup");
+      await tty.key("y");
+      expect(tty.lastFrame()).toContain("Project hygiene: yes");
+      await tty.keys("b", "n");
+      expect(tty.lastFrame()).toContain("Project hygiene: no");
+      expect(tty.lastFrame()).not.toContain("CHANGELOG.md");
+      expect(tty.lastFrame()).not.toContain(".gitignore");
+    } finally {
+      tty.unmount();
+      cleanup();
+    }
+  });
+});
+
 test("typing narrows the locale picker's visible rows", async () => {
   const cleanup = withSeedConfig(seedConfig);
   try {
     const tty = await renderInk(<Wizard onExit={noop} />);
     await tty.keys(SPACE, ENTER); // -> locale
     const full = tty.lastFrame();
-    expect(full).toContain("Español (España)");
+    expect(full).toContain("❯ English");
     expect(full).toContain("Español (Argentina)");
     await tty.keys("chile");
     const narrowed = tty.lastFrame();
@@ -972,6 +1013,7 @@ test("'Other…' keeps the validated custom-timezone flow (CA-04)", async () => 
 });
 
 test("the develop-branch editor carries its example placeholder (CA-09 wiring)", async () => {
+  const cleanup = withSeedConfig(seedConfig);
   // The branchPolicy screen only mounts over a git repo; pin the resolution
   // root to this repo (and skip the basePath prompt) for the walk.
   const prev = process.env.WORKFLOW_WORKSPACE_ROOT;
@@ -990,6 +1032,7 @@ test("the develop-branch editor carries its example placeholder (CA-09 wiring)",
   } finally {
     if (prev === undefined) delete process.env.WORKFLOW_WORKSPACE_ROOT;
     else process.env.WORKFLOW_WORKSPACE_ROOT = prev;
+    cleanup();
   }
 });
 

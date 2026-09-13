@@ -224,6 +224,9 @@ acquire --actor <id>` binds a writer to a Codex session the hook matches,
 
 ### Fixed
 
+- Init project setup now defaults to No and `n` advances without adding files.
+  Locale and timezone selectors scroll beyond five rows, preserving the current
+  value instead of silently clamping English to `es-AR`.
 - Binding approval questions repeat the `Workit decision: <purpose>` label in
   the question text, so host UIs that do not render headers still show what is
   being approved. The rule ships in the invariant bootstrap (all hosts), the

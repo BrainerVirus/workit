@@ -895,7 +895,7 @@ test("Step 6 prints the resolved basePath as the exact hygiene target", async ()
     await gotoWorkspaces(tty);
     await tty.keys(ENTER); // Done -> project
     const proj = tty.lastFrame();
-    expect(proj).toContain(`Will apply gitignore + hygiene in ${root}`);
+    expect(proj).toContain(`Apply gitignore + hygiene in ${root}?`);
     expect(proj).not.toContain(project);
     await tty.keys("y"); // -> summary
     // CA-07: the planned gitignore mutation resolves against the displayed dir

@@ -865,19 +865,22 @@ function Screen({
         <Box flexDirection="column" gap={1}>
           <Text bold>Step 6 — Project setup</Text>
           <Text dimColor>
-            Will apply gitignore + hygiene in {resolveBasePath(draft.values)} (existing files are
-            never overwritten):
+            Apply gitignore + hygiene in {resolveBasePath(draft.values)}? (Existing files are never
+            overwritten.)
           </Text>
           <ConfirmInput
-            defaultChoice="confirm"
+            defaultChoice="cancel"
             submitOnEnter={false}
             onConfirm={() => {
               dispatch({ type: "set", field: "applyProject", value: true });
               dispatch({ type: "next" });
             }}
-            onCancel={() => {}}
+            onCancel={() => {
+              dispatch({ type: "set", field: "applyProject", value: false });
+              dispatch({ type: "next" });
+            }}
           />
-          <Text dimColor>y to continue · n to stay · b Back · Esc Cancel</Text>
+          <Text dimColor>y to add project files · n to skip · b Back · Esc Cancel</Text>
         </Box>
       );
     case "summary": {

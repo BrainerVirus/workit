@@ -18,7 +18,7 @@ host documents.
 ## Install
 
 Requires **Node.js 24 or newer**. The wizard detects your hosts, configures the
-ones you pick, and writes your global config and project files:
+ones you pick, and writes your global config and optional project files:
 
 ```bash
 npx @brainervirus/workit-cli init
@@ -26,7 +26,14 @@ npx @brainervirus/workit-cli init
 
 `workit init` is an interactive TTY wizard (locale, timezone, branch policy,
 YouTrack, VCS, workspaces, project hygiene). `workit doctor` verifies any
-install. Manual setup per tool:
+install. Project setup defaults to No: press `n` to skip adding files when
+configuring from a parent folder containing multiple repositories. Press `y`
+only to add hygiene files and gitignore entries to the displayed directory.
+Re-running init preserves existing credentials and files; it does not remove
+templates created by an earlier install. Locale and timezone selectors keep
+the current selection until you choose another value.
+
+Manual setup per tool:
 
 <details>
 <summary><strong>OpenCode</strong> — native plugin</summary>

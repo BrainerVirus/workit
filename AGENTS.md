@@ -86,6 +86,9 @@ process around it.
 
 ## Workflow contract
 
+- CLI init project hygiene is optional: `n` advances without project writes,
+  including after revisiting an accepted project step. Search selectors retain
+  the current value and scroll their five-row viewport across all matches.
 - Task state lives under `.workit/` in the checkout; never edit it directly. Use the eight shared operation families (`workit_task`, `workit_policy`, `workit_evidence`, `workit_finding`, `workit_decision`, `workit_worker`, `workit_writer`, `workit_state`) with closed `action` enums. CLI surface is `workit <family> <action>` (hyphenated actions). There are no `workit flow` aliases.
 - Start work with `task.start` then `policy.assess`. Policy is adaptive: reassess when evidence or constraints change; `policy.preview` is read-only. Behavior and mechanical-low-risk assessments add a `pre-pr-cleanup` requirement that gates `hosting.pull_request` (and close) on a fresh passing deslop check or an approved limitation waiver. Optional spec/plan docs may live under `docs/<slug>/`, but they are not required gates for every task.
 - Task lifecycle is `unassessed` → `active`/`paused` → closed outcomes (`verified`, `accepted_limitations`, `stopped`). **Mandatory:** close the lead task with `task.close` once requirements are satisfied and repository verification passes — never finish while the task is still `active` or `paused`.
