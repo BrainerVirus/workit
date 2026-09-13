@@ -881,9 +881,7 @@ export function copyPluginDir(src: string, dest: string): SetupResultStatus {
   const marker = path.join(dest, ".workit-root");
   const destIsLink = existsSync(dest) && lstatSync(dest).isSymbolicLink();
   const synced =
-    !destIsLink &&
-    readFileSafe(marker)?.trim() === realSrc &&
-    samePluginContent(realSrc, dest);
+    !destIsLink && readFileSafe(marker)?.trim() === realSrc && samePluginContent(realSrc, dest);
   if (synced) return "Skipped";
   const hadDir = existsSync(dest);
   const rules = preservedCursorRules(realSrc, dest);

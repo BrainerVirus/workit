@@ -30,12 +30,7 @@ const values = (): SetupPreviewInput => ({
 });
 
 test("published node_modules adapter roots resolve to the npm OpenCode pin", () => {
-  const root = path.join(
-    tempDir("wk-oc-nm-"),
-    "node_modules",
-    "@brainervirus",
-    "workit-opencode",
-  );
+  const root = path.join(tempDir("wk-oc-nm-"), "node_modules", "@brainervirus", "workit-opencode");
   mkdirSync(path.join(root, "dist"), { recursive: true });
   writeFileSync(path.join(root, "dist", "plugin.js"), "export default {};\n");
   try {
