@@ -158,8 +158,10 @@ The packed CLI is a self-contained Node bundle; Node.js 24+ is required.
 <summary><strong>Upgrading a legacy install</strong></summary>
 
 `workit doctor` reports `stale_install` when a legacy selector or a
-local-dist install is behind the current runtime, with the exact repair step;
-canonical `@latest` installs never fail on version metadata.
+local-dist install is behind the current runtime, or when OpenCode's
+frozen `@latest` package cache lags published `workit-opencode`, with the
+exact repair step; Cursor canonical `@latest` installs never fail on
+version metadata.
 
 ```bash
 workit cutover preview [--hosts <hosts>] [--json]

@@ -27,6 +27,7 @@ import { getDiagnosticLogger, isConfigObject } from "./config";
 import { packageRoot } from "./package-root";
 import {
   CURSOR_RUNTIME_PACKAGE,
+  OPENCODE_NPM_PIN,
   cursorHookDrift,
   cursorHooksEntry,
   cursorMcpServerEntry,
@@ -111,6 +112,8 @@ export type DoctorOptions = {
   dev?: string;
   cwd?: string;
   opencodeConfig?: string;
+  /** OpenCode npm `@latest` package cache root (test seam). */
+  opencodePackageCacheDir?: string;
   cursorSettings?: string;
   cursorMcp?: string;
   cursorPluginDir?: string;
@@ -129,6 +132,7 @@ type Resolved = {
   cwd: string;
   dev: string | null;
   opencodeConfig: string;
+  opencodePackageCacheDir: string;
   cursorSettings: string;
   cursorMcp: string;
   cursorPluginDir: string;
@@ -179,6 +183,9 @@ const resolve = (options: DoctorOptions): Resolved => {
     dev,
     opencodeConfig:
       options.opencodeConfig ?? path.join(home, ".config", "opencode", "opencode.json"),
+    opencodePackageCacheDir:
+      options.opencodePackageCacheDir ??
+      path.join(home, ".cache", "opencode", "packages", "@brainervirus", "workit-opencode@latest"),
     cursorSettings: options.cursorSettings ?? path.join(home, ".cursor", "settings.json"),
     cursorMcp: options.cursorMcp ?? path.join(home, ".cursor", "mcp.json"),
     cursorPluginDir:
@@ -771,6 +778,13 @@ const checkStalePin = (res: Resolved): DoctorCheck => {
 //     `@latest` installs skip the probe entirely: the selector resolves fresh
 //     at launch, so the installed package.json version is metadata, not a
 //     freshness signal.
+// OpenCode npm pins (`@brainervirus/workit-opencode` / `@…@latest`) are different:
+// OpenCode freezes the first resolved version under
+// `~/.cache/opencode/packages/@brainervirus/workit-opencode@latest` and does not
+// re-resolve on later launches. Doctor compares that cache to the published
+// package (same CA-04 fail-open seam) and tells the user to delete the cache
+// directory so OpenCode can resolve `@latest` again. Exact `@version` pins and
+// `file://` checkout pins skip the comparison.
 // Test seams (no spawns on the canonical path): WORKIT_DOCTOR_STALE_REGISTRY_VERSION
 // short-circuits the probe with the resolved latest version; the optional
 // WORKIT_DOCTOR_STALE_REGISTRY_CMD replaces the `npm view` binary (a
@@ -786,7 +800,15 @@ const pluginMcpSelectors = (res: Resolved): string[] | null => {
   return args.map(String).filter((a) => a.startsWith("--package="));
 };
 
-const registryLatestVersion = (res: Resolved): string | null => {
+const isFloatingOpenCodeNpmPin = (entry: string): boolean => {
+  const s = entry.trim();
+  return s === OPENCODE_NPM_PIN || s === `${OPENCODE_NPM_PIN}@latest`;
+};
+
+const registryLatestVersion = (
+  res: Resolved,
+  pkgName: string = CURSOR_RUNTIME_PACKAGE,
+): string | null => {
   const seam = res.env.WORKIT_DOCTOR_STALE_REGISTRY_VERSION;
   if (typeof seam === "string" && seam) {
     return /^\d+(?:\.\d+){1,2}$/.test(seam) ? seam : null;
@@ -795,7 +817,7 @@ const registryLatestVersion = (res: Resolved): string | null => {
     res.env.WORKIT_DOCTOR_STALE_REGISTRY_CMD ?? (commandOnPath("npm", res.env) ? "npm" : null);
   if (!cmd) return null;
   try {
-    const r = spawnSync(cmd, ["view", CURSOR_RUNTIME_PACKAGE, "version"], {
+    const r = spawnSync(cmd, ["view", pkgName, "version"], {
       encoding: "utf8",
       timeout: 20_000,
       env: res.env,
@@ -812,12 +834,96 @@ const installedPluginVersion = (res: Resolved): string | null => {
   return typeof pkg?.version === "string" && pkg.version ? pkg.version : null;
 };
 
+const installedOpenCodeCacheVersion = (res: Resolved): string | null => {
+  const pkg = readJson(
+    path.join(
+      res.opencodePackageCacheDir,
+      "node_modules",
+      "@brainervirus",
+      "workit-opencode",
+      "package.json",
+    ),
+  );
+  return typeof pkg?.version === "string" && pkg.version ? pkg.version : null;
+};
+
+/** OpenCode freezes the first `@latest` resolve in its package cache — detect lag. */
+const checkOpenCodePackageCache = (res: Resolved): DoctorCheck & { registryProbed?: boolean } => {
+  if (!existsSync(res.opencodeConfig)) {
+    return {
+      id: "stale_install",
+      status: "pass",
+      detail: "no opencode config — package cache not inspected",
+    };
+  }
+  const entries = pluginEntries(readJson(res.opencodeConfig));
+  if (entries.length === 0) {
+    return {
+      id: "stale_install",
+      status: "pass",
+      detail: "no workit opencode pin — package cache not inspected",
+    };
+  }
+  const pin = entries[0]!;
+  if (pin.startsWith("file:") || pin.startsWith("git+file:")) {
+    return {
+      id: "stale_install",
+      status: "pass",
+      detail: "opencode checkout pin — package cache not used for npm resolution",
+    };
+  }
+  if (!isFloatingOpenCodeNpmPin(pin)) {
+    return {
+      id: "stale_install",
+      status: "pass",
+      detail: `opencode pin ${pin} is an exact version — not compared to registry latest`,
+    };
+  }
+  const installed = installedOpenCodeCacheVersion(res);
+  if (installed === null) {
+    return {
+      id: "stale_install",
+      status: "pass",
+      detail: "opencode @latest package cache empty — OpenCode will resolve on next launch",
+    };
+  }
+  const expected = registryLatestVersion(res, OPENCODE_NPM_PIN);
+  if (expected === null) {
+    return {
+      id: "registry_unreachable",
+      status: "warn",
+      registryProbed: true,
+      detail:
+        "registry_unreachable: cannot compare OpenCode @latest cache against published workit-opencode",
+      fix: `Retry when npm is reachable, or remove ${res.opencodePackageCacheDir} and restart OpenCode to re-resolve`,
+    };
+  }
+  if (!semverAtLeast(installed, expected)) {
+    return {
+      id: "stale_install",
+      status: "fail",
+      registryProbed: true,
+      detail: `stale_install: OpenCode @latest cache has workit-opencode ${installed} behind published ${expected}`,
+      fix: `Remove ${res.opencodePackageCacheDir} and restart OpenCode — it re-resolves @latest on the next launch`,
+    };
+  }
+  return {
+    id: "stale_install",
+    status: "pass",
+    registryProbed: true,
+    detail: `OpenCode @latest cache workit-opencode ${installed} matches published ${expected}`,
+  };
+};
+
 const checkStaleInstall = (res: Resolved): DoctorCheck & { registryProbed?: boolean } => {
+  if (res.host === "opencode") {
+    return checkOpenCodePackageCache(res);
+  }
   if (res.host !== "cursor" && res.host !== "cli") {
     return {
       id: "stale_install",
       status: "pass",
-      detail: "cursor plugin not inspected on the opencode host",
+      detail: "cursor plugin not inspected on this host",
     };
   }
   // Symlink installs into pnpm dlx / _npx caches break when the cache is cleared.
@@ -930,21 +1036,31 @@ const checkStaleInstall = (res: Resolved): DoctorCheck & { registryProbed?: bool
         fix: "Re-run install-cursor-plugin.sh — it refreshes the plugin directory with the current build",
       };
     }
-    return {
-      id: "stale_install",
-      status: "pass",
+    const cursorOk = {
+      id: "stale_install" as const,
+      status: "pass" as const,
       registryProbed: true,
       detail: `installed local-dist workit-cursor ${installed} matches the published runtime ${expected}`,
     };
+    if (res.host === "cli") {
+      const oc = checkOpenCodePackageCache(res);
+      if (oc.status !== "pass") return oc;
+    }
+    return cursorOk;
   }
-  return {
-    id: "stale_install",
-    status: "pass",
+  const cursorOk = {
+    id: "stale_install" as const,
+    status: "pass" as const,
     detail:
       installed === null
         ? "installed workit-cursor selectors are canonical"
         : `installed workit-cursor ${installed} is metadata on the canonical @latest install (fresh at launch)`,
   };
+  if (res.host === "cli") {
+    const oc = checkOpenCodePackageCache(res);
+    if (oc.status !== "pass") return oc;
+  }
+  return cursorOk;
 };
 
 const checkDuplicateRegistration = (res: Resolved): DoctorCheck => {
