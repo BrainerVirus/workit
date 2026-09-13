@@ -2,13 +2,17 @@
   "name": "@brainervirus/workit-codex",
   "version": "1.0.1",
   "private": false,
-  "description": "Workit Codex CLI and desktop plugin",
+  "description": "Workit Codex CLI/desktop plugin — shared MCP transport, hooks, and fourteen method skills",
   "keywords": [
-    "agent",
+    "agentic-coding",
+    "ai-agents",
     "codex",
     "mcp",
+    "model-context-protocol",
+    "plugin",
     "workflow"
   ],
+  "homepage": "https://github.com/BrainerVirus/workit#readme",
   "license": "MIT",
   "repository": {
     "type": "git",

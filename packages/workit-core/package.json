@@ -2,15 +2,21 @@
   "name": "@brainervirus/workit-core",
   "version": "1.0.1",
   "private": false,
-  "description": "Workit — workflow rails for agentic coding: specs, plans, YouTrack, CI-gated commits (shared core)",
+  "description": "Workit shared core — task, policy, evidence, review, decision, worker, and writer state for agentic coding workflows",
   "keywords": [
-    "agent",
+    "agentic-coding",
+    "ai-agents",
+    "codex",
     "cursor",
     "mcp",
     "opencode",
-    "workflow",
-    "youTrack"
+    "pi",
+    "policy-engine",
+    "task-management",
+    "typescript",
+    "workflow"
   ],
+  "homepage": "https://github.com/BrainerVirus/workit#readme",
   "bugs": {
     "url": "https://github.com/BrainerVirus/workit/issues"
   },

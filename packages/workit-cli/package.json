@@ -2,14 +2,17 @@
   "name": "@brainervirus/workit-cli",
   "version": "1.0.1",
   "private": false,
-  "description": "Workit interactive setup wizard (Ink TUI)",
+  "description": "Workit CLI — setup wizard, doctor, and task control for agentic coding workflows",
   "keywords": [
+    "agentic-coding",
+    "ai-agents",
     "cli",
     "cursor",
     "opencode",
     "setup",
     "workflow"
   ],
+  "homepage": "https://github.com/BrainerVirus/workit#readme",
   "bugs": {
     "url": "https://github.com/BrainerVirus/workit/issues"
   },
