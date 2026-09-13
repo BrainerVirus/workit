@@ -198,6 +198,15 @@ test("bootstrap tells lead to start and assess when task list is empty", () => {
     expect(bootstrap).toContain(operation);
 });
 
+test("steer and babysit pin the pause and post-merge lessons", () => {
+  const steer = skillText("workit-steer");
+  expect(steer).toContain("task.pause");
+  expect(steer).toContain("one active lead");
+  const babysit = skillText("workit-babysit");
+  expect(babysit).toContain("squash merge");
+  expect(babysit).toContain("re-record");
+});
+
 test("challenge pins the grounded grill loop", () => {
   const skill = skillText("workit-challenge");
   expect(skill).toContain("Diverge once");

@@ -20,11 +20,14 @@ selects requirements; do not wait for a rule that can only exist after assess.
    blockers. Never trust memory across an interruption.
 2. Classify the steering:
    - same-task: fold into scope (reassess if facts changed), continue.
-   - new-task: `task.start` + `policy.assess`; the parked task waits.
+   - new-task: `task.pause` the parked lead task, then `task.start` +
+     `policy.assess` for the new one. Keep exactly one active lead per
+     session: external actions bind to that single active task, and a second
+     active lead makes writer authority ambiguous.
    - quick-question: answer from the parked state, then resume.
 3. Handle it with the same rigor as the parked work (no drive-by edits).
 4. Re-anchor: one-line resume brief (where we were, what changed, what
-   is next) before touching the parked work again.
+   is next), then `task.resume` the parked task before touching it again.
 
 ## Completion
 

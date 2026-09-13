@@ -31,3 +31,8 @@ selects requirements; do not wait for a rule that can only exist after assess.
 
 PR merged per settings, or a status brief (frontier state, next action) when
 blocked on the human. Record evidence for fixes, findings for blockers.
+
+A squash merge creates a new commit on the base branch, so the pre-merge
+candidate identity changes: re-record verification and review evidence against
+the merged commit before `task.close`, or the close will report unsatisfied
+requirements.

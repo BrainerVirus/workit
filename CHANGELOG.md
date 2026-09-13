@@ -167,6 +167,10 @@ acquire --actor <id>` binds a writer to a Codex session the hook matches,
 
 ### Changed
 
+- `workit-steer` pauses the parked lead task before starting a new one (one
+  active lead per session keeps external-action writer authority unambiguous),
+  and `workit-babysit` re-records verification and review evidence after a
+  squash merge, when the pre-merge candidate identity changes.
 - AGENTS.md maps where agent-facing rules live (invariant bootstrap, method
   skills, adapter messages, repository docs) so future fixes are proposed for
   the distributed surface first.
