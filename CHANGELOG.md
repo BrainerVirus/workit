@@ -207,6 +207,9 @@ acquire --actor <id>` binds a writer to a Codex session the hook matches,
 
 ### Fixed
 
+- GitHub release notes now render breaking changes and features: the release
+  pipeline loads the `conventionalcommits` preset (the angular default silently
+  dropped `!` headers), and the v1.0.0 release body was backfilled.
 - Clean-checkout CI builds, packs, and typechecks again: the Cursor MCP entry
   imports the shared transport's source subpath (matching the Codex launcher)
   instead of its gitignored `dist`, the Cursor build skips the in-place
