@@ -68,6 +68,22 @@ is never available to supervised children.
 7. Stale-install auto-load repair is automatic and fail-open: the doctor's `stale_install` finding (legacy `mcp.json`/hook selectors, or a local-dist install behind the current/published runtime) is enforced by `install-cursor-plugin.sh` via a `doctor-check.ts cursor --stale` pre-check — exit 2 triggers a refresh + canonical re-registration, a healthy install is byte-untouched, and a registry-unreachable comparison warns as `registry_unreachable` (never `stale_install`, never an install failure). Canonical `@latest` installs never fail on version metadata.
 8. Agent-facing behavior rules ship in the distributed surfaces: the invariant bootstrap (injected on OpenCode, Pi, Cursor, and Codex), the method skills (copied to every host), and adapter messages. This file documents this repository's development contract; a rule that lives only here never reaches installed workit instances.
 
+### Where a rule lives
+
+| Rule kind                                                                              | Home                                                                                            |
+| -------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| How agents behave in any installed project (receipts, decisions, routing, skill choice) | `invariantBootstrap()` in `packages/workit-core/src/core/methods.ts` — injected on every host    |
+| Method-specific behavior                                                               | the skill under `packages/workit-core/skills/` (the build copies it to every host)              |
+| Failure-time guidance for one host surface                                             | that adapter's message strings                                                                  |
+| How to develop, verify, or release this repository                                     | this file                                                                                       |
+| Install and usage information                                                          | `README.md` and the package READMEs                                                             |
+| Release-facing history                                                                 | `CHANGELOG.md` and the generated release notes                                                  |
+
+Test: if the rule must change what an agent does in an installed workit project,
+it ships in a package. Text that lives only in this file never reaches there —
+propose the distributed surface first, then use this file to document the
+process around it.
+
 ## Workflow contract
 
 - Task state lives under `.workit/` in the checkout; never edit it directly. Use the eight shared operation families (`workit_task`, `workit_policy`, `workit_evidence`, `workit_finding`, `workit_decision`, `workit_worker`, `workit_writer`, `workit_state`) with closed `action` enums. CLI surface is `workit <family> <action>` (hyphenated actions). There are no `workit flow` aliases.

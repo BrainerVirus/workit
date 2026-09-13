@@ -167,6 +167,9 @@ acquire --actor <id>` binds a writer to a Codex session the hook matches,
 
 ### Changed
 
+- AGENTS.md maps where agent-facing rules live (invariant bootstrap, method
+  skills, adapter messages, repository docs) so future fixes are proposed for
+  the distributed surface first.
 - The repository README opens with a per-tool install guide (collapsible
   sections for OpenCode, Cursor, Codex CLI/desktop, Pi, and the CLI) and a
   dedicated host-surfaces section.
