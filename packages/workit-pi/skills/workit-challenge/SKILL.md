@@ -28,8 +28,10 @@ selects requirements; do not wait for a rule that can only exist after assess.
    dependency order and recompute after every answer — a wall of questions is
    not an interview.
 4. Funnel every resolution: the moment a consequential choice settles, bind it
-   with a receipt-shaped question (header `Workit decision: <purpose>`, exactly
-   `approved`/`rejected`, the approved description carrying the exact content).
+   with a receipt-shaped question — header `Workit decision: <purpose>` and the
+   same label repeated in the question text (host UIs may not render headers) —
+   exactly `approved`/`rejected` options, the approved description carrying the
+   exact content.
    If the user already stated the choice in conversation and no receipt can be
    minted, record it in task progress and reassess so the settled requirement
    retires — never re-ask to mint a receipt, and never leave it for close to
