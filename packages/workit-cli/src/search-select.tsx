@@ -3,9 +3,7 @@ import { TextInput } from "@inkjs/ui";
 import { useMemo, useState, type JSX } from "react";
 
 // Teams-style language × nationality rows → BCP-47 tag. Includes every core
-// localeOptions default (en, es-CL, es-MX, es-AR, pt-BR). The Español block
-// leads so the 5-row cap keeps the whole language family visible together for
-// the shared "es" prefix.
+// localeOptions default (en, es-CL, es-MX, es-AR, pt-BR).
 export const LOCALE_LANGUAGE_MAP: { label: string; locale: string }[] = [
   { label: "Español (España)", locale: "es-ES" },
   { label: "Español (Latinoamérica)", locale: "es-419" },
@@ -83,7 +81,7 @@ export function SearchSelect<T extends string>({
   onQueryChange?: (query: string) => void;
 }): JSX.Element {
   const [query, setQuery] = useState("");
-  const filtered = useMemo(() => filterOptions(options, query), [options, query]);
+  const filtered = useMemo(() => filterOptions(options, query, Infinity), [options, query]);
   const [rawIndex, setRawIndex] = useState(() =>
     Math.max(
       0,
@@ -92,6 +90,7 @@ export function SearchSelect<T extends string>({
   );
   // Clamped highlight: narrowing can never leave it pointing past the last row.
   const index = Math.min(rawIndex, Math.max(0, filtered.length - 1));
+  const offset = Math.max(0, index - VISIBLE_ROWS + 1);
 
   useInput((input, key) => {
     // A query change resets the highlight to the top of the filtered set.
@@ -119,9 +118,9 @@ export function SearchSelect<T extends string>({
       {filtered.length === 0 ? (
         <Text dimColor>No matches</Text>
       ) : (
-        filtered.map((option, i) => (
-          <Text key={option.value} color={i === index ? "cyan" : "dim"}>
-            {i === index ? "❯ " : "  "}
+        filtered.slice(offset, offset + VISIBLE_ROWS).map((option, i) => (
+          <Text key={option.value} color={i + offset === index ? "cyan" : "dim"}>
+            {i + offset === index ? "❯ " : "  "}
             {option.label}
           </Text>
         ))
