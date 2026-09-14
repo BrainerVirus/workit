@@ -1,11 +1,11 @@
 ---
 name: workit-babysit
-description: Use when a PR needs driving to merge-ready, CI is red, or the user says babysit
+description: Use after creating a PR (auto-starts, drive default), when a PR needs driving to merge-ready, CI is red, or the user says babysit
 ---
 
 # Babysit a PR to merge-ready
 
-Babysit starts automatically on PR creation unless declined (`--no-babysit`).
+Babysit starts automatically on PR creation unless declined (`babysit:false`).
 One babysitter per PR; never mutate PR topology (no rebase strategy changes,
 no force-push).
 
@@ -17,8 +17,11 @@ selects requirements; do not wait for a rule that can only exist after assess.
 
 ## Method
 
-1. Declare mode: drive (fix + merge), watch (report only), or threads-only.
+1. Declare mode in the same turn as the PR URL: drive (fix + merge, the
+   default), watch (report only), or threads-only.
 2. Work the merge frontier in order: conflicts → review threads → CI.
+   Record a frontier brief (frontier state, next action) in task progress
+   per pass so the steps stay visible.
 3. Classify CI before retry: flake (rerun once) vs stale base (verify with
    `git merge-base --is-ancestor` before updating) vs real failure (fix).
 4. Triage bot findings skeptically: reproduce or quote code before acting;

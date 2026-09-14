@@ -199,7 +199,8 @@ or explicitly via five bare aliases — `/challenge`, `/babysit`, `/implement`,
 `/plan`, `/debug` — on OpenCode, Cursor, and Pi. An alias routes through
 policy to the method skills and never calls another alias. Codex CLI has no
 slash path: invoke skills explicitly as `$workit-<name>` or from the `/skills`
-picker.
+picker. Creating a PR auto-starts babysit (drive default; opt out with
+`babysit:false`).
 
 ## Host surfaces
 

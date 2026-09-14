@@ -937,6 +937,9 @@ export const resolveExternalActionRequest = (
   }
 };
 
+export const prBabysitNext = (output: string): string =>
+  `Babysit ${output} to merge-ready (drive mode default). Follow skill workit-babysit: declare mode in this turn, work conflicts, review threads, then CI, and record a frontier brief in task progress per pass. Opt out with babysit:false.`;
+
 export const executeConcreteExternalAction = async (
   request: ExternalActionRequest,
   root: string,
@@ -1015,6 +1018,9 @@ export const executeConcreteExternalAction = async (
             ...result,
             babysit: request.payload.babysit ?? true,
             babysitSkill: "workit-babysit",
+            ...((request.payload.babysit ?? true)
+              ? { next: prBabysitNext(String((result as { output?: unknown }).output ?? "")) }
+              : {}),
           });
     }
     case "changelog.apply": {

@@ -20,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Auto-babysit on PR creation: `hosting.pull_request` success now carries a
+  visible `next` directive (drive mode default, `workit-babysit` skill) unless
+  declined with `babysit:false`; the skill declares its mode in the same turn
+  and records a frontier brief in task progress per pass.
 - Reviewer worker assignments with no requirement ids now fail at assign time
   on assessed tasks and return the review requirement ids, instead of letting
   the worker discover later that its evidence is rejected.
