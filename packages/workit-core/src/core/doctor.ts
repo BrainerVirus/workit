@@ -531,7 +531,8 @@ const registeredCursorLauncher = (res: Resolved): CursorLauncher | null | "inval
   // offline doctor validates its shape (never the registry reachability).
   // Exact positional tokens — a substring match would accept `@latest-alpha`
   // or `workit-cursor-mcp-foo`, and any extra/missing token would weaken the
-  // freshness guarantee (`--prefer-online` is mandatory).
+  // freshness guarantee (`--prefer-online` and the npm release-age workaround
+  // are mandatory).
   const canonical = cursorMcpServerEntry("").args;
   if (executable === "npx" || executable === "npx.exe" || executable === "npx.cmd") {
     if (args.length !== canonical.length || args.some((a, i) => a !== canonical[i]))

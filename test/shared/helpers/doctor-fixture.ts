@@ -89,7 +89,7 @@ export const makeDoctorFixture = (): DoctorFixture => {
         sessionStart: [
           {
             command:
-              "npx -y --prefer-online --package=@brainervirus/workit-cursor@latest workit-cursor-session-start",
+              "npx -y --prefer-online --min-release-age=0 --package=@brainervirus/workit-cursor@latest workit-cursor-session-start",
           },
         ],
       },
@@ -139,6 +139,7 @@ export const makeDoctorFixture = (): DoctorFixture => {
           args: [
             "-y",
             "--prefer-online",
+            "--min-release-age=0",
             "--package=@brainervirus/workit-cursor@latest",
             "workit-cursor-mcp",
             "${workspaceFolder}",
@@ -181,6 +182,7 @@ export const makeDoctorFixture = (): DoctorFixture => {
           args: [
             "-y",
             "--prefer-online",
+            "--min-release-age=0",
             "--package=@brainervirus/workit-cursor@latest",
             "workit-cursor-mcp",
             "${workspaceFolder}",

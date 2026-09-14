@@ -409,6 +409,7 @@ test("cursorMcpServerEntry launches the published package via npx", () => {
   expect(entry.args).toEqual([
     "-y",
     "--prefer-online",
+    "--min-release-age=0",
     `--package=${CURSOR_RUNTIME_PACKAGE}`,
     "workit-cursor-mcp",
     "${workspaceFolder}",
@@ -418,7 +419,7 @@ test("cursorMcpServerEntry launches the published package via npx", () => {
 test("cursorHooksEntry uses the documented single command string with no args", () => {
   const entry = cursorHooksEntry("/any/pkg/dir");
   expect(entry.command).toBe(
-    `npx -y --prefer-online --package=${CURSOR_RUNTIME_PACKAGE} workit-cursor-session-start`,
+    `npx -y --prefer-online --min-release-age=0 --package=${CURSOR_RUNTIME_PACKAGE} workit-cursor-session-start`,
   );
   expect(entry.args).toEqual([]);
 });

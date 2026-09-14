@@ -276,6 +276,7 @@ test("Cursor MCP launcher starts the server from the extracted package, repo-fre
     expect(server.args).toEqual([
       "-y",
       "--prefer-online",
+      "--min-release-age=0",
       "--package=@brainervirus/workit-cursor@latest",
       "workit-cursor-mcp",
       "${workspaceFolder}",

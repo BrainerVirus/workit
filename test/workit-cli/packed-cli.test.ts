@@ -172,6 +172,7 @@ test("packed CLI setup flow configures OpenCode + Cursor and doctor verifies it"
     expect(mcp.mcpServers?.workit?.args).toEqual([
       "-y",
       "--prefer-online",
+      "--min-release-age=0",
       "--package=@brainervirus/workit-cursor@latest",
       "workit-cursor-mcp",
       "${workspaceFolder}",

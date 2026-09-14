@@ -224,6 +224,18 @@ acquire --actor <id>` binds a writer to a Codex session the hook matches,
 
 ### Fixed
 
+- Cursor's canonical `npx` launcher now carries `--min-release-age=0` so npm's
+  open `npx` exclusion bug cannot select an older cached Workit release despite
+  the user's `@brainervirus/*` release-age exception.
+- External changelog actions canonicalize the workspace root before deriving
+  their approved relative path, so macOS `/var` → `/private/var` aliases and
+  other symlink-spelled roots no longer look like escapes.
+- Preflight failures now surface a failed external-action settlement instead
+  of hiding it behind the original provider error and leaving a reservation
+  blocked without recovery guidance.
+- Codex workspace-root tests compare canonical roots, matching the runtime on
+  macOS and other platforms with path aliases.
+
 - Mechanical `self-review` requirements now accept the lead's fresh review
   evidence on every host. Independent reviews correctly reject the task creator's
   session even when it has not recorded any other evidence.

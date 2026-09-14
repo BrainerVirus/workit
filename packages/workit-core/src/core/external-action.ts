@@ -524,7 +524,7 @@ export async function runAuthorizedExternalAction<T>(
         (contract.details as Record<string, unknown>).outcome === "not_started";
       const outcome = input.failureOutcome ?? (preflight ? "not_started" : "unknown");
       const settled = settleWithRefresh(outcome, settle(outcome));
-      if (!settled.ok && outcome === "unknown") return settled as ExternalActionResult<T>;
+      if (!settled.ok) return settled as ExternalActionResult<T>;
       return contract;
     }
     effectValue = contract.data;

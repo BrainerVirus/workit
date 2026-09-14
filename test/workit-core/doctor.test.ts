@@ -212,13 +212,13 @@ test("reports stale_install when the installed preToolUse matcher drifts from ca
         sessionStart: [
           {
             command:
-              "npx -y --prefer-online --package=@brainervirus/workit-cursor@latest workit-cursor-session-start",
+              "npx -y --prefer-online --min-release-age=0 --package=@brainervirus/workit-cursor@latest workit-cursor-session-start",
           },
         ],
         preToolUse: [
           {
             command:
-              "npx -y --prefer-online --package=@brainervirus/workit-cursor@latest workit-cursor-hook",
+              "npx -y --prefer-online --min-release-age=0 --package=@brainervirus/workit-cursor@latest workit-cursor-hook",
             matcher: "Write|Edit|Delete|Shell",
             failClosed: true,
           },
@@ -882,6 +882,7 @@ test("cursor launcher npx shape matches exact tokens, never substrings (CA-17)",
         args: [
           "-y",
           "--prefer-online",
+          "--min-release-age=0",
           "--package=@brainervirus/workit-cursor@latest",
           "workit-cursor-mcp",
           "${workspaceFolder}",
@@ -1004,7 +1005,7 @@ test("cursor session-start hook command matches exact canonical string (CA-17)",
       sessionStart: [
         {
           command:
-            "npx -y --prefer-online --package=@brainervirus/workit-cursor@latest workit-cursor-session-start",
+            "npx -y --prefer-online --min-release-age=0 --package=@brainervirus/workit-cursor@latest workit-cursor-session-start",
         },
       ],
     },
@@ -1068,7 +1069,7 @@ test("accepts a local-dist node session-start hook pointing at the installed dis
     write(`node ${path.join(fixture.pluginDir, "dist", "missing.js")}`);
     expect(check(run(), "launcher").status).toBe("fail");
     write(
-      "npx -y --prefer-online --package=@brainervirus/workit-cursor@latest workit-cursor-session-start",
+      "npx -y --prefer-online --min-release-age=0 --package=@brainervirus/workit-cursor@latest workit-cursor-session-start",
     );
     expect(check(run(), "launcher").status).toBe("pass");
   } finally {
@@ -1080,7 +1081,7 @@ test("accepts a local-dist node session-start hook pointing at the installed dis
           sessionStart: [
             {
               command:
-                "npx -y --prefer-online --package=@brainervirus/workit-cursor@latest workit-cursor-session-start",
+                "npx -y --prefer-online --min-release-age=0 --package=@brainervirus/workit-cursor@latest workit-cursor-session-start",
             },
           ],
         },

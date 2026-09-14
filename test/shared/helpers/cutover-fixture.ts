@@ -117,7 +117,7 @@ export function makeCutoverFixture(
         sessionStart: [
           {
             command:
-              "npx -y --prefer-online --package=@brainervirus/workit-cursor@latest workit-cursor-session-start",
+              "npx -y --prefer-online --min-release-age=0 --package=@brainervirus/workit-cursor@latest workit-cursor-session-start",
           },
         ],
       },
@@ -187,6 +187,7 @@ export function makeCutoverFixture(
           args: [
             "-y",
             "--prefer-online",
+            "--min-release-age=0",
             "--package=@brainervirus/workit-cursor@latest",
             "workit-cursor-mcp",
             "${workspaceFolder}",
