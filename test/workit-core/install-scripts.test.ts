@@ -116,6 +116,7 @@ test(
         args: [
           "-y",
           "--prefer-online",
+          "--min-release-age=0",
           "--package=@brainervirus/workit-cursor@latest",
           "workit-cursor-mcp",
           "${workspaceFolder}",
@@ -129,6 +130,7 @@ test(
         args: [
           "-y",
           "--prefer-online",
+          "--min-release-age=0",
           "--package=@brainervirus/workit-cursor@latest",
           "workit-cursor-mcp",
           "${workspaceFolder}",
@@ -381,6 +383,7 @@ rsync -a --delete "$WORKFLOW_TOOLKIT_DEV/packages/workit-cursor/" "$HOME/.cursor
           args: [
             "-y",
             "--prefer-online",
+            "--min-release-age=0",
             "--package=@brainervirus/workit-cursor@latest",
             "workit-cursor-mcp",
             "${workspaceFolder}",
@@ -407,7 +410,7 @@ rsync -a --delete "$WORKFLOW_TOOLKIT_DEV/packages/workit-cursor/" "$HOME/.cursor
         sessionStart: [
           {
             command:
-              "npx -y --prefer-online --package=@brainervirus/workit-cursor@latest workit-cursor-session-start",
+              "npx -y --prefer-online --min-release-age=0 --package=@brainervirus/workit-cursor@latest workit-cursor-session-start",
           },
         ],
       },
@@ -756,6 +759,7 @@ test(
         args: [
           "-y",
           "--prefer-online",
+          "--min-release-age=0",
           "--package=@brainervirus/workit-cursor@latest",
           "workit-cursor-mcp",
           "${workspaceFolder}",

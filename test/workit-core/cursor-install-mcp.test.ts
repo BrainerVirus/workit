@@ -64,6 +64,7 @@ test("the installed plugin mcp.json carries the marketplace npx command (CA-17)"
     expect(entry.args).toEqual([
       "-y",
       "--prefer-online",
+      "--min-release-age=0",
       "--package=@brainervirus/workit-cursor@latest",
       "workit-cursor-mcp",
       "${workspaceFolder}",

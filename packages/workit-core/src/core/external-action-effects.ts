@@ -820,7 +820,7 @@ export const resolveExternalActionRequest = (
         if (preview.error) return failure("invalid_input", preview.error);
         const target = String(preview.path);
         const relative =
-          path.relative(path.resolve(root), target).replaceAll(path.sep, "/") || "CHANGELOG.md";
+          path.relative(fs.realpathSync(root), target).replaceAll(path.sep, "/") || "CHANGELOG.md";
         const normalized = {
           operation: request.operation,
           payload: {

@@ -841,6 +841,45 @@ test("an explicitly preflight-classified failure releases the reservation", asyn
   }
 });
 
+test("a preflight failure does not hide a failed reservation release", async () => {
+  const setupState = setup();
+  try {
+    const result = await runAuthorizedExternalAction(
+      {
+        ...inputFor(setupState),
+        failureOutcome: "not_started",
+        refresh: () => {
+          throw new Error("state unavailable");
+        },
+      },
+      async () => {
+        const current = setupState.store.readTask(setupState.task.id);
+        if (!current.ok) throw new Error(current.error);
+        const changed = setupState.store.mutateTask(
+          setupState.task.id,
+          current.data.revision,
+          (task, mutation) =>
+            contractSuccess(mutation.revision, null, {
+              ...task,
+              progress: { ...task.progress, summary: "concurrent progress" },
+            }),
+        );
+        if (!changed.ok) throw new Error(changed.error);
+        return {
+          ok: false as const,
+          schemaVersion: 1 as const,
+          code: "invalid_input" as const,
+          error: "preflight rejected",
+          details: {},
+        };
+      },
+    );
+    expect(result).toMatchObject({ ok: false, code: "external_outcome_unknown" });
+  } finally {
+    rmSync(setupState.root, { recursive: true, force: true });
+  }
+});
+
 test("settlement refreshes exact revisions after unrelated task progress", async () => {
   const setupState = setup();
   try {

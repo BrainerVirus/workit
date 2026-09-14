@@ -79,6 +79,7 @@ Or add the published launcher to the Cursor MCP config:
       "args": [
         "-y",
         "--prefer-online",
+        "--min-release-age=0",
         "--package=@brainervirus/workit-cursor@latest",
         "workit-cursor-mcp",
         "${workspaceFolder}"
@@ -88,8 +89,9 @@ Or add the published launcher to the Cursor MCP config:
 }
 ```
 
-`@latest` plus `--prefer-online` are intentional: the runtime resolves from npm
-at launch and never depends on a checkout-local `dist/`. The wizard also copies
+`@latest`, `--prefer-online`, and `--min-release-age=0` are intentional: the
+runtime resolves from npm at launch despite npm/cli#9765, where `npx` ignores
+scoped `min-release-age-exclude` settings. The wizard also copies
 the plugin into `~/.cursor/plugins/local/workit` as a **real directory** (not a
 symlink into pnpm dlx/`_npx` caches). Requires Node.js 24+ and network access on
 first run. Plugin metadata lives under `.cursor-plugin/` and is

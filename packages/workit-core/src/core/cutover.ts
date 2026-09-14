@@ -235,8 +235,9 @@ export const detectCursorLatest = (cursorMcp: string): boolean => {
     return (
       server.args[0] === "-y" &&
       server.args[1] === "--prefer-online" &&
-      server.args[2] === `--package=${CURSOR_RUNTIME_PACKAGE}` &&
-      server.args[3] === "workit-cursor-mcp"
+      server.args[2] === "--min-release-age=0" &&
+      server.args[3] === `--package=${CURSOR_RUNTIME_PACKAGE}` &&
+      server.args[4] === "workit-cursor-mcp"
     );
   } catch {
     return false;

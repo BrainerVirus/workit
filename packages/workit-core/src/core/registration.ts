@@ -206,8 +206,8 @@ export function mergeCursorHooks(
  * Canonical selector for the Cursor npm runtime: `@latest` with `--prefer-online`
  * (README "Update review"). The single source for every source-derived Cursor
  * runtime selector; the committed manifests keep the literal (static data
- * cannot import TS). `--prefer-online` is mandatory — it forces npx to check
- * the registry so a stale cached `latest` resolution is never reused.
+ * cannot import TS). `--min-release-age=0` works around npm/cli#9765, where
+ * npx ignores the user's scoped release-age exclusion.
  */
 export const CURSOR_RUNTIME_PACKAGE = "@brainervirus/workit-cursor@latest";
 
@@ -215,7 +215,7 @@ export const CURSOR_RUNTIME_PACKAGE = "@brainervirus/workit-cursor@latest";
  * Canonical Cursor hook launcher (single source of truth for the shipped
  * hooks-cursor.json, the installer merge, and the doctor drift check).
  */
-export const CURSOR_HOOK_RUN_COMMAND = `npx -y --prefer-online --package=${CURSOR_RUNTIME_PACKAGE} workit-cursor-hook`;
+export const CURSOR_HOOK_RUN_COMMAND = `npx -y --prefer-online --min-release-age=0 --package=${CURSOR_RUNTIME_PACKAGE} workit-cursor-hook`;
 
 /**
  * preToolUse matcher covering every name the hook's write-tool guard treats
@@ -270,6 +270,7 @@ export function cursorMcpServerEntry(_packageDir: string): {
     args: [
       "-y",
       "--prefer-online",
+      "--min-release-age=0",
       `--package=${CURSOR_RUNTIME_PACKAGE}`,
       "workit-cursor-mcp",
       "${workspaceFolder}",
@@ -286,7 +287,7 @@ export function cursorHooksEntry(_packageDir: string): {
   args: string[];
 } {
   return {
-    command: `npx -y --prefer-online --package=${CURSOR_RUNTIME_PACKAGE} workit-cursor-session-start`,
+    command: `npx -y --prefer-online --min-release-age=0 --package=${CURSOR_RUNTIME_PACKAGE} workit-cursor-session-start`,
     args: [],
   };
 }

@@ -109,11 +109,11 @@ test("Codex MCP provider keeps caller identity empty on both surfaces", async ()
   expect(resolveCodexWorkspaceRoot(pluginRoot, { PWD: pluginRoot })).toBeNull();
   const validRoot = initializedRoot();
   expect(resolveCodexWorkspaceRoot(pluginRoot, { WORKFLOW_WORKSPACE_ROOT: validRoot })).toBe(
-    validRoot,
+    new TaskStore(validRoot).root,
   );
   const freshRoot = mkdtempSync(path.join(tmpdir(), "workit-codex-no-state-"));
   expect(await codexContextProvider("codex_cli", freshRoot).current()).toMatchObject({
-    root: freshRoot,
+    root: new TaskStore(freshRoot).root,
   });
   expect(
     resolveCodexWorkspaceRoot(pluginRoot, {

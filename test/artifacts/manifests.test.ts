@@ -57,6 +57,7 @@ test(
       expect(server.args, source).toEqual([
         "-y",
         "--prefer-online",
+        "--min-release-age=0",
         "--package=@brainervirus/workit-cursor@latest",
         "workit-cursor-mcp",
         "${workspaceFolder}",
@@ -89,7 +90,7 @@ test(
       expect(hooks.version, source).toBe(1);
       const entry = hooks.hooks.sessionStart[0];
       expect(entry.command, source).toBe(
-        "npx -y --prefer-online --package=@brainervirus/workit-cursor@latest workit-cursor-session-start",
+        "npx -y --prefer-online --min-release-age=0 --package=@brainervirus/workit-cursor@latest workit-cursor-session-start",
       );
       expect(entry.args, source).toBeUndefined();
       expect(JSON.stringify(entry), source).not.toContain("dist/");

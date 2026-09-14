@@ -462,7 +462,7 @@ test("explicit root at the server directory resolves only for a live workspace",
     // codex exec spawns the MCP server in the project dir: an explicit live
     // root is operator intent and resolves.
     expect(resolveCodexWorkspaceRoot(live, { WORKFLOW_WORKSPACE_ROOT: live })).toBe(
-      path.resolve(live),
+      new TaskStore(live).root,
     );
     // Without live state the same setup still refuses (never init plugin dirs).
     expect(resolveCodexWorkspaceRoot(fresh, { WORKFLOW_WORKSPACE_ROOT: fresh })).toBeNull();
@@ -478,7 +478,7 @@ test("workspace root resolution honors explicit root and refuses the plugin dir"
   try {
     // Fresh checkouts without state resolve so task.start can initialize them.
     expect(resolveCodexWorkspaceRoot(pluginRoot, { WORKFLOW_WORKSPACE_ROOT: workspace })).toBe(
-      workspace,
+      new TaskStore(workspace).root,
     );
     // The plugin root itself never resolves (would operate on shipped files).
     expect(
@@ -488,7 +488,9 @@ test("workspace root resolution honors explicit root and refuses the plugin dir"
     expect(resolveCodexWorkspaceRoot(pluginRoot, { WORKFLOW_WORKSPACE_ROOT: "rel" })).toBeNull();
     expect(resolveCodexWorkspaceRoot(pluginRoot, {})).toBeNull();
     // PWD inherits only when it points outside the plugin root.
-    expect(resolveCodexWorkspaceRoot(pluginRoot, { PWD: workspace })).toBe(workspace);
+    expect(resolveCodexWorkspaceRoot(pluginRoot, { PWD: workspace })).toBe(
+      new TaskStore(workspace).root,
+    );
     expect(resolveCodexWorkspaceRoot(pluginRoot, { PWD: pluginRoot })).toBeNull();
   } finally {
     rmSync(pluginRoot, { recursive: true, force: true });
