@@ -19,6 +19,7 @@ import {
 } from "@/packages/workit-core/src/core/external-action";
 import {
   executeResolvedExternalAction,
+  prBabysitNext,
   readHostingAction,
   readYouTrackAction,
   resolveExternalActionRequest,
@@ -1017,6 +1018,13 @@ test("pull_request resolve defaults babysit true and honors explicit decline", (
     else process.env.WORKFLOW_VCS_CONFIG = previousConfig;
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("pull_request success carries a visible babysit directive by default", () => {
+  const note = prBabysitNext("https://github.com/org/repo/pull/1");
+  expect(note).toContain("https://github.com/org/repo/pull/1");
+  expect(note).toContain("babysit");
+  expect(note).toContain("drive");
 });
 
 const assessedGateSetup = () => {
