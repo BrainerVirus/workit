@@ -136,6 +136,7 @@ adapter-local pilot.
 
 ## Next Action
 
-Implement task 1 with behavioral tests first. Do not begin the OpenCode V2 dual
-entry or add Effect until the reliability gate and the later Docker evidence are
-complete.
+All four tasks are landed and closed (`ecccfc0`, `1bd7374`, `a70a8a5`,
+`8338cbf`). The OpenCode V2 dual entry starts with the disposable Docker
+contract spike in `docs/opencode-v2/plan.md` step 3; the Effect pilot decision
+follows that spike against the adoption gate above and is not pre-approved.

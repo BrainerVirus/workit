@@ -10,22 +10,26 @@
   change product packages.
 - Reconcile every recorded review finding, run docs checks, and close.
 
-### 2. Land the runtime-reliability prerequisite
+### 2. Landed: runtime-reliability prerequisite
 
-Implement and close `docs/workit-runtime-reliability/plan.md` before extracting
-shared V1/V2 adapter code.
+`docs/workit-runtime-reliability/plan.md` is complete on
+`feature/workit-runtime-reliability`; each task closed verified with RED/GREEN
+evidence and an independent fresh-context review:
 
-- Correct semantic decision receipt matching and no-re-ask guidance.
-- Project policy-selected methods through shared task context.
-- Persist the worker `dispatching` claim before native launch and preserve
-  uncertainty until host evidence settles it.
-- Route recognizable branch and PR creation through Workit where host hooks can
-  enforce it, preserving honest `agent_guided` fallbacks elsewhere.
-- Run full host parity and release-candidate checks without adding Effect to
-  core.
+- `ecccfc0` semantic decision receipts (normalized labels, matching-queue
+  search, injected clock, no-re-ask guidance) and per-loop selected-method
+  projection.
+- `1bd7374` durable `dispatching` claims with host-proof settlement,
+  unbound/unsettled launch denial, and closure/resume blocking.
+- `a70a8a5` narrow shell route enforcement on OpenCode, Codex, and Pi plus the
+  observed-route babysit fallback in all five skill copies.
+- `8338cbf` README/AGENTS/CHANGELOG handoff and host skill parity coverage.
 
-Exit condition: the reliability task is closed with current verification and
-review evidence; OpenCode V1 exposes the corrected contracts that V2 will port.
+Gates: `bun run check` 1352/0, deterministic acceptance 24/0, release-candidate
+verification of all 7 tarballs. No Effect dependency was added.
+
+Exit condition satisfied: OpenCode V1 exposes the corrected contracts that V2
+ports; do not re-implement them in the V2 adapter.
 
 ### 3. Run a disposable Docker contract spike
 
@@ -40,7 +44,9 @@ Docker harness under `test/`; do not change the Workit adapter implementation.
   - `subagent` tool name, `event.id`, structured success/error results, and
     concurrent tool execution;
   - created/execution/deleted event envelopes and ordering;
-  - shell permission action/resource values;
+  - shell permission action/resource values and the shell deny path, including
+    recognized branch/PR route denial with guidance and unparseable-command
+    pass-through;
   - question completion metadata plus form API replies;
   - context and compaction hook behavior; and
   - unchanged V1 config normalization versus native V2 config.
@@ -109,11 +115,18 @@ Adapter behavior:
 - Deny a second in-flight fresh subagent launch per coordinator; treat existing
   session continuation separately and conservatively preserve no-child
   uncertainty. Claim the single fresh-launch slot synchronously before awaited
-  validation and release it on settlement or pre-reservation failure.
+  validation and release it on settlement or pre-reservation failure, while core
+  `prepareWorkerDispatch` persists the durable `dispatching` claim before the
+  spawn attempt. Deny a managed launch before spawn when no attributable
+  assigned worker exists or a claim is unsettled; settle the durable claim only
+  from host evidence.
 - Reconcile unresolved workers through bounded session reads before a veto
   blocks launches, so a missed terminal event cannot deadlock the coordinator.
+  A durable `dispatching` claim stays unresolved through inconclusive
+  reconciliation and keeps replacement, closure, and resume blocked.
 - Inject bootstrap/task/worker context through `context`, compaction context
-  through `compaction`, and worktree denial through permission evaluation.
+  through `compaction`, and both worktree and recognized branch/PR route denial
+  through shell permission evaluation using `shellRouteIntent`.
 
 Exit condition: focused V1 and V2 adapter tests pass and the packed artifact
 contains one dual entry plus all method skills.
@@ -128,9 +141,10 @@ Build and `npm pack` the candidate once, then test that same artifact:
 - V2 `2.0.3` image, V1-shaped config copy: normalization and full parity.
 - V2 `2.0.3` image, native config copy: full parity.
 - Run all 16 checks in `spec.md` section 10, including parallel launch,
-  continuation, background lifecycle, an injected missed terminal event,
-  command collision, active skill content, persisted-prompt non-mutation,
-  unload/reload, and packed-artifact checks.
+  unbound-launch denial, continuation, background lifecycle, an injected missed
+  terminal event, route denial with unparseable pass-through, command collision,
+  active skill content, persisted-prompt non-mutation, unload/reload, and
+  packed-artifact checks.
 - Confirm doctor, CI, and manifests tests enforce the `1.18.30` V1 floor.
 - Run `bun run check` after the container matrix.
 
@@ -153,7 +167,7 @@ the same candidate artifact.
 
 ## Next action
 
-Close this documentation revision, then implement and close the runtime
-reliability prerequisite. Run the disposable Docker contract spike afterward.
-Do not start the dual-entry product port or add Effect until both gates are
-complete.
+The runtime-reliability prerequisite is landed and closed. Run the disposable
+Docker contract spike (step 3) against the pinned V2 image, then record the
+Effect decision (step 4) against `spec.md` section 6. Do not start the
+dual-entry product port or add Effect until both gates are complete.

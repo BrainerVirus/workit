@@ -10,13 +10,17 @@ OpenCode V2 `2.0.3`, with the same Workit outcomes:
 - 14 method skills and their 14 `wk-*` command aliases;
 - native decision receipts;
 - direct-child delegation lineage and worker lifecycle;
-- bootstrap, task, worker, and compaction context; and
-- denial of Git worktree creation.
+- bootstrap, task, worker, and compaction context;
+- denial of Git worktree creation; and
+- denial of recognized raw branch and PR creation routes.
 
 The live V1 host stays unchanged until the packed dual-entry artifact passes
-the real-host V1 and V2 matrices. The prerequisite behavior is specified in
-`docs/workit-runtime-reliability/spec.md`; that slice must land before adapter
-extraction. This task changes only this spec and plan.
+the real-host V1 and V2 matrices. The prerequisite behavior in
+`docs/workit-runtime-reliability/spec.md` has landed on
+`feature/workit-runtime-reliability` (`ecccfc0` semantic receipts and per-loop
+method projection, `1bd7374` durable dispatch claims, `a70a8a5` route
+enforcement, `8338cbf` docs handoff); this port consumes those corrected
+contracts.
 
 ## 2. Non-goals
 
@@ -147,8 +151,8 @@ uses native platform primitives.
 | V1 today                                                             | V2-native destination                                                                                         | Required parity behavior                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `tool: {...createWorkitTools(), workit_init_apply}` through `tool()` | One `ctx.tool.transform` registering the 10 exact names with JSON Schema and structured `{ content }` results | Include all 8 families, `workit_external_action`, and `workit_init_apply`. Adapt root/session/progress explicitly as described in section 6.                                                                                                                                                                                                                                                                                                                |
-| `tool.execute.before` for native `task`                              | `ctx.tool.hook("execute.before", event => ...)` for `event.tool === "subagent"`                               | V2 fields are `event.sessionID`, `event.id`, and `event.input`. Enforce direct-child lineage. Only a fresh call with no input `sessionID` may reserve an assigned worker. Claim the single fresh-launch slot synchronously before any awaited validation; release it when the launch settles or when validation fails before a worker reservation was committed.                                                                                            |
-| Coordinator-keyed dispatch reservation                               | One in-flight fresh `subagent` launch per coordinator                                                         | V2 executes tools concurrently. If a coordinator already has an unsettled fresh launch, fail a second fresh launch before it runs. Never overwrite the first reservation. Add a parallel-call regression check.                                                                                                                                                                                                                                             |
+| `tool.execute.before` for native `task`                              | `ctx.tool.hook("execute.before", event => ...)` for `event.tool === "subagent"`                               | V2 fields are `event.sessionID`, `event.id`, and `event.input`. Enforce direct-child lineage. Only a fresh call with no input `sessionID` may claim a worker. Claim the adapter's single fresh-launch slot synchronously before any awaited validation, and let core `prepareWorkerDispatch` persist the durable `dispatching` claim before the spawn attempt. Deny a managed launch before spawn when no attributable assigned worker exists or a claim is unsettled; the in-memory slot is adapter-local correlation only and releases on settlement or pre-reservation failure, while the durable claim settles only from host evidence. |
+| Coordinator-keyed dispatch reservation                               | One in-flight fresh `subagent` launch per coordinator                                                         | V2 executes tools concurrently. If a coordinator already has an unsettled fresh launch, fail a second fresh launch before it runs. Never overwrite the first reservation; the durable `dispatching` claim is store-owned, and only the live reservation may settle it as `running` with an observed child or `stopped` with host-attested proof that no child started. Add a parallel-call regression check.                                                                                                             |
 | Native task continuation                                             | V2 `subagent` input with existing `sessionID`                                                                 | Validate that the session is an existing direct child already bound to the coordinator. Do not prepare or consume a new Workit worker assignment.                                                                                                                                                                                                                                                                                                           |
 | `tool.execute.after` task bind/settle                                | V2 `execute.after` completed/error union                                                                      | Correlate with `event.id`. On success read `event.result.output` (`sessionID`, `status`, `output`) and `event.result.metadata`; completed content uses `<subagent ...>`. A running/background result remains running.                                                                                                                                                                                                                                       |
 | `childCreated:false` no-child proof                                  | No equivalent proof in the released V2 error result                                                           | Never infer `not_started` from a missing session ID or generic error. Keep the launch unresolved until a trusted created/terminal event settles it; block replacement while uncertainty remains.                                                                                                                                                                                                                                                            |
@@ -159,11 +163,12 @@ uses native platform primitives.
 | `config` skill path                                                  | Read 14 packaged manifests/content before `ctx.skill.transform`                                               | Register exact skill IDs, locations, descriptions, and content. Skip an existing user skill ID rather than silently replacing it. Validate active `ctx.skill.list()`, not just asset directory count.                                                                                                                                                                                                                                                       |
 | `config` `wk-*` command aliases                                      | Read `ctx.command.list()`, then `ctx.command.transform(editor.add(...))`                                      | Register all 14 aliases. Preserve existing user commands by skipping names already present. `execute({sessionID,prompt,delivery})` calls `ctx.session.prompt` and preserves prompt attachments, arguments, and delivery.                                                                                                                                                                                                                                    |
 | `config` Bash worktree deny                                          | `ctx.permission.hook("evaluate")`                                                                             | For `action === "shell"`, deny resources matching the existing Git-worktree rule and set the denial message. `permission.rules()` is not called from setup: it requires a session ID and replaces session rules. Explicit configured denies remain final; the hook handles allow/ask decisions.                                                                                                                                                             |
+| `tool.execute.before` bash route deny                                | `ctx.permission.hook("evaluate")` for `action === "shell"`                                                     | Evaluate `shellRouteIntent` on the shell resource before the worktree rule: deny recognized `git switch -c`/`--create`, `git checkout -b`/`-B`, `gh pr create`, and `glab mr create` with the exact Workit route guidance, and let unparseable or unrelated commands keep their configured allow/ask behavior. The spike confirms the V2 shell resource shape; the recognizer and guidance stay core-owned (`shellRouteIntent`).                          |
 | `experimental.session.compacting` context push                       | `ctx.session.hook("compaction")`                                                                              | Append `<workit-task-context>` as a text system part when absent. Never set `event.result`; that supplies a completed summary and skips the model call.                                                                                                                                                                                                                                                                                                     |
 | `experimental.chat.messages.transform`                               | `ctx.session.hook("context")`                                                                                 | Add `<workit-contract>`, `<workit-task-context>`, or `<workit-worker-context>` to model-visible system context as applicable on every agent-loop call. Shared task context includes current policy-selected methods and assurance. Do not use `prompt`: prompt edits become persisted user input. Dedupe markers within the current hook event, never across later policy changes. |
 | `client.session.get` lineage checks                                  | `ctx.session.get({ sessionID })` and V2 `Session.Info`                                                        | Normalize the direct response and use `session.location.directory`; `ctx.location` alone is insufficient.                                                                                                                                                                                                                                                                                                                                                   |
 | Initialization/provenance and stale-source warning                   | V2 setup logging plus the same tool-before stale-source check                                                 | Preserve diagnostics without allowing logging failures to break hook/event delivery. Update source-marker paths for the new layout.                                                                                                                                                                                                                                                                                                                         |
-| Ephemeral receipts, dispatches, and context markers                  | Per-plugin in-memory state                                                                                    | Return cleanup that aborts event subscription. Hook/transform registrations are plugin-scoped and auto-disposed. `.workit/` remains durable authority; no speculative `ctx.storage` cache.                                                                                                                                                                                                                                                                  |
+| Ephemeral receipt queues, in-flight launch slots, and context markers | Per-plugin in-memory state                                                                                    | Return cleanup that aborts event subscription. Hook/transform registrations are plugin-scoped and auto-disposed. `.workit/` remains durable authority: the `dispatching` claim lives in `TaskStore`, and there is no speculative `ctx.storage` cache.                                                                                                                                                                                                          |
 
 Unused V1 hooks remain unported: Workit has no `shell.env`, `$`,
 `chat.params`, `chat.headers`, provider/auth, small-model, or text-complete
@@ -234,9 +239,11 @@ Run the packed artifact, not only workspace-linked source.
    preparation durably changes the selected worker from `assigned` to
    `dispatching`; cross-task ambiguity binds nothing and denies a managed launch;
    nested launch is denied.
-7. Concurrent fresh launches cannot overwrite a reservation, with the first
-   claim recorded before any awaited validation, and continuation of an
-   existing `sessionID` consumes no assigned worker.
+7. Concurrent fresh launches cannot overwrite a reservation, the first
+   adapter slot is claimed before any awaited validation, core persists the
+   `dispatching` claim before the spawn attempt, and a managed launch with no
+   attributable assigned worker is denied before a child starts; continuation
+   of an existing `sessionID` consumes no assigned worker.
 8. Foreground completion, background running/completion, failure,
    interruption, sparse deletion, no-child uncertainty, and one injected
    missed terminal event produce the documented worker states: reconciliation
@@ -248,8 +255,11 @@ Run the packed artifact, not only workspace-linked source.
 10. Bootstrap is model-visible without changing persisted user text; task and
     worker contexts appear on each applicable agent-loop call; compaction gets
     task context and still performs its normal model call.
-11. Git worktree shell commands are denied with a reason. Other shell/edit
-    actions retain configured behavior, including explicit existing denies.
+11. Git worktree shell commands and recognized raw branch/PR creation
+    (`git switch -c`/`--create`, `git checkout -b`/`-B`, `gh pr create`,
+    `glab mr create`) are denied with a reason and the exact Workit route.
+    Unparseable or unrelated shell commands retain configured behavior,
+    including explicit existing denies.
 12. Unload/reload aborts the event stream and removes registrations without
    duplicate tools, skills, commands, hooks, or stale in-memory receipts.
 13. The package artifact remains self-contained, includes `assets/skills`,
@@ -288,6 +298,6 @@ Run the packed artifact, not only workspace-linked source.
 - Released `2.0.3` field names are requirements, not Docker unknowns.
 - The Docker spike is reproducible, credential-isolated, and distinct from the
   post-implementation parity run.
-- `plan.md` sequences runtime reliability, the probe, the Effect decision gate,
-  implementation, dual-host acceptance, docs, and release without changing the
-  live V1 host.
+- `plan.md` records the landed runtime-reliability prerequisite, then sequences
+  the probe, the Effect decision gate, implementation, dual-host acceptance,
+  docs, and release without changing the live V1 host.
