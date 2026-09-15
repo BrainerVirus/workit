@@ -1164,6 +1164,132 @@ test("decision receipts cannot cross core decision purposes", () => {
   ).toBe(false);
 });
 
+test("receipt-shaped questions accept presentation-only rejected descriptions", () => {
+  const receipts = new NativeReceiptStore();
+  receipts.record(
+    {
+      sessionID: "s",
+      callID: "decision",
+      args: {
+        questions: [
+          {
+            header: "Workit decision: design",
+            question: "Approve this change?",
+            options: [
+              { label: "approved", description: "Allow it" },
+              { label: "rejected", description: "No thanks" },
+            ],
+          },
+        ],
+      },
+    },
+    { metadata: { answers: [["approved"]] } },
+  );
+  expect(receipts.consume("s", "decision").ok).toBe(true);
+});
+
+test("host-qualified option labels normalize while original bytes stay in the receipt", () => {
+  const receipts = new NativeReceiptStore();
+  receipts.record(
+    {
+      sessionID: "s",
+      callID: "decision",
+      args: {
+        questions: [
+          {
+            header: "Workit decision: design",
+            question: "Approve this change?",
+            options: [
+              { label: "approved (Recommended)", description: "Allow it" },
+              { label: "rejected (Recommended)", description: "No thanks" },
+            ],
+          },
+        ],
+      },
+    },
+    { metadata: { answers: [["approved (Recommended)"]] } },
+  );
+  const consumed = receipts.consume("s", "decision", {
+    selectedLabel: "approved",
+    selectedDescription: "Allow it",
+  });
+  expect(consumed.ok).toBe(true);
+  if (!consumed.ok) throw new Error("expected a receipt");
+  expect(consumed.receipt.selectedLabel).toBe("approved (Recommended)");
+});
+
+test("an unrelated newer same-purpose receipt does not shadow a valid match", () => {
+  const receipts = new NativeReceiptStore();
+  for (const [question, content] of [
+    ["Approve the first design?", "Design v1"],
+    ["Approve the second design?", "Design v2"],
+  ] as const) {
+    receipts.record(
+      {
+        sessionID: "s",
+        callID: `call-${content}`,
+        args: {
+          questions: [
+            {
+              header: "Workit decision: design",
+              question,
+              options: [
+                { label: "approved", description: content },
+                { label: "rejected", description: "No thanks" },
+              ],
+            },
+          ],
+        },
+      },
+      { metadata: { answers: [["approved"]] } },
+    );
+  }
+  expect(
+    receipts.consume("s", "decision", {
+      question: "Approve the first design?",
+      selectedDescription: "Design v1",
+    }).ok,
+  ).toBe(true);
+});
+
+test("receipt freshness uses the injected clock and consumes a stale match", () => {
+  let now = 1_000_000;
+  const receipts = new NativeReceiptStore({ now: () => now });
+  receipts.record(
+    {
+      sessionID: "s",
+      callID: "decision",
+      args: {
+        questions: [
+          {
+            header: "Workit decision: design",
+            question: "Approve this change?",
+            options: [
+              { label: "approved", description: "Allow it" },
+              { label: "rejected", description: "No thanks" },
+            ],
+          },
+        ],
+      },
+    },
+    { metadata: { answers: [["approved"]] } },
+  );
+  now += 5 * 60 * 1000 + 1;
+  const stale = receipts.consume("s", "decision");
+  expect(stale.ok).toBe(false);
+  if (stale.ok) throw new Error("expected stale failure");
+  expect(stale.error).toContain("stale");
+  expect(receipts.consume("s", "decision").ok).toBe(false);
+});
+
+test("missing receipt guidance says not to ask again", () => {
+  const missing = new NativeReceiptStore().consume("lead", "decision");
+  expect(missing.ok).toBe(false);
+  if (missing.ok) throw new Error("expected failure");
+  expect(missing.error).toContain("do not ask again");
+  expect(missing.error).toContain("task progress");
+});
+
 test("decision receipts bind approved content to the exact native question", async () => {
   const root = mkdtempSync(join(tmpdir(), "workit-task11-decision-content-"));
   try {
@@ -1244,6 +1370,64 @@ test("rejected native Workit decisions remain exact and host-observed", async ()
               options: [
                 { label: "approved", description: "Design v1" },
                 { label: "rejected", description: "Reject this decision" },
+              ],
+            },
+          ],
+        },
+      },
+      { title: "Workit decision", output: "rejected", metadata: { answers: [["rejected"]] } },
+    );
+    const task = active.store.readTask(active.task.id);
+    const workspace = active.store.readWorkspace();
+    if (!task.ok || !workspace.ok || !workspace.data) throw new Error("fixture missing");
+    const raw = await hooks.tool?.workit_decision.execute(
+      {
+        schemaVersion: 1,
+        action: "record",
+        taskId: active.task.id,
+        expectedRevision: task.data.revision,
+        purpose: "design",
+        binding: {
+          taskId: active.task.id,
+          workspaceId: workspace.data.id,
+          scope: scope(),
+          presented: "Approve the design?",
+          approvedContent: "Design v1",
+          contentRefs: [],
+        },
+        response: "rejected",
+        requirementIds: [],
+      },
+      { directory: root, sessionID: "lead" } as never,
+    );
+    expect(JSON.parse(raw as string).ok).toBe(true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("rejected decisions accept presentation-only rejected text end to end", async () => {
+  const root = mkdtempSync(join(tmpdir(), "workit-task11-decision-rejected-text-"));
+  try {
+    const active = start(root, "lead");
+    const hooks = await plugin(
+      input(root, {
+        session: { get: async () => ({ data: { id: "lead", directory: root } }) },
+      }) as never,
+    );
+    await hooks["tool.execute.after"]?.(
+      {
+        tool: "question",
+        sessionID: "lead",
+        callID: "rejected-text-question-call",
+        args: {
+          questions: [
+            {
+              header: "Workit decision: design",
+              question: "Approve the design?",
+              options: [
+                { label: "approved", description: "Design v1" },
+                { label: "rejected", description: "No thanks" },
               ],
             },
           ],

@@ -20,6 +20,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Durable worker launch claims: `prepareWorkerDispatch` persists the
+  `dispatching` state inside the lock-guarded prepare mutation, and only the
+  live reservation settles it as `running` with an observed child or `stopped`
+  with host-attested proof that no child started. Generic errors, cancellation
+  text, missing metadata, interruption, and restarts leave the claim
+  unresolved, blocking replacement, closure, and resume until reconciliation.
+- OpenCode denies a fresh native `task` launch when the coordinator owns an
+  active Workit task but has no attributable assigned worker, or when a prior
+  launch is still unsettled; native task use outside Workit coordination stays
+  unmanaged.
+- Narrow shell route enforcement: recognized direct branch creation
+  (`git switch -c/--create`, `git checkout -b/-B`) and PR creation
+  (`gh pr create`, `glab mr create`) are denied with the exact Workit action on
+  OpenCode, Codex, and Pi; unparseable or unrelated commands stay explicitly
+  unenforced, and every host copy of `workit-babysit` tells the agent to drive
+  a PR observed from a route Workit did not enforce.
 - Auto-babysit on PR creation: `hosting.pull_request` success now carries a
   visible `next` directive (drive mode default, `workit-babysit` skill) unless
   declined with `babysit:false`; the skill declares its mode in the same turn
@@ -228,6 +244,19 @@ acquire --actor <id>` binds a writer to a Codex session the hook matches,
 
 ### Fixed
 
+- Native decision receipts recognize the binding question semantically: host
+  label qualifiers such as `(Recommended)` normalize for comparison while
+  original bytes stay in the receipt, the rejected option description is
+  presentation-only, and matching searches the session queue so a newer
+  unrelated same-purpose receipt cannot shadow a valid match. Freshness uses an
+  injectable clock, and the no-receipt failure now says not to re-ask: record
+  the settled choice in task progress and reassess so the requirement retires.
+- Policy-selected methods are projected through the shared compact task context
+  on every OpenCode agent-loop call instead of only the first, and Pi's separate
+  method rendering is removed.
+- A worker that may still be `dispatching` blocks every closure outcome and
+  resume reconciliation until its launch claim settles or host evidence
+  resolves it.
 - Cursor's canonical `npx` launcher now carries `--min-release-age=0` so npm's
   open `npx` exclusion bug cannot select an older cached Workit release despite
   the user's `@brainervirus/*` release-age exception.

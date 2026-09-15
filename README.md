@@ -200,7 +200,10 @@ or explicitly via five bare aliases — `/challenge`, `/babysit`, `/implement`,
 policy to the method skills and never calls another alias. Codex CLI has no
 slash path: invoke skills explicitly as `$workit-<name>` or from the `/skills`
 picker. Creating a PR auto-starts babysit (drive default; opt out with
-`babysit:false`).
+`babysit:false`); a PR URL observed from a route Workit did not enforce is
+still driven through `workit-babysit`, without claiming enforcement. Raw
+branch and PR creation commands are denied on OpenCode, Codex, and Pi with the
+exact Workit action to use instead.
 
 ## Host surfaces
 
@@ -253,15 +256,16 @@ family).
 <details>
 <summary><strong>Worker dispatch</strong></summary>
 
-Hosts that can observe their own launch surface claim a worker's launch slot
-before spawning it, through the host-only core methods
-`prepareWorkerDispatch` and `commitWorkerDispatch`. The reservation lives in
-the adapter process, is never serialized, and settles exactly once: either the
-observed child session binds the worker as running, or the host attests that no
-child was ever created and the worker is recorded as stopped with no session. A
-cancelled launch is only resolved this way when the same reservation proves it;
-ambiguous assignments, generic cancellation text, and reservations lost to a
-restart stay unresolved rather than being guessed.
+Hosts that can observe their own launch surface durably claim a worker's launch
+slot (persisted state `dispatching`) before spawning it, through the host-only
+core methods `prepareWorkerDispatch` and `commitWorkerDispatch`. Only the live
+reservation settles the claim exactly once: either the observed child session
+binds the worker as running, or the host attests that no child was ever created
+and the worker is recorded as stopped with no session. Ambiguous assignments,
+generic cancellation text, unsettled claims, and claims lost to a restart stay
+unresolved — blocking replacement, closure, and resume instead of being
+guessed — and a fresh managed launch without an attributable worker is denied
+before spawn.
 
 </details>
 

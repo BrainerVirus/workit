@@ -1015,7 +1015,7 @@ test("a prepared Pi launch that never spawned is cancelled as never started", as
   });
   expect(handle.spawned).toBe(false);
   expect(handle.child).toBeNull();
-  expect(fixture.state()).toMatchObject({ state: "assigned", session: null });
+  expect(fixture.state()).toMatchObject({ state: "dispatching", session: null });
   expect(await cancelWorker(handle, { binding: fixture.binding })).toMatchObject({
     state: "stopped",
     observed: true,
@@ -1079,7 +1079,7 @@ test("a raced Pi spawn or a handle without a reservation stays unresolved", asyn
     state: "unknown",
     observed: false,
   });
-  expect(fixture.state()).toMatchObject({ state: "assigned", session: null });
+  expect(fixture.state()).toMatchObject({ state: "dispatching", session: null });
 
   // A handle rebuilt after a restart holds no reservation and cannot recover either.
   const reconstructed = launchWorker(assignment("reviewer"), {
@@ -1094,5 +1094,5 @@ test("a raced Pi spawn or a handle without a reservation stays unresolved", asyn
   });
   expect(reconstructed.dispatch).toBeNull();
   expect((await cancelWorker(reconstructed, { binding: fixture.binding })).state).toBe("unknown");
-  expect(fixture.state()).toMatchObject({ state: "assigned", session: null });
+  expect(fixture.state()).toMatchObject({ state: "dispatching", session: null });
 });

@@ -432,12 +432,65 @@ const prepared = (lead: ReturnType<typeof active>) => {
   return { workerId: assigned.data.id, dispatch: dispatch.data };
 };
 
-test("dispatch preparation keeps the worker assigned without inventing a session", () => {
+test("dispatch preparation durably claims the worker before launch", () => {
   const lead = active({ nativeWorker: dispatchVerifier() });
   const { workerId } = prepared(lead);
   const worker = current(lead).task.workers.find((entry) => entry.id === workerId);
-  expect(worker?.data).toMatchObject({ state: "assigned", session: null });
+  expect(worker?.data).toMatchObject({ state: "dispatching", session: null });
   expect(worker?.provenance).toMatchObject({ kind: "host_observed", workerId });
+});
+
+test("a durable claim blocks replacement across cores until it settles", () => {
+  const lead = active({ nativeWorker: dispatchVerifier() });
+  const { workerId, dispatch } = prepared(lead);
+  const claimed = current(lead);
+  expect(claimed.task.workers.find((entry) => entry.id === workerId)?.data).toMatchObject({
+    state: "dispatching",
+    session: null,
+  });
+  const restarted = new WorkitCore(
+    lead.store,
+    context(lead.root, { nativeWorker: dispatchVerifier() }),
+  );
+  expect(
+    restarted.prepareWorkerDispatch({
+      taskId: lead.task.id,
+      workerId,
+      expectedRevision: claimed.task.revision,
+      expectedWorkspaceRevision: claimed.workspace.revision,
+      observation: { stage: "prepare" },
+    }),
+  ).toMatchObject({ ok: false, code: "invalid_transition" });
+  expect(
+    lead.core.commitWorkerDispatch({
+      dispatch,
+      taskId: lead.task.id,
+      workerId,
+      expectedRevision: claimed.task.revision,
+      expectedWorkspaceRevision: claimed.workspace.revision,
+      outcome: "not_started",
+      session: null,
+      observation: { stage: "not_started" },
+    }),
+  ).toMatchObject({ ok: true, data: { data: { state: "stopped", session: null } } });
+});
+
+test("a dispatching worker blocks closure until the claim settles", () => {
+  const lead = active({ nativeWorker: dispatchVerifier() });
+  prepared(lead);
+  const claimed = current(lead);
+  expect(
+    lead.core.task({
+      schemaVersion: 1,
+      action: "close",
+      taskId: lead.task.id,
+      expectedRevision: claimed.task.revision,
+      expectedWorkspaceRevision: claimed.workspace.revision,
+      outcome: "stopped",
+      summary: "halted for recovery",
+      decisionIds: [],
+    }),
+  ).toMatchObject({ ok: false, code: "recovery_required" });
 });
 
 test("preparation requires an assigned worker on an active task with host attestation", () => {

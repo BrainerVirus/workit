@@ -3,6 +3,7 @@ import path from "node:path";
 import {
   compactTaskContext,
   invariantBootstrap,
+  shellRouteIntent,
   TaskStore,
   WorkitCore,
   type Capability,
@@ -339,6 +340,15 @@ export const handleCodexHook = (raw: unknown): Record<string, unknown> => {
     // File writes are host-policy territory: the hook no longer gates covered
     // write tools on task scopes. Managed workit mutations keep core-side
     // writer ownership checks.
+    if (["bash", "unified-exec"].includes(String(input.tool_name).toLowerCase())) {
+      const command = record(input.tool_input) ? input.tool_input.command : undefined;
+      const route = typeof command === "string" ? shellRouteIntent(command) : null;
+      if (route)
+        return denied(
+          "PreToolUse",
+          `direct branch or PR creation bypasses the Workit route; ${route.guidance}`,
+        );
+    }
     return output("PreToolUse", { permissionDecision: "allow" });
   }
   if (input.hook_event_name === "SubagentStart")

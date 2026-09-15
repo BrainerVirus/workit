@@ -1,11 +1,9 @@
 import {
   compactTaskContext,
   invariantBootstrap,
-  selectMethods,
   TaskStore,
   type Capability,
   type OperationContext,
-  type SelectedMethod,
   type TaskView,
   WorkitCore,
 } from "@brainervirus/workit-core/src/core";
@@ -62,7 +60,6 @@ export const workitContext = (ctx: ExtensionContext): string => {
   if (!ctx.isProjectTrusted())
     return `${invariantBootstrap()}\n\nNative Pi session: ${session}. Project-local Workit state is unavailable until Pi trusts this project.`;
   let taskContext: string | null = null;
-  let methods: SelectedMethod[] = [];
   try {
     const store = new TaskStore(ctx.cwd);
     const tasks = store.listTasks();
@@ -83,7 +80,6 @@ export const workitContext = (ctx: ExtensionContext): string => {
         )
         .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0];
       if (task) {
-        methods = task.policy ? selectMethods(task.policy, piCapabilities(ctx)) : [];
         const core = new WorkitCore(store, piContext(ctx));
         const view = core.task({
           schemaVersion: 1,
@@ -97,9 +93,6 @@ export const workitContext = (ctx: ExtensionContext): string => {
   } catch {
     // Static contract guidance remains useful when state is unavailable.
   }
-  const methodText = methods.length
-    ? `\nSelected methods: ${methods.map((method) => `${method.id} (${method.assurance})`).join(", ")}.`
-    : "";
   const taskText = taskContext ? `\nCurrent task context: ${taskContext}` : "";
-  return `${invariantBootstrap()}\n\nNative Pi session: ${session}.${methodText}${taskText}`;
+  return `${invariantBootstrap()}\n\nNative Pi session: ${session}.${taskText}`;
 };

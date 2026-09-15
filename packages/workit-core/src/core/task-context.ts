@@ -13,6 +13,7 @@ import {
   type Utc,
 } from "./task-contract";
 import { captureCandidate, evaluateEvidence } from "./task-evaluation";
+import { selectMethods, type SelectedMethod } from "./methods";
 import type { NativeWorkerObservation } from "./workers";
 
 export type ResumeObservation = {
@@ -43,7 +44,7 @@ export function reconcileResume(
   const blockers = [...view.task.progress.blockers];
   if (
     view.task.workers.some((entry) =>
-      ["running", "cancelling", "unknown"].includes(entry.data.state),
+      ["dispatching", "running", "cancelling", "unknown"].includes(entry.data.state),
     )
   )
     blockers.push({
@@ -71,10 +72,12 @@ type CompactDecision = {
   digest: string;
   references: CompactReference[];
 };
+type CompactMethod = Pick<SelectedMethod, "id" | "assurance"> & { reason: string };
 export type CompactTaskContext = {
   objective: string;
   status: TaskView["task"]["status"];
   decisions: CompactDecision[];
+  methods: CompactMethod[];
   gaps: string[];
   nextAction: string | null;
 };
@@ -127,6 +130,13 @@ export function compactTaskContext(view: TaskView): string {
       digest: entry.data.digest,
       references: entry.data.binding.contentRefs.slice(0, 1).map(compactReference),
     }));
+  const methods: CompactMethod[] = view.task.policy
+    ? selectMethods(view.task.policy, view.capabilities).map((method) => ({
+        id: method.id,
+        assurance: method.assurance,
+        reason: compactText(method.reason, COMPACT_TEXT_BYTES) ?? "",
+      }))
+    : [];
   const gaps = Array.from(
     new Set([
       ...view.evidence
@@ -145,16 +155,18 @@ export function compactTaskContext(view: TaskView): string {
     objective: compactText(view.task.intent.data.objective, COMPACT_TEXT_BYTES) ?? "",
     status: view.task.status,
     decisions,
+    methods,
     gaps,
     nextAction: compactText(view.task.progress.nextAction, COMPACT_TEXT_BYTES),
   };
   let encoded = JSON.stringify(context);
   while (
     compactBytes(encoded) > COMPACT_MAX_BYTES &&
-    (context.decisions.length || context.gaps.length)
+    (context.decisions.length || context.methods.length || context.gaps.length)
   ) {
     if (context.gaps.length) context.gaps.pop();
-    else context.decisions.pop();
+    else if (context.decisions.length) context.decisions.pop();
+    else context.methods.pop();
     encoded = JSON.stringify(context);
   }
   if (compactBytes(encoded) > COMPACT_MAX_BYTES) {

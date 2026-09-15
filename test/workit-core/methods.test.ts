@@ -5,8 +5,10 @@ import type {
   Capability,
   Policy,
   Requirement,
+  TaskView,
 } from "@/packages/workit-core/src/core/task-contract";
 import { invariantBootstrap, selectMethods } from "@/packages/workit-core/src/core/methods";
+import { compactTaskContext } from "@/packages/workit-core/src/core/task-context";
 import {
   WORKIT_METHOD_SKILLS,
   skillManifestNames,
@@ -205,6 +207,7 @@ test("steer and babysit pin the pause and post-merge lessons", () => {
   const babysit = skillText("workit-babysit");
   expect(babysit).toContain("squash merge");
   expect(babysit).toContain("re-record");
+  expect(babysit).toContain("route Workit did not enforce");
 });
 
 test("challenge pins the grounded grill loop", () => {
@@ -216,6 +219,32 @@ test("challenge pins the grounded grill loop", () => {
   expect(skill).toContain("durable-spec");
   expect(skill).toContain("counter-case");
   expect(skill).not.toContain("Frontier rounds");
+});
+
+test("compact task context carries selected methods and refreshes with policy", () => {
+  const view = (policyValue: Policy | null) =>
+    ({
+      task: {
+        status: "active",
+        intent: { data: { objective: "ship the release" } },
+        decisions: [],
+        progress: { nextAction: "run checks", blockers: [] },
+        policy: policyValue,
+      },
+      capabilities: [],
+      evidence: [],
+      requirements: [],
+    }) as unknown as TaskView;
+  const unassessed = JSON.parse(compactTaskContext(view(null))) as { methods: unknown };
+  expect(unassessed.methods).toEqual([]);
+  const assessed = JSON.parse(
+    compactTaskContext(
+      view(policy(requirement({ ruleId: "product-decision", dimension: "decisions" }))),
+    ),
+  ) as { methods: unknown };
+  expect(assessed.methods).toEqual([
+    { id: "workit-challenge", assurance: "agent_guided", reason: "fixture requirement" },
+  ]);
 });
 
 test("method skills require start and assess before relying on selected policy", () => {
@@ -231,6 +260,20 @@ test("debug and behavioral-tdd do not wait for pre-assess policy selection", () 
     const skill = skillText(name);
     expect(skill, name).not.toMatch(/only when policy selects/i);
     expect(skill, name).not.toMatch(/when the `[^`]+` rule is selected/i);
+  }
+});
+
+test("host skill copies stay byte-identical to the canonical core copy", () => {
+  const canonical = skillText("workit-babysit");
+  for (const relative of [
+    "packages/workit-opencode/assets/skills/workit-babysit/SKILL.md",
+    "packages/workit-cursor/skills/workit-babysit/SKILL.md",
+    "packages/workit-codex/skills/workit-babysit/SKILL.md",
+    "packages/workit-pi/skills/workit-babysit/SKILL.md",
+  ]) {
+    expect(readFileSync(path.join(import.meta.dir, "../..", relative), "utf8"), relative).toBe(
+      canonical,
+    );
   }
 });
 
