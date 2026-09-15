@@ -7,7 +7,9 @@ description: Use after creating a PR (auto-starts, drive default), when a PR nee
 
 Babysit starts automatically on PR creation unless declined (`babysit:false`).
 One babysitter per PR; never mutate PR topology (no rebase strategy changes,
-no force-push).
+no force-push). When a PR URL is observed from a route Workit did not enforce
+(for example a raw `gh pr create` the host allowed), load this skill and drive
+that PR anyway; do not claim the Workit route was enforced.
 
 ## Before method work
 

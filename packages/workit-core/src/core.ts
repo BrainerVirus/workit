@@ -66,6 +66,8 @@ export type {
 } from "./core/task-context";
 export { METHODS, invariantBootstrap, selectMethods } from "./core/methods";
 export type { MethodId, SelectedMethod } from "./core/methods";
+export { shellRouteIntent } from "./core/route-intent";
+export type { ShellRouteIntent } from "./core/route-intent";
 export { applicableDecision, reserveAction, settleAction, reconcileAction } from "./core/authority";
 export {
   createAuthorizedExternalActionRunner,

@@ -643,6 +643,35 @@ test("Pi affected-doc context passes edits through and public evidence captures 
   }
 });
 
+test("Pi blocks recognized raw branch and PR creation routes", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "workit-pi-route-"));
+  try {
+    const pi = makePi();
+    await extension(pi as any);
+    const guard = pi.handlers.get("tool_call");
+    expect(
+      await guard?.(
+        { toolName: "bash", toolCallId: "branch", input: { command: "git switch -c feature/raw" } },
+        context(root),
+      ),
+    ).toMatchObject({ block: true });
+    expect(
+      await guard?.(
+        { toolName: "bash", toolCallId: "pr", input: { command: "glab mr create --title t" } },
+        context(root),
+      ),
+    ).toMatchObject({ block: true });
+    expect(
+      await guard?.(
+        { toolName: "bash", toolCallId: "other", input: { command: "git status --short" } },
+        context(root),
+      ),
+    ).toBeUndefined();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("npm installs the packed package without workspace protocol dependencies", async () => {
   const repoRoot = path.resolve(import.meta.dir, "../..");
   const packageRoot = path.join(repoRoot, "packages/workit-pi");

@@ -933,6 +933,32 @@ test("a restarted plugin loses the reservation and stays blocked", async () => {
   }
 });
 
+test("recognized raw branch and PR creation commands are denied with the Workit route", async () => {
+  const hooks = await plugin({
+    directory: "/repo",
+    worktree: "/repo",
+    serverUrl: new URL("http://localhost"),
+  } as never);
+  await expect(
+    hooks["tool.execute.before"]?.(
+      { tool: "bash", sessionID: "lead", callID: "branch" },
+      { args: { command: "git switch -c feature/raw" } },
+    ),
+  ).rejects.toThrow("git.branch_setup");
+  await expect(
+    hooks["tool.execute.before"]?.(
+      { tool: "bash", sessionID: "lead", callID: "pr" },
+      { args: { command: "gh pr create --fill" } },
+    ),
+  ).rejects.toThrow("hosting.pull_request");
+  await expect(
+    hooks["tool.execute.before"]?.(
+      { tool: "bash", sessionID: "lead", callID: "other" },
+      { args: { command: "git status --short" } },
+    ),
+  ).resolves.toBeUndefined();
+});
+
 test("OpenCode native write shapes normalize filePath and apply_patch targets", async () => {
   const root = mkdtempSync(join(tmpdir(), "workit-opencode-native-writes-"));
   try {

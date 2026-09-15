@@ -207,6 +207,7 @@ test("steer and babysit pin the pause and post-merge lessons", () => {
   const babysit = skillText("workit-babysit");
   expect(babysit).toContain("squash merge");
   expect(babysit).toContain("re-record");
+  expect(babysit).toContain("route Workit did not enforce");
 });
 
 test("challenge pins the grounded grill loop", () => {

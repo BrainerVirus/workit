@@ -256,6 +256,59 @@ test("PreToolUse allows recognized product writes without writer ownership", () 
   expect(escaped.hookSpecificOutput).toMatchObject({ permissionDecision: "allow" });
 });
 
+test("PreToolUse denies recognized raw branch and PR creation with the Workit route", () => {
+  const root = cwd();
+  const branch = handleCodexHook(
+    official(
+      {
+        hook_event_name: "PreToolUse",
+        turn_id: "turn-1",
+        tool_use_id: "tool-branch",
+        tool_name: "Bash",
+        tool_input: { command: "git checkout -b feature/raw" },
+      },
+      root,
+    ),
+  );
+  expect(branch.hookSpecificOutput).toMatchObject({ permissionDecision: "deny" });
+  expect(
+    String(
+      (branch.hookSpecificOutput as { permissionDecisionReason?: string }).permissionDecisionReason,
+    ),
+  ).toContain("git.branch_setup");
+  const pr = handleCodexHook(
+    official(
+      {
+        hook_event_name: "PreToolUse",
+        turn_id: "turn-1",
+        tool_use_id: "tool-pr",
+        tool_name: "bash",
+        tool_input: { command: "gh pr create --fill" },
+      },
+      root,
+    ),
+  );
+  expect(pr.hookSpecificOutput).toMatchObject({ permissionDecision: "deny" });
+  expect(
+    String(
+      (pr.hookSpecificOutput as { permissionDecisionReason?: string }).permissionDecisionReason,
+    ),
+  ).toContain("hosting.pull_request");
+  const other = handleCodexHook(
+    official(
+      {
+        hook_event_name: "PreToolUse",
+        turn_id: "turn-1",
+        tool_use_id: "tool-other",
+        tool_name: "bash",
+        tool_input: { command: "git status --short" },
+      },
+      root,
+    ),
+  );
+  expect(other.hookSpecificOutput).toMatchObject({ permissionDecision: "allow" });
+});
+
 test("SubagentStop is observational and denial exits zero with JSON", () => {
   const root = cwd();
   expect(

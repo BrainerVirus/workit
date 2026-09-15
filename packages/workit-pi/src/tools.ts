@@ -14,6 +14,7 @@ import {
   OPERATION_SCHEMA_DEPTH,
   OPERATION_FAMILIES,
   parseOperation,
+  shellRouteIntent,
   success,
   canonicalJson,
   TaskStore,
@@ -463,6 +464,16 @@ export const enforceNativeWriter = (
   event: ToolCallEvent,
   ctx: ExtensionContext,
 ): { block: true; reason: string } | undefined => {
+  if (event.toolName === "bash") {
+    const command = (event.input as { command?: unknown } | undefined)?.command;
+    const route = typeof command === "string" ? shellRouteIntent(command) : null;
+    if (route)
+      return {
+        block: true,
+        reason: `direct branch or PR creation bypasses the Workit route; ${route.guidance}`,
+      };
+    return undefined;
+  }
   if (event.toolName !== "write" && event.toolName !== "edit") return undefined;
   // Pi project trust is host policy and stays enforced. Workit task scopes no
   // longer gate file writes; managed workit mutations keep core-side writer

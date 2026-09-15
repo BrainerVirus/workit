@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Plugin } from "@opencode-ai/plugin";
-import { TaskStore, WorkitCore } from "@brainervirus/workit-core/src/core";
+import { shellRouteIntent, TaskStore, WorkitCore } from "@brainervirus/workit-core/src/core";
 import { WORKIT_SKILL_ALIASES } from "@brainervirus/workit-core/src/core/skill-manifests";
 import { createLogger } from "@brainervirus/workit-core/src/core/logger";
 import {
@@ -596,8 +596,17 @@ const plugin: Plugin = async ({ client, directory }) => {
           unresolvedTaskLaunches.add(input.sessionID);
       }
     },
-    "tool.execute.before": async (input, _output) => {
+    "tool.execute.before": async (input, output) => {
       warnStaleSources();
+      if (input.tool === "bash") {
+        const command = (output?.args as { command?: unknown } | undefined)?.command;
+        const route = typeof command === "string" ? shellRouteIntent(command) : null;
+        if (route)
+          throw new Error(
+            `recovery_required: direct branch or PR creation bypasses the Workit route; ${route.guidance}`,
+          );
+        return;
+      }
       if (input.tool === "task") {
         const listed = new TaskStore(directory).listTasks();
         // Scoped veto: only workers attributable to the launching coordinator
