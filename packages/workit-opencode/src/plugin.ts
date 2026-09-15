@@ -158,7 +158,6 @@ const plugin: Plugin = async ({ client, directory }) => {
   // session exists, lifecycle authority is persisted in core state.
   const unresolvedTaskLaunches = new Set<string>();
   const dispatches = new Map<string, PreparedDispatch>();
-  const bootstrapped = new Set<string>();
   try {
     logger.info(EVENT.initialization, { host: "opencode", plugin_root: root });
     logger.info(
@@ -689,7 +688,6 @@ const plugin: Plugin = async ({ client, directory }) => {
       const first = output.messages.find((message) => message.info.role === "user");
       if (!first || !first.parts.length) return;
       const sessionID = first.info.sessionID;
-      if (bootstrapped.has(sessionID)) return;
       const anchor = first.parts[0];
       const session = await sessionData(client, sessionID);
       if (!trustedSession(directory, sessionID, session)) return;
@@ -728,7 +726,6 @@ const plugin: Plugin = async ({ client, directory }) => {
           text: `<workit-worker-context>${workerContext}</workit-worker-context>`,
         } as never);
       }
-      bootstrapped.add(sessionID);
     },
   };
 };

@@ -67,4 +67,46 @@ describe("session bootstrap", () => {
     await hooks["experimental.chat.messages.transform"]?.({} as never, output as never);
     expect(output.messages[0].parts.length).toBe(afterFirst);
   });
+
+  test("messages.transform refreshes context on later agent-loop calls", async () => {
+    const hooks = await plugin({
+      directory: "/repo",
+      worktree: "/repo",
+      serverUrl: new URL("http://localhost"),
+      client: {
+        session: { get: async () => ({ data: { id: "s2", directory: "/repo" } }) },
+      },
+    } as never);
+    const loop = (text: string) => ({
+      messages: [
+        {
+          info: {
+            role: "user" as const,
+            id: "m1",
+            sessionID: "s2",
+            time: { created: 0, updated: 0 },
+          },
+          parts: [
+            {
+              type: "text" as const,
+              text,
+              id: "p1",
+              messageID: "m1",
+              sessionID: "s2",
+              time: { created: 0, updated: 0 },
+            },
+          ],
+        },
+      ],
+    });
+    const first = loop("hello");
+    await hooks["experimental.chat.messages.transform"]?.({} as never, first as never);
+    expect(first.messages[0].parts.some((p: any) => isWorkitBootstrap(p.text ?? ""))).toBe(true);
+
+    const second = loop("continue");
+    await hooks["experimental.chat.messages.transform"]?.({} as never, second as never);
+    const texts = second.messages[0].parts.map((p: any) => p.text ?? "");
+    expect(texts.some((t: string) => isWorkitBootstrap(t))).toBe(true);
+    expect(texts[texts.length - 1]).toBe("continue");
+  });
 });

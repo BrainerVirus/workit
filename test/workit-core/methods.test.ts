@@ -5,8 +5,10 @@ import type {
   Capability,
   Policy,
   Requirement,
+  TaskView,
 } from "@/packages/workit-core/src/core/task-contract";
 import { invariantBootstrap, selectMethods } from "@/packages/workit-core/src/core/methods";
+import { compactTaskContext } from "@/packages/workit-core/src/core/task-context";
 import {
   WORKIT_METHOD_SKILLS,
   skillManifestNames,
@@ -216,6 +218,32 @@ test("challenge pins the grounded grill loop", () => {
   expect(skill).toContain("durable-spec");
   expect(skill).toContain("counter-case");
   expect(skill).not.toContain("Frontier rounds");
+});
+
+test("compact task context carries selected methods and refreshes with policy", () => {
+  const view = (policyValue: Policy | null) =>
+    ({
+      task: {
+        status: "active",
+        intent: { data: { objective: "ship the release" } },
+        decisions: [],
+        progress: { nextAction: "run checks", blockers: [] },
+        policy: policyValue,
+      },
+      capabilities: [],
+      evidence: [],
+      requirements: [],
+    }) as unknown as TaskView;
+  const unassessed = JSON.parse(compactTaskContext(view(null))) as { methods: unknown };
+  expect(unassessed.methods).toEqual([]);
+  const assessed = JSON.parse(
+    compactTaskContext(
+      view(policy(requirement({ ruleId: "product-decision", dimension: "decisions" }))),
+    ),
+  ) as { methods: unknown };
+  expect(assessed.methods).toEqual([
+    { id: "workit-challenge", assurance: "agent_guided", reason: "fixture requirement" },
+  ]);
 });
 
 test("method skills require start and assess before relying on selected policy", () => {

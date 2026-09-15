@@ -114,6 +114,14 @@ const decisionOptions = (options: unknown) =>
     ? (options as Array<{ label: string; description: string }>)
     : null;
 
+/** Host UIs may append qualifiers like "(Recommended)" to option labels. */
+const normalizeReceiptLabel = (label: string): string =>
+  label
+    .trim()
+    .replace(/(?:\s*[([]\s*[^()[\]]*\s*[)\]]\s*)+$/u, "")
+    .trim()
+    .toLowerCase();
+
 const purposeForQuestion = (question: Question): Receipt["purpose"] | undefined => {
   const header = typeof question.header === "string" ? question.header.trim() : "";
   const options = decisionOptions(question.options);
@@ -123,9 +131,8 @@ const purposeForQuestion = (question: Question): Receipt["purpose"] | undefined 
   if (
     decisionPurpose &&
     options !== null &&
-    options[0].label === "approved" &&
-    options[1].label === "rejected" &&
-    options[1].description === rejectedDescription
+    normalizeReceiptLabel(options[0].label) === "approved" &&
+    normalizeReceiptLabel(options[1].label) === "rejected"
   )
     return "decision";
   return undefined;
@@ -138,6 +145,11 @@ export class NativeReceiptStore {
   #receipts = new Map<string, Receipt[]>();
   #observations = new WeakSet<object>();
   #pending = new Map<string, { sessionID: string; callID: string; questions: unknown }>();
+  #now: () => number;
+
+  constructor(options: { now?: () => number } = {}) {
+    this.#now = options.now ?? Date.now;
+  }
 
   /** Stash an asked native question until its out-of-band reply arrives. */
   recordRequest(requestID: string, sessionID: string, callID: string, questions: unknown): void {
@@ -184,7 +196,9 @@ export class NativeReceiptStore {
     if (!purpose) return false;
     const options = decisionOptions(question.options);
     if (!options) return false;
-    const selected = options?.find((option) => option.label === answer);
+    const selected = options.find(
+      (option) => normalizeReceiptLabel(option.label) === normalizeReceiptLabel(answer),
+    );
     if (!selected) return false;
     const decisionPurpose =
       typeof question.header === "string"
@@ -205,7 +219,7 @@ export class NativeReceiptStore {
       question: content.question,
       purpose,
       contentDigest: sha256(canonicalJson(content)),
-      recordedAt: Date.now(),
+      recordedAt: this.#now(),
     };
     const queue = this.#receipts.get(sessionID) ?? [];
     queue.push(receipt);
@@ -235,7 +249,8 @@ export class NativeReceiptStore {
       if (
         (expected.callID !== undefined && receipt.callID !== expected.callID) ||
         (expected.selectedLabel !== undefined &&
-          receipt.selectedLabel !== expected.selectedLabel) ||
+          normalizeReceiptLabel(receipt.selectedLabel) !==
+            normalizeReceiptLabel(expected.selectedLabel)) ||
         (expected.selectedDescription !== undefined &&
           receipt.selectedDescription !== expected.selectedDescription) ||
         (expected.decisionPurpose !== undefined &&
@@ -244,16 +259,10 @@ export class NativeReceiptStore {
           receipt.contentDigest !== expected.contentDigest) ||
         (expected.question !== undefined && receipt.question !== expected.question)
       )
-        return {
-          ok: false,
-          error:
-            "permission_denied: native question receipt does not match the requested content " +
-            "(binding questions must be asked receipt-shaped: header `Workit decision: <purpose>` " +
-            "with the same label in the question text and exactly approved/rejected options)",
-        };
+        continue;
       queue.splice(i, 1);
       if (!queue.length) this.#receipts.delete(sessionID);
-      if (Date.now() - receipt.recordedAt > freshMs)
+      if (this.#now() - receipt.recordedAt > freshMs)
         return { ok: false, error: "permission_denied: native question receipt is stale" };
       const observation = { receipt };
       this.#observations.add(observation);
@@ -262,10 +271,11 @@ export class NativeReceiptStore {
     return {
       ok: false,
       error:
-        "permission_denied: no native question receipt for this purpose " +
-        "(ordinary multi-option questions mint no receipt; ask binding questions receipt-shaped: " +
-        "header `Workit decision: <purpose>`, the same label in the question text, with exactly " +
-        "approved/rejected options)",
+        "permission_denied: no matching native question receipt for this purpose; if the user " +
+        "already settled this choice in conversation, do not ask again — record the settled " +
+        "choice in task progress and reassess so the requirement can retire. Otherwise ask " +
+        "once, receipt-shaped: header `Workit decision: <purpose>`, the same label repeated in " +
+        "the question text, with exactly approved/rejected options",
     };
   }
 
@@ -429,11 +439,9 @@ const nativeAuthority = (
       !receipt ||
       caller.host !== "opencode" ||
       caller.actor !== actor ||
-      receipt.selectedLabel !== expected.response ||
-      receipt.selectedDescription !==
-        (expected.response === "approved"
-          ? expected.binding.approvedContent
-          : rejectedDescription) ||
+      normalizeReceiptLabel(receipt.selectedLabel) !== normalizeReceiptLabel(expected.response) ||
+      (expected.response === "approved" &&
+        receipt.selectedDescription !== expected.binding.approvedContent) ||
       receipt.decisionPurpose !== expected.purpose ||
       receipt.contentDigest !==
         sha256(
@@ -697,12 +705,8 @@ export const createWorkitTools = ({
             purpose: Receipt["decisionPurpose"];
             binding: { presented: string; approvedContent: string };
           };
-          const observed = receipts.consume(context.sessionID, "decision", {
+          const expectation: ReceiptExpectation = {
             selectedLabel: decision.response,
-            selectedDescription:
-              decision.response === "approved"
-                ? decision.binding.approvedContent
-                : rejectedDescription,
             decisionPurpose: decision.purpose,
             contentDigest: sha256(
               canonicalJson(
@@ -714,7 +718,12 @@ export const createWorkitTools = ({
               ),
             ),
             question: decision.binding.presented,
-          });
+          };
+          // The rejected option description is presentation text; only an
+          // approved answer binds the approved content bytes.
+          if (decision.response === "approved")
+            expectation.selectedDescription = decision.binding.approvedContent;
+          const observed = receipts.consume(context.sessionID, "decision", expectation);
           if (!observed.ok) return output(failure("permission_denied", observed.error));
           result = core.observeDecision(parsed.data, observed.observation);
         } else {
