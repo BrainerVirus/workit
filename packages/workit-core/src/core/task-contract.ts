@@ -510,7 +510,7 @@ export type WorkerReport = z.infer<typeof workerReportSchema>;
 export const workerSchema = z
   .object({
     assignment: assignmentSchema,
-    state: z.enum(["assigned", "running", "cancelling", "stopped", "unknown"]),
+    state: z.enum(["assigned", "dispatching", "running", "cancelling", "stopped", "unknown"]),
     session: refSchema.nullable(),
     report: workerReportSchema.nullable(),
   })

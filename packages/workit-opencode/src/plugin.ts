@@ -208,30 +208,39 @@ const plugin: Plugin = async ({ client, directory }) => {
             : 1,
     )[0];
   };
-  const prepareDispatch = (coordinator: string, callID: string) => {
-    dispatches.delete(coordinator);
+  /** "unmanaged" leaves native task use outside an active Workit task untouched. */
+  type DispatchPreparation = "prepared" | "unsettled" | "unbound" | "unmanaged";
+  const prepareDispatch = (coordinator: string, callID: string): DispatchPreparation => {
+    if (dispatches.has(coordinator)) return "unsettled";
     const store = new TaskStore(directory);
     const workspace = store.readWorkspace();
     const listed = store.listTasks();
-    if (!workspace.ok || !workspace.data || !listed.ok) return;
-    const eligible = listed.data.flatMap((task) =>
-      task.status === "active" && task.workspaceId === workspace.data?.id
-        ? task.workers
-            .filter(
-              (entry) =>
-                entry.data.state === "assigned" &&
-                entry.data.session === null &&
-                entry.provenance.session?.kind === "host" &&
-                entry.provenance.session.host === "opencode" &&
-                entry.provenance.session.handle === coordinator,
-            )
-            .map((entry) => ({ task, entry }))
-        : [],
+    if (!workspace.ok || !workspace.data || !listed.ok) return "unmanaged";
+    const owned = listed.data.filter(
+      (task) =>
+        task.status === "active" &&
+        task.workspaceId === workspace.data?.id &&
+        task.intent.provenance.session?.kind === "host" &&
+        task.intent.provenance.session.host === "opencode" &&
+        task.intent.provenance.session.handle === coordinator,
+    );
+    if (owned.length === 0) return "unmanaged";
+    const eligible = owned.flatMap((task) =>
+      task.workers
+        .filter(
+          (entry) =>
+            entry.data.state === "assigned" &&
+            entry.data.session === null &&
+            entry.provenance.session?.kind === "host" &&
+            entry.provenance.session.host === "opencode" &&
+            entry.provenance.session.handle === coordinator,
+        )
+        .map((entry) => ({ task, entry })),
     );
     // Queue: the oldest unbound worker of a single task. Zero eligible, or
-    // eligible workers spread across tasks, prepares nothing.
+    // eligible workers spread across tasks, denies the managed launch.
     const next = oldestOfSingleTask(eligible);
-    if (!next) return;
+    if (!next) return "unbound";
     const generation: DispatchGeneration = {
       coordinator,
       callID,
@@ -253,7 +262,7 @@ const plugin: Plugin = async ({ client, directory }) => {
       expectedWorkspaceRevision: workspace.data.revision,
       observation: { stage: "prepare", sessionID: coordinator, callID },
     });
-    if (!prepared.ok) return;
+    if (!prepared.ok) return "unbound";
     dispatches.set(coordinator, {
       generation,
       dispatch: prepared.data,
@@ -261,6 +270,7 @@ const plugin: Plugin = async ({ client, directory }) => {
       taskId: next.task.id,
       workerId: next.entry.id,
     });
+    return "prepared";
   };
   const commitDispatchStart = (coordinator: string, childID: string): boolean => {
     const pending = dispatches.get(coordinator);
@@ -436,7 +446,7 @@ const plugin: Plugin = async ({ client, directory }) => {
         ? task.workers
             .filter(
               (entry) =>
-                entry.data.state === "assigned" &&
+                (entry.data.state === "assigned" || entry.data.state === "dispatching") &&
                 entry.data.session === null &&
                 entry.provenance.session?.kind === "host" &&
                 entry.provenance.session.host === "opencode" &&
@@ -616,7 +626,15 @@ const plugin: Plugin = async ({ client, directory }) => {
           throw new Error(
             "delegation_lineage_denied: native task workers must be direct children of the coordinator",
           );
-        prepareDispatch(input.sessionID, input.callID);
+        const prepared = prepareDispatch(input.sessionID, input.callID);
+        if (prepared === "unsettled")
+          throw new Error(
+            "recovery_required: a previous native task launch is unsettled; wait for it to settle or reconcile its worker before launching again",
+          );
+        if (prepared === "unbound")
+          throw new Error(
+            "recovery_required: no assigned Workit worker is attributable to this coordinator; assign one with workit_worker before launching a native task",
+          );
       }
     },
     config: async (config) => {

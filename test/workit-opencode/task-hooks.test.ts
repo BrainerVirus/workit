@@ -722,7 +722,7 @@ test("a task call that proves no child was created stops the worker as never sta
       { tool: "task", sessionID: "coord", callID: "launch" },
       { args: {} },
     );
-    expect(workerState(active, ids[0])).toMatchObject({ state: "assigned", session: null });
+    expect(workerState(active, ids[0])).toMatchObject({ state: "dispatching", session: null });
     await hooks["tool.execute.after"]?.(
       { tool: "task", sessionID: "coord", callID: "launch", args: {} },
       {
@@ -732,12 +732,13 @@ test("a task call that proves no child was created stops the worker as never sta
       },
     );
     expect(workerState(active, ids[0])).toMatchObject({ state: "stopped", session: null });
+    // The settled slot is gone: another launch needs a fresh attributable worker.
     await expect(
       hooks["tool.execute.before"]?.(
         { tool: "task", sessionID: "coord", callID: "next" },
         { args: {} },
       ),
-    ).resolves.toBeUndefined();
+    ).rejects.toThrow("no assigned Workit worker");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -755,13 +756,53 @@ test("a generic cancellation or missing metadata never marks an unbound worker s
       { tool: "task", sessionID: "coord", callID: "launch", args: {} },
       { title: "task", output: "worker cancellation is uncertain", metadata: {} },
     );
-    expect(workerState(active, ids[0])).toMatchObject({ state: "assigned", session: null });
+    expect(workerState(active, ids[0])).toMatchObject({ state: "dispatching", session: null });
     await expect(
       hooks["tool.execute.before"]?.(
         { tool: "task", sessionID: "coord", callID: "next" },
         { args: {} },
       ),
     ).rejects.toThrow("recovery_required");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a managed fresh launch without an attributable worker is denied", async () => {
+  const root = mkdtempSync(join(tmpdir(), "workit-opencode-dispatch-unbound-"));
+  try {
+    activeTask(root, "coord");
+    const hooks = await plugin({
+      directory: root,
+      worktree: root,
+      serverUrl: new URL("http://localhost"),
+      client: coordinatorClient(root),
+    } as never);
+    await expect(
+      hooks["tool.execute.before"]?.(
+        { tool: "task", sessionID: "coord", callID: "launch" },
+        { args: {} },
+      ),
+    ).rejects.toThrow("no assigned Workit worker");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a second fresh launch while the first claim is unsettled is denied", async () => {
+  const root = mkdtempSync(join(tmpdir(), "workit-opencode-dispatch-unsettled-"));
+  try {
+    const { hooks } = await dispatchFixture(root);
+    await hooks["tool.execute.before"]?.(
+      { tool: "task", sessionID: "coord", callID: "first" },
+      { args: {} },
+    );
+    await expect(
+      hooks["tool.execute.before"]?.(
+        { tool: "task", sessionID: "coord", callID: "second" },
+        { args: {} },
+      ),
+    ).rejects.toThrow("unsettled");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -880,7 +921,7 @@ test("a restarted plugin loses the reservation and stays blocked", async () => {
         metadata: { childCreated: false, status: "cancelled" },
       },
     );
-    expect(workerState(active, ids[0])).toMatchObject({ state: "assigned", session: null });
+    expect(workerState(active, ids[0])).toMatchObject({ state: "dispatching", session: null });
     await expect(
       restarted["tool.execute.before"]?.(
         { tool: "task", sessionID: "coord", callID: "next" },

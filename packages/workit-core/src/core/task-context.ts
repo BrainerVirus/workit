@@ -44,7 +44,7 @@ export function reconcileResume(
   const blockers = [...view.task.progress.blockers];
   if (
     view.task.workers.some((entry) =>
-      ["running", "cancelling", "unknown"].includes(entry.data.state),
+      ["dispatching", "running", "cancelling", "unknown"].includes(entry.data.state),
     )
   )
     blockers.push({

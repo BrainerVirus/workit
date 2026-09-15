@@ -343,10 +343,10 @@ const applyWorkerLifecycle = (input: ObserveWorkerLifecycleInput): Result<Entry<
   const notStarted = input.dispatch === true;
   if (notStarted && (input.state !== "stopped" || input.session !== null))
     return failure("invalid_input", "a never-dispatched worker stops with no session");
-  if (notStarted && (entry.data.state === "stopped" || entry.data.state === "unknown"))
-    return failure("invalid_transition", "worker is no longer awaiting dispatch");
-  if (notStarted && (entry.data.session !== null || entry.data.state === "running"))
+  if (notStarted && entry.data.session !== null)
     return failure("invalid_transition", "worker already has an observed session");
+  if (notStarted && !["dispatching", "cancelling"].includes(entry.data.state))
+    return failure("invalid_transition", "worker launch was not claimed");
   if (
     (input.state === "running" ||
       input.state === "cancelling" ||
@@ -824,7 +824,9 @@ export class WorkitCore {
     if (workspace.writer)
       return failure("recovery_required", "writer ownership must be released first");
     if (
-      task.workers.some((entry) => ["running", "cancelling", "unknown"].includes(entry.data.state))
+      task.workers.some((entry) =>
+        ["dispatching", "running", "cancelling", "unknown"].includes(entry.data.state),
+      )
     )
       return failure("recovery_required", "worker state requires reconciliation");
     return null;
@@ -1776,7 +1778,12 @@ export class WorkitCore {
           ...current,
           workers: current.workers.map((item) =>
             item.id === input.workerId
-              ? { ...item, recordedAt: mutation.now, provenance: attested.data }
+              ? {
+                  ...item,
+                  recordedAt: mutation.now,
+                  provenance: attested.data,
+                  data: { ...item.data, state: "dispatching" as const },
+                }
               : item,
           ),
         });
@@ -2337,7 +2344,7 @@ export class WorkitCore {
     const base = reconcileResumeContext(effectiveView);
     if (!base.ok) return base;
     const needsReconciliation = view.task.workers.some((entry) =>
-      ["running", "cancelling", "unknown"].includes(
+      ["dispatching", "running", "cancelling", "unknown"].includes(
         observedStates.get(entry.id) ?? entry.data.state,
       ),
     );
