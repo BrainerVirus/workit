@@ -107,24 +107,34 @@ process around it.
 - Delegated authority is direct-child-only where the host exposes a trusted parent binding. OpenCode derives it from native session parentage; Cursor uses documented `subagentStart` identity for bounded assignment and never invents a cross-process token or receipt. Cursor `subagentStop` lacks a stable child identity, AskQuestion answers are policy-only, and arbitrary shell/Tab writes remain unavailable.
 - Worker launches are reservation-bound. `prepareWorkerDispatch` /
   `commitWorkerDispatch` are host-only core methods (never a ninth family, never
-  caller-supplied receipts): a host claims the slot of an exactly-`assigned`
-  worker before spawning, and the in-process reservation settles once as either
-  `started` with the observed child session or `not_started` (host-attested
-  `stopped`, null session). OpenCode prepares at `tool.execute.before` for a
-  native `task` call with exactly one attributable assigned worker; Pi prepares
-  on the live handle immediately before spawn. Never mark a worker stopped from
-  a null session, missing metadata, a cancellation string, or a lost
-  reservation — those stay unresolved. Serial native `task` calls consume
-  the oldest still-unbound worker first, but only within a single task:
-  workers spread across tasks bind nothing, because no observed child can
-  prove which task the coordinator intends. A `cancelling` worker vetoes
-  launches from its own coordinator until a repeated cancel on the ended
+  caller-supplied receipts): a host durably claims the slot of an
+  exactly-`assigned` worker (persisted state `dispatching`) before spawning, and
+  only the live reservation settles it as either `started` with the observed
+  child session or `not_started` (host-attested `stopped`, null session).
+  OpenCode prepares at `tool.execute.before` for a native `task` call with
+  exactly one attributable assigned worker; Pi prepares on the live handle
+  immediately before spawn. Never mark a worker stopped from a null session,
+  missing metadata, a cancellation string, interruption, or a lost
+  reservation — those stay unresolved, keep replacement blocked, and block
+  closure and resume until reconciled. A fresh managed launch with no
+  attributable assignment, or with an unsettled claim, is denied before spawn;
+  native task use outside an active Workit task stays unmanaged. Serial native
+  `task` calls consume the oldest still-unbound worker first, but only within a
+  single task: workers spread across tasks bind nothing, because no observed
+  child can prove which task the coordinator intends. A `cancelling` worker
+  vetoes launches from its own coordinator until a repeated cancel on the ended
   worker confirms its stop; other coordinators proceed. Independent-review evidence
   only counts from a session that is neither the task creator's nor any
   other evidence recorder's. A policy-selected `self-review` accepts the lead's
   own review session, including when the lead recorded checks; freshness and
   matching review-context provenance remain required on every host.
 - VCS routing is per-workspace: `workspaces.json` `resolveWorkspace` maps `work`-glob repos to GitLab/`develop`/gitflow and `personal`-glob repos to GitHub/`main`/github-flow, resolved in the order explicit workspace `vcs.defaultTargetBranch` → workspace branchPolicy default → global `vcs.json` → preset defaults. The active `vcs.json` carries no global `defaultTargetBranch`; a global default can no longer shadow a matched workspace's branchPolicy default. On GitHub, `prCreate` pushes the branch before `gh pr create` when `pr.pushBranch` is enabled (default), and a caller-supplied target equal to the resolved default is accepted even though protected. The runtime reads only the active `~/.config/workit/` config dir; legacy `~/.config/workflow-toolkit/` non-secret files were cleaned up once the active config passed status checks.
-- Never use worktrees; use guarded in-place branch setup.
+- Never use worktrees; use guarded in-place branch setup. Recognized direct
+  branch creation (`git switch -c`/`--create`, `git checkout -b`/`-B`) and PR
+  creation (`gh pr create`, `glab mr create`) are denied on hosts with a shell
+  pre-execution boundary, with guidance to use `git.branch_setup` /
+  `hosting.pull_request`; unparseable or unrelated commands stay unenforced.
+  When a PR URL is observed from a route Workit did not enforce, load
+  `workit-babysit` and drive it without claiming enforcement.
 - Before any GitHub remote mutation (push, PR create/close, branch delete), verify the effective identity with `gh api user --jq .login` and confirm it matches the checkout's area account — `gh auth status` shows config metadata and can disagree with the credential actually used (keyring vs hosts file). Never trust the status display for this check.
 - Every created PR is babysat to merge-ready (drive default) unless declined with `babysit:false`: declare the babysit mode in the same turn as the PR URL and record a frontier brief in task progress per pass.

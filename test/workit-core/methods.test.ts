@@ -263,6 +263,20 @@ test("debug and behavioral-tdd do not wait for pre-assess policy selection", () 
   }
 });
 
+test("host skill copies stay byte-identical to the canonical core copy", () => {
+  const canonical = skillText("workit-babysit");
+  for (const relative of [
+    "packages/workit-opencode/assets/skills/workit-babysit/SKILL.md",
+    "packages/workit-cursor/skills/workit-babysit/SKILL.md",
+    "packages/workit-codex/skills/workit-babysit/SKILL.md",
+    "packages/workit-pi/skills/workit-babysit/SKILL.md",
+  ]) {
+    expect(readFileSync(path.join(import.meta.dir, "../..", relative), "utf8"), relative).toBe(
+      canonical,
+    );
+  }
+});
+
 test("method manifest lists exactly fourteen core skills", () => {
   expect(WORKIT_METHOD_SKILLS).toEqual([
     "workit-challenge",
