@@ -1,0 +1,159 @@
+# Workit OpenCode V2 - Plan
+
+## Sequence
+
+### 1. Finalize the contract (this task)
+
+- Update `spec.md` and this plan from the OpenCode `2.0.3` docs, package types,
+  source, and pinned V1/V2 images.
+- Keep this slice documentation-only. Do not install V2 on the live host or
+  change product packages.
+- Reconcile every recorded review finding, run docs checks, and close.
+
+### 2. Land the runtime-reliability prerequisite
+
+Implement and close `docs/workit-runtime-reliability/plan.md` before extracting
+shared V1/V2 adapter code.
+
+- Correct semantic decision receipt matching and no-re-ask guidance.
+- Project policy-selected methods through shared task context.
+- Persist the worker `dispatching` claim before native launch and preserve
+  uncertainty until host evidence settles it.
+- Route recognizable branch and PR creation through Workit where host hooks can
+  enforce it, preserving honest `agent_guided` fallbacks elsewhere.
+- Run full host parity and release-candidate checks without adding Effect to
+  core.
+
+Exit condition: the reliability task is closed with current verification and
+review evidence; OpenCode V1 exposes the corrected contracts that V2 will port.
+
+### 3. Run a disposable Docker contract spike
+
+Open a follow-up task scoped to a disposable probe plus a tracked, reusable
+Docker harness under `test/`; do not change the Workit adapter implementation.
+
+- Start the exact V2 image/digest from `spec.md` with a temporary HOME/XDG
+  config and no host credentials.
+- Run a deterministic OpenAI-compatible stub on an isolated Docker network.
+- Load a minimal V2 probe plugin and use the HTTP API driver to confirm:
+  - plugin/package loading and cleanup;
+  - `subagent` tool name, `event.id`, structured success/error results, and
+    concurrent tool execution;
+  - created/execution/deleted event envelopes and ordering;
+  - shell permission action/resource values;
+  - question completion metadata plus form API replies;
+  - context and compaction hook behavior; and
+  - unchanged V1 config normalization versus native V2 config.
+- Keep the mock provider, API driver, config fixtures, and container command as
+  runnable test assets; remove only the disposable probe after its observations
+  are captured. Revise `spec.md` only if the pinned runtime contradicts the
+  pinned source.
+
+Exit condition: the harness can deterministically drive every host surface
+needed by the later parity matrix without model credentials or live remotes.
+
+### 4. Decide whether an adapter-local Effect pilot is justified
+
+Use the Docker harness to exercise concurrent subagent events, missed terminal
+events, cancellation, subscription cleanup, and bounded reconciliation after
+the durable dispatch fix.
+
+- Default to native `AbortSignal`, promises, and the existing task-store
+  transaction.
+- Consider Effect only if a runnable failing case demonstrates remaining
+  lifecycle complexity and an adapter-local implementation is materially
+  smaller or safer.
+- Keep all Effect values inside `packages/workit-opencode`; preserve public
+  `Result<T>`, explicit host observations, and `TaskStore` authority.
+- Never treat interruption or scope finalization as proof of `not_started`,
+  `stopped`, or a remote action outcome.
+- If every adoption condition in `spec.md` section 6 passes, record a separate
+  design decision for one bounded V2 adapter pilot. Otherwise record the native
+  implementation choice and add no dependency.
+
+Exit condition: the V2 implementation has one evidenced orchestration approach;
+the dependency choice is not left implicit.
+
+### 5. Implement the dual entry
+
+Open a behavior-change task and use the Docker spike evidence as authority.
+
+Package and build:
+
+- Add `src/index.ts`, `src/v1/server.ts`, `src/v2/plugin.ts`, and the minimum
+  `src/shared/` modules needed by both adapters.
+- Keep `src/plugin.ts` as a thin default re-export and keep published
+  `dist/plugin.js`.
+- Build `src/index.ts` to `dist/plugin.js` and pin/bundle
+  `@opencode/plugin@2.0.3`.
+- Update asset resolution for source and bundled layouts.
+- Update only tests/tooling that must understand the dual object; setup,
+  doctor, sync, cutover, root exports, and checkout pins should remain on their
+  existing stable paths.
+- Raise the declared and enforced V1 floor to `1.18.30`: support matrix,
+  doctor, CI `OPENCODE_MINIMUM`, and manifests tests. Object entrypoints exist
+  only from `1.18.29`, so older hosts must fail support checks instead of
+  loading the wrong export shape.
+
+Adapter behavior:
+
+- Extract host-neutral execution and receipt logic without sharing mutable V1
+  hook closures or SDK context types.
+- Register the exact 10 tool names, 14 active skills, and 14 collision-safe
+  commands.
+- Adapt V2 root/session/result/schema shapes explicitly.
+- Implement V2 question receipts from the completed tool result.
+- Reuse the corrected semantic receipt recognizer and shared selected-method
+  task projection from the reliability prerequisite.
+- Implement the V2 execution lifecycle event adapter and sparse deletion rule.
+- Deny a second in-flight fresh subagent launch per coordinator; treat existing
+  session continuation separately and conservatively preserve no-child
+  uncertainty. Claim the single fresh-launch slot synchronously before awaited
+  validation and release it on settlement or pre-reservation failure.
+- Reconcile unresolved workers through bounded session reads before a veto
+  blocks launches, so a missed terminal event cannot deadlock the coordinator.
+- Inject bootstrap/task/worker context through `context`, compaction context
+  through `compaction`, and worktree denial through permission evaluation.
+
+Exit condition: focused V1 and V2 adapter tests pass and the packed artifact
+contains one dual entry plus all method skills.
+
+### 6. Run dual-host acceptance
+
+Build and `npm pack` the candidate once, then test that same artifact:
+
+- V1 `1.18.30` image: real host load through `server()`, exact V1 surface and
+  behavior, stable source/dist paths, and a byte-unchanged host config after
+  the lane.
+- V2 `2.0.3` image, V1-shaped config copy: normalization and full parity.
+- V2 `2.0.3` image, native config copy: full parity.
+- Run all 16 checks in `spec.md` section 10, including parallel launch,
+  continuation, background lifecycle, an injected missed terminal event,
+  command collision, active skill content, persisted-prompt non-mutation,
+  unload/reload, and packed-artifact checks.
+- Confirm doctor, CI, and manifests tests enforce the `1.18.30` V1 floor.
+- Run `bun run check` after the container matrix.
+
+Do not execute remote Git, hosting, or YouTrack mutations. The external-action
+lane uses `context.read` and approval-gate assertions only.
+
+Exit condition: all three host/config lanes and repository checks pass against
+the same candidate artifact.
+
+### 7. Document and release
+
+- Update README and package README install/support notes.
+- Update `AGENTS.md` host parity notes and `CHANGELOG.md` Unreleased in the same
+  product change.
+- Preserve Cursor, Pi, Codex, MCP, and CLI outcomes; run the normal full parity
+  and release-candidate checks.
+- Open the PR and babysit it to merge-ready.
+- Keep the live host on V1 until the merged/published package passes the same
+  V2 packed-artifact smoke. Host replacement is a separate, explicit action.
+
+## Next action
+
+Close this documentation revision, then implement and close the runtime
+reliability prerequisite. Run the disposable Docker contract spike afterward.
+Do not start the dual-entry product port or add Effect until both gates are
+complete.
