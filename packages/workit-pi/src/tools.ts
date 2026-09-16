@@ -2,6 +2,7 @@ import {
   failure,
   approvedExternalAction,
   approvedPlanCommit,
+  planCommitBinding,
   externalActionState,
   priorExternalAction,
   priorResolvedDrift,
@@ -152,20 +153,6 @@ const nativeAuthority = (
   },
 });
 
-const commitMessageFromDescriptor = (operation: string): string | undefined => {
-  try {
-    const descriptor = JSON.parse(operation) as {
-      operation?: unknown;
-      payload?: { message?: unknown };
-    };
-    return descriptor.operation === "git.commit" && typeof descriptor.payload?.message === "string"
-      ? descriptor.payload.message
-      : undefined;
-  } catch {
-    return undefined;
-  }
-};
-
 export const nativeExternalActionRunner = (
   root: string,
   actor: string,
@@ -176,23 +163,19 @@ export const nativeExternalActionRunner = (
     const store = new TaskStore(root);
     const selected = approvedExternalAction(store, "pi", actor, operation);
     if (!selected.ok) {
-      const message = commitMessageFromDescriptor(operation);
-      const plan = message ? approvedPlanCommit(store, "pi", actor, message) : null;
-      if (plan?.ok) {
-        const workspace = store.readWorkspace();
-        if (!workspace.ok || !workspace.data)
-          return failure("storage_error", "external action state is unavailable");
+      const plan = planCommitBinding(store, "pi", actor, operation);
+      if (plan) {
         const actionRef = externalActionRef("pi", actor, operation);
         return {
-          taskId: plan.data.task.id,
-          decisionId: plan.data.entry.id,
+          taskId: plan.taskId,
+          decisionId: plan.decisionId,
           actionRef,
-          expectedRevision: plan.data.task.revision,
-          expectedWorkspaceRevision: workspace.data.revision,
-          binding: plan.data.entry.data.binding,
-          step: message as string,
+          expectedRevision: plan.expectedRevision,
+          expectedWorkspaceRevision: plan.expectedWorkspaceRevision,
+          binding: plan.binding,
+          step: plan.step,
           refresh: () => {
-            const task = store.readTask(plan.data.task.id);
+            const task = store.readTask(plan.taskId);
             const freshWorkspace = store.readWorkspace();
             if (!task.ok || !freshWorkspace.ok || !freshWorkspace.data)
               throw new Error("external action state changed");

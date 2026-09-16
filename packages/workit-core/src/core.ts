@@ -89,6 +89,8 @@ export {
   approvedExternalAction,
   approvedPlanCommit,
   planCommitDescriptor,
+  planCommitBinding,
+  commitMessageFromDescriptor,
   externalActionState,
   priorExternalAction,
   priorResolvedDrift,

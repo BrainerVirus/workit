@@ -20,6 +20,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Concise native action approvals: a mutating action call that has no approval
+  returns `needs_input` with a short user-facing proposal (`presented`,
+  `approvedContent`, `descriptorDigest`) while the canonical descriptor stays in
+  tool state; `decision.record` stores the exact descriptor plus the approved
+  display text, and Pi/CLI confirm the same concise summary. Oversize Workit
+  binding questions are rejected with show-first guidance — before display on
+  OpenCode and at record time elsewhere — and near-miss failures name the failed
+  receipt element instead of only "no match".
+- Plan-scoped commit approvals: `git.commit` accepts `plan_steps`/`plan_branch`
+  and records one approved commit list; each listed commit then executes once,
+  in order, without a new question, while unlisted messages, branch or checkout
+  mismatches, and replays still require a fresh exact approval.
+- Show-before-ask guidance shipped in the invariant bootstrap and `workit-plan`:
+  present durable artifacts as a complete digest plus exact path (inline plans as
+  their content) before any binding question, keep questions to one scoped
+  sentence, treat custom answers as steering rather than approval, and execute
+  an approved plan continuously with one atomic commit per task.
+- Runtime metadata: task and workspace records carry
+  `runtime.createdWith`/`runtime.updatedWith`; summaries expose it, imports
+  preserve the source creator, and legacy records are stamped truthfully on
+  their next mutation.
+- Protocol ergonomics: revision conflicts teach omission with current
+  revisions, `task.close.decisionIds` is optional and closure derives its own
+  references, `requirements_unsatisfied` reports each blocking rule with its
+  reason and satisfaction text, `writer.acquire`/`writer.release` both accept an
+  optional reason, escaping scopes and document refs explain the linked-task and
+  `file://` alternatives, placeholder policy actions are gone, and summaries
+  carry deterministic timestamps and blockers.
+- Host truthfulness: OpenCode, Pi, Codex, and Cursor declare an honest
+  `fresh-context-review` capability instead of implying independence, and the
+  OpenCode stale-source marker resolves the real core sources.
+- Branch setup truthfulness: `target_branch` is required for `setup` and names
+  the working branch, the proposal binds `base_branch`, `target_exists`,
+  `remote_base`, and `dirty`, proven preflight failures return `not_started`
+  without touching HEAD/index/stash/manifest, and a repository state change
+  after approval requires a new resolved proposal.
+
+### Fixed
+
+- Worker and evidence transitions: a reviewer may record supporting checks and
+  its review from one independent session (creator and other review sessions
+  stay excluded), evidence auto-binds the current candidate before worker pin
+  validation, a late child-start observation keeps `cancelling` instead of
+  returning to `running`, one shared uncertain-worker set backs
+  close/revise/resume/replacement checks, and pausing preserves progress while
+  storing the pause reason separately.
+
+
 - Durable worker launch claims: `prepareWorkerDispatch` persists the
   `dispatching` state inside the lock-guarded prepare mutation, and only the
   live reservation settles it as `running` with an observed child or `stopped`

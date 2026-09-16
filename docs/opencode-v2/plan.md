@@ -31,6 +31,24 @@ verification of all 7 tarballs. No Effect dependency was added.
 Exit condition satisfied: OpenCode V1 exposes the corrected contracts that V2
 ports; do not re-implement them in the V2 adapter.
 
+### 2b. Landed: reliability delta
+
+`docs/workit-reliability-delta/plan.md` landed on
+`feature/workit-reliability-delta` after the prerequisite:
+
+- concise action approvals with proposal-before-reservation, hidden exact
+  descriptors, a display budget for binding questions, and record-time
+  fallbacks (`fix(actions)`);
+- plan-scoped commit approvals so one approved list covers the plan's atomic
+  commits (`feat(actions)`);
+- protocol ergonomics, evidence/state correctness, and runtime metadata
+  (`fix(protocol)`, `fix(state)`, `feat(state)`);
+- host truthfulness (fresh-context-review capabilities, real stale-source
+  paths) and guidance for show-before-ask plus continuous approved-plan
+  execution (`fix(adapters)`, `docs(workflow)`).
+
+V2 consumes these shared contracts; it must not re-implement or bypass them.
+
 ### 3. Run a disposable Docker contract spike
 
 Open a follow-up task scoped to a disposable probe plus a tracked, reusable

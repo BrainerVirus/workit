@@ -408,6 +408,51 @@ export const approvedPlanCommit = (
   return success(workspace.data.revision, null, matches[0]);
 };
 
+export const commitMessageFromDescriptor = (operation: string): string | undefined => {
+  try {
+    const descriptor = JSON.parse(operation) as {
+      operation?: unknown;
+      payload?: { message?: unknown };
+    };
+    return descriptor.operation === "git.commit" && typeof descriptor.payload?.message === "string"
+      ? descriptor.payload.message
+      : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+/** Resolve a plan-commit authorization into the exact binding an adapter needs
+ * to run one listed commit under the approved list. */
+export const planCommitBinding = (
+  store: TaskStore,
+  host: string,
+  actor: string,
+  operation: string,
+): {
+  taskId: Id;
+  decisionId: Id;
+  binding: Decision["binding"];
+  expectedRevision: Revision;
+  expectedWorkspaceRevision: Revision;
+  step: string;
+} | null => {
+  const message = commitMessageFromDescriptor(operation);
+  if (!message) return null;
+  const plan = approvedPlanCommit(store, host, actor, message);
+  if (!plan.ok) return null;
+  const workspace = store.readWorkspace();
+  if (!workspace.ok || !workspace.data) return null;
+  return {
+    taskId: plan.data.task.id,
+    decisionId: plan.data.entry.id,
+    binding: plan.data.entry.data.binding,
+    expectedRevision: plan.data.task.revision,
+    expectedWorkspaceRevision: workspace.data.revision,
+    step: message,
+  };
+};
+
 export const approvedExternalAction = (
   store: TaskStore,
   host: string,

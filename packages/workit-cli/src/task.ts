@@ -4,6 +4,7 @@ import {
   OPERATION_FAMILIES,
   approvedExternalAction,
   approvedPlanCommit,
+  planCommitBinding,
   externalActionState,
   priorExternalAction,
   priorResolvedDrift,
@@ -502,42 +503,24 @@ const cliActionAuthority = (
   },
 });
 
-const commitMessageFromDescriptor = (operation: string): string | undefined => {
-  try {
-    const descriptor = JSON.parse(operation) as {
-      operation?: unknown;
-      payload?: { message?: unknown };
-    };
-    return descriptor.operation === "git.commit" && typeof descriptor.payload?.message === "string"
-      ? descriptor.payload.message
-      : undefined;
-  } catch {
-    return undefined;
-  }
-};
-
 const nativeExternalActionRunner = (root: string, actor: string, core: WorkitCore, step?: string) =>
   createAuthorizedExternalActionRunner(core, (operationValue) => {
     const store = new TaskStore(root);
     const approved = approvedExternalAction(store, "workit_cli", actor, operationValue);
     if (!approved.ok) {
-      const message = commitMessageFromDescriptor(operationValue);
-      const plan = message ? approvedPlanCommit(store, "workit_cli", actor, message) : null;
-      if (plan?.ok) {
-        const workspace = store.readWorkspace();
-        if (!workspace.ok || !workspace.data)
-          return failure("storage_error", "external action state is unavailable");
+      const plan = planCommitBinding(store, "workit_cli", actor, operationValue);
+      if (plan) {
         const actionRef = externalActionRef("workit_cli", actor, operationValue);
         return {
-          taskId: plan.data.task.id,
-          decisionId: plan.data.entry.id,
+          taskId: plan.taskId,
+          decisionId: plan.decisionId,
           actionRef,
-          expectedRevision: plan.data.task.revision,
-          expectedWorkspaceRevision: workspace.data.revision,
-          binding: plan.data.entry.data.binding,
-          step: message as string,
+          expectedRevision: plan.expectedRevision,
+          expectedWorkspaceRevision: plan.expectedWorkspaceRevision,
+          binding: plan.binding,
+          step: plan.step,
           refresh: () => {
-            const task = store.readTask(plan.data.task.id);
+            const task = store.readTask(plan.taskId);
             const freshWorkspace = store.readWorkspace();
             if (!task.ok || !freshWorkspace.ok || !freshWorkspace.data)
               throw new Error("external action state changed");
