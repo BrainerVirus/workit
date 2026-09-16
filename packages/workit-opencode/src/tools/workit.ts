@@ -1014,7 +1014,7 @@ export const createWorkitTools = ({
           }
         }
         if (!selected.ok && !planAuthorized) {
-          if (/^no approved action/.test(selected.error)) {
+          if (selected.error.startsWith("no approved action")) {
             const proposal = actionProposalQuestion(
               resolved.data.request,
               resolved.data.descriptorPayload,

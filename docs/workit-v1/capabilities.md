@@ -9,6 +9,7 @@ Unknown or untested cells fail the applicable baseline rather than reading as su
 | arbitrary_shell_write | agent_guided | unavailable | unavailable | unavailable | agent_guided | — |
 | compact_context | — | agent_guided | agent_guided | agent_guided | — | — |
 | direct_child_workers | enforced | — | — | — | — | — |
+| fresh-context-review | agent_guided | agent_guided | agent_guided | agent_guided | agent_guided | — |
 | interactive_decision | enforced | agent_guided | agent_guided | agent_guided | enforced | enforced |
 | known_product_writes | unavailable | unavailable | unavailable | unavailable | — | — |
 | native_subagent_start | — | enforced | agent_guided | agent_guided | — | — |
@@ -21,6 +22,7 @@ Unknown or untested cells fail the applicable baseline rather than reading as su
 
 - **interactive_decision** (enforced): native question answers are observed by tool.execute.after and consumed once
 - **direct_child_workers** (enforced): nested native task launches are denied and observed child sessions are parent-bound
+- **fresh-context-review** (agent_guided): independent review runs as a native direct-child session; evidence evaluation enforces creator and duplicate-reviewer exclusion
 - **known_product_writes** (unavailable): file writes are host-policy; OpenCode native permissions govern them, workit no longer gates write tools
 - **arbitrary_shell_write** (agent_guided): OpenCode does not expose a reliable interception boundary for every shell mutation
 
@@ -30,6 +32,7 @@ Unknown or untested cells fail the applicable baseline rather than reading as su
 - **known_product_writes** (unavailable): file writes are host-policy; the Cursor hook no longer gates write tools or shell commands
 - **native_subagents** (agent_guided): reviewer/investigator starts are bounded; Cursor implementer delegation is unavailable and subagentStop lacks a stable child identity
 - **native_subagent_start** (enforced): Cursor subagentStart enforces explicit reviewer/investigator markers; implementer delegation is unavailable
+- **fresh-context-review** (agent_guided): independent review runs as a bounded reviewer subagent; stops lack stable identity, so reviewer exclusivity is evaluated from recorded evidence
 - **arbitrary_shell_write** (unavailable): Only explicitly parsed shell targets are interceptable; arbitrary shell writes are not provable
 - **compact_context** (agent_guided): sessionStart injects context; preCompact can only show a bounded user reminder
 
@@ -37,6 +40,7 @@ Unknown or untested cells fail the applicable baseline rather than reading as su
 
 - **interactive_decision** (agent_guided): Codex hooks expose no native arbitrary-question answer receipt
 - **known_product_writes** (unavailable): file writes are host-policy; PreToolUse allows write tools
+- **fresh-context-review** (agent_guided): independent review runs as a bounded subagent; evidence evaluation enforces reviewer exclusivity, and stops remain untrusted
 - **native_subagents** (agent_guided): Codex reports stable child identities, but cannot block creation or bind a writer
 - **native_subagent_start** (agent_guided): SubagentStart supplies identity and bounded read-only guidance; continue:false cannot stop creation
 - **arbitrary_shell_write** (unavailable): Only covered known tool inputs are interceptable; specialized and write_stdin paths are not complete
@@ -46,6 +50,7 @@ Unknown or untested cells fail the applicable baseline rather than reading as su
 
 - **interactive_decision** (agent_guided): Codex hooks expose no native arbitrary-question answer receipt
 - **known_product_writes** (unavailable): file writes are host-policy; PreToolUse allows write tools
+- **fresh-context-review** (agent_guided): independent review runs as a bounded subagent; evidence evaluation enforces reviewer exclusivity, and stops remain untrusted
 - **native_subagents** (agent_guided): Codex reports stable child identities, but cannot block creation or bind a writer
 - **native_subagent_start** (agent_guided): SubagentStart supplies identity and bounded read-only guidance; continue:false cannot stop creation
 - **arbitrary_shell_write** (unavailable): Only covered known tool inputs are interceptable; specialized and write_stdin paths are not complete
@@ -56,3 +61,4 @@ Unknown or untested cells fail the applicable baseline rather than reading as su
 - **product_write_interception** (enforced): Pi exposes a before-tool boundary for known built-in write tools; it enforces project trust while file targets stay host-policy.
 - **interactive_decision** (enforced): Pi supplies a native confirmation receipt when dialog UI is available.
 - **arbitrary_shell_write** (agent_guided): Pi extensions do not sandbox arbitrary shell commands.
+- **fresh-context-review** (agent_guided): independent review runs as a supervised stock-Pi process; evidence evaluation enforces reviewer exclusivity

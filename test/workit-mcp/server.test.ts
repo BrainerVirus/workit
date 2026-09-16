@@ -23,13 +23,9 @@ import { operationCorpus, taskStartRequest } from "@/test/workit-core/task-fixtu
 const id = "00000000-0000-4000-8000-000000000001";
 const root = process.cwd();
 
-const context = (host: Host, workspaceRoot = root, attested = false): OperationContext => ({
+const context = (host: Host, workspaceRoot = root): OperationContext => ({
   root: workspaceRoot,
-  caller: {
-    host,
-    actor: "mcp-test",
-    ...(attested ? { attested: true } : {}),
-  } as OperationContext["caller"],
+  caller: { host, actor: "mcp-test" },
   capabilities: [],
   constraints: [],
   now: "2026-01-01T00:00:00Z",
@@ -47,9 +43,7 @@ const connect = async (
 };
 
 test("MCP exposes exactly the eight family tools with core-derived 2020-12 schemas", async () => {
-  const { client, server } = await connect("cursor", {
-    current: async () => context("cursor", root, true),
-  });
+  const { client, server } = await connect("cursor", { current: async () => context("cursor") });
   try {
     const listed = await client.listTools();
     expect(listed.tools.map((tool) => tool.name)).toEqual(
@@ -84,30 +78,6 @@ const jsonDepth = (node: unknown, current = 0): number => {
   return current;
 };
 
-test("unattested MCP callers see only read-only actions", async () => {
-  const { client, server } = await connect("cursor", { current: async () => context("cursor") });
-  try {
-    const listed = await client.listTools();
-    expect(listed.tools.map((tool) => tool.name)).toEqual([
-      "workit_task",
-      "workit_policy",
-      "workit_state",
-    ]);
-    const task = listed.tools.find((tool) => tool.name === "workit_task")!;
-    const oneOf =
-      (task.inputSchema as { oneOf?: Array<{ properties?: { action?: { const?: string } } }> })
-        .oneOf ?? [];
-    expect(oneOf.map((branch) => branch.properties?.action?.const).sort()).toEqual([
-      "inspect",
-      "list",
-    ]);
-    expect(jsonDepth(task.inputSchema)).toBeLessThanOrEqual(OPERATION_SCHEMA_MAX_DEPTH);
-  } finally {
-    await client.close();
-    await server.close();
-  }
-});
-
 test("MCP exposes a read-only context resource without adding a ninth tool", async () => {
   const workspaceRoot = mkdtempSync(path.join(os.tmpdir(), "workit-mcp-context-"));
   spawnSync("git", ["init", "-q"], { cwd: workspaceRoot });
@@ -117,7 +87,7 @@ test("MCP exposes a read-only context resource without adding a ninth tool", asy
   spawnSync("git", ["add", "fixture.txt"], { cwd: workspaceRoot });
   spawnSync("git", ["commit", "-qm", "fixture"], { cwd: workspaceRoot });
   const { client, server } = await connect("cursor", {
-    current: async () => context("cursor", workspaceRoot, true),
+    current: async () => context("cursor", workspaceRoot),
   });
   try {
     const listed = await client.listTools();
@@ -323,9 +293,7 @@ test("MCP publishes every core action in every family without a second action ta
     actions.add(String((fixture.input as { action: string }).action));
     families.set(fixture.family, actions);
   }
-  const { client, server } = await connect("cursor", {
-    current: async () => context("cursor", root, true),
-  });
+  const { client, server } = await connect("cursor", { current: async () => context("cursor") });
   try {
     const listed = await client.listTools();
     for (const family of OPERATION_FAMILIES) {

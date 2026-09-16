@@ -594,10 +594,6 @@ test("OpenCode changelog.apply uses the approved target and existing writer", as
     };
     const resolved = resolveExternalActionRequest(root, request);
     if (!resolved.ok) throw new Error(resolved.error);
-    const descriptor = externalActionDescriptor(
-      resolved.data.request.operation,
-      resolved.data.descriptorPayload,
-    );
     const { tools, decision } = await approveActionFor({
       root,
       actor,
@@ -672,10 +668,6 @@ test("OpenCode changelog.apply refuses approval-time file drift without writing"
     };
     const resolved = resolveExternalActionRequest(root, request);
     if (!resolved.ok) throw new Error(resolved.error);
-    const descriptor = externalActionDescriptor(
-      resolved.data.request.operation,
-      resolved.data.descriptorPayload,
-    );
     const { tools, decision } = await approveActionFor({
       root,
       actor,
@@ -815,10 +807,6 @@ test("OpenCode action route consumes the exact native receipt before committing"
       payload: { message: "chore(test): native commit" },
     });
     if (!resolved.ok) throw new Error(resolved.error);
-    const descriptor = externalActionDescriptor(
-      resolved.data.request.operation,
-      resolved.data.descriptorPayload,
-    );
     const { tools, decision } = await approveActionFor({
       root,
       actor,
@@ -1099,10 +1087,6 @@ test("OpenCode hosting action reconciles a matching provider result without retr
     };
     const resolved = resolveExternalActionRequest(root, request);
     if (!resolved.ok) throw new Error(resolved.error);
-    const descriptor = externalActionDescriptor(
-      resolved.data.request.operation,
-      resolved.data.descriptorPayload,
-    );
     const { tools, decision } = await approveActionFor({
       root,
       actor,
@@ -1216,10 +1200,6 @@ test.each([undefined, 5])(
       };
       const resolved = resolveExternalActionRequest(root, request);
       if (!resolved.ok) throw new Error(resolved.error);
-      const descriptor = externalActionDescriptor(
-        resolved.data.request.operation,
-        resolved.data.descriptorPayload,
-      );
       const { tools, decision } = await approveActionFor({
         root,
         actor,
@@ -1405,10 +1385,6 @@ test("OpenCode YouTrack time response loss reconciles the exact applied item wit
     };
     const resolved = resolveExternalActionRequest(root, request);
     if (!resolved.ok) throw new Error(resolved.error);
-    const descriptor = externalActionDescriptor(
-      resolved.data.request.operation,
-      resolved.data.descriptorPayload,
-    );
     const { tools, decision } = await approveActionFor({
       root,
       actor,
@@ -1881,7 +1857,7 @@ test("OpenCode proposes a concise action approval and binds the exact descriptor
     if (!recorded.ok) throw new Error("recorded task unavailable");
     const entry = recorded.data.decisions.find((item) => item.data.purpose === "action");
     expect(entry?.data.binding.approvedContent).toBe(descriptor);
-    expect((entry?.data.binding as { displayed?: string }).displayed).toBe(
+    expect(entry && (entry.data.binding as { displayed?: string }).displayed).toBe(
       proposal.approvedContent,
     );
 
