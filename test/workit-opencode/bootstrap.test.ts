@@ -1,5 +1,4 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync } from "node:fs";
 import path from "node:path";
 import { getWorkitBootstrap, isWorkitBootstrap } from "@/packages/workit-opencode/src/bootstrap";
 import plugin from "@/packages/workit-opencode/src/plugin";
