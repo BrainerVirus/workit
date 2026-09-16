@@ -19,6 +19,7 @@ import {
   parseOperation,
   shellRouteIntent,
   success,
+  workitBindingQuestionIssue,
   canonicalJson,
   TaskStore,
   WorkitCore,
@@ -31,6 +32,7 @@ import {
 } from "@brainervirus/workit-core/src/core";
 import {
   actionProposalQuestion,
+  assertLocalExternalActionWriter,
   approvedResolvedExternalAction,
   executeResolvedExternalAction,
   readExternalAction,
@@ -284,8 +286,22 @@ const executeFamily = async (
       );
     const decision = parsed.data as {
       response: "approved" | "rejected";
-      binding: { presented: string };
+      binding: { presented: string; approvedContent: string; displayed?: string };
     };
+    const budgetIssue = workitBindingQuestionIssue([
+      {
+        header: `Workit decision: ${(parsed.data as { purpose: string }).purpose}`,
+        question: decision.binding.presented,
+        options: [
+          {
+            label: "approved",
+            description: decision.binding.displayed ?? decision.binding.approvedContent,
+          },
+          { label: "rejected", description: "Reject this decision" },
+        ],
+      },
+    ]);
+    if (budgetIssue) return output(failure("invalid_input", budgetIssue));
     const approved = await ctx.ui.confirm("Workit decision", decision.binding.presented);
     if (approved !== (decision.response === "approved"))
       return output(
@@ -372,6 +388,25 @@ export const registerWorkitTools = (
         ...context,
         nativeAuthority: nativeAuthority(actor, reconciliationTokens),
       });
+      const localOperation = [
+        "git.branch_setup",
+        "git.commit",
+        "git.push",
+        "hosting.pull_request",
+        "changelog.apply",
+      ].includes(resolved.data.request.operation);
+      if (localOperation) {
+        const writer = assertLocalExternalActionWriter(ctx.cwd, { host: "pi", actor });
+        if (!writer.ok)
+          return output(
+            failure("needs_input", "writer ownership is required before this action", {
+              outcome: "not_started",
+              operation: resolved.data.request.operation,
+              guidance:
+                "Acquire checkout writer ownership first (writer.acquire) and retry the action.",
+            }),
+          );
+      }
       const descriptor = externalActionDescriptor(
         resolved.data.request.operation,
         resolved.data.descriptorPayload,

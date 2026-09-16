@@ -31,6 +31,7 @@ import {
 } from "@brainervirus/workit-core/src/core";
 import {
   actionProposalQuestion,
+  assertLocalExternalActionWriter,
   approvedResolvedExternalAction,
   executeResolvedExternalAction,
   readExternalAction,
@@ -993,6 +994,28 @@ export const createWorkitTools = ({
               )
             : success(null, null, null);
         if (!drift.ok) return output(drift);
+        const localOperation = [
+          "git.branch_setup",
+          "git.commit",
+          "git.push",
+          "hosting.pull_request",
+          "changelog.apply",
+        ].includes(resolved.data.request.operation);
+        if (localOperation) {
+          const writer = assertLocalExternalActionWriter(context.directory, {
+            host: "opencode",
+            actor: context.sessionID,
+          });
+          if (!writer.ok)
+            return output(
+              failure("needs_input", "writer ownership is required before this action", {
+                outcome: "not_started",
+                operation: resolved.data.request.operation,
+                guidance:
+                  "Acquire checkout writer ownership first (writer.acquire) and retry the action.",
+              }),
+            );
+        }
         const selected = approvedExternalAction(store, "opencode", context.sessionID, descriptor);
         let planAuthorized = false;
         if (!selected.ok) {

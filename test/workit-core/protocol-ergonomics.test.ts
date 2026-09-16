@@ -201,6 +201,29 @@ test("new and legacy records carry truthful runtime versions", () => {
   }
 });
 
+test("records written by a newer Workit ask for an upgrade", () => {
+  const root = gitRepo();
+  try {
+    const core = coreFor(root);
+    const started = core.task(taskStartRequest());
+    if (!started.ok) throw new Error(started.error);
+    const taskId = (started.data as { id: string }).id;
+    const taskFile = path.join(root, ".workit", "tasks", `${taskId}.json`);
+    const raw = JSON.parse(readFileSync(taskFile, "utf8"));
+    raw.runtime = { createdWith: "99.0.0", updatedWith: "99.0.0" };
+    raw.futureField = "unknown-to-this-runtime";
+    writeFileSync(taskFile, JSON.stringify(raw));
+    const task = new TaskStore(root).readTask(taskId);
+    expect(task.ok).toBe(false);
+    if (!task.ok) {
+      expect(task.code).toBe("recovery_required");
+      expect(task.error).toContain("upgrade Workit");
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("close reports rule-level remedies for unsatisfied requirements", () => {
   const root = gitRepo();
   try {

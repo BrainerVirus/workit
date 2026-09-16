@@ -292,6 +292,50 @@ test("a cancelling worker keeps ownership until an observed stop", () => {
   ).toMatchObject({ ok: false, code: "recovery_required" });
 });
 
+test("a late running observation keeps cancelling until a host-confirmed stop", () => {
+  const lead = active({ nativeWorker: observationVerifier() });
+  const assigned = assign(lead.core, lead.task, lead.workspace);
+  expect(assigned.ok).toBe(true);
+  if (!assigned.ok) throw new Error(assigned.error);
+  let task = lead.store.readTask(lead.task.id);
+  let workspace = lead.store.readWorkspace();
+  if (!task.ok || !workspace.ok || !workspace.data) throw new Error("state missing");
+  expect(
+    observeRunning(
+      lead.core,
+      lead.task.id,
+      assigned.data.id,
+      task.data.revision,
+      workspace.data.revision,
+    ).ok,
+  ).toBe(true);
+  task = lead.store.readTask(lead.task.id);
+  workspace = lead.store.readWorkspace();
+  if (!task.ok || !workspace.ok || !workspace.data) throw new Error("state missing");
+  expect(
+    lead.core.worker({
+      schemaVersion: 1,
+      action: "cancel",
+      taskId: lead.task.id,
+      expectedRevision: task.data.revision,
+      expectedWorkspaceRevision: workspace.data.revision,
+      workerId: assigned.data.id,
+      reason: "timeout",
+    }),
+  ).toMatchObject({ ok: true, data: { data: { state: "cancelling" } } });
+  task = lead.store.readTask(lead.task.id);
+  workspace = lead.store.readWorkspace();
+  if (!task.ok || !workspace.ok || !workspace.data) throw new Error("state missing");
+  const late = observeRunning(
+    lead.core,
+    lead.task.id,
+    assigned.data.id,
+    task.data.revision,
+    workspace.data.revision,
+  );
+  expect(late).toMatchObject({ ok: true, data: { data: { state: "cancelling" } } });
+});
+
 test("helpers cannot change lifecycle, scope, decisions, assign helpers, or resolve findings", () => {
   const lead = active();
   const assigned = assign(lead.core, lead.task, lead.workspace);

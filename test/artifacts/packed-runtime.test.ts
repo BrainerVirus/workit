@@ -183,16 +183,7 @@ test("cursor MCP server boots over stdio from the extracted package with node (n
       const names = ((listed.result as { tools?: { name: string }[] })?.tools ?? []).map(
         (t) => t.name,
       );
-      expect(names).toEqual([
-        "workit_task",
-        "workit_policy",
-        "workit_evidence",
-        "workit_finding",
-        "workit_decision",
-        "workit_worker",
-        "workit_writer",
-        "workit_state",
-      ]);
+      expect(names).toEqual(["workit_task", "workit_policy", "workit_state"]);
     } finally {
       // win32 keeps deleted files/dirs locked until the child fully exits, so
       // wait for the kill to land before the outer finally rmSync's the tree.
@@ -327,16 +318,7 @@ test.skipIf(!npmRegistryOk)(
         const names = ((listed.result as { tools?: { name: string }[] })?.tools ?? []).map(
           (t) => t.name,
         );
-        expect(names).toEqual([
-          "workit_task",
-          "workit_policy",
-          "workit_evidence",
-          "workit_finding",
-          "workit_decision",
-          "workit_worker",
-          "workit_writer",
-          "workit_state",
-        ]);
+        expect(names).toEqual(["workit_task", "workit_policy", "workit_state"]);
       } finally {
         child.kill();
         await Promise.race([

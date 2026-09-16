@@ -18,6 +18,7 @@ import {
   compactTaskContext,
   failure,
   success,
+  workitBindingQuestionIssue,
   type Capability,
   type Caller,
   type Constraint,
@@ -26,6 +27,7 @@ import {
 } from "@brainervirus/workit-core/src/core";
 import {
   actionProposalQuestion,
+  assertLocalExternalActionWriter,
   approvedResolvedExternalAction,
   executeResolvedExternalAction,
   readExternalAction,
@@ -408,7 +410,34 @@ export async function runTaskCommand(argv: string[], deps: TaskCliDeps = {}): Pr
     ),
   );
   let result: Result<unknown>;
-  if (parsed.parsed.handoff) {
+  const decisionBudgetIssue = (() => {
+    if (parsed.parsed.family !== "decision" || parsed.parsed.action !== "record") return null;
+    const request = parsed.parsed.request as {
+      purpose?: unknown;
+      binding?: { presented?: unknown; approvedContent?: unknown; displayed?: unknown };
+    };
+    if (typeof request.purpose !== "string" || !request.binding) return null;
+    return workitBindingQuestionIssue([
+      {
+        header: `Workit decision: ${request.purpose}`,
+        question: typeof request.binding.presented === "string" ? request.binding.presented : "",
+        options: [
+          {
+            label: "approved",
+            description:
+              typeof request.binding.displayed === "string"
+                ? request.binding.displayed
+                : typeof request.binding.approvedContent === "string"
+                  ? request.binding.approvedContent
+                  : "",
+          },
+          { label: "rejected", description: "Reject this decision" },
+        ],
+      },
+    ]);
+  })();
+  if (decisionBudgetIssue) result = failure("invalid_input", decisionBudgetIssue);
+  else if (parsed.parsed.handoff) {
     const exported = dispatch(core, "state", parsed.parsed.request);
     if (!exported.ok) result = exported;
     else {
@@ -776,6 +805,26 @@ export async function runActionCommand(argv: string[], deps: TaskCliDeps = {}): 
     if (json) jsonResult(outOf(deps), drift);
     else printHuman(drift, deps);
     return 1;
+  }
+  const localOperation = [
+    "git.branch_setup",
+    "git.commit",
+    "git.push",
+    "hosting.pull_request",
+    "changelog.apply",
+  ].includes(normalized.operation);
+  if (localOperation) {
+    const writer = assertLocalExternalActionWriter(root, { host: "workit_cli", actor });
+    if (!writer.ok) {
+      const result = failure("needs_input", "writer ownership is required before this action", {
+        outcome: "not_started",
+        operation: normalized.operation,
+        guidance: "Acquire checkout writer ownership first (writer.acquire) and retry the action.",
+      });
+      if (json) jsonResult(outOf(deps), result);
+      else printHuman(result, deps);
+      return 1;
+    }
   }
   const question = actionProposalQuestion(normalized, resolved.data.descriptorPayload);
   const commitMessage =

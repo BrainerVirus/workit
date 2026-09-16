@@ -90,11 +90,6 @@ test("Node executable completes MCP initialize and tools/list with protocol-only
     expect(listed.result.tools.map((tool: { name: string }) => tool.name)).toEqual([
       "workit_task",
       "workit_policy",
-      "workit_evidence",
-      "workit_finding",
-      "workit_decision",
-      "workit_worker",
-      "workit_writer",
       "workit_state",
     ]);
     const called = await request("tools/call", {

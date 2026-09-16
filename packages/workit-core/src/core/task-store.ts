@@ -132,6 +132,21 @@ const stampNew = (record: { runtime?: { createdWith: string | null } }) => ({
   createdWith: record.runtime?.createdWith ?? null,
   updatedWith: runtimeVersion(),
 });
+
+const isNewerVersion = (candidate: string, current: string): boolean => {
+  const parts = (value: string) =>
+    value
+      .split("-")[0]
+      .split(".")
+      .map((item) => Number.parseInt(item, 10) || 0);
+  const [next, now] = [parts(candidate), parts(current)];
+  for (let index = 0; index < 3; index += 1) {
+    const left = next[index] ?? 0;
+    const right = now[index] ?? 0;
+    if (left !== right) return left > right;
+  }
+  return false;
+};
 const jsonBytes = (value: unknown): string => `${canonicalJson(value)}\n`;
 const digestBytes = (value: string | Buffer): string =>
   createHash("sha256").update(value).digest("hex");
@@ -1078,9 +1093,17 @@ export class TaskStore {
     if (isObject(value) && "schemaVersion" in value && value.schemaVersion !== SCHEMA_VERSION)
       return failure("unsupported_version", "unsupported snapshot schema version");
     const parsed = schema.safeParse(value);
-    return parsed.success
-      ? success(null, null, parsed.data)
-      : failure("recovery_required", "snapshot does not satisfy its schema");
+    if (parsed.success) return success(null, null, parsed.data);
+    const writerVersion =
+      isObject(value) && isObject((value as { runtime?: unknown }).runtime)
+        ? (value as { runtime: { updatedWith?: unknown } }).runtime.updatedWith
+        : null;
+    if (typeof writerVersion === "string" && isNewerVersion(writerVersion, runtimeVersion()))
+      return failure(
+        "recovery_required",
+        `snapshot was written by workit ${writerVersion}; upgrade Workit before mutating this checkout`,
+      );
+    return failure("recovery_required", "snapshot does not satisfy its schema");
   }
 
   private processStart(pid: number): string | null {

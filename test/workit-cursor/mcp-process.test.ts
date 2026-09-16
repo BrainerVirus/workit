@@ -55,11 +55,6 @@ test("run-server <workspace> from an unrelated cwd defaults omitted roots to the
   expect(result.listed.result.tools.map((tool: { name: string }) => tool.name)).toEqual([
     "workit_task",
     "workit_policy",
-    "workit_evidence",
-    "workit_finding",
-    "workit_decision",
-    "workit_worker",
-    "workit_writer",
     "workit_state",
   ]);
 });

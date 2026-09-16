@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { existsSync } from "node:fs";
+import path from "node:path";
 import { getWorkitBootstrap, isWorkitBootstrap } from "@/packages/workit-opencode/src/bootstrap";
 import plugin from "@/packages/workit-opencode/src/plugin";
 
@@ -108,5 +110,26 @@ describe("session bootstrap", () => {
     const texts = second.messages[0].parts.map((p: any) => p.text ?? "");
     expect(texts.some((t: string) => isWorkitBootstrap(t))).toBe(true);
     expect(texts[texts.length - 1]).toBe("continue");
+  });
+});
+
+describe("stale-source markers", () => {
+  test("resolve in both source and bundled plugin layouts", () => {
+    const repoRoot = path.join(import.meta.dir, "..", "..");
+    for (const hostDir of [
+      path.join(repoRoot, "packages", "workit-opencode", "src"),
+      path.join(repoRoot, "packages", "workit-opencode", "dist"),
+    ]) {
+      const resolved = path.resolve(
+        hostDir,
+        "..",
+        "..",
+        "workit-core",
+        "src",
+        "core",
+        "task-contract.ts",
+      );
+      expect(existsSync(resolved), hostDir).toBe(true);
+    }
   });
 });

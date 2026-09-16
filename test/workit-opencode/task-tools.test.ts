@@ -897,6 +897,18 @@ test("OpenCode executes a plan-commit list once per listed message", async () =>
       planEntry ? planCommitDescriptor(planEntry.data.binding.approvedContent) : null,
     ).toMatchObject({ steps: ["chore(a): one", "chore(b): two"], branch: "feature/plan" });
 
+    spawnSync("git", ["checkout", "-q", "-b", "feature/other"], { cwd: root });
+    writeFileSync(join(root, "wrong-branch.txt"), "wrong\n");
+    spawnSync("git", ["add", "wrong-branch.txt"], { cwd: root });
+    const wrongBranch = await tools.workit_external_action.execute(
+      { operation: "git.commit", payload: { message: "chore(a): one" } },
+      { directory: root, sessionID: actor },
+    );
+    expect(
+      JSON.parse(typeof wrongBranch === "string" ? wrongBranch : wrongBranch.output),
+    ).toMatchObject({ ok: false, code: "needs_input" });
+    spawnSync("git", ["checkout", "-q", "feature/plan"], { cwd: root });
+
     writeFileSync(join(root, "one.txt"), "one\n");
     spawnSync("git", ["add", "one.txt"], { cwd: root });
     const first = await tools.workit_external_action.execute(
@@ -942,6 +954,107 @@ test("OpenCode executes a plan-commit list once per listed message", async () =>
       ok: false,
       code: "needs_input",
     });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("identical concurrent proposals fail closed on ambiguous approval", async () => {
+  const root = mkdtempSync(join(tmpdir(), "workit-opencode-ambiguous-"));
+  try {
+    for (const args of [
+      ["init", "-q"],
+      ["config", "user.email", "test@example.invalid"],
+      ["config", "user.name", "Workit Test"],
+    ])
+      spawnSync("git", args, { cwd: root });
+    writeFileSync(join(root, "base.txt"), "base\n");
+    spawnSync("git", ["add", "base.txt"], { cwd: root });
+    spawnSync("git", ["commit", "-qm", "base"], { cwd: root });
+    writeFileSync(join(root, "change.txt"), "change\n");
+    spawnSync("git", ["add", "change.txt"], { cwd: root });
+    const actor = "opencode-ambiguous-session";
+    const store = new TaskStore(root);
+    const core = new WorkitCore(store, {
+      root,
+      caller: { host: "opencode", actor },
+      capabilities: [],
+      constraints: [],
+      now: "2026-01-01T00:00:00Z",
+    });
+    const started = core.task(taskStartRequest());
+    if (!started.ok) throw new Error(started.error);
+    const task = store.readTask((started.data as { id: string }).id);
+    const workspace = store.readWorkspace();
+    if (!task.ok || !workspace.ok || !workspace.data) throw new Error("task setup failed");
+    expect(
+      core.writer({
+        schemaVersion: 1,
+        action: "acquire",
+        taskId: task.data.id,
+        expectedRevision: task.data.revision,
+        expectedWorkspaceRevision: workspace.data.revision,
+        workerId: null,
+      }),
+    ).toMatchObject({ ok: true });
+    const receipts = new NativeReceiptStore();
+    const tools = createWorkitTools({
+      receipts,
+      client: { session: { get: async () => ({ data: { id: actor, directory: root } }) } },
+    }) as any;
+    const request = { operation: "git.commit", payload: { message: "chore(test): ambiguous" } };
+    const firstCall = await tools.workit_external_action.execute(request, {
+      directory: root,
+      sessionID: actor,
+    });
+    await tools.workit_external_action.execute(request, { directory: root, sessionID: actor });
+    const proposal = JSON.parse(
+      typeof firstCall === "string" ? firstCall : (firstCall as { output: string }).output,
+    ).details.proposal;
+    receipts.record(
+      {
+        sessionID: actor,
+        callID: "ambiguous-question",
+        args: {
+          questions: [
+            {
+              header: "Workit decision: action",
+              question: proposal.presented,
+              options: [
+                { label: "approved", description: proposal.approvedContent },
+                { label: "rejected", description: "Reject this decision" },
+              ],
+            },
+          ],
+        },
+      },
+      { metadata: { answers: [["approved"]] } },
+    );
+    const fresh = store.readTask(task.data.id);
+    if (!fresh.ok) throw new Error("task refresh failed");
+    const decision = await tools.workit_decision.execute(
+      {
+        schemaVersion: 1,
+        action: "record",
+        taskId: task.data.id,
+        expectedRevision: fresh.data.revision,
+        purpose: "action",
+        binding: {
+          taskId: task.data.id,
+          workspaceId: workspace.data.id,
+          scope: task.data.intent.data.scope,
+          presented: proposal.presented,
+          approvedContent: proposal.approvedContent,
+          contentRefs: [],
+        },
+        response: "approved",
+        requirementIds: [],
+      },
+      { directory: root, sessionID: actor } as never,
+    );
+    expect(
+      JSON.parse(typeof decision === "string" ? decision : (decision as { output: string }).output),
+    ).toMatchObject({ ok: false, code: "invalid_input" });
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
