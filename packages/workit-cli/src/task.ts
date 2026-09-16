@@ -5,6 +5,7 @@ import {
   approvedExternalAction,
   externalActionState,
   priorExternalAction,
+  priorResolvedDrift,
   externalActionDescriptor,
   externalActionRequest,
   externalActionRef,
@@ -22,6 +23,7 @@ import {
   type OperationContext,
 } from "@brainervirus/workit-core/src/core";
 import {
+  actionProposalQuestion,
   approvedResolvedExternalAction,
   executeResolvedExternalAction,
   readExternalAction,
@@ -723,7 +725,24 @@ export async function runActionCommand(argv: string[], deps: TaskCliDeps = {}): 
     else printHuman(result, deps);
     return 1;
   }
-  if (!json) write(outOf(deps), `External action preview: ${descriptor}`);
+  const drift =
+    normalized.operation === "git.branch_setup"
+      ? priorResolvedDrift(
+          store,
+          "workit_cli",
+          actor,
+          normalized.operation,
+          normalized.payload,
+          (resolved.data.descriptorPayload as { resolved?: unknown }).resolved,
+        )
+      : success(null, null, null);
+  if (!drift.ok) {
+    if (json) jsonResult(outOf(deps), drift);
+    else printHuman(drift, deps);
+    return 1;
+  }
+  const question = actionProposalQuestion(normalized, resolved.data.descriptorPayload);
+  if (!json) write(outOf(deps), question.presented);
   const accepted = await observeConsent(deps);
   if (!accepted.accepted || !accepted.observed) {
     const result = failure(
@@ -751,8 +770,9 @@ export async function runActionCommand(argv: string[], deps: TaskCliDeps = {}): 
         taskId: task.id,
         workspaceId: workspace.data.id,
         scope: task.intent.data.scope,
-        presented: `Approve ${descriptor}`,
+        presented: question.presented,
         approvedContent: descriptor,
+        displayed: question.approvedText,
         contentRefs: [],
       },
       response: "approved",

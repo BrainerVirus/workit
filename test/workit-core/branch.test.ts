@@ -13,6 +13,8 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { createRepoTools } from "@/packages/workit-opencode/src/tools/repo";
 import { branchSetup } from "@/packages/workit-core/src/core/branch";
+import { resolveExternalActionRequest } from "@/packages/workit-core/src/core/external-action-effects";
+import { externalActionRequest } from "@/packages/workit-core/src/core/external-action";
 
 const git = (cwd: string, args: string[]) => spawnSync("git", args, { cwd, encoding: "utf8" });
 
@@ -153,6 +155,107 @@ test(
     } finally {
       const sddDir = path.join(root, "docs", "sdd");
       if (existsSync(sddDir)) chmodSync(sddDir, 0o755);
+      rmSync(root, { recursive: true, force: true });
+      rmSync(remote, { recursive: true, force: true });
+    }
+  },
+  { timeout: 60_000 },
+);
+
+test(
+  "setup without target_branch fails preflight and creates nothing",
+  () => {
+    const { root, remote } = repoOnMain({ withDevelop: true });
+    try {
+      const result = branchSetup({ workspace_root: root, sdd_dir: "docs/sdd" });
+      expect("error" in result).toBe(true);
+      if (!("error" in result)) return;
+      expect(result.phase).toBe("preflight");
+      expect(result.error).toContain("target_branch");
+      expect(existsSync(path.join(root, "docs"))).toBe(false);
+      expect(git(root, ["branch", "--show-current"]).stdout.trim()).toBe("main");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(remote, { recursive: true, force: true });
+    }
+  },
+  { timeout: 60_000 },
+);
+
+test(
+  "dirty preflight rejection leaves HEAD, stash, and manifest untouched",
+  () => {
+    const { root, remote } = repoOnMain({ withDevelop: true });
+    try {
+      git(root, ["branch", "feature/exists"]);
+      dirtyTree(root);
+      const before = git(root, ["rev-parse", "HEAD"]).stdout.trim();
+      const result = branchSetup({
+        target_branch: "feature/exists",
+        stash: "no",
+        workspace_root: root,
+        sdd_dir: "docs/sdd",
+      });
+      expect("error" in result).toBe(true);
+      if (!("error" in result)) return;
+      expect(result.phase).toBe("preflight");
+      expect(result.error).toContain("dirty working tree");
+      expect(existsSync(path.join(root, "docs"))).toBe(false);
+      expect(git(root, ["rev-parse", "HEAD"]).stdout.trim()).toBe(before);
+      expect(git(root, ["stash", "list"]).stdout.trim()).toBe("");
+      expect(git(root, ["branch", "--show-current"]).stdout.trim()).toBe("main");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(remote, { recursive: true, force: true });
+    }
+  },
+  { timeout: 60_000 },
+);
+
+test(
+  "branch setup resolution requires the working branch and binds its base baseline",
+  () => {
+    const { root, remote } = repoOnMain({ withDevelop: true });
+    try {
+      const missing = externalActionRequest({
+        operation: "git.branch_setup",
+        payload: { action: "setup" },
+      });
+      expect(missing.ok).toBe(true);
+      if (!missing.ok) return;
+      const unresolved = resolveExternalActionRequest(root, missing.data);
+      expect(unresolved.ok).toBe(false);
+      if (!unresolved.ok) {
+        expect(unresolved.code).toBe("invalid_input");
+        expect((unresolved.details as { outcome?: string } | undefined)?.outcome).toBe(
+          "not_started",
+        );
+      }
+      const request = externalActionRequest({
+        operation: "git.branch_setup",
+        payload: { action: "setup", target_branch: "feature/delta" },
+      });
+      expect(request.ok).toBe(true);
+      if (!request.ok) return;
+      const resolved = resolveExternalActionRequest(root, request.data);
+      expect(resolved.ok).toBe(true);
+      if (resolved.ok) {
+        const payload = resolved.data.descriptorPayload as {
+          resolved?: Record<string, unknown>;
+        };
+        expect(payload.resolved?.base_branch).toBe("develop");
+        expect(payload.resolved?.target_exists).toBe(false);
+        expect(String(payload.resolved?.remote_base)).toMatch(/^[0-9a-f]{40}$/);
+        expect(payload.resolved?.dirty).toBe(false);
+      }
+      const reapply = externalActionRequest({
+        operation: "git.branch_setup",
+        payload: { action: "reapply_stash" },
+      });
+      expect(reapply.ok).toBe(true);
+      if (!reapply.ok) return;
+      expect(resolveExternalActionRequest(root, reapply.data).ok).toBe(true);
+    } finally {
       rmSync(root, { recursive: true, force: true });
       rmSync(remote, { recursive: true, force: true });
     }

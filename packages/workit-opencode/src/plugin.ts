@@ -2,7 +2,12 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Plugin } from "@opencode-ai/plugin";
-import { shellRouteIntent, TaskStore, WorkitCore } from "@brainervirus/workit-core/src/core";
+import {
+  shellRouteIntent,
+  TaskStore,
+  WorkitCore,
+  workitBindingQuestionIssue,
+} from "@brainervirus/workit-core/src/core";
 import { WORKIT_SKILL_ALIASES } from "@brainervirus/workit-core/src/core/skill-manifests";
 import { createLogger } from "@brainervirus/workit-core/src/core/logger";
 import {
@@ -605,6 +610,13 @@ const plugin: Plugin = async ({ client, directory }) => {
           throw new Error(
             `recovery_required: direct branch or PR creation bypasses the Workit route; ${route.guidance}`,
           );
+        return;
+      }
+      if (input.tool === "question") {
+        const issue = workitBindingQuestionIssue(
+          (output?.args as { questions?: unknown } | undefined)?.questions,
+        );
+        if (issue) throw new Error(issue);
         return;
       }
       if (input.tool === "task") {

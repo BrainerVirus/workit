@@ -3,6 +3,7 @@ import {
   approvedExternalAction,
   externalActionState,
   priorExternalAction,
+  priorResolvedDrift,
   externalActionDescriptor,
   externalActionHelp,
   externalActionRequest,
@@ -27,6 +28,7 @@ import {
   type ContractResult as Result,
 } from "@brainervirus/workit-core/src/core";
 import {
+  actionProposalQuestion,
   approvedResolvedExternalAction,
   executeResolvedExternalAction,
   readExternalAction,
@@ -398,6 +400,18 @@ export const registerWorkitTools = (
       }
       if (priorRequest.ok && priorRequest.data.entry.data.consumption !== null)
         return output(failure("permission_denied", "external action was already settled"));
+      const drift =
+        resolved.data.request.operation === "git.branch_setup"
+          ? priorResolvedDrift(
+              store,
+              "pi",
+              actor,
+              resolved.data.request.operation,
+              resolved.data.request.payload,
+              (resolved.data.descriptorPayload as { resolved?: unknown }).resolved,
+            )
+          : success(null, null, null);
+      if (!drift.ok) return output(drift);
       const existing = approvedExternalAction(store, "pi", actor, descriptor);
       if (!existing.ok) {
         const prior = externalActionState(store, "pi", actor, descriptor);
@@ -420,7 +434,11 @@ export const registerWorkitTools = (
             failure("permission_denied", "external action requires exactly one active Pi task"),
           );
         const task = candidates[0];
-        const approved = await ctx.ui.confirm("Workit external action", descriptor);
+        const question = actionProposalQuestion(
+          resolved.data.request,
+          resolved.data.descriptorPayload,
+        );
+        const approved = await ctx.ui.confirm(question.presented, question.approvedText);
         if (!approved)
           return output(failure("permission_denied", "external action was not approved"));
         const currentWorkspace = store.readWorkspace();
@@ -437,8 +455,9 @@ export const registerWorkitTools = (
               taskId: task.id,
               workspaceId: currentWorkspace.data.id,
               scope: task.intent.data.scope,
-              presented: `Approve ${descriptor}`,
+              presented: question.presented,
               approvedContent: descriptor,
+              displayed: question.approvedText,
               contentRefs: [],
             },
             response: "approved",

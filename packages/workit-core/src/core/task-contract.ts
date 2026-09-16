@@ -453,6 +453,7 @@ export const decisionSchema = z
         scope: scopeSchema,
         presented: text,
         approvedContent: text,
+        displayed: text.optional(),
         contentRefs: z.array(refSchema),
       })
       .strict(),
@@ -471,6 +472,29 @@ export const decisionSchema = z
   })
   .strict();
 export type Decision = z.infer<typeof decisionSchema>;
+
+/** Show-before-ask guard: binding questions are single-sentence and never
+ * carry the artifact, descriptor, or payload body in the question UI. */
+export const BINDING_QUESTION_BUDGET = 300;
+const bindingQuestionHeader = /^Workit decision: (design|action|limitation|preference)$/;
+export const workitBindingQuestionIssue = (questions: unknown): string | null => {
+  if (!Array.isArray(questions) || questions.length !== 1) return null;
+  const question = questions[0] as { header?: unknown; question?: unknown; options?: unknown };
+  if (!question || typeof question !== "object") return null;
+  if (typeof question.header !== "string" || !bindingQuestionHeader.test(question.header.trim()))
+    return null;
+  const over = (label: string, value: string) =>
+    `invalid_input: ${label} is ${value.length} characters; Workit binding questions must stay within ${BINDING_QUESTION_BUDGET}. present the item in the conversation first, then ask a short scoped question.`;
+  if (typeof question.question === "string" && question.question.length > BINDING_QUESTION_BUDGET)
+    return over("the question text", question.question);
+  if (Array.isArray(question.options))
+    for (const option of question.options) {
+      const description = (option as { description?: unknown }).description;
+      if (typeof description === "string" && description.length > BINDING_QUESTION_BUDGET)
+        return over("an option description", description);
+    }
+  return null;
+};
 export const findingSchema = z
   .object({
     claim: text,
@@ -891,6 +915,13 @@ export type ErrorDetails = {
   path?: string;
   operation?: string;
   outcome?: "not_started" | "pending" | "unknown";
+  /** Present when a native approval must be asked from a concise proposal. */
+  proposal?: {
+    presented: string;
+    approvedContent: string;
+    descriptorDigest: string;
+  };
+  guidance?: string;
 };
 export type Result<T> =
   | {

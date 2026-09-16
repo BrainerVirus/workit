@@ -350,7 +350,7 @@ test(
       const noTarget = JSON.parse(
         (await tools.workit_branch_setup.execute({ confirmed: true }, ctx)) as string,
       );
-      expect(noTarget.error).toContain("target branch required");
+      expect(noTarget.error).toContain("is required for setup");
       const protected_ = JSON.parse(
         (await tools.workit_branch_setup.execute(
           { confirmed: true, target_branch: "main" },

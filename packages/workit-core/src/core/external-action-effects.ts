@@ -236,6 +236,96 @@ const safePath = (root: string, value: string): string | null => {
   }
 };
 
+/** Read-only baseline bound into a branch-setup proposal: the exact remote
+ * commit the base currently points at, without moving any local ref. */
+const branchCreationBaseline = (
+  root: string,
+  target: string,
+  base: string,
+): { base_branch: string; target_exists: boolean; remote_base: string | null } => {
+  const exists =
+    gitValue(root, ["rev-parse", "--verify", "--quiet", `refs/heads/${target}`]) !== null;
+  if (exists) return { base_branch: base, target_exists: true, remote_base: null };
+  const remote = run(root, ["ls-remote", "origin", `refs/heads/${base}`]);
+  const sha = remote.exitCode === 0 ? remote.stdout.trim().split(/\s+/)[0] : "";
+  return {
+    base_branch: base,
+    target_exists: false,
+    remote_base: /^[0-9a-f]{40}$/.test(sha ?? "") ? (sha as string) : null,
+  };
+};
+
+const shortSha = (value: unknown): string =>
+  typeof value === "string" && value ? value.slice(0, 8) : "unknown";
+
+/** Concise, user-facing approval text for one resolved action. The exact
+ * descriptor stays machine-facing; this is what the native question shows. */
+export const actionProposalQuestion = (
+  request: ExternalActionRequest,
+  descriptorPayload: unknown,
+): { presented: string; approvedText: string } => {
+  const payload = (descriptorPayload ?? {}) as Record<string, unknown>;
+  const resolved = (payload.resolved ?? {}) as Record<string, unknown>;
+  const payloadTarget = String(payload.target_branch ?? "");
+  switch (request.operation) {
+    case "git.branch_setup": {
+      const target = String(payload.target_branch ?? "");
+      if (resolved.target_exists === true)
+        return {
+          presented: `Workit decision: action — Switch to branch \`${target}\`?`,
+          approvedText: `Switch to \`${target}\`.`,
+        };
+      const base = String(resolved.base_branch ?? "the base branch");
+      return {
+        presented: `Workit decision: action — Create branch \`${target}\` from \`${base}\` (currently ${shortSha(resolved.remote_base)})?`,
+        approvedText: `Create \`${target}\` from \`${base}\` at ${shortSha(resolved.remote_base)}.`,
+      };
+    }
+    case "git.commit": {
+      const paths = Array.isArray(resolved.paths) ? (resolved.paths as string[]) : [];
+      return {
+        presented: `Workit decision: action — Commit ${paths.length} staged file(s) as "${String(request.payload.message)}"?`,
+        approvedText: `Commit as "${String(request.payload.message)}".`,
+      };
+    }
+    case "git.push":
+      return {
+        presented: `Workit decision: action — Push branch \`${String(payload.branch ?? "")}\` to origin?`,
+        approvedText: `Push \`${String(payload.branch ?? "")}\` to origin.`,
+      };
+    case "hosting.pull_request":
+      return {
+        presented: `Workit decision: action — Open a PR from \`${String(resolved.source_branch ?? "")}\` to \`${payloadTarget}\` titled "${String(request.payload.title)}"?`,
+        approvedText: `Open the PR: ${String(resolved.source_branch ?? "")} → ${payloadTarget}, "${String(request.payload.title)}".`,
+      };
+    case "changelog.apply":
+      return {
+        presented: `Workit decision: action — Apply changelog changes at \`${String(payload.path ?? "CHANGELOG.md")}\`?`,
+        approvedText: `Apply changelog changes at ${String(payload.path ?? "CHANGELOG.md")}.`,
+      };
+    case "youtrack.update":
+      return {
+        presented: `Workit decision: action — Update YouTrack issue ${String(request.payload.issueId)}${request.payload.minutes ? ` and log ${String(request.payload.minutes)}m` : ""}?`,
+        approvedText: `Update YouTrack issue ${String(request.payload.issueId)}.`,
+      };
+    case "youtrack.time":
+      return {
+        presented: `Workit decision: action — Log ${String(request.payload.minutes)}m to YouTrack issue ${String(request.payload.issueId)}?`,
+        approvedText: `Log time to YouTrack issue ${String(request.payload.issueId)}.`,
+      };
+    case "youtrack.meeting":
+      return {
+        presented: `Workit decision: action — Log meeting time to YouTrack issue ${String(request.payload.issueId)}?`,
+        approvedText: `Log meeting time to YouTrack issue ${String(request.payload.issueId)}.`,
+      };
+    default:
+      return {
+        presented: `Workit decision: action — Approve ${request.operation}?`,
+        approvedText: `Approve ${request.operation}.`,
+      };
+  }
+};
+
 export type ResolvedExternalAction = {
   request: ExternalActionRequest;
   descriptorPayload: unknown;
@@ -697,23 +787,41 @@ export const resolveExternalActionRequest = (
       case "git.branch_setup": {
         const sdd_dir = safePath(root, request.payload.sdd_dir ?? "docs");
         if (!sdd_dir) return failure("invalid_input", "sdd_dir must stay inside the workspace");
+        const action = request.payload.action ?? "setup";
         const policy = resolveBranchPolicyFor(root);
-        const target_branch = request.payload.target_branch ?? policy.defaultTargetBranch;
+        const target_branch = request.payload.target_branch;
+        if (action !== "reapply_stash" && !target_branch)
+          return failure(
+            "invalid_input",
+            "target_branch (the working branch to create or switch to) is required for setup",
+            {
+              outcome: "not_started",
+              fields: [{ path: "target_branch", reason: "required for action=setup" }],
+            },
+          );
         const head = gitValue(root, ["rev-parse", "HEAD"]);
         if (!head) return failure("storage_error", "current Git commit could not be resolved");
+        const dirty = Boolean((gitRaw(root, ["status", "--short"]) ?? "").trim());
+        const creation =
+          action === "reapply_stash" || !target_branch
+            ? { base_branch: policy.defaultTargetBranch }
+            : branchCreationBaseline(root, target_branch, policy.defaultTargetBranch);
         const normalized = {
           operation: request.operation,
           payload: {
             ...request.payload,
-            action: request.payload.action ?? "setup",
+            action,
             sdd_dir,
             stash: request.payload.stash ?? "no",
-            target_branch,
+            ...(target_branch ? { target_branch } : {}),
           },
         } as ExternalActionRequest;
         return success(null, null, {
           request: normalized,
-          descriptorPayload: { ...normalized.payload, resolved: { head, target_branch } },
+          descriptorPayload: {
+            ...normalized.payload,
+            resolved: { head, dirty, ...creation },
+          },
         });
       }
       case "git.push": {
@@ -985,7 +1093,15 @@ export const executeConcreteExternalAction = async (
         sdd_dir: request.payload.sdd_dir ?? "docs",
         workspace_root: root,
       });
-      return result.error ? unknown(request.operation) : success(null, null, result);
+      if ("error" in result) {
+        if (result.phase === "preflight")
+          return failure("invalid_input", result.error, {
+            outcome: "not_started",
+            operation: request.operation,
+          });
+        return unknown(request.operation);
+      }
+      return success(null, null, result);
     }
     case "git.commit": {
       const result = run(root, ["commit", "-m", request.payload.message]);

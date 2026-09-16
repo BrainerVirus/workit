@@ -206,7 +206,7 @@ export const externalActionDescriptor = (operation: string, payload: unknown): s
 
 /** Compact host-facing help for the fixed optional-action surface. */
 export const externalActionHelp =
-  "Fixed actions: git.branch_setup {action?,sdd_dir?,target_branch?,stash?}; git.commit {message}; git.push {branch?}; hosting.pull_request {title,body?,draft?,target_branch?,babysit?}; youtrack.update {issueId,markdown,minutes?}; youtrack.time {issueId,minutes,text?,dateMs?}; youtrack.meeting {issueId,minutes,text}; changelog.apply {entries?,path?,normalize_only?}; context.read {kind,range?,issueId?,issueUrl?,issueRef?,mode?,specPath?,planPath?}. context.read is read-only and needs no approval; all other operations require native approval (CLI uses a TTY; caller-unattested MCP cannot mutate).";
+  "Fixed actions: git.branch_setup {action?,sdd_dir?,target_branch(required unless reapply_stash; the working branch to create or switch to),stash?}; git.commit {message}; git.push {branch?}; hosting.pull_request {title,body?,draft?,target_branch?,babysit?}; youtrack.update {issueId,markdown,minutes?}; youtrack.time {issueId,minutes,text?,dateMs?}; youtrack.meeting {issueId,minutes,text}; changelog.apply {entries?,path?,normalize_only?}; context.read {kind,range?,issueId?,issueUrl?,issueRef?,mode?,specPath?,planPath?}. context.read is read-only and needs no approval; all other operations require native approval (CLI uses a TTY; caller-unattested MCP cannot mutate).";
 
 export const externalActionRef = (
   host: "opencode" | "pi" | "workit_cli",
@@ -329,6 +329,40 @@ export const approvedExternalAction = (
         : "external action was already settled",
     );
   return selected;
+};
+
+/**
+ * Re-resolve guard: when a prior approval exists for the same requested
+ * operation/payload, the freshly resolved baseline (source state and remote
+ * base) must still match the approved descriptor. Drift returns not_started so
+ * the agent re-presents the current state instead of executing a stale effect.
+ */
+export const priorResolvedDrift = (
+  store: TaskStore,
+  host: string,
+  actor: string,
+  operation: string,
+  payload: unknown,
+  currentResolved: unknown,
+): Result<null> => {
+  const prior = priorExternalAction(store, host, actor, operation, payload);
+  if (!prior.ok) return success(null, null, null);
+  let baseline: unknown;
+  try {
+    const parsed = JSON.parse(prior.data.entry.data.binding.approvedContent) as {
+      payload?: { resolved?: unknown };
+    };
+    baseline = parsed.payload?.resolved;
+  } catch {
+    return success(null, null, null);
+  }
+  if (baseline === undefined || baseline === null) return success(null, null, null);
+  if (canonicalJson(baseline) === canonicalJson(currentResolved)) return success(null, null, null);
+  return failure(
+    "invalid_input",
+    "repository state changed since approval; show the current state and approve the action again",
+    { outcome: "not_started", operation },
+  );
 };
 
 export const createAuthorizedExternalActionRunner =

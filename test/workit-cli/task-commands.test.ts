@@ -272,7 +272,7 @@ test("CLI changelog.apply uses the writer for success regardless of scope", asyn
   }
 });
 
-test("CLI TTY route prints the bound descriptor before confirmation", async () => {
+test("CLI TTY route prints the concise question before confirmation", async () => {
   const root = fixture();
   try {
     spawnSync("git", ["init", "-q"], { cwd: root });
@@ -327,7 +327,9 @@ test("CLI TTY route prints the bound descriptor before confirmation", async () =
         },
       ),
     ).toBe(0);
-    expect(out.read().stdout).toContain("External action preview:");
+    expect(out.read().stdout).toContain("Workit decision: action");
+    expect(out.read().stdout).toContain("chore(test): tty commit");
+    expect(out.read().stdout).not.toContain('"operation":"git.commit"');
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

@@ -22,6 +22,8 @@ export {
   decisionDigest,
   candidateDigest,
   requirementId,
+  BINDING_QUESTION_BUDGET,
+  workitBindingQuestionIssue,
 } from "./core/task-contract";
 export type {
   OperationFamily,
@@ -87,6 +89,7 @@ export {
   approvedExternalAction,
   externalActionState,
   priorExternalAction,
+  priorResolvedDrift,
   externalActionRef,
   externalActionDescriptor,
   externalActionHelp,
