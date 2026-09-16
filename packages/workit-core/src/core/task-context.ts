@@ -1,3 +1,4 @@
+import { isUncertainWorker } from "./workers";
 import {
   POLICY_VERSION,
   failure,
@@ -42,11 +43,7 @@ export function reconcileResume(
     .filter((entry) => entry.status === "stale")
     .map((entry) => entry.evidenceId);
   const blockers = [...view.task.progress.blockers];
-  if (
-    view.task.workers.some((entry) =>
-      ["dispatching", "running", "cancelling", "unknown"].includes(entry.data.state),
-    )
-  )
+  if (view.task.workers.some((entry) => isUncertainWorker(entry.data.state)))
     blockers.push({
       reason: "worker state requires reconciliation",
       dependentAction: "resume",
