@@ -7,6 +7,8 @@ import {
   type Result,
   type Revision,
   type Decision,
+  type Entry,
+  type TaskRecord,
   refSchema,
   sha256,
 } from "./task-contract";
@@ -53,7 +55,13 @@ const externalActionSchema = z.discriminatedUnion("operation", [
   z
     .object({
       operation: z.literal("git.commit"),
-      payload: z.object({ message: z.string().min(1) }).strict(),
+      payload: z
+        .object({
+          message: z.string().min(1).optional(),
+          plan_steps: z.array(z.string().min(1)).optional(),
+          plan_branch: z.string().min(1).optional(),
+        })
+        .strict(),
     })
     .strict(),
   z
@@ -309,6 +317,95 @@ export const priorExternalAction = (
         : "multiple prior external actions match this request",
     );
   return success(workspace.data.revision, null, { ...candidates[0], workspace: workspace.data });
+};
+
+/** Parse a plan-commit authorization descriptor (one approved list per plan). */
+export const planCommitDescriptor = (
+  content: string,
+): { steps: string[]; branch: string } | null => {
+  try {
+    const value = JSON.parse(content) as {
+      operation?: unknown;
+      payload?: { plan_steps?: unknown; plan_branch?: unknown };
+    };
+    if (value.operation !== "git.commit" || !value.payload) return null;
+    const steps = value.payload.plan_steps;
+    const branch = value.payload.plan_branch;
+    if (
+      !Array.isArray(steps) ||
+      steps.some((step) => typeof step !== "string" || !step) ||
+      typeof branch !== "string" ||
+      !branch
+    )
+      return null;
+    return { steps: steps as string[], branch };
+  } catch {
+    return null;
+  }
+};
+
+export type PlanCommitAuthorization = {
+  task: TaskRecord;
+  entry: Entry<Decision>;
+  steps: string[];
+  branch: string;
+  completed: string[];
+};
+
+/**
+ * Find the single active plan-commit authorization whose next unconsumed step
+ * is this exact commit message. Consumption order is enforced so each listed
+ * commit executes once, in plan order; unlisted or replayed messages find no
+ * authorization and require a fresh exact approval.
+ */
+export const approvedPlanCommit = (
+  store: TaskStore,
+  host: string,
+  actor: string,
+  message: string,
+): Result<PlanCommitAuthorization> => {
+  if (typeof message !== "string" || !message)
+    return failure("invalid_input", "commit message is required");
+  const listed = store.listTasks();
+  const workspace = store.readWorkspace();
+  if (!listed.ok || !workspace.ok)
+    return failure("storage_error", "external action state is unavailable");
+  if (!workspace.data) return failure("not_found", "workspace not found");
+  const matches = listed.data.flatMap((task) => {
+    if (task.status !== "active" || task.workspaceId !== workspace.data!.id) return [];
+    if (
+      task.intent.provenance.session?.kind !== "host" ||
+      task.intent.provenance.session.host !== host ||
+      task.intent.provenance.session.handle !== actor
+    )
+      return [];
+    return task.decisions.flatMap((entry) => {
+      const decision = entry.data;
+      if (
+        decision.purpose !== "action" ||
+        decision.response !== "approved" ||
+        decision.revoked !== null
+      )
+        return [];
+      if (entry.provenance.kind !== "host_observed" || entry.provenance.receipts.length === 0)
+        return [];
+      const plan = planCommitDescriptor(decision.binding.approvedContent);
+      if (!plan) return [];
+      const completed =
+        task.actionProgress?.find((progress) => progress.decisionId === entry.id)?.completedSteps ??
+        [];
+      if (plan.steps[completed.length] !== message) return [];
+      return [{ task, entry, steps: plan.steps, branch: plan.branch, completed: [...completed] }];
+    });
+  });
+  if (matches.length !== 1)
+    return failure(
+      "permission_denied",
+      matches.length === 0
+        ? "no plan commit authorization matches this message"
+        : "multiple plan authorizations match this message",
+    );
+  return success(workspace.data.revision, null, matches[0]);
 };
 
 export const approvedExternalAction = (

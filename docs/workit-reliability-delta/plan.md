@@ -55,6 +55,39 @@ one atomic commit after its focused RED/GREEN checks pass.
 
 **Commit:** `fix(actions): make native approvals concise and actionable`
 
+### Task 1b: Approve plan commit lists once
+
+**Depends on:** task 1 (proposal and concise approval flow).
+
+**Files:**
+
+- Modify `packages/workit-core/src/core/authority.ts`,
+  `packages/workit-core/src/core/external-action.ts`, and
+  `packages/workit-core/src/core/task-contract.ts`.
+- Modify native action adapters in `packages/workit-opencode`,
+  `packages/workit-pi`, and `packages/workit-cli`.
+- Test `test/workit-core/authority.test.ts`,
+  `test/workit-core/external-action.test.ts`,
+  `test/workit-opencode/task-tools.test.ts`,
+  `test/workit-pi/extension.test.ts`, and
+  `test/workit-cli/task-commands.test.ts`.
+
+**Work:**
+
+1. Add RED cases for one listed commit per step, unlisted-message rejection,
+   branch/checkout mismatch, replay of a consumed step, and revoked-plan
+   retirement.
+2. Add a plan-authorization action decision (checkout, branch, listed messages)
+   and accept `git.commit` under it only for an unconsumed listed step.
+3. Keep exact resolution/settlement evidence for every executed commit.
+4. Record the authorization through the one concise question at plan approval;
+   never re-ask per commit.
+
+**Command:**
+`bun test test/workit-core/authority.test.ts test/workit-core/external-action.test.ts test/workit-opencode/task-tools.test.ts test/workit-pi/extension.test.ts test/workit-cli/task-commands.test.ts`
+
+**Commit:** `feat(actions): approve plan commit lists once`
+
 ### Task 2: Remove protocol retry traps
 
 **Depends on:** task 1 for action/decision diagnostics.
@@ -184,6 +217,9 @@ one atomic commit after its focused RED/GREEN checks pass.
 2. Teach show-then-ask in the bootstrap and `workit-plan`: present durable
    artifacts as a complete digest plus exact path and inline plans as content
    before any approval question; keep questions scoped and never ask unseen.
+   Pin the section 8 playbook examples (unseen-content violation, custom-answer
+   steering, unambiguous effect wording, no routine plan re-asks) in the
+   bootstrap text so every host receives them.
 3. Document one-task-per-repository linked-task handling in installed guidance.
 4. Run focused bootstrap and skill-copy tests.
 

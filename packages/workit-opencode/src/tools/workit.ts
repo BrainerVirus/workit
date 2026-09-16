@@ -5,6 +5,7 @@ import {
   WorkitCore,
   TaskStore,
   approvedExternalAction,
+  approvedPlanCommit,
   externalActionDescriptor,
   externalActionHelp,
   priorExternalAction,
@@ -615,6 +616,20 @@ export const nativeDispatchFor = (
   },
 });
 
+const commitMessageFromDescriptor = (operation: string): string | undefined => {
+  try {
+    const descriptor = JSON.parse(operation) as {
+      operation?: unknown;
+      payload?: { message?: unknown };
+    };
+    return descriptor.operation === "git.commit" && typeof descriptor.payload?.message === "string"
+      ? descriptor.payload.message
+      : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
 /** Bind concrete optional effects to one approved action decision in this session. */
 export const nativeExternalActionRunner = (
   root: string,
@@ -625,7 +640,45 @@ export const nativeExternalActionRunner = (
   createAuthorizedExternalActionRunner(core, (operation) => {
     const store = new TaskStore(root);
     const selected = approvedExternalAction(store, "opencode", actor, operation);
-    if (!selected.ok) return selected;
+    if (!selected.ok) {
+      const message = commitMessageFromDescriptor(operation);
+      const plan = message ? approvedPlanCommit(store, "opencode", actor, message) : null;
+      if (plan?.ok) {
+        const workspace = store.readWorkspace();
+        if (!workspace.ok || !workspace.data)
+          return failure("storage_error", "external action state is unavailable");
+        const actionRef = externalActionRef("opencode", actor, operation);
+        return {
+          taskId: plan.data.task.id,
+          decisionId: plan.data.entry.id,
+          actionRef,
+          expectedRevision: plan.data.task.revision,
+          expectedWorkspaceRevision: workspace.data.revision,
+          binding: plan.data.entry.data.binding,
+          step: message as string,
+          refresh: () => {
+            const task = store.readTask(plan.data.task.id);
+            const freshWorkspace = store.readWorkspace();
+            if (!task.ok || !freshWorkspace.ok || !freshWorkspace.data)
+              throw new Error("external action state changed");
+            return {
+              expectedRevision: task.data.revision,
+              expectedWorkspaceRevision: freshWorkspace.data.revision,
+            };
+          },
+          reserveObservation: nativeExternalActionObservation(actor, actionRef, "reserve"),
+          settleObservation: (outcome: "succeeded" | "not_started" | "unknown", revisions) =>
+            nativeExternalActionObservation(
+              actor,
+              actionRef,
+              outcome,
+              actionRef.kind === "host" ? actionRef.handle : "external-action",
+              revisions,
+            ),
+        };
+      }
+      return selected;
+    }
     const actionRef = externalActionRef("opencode", actor, operation);
     return {
       taskId: selected.data.task.id,
@@ -938,7 +991,21 @@ export const createWorkitTools = ({
             : success(null, null, null);
         if (!drift.ok) return output(drift);
         const selected = approvedExternalAction(store, "opencode", context.sessionID, descriptor);
+        let planAuthorized = false;
         if (!selected.ok) {
+          const commitMessage =
+            resolved.data.request.operation === "git.commit"
+              ? (resolved.data.request.payload as { message?: unknown }).message
+              : undefined;
+          const currentBranch = (
+            resolved.data.descriptorPayload as { resolved?: { branch?: unknown } }
+          ).resolved?.branch;
+          if (typeof commitMessage === "string" && commitMessage) {
+            const plan = approvedPlanCommit(store, "opencode", context.sessionID, commitMessage);
+            planAuthorized = plan.ok && plan.data.branch === currentBranch;
+          }
+        }
+        if (!selected.ok && !planAuthorized) {
           if (/^no approved action/.test(selected.error)) {
             const proposal = actionProposalQuestion(
               resolved.data.request,

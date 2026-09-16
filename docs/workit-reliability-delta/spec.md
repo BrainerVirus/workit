@@ -108,6 +108,26 @@ message and staged paths, branch to push, PR source/target/title, changelog path
 or YouTrack issue/minutes. The canonical JSON remains in tool state, not the
 question UI.
 
+### Plan-scoped commit approvals
+
+After the user approves a plan, the lead records one bounded authorization for
+the plan's listed commits instead of asking again per task.
+
+- The authorization is an action decision whose approved content lists the
+  repository checkout, the working branch, and each planned commit message (one
+  per task). The user approves that list once, through the same concise native
+  question.
+- While the authorization is unconsumed, `git.commit` executes without a new
+  question only when the requested message is an unconsumed listed step, the
+  checkout matches, and the current branch matches the authorized branch.
+- Each listed commit consumes exactly one step. Replay, an unlisted message, a
+  different branch or checkout, or any plan change requires a fresh exact
+  approval.
+- Resolution and settlement still record the exact executed payload (HEAD,
+  staged bytes digest, paths) as evidence for every commit; the plan
+  authorization binds intent and scope, not unknown future bytes.
+- Revoking the plan or the authorization retires the remaining steps.
+
 ### 2. Truthful action outcomes
 
 - `git.branch_setup.target_branch` is required for `action: "setup"` and means
@@ -276,6 +296,23 @@ for the decision.
 - Ordinary (non-binding) questions follow the same presentation guidance; the
   mechanical budget applies only to Workit binding questions.
 
+Playbook examples (all observed in real sessions):
+
+- Asking to approve a spec, plan, or commit before the user has seen it is a
+  show-before-ask violation: present the digest plus exact path (or the content
+  itself), then ask one scoped question.
+- An answer with custom text is steering, not approval: no receipt is minted.
+  Record the steer, adjust, re-present, and only then ask a new scoped question
+  — never re-ask the identical question to mint a receipt.
+- A proposal must name the concrete effect unambiguously. When a field name or
+  tool semantic invites confusion (for example a working-branch argument that
+  reads like a base branch), fix the surface or the proposal wording instead of
+  relying on prose explanation.
+- Approved-plan execution never re-asks "continue" and does not turn routine,
+  already-approved plan steps into fresh questions. Where a native receipt is
+  still required for one external action, the question is scoped to that shown
+  step, and a changed resolved payload requires a new proposal.
+
 ## Compatibility
 
 - Storage remains schema version 1; new runtime and pause fields are optional to
@@ -338,6 +375,10 @@ for the decision.
 - CA-15: A non-durable plan or agreement is visible before its approval question.
 - CA-16: Bootstrap and `workit-plan` teach show-then-ask for durable and inline
   artifacts; copied host skills remain byte-identical.
+- CA-17: One approved plan-scoped commit authorization lets each listed commit
+  execute once without a new question; unlisted messages, branch or checkout
+  mismatches, and replays still require exact approval; every executed commit
+  still records its resolved payload.
 
 ## Audit Traceability
 
@@ -364,3 +405,4 @@ for the decision.
 | Continuous plan execution and atomic commits | 7 | 6 | CA-11; bootstrap/skill content tests |
 | Close and dispatch live-verification gap | all | 7 | CA-12; acceptance and packed candidate runs |
 | Ask-before-show and wall-of-text question UX | 8 | 1, 6 | CA-13..CA-16; pre-display deny, digest-bound artifact approval, and guidance tests |
+| Per-commit approval friction during approved plans | 1 (plan-scoped) | 1b | CA-17; listed-step consumption, mismatch, and replay tests |

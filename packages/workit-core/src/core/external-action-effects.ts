@@ -258,6 +258,9 @@ const branchCreationBaseline = (
 const shortSha = (value: unknown): string =>
   typeof value === "string" && value ? value.slice(0, 8) : "unknown";
 
+const isProtectedBranch = (root: string, branch: string): boolean =>
+  resolveBranchPolicyFor(root).protected.has(branch.toLowerCase());
+
 /** Concise, user-facing approval text for one resolved action. The exact
  * descriptor stays machine-facing; this is what the native question shows. */
 export const actionProposalQuestion = (
@@ -267,6 +270,13 @@ export const actionProposalQuestion = (
   const payload = (descriptorPayload ?? {}) as Record<string, unknown>;
   const resolved = (payload.resolved ?? {}) as Record<string, unknown>;
   const payloadTarget = String(payload.target_branch ?? "");
+  if (request.operation === "git.commit" && Array.isArray(payload.plan_steps)) {
+    const steps = payload.plan_steps as string[];
+    return {
+      presented: `Workit decision: action — Approve committing the plan's ${steps.length} listed tasks on \`${String(payload.plan_branch ?? "")}\`?`,
+      approvedText: `Approve the ${steps.length} listed plan commits.`,
+    };
+  }
   switch (request.operation) {
     case "git.branch_setup": {
       const target = String(payload.target_branch ?? "");
@@ -837,7 +847,46 @@ export const resolveExternalActionRequest = (
           : failure("invalid_input", "git push requires a resolvable current branch");
       }
       case "git.commit": {
+        const planSteps = request.payload.plan_steps;
+        const planBranch = request.payload.plan_branch;
         const head = gitValue(root, ["rev-parse", "HEAD"]);
+        if (!head) return failure("storage_error", "Git state could not be resolved");
+        const branch = gitValue(root, ["branch", "--show-current"]);
+        if (planSteps !== undefined || planBranch !== undefined) {
+          if (
+            !Array.isArray(planSteps) ||
+            planSteps.some((step) => typeof step !== "string" || !step.trim()) ||
+            new Set(planSteps).size !== planSteps.length ||
+            planSteps.length === 0 ||
+            planSteps.length > 32
+          )
+            return failure(
+              "invalid_input",
+              "plan_steps must be 1-32 unique non-empty commit messages",
+              {
+                outcome: "not_started",
+                fields: [{ path: "plan_steps", reason: "unique strings" }],
+              },
+            );
+          if (typeof planBranch !== "string" || !planBranch.trim() || planBranch !== branch)
+            return failure("invalid_input", "plan_branch must name the current working branch", {
+              outcome: "not_started",
+              fields: [{ path: "plan_branch", reason: "current branch" }],
+            });
+          if (isProtectedBranch(root, planBranch))
+            return failure("invalid_input", "plan_branch must not be a protected branch", {
+              outcome: "not_started",
+              fields: [{ path: "plan_branch", reason: "protected branch" }],
+            });
+          return success(null, null, {
+            request,
+            descriptorPayload: {
+              plan_steps: planSteps,
+              plan_branch: planBranch,
+              resolved: { head, branch, steps: planSteps },
+            },
+          });
+        }
         const staged = gitRaw(root, [
           "diff",
           "--cached",
@@ -848,7 +897,13 @@ export const resolveExternalActionRequest = (
           "HEAD",
         ]);
         const paths = stagedPaths(root);
-        if (!head || staged === null || paths === null)
+        const message = request.payload.message;
+        if (typeof message !== "string" || !message)
+          return failure("invalid_input", "git.commit requires a commit message", {
+            outcome: "not_started",
+            fields: [{ path: "message", reason: "required unless plan_steps is provided" }],
+          });
+        if (staged === null || paths === null)
           return failure("storage_error", "Git state could not be resolved");
         let policy: { preset: string; pattern?: string };
         try {
@@ -865,7 +920,7 @@ export const resolveExternalActionRequest = (
           const detected = detectCommitFlavor((log ?? "").split("\n").filter(Boolean));
           flavor = detected.flavor ?? "conventional";
         }
-        if (!matchCommitFlavor(request.payload.message, flavor as CommitFlavor, policy.pattern))
+        if (!matchCommitFlavor(message, flavor as CommitFlavor, policy.pattern))
           return failure(
             "invalid_input",
             `Commit message does not match the ${flavor} flavor (commitPolicy.preset)`,
@@ -874,7 +929,7 @@ export const resolveExternalActionRequest = (
           request,
           descriptorPayload: {
             ...request.payload,
-            resolved: { head, staged: sha256(staged), paths },
+            resolved: { head, branch, staged: sha256(staged), paths },
           },
         });
       }
@@ -1104,7 +1159,13 @@ export const executeConcreteExternalAction = async (
       return success(null, null, result);
     }
     case "git.commit": {
-      const result = run(root, ["commit", "-m", request.payload.message]);
+      const message = request.payload.message;
+      if (typeof message !== "string" || !message)
+        return failure("invalid_input", "git.commit requires a commit message", {
+          outcome: "not_started",
+          fields: [{ path: "message", reason: "required" }],
+        });
+      const result = run(root, ["commit", "-m", message]);
       return result.exitCode === 0
         ? success(null, null, { stdout: result.stdout.trim() })
         : unknown(request.operation);

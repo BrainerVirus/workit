@@ -87,6 +87,8 @@ export type {
 } from "./core/external-action";
 export {
   approvedExternalAction,
+  approvedPlanCommit,
+  planCommitDescriptor,
   externalActionState,
   priorExternalAction,
   priorResolvedDrift,

@@ -3,6 +3,7 @@ import { createInterface } from "node:readline/promises";
 import {
   OPERATION_FAMILIES,
   approvedExternalAction,
+  approvedPlanCommit,
   externalActionState,
   priorExternalAction,
   priorResolvedDrift,
@@ -501,11 +502,63 @@ const cliActionAuthority = (
   },
 });
 
+const commitMessageFromDescriptor = (operation: string): string | undefined => {
+  try {
+    const descriptor = JSON.parse(operation) as {
+      operation?: unknown;
+      payload?: { message?: unknown };
+    };
+    return descriptor.operation === "git.commit" && typeof descriptor.payload?.message === "string"
+      ? descriptor.payload.message
+      : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
 const nativeExternalActionRunner = (root: string, actor: string, core: WorkitCore, step?: string) =>
   createAuthorizedExternalActionRunner(core, (operationValue) => {
     const store = new TaskStore(root);
     const approved = approvedExternalAction(store, "workit_cli", actor, operationValue);
-    if (!approved.ok) return approved;
+    if (!approved.ok) {
+      const message = commitMessageFromDescriptor(operationValue);
+      const plan = message ? approvedPlanCommit(store, "workit_cli", actor, message) : null;
+      if (plan?.ok) {
+        const workspace = store.readWorkspace();
+        if (!workspace.ok || !workspace.data)
+          return failure("storage_error", "external action state is unavailable");
+        const actionRef = externalActionRef("workit_cli", actor, operationValue);
+        return {
+          taskId: plan.data.task.id,
+          decisionId: plan.data.entry.id,
+          actionRef,
+          expectedRevision: plan.data.task.revision,
+          expectedWorkspaceRevision: workspace.data.revision,
+          binding: plan.data.entry.data.binding,
+          step: message as string,
+          refresh: () => {
+            const task = store.readTask(plan.data.task.id);
+            const freshWorkspace = store.readWorkspace();
+            if (!task.ok || !freshWorkspace.ok || !freshWorkspace.data)
+              throw new Error("external action state changed");
+            return {
+              expectedRevision: task.data.revision,
+              expectedWorkspaceRevision: freshWorkspace.data.revision,
+            };
+          },
+          reserveObservation: nativeExternalActionObservation(actor, actionRef, "reserve"),
+          settleObservation: (outcome: "succeeded" | "not_started" | "unknown", revisions) =>
+            nativeExternalActionObservation(
+              actor,
+              actionRef,
+              outcome,
+              actionRef.kind === "host" ? actionRef.handle : "external-action",
+              revisions,
+            ),
+        };
+      }
+      return approved;
+    }
     const actionRef = externalActionRef("workit_cli", actor, operationValue);
     return {
       taskId: approved.data.task.id,
@@ -742,6 +795,30 @@ export async function runActionCommand(argv: string[], deps: TaskCliDeps = {}): 
     return 1;
   }
   const question = actionProposalQuestion(normalized, resolved.data.descriptorPayload);
+  const commitMessage =
+    normalized.operation === "git.commit"
+      ? (normalized.payload as { message?: unknown }).message
+      : undefined;
+  const currentBranch = (resolved.data.descriptorPayload as { resolved?: { branch?: unknown } })
+    .resolved?.branch;
+  const plan =
+    typeof commitMessage === "string" && commitMessage
+      ? approvedPlanCommit(store, "workit_cli", actor, commitMessage)
+      : null;
+  if (plan?.ok && plan.data.branch === currentBranch) {
+    const core = new WorkitCore(store, {
+      ...contextFor(root, { ...deps, actor }, "host_observed"),
+      nativeAuthority: cliActionAuthority(actor),
+      workerId: null,
+    });
+    const runner = nativeExternalActionRunner(root, actor, core);
+    const result = await runner(descriptor, (step) =>
+      executeResolvedExternalAction(resolved.data, root, step, { host: "workit_cli", actor }),
+    );
+    if (json) jsonResult(outOf(deps), result);
+    else printHuman(result, deps);
+    return result.ok ? 0 : 1;
+  }
   if (!json) write(outOf(deps), question.presented);
   const accepted = await observeConsent(deps);
   if (!accepted.accepted || !accepted.observed) {
@@ -788,6 +865,13 @@ export async function runActionCommand(argv: string[], deps: TaskCliDeps = {}): 
     if (json) jsonResult(outOf(deps), decision);
     else printHuman(decision, deps);
     return 1;
+  }
+  const planSteps = (resolved.data.descriptorPayload as { plan_steps?: unknown }).plan_steps;
+  if (normalized.operation === "git.commit" && Array.isArray(planSteps)) {
+    const result = success(null, null, { plan_commits: planSteps.length });
+    if (json) jsonResult(outOf(deps), result);
+    else printHuman(result, deps);
+    return 0;
   }
   const runner = nativeExternalActionRunner(root, actor, core);
   const result = await runner(descriptor, (step) =>

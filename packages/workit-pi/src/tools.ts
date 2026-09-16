@@ -1,6 +1,7 @@
 import {
   failure,
   approvedExternalAction,
+  approvedPlanCommit,
   externalActionState,
   priorExternalAction,
   priorResolvedDrift,
@@ -151,6 +152,20 @@ const nativeAuthority = (
   },
 });
 
+const commitMessageFromDescriptor = (operation: string): string | undefined => {
+  try {
+    const descriptor = JSON.parse(operation) as {
+      operation?: unknown;
+      payload?: { message?: unknown };
+    };
+    return descriptor.operation === "git.commit" && typeof descriptor.payload?.message === "string"
+      ? descriptor.payload.message
+      : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
 export const nativeExternalActionRunner = (
   root: string,
   actor: string,
@@ -160,7 +175,45 @@ export const nativeExternalActionRunner = (
   createAuthorizedExternalActionRunner(core, (operation) => {
     const store = new TaskStore(root);
     const selected = approvedExternalAction(store, "pi", actor, operation);
-    if (!selected.ok) return selected;
+    if (!selected.ok) {
+      const message = commitMessageFromDescriptor(operation);
+      const plan = message ? approvedPlanCommit(store, "pi", actor, message) : null;
+      if (plan?.ok) {
+        const workspace = store.readWorkspace();
+        if (!workspace.ok || !workspace.data)
+          return failure("storage_error", "external action state is unavailable");
+        const actionRef = externalActionRef("pi", actor, operation);
+        return {
+          taskId: plan.data.task.id,
+          decisionId: plan.data.entry.id,
+          actionRef,
+          expectedRevision: plan.data.task.revision,
+          expectedWorkspaceRevision: workspace.data.revision,
+          binding: plan.data.entry.data.binding,
+          step: message as string,
+          refresh: () => {
+            const task = store.readTask(plan.data.task.id);
+            const freshWorkspace = store.readWorkspace();
+            if (!task.ok || !freshWorkspace.ok || !freshWorkspace.data)
+              throw new Error("external action state changed");
+            return {
+              expectedRevision: task.data.revision,
+              expectedWorkspaceRevision: freshWorkspace.data.revision,
+            };
+          },
+          reserveObservation: nativeExternalActionObservation(actor, actionRef, "reserve"),
+          settleObservation: (outcome: "succeeded" | "not_started" | "unknown", revisions) =>
+            nativeExternalActionObservation(
+              actor,
+              actionRef,
+              outcome,
+              actionRef.kind === "host" ? actionRef.handle : "external-action",
+              revisions,
+            ),
+        };
+      }
+      return selected;
+    }
     const actionRef = externalActionRef("pi", actor, operation);
     return {
       taskId: selected.data.task.id,
@@ -414,6 +467,27 @@ export const registerWorkitTools = (
       if (!drift.ok) return output(drift);
       const existing = approvedExternalAction(store, "pi", actor, descriptor);
       if (!existing.ok) {
+        const commitMessage =
+          resolved.data.request.operation === "git.commit"
+            ? (resolved.data.request.payload as { message?: unknown }).message
+            : undefined;
+        const currentBranch = (
+          resolved.data.descriptorPayload as { resolved?: { branch?: unknown } }
+        ).resolved?.branch;
+        const plan =
+          typeof commitMessage === "string" && commitMessage
+            ? approvedPlanCommit(store, "pi", actor, commitMessage)
+            : null;
+        if (plan?.ok && plan.data.branch === currentBranch) {
+          const result = await nativeExternalActionRunner(
+            ctx.cwd,
+            actor,
+            core,
+          )(descriptor, (step) =>
+            executeResolvedExternalAction(resolved.data, ctx.cwd, step, { host: "pi", actor }),
+          );
+          return output(result);
+        }
         const prior = externalActionState(store, "pi", actor, descriptor);
         if (prior.ok && prior.data.entry.data.consumption !== null)
           return output(failure("permission_denied", "external action was already settled"));
@@ -467,6 +541,9 @@ export const registerWorkitTools = (
         );
         if (!decision.ok) return output(decision);
       }
+      const planSteps = (resolved.data.descriptorPayload as { plan_steps?: unknown }).plan_steps;
+      if (resolved.data.request.operation === "git.commit" && Array.isArray(planSteps))
+        return output(success(null, null, { plan_commits: planSteps.length }));
       const result = await nativeExternalActionRunner(
         ctx.cwd,
         actor,

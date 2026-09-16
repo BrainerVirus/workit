@@ -12,7 +12,12 @@ import {
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { TaskStore, WorkitCore, externalActionDescriptor } from "@/packages/workit-core/src/core";
+import {
+  TaskStore,
+  WorkitCore,
+  externalActionDescriptor,
+  planCommitDescriptor,
+} from "@/packages/workit-core/src/core";
 import { scope, taskStartRequest } from "@/test/workit-core/task-fixtures";
 import { resolveExternalActionRequest } from "@/packages/workit-core/src/core/external-action-effects";
 import plugin from "@/packages/workit-opencode/src/plugin";
@@ -836,6 +841,119 @@ test("OpenCode action route consumes the exact native receipt before committing"
     expect(
       spawnSync("git", ["log", "-1", "--pretty=%s"], { cwd: root, encoding: "utf8" }).stdout.trim(),
     ).toBe("chore(test): native commit");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("OpenCode executes a plan-commit list once per listed message", async () => {
+  const root = mkdtempSync(join(tmpdir(), "workit-opencode-plan-commits-"));
+  try {
+    for (const args of [
+      ["init", "-q", "-b", "feature/plan"],
+      ["config", "user.email", "test@example.invalid"],
+      ["config", "user.name", "Workit Test"],
+    ])
+      spawnSync("git", args, { cwd: root });
+    writeFileSync(join(root, "base.txt"), "base\n");
+    spawnSync("git", ["add", "base.txt"], { cwd: root });
+    spawnSync("git", ["commit", "-qm", "base"], { cwd: root });
+    const actor = "opencode-plan-session";
+    const store = new TaskStore(root);
+    const core = new WorkitCore(store, {
+      root,
+      caller: { host: "opencode", actor },
+      capabilities: [],
+      constraints: [],
+      now: "2026-01-01T00:00:00Z",
+    });
+    const started = core.task(taskStartRequest());
+    if (!started.ok) throw new Error(started.error);
+    const task = store.readTask((started.data as { id: string }).id);
+    const workspace = store.readWorkspace();
+    if (!task.ok || !workspace.ok || !workspace.data) throw new Error("task setup failed");
+    expect(
+      core.writer({
+        schemaVersion: 1,
+        action: "acquire",
+        taskId: task.data.id,
+        expectedRevision: task.data.revision,
+        expectedWorkspaceRevision: workspace.data.revision,
+        workerId: null,
+      }),
+    ).toMatchObject({ ok: true });
+    const decisionTask = store.readTask(task.data.id);
+    const decisionWorkspace = store.readWorkspace();
+    if (!decisionTask.ok || !decisionWorkspace.ok || !decisionWorkspace.data)
+      throw new Error("writer refresh failed");
+
+    const planRequest = {
+      operation: "git.commit" as const,
+      payload: {
+        plan_steps: ["chore(a): one", "chore(b): two"],
+        plan_branch: "feature/plan",
+      },
+    };
+    const { tools } = await approveActionFor({
+      root,
+      actor,
+      task: decisionTask.data,
+      workspace: decisionWorkspace.data,
+      request: planRequest,
+      callID: "plan-commits-question",
+    });
+    const recorded = store.readTask(task.data.id);
+    if (!recorded.ok) throw new Error("recorded task unavailable");
+    const planEntry = recorded.data.decisions.find((item) => item.data.purpose === "action");
+    expect(
+      planEntry ? planCommitDescriptor(planEntry.data.binding.approvedContent) : null,
+    ).toMatchObject({ steps: ["chore(a): one", "chore(b): two"], branch: "feature/plan" });
+
+    writeFileSync(join(root, "one.txt"), "one\n");
+    spawnSync("git", ["add", "one.txt"], { cwd: root });
+    const first = await tools.workit_external_action.execute(
+      { operation: "git.commit", payload: { message: "chore(a): one" } },
+      { directory: root, sessionID: actor },
+    );
+    expect(JSON.parse(typeof first === "string" ? first : first.output)).toMatchObject({
+      ok: true,
+    });
+
+    writeFileSync(join(root, "two.txt"), "two\n");
+    spawnSync("git", ["add", "two.txt"], { cwd: root });
+    const second = await tools.workit_external_action.execute(
+      { operation: "git.commit", payload: { message: "chore(b): two" } },
+      { directory: root, sessionID: actor },
+    );
+    expect(JSON.parse(typeof second === "string" ? second : second.output)).toMatchObject({
+      ok: true,
+    });
+    const subjects = spawnSync("git", ["log", "--format=%s", "-2"], {
+      cwd: root,
+      encoding: "utf8",
+    })
+      .stdout.trim()
+      .split("\n");
+    expect(subjects).toEqual(["chore(b): two", "chore(a): one"]);
+
+    writeFileSync(join(root, "three.txt"), "three\n");
+    spawnSync("git", ["add", "three.txt"], { cwd: root });
+    const unlisted = await tools.workit_external_action.execute(
+      { operation: "git.commit", payload: { message: "chore(c): three" } },
+      { directory: root, sessionID: actor },
+    );
+    expect(JSON.parse(typeof unlisted === "string" ? unlisted : unlisted.output)).toMatchObject({
+      ok: false,
+      code: "needs_input",
+    });
+    const replay = await tools.workit_external_action.execute(
+      { operation: "git.commit", payload: { message: "chore(a): one" } },
+      { directory: root, sessionID: actor },
+    );
+    expect(JSON.parse(typeof replay === "string" ? replay : replay.output)).toMatchObject({
+      ok: false,
+      code: "needs_input",
+    });
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

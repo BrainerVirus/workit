@@ -335,6 +335,90 @@ test("CLI TTY route prints the concise question before confirmation", async () =
   }
 });
 
+test("CLI executes a plan-commit list once per listed message", async () => {
+  const root = fixture();
+  try {
+    spawnSync("git", ["init", "-q", "-b", "feature/plan"], { cwd: root });
+    spawnSync("git", ["config", "user.email", "test@example.invalid"], { cwd: root });
+    spawnSync("git", ["config", "user.name", "Workit Test"], { cwd: root });
+    writeFileSync(path.join(root, "base.txt"), "base\n");
+    spawnSync("git", ["add", "base.txt"], { cwd: root });
+    spawnSync("git", ["commit", "-qm", "base"], { cwd: root });
+    const store = new TaskStore(root);
+    const core = new WorkitCore(store, {
+      root,
+      caller: { host: "workit_cli", actor: "cli" },
+      capabilities: [],
+      constraints: [],
+      now: "2026-01-01T00:00:00Z",
+    });
+    expect(core.task(taskStartRequest()).ok).toBe(true);
+    const started = store.listTasks();
+    const writerWorkspace = store.readWorkspace();
+    if (!started.ok || started.data.length !== 1 || !writerWorkspace.ok || !writerWorkspace.data)
+      throw new Error("writer state missing");
+    const writerTask = store.readTask(started.data[0].id);
+    if (!writerTask.ok) throw new Error("writer task missing");
+    expect(
+      core.writer({
+        schemaVersion: 1,
+        action: "acquire",
+        taskId: writerTask.data.id,
+        expectedRevision: writerTask.data.revision,
+        expectedWorkspaceRevision: writerWorkspace.data.revision,
+        workerId: null,
+      }),
+    ).toMatchObject({ ok: true });
+    const planOut = capture();
+    expect(
+      await runActionCommand(
+        [
+          "git.commit",
+          "--payload",
+          JSON.stringify({ plan_steps: ["chore(a): one"], plan_branch: "feature/plan" }),
+          "--confirm",
+        ],
+        {
+          cwd: root,
+          actor: "cli",
+          out: planOut.out,
+          err: planOut.err,
+          stdinIsTTY: () => true,
+          confirm: async () => true,
+        },
+      ),
+    ).toBe(0);
+    expect(planOut.read().stdout).toContain("plan_commits");
+
+    writeFileSync(path.join(root, "one.txt"), "one\n");
+    spawnSync("git", ["add", "one.txt"], { cwd: root });
+    let asked = 0;
+    const commitOut = capture();
+    expect(
+      await runActionCommand(
+        ["git.commit", "--payload", JSON.stringify({ message: "chore(a): one" }), "--confirm"],
+        {
+          cwd: root,
+          actor: "cli",
+          out: commitOut.out,
+          err: commitOut.err,
+          stdinIsTTY: () => true,
+          confirm: async () => {
+            asked += 1;
+            return true;
+          },
+        },
+      ),
+    ).toBe(0);
+    expect(asked).toBe(0);
+    expect(
+      spawnSync("git", ["log", "-1", "--pretty=%s"], { cwd: root, encoding: "utf8" }).stdout.trim(),
+    ).toBe("chore(a): one");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("every closed family/action pair reaches the structured core parser", async () => {
   const root = fixture();
   try {
