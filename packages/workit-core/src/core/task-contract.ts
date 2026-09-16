@@ -663,6 +663,8 @@ export const taskSummarySchema = z
     id,
     revision,
     workspaceRevision: revision,
+    createdAt: utc,
+    updatedAt: utc,
     objective: text,
     status: z.enum(["active", "paused", "closed"]),
     closure: closureSchema.nullable(),
@@ -744,7 +746,7 @@ const taskOperations = {
     expectedWorkspaceRevision: revision.optional(),
     outcome: outcomeSchema,
     summary: text,
-    decisionIds: z.array(id),
+    decisionIds: z.array(id).optional(),
   }),
 };
 const policyOperations = {
@@ -837,13 +839,14 @@ const writerOperations = {
     expectedRevision: revision.optional(),
     expectedWorkspaceRevision: revision.optional(),
     workerId: nullableId.optional(),
+    reason: text.optional(),
   }),
   release: operation({
     action: z.literal("release"),
     ...taskId,
     expectedRevision: revision.optional(),
     expectedWorkspaceRevision: revision.optional(),
-    reason: text,
+    reason: text.optional(),
   }),
 };
 const stateOperations = {
@@ -922,6 +925,15 @@ export type ErrorDetails = {
     descriptorDigest: string;
   };
   guidance?: string;
+  /** Structured remedy for unsatisfied requirements: rule, reason, and
+   * satisfaction text instead of opaque requirement hashes alone. */
+  requirements?: {
+    requirementId: string;
+    ruleId: string;
+    reason: string;
+    satisfaction: string;
+    dependentAction: string | null;
+  }[];
 };
 export type Result<T> =
   | {

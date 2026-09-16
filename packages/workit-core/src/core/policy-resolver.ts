@@ -306,7 +306,7 @@ function resolveRequirements(input: NormalizedResolverInput): Requirement[] {
         satisfaction:
           "An observed or inferred fact resolves the uncertainty and records its supporting references.",
         before: "dependent_action",
-        dependentAction: "dependent-action",
+        dependentAction: null,
         acceptanceAllowed: false,
       }),
     );
@@ -321,7 +321,7 @@ function resolveRequirements(input: NormalizedResolverInput): Requirement[] {
         satisfaction:
           "Present the material alternatives and record the user's decision before the dependent action.",
         before: "dependent_action",
-        dependentAction: "dependent-action",
+        dependentAction: null,
         acceptanceAllowed: false,
       }),
     );

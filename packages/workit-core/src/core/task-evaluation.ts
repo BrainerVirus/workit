@@ -154,14 +154,23 @@ const scopeRoots = (root: string, scope: Scope): Result<string[]> => {
   const roots: string[] = [];
   for (const item of scope.paths.length ? scope.paths : ["."]) {
     const target = path.resolve(root, item);
-    if (!inside(root, target)) return failure("invalid_input", "candidate scope escapes checkout");
+    if (!inside(root, target))
+      return failure(
+        "invalid_input",
+        `candidate scope escapes checkout: ${item} — keep one task per repository and coordinate a separate linked task in the other checkout`,
+        { fields: [{ path: "scope.paths", reason: `${item} is outside the checkout` }] },
+      );
     let ancestor = target;
     while (!fs.existsSync(ancestor) && ancestor !== root) ancestor = path.dirname(ancestor);
     try {
       if (!inside(root, fs.realpathSync(ancestor)))
-        return failure("invalid_input", "candidate scope escapes checkout");
+        return failure(
+          "invalid_input",
+          `candidate scope escapes checkout through a symlink: ${item} — keep one task per repository and coordinate a separate linked task in the other checkout`,
+          { fields: [{ path: "scope.paths", reason: `${item} resolves outside the checkout` }] },
+        );
     } catch {
-      return failure("invalid_input", "candidate scope cannot be inspected");
+      return failure("invalid_input", `candidate scope cannot be inspected: ${item}`);
     }
     roots.push(target);
   }
@@ -180,7 +189,12 @@ export function captureCandidate(
     return failure("invalid_input", "candidate root does not exist");
   }
   const normalizedScope = canonicalScope(scope);
-  if (!normalizedScope) return failure("invalid_input", "candidate scope is invalid");
+  if (!normalizedScope)
+    return failure(
+      "invalid_input",
+      "candidate scope is invalid: paths must be checkout-relative — to work in another repository, keep this task here and coordinate a separate linked task in that checkout",
+      { fields: [{ path: "scope.paths", reason: "must be checkout-relative" }] },
+    );
   const roots = scopeRoots(checkout, normalizedScope);
   if (!roots.ok) return roots;
   const git = gitPaths(checkout);
@@ -641,6 +655,18 @@ export function evaluateClosure(
   if (requestedOutcome !== "stopped" && blocking.length)
     return failure("requirements_unsatisfied", "applicable requirements are unsatisfied", {
       requirementIds: blocking.map((item) => item.requirementId),
+      requirements: blocking.map((item) => {
+        const requirement = view.task.policy?.requirements.find(
+          (candidate) => candidate.id === item.requirementId,
+        );
+        return {
+          requirementId: item.requirementId,
+          ruleId: requirement?.ruleId ?? "unknown",
+          reason: item.reason,
+          satisfaction: requirement?.satisfaction ?? "",
+          dependentAction: requirement?.dependentAction ?? null,
+        };
+      }),
     });
   const accepted = evaluations.filter((item) => item.status === "accepted_limitation");
   if (requestedOutcome === "verified" && accepted.length)

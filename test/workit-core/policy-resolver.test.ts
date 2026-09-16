@@ -229,7 +229,7 @@ test("consequential unknowns block only their dependent action", () => {
   expect(rules(result)).toContain("consequential-unknown");
   expect(
     policy.requirements.find((r) => r.ruleId === "consequential-unknown")?.dependentAction,
-  ).toBe("dependent-action");
+  ).toBeNull();
   expect(rules(result)).toContain("mechanical-existing-checks");
 });
 

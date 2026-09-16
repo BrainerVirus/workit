@@ -221,10 +221,14 @@ export class TaskStore {
           ? value.expectedWorkspaceRevision !== current.data.revision
           : value.expectedWorkspaceRevision !== null
       ) {
-        return failure("revision_conflict", "workspace revision does not match", {
-          expectedWorkspaceRevision: value.expectedWorkspaceRevision,
-          actualWorkspaceRevision: current.data?.revision ?? null,
-        });
+        return failure(
+          "revision_conflict",
+          "workspace revision does not match; omit expectedWorkspaceRevision to use the current record",
+          {
+            expectedWorkspaceRevision: value.expectedWorkspaceRevision,
+            actualWorkspaceRevision: current.data?.revision ?? null,
+          },
+        );
       }
       if (!value.provenance) return failure("invalid_input", "provenance is required");
       if (
@@ -312,10 +316,14 @@ export class TaskStore {
           ? input.expectedWorkspaceRevision !== current.data.revision
           : input.expectedWorkspaceRevision !== null
       )
-        return failure("revision_conflict", "workspace revision does not match", {
-          expectedWorkspaceRevision: input.expectedWorkspaceRevision,
-          actualWorkspaceRevision: current.data?.revision ?? null,
-        });
+        return failure(
+          "revision_conflict",
+          "workspace revision does not match; omit expectedWorkspaceRevision to use the current record",
+          {
+            expectedWorkspaceRevision: input.expectedWorkspaceRevision,
+            actualWorkspaceRevision: current.data?.revision ?? null,
+          },
+        );
       const previousWorkspaceBytes = current.data ? this.snapshotBytes(this.workspacePath) : null;
       if (current.data && !previousWorkspaceBytes)
         return failure("storage_error", "workspace snapshot disappeared during import");
@@ -1041,10 +1049,14 @@ export class TaskStore {
   }
 
   private conflict(expected: Revision, actual: Revision): Result<never> {
-    return failure("revision_conflict", "snapshot revision does not match", {
-      expectedRevision: expected,
-      actualRevision: actual,
-    });
+    return failure(
+      "revision_conflict",
+      "snapshot revision does not match; omit expectedRevision to use the current record",
+      {
+        expectedRevision: expected,
+        actualRevision: actual,
+      },
+    );
   }
 
   private taskPath(taskId: Id) {
