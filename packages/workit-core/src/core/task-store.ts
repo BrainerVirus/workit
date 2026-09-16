@@ -497,6 +497,7 @@ export class TaskStore {
         id: current.data.id,
         root: this.root,
         revision: context.revision,
+        runtime: stampNew(current.data),
       };
       const valid = workspaceRecordSchema.safeParse(record);
       if (!valid.success)
@@ -851,6 +852,7 @@ export class TaskStore {
       ...workspace,
       writer: { ...workspace.writer, state: "uncertain" as const },
       revision: newRevision(),
+      runtime: stampNew(workspace),
     };
     this.replaceSnapshot(this.workspacePath, value, workspace);
   }
