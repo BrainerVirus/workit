@@ -133,6 +133,46 @@ const toolInputSchema = (family: OperationFamily) => {
   return { type: "object" as const, ...schema };
 };
 
+const schemaBranches = (schema: Record<string, unknown>): unknown[] =>
+  Array.isArray(schema.oneOf)
+    ? schema.oneOf
+    : Array.isArray(schema.anyOf)
+      ? schema.anyOf
+      : [schema];
+
+const readOnlyBranches = (family: OperationFamily): unknown[] =>
+  schemaBranches(boundedOperationJsonSchema(family) as Record<string, unknown>).filter((branch) => {
+    const action = (branch as { properties?: { action?: { const?: unknown } } }).properties?.action
+      ?.const;
+    return typeof action === "string" && READ_ONLY_ACTIONS.has(action);
+  });
+
+/** Attested callers (host sessions that can mutate) see the full family union;
+ * unattested MCP callers see only read-only actions, and families with no
+ * read-only action are not advertised as callable tools at all. */
+export const advertisedToolSchemas = (
+  attested: boolean,
+): { name: string; description: string; inputSchema: Record<string, unknown> }[] => {
+  if (attested)
+    return OPERATION_FAMILIES.map((family) => ({
+      name: `workit_${family}`,
+      description: operationDescription(family),
+      inputSchema: toolInputSchema(family),
+    }));
+  return OPERATION_FAMILIES.flatMap((family) => {
+    const branches = readOnlyBranches(family);
+    if (!branches.length) return [];
+    const schema = boundedOperationJsonSchema(family) as Record<string, unknown>;
+    return [
+      {
+        name: `workit_${family}`,
+        description: `${operationDescription(family)} Unattested MCP callers can only run read-only actions; mutating operations require an attested host session.`,
+        inputSchema: { type: "object" as const, ...schema, oneOf: branches },
+      },
+    ];
+  });
+};
+
 const sanitizeFailure = (result: Result<unknown>, workspaceRoot?: string): Result<unknown> => {
   if (result.ok) return result;
   const sanitize = (value: unknown): unknown => {
@@ -198,13 +238,16 @@ export function createMcpServer(host: McpHost, contextProvider: NativeContextPro
     { capabilities: { tools: {}, resources: {} } },
   );
 
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: OPERATION_FAMILIES.map((family) => ({
-      name: `workit_${family}`,
-      description: operationDescription(family),
-      inputSchema: toolInputSchema(family),
-    })),
-  }));
+  server.setRequestHandler(ListToolsRequestSchema, async () => {
+    let attested = false;
+    try {
+      const context = await contextProvider.current();
+      attested = (context.caller as { attested?: unknown }).attested === true;
+    } catch {
+      attested = false;
+    }
+    return { tools: advertisedToolSchemas(attested) };
+  });
 
   server.setRequestHandler(ListResourcesRequestSchema, async () => ({
     resources: CONTEXT_KINDS.map((kind) => ({

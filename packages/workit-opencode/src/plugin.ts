@@ -54,9 +54,7 @@ const sourceMarker = markSourcesLoaded(
       "workers.ts",
       "authority.ts",
       "methods.ts",
-    ].map((file) =>
-      fileURLToPath(new URL(`../../../workit-core/src/core/${file}`, import.meta.url)),
-    ),
+    ].map((file) => fileURLToPath(new URL(`../../workit-core/src/core/${file}`, import.meta.url))),
   ].filter((file) => existsSync(file)),
 );
 let staleSourcesWarned = false;

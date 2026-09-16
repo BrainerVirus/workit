@@ -36,6 +36,14 @@ export const piCapabilities = (ctx?: Pick<ExtensionContext, "hasUI">): Capabilit
     reason: "Pi extensions do not sandbox arbitrary shell commands.",
     refs: [hostRef("tool_call")],
   },
+  {
+    name: "fresh-context-review",
+    surface: "supervised_worker",
+    assurance: "agent_guided",
+    reason:
+      "independent review runs as a supervised stock-Pi process; evidence evaluation enforces reviewer exclusivity",
+    refs: [hostRef("worker")],
+  },
 ];
 
 export const piContext = (ctx: ExtensionContext): OperationContext => ({

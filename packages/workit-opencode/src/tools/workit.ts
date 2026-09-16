@@ -449,6 +449,14 @@ export const opencodeCapabilities = () => [
     refs: [hostRef("task")],
   },
   {
+    name: "fresh-context-review",
+    surface: "task",
+    assurance: "agent_guided" as const,
+    reason:
+      "independent review runs as a native direct-child session; evidence evaluation enforces creator and duplicate-reviewer exclusion",
+    refs: [hostRef("task")],
+  },
+  {
     name: "known_product_writes",
     surface: "write/edit/bash",
     assurance: "unavailable" as const,
