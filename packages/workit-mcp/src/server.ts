@@ -381,7 +381,7 @@ export function createMcpServer(host: McpHost, contextProvider: NativeContextPro
       }
       const parsed = parseOperation(family, request.params.arguments);
       if (!parsed.ok) return resultForClient(parsed, workspaceRoot);
-      if (context.callerAttested === false && requiresCallerIdentity(parsed.data))
+      if (context.callerAttested !== true && requiresCallerIdentity(parsed.data))
         return resultForClient(
           {
             ok: false,

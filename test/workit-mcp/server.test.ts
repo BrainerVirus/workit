@@ -81,6 +81,21 @@ const jsonDepth = (node: unknown, current = 0): number => {
   return current;
 };
 
+test("omitted caller attestation fails closed for mutations", async () => {
+  const { client, server } = await connect("cursor", { current: async () => context("cursor") });
+  try {
+    const start = await client.callTool({
+      name: "workit_task",
+      arguments: taskStartRequest(),
+    });
+    expect(start.isError).toBe(true);
+    expect(start.structuredContent).toMatchObject({ ok: false, code: "capability_unavailable" });
+  } finally {
+    await client.close();
+    await server.close();
+  }
+});
+
 test("unattested MCP callers see only read-only actions", async () => {
   const { client, server } = await connect("cursor", { current: async () => context("cursor") });
   try {
@@ -226,7 +241,7 @@ test("MCP rejects caller-supplied provenance and workspace roots through strict 
 test("MCP maps exact core results and marks domain failures as errors", async () => {
   const workspaceRoot = mkdtempSync(path.join(os.tmpdir(), "workit-mcp-server-"));
   const { client, server } = await connect("cursor", {
-    current: async () => context("cursor", workspaceRoot),
+    current: async () => context("cursor", workspaceRoot, true),
   });
   try {
     const start = await client.callTool({
