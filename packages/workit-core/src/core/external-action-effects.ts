@@ -279,6 +279,12 @@ export const actionProposalQuestion = (
   }
   switch (request.operation) {
     case "git.branch_setup": {
+      if (request.payload.action === "reapply_stash")
+        return {
+          presented:
+            "Workit decision: action — Reapply the pre-checkout stash recorded in the branch manifest?",
+          approvedText: "Reapply the recorded stash.",
+        };
       const target = String(payload.target_branch ?? "");
       if (resolved.target_exists === true)
         return {

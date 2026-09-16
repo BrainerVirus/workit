@@ -15,6 +15,7 @@ import { createRepoTools } from "@/packages/workit-opencode/src/tools/repo";
 import { branchSetup } from "@/packages/workit-core/src/core/branch";
 import { resolveExternalActionRequest } from "@/packages/workit-core/src/core/external-action-effects";
 import { externalActionDescriptor } from "@/packages/workit-core/src/core/external-action";
+import { actionProposalQuestion } from "@/packages/workit-core/src/core/external-action-effects";
 import { externalActionRequest } from "@/packages/workit-core/src/core/external-action";
 
 const git = (cwd: string, args: string[]) => spawnSync("git", args, { cwd, encoding: "utf8" });
@@ -255,7 +256,16 @@ test(
       });
       expect(reapply.ok).toBe(true);
       if (!reapply.ok) return;
-      expect(resolveExternalActionRequest(root, reapply.data).ok).toBe(true);
+      const resolvedReapply = resolveExternalActionRequest(root, reapply.data);
+      expect(resolvedReapply.ok).toBe(true);
+      if (resolvedReapply.ok) {
+        const question = actionProposalQuestion(
+          resolvedReapply.data.request,
+          resolvedReapply.data.descriptorPayload,
+        );
+        expect(question.presented).toContain("Reapply the pre-checkout stash");
+        expect(question.presented).not.toContain("Create branch");
+      }
     } finally {
       rmSync(root, { recursive: true, force: true });
       rmSync(remote, { recursive: true, force: true });

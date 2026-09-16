@@ -198,6 +198,17 @@ test("new and legacy records carry truthful runtime versions", () => {
     ).toBe(true);
     const stamped = JSON.parse(readFileSync(taskFile, "utf8"));
     expect(stamped.runtime).toEqual({ createdWith: null, updatedWith: version });
+
+    const acquired = core.writer({
+      schemaVersion: 1,
+      action: "acquire",
+      taskId,
+      workerId: null,
+    });
+    expect(acquired.ok).toBe(true);
+    const workspaceFile = path.join(root, ".workit", "workspace.json");
+    const workspaceAfter = JSON.parse(readFileSync(workspaceFile, "utf8"));
+    expect(workspaceAfter.runtime).toEqual({ createdWith: version, updatedWith: version });
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
