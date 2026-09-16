@@ -745,7 +745,7 @@ export const createWorkitTools = ({
 }: WorkitToolOptions = {}) => {
   const actionProposals = new Map<
     string,
-    { descriptor: string; presented: string; approvedText: string; createdAt: number }
+    Array<{ descriptor: string; presented: string; approvedText: string; createdAt: number }>
   >();
   const make = (family: OperationFamily) =>
     tool({
@@ -818,14 +818,26 @@ export const createWorkitTools = ({
           if (!observed.ok) return output(failure("permission_denied", observed.error));
           let recordInput = parsed.data as Record<string, unknown>;
           if (decision.purpose === "action" && decision.response === "approved") {
-            const pending = actionProposals.get(context.sessionID);
-            if (
-              pending &&
-              pending.presented === decision.binding.presented &&
-              pending.approvedText === decision.binding.approvedContent &&
-              Date.now() - pending.createdAt <= 5 * 60 * 1000
-            ) {
-              actionProposals.delete(context.sessionID);
+            const queue = actionProposals.get(context.sessionID) ?? [];
+            const matches = queue.filter(
+              (pending) =>
+                pending.presented === decision.binding.presented &&
+                pending.approvedText === decision.binding.approvedContent &&
+                Date.now() - pending.createdAt <= 5 * 60 * 1000,
+            );
+            if (matches.length > 1)
+              return output(
+                failure(
+                  "invalid_input",
+                  "multiple action proposals match this approval; resolve the action again",
+                ),
+              );
+            const pending = matches[0];
+            if (pending) {
+              actionProposals.set(
+                context.sessionID,
+                queue.filter((candidate) => candidate !== pending),
+              );
               recordInput = {
                 ...recordInput,
                 binding: {
@@ -1002,12 +1014,15 @@ export const createWorkitTools = ({
               resolved.data.request,
               resolved.data.descriptorPayload,
             );
-            actionProposals.set(context.sessionID, {
+            const pending = actionProposals.get(context.sessionID) ?? [];
+            pending.push({
               descriptor,
               presented: proposal.presented,
               approvedText: proposal.approvedText,
               createdAt: Date.now(),
             });
+            if (pending.length > 8) pending.shift();
+            actionProposals.set(context.sessionID, pending);
             return output(
               failure("needs_input", proposal.presented, {
                 outcome: "not_started",

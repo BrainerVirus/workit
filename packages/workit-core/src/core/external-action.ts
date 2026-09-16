@@ -15,6 +15,7 @@ import {
 import { WorkitCore } from "./task-engine";
 import { TaskStore } from "./task-store";
 import * as z from "zod";
+import { execFileSync } from "node:child_process";
 
 export type AuthorizedActionInput = {
   core: WorkitCore;
@@ -441,6 +442,17 @@ export const planCommitBinding = (
   if (!message) return null;
   const plan = approvedPlanCommit(store, host, actor, message);
   if (!plan.ok) return null;
+  let branch: string;
+  try {
+    branch = execFileSync("git", ["branch", "--show-current"], {
+      cwd: store.root,
+      encoding: "utf8",
+      stdio: ["pipe", "pipe", "pipe"],
+    }).trim();
+  } catch {
+    return null;
+  }
+  if (!branch || branch !== plan.data.branch) return null;
   const workspace = store.readWorkspace();
   if (!workspace.ok || !workspace.data) return null;
   return {
