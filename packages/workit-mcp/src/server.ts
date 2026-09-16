@@ -242,7 +242,7 @@ export function createMcpServer(host: McpHost, contextProvider: NativeContextPro
     let attested = false;
     try {
       const context = await contextProvider.current();
-      attested = (context.caller as { attested?: unknown }).attested === true;
+      attested = context.callerAttested === true;
     } catch {
       attested = false;
     }

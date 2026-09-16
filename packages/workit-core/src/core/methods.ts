@@ -18,7 +18,7 @@ type MethodDefinition = {
 export const METHODS: Readonly<Record<MethodId, MethodDefinition>> = {
   "workit-challenge": { dimensions: ["challenge", "decisions"] },
   "workit-behavioral-tdd": { dimensions: ["testing"] },
-  "workit-review": { dimensions: ["review"] },
+  "workit-review": { dimensions: ["review"], ruleIds: ["fresh-context-review"] },
   "workit-plan": { dimensions: ["artifacts", "continuity"] },
   "workit-implement": { dimensions: ["delegation"] },
   "workit-debug": { ruleIds: ["root-cause-investigation"] },

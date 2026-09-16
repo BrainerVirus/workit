@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { getWorkitBootstrap, isWorkitBootstrap } from "@/packages/workit-opencode/src/bootstrap";
-import plugin from "@/packages/workit-opencode/src/plugin";
+import plugin, { pluginSourceFiles } from "@/packages/workit-opencode/src/plugin";
 
 describe("session bootstrap", () => {
   test("bootstrap contract names the native operation families", () => {
@@ -114,22 +114,12 @@ describe("session bootstrap", () => {
 });
 
 describe("stale-source markers", () => {
-  test("resolve in both source and bundled plugin layouts", () => {
-    const repoRoot = path.join(import.meta.dir, "..", "..");
-    for (const hostDir of [
-      path.join(repoRoot, "packages", "workit-opencode", "src"),
-      path.join(repoRoot, "packages", "workit-opencode", "dist"),
-    ]) {
-      const resolved = path.resolve(
-        hostDir,
-        "..",
-        "..",
-        "workit-core",
-        "src",
-        "core",
-        "task-contract.ts",
-      );
-      expect(existsSync(resolved), hostDir).toBe(true);
-    }
+  test("resolve the real core sources in the plugin layout", () => {
+    expect(
+      pluginSourceFiles.some((file) =>
+        file.endsWith(path.join("workit-core", "src", "core", "task-contract.ts")),
+      ),
+    ).toBe(true);
+    for (const file of pluginSourceFiles) expect(existsSync(file), file).toBe(true);
   });
 });

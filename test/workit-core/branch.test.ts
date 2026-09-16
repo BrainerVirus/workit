@@ -14,6 +14,7 @@ import { spawnSync } from "node:child_process";
 import { createRepoTools } from "@/packages/workit-opencode/src/tools/repo";
 import { branchSetup } from "@/packages/workit-core/src/core/branch";
 import { resolveExternalActionRequest } from "@/packages/workit-core/src/core/external-action-effects";
+import { externalActionDescriptor } from "@/packages/workit-core/src/core/external-action";
 import { externalActionRequest } from "@/packages/workit-core/src/core/external-action";
 
 const git = (cwd: string, args: string[]) => spawnSync("git", args, { cwd, encoding: "utf8" });
@@ -262,6 +263,43 @@ test(
   },
   { timeout: 60_000 },
 );
+
+test("branch setup binds the remote base so a remote advance changes the descriptor", () => {
+  const { root, remote } = repoOnMain({ withDevelop: true });
+  try {
+    const request = externalActionRequest({
+      operation: "git.branch_setup",
+      payload: { action: "setup", target_branch: "feature/delta" },
+    });
+    expect(request.ok).toBe(true);
+    if (!request.ok) return;
+    const before = resolveExternalActionRequest(root, request.data);
+    expect(before.ok).toBe(true);
+    if (!before.ok) return;
+    const descriptorBefore = externalActionDescriptor(
+      before.data.request.operation,
+      before.data.descriptorPayload,
+    );
+    git(root, ["fetch", "-q", "origin", "develop:develop"]);
+    git(root, ["checkout", "-q", "develop"]);
+    writeFileSync(path.join(root, "advance.txt"), "advance\n");
+    git(root, ["add", "advance.txt"]);
+    git(root, ["commit", "-qm", "advance"]);
+    git(root, ["push", "-q", "origin", "develop"]);
+    git(root, ["checkout", "-q", "main"]);
+    const after = resolveExternalActionRequest(root, request.data);
+    expect(after.ok).toBe(true);
+    if (!after.ok) return;
+    const descriptorAfter = externalActionDescriptor(
+      after.data.request.operation,
+      after.data.descriptorPayload,
+    );
+    expect(descriptorAfter).not.toBe(descriptorBefore);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(remote, { recursive: true, force: true });
+  }
+});
 
 test(
   "failed base resolution fails before any stash and leaves tree intact",

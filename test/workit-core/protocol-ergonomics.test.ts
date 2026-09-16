@@ -6,7 +6,9 @@ import { spawnSync } from "node:child_process";
 import {
   TaskStore,
   WorkitCore,
+  externalActionDescriptor,
   parseOperation,
+  planCommitBinding,
   runtimeVersion,
 } from "@/packages/workit-core/src/core";
 import { captureCandidate } from "@/packages/workit-core/src/core/task-evaluation";
@@ -219,6 +221,78 @@ test("records written by a newer Workit ask for an upgrade", () => {
       expect(task.code).toBe("recovery_required");
       expect(task.error).toContain("upgrade Workit");
     }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("plan commit bindings refuse branches other than the approved one", () => {
+  const root = gitRepo();
+  try {
+    const core = coreFor(root);
+    const started = core.task(taskStartRequest());
+    if (!started.ok) throw new Error(started.error);
+    const taskId = (started.data as { id: string }).id;
+    const store = new TaskStore(root);
+    const workspace = store.readWorkspace();
+    const task = store.readTask(taskId);
+    if (!workspace.ok || !workspace.data || !task.ok) throw new Error("state missing");
+    const planDescriptor = externalActionDescriptor("git.commit", {
+      plan_steps: ["chore(a): one"],
+      plan_branch: "feature/plan",
+      resolved: { head: "x", branch: "feature/plan", steps: ["chore(a): one"] },
+    });
+    const taskFile = path.join(root, ".workit", "tasks", `${taskId}.json`);
+    const raw = JSON.parse(readFileSync(taskFile, "utf8"));
+    raw.decisions = [
+      {
+        id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+        recordedAt: "2026-01-01T00:00:00Z",
+        provenance: {
+          kind: "host_observed",
+          host: "workit_cli",
+          session: { kind: "host", host: "workit_cli", handle: "protocol-test" },
+          workerId: null,
+          receipts: [{ kind: "host", host: "workit_cli", handle: "call-1" }],
+        },
+        data: {
+          purpose: "action",
+          binding: {
+            taskId,
+            workspaceId: workspace.data.id,
+            scope: task.data.intent.data.scope,
+            presented: "Approve the listed plan commits.",
+            approvedContent: planDescriptor,
+            contentRefs: [],
+          },
+          digest: "b".repeat(64),
+          response: "approved",
+          requirementIds: [],
+          revoked: null,
+          consumption: null,
+        },
+      },
+    ];
+    writeFileSync(taskFile, JSON.stringify(raw));
+    const commitDescriptor = externalActionDescriptor("git.commit", {
+      message: "chore(a): one",
+      resolved: { head: "x", branch: "feature/plan", staged: "s", paths: ["x"] },
+    });
+    const mismatched = planCommitBinding(
+      new TaskStore(root),
+      "workit_cli",
+      "protocol-test",
+      commitDescriptor,
+    );
+    expect(mismatched).toBeNull();
+    spawnSync("git", ["checkout", "-q", "-b", "feature/plan"], { cwd: root });
+    const bound = planCommitBinding(
+      new TaskStore(root),
+      "workit_cli",
+      "protocol-test",
+      commitDescriptor,
+    );
+    expect(bound).toMatchObject({ step: "chore(a): one" });
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

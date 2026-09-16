@@ -419,6 +419,88 @@ test("CLI executes a plan-commit list once per listed message", async () => {
   }
 });
 
+test("CLI requires writer ownership and concise binding questions", async () => {
+  const root = fixture();
+  try {
+    spawnSync("git", ["init", "-q"], { cwd: root });
+    spawnSync("git", ["config", "user.email", "test@example.invalid"], { cwd: root });
+    spawnSync("git", ["config", "user.name", "Workit Test"], { cwd: root });
+    writeFileSync(path.join(root, "base.txt"), "base\n");
+    spawnSync("git", ["add", "base.txt"], { cwd: root });
+    spawnSync("git", ["commit", "-qm", "base"], { cwd: root });
+    writeFileSync(path.join(root, "change.txt"), "change\n");
+    spawnSync("git", ["add", "change.txt"], { cwd: root });
+    const store = new TaskStore(root);
+    const core = new WorkitCore(store, {
+      root,
+      caller: { host: "workit_cli", actor: "cli" },
+      capabilities: [],
+      constraints: [],
+      now: "2026-01-01T00:00:00Z",
+    });
+    expect(core.task(taskStartRequest()).ok).toBe(true);
+    const started = store.listTasks();
+    const workspace = store.readWorkspace();
+    if (!started.ok || started.data.length !== 1 || !workspace.ok || !workspace.data)
+      throw new Error("state missing");
+    const task = store.readTask(started.data[0].id);
+    if (!task.ok) throw new Error("task missing");
+    const out = capture();
+    const code = await runActionCommand(
+      [
+        "git.commit",
+        "--payload",
+        JSON.stringify({ message: "chore(test): needs writer" }),
+        "--confirm",
+      ],
+      {
+        cwd: root,
+        actor: "cli",
+        out: out.out,
+        err: out.err,
+        stdinIsTTY: () => true,
+        confirm: async () => true,
+      },
+    );
+    expect(code).toBe(1);
+    expect(out.read().stderr).toContain("writer ownership");
+
+    const decisionOut = capture();
+    const long = `Approve ${"x".repeat(400)}`;
+    const decisionCode = await runTaskCommand(
+      [
+        "decision",
+        "record",
+        "--json",
+        "--payload",
+        JSON.stringify({
+          schemaVersion: 1,
+          action: "record",
+          taskId: task.data.id,
+          purpose: "design",
+          binding: {
+            taskId: task.data.id,
+            workspaceId: workspace.data.id,
+            scope: task.data.intent.data.scope,
+            presented: long,
+            approvedContent: long,
+            contentRefs: [],
+          },
+          response: "approved",
+          requirementIds: [],
+        }),
+      ],
+      { cwd: root, actor: "cli", out: decisionOut.out, err: decisionOut.err },
+    );
+    const parsed = JSON.parse(decisionOut.read().stdout);
+    expect(parsed).toMatchObject({ ok: false, code: "invalid_input" });
+    expect(String(parsed.error)).toContain("present the item");
+    expect(decisionCode).toBe(1);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("every closed family/action pair reaches the structured core parser", async () => {
   const root = fixture();
   try {

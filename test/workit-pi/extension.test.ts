@@ -531,6 +531,64 @@ test("Pi executes a plan-commit list once per listed message", async () => {
   }
 });
 
+test("Pi requires writer ownership and concise binding questions", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "workit-pi-writer-budget-"));
+  try {
+    for (const args of [
+      ["init", "-q"],
+      ["config", "user.email", "test@example.invalid"],
+      ["config", "user.name", "Workit Test"],
+    ])
+      spawnSync("git", args, { cwd: root });
+    writeFileSync(path.join(root, "base.txt"), "base\n");
+    spawnSync("git", ["add", "base.txt"], { cwd: root });
+    spawnSync("git", ["commit", "-qm", "base"], { cwd: root });
+    writeFileSync(path.join(root, "change.txt"), "change\n");
+    spawnSync("git", ["add", "change.txt"], { cwd: root });
+    const { task, workspace } = startedTask(root);
+    const pi = makePi();
+    await extension(pi as any);
+    const action = pi.tools.find((tool) => tool.name === "workit_external_action");
+    const commit = await action.execute(
+      "writer-prereq",
+      { operation: "git.commit", payload: { message: "chore(test): needs writer" } },
+      undefined,
+      undefined,
+      context(root, true),
+    );
+    expect(commit.details).toMatchObject({ ok: false, code: "needs_input" });
+    expect(String(commit.details.error)).toContain("writer ownership");
+    const decision = pi.tools.find((tool) => tool.name === "workit_decision");
+    const long = `Approve ${"x".repeat(400)}`;
+    const recorded = await decision.execute(
+      "budget",
+      {
+        schemaVersion: 1,
+        action: "record",
+        taskId: task.id,
+        purpose: "design",
+        binding: {
+          taskId: task.id,
+          workspaceId: workspace.id,
+          scope: task.intent.data.scope,
+          presented: long,
+          approvedContent: long,
+          contentRefs: [],
+        },
+        response: "approved",
+        requirementIds: [],
+      },
+      undefined,
+      undefined,
+      context(root, true),
+    );
+    expect(recorded.details).toMatchObject({ ok: false, code: "invalid_input" });
+    expect(String(recorded.details.error)).toContain("present the item");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("Pi child registration omits coordinator-only optional actions", async () => {
   const previous = process.env.WORKIT_PI_WORKER_ID;
   process.env.WORKIT_PI_WORKER_ID = "worker-child";

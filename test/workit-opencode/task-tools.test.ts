@@ -1060,6 +1060,154 @@ test("identical concurrent proposals fail closed on ambiguous approval", async (
   }
 });
 
+test("OpenCode requires writer ownership before local actions", async () => {
+  const root = mkdtempSync(join(tmpdir(), "workit-opencode-writer-prereq-"));
+  try {
+    for (const args of [
+      ["init", "-q"],
+      ["config", "user.email", "test@example.invalid"],
+      ["config", "user.name", "Workit Test"],
+    ])
+      spawnSync("git", args, { cwd: root });
+    writeFileSync(join(root, "base.txt"), "base\n");
+    spawnSync("git", ["add", "base.txt"], { cwd: root });
+    spawnSync("git", ["commit", "-qm", "base"], { cwd: root });
+    writeFileSync(join(root, "change.txt"), "change\n");
+    spawnSync("git", ["add", "change.txt"], { cwd: root });
+    const actor = "opencode-writer-prereq";
+    const store = new TaskStore(root);
+    const core = new WorkitCore(store, {
+      root,
+      caller: { host: "opencode", actor },
+      capabilities: [],
+      constraints: [],
+      now: "2026-01-01T00:00:00Z",
+    });
+    const started = core.task(taskStartRequest());
+    if (!started.ok) throw new Error(started.error);
+    const tools = createWorkitTools({
+      receipts: new NativeReceiptStore(),
+      client: { session: { get: async () => ({ data: { id: actor, directory: root } }) } },
+    }) as any;
+    const result = await tools.workit_external_action.execute(
+      { operation: "git.commit", payload: { message: "chore(test): needs writer" } },
+      { directory: root, sessionID: actor },
+    );
+    const parsed = JSON.parse(typeof result === "string" ? result : result.output);
+    expect(parsed).toMatchObject({ ok: false, code: "needs_input" });
+    expect(String(parsed.error)).toContain("writer ownership");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("action proposals expire with the injectable clock", async () => {
+  const root = mkdtempSync(join(tmpdir(), "workit-opencode-proposal-expiry-"));
+  try {
+    for (const args of [
+      ["init", "-q"],
+      ["config", "user.email", "test@example.invalid"],
+      ["config", "user.name", "Workit Test"],
+    ])
+      spawnSync("git", args, { cwd: root });
+    writeFileSync(join(root, "base.txt"), "base\n");
+    spawnSync("git", ["add", "base.txt"], { cwd: root });
+    spawnSync("git", ["commit", "-qm", "base"], { cwd: root });
+    writeFileSync(join(root, "change.txt"), "change\n");
+    spawnSync("git", ["add", "change.txt"], { cwd: root });
+    const actor = "opencode-proposal-expiry";
+    let nowMs = Date.parse("2026-01-01T00:00:00Z");
+    const store = new TaskStore(root);
+    const core = new WorkitCore(store, {
+      root,
+      caller: { host: "opencode", actor },
+      capabilities: [],
+      constraints: [],
+      now: "2026-01-01T00:00:00Z",
+    });
+    const started = core.task(taskStartRequest());
+    if (!started.ok) throw new Error(started.error);
+    const task = store.readTask((started.data as { id: string }).id);
+    const workspace = store.readWorkspace();
+    if (!task.ok || !workspace.ok || !workspace.data) throw new Error("task setup failed");
+    expect(
+      core.writer({
+        schemaVersion: 1,
+        action: "acquire",
+        taskId: task.data.id,
+        expectedRevision: task.data.revision,
+        expectedWorkspaceRevision: workspace.data.revision,
+        workerId: null,
+      }),
+    ).toMatchObject({ ok: true });
+    const receipts = new NativeReceiptStore({ now: () => nowMs });
+    const tools = createWorkitTools({
+      receipts,
+      now: () => nowMs,
+      client: { session: { get: async () => ({ data: { id: actor, directory: root } }) } },
+    }) as any;
+    const request = { operation: "git.commit", payload: { message: "chore(test): expired" } };
+    const first = await tools.workit_external_action.execute(request, {
+      directory: root,
+      sessionID: actor,
+    });
+    const proposal = JSON.parse(
+      typeof first === "string" ? first : (first as { output: string }).output,
+    ).details.proposal;
+    nowMs += 6 * 60 * 1000;
+    receipts.record(
+      {
+        sessionID: actor,
+        callID: "expired-question",
+        args: {
+          questions: [
+            {
+              header: "Workit decision: action",
+              question: proposal.presented,
+              options: [
+                { label: "approved", description: proposal.approvedContent },
+                { label: "rejected", description: "Reject this decision" },
+              ],
+            },
+          ],
+        },
+      },
+      { metadata: { answers: [["approved"]] } },
+    );
+    const fresh = store.readTask(task.data.id);
+    if (!fresh.ok) throw new Error("task refresh failed");
+    const decision = await tools.workit_decision.execute(
+      {
+        schemaVersion: 1,
+        action: "record",
+        taskId: task.data.id,
+        expectedRevision: fresh.data.revision,
+        purpose: "action",
+        binding: {
+          taskId: task.data.id,
+          workspaceId: workspace.data.id,
+          scope: task.data.intent.data.scope,
+          presented: proposal.presented,
+          approvedContent: proposal.approvedContent,
+          contentRefs: [],
+        },
+        response: "approved",
+        requirementIds: [],
+      },
+      { directory: root, sessionID: actor } as never,
+    );
+    expect(
+      JSON.parse(typeof decision === "string" ? decision : (decision as { output: string }).output),
+    ).toMatchObject({ ok: true });
+    const recorded = store.readTask(task.data.id);
+    if (!recorded.ok) throw new Error("recorded task unavailable");
+    const entry = recorded.data.decisions.find((item) => item.data.purpose === "action");
+    expect(entry?.data.binding.approvedContent).toBe(proposal.approvedContent);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("OpenCode child sessions cannot invoke the coordinator-only action route", async () => {
   const tools = createWorkitTools({
     client: {

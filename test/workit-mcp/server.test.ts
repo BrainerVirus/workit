@@ -25,11 +25,8 @@ const root = process.cwd();
 
 const context = (host: Host, workspaceRoot = root, attested = false): OperationContext => ({
   root: workspaceRoot,
-  caller: {
-    host,
-    actor: "mcp-test",
-    ...(attested ? { attested: true } : {}),
-  } as OperationContext["caller"],
+  caller: { host, actor: "mcp-test" },
+  ...(attested ? { callerAttested: true } : {}),
   capabilities: [],
   constraints: [],
   now: "2026-01-01T00:00:00Z",

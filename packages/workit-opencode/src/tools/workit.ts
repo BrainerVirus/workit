@@ -737,12 +737,14 @@ export type WorkitToolOptions = {
   client?: SessionLookup;
   receipts?: NativeReceiptStore;
   directChildren?: DirectChildren;
+  now?: () => number;
 };
 
 export const createWorkitTools = ({
   client,
   receipts = new NativeReceiptStore(),
   directChildren = new Map<string, string>(),
+  now = Date.now,
 }: WorkitToolOptions = {}) => {
   const actionProposals = new Map<
     string,
@@ -824,7 +826,7 @@ export const createWorkitTools = ({
               (pending) =>
                 pending.presented === decision.binding.presented &&
                 pending.approvedText === decision.binding.approvedContent &&
-                Date.now() - pending.createdAt <= 5 * 60 * 1000,
+                now() - pending.createdAt <= 5 * 60 * 1000,
             );
             if (matches.length > 1)
               return output(
@@ -1042,7 +1044,7 @@ export const createWorkitTools = ({
               descriptor,
               presented: proposal.presented,
               approvedText: proposal.approvedText,
-              createdAt: Date.now(),
+              createdAt: now(),
             });
             if (pending.length > 8) pending.shift();
             actionProposals.set(context.sessionID, pending);

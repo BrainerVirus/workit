@@ -42,21 +42,20 @@ const logger = createLogger({
 // Long-lived sessions load workit sources once. Warn once (never block) when
 // the checkout moves underneath the live process so stale behavior is visible
 // instead of silently running old code after local fixes.
-const sourceMarker = markSourcesLoaded(
-  [
-    fileURLToPath(import.meta.url),
-    fileURLToPath(new URL("./tools/workit.ts", import.meta.url)),
-    ...[
-      "task-contract.ts",
-      "task-engine.ts",
-      "task-evaluation.ts",
-      "task-store.ts",
-      "workers.ts",
-      "authority.ts",
-      "methods.ts",
-    ].map((file) => fileURLToPath(new URL(`../../workit-core/src/core/${file}`, import.meta.url))),
-  ].filter((file) => existsSync(file)),
-);
+export const pluginSourceFiles = [
+  fileURLToPath(import.meta.url),
+  fileURLToPath(new URL("./tools/workit.ts", import.meta.url)),
+  ...[
+    "task-contract.ts",
+    "task-engine.ts",
+    "task-evaluation.ts",
+    "task-store.ts",
+    "workers.ts",
+    "authority.ts",
+    "methods.ts",
+  ].map((file) => fileURLToPath(new URL(`../../workit-core/src/core/${file}`, import.meta.url))),
+].filter((file) => existsSync(file));
+const sourceMarker = markSourcesLoaded(pluginSourceFiles);
 let staleSourcesWarned = false;
 const warnStaleSources = (): void => {
   if (staleSourcesWarned) return;
