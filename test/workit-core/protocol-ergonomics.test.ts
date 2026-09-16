@@ -65,7 +65,7 @@ test("revision conflicts teach omission instead of blind retries", () => {
     const result = core.task({
       schemaVersion: 1,
       action: "progress",
-      taskId: started.data.id,
+      taskId: (started.data as { id: string }).id,
       expectedRevision: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
       progress: { summary: "x", nextAction: null, blockers: [] },
     });
@@ -107,7 +107,7 @@ test("policy placeholders are gone and summaries carry timestamps", () => {
     const assessed = core.policy({
       schemaVersion: 1,
       action: "assess",
-      taskId: started.data.id,
+      taskId: (started.data as { id: string }).id,
       assessment: {
         ...base,
         signals: {
@@ -122,7 +122,7 @@ test("policy placeholders are gone and summaries carry timestamps", () => {
       },
     });
     expect(assessed.ok).toBe(true);
-    if (!assessed.ok) return;
+    if (!assessed.ok || !assessed.data) return;
     const product = assessed.data.requirements.find(
       (requirement) => requirement.ruleId === "product-decision",
     );
@@ -141,14 +141,14 @@ test("close reports rule-level remedies for unsatisfied requirements", () => {
     const assessed = core.policy({
       schemaVersion: 1,
       action: "assess",
-      taskId: started.data.id,
+      taskId: (started.data as { id: string }).id,
       assessment: assessment(),
     });
     expect(assessed.ok).toBe(true);
     const closed = core.task({
       schemaVersion: 1,
       action: "close",
-      taskId: started.data.id,
+      taskId: (started.data as { id: string }).id,
       outcome: "verified",
       summary: "done",
     });
