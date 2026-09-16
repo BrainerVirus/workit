@@ -589,6 +589,13 @@ export const actionProgressListSchema = z.array(actionProgressSchema).check((ctx
       path: ["decisionId"],
     });
 });
+export const runtimeSchema = z
+  .object({
+    createdWith: text.nullable(),
+    updatedWith: text,
+  })
+  .strict();
+export type RuntimeInfo = z.infer<typeof runtimeSchema>;
 export const taskRecordSchema = z
   .object({
     schemaVersion: z.literal(1),
@@ -604,6 +611,7 @@ export const taskRecordSchema = z
     closure: closureSchema.nullable(),
     progress: progressSchema,
     pauseReason: text.nullable().optional(),
+    runtime: runtimeSchema.optional(),
     assessments: z.array(entrySchema(assessmentSchema)),
     policy: policySchema.nullable(),
     policyChanges: z.array(policyChangeSchema),
@@ -622,6 +630,7 @@ export const workspaceRecordSchema = z
     id,
     revision,
     root: nonEmpty,
+    runtime: runtimeSchema.optional(),
     writer: z
       .object({ state: z.enum(["held", "uncertain"]), owner: ownerSchema, acquiredAt: utc })
       .strict()
@@ -666,6 +675,7 @@ export const taskSummarySchema = z
     workspaceRevision: revision,
     createdAt: utc,
     updatedAt: utc,
+    runtime: runtimeSchema.nullable(),
     objective: text,
     status: z.enum(["active", "paused", "closed"]),
     closure: closureSchema.nullable(),

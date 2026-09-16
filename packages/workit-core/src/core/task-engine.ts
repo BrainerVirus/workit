@@ -2246,6 +2246,7 @@ export class WorkitCore {
       workspaceRevision: workspace.data.revision,
       createdAt: task.createdAt,
       updatedAt: task.updatedAt,
+      runtime: task.runtime ?? null,
       objective: task.intent.data.objective,
       status: task.status,
       closure: task.closure,

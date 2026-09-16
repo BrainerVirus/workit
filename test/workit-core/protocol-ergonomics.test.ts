@@ -1,9 +1,14 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { TaskStore, WorkitCore, parseOperation } from "@/packages/workit-core/src/core";
+import {
+  TaskStore,
+  WorkitCore,
+  parseOperation,
+  runtimeVersion,
+} from "@/packages/workit-core/src/core";
 import { captureCandidate } from "@/packages/workit-core/src/core/task-evaluation";
 import { assessment, taskStartRequest } from "@/test/workit-core/task-fixtures";
 
@@ -155,6 +160,42 @@ test("pause keeps progress and stores the reason separately", () => {
     expect(paused.data.progress.summary).toBe("work in progress");
     expect(paused.data.progress.nextAction).toBe("next step");
     expect(paused.data.pauseReason).toBe("waiting for review");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("new and legacy records carry truthful runtime versions", () => {
+  const root = gitRepo();
+  try {
+    const core = coreFor(root);
+    const started = core.task(taskStartRequest());
+    if (!started.ok) throw new Error(started.error);
+    const taskId = (started.data as { id: string }).id;
+    const version = runtimeVersion();
+    expect(
+      (started.data as { runtime?: { createdWith?: string; updatedWith?: string } }).runtime,
+    ).toEqual({ createdWith: version, updatedWith: version });
+    const workspace = new TaskStore(root).readWorkspace();
+    if (!workspace.ok || !workspace.data) throw new Error("workspace missing");
+    expect(workspace.data.runtime).toEqual({ createdWith: version, updatedWith: version });
+
+    const taskFile = path.join(root, ".workit", "tasks", `${taskId}.json`);
+    const raw = JSON.parse(readFileSync(taskFile, "utf8"));
+    delete raw.runtime;
+    writeFileSync(taskFile, JSON.stringify(raw));
+    const legacy = core.task({ schemaVersion: 1, action: "inspect", taskId, view: "summary" });
+    expect(legacy.ok).toBe(true);
+    expect(
+      core.task({
+        schemaVersion: 1,
+        action: "progress",
+        taskId,
+        progress: { summary: "stamped", nextAction: null, blockers: [] },
+      }).ok,
+    ).toBe(true);
+    const stamped = JSON.parse(readFileSync(taskFile, "utf8"));
+    expect(stamped.runtime).toEqual({ createdWith: null, updatedWith: version });
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

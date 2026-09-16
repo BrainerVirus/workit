@@ -57,7 +57,7 @@ export type {
   ExportBundle,
   Result as ContractResult,
 } from "./core/task-contract";
-export { TaskStore } from "./core/task-store";
+export { TaskStore, runtimeVersion } from "./core/task-store";
 export type { MetadataLock, ProcessEvidence, RecoveryInput } from "./core/task-store";
 export { compactTaskContext, reconcileResume } from "./core/task-context";
 export type {
