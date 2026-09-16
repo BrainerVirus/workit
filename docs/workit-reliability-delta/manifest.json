@@ -1,0 +1,6 @@
+{
+  "branch": "feature/workit-reliability-delta",
+  "previous_branch": "main",
+  "spec": "docs/workit-reliability-delta/spec.md",
+  "plan": "docs/workit-reliability-delta/plan.md"
+}
