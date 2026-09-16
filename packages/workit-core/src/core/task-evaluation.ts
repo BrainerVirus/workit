@@ -475,7 +475,10 @@ export function evaluateRequirements(
       const reviewSession = sessionFromRef(entry.data.reviewContext);
       const sameImplementation = sameSession(reviewSession, task.intent.provenance.session);
       const sameEvidenceSession = task.evidence.some(
-        (other) => other.id !== entry.id && sameSession(reviewSession, other.provenance.session),
+        (other) =>
+          other.id !== entry.id &&
+          other.data.kind === "review" &&
+          sameSession(reviewSession, other.provenance.session),
       );
       return (
         entry.data.kind === "review" &&

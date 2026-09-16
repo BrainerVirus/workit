@@ -603,6 +603,7 @@ export const taskRecordSchema = z
     status: z.enum(["active", "paused", "closed"]),
     closure: closureSchema.nullable(),
     progress: progressSchema,
+    pauseReason: text.nullable().optional(),
     assessments: z.array(entrySchema(assessmentSchema)),
     policy: policySchema.nullable(),
     policyChanges: z.array(policyChangeSchema),

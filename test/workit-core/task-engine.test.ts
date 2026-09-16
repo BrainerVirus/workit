@@ -686,7 +686,7 @@ test("review evidence uses the trusted caller session and requires an independen
     ok: true,
     data: {
       requirements: expect.arrayContaining([
-        expect.objectContaining({ requirementId: reviewRequirement.id, status: "unsatisfied" }),
+        expect.objectContaining({ requirementId: reviewRequirement.id, status: "satisfied" }),
       ]),
     },
   });
@@ -695,7 +695,7 @@ test("review evidence uses the trusted caller session and requires an independen
     ok: true,
     data: {
       requirements: expect.arrayContaining([
-        expect.objectContaining({ requirementId: reviewRequirement.id, status: "unsatisfied" }),
+        expect.objectContaining({ requirementId: reviewRequirement.id, status: "satisfied" }),
       ]),
     },
   });

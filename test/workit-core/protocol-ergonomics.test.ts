@@ -132,6 +132,34 @@ test("policy placeholders are gone and summaries carry timestamps", () => {
   }
 });
 
+test("pause keeps progress and stores the reason separately", () => {
+  const root = gitRepo();
+  try {
+    const core = coreFor(root);
+    const started = core.task(taskStartRequest());
+    if (!started.ok) throw new Error(started.error);
+    const taskId = (started.data as { id: string }).id;
+    expect(
+      core.task({
+        schemaVersion: 1,
+        action: "progress",
+        taskId,
+        progress: { summary: "work in progress", nextAction: "next step", blockers: [] },
+      }).ok,
+    ).toBe(true);
+    expect(
+      core.task({ schemaVersion: 1, action: "pause", taskId, reason: "waiting for review" }).ok,
+    ).toBe(true);
+    const paused = new TaskStore(root).readTask(taskId);
+    if (!paused.ok) throw new Error(paused.error);
+    expect(paused.data.progress.summary).toBe("work in progress");
+    expect(paused.data.progress.nextAction).toBe("next step");
+    expect(paused.data.pauseReason).toBe("waiting for review");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("close reports rule-level remedies for unsatisfied requirements", () => {
   const root = gitRepo();
   try {
