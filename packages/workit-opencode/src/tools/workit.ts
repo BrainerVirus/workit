@@ -8,6 +8,7 @@ import {
   approvedPlanCommit,
   classifyBranchDirt,
   planCommitBinding,
+  chainStepBinding,
   externalActionDescriptor,
   externalActionHelp,
   priorExternalAction,
@@ -647,7 +648,9 @@ export const nativeExternalActionRunner = (
     const store = new TaskStore(root);
     const selected = approvedExternalAction(store, "opencode", actor, operation);
     if (!selected.ok) {
-      const plan = planCommitBinding(store, "opencode", actor, operation);
+      const plan =
+        planCommitBinding(store, "opencode", actor, operation) ??
+        chainStepBinding(store, "opencode", actor, operation);
       if (plan) {
         const actionRef = externalActionRef("opencode", actor, operation);
         return {

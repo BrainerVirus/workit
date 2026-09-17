@@ -6,6 +6,7 @@ import {
   approvedPlanCommit,
   classifyBranchDirt,
   planCommitBinding,
+  chainStepBinding,
   externalActionState,
   priorExternalAction,
   priorResolvedDrift,
@@ -538,7 +539,9 @@ const nativeExternalActionRunner = (root: string, actor: string, core: WorkitCor
     const store = new TaskStore(root);
     const approved = approvedExternalAction(store, "workit_cli", actor, operationValue);
     if (!approved.ok) {
-      const plan = planCommitBinding(store, "workit_cli", actor, operationValue);
+      const plan =
+        planCommitBinding(store, "workit_cli", actor, operationValue) ??
+        chainStepBinding(store, "workit_cli", actor, operationValue);
       if (plan) {
         const actionRef = externalActionRef("workit_cli", actor, operationValue);
         return {

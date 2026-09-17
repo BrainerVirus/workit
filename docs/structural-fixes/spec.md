@@ -62,6 +62,16 @@ is rejected at review.
    outside an attributed session, commands are silently allowed
    (`plugin.ts:589-598`; `packages/workit-pi/src/tools.ts:577-589`;
    `packages/workit-codex/hooks/workit-hook.ts:352-360`).
+6b. **Branch-owned docs auto-carry (no auto-commit).** Starting work on a
+   spec/plan must not cost a stash interrogation for the spec/plan itself.
+   Dirt confined to untracked files or tracked modifications under `docs/`
+   rides onto the new branch silently — `git switch -c` never touches
+   untracked files, and the base-checkout sequence aborts cleanly
+   pre-mutation on a real collision (the existing fail-after-stash
+   recovery covers it). The stash question fires only for dirt outside
+   those paths. Commits are deliberately excluded: history always needs
+   approval, so carried docs land through the normal plan commits, never
+   as a silent first commit (`branch.ts:399-407` dirty gate).
 7. **Self-identifying runtime.** Doctor and stale-install logic compare the
    running core bundle hash against the registry hash — never launcher argv,
    pin forms, or path spellings. Collapses the path/pin/symlink/`/var`-alias

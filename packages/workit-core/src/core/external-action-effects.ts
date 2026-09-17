@@ -24,6 +24,7 @@ import { failure, success, sha256, type Caller, type Result, type Ref } from "./
 import { changelogApply, changelogApplyPreview } from "./changelog";
 import type { ExternalActionRequest } from "./external-action";
 import { externalActionDescriptor, externalActionRequest } from "./external-action";
+import { normalizeChainSteps } from "./authority";
 import { resolveInside, run as coreRun } from "../core";
 import { vcsConfig } from "./vcs-config";
 import { detectCommitFlavor, matchCommitFlavor, type CommitFlavor } from "./commit-flavors";
@@ -271,10 +272,33 @@ export const actionProposalQuestion = (
   const resolved = (payload.resolved ?? {}) as Record<string, unknown>;
   const payloadTarget = String(payload.target_branch ?? "");
   if (request.operation === "git.commit" && Array.isArray(payload.plan_steps)) {
-    const steps = payload.plan_steps as string[];
+    const steps = payload.plan_steps as unknown[];
+    const chain = normalizeChainSteps(steps);
+    if (!chain)
+      return {
+        presented: `Workit decision: action — Approve committing the plan's listed tasks?`,
+        approvedText: `Approve the listed plan commits.`,
+      };
+    const kinds = chain.map((step) => step.kind);
+    if (kinds.every((kind) => kind === "commit"))
+      return {
+        presented: `Workit decision: action — Approve committing the plan's ${steps.length} listed tasks on \`${String(payload.plan_branch ?? "")}\`?`,
+        approvedText: `Approve the ${steps.length} listed plan commits.`,
+      };
+    const summary = [
+      kinds.filter((kind) => kind === "branch").length
+        ? `${kinds.filter((kind) => kind === "branch").length} branch`
+        : null,
+      kinds.filter((kind) => kind === "commit").length
+        ? `${kinds.filter((kind) => kind === "commit").length} commits`
+        : null,
+      kinds.includes("pr") ? "PR" : null,
+    ]
+      .filter(Boolean)
+      .join(", ");
     return {
-      presented: `Workit decision: action — Approve committing the plan's ${steps.length} listed tasks on \`${String(payload.plan_branch ?? "")}\`?`,
-      approvedText: `Approve the ${steps.length} listed plan commits.`,
+      presented: `Workit decision: action — Approve the ${steps.length}-step chain on \`${String(payload.plan_branch ?? "")}\` (${summary})?`,
+      approvedText: `Approve the ${steps.length}-step chain (${summary}).`,
     };
   }
   switch (request.operation) {
@@ -872,26 +896,41 @@ export const resolveExternalActionRequest = (
         if (!head) return failure("storage_error", "Git state could not be resolved");
         const branch = gitValue(root, ["branch", "--show-current"]);
         if (planSteps !== undefined || planBranch !== undefined) {
-          if (
-            !Array.isArray(planSteps) ||
-            planSteps.some((step) => typeof step !== "string" || !step.trim()) ||
-            new Set(planSteps).size !== planSteps.length ||
-            planSteps.length === 0 ||
-            planSteps.length > 32
-          )
+          const chain = Array.isArray(planSteps) ? normalizeChainSteps(planSteps) : null;
+          if (!chain)
             return failure(
               "invalid_input",
-              "plan_steps must be 1-32 unique non-empty commit messages",
+              "plan_steps must be 1-32 unique non-empty commit messages, branch targets, or pull_request markers",
               {
                 outcome: "not_started",
-                fields: [{ path: "plan_steps", reason: "unique strings" }],
+                fields: [{ path: "plan_steps", reason: "unique steps" }],
               },
             );
-          if (typeof planBranch !== "string" || !planBranch.trim() || planBranch !== branch)
-            return failure("invalid_input", "plan_branch must name the current working branch", {
+          if (typeof planBranch !== "string" || !planBranch.trim())
+            return failure("invalid_input", "plan_branch must name the working branch", {
               outcome: "not_started",
-              fields: [{ path: "plan_branch", reason: "current branch" }],
+              fields: [{ path: "plan_branch", reason: "required" }],
             });
+          // A chain that creates its own branch names that branch; otherwise
+          // the plan runs on the branch already checked out.
+          const first = chain[0];
+          const createsBranch = first?.kind === "branch";
+          if (createsBranch ? planBranch !== first.target : planBranch !== branch)
+            return failure(
+              "invalid_input",
+              createsBranch
+                ? "plan_branch must name the branch the chain creates"
+                : "plan_branch must name the current working branch",
+              {
+                outcome: "not_started",
+                fields: [
+                  {
+                    path: "plan_branch",
+                    reason: createsBranch ? "chain branch" : "current branch",
+                  },
+                ],
+              },
+            );
           if (isProtectedBranch(root, planBranch))
             return failure("invalid_input", "plan_branch must not be a protected branch", {
               outcome: "not_started",

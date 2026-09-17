@@ -3,6 +3,7 @@ import {
   approvedExternalAction,
   approvedPlanCommit,
   planCommitBinding,
+  chainStepBinding,
   externalActionState,
   priorExternalAction,
   priorResolvedDrift,
@@ -166,7 +167,9 @@ export const nativeExternalActionRunner = (
     const store = new TaskStore(root);
     const selected = approvedExternalAction(store, "pi", actor, operation);
     if (!selected.ok) {
-      const plan = planCommitBinding(store, "pi", actor, operation);
+      const plan =
+        planCommitBinding(store, "pi", actor, operation) ??
+        chainStepBinding(store, "pi", actor, operation);
       if (plan) {
         const actionRef = externalActionRef("pi", actor, operation);
         return {

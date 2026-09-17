@@ -75,6 +75,8 @@ export { classifyBranchDirt } from "./core/branch";
 export type { BranchDirt } from "./core/branch";
 export type { ShellRouteIntent } from "./core/route-intent";
 export { applicableDecision, reserveAction, settleAction, reconcileAction } from "./core/authority";
+export { normalizeChainSteps, chainStepKey } from "./core/authority";
+export type { ChainStep } from "./core/authority";
 export {
   createAuthorizedExternalActionRunner,
   runAuthorizedExternalAction,
@@ -91,9 +93,11 @@ export type {
 } from "./core/external-action";
 export {
   approvedBranchSetupIntent,
+  approvedChainStep,
   approvedExternalAction,
   approvedPlanCommit,
   branchSetupIntent,
+  chainStepBinding,
   planCommitDescriptor,
   planCommitBinding,
   commitMessageFromDescriptor,

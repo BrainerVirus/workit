@@ -895,7 +895,13 @@ test("OpenCode executes a plan-commit list once per listed message", async () =>
     const planEntry = recorded.data.decisions.find((item) => item.data.purpose === "action");
     expect(
       planEntry ? planCommitDescriptor(planEntry.data.binding.approvedContent) : null,
-    ).toMatchObject({ steps: ["chore(a): one", "chore(b): two"], branch: "feature/plan" });
+    ).toMatchObject({
+      steps: [
+        { kind: "commit", message: "chore(a): one" },
+        { kind: "commit", message: "chore(b): two" },
+      ],
+      branch: "feature/plan",
+    });
 
     spawnSync("git", ["checkout", "-q", "-b", "feature/other"], { cwd: root });
     writeFileSync(join(root, "wrong-branch.txt"), "wrong\n");

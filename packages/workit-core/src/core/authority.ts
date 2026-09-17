@@ -181,12 +181,57 @@ export type ReconcileActionInput = {
 
 type Workflow = { steps: string[]; completed: string[] };
 
+/** One typed step of a chain reservation. Plain strings are commit
+ * messages (the historical plan_steps shape); branch and pr steps carry
+ * their match key. Keys are the canonical consumption alphabet. */
+export type ChainStep =
+  | { kind: "commit"; message: string }
+  | { kind: "branch"; target: string }
+  | { kind: "pr" };
+
+export const chainStepKey = (step: ChainStep): string =>
+  step.kind === "commit" ? step.message : step.kind === "branch" ? `branch:${step.target}` : "pr";
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+/** Normalize mixed plan steps to typed entries. Returns null for empty,
+ * over-long, malformed, or key-colliding lists (a commit message that
+ * spells exactly like a typed key is rejected rather than misrouted). */
+export const normalizeChainSteps = (steps: unknown): ChainStep[] | null => {
+  if (!Array.isArray(steps) || steps.length === 0 || steps.length > 32) return null;
+  const normalized: ChainStep[] = [];
+  for (const step of steps) {
+    if (typeof step === "string") {
+      if (!step.trim()) return null;
+      normalized.push({ kind: "commit", message: step });
+      continue;
+    }
+    if (!isRecord(step)) return null;
+    if (typeof step.branch === "string" && step.branch.trim() && Object.keys(step).length === 1) {
+      normalized.push({ kind: "branch", target: step.branch });
+      continue;
+    }
+    if (step.pr === true && Object.keys(step).length === 1) {
+      normalized.push({ kind: "pr" });
+      continue;
+    }
+    return null;
+  }
+  const keys = normalized.map(chainStepKey);
+  if (new Set(keys).size !== keys.length) return null;
+  return normalized;
+};
+
 const scopeEqual = (
   left: Decision["binding"]["scope"],
   right: Decision["binding"]["scope"],
 ): boolean => canonicalJson(left) === canonicalJson(right);
 
-const parseSteps = (content: string): string[] | null => {
+/** Parse the durable approved text into typed chain steps. Single commits
+ * and branch/PR operations carry no step list (empty, not an invalid
+ * chain); an invalid list is null and rejected by callers. */
+const parseSteps = (content: string): ChainStep[] | null => {
   let value: unknown;
   try {
     value = JSON.parse(content) as unknown;
@@ -195,7 +240,9 @@ const parseSteps = (content: string): string[] | null => {
   }
   if (typeof value !== "object" || value === null || !("steps" in value)) return [];
   const steps = (value as { steps?: unknown }).steps;
-  return Array.isArray(steps) && steps.every((step) => typeof step === "string") ? steps : null;
+  if (!Array.isArray(steps)) return null;
+  const normalized = normalizeChainSteps(steps);
+  return normalized;
 };
 
 const decisionMatches = (
@@ -543,22 +590,17 @@ const validateAction = (
   if (!content.ok) return content as Result<never>;
   const requestedSteps = parseSteps(decision.binding.approvedContent);
   if (requestedSteps === null)
-    return failure("invalid_input", "bounded action steps must be a string array");
-  if (input.steps && canonicalJson(input.steps) !== canonicalJson(requestedSteps))
+    return failure("invalid_input", "bounded action steps must be a unique non-empty array");
+  if (input.steps && canonicalJson(input.steps) !== canonicalJson(requestedSteps.map(chainStepKey)))
     return failure("permission_denied", "bounded action steps do not match approved content");
-  if (
-    requestedSteps.some((step) => !step || typeof step !== "string") ||
-    new Set(requestedSteps).size !== requestedSteps.length
-  )
-    return failure("invalid_input", "bounded action steps must be unique and non-empty");
   const stored = task.actionProgress?.find((item) => item.decisionId === input.decisionId);
   const workflow = stored
     ? { steps: stored.steps, completed: stored.completedSteps }
-    : { steps: requestedSteps, completed: [] };
+    : { steps: requestedSteps.map(chainStepKey), completed: [] };
   if (
     workflow.steps.length &&
     requestedSteps.length &&
-    canonicalJson(workflow.steps) !== canonicalJson(requestedSteps)
+    canonicalJson(workflow.steps) !== canonicalJson(requestedSteps.map(chainStepKey))
   )
     return failure("permission_denied", "bounded action scope changed");
   return success(null, null, { entry, workflow });

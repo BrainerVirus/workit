@@ -254,7 +254,11 @@ test("plan commit bindings refuse branches other than the approved one", () => {
     const planDescriptor = externalActionDescriptor("git.commit", {
       plan_steps: ["chore(a): one"],
       plan_branch: "feature/plan",
-      resolved: { head: "x", branch: "feature/plan", steps: ["chore(a): one"] },
+      resolved: {
+        head: spawnSync("git", ["rev-parse", "HEAD"], { cwd: root }).stdout.toString().trim(),
+        branch: "feature/plan",
+        steps: ["chore(a): one"],
+      },
     });
     const taskFile = path.join(root, ".workit", "tasks", `${taskId}.json`);
     const raw = JSON.parse(readFileSync(taskFile, "utf8"));
