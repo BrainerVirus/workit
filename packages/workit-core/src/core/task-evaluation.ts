@@ -377,6 +377,52 @@ export function evaluateEvidence(
 }
 
 export const scopeCovers = contractScopeCovers;
+
+/** One shared pin check for evidence and finding records: an unpinned
+ * assignment accepts anything in scope; a pinned one accepts the pin on
+ * either candidate slot. Absent IDs behave as null. */
+export const checkPin = (
+  assignment: { candidateId?: string | null },
+  beforeCandidateId: string | null | undefined,
+  candidateId: string | null | undefined,
+): boolean => {
+  const pin = assignment.candidateId ?? null;
+  if (pin === null) return true;
+  return (beforeCandidateId ?? null) === pin || (candidateId ?? null) === pin;
+};
+
+/** Resolve effective evidence binding: explicit IDs win; otherwise a pinned
+ * worker defaults to its pin and everyone else to the current candidate
+ * (checks and reviews) or null. Callers validate and pin-check the resolved
+ * values — never the caller's possibly-empty fields. */
+export const resolveBinding = (
+  evidence: {
+    beforeCandidateId?: string | null;
+    candidateId?: string | null;
+    kind: string;
+  },
+  pin: string | null | undefined,
+  currentCandidateId: string | null,
+): { beforeCandidateId: string | null; candidateId: string | null } => {
+  const bound = evidence.kind === "check" || evidence.kind === "review";
+  const fallback = bound ? (pin ?? currentCandidateId) : null;
+  return {
+    beforeCandidateId: evidence.beforeCandidateId ?? fallback,
+    candidateId: evidence.candidateId ?? fallback,
+  };
+};
+
+/** One shared verification predicate for fixed findings: a passed
+ * check/review counts when the finding is unscoped or the evidence is
+ * bound to the finding's candidate. Used by the auto-reopen scan, the
+ * resolve gate, and closure — one predicate, one error code each. */
+export const findingVerificationPasses = (
+  findingCandidateId: string | null | undefined,
+  evidence: { kind: string; candidateId: string | null | undefined; status: string },
+): boolean =>
+  evidence.status === "passed" &&
+  (evidence.kind === "check" || evidence.kind === "review") &&
+  ((findingCandidateId ?? null) === null || evidence.candidateId === findingCandidateId);
 const applicableDecision = (
   task: TaskRecord,
   workspace: WorkspaceRecord,
@@ -664,10 +710,12 @@ export function evaluateClosure(
       if (entry.data.disposition === "fixed") {
         const verified = entry.data.resolution?.evidenceIds.some((id) => {
           const evidence = view.task.evidence.find((item) => item.id === id);
-          return (
-            evidenceById.get(id) === "passed" &&
-            (evidence?.data.kind === "check" || evidence?.data.kind === "review")
-          );
+          if (!evidence) return false;
+          return findingVerificationPasses(entry.data.candidateId, {
+            kind: evidence.data.kind,
+            candidateId: evidence.data.candidateId,
+            status: evidenceById.get(id) ?? "missing",
+          });
         });
         if (!verified)
           return failure("requirements_unsatisfied", "fixed findings require current verification");

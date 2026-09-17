@@ -77,9 +77,12 @@ import {
 } from "./workers";
 import {
   captureCandidate,
+  checkPin,
   evaluateClosure,
   evaluateEvidence,
   evaluateRequirements,
+  findingVerificationPasses,
+  resolveBinding,
   type CandidateEnvironment,
 } from "./task-evaluation";
 
@@ -996,30 +999,23 @@ export class WorkitCore {
       environment(),
     );
     if (!currentCandidate.ok) return currentCandidate as Result<never>;
-    if (evidence.kind === "check" || evidence.kind === "review") {
-      // Checks run against the tree as observed now; bind them to the captured
-      // candidate so callers never hand-compute digests. Later tree changes
-      // still mark this evidence stale through the normal evaluation.
-      evidence.beforeCandidateId ??= currentCandidate.data.id;
-      evidence.candidateId ??= currentCandidate.data.id;
-    } else {
-      evidence.beforeCandidateId ??= null;
-      evidence.candidateId ??= null;
-    }
+    // Resolve the binding first (explicit IDs, else the worker pin, else the
+    // current candidate), then validate and pin-check the resolved values —
+    // never the caller's possibly-empty fields. The input itself is untouched.
+    const pin = helper && helper.ok ? helper.data.data.assignment.candidateId : null;
+    const bound = resolveBinding(evidence, pin, currentCandidate.data.id);
     if (helper?.ok) {
       const assignment = helper.data.data.assignment;
       if (
         evidence.requirementIds.some((id: string) => !assignment.requirementIds.includes(id)) ||
-        (assignment.candidateId !== null &&
-          evidence.candidateId !== assignment.candidateId &&
-          evidence.beforeCandidateId !== assignment.candidateId) ||
+        !checkPin(assignment, bound.beforeCandidateId, bound.candidateId) ||
         !refsWithinScope(evidence.refs, assignment.scope) ||
         !refsWithinScope(evidence.refs, task.data.intent.data.scope)
       )
         return failure("permission_denied", "evidence is outside the worker assignment");
     }
     const knownCandidates = new Set(task.data.candidates.map((candidate) => candidate.id));
-    for (const candidateId of [evidence.beforeCandidateId, evidence.candidateId]) {
+    for (const candidateId of [bound.beforeCandidateId, bound.candidateId]) {
       if (
         candidateId &&
         candidateId !== currentCandidate.data.id &&
@@ -1027,6 +1023,7 @@ export class WorkitCore {
       )
         return failure("invalid_input", "evidence candidate is not a captured candidate");
     }
+    const boundEvidence = { ...evidence, ...bound };
     const changed = this.store.mutateTask(
       task.data.id,
       input.expectedRevision,
@@ -1038,14 +1035,14 @@ export class WorkitCore {
           id: newId(),
           recordedAt: mutation.now,
           provenance: provenance(this.context, "agent_reported"),
-          data: evidence,
+          data: boundEvidence,
         };
         return success(mutation.revision, null, {
           ...current,
           candidates,
           evidence: [...current.evidence, entry],
           findings: current.findings.map((finding) => {
-            if (finding.data.disposition === "open" || evidence.result === "skipped")
+            if (finding.data.disposition === "open" || boundEvidence.result === "skipped")
               return finding;
             if (finding.data.disposition !== "fixed") return finding;
             // A fix stands while its verification still passes on the current
@@ -1058,17 +1055,17 @@ export class WorkitCore {
                 item.status,
               ]),
             );
-            const verified = withEntry.evidence.some(
-              (item) =>
-                statuses.get(item.id) === "passed" &&
-                (item.data.kind === "check" || item.data.kind === "review") &&
-                (finding.data.candidateId === null ||
-                  item.data.candidateId === finding.data.candidateId),
+            const verified = withEntry.evidence.some((item) =>
+              findingVerificationPasses(finding.data.candidateId, {
+                kind: item.data.kind,
+                candidateId: item.data.candidateId,
+                status: statuses.get(item.id) ?? "missing",
+              }),
             );
             const contradicted =
-              evidence.result === "failed" &&
+              boundEvidence.result === "failed" &&
               finding.data.refs.some((left: Ref) =>
-                evidence.refs.some((right: Ref) => JSON.stringify(left) === JSON.stringify(right)),
+                boundEvidence.refs.some((right: Ref) => sameValue(left, right)),
               );
             return verified && !contradicted
               ? finding
@@ -1262,7 +1259,7 @@ export class WorkitCore {
         if (
           !bindingCovers(assignment.scope, input.scope) ||
           !bindingCovers(task.data.intent.data.scope, input.scope) ||
-          (assignment.candidateId !== null && input.candidateId !== assignment.candidateId) ||
+          !checkPin(assignment, null, input.candidateId ?? null) ||
           !refsWithinScope(input.refs, assignment.scope) ||
           !refsWithinScope(input.refs, task.data.intent.data.scope)
         )
@@ -1319,11 +1316,11 @@ export class WorkitCore {
       const evaluations = evaluateEvidence(task.data, current.data);
       const verified = evidence.some((entry) => {
         const evaluation = evaluations.find((item) => item.evidenceId === entry.id);
-        return (
-          evaluation?.status === "passed" &&
-          (entry.data.kind === "check" || entry.data.kind === "review") &&
-          (finding.data.candidateId === null || entry.data.candidateId === finding.data.candidateId)
-        );
+        return findingVerificationPasses(finding.data.candidateId, {
+          kind: entry.data.kind,
+          candidateId: entry.data.candidateId,
+          status: evaluation?.status ?? "missing",
+        });
       });
       if (!verified)
         return failure("permission_denied", "fixed findings require passing verification evidence");
@@ -1339,7 +1336,7 @@ export class WorkitCore {
             : entry.data.candidateId === finding.data.candidateId ||
               entry.data.beforeCandidateId === finding.data.candidateId;
         const referenceMatches = finding.data.refs.some((left) =>
-          entry.data.refs.some((right) => JSON.stringify(left) === JSON.stringify(right)),
+          entry.data.refs.some((right) => sameValue(left, right)),
         );
         return candidateMatches && (referenceMatches || entry.data.claim === finding.data.claim);
       });

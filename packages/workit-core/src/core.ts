@@ -121,9 +121,12 @@ export type {
 } from "./core/authority";
 export {
   captureCandidate,
+  checkPin,
   evaluateEvidence,
   evaluateRequirements,
   evaluateClosure,
+  findingVerificationPasses,
+  resolveBinding,
 } from "./core/task-evaluation";
 export type { CandidateEnvironment, ClosureEvaluation } from "./core/task-evaluation";
 export { WorkitCore } from "./core/task-engine";
