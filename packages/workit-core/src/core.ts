@@ -68,7 +68,7 @@ export type {
 } from "./core/task-context";
 export { METHODS, invariantBootstrap, selectMethods } from "./core/methods";
 export type { MethodId, SelectedMethod } from "./core/methods";
-export { shellRouteIntent } from "./core/route-intent";
+export { hasLiveWorkitTask, shellRouteIntent, shouldDenyShellRoute } from "./core/route-intent";
 export type { ShellRouteIntent } from "./core/route-intent";
 export { applicableDecision, reserveAction, settleAction, reconcileAction } from "./core/authority";
 export {
@@ -86,8 +86,10 @@ export type {
   ExternalActionOperation,
 } from "./core/external-action";
 export {
+  approvedBranchSetupIntent,
   approvedExternalAction,
   approvedPlanCommit,
+  branchSetupIntent,
   planCommitDescriptor,
   planCommitBinding,
   commitMessageFromDescriptor,

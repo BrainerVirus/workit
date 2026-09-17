@@ -888,3 +888,126 @@ test("writer acquire --actor stamps the session handle a hook can match", async 
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+const branchRepo = () => {
+  const root = fixture();
+  const remote = mkdtempSync(path.join(os.tmpdir(), "wk-task-cli-remote-"));
+  spawnSync("git", ["init", "-q", "--bare"], { cwd: remote });
+  spawnSync("git", ["init", "-q", "-b", "main"], { cwd: root });
+  spawnSync("git", ["config", "user.email", "test@example.invalid"], { cwd: root });
+  spawnSync("git", ["config", "user.name", "Workit Test"], { cwd: root });
+  writeFileSync(path.join(root, "base.txt"), "base\n");
+  spawnSync("git", ["add", "base.txt"], { cwd: root });
+  spawnSync("git", ["commit", "-qm", "base"], { cwd: root });
+  spawnSync("git", ["remote", "add", "origin", remote], { cwd: root });
+  spawnSync("git", ["push", "-q", "-u", "origin", "main"], { cwd: root });
+  spawnSync("git", ["branch", "develop"], { cwd: root });
+  spawnSync("git", ["push", "-q", "origin", "develop"], { cwd: root });
+  spawnSync("git", ["branch", "-D", "develop"], { cwd: root });
+  const store = new TaskStore(root);
+  const core = new WorkitCore(store, {
+    root,
+    caller: { host: "workit_cli", actor: "cli" },
+    capabilities: [],
+    constraints: [],
+    now: "2026-01-01T00:00:00Z",
+  });
+  expect(core.task(taskStartRequest()).ok).toBe(true);
+  const listed = store.listTasks();
+  if (!listed.ok || listed.data.length !== 1) throw new Error("task setup failed");
+  const task = store.readTask(listed.data[0].id);
+  const workspace = store.readWorkspace();
+  if (!task.ok || !workspace.ok || !workspace.data) throw new Error("writer state missing");
+  expect(
+    core.writer({
+      schemaVersion: 1,
+      action: "acquire",
+      taskId: task.data.id,
+      expectedRevision: task.data.revision,
+      expectedWorkspaceRevision: workspace.data.revision,
+      workerId: null,
+    }).ok,
+  ).toBe(true);
+  return { root, remote };
+};
+
+test("CLI dirty branch setup names the stash and executes in one confirmation", async () => {
+  const { root, remote } = branchRepo();
+  try {
+    writeFileSync(path.join(root, "base.txt"), "wip\n");
+    const out = capture();
+    expect(
+      await runActionCommand(
+        [
+          "git.branch_setup",
+          "--payload",
+          JSON.stringify({ target_branch: "feature/cli-dirty" }),
+          "--confirm",
+        ],
+        {
+          cwd: root,
+          actor: "cli",
+          out: out.out,
+          err: out.err,
+          stdinIsTTY: () => true,
+          confirm: async () => true,
+        },
+      ),
+    ).toBe(0);
+    expect(out.read().stdout).toContain("Stash");
+    expect(
+      spawnSync("git", ["branch", "--show-current"], { cwd: root, encoding: "utf8" }).stdout.trim(),
+    ).toBe("feature/cli-dirty");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(remote, { recursive: true, force: true });
+  }
+});
+
+test("CLI branch approval carries across base moves inside one confirmation", async () => {
+  const { root, remote } = branchRepo();
+  try {
+    let confirms = 0;
+    const out = capture();
+    expect(
+      await runActionCommand(
+        [
+          "git.branch_setup",
+          "--payload",
+          JSON.stringify({ target_branch: "feature/cli-carry" }),
+          "--confirm",
+        ],
+        {
+          cwd: root,
+          actor: "cli",
+          out: out.out,
+          err: out.err,
+          stdinIsTTY: () => true,
+          confirm: async () => {
+            confirms += 1;
+            spawnSync("git", ["checkout", "-q", "develop"], { cwd: root });
+            writeFileSync(path.join(root, "later.txt"), "later\n");
+            spawnSync("git", ["add", "later.txt"], { cwd: root });
+            spawnSync("git", ["commit", "-qm", "later"], { cwd: root });
+            spawnSync("git", ["checkout", "-q", "main"], { cwd: root });
+            return true;
+          },
+        },
+      ),
+    ).toBe(0);
+    expect(confirms).toBe(1);
+    const head = spawnSync("git", ["rev-parse", "develop"], {
+      cwd: root,
+      encoding: "utf8",
+    }).stdout.trim();
+    expect(
+      spawnSync("git", ["rev-parse", "feature/cli-carry"], {
+        cwd: root,
+        encoding: "utf8",
+      }).stdout.trim(),
+    ).toBe(head);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(remote, { recursive: true, force: true });
+  }
+});

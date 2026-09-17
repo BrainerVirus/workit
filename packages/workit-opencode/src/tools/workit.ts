@@ -27,6 +27,7 @@ import {
   workitBindingQuestionIssue,
   type OperationFamily,
   type OperationContext,
+  type ExternalActionRequest,
   type ContractResult as Result,
 } from "@brainervirus/workit-core/src/core";
 import {
@@ -89,7 +90,6 @@ type Receipt = {
   recordedAt: number;
 };
 
-const freshMs = 5 * 60 * 1000;
 const rejectedDescription = "Reject this decision";
 
 /**
@@ -281,8 +281,6 @@ export class NativeReceiptStore {
         continue;
       queue.splice(i, 1);
       if (!queue.length) this.#receipts.delete(sessionID);
-      if (this.#now() - receipt.recordedAt > freshMs)
-        return { ok: false, error: "permission_denied: native question receipt is stale" };
       const observation = { receipt };
       this.#observations.add(observation);
       return { ok: true, receipt, observation };
@@ -316,8 +314,6 @@ export class NativeReceiptStore {
             closest.contentDigest !== expected.contentDigest
           )
             reasons.push("question or approved content differed from the asked receipt");
-          if (this.#now() - closest.recordedAt > freshMs)
-            reasons.push("receipt is stale (older than 5 minutes)");
           if (reasons.length) return `${base} (closest ${purpose} receipt: ${reasons.join("; ")})`;
         }
         return (
@@ -750,18 +746,21 @@ export type WorkitToolOptions = {
   client?: SessionLookup;
   receipts?: NativeReceiptStore;
   directChildren?: DirectChildren;
-  now?: () => number;
 };
 
 export const createWorkitTools = ({
   client,
   receipts = new NativeReceiptStore(),
   directChildren = new Map<string, string>(),
-  now = Date.now,
 }: WorkitToolOptions = {}) => {
   const actionProposals = new Map<
     string,
-    Array<{ descriptor: string; presented: string; approvedText: string; createdAt: number }>
+    Array<{
+      descriptor: string;
+      presented: string;
+      approvedText: string;
+      request: ExternalActionRequest;
+    }>
   >();
   const make = (family: OperationFamily) =>
     tool({
@@ -804,6 +803,13 @@ export const createWorkitTools = ({
             purpose: Receipt["decisionPurpose"];
             binding: { presented: string; approvedContent: string; displayed?: string };
           };
+          // Stated choices settle without a native receipt: the user's words
+          // are the authority. Core restricts them to non-mutating purposes;
+          // action approvals always mint a receipt-shaped question first.
+          if (decision.response === "stated") {
+            result = core.observeDecision(parsed.data, undefined);
+            return output(result);
+          }
           const budgetIssue = workitBindingQuestionIssue([
             decisionContent(
               decision.purpose,
@@ -840,36 +846,55 @@ export const createWorkitTools = ({
                 pending.presented === decision.binding.presented &&
                 pending.approvedText === decision.binding.approvedContent,
             );
-            const matches = textMatches.filter(
-              (pending) => now() - pending.createdAt <= 5 * 60 * 1000,
-            );
-            if (matches.length > 1)
+            if (
+              textMatches.length > 1 &&
+              new Set(textMatches.map((pending) => pending.descriptor)).size > 1
+            )
               return output(
                 failure(
                   "invalid_input",
                   "multiple action proposals match this approval; resolve the action again",
                 ),
               );
-            const pending = matches[0];
+            let bound = false;
+            const pending = textMatches[0];
             if (pending) {
-              actionProposals.set(
-                context.sessionID,
-                queue.filter((candidate) => candidate !== pending),
-              );
-              recordInput = {
-                ...recordInput,
-                binding: {
-                  ...(recordInput as { binding: Record<string, unknown> }).binding,
-                  approvedContent: pending.descriptor,
-                  displayed: pending.approvedText,
-                },
-              };
-            } else if (!isSelfAuthorizingActionContent(decision.binding.approvedContent)) {
+              // Validity is content-bound, never clock-bound: re-resolve from
+              // current repository state and accept only a byte-identical
+              // descriptor. Human latency is not drift.
+              const fresh = resolveExternalActionRequest(context.directory, pending.request);
+              const freshDescriptor = fresh.ok
+                ? externalActionDescriptor(pending.request.operation, fresh.data.descriptorPayload)
+                : null;
+              if (freshDescriptor === pending.descriptor) {
+                actionProposals.set(
+                  context.sessionID,
+                  queue.filter((candidate) => candidate !== pending),
+                );
+                recordInput = {
+                  ...recordInput,
+                  binding: {
+                    ...(recordInput as { binding: Record<string, unknown> }).binding,
+                    approvedContent: pending.descriptor,
+                    displayed: pending.approvedText,
+                  },
+                };
+                bound = true;
+              } else if (fresh.ok) {
+                // Proven drift evicts the stale pending so a fresh resolve
+                // opens exactly one question instead of wedging ambiguous.
+                actionProposals.set(
+                  context.sessionID,
+                  queue.filter((candidate) => candidate !== pending),
+                );
+              }
+            }
+            if (!bound && !isSelfAuthorizingActionContent(decision.binding.approvedContent)) {
               return output(
                 failure(
                   "invalid_input",
                   textMatches.length > 0
-                    ? "action proposal expired; resolve the action again for a fresh proposal"
+                    ? "repository state changed since the proposal; resolve the action again for a fresh proposal"
                     : "no matching action proposal; resolve the action through the action tool first",
                 ),
               );
@@ -916,8 +941,23 @@ export const createWorkitTools = ({
               failure("permission_denied", "child sessions cannot run external actions"),
             );
         }
-        const resolved = resolveExternalActionRequest(context.directory, parsed.data);
+        let resolved = resolveExternalActionRequest(context.directory, parsed.data);
         if (!resolved.ok) return output(resolved);
+        // A dirty tree binds stash up front so the proposal names it and one
+        // approval carries the whole effect instead of failing at preflight.
+        if (
+          resolved.ok &&
+          resolved.data.request.operation === "git.branch_setup" &&
+          (resolved.data.descriptorPayload as { resolved?: { dirty?: unknown } }).resolved
+            ?.dirty === true &&
+          (resolved.data.descriptorPayload as { stash?: unknown }).stash !== "yes"
+        ) {
+          const upgraded = resolveExternalActionRequest(context.directory, {
+            ...parsed.data,
+            payload: { ...(parsed.data.payload as Record<string, unknown>), stash: "yes" },
+          } as typeof parsed.data);
+          if (upgraded.ok) resolved = upgraded;
+        }
         if (resolved.data.request.operation === "context.read")
           return output(await executeResolvedExternalAction(resolved.data, context.directory));
         if (!client)
@@ -1064,14 +1104,24 @@ export const createWorkitTools = ({
               resolved.data.descriptorPayload,
             );
             const pending = actionProposals.get(context.sessionID) ?? [];
-            pending.push({
+            // Idempotent proposals: one descriptor opens at most one
+            // question. A re-resolution returns the existing proposal
+            // instead of minting a duplicate.
+            const existing = pending.find((candidate) => candidate.descriptor === descriptor);
+            const open = existing ?? {
               descriptor,
               presented: proposal.presented,
               approvedText: proposal.approvedText,
-              createdAt: now(),
-            });
-            if (pending.length > 8) pending.shift();
-            actionProposals.set(context.sessionID, pending);
+              // The normalized request behind this descriptor (stash
+              // upgrades included), so record-time re-resolution replays
+              // the same bytes instead of drifting on its own upgrade.
+              request: resolved.data.request,
+            };
+            if (!existing) {
+              pending.push(open);
+              if (pending.length > 8) pending.shift();
+              actionProposals.set(context.sessionID, pending);
+            }
             return output(
               failure("needs_input", proposal.presented, {
                 outcome: "not_started",

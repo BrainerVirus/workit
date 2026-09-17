@@ -286,16 +286,29 @@ export const actionProposalQuestion = (
           approvedText: "Reapply the recorded stash.",
         };
       const target = String(payload.target_branch ?? "");
+      // A dirty tree binds stash: the approval carries the stash through,
+      // so the question names it instead of failing later at preflight.
+      const stashes = payload.stash === "yes" && resolved.dirty === true;
       if (resolved.target_exists === true)
-        return {
-          presented: `Workit decision: action — Switch to branch \`${target}\`?`,
-          approvedText: `Switch to \`${target}\`.`,
-        };
+        return stashes
+          ? {
+              presented: `Workit decision: action — Stash the dirty working tree and switch to branch \`${target}\`?`,
+              approvedText: `Stash and switch to \`${target}\`.`,
+            }
+          : {
+              presented: `Workit decision: action — Switch to branch \`${target}\`?`,
+              approvedText: `Switch to \`${target}\`.`,
+            };
       const base = String(resolved.base_branch ?? "the base branch");
-      return {
-        presented: `Workit decision: action — Create branch \`${target}\` from \`${base}\` (currently ${shortSha(resolved.remote_base)})?`,
-        approvedText: `Create \`${target}\` from \`${base}\` at ${shortSha(resolved.remote_base)}.`,
-      };
+      return stashes
+        ? {
+            presented: `Workit decision: action — Stash the dirty working tree and create branch \`${target}\` from \`${base}\` (currently ${shortSha(resolved.remote_base)})?`,
+            approvedText: `Stash and create \`${target}\` from \`${base}\` at ${shortSha(resolved.remote_base)}.`,
+          }
+        : {
+            presented: `Workit decision: action — Create branch \`${target}\` from \`${base}\` (currently ${shortSha(resolved.remote_base)})?`,
+            approvedText: `Create \`${target}\` from \`${base}\` at ${shortSha(resolved.remote_base)}.`,
+          };
     }
     case "git.commit": {
       const paths = Array.isArray(resolved.paths) ? (resolved.paths as string[]) : [];

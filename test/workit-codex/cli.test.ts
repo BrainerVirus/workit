@@ -258,6 +258,17 @@ test("PreToolUse allows recognized product writes without writer ownership", () 
 
 test("PreToolUse denies recognized raw branch and PR creation with the Workit route", () => {
   const root = cwd();
+  const store = new TaskStore(root);
+  const context: OperationContext = {
+    root,
+    caller: { host: detectCodexSurface(process.env), actor: "session-1" },
+    callerAttested: false,
+    capabilities: [],
+    constraints: [],
+    now: "2026-01-01T00:00:00Z",
+  };
+  const started = new WorkitCore(store, context).task(taskStartRequest());
+  expect(started.ok).toBe(true);
   const branch = handleCodexHook(
     official(
       {
@@ -307,6 +318,36 @@ test("PreToolUse denies recognized raw branch and PR creation with the Workit ro
     ),
   );
   expect(other.hookSpecificOutput).toMatchObject({ permissionDecision: "allow" });
+});
+
+test("PreToolUse allows recognized raw branch and PR creation outside live work", () => {
+  const root = cwd();
+  const branch = handleCodexHook(
+    official(
+      {
+        hook_event_name: "PreToolUse",
+        turn_id: "turn-1",
+        tool_use_id: "tool-branch",
+        tool_name: "Bash",
+        tool_input: { command: "git checkout -b feature/raw" },
+      },
+      root,
+    ),
+  );
+  expect(branch.hookSpecificOutput).toMatchObject({ permissionDecision: "allow" });
+  const pr = handleCodexHook(
+    official(
+      {
+        hook_event_name: "PreToolUse",
+        turn_id: "turn-1",
+        tool_use_id: "tool-pr",
+        tool_name: "bash",
+        tool_input: { command: "gh pr create --fill" },
+      },
+      root,
+    ),
+  );
+  expect(pr.hookSpecificOutput).toMatchObject({ permissionDecision: "allow" });
 });
 
 test("SubagentStop is observational and denial exits zero with JSON", () => {

@@ -1189,7 +1189,15 @@ export class WorkitCore {
         "permission_denied",
         "native observation is only valid for recording decisions",
       );
-    if (nativeRequired && nativeObservation === undefined)
+    // Stated choices carry user-settled decisions without a native receipt.
+    // They never authorize mutating actions; native verification is skipped
+    // and provenance stays agent-reported.
+    const stated = input.action === "record" && input.response === "stated";
+    if (stated && input.purpose === "action")
+      return failure("permission_denied", "stated choices cannot authorize mutating actions");
+    if (stated && !input.binding?.statedChoice)
+      return failure("invalid_input", "stated choices require binding.statedChoice");
+    if (nativeRequired && nativeObservation === undefined && !stated)
       return failure("permission_denied", "native decision observation is required");
     const task = this.store.readTask(input.taskId);
     if (!task.ok) return task as Result<never>;
@@ -1220,26 +1228,27 @@ export class WorkitCore {
         consumption: null,
       } satisfies Omit<Decision, "digest">;
       const data: Decision = { ...base, digest: decisionDigest(base) };
-      const native = nativeRequired
-        ? verifyNativeDecision(
-            this.context.nativeAuthority,
-            {
-              observation: nativeObservation,
-              expected: {
-                taskId: task.data.id,
-                workspaceId: workspace.data.id,
-                purpose: input.purpose,
-                response: input.response,
-                binding: input.binding,
-                bindingBytes: canonicalJson(input.binding),
-                digest: data.digest,
-                requirementIds: [...input.requirementIds],
+      const native =
+        nativeRequired && !stated
+          ? verifyNativeDecision(
+              this.context.nativeAuthority,
+              {
+                observation: nativeObservation,
+                expected: {
+                  taskId: task.data.id,
+                  workspaceId: workspace.data.id,
+                  purpose: input.purpose,
+                  response: input.response,
+                  binding: input.binding,
+                  bindingBytes: canonicalJson(input.binding),
+                  digest: data.digest,
+                  requirementIds: [...input.requirementIds],
+                },
+                caller: this.context.caller,
               },
-              caller: this.context.caller,
-            },
-            { owner: this.authorityOwner, store: this.store, root: this.store.root },
-          )
-        : null;
+              { owner: this.authorityOwner, store: this.store, root: this.store.root },
+            )
+          : null;
       if (native && !native.ok) return native as Result<never>;
       const nativeProvenance = native?.ok ? retireNativeAuthority(native.data) : null;
       if (native?.ok && !nativeProvenance)

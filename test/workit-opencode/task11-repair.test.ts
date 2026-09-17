@@ -1252,7 +1252,7 @@ test("an unrelated newer same-purpose receipt does not shadow a valid match", ()
   ).toBe(true);
 });
 
-test("receipt freshness uses the injected clock and consumes a stale match", () => {
+test("receipt validity ignores wall-clock age; only content binds", () => {
   let now = 1_000_000;
   const receipts = new NativeReceiptStore({ now: () => now });
   receipts.record(
@@ -1274,11 +1274,10 @@ test("receipt freshness uses the injected clock and consumes a stale match", () 
     },
     { metadata: { answers: [["approved"]] } },
   );
-  now += 5 * 60 * 1000 + 1;
-  const stale = receipts.consume("s", "decision");
-  expect(stale.ok).toBe(false);
-  if (stale.ok) throw new Error("expected stale failure");
-  expect(stale.error).toContain("stale");
+  now += 60 * 60 * 1000;
+  const aged = receipts.consume("s", "decision");
+  expect(aged.ok).toBe(true);
+  if (!aged.ok) throw new Error("aged receipt must stay valid");
   expect(receipts.consume("s", "decision").ok).toBe(false);
 });
 

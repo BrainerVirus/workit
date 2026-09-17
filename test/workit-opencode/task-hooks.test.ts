@@ -934,29 +934,60 @@ test("a restarted plugin loses the reservation and stays blocked", async () => {
 });
 
 test("recognized raw branch and PR creation commands are denied with the Workit route", async () => {
-  const hooks = await plugin({
-    directory: "/repo",
-    worktree: "/repo",
-    serverUrl: new URL("http://localhost"),
-  } as never);
-  await expect(
-    hooks["tool.execute.before"]?.(
-      { tool: "bash", sessionID: "lead", callID: "branch" },
-      { args: { command: "git switch -c feature/raw" } },
-    ),
-  ).rejects.toThrow("git.branch_setup");
-  await expect(
-    hooks["tool.execute.before"]?.(
-      { tool: "bash", sessionID: "lead", callID: "pr" },
-      { args: { command: "gh pr create --fill" } },
-    ),
-  ).rejects.toThrow("hosting.pull_request");
-  await expect(
-    hooks["tool.execute.before"]?.(
-      { tool: "bash", sessionID: "lead", callID: "other" },
-      { args: { command: "git status --short" } },
-    ),
-  ).resolves.toBeUndefined();
+  const root = mkdtempSync(join(tmpdir(), "workit-opencode-route-deny-"));
+  try {
+    activeTask(root, "owner");
+    const hooks = await plugin({
+      directory: root,
+      worktree: root,
+      serverUrl: new URL("http://localhost"),
+    } as never);
+    await expect(
+      hooks["tool.execute.before"]?.(
+        { tool: "bash", sessionID: "lead", callID: "branch" },
+        { args: { command: "git switch -c feature/raw" } },
+      ),
+    ).rejects.toThrow("git.branch_setup");
+    await expect(
+      hooks["tool.execute.before"]?.(
+        { tool: "bash", sessionID: "lead", callID: "pr" },
+        { args: { command: "gh pr create --fill" } },
+      ),
+    ).rejects.toThrow("hosting.pull_request");
+    await expect(
+      hooks["tool.execute.before"]?.(
+        { tool: "bash", sessionID: "lead", callID: "other" },
+        { args: { command: "git status --short" } },
+      ),
+    ).resolves.toBeUndefined();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("recognized raw branch and PR creation commands pass outside live work", async () => {
+  const root = mkdtempSync(join(tmpdir(), "workit-opencode-route-allow-"));
+  try {
+    const hooks = await plugin({
+      directory: root,
+      worktree: root,
+      serverUrl: new URL("http://localhost"),
+    } as never);
+    await expect(
+      hooks["tool.execute.before"]?.(
+        { tool: "bash", sessionID: "lead", callID: "branch" },
+        { args: { command: "git switch -c feature/raw" } },
+      ),
+    ).resolves.toBeUndefined();
+    await expect(
+      hooks["tool.execute.before"]?.(
+        { tool: "bash", sessionID: "lead", callID: "pr" },
+        { args: { command: "gh pr create --fill" } },
+      ),
+    ).resolves.toBeUndefined();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("OpenCode native write shapes normalize filePath and apply_patch targets", async () => {

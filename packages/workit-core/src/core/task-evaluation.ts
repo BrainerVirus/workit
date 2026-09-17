@@ -413,7 +413,7 @@ const applicableRequirementDecision = (
       ({ data, provenance }) =>
         provenance.kind !== "imported" &&
         data.purpose !== "limitation" &&
-        data.response === "approved" &&
+        (data.response === "approved" || data.response === "stated") &&
         data.revoked === null &&
         data.binding.taskId === task.id &&
         data.binding.workspaceId === workspace.id &&
@@ -553,7 +553,7 @@ export function evaluateRequirements(
         status: "satisfied" as const,
         evidenceIds: [],
         decisionIds: decisions.map((decision) => decision.id),
-        reason: "an applicable approved decision satisfies the requirement",
+        reason: "an applicable approved or stated decision satisfies the requirement",
       };
     const limitations = requirement.acceptanceAllowed
       ? applicableDecision(task, workspace, requirement, checkoutRoot)

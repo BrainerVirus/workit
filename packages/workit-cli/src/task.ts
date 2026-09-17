@@ -639,11 +639,25 @@ export async function runActionCommand(argv: string[], deps: TaskCliDeps = {}): 
     return 2;
   }
   const root = deps.root ?? process.env.WORKFLOW_WORKSPACE_ROOT ?? deps.cwd ?? process.cwd();
-  const resolved = resolveExternalActionRequest(root, parsed.data);
+  let resolved = resolveExternalActionRequest(root, parsed.data);
   if (!resolved.ok) {
     if (json) jsonResult(outOf(deps), resolved);
     else printHuman(resolved, deps);
     return 2;
+  }
+  // A dirty tree binds stash up front so the confirmation names it and one
+  // approval carries the whole effect instead of failing at preflight.
+  if (
+    resolved.data.request.operation === "git.branch_setup" &&
+    (resolved.data.descriptorPayload as { resolved?: { dirty?: unknown } }).resolved?.dirty ===
+      true &&
+    (resolved.data.descriptorPayload as { stash?: unknown }).stash !== "yes"
+  ) {
+    const upgraded = resolveExternalActionRequest(root, {
+      ...parsed.data,
+      payload: { ...(parsed.data.payload as Record<string, unknown>), stash: "yes" },
+    } as typeof parsed.data);
+    if (upgraded.ok) resolved = upgraded;
   }
   const normalized = resolved.data.request;
   const descriptor = externalActionDescriptor(

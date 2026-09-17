@@ -959,7 +959,7 @@ test("OpenCode executes a plan-commit list once per listed message", async () =>
   }
 });
 
-test("identical concurrent proposals fail closed on ambiguous approval", async () => {
+test("identical concurrent resolves share one open proposal", async () => {
   const root = mkdtempSync(join(tmpdir(), "workit-opencode-ambiguous-"));
   try {
     for (const args of [
@@ -1007,10 +1007,18 @@ test("identical concurrent proposals fail closed on ambiguous approval", async (
       directory: root,
       sessionID: actor,
     });
-    await tools.workit_external_action.execute(request, { directory: root, sessionID: actor });
-    const proposal = JSON.parse(
+    const secondCall = await tools.workit_external_action.execute(request, {
+      directory: root,
+      sessionID: actor,
+    });
+    const firstProposal = JSON.parse(
       typeof firstCall === "string" ? firstCall : (firstCall as { output: string }).output,
     ).details.proposal;
+    const secondProposal = JSON.parse(
+      typeof secondCall === "string" ? secondCall : (secondCall as { output: string }).output,
+    ).details.proposal;
+    expect(secondProposal.descriptorDigest).toBe(firstProposal.descriptorDigest);
+    const proposal = firstProposal;
     receipts.record(
       {
         sessionID: actor,
@@ -1054,7 +1062,7 @@ test("identical concurrent proposals fail closed on ambiguous approval", async (
     );
     expect(
       JSON.parse(typeof decision === "string" ? decision : (decision as { output: string }).output),
-    ).toMatchObject({ ok: false, code: "invalid_input" });
+    ).toMatchObject({ ok: true });
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -1101,7 +1109,7 @@ test("OpenCode requires writer ownership before local actions", async () => {
   }
 });
 
-test("action proposals expire with the injectable clock", async () => {
+test("aged action proposals with unchanged state still bind", async () => {
   const root = mkdtempSync(join(tmpdir(), "workit-opencode-proposal-expiry-"));
   try {
     for (const args of [
@@ -1143,7 +1151,6 @@ test("action proposals expire with the injectable clock", async () => {
     const receipts = new NativeReceiptStore({ now: () => nowMs });
     const tools = createWorkitTools({
       receipts,
-      now: () => nowMs,
       client: { session: { get: async () => ({ data: { id: actor, directory: root } }) } },
     }) as any;
     const request = { operation: "git.commit", payload: { message: "chore(test): expired" } };
@@ -1199,8 +1206,113 @@ test("action proposals expire with the injectable clock", async () => {
     const parsed = JSON.parse(
       typeof decision === "string" ? decision : (decision as { output: string }).output,
     );
-    expect(parsed).toMatchObject({ ok: false, code: "invalid_input" });
-    expect(String(parsed.error)).toContain("expired");
+    expect(parsed).toMatchObject({ ok: true });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("drifted repository state rejects an aged approval", async () => {
+  const root = mkdtempSync(join(tmpdir(), "workit-opencode-proposal-drift-"));
+  try {
+    for (const args of [
+      ["init", "-q"],
+      ["config", "user.email", "test@example.invalid"],
+      ["config", "user.name", "Workit Test"],
+    ])
+      spawnSync("git", args, { cwd: root });
+    writeFileSync(join(root, "base.txt"), "base\n");
+    spawnSync("git", ["add", "base.txt"], { cwd: root });
+    spawnSync("git", ["commit", "-qm", "base"], { cwd: root });
+    writeFileSync(join(root, "change.txt"), "change\n");
+    spawnSync("git", ["add", "change.txt"], { cwd: root });
+    const actor = "opencode-proposal-drift";
+    let nowMs = Date.parse("2026-01-01T00:00:00Z");
+    const store = new TaskStore(root);
+    const core = new WorkitCore(store, {
+      root,
+      caller: { host: "opencode", actor },
+      capabilities: [],
+      constraints: [],
+      now: "2026-01-01T00:00:00Z",
+    });
+    const started = core.task(taskStartRequest());
+    if (!started.ok) throw new Error(started.error);
+    const task = store.readTask((started.data as { id: string }).id);
+    const workspace = store.readWorkspace();
+    if (!task.ok || !workspace.ok || !workspace.data) throw new Error("task setup failed");
+    expect(
+      core.writer({
+        schemaVersion: 1,
+        action: "acquire",
+        taskId: task.data.id,
+        expectedRevision: task.data.revision,
+        expectedWorkspaceRevision: workspace.data.revision,
+        workerId: null,
+      }),
+    ).toMatchObject({ ok: true });
+    const receipts = new NativeReceiptStore({ now: () => nowMs });
+    const tools = createWorkitTools({
+      receipts,
+      client: { session: { get: async () => ({ data: { id: actor, directory: root } }) } },
+    }) as any;
+    const request = { operation: "git.commit", payload: { message: "chore(test): drift" } };
+    const first = await tools.workit_external_action.execute(request, {
+      directory: root,
+      sessionID: actor,
+    });
+    const proposal = JSON.parse(
+      typeof first === "string" ? first : (first as { output: string }).output,
+    ).details.proposal;
+    nowMs += 6 * 60 * 1000;
+    writeFileSync(join(root, "other.txt"), "other\n");
+    spawnSync("git", ["add", "other.txt"], { cwd: root });
+    receipts.record(
+      {
+        sessionID: actor,
+        callID: "drift-question",
+        args: {
+          questions: [
+            {
+              header: "Workit decision: action",
+              question: proposal.presented,
+              options: [
+                { label: "approved", description: proposal.approvedContent },
+                { label: "rejected", description: "Reject this decision" },
+              ],
+            },
+          ],
+        },
+      },
+      { metadata: { answers: [["approved"]] } },
+    );
+    const fresh = store.readTask(task.data.id);
+    if (!fresh.ok) throw new Error("task refresh failed");
+    const decision = await tools.workit_decision.execute(
+      {
+        schemaVersion: 1,
+        action: "record",
+        taskId: task.data.id,
+        expectedRevision: fresh.data.revision,
+        purpose: "action",
+        binding: {
+          taskId: task.data.id,
+          workspaceId: workspace.data.id,
+          scope: task.data.intent.data.scope,
+          presented: proposal.presented,
+          approvedContent: proposal.approvedContent,
+          contentRefs: [],
+        },
+        response: "approved",
+        requirementIds: [],
+      },
+      { directory: root, sessionID: actor } as never,
+    );
+    const drifted = JSON.parse(
+      typeof decision === "string" ? decision : (decision as { output: string }).output,
+    );
+    expect(drifted).toMatchObject({ ok: false, code: "invalid_input" });
+    expect(String(drifted.error)).toContain("changed");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -2330,4 +2442,374 @@ test("receipt near misses name the failed element", () => {
   });
   expect(consumed.ok).toBe(false);
   if (!consumed.ok) expect(consumed.error).toContain("description");
+});
+
+const branchRepo = (actor: string) => {
+  const root = mkdtempSync(join(tmpdir(), `workit-opencode-branch-${actor}-`));
+  const remote = mkdtempSync(join(tmpdir(), `workit-opencode-branch-remote-${actor}-`));
+  const configHome = mkdtempSync(join(tmpdir(), `workit-opencode-branch-config-${actor}-`));
+  const previousXdg = process.env.XDG_CONFIG_HOME;
+  process.env.XDG_CONFIG_HOME = configHome;
+  writeFileSync(
+    join(configHome, "config.json"),
+    JSON.stringify({ branchPolicy: { preset: "gitflow" } }),
+  );
+  spawnSync("git", ["init", "-q", "--bare"], { cwd: remote });
+  for (const args of [
+    ["init", "-q", "-b", "main"],
+    ["config", "user.email", "test@example.invalid"],
+    ["config", "user.name", "Workit Test"],
+  ])
+    spawnSync("git", args, { cwd: root });
+  writeFileSync(join(root, "base.txt"), "base\n");
+  spawnSync("git", ["add", "base.txt"], { cwd: root });
+  spawnSync("git", ["commit", "-qm", "base"], { cwd: root });
+  spawnSync("git", ["remote", "add", "origin", remote], { cwd: root });
+  spawnSync("git", ["push", "-q", "-u", "origin", "main"], { cwd: root });
+  spawnSync("git", ["branch", "develop"], { cwd: root });
+  spawnSync("git", ["push", "-q", "origin", "develop"], { cwd: root });
+  spawnSync("git", ["branch", "-D", "develop"], { cwd: root });
+  const store = new TaskStore(root);
+  const setupCore = new WorkitCore(store, {
+    root,
+    caller: { host: "opencode", actor },
+    capabilities: [],
+    constraints: [],
+    now: "2026-01-01T00:00:00Z",
+  });
+  const started = setupCore.task(taskStartRequest());
+  if (!started.ok) throw new Error(started.error);
+  const task = store.readTask((started.data as { id: string }).id);
+  const workspace = store.readWorkspace();
+  if (!task.ok || !workspace.ok || !workspace.data) throw new Error("task setup failed");
+  expect(
+    setupCore.writer({
+      schemaVersion: 1,
+      action: "acquire",
+      taskId: task.data.id,
+      expectedRevision: task.data.revision,
+      expectedWorkspaceRevision: workspace.data.revision,
+      workerId: null,
+    }),
+  ).toMatchObject({ ok: true });
+  const decisionTask = store.readTask(task.data.id);
+  const decisionWorkspace = store.readWorkspace();
+  if (!decisionTask.ok || !decisionWorkspace.ok || !decisionWorkspace.data)
+    throw new Error("writer refresh failed");
+  return {
+    root,
+    remote,
+    configHome,
+    previousXdg,
+    store,
+    task: decisionTask.data,
+    workspace: decisionWorkspace.data,
+  };
+};
+
+const restoreBranchRepo = (repo: {
+  root: string;
+  remote: string;
+  configHome: string;
+  previousXdg: string | undefined;
+}) => {
+  if (repo.previousXdg === undefined) delete process.env.XDG_CONFIG_HOME;
+  else process.env.XDG_CONFIG_HOME = repo.previousXdg;
+  rmSync(repo.root, { recursive: true, force: true });
+  rmSync(repo.remote, { recursive: true, force: true });
+  rmSync(repo.configHome, { recursive: true, force: true });
+};
+
+const branchOutput = (result: unknown) =>
+  JSON.parse(typeof result === "string" ? result : (result as { output: string }).output);
+
+test("dirty branch setup proposes the stash and executes in one approval", async () => {
+  const actor = "opencode-branch-dirty";
+  const repo = branchRepo(actor);
+  const { root, task, workspace } = repo;
+  try {
+    writeFileSync(join(root, "base.txt"), "wip\n");
+    writeFileSync(join(root, "notes.md"), "untracked\n");
+    const receipts = new NativeReceiptStore();
+    const tools = createWorkitTools({
+      receipts,
+      client: { session: { get: async () => ({ data: { id: actor, directory: root } }) } },
+    }) as any;
+    const request = { operation: "git.branch_setup", payload: { target_branch: "feature/dirty" } };
+    const first = await tools.workit_external_action.execute(request, {
+      directory: root,
+      sessionID: actor,
+    });
+    const proposal = branchOutput(first).details.proposal;
+    expect(String(proposal.presented)).toContain("Stash");
+    receipts.record(
+      {
+        sessionID: actor,
+        callID: "dirty-question",
+        args: {
+          questions: [
+            {
+              header: "Workit decision: action",
+              question: proposal.presented,
+              options: [
+                { label: "approved", description: proposal.approvedContent },
+                { label: "rejected", description: "Reject this decision" },
+              ],
+            },
+          ],
+        },
+      },
+      { metadata: { answers: [["approved"]] } },
+    );
+    const fresh = new TaskStore(root).readTask(task.id);
+    if (!fresh.ok) throw new Error("task refresh failed");
+    const decision = await tools.workit_decision.execute(
+      {
+        schemaVersion: 1,
+        action: "record",
+        taskId: task.id,
+        expectedRevision: fresh.data.revision,
+        purpose: "action",
+        binding: {
+          taskId: task.id,
+          workspaceId: workspace.id,
+          scope: (task as any).intent.data.scope,
+          presented: proposal.presented,
+          approvedContent: proposal.approvedContent,
+          contentRefs: [],
+        },
+        response: "approved",
+        requirementIds: [],
+      },
+      { directory: root, sessionID: actor } as never,
+    );
+    expect(branchOutput(decision)).toMatchObject({ ok: true });
+    const result = await tools.workit_external_action.execute(request, {
+      directory: root,
+      sessionID: actor,
+    });
+    expect(branchOutput(result)).toMatchObject({ ok: true });
+    expect(
+      spawnSync("git", ["branch", "--show-current"], { cwd: root, encoding: "utf8" }).stdout.trim(),
+    ).toBe("feature/dirty");
+    expect(
+      spawnSync("git", ["status", "--short"], { cwd: root, encoding: "utf8" }).stdout.trim(),
+    ).toBe("?? docs/");
+    expect(
+      spawnSync("git", ["stash", "list"], { cwd: root, encoding: "utf8" }).stdout.trim(),
+    ).toContain("workit: pre-checkout feature/dirty");
+  } finally {
+    restoreBranchRepo(repo);
+  }
+});
+
+test("branch approval carries across unrelated HEAD moves without re-approval", async () => {
+  const actor = "opencode-branch-carry";
+  const repo = branchRepo(actor);
+  const { root, task, workspace } = repo;
+  try {
+    const request = { operation: "git.branch_setup", payload: { target_branch: "feature/carry" } };
+    const { tools } = await approveActionFor({
+      root,
+      actor,
+      task,
+      workspace,
+      request,
+      callID: "carry-question",
+    });
+    writeFileSync(join(root, "later.txt"), "later\n");
+    spawnSync("git", ["checkout", "-q", "develop"], { cwd: root });
+    spawnSync("git", ["add", "later.txt"], { cwd: root });
+    spawnSync("git", ["commit", "-qm", "later"], { cwd: root });
+    spawnSync("git", ["checkout", "-q", "main"], { cwd: root });
+    const head = spawnSync("git", ["rev-parse", "develop"], {
+      cwd: root,
+      encoding: "utf8",
+    }).stdout.trim();
+    const result = await tools.workit_external_action.execute(request, {
+      directory: root,
+      sessionID: actor,
+    });
+    expect(branchOutput(result)).toMatchObject({ ok: true });
+    expect(
+      spawnSync("git", ["rev-parse", "feature/carry"], {
+        cwd: root,
+        encoding: "utf8",
+      }).stdout.trim(),
+    ).toBe(head);
+  } finally {
+    restoreBranchRepo(repo);
+  }
+});
+
+test("stated design choices record without a receipt and never authorize actions", async () => {
+  const actor = "opencode-stated";
+  const repo = branchRepo(actor);
+  const { root, task, workspace } = repo;
+  try {
+    const receipts = new NativeReceiptStore();
+    const tools = createWorkitTools({
+      receipts,
+      client: { session: { get: async () => ({ data: { id: actor, directory: root } }) } },
+    }) as any;
+    const stated = await tools.workit_decision.execute(
+      {
+        schemaVersion: 1,
+        action: "record",
+        taskId: task.id,
+        expectedRevision: task.revision,
+        purpose: "design",
+        binding: {
+          taskId: task.id,
+          workspaceId: workspace.id,
+          scope: (task as any).intent.data.scope,
+          presented: "Take the second approach?",
+          approvedContent: "Take the second approach.",
+          contentRefs: [],
+          statedChoice: { ref: "call-stated-1", text: "take the second one" },
+        },
+        response: "stated",
+        requirementIds: [],
+      },
+      { directory: root, sessionID: actor } as never,
+    );
+    expect(branchOutput(stated)).toMatchObject({ ok: true });
+    expect(JSON.stringify(branchOutput(stated))).toContain('"response":"stated"');
+    const statedAction = await tools.workit_decision.execute(
+      {
+        schemaVersion: 1,
+        action: "record",
+        taskId: task.id,
+        expectedRevision: task.revision,
+        purpose: "action",
+        binding: {
+          taskId: task.id,
+          workspaceId: workspace.id,
+          scope: (task as any).intent.data.scope,
+          presented: "Run it?",
+          approvedContent: "Run it.",
+          contentRefs: [],
+          statedChoice: { ref: "call-stated-2", text: "yes, run it" },
+        },
+        response: "stated",
+        requirementIds: [],
+      },
+      { directory: root, sessionID: actor } as never,
+    );
+    expect(branchOutput(statedAction)).toMatchObject({ ok: false });
+  } finally {
+    restoreBranchRepo(repo);
+  }
+});
+
+test("drifted proposals evict so a fresh resolve never wedges ambiguous", async () => {
+  const root = mkdtempSync(join(tmpdir(), "workit-opencode-proposal-evict-"));
+  try {
+    for (const args of [
+      ["init", "-q"],
+      ["config", "user.email", "test@example.invalid"],
+      ["config", "user.name", "Workit Test"],
+    ])
+      spawnSync("git", args, { cwd: root });
+    writeFileSync(join(root, "base.txt"), "base\n");
+    spawnSync("git", ["add", "base.txt"], { cwd: root });
+    spawnSync("git", ["commit", "-qm", "base"], { cwd: root });
+    writeFileSync(join(root, "change.txt"), "change\n");
+    spawnSync("git", ["add", "change.txt"], { cwd: root });
+    const actor = "opencode-proposal-evict";
+    const store = new TaskStore(root);
+    const setupCore = new WorkitCore(store, {
+      root,
+      caller: { host: "opencode", actor },
+      capabilities: [],
+      constraints: [],
+      now: "2026-01-01T00:00:00Z",
+    });
+    const started = setupCore.task(taskStartRequest());
+    if (!started.ok) throw new Error(started.error);
+    const task = store.readTask((started.data as { id: string }).id);
+    const workspace = store.readWorkspace();
+    if (!task.ok || !workspace.ok || !workspace.data) throw new Error("task setup failed");
+    const workspaceId = workspace.data.id;
+    expect(
+      setupCore.writer({
+        schemaVersion: 1,
+        action: "acquire",
+        taskId: task.data.id,
+        expectedRevision: task.data.revision,
+        expectedWorkspaceRevision: workspace.data.revision,
+        workerId: null,
+      }),
+    ).toMatchObject({ ok: true });
+    const receipts = new NativeReceiptStore();
+    const tools = createWorkitTools({
+      receipts,
+      client: { session: { get: async () => ({ data: { id: actor, directory: root } }) } },
+    }) as any;
+    const request = { operation: "git.commit", payload: { message: "chore(test): evict" } };
+    const resolve = async () => {
+      const resolved = await tools.workit_external_action.execute(request, {
+        directory: root,
+        sessionID: actor,
+      });
+      return branchOutput(resolved).details.proposal;
+    };
+    const record = async (
+      callID: string,
+      proposal: { presented: string; approvedContent: string },
+    ) => {
+      receipts.record(
+        {
+          sessionID: actor,
+          callID,
+          args: {
+            questions: [
+              {
+                header: "Workit decision: action",
+                question: proposal.presented,
+                options: [
+                  { label: "approved", description: proposal.approvedContent },
+                  { label: "rejected", description: "Reject this decision" },
+                ],
+              },
+            ],
+          },
+        },
+        { metadata: { answers: [["approved"]] } },
+      );
+      const fresh = store.readTask(task.data.id);
+      if (!fresh.ok) throw new Error("task refresh failed");
+      return tools.workit_decision.execute(
+        {
+          schemaVersion: 1,
+          action: "record",
+          taskId: task.data.id,
+          expectedRevision: fresh.data.revision,
+          purpose: "action",
+          binding: {
+            taskId: task.data.id,
+            workspaceId,
+            scope: (task.data as any).intent.data.scope,
+            presented: proposal.presented,
+            approvedContent: proposal.approvedContent,
+            contentRefs: [],
+          },
+          response: "approved",
+          requirementIds: [],
+        },
+        { directory: root, sessionID: actor } as never,
+      );
+    };
+    const stale = await resolve();
+    writeFileSync(join(root, "drift.txt"), "drift\n");
+    spawnSync("git", ["add", "drift.txt"], { cwd: root });
+    expect(branchOutput(await record("evict-drifted", stale))).toMatchObject({
+      ok: false,
+      code: "invalid_input",
+    });
+    const recovered = await record("evict-retry", await resolve());
+    expect(branchOutput(recovered)).toMatchObject({ ok: true });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
