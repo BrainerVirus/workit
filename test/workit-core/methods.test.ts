@@ -62,7 +62,7 @@ test("a fresh-context-review capability activates the review method", () => {
   expect(withoutCapability).toMatchObject([{ id: "workit-review", assurance: "unavailable" }]);
 });
 
-test("mechanical work loads no design or TDD method", () => {
+test("mechanical work routes checks to TDD and self-review to review", () => {
   const result = selectMethods(
     policy(
       requirement({ ruleId: "mechanical-existing-checks", dimension: "verification" }),
@@ -70,7 +70,7 @@ test("mechanical work loads no design or TDD method", () => {
     ),
     [capability({ name: "review", surface: "review", assurance: "enforced" })],
   );
-  expect(result.map((method) => method.id)).toEqual([]);
+  expect(result.map((method) => method.id)).toEqual(["workit-behavioral-tdd", "workit-review"]);
 });
 
 test("behavior change selects TDD and fresh review independently", () => {
@@ -149,8 +149,8 @@ test("pre-pr-cleanup selects the deslop method", () => {
 test("selection has stable registry order and no duplicate methods", () => {
   const selected = selectMethods(
     policy(
-      requirement({ ruleId: "durable-handoff", dimension: "continuity" }),
-      requirement({ ruleId: "root-cause-investigation", dimension: "investigation" }),
+      requirement({ ruleId: "self-review", dimension: "review" }),
+      requirement({ ruleId: "mechanical-existing-checks", dimension: "verification" }),
       requirement({ ruleId: "behavioral-verification", dimension: "testing" }),
       requirement({ ruleId: "fresh-context-review", dimension: "review" }),
       requirement({ ruleId: "helper-usefulness", dimension: "delegation" }),
@@ -165,8 +165,6 @@ test("selection has stable registry order and no duplicate methods", () => {
     "workit-review",
     "workit-plan",
     "workit-implement",
-    "workit-debug",
-    "workit-handoff",
   ]);
   expect(new Set(selected.map((method) => method.id)).size).toBe(selected.length);
 });

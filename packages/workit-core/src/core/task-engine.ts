@@ -1958,6 +1958,26 @@ export class WorkitCore {
         if (!sameSession(helper.data.data.session, this.context))
           return failure("permission_denied", "worker session does not match the caller");
       }
+      // Write-timed requirements gate acquisition, not just close: a spec
+      // gate is enforced where writes begin, never as advisory prose.
+      const gate = this.view(task.data);
+      if (gate.ok) {
+        const writeGates = (task.data.policy?.requirements ?? []).filter(
+          (requirement) =>
+            requirement.before === "write" &&
+            gate.data.requirements.some(
+              (evaluation) =>
+                evaluation.requirementId === requirement.id &&
+                (evaluation.status === "unsatisfied" || evaluation.status === "unavailable"),
+            ),
+        );
+        if (writeGates.length)
+          return failure(
+            "requirements_unsatisfied",
+            "writer ownership is gated by unsatisfied requirements; record their evidence or an approved limitation waiver first",
+            { requirementIds: writeGates.map((requirement) => requirement.id) },
+          );
+      }
       const owner = {
         taskId: task.data.id,
         workerId: helperId,

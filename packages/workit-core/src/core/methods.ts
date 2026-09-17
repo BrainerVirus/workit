@@ -17,12 +17,14 @@ type MethodDefinition = {
 
 export const METHODS: Readonly<Record<MethodId, MethodDefinition>> = {
   "workit-challenge": { dimensions: ["challenge", "decisions"] },
-  "workit-behavioral-tdd": { dimensions: ["testing"] },
-  "workit-review": { dimensions: ["review"], ruleIds: ["fresh-context-review"] },
+  "workit-behavioral-tdd": { dimensions: ["testing"], ruleIds: ["mechanical-existing-checks"] },
+  "workit-review": { dimensions: ["review"], ruleIds: ["fresh-context-review", "self-review"] },
   "workit-plan": { dimensions: ["artifacts", "continuity"] },
   "workit-implement": { dimensions: ["delegation"] },
-  "workit-debug": { ruleIds: ["root-cause-investigation"] },
-  "workit-handoff": { ruleIds: ["durable-handoff"] },
+  // workit-debug and workit-handoff stay slash-invoked: no generated rule
+  // routes to them, so they never appear spuriously in method selection.
+  "workit-debug": {},
+  "workit-handoff": {},
   "workit-deslop": { ruleIds: ["pre-pr-cleanup"] },
 };
 
@@ -33,12 +35,10 @@ export type SelectedMethod = {
 };
 
 const methodMatches = (
-  id: MethodId,
   definition: MethodDefinition,
   requirement: Policy["requirements"][number],
 ): boolean =>
-  (definition.dimensions?.includes(requirement.dimension) === true &&
-    !(id === "workit-review" && requirement.ruleId === "self-review")) ||
+  definition.dimensions?.includes(requirement.dimension) === true ||
   definition.ruleIds?.includes(requirement.ruleId) === true;
 
 const assuranceFor = (
@@ -71,7 +71,7 @@ const assuranceFor = (
 export function selectMethods(policy: Policy, capabilities: Capability[]): SelectedMethod[] {
   return (Object.entries(METHODS) as [MethodId, MethodDefinition][]).flatMap(([id, definition]) => {
     const requirements = policy.requirements.filter((requirement) =>
-      methodMatches(id, definition, requirement),
+      methodMatches(definition, requirement),
     );
     if (requirements.length === 0) return [];
     const capability = assuranceFor(id, definition, capabilities);
