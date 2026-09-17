@@ -17,7 +17,7 @@ import {
   OPERATION_SCHEMA_DEPTH,
   OPERATION_FAMILIES,
   parseOperation,
-  shellRouteIntent,
+  shouldDenyShellRoute,
   success,
   workitBindingQuestionIssue,
   canonicalJson,
@@ -580,7 +580,8 @@ export const enforceNativeWriter = (
 ): { block: true; reason: string } | undefined => {
   if (event.toolName === "bash") {
     const command = (event.input as { command?: unknown } | undefined)?.command;
-    const route = typeof command === "string" ? shellRouteIntent(command) : null;
+    const route =
+      typeof command === "string" ? shouldDenyShellRoute(ctx.cwd, command) : null;
     if (route)
       return {
         block: true,

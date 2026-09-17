@@ -1,3 +1,7 @@
+import { realpathSync } from "node:fs";
+import path from "node:path";
+import { TaskStore } from "./task-store";
+
 export type ShellRouteIntent = {
   route: "git.branch_setup" | "hosting.pull_request";
   guidance: string;
@@ -48,4 +52,30 @@ export function shellRouteIntent(command: string): ShellRouteIntent | null {
       return { route: "hosting.pull_request", guidance: GUIDANCE["hosting.pull_request"] };
   }
   return null;
+}
+
+/**
+ * Session-scoped enforcement: the denial protects live Workit coordination,
+ * so it fires only where an active or paused task exists. Any filesystem or
+ * storage failure means "no live task" — never deny on uncertainty.
+ */
+export function hasLiveWorkitTask(dir: string): boolean {
+  try {
+    if (typeof dir !== "string" || dir === "") return false;
+    const listed = new TaskStore(dir).listTasks();
+    if (!listed.ok) return false;
+    return listed.data.some((task) => task.status === "active" || task.status === "paused");
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Single core gate for the shell route denial. Adapters pass their
+ * session/project directory and delete local deny duplication; outside
+ * attributed sessions the command is silently allowed.
+ */
+export function shouldDenyShellRoute(dir: string, command: string): ShellRouteIntent | null {
+  if (!hasLiveWorkitTask(dir)) return null;
+  return shellRouteIntent(command);
 }

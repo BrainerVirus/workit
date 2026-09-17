@@ -3,7 +3,7 @@ import path from "node:path";
 import {
   compactTaskContext,
   invariantBootstrap,
-  shellRouteIntent,
+  shouldDenyShellRoute,
   TaskStore,
   WorkitCore,
   type Capability,
@@ -351,7 +351,7 @@ export const handleCodexHook = (raw: unknown): Record<string, unknown> => {
     // writer ownership checks.
     if (["bash", "unified-exec"].includes(String(input.tool_name).toLowerCase())) {
       const command = record(input.tool_input) ? input.tool_input.command : undefined;
-      const route = typeof command === "string" ? shellRouteIntent(command) : null;
+      const route = typeof command === "string" ? shouldDenyShellRoute(input.cwd, command) : null;
       if (route)
         return denied(
           "PreToolUse",
