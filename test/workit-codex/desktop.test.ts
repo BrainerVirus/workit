@@ -204,7 +204,7 @@ const startPackedMcp = (workspaceRoot: string) => {
   return { child, packed, responses, request, getStderr: () => stderr };
 };
 
-test("packed Codex launcher uses the shipped node command and lists eight families once", async () => {
+test("packed Codex launcher uses the shipped node command and lists read-only families once", async () => {
   const launcher = startPackedMcp(initializedRoot());
   try {
     await launcher.request(1, "initialize", {
@@ -218,11 +218,6 @@ test("packed Codex launcher uses the shipped node command and lists eight famili
     expect(launcher.responses[2].result.tools.map((tool: { name: string }) => tool.name)).toEqual([
       "workit_task",
       "workit_policy",
-      "workit_evidence",
-      "workit_finding",
-      "workit_decision",
-      "workit_worker",
-      "workit_writer",
       "workit_state",
     ]);
     expect(Object.keys(launcher.responses)).toEqual(["1", "2"]);

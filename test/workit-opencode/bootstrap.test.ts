@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import path from "node:path";
 import { getWorkitBootstrap, isWorkitBootstrap } from "@/packages/workit-opencode/src/bootstrap";
 import plugin from "@/packages/workit-opencode/src/plugin";
+import { pluginSourceFiles } from "@/packages/workit-opencode/src/stale-sources";
 
 describe("session bootstrap", () => {
   test("bootstrap contract names the native operation families", () => {
@@ -108,5 +110,17 @@ describe("session bootstrap", () => {
     const texts = second.messages[0].parts.map((p: any) => p.text ?? "");
     expect(texts.some((t: string) => isWorkitBootstrap(t))).toBe(true);
     expect(texts[texts.length - 1]).toBe("continue");
+  });
+});
+
+describe("stale-source markers", () => {
+  test("resolve the real core sources in the plugin layout", () => {
+    expect(pluginSourceFiles.length).toBeGreaterThanOrEqual(8);
+    expect(
+      pluginSourceFiles.some((file) =>
+        file.endsWith(path.join("workit-core", "src", "core", "task-contract.ts")),
+      ),
+    ).toBe(true);
+    expect(pluginSourceFiles.some((file) => file.endsWith("plugin.ts"))).toBe(true);
   });
 });

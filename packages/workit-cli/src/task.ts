@@ -3,8 +3,11 @@ import { createInterface } from "node:readline/promises";
 import {
   OPERATION_FAMILIES,
   approvedExternalAction,
+  approvedPlanCommit,
+  planCommitBinding,
   externalActionState,
   priorExternalAction,
+  priorResolvedDrift,
   externalActionDescriptor,
   externalActionRequest,
   externalActionRef,
@@ -15,6 +18,7 @@ import {
   compactTaskContext,
   failure,
   success,
+  workitBindingQuestionIssue,
   type Capability,
   type Caller,
   type Constraint,
@@ -22,6 +26,8 @@ import {
   type OperationContext,
 } from "@brainervirus/workit-core/src/core";
 import {
+  actionProposalQuestion,
+  assertLocalExternalActionWriter,
   approvedResolvedExternalAction,
   executeResolvedExternalAction,
   readExternalAction,
@@ -404,7 +410,34 @@ export async function runTaskCommand(argv: string[], deps: TaskCliDeps = {}): Pr
     ),
   );
   let result: Result<unknown>;
-  if (parsed.parsed.handoff) {
+  const decisionBudgetIssue = (() => {
+    if (parsed.parsed.family !== "decision" || parsed.parsed.action !== "record") return null;
+    const request = parsed.parsed.request as {
+      purpose?: unknown;
+      binding?: { presented?: unknown; approvedContent?: unknown; displayed?: unknown };
+    };
+    if (typeof request.purpose !== "string" || !request.binding) return null;
+    return workitBindingQuestionIssue([
+      {
+        header: `Workit decision: ${request.purpose}`,
+        question: typeof request.binding.presented === "string" ? request.binding.presented : "",
+        options: [
+          {
+            label: "approved",
+            description:
+              typeof request.binding.displayed === "string"
+                ? request.binding.displayed
+                : typeof request.binding.approvedContent === "string"
+                  ? request.binding.approvedContent
+                  : "",
+          },
+          { label: "rejected", description: "Reject this decision" },
+        ],
+      },
+    ]);
+  })();
+  if (decisionBudgetIssue) result = failure("invalid_input", decisionBudgetIssue);
+  else if (parsed.parsed.handoff) {
     const exported = dispatch(core, "state", parsed.parsed.request);
     if (!exported.ok) result = exported;
     else {
@@ -503,7 +536,41 @@ const nativeExternalActionRunner = (root: string, actor: string, core: WorkitCor
   createAuthorizedExternalActionRunner(core, (operationValue) => {
     const store = new TaskStore(root);
     const approved = approvedExternalAction(store, "workit_cli", actor, operationValue);
-    if (!approved.ok) return approved;
+    if (!approved.ok) {
+      const plan = planCommitBinding(store, "workit_cli", actor, operationValue);
+      if (plan) {
+        const actionRef = externalActionRef("workit_cli", actor, operationValue);
+        return {
+          taskId: plan.taskId,
+          decisionId: plan.decisionId,
+          actionRef,
+          expectedRevision: plan.expectedRevision,
+          expectedWorkspaceRevision: plan.expectedWorkspaceRevision,
+          binding: plan.binding,
+          step: plan.step,
+          refresh: () => {
+            const task = store.readTask(plan.taskId);
+            const freshWorkspace = store.readWorkspace();
+            if (!task.ok || !freshWorkspace.ok || !freshWorkspace.data)
+              throw new Error("external action state changed");
+            return {
+              expectedRevision: task.data.revision,
+              expectedWorkspaceRevision: freshWorkspace.data.revision,
+            };
+          },
+          reserveObservation: nativeExternalActionObservation(actor, actionRef, "reserve"),
+          settleObservation: (outcome: "succeeded" | "not_started" | "unknown", revisions) =>
+            nativeExternalActionObservation(
+              actor,
+              actionRef,
+              outcome,
+              actionRef.kind === "host" ? actionRef.handle : "external-action",
+              revisions,
+            ),
+        };
+      }
+      return approved;
+    }
     const actionRef = externalActionRef("workit_cli", actor, operationValue);
     return {
       taskId: approved.data.task.id,
@@ -723,7 +790,68 @@ export async function runActionCommand(argv: string[], deps: TaskCliDeps = {}): 
     else printHuman(result, deps);
     return 1;
   }
-  if (!json) write(outOf(deps), `External action preview: ${descriptor}`);
+  const drift =
+    normalized.operation === "git.branch_setup"
+      ? priorResolvedDrift(
+          store,
+          "workit_cli",
+          actor,
+          normalized.operation,
+          normalized.payload,
+          (resolved.data.descriptorPayload as { resolved?: unknown }).resolved,
+        )
+      : success(null, null, null);
+  if (!drift.ok) {
+    if (json) jsonResult(outOf(deps), drift);
+    else printHuman(drift, deps);
+    return 1;
+  }
+  const localOperation = [
+    "git.branch_setup",
+    "git.commit",
+    "git.push",
+    "hosting.pull_request",
+    "changelog.apply",
+  ].includes(normalized.operation);
+  if (localOperation) {
+    const writer = assertLocalExternalActionWriter(root, { host: "workit_cli", actor });
+    if (!writer.ok) {
+      const result = failure("needs_input", "writer ownership is required before this action", {
+        outcome: "not_started",
+        operation: normalized.operation,
+        guidance: "Acquire checkout writer ownership first (writer.acquire) and retry the action.",
+      });
+      if (json) jsonResult(outOf(deps), result);
+      else printHuman(result, deps);
+      return 1;
+    }
+  }
+  const question = actionProposalQuestion(normalized, resolved.data.descriptorPayload);
+  const commitMessage =
+    normalized.operation === "git.commit"
+      ? (normalized.payload as { message?: unknown }).message
+      : undefined;
+  const currentBranch = (resolved.data.descriptorPayload as { resolved?: { branch?: unknown } })
+    .resolved?.branch;
+  const plan =
+    typeof commitMessage === "string" && commitMessage
+      ? approvedPlanCommit(store, "workit_cli", actor, commitMessage)
+      : null;
+  if (plan?.ok && plan.data.branch === currentBranch) {
+    const core = new WorkitCore(store, {
+      ...contextFor(root, { ...deps, actor }, "host_observed"),
+      nativeAuthority: cliActionAuthority(actor),
+      workerId: null,
+    });
+    const runner = nativeExternalActionRunner(root, actor, core);
+    const result = await runner(descriptor, (step) =>
+      executeResolvedExternalAction(resolved.data, root, step, { host: "workit_cli", actor }),
+    );
+    if (json) jsonResult(outOf(deps), result);
+    else printHuman(result, deps);
+    return result.ok ? 0 : 1;
+  }
+  if (!json) write(outOf(deps), question.presented);
   const accepted = await observeConsent(deps);
   if (!accepted.accepted || !accepted.observed) {
     const result = failure(
@@ -751,8 +879,9 @@ export async function runActionCommand(argv: string[], deps: TaskCliDeps = {}): 
         taskId: task.id,
         workspaceId: workspace.data.id,
         scope: task.intent.data.scope,
-        presented: `Approve ${descriptor}`,
+        presented: question.presented,
         approvedContent: descriptor,
+        displayed: question.approvedText,
         contentRefs: [],
       },
       response: "approved",
@@ -768,6 +897,13 @@ export async function runActionCommand(argv: string[], deps: TaskCliDeps = {}): 
     if (json) jsonResult(outOf(deps), decision);
     else printHuman(decision, deps);
     return 1;
+  }
+  const planSteps = (resolved.data.descriptorPayload as { plan_steps?: unknown }).plan_steps;
+  if (normalized.operation === "git.commit" && Array.isArray(planSteps)) {
+    const result = success(null, null, { plan_commits: planSteps.length });
+    if (json) jsonResult(outOf(deps), result);
+    else printHuman(result, deps);
+    return 0;
   }
   const runner = nativeExternalActionRunner(root, actor, core);
   const result = await runner(descriptor, (step) =>

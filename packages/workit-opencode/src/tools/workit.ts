@@ -5,9 +5,12 @@ import {
   WorkitCore,
   TaskStore,
   approvedExternalAction,
+  approvedPlanCommit,
+  planCommitBinding,
   externalActionDescriptor,
   externalActionHelp,
   priorExternalAction,
+  priorResolvedDrift,
   externalActionRequest,
   externalActionRef,
   canonicalJson,
@@ -21,11 +24,14 @@ import {
   parseOperation,
   sha256,
   success,
+  workitBindingQuestionIssue,
   type OperationFamily,
   type OperationContext,
   type ContractResult as Result,
 } from "@brainervirus/workit-core/src/core";
 import {
+  actionProposalQuestion,
+  assertLocalExternalActionWriter,
   approvedResolvedExternalAction,
   executeResolvedExternalAction,
   readExternalAction,
@@ -85,6 +91,19 @@ type Receipt = {
 
 const freshMs = 5 * 60 * 1000;
 const rejectedDescription = "Reject this decision";
+
+/**
+ * Concise approval text always needs a live proposal to bind it; an exact
+ * descriptor, plan list, or bare operation binds its own bytes.
+ */
+const isSelfAuthorizingActionContent = (content: string): boolean => {
+  try {
+    const value = JSON.parse(content) as { operation?: unknown };
+    return typeof value.operation === "string" && value.operation.length > 0;
+  } catch {
+    return /^[a-z][a-z_]*\.[a-z_]+$/.test(content);
+  }
+};
 
 const decisionContent = (
   purpose: Receipt["decisionPurpose"],
@@ -270,12 +289,45 @@ export class NativeReceiptStore {
     }
     return {
       ok: false,
-      error:
-        "permission_denied: no matching native question receipt for this purpose; if the user " +
-        "already settled this choice in conversation, do not ask again — record the settled " +
-        "choice in task progress and reassess so the requirement can retire. Otherwise ask " +
-        "once, receipt-shaped: header `Workit decision: <purpose>`, the same label repeated in " +
-        "the question text, with exactly approved/rejected options",
+      error: (() => {
+        const samePurpose = queue.filter((receipt) => receipt.purpose === purpose);
+        const base = "permission_denied: no matching native question receipt for this purpose";
+        if (samePurpose.length) {
+          const closest = samePurpose[samePurpose.length - 1];
+          const reasons: string[] = [];
+          if (
+            expected.selectedLabel !== undefined &&
+            normalizeReceiptLabel(closest.selectedLabel) !==
+              normalizeReceiptLabel(expected.selectedLabel)
+          )
+            reasons.push(`selected answer was "${closest.selectedLabel}"`);
+          if (
+            expected.selectedDescription !== undefined &&
+            closest.selectedDescription !== expected.selectedDescription
+          )
+            reasons.push("approved option description did not match");
+          if (
+            expected.decisionPurpose !== undefined &&
+            closest.decisionPurpose !== expected.decisionPurpose
+          )
+            reasons.push(`purpose was "${closest.decisionPurpose}"`);
+          if (
+            expected.contentDigest !== undefined &&
+            closest.contentDigest !== expected.contentDigest
+          )
+            reasons.push("question or approved content differed from the asked receipt");
+          if (this.#now() - closest.recordedAt > freshMs)
+            reasons.push("receipt is stale (older than 5 minutes)");
+          if (reasons.length) return `${base} (closest ${purpose} receipt: ${reasons.join("; ")})`;
+        }
+        return (
+          `${base}; if the user already settled this choice in conversation, do not ask ` +
+          `again — record the settled choice in task progress and reassess so the ` +
+          `requirement can retire. Otherwise ask once, receipt-shaped: header ` +
+          `\`Workit decision: <purpose>\`, the same label repeated in the question text, ` +
+          `with exactly approved/rejected options`
+        );
+      })(),
     };
   }
 
@@ -412,6 +464,14 @@ export const opencodeCapabilities = () => [
     refs: [hostRef("task")],
   },
   {
+    name: "fresh-context-review",
+    surface: "task",
+    assurance: "agent_guided" as const,
+    reason:
+      "independent review runs as a native direct-child session; evidence evaluation enforces creator and duplicate-reviewer exclusion",
+    refs: [hostRef("task")],
+  },
+  {
     name: "known_product_writes",
     surface: "write/edit/bash",
     assurance: "unavailable" as const,
@@ -435,22 +495,21 @@ const nativeAuthority = (
 ): NativeAuthorityVerifier => ({
   verifyDecision: ({ observation, expected, caller }) => {
     const receipt = receipts.verify(observation, actor, "decision");
+    const expectedApproved =
+      typeof (expected.binding as { displayed?: unknown }).displayed === "string"
+        ? (expected.binding as { displayed: string }).displayed
+        : expected.binding.approvedContent;
     if (
       !receipt ||
       caller.host !== "opencode" ||
       caller.actor !== actor ||
       normalizeReceiptLabel(receipt.selectedLabel) !== normalizeReceiptLabel(expected.response) ||
-      (expected.response === "approved" &&
-        receipt.selectedDescription !== expected.binding.approvedContent) ||
+      (expected.response === "approved" && receipt.selectedDescription !== expectedApproved) ||
       receipt.decisionPurpose !== expected.purpose ||
       receipt.contentDigest !==
         sha256(
           canonicalJson(
-            decisionContent(
-              expected.purpose,
-              expected.binding.presented,
-              expected.binding.approvedContent,
-            ),
+            decisionContent(expected.purpose, expected.binding.presented, expectedApproved),
           ),
         ) ||
       receipt.question !== expected.binding.presented
@@ -590,7 +649,41 @@ export const nativeExternalActionRunner = (
   createAuthorizedExternalActionRunner(core, (operation) => {
     const store = new TaskStore(root);
     const selected = approvedExternalAction(store, "opencode", actor, operation);
-    if (!selected.ok) return selected;
+    if (!selected.ok) {
+      const plan = planCommitBinding(store, "opencode", actor, operation);
+      if (plan) {
+        const actionRef = externalActionRef("opencode", actor, operation);
+        return {
+          taskId: plan.taskId,
+          decisionId: plan.decisionId,
+          actionRef,
+          expectedRevision: plan.expectedRevision,
+          expectedWorkspaceRevision: plan.expectedWorkspaceRevision,
+          binding: plan.binding,
+          step: plan.step,
+          refresh: () => {
+            const task = store.readTask(plan.taskId);
+            const freshWorkspace = store.readWorkspace();
+            if (!task.ok || !freshWorkspace.ok || !freshWorkspace.data)
+              throw new Error("external action state changed");
+            return {
+              expectedRevision: task.data.revision,
+              expectedWorkspaceRevision: freshWorkspace.data.revision,
+            };
+          },
+          reserveObservation: nativeExternalActionObservation(actor, actionRef, "reserve"),
+          settleObservation: (outcome: "succeeded" | "not_started" | "unknown", revisions) =>
+            nativeExternalActionObservation(
+              actor,
+              actionRef,
+              outcome,
+              actionRef.kind === "host" ? actionRef.handle : "external-action",
+              revisions,
+            ),
+        };
+      }
+      return selected;
+    }
     const actionRef = externalActionRef("opencode", actor, operation);
     return {
       taskId: selected.data.task.id,
@@ -657,13 +750,19 @@ export type WorkitToolOptions = {
   client?: SessionLookup;
   receipts?: NativeReceiptStore;
   directChildren?: DirectChildren;
+  now?: () => number;
 };
 
 export const createWorkitTools = ({
   client,
   receipts = new NativeReceiptStore(),
   directChildren = new Map<string, string>(),
+  now = Date.now,
 }: WorkitToolOptions = {}) => {
+  const actionProposals = new Map<
+    string,
+    Array<{ descriptor: string; presented: string; approvedText: string; createdAt: number }>
+  >();
   const make = (family: OperationFamily) =>
     tool({
       description: `Workit ${family} operations backed by the shared task contract.`,
@@ -703,8 +802,16 @@ export const createWorkitTools = ({
           const decision = parsed.data as {
             response: string;
             purpose: Receipt["decisionPurpose"];
-            binding: { presented: string; approvedContent: string };
+            binding: { presented: string; approvedContent: string; displayed?: string };
           };
+          const budgetIssue = workitBindingQuestionIssue([
+            decisionContent(
+              decision.purpose,
+              decision.binding.presented,
+              decision.binding.approvedContent,
+            ),
+          ]);
+          if (budgetIssue) return output(failure("invalid_input", budgetIssue));
           const expectation: ReceiptExpectation = {
             selectedLabel: decision.response,
             decisionPurpose: decision.purpose,
@@ -725,7 +832,50 @@ export const createWorkitTools = ({
             expectation.selectedDescription = decision.binding.approvedContent;
           const observed = receipts.consume(context.sessionID, "decision", expectation);
           if (!observed.ok) return output(failure("permission_denied", observed.error));
-          result = core.observeDecision(parsed.data, observed.observation);
+          let recordInput = parsed.data as Record<string, unknown>;
+          if (decision.purpose === "action" && decision.response === "approved") {
+            const queue = actionProposals.get(context.sessionID) ?? [];
+            const textMatches = queue.filter(
+              (pending) =>
+                pending.presented === decision.binding.presented &&
+                pending.approvedText === decision.binding.approvedContent,
+            );
+            const matches = textMatches.filter(
+              (pending) => now() - pending.createdAt <= 5 * 60 * 1000,
+            );
+            if (matches.length > 1)
+              return output(
+                failure(
+                  "invalid_input",
+                  "multiple action proposals match this approval; resolve the action again",
+                ),
+              );
+            const pending = matches[0];
+            if (pending) {
+              actionProposals.set(
+                context.sessionID,
+                queue.filter((candidate) => candidate !== pending),
+              );
+              recordInput = {
+                ...recordInput,
+                binding: {
+                  ...(recordInput as { binding: Record<string, unknown> }).binding,
+                  approvedContent: pending.descriptor,
+                  displayed: pending.approvedText,
+                },
+              };
+            } else if (!isSelfAuthorizingActionContent(decision.binding.approvedContent)) {
+              return output(
+                failure(
+                  "invalid_input",
+                  textMatches.length > 0
+                    ? "action proposal expired; resolve the action again for a fresh proposal"
+                    : "no matching action proposal; resolve the action through the action tool first",
+                ),
+              );
+            }
+          }
+          result = core.observeDecision(recordInput, observed.observation);
         } else {
           const run = core[family] as unknown as (request: unknown) => Result<unknown>;
           result = run.call(core, parsed.data);
@@ -858,6 +1008,86 @@ export const createWorkitTools = ({
           resolved.data.request.operation,
           resolved.data.descriptorPayload,
         );
+        const drift =
+          resolved.data.request.operation === "git.branch_setup"
+            ? priorResolvedDrift(
+                store,
+                "opencode",
+                context.sessionID,
+                resolved.data.request.operation,
+                resolved.data.request.payload,
+                (resolved.data.descriptorPayload as { resolved?: unknown }).resolved,
+              )
+            : success(null, null, null);
+        if (!drift.ok) return output(drift);
+        const localOperation = [
+          "git.branch_setup",
+          "git.commit",
+          "git.push",
+          "hosting.pull_request",
+          "changelog.apply",
+        ].includes(resolved.data.request.operation);
+        if (localOperation) {
+          const writer = assertLocalExternalActionWriter(context.directory, {
+            host: "opencode",
+            actor: context.sessionID,
+          });
+          if (!writer.ok)
+            return output(
+              failure("needs_input", "writer ownership is required before this action", {
+                outcome: "not_started",
+                operation: resolved.data.request.operation,
+                guidance:
+                  "Acquire checkout writer ownership first (writer.acquire) and retry the action.",
+              }),
+            );
+        }
+        const selected = approvedExternalAction(store, "opencode", context.sessionID, descriptor);
+        let planAuthorized = false;
+        if (!selected.ok) {
+          const commitMessage =
+            resolved.data.request.operation === "git.commit"
+              ? (resolved.data.request.payload as { message?: unknown }).message
+              : undefined;
+          const currentBranch = (
+            resolved.data.descriptorPayload as { resolved?: { branch?: unknown } }
+          ).resolved?.branch;
+          if (typeof commitMessage === "string" && commitMessage) {
+            const plan = approvedPlanCommit(store, "opencode", context.sessionID, commitMessage);
+            planAuthorized = plan.ok && plan.data.branch === currentBranch;
+          }
+        }
+        if (!selected.ok && !planAuthorized) {
+          if (selected.error.startsWith("no approved action")) {
+            const proposal = actionProposalQuestion(
+              resolved.data.request,
+              resolved.data.descriptorPayload,
+            );
+            const pending = actionProposals.get(context.sessionID) ?? [];
+            pending.push({
+              descriptor,
+              presented: proposal.presented,
+              approvedText: proposal.approvedText,
+              createdAt: now(),
+            });
+            if (pending.length > 8) pending.shift();
+            actionProposals.set(context.sessionID, pending);
+            return output(
+              failure("needs_input", proposal.presented, {
+                outcome: "not_started",
+                operation: resolved.data.request.operation,
+                proposal: {
+                  presented: proposal.presented,
+                  approvedContent: proposal.approvedText,
+                  descriptorDigest: sha256(descriptor),
+                },
+                guidance:
+                  "Ask one native question with header `Workit decision: action`, the presented text as the question text, and exactly two options: approved (description = the proposal approvedContent) and rejected (description = `Reject this decision`). Then call decision.record with the same presented/approvedContent and the native receipt; the adapter binds the exact descriptor. Never show the raw descriptor.",
+              }),
+            );
+          }
+          return output(selected);
+        }
         const result = await nativeExternalActionRunner(
           context.directory,
           context.sessionID,

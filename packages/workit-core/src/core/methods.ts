@@ -18,7 +18,7 @@ type MethodDefinition = {
 export const METHODS: Readonly<Record<MethodId, MethodDefinition>> = {
   "workit-challenge": { dimensions: ["challenge", "decisions"] },
   "workit-behavioral-tdd": { dimensions: ["testing"] },
-  "workit-review": { dimensions: ["review"] },
+  "workit-review": { dimensions: ["review"], ruleIds: ["fresh-context-review"] },
   "workit-plan": { dimensions: ["artifacts", "continuity"] },
   "workit-implement": { dimensions: ["delegation"] },
   "workit-debug": { ruleIds: ["root-cause-investigation"] },
@@ -107,7 +107,18 @@ decision.record {binding with taskId/workspaceId from inspect plus presented and
 approvedContent} only through a native approval question asked receipt-shaped:
 header Workit decision: <purpose>, the same label repeated in the question
 text (some host UIs do not render headers), exactly two options approved and
-rejected; ask once, never re-ask to mint a receipt. task.close {outcome,
+rejected; ask once, never re-ask to mint a receipt. Before asking, present the
+item in the conversation (durable artifacts: complete digest plus exact path;
+inline plans: the content) and keep the question to one short scoped sentence;
+never ask to approve something unseen. An answer with custom text is steering,
+not approval: adjust, re-present, then ask a new scoped question. After the user
+approves a spec or plan, execute the remaining tasks continuously with one
+atomic commit per task and do not ask whether to continue; stop only for a new
+product decision, a failed safety or verification gate, a conflicting edit, or
+missing authority. Record the plan's commit list once through the plan-scoped
+action approval (git.commit with plan_steps and plan_branch) so each listed
+commit executes without a new question; an unlisted message needs a fresh
+approval. task.close {outcome,
 summary, decisionIds}. A completed native subagent run stops its bound worker
 by itself; if a worker strands in cancelling with its run verifiably over,
 repeat worker.cancel {reason} to confirm the stop. Check and review evidence

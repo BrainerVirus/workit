@@ -58,6 +58,7 @@ import {
 } from "./task-context";
 import {
   assertProductWriteAllowed,
+  isUncertainWorker,
   type CallerContext,
   type NativeWorkerObservation,
   type NativeWorkerVerification,
@@ -360,11 +361,16 @@ const applyWorkerLifecycle = (input: ObserveWorkerLifecycleInput): Result<Entry<
     return failure("invalid_transition", "worker has not started");
   if (input.state === "running" && entry.data.state === "stopped")
     return failure("invalid_transition", "stopped worker cannot run again");
+  const terminalCancel = entry.data.state === "cancelling" && input.state === "running";
   const nextEntry = {
     ...entry,
     recordedAt: input.now ?? entry.recordedAt,
     provenance: authority.provenance,
-    data: { ...entry.data, state: input.state, session: input.session },
+    data: {
+      ...entry.data,
+      state: terminalCancel ? ("cancelling" as const) : input.state,
+      session: input.session,
+    },
   } satisfies Entry<Worker>;
   const shouldClear =
     input.state === "stopped" &&
@@ -381,7 +387,7 @@ const applyWorkerLifecycle = (input: ObserveWorkerLifecycleInput): Result<Entry<
   // revision bump per event livelocks worker sessions — each call would
   // invalidate the revision the previous call returned.
   if (
-    entry.data.state === input.state &&
+    entry.data.state === nextEntry.data.state &&
     sameValue(entry.data.session, input.session) &&
     !shouldClear &&
     !shouldUncertain
@@ -823,11 +829,7 @@ export class WorkitCore {
   ) {
     if (workspace.writer)
       return failure("recovery_required", "writer ownership must be released first");
-    if (
-      task.workers.some((entry) =>
-        ["dispatching", "running", "cancelling", "unknown"].includes(entry.data.state),
-      )
-    )
+    if (task.workers.some((entry) => isUncertainWorker(entry.data.state)))
       return failure("recovery_required", "worker state requires reconciliation");
     return null;
   }
@@ -1063,18 +1065,6 @@ export class WorkitCore {
       (this.context.workerId ?? null) === null ? null : this.helperEntry(task.data, true, true);
     if (helper && !helper.ok) return helper as Result<never>;
     const evidence = input.evidence as Evidence;
-    if (helper?.ok) {
-      const assignment = helper.data.data.assignment;
-      if (
-        evidence.requirementIds.some((id: string) => !assignment.requirementIds.includes(id)) ||
-        (assignment.candidateId !== null &&
-          evidence.candidateId !== assignment.candidateId &&
-          evidence.beforeCandidateId !== assignment.candidateId) ||
-        !refsWithinScope(evidence.refs, assignment.scope) ||
-        !refsWithinScope(evidence.refs, task.data.intent.data.scope)
-      )
-        return failure("permission_denied", "evidence is outside the worker assignment");
-    }
     if (
       (evidence.result === "missing" || evidence.result === "skipped") &&
       !evidence.summary.trim()
@@ -1099,6 +1089,18 @@ export class WorkitCore {
     } else {
       evidence.beforeCandidateId ??= null;
       evidence.candidateId ??= null;
+    }
+    if (helper?.ok) {
+      const assignment = helper.data.data.assignment;
+      if (
+        evidence.requirementIds.some((id: string) => !assignment.requirementIds.includes(id)) ||
+        (assignment.candidateId !== null &&
+          evidence.candidateId !== assignment.candidateId &&
+          evidence.beforeCandidateId !== assignment.candidateId) ||
+        !refsWithinScope(evidence.refs, assignment.scope) ||
+        !refsWithinScope(evidence.refs, task.data.intent.data.scope)
+      )
+        return failure("permission_denied", "evidence is outside the worker assignment");
     }
     const knownCandidates = new Set(task.data.candidates.map((candidate) => candidate.id));
     for (const candidateId of [evidence.beforeCandidateId, evidence.candidateId]) {
@@ -2242,6 +2244,9 @@ export class WorkitCore {
       id: task.id,
       revision: task.revision,
       workspaceRevision: workspace.data.revision,
+      createdAt: task.createdAt,
+      updatedAt: task.updatedAt,
+      runtime: task.runtime ?? null,
       objective: task.intent.data.objective,
       status: task.status,
       closure: task.closure,
@@ -2344,9 +2349,7 @@ export class WorkitCore {
     const base = reconcileResumeContext(effectiveView);
     if (!base.ok) return base;
     const needsReconciliation = view.task.workers.some((entry) =>
-      ["dispatching", "running", "cancelling", "unknown"].includes(
-        observedStates.get(entry.id) ?? entry.data.state,
-      ),
+      isUncertainWorker(observedStates.get(entry.id) ?? entry.data.state),
     );
     const blockers = [...base.data.blockers];
     if (
@@ -2438,8 +2441,8 @@ export class WorkitCore {
             !current.candidates.some((candidate) => candidate.id === resumeCandidate!.id)
               ? [...current.candidates, resumeCandidate]
               : current.candidates,
-          progress:
-            status === "paused" ? { ...current.progress, summary: input.reason } : current.progress,
+          progress: current.progress,
+          pauseReason: status === "paused" ? (input.reason ?? null) : null,
         }),
     });
     if (!changed.ok) return changed as Result<never>;
@@ -2475,7 +2478,10 @@ export class WorkitCore {
     const workspace = this.store.readWorkspace();
     if (!workspace.ok) return workspace as Result<never>;
     if (!workspace.data) return failure("not_found", "workspace not found");
-    if (workspace.data.writer || task.data.workers.some((entry) => entry.data.state !== "stopped"))
+    if (
+      workspace.data.writer ||
+      task.data.workers.some((entry) => isUncertainWorker(entry.data.state))
+    )
       return failure(
         "recovery_required",
         "scope revision requires worker ownership reconciliation",

@@ -453,6 +453,7 @@ export const decisionSchema = z
         scope: scopeSchema,
         presented: text,
         approvedContent: text,
+        displayed: text.optional(),
         contentRefs: z.array(refSchema),
       })
       .strict(),
@@ -471,6 +472,29 @@ export const decisionSchema = z
   })
   .strict();
 export type Decision = z.infer<typeof decisionSchema>;
+
+/** Show-before-ask guard: binding questions are single-sentence and never
+ * carry the artifact, descriptor, or payload body in the question UI. */
+export const BINDING_QUESTION_BUDGET = 300;
+const bindingQuestionHeader = /^Workit decision: (design|action|limitation|preference)$/;
+export const workitBindingQuestionIssue = (questions: unknown): string | null => {
+  if (!Array.isArray(questions) || questions.length !== 1) return null;
+  const question = questions[0] as { header?: unknown; question?: unknown; options?: unknown };
+  if (!question || typeof question !== "object") return null;
+  if (typeof question.header !== "string" || !bindingQuestionHeader.test(question.header.trim()))
+    return null;
+  const over = (label: string, value: string) =>
+    `invalid_input: ${label} is ${value.length} characters; Workit binding questions must stay within ${BINDING_QUESTION_BUDGET}. present the item in the conversation first, then ask a short scoped question.`;
+  if (typeof question.question === "string" && question.question.length > BINDING_QUESTION_BUDGET)
+    return over("the question text", question.question);
+  if (Array.isArray(question.options))
+    for (const option of question.options) {
+      const description = (option as { description?: unknown }).description;
+      if (typeof description === "string" && description.length > BINDING_QUESTION_BUDGET)
+        return over("an option description", description);
+    }
+  return null;
+};
 export const findingSchema = z
   .object({
     claim: text,
@@ -565,6 +589,13 @@ export const actionProgressListSchema = z.array(actionProgressSchema).check((ctx
       path: ["decisionId"],
     });
 });
+export const runtimeSchema = z
+  .object({
+    createdWith: text.nullable(),
+    updatedWith: text,
+  })
+  .strict();
+export type RuntimeInfo = z.infer<typeof runtimeSchema>;
 export const taskRecordSchema = z
   .object({
     schemaVersion: z.literal(1),
@@ -579,6 +610,8 @@ export const taskRecordSchema = z
     status: z.enum(["active", "paused", "closed"]),
     closure: closureSchema.nullable(),
     progress: progressSchema,
+    pauseReason: text.nullable().optional(),
+    runtime: runtimeSchema.optional(),
     assessments: z.array(entrySchema(assessmentSchema)),
     policy: policySchema.nullable(),
     policyChanges: z.array(policyChangeSchema),
@@ -597,6 +630,7 @@ export const workspaceRecordSchema = z
     id,
     revision,
     root: nonEmpty,
+    runtime: runtimeSchema.optional(),
     writer: z
       .object({ state: z.enum(["held", "uncertain"]), owner: ownerSchema, acquiredAt: utc })
       .strict()
@@ -639,6 +673,9 @@ export const taskSummarySchema = z
     id,
     revision,
     workspaceRevision: revision,
+    createdAt: utc,
+    updatedAt: utc,
+    runtime: runtimeSchema.nullable(),
     objective: text,
     status: z.enum(["active", "paused", "closed"]),
     closure: closureSchema.nullable(),
@@ -720,7 +757,7 @@ const taskOperations = {
     expectedWorkspaceRevision: revision.optional(),
     outcome: outcomeSchema,
     summary: text,
-    decisionIds: z.array(id),
+    decisionIds: z.array(id).optional(),
   }),
 };
 const policyOperations = {
@@ -813,13 +850,14 @@ const writerOperations = {
     expectedRevision: revision.optional(),
     expectedWorkspaceRevision: revision.optional(),
     workerId: nullableId.optional(),
+    reason: text.optional(),
   }),
   release: operation({
     action: z.literal("release"),
     ...taskId,
     expectedRevision: revision.optional(),
     expectedWorkspaceRevision: revision.optional(),
-    reason: text,
+    reason: text.optional(),
   }),
 };
 const stateOperations = {
@@ -891,6 +929,22 @@ export type ErrorDetails = {
   path?: string;
   operation?: string;
   outcome?: "not_started" | "pending" | "unknown";
+  /** Present when a native approval must be asked from a concise proposal. */
+  proposal?: {
+    presented: string;
+    approvedContent: string;
+    descriptorDigest: string;
+  };
+  guidance?: string;
+  /** Structured remedy for unsatisfied requirements: rule, reason, and
+   * satisfaction text instead of opaque requirement hashes alone. */
+  requirements?: {
+    requirementId: string;
+    ruleId: string;
+    reason: string;
+    satisfaction: string;
+    dependentAction: string | null;
+  }[];
 };
 export type Result<T> =
   | {

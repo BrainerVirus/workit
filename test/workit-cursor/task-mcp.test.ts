@@ -4,7 +4,6 @@ import path from "node:path";
 import { tmpdir } from "node:os";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { OPERATION_FAMILIES } from "@/packages/workit-core/src/core";
 import { createMcpServer } from "@/packages/workit-mcp/src/index";
 import { cursorCapabilities, cursorContextProvider } from "@/packages/workit-cursor/mcp/run-server";
 
@@ -21,9 +20,11 @@ test("Cursor uses the shared MCP transport with truthful native capabilities", a
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
   try {
-    expect((await client.listTools()).tools.map((tool) => tool.name)).toEqual(
-      OPERATION_FAMILIES.map((family) => `workit_${family}`),
-    );
+    expect((await client.listTools()).tools.map((tool) => tool.name)).toEqual([
+      "workit_task",
+      "workit_policy",
+      "workit_state",
+    ]);
   } finally {
     await client.close();
     await server.close();

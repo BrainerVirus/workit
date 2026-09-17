@@ -93,6 +93,12 @@ const same = (left: unknown, right: unknown): boolean => {
   }
 };
 
+/** The one shared definition of active or uncertain worker state used by
+ * close, revise, resume, and replacement-launch checks. */
+export const UNCERTAIN_WORKER_STATES = ["dispatching", "running", "cancelling", "unknown"] as const;
+export const isUncertainWorker = (state: string): boolean =>
+  (UNCERTAIN_WORKER_STATES as readonly string[]).includes(state);
+
 const callerSession = (caller: CallerContext): HostSession =>
   caller.session ?? { kind: "host", host: caller.host, handle: caller.actor };
 

@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import { hostname } from "node:os";
 import path from "node:path";
 import * as z from "zod";
+import { packageRoot } from "./package-root";
 import {
   acquireFileLockSync,
   type FileLockSyncHandle,
@@ -109,6 +110,43 @@ export type RecoveryCandidate = {
 };
 
 const now = (): Utc => new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+
+let cachedRuntimeVersion: string | null = null;
+/** Version of the package that hosts this runtime; recorded with state so a
+ * bug report can identify the writer version without reading raw .workit. */
+export const runtimeVersion = (): string => {
+  if (cachedRuntimeVersion === null) {
+    try {
+      const pkg = JSON.parse(fs.readFileSync(path.join(packageRoot(), "package.json"), "utf8")) as {
+        version?: unknown;
+      };
+      cachedRuntimeVersion = typeof pkg.version === "string" && pkg.version ? pkg.version : "0.0.0";
+    } catch {
+      cachedRuntimeVersion = "0.0.0";
+    }
+  }
+  return cachedRuntimeVersion;
+};
+
+const stampNew = (record: { runtime?: { createdWith: string | null } }) => ({
+  createdWith: record.runtime?.createdWith ?? null,
+  updatedWith: runtimeVersion(),
+});
+
+const isNewerVersion = (candidate: string, current: string): boolean => {
+  const parts = (value: string) =>
+    value
+      .split("-")[0]
+      .split(".")
+      .map((item) => Number.parseInt(item, 10) || 0);
+  const [next, now] = [parts(candidate), parts(current)];
+  for (let index = 0; index < 3; index += 1) {
+    const left = next[index] ?? 0;
+    const right = now[index] ?? 0;
+    if (left !== right) return left > right;
+  }
+  return false;
+};
 const jsonBytes = (value: unknown): string => `${canonicalJson(value)}\n`;
 const digestBytes = (value: string | Buffer): string =>
   createHash("sha256").update(value).digest("hex");
@@ -221,10 +259,14 @@ export class TaskStore {
           ? value.expectedWorkspaceRevision !== current.data.revision
           : value.expectedWorkspaceRevision !== null
       ) {
-        return failure("revision_conflict", "workspace revision does not match", {
-          expectedWorkspaceRevision: value.expectedWorkspaceRevision,
-          actualWorkspaceRevision: current.data?.revision ?? null,
-        });
+        return failure(
+          "revision_conflict",
+          "workspace revision does not match; omit expectedWorkspaceRevision to use the current record",
+          {
+            expectedWorkspaceRevision: value.expectedWorkspaceRevision,
+            actualWorkspaceRevision: current.data?.revision ?? null,
+          },
+        );
       }
       if (!value.provenance) return failure("invalid_input", "provenance is required");
       if (
@@ -236,12 +278,18 @@ export class TaskStore {
       if (current.data && !previousWorkspaceBytes)
         return failure("storage_error", "workspace snapshot disappeared during creation");
       const workspace: WorkspaceRecord = current.data
-        ? { ...current.data, revision: newRevision(), root: this.root }
+        ? {
+            ...current.data,
+            revision: newRevision(),
+            root: this.root,
+            runtime: stampNew(current.data),
+          }
         : {
             schemaVersion: SCHEMA_VERSION,
             id: newId(),
             revision: newRevision(),
             root: this.root,
+            runtime: { createdWith: runtimeVersion(), updatedWith: runtimeVersion() },
             writer: null,
           };
       const timestamp = value.now ?? now();
@@ -263,6 +311,7 @@ export class TaskStore {
         status: "active",
         closure: null,
         progress: { summary: "", nextAction: null, blockers: [] },
+        runtime: { createdWith: runtimeVersion(), updatedWith: runtimeVersion() },
         assessments: [],
         policy: null,
         policyChanges: [],
@@ -312,21 +361,31 @@ export class TaskStore {
           ? input.expectedWorkspaceRevision !== current.data.revision
           : input.expectedWorkspaceRevision !== null
       )
-        return failure("revision_conflict", "workspace revision does not match", {
-          expectedWorkspaceRevision: input.expectedWorkspaceRevision,
-          actualWorkspaceRevision: current.data?.revision ?? null,
-        });
+        return failure(
+          "revision_conflict",
+          "workspace revision does not match; omit expectedWorkspaceRevision to use the current record",
+          {
+            expectedWorkspaceRevision: input.expectedWorkspaceRevision,
+            actualWorkspaceRevision: current.data?.revision ?? null,
+          },
+        );
       const previousWorkspaceBytes = current.data ? this.snapshotBytes(this.workspacePath) : null;
       if (current.data && !previousWorkspaceBytes)
         return failure("storage_error", "workspace snapshot disappeared during import");
       const timestamp = input.now ?? now();
       const workspace: WorkspaceRecord = current.data
-        ? { ...current.data, revision: newRevision(), root: this.root }
+        ? {
+            ...current.data,
+            revision: newRevision(),
+            root: this.root,
+            runtime: stampNew(current.data),
+          }
         : {
             schemaVersion: SCHEMA_VERSION,
             id: input.workspaceId ?? newId(),
             revision: newRevision(),
             root: this.root,
+            runtime: { createdWith: runtimeVersion(), updatedWith: runtimeVersion() },
             writer: null,
           };
       const task = {
@@ -335,6 +394,10 @@ export class TaskStore {
         revision: newRevision(),
         createdAt: timestamp,
         updatedAt: timestamp,
+        runtime: {
+          createdWith: input.task.runtime?.createdWith ?? null,
+          updatedWith: runtimeVersion(),
+        },
       };
       const validTask = taskRecordSchema.safeParse(task);
       if (!validTask.success)
@@ -402,6 +465,7 @@ export class TaskStore {
         createdAt: current.data.createdAt,
         revision: context.revision,
         updatedAt: context.now,
+        runtime: stampNew(current.data),
       };
       const valid = taskRecordSchema.safeParse(record);
       if (!valid.success)
@@ -433,6 +497,7 @@ export class TaskStore {
         id: current.data.id,
         root: this.root,
         revision: context.revision,
+        runtime: stampNew(current.data),
       };
       const valid = workspaceRecordSchema.safeParse(record);
       if (!valid.success)
@@ -472,6 +537,7 @@ export class TaskStore {
         id: workspace.data.id,
         root: this.root,
         revision: workspaceContext.revision,
+        runtime: stampNew(workspace.data),
       });
       if (!nextWorkspace.success)
         return failure("invalid_input", "workspace mutation produced an invalid record");
@@ -508,6 +574,7 @@ export class TaskStore {
         createdAt: task.data.createdAt,
         revision: taskContext.revision,
         updatedAt: taskContext.now,
+        runtime: stampNew(task.data),
       });
       if (!nextTask.success) {
         this.markUncertain(nextWorkspace.data);
@@ -785,6 +852,7 @@ export class TaskStore {
       ...workspace,
       writer: { ...workspace.writer, state: "uncertain" as const },
       revision: newRevision(),
+      runtime: stampNew(workspace),
     };
     this.replaceSnapshot(this.workspacePath, value, workspace);
   }
@@ -1027,9 +1095,17 @@ export class TaskStore {
     if (isObject(value) && "schemaVersion" in value && value.schemaVersion !== SCHEMA_VERSION)
       return failure("unsupported_version", "unsupported snapshot schema version");
     const parsed = schema.safeParse(value);
-    return parsed.success
-      ? success(null, null, parsed.data)
-      : failure("recovery_required", "snapshot does not satisfy its schema");
+    if (parsed.success) return success(null, null, parsed.data);
+    const writerVersion =
+      isObject(value) && isObject((value as { runtime?: unknown }).runtime)
+        ? (value as { runtime: { updatedWith?: unknown } }).runtime.updatedWith
+        : null;
+    if (typeof writerVersion === "string" && isNewerVersion(writerVersion, runtimeVersion()))
+      return failure(
+        "recovery_required",
+        `snapshot was written by workit ${writerVersion}; upgrade Workit before mutating this checkout`,
+      );
+    return failure("recovery_required", "snapshot does not satisfy its schema");
   }
 
   private processStart(pid: number): string | null {
@@ -1041,10 +1117,14 @@ export class TaskStore {
   }
 
   private conflict(expected: Revision, actual: Revision): Result<never> {
-    return failure("revision_conflict", "snapshot revision does not match", {
-      expectedRevision: expected,
-      actualRevision: actual,
-    });
+    return failure(
+      "revision_conflict",
+      "snapshot revision does not match; omit expectedRevision to use the current record",
+      {
+        expectedRevision: expected,
+        actualRevision: actual,
+      },
+    );
   }
 
   private taskPath(taskId: Id) {

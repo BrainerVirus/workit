@@ -268,6 +268,18 @@ export const ensureBaseBranch = (cwd: string, base: string): { ok: boolean; erro
   return fastForwardBase(cwd, base);
 };
 
+export type BranchSetupResult =
+  | {
+      action: "setup";
+      ok: true;
+      branch: string;
+      previous_branch: string;
+      stash_ref: string | null;
+      manifest: string;
+    }
+  | { action: "reapply_stash"; ok: true }
+  | { error: string; phase: "preflight" | "post_mutation" };
+
 // Port of scripts/branch/setup-branch.sh
 export const branchSetup = ({
   action,
@@ -283,12 +295,13 @@ export const branchSetup = ({
   stash?: string;
   workspace_root: string;
   log?: (message: string) => void;
-}) => {
+}): BranchSetupResult => {
   const cwd = path.resolve(workspace_root);
   const exec = (args: string[]): string =>
     execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] });
   const current = gitContext(cwd).branch;
-  if (!current || current === "unknown") return { error: "not in a git repository" };
+  if (!current || current === "unknown")
+    return { error: "not in a git repository", phase: "preflight" };
   const sdd = sdd_dir ?? "docs";
   const manifestPath = path.isAbsolute(sdd)
     ? path.join(sdd, "manifest.json")
@@ -297,7 +310,6 @@ export const branchSetup = ({
     const dir = path.dirname(manifestPath);
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o755 });
   };
-  ensureManifestDir();
   const readManifest = (): Record<string, unknown> => {
     try {
       return JSON.parse(readFileSync(manifestPath, "utf8"));
@@ -315,13 +327,16 @@ export const branchSetup = ({
   if (action === "reapply_stash") {
     const manifest = readManifest();
     const ref = manifest.stash_ref;
-    if (!ref) return { error: "no stash_ref in manifest" };
+    if (!ref) return { error: "no stash_ref in manifest", phase: "preflight" };
     journal(`pre-pop: ${String(ref)}`);
     try {
       exec(["stash", "pop", String(ref)]);
     } catch (error) {
       journal("pop: failed");
-      return { error: error instanceof Error ? error.message : "stash pop failed" };
+      return {
+        error: error instanceof Error ? error.message : "stash pop failed",
+        phase: "post_mutation",
+      };
     }
     journal("pop: ok");
     delete manifest.stash_ref;
@@ -331,10 +346,17 @@ export const branchSetup = ({
   }
 
   const target = target_branch ?? "";
-  if (!target) return { error: "target branch required" };
-  if (isProtected(cwd, target)) return { error: `protected branch ${target}` };
+  if (!target)
+    return {
+      error: "target_branch (the working branch to create or switch to) is required for setup",
+      phase: "preflight",
+    };
+  if (isProtected(cwd, target)) return { error: `protected branch ${target}`, phase: "preflight" };
   if (!allowedBranch(cwd, target))
-    return { error: `target branch ${target} is not allowed by the branch policy` };
+    return {
+      error: `target branch ${target} is not allowed by the branch policy`,
+      phase: "preflight",
+    };
 
   // CA-02: resolve the base up front so an unresolvable base fails before
   // any mutation. The origin/<base> validation runs after the stash gate
@@ -348,7 +370,7 @@ export const branchSetup = ({
   }
   if (!targetExists) {
     const baseResolved = baseBranch(cwd);
-    if ("error" in baseResolved) return { error: baseResolved.error };
+    if ("error" in baseResolved) return { error: baseResolved.error, phase: "preflight" };
     base = baseResolved.base;
   }
   journal(`entry: current=${current} target=${target} base=${base ?? "-"}`);
@@ -356,7 +378,10 @@ export const branchSetup = ({
   let stash_ref: string | undefined;
   // Best-effort restore; if the pop itself fails, the caller's error gains a
   // suffix pointing at the stash so stranded work stays discoverable.
-  const failAfterStash = (message: string): { error: string } => {
+  const failAfterStash = (
+    message: string,
+    phase: "preflight" | "post_mutation" = "post_mutation",
+  ): { error: string; phase: "preflight" | "post_mutation" } => {
     let suffix = "";
     if (stash_ref) {
       journal(`pre-pop: ${stash_ref}`);
@@ -369,7 +394,7 @@ export const branchSetup = ({
         suffix = " (changes preserved in stash)";
       }
     }
-    return { error: `${message}${suffix}` };
+    return { error: `${message}${suffix}`, phase: stash_ref ? "post_mutation" : phase };
   };
   if (current !== target) {
     const dirty = Boolean(gitContext(cwd).status_short.trim());
@@ -377,6 +402,7 @@ export const branchSetup = ({
       return {
         error:
           "dirty working tree — ask with native question, then call workit_branch_setup with stash=yes",
+        phase: "preflight",
       };
     }
     // CA-02: validate origin/<base> before ANY mutation (no snapshot, no
@@ -386,14 +412,18 @@ export const branchSetup = ({
     let validatedBase: string | undefined;
     if (!targetExists && base !== undefined) {
       const ready = originBaseReady(cwd, base);
-      if (!ready.ok) return { error: ready.error ?? "ensure-base-branch failed" };
+      if (!ready.ok)
+        return { error: ready.error ?? "ensure-base-branch failed", phase: "preflight" };
       validatedBase = base;
     }
     if (dirty) {
       try {
         exec(["stash", "push", "-u", "-m", `workit: pre-checkout ${target}`]);
       } catch (error) {
-        return { error: error instanceof Error ? error.message : "stash push failed" };
+        return {
+          error: error instanceof Error ? error.message : "stash push failed",
+          phase: "post_mutation",
+        };
       }
       stash_ref = "stash@{0}";
       journal(`stash push: ${stash_ref}`);
@@ -406,13 +436,14 @@ export const branchSetup = ({
       if (/worktree/i.test(message)) {
         return failAfterStash(
           `branch ${target} is locked by an existing git worktree — remove it first (we do not use worktrees)`,
+          "preflight",
         );
       }
       try {
         let effectiveBase = base;
         if (effectiveBase === undefined) {
           const lateResolved = baseBranch(cwd);
-          if ("error" in lateResolved) return failAfterStash(lateResolved.error);
+          if ("error" in lateResolved) return failAfterStash(lateResolved.error, "preflight");
           effectiveBase = lateResolved.base;
         }
         // Pre-validated above when the target was missing: only the

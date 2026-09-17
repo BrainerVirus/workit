@@ -1,8 +1,11 @@
 import {
   failure,
   approvedExternalAction,
+  approvedPlanCommit,
+  planCommitBinding,
   externalActionState,
   priorExternalAction,
+  priorResolvedDrift,
   externalActionDescriptor,
   externalActionHelp,
   externalActionRequest,
@@ -16,6 +19,7 @@ import {
   parseOperation,
   shellRouteIntent,
   success,
+  workitBindingQuestionIssue,
   canonicalJson,
   TaskStore,
   WorkitCore,
@@ -27,6 +31,8 @@ import {
   type ContractResult as Result,
 } from "@brainervirus/workit-core/src/core";
 import {
+  actionProposalQuestion,
+  assertLocalExternalActionWriter,
   approvedResolvedExternalAction,
   executeResolvedExternalAction,
   readExternalAction,
@@ -158,7 +164,41 @@ export const nativeExternalActionRunner = (
   createAuthorizedExternalActionRunner(core, (operation) => {
     const store = new TaskStore(root);
     const selected = approvedExternalAction(store, "pi", actor, operation);
-    if (!selected.ok) return selected;
+    if (!selected.ok) {
+      const plan = planCommitBinding(store, "pi", actor, operation);
+      if (plan) {
+        const actionRef = externalActionRef("pi", actor, operation);
+        return {
+          taskId: plan.taskId,
+          decisionId: plan.decisionId,
+          actionRef,
+          expectedRevision: plan.expectedRevision,
+          expectedWorkspaceRevision: plan.expectedWorkspaceRevision,
+          binding: plan.binding,
+          step: plan.step,
+          refresh: () => {
+            const task = store.readTask(plan.taskId);
+            const freshWorkspace = store.readWorkspace();
+            if (!task.ok || !freshWorkspace.ok || !freshWorkspace.data)
+              throw new Error("external action state changed");
+            return {
+              expectedRevision: task.data.revision,
+              expectedWorkspaceRevision: freshWorkspace.data.revision,
+            };
+          },
+          reserveObservation: nativeExternalActionObservation(actor, actionRef, "reserve"),
+          settleObservation: (outcome: "succeeded" | "not_started" | "unknown", revisions) =>
+            nativeExternalActionObservation(
+              actor,
+              actionRef,
+              outcome,
+              actionRef.kind === "host" ? actionRef.handle : "external-action",
+              revisions,
+            ),
+        };
+      }
+      return selected;
+    }
     const actionRef = externalActionRef("pi", actor, operation);
     return {
       taskId: selected.data.task.id,
@@ -246,8 +286,22 @@ const executeFamily = async (
       );
     const decision = parsed.data as {
       response: "approved" | "rejected";
-      binding: { presented: string };
+      binding: { presented: string; approvedContent: string; displayed?: string };
     };
+    const budgetIssue = workitBindingQuestionIssue([
+      {
+        header: `Workit decision: ${(parsed.data as { purpose: string }).purpose}`,
+        question: decision.binding.presented,
+        options: [
+          {
+            label: "approved",
+            description: decision.binding.displayed ?? decision.binding.approvedContent,
+          },
+          { label: "rejected", description: "Reject this decision" },
+        ],
+      },
+    ]);
+    if (budgetIssue) return output(failure("invalid_input", budgetIssue));
     const approved = await ctx.ui.confirm("Workit decision", decision.binding.presented);
     if (approved !== (decision.response === "approved"))
       return output(
@@ -334,6 +388,25 @@ export const registerWorkitTools = (
         ...context,
         nativeAuthority: nativeAuthority(actor, reconciliationTokens),
       });
+      const localOperation = [
+        "git.branch_setup",
+        "git.commit",
+        "git.push",
+        "hosting.pull_request",
+        "changelog.apply",
+      ].includes(resolved.data.request.operation);
+      if (localOperation) {
+        const writer = assertLocalExternalActionWriter(ctx.cwd, { host: "pi", actor });
+        if (!writer.ok)
+          return output(
+            failure("needs_input", "writer ownership is required before this action", {
+              outcome: "not_started",
+              operation: resolved.data.request.operation,
+              guidance:
+                "Acquire checkout writer ownership first (writer.acquire) and retry the action.",
+            }),
+          );
+      }
       const descriptor = externalActionDescriptor(
         resolved.data.request.operation,
         resolved.data.descriptorPayload,
@@ -398,8 +471,41 @@ export const registerWorkitTools = (
       }
       if (priorRequest.ok && priorRequest.data.entry.data.consumption !== null)
         return output(failure("permission_denied", "external action was already settled"));
+      const drift =
+        resolved.data.request.operation === "git.branch_setup"
+          ? priorResolvedDrift(
+              store,
+              "pi",
+              actor,
+              resolved.data.request.operation,
+              resolved.data.request.payload,
+              (resolved.data.descriptorPayload as { resolved?: unknown }).resolved,
+            )
+          : success(null, null, null);
+      if (!drift.ok) return output(drift);
       const existing = approvedExternalAction(store, "pi", actor, descriptor);
       if (!existing.ok) {
+        const commitMessage =
+          resolved.data.request.operation === "git.commit"
+            ? (resolved.data.request.payload as { message?: unknown }).message
+            : undefined;
+        const currentBranch = (
+          resolved.data.descriptorPayload as { resolved?: { branch?: unknown } }
+        ).resolved?.branch;
+        const plan =
+          typeof commitMessage === "string" && commitMessage
+            ? approvedPlanCommit(store, "pi", actor, commitMessage)
+            : null;
+        if (plan?.ok && plan.data.branch === currentBranch) {
+          const result = await nativeExternalActionRunner(
+            ctx.cwd,
+            actor,
+            core,
+          )(descriptor, (step) =>
+            executeResolvedExternalAction(resolved.data, ctx.cwd, step, { host: "pi", actor }),
+          );
+          return output(result);
+        }
         const prior = externalActionState(store, "pi", actor, descriptor);
         if (prior.ok && prior.data.entry.data.consumption !== null)
           return output(failure("permission_denied", "external action was already settled"));
@@ -420,7 +526,11 @@ export const registerWorkitTools = (
             failure("permission_denied", "external action requires exactly one active Pi task"),
           );
         const task = candidates[0];
-        const approved = await ctx.ui.confirm("Workit external action", descriptor);
+        const question = actionProposalQuestion(
+          resolved.data.request,
+          resolved.data.descriptorPayload,
+        );
+        const approved = await ctx.ui.confirm(question.presented, question.approvedText);
         if (!approved)
           return output(failure("permission_denied", "external action was not approved"));
         const currentWorkspace = store.readWorkspace();
@@ -437,8 +547,9 @@ export const registerWorkitTools = (
               taskId: task.id,
               workspaceId: currentWorkspace.data.id,
               scope: task.intent.data.scope,
-              presented: `Approve ${descriptor}`,
+              presented: question.presented,
               approvedContent: descriptor,
+              displayed: question.approvedText,
               contentRefs: [],
             },
             response: "approved",
@@ -448,6 +559,9 @@ export const registerWorkitTools = (
         );
         if (!decision.ok) return output(decision);
       }
+      const planSteps = (resolved.data.descriptorPayload as { plan_steps?: unknown }).plan_steps;
+      if (resolved.data.request.operation === "git.commit" && Array.isArray(planSteps))
+        return output(success(null, null, { plan_commits: planSteps.length }));
       const result = await nativeExternalActionRunner(
         ctx.cwd,
         actor,

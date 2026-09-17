@@ -49,6 +49,19 @@ const capability = (overrides: Partial<Capability> = {}): Capability => ({
   ...overrides,
 });
 
+test("a fresh-context-review capability activates the review method", () => {
+  const result = selectMethods(
+    policy(requirement({ ruleId: "fresh-context-review", dimension: "review" })),
+    [capability({ name: "fresh-context-review", surface: "task", assurance: "agent_guided" })],
+  );
+  expect(result).toMatchObject([{ id: "workit-review", assurance: "agent_guided" }]);
+  const withoutCapability = selectMethods(
+    policy(requirement({ ruleId: "fresh-context-review", dimension: "review" })),
+    [],
+  );
+  expect(withoutCapability).toMatchObject([{ id: "workit-review", assurance: "unavailable" }]);
+});
+
 test("mechanical work loads no design or TDD method", () => {
   const result = selectMethods(
     policy(

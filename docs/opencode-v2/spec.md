@@ -20,7 +20,11 @@ the real-host V1 and V2 matrices. The prerequisite behavior in
 `feature/workit-runtime-reliability` (`ecccfc0` semantic receipts and per-loop
 method projection, `1bd7374` durable dispatch claims, `a70a8a5` route
 enforcement, `8338cbf` docs handoff); this port consumes those corrected
-contracts.
+contracts. The `docs/workit-reliability-delta/` slice then added
+concise native action approvals with hidden exact descriptors, plan-scoped
+commit approvals, protocol and state-transition fixes, persisted runtime
+metadata, and show-before-ask guidance; the V2 adapter consumes those contracts
+as well.
 
 ## 2. Non-goals
 

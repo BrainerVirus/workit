@@ -7,10 +7,10 @@ host documents.
 
 | Package     | Purpose                                                                         |
 | ----------- | ------------------------------------------------------------------------------- |
-| OpenCode    | Native plugin with fourteen method skills, eight tools, and provider-safe schemas |
+| OpenCode    | Native plugin with fourteen method skills, ten tools (eight shared families plus external action and init apply), and provider-safe schemas |
 | Cursor      | MCP transport, one native hook dispatcher, one contract rule, and fourteen skills  |
 | Codex       | Native plugin manifest, shared MCP transport, documented lifecycle hooks, and fourteen skills |
-| Pi          | Native npm extension with eight tools, fourteen skills, and session continuity      |
+| Pi          | Native npm extension with nine tools (eight shared families plus external action), fourteen skills, and session continuity |
 | Shared MCP  | Low-level transport for the eight core operation families                       |
 | Shared core | Task, policy, evidence, finding, decision, worker, writer, and continuity state |
 | CLI         | Setup wizard (`workit`)                                                         |
@@ -195,11 +195,11 @@ review requirements still need a session distinct from the task creator and
 other evidence recorders.
 
 Skills are reachable two ways: model-invoked automatically when the task fits,
-or explicitly via five bare aliases — `/challenge`, `/babysit`, `/implement`,
-`/plan`, `/debug` — on OpenCode, Cursor, and Pi. An alias routes through
-policy to the method skills and never calls another alias. Codex CLI has no
-slash path: invoke skills explicitly as `$workit-<name>` or from the `/skills`
-picker. Creating a PR auto-starts babysit (drive default; opt out with
+or explicitly via the fourteen `wk-*` aliases (`/wk-challenge`, `/wk-babysit`,
+`/wk-implement`, `/wk-plan`, `/wk-debug`, and the rest) on OpenCode, Cursor, and
+Pi. An alias routes through policy to the method skills and never calls another
+alias. Codex CLI has no slash path: invoke skills explicitly as
+`$workit-<name>` or from the `/skills` picker. Creating a PR auto-starts babysit (drive default; opt out with
 `babysit:false`); a PR URL observed from a route Workit did not enforce is
 still driven through `workit-babysit`, without claiming enforcement. Raw
 branch and PR creation commands are denied on OpenCode, Codex, and Pi with the

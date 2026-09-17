@@ -22,9 +22,21 @@ selects requirements; do not wait for a rule that can only exist after assess.
    needed, owner, and next action. Keep the plan against the existing system.
 3. If policy separately requires a durable specification, record that behavior
    agreement; otherwise do not invent a spec. A plan without a spec is valid.
-4. Update the shared task progress at meaningful boundaries. Reassess when facts,
+4. Present before asking: show durable artifacts as a complete digest plus the
+   exact path and inline plans as their content. Never ask the user to approve
+   something they have not seen, and keep the question to one short scoped
+   sentence.
+5. Execute an approved plan continuously: one atomic commit per task after its
+   checks pass, no "continue?" prompts. Stop only for a new product decision, a
+   failed safety or verification gate, a conflicting concurrent edit, or missing
+   authority.
+6. Record the plan's commit list once through the plan-scoped action approval
+   (`git.commit` with `plan_steps` and `plan_branch`) so each listed commit runs
+   without a new question; an unlisted message, a branch change, or any change to
+   the plan needs a fresh exact approval.
+7. Update the shared task progress at meaningful boundaries. Reassess when facts,
    dependencies, or scope change; preserve unresolved blockers and decisions.
-5. On steering (new instructions mid-task): apply `workit-steer` — park state
+8. On steering (new instructions mid-task): apply `workit-steer` — park state
    verbatim, classify same-task / new-task / quick-question, handle, re-anchor.
 
 Use shared task/progress and evidence operations. Do not create a universal

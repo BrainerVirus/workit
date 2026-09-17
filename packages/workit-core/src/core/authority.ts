@@ -432,7 +432,15 @@ export const verifyDecisionContentAtRoot = (
       return failure("invalid_input", "document references require a byte digest");
     const target = path.resolve(root, reference.path);
     if (target !== root && !target.startsWith(`${root}${path.sep}`))
-      return failure("invalid_input", "document reference escapes checkout");
+      return failure(
+        "invalid_input",
+        "document reference escapes checkout; cite it as an external file:// reference instead",
+        {
+          fields: [
+            { path: "contentRefs.path", reason: `${reference.path} is outside the checkout` },
+          ],
+        },
+      );
     try {
       const relative = path.relative(root, target);
       let current = root;
@@ -442,7 +450,18 @@ export const verifyDecisionContentAtRoot = (
         const stat = fs.lstatSync(current);
         const real = fs.realpathSync(current);
         if (real !== root && !real.startsWith(`${root}${path.sep}`))
-          return failure("invalid_input", "document reference escapes checkout");
+          return failure(
+            "invalid_input",
+            "document reference escapes checkout; cite it as an external file:// reference instead",
+            {
+              fields: [
+                {
+                  path: "contentRefs.path",
+                  reason: `${reference.path} resolves outside the checkout`,
+                },
+              ],
+            },
+          );
         if (stat.isSymbolicLink())
           return failure("invalid_input", "document reference uses a symlink");
         if (current === target && !stat.isFile())

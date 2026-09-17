@@ -106,6 +106,15 @@ export const cursorCapabilities = (availability: HookAvailability = {}): Capabil
       refs: [hostRef("subagentStart")],
     },
     {
+      name: "fresh-context-review",
+      surface: "subagentStart",
+      assurance: has("subagentStart") ? "agent_guided" : "unavailable",
+      reason: has("subagentStart")
+        ? "independent review runs as a bounded reviewer subagent; stops lack stable identity, so reviewer exclusivity is evaluated from recorded evidence"
+        : "Cursor subagentStart is unavailable for independent review",
+      refs: [hostRef("subagentStart")],
+    },
+    {
       name: "arbitrary_shell_write",
       surface: "unobservable_shell",
       assurance: "unavailable",

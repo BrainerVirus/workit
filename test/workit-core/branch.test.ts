@@ -13,6 +13,10 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { createRepoTools } from "@/packages/workit-opencode/src/tools/repo";
 import { branchSetup } from "@/packages/workit-core/src/core/branch";
+import { resolveExternalActionRequest } from "@/packages/workit-core/src/core/external-action-effects";
+import { externalActionDescriptor } from "@/packages/workit-core/src/core/external-action";
+import { actionProposalQuestion } from "@/packages/workit-core/src/core/external-action-effects";
+import { externalActionRequest } from "@/packages/workit-core/src/core/external-action";
 
 const git = (cwd: string, args: string[]) => spawnSync("git", args, { cwd, encoding: "utf8" });
 
@@ -159,6 +163,153 @@ test(
   },
   { timeout: 60_000 },
 );
+
+test(
+  "setup without target_branch fails preflight and creates nothing",
+  () => {
+    const { root, remote } = repoOnMain({ withDevelop: true });
+    try {
+      const result = branchSetup({ workspace_root: root, sdd_dir: "docs/sdd" });
+      expect("error" in result).toBe(true);
+      if (!("error" in result)) return;
+      expect(result.phase).toBe("preflight");
+      expect(result.error).toContain("target_branch");
+      expect(existsSync(path.join(root, "docs"))).toBe(false);
+      expect(git(root, ["branch", "--show-current"]).stdout.trim()).toBe("main");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(remote, { recursive: true, force: true });
+    }
+  },
+  { timeout: 60_000 },
+);
+
+test(
+  "dirty preflight rejection leaves HEAD, stash, and manifest untouched",
+  () => {
+    const { root, remote } = repoOnMain({ withDevelop: true });
+    try {
+      git(root, ["branch", "feature/exists"]);
+      dirtyTree(root);
+      const before = git(root, ["rev-parse", "HEAD"]).stdout.trim();
+      const result = branchSetup({
+        target_branch: "feature/exists",
+        stash: "no",
+        workspace_root: root,
+        sdd_dir: "docs/sdd",
+      });
+      expect("error" in result).toBe(true);
+      if (!("error" in result)) return;
+      expect(result.phase).toBe("preflight");
+      expect(result.error).toContain("dirty working tree");
+      expect(existsSync(path.join(root, "docs"))).toBe(false);
+      expect(git(root, ["rev-parse", "HEAD"]).stdout.trim()).toBe(before);
+      expect(git(root, ["stash", "list"]).stdout.trim()).toBe("");
+      expect(git(root, ["branch", "--show-current"]).stdout.trim()).toBe("main");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(remote, { recursive: true, force: true });
+    }
+  },
+  { timeout: 60_000 },
+);
+
+test(
+  "branch setup resolution requires the working branch and binds its base baseline",
+  () => {
+    const { root, remote } = repoOnMain({ withDevelop: true });
+    try {
+      const missing = externalActionRequest({
+        operation: "git.branch_setup",
+        payload: { action: "setup" },
+      });
+      expect(missing.ok).toBe(true);
+      if (!missing.ok) return;
+      const unresolved = resolveExternalActionRequest(root, missing.data);
+      expect(unresolved.ok).toBe(false);
+      if (!unresolved.ok) {
+        expect(unresolved.code).toBe("invalid_input");
+        expect((unresolved.details as { outcome?: string } | undefined)?.outcome).toBe(
+          "not_started",
+        );
+      }
+      const request = externalActionRequest({
+        operation: "git.branch_setup",
+        payload: { action: "setup", target_branch: "feature/delta" },
+      });
+      expect(request.ok).toBe(true);
+      if (!request.ok) return;
+      const resolved = resolveExternalActionRequest(root, request.data);
+      expect(resolved.ok).toBe(true);
+      if (resolved.ok) {
+        const payload = resolved.data.descriptorPayload as {
+          resolved?: Record<string, unknown>;
+        };
+        expect(payload.resolved?.base_branch).toBe("develop");
+        expect(payload.resolved?.target_exists).toBe(false);
+        expect(String(payload.resolved?.remote_base)).toMatch(/^[0-9a-f]{40}$/);
+        expect(payload.resolved?.dirty).toBe(false);
+      }
+      const reapply = externalActionRequest({
+        operation: "git.branch_setup",
+        payload: { action: "reapply_stash" },
+      });
+      expect(reapply.ok).toBe(true);
+      if (!reapply.ok) return;
+      const resolvedReapply = resolveExternalActionRequest(root, reapply.data);
+      expect(resolvedReapply.ok).toBe(true);
+      if (resolvedReapply.ok) {
+        const question = actionProposalQuestion(
+          resolvedReapply.data.request,
+          resolvedReapply.data.descriptorPayload,
+        );
+        expect(question.presented).toContain("Reapply the pre-checkout stash");
+        expect(question.presented).not.toContain("Create branch");
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(remote, { recursive: true, force: true });
+    }
+  },
+  { timeout: 60_000 },
+);
+
+test("branch setup binds the remote base so a remote advance changes the descriptor", () => {
+  const { root, remote } = repoOnMain({ withDevelop: true });
+  try {
+    const request = externalActionRequest({
+      operation: "git.branch_setup",
+      payload: { action: "setup", target_branch: "feature/delta" },
+    });
+    expect(request.ok).toBe(true);
+    if (!request.ok) return;
+    const before = resolveExternalActionRequest(root, request.data);
+    expect(before.ok).toBe(true);
+    if (!before.ok) return;
+    const descriptorBefore = externalActionDescriptor(
+      before.data.request.operation,
+      before.data.descriptorPayload,
+    );
+    git(root, ["fetch", "-q", "origin", "develop:develop"]);
+    git(root, ["checkout", "-q", "develop"]);
+    writeFileSync(path.join(root, "advance.txt"), "advance\n");
+    git(root, ["add", "advance.txt"]);
+    git(root, ["commit", "-qm", "advance"]);
+    git(root, ["push", "-q", "origin", "develop"]);
+    git(root, ["checkout", "-q", "main"]);
+    const after = resolveExternalActionRequest(root, request.data);
+    expect(after.ok).toBe(true);
+    if (!after.ok) return;
+    const descriptorAfter = externalActionDescriptor(
+      after.data.request.operation,
+      after.data.descriptorPayload,
+    );
+    expect(descriptorAfter).not.toBe(descriptorBefore);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(remote, { recursive: true, force: true });
+  }
+});
 
 test(
   "failed base resolution fails before any stash and leaves tree intact",

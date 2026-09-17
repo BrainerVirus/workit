@@ -7,12 +7,15 @@ import {
   type Result,
   type Revision,
   type Decision,
+  type Entry,
+  type TaskRecord,
   refSchema,
   sha256,
 } from "./task-contract";
 import { WorkitCore } from "./task-engine";
 import { TaskStore } from "./task-store";
 import * as z from "zod";
+import { execFileSync } from "node:child_process";
 
 export type AuthorizedActionInput = {
   core: WorkitCore;
@@ -53,7 +56,13 @@ const externalActionSchema = z.discriminatedUnion("operation", [
   z
     .object({
       operation: z.literal("git.commit"),
-      payload: z.object({ message: z.string().min(1) }).strict(),
+      payload: z
+        .object({
+          message: z.string().min(1).optional(),
+          plan_steps: z.array(z.string().min(1)).optional(),
+          plan_branch: z.string().min(1).optional(),
+        })
+        .strict(),
     })
     .strict(),
   z
@@ -206,7 +215,7 @@ export const externalActionDescriptor = (operation: string, payload: unknown): s
 
 /** Compact host-facing help for the fixed optional-action surface. */
 export const externalActionHelp =
-  "Fixed actions: git.branch_setup {action?,sdd_dir?,target_branch?,stash?}; git.commit {message}; git.push {branch?}; hosting.pull_request {title,body?,draft?,target_branch?,babysit?}; youtrack.update {issueId,markdown,minutes?}; youtrack.time {issueId,minutes,text?,dateMs?}; youtrack.meeting {issueId,minutes,text}; changelog.apply {entries?,path?,normalize_only?}; context.read {kind,range?,issueId?,issueUrl?,issueRef?,mode?,specPath?,planPath?}. context.read is read-only and needs no approval; all other operations require native approval (CLI uses a TTY; caller-unattested MCP cannot mutate).";
+  "Fixed actions: git.branch_setup {action?,sdd_dir?,target_branch(required unless reapply_stash; the working branch to create or switch to),stash?}; git.commit {message}; git.push {branch?}; hosting.pull_request {title,body?,draft?,target_branch?,babysit?}; youtrack.update {issueId,markdown,minutes?}; youtrack.time {issueId,minutes,text?,dateMs?}; youtrack.meeting {issueId,minutes,text}; changelog.apply {entries?,path?,normalize_only?}; context.read {kind,range?,issueId?,issueUrl?,issueRef?,mode?,specPath?,planPath?}. context.read is read-only and needs no approval; all other operations require native approval (CLI uses a TTY; caller-unattested MCP cannot mutate).";
 
 export const externalActionRef = (
   host: "opencode" | "pi" | "workit_cli",
@@ -311,6 +320,151 @@ export const priorExternalAction = (
   return success(workspace.data.revision, null, { ...candidates[0], workspace: workspace.data });
 };
 
+/** Parse a plan-commit authorization descriptor (one approved list per plan). */
+export const planCommitDescriptor = (
+  content: string,
+): { steps: string[]; branch: string } | null => {
+  try {
+    const value = JSON.parse(content) as {
+      operation?: unknown;
+      payload?: { plan_steps?: unknown; plan_branch?: unknown };
+    };
+    if (value.operation !== "git.commit" || !value.payload) return null;
+    const steps = value.payload.plan_steps;
+    const branch = value.payload.plan_branch;
+    if (
+      !Array.isArray(steps) ||
+      steps.some((step) => typeof step !== "string" || !step) ||
+      typeof branch !== "string" ||
+      !branch
+    )
+      return null;
+    return { steps: steps as string[], branch };
+  } catch {
+    return null;
+  }
+};
+
+export type PlanCommitAuthorization = {
+  task: TaskRecord;
+  entry: Entry<Decision>;
+  steps: string[];
+  branch: string;
+  completed: string[];
+};
+
+/**
+ * Find the single active plan-commit authorization whose next unconsumed step
+ * is this exact commit message. Consumption order is enforced so each listed
+ * commit executes once, in plan order; unlisted or replayed messages find no
+ * authorization and require a fresh exact approval.
+ */
+export const approvedPlanCommit = (
+  store: TaskStore,
+  host: string,
+  actor: string,
+  message: string,
+): Result<PlanCommitAuthorization> => {
+  if (typeof message !== "string" || !message)
+    return failure("invalid_input", "commit message is required");
+  const listed = store.listTasks();
+  const workspace = store.readWorkspace();
+  if (!listed.ok || !workspace.ok)
+    return failure("storage_error", "external action state is unavailable");
+  if (!workspace.data) return failure("not_found", "workspace not found");
+  const matches = listed.data.flatMap((task) => {
+    if (task.status !== "active" || task.workspaceId !== workspace.data!.id) return [];
+    if (
+      task.intent.provenance.session?.kind !== "host" ||
+      task.intent.provenance.session.host !== host ||
+      task.intent.provenance.session.handle !== actor
+    )
+      return [];
+    return task.decisions.flatMap((entry) => {
+      const decision = entry.data;
+      if (
+        decision.purpose !== "action" ||
+        decision.response !== "approved" ||
+        decision.revoked !== null
+      )
+        return [];
+      if (entry.provenance.kind !== "host_observed" || entry.provenance.receipts.length === 0)
+        return [];
+      const plan = planCommitDescriptor(decision.binding.approvedContent);
+      if (!plan) return [];
+      const completed =
+        task.actionProgress?.find((progress) => progress.decisionId === entry.id)?.completedSteps ??
+        [];
+      if (plan.steps[completed.length] !== message) return [];
+      return [{ task, entry, steps: plan.steps, branch: plan.branch, completed: [...completed] }];
+    });
+  });
+  if (matches.length !== 1)
+    return failure(
+      "permission_denied",
+      matches.length === 0
+        ? "no plan commit authorization matches this message"
+        : "multiple plan authorizations match this message",
+    );
+  return success(workspace.data.revision, null, matches[0]);
+};
+
+export const commitMessageFromDescriptor = (operation: string): string | undefined => {
+  try {
+    const descriptor = JSON.parse(operation) as {
+      operation?: unknown;
+      payload?: { message?: unknown };
+    };
+    return descriptor.operation === "git.commit" && typeof descriptor.payload?.message === "string"
+      ? descriptor.payload.message
+      : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+/** Resolve a plan-commit authorization into the exact binding an adapter needs
+ * to run one listed commit under the approved list. */
+export const planCommitBinding = (
+  store: TaskStore,
+  host: string,
+  actor: string,
+  operation: string,
+): {
+  taskId: Id;
+  decisionId: Id;
+  binding: Decision["binding"];
+  expectedRevision: Revision;
+  expectedWorkspaceRevision: Revision;
+  step: string;
+} | null => {
+  const message = commitMessageFromDescriptor(operation);
+  if (!message) return null;
+  const plan = approvedPlanCommit(store, host, actor, message);
+  if (!plan.ok) return null;
+  let branch: string;
+  try {
+    branch = execFileSync("git", ["branch", "--show-current"], {
+      cwd: store.root,
+      encoding: "utf8",
+      stdio: ["pipe", "pipe", "pipe"],
+    }).trim();
+  } catch {
+    return null;
+  }
+  if (!branch || branch !== plan.data.branch) return null;
+  const workspace = store.readWorkspace();
+  if (!workspace.ok || !workspace.data) return null;
+  return {
+    taskId: plan.data.task.id,
+    decisionId: plan.data.entry.id,
+    binding: plan.data.entry.data.binding,
+    expectedRevision: plan.data.task.revision,
+    expectedWorkspaceRevision: workspace.data.revision,
+    step: message,
+  };
+};
+
 export const approvedExternalAction = (
   store: TaskStore,
   host: string,
@@ -329,6 +483,40 @@ export const approvedExternalAction = (
         : "external action was already settled",
     );
   return selected;
+};
+
+/**
+ * Re-resolve guard: when a prior approval exists for the same requested
+ * operation/payload, the freshly resolved baseline (source state and remote
+ * base) must still match the approved descriptor. Drift returns not_started so
+ * the agent re-presents the current state instead of executing a stale effect.
+ */
+export const priorResolvedDrift = (
+  store: TaskStore,
+  host: string,
+  actor: string,
+  operation: string,
+  payload: unknown,
+  currentResolved: unknown,
+): Result<null> => {
+  const prior = priorExternalAction(store, host, actor, operation, payload);
+  if (!prior.ok) return success(null, null, null);
+  let baseline: unknown;
+  try {
+    const parsed = JSON.parse(prior.data.entry.data.binding.approvedContent) as {
+      payload?: { resolved?: unknown };
+    };
+    baseline = parsed.payload?.resolved;
+  } catch {
+    return success(null, null, null);
+  }
+  if (baseline === undefined || baseline === null) return success(null, null, null);
+  if (canonicalJson(baseline) === canonicalJson(currentResolved)) return success(null, null, null);
+  return failure(
+    "invalid_input",
+    "repository state changed since approval; show the current state and approve the action again",
+    { outcome: "not_started", operation },
+  );
 };
 
 export const createAuthorizedExternalActionRunner =

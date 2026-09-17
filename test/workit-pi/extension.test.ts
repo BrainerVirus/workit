@@ -452,6 +452,143 @@ test("Pi optional actions use native UI and the exact resolved descriptor", asyn
   }
 });
 
+test("Pi executes a plan-commit list once per listed message", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "workit-pi-plan-commits-"));
+  try {
+    for (const args of [
+      ["init", "-q", "-b", "feature/plan"],
+      ["config", "user.email", "test@example.invalid"],
+      ["config", "user.name", "Workit Test"],
+    ])
+      spawnSync("git", args, { cwd: root });
+    writeFileSync(path.join(root, "base.txt"), "base\n");
+    spawnSync("git", ["add", "base.txt"], { cwd: root });
+    spawnSync("git", ["commit", "-qm", "base"], { cwd: root });
+    const store = new TaskStore(root);
+    const core = () =>
+      new WorkitCore(store, {
+        root,
+        caller: { host: "pi", actor: "pi-session" },
+        callerAttested: true,
+        capabilities: [],
+        constraints: [],
+        now: "2026-01-01T00:00:00Z",
+      });
+    const started = core().task(taskStartRequest());
+    if (!started.ok) throw new Error(started.error);
+    const task = store.readTask((started.data as { id: string }).id);
+    const workspace = store.readWorkspace();
+    if (!task.ok || !workspace.ok || !workspace.data) throw new Error("task setup failed");
+    expect(
+      core().writer({
+        schemaVersion: 1,
+        action: "acquire",
+        taskId: task.data.id,
+        expectedRevision: task.data.revision,
+        expectedWorkspaceRevision: workspace.data.revision,
+        workerId: null,
+      }),
+    ).toMatchObject({ ok: true });
+    let confirms = 0;
+    const actionContext = context(root, true);
+    actionContext.ui = {
+      confirm: async () => {
+        confirms += 1;
+        return true;
+      },
+    };
+    const pi = makePi();
+    await extension(pi as any);
+    const action = pi.tools.find((tool) => tool.name === "workit_external_action");
+    const plan = await action.execute(
+      "plan-list",
+      {
+        operation: "git.commit",
+        payload: { plan_steps: ["chore(a): one"], plan_branch: "feature/plan" },
+      },
+      undefined,
+      undefined,
+      actionContext,
+    );
+    expect(plan.details).toMatchObject({ ok: true, data: { plan_commits: 1 } });
+    expect(confirms).toBe(1);
+    writeFileSync(path.join(root, "one.txt"), "one\n");
+    spawnSync("git", ["add", "one.txt"], { cwd: root });
+    const commit = await action.execute(
+      "plan-commit",
+      { operation: "git.commit", payload: { message: "chore(a): one" } },
+      undefined,
+      undefined,
+      actionContext,
+    );
+    expect(commit.details).toMatchObject({ ok: true });
+    expect(confirms).toBe(1);
+    expect(
+      spawnSync("git", ["log", "-1", "--pretty=%s"], { cwd: root, encoding: "utf8" }).stdout.trim(),
+    ).toBe("chore(a): one");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Pi requires writer ownership and concise binding questions", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "workit-pi-writer-budget-"));
+  try {
+    for (const args of [
+      ["init", "-q"],
+      ["config", "user.email", "test@example.invalid"],
+      ["config", "user.name", "Workit Test"],
+    ])
+      spawnSync("git", args, { cwd: root });
+    writeFileSync(path.join(root, "base.txt"), "base\n");
+    spawnSync("git", ["add", "base.txt"], { cwd: root });
+    spawnSync("git", ["commit", "-qm", "base"], { cwd: root });
+    writeFileSync(path.join(root, "change.txt"), "change\n");
+    spawnSync("git", ["add", "change.txt"], { cwd: root });
+    const { task, workspace } = startedTask(root);
+    const pi = makePi();
+    await extension(pi as any);
+    const action = pi.tools.find((tool) => tool.name === "workit_external_action");
+    const commit = await action.execute(
+      "writer-prereq",
+      { operation: "git.commit", payload: { message: "chore(test): needs writer" } },
+      undefined,
+      undefined,
+      context(root, true),
+    );
+    expect(commit.details).toMatchObject({ ok: false, code: "needs_input" });
+    expect(String(commit.details.error)).toContain("writer ownership");
+    const decision = pi.tools.find((tool) => tool.name === "workit_decision");
+    const long = `Approve ${"x".repeat(400)}`;
+    const recorded = await decision.execute(
+      "budget",
+      {
+        schemaVersion: 1,
+        action: "record",
+        taskId: task.id,
+        purpose: "design",
+        binding: {
+          taskId: task.id,
+          workspaceId: workspace.id,
+          scope: task.intent.data.scope,
+          presented: long,
+          approvedContent: long,
+          contentRefs: [],
+        },
+        response: "approved",
+        requirementIds: [],
+      },
+      undefined,
+      undefined,
+      context(root, true),
+    );
+    expect(recorded.details).toMatchObject({ ok: false, code: "invalid_input" });
+    expect(String(recorded.details.error)).toContain("present the item");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("Pi child registration omits coordinator-only optional actions", async () => {
   const previous = process.env.WORKIT_PI_WORKER_ID;
   process.env.WORKIT_PI_WORKER_ID = "worker-child";

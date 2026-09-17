@@ -80,6 +80,15 @@ export const codexCapabilities = (
       refs: [ref(host, "PreToolUse")],
     },
     {
+      name: "fresh-context-review",
+      surface: "SubagentStart",
+      assurance: has("subagentStart") ? "agent_guided" : "unavailable",
+      reason: has("subagentStart")
+        ? "independent review runs as a bounded subagent; evidence evaluation enforces reviewer exclusivity, and stops remain untrusted"
+        : "Codex subagent lifecycle hooks are unavailable for independent review",
+      refs: [ref(host, "SubagentStart")],
+    },
+    {
       name: "native_subagents",
       surface: "SubagentStart/SubagentStop",
       assurance: has("subagentStart") && has("subagentStop") ? "agent_guided" : "unavailable",

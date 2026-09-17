@@ -272,7 +272,7 @@ test("CLI changelog.apply uses the writer for success regardless of scope", asyn
   }
 });
 
-test("CLI TTY route prints the bound descriptor before confirmation", async () => {
+test("CLI TTY route prints the concise question before confirmation", async () => {
   const root = fixture();
   try {
     spawnSync("git", ["init", "-q"], { cwd: root });
@@ -327,7 +327,175 @@ test("CLI TTY route prints the bound descriptor before confirmation", async () =
         },
       ),
     ).toBe(0);
-    expect(out.read().stdout).toContain("External action preview:");
+    expect(out.read().stdout).toContain("Workit decision: action");
+    expect(out.read().stdout).toContain("chore(test): tty commit");
+    expect(out.read().stdout).not.toContain('"operation":"git.commit"');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("CLI executes a plan-commit list once per listed message", async () => {
+  const root = fixture();
+  try {
+    spawnSync("git", ["init", "-q", "-b", "feature/plan"], { cwd: root });
+    spawnSync("git", ["config", "user.email", "test@example.invalid"], { cwd: root });
+    spawnSync("git", ["config", "user.name", "Workit Test"], { cwd: root });
+    writeFileSync(path.join(root, "base.txt"), "base\n");
+    spawnSync("git", ["add", "base.txt"], { cwd: root });
+    spawnSync("git", ["commit", "-qm", "base"], { cwd: root });
+    const store = new TaskStore(root);
+    const core = new WorkitCore(store, {
+      root,
+      caller: { host: "workit_cli", actor: "cli" },
+      capabilities: [],
+      constraints: [],
+      now: "2026-01-01T00:00:00Z",
+    });
+    expect(core.task(taskStartRequest()).ok).toBe(true);
+    const started = store.listTasks();
+    const writerWorkspace = store.readWorkspace();
+    if (!started.ok || started.data.length !== 1 || !writerWorkspace.ok || !writerWorkspace.data)
+      throw new Error("writer state missing");
+    const writerTask = store.readTask(started.data[0].id);
+    if (!writerTask.ok) throw new Error("writer task missing");
+    expect(
+      core.writer({
+        schemaVersion: 1,
+        action: "acquire",
+        taskId: writerTask.data.id,
+        expectedRevision: writerTask.data.revision,
+        expectedWorkspaceRevision: writerWorkspace.data.revision,
+        workerId: null,
+      }),
+    ).toMatchObject({ ok: true });
+    const planOut = capture();
+    expect(
+      await runActionCommand(
+        [
+          "git.commit",
+          "--payload",
+          JSON.stringify({ plan_steps: ["chore(a): one"], plan_branch: "feature/plan" }),
+          "--confirm",
+        ],
+        {
+          cwd: root,
+          actor: "cli",
+          out: planOut.out,
+          err: planOut.err,
+          stdinIsTTY: () => true,
+          confirm: async () => true,
+        },
+      ),
+    ).toBe(0);
+    expect(planOut.read().stdout).toContain("plan_commits");
+
+    writeFileSync(path.join(root, "one.txt"), "one\n");
+    spawnSync("git", ["add", "one.txt"], { cwd: root });
+    let asked = 0;
+    const commitOut = capture();
+    expect(
+      await runActionCommand(
+        ["git.commit", "--payload", JSON.stringify({ message: "chore(a): one" }), "--confirm"],
+        {
+          cwd: root,
+          actor: "cli",
+          out: commitOut.out,
+          err: commitOut.err,
+          stdinIsTTY: () => true,
+          confirm: async () => {
+            asked += 1;
+            return true;
+          },
+        },
+      ),
+    ).toBe(0);
+    expect(asked).toBe(0);
+    expect(
+      spawnSync("git", ["log", "-1", "--pretty=%s"], { cwd: root, encoding: "utf8" }).stdout.trim(),
+    ).toBe("chore(a): one");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("CLI requires writer ownership and concise binding questions", async () => {
+  const root = fixture();
+  try {
+    spawnSync("git", ["init", "-q"], { cwd: root });
+    spawnSync("git", ["config", "user.email", "test@example.invalid"], { cwd: root });
+    spawnSync("git", ["config", "user.name", "Workit Test"], { cwd: root });
+    writeFileSync(path.join(root, "base.txt"), "base\n");
+    spawnSync("git", ["add", "base.txt"], { cwd: root });
+    spawnSync("git", ["commit", "-qm", "base"], { cwd: root });
+    writeFileSync(path.join(root, "change.txt"), "change\n");
+    spawnSync("git", ["add", "change.txt"], { cwd: root });
+    const store = new TaskStore(root);
+    const core = new WorkitCore(store, {
+      root,
+      caller: { host: "workit_cli", actor: "cli" },
+      capabilities: [],
+      constraints: [],
+      now: "2026-01-01T00:00:00Z",
+    });
+    expect(core.task(taskStartRequest()).ok).toBe(true);
+    const started = store.listTasks();
+    const workspace = store.readWorkspace();
+    if (!started.ok || started.data.length !== 1 || !workspace.ok || !workspace.data)
+      throw new Error("state missing");
+    const task = store.readTask(started.data[0].id);
+    if (!task.ok) throw new Error("task missing");
+    const out = capture();
+    const code = await runActionCommand(
+      [
+        "git.commit",
+        "--payload",
+        JSON.stringify({ message: "chore(test): needs writer" }),
+        "--confirm",
+      ],
+      {
+        cwd: root,
+        actor: "cli",
+        out: out.out,
+        err: out.err,
+        stdinIsTTY: () => true,
+        confirm: async () => true,
+      },
+    );
+    expect(code).toBe(1);
+    expect(out.read().stderr).toContain("writer ownership");
+
+    const decisionOut = capture();
+    const long = `Approve ${"x".repeat(400)}`;
+    const decisionCode = await runTaskCommand(
+      [
+        "decision",
+        "record",
+        "--json",
+        "--payload",
+        JSON.stringify({
+          schemaVersion: 1,
+          action: "record",
+          taskId: task.data.id,
+          purpose: "design",
+          binding: {
+            taskId: task.data.id,
+            workspaceId: workspace.data.id,
+            scope: task.data.intent.data.scope,
+            presented: long,
+            approvedContent: long,
+            contentRefs: [],
+          },
+          response: "approved",
+          requirementIds: [],
+        }),
+      ],
+      { cwd: root, actor: "cli", out: decisionOut.out, err: decisionOut.err },
+    );
+    const parsed = JSON.parse(decisionOut.read().stdout);
+    expect(parsed).toMatchObject({ ok: false, code: "invalid_input" });
+    expect(String(parsed.error)).toContain("present the item");
+    expect(decisionCode).toBe(1);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

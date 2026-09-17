@@ -353,7 +353,7 @@ export function createRepoTools(runtime: RepoRuntime = defaultRuntime) {
           legacyScriptResult({
             stdout: JSON.stringify(result),
             stderr: "",
-            exitCode: result.error ? 1 : 0,
+            exitCode: "error" in result ? 1 : 0,
             cwd: context.directory,
           }),
         );
