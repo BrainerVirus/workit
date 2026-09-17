@@ -128,9 +128,10 @@ is rejected at review.
 
 - `docs/route-denial-scope/spec.md`: marked superseded (Option A marker gate
   replaced by decision 6 above); kept as history, not to be implemented.
-- `docs/workit-reliability-delta/spec.md`: historical record of shipped
-  v1.0.9/v1.0.10 behavior — left unchanged. Its §1 proposal TTL and
-  fail-closed rules are the mechanism decisions 1–4 replace.
+- `docs/workit-reliability-delta/spec.md` and the receipt-clock sections of
+  `docs/workit-runtime-reliability/spec.md`: historical records of shipped
+  behavior — left unchanged. Their proposal TTL and fail-closed rules are
+  the mechanism decisions 1–4 replace.
 - `AGENTS.md`, `CHANGELOG.md`: unchanged until implementation lands; they
   describe current behavior truthfully today.
 

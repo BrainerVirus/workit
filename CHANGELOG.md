@@ -54,8 +54,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Branch setup truthfulness: `target_branch` is required for `setup` and names
   the working branch, the proposal binds `base_branch`, `target_exists`,
   `remote_base`, and `dirty`, proven preflight failures return `not_started`
-  without touching HEAD/index/stash/manifest, and a repository state change
-  after approval requires a new resolved proposal.
+  without touching HEAD/index/stash/manifest, and only target, base, remote
+  base, or existence moves after approval require a new resolved proposal —
+  unrelated HEAD or dirt moves re-resolve under the same approval, and a
+  dirty tree binds `stash: "yes"` into the proposal so one approval carries
+  the stash through.
+- Structural approval validity: action approvals are content-bound, never
+  clock-bound — an aged approval revalidates when a fresh resolve produces
+  the identical descriptor and only genuine repository drift fails closed
+  (naming the moved element); re-resolution returns the existing pending
+  proposal instead of minting duplicates; and a user-stated choice records
+  as a `stated` decision that retires product decisions without authorizing
+  mutating actions.
 
 ### Fixed
 
@@ -66,7 +76,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   returning to `running`, one shared uncertain-worker set backs
   close/revise/resume/replacement checks, and pausing preserves progress while
   storing the pause reason separately.
-
 
 - Durable worker launch claims: `prepareWorkerDispatch` persists the
   `dispatching` state inside the lock-guarded prepare mutation, and only the
@@ -81,9 +90,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Narrow shell route enforcement: recognized direct branch creation
   (`git switch -c/--create`, `git checkout -b/-B`) and PR creation
   (`gh pr create`, `glab mr create`) are denied with the exact Workit action on
-  OpenCode, Codex, and Pi; unparseable or unrelated commands stay explicitly
-  unenforced, and every host copy of `workit-babysit` tells the agent to drive
-  a PR observed from a route Workit did not enforce.
+  OpenCode, Codex, and Pi only while an active or paused Workit task exists in
+  that checkout; elsewhere the same commands pass silently. Unparseable or
+  unrelated commands stay explicitly unenforced, and every host copy of
+  `workit-babysit` tells the agent to drive a PR observed from a route Workit
+  did not enforce.
 - Auto-babysit on PR creation: `hosting.pull_request` success now carries a
   visible `next` directive (drive mode default, `workit-babysit` skill) unless
   declined with `babysit:false`; the skill declares its mode in the same turn
