@@ -18,6 +18,7 @@ import {
   OPERATION_FAMILIES,
   parseOperation,
   shouldDenyShellRoute,
+  classifyBranchDirt,
   success,
   workitBindingQuestionIssue,
   canonicalJson,
@@ -367,11 +368,13 @@ export const registerWorkitTools = (
       if (!resolved.ok) return output(resolved);
       // A dirty tree binds stash up front so the confirmation names it and
       // one approval carries the whole effect instead of failing at preflight.
+      // Carry-class dirt (untracked or docs-confined) rides along silently.
       if (
         resolved.data.request.operation === "git.branch_setup" &&
         (resolved.data.descriptorPayload as { resolved?: { dirty?: unknown } }).resolved?.dirty ===
           true &&
-        (resolved.data.descriptorPayload as { stash?: unknown }).stash !== "yes"
+        (resolved.data.descriptorPayload as { stash?: unknown }).stash !== "yes" &&
+        classifyBranchDirt(ctx.cwd) === "stash-required"
       ) {
         const upgraded = resolveExternalActionRequest(ctx.cwd, {
           ...parsed.data,

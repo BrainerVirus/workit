@@ -4,6 +4,7 @@ import {
   OPERATION_FAMILIES,
   approvedExternalAction,
   approvedPlanCommit,
+  classifyBranchDirt,
   planCommitBinding,
   externalActionState,
   priorExternalAction,
@@ -647,11 +648,13 @@ export async function runActionCommand(argv: string[], deps: TaskCliDeps = {}): 
   }
   // A dirty tree binds stash up front so the confirmation names it and one
   // approval carries the whole effect instead of failing at preflight.
+  // Carry-class dirt (untracked or docs-confined) rides along silently.
   if (
     resolved.data.request.operation === "git.branch_setup" &&
     (resolved.data.descriptorPayload as { resolved?: { dirty?: unknown } }).resolved?.dirty ===
       true &&
-    (resolved.data.descriptorPayload as { stash?: unknown }).stash !== "yes"
+    (resolved.data.descriptorPayload as { stash?: unknown }).stash !== "yes" &&
+    classifyBranchDirt(root) === "stash-required"
   ) {
     const upgraded = resolveExternalActionRequest(root, {
       ...parsed.data,

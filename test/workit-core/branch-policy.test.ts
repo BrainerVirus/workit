@@ -367,7 +367,7 @@ test(
       expect(badKind.error).toContain("not allowed by the branch policy");
 
       run(["checkout", "-q", "-b", "feature/dirty"]);
-      writeFileSync(path.join(dir, "dirty.txt"), "uncommitted");
+      writeFileSync(path.join(dir, "r.md"), "uncommitted change");
       const dirty = JSON.parse(
         (await tools.workit_branch_setup.execute(
           { confirmed: true, target_branch: "feature/next", stash: "no" },

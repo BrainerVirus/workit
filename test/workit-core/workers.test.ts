@@ -226,7 +226,7 @@ test("investigators and reviewers remain read-only", () => {
   }
 });
 
-test("a cancelling worker keeps ownership until an observed stop", () => {
+test("a cancelled worker releases ownership immediately", () => {
   const lead = active({ nativeWorker: observationVerifier() });
   const assigned = assign(lead.core, lead.task, lead.workspace);
   expect(assigned.ok).toBe(true);
@@ -275,7 +275,7 @@ test("a cancelling worker keeps ownership until an observed stop", () => {
     workerId: assigned.data.id,
     reason: "timeout",
   });
-  expect(cancelled).toMatchObject({ ok: true, data: { data: { state: "cancelling" } } });
+  expect(cancelled).toMatchObject({ ok: true, data: { data: { state: "stopped" } } });
   const replacement = new WorkitCore(lead.store, context(lead.root));
   task = lead.store.readTask(lead.task.id);
   workspace = lead.store.readWorkspace();
@@ -289,10 +289,10 @@ test("a cancelling worker keeps ownership until an observed stop", () => {
       expectedWorkspaceRevision: workspace.data.revision,
       workerId: null,
     }),
-  ).toMatchObject({ ok: false, code: "recovery_required" });
+  ).toMatchObject({ ok: true });
 });
 
-test("a late running observation keeps cancelling until a host-confirmed stop", () => {
+test("a late running observation after a terminal stop fails closed", () => {
   const lead = active({ nativeWorker: observationVerifier() });
   const assigned = assign(lead.core, lead.task, lead.workspace);
   expect(assigned.ok).toBe(true);
@@ -322,7 +322,7 @@ test("a late running observation keeps cancelling until a host-confirmed stop", 
       workerId: assigned.data.id,
       reason: "timeout",
     }),
-  ).toMatchObject({ ok: true, data: { data: { state: "cancelling" } } });
+  ).toMatchObject({ ok: true, data: { data: { state: "stopped" } } });
   task = lead.store.readTask(lead.task.id);
   workspace = lead.store.readWorkspace();
   if (!task.ok || !workspace.ok || !workspace.data) throw new Error("state missing");
@@ -333,7 +333,7 @@ test("a late running observation keeps cancelling until a host-confirmed stop", 
     task.data.revision,
     workspace.data.revision,
   );
-  expect(late).toMatchObject({ ok: true, data: { data: { state: "cancelling" } } });
+  expect(late).toMatchObject({ ok: false, code: "invalid_transition" });
 });
 
 test("helpers cannot change lifecycle, scope, decisions, assign helpers, or resolve findings", () => {
@@ -597,7 +597,7 @@ test("cancellation and launch race one reservation and only the first commit win
       expectedWorkspaceRevision: beforeCancel.workspace.revision,
       reason: "cancelled before launch",
     }),
-  ).toMatchObject({ ok: true, data: { data: { state: "cancelling" } } });
+  ).toMatchObject({ ok: true, data: { data: { state: "stopped", session: null } } });
   const cancelling = current(cancelFirst);
   expect(
     cancelFirst.core.commitWorkerDispatch({
@@ -1124,9 +1124,9 @@ test("a repeat cancel confirms an ended worker when no observation arrives", () 
       state.workspace.revision,
     ),
   ).toMatchObject({ ok: true });
-  // The session end is never observed (missed host event). The first cancel
-  // still waits for confirmation; the repeat cancel is the lead's explicit
-  // confirmation that the worker ended.
+  // The session end is never observed (missed host event). The lead-attested
+  // cancel is terminal: the first cancel stops the worker, and the repeat is
+  // an idempotent confirmation.
   state = current(lead);
   const cancel = (reason: string) => {
     const fresh = current(lead);
@@ -1142,7 +1142,7 @@ test("a repeat cancel confirms an ended worker when no observation arrives", () 
   };
   expect(cancel("session silent, asking it to stop")).toMatchObject({
     ok: true,
-    data: { data: { state: "cancelling" } },
+    data: { data: { state: "stopped" } },
   });
   expect(cancel("session ended without an observed stop, confirmed")).toMatchObject({
     ok: true,
@@ -1347,7 +1347,7 @@ test("cancel on a worker that already reported stops it instead of stranding it"
       workerId: assigned.data.id,
       reason: "already stopped",
     }),
-  ).toMatchObject({ ok: false, code: "invalid_transition" });
+  ).toMatchObject({ ok: true, data: { data: { state: "stopped" } } });
   expect(
     lead.core.task({
       schemaVersion: 1,

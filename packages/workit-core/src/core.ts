@@ -69,6 +69,8 @@ export type {
 export { METHODS, invariantBootstrap, selectMethods } from "./core/methods";
 export type { MethodId, SelectedMethod } from "./core/methods";
 export { hasLiveWorkitTask, shellRouteIntent, shouldDenyShellRoute } from "./core/route-intent";
+export { classifyBranchDirt } from "./core/branch";
+export type { BranchDirt } from "./core/branch";
 export type { ShellRouteIntent } from "./core/route-intent";
 export { applicableDecision, reserveAction, settleAction, reconcileAction } from "./core/authority";
 export {

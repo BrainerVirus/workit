@@ -59,6 +59,7 @@ import {
 import {
   assertProductWriteAllowed,
   isUncertainWorker,
+  workerBlocksTransition,
   type CallerContext,
   type NativeWorkerObservation,
   type NativeWorkerVerification,
@@ -342,6 +343,8 @@ const applyWorkerLifecycle = (input: ObserveWorkerLifecycleInput): Result<Entry<
   if (task.data.status === "paused" && (input.state === "running" || input.state === "cancelling"))
     return failure("invalid_transition", "paused task cannot run a worker");
   const notStarted = input.dispatch === true;
+  if (notStarted && entry.data.state === "stopped" && input.session === null)
+    return success(task.data.revision, workspace.data.revision, entry);
   if (notStarted && (input.state !== "stopped" || input.session !== null))
     return failure("invalid_input", "a never-dispatched worker stops with no session");
   if (notStarted && entry.data.session !== null)
@@ -829,7 +832,7 @@ export class WorkitCore {
   ) {
     if (workspace.writer)
       return failure("recovery_required", "writer ownership must be released first");
-    if (task.workers.some((entry) => isUncertainWorker(entry.data.state)))
+    if (task.workers.some((entry) => workerBlocksTransition("close", entry.data.state)))
       return failure("recovery_required", "worker state requires reconciliation");
     return null;
   }
@@ -1639,20 +1642,28 @@ export class WorkitCore {
       return failure("invalid_transition", "closed task cannot cancel workers");
     if (entry.data.state === "unknown")
       return failure("recovery_required", "worker state requires recovery");
-    if (entry.data.state === "stopped")
-      return failure("invalid_transition", "stopped worker cannot be cancelled");
-    // A reported worker already made its terminal session-authenticated
-    // statement, and a repeat cancel is the lead's explicit confirmation that
-    // an unconfirmed worker ended. Both settle instead of stranding the worker
-    // in cancelling when the session end was never observed. A first cancel of
-    // a live unreported worker still waits for an observed stop.
-    const settles = entry.data.report !== null || entry.data.state === "cancelling";
+    if (entry.data.state === "stopped") {
+      // Idempotent cancel: repeating a settled stop succeeds with the
+      // current entry instead of failing the retry.
+      const stopped = task.data.workers.find((candidate) => candidate.id === input.workerId)!;
+      return success(task.data.revision, workspace.data.revision, stopped);
+    }
+    // Lead-attested cancel is terminal for every live state: the lead saw
+    // the run end, so no host observation is awaited. A later live-child
+    // sighting against a stopped worker is a new anomaly for the host to
+    // flag, not a reason to strand the worker short of stopped. A writer
+    // held by the cancelled worker dies with it; anything else would brick
+    // the checkout behind a stopped owner.
     const changed = this.store.mutateTaskAndWorkspace({
       taskId: task.data.id,
-      expectedTaskRevision: input.expectedRevision,
+      expectedRevision: input.expectedRevision,
       expectedWorkspaceRevision: input.expectedWorkspaceRevision,
       now: trustedNow(this.context),
-      workspace: (current, mutation) => success(mutation.revision, mutation.revision, current),
+      workspace: (current, mutation) =>
+        success(mutation.revision, mutation.revision, {
+          ...current,
+          writer: current.writer?.owner.workerId === input.workerId ? null : current.writer,
+        }),
       task: (current, mutation) =>
         success(mutation.revision, null, {
           ...current,
@@ -1661,10 +1672,7 @@ export class WorkitCore {
               ? {
                   ...candidate,
                   recordedAt: mutation.now,
-                  data: {
-                    ...candidate.data,
-                    state: settles ? ("stopped" as const) : ("cancelling" as const),
-                  },
+                  data: { ...candidate.data, state: "stopped" as const },
                 }
               : candidate,
           ),
@@ -2453,8 +2461,24 @@ export class WorkitCore {
         return failure("permission_denied", "imported resume requires native destination approval");
       resumeCandidate = current.data.candidate;
     }
-    const blocker = this.activeWorkerBlocker(task.data, workspace.data);
+    const blocker =
+      status === "paused"
+        ? workspace.data.writer
+          ? failure("recovery_required", "writer ownership must be released first")
+          : null
+        : this.activeWorkerBlocker(task.data, workspace.data);
     if (blocker) return blocker as Result<never>;
+    let pauseCandidate: import("./task-contract").Candidate | null = null;
+    if (status === "paused") {
+      // Freezing records the tree state the task resumes from.
+      const captured = captureCandidate(
+        this.store.root,
+        task.data.intent.data.scope,
+        environment(),
+      );
+      if (!captured.ok) return captured as Result<never>;
+      pauseCandidate = captured.data;
+    }
     const changed = this.store.mutateTaskAndWorkspace({
       taskId: task.data.id,
       expectedTaskRevision: input.expectedRevision,
@@ -2466,9 +2490,11 @@ export class WorkitCore {
           ...current,
           status,
           candidates:
-            resumeCandidate &&
-            !current.candidates.some((candidate) => candidate.id === resumeCandidate!.id)
-              ? [...current.candidates, resumeCandidate]
+            (resumeCandidate ?? pauseCandidate) &&
+            !current.candidates.some(
+              (candidate) => candidate.id === (resumeCandidate ?? pauseCandidate)!.id,
+            )
+              ? [...current.candidates, (resumeCandidate ?? pauseCandidate)!]
               : current.candidates,
           progress: current.progress,
           pauseReason: status === "paused" ? (input.reason ?? null) : null,
@@ -2507,14 +2533,8 @@ export class WorkitCore {
     const workspace = this.store.readWorkspace();
     if (!workspace.ok) return workspace as Result<never>;
     if (!workspace.data) return failure("not_found", "workspace not found");
-    if (
-      workspace.data.writer ||
-      task.data.workers.some((entry) => isUncertainWorker(entry.data.state))
-    )
-      return failure(
-        "recovery_required",
-        "scope revision requires worker ownership reconciliation",
-      );
+    const revisionBlocker = this.activeWorkerBlocker(task.data, workspace.data);
+    if (revisionBlocker) return revisionBlocker as Result<never>;
     this.fillRevisions(input, task.data, workspace.data);
     const changed = this.store.mutateTaskAndWorkspace({
       taskId: task.data.id,

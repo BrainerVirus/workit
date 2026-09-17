@@ -6,6 +6,7 @@ import {
   TaskStore,
   approvedExternalAction,
   approvedPlanCommit,
+  classifyBranchDirt,
   planCommitBinding,
   externalActionDescriptor,
   externalActionHelp,
@@ -945,12 +946,14 @@ export const createWorkitTools = ({
         if (!resolved.ok) return output(resolved);
         // A dirty tree binds stash up front so the proposal names it and one
         // approval carries the whole effect instead of failing at preflight.
+        // Carry-class dirt (untracked or docs-confined) rides along silently.
         if (
           resolved.ok &&
           resolved.data.request.operation === "git.branch_setup" &&
           (resolved.data.descriptorPayload as { resolved?: { dirty?: unknown } }).resolved
             ?.dirty === true &&
-          (resolved.data.descriptorPayload as { stash?: unknown }).stash !== "yes"
+          (resolved.data.descriptorPayload as { stash?: unknown }).stash !== "yes" &&
+          classifyBranchDirt(context.directory) === "stash-required"
         ) {
           const upgraded = resolveExternalActionRequest(context.directory, {
             ...parsed.data,
