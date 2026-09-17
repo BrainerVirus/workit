@@ -1,5 +1,3 @@
-import { realpathSync } from "node:fs";
-import path from "node:path";
 import { TaskStore } from "./task-store";
 
 export type ShellRouteIntent = {

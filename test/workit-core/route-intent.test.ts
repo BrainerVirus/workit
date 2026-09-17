@@ -3,7 +3,10 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { TaskStore, WorkitCore, type OperationContext } from "@/packages/workit-core/src/core";
-import { shellRouteIntent, shouldDenyShellRoute } from "@/packages/workit-core/src/core/route-intent";
+import {
+  shellRouteIntent,
+  shouldDenyShellRoute,
+} from "@/packages/workit-core/src/core/route-intent";
 import { caller, taskStartRequest } from "./task-fixtures";
 
 test("direct branch creation routes to git.branch_setup", () => {

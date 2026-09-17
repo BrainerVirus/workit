@@ -24,7 +24,7 @@ const startTask = (root: string) => {
 };
 
 const bash = (
-  hooks: Record<string, ((input: never, output: never) => unknown) | undefined>,
+  hooks: { "tool.execute.before"?: (input: never, output: never) => unknown },
   command: string,
 ) =>
   hooks["tool.execute.before"]?.(

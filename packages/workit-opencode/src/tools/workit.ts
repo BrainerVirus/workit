@@ -806,6 +806,13 @@ export const createWorkitTools = ({
             purpose: Receipt["decisionPurpose"];
             binding: { presented: string; approvedContent: string; displayed?: string };
           };
+          // Stated choices settle without a native receipt: the user's words
+          // are the authority. Core restricts them to non-mutating purposes;
+          // action approvals always mint a receipt-shaped question first.
+          if (decision.response === "stated") {
+            result = core.observeDecision(parsed.data, undefined);
+            return output(result);
+          }
           const budgetIssue = workitBindingQuestionIssue([
             decisionContent(
               decision.purpose,
@@ -878,10 +885,7 @@ export const createWorkitTools = ({
                 bound = true;
               }
             }
-            if (
-              !bound &&
-              !isSelfAuthorizingActionContent(decision.binding.approvedContent)
-            ) {
+            if (!bound && !isSelfAuthorizingActionContent(decision.binding.approvedContent)) {
               return output(
                 failure(
                   "invalid_input",
@@ -933,8 +937,23 @@ export const createWorkitTools = ({
               failure("permission_denied", "child sessions cannot run external actions"),
             );
         }
-        const resolved = resolveExternalActionRequest(context.directory, parsed.data);
+        let resolved = resolveExternalActionRequest(context.directory, parsed.data);
         if (!resolved.ok) return output(resolved);
+        // A dirty tree binds stash up front so the proposal names it and one
+        // approval carries the whole effect instead of failing at preflight.
+        if (
+          resolved.ok &&
+          resolved.data.request.operation === "git.branch_setup" &&
+          (resolved.data.descriptorPayload as { resolved?: { dirty?: unknown } }).resolved
+            ?.dirty === true &&
+          (resolved.data.descriptorPayload as { stash?: unknown }).stash !== "yes"
+        ) {
+          const upgraded = resolveExternalActionRequest(context.directory, {
+            ...parsed.data,
+            payload: { ...(parsed.data.payload as Record<string, unknown>), stash: "yes" },
+          } as typeof parsed.data);
+          if (upgraded.ok) resolved = upgraded;
+        }
         if (resolved.data.request.operation === "context.read")
           return output(await executeResolvedExternalAction(resolved.data, context.directory));
         if (!client)
@@ -1090,7 +1109,10 @@ export const createWorkitTools = ({
               presented: proposal.presented,
               approvedText: proposal.approvedText,
               createdAt: now(),
-              request: parsed.data,
+              // The normalized request behind this descriptor (stash
+              // upgrades included), so record-time re-resolution replays
+              // the same bytes instead of drifting on its own upgrade.
+              request: resolved.data.request,
             };
             if (!existing) {
               pending.push(open);

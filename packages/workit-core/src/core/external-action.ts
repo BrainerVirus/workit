@@ -472,24 +472,131 @@ export const approvedExternalAction = (
   operation: string,
 ) => {
   const selected = externalActionState(store, host, actor, operation);
-  if (!selected.ok) return selected;
-  if (selected.data.entry.data.consumption !== null)
-    return failure(
-      selected.data.entry.data.consumption.state === "uncertain"
-        ? "external_outcome_unknown"
-        : "permission_denied",
-      selected.data.entry.data.consumption.state === "uncertain"
-        ? "previous external action outcome is unknown"
-        : "external action was already settled",
-    );
+  if (selected.ok) {
+    if (selected.data.entry.data.consumption !== null)
+      return failure(
+        selected.data.entry.data.consumption.state === "uncertain"
+          ? "external_outcome_unknown"
+          : "permission_denied",
+        selected.data.entry.data.consumption.state === "uncertain"
+          ? "previous external action outcome is unknown"
+          : "external action was already settled",
+      );
+    return selected;
+  }
+  // Intent carry for branch setup: an approval binds (target, base) intent,
+  // so unrelated HEAD or dirt moves between approval and execution re-resolve
+  // instead of demanding re-approval. Remote, existence, and target drift
+  // still fail closed through priorResolvedDrift.
+  const intent = approvedBranchSetupIntent(store, host, actor, operation);
+  if (intent.ok) {
+    if (intent.data.entry.data.consumption !== null)
+      return failure(
+        intent.data.entry.data.consumption.state === "uncertain"
+          ? "external_outcome_unknown"
+          : "permission_denied",
+        intent.data.entry.data.consumption.state === "uncertain"
+          ? "previous external action outcome is unknown"
+          : "external action was already settled",
+      );
+    return intent;
+  }
   return selected;
+};
+
+/** Intent identity for a branch-setup descriptor: target and base bind the
+ * effect; head and dirt are execution-time state that re-resolves. */
+export const branchSetupIntent = (
+  descriptor: string,
+): { target: string; base: string; remoteBase: string | null; targetExists: boolean } | null => {
+  try {
+    const value = JSON.parse(descriptor) as {
+      operation?: unknown;
+      payload?: {
+        target_branch?: unknown;
+        resolved?: {
+          base_branch?: unknown;
+          remote_base?: unknown;
+          target_exists?: unknown;
+        };
+      };
+    };
+    if (value.operation !== "git.branch_setup" || !value.payload) return null;
+    const { target_branch, resolved } = value.payload;
+    if (typeof target_branch !== "string" || !target_branch || !resolved) return null;
+    if (typeof resolved.base_branch !== "string" || typeof resolved.target_exists !== "boolean")
+      return null;
+    return {
+      target: target_branch,
+      base: resolved.base_branch,
+      remoteBase: typeof resolved.remote_base === "string" ? resolved.remote_base : null,
+      targetExists: resolved.target_exists,
+    };
+  } catch {
+    return null;
+  }
+};
+
+/** Find the single unconsumed branch-setup approval with the same intent as
+ * the current descriptor, regardless of head or dirt moves since approval. */
+export const approvedBranchSetupIntent = (
+  store: TaskStore,
+  host: string,
+  actor: string,
+  operation: string,
+) => {
+  const current = branchSetupIntent(operation);
+  if (!current) return failure("permission_denied", "no approved action is bound to this session");
+  const listed = store.listTasks();
+  const workspace = store.readWorkspace();
+  if (!listed.ok || !workspace.ok)
+    return failure("storage_error", "external action state is unavailable");
+  if (!workspace.data) return failure("not_found", "workspace not found");
+  const candidates = listed.data.flatMap((task) => {
+    if (
+      task.status !== "active" ||
+      task.workspaceId !== workspace.data!.id ||
+      task.intent.provenance.session?.kind !== "host" ||
+      task.intent.provenance.session.host !== host ||
+      task.intent.provenance.session.handle !== actor
+    )
+      return [];
+    return task.decisions
+      .filter(
+        (entry) =>
+          entry.data.purpose === "action" &&
+          entry.data.response === "approved" &&
+          entry.data.revoked === null,
+      )
+      .map((entry) => ({ task, entry }));
+  });
+  const matches = candidates.filter(({ entry }) => {
+    const intent = branchSetupIntent(entry.data.binding.approvedContent);
+    return (
+      intent !== null &&
+      intent.target === current.target &&
+      intent.base === current.base &&
+      intent.remoteBase === current.remoteBase &&
+      intent.targetExists === current.targetExists
+    );
+  });
+  if (matches.length !== 1)
+    return failure(
+      "permission_denied",
+      matches.length === 0
+        ? "no approved action is bound to this session"
+        : "multiple approved actions match this session",
+    );
+  return success(workspace.data.revision, null, { ...matches[0], workspace: workspace.data });
 };
 
 /**
  * Re-resolve guard: when a prior approval exists for the same requested
- * operation/payload, the freshly resolved baseline (source state and remote
- * base) must still match the approved descriptor. Drift returns not_started so
- * the agent re-presents the current state instead of executing a stale effect.
+ * operation/payload, the intent baseline must still match. For branch setup
+ * only (target, base, remote base, existence) bind the effect — head and
+ * dirt moves re-resolve instead of demanding re-approval. Drift names the
+ * moved element and returns not_started so the agent re-presents the
+ * current state instead of executing a stale effect.
  */
 export const priorResolvedDrift = (
   store: TaskStore,
@@ -511,6 +618,38 @@ export const priorResolvedDrift = (
     return success(null, null, null);
   }
   if (baseline === undefined || baseline === null) return success(null, null, null);
+  if (operation === "git.branch_setup") {
+    const before = branchSetupIntent(prior.data.entry.data.binding.approvedContent);
+    let after: ReturnType<typeof branchSetupIntent> = null;
+    try {
+      after = branchSetupIntent(
+        JSON.stringify({
+          operation,
+          payload: { ...(payload as Record<string, unknown>), resolved: currentResolved },
+        }),
+      );
+    } catch {
+      after = null;
+    }
+    if (before && after) {
+      const moved =
+        before.target !== after.target
+          ? "target_branch"
+          : before.base !== after.base
+            ? "base_branch"
+            : before.remoteBase !== after.remoteBase
+              ? "remote_base"
+              : before.targetExists !== after.targetExists
+                ? "target_exists"
+                : null;
+      if (moved === null) return success(null, null, null);
+      return failure(
+        "invalid_input",
+        `repository state changed since approval (${moved} moved); show the current state and approve the action again`,
+        { outcome: "not_started", operation },
+      );
+    }
+  }
   if (canonicalJson(baseline) === canonicalJson(currentResolved)) return success(null, null, null);
   return failure(
     "invalid_input",

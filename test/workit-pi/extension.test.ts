@@ -783,6 +783,7 @@ test("Pi affected-doc context passes edits through and public evidence captures 
 test("Pi blocks recognized raw branch and PR creation routes", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "workit-pi-route-"));
   try {
+    startedTask(root);
     const pi = makePi();
     await extension(pi as any);
     const guard = pi.handlers.get("tool_call");
@@ -801,6 +802,29 @@ test("Pi blocks recognized raw branch and PR creation routes", async () => {
     expect(
       await guard?.(
         { toolName: "bash", toolCallId: "other", input: { command: "git status --short" } },
+        context(root),
+      ),
+    ).toBeUndefined();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Pi allows recognized raw branch and PR creation outside live work", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "workit-pi-route-bare-"));
+  try {
+    const pi = makePi();
+    await extension(pi as any);
+    const guard = pi.handlers.get("tool_call");
+    expect(
+      await guard?.(
+        { toolName: "bash", toolCallId: "branch", input: { command: "git switch -c feature/raw" } },
+        context(root),
+      ),
+    ).toBeUndefined();
+    expect(
+      await guard?.(
+        { toolName: "bash", toolCallId: "pr", input: { command: "glab mr create --title t" } },
         context(root),
       ),
     ).toBeUndefined();
@@ -1120,5 +1144,132 @@ test("cancel without a live handle fails recovery_required instead of pretending
     });
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+const branchRepo = (suffix: string) => {
+  const root = mkdtempSync(path.join(tmpdir(), `workit-pi-branch-${suffix}-`));
+  const remote = mkdtempSync(path.join(tmpdir(), `workit-pi-branch-remote-${suffix}-`));
+  spawnSync("git", ["init", "-q", "--bare"], { cwd: remote });
+  for (const args of [
+    ["init", "-q", "-b", "main"],
+    ["config", "user.email", "test@example.invalid"],
+    ["config", "user.name", "Workit Test"],
+  ])
+    spawnSync("git", args, { cwd: root });
+  writeFileSync(path.join(root, "base.txt"), "base\n");
+  spawnSync("git", ["add", "base.txt"], { cwd: root });
+  spawnSync("git", ["commit", "-qm", "base"], { cwd: root });
+  spawnSync("git", ["remote", "add", "origin", remote], { cwd: root });
+  spawnSync("git", ["push", "-q", "-u", "origin", "main"], { cwd: root });
+  spawnSync("git", ["branch", "develop"], { cwd: root });
+  spawnSync("git", ["push", "-q", "origin", "develop"], { cwd: root });
+  spawnSync("git", ["branch", "-D", "develop"], { cwd: root });
+  const store = new TaskStore(root);
+  const core = () =>
+    new WorkitCore(store, {
+      root,
+      caller: { host: "pi", actor: "pi-session" },
+      callerAttested: true,
+      capabilities: [],
+      constraints: [],
+      now: "2026-01-01T00:00:00Z",
+    });
+  const started = core().task(taskStartRequest());
+  if (!started.ok) throw new Error(started.error);
+  const task = store.readTask((started.data as { id: string }).id);
+  const workspace = store.readWorkspace();
+  if (!task.ok || !workspace.ok || !workspace.data) throw new Error("task setup failed");
+  expect(
+    core().writer({
+      schemaVersion: 1,
+      action: "acquire",
+      taskId: task.data.id,
+      expectedRevision: task.data.revision,
+      expectedWorkspaceRevision: workspace.data.revision,
+      workerId: null,
+    }),
+  ).toMatchObject({ ok: true });
+  return { root, remote };
+};
+
+test("Pi dirty branch setup confirms the stash and executes in one approval", async () => {
+  const { root, remote } = branchRepo("dirty");
+  try {
+    writeFileSync(path.join(root, "base.txt"), "wip\n");
+    writeFileSync(path.join(root, "notes.md"), "untracked\n");
+    let confirms = 0;
+    let asked = "";
+    const actionContext = context(root, true);
+    actionContext.ui = {
+      confirm: async (question: string) => {
+        confirms += 1;
+        asked = String(question);
+        return true;
+      },
+    };
+    const pi = makePi();
+    await extension(pi as any);
+    const action = pi.tools.find((tool) => tool.name === "workit_external_action");
+    const result = await action.execute(
+      "pi-branch-dirty",
+      { operation: "git.branch_setup", payload: { target_branch: "feature/pi-dirty" } },
+      undefined,
+      undefined,
+      actionContext,
+    );
+    expect(result.details).toMatchObject({ ok: true });
+    expect(asked).toContain("Stash");
+    expect(confirms).toBe(1);
+    expect(
+      spawnSync("git", ["branch", "--show-current"], { cwd: root, encoding: "utf8" }).stdout.trim(),
+    ).toBe("feature/pi-dirty");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(remote, { recursive: true, force: true });
+  }
+});
+
+test("Pi branch approval carries across base moves inside one confirmation", async () => {
+  const { root, remote } = branchRepo("carry");
+  try {
+    let confirms = 0;
+    const actionContext = context(root, true);
+    actionContext.ui = {
+      confirm: async () => {
+        confirms += 1;
+        spawnSync("git", ["checkout", "-q", "develop"], { cwd: root });
+        writeFileSync(path.join(root, "later.txt"), "later\n");
+        spawnSync("git", ["add", "later.txt"], { cwd: root });
+        spawnSync("git", ["commit", "-qm", "later"], { cwd: root });
+        spawnSync("git", ["checkout", "-q", "main"], { cwd: root });
+        return true;
+      },
+    };
+    const pi = makePi();
+    await extension(pi as any);
+    const action = pi.tools.find((tool) => tool.name === "workit_external_action");
+    const result = await action.execute(
+      "pi-branch-carry",
+      { operation: "git.branch_setup", payload: { target_branch: "feature/pi-carry" } },
+      undefined,
+      undefined,
+      actionContext,
+    );
+    expect(result.details).toMatchObject({ ok: true });
+    expect(confirms).toBe(1);
+    const head = spawnSync("git", ["rev-parse", "develop"], {
+      cwd: root,
+      encoding: "utf8",
+    }).stdout.trim();
+    expect(
+      spawnSync("git", ["rev-parse", "feature/pi-carry"], {
+        cwd: root,
+        encoding: "utf8",
+      }).stdout.trim(),
+    ).toBe(head);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(remote, { recursive: true, force: true });
   }
 });

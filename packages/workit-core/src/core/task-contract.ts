@@ -455,10 +455,11 @@ export const decisionSchema = z
         approvedContent: text,
         displayed: text.optional(),
         contentRefs: z.array(refSchema),
+        statedChoice: z.object({ ref: text, text: text }).strict().optional(),
       })
       .strict(),
     digest,
-    response: z.enum(["approved", "rejected"]),
+    response: z.enum(["approved", "rejected", "stated"]),
     requirementIds: z.array(digest),
     revoked: z.object({ at: utc, reason: text }).strict().nullable(),
     consumption: z

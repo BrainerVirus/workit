@@ -363,8 +363,22 @@ export const registerWorkitTools = (
       const parsed = externalActionRequest(input);
       if (!parsed.ok) return output(parsed);
       const context = piContext(ctx);
-      const resolved = resolveExternalActionRequest(ctx.cwd, parsed.data);
+      let resolved = resolveExternalActionRequest(ctx.cwd, parsed.data);
       if (!resolved.ok) return output(resolved);
+      // A dirty tree binds stash up front so the confirmation names it and
+      // one approval carries the whole effect instead of failing at preflight.
+      if (
+        resolved.data.request.operation === "git.branch_setup" &&
+        (resolved.data.descriptorPayload as { resolved?: { dirty?: unknown } }).resolved?.dirty ===
+          true &&
+        (resolved.data.descriptorPayload as { stash?: unknown }).stash !== "yes"
+      ) {
+        const upgraded = resolveExternalActionRequest(ctx.cwd, {
+          ...parsed.data,
+          payload: { ...(parsed.data.payload as Record<string, unknown>), stash: "yes" },
+        } as typeof parsed.data);
+        if (upgraded.ok) resolved = upgraded;
+      }
       if (resolved.data.request.operation === "context.read")
         return output(await executeResolvedExternalAction(resolved.data, ctx.cwd));
       if (!ctx.isProjectTrusted())
@@ -580,8 +594,7 @@ export const enforceNativeWriter = (
 ): { block: true; reason: string } | undefined => {
   if (event.toolName === "bash") {
     const command = (event.input as { command?: unknown } | undefined)?.command;
-    const route =
-      typeof command === "string" ? shouldDenyShellRoute(ctx.cwd, command) : null;
+    const route = typeof command === "string" ? shouldDenyShellRoute(ctx.cwd, command) : null;
     if (route)
       return {
         block: true,

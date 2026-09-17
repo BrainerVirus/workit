@@ -86,8 +86,10 @@ export type {
   ExternalActionOperation,
 } from "./core/external-action";
 export {
+  approvedBranchSetupIntent,
   approvedExternalAction,
   approvedPlanCommit,
+  branchSetupIntent,
   planCommitDescriptor,
   planCommitBinding,
   commitMessageFromDescriptor,

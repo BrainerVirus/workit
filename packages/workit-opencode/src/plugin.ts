@@ -590,8 +590,7 @@ const plugin: Plugin = async ({ client, directory }) => {
       warnStaleSources();
       if (input.tool === "bash") {
         const command = (output?.args as { command?: unknown } | undefined)?.command;
-        const route =
-          typeof command === "string" ? shouldDenyShellRoute(directory, command) : null;
+        const route = typeof command === "string" ? shouldDenyShellRoute(directory, command) : null;
         if (route)
           throw new Error(
             `recovery_required: direct branch or PR creation bypasses the Workit route; ${route.guidance}`,
