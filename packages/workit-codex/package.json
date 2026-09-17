@@ -1,6 +1,6 @@
 {
   "name": "@brainervirus/workit-codex",
-  "version": "1.0.9",
+  "version": "1.0.10",
   "private": false,
   "description": "Workit Codex CLI/desktop plugin — shared MCP transport, hooks, and fourteen method skills",
   "keywords": [
