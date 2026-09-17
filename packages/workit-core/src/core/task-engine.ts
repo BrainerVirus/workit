@@ -5,8 +5,14 @@ import {
   failure,
   decisionDigest,
   exportBundleSchema,
+  assessmentSchema,
+  decisionSchema,
+  evidenceSchema,
+  findingSchema,
+  intentSchema,
   newId,
   parseOperation,
+  rewriteRecordRefs,
   success,
   type Assessment,
   type Capability,
@@ -398,7 +404,7 @@ const applyWorkerLifecycle = (input: ObserveWorkerLifecycleInput): Result<Entry<
     return success(task.data.revision, workspace.data.revision, entry);
   const changed = input.store.mutateTaskAndWorkspace({
     taskId: task.data.id,
-    expectedTaskRevision: input.expectedRevision,
+    expectedRevision: input.expectedRevision,
     expectedWorkspaceRevision: input.expectedWorkspaceRevision,
     now: input.now,
     workspace: (current, mutation) =>
@@ -472,96 +478,28 @@ const importedProvenance = (context: OperationContext): Provenance => ({
 });
 
 const portableTask = (task: TaskRecord): TaskRecord => {
-  const clone = structuredClone(task);
-  const portableProvenance = (value: Provenance): Provenance => ({
-    ...value,
-    session: null,
-    receipts: [],
-  });
-  const entries = [
-    clone.intent,
-    ...clone.assessments,
-    ...clone.evidence,
-    ...clone.decisions,
-    ...clone.findings,
-    ...clone.workers,
-  ];
-  for (const entry of entries) entry.provenance = portableProvenance(entry.provenance);
-  for (const worker of clone.workers) worker.data.session = null;
-  clone.intent = {
-    ...clone.intent,
-    data: { ...clone.intent.data, authorityRefs: portableRefs(clone.intent.data.authorityRefs) },
+  // Schema-driven ref stripping: every Ref anywhere in the record is mapped
+  // by shape (arrays drop unportable refs, nullable fields null them), so a
+  // new ref-bearing field can never silently leak across checkouts.
+  const stripped = rewriteRecordRefs(task, taskRecordSchema, portableRef);
+  if (typeof stripped !== "object" || stripped === null || Array.isArray(stripped))
+    throw new TypeError("portable task rewrite produced a non-record");
+  const clone = structuredClone(stripped) as TaskRecord;
+  const demote = (
+    facts: Assessment["facts"][number][],
+    signals: Assessment["signals"],
+    consequences: Assessment["consequences"],
+  ): void => {
+    for (const fact of facts) Object.assign(fact, portableFact(fact));
+    for (const name of Object.keys(signals) as (keyof Assessment["signals"])[]) {
+      const signal = signals[name];
+      Object.assign(signal, portableSignal(signal));
+    }
+    for (const consequence of consequences)
+      Object.assign(consequence.fact, portableFact(consequence.fact));
   };
-  clone.constraints = clone.constraints.flatMap((constraint) => {
-    const source = portableRef(constraint.source);
-    return source
-      ? [
-          {
-            ...constraint,
-            source,
-            requires: constraint.requires.map((requirement) => ({
-              ...requirement,
-              refs: portableRefs(requirement.refs),
-            })),
-          },
-        ]
-      : [];
-  });
-  clone.assessments = clone.assessments.map((entry) => ({
-    ...entry,
-    data: {
-      ...entry.data,
-      facts: entry.data.facts.map(portableFact),
-      signals: Object.fromEntries(
-        Object.entries(entry.data.signals).map(([name, signal]) => [name, portableSignal(signal)]),
-      ) as typeof entry.data.signals,
-      consequences: entry.data.consequences.map((consequence) => ({
-        ...consequence,
-        fact: portableFact(consequence.fact),
-      })),
-      verification: entry.data.verification.map((verification) => ({
-        ...verification,
-        availableChecks: portableRefs(verification.availableChecks),
-      })),
-    },
-  }));
-  clone.progress = {
-    ...clone.progress,
-    blockers: clone.progress.blockers.map((blocker) => ({
-      ...blocker,
-      refs: portableRefs(blocker.refs),
-    })),
-  };
-  clone.evidence = clone.evidence.map((entry) => ({
-    ...entry,
-    data: {
-      ...entry.data,
-      refs: portableRefs(entry.data.refs),
-      reviewContext: portableRef(entry.data.reviewContext),
-    },
-  }));
-  clone.decisions = clone.decisions.map((entry) => ({
-    ...entry,
-    data: {
-      ...entry.data,
-      consumption: entry.data.consumption
-        ? portableRef(entry.data.consumption.actionRef)
-          ? {
-              ...entry.data.consumption,
-              actionRef: portableRef(entry.data.consumption.actionRef)!,
-            }
-          : null
-        : null,
-      binding: {
-        ...entry.data.binding,
-        contentRefs: portableRefs(entry.data.binding.contentRefs),
-      },
-    },
-  }));
-  clone.findings = clone.findings.map((entry) => ({
-    ...entry,
-    data: { ...entry.data, refs: portableRefs(entry.data.refs) },
-  }));
+  for (const entry of clone.assessments)
+    demote(entry.data.facts, entry.data.signals, entry.data.consequences);
   // Candidate metadata can contain environment-derived paths and digests. The destination
   // must recapture its own candidate instead of receiving source checkout material.
   clone.candidates = [];
@@ -594,15 +532,13 @@ const importedTask = (
     allocate(entry.id);
   const fresh = (id: string) => allocate(id);
   const provenance = importedProvenance(context);
+  const remap = (ref: Ref): Ref | null => mapRef(ref, ids);
   const intent = {
     ...source.intent,
     id: fresh(source.intent.id),
     recordedAt: timestamp,
     provenance,
-    data: {
-      ...source.intent.data,
-      authorityRefs: source.intent.data.authorityRefs.map((ref) => mapRef(ref, ids)),
-    },
+    data: rewriteRecordRefs(source.intent.data, intentSchema, remap) as typeof source.intent.data,
   };
   const assessments = source.assessments.map((entry) => {
     const data = entry.data;
@@ -611,30 +547,7 @@ const importedTask = (
       id: fresh(entry.id),
       recordedAt: timestamp,
       provenance,
-      data: {
-        ...data,
-        facts: data.facts.map((fact) => ({
-          ...fact,
-          refs: fact.refs.map((ref) => mapRef(ref, ids)),
-        })),
-        signals: Object.fromEntries(
-          Object.entries(data.signals).map(([name, signal]) => [
-            name,
-            { ...signal, refs: signal.refs.map((ref) => mapRef(ref, ids)) },
-          ]),
-        ) as typeof data.signals,
-        consequences: data.consequences.map((consequence) => ({
-          ...consequence,
-          fact: {
-            ...consequence.fact,
-            refs: consequence.fact.refs.map((ref) => mapRef(ref, ids)),
-          },
-        })),
-        verification: data.verification.map((verification) => ({
-          ...verification,
-          availableChecks: verification.availableChecks.map((ref) => mapRef(ref, ids)),
-        })),
-      },
+      data: rewriteRecordRefs(data, assessmentSchema, remap) as typeof data,
     };
   });
   const evidence = source.evidence.map((entry) => ({
@@ -642,11 +555,7 @@ const importedTask = (
     id: fresh(entry.id),
     recordedAt: timestamp,
     provenance,
-    data: {
-      ...entry.data,
-      refs: entry.data.refs.map((ref) => mapRef(ref, ids)),
-      reviewContext: entry.data.reviewContext ? mapRef(entry.data.reviewContext, ids) : null,
-    },
+    data: rewriteRecordRefs(entry.data, evidenceSchema, remap) as typeof entry.data,
   }));
   const decisions = source.decisions.map((entry) => ({
     ...entry,
@@ -654,23 +563,25 @@ const importedTask = (
     recordedAt: timestamp,
     provenance,
   }));
-  const findings = source.findings.map((entry) => ({
-    ...entry,
-    id: fresh(entry.id),
-    recordedAt: timestamp,
-    provenance,
-    data: {
-      ...entry.data,
-      refs: entry.data.refs.map((ref) => mapRef(ref, ids)),
-      resolution: entry.data.resolution
-        ? {
-            ...entry.data.resolution,
-            evidenceIds: entry.data.resolution.evidenceIds.map((id) => ids.get(id) ?? id),
-            decisionIds: entry.data.resolution.decisionIds.map((id) => ids.get(id) ?? id),
-          }
-        : null,
-    },
-  }));
+  const findings = source.findings.map((entry) => {
+    const data = rewriteRecordRefs(entry.data, findingSchema, remap) as typeof entry.data;
+    return {
+      ...entry,
+      id: fresh(entry.id),
+      recordedAt: timestamp,
+      provenance,
+      data: {
+        ...data,
+        resolution: data.resolution
+          ? {
+              ...data.resolution,
+              evidenceIds: data.resolution.evidenceIds.map((id) => ids.get(id) ?? id),
+              decisionIds: data.resolution.decisionIds.map((id) => ids.get(id) ?? id),
+            }
+          : null,
+      },
+    };
+  });
   const workers = source.workers.map((entry) => ({
     ...entry,
     id: fresh(entry.id),
@@ -715,19 +626,21 @@ const importedTask = (
     closure: null,
     assessments,
     evidence,
-    decisions: decisions.map((entry) => ({
-      ...entry,
-      data: {
-        ...entry.data,
-        binding: {
-          ...entry.data.binding,
-          taskId: "",
-          workspaceId: destinationWorkspaceId,
-          contentRefs: entry.data.binding.contentRefs.map((ref) => mapRef(ref, ids)),
+    decisions: decisions.map((entry) => {
+      const data = rewriteRecordRefs(entry.data, decisionSchema, remap) as typeof entry.data;
+      return {
+        ...entry,
+        data: {
+          ...data,
+          binding: {
+            ...data.binding,
+            taskId: "",
+            workspaceId: destinationWorkspaceId,
+          },
+          consumption: null,
         },
-        consumption: null,
-      },
-    })),
+      };
+    }),
     ...(actionProgress ? { actionProgress } : {}),
     findings,
     workers,
@@ -1549,7 +1462,7 @@ export class WorkitCore {
       const workerId = newId();
       const changed = this.store.mutateTaskAndWorkspace({
         taskId: task.data.id,
-        expectedTaskRevision: input.expectedRevision,
+        expectedRevision: input.expectedRevision,
         expectedWorkspaceRevision: input.expectedWorkspaceRevision,
         now: trustedNow(this.context),
         workspace: (current, mutation) => success(mutation.revision, mutation.revision, current),
@@ -1609,7 +1522,7 @@ export class WorkitCore {
         return failure("permission_denied", "worker report is outside the worker assignment");
       const changed = this.store.mutateTaskAndWorkspace({
         taskId: task.data.id,
-        expectedTaskRevision: input.expectedRevision,
+        expectedRevision: input.expectedRevision,
         expectedWorkspaceRevision: input.expectedWorkspaceRevision,
         now: trustedNow(this.context),
         workspace: (current, mutation) => success(mutation.revision, mutation.revision, current),
@@ -1784,7 +1697,7 @@ export class WorkitCore {
     if (!attested.ok) return attested as Result<never>;
     const changed = this.store.mutateTaskAndWorkspace({
       taskId: task.data.id,
-      expectedTaskRevision: input.expectedRevision,
+      expectedRevision: input.expectedRevision,
       expectedWorkspaceRevision: input.expectedWorkspaceRevision,
       now: trustedNow(this.context),
       workspace: (current, mutation) => success(mutation.revision, mutation.revision, current),
@@ -1997,7 +1910,7 @@ export class WorkitCore {
       };
       const changed = this.store.mutateTaskAndWorkspace({
         taskId: task.data.id,
-        expectedTaskRevision: input.expectedRevision,
+        expectedRevision: input.expectedRevision,
         expectedWorkspaceRevision: input.expectedWorkspaceRevision,
         now: trustedNow(this.context),
         workspace: (current, mutation) =>
@@ -2034,7 +1947,7 @@ export class WorkitCore {
     }
     const changed = this.store.mutateTaskAndWorkspace({
       taskId: task.data.id,
-      expectedTaskRevision: input.expectedRevision,
+      expectedRevision: input.expectedRevision,
       expectedWorkspaceRevision: input.expectedWorkspaceRevision,
       now: trustedNow(this.context),
       workspace: (currentWorkspace, mutation) =>
@@ -2345,10 +2258,18 @@ export class WorkitCore {
       if (seen.has(observation.workerId))
         return failure("invalid_input", "worker observations must be unique");
       seen.add(observation.workerId);
+      // Anchor on fresh reads, not the passed view: a view captured before
+      // recent mutations must not stale-fail observations that match the
+      // current state. Genuinely stale observations still conflict below.
+      const freshTask = this.store.readTask(view.task.id);
+      const freshWorkspace = this.store.readWorkspace();
+      if (!freshTask.ok) return freshTask as Result<never>;
+      if (!freshWorkspace.ok) return freshWorkspace as Result<never>;
+      if (!freshWorkspace.data) return failure("not_found", "workspace not found");
       if (
         observation.taskId !== view.task.id ||
-        observation.expectedRevision !== view.task.revision ||
-        observation.expectedWorkspaceRevision !== view.workspace.revision
+        observation.expectedRevision !== freshTask.data.revision ||
+        observation.expectedWorkspaceRevision !== freshWorkspace.data.revision
       )
         return failure("revision_conflict", "worker observation is stale");
       if (!view.task.workers.some((entry) => entry.id === observation.workerId))
@@ -2481,7 +2402,7 @@ export class WorkitCore {
     }
     const changed = this.store.mutateTaskAndWorkspace({
       taskId: task.data.id,
-      expectedTaskRevision: input.expectedRevision,
+      expectedRevision: input.expectedRevision,
       expectedWorkspaceRevision: input.expectedWorkspaceRevision,
       now: trustedNow(this.context),
       workspace: (workspace, context) => success(context.revision, context.revision, workspace),
@@ -2538,7 +2459,7 @@ export class WorkitCore {
     this.fillRevisions(input, task.data, workspace.data);
     const changed = this.store.mutateTaskAndWorkspace({
       taskId: task.data.id,
-      expectedTaskRevision: input.expectedRevision,
+      expectedRevision: input.expectedRevision,
       expectedWorkspaceRevision: input.expectedWorkspaceRevision,
       now: trustedNow(this.context),
       workspace: (workspace, context) => success(context.revision, context.revision, workspace),
@@ -2598,7 +2519,7 @@ export class WorkitCore {
     if (!closure.ok) return closure as Result<never>;
     const changed = this.store.mutateTaskAndWorkspace({
       taskId: task.data.id,
-      expectedTaskRevision: input.expectedRevision,
+      expectedRevision: input.expectedRevision,
       expectedWorkspaceRevision: input.expectedWorkspaceRevision,
       now: trustedNow(this.context),
       workspace: (value, context) => success(context.revision, context.revision, value),

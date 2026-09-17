@@ -22,6 +22,7 @@ export {
   decisionDigest,
   candidateDigest,
   requirementId,
+  rewriteRecordRefs,
   BINDING_QUESTION_BUDGET,
   workitBindingQuestionIssue,
 } from "./core/task-contract";
@@ -55,6 +56,7 @@ export type {
   TaskView,
   TaskSummary,
   ExportBundle,
+  RefMap,
   Result as ContractResult,
 } from "./core/task-contract";
 export { TaskStore, runtimeVersion } from "./core/task-store";

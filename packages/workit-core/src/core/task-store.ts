@@ -41,8 +41,7 @@ export type WorkspaceMutation = (
 ) => Result<WorkspaceRecord>;
 export type CoupledMutation = {
   taskId: Id;
-  expectedTaskRevision?: Revision;
-  expectedRevision?: Revision;
+  expectedRevision: Revision;
   expectedWorkspaceRevision: Revision;
   now?: Utc;
   task: TaskMutation;
@@ -514,10 +513,9 @@ export class TaskStore {
       const workspace = this.readWorkspace();
       if (!workspace.ok) return workspace;
       if (!workspace.data) return failure("not_found", "workspace not found");
-      const expectedTaskRevision = input.expectedTaskRevision ?? input.expectedRevision!;
-      if (!expectedTaskRevision) return failure("invalid_input", "task revision is required");
-      if (task.data.revision !== expectedTaskRevision)
-        return this.conflict(expectedTaskRevision, task.data.revision);
+      const expected = input.expectedRevision;
+      if (!expected) return failure("invalid_input", "task revision is required");
+      if (task.data.revision !== expected) return this.conflict(expected, task.data.revision);
       if (workspace.data.revision !== input.expectedWorkspaceRevision)
         return this.conflict(input.expectedWorkspaceRevision, workspace.data.revision);
       const previousWorkspaceBytes = this.snapshotBytes(this.workspacePath);

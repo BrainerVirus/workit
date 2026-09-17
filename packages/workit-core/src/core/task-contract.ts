@@ -147,6 +147,113 @@ export const refSchema = z.discriminatedUnion("kind", [
 ]);
 export type Ref = z.infer<typeof refSchema>;
 
+/** Maps one reference during record traversal. Returning null marks the
+ * reference unportable: arrays drop it, nullable fields null it, and
+ * non-nullable positions propagate the drop to their owner. */
+export type RefMap = (ref: Ref) => Ref | null;
+
+type RewriteOutcome = { drop: boolean; value?: unknown };
+
+const rewriteUnknown = (value: unknown, map: RefMap): RewriteOutcome => {
+  if (Array.isArray(value)) {
+    const out: unknown[] = [];
+    for (const item of value) {
+      const rewritten = rewriteUnknown(item, map);
+      if (!rewritten.drop) out.push(rewritten.value);
+    }
+    return { drop: false, value: out };
+  }
+  if (typeof value === "object" && value !== null) {
+    if (refSchema.safeParse(value).success) {
+      const mapped = map(value as Ref);
+      return mapped === null ? { drop: true } : { drop: false, value: mapped };
+    }
+    const out: Record<string, unknown> = {};
+    for (const [key, item] of Object.entries(value)) {
+      const rewritten = rewriteUnknown(item, map);
+      out[key] = rewritten.drop ? null : rewritten.value;
+    }
+    return { drop: false, value: out };
+  }
+  return { drop: false, value };
+};
+
+const rewriteNode = (value: unknown, schema: z.ZodType, map: RefMap): RewriteOutcome => {
+  // Note: this zod version's classic accessors return core types, hence the
+  // casts below. Runtime behavior is identical; only the annotations differ.
+  if (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    refSchema.safeParse(value).success
+  ) {
+    const mapped = map(value as Ref);
+    return mapped === null ? { drop: true } : { drop: false, value: mapped };
+  }
+  let node: z.ZodType = schema;
+  while (
+    node instanceof z.ZodNullable ||
+    node instanceof z.ZodOptional ||
+    node instanceof z.ZodDefault
+  ) {
+    node = node.unwrap() as z.ZodType;
+  }
+  if (node === refSchema) {
+    if (!refSchema.safeParse(value).success) return { drop: false, value };
+    const mapped = map(value as Ref);
+    return mapped === null ? { drop: true } : { drop: false, value: mapped };
+  }
+  if (node instanceof z.ZodArray) {
+    if (!Array.isArray(value)) return { drop: false, value };
+    const out: unknown[] = [];
+    for (const item of value) {
+      const rewritten = rewriteNode(item, node.element as z.ZodType, map);
+      if (!rewritten.drop) out.push(rewritten.value);
+    }
+    return { drop: false, value: out };
+  }
+  if (node instanceof z.ZodObject) {
+    if (typeof value !== "object" || value === null || Array.isArray(value))
+      return { drop: false, value };
+    const shape = node.shape as Record<string, z.ZodType>;
+    const record = value as Record<string, unknown>;
+    const out: Record<string, unknown> = {};
+    for (const [key, item] of Object.entries(record)) {
+      if (!(key in shape)) {
+        const scrubbed = rewriteUnknown(item, map);
+        out[key] = scrubbed.drop ? null : scrubbed.value;
+        continue;
+      }
+      const child = shape[key];
+      const rewritten = rewriteNode(item, child, map);
+      if (rewritten.drop) {
+        if (child instanceof z.ZodOptional || child instanceof z.ZodDefault) continue;
+        if (child instanceof z.ZodNullable) {
+          out[key] = null;
+          continue;
+        }
+        return { drop: true };
+      }
+      out[key] = rewritten.value;
+    }
+    return { drop: false, value: out };
+  }
+  return { drop: false, value };
+};
+
+/**
+ * Schema-driven reference rewrite over an already-validated record subtree.
+ * Every `Ref` anywhere in the value is mapped; unportable references are
+ * dropped from arrays, nulled in nullable fields, and propagated upward
+ * anywhere else — so a new ref-bearing field can never silently slip
+ * through export or import. Unknown (schema-absent) keys are scrubbed the
+ * same way. Returns null only when the root itself is an unportable ref.
+ */
+export const rewriteRecordRefs = (value: unknown, schema: z.ZodType, map: RefMap): unknown => {
+  const rewritten = rewriteNode(value, schema, map);
+  return rewritten.drop ? null : rewritten.value;
+};
+
 export const provenanceSchema = z
   .object({
     kind: z.enum(["host_observed", "agent_reported", "imported"]),
