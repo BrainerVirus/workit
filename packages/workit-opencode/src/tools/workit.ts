@@ -746,14 +746,12 @@ export type WorkitToolOptions = {
   client?: SessionLookup;
   receipts?: NativeReceiptStore;
   directChildren?: DirectChildren;
-  now?: () => number;
 };
 
 export const createWorkitTools = ({
   client,
   receipts = new NativeReceiptStore(),
   directChildren = new Map<string, string>(),
-  now = Date.now,
 }: WorkitToolOptions = {}) => {
   const actionProposals = new Map<
     string,
@@ -761,7 +759,6 @@ export const createWorkitTools = ({
       descriptor: string;
       presented: string;
       approvedText: string;
-      createdAt: number;
       request: ExternalActionRequest;
     }>
   >();
@@ -883,6 +880,13 @@ export const createWorkitTools = ({
                   },
                 };
                 bound = true;
+              } else if (fresh.ok) {
+                // Proven drift evicts the stale pending so a fresh resolve
+                // opens exactly one question instead of wedging ambiguous.
+                actionProposals.set(
+                  context.sessionID,
+                  queue.filter((candidate) => candidate !== pending),
+                );
               }
             }
             if (!bound && !isSelfAuthorizingActionContent(decision.binding.approvedContent)) {
@@ -1108,7 +1112,6 @@ export const createWorkitTools = ({
               descriptor,
               presented: proposal.presented,
               approvedText: proposal.approvedText,
-              createdAt: now(),
               // The normalized request behind this descriptor (stash
               // upgrades included), so record-time re-resolution replays
               // the same bytes instead of drifting on its own upgrade.
