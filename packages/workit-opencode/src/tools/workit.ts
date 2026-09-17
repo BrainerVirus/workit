@@ -92,6 +92,19 @@ type Receipt = {
 const freshMs = 5 * 60 * 1000;
 const rejectedDescription = "Reject this decision";
 
+/**
+ * Concise approval text always needs a live proposal to bind it; an exact
+ * descriptor, plan list, or bare operation binds its own bytes.
+ */
+const isSelfAuthorizingActionContent = (content: string): boolean => {
+  try {
+    const value = JSON.parse(content) as { operation?: unknown };
+    return typeof value.operation === "string" && value.operation.length > 0;
+  } catch {
+    return /^[a-z][a-z_]*\.[a-z_]+$/.test(content);
+  }
+};
+
 const decisionContent = (
   purpose: Receipt["decisionPurpose"],
   question: string,
@@ -822,11 +835,13 @@ export const createWorkitTools = ({
           let recordInput = parsed.data as Record<string, unknown>;
           if (decision.purpose === "action" && decision.response === "approved") {
             const queue = actionProposals.get(context.sessionID) ?? [];
-            const matches = queue.filter(
+            const textMatches = queue.filter(
               (pending) =>
                 pending.presented === decision.binding.presented &&
-                pending.approvedText === decision.binding.approvedContent &&
-                now() - pending.createdAt <= 5 * 60 * 1000,
+                pending.approvedText === decision.binding.approvedContent,
+            );
+            const matches = textMatches.filter(
+              (pending) => now() - pending.createdAt <= 5 * 60 * 1000,
             );
             if (matches.length > 1)
               return output(
@@ -849,6 +864,15 @@ export const createWorkitTools = ({
                   displayed: pending.approvedText,
                 },
               };
+            } else if (!isSelfAuthorizingActionContent(decision.binding.approvedContent)) {
+              return output(
+                failure(
+                  "invalid_input",
+                  textMatches.length > 0
+                    ? "action proposal expired; resolve the action again for a fresh proposal"
+                    : "no matching action proposal; resolve the action through the action tool first",
+                ),
+              );
             }
           }
           result = core.observeDecision(recordInput, observed.observation);

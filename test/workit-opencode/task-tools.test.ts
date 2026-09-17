@@ -1196,13 +1196,103 @@ test("action proposals expire with the injectable clock", async () => {
       },
       { directory: root, sessionID: actor } as never,
     );
+    const parsed = JSON.parse(
+      typeof decision === "string" ? decision : (decision as { output: string }).output,
+    );
+    expect(parsed).toMatchObject({ ok: false, code: "invalid_input" });
+    expect(String(parsed.error)).toContain("expired");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("concise action approval without a live proposal fails closed", async () => {
+  const root = mkdtempSync(join(tmpdir(), "workit-opencode-no-proposal-"));
+  try {
+    for (const args of [
+      ["init", "-q"],
+      ["config", "user.email", "test@example.invalid"],
+      ["config", "user.name", "Workit Test"],
+    ])
+      spawnSync("git", args, { cwd: root });
+    writeFileSync(join(root, "base.txt"), "base\n");
+    spawnSync("git", ["add", "base.txt"], { cwd: root });
+    spawnSync("git", ["commit", "-qm", "base"], { cwd: root });
+    const actor = "opencode-no-proposal";
+    const store = new TaskStore(root);
+    const core = new WorkitCore(store, {
+      root,
+      caller: { host: "opencode", actor },
+      capabilities: [],
+      constraints: [],
+      now: "2026-01-01T00:00:00Z",
+    });
+    const started = core.task(taskStartRequest());
+    if (!started.ok) throw new Error(started.error);
+    const task = store.readTask((started.data as { id: string }).id);
+    const workspace = store.readWorkspace();
+    if (!task.ok || !workspace.ok || !workspace.data) throw new Error("task setup failed");
     expect(
-      JSON.parse(typeof decision === "string" ? decision : (decision as { output: string }).output),
+      core.writer({
+        schemaVersion: 1,
+        action: "acquire",
+        taskId: task.data.id,
+        expectedRevision: task.data.revision,
+        expectedWorkspaceRevision: workspace.data.revision,
+        workerId: null,
+      }),
     ).toMatchObject({ ok: true });
-    const recorded = store.readTask(task.data.id);
-    if (!recorded.ok) throw new Error("recorded task unavailable");
-    const entry = recorded.data.decisions.find((item) => item.data.purpose === "action");
-    expect(entry?.data.binding.approvedContent).toBe(proposal.approvedContent);
+    const receipts = new NativeReceiptStore();
+    const tools = createWorkitTools({
+      receipts,
+      client: { session: { get: async () => ({ data: { id: actor, directory: root } }) } },
+    }) as any;
+    const presented =
+      "Workit decision: action — Open a PR from `feature/workit-reliability-delta` to `main`?";
+    const approvedContent = "Open the PR: feature/workit-reliability-delta → main.";
+    receipts.record(
+      {
+        sessionID: actor,
+        callID: "no-proposal-question",
+        args: {
+          questions: [
+            {
+              header: "Workit decision: action",
+              question: presented,
+              options: [
+                { label: "approved", description: approvedContent },
+                { label: "rejected", description: "Reject this decision" },
+              ],
+            },
+          ],
+        },
+      },
+      { metadata: { answers: [["approved"]] } },
+    );
+    const decision = await tools.workit_decision.execute(
+      {
+        schemaVersion: 1,
+        action: "record",
+        taskId: task.data.id,
+        purpose: "action",
+        binding: {
+          taskId: task.data.id,
+          workspaceId: workspace.data.id,
+          scope: task.data.intent.data.scope,
+          presented,
+          approvedContent,
+          contentRefs: [],
+        },
+        response: "approved",
+        requirementIds: [],
+      },
+      { directory: root, sessionID: actor } as never,
+    );
+    const parsed = JSON.parse(
+      typeof decision === "string" ? decision : (decision as { output: string }).output,
+    );
+    expect(parsed).toMatchObject({ ok: false, code: "invalid_input" });
+    expect(String(parsed.error)).toContain("no matching action proposal");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
