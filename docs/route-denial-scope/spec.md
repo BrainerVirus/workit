@@ -1,5 +1,9 @@
 # Checkout-Scoped Shell Route Denial - Spec
 
+> **Superseded by `docs/structural-fixes/spec.md` (decision 6,
+> session-scoped enforcement).** The Option A `.workit/` marker gate below
+> is kept as history — do not implement as written.
+
 ## Context
 
 The narrow shell route denial (`shellRouteIntent`: `git switch -c/--create`,
