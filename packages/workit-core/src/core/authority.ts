@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import path from "node:path";
+import { operationAutoClass, standingApprovalLive } from "./auto-approval";
 import {
   canonicalJson,
   decisionDigest,
@@ -579,6 +580,36 @@ const validateAction = (
     !provenanceMatches(entry.provenance, authority.provenance)
   )
     return failure("permission_denied", "action approval lacks native receipt assurance");
+  // Standing auto-approval receipts carry no live question. They authorize
+  // only while the referenced workspace rule still covers the operation —
+  // verified here, at reserve time, against current config. Question-backed
+  // approvals (host-kind receipts) skip this; anything else was already
+  // denied above.
+  const receipts = entry.provenance.receipts as unknown[];
+  const standing = receipts.filter(
+    (receipt) =>
+      typeof receipt === "object" &&
+      receipt !== null &&
+      (receipt as { kind?: unknown }).kind === "standing",
+  );
+  const questionBacked = receipts.some(
+    (receipt) =>
+      typeof receipt === "object" &&
+      receipt !== null &&
+      (receipt as { kind?: unknown }).kind === "host",
+  );
+  if (!questionBacked && standing.length > 0) {
+    let operation: unknown;
+    try {
+      operation = (JSON.parse(decision.binding.approvedContent) as { operation?: unknown })
+        .operation;
+    } catch {
+      operation = null;
+    }
+    const cls = operationAutoClass(operation);
+    if (!cls || !standing.some((receipt) => standingApprovalLive(store.root, receipt, cls)))
+      return failure("permission_denied", "standing auto-approval is not live for this operation");
+  }
   if (decision.revoked) return failure("permission_denied", "decision is revoked");
   if (decision.digest !== decisionDigest(decision))
     return failure("permission_denied", "decision binding is invalid");

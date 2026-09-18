@@ -73,6 +73,23 @@ export type { MethodId, SelectedMethod } from "./core/methods";
 export { hasLiveWorkitTask, shellRouteIntent, shouldDenyShellRoute } from "./core/route-intent";
 export { classifyBranchDirt } from "./core/branch";
 export type { BranchDirt } from "./core/branch";
+export {
+  AUTO_CLASSES,
+  autoApproves,
+  operationAutoClass,
+  resolveAutoApproval,
+  standingApprovalLive,
+  standingAutoApplies,
+  standingAutoBinding,
+  standingReceiptFor,
+  verifyStandingApproval,
+} from "./core/auto-approval";
+export type {
+  AutoApproval,
+  AutoClass,
+  StandingAutoBinding,
+  StandingReceipt,
+} from "./core/auto-approval";
 export { bundleHashOfFile, isEphemeralCachePath, sha256Hex } from "./core/runtime-identity";
 export type { ShellRouteIntent } from "./core/route-intent";
 export { applicableDecision, reserveAction, settleAction, reconcileAction } from "./core/authority";
