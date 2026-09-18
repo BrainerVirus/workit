@@ -66,6 +66,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   proposal instead of minting duplicates; and a user-stated choice records
   as a `stated` decision that retires product decisions without authorizing
   mutating actions.
+- Single chain reservations: a plan list may mix `{branch: name}` and
+  `{pr: true}` steps with commit messages under one approval, executed once
+  each in order against a history lease (rewrites invalidate the chain);
+  branch-owned spec/plan docs under `docs/` ride onto a new branch while
+  other dirt binds `stash: "yes"` up front; one binding/pin/verify core
+  serves every call site with canonical-JSON ref comparison.
+- Explicit singular revisions: every task mutation takes `expectedRevision`
+  (plus `expectedWorkspaceRevision`), exports/imports round-trip through the
+  schema with a single resume path, worker cancel is idempotent and
+  lead-attested, and the lifecycle gate table splits pause blockers from
+  resume/close/revise blockers. Policy gates are enforced, never advisory:
+  `before:write` blocks `writer.acquire` while unsatisfied, close blocks
+  only on `before:close`, and unsatisfied reasons name the expected evidence
+  kind.
+- Self-identifying runtime: local-dist stale-install detection compares the
+  installed bundle hash against the current build (same version, different
+  bytes fails), and the ephemeral-cache path table lives in one core helper
+  instead of per-callsite substring lists; the branch-setup stash upgrade is
+  one core helper with one-line adapter callers.
 
 ### Fixed
 
