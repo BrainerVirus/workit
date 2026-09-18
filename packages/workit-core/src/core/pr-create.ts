@@ -404,7 +404,8 @@ export function mergePr(
     cmd = ["gh", "pr", "merge", opts.source];
     cmd.push(squash ? "--squash" : "--merge");
     if (removeBranch) cmd.push("--delete-branch");
-    cmd.push("--yes");
+    // NOTE: gh pr merge has no --yes flag; fully-specified flags merge
+    // non-interactively on their own.
     cmdEnv = { ...process.env, PATH: process.env.PATH ?? "", GH_TOKEN: token };
   }
   const result = spawnSync(cmd[0], cmd.slice(1), { cwd: root, encoding: "utf8", env: cmdEnv });
