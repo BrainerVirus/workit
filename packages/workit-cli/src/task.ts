@@ -4,7 +4,6 @@ import {
   OPERATION_FAMILIES,
   approvedExternalAction,
   approvedPlanCommit,
-  classifyBranchDirt,
   planCommitBinding,
   chainStepBinding,
   externalActionState,
@@ -34,6 +33,7 @@ import {
   executeResolvedExternalAction,
   readExternalAction,
   resolveExternalActionRequest,
+  upgradeBranchSetupForStash,
 } from "@brainervirus/workit-core/src/core/external-action-effects";
 import type {
   NativeAuthorityVerifier,
@@ -649,21 +649,11 @@ export async function runActionCommand(argv: string[], deps: TaskCliDeps = {}): 
     else printHuman(resolved, deps);
     return 2;
   }
-  // A dirty tree binds stash up front so the confirmation names it and one
-  // approval carries the whole effect instead of failing at preflight.
-  // Carry-class dirt (untracked or docs-confined) rides along silently.
-  if (
-    resolved.data.request.operation === "git.branch_setup" &&
-    (resolved.data.descriptorPayload as { resolved?: { dirty?: unknown } }).resolved?.dirty ===
-      true &&
-    (resolved.data.descriptorPayload as { stash?: unknown }).stash !== "yes" &&
-    classifyBranchDirt(root) === "stash-required"
-  ) {
-    const upgraded = resolveExternalActionRequest(root, {
-      ...parsed.data,
-      payload: { ...(parsed.data.payload as Record<string, unknown>), stash: "yes" },
-    } as typeof parsed.data);
-    if (upgraded.ok) resolved = upgraded;
+  resolved = upgradeBranchSetupForStash(root, parsed.data, resolved);
+  if (!resolved.ok) {
+    if (json) jsonResult(outOf(deps), resolved);
+    else printHuman(resolved, deps);
+    return 2;
   }
   const normalized = resolved.data.request;
   const descriptor = externalActionDescriptor(

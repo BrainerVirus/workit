@@ -1,4 +1,9 @@
-import { branchSetup, resolveBranchPolicyFor, resolveCommitPolicyFor } from "./branch";
+import {
+  branchSetup,
+  classifyBranchDirt,
+  resolveBranchPolicyFor,
+  resolveCommitPolicyFor,
+} from "./branch";
 import { hostingCliAvailable, prCreate } from "./pr-create";
 import {
   changelogContext,
@@ -828,6 +833,32 @@ const youTrackWritePreflight = (): Result<null> => {
       outcome: "not_started",
     });
   return success(null, null, null);
+};
+
+/**
+ * A dirty tree binds stash up front so the proposal names it and one
+ * approval carries the whole effect instead of failing at preflight.
+ * Carry-class dirt (untracked or docs-confined) rides along silently.
+ * Returns the original resolution untouched unless an upgrade applies.
+ */
+export const upgradeBranchSetupForStash = (
+  root: string,
+  parsed: ExternalActionRequest,
+  resolved: Result<ResolvedExternalAction>,
+): Result<ResolvedExternalAction> => {
+  if (!resolved.ok || resolved.data.request.operation !== "git.branch_setup") return resolved;
+  if (
+    (resolved.data.descriptorPayload as { resolved?: { dirty?: unknown } }).resolved?.dirty !==
+      true ||
+    (resolved.data.descriptorPayload as { stash?: unknown }).stash === "yes" ||
+    classifyBranchDirt(root) !== "stash-required"
+  )
+    return resolved;
+  const upgraded = resolveExternalActionRequest(root, {
+    ...parsed,
+    payload: { ...(parsed.payload as Record<string, unknown>), stash: "yes" },
+  } as typeof parsed);
+  return upgraded.ok ? upgraded : resolved;
 };
 
 export const resolveExternalActionRequest = (
