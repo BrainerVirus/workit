@@ -221,6 +221,43 @@ tool calls, form replies, and unload behavior. It does not pretend the current
 V1-only Workit entry can pass V2 parity. The full matrix runs after the dual
 entry is implemented.
 
+### Spike findings (plan step 3, `test/opencode-v2/` harness green 13/13)
+
+- **Tool visibility is unresolved — matrix item 4 is blocked on it.** A tool
+  registered through `ctx.tool.transform` + `editor.add` appears in
+  `editor.list()` but is NOT offered to model requests in `2.0.3` (verified
+  across plain, namespaced, `permission`-optioned, `pinned`, and `codemode`
+  registrations; scripted direct calls fail as "not currently available").
+  Registration alone does not satisfy matrix item 4. Candidates for the
+  mechanism: MCP-server tools, a per-mode surfacing rule, or newer `2.0.x`
+  behavior. Step 5 must resolve this before the 10-tool port.
+- Latest docs describe `ctx.provider`/`ctx.model` transforms; the pinned
+  `2.0.3` SDK has neither. Custom providers are config-declared, and model
+  entries require `capabilities: { tools, input: [...], output: [...] }` —
+  anything less is skipped as malformed (server logs a normalization
+  diagnostic). Plain-object plugins (no SDK import) load fine.
+- The `openai-compatible` runtime requires SSE-streamed chat completions;
+  plain JSON bodies fail as `provider.invalid-output` with endless retries.
+- Permission `evaluate` carries `{ sessionID, agent, action, resources[],
+  source, effect }` with mutable `effect`/`message`. Pre-set deny rules
+  FILTER the tool from the offering; a mid-flight deny yields
+  `permission.rejected` with `executed: false`. Question forms round-trip
+  through `form.created` → form GET → `/form/{id}/reply`.
+- `subagent` requires `agent`, spawns a child with `parentID` lineage, and
+  completes concurrently (two children, one turn) with `<subagent
+  sessionID state>result</subagent>` envelopes. Prompt `text` edits persist
+  (prompt hook); `context`-hook `system` edits do NOT reach the provider in
+  `2.0.3`. Compaction validates a fixed section template and fires the
+  `compaction` hook. V1-shaped config normalizes in memory (`plugin`→
+  `plugins`, `provider`→`providers`, `npm`→`aisdk:`-prefixed `package`,
+  `options`→`settings`) without rewriting the source file.
+- Harness caveats: the CLI always spawns a background service, so the driver
+  must tolerate transient empty outputs and void endpoints; location services
+  boot on first prompt (not session create); plugin file changes hot-reload
+  via watchers; `prompt` takes no model (switch via `/model`); event ids are
+  `evt_`-prefixed across a wide taxonomy (`session.step.*`,
+  `session.execution.*`, `session.usage.updated`, `*.updated`).
+
 ## 10. Validation matrix
 
 Run the packed artifact, not only workspace-linked source.
