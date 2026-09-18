@@ -5,6 +5,7 @@ import {
   approvedExternalAction,
   approvedPlanCommit,
   planCommitBinding,
+  chainStepBinding,
   externalActionState,
   priorExternalAction,
   priorResolvedDrift,
@@ -32,6 +33,7 @@ import {
   executeResolvedExternalAction,
   readExternalAction,
   resolveExternalActionRequest,
+  upgradeBranchSetupForStash,
 } from "@brainervirus/workit-core/src/core/external-action-effects";
 import type {
   NativeAuthorityVerifier,
@@ -537,7 +539,9 @@ const nativeExternalActionRunner = (root: string, actor: string, core: WorkitCor
     const store = new TaskStore(root);
     const approved = approvedExternalAction(store, "workit_cli", actor, operationValue);
     if (!approved.ok) {
-      const plan = planCommitBinding(store, "workit_cli", actor, operationValue);
+      const plan =
+        planCommitBinding(store, "workit_cli", actor, operationValue) ??
+        chainStepBinding(store, "workit_cli", actor, operationValue);
       if (plan) {
         const actionRef = externalActionRef("workit_cli", actor, operationValue);
         return {
@@ -645,19 +649,11 @@ export async function runActionCommand(argv: string[], deps: TaskCliDeps = {}): 
     else printHuman(resolved, deps);
     return 2;
   }
-  // A dirty tree binds stash up front so the confirmation names it and one
-  // approval carries the whole effect instead of failing at preflight.
-  if (
-    resolved.data.request.operation === "git.branch_setup" &&
-    (resolved.data.descriptorPayload as { resolved?: { dirty?: unknown } }).resolved?.dirty ===
-      true &&
-    (resolved.data.descriptorPayload as { stash?: unknown }).stash !== "yes"
-  ) {
-    const upgraded = resolveExternalActionRequest(root, {
-      ...parsed.data,
-      payload: { ...(parsed.data.payload as Record<string, unknown>), stash: "yes" },
-    } as typeof parsed.data);
-    if (upgraded.ok) resolved = upgraded;
+  resolved = upgradeBranchSetupForStash(root, parsed.data, resolved);
+  if (!resolved.ok) {
+    if (json) jsonResult(outOf(deps), resolved);
+    else printHuman(resolved, deps);
+    return 2;
   }
   const normalized = resolved.data.request;
   const descriptor = externalActionDescriptor(

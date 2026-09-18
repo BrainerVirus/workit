@@ -236,6 +236,7 @@ function copyCoreSources(stub: string) {
     "config-conversion.ts",
     "cutover.ts",
     "task-contract.ts",
+    "runtime-identity.ts",
   ]) {
     const src =
       name === "doctor-check.ts"

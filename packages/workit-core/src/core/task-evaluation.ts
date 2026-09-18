@@ -377,6 +377,52 @@ export function evaluateEvidence(
 }
 
 export const scopeCovers = contractScopeCovers;
+
+/** One shared pin check for evidence and finding records: an unpinned
+ * assignment accepts anything in scope; a pinned one accepts the pin on
+ * either candidate slot. Absent IDs behave as null. */
+export const checkPin = (
+  assignment: { candidateId?: string | null },
+  beforeCandidateId: string | null | undefined,
+  candidateId: string | null | undefined,
+): boolean => {
+  const pin = assignment.candidateId ?? null;
+  if (pin === null) return true;
+  return (beforeCandidateId ?? null) === pin || (candidateId ?? null) === pin;
+};
+
+/** Resolve effective evidence binding: explicit IDs win; otherwise a pinned
+ * worker defaults to its pin and everyone else to the current candidate
+ * (checks and reviews) or null. Callers validate and pin-check the resolved
+ * values — never the caller's possibly-empty fields. */
+export const resolveBinding = (
+  evidence: {
+    beforeCandidateId?: string | null;
+    candidateId?: string | null;
+    kind: string;
+  },
+  pin: string | null | undefined,
+  currentCandidateId: string | null,
+): { beforeCandidateId: string | null; candidateId: string | null } => {
+  const bound = evidence.kind === "check" || evidence.kind === "review";
+  const fallback = bound ? (pin ?? currentCandidateId) : null;
+  return {
+    beforeCandidateId: evidence.beforeCandidateId ?? fallback,
+    candidateId: evidence.candidateId ?? fallback,
+  };
+};
+
+/** One shared verification predicate for fixed findings: a passed
+ * check/review counts when the finding is unscoped or the evidence is
+ * bound to the finding's candidate. Used by the auto-reopen scan, the
+ * resolve gate, and closure — one predicate, one error code each. */
+export const findingVerificationPasses = (
+  findingCandidateId: string | null | undefined,
+  evidence: { kind: string; candidateId: string | null | undefined; status: string },
+): boolean =>
+  evidence.status === "passed" &&
+  (evidence.kind === "check" || evidence.kind === "review") &&
+  ((findingCandidateId ?? null) === null || evidence.candidateId === findingCandidateId);
 const applicableDecision = (
   task: TaskRecord,
   workspace: WorkspaceRecord,
@@ -430,14 +476,29 @@ const evidenceMatchesRequirement = (
   kind: EvidenceEvaluation["status"],
   evidenceKind: string,
   dimension: Requirement["dimension"],
+  ruleId?: string,
 ): boolean => {
   if (kind !== "passed") return false;
-  if (dimension === "testing" || dimension === "verification") return evidenceKind === "check";
+  if (dimension === "testing" || dimension === "verification")
+    return evidenceKind === "check" || (ruleId === "pre-pr-cleanup" && evidenceKind === "artifact");
   if (dimension === "review") return evidenceKind === "review";
   if (dimension === "investigation" || dimension === "challenge")
     return evidenceKind === "investigation";
   if (dimension === "artifacts" || dimension === "continuity") return evidenceKind === "artifact";
   return false;
+};
+
+/** Human-readable evidence kinds each requirement dimension accepts, used
+ * so kind mismatches fail with the expected kind instead of silence. */
+const expectedKinds = (dimension: Requirement["dimension"], ruleId?: string): string => {
+  if (dimension === "testing") return "check";
+  if (dimension === "verification")
+    return ruleId === "pre-pr-cleanup" ? "check or artifact" : "check";
+  if (dimension === "review") return "review";
+  if (dimension === "investigation" || dimension === "challenge") return "investigation";
+  if (dimension === "artifacts" || dimension === "continuity") return "artifact";
+  if (dimension === "decisions") return "decision";
+  return "worker report";
 };
 
 export function evaluateRequirements(
@@ -462,7 +523,14 @@ export function evaluateRequirements(
       .map((entry, index) => ({ entry, evaluation: evidence[index] }))
       .filter(({ entry }) => entry.data.requirementIds.includes(requirement.id));
     const passed = related.filter(({ entry, evaluation }) => {
-      if (!evidenceMatchesRequirement(evaluation.status, entry.data.kind, requirement.dimension))
+      if (
+        !evidenceMatchesRequirement(
+          evaluation.status,
+          entry.data.kind,
+          requirement.dimension,
+          requirement.ruleId,
+        )
+      )
         return false;
       if (
         (entry.data.kind === "check" || entry.data.kind === "review") &&
@@ -474,10 +542,15 @@ export function evaluateRequirements(
       if (requirement.dimension !== "review") return true;
       const reviewSession = sessionFromRef(entry.data.reviewContext);
       const sameImplementation = sameSession(reviewSession, task.intent.provenance.session);
-      const sameEvidenceSession = task.evidence.some(
-        (other) =>
+      // Reviewer-session uniqueness is per candidate, not per task: the
+      // same session may re-verify after the candidate changes, but never
+      // manufacture two reviews for one candidate.
+      const sameEvidenceSession = related.some(
+        ({ entry: other }) =>
           other.id !== entry.id &&
           other.data.kind === "review" &&
+          other.data.candidateId !== null &&
+          other.data.candidateId === entry.data.candidateId &&
           sameSession(reviewSession, other.provenance.session),
       );
       return (
@@ -488,19 +561,34 @@ export function evaluateRequirements(
       );
     });
     if (passed.length) {
-      // RED-first: a testing requirement is only satisfied by a pass that was
-      // preceded by a recorded failure on the same requirement. A GREEN with
-      // no RED is indistinguishable from code-then-tests.
+      // RED-first, scoped to fresh claims: a testing pass bound to the
+      // current candidate needs a preceding recorded failure, unless a
+      // passing baseline already exists from earlier work — a check that
+      // passed (when recorded) against a different candidate. Stale passes
+      // count as baselines: green on an older tree is exactly what "prior
+      // passing baseline" means. A GREEN with neither is indistinguishable
+      // from code-then-tests.
+      const currentId = candidate?.id ?? null;
       const withRed =
         requirement.dimension === "testing"
-          ? passed.filter(({ entry }) =>
-              related.some(
-                (other) =>
-                  other.entry.data.kind === "check" &&
-                  other.evaluation.status === "failed" &&
-                  other.entry.data.requirementIds.includes(requirement.id) &&
-                  other.entry.recordedAt <= entry.recordedAt,
-              ),
+          ? passed.filter(
+              ({ entry }) =>
+                related.some(
+                  (other) =>
+                    other.entry.data.kind === "check" &&
+                    other.evaluation.status === "failed" &&
+                    other.entry.data.requirementIds.includes(requirement.id) &&
+                    other.entry.recordedAt <= entry.recordedAt,
+                ) ||
+                related.some(
+                  (baseline) =>
+                    baseline.entry.id !== entry.id &&
+                    baseline.entry.data.kind === "check" &&
+                    baseline.entry.data.result === "passed" &&
+                    baseline.entry.data.candidateId !== null &&
+                    currentId !== null &&
+                    baseline.entry.data.candidateId !== currentId,
+                ),
             )
           : passed;
       if (withRed.length)
@@ -573,6 +661,14 @@ export function evaluateRequirements(
         capability.assurance === "unavailable" &&
         (capability.name === requirement.dimension || capability.surface === requirement.dimension),
     );
+    if (!unavailable && related.length > 0 && !passed.length)
+      return {
+        requirementId: requirement.id,
+        status: "unsatisfied" as const,
+        evidenceIds: related.map(({ entry }) => entry.id),
+        decisionIds: [],
+        reason: `no passing evidence (needs kind:${expectedKinds(requirement.dimension, requirement.ruleId)})`,
+      };
     return {
       requirementId: requirement.id,
       status: unavailable ? ("unavailable" as const) : ("unsatisfied" as const),
@@ -614,10 +710,12 @@ export function evaluateClosure(
       if (entry.data.disposition === "fixed") {
         const verified = entry.data.resolution?.evidenceIds.some((id) => {
           const evidence = view.task.evidence.find((item) => item.id === id);
-          return (
-            evidenceById.get(id) === "passed" &&
-            (evidence?.data.kind === "check" || evidence?.data.kind === "review")
-          );
+          if (!evidence) return false;
+          return findingVerificationPasses(entry.data.candidateId, {
+            kind: evidence.data.kind,
+            candidateId: evidence.data.candidateId,
+            status: evidenceById.get(id) ?? "missing",
+          });
         });
         if (!verified)
           return failure("requirements_unsatisfied", "fixed findings require current verification");
@@ -652,9 +750,16 @@ export function evaluateClosure(
       }
     }
   }
-  const blocking = evaluations.filter(
-    (item) => item.status === "unsatisfied" || item.status === "unavailable",
-  );
+  // Close is gated only by close-timed requirements. Dependent-action gates
+  // (e.g. deslop before hosting.pull_request) block their named action at
+  // reservation time, never the close itself.
+  const blocking = evaluations.filter((item) => {
+    if (item.status !== "unsatisfied" && item.status !== "unavailable") return false;
+    const requirement = view.task.policy?.requirements.find(
+      (candidate) => candidate.id === item.requirementId,
+    );
+    return !requirement || requirement.before === "close";
+  });
   if (requestedOutcome !== "stopped" && blocking.length)
     return failure("requirements_unsatisfied", "applicable requirements are unsatisfied", {
       requirementIds: blocking.map((item) => item.requirementId),

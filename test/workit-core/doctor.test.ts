@@ -183,6 +183,59 @@ test("healthy fixture: canonical install yields no stale_install finding", () =>
   expect(stale.detail).not.toMatch(/stale/i);
 });
 
+test("reports stale_install when a same-version local-dist install runs different bytes", () => {
+  const pluginPkg = path.join(fixture.pluginDir, "package.json");
+  const hooksFile = path.join(fixture.pluginDir, "hooks", "hooks-cursor.json");
+  const hookBundle = path.join(fixture.pluginDir, "dist", "cursor-session-start.js");
+  const devBundle = path.join(
+    fixture.dev,
+    "packages",
+    "workit-cursor",
+    "dist",
+    "cursor-session-start.js",
+  );
+  const originalHooks = readFileSync(hooksFile, "utf8");
+  const originalHookBundle = readFileSync(hookBundle, "utf8");
+  const originalDevBundle = readFileSync(devBundle, "utf8");
+  // Same version both sides: version strings cannot see the difference, the
+  // bundle hash can.
+  writeConfig(
+    pluginPkg,
+    JSON.stringify({
+      name: "@brainervirus/workit-cursor",
+      version: "1.0.0",
+      dependencies: { "@brainervirus/workit-core": "workspace:*" },
+    }),
+  );
+  rmSync(path.join(fixture.pluginDir, "mcp.json"), { force: true });
+  writeConfig(
+    hooksFile,
+    JSON.stringify({
+      version: 1,
+      hooks: { sessionStart: [{ command: `node ${hookBundle}` }] },
+    }),
+  );
+  try {
+    const report = run();
+    expect(report.exitCode).not.toBe(0);
+    const stale = check(report, "stale_install");
+    expect(stale.status).toBe("fail");
+    expect(stale.detail).toMatch(/different bytes|hash mismatch/);
+    // Byte-identical install heals without touching versions.
+    writeConfig(hookBundle, originalDevBundle);
+    const healed = run({
+      env: { ...process.env, WORKIT_DOCTOR_STALE_REGISTRY_VERSION: "1.0.0" },
+    });
+    expect(check(healed, "stale_install").status).toBe("pass");
+  } finally {
+    rmSync(pluginPkg, { force: true });
+    writeConfig(hooksFile, originalHooks);
+    writeConfig(hookBundle, originalHookBundle);
+    writeConfig(devBundle, originalDevBundle);
+  }
+  expect(check(run(), "stale_install").status).toBe("pass");
+});
+
 test("reports stale_install when the cursor plugin dir is a symlink into a package cache", () => {
   const cachePkg = path.join(fixture.root, "Library", "Caches", "pnpm", "dlx", "abc", "pkg");
   mkdirSync(cachePkg, { recursive: true });
@@ -260,7 +313,21 @@ test("canonical @latest install with an old plugin package.json version is not s
 test("offline flag reflects the registry probe: false for local-dist installs, true otherwise", () => {
   const pluginPkg = path.join(fixture.pluginDir, "package.json");
   const hooksFile = path.join(fixture.pluginDir, "hooks", "hooks-cursor.json");
+  const hookBundle = path.join(fixture.pluginDir, "dist", "cursor-session-start.js");
+  const devBundle = path.join(
+    fixture.dev,
+    "packages",
+    "workit-cursor",
+    "dist",
+    "cursor-session-start.js",
+  );
   const originalHooks = readFileSync(hooksFile, "utf8");
+  const originalHookBundle = readFileSync(hookBundle, "utf8");
+  const originalDevBundle = readFileSync(devBundle, "utf8");
+  // Same version means same bytes: the bundle-hash check compares content.
+  // The synced bytes keep a valid node launcher entry (shebang + syntax).
+  writeConfig(hookBundle, "#!/usr/bin/env node\n// bundle\n");
+  writeConfig(devBundle, "#!/usr/bin/env node\n// bundle\n");
   writeConfig(pluginPkg, JSON.stringify({ name: "@brainervirus/workit-cursor", version: "1.0.0" }));
   rmSync(path.join(fixture.pluginDir, "mcp.json"), { force: true });
   writeConfig(
@@ -291,6 +358,8 @@ test("offline flag reflects the registry probe: false for local-dist installs, t
   } finally {
     rmSync(pluginPkg, { force: true });
     writeConfig(hooksFile, originalHooks);
+    writeConfig(hookBundle, originalHookBundle);
+    writeConfig(devBundle, originalDevBundle);
   }
   expect(run().offline).toBe(true);
 });
@@ -342,7 +411,21 @@ test("local-dist install behind the published runtime is stale_install fail when
 test("registry-unreachable staleness comparison yields registry_unreachable, not stale_install", () => {
   const pluginPkg = path.join(fixture.pluginDir, "package.json");
   const hooksFile = path.join(fixture.pluginDir, "hooks", "hooks-cursor.json");
+  const hookBundle = path.join(fixture.pluginDir, "dist", "cursor-session-start.js");
+  const devBundle = path.join(
+    fixture.dev,
+    "packages",
+    "workit-cursor",
+    "dist",
+    "cursor-session-start.js",
+  );
   const originalHooks = readFileSync(hooksFile, "utf8");
+  const originalHookBundle = readFileSync(hookBundle, "utf8");
+  const originalDevBundle = readFileSync(devBundle, "utf8");
+  // Same version means same bytes: the bundle-hash check compares content.
+  // The synced bytes keep a valid node launcher entry (shebang + syntax).
+  writeConfig(hookBundle, "#!/usr/bin/env node\n// bundle\n");
+  writeConfig(devBundle, "#!/usr/bin/env node\n// bundle\n");
   writeConfig(pluginPkg, JSON.stringify({ name: "@brainervirus/workit-cursor", version: "1.0.0" }));
   rmSync(path.join(fixture.pluginDir, "mcp.json"), { force: true });
   writeConfig(
@@ -381,6 +464,8 @@ test("registry-unreachable staleness comparison yields registry_unreachable, not
   } finally {
     rmSync(pluginPkg, { force: true });
     writeConfig(hooksFile, originalHooks);
+    writeConfig(hookBundle, originalHookBundle);
+    writeConfig(devBundle, originalDevBundle);
   }
 });
 

@@ -14,6 +14,7 @@ import {
 } from "./task-contract";
 import { WorkitCore } from "./task-engine";
 import { TaskStore } from "./task-store";
+import { chainStepKey, normalizeChainSteps, type ChainStep } from "./authority";
 import * as z from "zod";
 import { execFileSync } from "node:child_process";
 
@@ -323,33 +324,58 @@ export const priorExternalAction = (
 /** Parse a plan-commit authorization descriptor (one approved list per plan). */
 export const planCommitDescriptor = (
   content: string,
-): { steps: string[]; branch: string } | null => {
+): { steps: ChainStep[]; branch: string; snapshotHead: string | null } | null => {
   try {
     const value = JSON.parse(content) as {
       operation?: unknown;
-      payload?: { plan_steps?: unknown; plan_branch?: unknown };
+      payload?: {
+        plan_steps?: unknown;
+        plan_branch?: unknown;
+        resolved?: { head?: unknown; branch?: unknown };
+      };
     };
     if (value.operation !== "git.commit" || !value.payload) return null;
-    const steps = value.payload.plan_steps;
+    const steps = normalizeChainSteps(value.payload.plan_steps);
     const branch = value.payload.plan_branch;
-    if (
-      !Array.isArray(steps) ||
-      steps.some((step) => typeof step !== "string" || !step) ||
-      typeof branch !== "string" ||
-      !branch
-    )
-      return null;
-    return { steps: steps as string[], branch };
+    if (!steps || typeof branch !== "string" || !branch) return null;
+    const head = value.payload.resolved?.head;
+    return { steps, branch, snapshotHead: typeof head === "string" ? head : null };
   } catch {
     return null;
+  }
+};
+
+/**
+ * Chain lease: the recorded head must still be an ancestor of the current
+ * HEAD — history only moved forward. Rebase/reset underneath an approved
+ * chain invalidates it instead of executing on rewritten history.
+ */
+export const chainLeaseValid = (store: TaskStore, snapshotHead: string | null): boolean => {
+  if (!snapshotHead) return true;
+  try {
+    const head = execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: store.root,
+      encoding: "utf8",
+      stdio: ["pipe", "pipe", "pipe"],
+    }).trim();
+    if (head === snapshotHead) return true;
+    execFileSync("git", ["merge-base", "--is-ancestor", snapshotHead, head], {
+      cwd: store.root,
+      encoding: "utf8",
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    return true;
+  } catch {
+    return false;
   }
 };
 
 export type PlanCommitAuthorization = {
   task: TaskRecord;
   entry: Entry<Decision>;
-  steps: string[];
+  steps: ChainStep[];
   branch: string;
+  snapshotHead: string | null;
   completed: string[];
 };
 
@@ -357,7 +383,10 @@ export type PlanCommitAuthorization = {
  * Find the single active plan-commit authorization whose next unconsumed step
  * is this exact commit message. Consumption order is enforced so each listed
  * commit executes once, in plan order; unlisted or replayed messages find no
- * authorization and require a fresh exact approval.
+ * authorization and require a fresh exact approval. Typed chain positions
+ * never match messages (a pathological message falls through to a fresh
+ * approval instead of consuming the wrong step), and a rewritten history
+ * breaks the lease.
  */
 export const approvedPlanCommit = (
   store: TaskStore,
@@ -395,8 +424,19 @@ export const approvedPlanCommit = (
       const completed =
         task.actionProgress?.find((progress) => progress.decisionId === entry.id)?.completedSteps ??
         [];
-      if (plan.steps[completed.length] !== message) return [];
-      return [{ task, entry, steps: plan.steps, branch: plan.branch, completed: [...completed] }];
+      const next = plan.steps[completed.length];
+      if (!next || next.kind !== "commit" || next.message !== message) return [];
+      if (!chainLeaseValid(store, plan.snapshotHead)) return [];
+      return [
+        {
+          task,
+          entry,
+          steps: plan.steps,
+          branch: plan.branch,
+          snapshotHead: plan.snapshotHead,
+          completed: [...completed],
+        },
+      ];
     });
   });
   if (matches.length !== 1)
@@ -405,6 +445,80 @@ export const approvedPlanCommit = (
       matches.length === 0
         ? "no plan commit authorization matches this message"
         : "multiple plan authorizations match this message",
+    );
+  return success(workspace.data.revision, null, matches[0]);
+};
+
+export type ChainStepQuery =
+  | { operation: "git.branch_setup"; target: string }
+  | { operation: "hosting.pull_request" };
+
+/**
+ * Match one branch or PR step of a chain authorization: same session-bound
+ * search as plan commits, next unconsumed step of the right kind, lease
+ * intact. Commit steps stay on the plan path; this covers the steps plans
+ * could never express.
+ */
+export const approvedChainStep = (
+  store: TaskStore,
+  host: string,
+  actor: string,
+  query: ChainStepQuery,
+): Result<PlanCommitAuthorization> => {
+  const listed = store.listTasks();
+  const workspace = store.readWorkspace();
+  if (!listed.ok || !workspace.ok)
+    return failure("storage_error", "external action state is unavailable");
+  if (!workspace.data) return failure("not_found", "workspace not found");
+  const matches = listed.data.flatMap((task) => {
+    if (task.status !== "active" || task.workspaceId !== workspace.data!.id) return [];
+    if (
+      task.intent.provenance.session?.kind !== "host" ||
+      task.intent.provenance.session.host !== host ||
+      task.intent.provenance.session.handle !== actor
+    )
+      return [];
+    return task.decisions.flatMap((entry) => {
+      const decision = entry.data;
+      if (
+        decision.purpose !== "action" ||
+        decision.response !== "approved" ||
+        decision.revoked !== null
+      )
+        return [];
+      if (entry.provenance.kind !== "host_observed" || entry.provenance.receipts.length === 0)
+        return [];
+      const plan = planCommitDescriptor(decision.binding.approvedContent);
+      if (!plan) return [];
+      const completed =
+        task.actionProgress?.find((progress) => progress.decisionId === entry.id)?.completedSteps ??
+        [];
+      const next = plan.steps[completed.length];
+      if (!next) return [];
+      if (query.operation === "git.branch_setup") {
+        if (next.kind !== "branch" || next.target !== query.target) return [];
+      } else if (next.kind !== "pr") {
+        return [];
+      }
+      if (!chainLeaseValid(store, plan.snapshotHead)) return [];
+      return [
+        {
+          task,
+          entry,
+          steps: plan.steps,
+          branch: plan.branch,
+          snapshotHead: plan.snapshotHead,
+          completed: [...completed],
+        },
+      ];
+    });
+  });
+  if (matches.length !== 1)
+    return failure(
+      "permission_denied",
+      matches.length === 0
+        ? "no chain authorization matches this step"
+        : "multiple chain authorizations match this step",
     );
   return success(workspace.data.revision, null, matches[0]);
 };
@@ -421,6 +535,69 @@ export const commitMessageFromDescriptor = (operation: string): string | undefin
   } catch {
     return undefined;
   }
+};
+
+/** Resolve a chain authorization into the exact binding an adapter needs
+ * to run one branch or PR step under the approved chain. Commit steps stay
+ * on the plan path; this covers the steps plans could never express. */
+export const chainStepBinding = (
+  store: TaskStore,
+  host: string,
+  actor: string,
+  operation: string,
+): {
+  taskId: Id;
+  decisionId: Id;
+  binding: Decision["binding"];
+  expectedRevision: Revision;
+  expectedWorkspaceRevision: Revision;
+  step: string;
+} | null => {
+  let descriptor: { operation?: unknown; payload?: Record<string, unknown> };
+  try {
+    descriptor = JSON.parse(operation) as {
+      operation?: unknown;
+      payload?: Record<string, unknown>;
+    };
+  } catch {
+    return null;
+  }
+  const query: ChainStepQuery | null =
+    descriptor.operation === "git.branch_setup" &&
+    typeof descriptor.payload?.target_branch === "string"
+      ? { operation: "git.branch_setup", target: descriptor.payload.target_branch as string }
+      : descriptor.operation === "hosting.pull_request"
+        ? { operation: "hosting.pull_request" }
+        : null;
+  if (!query) return null;
+  const chain = approvedChainStep(store, host, actor, query);
+  if (!chain.ok) return null;
+  // PR steps run on the chain branch; the branch step itself creates it.
+  if (query.operation === "hosting.pull_request") {
+    let branch: string;
+    try {
+      branch = execFileSync("git", ["branch", "--show-current"], {
+        cwd: store.root,
+        encoding: "utf8",
+        stdio: ["pipe", "pipe", "pipe"],
+      }).trim();
+    } catch {
+      return null;
+    }
+    if (!branch || branch !== chain.data.branch) return null;
+  }
+  const workspace = store.readWorkspace();
+  if (!workspace.ok || !workspace.data) return null;
+  const next = chain.data.steps[chain.data.completed.length];
+  if (!next) return null;
+  return {
+    taskId: chain.data.task.id,
+    decisionId: chain.data.entry.id,
+    binding: chain.data.entry.data.binding,
+    expectedRevision: chain.data.task.revision,
+    expectedWorkspaceRevision: workspace.data.revision,
+    step: chainStepKey(next),
+  };
 };
 
 /** Resolve a plan-commit authorization into the exact binding an adapter needs

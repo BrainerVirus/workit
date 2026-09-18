@@ -96,8 +96,18 @@ const same = (left: unknown, right: unknown): boolean => {
 /** The one shared definition of active or uncertain worker state used by
  * close, revise, resume, and replacement-launch checks. */
 export const UNCERTAIN_WORKER_STATES = ["dispatching", "running", "cancelling", "unknown"] as const;
-export const isUncertainWorker = (state: string): boolean =>
+export const isUncertainWorker = (state: WorkerState): boolean =>
   (UNCERTAIN_WORKER_STATES as readonly string[]).includes(state);
+
+/**
+ * Lifecycle gate table: which worker states block each lead transition.
+ * Pause freezes, so live workers never block it (writer release stays a
+ * separate explicit step); resume, revise, and close must reconcile first.
+ */
+export const workerBlocksTransition = (
+  transition: "pause" | "resume" | "revise" | "close",
+  state: WorkerState,
+): boolean => (transition === "pause" ? false : isUncertainWorker(state));
 
 const callerSession = (caller: CallerContext): HostSession =>
   caller.session ?? { kind: "host", host: caller.host, handle: caller.actor };

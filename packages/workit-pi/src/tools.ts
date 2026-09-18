@@ -3,6 +3,7 @@ import {
   approvedExternalAction,
   approvedPlanCommit,
   planCommitBinding,
+  chainStepBinding,
   externalActionState,
   priorExternalAction,
   priorResolvedDrift,
@@ -37,6 +38,7 @@ import {
   executeResolvedExternalAction,
   readExternalAction,
   resolveExternalActionRequest,
+  upgradeBranchSetupForStash,
 } from "@brainervirus/workit-core/src/core/external-action-effects";
 import type { Provenance } from "@brainervirus/workit-core/src/core/task-contract";
 import type {
@@ -165,7 +167,9 @@ export const nativeExternalActionRunner = (
     const store = new TaskStore(root);
     const selected = approvedExternalAction(store, "pi", actor, operation);
     if (!selected.ok) {
-      const plan = planCommitBinding(store, "pi", actor, operation);
+      const plan =
+        planCommitBinding(store, "pi", actor, operation) ??
+        chainStepBinding(store, "pi", actor, operation);
       if (plan) {
         const actionRef = externalActionRef("pi", actor, operation);
         return {
@@ -365,20 +369,8 @@ export const registerWorkitTools = (
       const context = piContext(ctx);
       let resolved = resolveExternalActionRequest(ctx.cwd, parsed.data);
       if (!resolved.ok) return output(resolved);
-      // A dirty tree binds stash up front so the confirmation names it and
-      // one approval carries the whole effect instead of failing at preflight.
-      if (
-        resolved.data.request.operation === "git.branch_setup" &&
-        (resolved.data.descriptorPayload as { resolved?: { dirty?: unknown } }).resolved?.dirty ===
-          true &&
-        (resolved.data.descriptorPayload as { stash?: unknown }).stash !== "yes"
-      ) {
-        const upgraded = resolveExternalActionRequest(ctx.cwd, {
-          ...parsed.data,
-          payload: { ...(parsed.data.payload as Record<string, unknown>), stash: "yes" },
-        } as typeof parsed.data);
-        if (upgraded.ok) resolved = upgraded;
-      }
+      resolved = upgradeBranchSetupForStash(ctx.cwd, parsed.data, resolved);
+      if (!resolved.ok) return output(resolved);
       if (resolved.data.request.operation === "context.read")
         return output(await executeResolvedExternalAction(resolved.data, ctx.cwd));
       if (!ctx.isProjectTrusted())

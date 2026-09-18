@@ -22,6 +22,7 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { SUPPORT_MATRIX } from "./support-matrix";
+import { bundleHashOfFile, isEphemeralCachePath } from "./runtime-identity";
 import { EVENT } from "./boundary";
 import { getDiagnosticLogger, isConfigObject } from "./config";
 import { packageRoot } from "./package-root";
@@ -682,12 +683,7 @@ const checkUtility = (res: Resolved): DoctorCheck => {
 const isFragileCachePin = (entry: string): boolean => {
   const n = entry.replaceAll("\\", "/").toLowerCase();
   if (!n.startsWith("file:")) return false;
-  return (
-    n.includes("/caches/pnpm/dlx/") ||
-    n.includes("/_npx/") ||
-    n.includes("/.pacquet/") ||
-    n.includes("/library/caches/pnpm/")
-  );
+  return isEphemeralCachePath(entry);
 };
 
 const staleEntry = (entry: string): "ok" | "stale" | "missing-file" | "fragile-cache" => {
@@ -936,12 +932,7 @@ const checkStaleInstall = (res: Resolved): DoctorCheck & { registryProbed?: bool
     } catch {
       target = "(unreadable)";
     }
-    const n = target.replaceAll("\\", "/").toLowerCase();
-    const fragile =
-      n.includes("/caches/pnpm/dlx/") ||
-      n.includes("/_npx/") ||
-      n.includes("/.pacquet/") ||
-      n.includes("/library/caches/pnpm/");
+    const fragile = isEphemeralCachePath(target);
     return {
       id: "stale_install",
       status: "fail",
@@ -1012,6 +1003,28 @@ const checkStaleInstall = (res: Resolved): DoctorCheck & { registryProbed?: bool
       detail: `stale_install: installed workit-cursor ${installed} is behind the current runtime ${source}`,
       fix: "Re-run install-cursor-plugin.sh — it refreshes the plugin directory and rewrites the workit MCP/hook entries",
     };
+  }
+  // Same version, different bytes: the install was hand-edited or built from
+  // a dirty tree. Version strings cannot see that; the bundle hash can. The
+  // dev dist is byte-deterministic, so a mismatch heals with reinstall.
+  if (localDist && installed !== null && source !== null && res.dev) {
+    const entry = /^node\s+(.+)$/.exec((hookCmd ?? "").trim())?.[1]?.trim() ?? "";
+    const sourceBundle =
+      entry && path.isAbsolute(entry)
+        ? path.join(res.dev, "packages", "workit-cursor", "dist", path.basename(entry))
+        : "";
+    if (entry && sourceBundle) {
+      const installedHash = bundleHashOfFile(entry);
+      const sourceHash = bundleHashOfFile(sourceBundle);
+      if (installedHash !== null && sourceHash !== null && installedHash !== sourceHash) {
+        return {
+          id: "stale_install",
+          status: "fail",
+          detail: `stale_install: installed workit-cursor ${installed} runs different bytes than the current runtime build (${path.basename(entry)} hash mismatch)`,
+          fix: "Re-run install-cursor-plugin.sh — it refreshes the plugin directory with the current build",
+        };
+      }
+    }
   }
   if (installed !== null && localDist) {
     const expected = registryLatestVersion(res);

@@ -500,7 +500,7 @@ test("coupled mutation retains uncertain workspace ownership after task failure"
   if (!workspace.ok || !workspace.data) throw new Error("workspace missing");
   const result = store.mutateTaskAndWorkspace({
     taskId: task.id,
-    expectedTaskRevision: task.revision,
+    expectedRevision: task.revision,
     expectedWorkspaceRevision: workspace.data.revision,
     workspace: (current, context) =>
       success(context.revision, context.revision, {

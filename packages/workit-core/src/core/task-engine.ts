@@ -5,8 +5,14 @@ import {
   failure,
   decisionDigest,
   exportBundleSchema,
+  assessmentSchema,
+  decisionSchema,
+  evidenceSchema,
+  findingSchema,
+  intentSchema,
   newId,
   parseOperation,
+  rewriteRecordRefs,
   success,
   type Assessment,
   type Capability,
@@ -59,6 +65,7 @@ import {
 import {
   assertProductWriteAllowed,
   isUncertainWorker,
+  workerBlocksTransition,
   type CallerContext,
   type NativeWorkerObservation,
   type NativeWorkerVerification,
@@ -70,9 +77,12 @@ import {
 } from "./workers";
 import {
   captureCandidate,
+  checkPin,
   evaluateClosure,
   evaluateEvidence,
   evaluateRequirements,
+  findingVerificationPasses,
+  resolveBinding,
   type CandidateEnvironment,
 } from "./task-evaluation";
 
@@ -342,6 +352,8 @@ const applyWorkerLifecycle = (input: ObserveWorkerLifecycleInput): Result<Entry<
   if (task.data.status === "paused" && (input.state === "running" || input.state === "cancelling"))
     return failure("invalid_transition", "paused task cannot run a worker");
   const notStarted = input.dispatch === true;
+  if (notStarted && entry.data.state === "stopped" && input.session === null)
+    return success(task.data.revision, workspace.data.revision, entry);
   if (notStarted && (input.state !== "stopped" || input.session !== null))
     return failure("invalid_input", "a never-dispatched worker stops with no session");
   if (notStarted && entry.data.session !== null)
@@ -395,7 +407,7 @@ const applyWorkerLifecycle = (input: ObserveWorkerLifecycleInput): Result<Entry<
     return success(task.data.revision, workspace.data.revision, entry);
   const changed = input.store.mutateTaskAndWorkspace({
     taskId: task.data.id,
-    expectedTaskRevision: input.expectedRevision,
+    expectedRevision: input.expectedRevision,
     expectedWorkspaceRevision: input.expectedWorkspaceRevision,
     now: input.now,
     workspace: (current, mutation) =>
@@ -469,96 +481,28 @@ const importedProvenance = (context: OperationContext): Provenance => ({
 });
 
 const portableTask = (task: TaskRecord): TaskRecord => {
-  const clone = structuredClone(task);
-  const portableProvenance = (value: Provenance): Provenance => ({
-    ...value,
-    session: null,
-    receipts: [],
-  });
-  const entries = [
-    clone.intent,
-    ...clone.assessments,
-    ...clone.evidence,
-    ...clone.decisions,
-    ...clone.findings,
-    ...clone.workers,
-  ];
-  for (const entry of entries) entry.provenance = portableProvenance(entry.provenance);
-  for (const worker of clone.workers) worker.data.session = null;
-  clone.intent = {
-    ...clone.intent,
-    data: { ...clone.intent.data, authorityRefs: portableRefs(clone.intent.data.authorityRefs) },
+  // Schema-driven ref stripping: every Ref anywhere in the record is mapped
+  // by shape (arrays drop unportable refs, nullable fields null them), so a
+  // new ref-bearing field can never silently leak across checkouts.
+  const stripped = rewriteRecordRefs(task, taskRecordSchema, portableRef);
+  if (typeof stripped !== "object" || stripped === null || Array.isArray(stripped))
+    throw new TypeError("portable task rewrite produced a non-record");
+  const clone = structuredClone(stripped) as TaskRecord;
+  const demote = (
+    facts: Assessment["facts"][number][],
+    signals: Assessment["signals"],
+    consequences: Assessment["consequences"],
+  ): void => {
+    for (const fact of facts) Object.assign(fact, portableFact(fact));
+    for (const name of Object.keys(signals) as (keyof Assessment["signals"])[]) {
+      const signal = signals[name];
+      Object.assign(signal, portableSignal(signal));
+    }
+    for (const consequence of consequences)
+      Object.assign(consequence.fact, portableFact(consequence.fact));
   };
-  clone.constraints = clone.constraints.flatMap((constraint) => {
-    const source = portableRef(constraint.source);
-    return source
-      ? [
-          {
-            ...constraint,
-            source,
-            requires: constraint.requires.map((requirement) => ({
-              ...requirement,
-              refs: portableRefs(requirement.refs),
-            })),
-          },
-        ]
-      : [];
-  });
-  clone.assessments = clone.assessments.map((entry) => ({
-    ...entry,
-    data: {
-      ...entry.data,
-      facts: entry.data.facts.map(portableFact),
-      signals: Object.fromEntries(
-        Object.entries(entry.data.signals).map(([name, signal]) => [name, portableSignal(signal)]),
-      ) as typeof entry.data.signals,
-      consequences: entry.data.consequences.map((consequence) => ({
-        ...consequence,
-        fact: portableFact(consequence.fact),
-      })),
-      verification: entry.data.verification.map((verification) => ({
-        ...verification,
-        availableChecks: portableRefs(verification.availableChecks),
-      })),
-    },
-  }));
-  clone.progress = {
-    ...clone.progress,
-    blockers: clone.progress.blockers.map((blocker) => ({
-      ...blocker,
-      refs: portableRefs(blocker.refs),
-    })),
-  };
-  clone.evidence = clone.evidence.map((entry) => ({
-    ...entry,
-    data: {
-      ...entry.data,
-      refs: portableRefs(entry.data.refs),
-      reviewContext: portableRef(entry.data.reviewContext),
-    },
-  }));
-  clone.decisions = clone.decisions.map((entry) => ({
-    ...entry,
-    data: {
-      ...entry.data,
-      consumption: entry.data.consumption
-        ? portableRef(entry.data.consumption.actionRef)
-          ? {
-              ...entry.data.consumption,
-              actionRef: portableRef(entry.data.consumption.actionRef)!,
-            }
-          : null
-        : null,
-      binding: {
-        ...entry.data.binding,
-        contentRefs: portableRefs(entry.data.binding.contentRefs),
-      },
-    },
-  }));
-  clone.findings = clone.findings.map((entry) => ({
-    ...entry,
-    data: { ...entry.data, refs: portableRefs(entry.data.refs) },
-  }));
+  for (const entry of clone.assessments)
+    demote(entry.data.facts, entry.data.signals, entry.data.consequences);
   // Candidate metadata can contain environment-derived paths and digests. The destination
   // must recapture its own candidate instead of receiving source checkout material.
   clone.candidates = [];
@@ -591,15 +535,13 @@ const importedTask = (
     allocate(entry.id);
   const fresh = (id: string) => allocate(id);
   const provenance = importedProvenance(context);
+  const remap = (ref: Ref): Ref | null => mapRef(ref, ids);
   const intent = {
     ...source.intent,
     id: fresh(source.intent.id),
     recordedAt: timestamp,
     provenance,
-    data: {
-      ...source.intent.data,
-      authorityRefs: source.intent.data.authorityRefs.map((ref) => mapRef(ref, ids)),
-    },
+    data: rewriteRecordRefs(source.intent.data, intentSchema, remap) as typeof source.intent.data,
   };
   const assessments = source.assessments.map((entry) => {
     const data = entry.data;
@@ -608,30 +550,7 @@ const importedTask = (
       id: fresh(entry.id),
       recordedAt: timestamp,
       provenance,
-      data: {
-        ...data,
-        facts: data.facts.map((fact) => ({
-          ...fact,
-          refs: fact.refs.map((ref) => mapRef(ref, ids)),
-        })),
-        signals: Object.fromEntries(
-          Object.entries(data.signals).map(([name, signal]) => [
-            name,
-            { ...signal, refs: signal.refs.map((ref) => mapRef(ref, ids)) },
-          ]),
-        ) as typeof data.signals,
-        consequences: data.consequences.map((consequence) => ({
-          ...consequence,
-          fact: {
-            ...consequence.fact,
-            refs: consequence.fact.refs.map((ref) => mapRef(ref, ids)),
-          },
-        })),
-        verification: data.verification.map((verification) => ({
-          ...verification,
-          availableChecks: verification.availableChecks.map((ref) => mapRef(ref, ids)),
-        })),
-      },
+      data: rewriteRecordRefs(data, assessmentSchema, remap) as typeof data,
     };
   });
   const evidence = source.evidence.map((entry) => ({
@@ -639,11 +558,7 @@ const importedTask = (
     id: fresh(entry.id),
     recordedAt: timestamp,
     provenance,
-    data: {
-      ...entry.data,
-      refs: entry.data.refs.map((ref) => mapRef(ref, ids)),
-      reviewContext: entry.data.reviewContext ? mapRef(entry.data.reviewContext, ids) : null,
-    },
+    data: rewriteRecordRefs(entry.data, evidenceSchema, remap) as typeof entry.data,
   }));
   const decisions = source.decisions.map((entry) => ({
     ...entry,
@@ -651,23 +566,25 @@ const importedTask = (
     recordedAt: timestamp,
     provenance,
   }));
-  const findings = source.findings.map((entry) => ({
-    ...entry,
-    id: fresh(entry.id),
-    recordedAt: timestamp,
-    provenance,
-    data: {
-      ...entry.data,
-      refs: entry.data.refs.map((ref) => mapRef(ref, ids)),
-      resolution: entry.data.resolution
-        ? {
-            ...entry.data.resolution,
-            evidenceIds: entry.data.resolution.evidenceIds.map((id) => ids.get(id) ?? id),
-            decisionIds: entry.data.resolution.decisionIds.map((id) => ids.get(id) ?? id),
-          }
-        : null,
-    },
-  }));
+  const findings = source.findings.map((entry) => {
+    const data = rewriteRecordRefs(entry.data, findingSchema, remap) as typeof entry.data;
+    return {
+      ...entry,
+      id: fresh(entry.id),
+      recordedAt: timestamp,
+      provenance,
+      data: {
+        ...data,
+        resolution: data.resolution
+          ? {
+              ...data.resolution,
+              evidenceIds: data.resolution.evidenceIds.map((id) => ids.get(id) ?? id),
+              decisionIds: data.resolution.decisionIds.map((id) => ids.get(id) ?? id),
+            }
+          : null,
+      },
+    };
+  });
   const workers = source.workers.map((entry) => ({
     ...entry,
     id: fresh(entry.id),
@@ -712,19 +629,21 @@ const importedTask = (
     closure: null,
     assessments,
     evidence,
-    decisions: decisions.map((entry) => ({
-      ...entry,
-      data: {
-        ...entry.data,
-        binding: {
-          ...entry.data.binding,
-          taskId: "",
-          workspaceId: destinationWorkspaceId,
-          contentRefs: entry.data.binding.contentRefs.map((ref) => mapRef(ref, ids)),
+    decisions: decisions.map((entry) => {
+      const data = rewriteRecordRefs(entry.data, decisionSchema, remap) as typeof entry.data;
+      return {
+        ...entry,
+        data: {
+          ...data,
+          binding: {
+            ...data.binding,
+            taskId: "",
+            workspaceId: destinationWorkspaceId,
+          },
+          consumption: null,
         },
-        consumption: null,
-      },
-    })),
+      };
+    }),
     ...(actionProgress ? { actionProgress } : {}),
     findings,
     workers,
@@ -829,7 +748,7 @@ export class WorkitCore {
   ) {
     if (workspace.writer)
       return failure("recovery_required", "writer ownership must be released first");
-    if (task.workers.some((entry) => isUncertainWorker(entry.data.state)))
+    if (task.workers.some((entry) => workerBlocksTransition("close", entry.data.state)))
       return failure("recovery_required", "worker state requires reconciliation");
     return null;
   }
@@ -1080,30 +999,23 @@ export class WorkitCore {
       environment(),
     );
     if (!currentCandidate.ok) return currentCandidate as Result<never>;
-    if (evidence.kind === "check" || evidence.kind === "review") {
-      // Checks run against the tree as observed now; bind them to the captured
-      // candidate so callers never hand-compute digests. Later tree changes
-      // still mark this evidence stale through the normal evaluation.
-      evidence.beforeCandidateId ??= currentCandidate.data.id;
-      evidence.candidateId ??= currentCandidate.data.id;
-    } else {
-      evidence.beforeCandidateId ??= null;
-      evidence.candidateId ??= null;
-    }
+    // Resolve the binding first (explicit IDs, else the worker pin, else the
+    // current candidate), then validate and pin-check the resolved values —
+    // never the caller's possibly-empty fields. The input itself is untouched.
+    const pin = helper && helper.ok ? helper.data.data.assignment.candidateId : null;
+    const bound = resolveBinding(evidence, pin, currentCandidate.data.id);
     if (helper?.ok) {
       const assignment = helper.data.data.assignment;
       if (
         evidence.requirementIds.some((id: string) => !assignment.requirementIds.includes(id)) ||
-        (assignment.candidateId !== null &&
-          evidence.candidateId !== assignment.candidateId &&
-          evidence.beforeCandidateId !== assignment.candidateId) ||
+        !checkPin(assignment, bound.beforeCandidateId, bound.candidateId) ||
         !refsWithinScope(evidence.refs, assignment.scope) ||
         !refsWithinScope(evidence.refs, task.data.intent.data.scope)
       )
         return failure("permission_denied", "evidence is outside the worker assignment");
     }
     const knownCandidates = new Set(task.data.candidates.map((candidate) => candidate.id));
-    for (const candidateId of [evidence.beforeCandidateId, evidence.candidateId]) {
+    for (const candidateId of [bound.beforeCandidateId, bound.candidateId]) {
       if (
         candidateId &&
         candidateId !== currentCandidate.data.id &&
@@ -1111,6 +1023,7 @@ export class WorkitCore {
       )
         return failure("invalid_input", "evidence candidate is not a captured candidate");
     }
+    const boundEvidence = { ...evidence, ...bound };
     const changed = this.store.mutateTask(
       task.data.id,
       input.expectedRevision,
@@ -1122,14 +1035,14 @@ export class WorkitCore {
           id: newId(),
           recordedAt: mutation.now,
           provenance: provenance(this.context, "agent_reported"),
-          data: evidence,
+          data: boundEvidence,
         };
         return success(mutation.revision, null, {
           ...current,
           candidates,
           evidence: [...current.evidence, entry],
           findings: current.findings.map((finding) => {
-            if (finding.data.disposition === "open" || evidence.result === "skipped")
+            if (finding.data.disposition === "open" || boundEvidence.result === "skipped")
               return finding;
             if (finding.data.disposition !== "fixed") return finding;
             // A fix stands while its verification still passes on the current
@@ -1142,17 +1055,17 @@ export class WorkitCore {
                 item.status,
               ]),
             );
-            const verified = withEntry.evidence.some(
-              (item) =>
-                statuses.get(item.id) === "passed" &&
-                (item.data.kind === "check" || item.data.kind === "review") &&
-                (finding.data.candidateId === null ||
-                  item.data.candidateId === finding.data.candidateId),
+            const verified = withEntry.evidence.some((item) =>
+              findingVerificationPasses(finding.data.candidateId, {
+                kind: item.data.kind,
+                candidateId: item.data.candidateId,
+                status: statuses.get(item.id) ?? "missing",
+              }),
             );
             const contradicted =
-              evidence.result === "failed" &&
+              boundEvidence.result === "failed" &&
               finding.data.refs.some((left: Ref) =>
-                evidence.refs.some((right: Ref) => JSON.stringify(left) === JSON.stringify(right)),
+                boundEvidence.refs.some((right: Ref) => sameValue(left, right)),
               );
             return verified && !contradicted
               ? finding
@@ -1346,7 +1259,7 @@ export class WorkitCore {
         if (
           !bindingCovers(assignment.scope, input.scope) ||
           !bindingCovers(task.data.intent.data.scope, input.scope) ||
-          (assignment.candidateId !== null && input.candidateId !== assignment.candidateId) ||
+          !checkPin(assignment, null, input.candidateId ?? null) ||
           !refsWithinScope(input.refs, assignment.scope) ||
           !refsWithinScope(input.refs, task.data.intent.data.scope)
         )
@@ -1403,11 +1316,11 @@ export class WorkitCore {
       const evaluations = evaluateEvidence(task.data, current.data);
       const verified = evidence.some((entry) => {
         const evaluation = evaluations.find((item) => item.evidenceId === entry.id);
-        return (
-          evaluation?.status === "passed" &&
-          (entry.data.kind === "check" || entry.data.kind === "review") &&
-          (finding.data.candidateId === null || entry.data.candidateId === finding.data.candidateId)
-        );
+        return findingVerificationPasses(finding.data.candidateId, {
+          kind: entry.data.kind,
+          candidateId: entry.data.candidateId,
+          status: evaluation?.status ?? "missing",
+        });
       });
       if (!verified)
         return failure("permission_denied", "fixed findings require passing verification evidence");
@@ -1423,7 +1336,7 @@ export class WorkitCore {
             : entry.data.candidateId === finding.data.candidateId ||
               entry.data.beforeCandidateId === finding.data.candidateId;
         const referenceMatches = finding.data.refs.some((left) =>
-          entry.data.refs.some((right) => JSON.stringify(left) === JSON.stringify(right)),
+          entry.data.refs.some((right) => sameValue(left, right)),
         );
         return candidateMatches && (referenceMatches || entry.data.claim === finding.data.claim);
       });
@@ -1546,7 +1459,7 @@ export class WorkitCore {
       const workerId = newId();
       const changed = this.store.mutateTaskAndWorkspace({
         taskId: task.data.id,
-        expectedTaskRevision: input.expectedRevision,
+        expectedRevision: input.expectedRevision,
         expectedWorkspaceRevision: input.expectedWorkspaceRevision,
         now: trustedNow(this.context),
         workspace: (current, mutation) => success(mutation.revision, mutation.revision, current),
@@ -1606,7 +1519,7 @@ export class WorkitCore {
         return failure("permission_denied", "worker report is outside the worker assignment");
       const changed = this.store.mutateTaskAndWorkspace({
         taskId: task.data.id,
-        expectedTaskRevision: input.expectedRevision,
+        expectedRevision: input.expectedRevision,
         expectedWorkspaceRevision: input.expectedWorkspaceRevision,
         now: trustedNow(this.context),
         workspace: (current, mutation) => success(mutation.revision, mutation.revision, current),
@@ -1639,20 +1552,28 @@ export class WorkitCore {
       return failure("invalid_transition", "closed task cannot cancel workers");
     if (entry.data.state === "unknown")
       return failure("recovery_required", "worker state requires recovery");
-    if (entry.data.state === "stopped")
-      return failure("invalid_transition", "stopped worker cannot be cancelled");
-    // A reported worker already made its terminal session-authenticated
-    // statement, and a repeat cancel is the lead's explicit confirmation that
-    // an unconfirmed worker ended. Both settle instead of stranding the worker
-    // in cancelling when the session end was never observed. A first cancel of
-    // a live unreported worker still waits for an observed stop.
-    const settles = entry.data.report !== null || entry.data.state === "cancelling";
+    if (entry.data.state === "stopped") {
+      // Idempotent cancel: repeating a settled stop succeeds with the
+      // current entry instead of failing the retry.
+      const stopped = task.data.workers.find((candidate) => candidate.id === input.workerId)!;
+      return success(task.data.revision, workspace.data.revision, stopped);
+    }
+    // Lead-attested cancel is terminal for every live state: the lead saw
+    // the run end, so no host observation is awaited. A later live-child
+    // sighting against a stopped worker is a new anomaly for the host to
+    // flag, not a reason to strand the worker short of stopped. A writer
+    // held by the cancelled worker dies with it; anything else would brick
+    // the checkout behind a stopped owner.
     const changed = this.store.mutateTaskAndWorkspace({
       taskId: task.data.id,
-      expectedTaskRevision: input.expectedRevision,
+      expectedRevision: input.expectedRevision,
       expectedWorkspaceRevision: input.expectedWorkspaceRevision,
       now: trustedNow(this.context),
-      workspace: (current, mutation) => success(mutation.revision, mutation.revision, current),
+      workspace: (current, mutation) =>
+        success(mutation.revision, mutation.revision, {
+          ...current,
+          writer: current.writer?.owner.workerId === input.workerId ? null : current.writer,
+        }),
       task: (current, mutation) =>
         success(mutation.revision, null, {
           ...current,
@@ -1661,10 +1582,7 @@ export class WorkitCore {
               ? {
                   ...candidate,
                   recordedAt: mutation.now,
-                  data: {
-                    ...candidate.data,
-                    state: settles ? ("stopped" as const) : ("cancelling" as const),
-                  },
+                  data: { ...candidate.data, state: "stopped" as const },
                 }
               : candidate,
           ),
@@ -1776,7 +1694,7 @@ export class WorkitCore {
     if (!attested.ok) return attested as Result<never>;
     const changed = this.store.mutateTaskAndWorkspace({
       taskId: task.data.id,
-      expectedTaskRevision: input.expectedRevision,
+      expectedRevision: input.expectedRevision,
       expectedWorkspaceRevision: input.expectedWorkspaceRevision,
       now: trustedNow(this.context),
       workspace: (current, mutation) => success(mutation.revision, mutation.revision, current),
@@ -1958,6 +1876,26 @@ export class WorkitCore {
         if (!sameSession(helper.data.data.session, this.context))
           return failure("permission_denied", "worker session does not match the caller");
       }
+      // Write-timed requirements gate acquisition, not just close: a spec
+      // gate is enforced where writes begin, never as advisory prose.
+      const gate = this.view(task.data);
+      if (gate.ok) {
+        const writeGates = (task.data.policy?.requirements ?? []).filter(
+          (requirement) =>
+            requirement.before === "write" &&
+            gate.data.requirements.some(
+              (evaluation) =>
+                evaluation.requirementId === requirement.id &&
+                (evaluation.status === "unsatisfied" || evaluation.status === "unavailable"),
+            ),
+        );
+        if (writeGates.length)
+          return failure(
+            "requirements_unsatisfied",
+            "writer ownership is gated by unsatisfied requirements; record their evidence or an approved limitation waiver first",
+            { requirementIds: writeGates.map((requirement) => requirement.id) },
+          );
+      }
       const owner = {
         taskId: task.data.id,
         workerId: helperId,
@@ -1969,7 +1907,7 @@ export class WorkitCore {
       };
       const changed = this.store.mutateTaskAndWorkspace({
         taskId: task.data.id,
-        expectedTaskRevision: input.expectedRevision,
+        expectedRevision: input.expectedRevision,
         expectedWorkspaceRevision: input.expectedWorkspaceRevision,
         now: trustedNow(this.context),
         workspace: (current, mutation) =>
@@ -2006,7 +1944,7 @@ export class WorkitCore {
     }
     const changed = this.store.mutateTaskAndWorkspace({
       taskId: task.data.id,
-      expectedTaskRevision: input.expectedRevision,
+      expectedRevision: input.expectedRevision,
       expectedWorkspaceRevision: input.expectedWorkspaceRevision,
       now: trustedNow(this.context),
       workspace: (currentWorkspace, mutation) =>
@@ -2317,10 +2255,18 @@ export class WorkitCore {
       if (seen.has(observation.workerId))
         return failure("invalid_input", "worker observations must be unique");
       seen.add(observation.workerId);
+      // Anchor on fresh reads, not the passed view: a view captured before
+      // recent mutations must not stale-fail observations that match the
+      // current state. Genuinely stale observations still conflict below.
+      const freshTask = this.store.readTask(view.task.id);
+      const freshWorkspace = this.store.readWorkspace();
+      if (!freshTask.ok) return freshTask as Result<never>;
+      if (!freshWorkspace.ok) return freshWorkspace as Result<never>;
+      if (!freshWorkspace.data) return failure("not_found", "workspace not found");
       if (
         observation.taskId !== view.task.id ||
-        observation.expectedRevision !== view.task.revision ||
-        observation.expectedWorkspaceRevision !== view.workspace.revision
+        observation.expectedRevision !== freshTask.data.revision ||
+        observation.expectedWorkspaceRevision !== freshWorkspace.data.revision
       )
         return failure("revision_conflict", "worker observation is stale");
       if (!view.task.workers.some((entry) => entry.id === observation.workerId))
@@ -2433,11 +2379,27 @@ export class WorkitCore {
         return failure("permission_denied", "imported resume requires native destination approval");
       resumeCandidate = current.data.candidate;
     }
-    const blocker = this.activeWorkerBlocker(task.data, workspace.data);
+    const blocker =
+      status === "paused"
+        ? workspace.data.writer
+          ? failure("recovery_required", "writer ownership must be released first")
+          : null
+        : this.activeWorkerBlocker(task.data, workspace.data);
     if (blocker) return blocker as Result<never>;
+    let pauseCandidate: import("./task-contract").Candidate | null = null;
+    if (status === "paused") {
+      // Freezing records the tree state the task resumes from.
+      const captured = captureCandidate(
+        this.store.root,
+        task.data.intent.data.scope,
+        environment(),
+      );
+      if (!captured.ok) return captured as Result<never>;
+      pauseCandidate = captured.data;
+    }
     const changed = this.store.mutateTaskAndWorkspace({
       taskId: task.data.id,
-      expectedTaskRevision: input.expectedRevision,
+      expectedRevision: input.expectedRevision,
       expectedWorkspaceRevision: input.expectedWorkspaceRevision,
       now: trustedNow(this.context),
       workspace: (workspace, context) => success(context.revision, context.revision, workspace),
@@ -2446,9 +2408,11 @@ export class WorkitCore {
           ...current,
           status,
           candidates:
-            resumeCandidate &&
-            !current.candidates.some((candidate) => candidate.id === resumeCandidate!.id)
-              ? [...current.candidates, resumeCandidate]
+            (resumeCandidate ?? pauseCandidate) &&
+            !current.candidates.some(
+              (candidate) => candidate.id === (resumeCandidate ?? pauseCandidate)!.id,
+            )
+              ? [...current.candidates, (resumeCandidate ?? pauseCandidate)!]
               : current.candidates,
           progress: current.progress,
           pauseReason: status === "paused" ? (input.reason ?? null) : null,
@@ -2487,18 +2451,12 @@ export class WorkitCore {
     const workspace = this.store.readWorkspace();
     if (!workspace.ok) return workspace as Result<never>;
     if (!workspace.data) return failure("not_found", "workspace not found");
-    if (
-      workspace.data.writer ||
-      task.data.workers.some((entry) => isUncertainWorker(entry.data.state))
-    )
-      return failure(
-        "recovery_required",
-        "scope revision requires worker ownership reconciliation",
-      );
+    const revisionBlocker = this.activeWorkerBlocker(task.data, workspace.data);
+    if (revisionBlocker) return revisionBlocker as Result<never>;
     this.fillRevisions(input, task.data, workspace.data);
     const changed = this.store.mutateTaskAndWorkspace({
       taskId: task.data.id,
-      expectedTaskRevision: input.expectedRevision,
+      expectedRevision: input.expectedRevision,
       expectedWorkspaceRevision: input.expectedWorkspaceRevision,
       now: trustedNow(this.context),
       workspace: (workspace, context) => success(context.revision, context.revision, workspace),
@@ -2558,7 +2516,7 @@ export class WorkitCore {
     if (!closure.ok) return closure as Result<never>;
     const changed = this.store.mutateTaskAndWorkspace({
       taskId: task.data.id,
-      expectedTaskRevision: input.expectedRevision,
+      expectedRevision: input.expectedRevision,
       expectedWorkspaceRevision: input.expectedWorkspaceRevision,
       now: trustedNow(this.context),
       workspace: (value, context) => success(context.revision, context.revision, value),

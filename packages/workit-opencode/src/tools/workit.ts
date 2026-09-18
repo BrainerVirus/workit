@@ -7,6 +7,7 @@ import {
   approvedExternalAction,
   approvedPlanCommit,
   planCommitBinding,
+  chainStepBinding,
   externalActionDescriptor,
   externalActionHelp,
   priorExternalAction,
@@ -37,6 +38,7 @@ import {
   executeResolvedExternalAction,
   readExternalAction,
   resolveExternalActionRequest,
+  upgradeBranchSetupForStash,
 } from "@brainervirus/workit-core/src/core/external-action-effects";
 import type {
   NativeAuthorityVerifier,
@@ -646,7 +648,9 @@ export const nativeExternalActionRunner = (
     const store = new TaskStore(root);
     const selected = approvedExternalAction(store, "opencode", actor, operation);
     if (!selected.ok) {
-      const plan = planCommitBinding(store, "opencode", actor, operation);
+      const plan =
+        planCommitBinding(store, "opencode", actor, operation) ??
+        chainStepBinding(store, "opencode", actor, operation);
       if (plan) {
         const actionRef = externalActionRef("opencode", actor, operation);
         return {
@@ -943,21 +947,8 @@ export const createWorkitTools = ({
         }
         let resolved = resolveExternalActionRequest(context.directory, parsed.data);
         if (!resolved.ok) return output(resolved);
-        // A dirty tree binds stash up front so the proposal names it and one
-        // approval carries the whole effect instead of failing at preflight.
-        if (
-          resolved.ok &&
-          resolved.data.request.operation === "git.branch_setup" &&
-          (resolved.data.descriptorPayload as { resolved?: { dirty?: unknown } }).resolved
-            ?.dirty === true &&
-          (resolved.data.descriptorPayload as { stash?: unknown }).stash !== "yes"
-        ) {
-          const upgraded = resolveExternalActionRequest(context.directory, {
-            ...parsed.data,
-            payload: { ...(parsed.data.payload as Record<string, unknown>), stash: "yes" },
-          } as typeof parsed.data);
-          if (upgraded.ok) resolved = upgraded;
-        }
+        resolved = upgradeBranchSetupForStash(context.directory, parsed.data, resolved);
+        if (!resolved.ok) return output(resolved);
         if (resolved.data.request.operation === "context.read")
           return output(await executeResolvedExternalAction(resolved.data, context.directory));
         if (!client)

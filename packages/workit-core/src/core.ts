@@ -22,6 +22,7 @@ export {
   decisionDigest,
   candidateDigest,
   requirementId,
+  rewriteRecordRefs,
   BINDING_QUESTION_BUDGET,
   workitBindingQuestionIssue,
 } from "./core/task-contract";
@@ -55,6 +56,7 @@ export type {
   TaskView,
   TaskSummary,
   ExportBundle,
+  RefMap,
   Result as ContractResult,
 } from "./core/task-contract";
 export { TaskStore, runtimeVersion } from "./core/task-store";
@@ -69,8 +71,13 @@ export type {
 export { METHODS, invariantBootstrap, selectMethods } from "./core/methods";
 export type { MethodId, SelectedMethod } from "./core/methods";
 export { hasLiveWorkitTask, shellRouteIntent, shouldDenyShellRoute } from "./core/route-intent";
+export { classifyBranchDirt } from "./core/branch";
+export type { BranchDirt } from "./core/branch";
+export { bundleHashOfFile, isEphemeralCachePath, sha256Hex } from "./core/runtime-identity";
 export type { ShellRouteIntent } from "./core/route-intent";
 export { applicableDecision, reserveAction, settleAction, reconcileAction } from "./core/authority";
+export { normalizeChainSteps, chainStepKey } from "./core/authority";
+export type { ChainStep } from "./core/authority";
 export {
   createAuthorizedExternalActionRunner,
   runAuthorizedExternalAction,
@@ -87,9 +94,11 @@ export type {
 } from "./core/external-action";
 export {
   approvedBranchSetupIntent,
+  approvedChainStep,
   approvedExternalAction,
   approvedPlanCommit,
   branchSetupIntent,
+  chainStepBinding,
   planCommitDescriptor,
   planCommitBinding,
   commitMessageFromDescriptor,
@@ -117,9 +126,12 @@ export type {
 } from "./core/authority";
 export {
   captureCandidate,
+  checkPin,
   evaluateEvidence,
   evaluateRequirements,
   evaluateClosure,
+  findingVerificationPasses,
+  resolveBinding,
 } from "./core/task-evaluation";
 export type { CandidateEnvironment, ClosureEvaluation } from "./core/task-evaluation";
 export { WorkitCore } from "./core/task-engine";

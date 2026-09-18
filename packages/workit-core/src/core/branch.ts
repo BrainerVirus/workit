@@ -281,6 +281,43 @@ export type BranchSetupResult =
   | { error: string; phase: "preflight" | "post_mutation" };
 
 // Port of scripts/branch/setup-branch.sh
+export type BranchDirt = "clean" | "carry" | "stash-required";
+
+/**
+ * Classify working-tree dirt for branch setup. Untracked files ride along
+ * (`git switch -c` never touches them), and tracked modifications confined
+ * to `docs/` are branch-owned by construction in this workflow — both
+ * auto-carry with no stash question. Anything else keeps the stash-bound
+ * proposal, since the base-checkout sequence could disturb it. Any
+ * inspection failure reads as clean so a broken git surfaces at its own
+ * error instead of inventing a stash demand.
+ */
+export const classifyBranchDirt = (workspaceRoot: string): BranchDirt => {
+  let raw: string;
+  try {
+    raw = execFileSync("git", ["status", "--porcelain=v1"], {
+      cwd: path.resolve(workspaceRoot),
+      encoding: "utf8",
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+  } catch {
+    return "clean";
+  }
+  let dirty = false;
+  for (const line of raw.split("\n")) {
+    if (!line.trim()) continue;
+    dirty = true;
+    const code = line.slice(0, 2);
+    if (code === "??") continue;
+    let entry = line.slice(3);
+    const arrow = entry.indexOf(" -> ");
+    if (arrow >= 0) entry = entry.slice(arrow + 4);
+    const unquoted = entry.startsWith('"') && entry.endsWith('"') ? entry.slice(1, -1) : entry;
+    if (unquoted !== "docs" && !unquoted.startsWith("docs/")) return "stash-required";
+  }
+  return dirty ? "carry" : "clean";
+};
+
 export const branchSetup = ({
   action,
   sdd_dir,
@@ -398,7 +435,7 @@ export const branchSetup = ({
   };
   if (current !== target) {
     const dirty = Boolean(gitContext(cwd).status_short.trim());
-    if (dirty && stash !== "yes") {
+    if (classifyBranchDirt(cwd) === "stash-required" && stash !== "yes") {
       return {
         error:
           "dirty working tree — ask with native question, then call workit_branch_setup with stash=yes",
@@ -416,7 +453,7 @@ export const branchSetup = ({
         return { error: ready.error ?? "ensure-base-branch failed", phase: "preflight" };
       validatedBase = base;
     }
-    if (dirty) {
+    if (dirty && stash === "yes") {
       try {
         exec(["stash", "push", "-u", "-m", `workit: pre-checkout ${target}`]);
       } catch (error) {

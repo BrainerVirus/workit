@@ -895,7 +895,13 @@ test("OpenCode executes a plan-commit list once per listed message", async () =>
     const planEntry = recorded.data.decisions.find((item) => item.data.purpose === "action");
     expect(
       planEntry ? planCommitDescriptor(planEntry.data.binding.approvedContent) : null,
-    ).toMatchObject({ steps: ["chore(a): one", "chore(b): two"], branch: "feature/plan" });
+    ).toMatchObject({
+      steps: [
+        { kind: "commit", message: "chore(a): one" },
+        { kind: "commit", message: "chore(b): two" },
+      ],
+      branch: "feature/plan",
+    });
 
     spawnSync("git", ["checkout", "-q", "-b", "feature/other"], { cwd: root });
     writeFileSync(join(root, "wrong-branch.txt"), "wrong\n");
@@ -2811,5 +2817,91 @@ test("drifted proposals evict so a fresh resolve never wedges ambiguous", async 
     expect(branchOutput(recovered)).toMatchObject({ ok: true });
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("docs-confined dirt carries onto the branch with no stash question", async () => {
+  const actor = "opencode-branch-carry-docs";
+  const repo = branchRepo(actor);
+  const { root, task, workspace } = repo;
+  try {
+    mkdirSync(join(root, "docs"), { recursive: true });
+    writeFileSync(join(root, "docs", "plan.md"), "plan\n");
+    spawnSync("git", ["add", "docs/plan.md"], { cwd: root });
+    spawnSync("git", ["commit", "-qm", "plan"], { cwd: root });
+    spawnSync("git", ["push", "-q", "origin", "main"], { cwd: root });
+    // Same blob on base and HEAD so the base checkout keeps the worktree.
+    spawnSync("git", ["checkout", "-q", "develop"], { cwd: root });
+    spawnSync("git", ["merge", "-q", "--ff-only", "main"], { cwd: root });
+    spawnSync("git", ["checkout", "-q", "main"], { cwd: root });
+    writeFileSync(join(root, "docs", "plan.md"), "plan v2\n");
+    const receipts = new NativeReceiptStore();
+    const tools = createWorkitTools({
+      receipts,
+      client: { session: { get: async () => ({ data: { id: actor, directory: root } }) } },
+    }) as any;
+    const request = { operation: "git.branch_setup", payload: { target_branch: "feature/carry" } };
+    const first = await tools.workit_external_action.execute(request, {
+      directory: root,
+      sessionID: actor,
+    });
+    const proposal = branchOutput(first).details.proposal;
+    expect(String(proposal.presented)).not.toContain("Stash");
+    receipts.record(
+      {
+        sessionID: actor,
+        callID: "carry-docs-question",
+        args: {
+          questions: [
+            {
+              header: "Workit decision: action",
+              question: proposal.presented,
+              options: [
+                { label: "approved", description: proposal.approvedContent },
+                { label: "rejected", description: "Reject this decision" },
+              ],
+            },
+          ],
+        },
+      },
+      { metadata: { answers: [["approved"]] } },
+    );
+    const fresh = new TaskStore(root).readTask(task.id);
+    if (!fresh.ok) throw new Error("task refresh failed");
+    const decision = await tools.workit_decision.execute(
+      {
+        schemaVersion: 1,
+        action: "record",
+        taskId: task.id,
+        expectedRevision: fresh.data.revision,
+        purpose: "action",
+        binding: {
+          taskId: task.id,
+          workspaceId: workspace.id,
+          scope: (task as any).intent.data.scope,
+          presented: proposal.presented,
+          approvedContent: proposal.approvedContent,
+          contentRefs: [],
+        },
+        response: "approved",
+        requirementIds: [],
+      },
+      { directory: root, sessionID: actor } as never,
+    );
+    expect(branchOutput(decision)).toMatchObject({ ok: true });
+    const result = await tools.workit_external_action.execute(request, {
+      directory: root,
+      sessionID: actor,
+    });
+    expect(branchOutput(result)).toMatchObject({ ok: true });
+    expect(
+      spawnSync("git", ["branch", "--show-current"], { cwd: root, encoding: "utf8" }).stdout.trim(),
+    ).toBe("feature/carry");
+    expect(readFileSync(join(root, "docs", "plan.md"), "utf8")).toBe("plan v2\n");
+    expect(spawnSync("git", ["stash", "list"], { cwd: root, encoding: "utf8" }).stdout.trim()).toBe(
+      "",
+    );
+  } finally {
+    restoreBranchRepo(repo);
   }
 });
