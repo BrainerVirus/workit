@@ -6,7 +6,6 @@ import { join } from "node:path";
 import {
   bundleHashOfFile,
   isEphemeralCachePath,
-  runtimeBundleHash,
   sha256Hex,
 } from "@/packages/workit-core/src/core/runtime-identity";
 import {
@@ -48,9 +47,6 @@ test("bundle hashes are stable hex digests of the exact bytes", () => {
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
-  const self = runtimeBundleHash();
-  expect(self).toMatch(/^[0-9a-f]{64}$/);
-  expect(runtimeBundleHash()).toBe(self);
 });
 
 const git = (cwd: string, args: string[]) => spawnSync("git", args, { cwd });

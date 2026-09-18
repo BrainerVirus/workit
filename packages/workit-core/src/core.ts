@@ -73,13 +73,7 @@ export type { MethodId, SelectedMethod } from "./core/methods";
 export { hasLiveWorkitTask, shellRouteIntent, shouldDenyShellRoute } from "./core/route-intent";
 export { classifyBranchDirt } from "./core/branch";
 export type { BranchDirt } from "./core/branch";
-export {
-  bundleHashOfFile,
-  isEphemeralCachePath,
-  runtimeBundleHash,
-  sameBundle,
-  sha256Hex,
-} from "./core/runtime-identity";
+export { bundleHashOfFile, isEphemeralCachePath, sha256Hex } from "./core/runtime-identity";
 export type { ShellRouteIntent } from "./core/route-intent";
 export { applicableDecision, reserveAction, settleAction, reconcileAction } from "./core/authority";
 export { normalizeChainSteps, chainStepKey } from "./core/authority";
