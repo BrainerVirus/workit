@@ -1,0 +1,44 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugins": ["__PLUGIN_DIR__"],
+  "model": "stub/stub-model",
+  "providers": {
+    "stub": {
+      "name": "Stub",
+      "package": "@opencode/ai/providers/openai-compatible",
+      "settings": { "baseURL": "__STUB_URL__" },
+      "models": {
+        "stub-model": {
+          "name": "Stub Model",
+          "capabilities": { "tools": true, "input": ["text"], "output": ["text"] },
+          "limit": { "context": 64000, "output": 4096 }
+        },
+        "stub-shell": {
+          "name": "Stub Shell",
+          "capabilities": { "tools": true, "input": ["text"], "output": ["text"] },
+          "limit": { "context": 64000, "output": 4096 }
+        },
+        "stub-question": {
+          "name": "Stub Question",
+          "capabilities": { "tools": true, "input": ["text"], "output": ["text"] },
+          "limit": { "context": 64000, "output": 4096 }
+        },
+        "stub-subagent": {
+          "name": "Stub Subagent",
+          "capabilities": { "tools": true, "input": ["text"], "output": ["text"] },
+          "limit": { "context": 64000, "output": 4096 }
+        },
+        "stub-subagent2": {
+          "name": "Stub Subagent x2",
+          "capabilities": { "tools": true, "input": ["text"], "output": ["text"] },
+          "limit": { "context": 64000, "output": 4096 }
+        },
+        "stub-text": {
+          "name": "Stub Text",
+          "capabilities": { "tools": true, "input": ["text"], "output": ["text"] },
+          "limit": { "context": 64000, "output": 4096 }
+        }
+      }
+    }
+  }
+}
