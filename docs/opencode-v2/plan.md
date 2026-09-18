@@ -98,6 +98,20 @@ the durable dispatch fix.
 Exit condition: the V2 implementation has one evidenced orchestration approach;
 the dependency choice is not left implicit.
 
+Outcome (recorded 2026-09-18): native implementation choice, no Effect
+dependency. `test/opencode-v2/lifecycle.test.ts` (4/4 green, opt-in
+`WORKIT_V2_HARNESS=1`) proves every lifecycle scenario with native
+primitives — concurrent launches complete with unique event ids, interrupt
+yields honest `interrupted`/`aborted` envelopes, missed terminal events
+reconcile via polling, unload fires cleanup and reload re-runs setup, and
+`session.get` settles within a 5-poll budget. No runnable failing case
+exists, so spec section 6 condition 1 fails and the gate stays closed.
+Counter-case for reopening: a future runnable failure (e.g. missed-event
+storms or cancellation races under real load) that native polling cannot
+cover. The harness also fixed one real finding en route: the probe was
+installed twice (config + location), duplicating every event id; it now
+installs location-only.
+
 ### 5. Implement the dual entry
 
 Open a behavior-change task and use the Docker spike evidence as authority.

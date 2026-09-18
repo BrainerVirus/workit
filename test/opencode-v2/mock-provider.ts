@@ -179,6 +179,15 @@ const scripts: Record<string, (() => Response)[]> = {
   ],
   text: [() => sse([textOnly("hello from stub"), textTurn("", "stop")])],
   summary: [() => sse([textOnly(SUMMARY), textTurn("", "stop")])],
+  // Long-running shell call so interrupt/cancel can land mid-flight.
+  slow: [
+    () =>
+      sse([
+        toolTurn("call_1", "shell", { command: "sleep 20", description: "probe sleep" }),
+        textTurn("", "tool_calls"),
+      ]),
+    () => sse([textOnly("slow done"), textTurn("", "stop")]),
+  ],
 };
 
 const hasToolResult = (body: any) =>
@@ -230,6 +239,11 @@ Bun.serve({
       const model = String(body?.model ?? "");
       const script = model.startsWith("stub-") ? model.slice("stub-".length) : "model";
       const turns = scripts[script] ?? scripts.model!;
+      // Client disconnects (interrupt/cancel mid-stream) are logged so tests
+      // can assert the provider observed the abort.
+      req.signal.addEventListener("abort", () => {
+        void log({ aborted: true, model: body?.model });
+      });
       if (isCompaction(body)) return scripts.summary![0]!();
       return hasToolResult(body) ? turns[turns.length - 1]!() : turns[0]!();
     }

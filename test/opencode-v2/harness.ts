@@ -123,9 +123,10 @@ export const boot = async (): Promise<Harness> => {
   const stub = `v2harness-stub-${process.pid}`;
   const server = `v2harness-server-${process.pid}`;
   const stubUrl = "http://stub:8000/v1";
-  const config = readFileSync(path.join(HERE, "fixtures", "opencode.json"), "utf8")
-    .replaceAll("__PLUGIN_DIR__", "/workspace/cfgplugin")
-    .replaceAll("__STUB_URL__", stubUrl);
+  const config = readFileSync(path.join(HERE, "fixtures", "opencode.json"), "utf8").replaceAll(
+    "__STUB_URL__",
+    stubUrl,
+  );
   mkdirSync(path.join(home, ".config", "opencode"), { recursive: true });
   writeFileSync(path.join(home, ".config", "opencode", "opencode.json"), config);
 
@@ -171,8 +172,6 @@ export const boot = async (): Promise<Harness> => {
       "V2PROBE_LOG=/logs/probe-events.log",
       "-v",
       `${home}:/home/oc`,
-      "-v",
-      `${path.join(HERE, "probe-plugin")}:/workspace/cfgplugin:ro`,
       "-v",
       `${work}:/workspace/work`,
       "-v",
