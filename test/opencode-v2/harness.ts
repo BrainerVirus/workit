@@ -35,7 +35,12 @@ export type Harness = {
   workdir: string;
   logDir: string;
   api: (method: string, route: string, body?: unknown, voidOk?: boolean) => Promise<any>;
-  op: (operation: string, args?: Record<string, string>, body?: unknown, voidOk?: boolean) => Promise<any>;
+  op: (
+    operation: string,
+    args?: Record<string, string>,
+    body?: unknown,
+    voidOk?: boolean,
+  ) => Promise<any>;
   serverLog: () => string;
   probeLog: () => string;
   stubLog: () => string;
@@ -227,7 +232,12 @@ export const boot = async (): Promise<Harness> => {
     }
   };
 
-  const api = async (method: string, route: string, body?: unknown, voidOk = false): Promise<any> => {
+  const api = async (
+    method: string,
+    route: string,
+    body?: unknown,
+    voidOk = false,
+  ): Promise<any> => {
     const args = ["api", method, route];
     if (body !== undefined) args.push("-d", JSON.stringify(body));
     return callJson(args, voidOk);
