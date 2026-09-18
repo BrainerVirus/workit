@@ -313,6 +313,26 @@ Candidate snapshots in Git workspaces use Git's ignore-aware file inventory, so
 ignored dependency/build trees are not recursively scanned; non-Git folders
 retain recursive inventory behavior.
 
+### Auto-approval (opt-in per workspace)
+
+Branch, commit, push, PR, and merge approvals can run without questions once a
+workspace opts in. Add `autoApprove` (action classes, or `true` for all five)
+and `vcs.account` (required for push) to the workspace entry in
+`~/.config/workit/workit/workspaces.json` — absent means manual as before:
+
+```json
+{ "name": "personal", "glob": "/home/you/projects/personal/**",
+  "vcs": { "provider": "github", "account": "you" },
+  "autoApprove": ["branch", "commit", "push", "pr", "merge"] }
+```
+
+Each auto action still records a reservation with the exact binding; the
+standing rule is re-read live, so removing the flag restores questions
+immediately. Guardrails are code, not prose: protected branches never push,
+open PRs, or merge sources; push identity must match the area account;
+publish/release stay gated. Product decisions, waivers, and close outcomes
+still require a human.
+
 ## Development
 
 ```bash
