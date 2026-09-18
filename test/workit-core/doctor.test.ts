@@ -900,6 +900,12 @@ test("cursor launcher rejects shebang-valid JavaScript syntax errors without exe
 test("cursor launcher syntax validation never executes valid plugin code", () => {
   const marker = path.join(fixture.root, "valid-code-must-not-execute");
   const installed = path.join(fixture.pluginDir, "dist", "mcp-server.js");
+  // The real installed plugin ships package.json with type:module; without
+  // it node --check parses the ESM dist as CJS and the precondition is void.
+  writeConfig(
+    path.join(fixture.pluginDir, "package.json"),
+    JSON.stringify({ name: "@brainervirus/workit-cursor", version: "1.0.0", type: "module" }),
+  );
   writeConfig(
     installed,
     `#!/usr/bin/env node\nimport { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(marker)}, "executed");\n`,
@@ -917,6 +923,7 @@ test("cursor launcher syntax validation never executes valid plugin code", () =>
     expect(check(report, "launcher").status).toBe("pass");
     expect(existsSync(marker)).toBe(false);
   } finally {
+    rmSync(path.join(fixture.pluginDir, "package.json"), { force: true });
     writeConfig(installed, "#!/usr/bin/env node\n// bundle\n");
   }
 });
