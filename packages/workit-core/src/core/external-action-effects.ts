@@ -4,7 +4,7 @@ import {
   resolveBranchPolicyFor,
   resolveCommitPolicyFor,
 } from "./branch";
-import { hostingCliAvailable, prCreate } from "./pr-create";
+import { hostingCliAvailable, mergePr, prCreate } from "./pr-create";
 import {
   changelogContext,
   docsRefreshContext,
@@ -356,6 +356,11 @@ export const actionProposalQuestion = (
         presented: `Workit decision: action — Open a PR from \`${String(resolved.source_branch ?? "")}\` to \`${payloadTarget}\` titled "${String(request.payload.title)}"?`,
         approvedText: `Open the PR: ${String(resolved.source_branch ?? "")} → ${payloadTarget}, "${String(request.payload.title)}".`,
       };
+    case "hosting.merge":
+      return {
+        presented: `Workit decision: action — Merge \`${String(resolved.source_branch ?? "")}\` into \`${payloadTarget}\` (squash, delete branch)?`,
+        approvedText: `Merge ${String(resolved.source_branch ?? "")} → ${payloadTarget}.`,
+      };
     case "changelog.apply":
       return {
         presented: `Workit decision: action — Apply changelog changes at \`${String(payload.path ?? "CHANGELOG.md")}\`?`,
@@ -404,6 +409,7 @@ export const approvedResolvedExternalAction = (content: string): Result<Resolved
     const value = JSON.parse(content) as { operation?: unknown; payload?: unknown };
     if (
       value.operation !== "hosting.pull_request" &&
+      value.operation !== "hosting.merge" &&
       value.operation !== "changelog.apply" &&
       value.operation !== "youtrack.update" &&
       value.operation !== "youtrack.time" &&
@@ -421,6 +427,15 @@ export const approvedResolvedExternalAction = (content: string): Result<Resolved
     const target = resolved as Record<string, unknown>;
     if (
       value.operation === "hosting.pull_request" &&
+      (typeof target.marker !== "string" ||
+        typeof target.source_branch !== "string" ||
+        typeof target.source_commit !== "string" ||
+        typeof target.remote !== "string" ||
+        typeof payload.target_branch !== "string")
+    )
+      return failure("invalid_input", "approved hosting target is incomplete");
+    if (
+      value.operation === "hosting.merge" &&
       (typeof target.marker !== "string" ||
         typeof target.source_branch !== "string" ||
         typeof target.source_commit !== "string" ||
@@ -910,6 +925,11 @@ export const resolveExternalActionRequest = (
       }
       case "git.push": {
         const branch = request.payload.branch ?? gitValue(root, ["branch", "--show-current"]);
+        if (branch && isProtectedBranch(root, branch))
+          return failure("invalid_input", `cannot push protected branch ${branch}`, {
+            outcome: "not_started",
+            fields: [{ path: "branch", reason: "protected branch" }],
+          });
         const commit = branch ? gitValue(root, ["rev-parse", branch]) : null;
         const remote = pushRemote(root);
         const identity = remote ? credentialFreeRemote(remote) : null;
@@ -1026,6 +1046,15 @@ export const resolveExternalActionRequest = (
         const target_branch =
           request.payload.target_branch ?? resolveBranchPolicyFor(root).defaultTargetBranch;
         const source_branch = gitValue(root, ["branch", "--show-current"]);
+        if (source_branch && isProtectedBranch(root, source_branch))
+          return failure(
+            "invalid_input",
+            `cannot open a PR from protected branch ${source_branch}`,
+            {
+              outcome: "not_started",
+              fields: [{ path: "source_branch", reason: "protected branch" }],
+            },
+          );
         const source_commit = gitValue(root, ["rev-parse", "HEAD"]);
         const remote = pushRemote(root);
         const identity = remote ? credentialFreeRemote(remote) : null;
@@ -1056,6 +1085,56 @@ export const resolveExternalActionRequest = (
         const normalized = {
           operation: request.operation,
           payload: { ...request.payload, target_branch, babysit: request.payload.babysit ?? true },
+        } as ExternalActionRequest;
+        const marker = `<!-- workit-action:${sha256({ operation: request.operation, payload: normalized.payload, source_commit, remote: identity })} -->`;
+        return success(null, null, {
+          request: normalized,
+          marker,
+          descriptorPayload: {
+            ...normalized.payload,
+            resolved: { source_branch, source_commit, remote: identity, target_branch, marker },
+          },
+        });
+      }
+      case "hosting.merge": {
+        const target_branch =
+          request.payload.target_branch ?? resolveBranchPolicyFor(root).defaultTargetBranch;
+        const source_branch =
+          request.payload.source_branch ?? gitValue(root, ["branch", "--show-current"]);
+        if (source_branch && isProtectedBranch(root, source_branch))
+          return failure("invalid_input", `cannot merge protected branch ${source_branch}`, {
+            outcome: "not_started",
+            fields: [{ path: "source_branch", reason: "protected branch" }],
+          });
+        const source_commit = gitValue(root, ["rev-parse", "HEAD"]);
+        const remote = pushRemote(root);
+        const identity = remote ? credentialFreeRemote(remote) : null;
+        if (
+          !source_branch ||
+          !source_commit ||
+          !identity ||
+          (remoteProvider(identity) !== null &&
+            remoteProvider(identity) !== String(vcsConfig("load", root).provider).toLowerCase())
+        )
+          return failure(
+            "capability_unavailable",
+            "hosting target is not bound to the configured remote provider",
+            { capability: "hosting.merge" },
+          );
+        const vcs = vcsConfig("load", root);
+        if (!vcs.ok || !vcs.tokenReady)
+          return failure("capability_unavailable", "hosting credentials are unavailable", {
+            capability: "hosting.merge",
+            outcome: "not_started",
+          });
+        if (!hostingCliAvailable(String(vcs.provider)))
+          return failure("capability_unavailable", "hosting CLI is unavailable", {
+            capability: "hosting.merge",
+            outcome: "not_started",
+          });
+        const normalized = {
+          operation: request.operation,
+          payload: { ...request.payload, target_branch, source_branch },
         } as ExternalActionRequest;
         const marker = `<!-- workit-action:${sha256({ operation: request.operation, payload: normalized.payload, source_commit, remote: identity })} -->`;
         return success(null, null, {
@@ -1288,6 +1367,19 @@ export const executeConcreteExternalAction = async (
               ? { next: prBabysitNext(String((result as { output?: unknown }).output ?? "")) }
               : {}),
           });
+    }
+    case "hosting.merge": {
+      const target = String(request.payload.target_branch ?? "");
+      const source = String(request.payload.source_branch ?? "");
+      if (!target || !source)
+        return failure("invalid_input", "hosting.merge requires target and source branches", {
+          outcome: "not_started",
+          fields: [{ path: "target_branch", reason: "required" }],
+        });
+      const result = mergePr(root, { target, source });
+      return result.error || result.ok === false
+        ? unknown(request.operation)
+        : success(null, null, result);
     }
     case "changelog.apply": {
       const preview = changelogApplyPreview({ ...request.payload, workspace_root: root });

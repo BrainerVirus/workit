@@ -18,6 +18,50 @@ const policy = (root: string) => resolveBranchPolicyFor(root);
 const allowedBranch = (root: string, name: string) =>
   policy(root).allowed.some((r) => r.test(name));
 const isProtected = (root: string, name: string) => policy(root).protected.has(name.toLowerCase());
+
+/** Public guardrail: protected refs fail closed anywhere, never ask. */
+export const isProtectedTarget = (root: string, name: string): boolean => {
+  try {
+    return isProtected(root, name);
+  } catch {
+    return true;
+  }
+};
+
+/**
+ * Push identity check as code: the credential actually used must belong to
+ * the workspace area account. Anything unresolvable fails closed — an
+ * unreachable host never reads as a match.
+ */
+export const verifyPushIdentity = (
+  root: string,
+  provider: string,
+  account: string,
+): { ok: true } | { ok: false; error: string } => {
+  if (!account || typeof account !== "string")
+    return { ok: false, error: "push identity requires a configured area account" };
+  const probe =
+    provider === "gitlab"
+      ? (["api", "user", "--jq", ".username"] as const)
+      : (["api", "user", "--jq", ".login"] as const);
+  const bin = provider === "gitlab" ? "glab" : "gh";
+  let login: string;
+  try {
+    login = execFileSync(bin, [...probe], {
+      cwd: root,
+      encoding: "utf8",
+      stdio: ["pipe", "pipe", "pipe"],
+    }).trim();
+  } catch {
+    return { ok: false, error: `${bin} identity could not be resolved` };
+  }
+  if (!login || login.toLowerCase() !== account.toLowerCase())
+    return {
+      ok: false,
+      error: `push identity ${login || "(unknown)"} does not match area account ${account}`,
+    };
+  return { ok: true };
+};
 // RL-01: malformed vcs.json blocks branch resolution with an exact-path error.
 const baseBranch = (cwd: string): { base: string } | { error: string } => {
   const resolved = vcsConfig("resolve", cwd);
