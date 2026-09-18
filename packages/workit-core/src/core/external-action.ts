@@ -88,6 +88,17 @@ const externalActionSchema = z.discriminatedUnion("operation", [
     .strict(),
   z
     .object({
+      operation: z.literal("hosting.merge"),
+      payload: z
+        .object({
+          target_branch: z.string().min(1).optional(),
+          source_branch: z.string().min(1).optional(),
+        })
+        .strict(),
+    })
+    .strict(),
+  z
+    .object({
       operation: z.literal("youtrack.update"),
       payload: z
         .object({
@@ -216,7 +227,7 @@ export const externalActionDescriptor = (operation: string, payload: unknown): s
 
 /** Compact host-facing help for the fixed optional-action surface. */
 export const externalActionHelp =
-  "Fixed actions: git.branch_setup {action?,sdd_dir?,target_branch(required unless reapply_stash; the working branch to create or switch to),stash?}; git.commit {message}; git.push {branch?}; hosting.pull_request {title,body?,draft?,target_branch?,babysit?}; youtrack.update {issueId,markdown,minutes?}; youtrack.time {issueId,minutes,text?,dateMs?}; youtrack.meeting {issueId,minutes,text}; changelog.apply {entries?,path?,normalize_only?}; context.read {kind,range?,issueId?,issueUrl?,issueRef?,mode?,specPath?,planPath?}. context.read is read-only and needs no approval; all other operations require native approval (CLI uses a TTY; caller-unattested MCP cannot mutate).";
+  "Fixed actions: git.branch_setup {action?,sdd_dir?,target_branch(required unless reapply_stash; the working branch to create or switch to),stash?}; git.commit {message}; git.push {branch?}; hosting.pull_request {title,body?,draft?,target_branch?,babysit?}; hosting.merge {target_branch?,source_branch?}; youtrack.update {issueId,markdown,minutes?}; youtrack.time {issueId,minutes,text?,dateMs?}; youtrack.meeting {issueId,minutes,text}; changelog.apply {entries?,path?,normalize_only?}; context.read {kind,range?,issueId?,issueUrl?,issueRef?,mode?,specPath?,planPath?}. context.read is read-only and needs no approval; all other operations require native approval (CLI uses a TTY; caller-unattested MCP cannot mutate).";
 
 export const externalActionRef = (
   host: "opencode" | "pi" | "workit_cli",
@@ -451,7 +462,8 @@ export const approvedPlanCommit = (
 
 export type ChainStepQuery =
   | { operation: "git.branch_setup"; target: string }
-  | { operation: "hosting.pull_request" };
+  | { operation: "hosting.pull_request" }
+  | { operation: "hosting.merge" };
 
 /**
  * Match one branch or PR step of a chain authorization: same session-bound

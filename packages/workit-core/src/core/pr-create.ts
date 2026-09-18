@@ -373,4 +373,54 @@ export function prCreate(env: NodeJS.ProcessEnv, cwd: string): Record<string, an
   };
 }
 
+/** Merge the open PR/MR for a source branch (squash + delete per pr settings). */
+export function mergePr(
+  cwd: string,
+  opts: { target: string; source: string },
+): Record<string, any> {
+  const root = repoRoot(cwd);
+  const cfg = vcsConfig("load", root);
+  if (!cfg.ok) return { error: cfg.error ?? "vcs config missing" };
+  if (!cfg.tokenReady)
+    return { error: "VCS token not ready — run /wk-init and edit token file locally" };
+  const provider = cfg.provider as string;
+  if (provider !== "gitlab" && provider !== "github")
+    return { error: `unsupported provider: ${provider}` };
+  if (!hostingCliAvailable(provider))
+    return { error: `workflow CLI missing (required for ${provider})` };
+  const pr = (cfg.pr ?? {}) as Record<string, any>;
+  const token = fs.readFileSync(cfg.tokenPath as string, "utf8").trim();
+  const squash = pr.squashOnMerge !== false;
+  const removeBranch = pr.removeSourceBranch !== false;
+  let cmd: string[];
+  let cmdEnv: NodeJS.ProcessEnv;
+  if (provider === "gitlab") {
+    cmd = ["glab", "mr", "merge", opts.source];
+    cmd.push(squash ? "--squash" : "--squash=false");
+    if (removeBranch) cmd.push("--remove-source-branch");
+    cmd.push("--yes");
+    cmdEnv = { ...process.env, PATH: process.env.PATH ?? "", GITLAB_TOKEN: token };
+  } else {
+    cmd = ["gh", "pr", "merge", opts.source];
+    cmd.push(squash ? "--squash" : "--merge");
+    if (removeBranch) cmd.push("--delete-branch");
+    cmd.push("--yes");
+    cmdEnv = { ...process.env, PATH: process.env.PATH ?? "", GH_TOKEN: token };
+  }
+  const result = spawnSync(cmd[0], cmd.slice(1), { cwd: root, encoding: "utf8", env: cmdEnv });
+  if (result.status !== 0)
+    return {
+      error: "merge failed",
+      provider,
+      stderr: (result.stderr ?? result.stdout ?? "").trim().slice(0, 800),
+    };
+  return {
+    ok: true,
+    provider,
+    targetBranch: opts.target,
+    sourceBranch: opts.source,
+    output: (result.stdout ?? "").trim(),
+  };
+}
+
 export { buildBody, parseGhRepo, parseGhIssue };
