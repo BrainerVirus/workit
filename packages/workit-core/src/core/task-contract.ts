@@ -144,6 +144,19 @@ export const refSchema = z.discriminatedUnion("kind", [
     .strict(),
   z.object({ kind: z.literal("host"), host: hostSchema, handle: nonEmpty }).strict(),
   z.object({ kind: z.literal("external"), url: text.url() }).strict(),
+  // Standing auto-approval receipt: authorizes without a live question while
+  // the referenced workspace rule covers the operation class. Verified live
+  // at reserve time against current config; dropped on export/import (a rule
+  // from another machine must never authorize here). Scalar-only shape keeps
+  // advertised operation schemas within provider depth limits.
+  z
+    .object({
+      kind: z.literal("standing"),
+      workspace: nonEmpty,
+      class: nonEmpty,
+      configDigest: nullableDigest,
+    })
+    .strict(),
 ]);
 export type Ref = z.infer<typeof refSchema>;
 
@@ -563,6 +576,7 @@ export const decisionSchema = z
         displayed: text.optional(),
         contentRefs: z.array(refSchema),
         statedChoice: z.object({ ref: text, text: text }).strict().optional(),
+        standing: z.object({ workspace: nonEmpty, class: nonEmpty }).strict().optional(),
       })
       .strict(),
     digest,

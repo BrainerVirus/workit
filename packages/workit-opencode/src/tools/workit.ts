@@ -8,6 +8,8 @@ import {
   approvedPlanCommit,
   planCommitBinding,
   chainStepBinding,
+  standingAutoApplies,
+  standingAutoBinding,
   externalActionDescriptor,
   externalActionHelp,
   priorExternalAction,
@@ -650,7 +652,8 @@ export const nativeExternalActionRunner = (
     if (!selected.ok) {
       const plan =
         planCommitBinding(store, "opencode", actor, operation) ??
-        chainStepBinding(store, "opencode", actor, operation);
+        chainStepBinding(store, "opencode", actor, operation) ??
+        standingAutoBinding(core, store, "opencode", actor, operation);
       if (plan) {
         const actionRef = externalActionRef("opencode", actor, operation);
         return {
@@ -927,6 +930,7 @@ export const createWorkitTools = ({
           "git.commit",
           "git.push",
           "hosting.pull_request",
+          "hosting.merge",
           "youtrack.update",
           "youtrack.time",
           "youtrack.meeting",
@@ -1056,6 +1060,7 @@ export const createWorkitTools = ({
           "git.commit",
           "git.push",
           "hosting.pull_request",
+          "hosting.merge",
           "changelog.apply",
         ].includes(resolved.data.request.operation);
         if (localOperation) {
@@ -1088,7 +1093,13 @@ export const createWorkitTools = ({
             planAuthorized = plan.ok && plan.data.branch === currentBranch;
           }
         }
-        if (!selected.ok && !planAuthorized) {
+        // Standing auto-approval skips the question and falls through to the
+        // runner, which binds the recorded standing decision.
+        const autoApplies =
+          !selected.ok &&
+          !planAuthorized &&
+          standingAutoApplies(store, "opencode", context.sessionID, descriptor);
+        if (!selected.ok && !planAuthorized && !autoApplies) {
           if (selected.error.startsWith("no approved action")) {
             const proposal = actionProposalQuestion(
               resolved.data.request,

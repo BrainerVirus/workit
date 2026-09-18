@@ -237,6 +237,7 @@ test("resolved remote descriptors never expose URL credentials", () => {
     writeFileSync(join(root, "initial.txt"), "initial\n");
     spawnSync("git", ["add", "initial.txt"], { cwd: root });
     spawnSync("git", ["commit", "-qm", "initial"], { cwd: root });
+    spawnSync("git", ["checkout", "-qb", "feature/credentials"], { cwd: root });
     spawnSync("git", ["remote", "add", "origin", "https://user:secret@example.com/org/repo.git"], {
       cwd: root,
     });
@@ -435,6 +436,7 @@ test("hosting reconciliation reads one exact GitHub result and preserves unknown
     writeFileSync(join(root, "initial.txt"), "initial\n");
     spawnSync("git", ["add", "initial.txt"], { cwd: root });
     spawnSync("git", ["commit", "-qm", "initial"], { cwd: root });
+    spawnSync("git", ["checkout", "-qb", "feature/reconcile"], { cwd: root });
     spawnSync("git", ["remote", "add", "origin", "https://github.com/org/repo.git"], { cwd: root });
     const tokenPath = join(root, "token");
     const configPath = join(root, "vcs.json");
@@ -990,6 +992,7 @@ test("pull_request resolve defaults babysit true and honors explicit decline", (
     writeFileSync(join(root, "initial.txt"), "initial\n");
     spawnSync("git", ["add", "initial.txt"], { cwd: root });
     spawnSync("git", ["commit", "-qm", "initial"], { cwd: root });
+    spawnSync("git", ["checkout", "-qb", "feature/babysit"], { cwd: root });
     spawnSync("git", ["remote", "add", "origin", "https://github.com/org/repo.git"], { cwd: root });
     const tokenPath = join(root, "token");
     const configPath = join(root, "vcs.json");

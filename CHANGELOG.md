@@ -20,6 +20,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Workspace opt-in auto-approval: `autoApprove` classes plus `vcs.account`
+  in `workspaces.json` let covered branch, commit, push, PR, and merge
+  effects execute with no question, each still recording a reservation with
+  its exact binding. Standing approvals re-validate live (removal restores
+  questions instantly, imported standing receipts are dropped). Guardrails
+  are code: protected branches never push, open PRs, or merge sources; push
+  identity must match the area account; publish/release stay gated. New
+  `hosting.merge` action (squash + delete branch per config) with the same
+  protections, and raw `gh pr merge` / `glab mr merge` route into it.
 - Concise native action approvals: a mutating action call that has no approval
   returns `needs_input` with a short user-facing proposal (`presented`,
   `approvedContent`, `descriptorDigest`) while the canonical descriptor stays in

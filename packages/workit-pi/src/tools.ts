@@ -4,6 +4,8 @@ import {
   approvedPlanCommit,
   planCommitBinding,
   chainStepBinding,
+  standingAutoApplies,
+  standingAutoBinding,
   externalActionState,
   priorExternalAction,
   priorResolvedDrift,
@@ -169,7 +171,8 @@ export const nativeExternalActionRunner = (
     if (!selected.ok) {
       const plan =
         planCommitBinding(store, "pi", actor, operation) ??
-        chainStepBinding(store, "pi", actor, operation);
+        chainStepBinding(store, "pi", actor, operation) ??
+        standingAutoBinding(core, store, "pi", actor, operation);
       if (plan) {
         const actionRef = externalActionRef("pi", actor, operation);
         return {
@@ -351,6 +354,7 @@ export const registerWorkitTools = (
             "git.commit",
             "git.push",
             "hosting.pull_request",
+            "hosting.merge",
             "youtrack.update",
             "youtrack.time",
             "youtrack.meeting",
@@ -381,7 +385,18 @@ export const registerWorkitTools = (
         return output(
           failure("permission_denied", "supervised Pi children cannot run external actions"),
         );
-      if (!ctx.hasUI)
+      if (
+        !ctx.hasUI &&
+        !standingAutoApplies(
+          new TaskStore(ctx.cwd),
+          "pi",
+          context.caller.actor,
+          externalActionDescriptor(
+            resolved.data.request.operation,
+            resolved.data.descriptorPayload,
+          ),
+        )
+      )
         return output(
           failure("needs_input", "interactive confirmation UI is unavailable", {
             capability: "interactive_decision",
@@ -399,6 +414,7 @@ export const registerWorkitTools = (
         "git.commit",
         "git.push",
         "hosting.pull_request",
+        "hosting.merge",
         "changelog.apply",
       ].includes(resolved.data.request.operation);
       if (localOperation) {
@@ -503,6 +519,18 @@ export const registerWorkitTools = (
             ? approvedPlanCommit(store, "pi", actor, commitMessage)
             : null;
         if (plan?.ok && plan.data.branch === currentBranch) {
+          const result = await nativeExternalActionRunner(
+            ctx.cwd,
+            actor,
+            core,
+          )(descriptor, (step) =>
+            executeResolvedExternalAction(resolved.data, ctx.cwd, step, { host: "pi", actor }),
+          );
+          return output(result);
+        }
+        // Standing auto-approval skips the native confirm: the runner binds
+        // the recorded standing decision through the same reservation path.
+        if (standingAutoApplies(store, "pi", actor, descriptor)) {
           const result = await nativeExternalActionRunner(
             ctx.cwd,
             actor,

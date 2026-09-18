@@ -1448,6 +1448,7 @@ test("OpenCode reports a missing hosting CLI before reserving a pull request", a
     writeFileSync(join(root, "initial.txt"), "initial\n");
     spawnSync("git", ["add", "initial.txt"], { cwd: root });
     spawnSync("git", ["commit", "-qm", "initial"], { cwd: root });
+    spawnSync("git", ["checkout", "-qb", "feature/no-gh"], { cwd: root });
     spawnSync("git", ["remote", "add", "origin", "https://github.com/org/repo.git"], {
       cwd: root,
     });
@@ -1503,6 +1504,7 @@ test("OpenCode hosting action reconciles a matching provider result without retr
     writeFileSync(join(root, "initial.txt"), "initial\n");
     spawnSync("git", ["add", "initial.txt"], { cwd: root });
     spawnSync("git", ["commit", "-qm", "initial"], { cwd: root });
+    spawnSync("git", ["checkout", "-qb", "feature/hosting"], { cwd: root });
     spawnSync("git", ["remote", "add", "origin", "https://github.com/org/repo.git"], { cwd: root });
     const bin = mkdtempSync(join(tmpdir(), "workit-fake-gh-"));
     const gh = join(bin, "gh");

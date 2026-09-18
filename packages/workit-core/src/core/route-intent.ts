@@ -1,7 +1,7 @@
 import { TaskStore } from "./task-store";
 
 export type ShellRouteIntent = {
-  route: "git.branch_setup" | "hosting.pull_request";
+  route: "git.branch_setup" | "hosting.pull_request" | "hosting.merge";
   guidance: string;
 };
 
@@ -10,6 +10,8 @@ const GUIDANCE: Record<ShellRouteIntent["route"], string> = {
     "use the Workit git.branch_setup action (workit_external_action in hosts, or `workit action git.branch_setup --payload '{}' --confirm --json` in the CLI)",
   "hosting.pull_request":
     "use the Workit hosting.pull_request action (workit_external_action in hosts, or `workit action hosting.pull_request --payload '{...}' --confirm --json` in the CLI), then drive the created PR through workit-babysit",
+  "hosting.merge":
+    "use the Workit hosting.merge action (workit_external_action in hosts, or `workit action hosting.merge --payload '{...}' --confirm --json` in the CLI)",
 };
 
 const unbalancedQuotes = (segment: string): boolean => {
@@ -48,6 +50,10 @@ export function shellRouteIntent(command: string): ShellRouteIntent | null {
       return { route: "hosting.pull_request", guidance: GUIDANCE["hosting.pull_request"] };
     if (head === "glab" && second === "mr" && third === "create")
       return { route: "hosting.pull_request", guidance: GUIDANCE["hosting.pull_request"] };
+    if (head === "gh" && second === "pr" && third === "merge")
+      return { route: "hosting.merge", guidance: GUIDANCE["hosting.merge"] };
+    if (head === "glab" && second === "mr" && third === "merge")
+      return { route: "hosting.merge", guidance: GUIDANCE["hosting.merge"] };
   }
   return null;
 }

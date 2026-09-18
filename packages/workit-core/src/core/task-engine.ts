@@ -56,6 +56,7 @@ import {
   type ReconcileActionInput,
 } from "./authority";
 import { diffPolicy, resolvePolicy } from "./policy-resolver";
+import { verifyStandingApproval } from "./auto-approval";
 import { TaskStore, type MetadataLock, type ProcessEvidence } from "./task-store";
 import {
   exportDigest,
@@ -1087,10 +1088,21 @@ export class WorkitCore {
     return this.recordDecision(request, observation, true);
   }
 
+  /**
+   * Record a standing auto-approval: no live question, authorized by the
+   * workspace rule named in binding.standing while it covers the operation.
+   * Lead-only, task-scoped, verified live here — revocation is config
+   * removal, which fails the next reserve closed.
+   */
+  observeStandingDecision(request: unknown): Result<Entry<Decision>> {
+    return this.recordDecision(request, undefined, true, true);
+  }
+
   private recordDecision(
     request: unknown,
     nativeObservation?: unknown,
     nativeRequired = false,
+    standing = false,
   ): Result<Entry<Decision>> {
     const root = this.contextRootError();
     if (!root.ok) return root as Result<never>;
@@ -1110,8 +1122,16 @@ export class WorkitCore {
       return failure("permission_denied", "stated choices cannot authorize mutating actions");
     if (stated && !input.binding?.statedChoice)
       return failure("invalid_input", "stated choices require binding.statedChoice");
-    if (nativeRequired && nativeObservation === undefined && !stated)
+    if (nativeRequired && nativeObservation === undefined && !stated && !standing)
       return failure("permission_denied", "native decision observation is required");
+    if (
+      standing &&
+      (!input.binding?.standing || input.purpose !== "action" || input.response !== "approved")
+    )
+      return failure(
+        "invalid_input",
+        "standing approvals need an approved action binding with a standing rule",
+      );
     const task = this.store.readTask(input.taskId);
     if (!task.ok) return task as Result<never>;
     if ((this.context.workerId ?? null) !== null)
@@ -1141,8 +1161,13 @@ export class WorkitCore {
         consumption: null,
       } satisfies Omit<Decision, "digest">;
       const data: Decision = { ...base, digest: decisionDigest(base) };
+      const standingApproval =
+        standing && !stated
+          ? verifyStandingApproval(this.store.root, task.data, this.context.caller, input.binding)
+          : null;
+      if (standingApproval && !standingApproval.ok) return standingApproval as Result<never>;
       const native =
-        nativeRequired && !stated
+        nativeRequired && !stated && !standingApproval
           ? verifyNativeDecision(
               this.context.nativeAuthority,
               {
@@ -1189,7 +1214,10 @@ export class WorkitCore {
           const entry: Entry<Decision> = {
             id: newId(),
             recordedAt: mutation.now,
-            provenance: nativeProvenance ?? provenance(this.context, "agent_reported"),
+            provenance:
+              standingApproval?.ok === true
+                ? standingApproval.data
+                : (nativeProvenance ?? provenance(this.context, "agent_reported")),
             data,
           };
           return success(mutation.revision, null, {
