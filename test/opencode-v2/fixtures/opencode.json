@@ -1,6 +1,5 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugins": ["__PLUGIN_DIR__"],
   "model": "stub/stub-model",
   "providers": {
     "stub": {
@@ -35,6 +34,11 @@
         },
         "stub-text": {
           "name": "Stub Text",
+          "capabilities": { "tools": true, "input": ["text"], "output": ["text"] },
+          "limit": { "context": 64000, "output": 4096 }
+        },
+        "stub-slow": {
+          "name": "Stub Slow",
           "capabilities": { "tools": true, "input": ["text"], "output": ["text"] },
           "limit": { "context": 64000, "output": 4096 }
         }
