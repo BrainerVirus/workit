@@ -114,12 +114,20 @@ test("protected targets fail closed", () => {
 
 test("push identity check enforces the area account", () => {
   const root = repo();
+  // Hermetic: empty PATH so gh/glab resolve to nothing and fail fast.
+  // (On Windows CI the real gh hangs instead of failing.)
+  const emptyBin = mkdtempSync(join(tmpdir(), "workit-empty-bin-"));
+  const previousPath = process.env.PATH;
+  process.env.PATH = emptyBin;
   try {
-    // No git host reachable here: unreachable identity fails closed, never open.
+    // Unreachable identity fails closed, never open.
     const result = verifyPushIdentity(root, "github", "someone");
     expect(result.ok).toBe(false);
   } finally {
+    if (previousPath === undefined) delete process.env.PATH;
+    else process.env.PATH = previousPath;
     rmSync(root, { recursive: true, force: true });
+    rmSync(emptyBin, { recursive: true, force: true });
   }
 });
 
