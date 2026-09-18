@@ -462,8 +462,7 @@ export const approvedPlanCommit = (
 
 export type ChainStepQuery =
   | { operation: "git.branch_setup"; target: string }
-  | { operation: "hosting.pull_request" }
-  | { operation: "hosting.merge" };
+  | { operation: "hosting.pull_request" };
 
 /**
  * Match one branch or PR step of a chain authorization: same session-bound
