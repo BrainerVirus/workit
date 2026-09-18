@@ -6,6 +6,8 @@ import {
   approvedPlanCommit,
   planCommitBinding,
   chainStepBinding,
+  standingAutoApplies,
+  standingAutoBinding,
   externalActionState,
   priorExternalAction,
   priorResolvedDrift,
@@ -541,7 +543,8 @@ const nativeExternalActionRunner = (root: string, actor: string, core: WorkitCor
     if (!approved.ok) {
       const plan =
         planCommitBinding(store, "workit_cli", actor, operationValue) ??
-        chainStepBinding(store, "workit_cli", actor, operationValue);
+        chainStepBinding(store, "workit_cli", actor, operationValue) ??
+        standingAutoBinding(core, store, "workit_cli", actor, operationValue);
       if (plan) {
         const actionRef = externalActionRef("workit_cli", actor, operationValue);
         return {
@@ -677,7 +680,12 @@ export async function runActionCommand(argv: string[], deps: TaskCliDeps = {}): 
     return result.ok ? 0 : 1;
   }
   const tty = deps.stdinIsTTY ? deps.stdinIsTTY() : process.stdin.isTTY === true;
-  if (!tty || !argv.includes("--confirm")) {
+  const actor = deps.actor ?? "cli";
+  const store = new TaskStore(root);
+  // Standing auto-approval skips the TTY confirm, including headless: the
+  // runner binds the recorded standing decision through the same path.
+  const autoApplies = standingAutoApplies(store, "workit_cli", actor, descriptor);
+  if ((!tty || !argv.includes("--confirm")) && !autoApplies) {
     const result = failure("needs_input", "TTY confirmation is required for external actions", {
       operation: normalized.operation,
     });
@@ -685,8 +693,6 @@ export async function runActionCommand(argv: string[], deps: TaskCliDeps = {}): 
     else printHuman(result, deps);
     return 1;
   }
-  const actor = deps.actor ?? "cli";
-  const store = new TaskStore(root);
   const taskId = taskIndex >= 0 ? argv[taskIndex + 1] : undefined;
   const listed = store.listTasks();
   const workspace = store.readWorkspace();
@@ -821,6 +827,7 @@ export async function runActionCommand(argv: string[], deps: TaskCliDeps = {}): 
     "git.commit",
     "git.push",
     "hosting.pull_request",
+    "hosting.merge",
     "changelog.apply",
   ].includes(normalized.operation);
   if (localOperation) {
@@ -848,6 +855,22 @@ export async function runActionCommand(argv: string[], deps: TaskCliDeps = {}): 
       ? approvedPlanCommit(store, "workit_cli", actor, commitMessage)
       : null;
   if (plan?.ok && plan.data.branch === currentBranch) {
+    const core = new WorkitCore(store, {
+      ...contextFor(root, { ...deps, actor }, "host_observed"),
+      nativeAuthority: cliActionAuthority(actor),
+      workerId: null,
+    });
+    const runner = nativeExternalActionRunner(root, actor, core);
+    const result = await runner(descriptor, (step) =>
+      executeResolvedExternalAction(resolved.data, root, step, { host: "workit_cli", actor }),
+    );
+    if (json) jsonResult(outOf(deps), result);
+    else printHuman(result, deps);
+    return result.ok ? 0 : 1;
+  }
+  // Standing auto-approval skips the TTY confirm, including headless: the
+  // runner binds the recorded standing decision through the same path.
+  if (standingAutoApplies(store, "workit_cli", actor, descriptor)) {
     const core = new WorkitCore(store, {
       ...contextFor(root, { ...deps, actor }, "host_observed"),
       nativeAuthority: cliActionAuthority(actor),
