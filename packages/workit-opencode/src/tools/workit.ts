@@ -1,5 +1,3 @@
-import { realpathSync } from "node:fs";
-import path from "node:path";
 import { tool } from "@opencode-ai/plugin";
 import {
   WorkitCore,
@@ -438,14 +436,8 @@ const sessionData = async (client: SessionLookup | undefined, sessionID: string)
   }
 };
 
-export const sameWorkspace = (expected: string, observed: unknown): boolean => {
-  if (typeof observed !== "string" || !observed) return false;
-  try {
-    return realpathSync(expected) === realpathSync(observed);
-  } catch {
-    return path.resolve(expected) === path.resolve(observed);
-  }
-};
+import { sameWorkspace } from "../shared/session";
+export { sameWorkspace };
 
 const hostRef = (handle: string) => ({ kind: "host" as const, host: "opencode" as const, handle });
 

@@ -1,4 +1,3 @@
-import path from "node:path";
 import { realpathSync } from "node:fs";
 import { tool } from "@opencode-ai/plugin";
 import { fail, gitRevisionParts, ok, resolveInside, run } from "@brainervirus/workit-core/src/core";
@@ -10,16 +9,7 @@ import {
 } from "@brainervirus/workit-core/src/core/parse-sections";
 import { parseVerifyOutput } from "@brainervirus/workit-core/src/core/verify-parse";
 import { branchSetup, resolveBranchPolicyFor } from "@brainervirus/workit-core/src/core/branch";
-import {
-  configDir,
-  getDiagnosticLogger,
-  mergeConfigValues,
-  readConfig,
-  writeConfig,
-  type BranchPreset,
-} from "@brainervirus/workit-core/src/core/config";
-import { ensureProjectGitignore } from "@brainervirus/workit-core/src/core/gitignore";
-import { ensureHygieneFiles } from "@brainervirus/workit-core/src/core/hygiene";
+import { getDiagnosticLogger } from "@brainervirus/workit-core/src/core/config";
 import {
   changelogContext,
   docsRefreshContext,
@@ -28,16 +18,20 @@ import {
 } from "@brainervirus/workit-core/src/core/repo-context";
 import { runVerifyProject } from "@brainervirus/workit-core/src/core/verify-project";
 import { prCreate } from "@brainervirus/workit-core/src/core/pr-create";
-import {
-  initApply,
-  initStatusData,
-  toolkitStatusData,
-} from "@brainervirus/workit-core/src/core/init";
+import { initStatusData, toolkitStatusData } from "@brainervirus/workit-core/src/core/init";
 import {
   normalizeLegacyResult,
   type RepoRuntime,
   type RunResult,
 } from "@brainervirus/workit-core/src/core/repo-tools";
+import { executeInitApply, initApplyRuntime } from "../shared/init-apply";
+import {
+  diagnostics,
+  legacyScriptResult,
+  output,
+  requireConfirmed,
+  scriptResult,
+} from "../shared/repo-result";
 
 const defaultRuntime: RepoRuntime = {
   git: (root, args) => run(root, "git", args),
@@ -58,15 +52,7 @@ const defaultRuntime: RepoRuntime = {
       cwd: root,
     };
   },
-  initApply: (root, action, env) => {
-    const out = initApply({ action, confirmed: true, env });
-    return {
-      exitCode: out.error ? 1 : 0,
-      stdout: JSON.stringify(out.data ?? out),
-      stderr: "",
-      cwd: root,
-    };
-  },
+  ...initApplyRuntime,
   initStatus: (root) => ({
     exitCode: 0,
     stdout: JSON.stringify(initStatusData()),
@@ -81,53 +67,7 @@ const defaultRuntime: RepoRuntime = {
   }),
 };
 
-const output = (value: unknown) => JSON.stringify(value, null, 2);
-const diagnostics = ({ stdout, stderr, exitCode }: RunResult) => ({ stdout, stderr, exitCode });
-const requireConfirmed = (confirmed: boolean) =>
-  confirmed === true ? null : output(fail("confirmed: true required"));
-
-function scriptResult<T extends object>(result: RunResult, parse: (stdout: string) => T) {
-  if (result.exitCode !== 0) {
-    return fail(
-      result.stderr.trim() || result.stdout.trim() || "workflow script failed",
-      diagnostics(result),
-    );
-  }
-  try {
-    return ok({
-      ...parse(result.stdout),
-      exitCode: 0,
-      ...(result.stderr ? { stderr: result.stderr } : {}),
-    });
-  } catch (error) {
-    return fail(
-      error instanceof Error ? error.message : "workflow output parse failed",
-      diagnostics(result),
-    );
-  }
-}
-
 const json = (stdout: string) => JSON.parse(stdout.trim()) as Record<string, unknown>;
-const legacyScriptResult = (result: RunResult) => {
-  let parsed: Record<string, unknown> | null = null;
-  try {
-    parsed = json(result.stdout);
-  } catch {
-    /* handled below */
-  }
-  if (result.exitCode !== 0 || parsed?.error || parsed?.ok === false)
-    return fail(
-      parsed?.error
-        ? String(parsed.error)
-        : parsed?.ok === false
-          ? "legacy operation reported failure"
-          : result.stderr.trim() || result.stdout.trim() || "workflow script failed",
-      diagnostics(result),
-    );
-  if (!parsed) return fail("workflow output parse failed", diagnostics(result));
-  const { ok: _legacyOk, ...data } = parsed;
-  return ok({ ...data, exitCode: 0, ...(result.stderr ? { stderr: result.stderr } : {}) });
-};
 const optionalJson = (value: string | undefined) => {
   if (!value?.trim()) return null;
   try {
@@ -456,84 +396,7 @@ export function createRepoTools(runtime: RepoRuntime = defaultRuntime) {
         branch_policy_protected: tool.schema.array(tool.schema.string()).optional(),
         include_open_source: tool.schema.boolean().optional(),
       },
-      execute: async (
-        {
-          confirmed,
-          action,
-          base_url,
-          default_mention,
-          meeting_issue,
-          vcs_provider,
-          vcs_target_branch,
-          name,
-          develop_branch,
-          integration,
-          locale,
-          locale_options,
-          timezone,
-          branch_policy_preset,
-          branch_policy_allowed,
-          branch_policy_protected,
-          include_open_source,
-        },
-        context,
-      ) => {
-        const rejected = requireConfirmed(confirmed);
-        if (rejected) return rejected;
-        if (action === "hygiene") {
-          const result = ensureHygieneFiles(context.directory, {
-            confirmed,
-            includeOpenSource: include_open_source,
-          });
-          return output(result.ok ? ok(result) : fail(result.error));
-        }
-        if (action === "gitignore") {
-          const result = ensureProjectGitignore(context.directory, confirmed);
-          return output(result.ok ? ok(result) : fail(result.error));
-        }
-        if (action === "config") {
-          // Mirrors core config.ts LOCALE_RE (keep in sync): 3-digit UN M.49
-          // region subtags like es-419 validate alongside 2-letter regions.
-          const LOCALE_RE = /^[a-z]{2,3}(-(?:[A-Z]{2}|[0-9]{3}))?$/;
-          if (locale !== undefined && !LOCALE_RE.test(locale)) {
-            return output(
-              fail(`invalid locale: ${JSON.stringify(locale)} — expected BCP-47 like en or es-CL`),
-            );
-          }
-          const current = readConfig();
-          // RL-02/CA-23: the preset is authoritative — derived policy fields
-          // always reset through the one shared merge (no divergent values).
-          const next = mergeConfigValues(
-            {
-              locale,
-              localeOptions: locale_options,
-              timezone,
-              preset: branch_policy_preset as BranchPreset,
-              allowed: branch_policy_allowed,
-              protectedNames: branch_policy_protected,
-            },
-            current,
-          );
-          writeConfig(next);
-          return output(
-            ok({ action: "config", path: path.join(configDir(), "config.json"), ...next }),
-          );
-        }
-        const env = Object.fromEntries(
-          Object.entries({
-            WORKFLOW_YT_BASE_URL: base_url,
-            WORKFLOW_YT_MENTION: default_mention,
-            WORKFLOW_YT_MEETING_ISSUE: meeting_issue,
-            WORKFLOW_VCS_PROVIDER: vcs_provider,
-            WORKFLOW_VCS_TARGET_BRANCH: vcs_target_branch,
-            WORKFLOW_WORKSPACE_ROOT: context.directory,
-            WORKFLOW_BP_NAME: name,
-            WORKFLOW_BP_DEVELOP: develop_branch,
-            WORKFLOW_BP_INTEGRATION: integration,
-          }).filter((entry): entry is [string, string] => entry[1] !== undefined),
-        );
-        return output(legacyScriptResult(runtime.initApply(context.directory, action, env)));
-      },
+      execute: async (args, context) => executeInitApply(args, context.directory, runtime),
     }),
   };
 }

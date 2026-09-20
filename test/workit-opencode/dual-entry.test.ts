@@ -5,8 +5,10 @@ import v1 from "@/packages/workit-opencode/src/v1/server";
 
 test("the checkout path re-exports the dual index entry", () => {
   expect(entry).toBe(index);
-  expect(Object.keys(entry).sort()).toEqual(["server"]);
+  expect(Object.keys(entry).sort()).toEqual(["id", "server", "setup"]);
+  expect(entry.id).toBe("workit");
   expect(typeof entry.server).toBe("function");
+  expect(typeof entry.setup).toBe("function");
 });
 
 test("the index server is the V1 adapter", () => {

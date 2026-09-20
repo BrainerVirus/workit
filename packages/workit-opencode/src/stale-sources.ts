@@ -9,6 +9,8 @@ export const pluginSourceFiles = [
   fileURLToPath(new URL("./index.ts", import.meta.url)),
   fileURLToPath(new URL("./plugin.ts", import.meta.url)),
   fileURLToPath(new URL("./v1/server.ts", import.meta.url)),
+  fileURLToPath(new URL("./v2/plugin.ts", import.meta.url)),
+  fileURLToPath(new URL("./shared/tools.ts", import.meta.url)),
   fileURLToPath(new URL("./tools/workit.ts", import.meta.url)),
   ...[
     "task-contract.ts",

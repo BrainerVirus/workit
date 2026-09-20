@@ -147,10 +147,15 @@ test(
       expect(bundle, "dist/plugin.js").not.toMatch(
         /(?:from\s+|import\s*\(\s*)\s*["']@opencode-ai\/plugin["']/,
       );
+      // The V2 SDK is build-time only: its used runtime (Plugin.define) is
+      // inlined, so the packed artifact imports no @opencode/* package.
+      expect(bundle, "dist/plugin.js").not.toMatch(/(?:from\s+|import\s*\(\s*)\s*["']@opencode\//);
 
       const mod = await import(pathToFileURL(entry).href);
       expect(typeof mod.default).toBe("object");
       expect(typeof mod.default.server).toBe("function");
+      expect(mod.default.id).toBe("workit");
+      expect(typeof mod.default.setup).toBe("function");
     } finally {
       rmSync(install, { recursive: true, force: true });
     }

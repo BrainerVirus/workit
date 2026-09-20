@@ -41,7 +41,8 @@
     "@brainervirus/workit-core": "workspace:*"
   },
   "devDependencies": {
-    "@opencode-ai/plugin": "1.18.30"
+    "@opencode-ai/plugin": "1.18.30",
+    "@opencode/plugin": "2.0.3"
   },
   "engines": {
     "node": ">=24"
