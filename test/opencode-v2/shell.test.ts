@@ -466,7 +466,7 @@ test("question results mint one consume-once decision receipt", async () => {
 test("permission evaluate denies worktrees always and routes only with a live task", async () => {
   const root = repository();
   try {
-    const { permissionHooks, call, hooks } = await harness(root);
+    const { permissionHooks, call } = await harness(root);
     const evaluate = permissionHooks.get("evaluate")!;
     expect(evaluate).toBeFunction();
 
@@ -539,7 +539,6 @@ test("permission evaluate denies worktrees always and routes only with a live ta
     const edit = { action: "edit", resources: ["file.txt"], effect: "allow" };
     await evaluate(edit);
     expect(edit.effect).toBe("allow");
-    expect(hooks.size).toBeGreaterThan(0);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

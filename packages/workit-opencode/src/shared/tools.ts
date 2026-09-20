@@ -26,7 +26,7 @@ const objectSchema = (
   additionalProperties: false,
 });
 
-export const WORKIT_EXTERNAL_ACTION_OPERATIONS = [
+const WORKIT_EXTERNAL_ACTION_OPERATIONS = [
   "git.branch_setup",
   "git.commit",
   "git.push",
@@ -46,7 +46,6 @@ const familyTools = OPERATION_FAMILIES.map((family): WorkitToolSpec => ({
 }));
 
 /** The exact 10 registered Workit tool names, in registration order. */
-export const WORKIT_FAMILY_TOOLS = familyTools;
 export const WORKIT_TOOL_NAMES: readonly string[] = [
   ...familyTools.map((tool) => tool.name),
   "workit_external_action",

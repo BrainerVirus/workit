@@ -197,11 +197,15 @@ export const setup = async (ctx: Context): Promise<() => void> => {
         : null;
     },
   });
-  const runFamily = (family: OperationFamily, input: unknown, session: V2Session): unknown => {
+  const runFamily = (
+    family: OperationFamily,
+    input: unknown,
+    session: V2Session,
+    store: TaskStore,
+    workerId: string | null,
+  ): unknown => {
     const parsed = parseOperation(family, input);
     if (!parsed.ok) return parsed;
-    const store = new TaskStore(root);
-    const workerId = workerIdFor(store, session.id, session.parentID, lifecycle.directChildren);
     const core = new WorkitCore(store, {
       root,
       caller: { host: "opencode", actor: session.id },
@@ -235,20 +239,20 @@ export const setup = async (ctx: Context): Promise<() => void> => {
                 "OpenCode session location does not match the plugin checkout",
               ),
             );
-          if (
-            session.parentID !== undefined &&
-            workerIdFor(
-              new TaskStore(root),
-              session.id,
-              session.parentID,
-              lifecycle.directChildren,
-            ) === null
-          )
+          const store = new TaskStore(root);
+          const workerId = workerIdFor(
+            store,
+            session.id,
+            session.parentID,
+            lifecycle.directChildren,
+          );
+          if (session.parentID !== undefined && workerId === null)
             return resultContent(
               failure("permission_denied", "OpenCode child session has no validated Workit worker"),
             );
           const family = workitFamilyOf(spec.name);
-          if (family !== null) return resultContent(runFamily(family, input, session));
+          if (family !== null)
+            return resultContent(runFamily(family, input, session, store, workerId));
           if (spec.name === "workit_external_action") {
             const parsed = externalActionRequest(input);
             if (!parsed.ok) return resultContent(parsed);
