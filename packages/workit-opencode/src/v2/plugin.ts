@@ -16,6 +16,7 @@ import {
 import { executeInitApply, initApplyRuntime } from "../shared/init-apply";
 import { sameWorkspace } from "../shared/session";
 import { WORKIT_TOOL_CATALOG, workitFamilyOf } from "../shared/tools";
+import { createV2Lifecycle } from "./lifecycle";
 
 /** V2-native session facts a Workit call is bound to. A present `parentID`
  * means a child session: worker lineage is validated by the lifecycle port
@@ -24,6 +25,7 @@ export type V2Session = {
   id: string;
   parentID?: string;
   directory: string;
+  outcome?: "succeeded" | "failed" | "interrupted";
 };
 
 const sessionFacts = async (ctx: Context, sessionID: string): Promise<V2Session | null> => {
@@ -33,7 +35,13 @@ const sessionFacts = async (ctx: Context, sessionID: string): Promise<V2Session 
     const directory = session?.location?.directory;
     if (typeof id !== "string" || id !== sessionID || typeof directory !== "string") return null;
     const parentID = typeof session.parentID === "string" ? session.parentID : undefined;
-    return { id, parentID, directory };
+    const outcome =
+      session.outcome === "succeeded" ||
+      session.outcome === "failed" ||
+      session.outcome === "interrupted"
+        ? session.outcome
+        : undefined;
+    return { id, parentID, directory, outcome };
   } catch {
     return null;
   }
@@ -54,6 +62,14 @@ const v2Capabilities = () => [
     reason:
       "file writes are host-policy; OpenCode native permissions govern them, workit no longer gates write tools",
     refs: [{ kind: "host" as const, host: "opencode" as const, handle: "permission.evaluate" }],
+  },
+  {
+    name: "direct_child_workers",
+    surface: "subagent",
+    assurance: "enforced" as const,
+    reason:
+      "nested subagent launches are denied and observed child sessions are parent-bound before they may own a worker",
+    refs: [{ kind: "host" as const, host: "opencode" as const, handle: "subagent" }],
   },
   {
     name: "fresh-context-review",
@@ -130,7 +146,55 @@ export const setup = async (ctx: Context): Promise<() => void> => {
       });
     }
   });
-  return () => {};
+  const lifecycle = createV2Lifecycle({
+    root,
+    getSession: async (sessionID) => {
+      const session = await sessionFacts(ctx, sessionID);
+      return session
+        ? {
+            id: session.id,
+            parentID: session.parentID,
+            directory: session.directory,
+            outcome: session.outcome,
+          }
+        : null;
+    },
+  });
+  await ctx.tool.hook("execute.before", async (event) => {
+    if (event.tool !== "subagent") return;
+    await lifecycle.executeBefore({
+      tool: event.tool,
+      sessionID: String(event.sessionID),
+      id: String(event.id),
+      input: event.input,
+    });
+  });
+  await ctx.tool.hook("execute.after", async (event) => {
+    if (event.tool !== "subagent") return;
+    await lifecycle.executeAfter({
+      tool: event.tool,
+      sessionID: String(event.sessionID),
+      id: String(event.id),
+      input: event.input,
+      ...(event.status === "completed"
+        ? { status: "completed" as const, result: event.result as never }
+        : { status: "error" as const, error: event.error }),
+    });
+  });
+  const subscription = new AbortController();
+  void (async () => {
+    try {
+      for await (const event of ctx.event.subscribe({ signal: subscription.signal })) {
+        await lifecycle.handleEvent(event as never);
+      }
+    } catch {
+      // Subscription end and abort are normal teardown; event delivery must
+      // never break hook delivery.
+    }
+  })();
+  return () => {
+    subscription.abort();
+  };
 };
 
 const definition = define({ id: "workit", setup });

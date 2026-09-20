@@ -41,17 +41,31 @@ const repository = (branch = "feature/v2-shell") => {
 
 const harness = async (
   root: string,
-  options: { parentID?: string; sessionDirectory?: string } = {},
+  options: {
+    parentID?: string;
+    sessionDirectory?: string;
+    sessions?: Record<string, { parentID?: string }>;
+  } = {},
 ) => {
   const registered: Registered[] = [];
+  const hooks = new Map<string, (event: unknown) => Promise<void>>();
+  const state = { subscribed: false, ended: false };
+  const sessions: Record<string, { parentID?: string }> = {
+    ses_v2: options.parentID ? { parentID: options.parentID } : {},
+    ...options.sessions,
+  };
   const ctx = {
     location: { directory: root },
     session: {
-      get: async ({ sessionID }: { sessionID: string }) => ({
-        id: sessionID,
-        ...(options.parentID ? { parentID: options.parentID } : {}),
-        location: { directory: options.sessionDirectory ?? root },
-      }),
+      get: async ({ sessionID }: { sessionID: string }) => {
+        const spec = sessions[sessionID];
+        if (!spec) return null;
+        return {
+          id: sessionID,
+          ...(spec.parentID ? { parentID: spec.parentID } : {}),
+          location: { directory: options.sessionDirectory ?? root },
+        };
+      },
     },
     tool: {
       transform: async (fn: (editor: unknown) => void) => {
@@ -66,6 +80,24 @@ const harness = async (
         await fn(editor);
         return { dispose: async () => {} };
       },
+      hook: async (name: string, fn: (event: unknown) => Promise<void>) => {
+        hooks.set(name, fn);
+      },
+    },
+    event: {
+      // An event stream with no events: iteration only ends when teardown
+      // aborts the signal, which is exactly what cleanup must prove.
+      subscribe: ({ signal }: { signal: AbortSignal }) => {
+        state.subscribed = true;
+        const iterator: AsyncIterator<unknown> = {
+          next: async () => {
+            while (!signal.aborted) await Bun.sleep(5);
+            state.ended = true;
+            return { done: true, value: undefined };
+          },
+        };
+        return { [Symbol.asyncIterator]: () => iterator };
+      },
     },
   };
   const cleanup = await definition.setup(ctx as never);
@@ -75,7 +107,7 @@ const harness = async (
     const result = await tool.execute(input, { sessionID });
     return JSON.parse(result.content ?? "null");
   };
-  return { registered, cleanup, call };
+  return { registered, hooks, state, cleanup, call };
 };
 
 test("the V2 definition carries the stable workit id and setup", () => {
@@ -181,6 +213,60 @@ test("workit_init_apply runs the shared confirmed executor", async () => {
     const applied = await call("workit_init_apply", { confirmed: true, action: "gitignore" });
     expect(applied.ok).toBe(true);
     expect(existsSync(path.join(root, ".gitignore"))).toBe(true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("setup registers the subagent lifecycle hooks and an abortable event stream", async () => {
+  const root = repository();
+  try {
+    const { hooks, state, call } = await harness(root, {
+      sessions: { ses_child: { parentID: "ses_parent" } },
+    });
+    expect([...hooks.keys()].sort()).toEqual(["execute.after", "execute.before"]);
+    expect(state.subscribed).toBe(true);
+
+    // Hooks ignore unrelated tools and deny unmanaged nested launches.
+    await hooks.get("execute.before")!({
+      tool: "shell",
+      sessionID: "ses_v2",
+      id: "call_1",
+      input: {},
+    });
+    await expect(
+      hooks.get("execute.before")!({
+        tool: "subagent",
+        sessionID: "ses_child",
+        id: "call_2",
+        input: {},
+      }),
+    ).rejects.toThrow(/direct children of the coordinator/);
+    await hooks.get("execute.after")!({
+      tool: "shell",
+      sessionID: "ses_v2",
+      id: "call_1",
+      input: {},
+      status: "completed",
+      result: {},
+    });
+    // Family tools still work with the lifecycle wired in.
+    const listed = await call("workit_task", { schemaVersion: 1, action: "list" });
+    expect(listed.ok).toBe(true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("cleanup aborts the event subscription", async () => {
+  const root = repository();
+  try {
+    const { state, cleanup } = await harness(root);
+    expect(typeof cleanup).toBe("function");
+    if (typeof cleanup === "function") cleanup();
+    const start = Date.now();
+    while (!state.ended && Date.now() - start < 1000) await Bun.sleep(5);
+    expect(state.ended).toBe(true);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
