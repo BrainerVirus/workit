@@ -24,6 +24,8 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 
 export const V2_IMAGE =
   "ghcr.io/anomalyco/opencode@sha256:aaf8c5420e10652c520e068532384f6e20cece2922c404db7f89e36720b9f212";
+export const V1_IMAGE =
+  "ghcr.io/anomalyco/opencode@sha256:412b37a894bb937a0d5d6a1860789b9fd7d34a109334bec98a3f6ecf812bb442";
 export const BUN_IMAGE =
   "oven/bun@sha256:1d653098bf847813e26adb2435f932b7cfa3c132a7e25dd5216dbb1f67dbd118";
 
@@ -41,6 +43,8 @@ export type Harness = {
     body?: unknown,
     voidOk?: boolean,
   ) => Promise<any>;
+  /** Run a command in the server container's workdir (V1 lane driver). */
+  exec: (args: string[]) => Promise<string>;
   serverLog: () => string;
   probeLog: () => string;
   stubLog: () => string;
@@ -70,7 +74,7 @@ const imagePresent = async (ref: string): Promise<boolean> => {
 };
 
 export const ensureImages = async (): Promise<void> => {
-  for (const ref of [V2_IMAGE, BUN_IMAGE]) {
+  for (const ref of [V2_IMAGE, V1_IMAGE, BUN_IMAGE]) {
     if (await imagePresent(ref)) continue;
     await $`docker pull ${ref}`;
   }
@@ -118,17 +122,41 @@ export const boot = async (): Promise<Harness> => {
   mkdirSync(path.join(work, ".opencode", "plugins", "v2probe"), { recursive: true });
   await $`cp ${path.join(HERE, "probe-plugin", "index.js")} ${path.join(work, ".opencode", "plugins", "v2probe", "index.js")}`;
   await $`cp ${path.join(HERE, "probe-plugin", "package.json")} ${path.join(work, ".opencode", "plugins", "v2probe", "package.json")}`;
-
-  const net = `v2harness-${process.pid}`;
-  const stub = `v2harness-stub-${process.pid}`;
-  const server = `v2harness-server-${process.pid}`;
-  const stubUrl = "http://stub:8000/v1";
-  const config = readFileSync(path.join(HERE, "fixtures", "opencode.json"), "utf8").replaceAll(
-    "__STUB_URL__",
-    stubUrl,
-  );
+  const config = readFileSync(path.join(HERE, "fixtures", "opencode.json"), "utf8");
   mkdirSync(path.join(home, ".config", "opencode"), { recursive: true });
-  writeFileSync(path.join(home, ".config", "opencode", "opencode.json"), config);
+  writeFileSync(
+    path.join(home, ".config", "opencode", "opencode.json"),
+    config.replaceAll("__STUB_URL__", STUB_URL),
+  );
+  return startContainer({ image: V2_IMAGE, root, home, work, logDir });
+};
+
+/** Boot a matrix lane from caller-prepared directories: the caller packs and
+ * installs the artifact, writes the config, and asserts file bytes around the
+ * run. Probe plugin is not installed. */
+export const bootLane = async (
+  options: Pick<BootLaneOptions, "image" | "root" | "home" | "work" | "logDir" | "driver">,
+): Promise<Harness> => startContainer(options);
+
+export type BootLaneOptions = {
+  image: string;
+  root: string;
+  home: string;
+  work: string;
+  logDir: string;
+  /** The V1 image has no `opencode api` driver: skip the V2 HTTP boot waits
+   * and drive the lane through `exec` instead. */
+  driver?: "v2" | "v1";
+};
+
+const STUB_URL = "http://stub:8000/v1";
+
+const startContainer = async (options: BootLaneOptions): Promise<Harness> => {
+  const { image, root, home, work, logDir, driver = "v2" } = options;
+  const suffix = Math.random().toString(36).slice(2, 8);
+  const net = `v2harness-${process.pid}-${suffix}`;
+  const stub = `v2harness-stub-${process.pid}-${suffix}`;
+  const server = `v2harness-server-${process.pid}-${suffix}`;
 
   await sh(["network", "create", net]);
   try {
@@ -176,7 +204,7 @@ export const boot = async (): Promise<Harness> => {
       `${work}:/workspace/work`,
       "-v",
       `${logDir}:/logs:rw`,
-      V2_IMAGE,
+      image,
       "-f",
       "/dev/null",
     ]);
@@ -279,32 +307,35 @@ export const boot = async (): Promise<Harness> => {
     }
   };
 
-  // Boot: the in-container CLI auto-starts exactly one background service;
-  // wait for it, then for the stub model to appear in the catalog.
-  await waitFor(
-    async () => {
-      try {
-        await cli(["api", "GET", "/api/health"]);
-        return true;
-      } catch {
-        return false;
-      }
-    },
-    60_000,
-    "service health",
-  );
-  await waitFor(
-    async () => {
-      try {
-        const r = await api("GET", "/api/model");
-        return Array.isArray(r.data) && r.data.some((m: any) => m.id === "stub-model");
-      } catch {
-        return false;
-      }
-    },
-    90_000,
-    "stub-model in catalog",
-  );
+  // Boot: the in-container V2 CLI auto-starts exactly one background service;
+  // wait for it, then for the stub model to appear in the catalog. The V1
+  // image has no `api` command, so its lanes skip this and drive `run`.
+  if (driver === "v2") {
+    await waitFor(
+      async () => {
+        try {
+          await cli(["api", "GET", "/api/health"]);
+          return true;
+        } catch {
+          return false;
+        }
+      },
+      60_000,
+      "service health",
+    );
+    await waitFor(
+      async () => {
+        try {
+          const r = await api("GET", "/api/model");
+          return Array.isArray(r.data) && r.data.some((m: any) => m.id === "stub-model");
+        } catch {
+          return false;
+        }
+      },
+      90_000,
+      "stub-model in catalog",
+    );
+  }
 
   const h: Harness = {
     root,
@@ -315,6 +346,7 @@ export const boot = async (): Promise<Harness> => {
     logDir,
     api,
     op,
+    exec: (args: string[]) => execServer(args),
     serverLog,
     probeLog,
     stubLog,
