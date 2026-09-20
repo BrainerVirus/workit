@@ -8,8 +8,10 @@
  *
  * Deliberately asserted 2.0.3 behaviors that differ from latest docs:
  * - ctx has no provider/model domains (config-declared providers instead);
- * - plugin-registered tools are NOT offered to model requests;
- * - context-hook system edits do not reach the provider (prompt hook does).
+ * - plugin-registered tools need `options: { codemode: false }` to reach
+ *   model requests;
+ * - context/compaction system edits reach the provider like prompt edits
+ *   (an earlier spike note claimed they did not; re-probed and corrected).
  */
 
 import { afterAll, beforeAll, expect, test } from "bun:test";

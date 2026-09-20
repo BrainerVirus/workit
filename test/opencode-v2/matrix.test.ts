@@ -191,11 +191,13 @@ const packs = () => {
 
 beforeAll(async () => {
   if (!ENABLED) return;
-  if (!(await dockerAvailable())) return;
+  // The opt-in is an explicit request for this gate: an unavailable
+  // environment fails loudly instead of reporting a vacuous pass.
+  if (!(await dockerAvailable())) throw new Error("WORKIT_V2_HARNESS=1 but docker is unavailable");
   try {
     await ensureImages();
   } catch {
-    return;
+    throw new Error("WORKIT_V2_HARNESS=1 but the pinned images are unreachable");
   }
   for (const [name, image, driver, config] of [
     ["v2-native", V2_IMAGE, "v2", v2NativeConfig],

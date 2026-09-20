@@ -248,9 +248,10 @@ entry is implemented.
 - `subagent` requires `agent`, spawns a child with `parentID` lineage, and
   completes concurrently (two children, one turn) with `<subagent
   sessionID state>result</subagent>` envelopes. Prompt `text` edits persist
-  (prompt hook); `context`-hook `system` edits do NOT reach the provider in
-  `2.0.3`. Compaction validates a fixed section template and fires the
-  `compaction` hook. V1-shaped config normalizes in memory (`plugin`→
+  (prompt hook); `context`-hook and `compaction`-hook `system` edits both
+  reach the provider in `2.0.3` (corrected by an independent review probe —
+  the earlier spike note claimed otherwise). Compaction validates a fixed
+  section template and fires the `compaction` hook. V1-shaped config normalizes in memory (`plugin`→
   `plugins`, `provider`→`providers`, `npm`→`aisdk:`-prefixed `package`,
   `options`→`settings`) without rewriting the source file.
 - Harness caveats: the CLI always spawns a background service, so the driver

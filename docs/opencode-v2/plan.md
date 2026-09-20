@@ -171,8 +171,8 @@ only with `options: { codemode: false }`; `execute.after` carries
 (receipts) and full child lineage (fresh vs continuation by input
 `sessionID`, invalid ids error as `tool.execution`); permission `evaluate`
 carries `{sessionID, agent, action, resources[], source}` with mutable
-`effect`/`message`; prompt-hook edits persist, context-hook system edits do
-not reach the provider; compaction validates the fixed section template.
+`effect`/`message`; prompt-hook edits persist and context/compaction system
+edits reach the provider; compaction validates the fixed section template.
 
 1. `feat(opencode-v2): dual-entry package layout with V1 re-export`
    (`src/index.ts`, `src/v1/server.ts` move, `src/plugin.ts` re-export,
