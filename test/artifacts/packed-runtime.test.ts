@@ -149,7 +149,8 @@ test(
       );
 
       const mod = await import(pathToFileURL(entry).href);
-      expect(typeof mod.default).toBe("function");
+      expect(typeof mod.default).toBe("object");
+      expect(typeof mod.default.server).toBe("function");
     } finally {
       rmSync(install, { recursive: true, force: true });
     }

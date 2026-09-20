@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { TaskStore, WorkitCore, success } from "@/packages/workit-core/src/core";
 import { scope, taskStartRequest } from "@/test/workit-core/task-fixtures";
-import plugin from "@/packages/workit-opencode/src/plugin";
+import { server as plugin } from "@/packages/workit-opencode/src/index";
 import { workerContextFor } from "@/packages/workit-opencode/src/runtime";
 import { createWorkitTools } from "@/packages/workit-opencode/src/tools/workit";
 

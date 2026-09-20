@@ -6,7 +6,9 @@ import { fileURLToPath } from "node:url";
  * layouts point at the same core sources. */
 export const pluginSourceFiles = [
   fileURLToPath(import.meta.url),
+  fileURLToPath(new URL("./index.ts", import.meta.url)),
   fileURLToPath(new URL("./plugin.ts", import.meta.url)),
+  fileURLToPath(new URL("./v1/server.ts", import.meta.url)),
   fileURLToPath(new URL("./tools/workit.ts", import.meta.url)),
   ...[
     "task-contract.ts",

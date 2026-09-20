@@ -30,7 +30,7 @@ const build = spawnSync(
   "bun",
   [
     "build",
-    path.join(pkgDir, "src/plugin.ts"),
+    path.join(pkgDir, "src/index.ts"),
     "--outfile",
     path.join(dist, "plugin.js"),
     "--target",

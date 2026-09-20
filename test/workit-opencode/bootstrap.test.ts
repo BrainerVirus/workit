@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import path from "node:path";
 import { getWorkitBootstrap, isWorkitBootstrap } from "@/packages/workit-opencode/src/bootstrap";
-import plugin from "@/packages/workit-opencode/src/plugin";
+import { server as plugin } from "@/packages/workit-opencode/src/index";
 import { pluginSourceFiles } from "@/packages/workit-opencode/src/stale-sources";
 
 describe("session bootstrap", () => {

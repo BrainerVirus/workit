@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { TaskStore, WorkitCore, success } from "@/packages/workit-core/src/core";
 import { runDoctor } from "@/packages/workit-core/src/core/doctor";
 import { scope, taskStartRequest } from "@/test/workit-core/task-fixtures";
-import plugin from "@/packages/workit-opencode/src/plugin";
+import { server as plugin } from "@/packages/workit-opencode/src/index";
 import { NativeReceiptStore } from "@/packages/workit-opencode/src/tools/workit";
 
 const input = (directory: string, client?: unknown) => ({

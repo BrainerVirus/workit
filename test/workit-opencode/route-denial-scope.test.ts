@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { TaskStore, WorkitCore } from "@/packages/workit-core/src/core";
 import { scope, taskStartRequest } from "@/test/workit-core/task-fixtures";
-import plugin from "@/packages/workit-opencode/src/plugin";
+import { server as plugin } from "@/packages/workit-opencode/src/index";
 
 const startTask = (root: string) => {
   const store = new TaskStore(root);
