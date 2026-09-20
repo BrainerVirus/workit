@@ -93,34 +93,6 @@ type Receipt = {
   recordedAt: number;
 };
 
-const rejectedDescription = "Reject this decision";
-
-/**
- * Concise approval text always needs a live proposal to bind it; an exact
- * descriptor, plan list, or bare operation binds its own bytes.
- */
-const isSelfAuthorizingActionContent = (content: string): boolean => {
-  try {
-    const value = JSON.parse(content) as { operation?: unknown };
-    return typeof value.operation === "string" && value.operation.length > 0;
-  } catch {
-    return /^[a-z][a-z_]*\.[a-z_]+$/.test(content);
-  }
-};
-
-const decisionContent = (
-  purpose: Receipt["decisionPurpose"],
-  question: string,
-  approvedContent: string,
-) => ({
-  header: `Workit decision: ${purpose}`,
-  question,
-  options: [
-    { label: "approved", description: approvedContent },
-    { label: "rejected", description: rejectedDescription },
-  ],
-});
-
 const decisionOptions = (options: unknown) =>
   Array.isArray(options) &&
   options.length === 2 &&
@@ -437,6 +409,7 @@ const sessionData = async (client: SessionLookup | undefined, sessionID: string)
 };
 
 import { sameWorkspace } from "../shared/session";
+import { decisionContent, isSelfAuthorizingActionContent } from "../shared/decision-content";
 export { sameWorkspace };
 
 const hostRef = (handle: string) => ({ kind: "host" as const, host: "opencode" as const, handle });
@@ -481,7 +454,7 @@ export const opencodeCapabilities = () => [
   },
 ];
 
-const nativeAuthority = (
+export const nativeAuthority = (
   receipts: NativeReceiptStore,
   actor: string,
   reconciliationTokens = new WeakSet<object>(),

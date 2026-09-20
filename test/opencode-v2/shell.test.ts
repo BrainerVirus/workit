@@ -49,6 +49,8 @@ const harness = async (
 ) => {
   const registered: Registered[] = [];
   const hooks = new Map<string, (event: unknown) => Promise<void>>();
+  const permissionHooks = new Map<string, (event: any) => void | Promise<void>>();
+  const sessionHooks = new Map<string, (event: any) => void | Promise<void>>();
   const state = { subscribed: false, ended: false };
   const sessions: Record<string, { parentID?: string }> = {
     ses_v2: options.parentID ? { parentID: options.parentID } : {},
@@ -65,6 +67,14 @@ const harness = async (
           ...(spec.parentID ? { parentID: spec.parentID } : {}),
           location: { directory: options.sessionDirectory ?? root },
         };
+      },
+      hook: async (name: string, fn: (event: any) => void | Promise<void>) => {
+        sessionHooks.set(name, fn);
+      },
+    },
+    permission: {
+      hook: async (name: string, fn: (event: any) => void | Promise<void>) => {
+        permissionHooks.set(name, fn);
       },
     },
     tool: {
@@ -107,7 +117,7 @@ const harness = async (
     const result = await tool.execute(input, { sessionID });
     return JSON.parse(result.content ?? "null");
   };
-  return { registered, hooks, state, cleanup, call };
+  return { registered, hooks, permissionHooks, sessionHooks, state, cleanup, call };
 };
 
 test("the V2 definition carries the stable workit id and setup", () => {
@@ -179,7 +189,7 @@ test("foreign session locations and child sessions are denied", async () => {
     const child = await harness(root, { parentID: "ses_parent" });
     const blocked = await child.call("workit_task", { schemaVersion: 1, action: "list" });
     expect(blocked.ok).toBe(false);
-    expect(blocked.error).toContain("child sessions");
+    expect(blocked.error).toContain("no validated Workit worker");
   } finally {
     rmSync(root, { recursive: true, force: true });
     rmSync(other, { recursive: true, force: true });
@@ -267,6 +277,200 @@ test("cleanup aborts the event subscription", async () => {
     const start = Date.now();
     while (!state.ended && Date.now() - start < 1000) await Bun.sleep(5);
     expect(state.ended).toBe(true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+const workitQuestion = (presented: string, approved: string) => ({
+  questions: [
+    {
+      header: "Workit decision: design",
+      question: presented,
+      options: [
+        { label: "approved", description: approved },
+        { label: "rejected", description: "Reject this decision" },
+      ],
+    },
+  ],
+});
+
+test("question results mint one consume-once decision receipt", async () => {
+  const root = repository();
+  try {
+    const { hooks, call } = await harness(root);
+    const intent = {
+      objective: "receipt probe",
+      scope: { description: "probe", paths: ["docs"], exclusions: [] },
+      authorityRefs: [],
+    };
+    await call("workit_task", { schemaVersion: 1, action: "start", intent });
+    const listed = await call("workit_task", { schemaVersion: 1, action: "list" });
+    const inspected = await call("workit_task", {
+      schemaVersion: 1,
+      action: "inspect",
+      taskId: listed.data[0].id,
+      view: "full",
+    });
+    const taskId = inspected.data.task.id as string;
+    const workspaceId = inspected.data.workspace.id as string;
+    const scope = inspected.data.task.intent.data.scope;
+    const presented = "Workit decision: design — approve the probe?";
+    const approved = "Approve the probe.";
+    await hooks.get("execute.after")!({
+      tool: "question",
+      sessionID: "ses_v2",
+      id: "call_q1",
+      input: workitQuestion(presented, approved),
+      status: "completed",
+      result: { metadata: { answers: { q0: "approved" } } },
+    });
+    const record = {
+      schemaVersion: 1,
+      action: "record",
+      taskId,
+      purpose: "design",
+      binding: {
+        taskId,
+        workspaceId,
+        scope,
+        presented,
+        approvedContent: approved,
+        contentRefs: [],
+      },
+      response: "approved",
+      requirementIds: [],
+    };
+    const recorded = await call("workit_decision", record);
+    expect(recorded.ok).toBe(true);
+    // The receipt is consumed once: a replay finds nothing to bind.
+    const replay = await call("workit_decision", record);
+    expect(replay.ok).toBe(false);
+    expect(replay.code).toBe("permission_denied");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("permission evaluate denies worktrees always and routes only with a live task", async () => {
+  const root = repository();
+  try {
+    const { permissionHooks, call, hooks } = await harness(root);
+    const evaluate = permissionHooks.get("evaluate")!;
+    expect(evaluate).toBeFunction();
+
+    // No live task: recognized routes keep their configured decision.
+    const idle = {
+      action: "shell",
+      resources: ["git switch -c probe"],
+      effect: "allow",
+      message: undefined as string | undefined,
+    };
+    await evaluate(idle);
+    expect(idle.effect).toBe("allow");
+
+    // Worktree commands are denied regardless of task state.
+    const worktree = {
+      action: "shell",
+      resources: ["git worktree add ../x"],
+      effect: "allow",
+      message: undefined as string | undefined,
+    };
+    await evaluate(worktree);
+    expect(worktree.effect).toBe("deny");
+    expect(worktree.message).toContain("worktrees");
+
+    // Explicit configured denies stay final.
+    const explicit = {
+      action: "shell",
+      resources: ["git worktree add ../x"],
+      effect: "deny",
+      message: undefined as string | undefined,
+    };
+    await evaluate(explicit);
+    expect(explicit.message).toBeUndefined();
+
+    const intent = {
+      objective: "route probe",
+      scope: { description: "probe", paths: ["docs"], exclusions: [] },
+      authorityRefs: [],
+    };
+    await call("workit_task", { schemaVersion: 1, action: "start", intent });
+    const route = {
+      action: "shell",
+      resources: ["git switch -c probe"],
+      effect: "allow",
+      message: undefined as string | undefined,
+    };
+    await evaluate(route);
+    expect(route.effect).toBe("deny");
+    expect(route.message).toContain("git.branch_setup");
+
+    // Unrelated and unparseable commands keep their configured behavior.
+    const unrelated = {
+      action: "shell",
+      resources: ["echo hi"],
+      effect: "allow",
+      message: undefined as string | undefined,
+    };
+    await evaluate(unrelated);
+    expect(unrelated.effect).toBe("allow");
+    const unparseable = {
+      action: "shell",
+      resources: ["git switch -c `x`"],
+      effect: "ask",
+      message: undefined as string | undefined,
+    };
+    await evaluate(unparseable);
+    expect(unparseable.effect).toBe("ask");
+
+    // Non-shell actions are never touched.
+    const edit = { action: "edit", resources: ["file.txt"], effect: "allow" };
+    await evaluate(edit);
+    expect(edit.effect).toBe("allow");
+    expect(hooks.size).toBeGreaterThan(0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("context injects the bootstrap and task context, compaction appends without result", async () => {
+  const root = repository();
+  try {
+    const { sessionHooks, call } = await harness(root);
+    const context = sessionHooks.get("context")!;
+    const compaction = sessionHooks.get("compaction")!;
+    expect(context).toBeFunction();
+    expect(compaction).toBeFunction();
+
+    const empty: Array<{ type: string; text: string }> = [];
+    await context({ sessionID: "ses_v2", system: empty });
+    // No live task yet: the lead still gets the contract bootstrap.
+    expect(empty.some((part) => part.text.includes("<workit-contract>"))).toBe(true);
+    expect(empty.some((part) => part.text.includes("<workit-task-context>"))).toBe(false);
+
+    // Markers dedupe within the same event.
+    await context({ sessionID: "ses_v2", system: empty });
+    expect(empty.filter((part) => part.text.includes("<workit-contract>"))).toHaveLength(1);
+
+    const intent = {
+      objective: "context probe",
+      scope: { description: "probe", paths: ["docs"], exclusions: [] },
+      authorityRefs: [],
+    };
+    await call("workit_task", { schemaVersion: 1, action: "start", intent });
+    const withTask: Array<{ type: string; text: string }> = [];
+    await context({ sessionID: "ses_v2", system: withTask });
+    expect(withTask.some((part) => part.text.includes("<workit-task-context>"))).toBe(true);
+
+    const compacting: Array<{ type: string; text: string }> = [];
+    const event: { sessionID: string; system: typeof compacting; result?: unknown } = {
+      sessionID: "ses_v2",
+      system: compacting,
+    };
+    await compaction(event);
+    expect(compacting.some((part) => part.text.includes("<workit-task-context>"))).toBe(true);
+    expect(event.result).toBeUndefined();
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
