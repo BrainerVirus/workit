@@ -11,6 +11,7 @@ import {
   priorResolvedDrift,
   externalActionDescriptor,
   externalActionHelp,
+  planReservationLength,
   externalActionRequest,
   externalActionRef,
   createAuthorizedExternalActionRunner,
@@ -530,7 +531,16 @@ export const registerWorkitTools = (
         }
         // Standing auto-approval skips the native confirm: the runner binds
         // the recorded standing decision through the same reservation path.
+        // Plan reservations never execute a commit; record and return the count.
         if (standingAutoApplies(store, "pi", actor, descriptor)) {
+          const planCount = planReservationLength(
+            resolved.data.request.operation,
+            resolved.data.descriptorPayload,
+          );
+          if (planCount !== null) {
+            const bound = standingAutoBinding(core, store, "pi", actor, descriptor);
+            if (bound) return output(success(null, null, { plan_commits: planCount }));
+          }
           const result = await nativeExternalActionRunner(
             ctx.cwd,
             actor,
@@ -593,9 +603,11 @@ export const registerWorkitTools = (
         );
         if (!decision.ok) return output(decision);
       }
-      const planSteps = (resolved.data.descriptorPayload as { plan_steps?: unknown }).plan_steps;
-      if (resolved.data.request.operation === "git.commit" && Array.isArray(planSteps))
-        return output(success(null, null, { plan_commits: planSteps.length }));
+      const planCount = planReservationLength(
+        resolved.data.request.operation,
+        resolved.data.descriptorPayload,
+      );
+      if (planCount !== null) return output(success(null, null, { plan_commits: planCount }));
       const result = await nativeExternalActionRunner(
         ctx.cwd,
         actor,

@@ -328,7 +328,8 @@ and `vcs.account` (required for push) to the workspace entry in
 
 Each auto action still records a reservation with the exact binding; the
 standing rule is re-read live, so removing the flag restores questions
-immediately. Guardrails are code, not prose: protected branches never push,
+immediately. A `git.commit` plan list (`plan_steps`/`plan_branch`) also
+records with no question and returns its commit count. Guardrails are code, not prose: protected branches never push,
 open PRs, or merge sources; push identity must match the area account;
 publish/release stay gated. Product decisions, waivers, and close outcomes
 still require a human.

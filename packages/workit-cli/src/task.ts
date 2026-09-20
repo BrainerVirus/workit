@@ -12,6 +12,7 @@ import {
   priorExternalAction,
   priorResolvedDrift,
   externalActionDescriptor,
+  planReservationLength,
   externalActionRequest,
   externalActionRef,
   nativeExternalActionObservation,
@@ -870,12 +871,23 @@ export async function runActionCommand(argv: string[], deps: TaskCliDeps = {}): 
   }
   // Standing auto-approval skips the TTY confirm, including headless: the
   // runner binds the recorded standing decision through the same path.
+  // Plan reservations never execute a commit; record and return the count.
   if (standingAutoApplies(store, "workit_cli", actor, descriptor)) {
     const core = new WorkitCore(store, {
       ...contextFor(root, { ...deps, actor }, "host_observed"),
       nativeAuthority: cliActionAuthority(actor),
       workerId: null,
     });
+    const planCount = planReservationLength(normalized.operation, resolved.data.descriptorPayload);
+    if (planCount !== null) {
+      const bound = standingAutoBinding(core, store, "workit_cli", actor, descriptor);
+      const result = bound
+        ? success(null, null, { plan_commits: planCount })
+        : failure("storage_error", "standing plan approval could not be recorded");
+      if (json) jsonResult(outOf(deps), result);
+      else printHuman(result, deps);
+      return result.ok ? 0 : 1;
+    }
     const runner = nativeExternalActionRunner(root, actor, core);
     const result = await runner(descriptor, (step) =>
       executeResolvedExternalAction(resolved.data, root, step, { host: "workit_cli", actor }),
@@ -931,9 +943,9 @@ export async function runActionCommand(argv: string[], deps: TaskCliDeps = {}): 
     else printHuman(decision, deps);
     return 1;
   }
-  const planSteps = (resolved.data.descriptorPayload as { plan_steps?: unknown }).plan_steps;
-  if (normalized.operation === "git.commit" && Array.isArray(planSteps)) {
-    const result = success(null, null, { plan_commits: planSteps.length });
+  const planCount = planReservationLength(normalized.operation, resolved.data.descriptorPayload);
+  if (planCount !== null) {
+    const result = success(null, null, { plan_commits: planCount });
     if (json) jsonResult(outOf(deps), result);
     else printHuman(result, deps);
     return 0;

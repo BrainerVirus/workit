@@ -188,3 +188,101 @@ test("CLI executes a commit headless with no TTY under a standing rule", async (
     value.cleanup();
   }
 });
+
+test("plan reservations record under a standing rule with no question on every host", async () => {
+  const steps = ["chore(auto): plan one", "chore(auto): plan two"];
+  const branch = "feature/auto";
+  const planPayload = { plan_steps: steps, plan_branch: branch };
+
+  {
+    const actor = "opencode-plan";
+    const value = setupTask("opencode", actor);
+    try {
+      const { createWorkitTools, NativeReceiptStore } =
+        await import("@/packages/workit-opencode/src/tools/workit");
+      const tools = createWorkitTools({
+        receipts: new NativeReceiptStore(),
+        client: { session: { get: async () => ({ data: { id: actor, directory: value.root } }) } },
+      }) as any;
+      const out = await tools.workit_external_action.execute(
+        { operation: "git.commit", payload: planPayload },
+        { directory: value.root, sessionID: actor },
+      );
+      expect(JSON.parse(typeof out === "string" ? out : out.output)).toMatchObject({
+        ok: true,
+        data: { plan_commits: 2 },
+      });
+    } finally {
+      value.cleanup();
+    }
+  }
+
+  {
+    const actor = "pi-plan";
+    const value = setupTask("pi", actor);
+    try {
+      const { default: extension } = await import("@/packages/workit-pi/extensions/workit");
+      const pi: any = {
+        tools: [],
+        registerTool(t: any) {
+          pi.tools.push(t);
+        },
+        registerCommand() {},
+        sendUserMessage() {},
+        on() {},
+      };
+      await extension(pi);
+      const action = pi.tools.find((tool: any) => tool.name === "workit_external_action");
+      const ctx: any = {
+        cwd: value.root,
+        hasUI: false,
+        mode: "json",
+        isProjectTrusted: () => true,
+        sessionManager: {
+          getSessionId: () => actor,
+          getSessionFile: () => "",
+          getCwd: () => value.root,
+          getEntries: () => [],
+          getBranch: () => [],
+        },
+        ui: {
+          confirm: async () => {
+            throw new Error("plan reservation must not ask under a standing rule");
+          },
+          select: async () => "approved",
+        },
+      };
+      const result = await action.execute(
+        "plan",
+        { operation: "git.commit", payload: planPayload },
+        undefined,
+        undefined,
+        ctx,
+      );
+      expect(result.details).toMatchObject({ ok: true, data: { plan_commits: 2 } });
+    } finally {
+      value.cleanup();
+    }
+  }
+
+  {
+    const value = setupTask("workit_cli", "cli");
+    try {
+      const { runActionCommand } = await import("@/packages/workit-cli/src/task");
+      const out: string[] = [];
+      const code = await runActionCommand(
+        ["git.commit", "--payload", JSON.stringify(planPayload), "--confirm", "--json"],
+        {
+          cwd: value.root,
+          out: { write: (s: string) => out.push(s) } as any,
+          err: { write: () => {} } as any,
+          stdinIsTTY: () => false,
+        } as any,
+      );
+      expect(code).toBe(0);
+      expect(JSON.parse(out.join(""))).toMatchObject({ ok: true, data: { plan_commits: 2 } });
+    } finally {
+      value.cleanup();
+    }
+  }
+});

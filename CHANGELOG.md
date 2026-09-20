@@ -97,6 +97,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Plan reservations under standing auto-approval: `git.commit` with
+  `plan_steps`/`plan_branch` records the listed chain and returns
+  `plan_commits` with no question on OpenCode, Pi, and CLI, instead of
+  failing as a single commit requiring a message. One shared core helper
+  backs all three hosts with a parity test.
 - Worker and evidence transitions: a reviewer may record supporting checks and
   its review from one independent session (creator and other review sessions
   stay excluded), evidence auto-binds the current candidate before worker pin

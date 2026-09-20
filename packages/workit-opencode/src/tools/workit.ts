@@ -12,6 +12,7 @@ import {
   standingAutoBinding,
   externalActionDescriptor,
   externalActionHelp,
+  planReservationLength,
   priorExternalAction,
   priorResolvedDrift,
   externalActionRequest,
@@ -1099,6 +1100,23 @@ export const createWorkitTools = ({
           !selected.ok &&
           !planAuthorized &&
           standingAutoApplies(store, "opencode", context.sessionID, descriptor);
+        const planCount = planReservationLength(
+          resolved.data.request.operation,
+          resolved.data.descriptorPayload,
+        );
+        if (planCount !== null) {
+          if (selected.ok) return output(success(null, null, { plan_commits: planCount }));
+          if (autoApplies) {
+            const bound = standingAutoBinding(
+              core,
+              store,
+              "opencode",
+              context.sessionID,
+              descriptor,
+            );
+            if (bound) return output(success(null, null, { plan_commits: planCount }));
+          }
+        }
         if (!selected.ok && !planAuthorized && !autoApplies) {
           if (selected.error.startsWith("no approved action")) {
             const proposal = actionProposalQuestion(

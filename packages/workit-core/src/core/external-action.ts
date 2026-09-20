@@ -225,6 +225,23 @@ export const externalActionDescriptor = (operation: string, payload: unknown): s
       : {}),
   });
 
+/**
+ * Plan reservations never execute a git commit. A git.commit whose resolved
+ * payload carries a plan_steps array records the listed chain once and lets
+ * each listed single commit execute later under that authorization. Adapters
+ * must return plan success without running the commit effect, both for prior
+ * approvals and standing auto-approval; otherwise the reservation fails as a
+ * single commit requiring a message. Returns the listed count, else null.
+ */
+export const planReservationLength = (
+  operation: string,
+  descriptorPayload: unknown,
+): number | null => {
+  if (operation !== "git.commit") return null;
+  const payload = (descriptorPayload ?? {}) as { plan_steps?: unknown };
+  return Array.isArray(payload.plan_steps) ? payload.plan_steps.length : null;
+};
+
 /** Compact host-facing help for the fixed optional-action surface. */
 export const externalActionHelp =
   "Fixed actions: git.branch_setup {action?,sdd_dir?,target_branch(required unless reapply_stash; the working branch to create or switch to),stash?}; git.commit {message}; git.push {branch?}; hosting.pull_request {title,body?,draft?,target_branch?,babysit?}; hosting.merge {target_branch?,source_branch?}; youtrack.update {issueId,markdown,minutes?}; youtrack.time {issueId,minutes,text?,dateMs?}; youtrack.meeting {issueId,minutes,text}; changelog.apply {entries?,path?,normalize_only?}; context.read {kind,range?,issueId?,issueUrl?,issueRef?,mode?,specPath?,planPath?}. context.read is read-only and needs no approval; all other operations require native approval (CLI uses a TTY; caller-unattested MCP cannot mutate).";
