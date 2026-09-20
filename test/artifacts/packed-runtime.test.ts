@@ -156,6 +156,62 @@ test(
       expect(typeof mod.default.server).toBe("function");
       expect(mod.default.id).toBe("workit");
       expect(typeof mod.default.setup).toBe("function");
+
+      // Asset resolution must survive bundling: V1 config and V2 skill
+      // registration point at the installed package's packaged skills.
+      const packageDir = path.join(install, "node_modules", OPENCODE);
+      const skillsPath = path.join(packageDir, "assets", "skills");
+      const v1Hooks = await mod.default.server({
+        directory: packageDir,
+        worktree: packageDir,
+        serverUrl: new URL("http://localhost"),
+      });
+      const v1Config: Record<string, any> = {};
+      await v1Hooks.config?.(v1Config);
+      expect(v1Config.skills?.paths).toEqual([skillsPath]);
+      expect(existsSync(v1Config.skills.paths[0])).toBe(true);
+
+      const skills: Array<{ id: string; location: string; content: string }> = [];
+      const commands: Array<{ name: string }> = [];
+      const fake = {
+        location: { directory: packageDir },
+        session: {
+          get: async () => null,
+          hook: async () => {},
+          prompt: async () => {},
+        },
+        permission: { hook: async () => {} },
+        event: {
+          subscribe: (input: { signal: AbortSignal }) => ({
+            [Symbol.asyncIterator]: () => ({
+              next: async () => {
+                while (!input.signal.aborted) await Bun.sleep(5);
+                return { done: true, value: undefined };
+              },
+            }),
+          }),
+        },
+        tool: { transform: async () => {}, hook: async () => {} },
+        skill: {
+          list: async () => ({ data: [] }),
+          transform: async (fn: (editor: unknown) => void) =>
+            fn({ list: () => skills, add: (skill: any) => skills.push(skill) }),
+        },
+        command: {
+          list: async () => ({ data: [] }),
+          transform: async (fn: (editor: unknown) => void) =>
+            fn({ add: (command: any) => commands.push(command) }),
+        },
+      };
+      const cleanup = await mod.default.setup(fake as never);
+      if (typeof cleanup === "function") cleanup();
+      expect(skills).toHaveLength(14);
+      expect(commands).toHaveLength(14);
+      for (const skill of skills) {
+        expect(existsSync(skill.location), skill.id).toBe(true);
+        expect(skill.location.startsWith(skillsPath), skill.id).toBe(true);
+        expect(skill.content.length, skill.id).toBeGreaterThan(100);
+      }
     } finally {
       rmSync(install, { recursive: true, force: true });
     }

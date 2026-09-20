@@ -45,12 +45,17 @@ const harness = async (
     parentID?: string;
     sessionDirectory?: string;
     sessions?: Record<string, { parentID?: string }>;
+    existingSkills?: Array<{ id: string }>;
+    existingCommands?: Array<{ name: string }>;
   } = {},
 ) => {
   const registered: Registered[] = [];
   const hooks = new Map<string, (event: unknown) => Promise<void>>();
   const permissionHooks = new Map<string, (event: any) => void | Promise<void>>();
   const sessionHooks = new Map<string, (event: any) => void | Promise<void>>();
+  const skills: Array<Record<string, any>> = [];
+  const commands: Array<Record<string, any>> = [];
+  const prompts: Array<Record<string, any>> = [];
   const state = { subscribed: false, ended: false };
   const sessions: Record<string, { parentID?: string }> = {
     ses_v2: options.parentID ? { parentID: options.parentID } : {},
@@ -70,6 +75,27 @@ const harness = async (
       },
       hook: async (name: string, fn: (event: any) => void | Promise<void>) => {
         sessionHooks.set(name, fn);
+      },
+      prompt: async (input: Record<string, unknown>) => {
+        prompts.push(input);
+      },
+    },
+    skill: {
+      list: async () => ({ data: options.existingSkills ?? [] }),
+      transform: async (fn: (editor: unknown) => void) => {
+        await fn({
+          list: () => [...(options.existingSkills ?? []), ...skills],
+          add: (skill: Record<string, any>) => skills.push(skill),
+          get: (id: string) => skills.find((skill) => skill.id === id),
+          update: () => {},
+          remove: () => {},
+        });
+      },
+    },
+    command: {
+      list: async () => ({ data: options.existingCommands ?? [] }),
+      transform: async (fn: (editor: unknown) => void) => {
+        await fn({ add: (command: Record<string, any>) => commands.push(command) });
       },
     },
     permission: {
@@ -117,7 +143,18 @@ const harness = async (
     const result = await tool.execute(input, { sessionID });
     return JSON.parse(result.content ?? "null");
   };
-  return { registered, hooks, permissionHooks, sessionHooks, state, cleanup, call };
+  return {
+    registered,
+    hooks,
+    permissionHooks,
+    sessionHooks,
+    skills,
+    commands,
+    prompts,
+    state,
+    cleanup,
+    call,
+  };
 };
 
 test("the V2 definition carries the stable workit id and setup", () => {
@@ -263,6 +300,80 @@ test("setup registers the subagent lifecycle hooks and an abortable event stream
     // Family tools still work with the lifecycle wired in.
     const listed = await call("workit_task", { schemaVersion: 1, action: "list" });
     expect(listed.ok).toBe(true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("setup registers 14 method skills with packaged content and locations", async () => {
+  const root = repository();
+  try {
+    const { skills } = await harness(root);
+    expect(skills).toHaveLength(14);
+    for (const skill of skills) {
+      expect(skill.content.length, skill.id).toBeGreaterThan(100);
+      expect(skill.description?.length, skill.id).toBeGreaterThan(0);
+      expect(existsSync(skill.location), skill.id).toBe(true);
+      expect(skill.location.endsWith(path.join(skill.id, "SKILL.md")), String(skill.id)).toBe(true);
+      expect(skill.content.startsWith("---"), String(skill.id)).toBe(false);
+    }
+    expect(skills.map((skill) => skill.id).sort()).toEqual([
+      "workit-babysit",
+      "workit-behavioral-tdd",
+      "workit-blast-radius",
+      "workit-challenge",
+      "workit-debug",
+      "workit-deslop",
+      "workit-diagram",
+      "workit-green-run",
+      "workit-handoff",
+      "workit-implement",
+      "workit-mockup",
+      "workit-plan",
+      "workit-review",
+      "workit-steer",
+    ]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("setup registers 14 collision-safe wk commands that forward prompts", async () => {
+  const root = repository();
+  try {
+    const { commands, prompts } = await harness(root);
+    expect(commands).toHaveLength(14);
+    const names = commands.map((command) => command.name);
+    expect(names).toContain("wk-tdd");
+    expect(names).toContain("wk-babysit");
+    const tdd = commands.find((command) => command.name === "wk-tdd")!;
+    const delivery = { mode: "steer" };
+    const files = [{ uri: "file:///tmp/a.png" }];
+    await tdd.execute({
+      sessionID: "ses_v2",
+      prompt: { text: "user arguments", files },
+      delivery,
+    });
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]).toMatchObject({ sessionID: "ses_v2", delivery, files });
+    expect(prompts[0].text).toContain("workit-behavioral-tdd");
+    expect(prompts[0].text).toContain("user arguments");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("existing user skills and commands are never replaced", async () => {
+  const root = repository();
+  try {
+    const { skills, commands } = await harness(root, {
+      existingSkills: [{ id: "workit-debug" }],
+      existingCommands: [{ name: "wk-debug" }],
+    });
+    expect(skills).toHaveLength(13);
+    expect(skills.some((skill) => skill.id === "workit-debug")).toBe(false);
+    expect(commands).toHaveLength(13);
+    expect(commands.some((command) => command.name === "wk-debug")).toBe(false);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

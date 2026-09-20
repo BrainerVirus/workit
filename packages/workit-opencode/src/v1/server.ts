@@ -1,6 +1,5 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import type { Plugin } from "@opencode-ai/plugin";
 import {
   shouldDenyShellRoute,
@@ -17,6 +16,7 @@ import {
   markSourcesLoaded,
 } from "@brainervirus/workit-core/src/core/boundary";
 import { getWorkitBootstrap } from "../bootstrap";
+import { assetsRoot, packageRoot } from "../shared/assets";
 import { pluginSourceFiles } from "../stale-sources";
 import { createRepoTools } from "../tools/repo";
 import {
@@ -34,7 +34,7 @@ import {
 import type { WorkerDispatch } from "@brainervirus/workit-core/src/core";
 import { compactContextFor, loadProvenance, workerContextFor } from "../runtime";
 
-const root = fileURLToPath(new URL("../../assets/", import.meta.url));
+const root = assetsRoot();
 const skillsPath = path.join(root, "skills");
 const logger = createLogger({
   appLog: () => undefined,
@@ -150,10 +150,7 @@ const plugin: Plugin = async ({ client, directory }) => {
   const dispatches = new Map<string, PreparedDispatch>();
   try {
     logger.info(EVENT.initialization, { host: "opencode", plugin_root: root });
-    logger.info(
-      EVENT.provenance,
-      loadProvenance(logger, new URL("../../package.json", import.meta.url)),
-    );
+    logger.info(EVENT.provenance, loadProvenance(logger, path.join(packageRoot(), "package.json")));
   } catch (error) {
     logger.warn(EVENT.hooks, { boundary: "initialization", ...errorDetail(error) });
   }

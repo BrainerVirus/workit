@@ -32,6 +32,7 @@ import { createV2Lifecycle } from "./lifecycle";
 import { injectAgentContext, injectCompactionContext } from "./injection";
 import { evaluateShellPermission } from "./permissions";
 import { normalizeQuestionAnswers } from "./receipts";
+import { registerCommands, registerSkills } from "./registry";
 
 /** V2-native session facts a Workit call is bound to. A present `parentID`
  * means a child session: worker lineage is validated by the lifecycle port
@@ -317,6 +318,8 @@ export const setup = async (ctx: Context): Promise<() => void> => {
   await ctx.session.hook("compaction", (event) => {
     injectCompactionContext(root, String(event.sessionID), event.system as never);
   });
+  await registerSkills(ctx as never);
+  await registerCommands(ctx as never);
   const subscription = new AbortController();
   void (async () => {
     try {
