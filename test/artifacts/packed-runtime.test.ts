@@ -6,6 +6,7 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -168,7 +169,9 @@ test(
       });
       const v1Config: Record<string, any> = {};
       await v1Hooks.config?.(v1Config);
-      expect(v1Config.skills?.paths).toEqual([skillsPath]);
+      // tmpdir prefixes differ by platform symlink layout (/var vs
+      // /private/var on macOS): compare the resolved paths on both sides.
+      expect(realpathSync(v1Config.skills.paths[0])).toBe(realpathSync(skillsPath));
       expect(existsSync(v1Config.skills.paths[0])).toBe(true);
 
       const skills: Array<{ id: string; location: string; content: string }> = [];

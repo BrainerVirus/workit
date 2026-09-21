@@ -22,20 +22,20 @@ export type V2LifecycleDeps = {
   getSession: (sessionID: string) => Promise<V2SessionInfo | null>;
 };
 
-export type V2ToolEvent = {
+type V2ToolEvent = {
   tool: string;
   sessionID: string;
   id: string;
   input: unknown;
 };
 
-export type V2ToolAfterEvent = V2ToolEvent &
+type V2ToolAfterEvent = V2ToolEvent &
   (
     | { status: "completed"; result: { output?: unknown; content?: unknown; metadata?: unknown } }
     | { status: "error"; error: unknown }
   );
 
-export type V2Event = {
+type V2Event = {
   id?: string;
   type?: string;
   data?: unknown;

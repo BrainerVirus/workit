@@ -37,7 +37,7 @@ import { registerCommands, registerSkills } from "./registry";
 /** V2-native session facts a Workit call is bound to. A present `parentID`
  * means a child session: worker lineage is validated by the lifecycle port
  * before children may run family tools. */
-export type V2Session = {
+type V2Session = {
   id: string;
   parentID?: string;
   directory: string;
@@ -180,7 +180,7 @@ const recordDecision = (
   return core.observeDecision(request, observed.observation);
 };
 
-export const setup = async (ctx: Context): Promise<() => void> => {
+const setup = async (ctx: Context): Promise<() => void> => {
   const root = ctx.location.directory;
   const receipts = new NativeReceiptStore();
   const lifecycle = createV2Lifecycle({

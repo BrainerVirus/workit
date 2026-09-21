@@ -45,13 +45,6 @@ const familyTools = OPERATION_FAMILIES.map((family): WorkitToolSpec => ({
   input: { type: "object", ...boundedOperationJsonSchema(family, OPERATION_SCHEMA_DEPTH) },
 }));
 
-/** The exact 10 registered Workit tool names, in registration order. */
-export const WORKIT_TOOL_NAMES: readonly string[] = [
-  ...familyTools.map((tool) => tool.name),
-  "workit_external_action",
-  "workit_init_apply",
-];
-
 export const WORKIT_TOOL_CATALOG: readonly WorkitToolSpec[] = [
   ...familyTools,
   {

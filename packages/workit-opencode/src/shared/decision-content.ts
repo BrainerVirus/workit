@@ -1,4 +1,4 @@
-export const rejectedDescription = "Reject this decision";
+const rejectedDescription = "Reject this decision";
 
 /**
  * The exact binding-question content a Workit decision receipt is minted
