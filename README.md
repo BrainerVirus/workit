@@ -57,9 +57,11 @@ checkout/dev install may pin `file://…/packages/workit-opencode/…` instead.
 Do not pin into pnpm dlx or `_npx` cache paths — those break when the cache is
 cleared.
 
-Requires OpenCode 1.18.30 and Node.js 24+. The published plugin is a
-self-contained Node bundle (no runtime `@opencode-ai/plugin` dependency) and
-ships the eight native tools plus the fourteen method skills.
+Requires OpenCode 1.18.30+ and Node.js 24+. One dual-entry artifact carries
+`server()` for V1 and `setup()` for OpenCode 2.0.3 with the same ten native
+tools, fourteen method skills and `wk-*` commands, question receipts, and
+direct-child delegation. The published plugin is a self-contained Node bundle
+(no runtime `@opencode-ai/plugin` or `@opencode/plugin` dependency).
 
 </details>
 
@@ -328,7 +330,8 @@ and `vcs.account` (required for push) to the workspace entry in
 
 Each auto action still records a reservation with the exact binding; the
 standing rule is re-read live, so removing the flag restores questions
-immediately. Guardrails are code, not prose: protected branches never push,
+immediately. A `git.commit` plan list (`plan_steps`/`plan_branch`) also
+records with no question and returns its commit count. Guardrails are code, not prose: protected branches never push,
 open PRs, or merge sources; push identity must match the area account;
 publish/release stay gated. Product decisions, waivers, and close outcomes
 still require a human.

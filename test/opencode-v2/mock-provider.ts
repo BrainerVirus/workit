@@ -84,6 +84,16 @@ const scripts: Record<string, (() => Response)[]> = {
     () => sse([toolTurn("call_1", "probe_ping", { word: "hello" }), textTurn("", "tool_calls")]),
     () => sse([textTurn("pong done", null), textTurn("", "stop")]),
   ],
+  // Matrix lane: prove the packed Workit plugin loaded by calling one family
+  // tool. Works on both hosts (the V1 driver uses `opencode run`).
+  workit: [
+    () =>
+      sse([
+        toolTurn("call_1", "workit_task", { schemaVersion: 1, action: "list" }),
+        textTurn("", "tool_calls"),
+      ]),
+    () => sse([textTurn("workit done", null), textTurn("", "stop")]),
+  ],
   shell: [
     () =>
       sse([
@@ -198,6 +208,28 @@ const hasToolResult = (body: any) =>
       (Array.isArray(m?.content) && m.content.some((c: any) => c?.type === "tool-result")),
   );
 
+// Continuation prompt: the latest user message asking "continue <sessionID>"
+// with no tool result after it emits a subagent call carrying that sessionID
+// so the lineage path is exercisable deterministically.
+const continueSessionId = (body: any): string | null => {
+  const msgs = Array.isArray(body?.messages) ? body.messages : [];
+  const textOf = (m: any): string =>
+    typeof m?.content === "string"
+      ? m.content
+      : Array.isArray(m?.content)
+        ? m.content.map((c: any) => (c?.type === "text" ? c.text : "")).join("\n")
+        : "";
+  let lastUser = -1;
+  let lastToolResult = -1;
+  msgs.forEach((m: any, i: number) => {
+    if (m?.role === "user") lastUser = i;
+    if (m?.role === "tool") lastToolResult = i;
+  });
+  if (lastUser < 0 || lastToolResult > lastUser) return null;
+  const found = /continue\s+(ses_[A-Za-z0-9]+)/.exec(textOf(msgs[lastUser]) ?? "");
+  return found ? found[1] : null;
+};
+
 const isCompaction = (body: any) => {
   const msgs = Array.isArray(body?.messages) ? body.messages : [];
   const last = msgs[msgs.length - 1];
@@ -245,6 +277,17 @@ Bun.serve({
         void log({ aborted: true, model: body?.model });
       });
       if (isCompaction(body)) return scripts.summary![0]!();
+      const continued = continueSessionId(body);
+      if (continued)
+        return sse([
+          toolTurn("call_1", "subagent", {
+            description: "probe continue",
+            prompt: "continued turn",
+            agent: "general",
+            sessionID: continued,
+          }),
+          textTurn("", "tool_calls"),
+        ]);
       return hasToolResult(body) ? turns[turns.length - 1]!() : turns[0]!();
     }
     return new Response("not found", { status: 404 });

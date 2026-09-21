@@ -1,5 +1,3 @@
-import { realpathSync } from "node:fs";
-import path from "node:path";
 import { tool } from "@opencode-ai/plugin";
 import {
   WorkitCore,
@@ -12,6 +10,7 @@ import {
   standingAutoBinding,
   externalActionDescriptor,
   externalActionHelp,
+  planReservationLength,
   priorExternalAction,
   priorResolvedDrift,
   externalActionRequest,
@@ -93,34 +92,6 @@ type Receipt = {
   contentDigest: string;
   recordedAt: number;
 };
-
-const rejectedDescription = "Reject this decision";
-
-/**
- * Concise approval text always needs a live proposal to bind it; an exact
- * descriptor, plan list, or bare operation binds its own bytes.
- */
-const isSelfAuthorizingActionContent = (content: string): boolean => {
-  try {
-    const value = JSON.parse(content) as { operation?: unknown };
-    return typeof value.operation === "string" && value.operation.length > 0;
-  } catch {
-    return /^[a-z][a-z_]*\.[a-z_]+$/.test(content);
-  }
-};
-
-const decisionContent = (
-  purpose: Receipt["decisionPurpose"],
-  question: string,
-  approvedContent: string,
-) => ({
-  header: `Workit decision: ${purpose}`,
-  question,
-  options: [
-    { label: "approved", description: approvedContent },
-    { label: "rejected", description: rejectedDescription },
-  ],
-});
 
 const decisionOptions = (options: unknown) =>
   Array.isArray(options) &&
@@ -437,14 +408,9 @@ const sessionData = async (client: SessionLookup | undefined, sessionID: string)
   }
 };
 
-export const sameWorkspace = (expected: string, observed: unknown): boolean => {
-  if (typeof observed !== "string" || !observed) return false;
-  try {
-    return realpathSync(expected) === realpathSync(observed);
-  } catch {
-    return path.resolve(expected) === path.resolve(observed);
-  }
-};
+import { sameWorkspace } from "../shared/session";
+import { decisionContent, isSelfAuthorizingActionContent } from "../shared/decision-content";
+export { sameWorkspace };
 
 const hostRef = (handle: string) => ({ kind: "host" as const, host: "opencode" as const, handle });
 
@@ -488,7 +454,7 @@ export const opencodeCapabilities = () => [
   },
 ];
 
-const nativeAuthority = (
+export const nativeAuthority = (
   receipts: NativeReceiptStore,
   actor: string,
   reconciliationTokens = new WeakSet<object>(),
@@ -1099,6 +1065,23 @@ export const createWorkitTools = ({
           !selected.ok &&
           !planAuthorized &&
           standingAutoApplies(store, "opencode", context.sessionID, descriptor);
+        const planCount = planReservationLength(
+          resolved.data.request.operation,
+          resolved.data.descriptorPayload,
+        );
+        if (planCount !== null) {
+          if (selected.ok) return output(success(null, null, { plan_commits: planCount }));
+          if (autoApplies) {
+            const bound = standingAutoBinding(
+              core,
+              store,
+              "opencode",
+              context.sessionID,
+              descriptor,
+            );
+            if (bound) return output(success(null, null, { plan_commits: planCount }));
+          }
+        }
         if (!selected.ok && !planAuthorized && !autoApplies) {
           if (selected.error.startsWith("no approved action")) {
             const proposal = actionProposalQuestion(

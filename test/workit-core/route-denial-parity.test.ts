@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { TaskStore, WorkitCore, type OperationContext } from "@/packages/workit-core/src/core";
 import { taskStartRequest } from "@/test/workit-core/task-fixtures";
-import plugin from "@/packages/workit-opencode/src/plugin";
+import { server as plugin } from "@/packages/workit-opencode/src/index";
 import { enforceNativeWriter } from "@/packages/workit-pi/src/tools";
 import { handleCodexHook } from "@/packages/workit-codex/hooks/workit-hook";
 

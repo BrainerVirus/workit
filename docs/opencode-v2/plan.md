@@ -163,6 +163,36 @@ Adapter behavior:
 Exit condition: focused V1 and V2 adapter tests pass and the packed artifact
 contains one dual entry plus all method skills.
 
+### 5b. Execution sequence (one atomic commit per task)
+
+Validated V2 mechanisms (spike evidence): plugin tools reach model requests
+only with `options: { codemode: false }`; `execute.after` carries
+`input`/`result.output.{sessionID,status,output}`/`result.metadata`
+(receipts) and full child lineage (fresh vs continuation by input
+`sessionID`, invalid ids error as `tool.execution`); permission `evaluate`
+carries `{sessionID, agent, action, resources[], source}` with mutable
+`effect`/`message`; prompt-hook edits persist and context/compaction system
+edits reach the provider; compaction validates the fixed section template.
+
+1. `feat(opencode-v2): dual-entry package layout with V1 re-export`
+   (`src/index.ts`, `src/v1/server.ts` move, `src/plugin.ts` re-export,
+   build from index, V1 behavior unchanged + tests proving it)
+2. `feat(opencode-v2): V2 plugin shell with tool registration`
+   (`src/v2/plugin.ts` setup, shared tool definitions, 10 tools with
+   `codemode: false`, plugin id `workit` in `ctx.plugin.list()`)
+3. `feat(opencode-v2): subagent lifecycle with lineage and reservations`
+   (fresh/continuation/nested handling, single fresh-launch slot, core
+   dispatch claims, bounded reconciliation reads)
+4. `feat(opencode-v2): question receipts, permission deny, session hooks`
+   (execute.after receipts, shell/worktree route denial, prompt/context/
+   compaction hooks)
+5. `feat(opencode-v2): skills, commands, config lanes, V1 floor`
+   (14 skills, 14 commands, V1-shaped + native config lanes, 1.18.30
+   enforcement, asset resolution, packaging)
+6. `test(opencode-v2): dual-artifact matrix lanes` (harness lanes for every
+   section-10 check against the packed artifact)
+7. Verification evidence only; then docs, deslop, review, PR, babysit, close.
+
 ### 6. Run dual-host acceptance
 
 Build and `npm pack` the candidate once, then test that same artifact:

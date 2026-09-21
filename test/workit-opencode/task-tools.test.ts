@@ -20,7 +20,7 @@ import {
 } from "@/packages/workit-core/src/core";
 import { scope, taskStartRequest } from "@/test/workit-core/task-fixtures";
 import { resolveExternalActionRequest } from "@/packages/workit-core/src/core/external-action-effects";
-import plugin from "@/packages/workit-opencode/src/plugin";
+import { server as plugin } from "@/packages/workit-opencode/src/index";
 import {
   NativeReceiptStore,
   createWorkitTools,

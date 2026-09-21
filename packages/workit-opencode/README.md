@@ -25,7 +25,9 @@ Local dev variant (absolute path to this repo):
 }
 ```
 
-Requirements: OpenCode 1.18.30, Node ≥ 24 (the published plugin is a self-contained Node bundle).
+Requirements: OpenCode 1.18.30+ (V1) or 2.0.3 (V2), Node ≥ 24. The published
+plugin is a self-contained Node bundle; its default export is a dual entry
+(`server()` for V1, `setup()` for V2), so the same pin works on both hosts.
 
 ## What it provides
 
@@ -42,7 +44,13 @@ Requirements: OpenCode 1.18.30, Node ≥ 24 (the published plugin is a self-cont
 
 ## Bundle / runtime model
 
-The build bundles the `@opencode-ai/plugin` SDK surface used by the adapter into `dist/plugin.js`, so the published plugin has **no** runtime `@opencode-ai/plugin` dependency (it stays a development/build-only pinned dependency). The plugin loads through its real package entry `dist/plugin.js`; only the fourteen method skills ship under `assets/`.
+The build bundles the `@opencode-ai/plugin` (V1) and `@opencode/plugin` (V2) SDK surfaces used by the adapters into `dist/plugin.js`, so the published plugin has **no** runtime dependency on either SDK (both stay development/build-only pins). The plugin loads through its real package entry `dist/plugin.js`; only the fourteen method skills ship under `assets/`.
+
+The V2 entry registers the same ten tools with `codemode: false`, the fourteen
+skills and `wk-*` commands (user collisions preserved), question receipts for
+`decision.record`, direct-child subagent lineage with durable dispatch claims,
+shell route and worktree denial through `permission.evaluate`, and the
+bootstrap/task/worker context plus compaction injection.
 
 ## Package scripts
 

@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { readdirSync } from "node:fs";
 import path from "node:path";
-import plugin from "@/packages/workit-opencode/src/plugin";
+import { server as plugin } from "@/packages/workit-opencode/src/index";
 
 const packageSkills = path.resolve(import.meta.dir, "../../packages/workit-opencode/assets/skills");
 const families = [

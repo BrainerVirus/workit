@@ -20,6 +20,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- OpenCode V2 dual entry: one `@brainervirus/workit-opencode` artifact serves
+  V1 `server()` (floor raised to `1.18.30`) and V2 `2.0.3` `setup()` with the
+  exact ten tools (`codemode: false`), fourteen method skills and `wk-*`
+  commands with user collisions preserved, question receipts consumed once by
+  `decision.record`, direct-child subagent lineage with durable dispatch
+  claims and bounded reconciliation, shell route and worktree denial through
+  `permission.evaluate`, bootstrap/task/worker context and compaction
+  injection, and layout-stable asset resolution for source and bundled
+  installs. Docker matrix lanes (V1, V2-native, V2 V1-shaped) run against one
+  packed artifact.
 - Workspace opt-in auto-approval: `autoApprove` classes plus `vcs.account`
   in `workspaces.json` let covered branch, commit, push, PR, and merge
   effects execute with no question, each still recording a reservation with
@@ -97,6 +107,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Plan reservations under standing auto-approval: `git.commit` with
+  `plan_steps`/`plan_branch` records the listed chain and returns
+  `plan_commits` with no question on OpenCode, Pi, and CLI, instead of
+  failing as a single commit requiring a message. One shared core helper
+  backs all three hosts with a parity test.
 - Worker and evidence transitions: a reviewer may record supporting checks and
   its review from one independent session (creator and other review sessions
   stay excluded), evidence auto-binds the current candidate before worker pin

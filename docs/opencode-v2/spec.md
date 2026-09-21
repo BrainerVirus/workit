@@ -223,14 +223,16 @@ entry is implemented.
 
 ### Spike findings (plan step 3, `test/opencode-v2/` harness green 13/13)
 
-- **Tool visibility is unresolved — matrix item 4 is blocked on it.** A tool
+- **Tool visibility resolved — matrix item 4 is unblocked.** A tool
   registered through `ctx.tool.transform` + `editor.add` appears in
-  `editor.list()` but is NOT offered to model requests in `2.0.3` (verified
-  across plain, namespaced, `permission`-optioned, `pinned`, and `codemode`
-  registrations; scripted direct calls fail as "not currently available").
-  Registration alone does not satisfy matrix item 4. Candidates for the
-  mechanism: MCP-server tools, a per-mode surfacing rule, or newer `2.0.x`
-  behavior. Step 5 must resolve this before the 10-tool port.
+  `editor.list()` but reaches model requests ONLY with
+  `options: { codemode: false }`; without it (or with `codemode: true`,
+  namespaces, `permission`, or `pinned` variants tried) the tool stays
+  code-mode-only and direct calls fail as "not currently available".
+  Verified end-to-end: offered alongside the 12 builtins, called by the
+  model, `tool.execute` ran in-plugin, structured result returned.
+  Register the 10 workit tools with `codemode: false` under their existing
+  effective names (no V2 namespace, per section 6).
 - Latest docs describe `ctx.provider`/`ctx.model` transforms; the pinned
   `2.0.3` SDK has neither. Custom providers are config-declared, and model
   entries require `capabilities: { tools, input: [...], output: [...] }` —
@@ -246,9 +248,10 @@ entry is implemented.
 - `subagent` requires `agent`, spawns a child with `parentID` lineage, and
   completes concurrently (two children, one turn) with `<subagent
   sessionID state>result</subagent>` envelopes. Prompt `text` edits persist
-  (prompt hook); `context`-hook `system` edits do NOT reach the provider in
-  `2.0.3`. Compaction validates a fixed section template and fires the
-  `compaction` hook. V1-shaped config normalizes in memory (`plugin`→
+  (prompt hook); `context`-hook and `compaction`-hook `system` edits both
+  reach the provider in `2.0.3` (corrected by an independent review probe —
+  the earlier spike note claimed otherwise). Compaction validates a fixed
+  section template and fires the `compaction` hook. V1-shaped config normalizes in memory (`plugin`→
   `plugins`, `provider`→`providers`, `npm`→`aisdk:`-prefixed `package`,
   `options`→`settings`) without rewriting the source file.
 - Harness caveats: the CLI always spawns a background service, so the driver
