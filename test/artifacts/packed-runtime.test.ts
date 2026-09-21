@@ -212,7 +212,9 @@ test(
       expect(commands).toHaveLength(14);
       for (const skill of skills) {
         expect(existsSync(skill.location), skill.id).toBe(true);
-        expect(skill.location.startsWith(skillsPath), skill.id).toBe(true);
+        expect(realpathSync(skill.location).startsWith(realpathSync(skillsPath)), skill.id).toBe(
+          true,
+        );
         expect(skill.content.length, skill.id).toBeGreaterThan(100);
       }
     } finally {
