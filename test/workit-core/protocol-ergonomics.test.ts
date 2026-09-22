@@ -7,12 +7,13 @@ import {
   TaskStore,
   WorkitCore,
   externalActionDescriptor,
+  externalActionHelp,
   parseOperation,
   planCommitBinding,
   runtimeVersion,
 } from "@/packages/workit-core/src/core";
 import { captureCandidate } from "@/packages/workit-core/src/core/task-evaluation";
-import { assessment, taskStartRequest } from "@/test/workit-core/task-fixtures";
+import { assessment, scope, taskStartRequest } from "@/test/workit-core/task-fixtures";
 
 const TASK_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 
@@ -61,6 +62,175 @@ test("close accepts omitted decisionIds and writer reason is symmetric", () => {
     taskId: TASK_ID,
   });
   expect(release.ok).toBe(true);
+  expect(
+    parseOperation("task", {
+      schemaVersion: 1,
+      action: "inspect",
+      taskId: TASK_ID,
+    }).ok,
+  ).toBe(true);
+  expect(
+    parseOperation("task", {
+      schemaVersion: 1,
+      action: "resume",
+      taskId: TASK_ID,
+    }).ok,
+  ).toBe(true);
+  expect(externalActionHelp).toContain("{branch:string}");
+  expect(externalActionHelp).toContain("github_issue");
+});
+
+test("ordinary paused tasks resume without imported-task authority refs", () => {
+  const root = gitRepo();
+  try {
+    const core = coreFor(root);
+    const started = core.task(taskStartRequest());
+    if (!started.ok) throw new Error(started.error);
+    const taskId = (started.data as { id: string }).id;
+    expect(core.task({ schemaVersion: 1, action: "pause", taskId, reason: "park" })).toMatchObject({
+      ok: true,
+      data: { status: "paused" },
+    });
+    expect(core.task({ schemaVersion: 1, action: "resume", taskId })).toMatchObject({
+      ok: true,
+      data: { status: "active" },
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("worker scope denials identify both conflicting scopes", () => {
+  const root = gitRepo();
+  try {
+    const core = coreFor(root);
+    const started = core.task(
+      taskStartRequest({
+        intent: { ...taskStartRequest().intent, scope: scope({ paths: ["src"] }) },
+      }),
+    );
+    if (!started.ok) throw new Error(started.error);
+    const denied = core.worker({
+      schemaVersion: 1,
+      action: "assign",
+      taskId: (started.data as { id: string }).id,
+      assignment: {
+        role: "implementer",
+        objective: "outside",
+        scope: scope({ paths: ["other"] }),
+        decisionIds: [],
+        requirementIds: [],
+        candidateId: null,
+        stoppingCondition: "report",
+      },
+    });
+    expect(denied).toMatchObject({
+      ok: false,
+      code: "permission_denied",
+      details: {
+        fields: [{ path: "assignment.scope" }, { path: "task.intent.scope" }],
+      },
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("task list defaults to a bounded compact open-task projection", () => {
+  const root = gitRepo();
+  try {
+    const core = coreFor(root);
+    for (let index = 0; index < 22; index += 1) {
+      const started = core.task(
+        taskStartRequest({
+          expectedWorkspaceRevision: undefined,
+          intent: { ...taskStartRequest().intent, objective: `closed ${index}` },
+        }),
+      );
+      if (!started.ok) throw new Error(started.error);
+      const closed = core.task({
+        schemaVersion: 1,
+        action: "close",
+        taskId: (started.data as { id: string }).id,
+        outcome: "stopped",
+        summary: "stopped",
+      });
+      if (!closed.ok) throw new Error(closed.error);
+    }
+    const active = core.task(
+      taskStartRequest({
+        expectedWorkspaceRevision: undefined,
+        intent: { ...taskStartRequest().intent, objective: "active" },
+      }),
+    );
+    if (!active.ok) throw new Error(active.error);
+
+    const open = core.task({ schemaVersion: 1, action: "list" });
+    expect(open).toMatchObject({ ok: true, data: [{ objective: "active", status: "active" }] });
+    if (!open.ok || !Array.isArray(open.data)) throw new Error("task list failed");
+    expect(open.data).toHaveLength(1);
+    expect(open.data[0]).not.toHaveProperty("policy");
+    expect(open.data[0]).not.toHaveProperty("requirements");
+
+    const history = core.task({ schemaVersion: 1, action: "list", status: "closed", limit: 5 });
+    if (!history.ok || !Array.isArray(history.data)) throw new Error("task history failed");
+    expect(history.data).toHaveLength(5);
+    expect(history.data.every((item) => "writer" in item && item.writer === null)).toBe(true);
+
+    const inspected = core.task({
+      schemaVersion: 1,
+      action: "inspect",
+      taskId: history.data[0].id,
+      view: "summary",
+    });
+    expect(inspected).toMatchObject({ ok: true, data: { status: "closed", writer: null } });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("closing A to B to A history retains A as the closure candidate", () => {
+  const root = gitRepo();
+  try {
+    const store = new TaskStore(root);
+    const core = coreFor(root);
+    const started = core.task(taskStartRequest());
+    if (!started.ok) throw new Error(started.error);
+    const taskId = (started.data as { id: string }).id;
+    const task = store.readTask(taskId);
+    if (!task.ok) throw new Error(task.error);
+    const a = captureCandidate(root, task.data.intent.data.scope, {});
+    if (!a.ok) throw new Error(a.error);
+    writeFileSync(path.join(root, "base.txt"), "changed\n");
+    const b = captureCandidate(root, task.data.intent.data.scope, {});
+    if (!b.ok) throw new Error(b.error);
+    const seeded = store.mutateTask(taskId, task.data.revision, (value, mutation) => ({
+      ok: true,
+      schemaVersion: 1,
+      revision: mutation.revision,
+      workspaceRevision: null,
+      data: { ...value, candidates: [a.data, b.data] },
+    }));
+    if (!seeded.ok) throw new Error(seeded.error);
+    writeFileSync(path.join(root, "base.txt"), "base\n");
+    const closed = core.task({
+      schemaVersion: 1,
+      action: "close",
+      taskId,
+      outcome: "stopped",
+      summary: "stopped",
+    });
+    if (!closed.ok) throw new Error(closed.error);
+    const persisted = store.readTask(taskId);
+    if (!persisted.ok) throw new Error(persisted.error);
+    expect(persisted.data.candidates.map((candidate) => candidate.id)).toEqual([
+      a.data.id,
+      b.data.id,
+      a.data.id,
+    ]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("revision conflicts teach omission instead of blind retries", () => {
