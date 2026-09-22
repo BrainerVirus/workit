@@ -13,9 +13,10 @@ import {
   type Revision,
   type TaskRecord,
 } from "./task-contract";
-import type { TaskStore } from "./task-store";
+import { TaskStore } from "./task-store";
 import type { WorkitCore } from "./task-engine";
 import type { Decision } from "./task-contract";
+import { currentWriterOwnsTask } from "./workers";
 
 /** Action classes auto-approval can cover. Unknown classes never match. */
 export const AUTO_CLASSES = ["branch", "commit", "push", "pr", "merge"] as const;
@@ -154,14 +155,10 @@ export const verifyStandingApproval = (
 ): Result<Provenance> => {
   if (task.status !== "active")
     return failure("invalid_transition", "only active tasks can authorize actions");
-  const session = task.intent?.provenance?.session;
-  if (
-    !session ||
-    session.kind !== "host" ||
-    session.host !== caller.host ||
-    session.handle !== caller.actor
-  )
-    return failure("permission_denied", "standing approval requires the lead session");
+  const workspace = new TaskStore(root).readWorkspace();
+  if (!workspace.ok) return workspace as Result<never>;
+  if (!workspace.data || !currentWriterOwnsTask(task, workspace.data, caller))
+    return failure("permission_denied", "standing approval requires the current writer session");
   const standing = binding.standing;
   if (!standing || typeof standing.workspace !== "string" || typeof standing.class !== "string")
     return failure("invalid_input", "standing approval needs a workspace and class");
@@ -244,12 +241,7 @@ export const standingAutoApplies = (
   const workspace = store.readWorkspace();
   if (!listed.ok || !workspace.ok || !workspace.data) return null;
   const matches = listed.data.filter(
-    (task) =>
-      task.status === "active" &&
-      task.workspaceId === workspace.data!.id &&
-      task.intent?.provenance?.session?.kind === "host" &&
-      (task.intent.provenance.session as { host?: unknown; handle?: unknown }).host === host &&
-      (task.intent.provenance.session as { host?: unknown; handle?: unknown }).handle === actor,
+    (task) => task.status === "active" && task.workspaceId === workspace.data!.id,
   );
   if (matches.length !== 1) return null;
   const resolved = resolveAutoApproval(store.root);

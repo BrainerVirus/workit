@@ -18,13 +18,11 @@ export const normalizeQuestionAnswers = (answers: unknown): unknown => {
     }
     if (first && typeof first === "object") {
       const values = Object.values(first as Record<string, unknown>);
-      if (values.length > 0 && values.every((entry) => singleValue(entry) !== null))
-        return [[singleValue(values[0])]];
+      if (values.length === 1 && singleValue(values[0]) !== null) return [[singleValue(values[0])]];
     }
     return answers;
   }
   const values = Object.values(answers as Record<string, unknown>);
-  if (values.length > 0 && values.every((entry) => singleValue(entry) !== null))
-    return [[singleValue(values[0])]];
+  if (values.length === 1 && singleValue(values[0]) !== null) return [[singleValue(values[0])]];
   return answers;
 };

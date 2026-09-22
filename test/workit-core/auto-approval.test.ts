@@ -217,7 +217,10 @@ const standingSetup = (actor = "cli-auto") => {
   });
   const started = core.task(taskStartRequest());
   if (!started.ok) throw new Error(started.error);
-  return { root, configDir, store, core, actor, taskId: (started.data as { id: string }).id };
+  const taskId = (started.data as { id: string }).id;
+  const writer = core.writer({ schemaVersion: 1, action: "acquire", taskId });
+  if (!writer.ok) throw new Error(writer.error);
+  return { root, configDir, store, core, actor, taskId };
 };
 
 const standingRecord = (
@@ -268,6 +271,60 @@ test("standing decisions record without a question and die with the rule", () =>
     writeFileSync(join(value.configDir, "workspaces.json"), JSON.stringify({ workspaces: [] }));
     const afterRemoval = standingRecord(value, fake, "commit");
     expect(afterRemoval.ok).toBe(false);
+  } finally {
+    if (previous === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG_DIR;
+    else process.env.WORKFLOW_TOOLKIT_CONFIG_DIR = previous;
+    rmSync(value.root, { recursive: true, force: true });
+    rmSync(value.configDir, { recursive: true, force: true });
+  }
+});
+
+test("standing decisions follow the current writer after session resumption", () => {
+  const value = standingSetup("creator");
+  const previous = process.env.WORKFLOW_TOOLKIT_CONFIG_DIR;
+  process.env.WORKFLOW_TOOLKIT_CONFIG_DIR = value.configDir;
+  try {
+    const resumed = new WorkitCore(value.store, {
+      root: value.root,
+      caller: { host: "workit_cli", actor: "resumed" },
+      capabilities: [],
+      constraints: [],
+      now: "2026-01-01T00:00:01Z",
+    });
+    const acquired = resumed.writer({
+      schemaVersion: 1,
+      action: "acquire",
+      taskId: value.taskId,
+    });
+    expect(acquired.ok).toBe(true);
+    const fake = JSON.stringify({
+      operation: "git.commit",
+      payload: { message: "auto resumed", resolved: { branch: "main" } },
+    });
+    const task = value.store.readTask(value.taskId);
+    const workspace = value.store.readWorkspace();
+    if (!task.ok || !workspace.ok || !workspace.data) throw new Error("state missing");
+    const recorded = resumed.observeStandingDecision({
+      schemaVersion: 1,
+      action: "record",
+      taskId: value.taskId,
+      purpose: "action",
+      binding: {
+        taskId: value.taskId,
+        workspaceId: workspace.data.id,
+        scope: task.data.intent.data.scope,
+        presented: "auto",
+        approvedContent: fake,
+        contentRefs: [],
+        standing: { workspace: "t", class: "commit" },
+      },
+      response: "approved",
+      requirementIds: [],
+    });
+    expect(recorded).toMatchObject({
+      ok: true,
+      data: { provenance: { session: { handle: "resumed" } } },
+    });
   } finally {
     if (previous === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG_DIR;
     else process.env.WORKFLOW_TOOLKIT_CONFIG_DIR = previous;

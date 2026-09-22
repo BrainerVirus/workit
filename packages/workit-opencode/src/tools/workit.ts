@@ -31,6 +31,9 @@ import {
   type OperationContext,
   type ExternalActionRequest,
   type ContractResult as Result,
+  type Entry,
+  type TaskRecord,
+  type Worker,
 } from "@brainervirus/workit-core/src/core";
 import {
   actionProposalQuestion,
@@ -138,6 +141,7 @@ const purposeForQuestion = (question: Question): Receipt["purpose"] | undefined 
 export class NativeReceiptStore {
   #receipts = new Map<string, Receipt[]>();
   #observations = new WeakSet<object>();
+  #reservations = new WeakMap<object, Receipt>();
   #pending = new Map<string, { sessionID: string; callID: string; questions: unknown }>();
   #now: () => number;
 
@@ -231,7 +235,7 @@ export class NativeReceiptStore {
     this.mint(input.sessionID, input.callID, args?.questions, answers);
   }
 
-  consume(
+  reserve(
     sessionID: string,
     purpose: Receipt["purpose"],
     expected: ReceiptExpectation = {},
@@ -254,10 +258,9 @@ export class NativeReceiptStore {
         (expected.question !== undefined && receipt.question !== expected.question)
       )
         continue;
-      queue.splice(i, 1);
-      if (!queue.length) this.#receipts.delete(sessionID);
       const observation = { receipt };
       this.#observations.add(observation);
+      this.#reservations.set(observation, receipt);
       return { ok: true, receipt, observation };
     }
     return {
@@ -300,6 +303,28 @@ export class NativeReceiptStore {
         );
       })(),
     };
+  }
+
+  commit(observation: object): boolean {
+    const receipt = this.#reservations.get(observation);
+    this.#reservations.delete(observation);
+    if (!receipt) return false;
+    const queue = this.#receipts.get(receipt.sessionID) ?? [];
+    const index = queue.indexOf(receipt);
+    if (index < 0) return false;
+    queue.splice(index, 1);
+    if (!queue.length) this.#receipts.delete(receipt.sessionID);
+    return true;
+  }
+
+  consume(
+    sessionID: string,
+    purpose: Receipt["purpose"],
+    expected: ReceiptExpectation = {},
+  ): { ok: true; receipt: Receipt; observation: object } | { ok: false; error: string } {
+    const reserved = this.reserve(sessionID, purpose, expected);
+    if (reserved.ok) this.commit(reserved.observation);
+    return reserved;
   }
 
   verify(observation: unknown, sessionID: string, purpose: Receipt["purpose"]): Receipt | null {
@@ -684,6 +709,15 @@ export const nativeExternalActionRunner = (
     };
   });
 
+/** The dispatch coordinator is persisted for restart safety. Records created
+ * before that field existed fall back to their original task creator. */
+export const workerCoordinatorFor = (task: TaskRecord, worker: Entry<Worker>): string | null => {
+  const coordinator = worker.data.coordinator ?? task.intent.provenance.session;
+  return coordinator?.kind === "host" && coordinator.host === "opencode"
+    ? coordinator.handle
+    : null;
+};
+
 const workerIdFor = (
   store: TaskStore,
   actor: string,
@@ -696,20 +730,14 @@ const workerIdFor = (
   if (!tasks.ok) return null;
   const matches = tasks.data.flatMap((task) => {
     if (task.status !== "active") return [];
-    const coordinator = task.intent.provenance.session;
-    if (
-      coordinator?.kind !== "host" ||
-      coordinator.host !== "opencode" ||
-      coordinator.handle !== parentID ||
-      directChildren.get(actor) !== parentID
-    )
-      return [];
+    if (directChildren.get(actor) !== parentID) return [];
     return task.workers.filter(
       (worker) =>
         worker.data.state === "running" &&
         worker.data.session?.kind === "host" &&
         worker.data.session.host === "opencode" &&
-        worker.data.session.handle === actor,
+        worker.data.session.handle === actor &&
+        workerCoordinatorFor(task, worker) === parentID,
     );
   });
   return matches.length === 1 ? matches[0].id : null;
@@ -809,9 +837,17 @@ export const createWorkitTools = ({
           // approved answer binds the approved content bytes.
           if (decision.response === "approved")
             expectation.selectedDescription = decision.binding.approvedContent;
-          const observed = receipts.consume(context.sessionID, "decision", expectation);
+          const observed = receipts.reserve(context.sessionID, "decision", expectation);
           if (!observed.ok) return output(failure("permission_denied", observed.error));
           let recordInput = parsed.data as Record<string, unknown>;
+          let proposalToCommit:
+            | {
+                descriptor: string;
+                presented: string;
+                approvedText: string;
+                request: ExternalActionRequest;
+              }
+            | undefined;
           if (decision.purpose === "action" && decision.response === "approved") {
             const queue = actionProposals.get(context.sessionID) ?? [];
             const textMatches = queue.filter(
@@ -840,10 +876,7 @@ export const createWorkitTools = ({
                 ? externalActionDescriptor(pending.request.operation, fresh.data.descriptorPayload)
                 : null;
               if (freshDescriptor === pending.descriptor) {
-                actionProposals.set(
-                  context.sessionID,
-                  queue.filter((candidate) => candidate !== pending),
-                );
+                proposalToCommit = pending;
                 recordInput = {
                   ...recordInput,
                   binding: {
@@ -874,6 +907,16 @@ export const createWorkitTools = ({
             }
           }
           result = core.observeDecision(recordInput, observed.observation);
+          if (result.ok) {
+            receipts.commit(observed.observation);
+            if (proposalToCommit) {
+              const queue = actionProposals.get(context.sessionID) ?? [];
+              actionProposals.set(
+                context.sessionID,
+                queue.filter((candidate) => candidate !== proposalToCommit),
+              );
+            }
+          }
         } else {
           const run = core[family] as unknown as (request: unknown) => Result<unknown>;
           result = run.call(core, parsed.data);
@@ -945,7 +988,9 @@ export const createWorkitTools = ({
         if (
           prior.ok &&
           prior.data.entry.data.consumption !== null &&
-          prior.data.entry.data.consumption.state !== "uncertain"
+          prior.data.entry.data.consumption.state !== "uncertain" &&
+          resolved.data.request.operation !== "git.commit" &&
+          resolved.data.request.operation !== "git.push"
         )
           return output(failure("permission_denied", "external action was already settled"));
         const reconciliationTokens = new WeakSet<object>();

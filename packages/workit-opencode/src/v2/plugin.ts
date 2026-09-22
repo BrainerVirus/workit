@@ -14,6 +14,10 @@ import {
   type OperationFamily,
 } from "@brainervirus/workit-core/src/core";
 import {
+  changedSourcesSinceLoad,
+  markSourcesLoaded,
+} from "@brainervirus/workit-core/src/core/boundary";
+import {
   executeResolvedExternalAction,
   resolveExternalActionRequest,
 } from "@brainervirus/workit-core/src/core/external-action-effects";
@@ -25,6 +29,7 @@ import {
   NativeReceiptStore,
   nativeAuthority,
   nativeWorkerFor,
+  workerCoordinatorFor,
   type DirectChildren,
   type Receipt,
 } from "../tools/workit";
@@ -33,6 +38,7 @@ import { injectAgentContext, injectCompactionContext } from "./injection";
 import { evaluateShellPermission } from "./permissions";
 import { normalizeQuestionAnswers } from "./receipts";
 import { registerCommands, registerSkills } from "./registry";
+import { pluginSourceFiles } from "../stale-sources";
 
 /** V2-native session facts a Workit call is bound to. A present `parentID`
  * means a child session: worker lineage is validated by the lifecycle port
@@ -116,20 +122,14 @@ const workerIdFor = (
   if (!tasks.ok) return null;
   const matches = tasks.data.flatMap((task) => {
     if (task.status !== "active") return [];
-    const coordinator = task.intent.provenance.session;
-    if (
-      coordinator?.kind !== "host" ||
-      coordinator.host !== "opencode" ||
-      coordinator.handle !== parentID ||
-      directChildren.get(actor) !== parentID
-    )
-      return [];
+    if (directChildren.get(actor) !== parentID) return [];
     return task.workers.filter(
       (worker) =>
         worker.data.state === "running" &&
         worker.data.session?.kind === "host" &&
         worker.data.session.host === "opencode" &&
-        worker.data.session.handle === actor,
+        worker.data.session.handle === actor &&
+        workerCoordinatorFor(task, worker) === parentID,
     );
   });
   return matches.length === 1 ? matches[0].id : null;
@@ -158,7 +158,7 @@ const recordDecision = (
   );
   const budgetIssue = workitBindingQuestionIssue([content]);
   if (budgetIssue) return failure("invalid_input", budgetIssue);
-  const observed = receipts.consume(sessionID, "decision", {
+  const observed = receipts.reserve(sessionID, "decision", {
     selectedLabel: decision.response,
     decisionPurpose: decision.purpose,
     contentDigest: sha256(canonicalJson(content)),
@@ -177,11 +177,15 @@ const recordDecision = (
       "invalid_input",
       "no matching action proposal; resolve the action through the action tool first",
     );
-  return core.observeDecision(request, observed.observation);
+  const result = core.observeDecision(request, observed.observation);
+  if (result.ok) receipts.commit(observed.observation);
+  return result;
 };
 
 const setup = async (ctx: Context): Promise<() => void> => {
   const root = ctx.location.directory;
+  const sourceMarker = markSourcesLoaded(pluginSourceFiles);
+  let staleSourcesWarned = false;
   const receipts = new NativeReceiptStore();
   const lifecycle = createV2Lifecycle({
     root,
@@ -318,6 +322,16 @@ const setup = async (ctx: Context): Promise<() => void> => {
   await ctx.session.hook("context", async (event) => {
     const session = await sessionFacts(ctx, String(event.sessionID));
     injectAgentContext(root, session, lifecycle.directChildren, event.system as never);
+    if (!staleSourcesWarned) {
+      const changed = changedSourcesSinceLoad(sourceMarker);
+      if (changed.length > 0) {
+        staleSourcesWarned = true;
+        (event.system as Array<{ type: "text"; text: string }>).push({
+          type: "text",
+          text: `<workit-warning>Workit sources changed after plugin load (${changed.map((file) => file.split(/[\\/]/).at(-1)).join(", ")}); restart the session for latest behavior.</workit-warning>`,
+        });
+      }
+    }
   });
   await ctx.session.hook("compaction", (event) => {
     injectCompactionContext(root, String(event.sessionID), event.system as never);

@@ -191,6 +191,65 @@ const approveChangelogAction = async (
     })
   ).decision;
 
+test("failed action decision persistence preserves its receipt and proposal for retry", async () => {
+  const fixture = createChangelogActionFixture(
+    "decision-retry",
+    new TextEncoder().encode("# Log\n"),
+  );
+  try {
+    const request = {
+      operation: "changelog.apply" as const,
+      payload: { entries: [{ category: "Fixed", text: "Retry safely" }] },
+    };
+    const first = await fixture.tools.workit_external_action.execute(request, {
+      directory: fixture.root,
+      sessionID: fixture.actor,
+    });
+    const proposal = JSON.parse(first as string).details.proposal;
+    fixture.receipts.record(
+      {
+        sessionID: fixture.actor,
+        callID: "decision-retry",
+        args: { questions: [workitQuestion(proposal.presented, proposal.approvedContent)] },
+      },
+      { metadata: { answers: [["approved"]] } },
+    );
+    const record = {
+      schemaVersion: 1,
+      action: "record",
+      taskId: fixture.task.id,
+      purpose: "action",
+      binding: {
+        taskId: fixture.task.id,
+        workspaceId: fixture.workspace.id,
+        scope: fixture.task.intent.data.scope,
+        presented: proposal.presented,
+        approvedContent: proposal.approvedContent,
+        contentRefs: [],
+      },
+      response: "approved",
+      requirementIds: [],
+    };
+    const failed = JSON.parse(
+      await fixture.tools.workit_decision.execute(
+        { ...record, expectedRevision: "00000000-0000-4000-8000-000000000000" },
+        { directory: fixture.root, sessionID: fixture.actor },
+      ),
+    );
+    expect(failed).toMatchObject({ ok: false, code: "revision_conflict" });
+    expect(
+      JSON.parse(
+        await fixture.tools.workit_decision.execute(record, {
+          directory: fixture.root,
+          sessionID: fixture.actor,
+        }),
+      ).ok,
+    ).toBe(true);
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
 test("OpenCode exposes the eight shared families plus init_apply", async () => {
   const hooks = await plugin(context as never);
   expect(Object.keys(hooks.tool ?? {})).toEqual([
@@ -1112,6 +1171,47 @@ test("OpenCode requires writer ownership before local actions", async () => {
     expect(String(parsed.error)).toContain("writer ownership");
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a later push of the same branch resolves as a new action", async () => {
+  const fixture = createChangelogActionFixture("repeat-push");
+  const remote = mkdtempSync(join(tmpdir(), "workit-repeat-push-remote-"));
+  try {
+    spawnSync("git", ["init", "--bare", "-q"], { cwd: remote });
+    spawnSync("git", ["checkout", "-q", "-b", "feature/repeat-push"], { cwd: fixture.root });
+    spawnSync("git", ["remote", "add", "origin", `file://${remote}`], { cwd: fixture.root });
+    const request = { operation: "git.push" as const, payload: { branch: "feature/repeat-push" } };
+    await approveActionFor({
+      root: fixture.root,
+      actor: fixture.actor,
+      task: fixture.task,
+      workspace: fixture.workspace,
+      request,
+      callID: "repeat-push",
+    });
+    expect(
+      JSON.parse(
+        await fixture.tools.workit_external_action.execute(request, {
+          directory: fixture.root,
+          sessionID: fixture.actor,
+        }),
+      ),
+    ).toMatchObject({ ok: true });
+    writeFileSync(join(fixture.root, "later.txt"), "later\n");
+    spawnSync("git", ["add", "later.txt"], { cwd: fixture.root });
+    spawnSync("git", ["commit", "-qm", "later"], { cwd: fixture.root });
+    const later = JSON.parse(
+      await fixture.tools.workit_external_action.execute(request, {
+        directory: fixture.root,
+        sessionID: fixture.actor,
+      }),
+    );
+    expect(later).toMatchObject({ ok: false, code: "needs_input" });
+    expect(later.error).not.toContain("already settled");
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+    rmSync(remote, { recursive: true, force: true });
   }
 });
 

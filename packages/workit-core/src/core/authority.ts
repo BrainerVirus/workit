@@ -23,6 +23,7 @@ import {
   type Utc,
 } from "./task-contract";
 import { TaskStore } from "./task-store";
+import { currentWriterOwnsTask } from "./workers";
 
 export type NativeAuthorityContext = {
   now: Utc;
@@ -542,6 +543,27 @@ export const storedDecisionApplicable = (
       verifyDecisionContentAtRoot(store.root, entry.data.binding).ok,
   );
 
+const approvalAuthorityMatches = (
+  store: TaskStore,
+  task: TaskRecord,
+  approval: Provenance,
+  current: Provenance,
+): boolean => {
+  if (approval.kind !== "host_observed" || approval.receipts.length === 0) return false;
+  if (provenanceMatches(approval, current)) return true;
+  const session = current.kind === "host_observed" ? current.session : null;
+  if (!session || session.kind !== "host") return false;
+  const workspace = store.readWorkspace();
+  return (
+    workspace.ok &&
+    workspace.data !== null &&
+    currentWriterOwnsTask(task, workspace.data, {
+      host: session.host,
+      actor: session.handle,
+    })
+  );
+};
+
 const validateAction = (
   store: TaskStore,
   task: TaskRecord,
@@ -574,11 +596,7 @@ const validateAction = (
     return failure("permission_denied", "native reservation authority does not match decision");
   if (decision.response !== "approved")
     return failure("permission_denied", "decision was rejected");
-  if (
-    entry.provenance.kind !== "host_observed" ||
-    entry.provenance.receipts.length === 0 ||
-    !provenanceMatches(entry.provenance, authority.provenance)
-  )
+  if (!approvalAuthorityMatches(store, task, entry.provenance, authority.provenance))
     return failure("permission_denied", "action approval lacks native receipt assurance");
   // Standing auto-approval receipts carry no live question. They authorize
   // only while the referenced workspace rule still covers the operation —
@@ -793,7 +811,7 @@ export function settleAction(input: SettleActionInput): Result<Entry<Decision>> 
       if (!entry) return failure("not_found", "decision not found");
       if (!authorityDecisionMatches(authority, entry.data))
         return failure("permission_denied", "native settlement authority does not match decision");
-      if (!provenanceMatches(entry.provenance, authority.provenance))
+      if (!approvalAuthorityMatches(input.store, current, entry.provenance, authority.provenance))
         return failure("permission_denied", "native settlement caller does not match approval");
       if (entry.data.purpose !== "action" || entry.data.digest !== decisionDigest(entry.data))
         return failure("permission_denied", "decision binding is invalid");
@@ -931,7 +949,7 @@ export function reconcileAction(input: ReconcileActionInput): Result<Entry<Decis
         return failure("not_found", "decision not found");
       if (
         !authorityDecisionMatches(authority, entry.data) ||
-        !provenanceMatches(entry.provenance, authority.provenance)
+        !approvalAuthorityMatches(input.store, current, entry.provenance, authority.provenance)
       )
         return failure("permission_denied", "native reconciliation caller does not match approval");
       if (
