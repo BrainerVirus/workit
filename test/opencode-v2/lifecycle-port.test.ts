@@ -9,7 +9,7 @@ import { createV2Lifecycle, type V2SessionInfo } from "@/packages/workit-opencod
 
 const git = (cwd: string, args: string[]) => spawnSync("git", args, { cwd });
 
-const fixture = () => {
+const fixture = (taskActor = "coordinator", coordinator = "coordinator") => {
   const root = mkdtempSync(join(tmpdir(), "workit-v2-lifecycle-"));
   for (const args of [
     ["init", "-q", "-b", "feature/v2-lifecycle"],
@@ -25,14 +25,14 @@ const fixture = () => {
   // consumes the oldest assigned worker first, and equal timestamps would
   // make that order depend on random ids.
   let tick = 0;
-  const core = new WorkitCore(store, {
+  const creator = new WorkitCore(store, {
     root,
-    caller: { host: "opencode", actor: "coordinator" },
+    caller: { host: "opencode", actor: taskActor },
     capabilities: [],
     constraints: [],
     now: () => new Date(Date.UTC(2026, 0, 1, 0, 0, tick++)).toISOString(),
   });
-  const started = core.task(
+  const started = creator.task(
     taskStartRequest({
       intent: { objective: "v2 lifecycle", scope: scope({ paths: ["."] }), authorityRefs: [] },
     }),
@@ -41,6 +41,16 @@ const fixture = () => {
   const task = store.readTask((started.data as { id: string }).id);
   const workspace = store.readWorkspace();
   if (!task.ok || !workspace.ok || !workspace.data) throw new Error("fixture missing");
+  const core =
+    taskActor === coordinator
+      ? creator
+      : new WorkitCore(store, {
+          root,
+          caller: { host: "opencode", actor: coordinator },
+          capabilities: [],
+          constraints: [],
+          now: () => new Date(Date.UTC(2026, 0, 1, 0, 0, tick++)).toISOString(),
+        });
   const assignWorker = (role: "reviewer" | "investigator") => {
     const current = store.readTask(task.data.id);
     const currentWorkspace = store.readWorkspace();
@@ -66,7 +76,7 @@ const fixture = () => {
   };
   assignWorker("reviewer");
   const sessions = new Map<string, V2SessionInfo>([
-    ["coordinator", { id: "coordinator", directory: root }],
+    [coordinator, { id: coordinator, directory: root }],
   ]);
   const lifecycle = createV2Lifecycle({
     root,
@@ -101,7 +111,7 @@ const fixture = () => {
   };
 };
 
-test("session.created binds exactly one assigned worker before its first turn", async () => {
+test("session.created never consumes an assigned worker without a matching subagent result", async () => {
   const value = fixture();
   try {
     await value.lifecycle.handleEvent({
@@ -112,13 +122,8 @@ test("session.created binds exactly one assigned worker before its first turn", 
         location: { directory: value.root },
       },
     });
-    const worker = value.worker();
-    expect(worker.data.state).toBe("running");
-    expect(worker.data.session).toEqual({
-      kind: "host",
-      host: "opencode",
-      handle: "ses_child1",
-    });
+    expect(value.worker().data.state).toBe("assigned");
+    expect(value.worker().data.session).toBeNull();
   } finally {
     value.cleanup();
   }
@@ -133,8 +138,10 @@ test("a fresh managed launch prepares the durable dispatching claim, then binds 
       id: "call_1",
       input: { description: "child", prompt: "work", agent: "general" },
     });
-    expect(value.worker().data.state).toBe("dispatching");
-
+    expect(value.worker().data).toMatchObject({
+      state: "dispatching",
+      coordinator: { kind: "host", host: "opencode", handle: "coordinator" },
+    });
     value.sessions.set("ses_child1", {
       id: "ses_child1",
       parentID: "coordinator",
@@ -163,7 +170,75 @@ test("a fresh managed launch prepares the durable dispatching claim, then binds 
       handle: "ses_child1",
     });
     expect(worker.data.state).toBe("stopped");
+    expect(worker.data.report).toEqual({
+      outcome: "completed",
+      summary: '<subagent sessionID="ses_child1" state="completed">ok</subagent>',
+      evidenceIds: [],
+      findingIds: [],
+    });
     expect(value.lifecycle.pendingLaunch("coordinator")).toBe(false);
+  } finally {
+    value.cleanup();
+  }
+});
+
+test("a resumed V2 coordinator claims its own assigned worker on an older task", async () => {
+  const value = fixture("creator", "coordinator");
+  try {
+    await value.lifecycle.executeBefore({
+      tool: "subagent",
+      sessionID: "coordinator",
+      id: "call_1",
+      input: {},
+    });
+    expect(value.worker().data.state).toBe("dispatching");
+    value.sessions.set("ses_child1", {
+      id: "ses_child1",
+      parentID: "coordinator",
+      directory: value.root,
+    });
+    await value.lifecycle.executeAfter({
+      tool: "subagent",
+      sessionID: "coordinator",
+      id: "call_1",
+      input: {},
+      status: "completed",
+      result: { metadata: { sessionID: "ses_child1" }, content: [] },
+    });
+    expect(value.worker().data.state).toBe("running");
+    await expect(
+      value.lifecycle.executeBefore({
+        tool: "subagent",
+        sessionID: "coordinator",
+        id: "continue",
+        input: { sessionID: "ses_child1" },
+      }),
+    ).resolves.toBeUndefined();
+
+    const reloaded = createV2Lifecycle({
+      root: value.root,
+      getSession: async (sessionID) => value.sessions.get(sessionID) ?? null,
+    });
+    value.sessions.set("ses_child1", {
+      id: "ses_child1",
+      parentID: "other",
+      directory: value.root,
+    });
+    await reloaded.handleEvent({
+      type: "session.execution.succeeded",
+      data: { sessionID: "ses_child1" },
+    });
+    expect(value.worker().data.state).toBe("running");
+    value.sessions.set("ses_child1", {
+      id: "ses_child1",
+      parentID: "coordinator",
+      directory: value.root,
+    });
+    await reloaded.handleEvent({
+      type: "session.execution.succeeded",
+      data: { sessionID: "ses_child1" },
+    });
+    expect(value.worker().data.state).toBe("stopped");
   } finally {
     value.cleanup();
   }
@@ -192,7 +267,7 @@ test("concurrent fresh launches share one synchronous slot", async () => {
   }
 });
 
-test("session.created settles a missed launch and frees the slot", async () => {
+test("session.created settles the exact live launch before the child runs", async () => {
   const value = fixture();
   try {
     await value.lifecycle.executeBefore({
@@ -201,7 +276,6 @@ test("session.created settles a missed launch and frees the slot", async () => {
       id: "call_1",
       input: {},
     });
-    // session.created arrives without the matching execute.after.
     await value.lifecycle.handleEvent({
       type: "session.created",
       data: {
@@ -210,7 +284,10 @@ test("session.created settles a missed launch and frees the slot", async () => {
         location: { directory: value.root },
       },
     });
-    expect(value.worker().data.state).toBe("running");
+    expect(value.worker().data).toMatchObject({
+      state: "running",
+      session: { handle: "ses_child1" },
+    });
     expect(value.lifecycle.pendingLaunch("coordinator")).toBe(false);
   } finally {
     value.cleanup();
@@ -273,7 +350,7 @@ test("an ambiguous cancelled result vetoes the next launch until it is reconcile
   }
 });
 
-test("continuation passes for a direct child and consumes no worker", async () => {
+test("continuation requires an existing running worker binding", async () => {
   const value = fixture();
   try {
     value.sessions.set("ses_child1", {
@@ -281,14 +358,14 @@ test("continuation passes for a direct child and consumes no worker", async () =
       parentID: "coordinator",
       directory: value.root,
     });
-    await value.lifecycle.executeBefore({
-      tool: "subagent",
-      sessionID: "coordinator",
-      id: "call_1",
-      input: { sessionID: "ses_child1", prompt: "continue" },
-    });
-    expect(value.worker().data.state).toBe("assigned");
-    expect(value.lifecycle.pendingLaunch("coordinator")).toBe(false);
+    await expect(
+      value.lifecycle.executeBefore({
+        tool: "subagent",
+        sessionID: "coordinator",
+        id: "call_1",
+        input: { sessionID: "ses_child1", prompt: "continue" },
+      }),
+    ).rejects.toThrow(/running Workit worker/);
 
     await expect(
       value.lifecycle.executeBefore({
@@ -342,13 +419,24 @@ test("nested launches are denied and unmanaged native use stays untouched", asyn
 test("execution.succeeded and sparse deletion stop bound children", async () => {
   const value = fixture();
   try {
-    await value.lifecycle.handleEvent({
-      type: "session.created",
-      data: {
-        sessionID: "ses_child1",
-        parentID: "coordinator",
-        location: { directory: value.root },
-      },
+    value.sessions.set("ses_child1", {
+      id: "ses_child1",
+      parentID: "coordinator",
+      directory: value.root,
+    });
+    await value.lifecycle.executeBefore({
+      tool: "subagent",
+      sessionID: "coordinator",
+      id: "call_1",
+      input: {},
+    });
+    await value.lifecycle.executeAfter({
+      tool: "subagent",
+      sessionID: "coordinator",
+      id: "call_1",
+      input: {},
+      status: "completed",
+      result: { metadata: { sessionID: "ses_child1" }, content: [] },
     });
     expect(value.worker().data.state).toBe("running");
     value.sessions.delete("ses_child1");
@@ -371,24 +459,30 @@ test("execution.succeeded and sparse deletion stop bound children", async () => 
 test("execution.started and terminal execution events map to running and stopped", async () => {
   const value = fixture();
   try {
-    await value.lifecycle.handleEvent({
-      type: "session.created",
-      data: {
-        sessionID: "ses_child1",
-        parentID: "coordinator",
-        location: { directory: value.root },
-      },
+    value.sessions.set("ses_child1", {
+      id: "ses_child1",
+      parentID: "coordinator",
+      directory: value.root,
+    });
+    await value.lifecycle.executeBefore({
+      tool: "subagent",
+      sessionID: "coordinator",
+      id: "call_1",
+      input: {},
+    });
+    await value.lifecycle.executeAfter({
+      tool: "subagent",
+      sessionID: "coordinator",
+      id: "call_1",
+      input: {},
+      status: "completed",
+      result: { metadata: { sessionID: "ses_child1" }, content: [] },
     });
     await value.lifecycle.handleEvent({
       type: "session.execution.started",
       data: { sessionID: "ses_child1" },
     });
     expect(value.worker().data.state).toBe("running");
-    value.sessions.set("ses_child1", {
-      id: "ses_child1",
-      parentID: "coordinator",
-      directory: value.root,
-    });
     await value.lifecycle.handleEvent({
       type: "session.execution.succeeded",
       data: { sessionID: "ses_child1" },

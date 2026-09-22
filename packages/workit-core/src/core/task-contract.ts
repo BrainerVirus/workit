@@ -658,6 +658,7 @@ export const workerSchema = z
     assignment: assignmentSchema,
     state: z.enum(["assigned", "dispatching", "running", "cancelling", "stopped", "unknown"]),
     session: refSchema.nullable(),
+    coordinator: refSchema.optional(),
     report: workerReportSchema.nullable(),
   })
   .strict();
@@ -808,6 +809,8 @@ export const taskSummarySchema = z
   })
   .strict();
 export type TaskSummary = z.infer<typeof taskSummarySchema>;
+export const taskListItemSchema = taskSummarySchema.omit({ policy: true, requirements: true });
+export type TaskListItem = z.infer<typeof taskListItemSchema>;
 export const exportBundleSchema = z
   .object({
     schemaVersion: z.literal(1),
@@ -838,11 +841,15 @@ const taskOperations = {
     expectedWorkspaceRevision: revision.nullable().optional(),
     intent: intentSchema,
   }),
-  list: operation({ action: z.literal("list") }),
+  list: operation({
+    action: z.literal("list"),
+    status: z.enum(["open", "closed", "all"]).optional(),
+    limit: z.number().int().min(1).max(50).optional(),
+  }),
   inspect: operation({
     action: z.literal("inspect"),
     ...taskId,
-    view: z.enum(["summary", "full"]),
+    view: z.enum(["summary", "full"]).optional(),
   }),
   revise: operation({
     action: z.literal("revise"),
@@ -870,7 +877,7 @@ const taskOperations = {
     ...taskId,
     ...revisions,
     expectedWorkspaceRevision: revision.optional(),
-    authorityRefs: z.array(refSchema),
+    authorityRefs: z.array(refSchema).optional(),
   }),
   close: operation({
     action: z.literal("close"),

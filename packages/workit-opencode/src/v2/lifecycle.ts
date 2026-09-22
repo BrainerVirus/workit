@@ -1,7 +1,14 @@
-import { TaskStore, WorkitCore, type WorkerDispatch } from "@brainervirus/workit-core/src/core";
+import {
+  TaskStore,
+  WorkitCore,
+  type TaskRecord,
+  type WorkerDispatch,
+  type WorkspaceRecord,
+} from "@brainervirus/workit-core/src/core";
 import {
   nativeDispatchFor,
   nativeWorkerFor,
+  workerCoordinatorFor,
   type DirectChildren,
   type DispatchGeneration,
 } from "../tools/workit";
@@ -119,20 +126,33 @@ export const createV2Lifecycle = (deps: V2LifecycleDeps): V2Lifecycle => {
     return session;
   };
 
+  const managedByCoordinator = (
+    task: TaskRecord,
+    workspace: WorkspaceRecord,
+    coordinator: string,
+  ): boolean =>
+    task.status === "active" &&
+    task.workspaceId === workspace.id &&
+    ((task.intent.provenance.session?.kind === "host" &&
+      task.intent.provenance.session.host === "opencode" &&
+      task.intent.provenance.session.handle === coordinator) ||
+      task.workers.some(
+        (entry) =>
+          entry.provenance.session?.kind === "host" &&
+          entry.provenance.session.host === "opencode" &&
+          entry.provenance.session.handle === coordinator,
+      ) ||
+      (workspace.writer?.owner.taskId === task.id &&
+        workspace.writer.owner.session.host === "opencode" &&
+        workspace.writer.owner.session.handle === coordinator));
+
   const ownsActiveTask = (coordinator: string): boolean => {
     try {
       const store = new TaskStore(root);
       const workspace = store.readWorkspace();
       const listed = store.listTasks();
       if (!workspace.ok || !workspace.data || !listed.ok) return false;
-      return listed.data.some(
-        (task) =>
-          task.status === "active" &&
-          task.workspaceId === workspace.data?.id &&
-          task.intent.provenance.session?.kind === "host" &&
-          task.intent.provenance.session.host === "opencode" &&
-          task.intent.provenance.session.handle === coordinator,
-      );
+      return listed.data.some((task) => managedByCoordinator(task, workspace.data!, coordinator));
     } catch {
       return false;
     }
@@ -178,16 +198,11 @@ export const createV2Lifecycle = (deps: V2LifecycleDeps): V2Lifecycle => {
     const workspace = store.readWorkspace();
     const listed = store.listTasks();
     if (!workspace.ok || !workspace.data || !listed.ok) return "unmanaged";
-    const owned = listed.data.filter(
-      (task) =>
-        task.status === "active" &&
-        task.workspaceId === workspace.data?.id &&
-        task.intent.provenance.session?.kind === "host" &&
-        task.intent.provenance.session.host === "opencode" &&
-        task.intent.provenance.session.handle === coordinator,
+    const managed = listed.data.filter((task) =>
+      managedByCoordinator(task, workspace.data!, coordinator),
     );
-    if (owned.length === 0) return "unmanaged";
-    const eligible = owned.flatMap((task) =>
+    if (managed.length === 0) return "unmanaged";
+    const eligible = managed.flatMap((task) =>
       task.workers
         .filter(
           (entry) =>
@@ -267,8 +282,8 @@ export const createV2Lifecycle = (deps: V2LifecycleDeps): V2Lifecycle => {
     parentID: string,
     state: "running" | "stopped" | "unknown",
     binding?: { taskId: string; workerId: string },
-    initial = false,
     deleted = false,
+    report?: { outcome: "completed"; summary: string; evidenceIds: []; findingIds: [] },
   ): Promise<void> => {
     const store = new TaskStore(root);
     const listed = store.listTasks();
@@ -286,7 +301,7 @@ export const createV2Lifecycle = (deps: V2LifecycleDeps): V2Lifecycle => {
         : [],
     );
     const matches = persisted.filter(({ entry }) => entry.data.session?.kind === "host");
-    if (binding && !initial && matches.length !== 1) return;
+    if (binding && matches.length !== 1) return;
     const selected = binding
       ? persisted.find(
           ({ task, entry }) => task.id === binding.taskId && entry.id === binding.workerId,
@@ -295,17 +310,18 @@ export const createV2Lifecycle = (deps: V2LifecycleDeps): V2Lifecycle => {
         ? matches[0]
         : undefined;
     if (!selected) return;
-    if (!initial && selected.entry.data.session?.kind !== "host") return;
+    if (selected.entry.data.session?.kind !== "host") return;
     if (selected.entry.provenance.session?.kind !== "host") return;
-    if (!binding) {
-      const coordinator = selected.task.intent.provenance.session;
-      if (coordinator?.kind !== "host" || coordinator.host !== "opencode") return;
-      parentID = coordinator.handle;
-    }
-    if (!initial && !deleted) {
+    if (!binding && deleted) return;
+    if (!deleted) {
       const observed = await readSession(sessionID);
-      if (!observed || !sameWorkspace(root, observed.directory) || parentOf(observed) !== parentID)
-        return;
+      const observedParent = parentOf(observed);
+      if (!observed || !sameWorkspace(root, observed.directory) || !observedParent) return;
+      if (!binding) {
+        const coordinator = workerCoordinatorFor(selected.task, selected.entry);
+        if (!coordinator || observedParent !== coordinator) return;
+        parentID = coordinator;
+      } else if (observedParent !== parentID) return;
     }
     directChildren.set(sessionID, parentID);
     const core = new WorkitCore(store, {
@@ -323,6 +339,7 @@ export const createV2Lifecycle = (deps: V2LifecycleDeps): V2Lifecycle => {
       expectedWorkspaceRevision: workspace.data.revision,
       state,
       session: { kind: "host", host: "opencode", handle: sessionID },
+      ...(report ? { report } : {}),
       observation: { event: state, sessionID },
     });
     if (!result.ok) return;
@@ -384,6 +401,22 @@ export const createV2Lifecycle = (deps: V2LifecycleDeps): V2Lifecycle => {
       if (!child || parentOf(child) !== coordinator)
         throw new Error(
           "delegation_lineage_denied: a continuation sessionID must name an existing direct child of the coordinator",
+        );
+      const listed = new TaskStore(root).listTasks();
+      const bound = listed.ok
+        ? listed.data.filter((task) =>
+            task.workers.some(
+              (worker) =>
+                worker.data.state === "running" &&
+                worker.data.session?.kind === "host" &&
+                worker.data.session.handle === childID &&
+                workerCoordinatorFor(task, worker) === coordinator,
+            ),
+          ).length
+        : 0;
+      if (bound !== 1 && ownsActiveTask(coordinator))
+        throw new Error(
+          "delegation_lineage_denied: a continuation sessionID must name a running Workit worker",
         );
       return;
     }
@@ -456,7 +489,13 @@ export const createV2Lifecycle = (deps: V2LifecycleDeps): V2Lifecycle => {
           : null;
       if (completedChild) {
         const binding = lifecycleBindings.get(completedChild);
-        if (binding) await observeLifecycle(completedChild, coordinator, "stopped", binding);
+        if (binding)
+          await observeLifecycle(completedChild, coordinator, "stopped", binding, false, {
+            outcome: "completed",
+            summary: output.trim() || "Native worker completed.",
+            evidenceIds: [],
+            findingIds: [],
+          });
       }
     } else {
       const message = String(
@@ -483,48 +522,12 @@ export const createV2Lifecycle = (deps: V2LifecycleDeps): V2Lifecycle => {
     directory: string;
   }): Promise<void> => {
     if (!sameWorkspace(root, data.directory)) return;
+    directChildren.set(data.sessionID, data.parentID);
     const live = dispatches.get(data.parentID);
     if (live) {
-      live.generation.childCreated = true;
-      // Any validated child of this coordinator is a reconciliation target
-      // even when it does not bind to the reserved worker.
       live.childID = data.sessionID;
+      commitDispatchStart(data.parentID, data.sessionID);
     }
-    const store = new TaskStore(root);
-    const workspace = store.readWorkspace();
-    const listed = store.listTasks();
-    if (!workspace.ok || !workspace.data || !listed.ok) return;
-    const candidates = listed.data.flatMap((task) =>
-      task.status === "active" && task.workspaceId === workspace.data?.id
-        ? task.workers
-            .filter(
-              (entry) =>
-                (entry.data.state === "assigned" || entry.data.state === "dispatching") &&
-                entry.data.session === null &&
-                entry.provenance.session?.kind === "host" &&
-                entry.provenance.session.host === "opencode" &&
-                entry.provenance.session.handle === data.parentID,
-            )
-            .map((entry) => ({ task, entry }))
-        : [],
-    );
-    const next = oldestOfSingleTask(candidates);
-    if (!next) return;
-    directChildren.set(data.sessionID, data.parentID);
-    if (
-      live &&
-      live.taskId === next.task.id &&
-      live.workerId === next.entry.id &&
-      commitDispatchStart(data.parentID, data.sessionID)
-    )
-      return;
-    await observeLifecycle(
-      data.sessionID,
-      data.parentID,
-      "running",
-      { taskId: next.task.id, workerId: next.entry.id },
-      true,
-    );
   };
 
   const handleEvent = async (event: V2Event): Promise<void> => {
@@ -552,7 +555,7 @@ export const createV2Lifecycle = (deps: V2LifecycleDeps): V2Lifecycle => {
       if (typeof directory === "string" && !sameWorkspace(root, directory)) return;
       // Sparse deletion carries no session facts; the persisted child binding
       // is the identity proof, and only deletion may skip a live read.
-      await observeLifecycle(sessionID, binding?.parentID ?? "", "stopped", binding, false, true);
+      await observeLifecycle(sessionID, binding?.parentID ?? "", "stopped", binding, true);
       return;
     }
     const state = type === "session.execution.started" ? "running" : "stopped";

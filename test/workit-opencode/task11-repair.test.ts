@@ -36,7 +36,33 @@ const start = (root: string, actor: string, paths = ["."]) => {
   return { store, core, task: task.data, workspace: workspace.data };
 };
 
-test("session.created binds exactly one assigned worker before its first turn", async () => {
+const coordinatorClient = (root: string, coordinator = "coordinator") => ({
+  session: {
+    get: async ({ path: { id } }: { path: { id: string } }) => ({
+      data:
+        id === coordinator
+          ? { id, directory: root }
+          : { id, directory: root, parentID: coordinator },
+    }),
+  },
+});
+
+const launchWorker = async (hooks: Awaited<ReturnType<typeof plugin>>, child = "child") => {
+  await hooks["tool.execute.before"]?.(
+    { tool: "task", sessionID: "coordinator", callID: `launch-${child}` },
+    { args: {} },
+  );
+  await hooks["tool.execute.after"]?.(
+    { tool: "task", sessionID: "coordinator", callID: `launch-${child}`, args: {} },
+    {
+      title: "task",
+      output: `<task id="${child}" state="running"></task>`,
+      metadata: { sessionId: child, parentSessionId: "coordinator" },
+    },
+  );
+};
+
+test("session.created alone does not bind an assigned worker", async () => {
   const root = mkdtempSync(join(tmpdir(), "workit-task11-lineage-"));
   try {
     const active = start(root, "coordinator");
@@ -65,12 +91,8 @@ test("session.created binds exactly one assigned worker before its first turn", 
       },
     } as never);
     const updated = active.store.readTask(active.task.id);
-    expect(updated.ok && updated.data.workers[0].data.state).toBe("running");
-    expect(updated.ok && updated.data.workers[0].data.session).toEqual({
-      kind: "host",
-      host: "opencode",
-      handle: "child",
-    });
+    expect(updated.ok && updated.data.workers[0].data.state).toBe("assigned");
+    expect(updated.ok && updated.data.workers[0].data.session).toBeNull();
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -111,7 +133,7 @@ test("unrelated session events do not reconcile a worker", async () => {
       },
     } as never);
     const updated = active.store.readTask(active.task.id);
-    expect(updated.ok && updated.data.workers[0].data.state).toBe("running");
+    expect(updated.ok && updated.data.workers[0].data.state).toBe("assigned");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -427,13 +449,8 @@ test("bound deleted events accept sparse payloads for the bound worker", async (
     });
     expect(assigned.ok).toBe(true);
     if (!assigned.ok) throw new Error(assigned.error);
-    const hooks = await plugin(input(root) as never);
-    await hooks.event?.({
-      event: {
-        type: "session.created",
-        properties: { info: { id: "child", directory: root, parentID: "coordinator" } },
-      },
-    } as never);
+    const hooks = await plugin(input(root, coordinatorClient(root)) as never);
+    await launchWorker(hooks);
     const running = active.store.readTask(active.task.id);
     expect(running.ok && running.data.workers[0].data.state).toBe("running");
     // A contradictory payload drops even with a live binding: the strict
@@ -495,12 +512,8 @@ test("bound lifecycle events reject ambiguous child worker handles", async () =>
       version: "1.18.30",
       time: { created: 0, updated: 0 },
     };
-    const hooks = await plugin(
-      input(root, { session: { get: async () => ({ data: info }) } }) as never,
-    );
-    await hooks.event?.({
-      event: { type: "session.created", properties: { info } },
-    } as never);
+    const hooks = await plugin(input(root, coordinatorClient(root)) as never);
+    await launchWorker(hooks);
     const firstRunning = active.store.readTask(active.task.id);
     expect(firstRunning.ok && firstRunning.data.workers[0].data.state).toBe("running");
 

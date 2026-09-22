@@ -28,6 +28,7 @@ import {
   observeQuestionEvent,
   sameWorkspace,
   sessionParent,
+  workerCoordinatorFor,
   type DirectChildren,
   type DispatchGeneration,
 } from "../tools/workit";
@@ -203,16 +204,25 @@ const plugin: Plugin = async ({ client, directory }) => {
     const workspace = store.readWorkspace();
     const listed = store.listTasks();
     if (!workspace.ok || !workspace.data || !listed.ok) return "unmanaged";
-    const owned = listed.data.filter(
+    const managed = listed.data.filter(
       (task) =>
         task.status === "active" &&
         task.workspaceId === workspace.data?.id &&
-        task.intent.provenance.session?.kind === "host" &&
-        task.intent.provenance.session.host === "opencode" &&
-        task.intent.provenance.session.handle === coordinator,
+        ((task.intent.provenance.session?.kind === "host" &&
+          task.intent.provenance.session.host === "opencode" &&
+          task.intent.provenance.session.handle === coordinator) ||
+          task.workers.some(
+            (entry) =>
+              entry.provenance.session?.kind === "host" &&
+              entry.provenance.session.host === "opencode" &&
+              entry.provenance.session.handle === coordinator,
+          ) ||
+          (workspace.data.writer?.owner.taskId === task.id &&
+            workspace.data.writer.owner.session.host === "opencode" &&
+            workspace.data.writer.owner.session.handle === coordinator)),
     );
-    if (owned.length === 0) return "unmanaged";
-    const eligible = owned.flatMap((task) =>
+    if (managed.length === 0) return "unmanaged";
+    const eligible = managed.flatMap((task) =>
       task.workers
         .filter(
           (entry) =>
@@ -306,8 +316,8 @@ const plugin: Plugin = async ({ client, directory }) => {
     parentID: string,
     state: "running" | "stopped" | "unknown",
     binding?: { taskId: string; workerId: string },
-    initial = false,
     eventInfo?: SessionInfo,
+    report?: { outcome: "completed"; summary: string; evidenceIds: []; findingIds: [] },
   ) => {
     const store = new TaskStore(directory);
     const listed = store.listTasks();
@@ -330,7 +340,7 @@ const plugin: Plugin = async ({ client, directory }) => {
     const matches = persisted.filter(({ entry }) => entry.data.session?.kind === "host");
     // A bound child handle shared by several workers stays unresolved: moving
     // one of them would forge the other's lifecycle.
-    if (binding && !initial && matches.length !== 1) {
+    if (binding && matches.length !== 1) {
       droppedLifecycle(sessionID, "bound child worker handle is ambiguous");
       return;
     }
@@ -348,7 +358,7 @@ const plugin: Plugin = async ({ client, directory }) => {
       );
       return;
     }
-    if (!initial && selected.entry.data.session?.kind !== "host") {
+    if (selected.entry.data.session?.kind !== "host") {
       droppedLifecycle(sessionID, "selected worker has no bound host session");
       return;
     }
@@ -356,34 +366,30 @@ const plugin: Plugin = async ({ client, directory }) => {
       droppedLifecycle(sessionID, "selected worker provenance is not host-observed");
       return;
     }
-    if (!binding) {
-      // ponytail: running lifecycle overwrites worker provenance with the child
-      // session; task intent is the persisted coordinator parent after restart.
-      const coordinator = selected.task.intent.provenance.session;
-      if (coordinator?.kind !== "host" || coordinator.host !== "opencode") {
-        droppedLifecycle(sessionID, "coordinator session is not validated");
+    // OpenCode deletes the session before the follow-up GET can succeed;
+    // only session.deleted may use its full, independently validated payload.
+    // With a live launch binding, a sparse deleted payload (id only) still
+    // ends the bound worker; without one, the full payload stays required.
+    const observed = eventInfo ?? (await sessionData(client, sessionID));
+    if (binding && eventInfo) {
+      if (!deletedSessionEnd(directory, sessionID, parentID, observed)) {
+        droppedLifecycle(sessionID, "deleted session payload contradicts the binding");
         return;
       }
-      parentID = coordinator.handle;
+    } else if (!trustedSession(directory, sessionID, observed)) {
+      droppedLifecycle(sessionID, "live session observation is not trusted");
+      return;
     }
-    if (!initial) {
-      // OpenCode deletes the session before the follow-up GET can succeed;
-      // only session.deleted may use its full, independently validated payload.
-      // With a live launch binding, a sparse deleted payload (id only) still
-      // ends the bound worker; without one, the full payload stays required.
-      const observed = eventInfo ?? (await sessionData(client, sessionID));
-      if (binding && eventInfo) {
-        if (!deletedSessionEnd(directory, sessionID, parentID, observed)) {
-          droppedLifecycle(sessionID, "deleted session payload contradicts the binding");
-          return;
-        }
-      } else if (
-        !trustedSession(directory, sessionID, observed) ||
-        observed.parentID !== parentID
-      ) {
-        droppedLifecycle(sessionID, "live session observation is not trusted");
+    if (!binding) {
+      const coordinator = workerCoordinatorFor(selected.task, selected.entry);
+      if (!coordinator || observed.parentID !== coordinator) {
+        droppedLifecycle(sessionID, "live session parent contradicts persisted coordinator");
         return;
       }
+      parentID = coordinator;
+    } else if (!eventInfo && (observed as SessionInfo).parentID !== parentID) {
+      droppedLifecycle(sessionID, "live session parent contradicts the binding");
+      return;
     }
     directChildren.set(sessionID, parentID);
     const core = new WorkitCore(store, {
@@ -401,6 +407,7 @@ const plugin: Plugin = async ({ client, directory }) => {
       expectedWorkspaceRevision: workspace.data.revision,
       state,
       session: { kind: "host", host: "opencode", handle: sessionID },
+      ...(report ? { report } : {}),
       observation: { event: state, sessionID },
     });
     if (!result.ok) {
@@ -420,50 +427,8 @@ const plugin: Plugin = async ({ client, directory }) => {
       !sameWorkspace(directory, info.directory)
     )
       return;
-    // Any validated child of this coordinator ends the current generation's claim
-    // that no child exists, even when the session binds to no assigned worker.
-    const live = dispatches.get(info.parentID);
-    if (live) live.generation.childCreated = true;
-    const store = new TaskStore(directory);
-    const workspace = store.readWorkspace();
-    const listed = store.listTasks();
-    if (!workspace.ok || !workspace.data || !listed.ok) return;
-    const candidates = listed.data.flatMap((task) =>
-      task.status === "active" && task.workspaceId === workspace.data?.id
-        ? task.workers
-            .filter(
-              (entry) =>
-                (entry.data.state === "assigned" || entry.data.state === "dispatching") &&
-                entry.data.session === null &&
-                entry.provenance.session?.kind === "host" &&
-                entry.provenance.session.host === "opencode" &&
-                entry.provenance.session.handle === info.parentID,
-            )
-            .map((entry) => ({ task, entry }))
-        : [],
-    );
-    // Same queue rule as prepareDispatch: oldest unbound worker of a single
-    // task; cross-task ambiguity binds nothing.
-    const next = oldestOfSingleTask(candidates);
-    if (!next) return;
     directChildren.set(info.id, info.parentID);
-    if (
-      live &&
-      live.taskId === next.task.id &&
-      live.workerId === next.entry.id &&
-      commitDispatchStart(info.parentID, info.id)
-    )
-      return;
-    await observeLifecycle(
-      info.id,
-      info.parentID,
-      "running",
-      {
-        taskId: next.task.id,
-        workerId: next.entry.id,
-      },
-      true,
-    );
+    if (dispatches.has(info.parentID)) commitDispatchStart(info.parentID, info.id);
   };
   return {
     tool: tools,
@@ -520,7 +485,6 @@ const plugin: Plugin = async ({ client, directory }) => {
         binding?.parentID ?? "",
         state,
         binding,
-        false,
         event.type === "session.deleted" ? (properties.info as SessionInfo | undefined) : undefined,
       );
     },
@@ -576,8 +540,16 @@ const plugin: Plugin = async ({ client, directory }) => {
               input.sessionID,
               "stopped",
               completionBinding,
-              false,
               undefined,
+              {
+                outcome: "completed",
+                summary:
+                  outputText.match(/<task_result>([\s\S]*?)<\/task_result>/)?.[1]?.trim() ||
+                  outputText.trim() ||
+                  "Native worker completed.",
+                evidenceIds: [],
+                findingIds: [],
+              },
             );
         } else if (!resolved && /(?:cancel|interrupt|unknown|uncertain)/.test(state))
           unresolvedTaskLaunches.add(input.sessionID);
