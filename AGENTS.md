@@ -100,6 +100,7 @@ process around it.
   Doctor also fails when OpenCode's frozen `@latest` package cache lags the
   published `workit-opencode` (delete the cache dir and restart OpenCode).
 - Task state lives under `.workit/` in the checkout; never edit it directly. Use the eight shared operation families (`workit_task`, `workit_policy`, `workit_evidence`, `workit_finding`, `workit_decision`, `workit_worker`, `workit_writer`, `workit_state`) with closed `action` enums. CLI surface is `workit <family> <action>` (hyphenated actions). There are no `workit flow` aliases.
+- `task.list` defaults to a compact, 20-item active/paused projection; bounded closed/all history is opt-in with `status` and `limit`, and `task.inspect` defaults to `summary`. Closed views evaluate their captured closure candidate and carry no current writer lease.
 - Start work with `task.start` then `policy.assess`. Policy is adaptive: reassess when evidence or constraints change; `policy.preview` is read-only. Behavior and mechanical-low-risk assessments add a `pre-pr-cleanup` requirement that gates `hosting.pull_request` (and close) on a fresh passing deslop check or an approved limitation waiver. Optional spec/plan docs may live under `docs/<slug>/`, but they are not required gates for every task.
 - Task lifecycle is `unassessed` → `active`/`paused` → closed outcomes (`verified`, `accepted_limitations`, `stopped`). **Mandatory:** close the lead task with `task.close` once requirements are satisfied and repository verification passes — never finish while the task is still `active` or `paused`.
 - Helpers are bounded: they cannot widen scope, record binding decisions, close or pause the lead task, assign further helpers, or resolve blocking findings on behalf of the lead. Managed workit mutations require `writer.acquire` ownership; arbitrary file writes are host-policy and pass through every adapter ungated.
@@ -108,6 +109,7 @@ process around it.
 - Plan lists may chain branch, commit, and PR steps under one approval: a leading `{branch: name}` step names the branch the chain creates (otherwise the plan runs on the current branch), each step executes once in order against a history lease (rewritten history invalidates the chain), and branch-owned spec/plan docs under `docs/` ride onto the new branch while other dirt still binds `stash: "yes"` up front.
 - Auto-approval is opt-in per workspace (`autoApprove` classes plus `vcs.account` in `workspaces.json`, default off): covered branch, commit, push, PR, and merge effects execute with no question, each still recording a reservation with its exact binding. The rule is re-read live (removal restores questions instantly); protected targets never push, open PRs, or merge sources; push identity must match the area account; publish/release stay gated. Product decisions, waivers, and close outcomes always stay human.
 - Revisions are explicit and singular: every task mutation takes `expectedRevision` (plus `expectedWorkspaceRevision`), one field name everywhere, and exports/imports round-trip through the schema with a single resume path. Worker cancel is idempotent and lead-attested; pause keeps progress with its reason stored separately. Policy gates are enforced, never advisory: `before:write` blocks `writer.acquire` while unsatisfied, close blocks only on `before:close`, and unsatisfied reasons name the expected evidence kind.
+- Local external actions authorize the workspace's current writer session, not the task creator's original session. Settled commits and pushes deduplicate by their resolved Git target rather than request text, and uncertain branch/commit/push/changelog outcomes use read-only repository evidence before any retry.
 - Delegated authority is direct-child-only where the host exposes a trusted parent binding. OpenCode derives it from native session parentage; Cursor uses documented `subagentStart` identity for bounded assignment and never invents a cross-process token or receipt. Cursor `subagentStop` lacks a stable child identity, AskQuestion answers are policy-only, and arbitrary shell/Tab writes remain unavailable.
 - Worker launches are reservation-bound. `prepareWorkerDispatch` /
   `commitWorkerDispatch` are host-only core methods (never a ninth family, never
@@ -125,7 +127,9 @@ process around it.
   native task use outside an active Workit task stays unmanaged. Serial native
   `task` calls consume the oldest still-unbound worker first, but only within a
   single task: workers spread across tasks bind nothing, because no observed
-  child can prove which task the coordinator intends. A `cancelling` worker
+  child can prove which task the coordinator intends. A resumed coordinator is
+  identified by its current worker assignment (or writer lease), never blocked
+  by the task creator's historical session. A `cancelling` worker
   vetoes launches from its own coordinator until a repeated cancel on the ended
   worker confirms its stop; other coordinators proceed. Independent-review evidence
   only counts from a session that is neither the task creator's nor any
@@ -147,4 +151,5 @@ process around it.
   When a PR URL is observed from a route Workit did not enforce, load
   `workit-babysit` and drive it without claiming enforcement.
 - Before any GitHub remote mutation (push, PR create/close, branch delete), verify the effective identity with `gh api user --jq .login` and confirm it matches the checkout's area account — `gh auth status` shows config metadata and can disagree with the credential actually used (keyring vs hosts file). Never trust the status display for this check.
+- Development OpenCode V1 and V2 sessions watch every adapter/core TypeScript source loaded from the checkout. A later source modification emits one fail-open restart warning; installed bundles with no source tree simply retain their bundle marker.
 - Every created PR is babysat to merge-ready (drive default) unless declined with `babysit:false`: declare the babysit mode in the same turn as the PR URL and record a frontier brief in task progress per pass.
