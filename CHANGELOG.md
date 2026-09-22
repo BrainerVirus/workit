@@ -115,10 +115,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   committed only after core persistence succeeds, so revision conflicts remain
   retryable and contradictory V2 answer metadata cannot authorize a decision.
 - Standing auto-approval and local external actions follow the workspace's
-  current writer session across resumed host sessions. Repeated commits and pushes bind their freshly resolved
-  Git target instead of request text, while uncertain branch, commit, push, and
-  changelog effects use deterministic read-only reconciliation before retry;
-  stash reapplication binds and verifies the exact stash commit.
+  current writer session across resumed host sessions, even when other tasks
+  are active. Repeated commits and pushes bind their freshly resolved Git
+  target instead of request text, while uncertain branch, commit, push,
+  hosting merge, and changelog effects use deterministic read-only
+  reconciliation before retry; stash reapplication binds and verifies the
+  exact stash commit.
 - Task listing defaults to a bounded compact active/paused projection, supports
   explicit bounded closed/all history, and no longer recomputes closed tasks
   against today's checkout or attaches today's writer. `task.inspect` defaults

@@ -802,6 +802,22 @@ test("hosting reconciliation reads one exact GitHub result and preserves unknown
       ok: true,
       data: { outcome: "succeeded", data: { provider: "github", id: 42 } },
     });
+    globalThis.fetch = (async () => ({
+      ok: true,
+      json: async () => [
+        {
+          number: 42,
+          body: "",
+          merged_at: null,
+          base: { ref: source.target_branch },
+          head: { ref: source.resolved.source_branch, sha: source.resolved.source_commit },
+        },
+      ],
+    })) as unknown as typeof fetch;
+    expect(await readExternalAction(root, merge.data, actionRef)).toMatchObject({
+      ok: false,
+      code: "external_outcome_unknown",
+    });
     malformed = true;
     expect(await readHostingAction(root, resolved.data, actionRef)).toMatchObject({
       ok: false,
@@ -888,6 +904,29 @@ test("hosting reconciliation reads one exact GitHub result and preserves unknown
     });
     gitlabMalformed = false;
     expect(await readHostingAction(root, gitlabResolved.data, actionRef)).toMatchObject({
+      ok: true,
+      data: { outcome: "succeeded", data: { provider: "gitlab", id: 7 } },
+    });
+    const gitlabMerge = resolveExternalActionRequest(root, {
+      operation: "hosting.merge",
+      payload: { source_branch: "feature/reconcile", target_branch: "main" },
+    });
+    expect(gitlabMerge).toMatchObject({ ok: true });
+    if (!gitlabMerge.ok) return;
+    globalThis.fetch = (async () => ({
+      ok: true,
+      json: async () => [
+        {
+          iid: 7,
+          state: "merged",
+          description: "",
+          target_branch: gitlabSource.target_branch,
+          source_branch: gitlabSource.resolved.source_branch,
+          sha: gitlabSource.resolved.source_commit,
+        },
+      ],
+    })) as unknown as typeof fetch;
+    expect(await readExternalAction(root, gitlabMerge.data, actionRef)).toMatchObject({
       ok: true,
       data: { outcome: "succeeded", data: { provider: "gitlab", id: 7 } },
     });
