@@ -682,6 +682,21 @@ export const readHostingAction = async (
         itemSha === sourceCommit
       );
     });
+    if (
+      operation === "hosting.merge" &&
+      records.some((item) => {
+        const base = item.base as Record<string, unknown> | undefined;
+        const head = item.head as Record<string, unknown> | undefined;
+        return (
+          (cfg.provider === "github" ? base?.ref : item.target_branch) === target &&
+          (cfg.provider === "github" ? head?.ref : item.source_branch) === branch &&
+          (cfg.provider === "github"
+            ? typeof item.merged_at !== "string"
+            : item.state !== "merged" && typeof item.merged_at !== "string")
+        );
+      })
+    )
+      return unknownHostingEvidence(operation);
     if (matches.length !== 1) return unknownHostingEvidence(operation);
     const item = matches[0];
     const id = item.number ?? item.iid ?? item.id;
@@ -1266,7 +1281,9 @@ export const resolveExternalActionRequest = (
             outcome: "not_started",
             fields: [{ path: "source_branch", reason: "protected branch" }],
           });
-        const source_commit = gitValue(root, ["rev-parse", "HEAD"]);
+        const source_commit = source_branch
+          ? gitValue(root, ["rev-parse", "--verify", `refs/heads/${source_branch}`])
+          : null;
         const remote = pushRemote(root);
         const identity = remote ? credentialFreeRemote(remote) : null;
         if (

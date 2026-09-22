@@ -713,7 +713,14 @@ test("hosting reconciliation reads one exact GitHub result and preserves unknown
     writeFileSync(join(root, "initial.txt"), "initial\n");
     spawnSync("git", ["add", "initial.txt"], { cwd: root });
     spawnSync("git", ["commit", "-qm", "initial"], { cwd: root });
+    const baseBranch = spawnSync("git", ["branch", "--show-current"], {
+      cwd: root,
+      encoding: "utf8",
+    }).stdout.trim();
     spawnSync("git", ["checkout", "-qb", "feature/reconcile"], { cwd: root });
+    writeFileSync(join(root, "feature.txt"), "feature\n");
+    spawnSync("git", ["add", "feature.txt"], { cwd: root });
+    spawnSync("git", ["commit", "-qm", "feature"], { cwd: root });
     spawnSync("git", ["remote", "add", "origin", "https://github.com/org/repo.git"], { cwd: root });
     const tokenPath = join(root, "token");
     const configPath = join(root, "vcs.json");
@@ -802,6 +809,41 @@ test("hosting reconciliation reads one exact GitHub result and preserves unknown
       ok: true,
       data: { outcome: "succeeded", data: { provider: "github", id: 42 } },
     });
+    globalThis.fetch = (async () => ({
+      ok: true,
+      json: async () => [
+        {
+          number: 42,
+          body: "",
+          merged_at: "2026-01-01T00:00:00Z",
+          base: { ref: source.target_branch },
+          head: { ref: source.resolved.source_branch, sha: source.resolved.source_commit },
+        },
+        {
+          number: 43,
+          body: "",
+          merged_at: null,
+          base: { ref: source.target_branch },
+          head: { ref: source.resolved.source_branch, sha: "f".repeat(40) },
+        },
+      ],
+    })) as unknown as typeof fetch;
+    expect(await readExternalAction(root, merge.data, actionRef)).toMatchObject({
+      ok: false,
+      code: "external_outcome_unknown",
+    });
+    spawnSync("git", ["checkout", "-q", baseBranch], { cwd: root });
+    const explicitSource = resolveExternalActionRequest(root, {
+      operation: "hosting.merge",
+      payload: { source_branch: "feature/reconcile", target_branch: "main" },
+    });
+    expect(explicitSource).toMatchObject({ ok: true });
+    if (explicitSource.ok)
+      expect(
+        (explicitSource.data.descriptorPayload as { resolved: { source_commit: string } }).resolved
+          .source_commit,
+      ).toBe(source.resolved.source_commit);
+    spawnSync("git", ["checkout", "-q", "feature/reconcile"], { cwd: root });
     globalThis.fetch = (async () => ({
       ok: true,
       json: async () => [
@@ -929,6 +971,29 @@ test("hosting reconciliation reads one exact GitHub result and preserves unknown
     expect(await readExternalAction(root, gitlabMerge.data, actionRef)).toMatchObject({
       ok: true,
       data: { outcome: "succeeded", data: { provider: "gitlab", id: 7 } },
+    });
+    globalThis.fetch = (async () => ({
+      ok: true,
+      json: async () => [
+        {
+          iid: 7,
+          state: "merged",
+          target_branch: gitlabSource.target_branch,
+          source_branch: gitlabSource.resolved.source_branch,
+          sha: gitlabSource.resolved.source_commit,
+        },
+        {
+          iid: 8,
+          state: "opened",
+          target_branch: gitlabSource.target_branch,
+          source_branch: gitlabSource.resolved.source_branch,
+          sha: "f".repeat(40),
+        },
+      ],
+    })) as unknown as typeof fetch;
+    expect(await readExternalAction(root, gitlabMerge.data, actionRef)).toMatchObject({
+      ok: false,
+      code: "external_outcome_unknown",
     });
   } finally {
     globalThis.fetch = previousFetch;
