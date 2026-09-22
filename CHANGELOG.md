@@ -120,7 +120,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   target instead of request text, while uncertain branch, commit, push,
   hosting merge, and changelog effects use deterministic read-only
   reconciliation before retry; stash reapplication binds and verifies the
-  exact stash commit.
+  exact stash commit. Fixed findings accept fresh verification of the repaired
+  candidate even when the original finding was pinned to the broken candidate.
 - Task listing defaults to a bounded compact active/paused projection, supports
   explicit bounded closed/all history, and no longer recomputes closed tasks
   against today's checkout or attaches today's writer. `task.inspect` defaults

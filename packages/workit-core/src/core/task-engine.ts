@@ -1375,11 +1375,14 @@ export class WorkitCore {
       const evaluations = evaluateEvidence(task.data, current.data);
       const verified = evidence.some((entry) => {
         const evaluation = evaluations.find((item) => item.evidenceId === entry.id);
-        return findingVerificationPasses(finding.data.candidateId, {
-          kind: entry.data.kind,
-          candidateId: entry.data.candidateId,
-          status: evaluation?.status ?? "missing",
-        });
+        return (
+          entry.recordedAt >= finding.recordedAt &&
+          findingVerificationPasses(finding.data.candidateId, {
+            kind: entry.data.kind,
+            candidateId: entry.data.candidateId,
+            status: evaluation?.status ?? "missing",
+          })
+        );
       });
       if (!verified)
         return failure("permission_denied", "fixed findings require passing verification evidence");
