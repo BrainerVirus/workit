@@ -418,6 +418,7 @@ export const registerWorkitTools = (
         "hosting.merge",
         "changelog.apply",
       ].includes(resolved.data.request.operation);
+      let writerTaskId: string | null = null;
       if (localOperation) {
         const writer = assertLocalExternalActionWriter(ctx.cwd, { host: "pi", actor });
         if (!writer.ok)
@@ -429,6 +430,7 @@ export const registerWorkitTools = (
                 "Acquire checkout writer ownership first (writer.acquire) and retry the action.",
             }),
           );
+        writerTaskId = writer.data.taskId;
       }
       const descriptor = externalActionDescriptor(
         resolved.data.request.operation,
@@ -492,7 +494,12 @@ export const registerWorkitTools = (
           failure("external_outcome_unknown", "previous external action outcome is unknown"),
         );
       }
-      if (priorRequest.ok && priorRequest.data.entry.data.consumption !== null)
+      if (
+        priorRequest.ok &&
+        priorRequest.data.entry.data.consumption !== null &&
+        resolved.data.request.operation !== "git.commit" &&
+        resolved.data.request.operation !== "git.push"
+      )
         return output(failure("permission_denied", "external action was already settled"));
       const drift =
         resolved.data.request.operation === "git.branch_setup"
@@ -561,9 +568,7 @@ export const registerWorkitTools = (
           (task) =>
             task.status === "active" &&
             task.workspaceId === workspace.data!.id &&
-            task.intent.provenance.session?.kind === "host" &&
-            task.intent.provenance.session.host === "pi" &&
-            task.intent.provenance.session.handle === actor,
+            (writerTaskId === null || task.id === writerTaskId),
         );
         if (candidates.length !== 1)
           return output(

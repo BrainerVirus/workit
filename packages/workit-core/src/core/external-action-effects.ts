@@ -25,7 +25,15 @@ import {
 } from "./youtrack";
 import fs from "node:fs";
 import path from "node:path";
-import { failure, success, sha256, type Caller, type Result, type Ref } from "./task-contract";
+import {
+  failure,
+  success,
+  sha256,
+  type Caller,
+  type Owner,
+  type Result,
+  type Ref,
+} from "./task-contract";
 import { changelogApply, changelogApplyPreview } from "./changelog";
 import type { ExternalActionRequest } from "./external-action";
 import { externalActionDescriptor, externalActionRequest } from "./external-action";
@@ -33,7 +41,7 @@ import { normalizeChainSteps } from "./authority";
 import { resolveInside, run as coreRun } from "../core";
 import { vcsConfig } from "./vcs-config";
 import { detectCommitFlavor, matchCommitFlavor, type CommitFlavor } from "./commit-flavors";
-import { assertProductWriteAllowed } from "./workers";
+import { assertProductWriteAllowed, currentWriterOwnsTask } from "./workers";
 import { TaskStore } from "./task-store";
 
 const run = (root: string, args: string[]) => {
@@ -201,26 +209,22 @@ const localAction = (operation: ExternalActionRequest["operation"]): boolean =>
   operation === "git.commit" ||
   operation === "git.push" ||
   operation === "hosting.pull_request" ||
+  operation === "hosting.merge" ||
   operation === "changelog.apply";
 
 export const assertLocalExternalActionWriter = (
   root: string,
   caller: { host: Caller["host"]; actor: string },
   paths: string[] = ["."],
-): Result<null> => {
+): Result<Owner> => {
   const store = new TaskStore(root);
   const listed = store.listTasks();
   const workspace = store.readWorkspace();
   if (!listed.ok) return listed as Result<never>;
   if (!workspace.ok) return workspace as Result<never>;
   if (!workspace.data) return failure("not_found", "workspace not found");
-  const candidates = listed.data.filter(
-    (task) =>
-      task.status === "active" &&
-      task.workspaceId === workspace.data!.id &&
-      task.intent.provenance.session?.kind === "host" &&
-      task.intent.provenance.session.host === caller.host &&
-      task.intent.provenance.session.handle === caller.actor,
+  const candidates = listed.data.filter((task) =>
+    currentWriterOwnsTask(task, workspace.data!, caller),
   );
   if (candidates.length !== 1)
     return failure("permission_denied", "local external action requires exactly one active task");
@@ -231,7 +235,7 @@ export const assertLocalExternalActionWriter = (
     paths,
     store,
   });
-  return allowed.ok ? success(null, null, null) : (allowed as Result<never>);
+  return allowed;
 };
 
 const safePath = (root: string, value: string): string | null => {
@@ -248,16 +252,29 @@ const branchCreationBaseline = (
   root: string,
   target: string,
   base: string,
-): { base_branch: string; target_exists: boolean; remote_base: string | null } => {
+): {
+  base_branch: string;
+  target_exists: boolean;
+  remote_base: string | null;
+  target_head: string | null;
+} => {
   const exists =
     gitValue(root, ["rev-parse", "--verify", "--quiet", `refs/heads/${target}`]) !== null;
-  if (exists) return { base_branch: base, target_exists: true, remote_base: null };
+  if (exists)
+    return {
+      base_branch: base,
+      target_exists: true,
+      remote_base: null,
+      target_head: gitValue(root, ["rev-parse", `refs/heads/${target}`]),
+    };
   const remote = run(root, ["ls-remote", "origin", `refs/heads/${base}`]);
   const sha = remote.exitCode === 0 ? remote.stdout.trim().split(/\s+/)[0] : "";
+  const remoteBase = /^[0-9a-f]{40}$/.test(sha ?? "") ? (sha as string) : null;
   return {
     base_branch: base,
     target_exists: false,
-    remote_base: /^[0-9a-f]{40}$/.test(sha ?? "") ? (sha as string) : null,
+    remote_base: remoteBase,
+    target_head: remoteBase,
   };
 };
 
@@ -408,6 +425,9 @@ export const approvedResolvedExternalAction = (content: string): Result<Resolved
   try {
     const value = JSON.parse(content) as { operation?: unknown; payload?: unknown };
     if (
+      value.operation !== "git.branch_setup" &&
+      value.operation !== "git.commit" &&
+      value.operation !== "git.push" &&
       value.operation !== "hosting.pull_request" &&
       value.operation !== "hosting.merge" &&
       value.operation !== "changelog.apply" &&
@@ -425,6 +445,28 @@ export const approvedResolvedExternalAction = (content: string): Result<Resolved
     if (!request.ok || !resolved || typeof resolved !== "object")
       return failure("invalid_input", "approved hosting target is incomplete");
     const target = resolved as Record<string, unknown>;
+    if (
+      value.operation === "git.commit" &&
+      (typeof target.head !== "string" ||
+        typeof target.staged !== "string" ||
+        typeof payload.message !== "string")
+    )
+      return failure("invalid_input", "approved Git commit target is incomplete");
+    if (
+      value.operation === "git.push" &&
+      (typeof target.branch !== "string" ||
+        typeof target.commit !== "string" ||
+        typeof target.remote !== "string")
+    )
+      return failure("invalid_input", "approved Git push target is incomplete");
+    if (
+      value.operation === "git.branch_setup" &&
+      (typeof target.head !== "string" ||
+        (payload.action === "reapply_stash"
+          ? typeof target.stash_commit !== "string"
+          : typeof payload.target_branch !== "string" || typeof target.target_head !== "string"))
+    )
+      return failure("invalid_input", "approved Git branch target is incomplete");
     if (
       value.operation === "hosting.pull_request" &&
       (typeof target.marker !== "string" ||
@@ -452,7 +494,11 @@ export const approvedResolvedExternalAction = (content: string): Result<Resolved
     )
       return failure("invalid_input", "approved changelog target is incomplete");
     if (
+      value.operation !== "git.branch_setup" &&
+      value.operation !== "git.commit" &&
+      value.operation !== "git.push" &&
       value.operation !== "hosting.pull_request" &&
+      value.operation !== "hosting.merge" &&
       value.operation !== "changelog.apply" &&
       (typeof target.marker !== "string" ||
         typeof target.baseUrl !== "string" ||
@@ -463,7 +509,7 @@ export const approvedResolvedExternalAction = (content: string): Result<Resolved
     return success(null, null, {
       request: request.data,
       descriptorPayload: value.payload,
-      marker: String(target.marker),
+      ...(typeof target.marker === "string" ? { marker: target.marker } : {}),
     });
   } catch {
     return failure("invalid_input", "approved action descriptor is invalid");
@@ -812,14 +858,112 @@ export const readYouTrackAction = async (
   }
 };
 
+/** Read-only proof for local effects whose command response was lost. */
+export const readLocalAction = async (
+  root: string,
+  resolved: ResolvedExternalAction,
+  actionRef: Ref,
+): Promise<Result<HostingReadEvidence>> => {
+  const operation = resolved.request.operation;
+  const target = (resolved.descriptorPayload as { resolved?: Record<string, unknown> }).resolved;
+  if (!target) return unknownHostingEvidence(operation);
+  let observed: Record<string, unknown> | null = null;
+  if (operation === "git.commit") {
+    const commit = gitValue(root, ["rev-parse", "HEAD"]);
+    const parent = commit ? gitValue(root, ["rev-parse", `${commit}^`]) : null;
+    const message = commit ? gitValue(root, ["show", "-s", "--format=%B", commit]) : null;
+    const diff =
+      commit && parent
+        ? gitRaw(root, ["diff", "--raw", "-z", "--no-ext-diff", "--no-textconv", parent, commit])
+        : null;
+    if (
+      commit &&
+      parent === target.head &&
+      message === resolved.request.payload.message &&
+      diff !== null &&
+      sha256(diff) === target.staged
+    )
+      observed = { commit, parent, message, staged: target.staged };
+  } else if (operation === "git.push") {
+    const branch = target.branch;
+    const commit = target.commit;
+    const approvedRemote = target.remote;
+    const currentRemote = pushRemote(root);
+    const currentIdentity = currentRemote ? credentialFreeRemote(currentRemote) : null;
+    if (
+      typeof branch === "string" &&
+      typeof commit === "string" &&
+      typeof approvedRemote === "string" &&
+      currentIdentity === approvedRemote
+    ) {
+      const remote = run(root, ["ls-remote", currentRemote!, `refs/heads/${branch}`]);
+      const remoteCommit = remote.exitCode === 0 ? remote.stdout.trim().split(/\s+/)[0] : null;
+      if (remoteCommit === commit) observed = { branch, commit, remote: approvedRemote };
+    }
+  } else if (operation === "git.branch_setup") {
+    const targetBranch = resolved.request.payload.target_branch;
+    const sdd = resolved.request.payload.sdd_dir;
+    if (resolved.request.payload.action === "reapply_stash" && typeof sdd === "string") {
+      try {
+        const manifest = JSON.parse(fs.readFileSync(path.join(sdd, "manifest.json"), "utf8")) as {
+          stash_ref?: unknown;
+        };
+        const stashes = gitRaw(root, ["stash", "list", "--format=%H"]);
+        if (
+          typeof target.stash_commit === "string" &&
+          manifest.stash_ref === undefined &&
+          stashes !== null &&
+          !stashes.split("\n").includes(target.stash_commit)
+        )
+          observed = { stash_commit: target.stash_commit };
+      } catch {}
+    } else if (
+      typeof targetBranch === "string" &&
+      typeof sdd === "string" &&
+      gitValue(root, ["branch", "--show-current"]) === targetBranch &&
+      typeof target.target_head === "string" &&
+      gitValue(root, ["rev-parse", "HEAD"]) === target.target_head
+    ) {
+      try {
+        const manifest = JSON.parse(fs.readFileSync(path.join(sdd, "manifest.json"), "utf8")) as {
+          branch?: unknown;
+        };
+        if (manifest.branch === targetBranch) observed = { branch: targetBranch };
+      } catch {}
+    }
+  } else if (operation === "changelog.apply") {
+    const afterDigest = target.afterDigest;
+    const preview = changelogApplyPreview({ ...resolved.request.payload, workspace_root: root });
+    if (!preview.error && typeof afterDigest === "string" && preview.beforeDigest === afterDigest)
+      observed = { target: target.target, afterDigest };
+  }
+  if (!observed) return unknownHostingEvidence(operation);
+  const evidenceDigest = sha256({ operation, observed });
+  return success(null, null, {
+    outcome: "succeeded",
+    evidenceDigest,
+    observation: {
+      kind: "provider_read",
+      actionRef,
+      outcome: "succeeded",
+      evidenceDigest,
+    },
+  });
+};
+
 export const readExternalAction = async (
   root: string,
   resolved: ResolvedExternalAction,
   actionRef: Ref,
 ): Promise<Result<HostingReadEvidence>> =>
-  resolved.request.operation === "hosting.pull_request"
-    ? readHostingAction(root, resolved, actionRef)
-    : readYouTrackAction(root, resolved, actionRef);
+  resolved.request.operation === "git.branch_setup" ||
+  resolved.request.operation === "git.commit" ||
+  resolved.request.operation === "git.push" ||
+  resolved.request.operation === "changelog.apply"
+    ? readLocalAction(root, resolved, actionRef)
+    : resolved.request.operation === "hosting.pull_request"
+      ? readHostingAction(root, resolved, actionRef)
+      : readYouTrackAction(root, resolved, actionRef);
 
 const youTrackBase = (): string | null => {
   try {
@@ -905,6 +1049,17 @@ export const resolveExternalActionRequest = (
           action === "reapply_stash" || !target_branch
             ? { base_branch: policy.defaultTargetBranch }
             : branchCreationBaseline(root, target_branch, policy.defaultTargetBranch);
+        let stashTarget: { stash_ref: string; stash_commit: string } | undefined;
+        if (action === "reapply_stash") {
+          try {
+            const manifest = JSON.parse(
+              fs.readFileSync(path.join(sdd_dir, "manifest.json"), "utf8"),
+            ) as { stash_ref?: unknown };
+            const stash_ref = typeof manifest.stash_ref === "string" ? manifest.stash_ref : "";
+            const stash_commit = stash_ref ? gitValue(root, ["rev-parse", stash_ref]) : null;
+            if (stash_ref && stash_commit) stashTarget = { stash_ref, stash_commit };
+          } catch {}
+        }
         const normalized = {
           operation: request.operation,
           payload: {
@@ -919,7 +1074,7 @@ export const resolveExternalActionRequest = (
           request: normalized,
           descriptorPayload: {
             ...normalized.payload,
-            resolved: { head, dirty, ...creation },
+            resolved: { head, dirty, ...creation, ...stashTarget },
           },
         });
       }
@@ -1521,7 +1676,7 @@ export const executeResolvedExternalAction = async (
     typeof resolvedDetails.resolved?.beforeExists === "boolean"
       ? resolvedDetails.resolved.beforeExists
       : undefined;
-  return executeConcreteExternalAction(
+  const result = await executeConcreteExternalAction(
     fresh.data.request,
     root,
     fresh.data.marker,
@@ -1532,4 +1687,13 @@ export const executeResolvedExternalAction = async (
     beforeDigest,
     beforeExists,
   );
+  if (!result.ok && result.code === "external_outcome_unknown" && caller) {
+    const observed = await readLocalAction(root, fresh.data, {
+      kind: "host",
+      host: caller.host,
+      handle: `local-recovery:${fresh.data.request.operation}`,
+    });
+    if (observed.ok) return success(null, null, { recovered: true });
+  }
+  return result;
 };

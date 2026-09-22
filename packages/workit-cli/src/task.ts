@@ -727,7 +727,9 @@ export async function runActionCommand(argv: string[], deps: TaskCliDeps = {}): 
   if (
     priorRequest.ok &&
     priorRequest.data.entry.data.consumption !== null &&
-    priorRequest.data.entry.data.consumption.state !== "uncertain"
+    priorRequest.data.entry.data.consumption.state !== "uncertain" &&
+    normalized.operation !== "git.commit" &&
+    normalized.operation !== "git.push"
   ) {
     const result = failure("permission_denied", "external action was already settled");
     if (json) jsonResult(outOf(deps), result);

@@ -18,6 +18,12 @@ import { chainStepKey, normalizeChainSteps, type ChainStep } from "./authority";
 import * as z from "zod";
 import { execFileSync } from "node:child_process";
 
+const chainStepSchema = z.union([
+  z.string().min(1),
+  z.object({ branch: z.string().min(1) }).strict(),
+  z.object({ pr: z.literal(true) }).strict(),
+]);
+
 export type AuthorizedActionInput = {
   core: WorkitCore;
   taskId: Id;
@@ -60,7 +66,7 @@ const externalActionSchema = z.discriminatedUnion("operation", [
       payload: z
         .object({
           message: z.string().min(1).optional(),
-          plan_steps: z.array(z.string().min(1)).optional(),
+          plan_steps: z.array(chainStepSchema).min(1).max(32).optional(),
           plan_branch: z.string().min(1).optional(),
         })
         .strict(),
@@ -244,7 +250,7 @@ export const planReservationLength = (
 
 /** Compact host-facing help for the fixed optional-action surface. */
 export const externalActionHelp =
-  "Fixed actions: git.branch_setup {action?,sdd_dir?,target_branch(required unless reapply_stash; the working branch to create or switch to),stash?}; git.commit {message}; git.push {branch?}; hosting.pull_request {title,body?,draft?,target_branch?,babysit?}; hosting.merge {target_branch?,source_branch?}; youtrack.update {issueId,markdown,minutes?}; youtrack.time {issueId,minutes,text?,dateMs?}; youtrack.meeting {issueId,minutes,text}; changelog.apply {entries?,path?,normalize_only?}; context.read {kind,range?,issueId?,issueUrl?,issueRef?,mode?,specPath?,planPath?}. context.read is read-only and needs no approval; all other operations require native approval (CLI uses a TTY; caller-unattested MCP cannot mutate).";
+  "Fixed actions: git.branch_setup {action?,sdd_dir?,target_branch(required unless reapply_stash; the working branch to create or switch to),stash?}; git.commit {message?; plan_steps?: (string | {branch:string} | {pr:true})[]; plan_branch?}; git.push {branch?}; hosting.pull_request {title,body?,draft?,target_branch?,babysit?}; hosting.merge {target_branch?,source_branch?}; youtrack.update {issueId,markdown,minutes?}; youtrack.time {issueId,minutes,text?,dateMs?}; youtrack.meeting {issueId,minutes,text}; changelog.apply {entries?,path?,normalize_only?}; context.read {kind: git|pr|youtrack|github_issue|gitlab_issue|changelog|release|affected,range?,issueId?,issueUrl?,issueRef?,mode?,specPath?,planPath?}. context.read is read-only and needs no approval; all other operations require native approval (CLI uses a TTY; caller-unattested MCP cannot mutate).";
 
 export const externalActionRef = (
   host: "opencode" | "pi" | "workit_cli",
@@ -268,14 +274,7 @@ export const externalActionState = (
     return failure("storage_error", "external action state is unavailable");
   if (!workspace.data) return failure("not_found", "workspace not found");
   const candidates = listed.data.flatMap((task) => {
-    if (
-      task.status !== "active" ||
-      task.workspaceId !== workspace.data!.id ||
-      task.intent.provenance.session?.kind !== "host" ||
-      task.intent.provenance.session.host !== host ||
-      task.intent.provenance.session.handle !== actor
-    )
-      return [];
+    if (task.status !== "active" || task.workspaceId !== workspace.data!.id) return [];
     return task.decisions
       .filter(
         (entry) =>
@@ -290,8 +289,8 @@ export const externalActionState = (
     return failure(
       "permission_denied",
       candidates.length === 0
-        ? "no approved action is bound to this session"
-        : "multiple approved actions match this session",
+        ? "no approved action is bound to the active task"
+        : "multiple approved actions match the active task",
     );
   return success(workspace.data.revision, null, { ...candidates[0], workspace: workspace.data });
 };
@@ -431,12 +430,6 @@ export const approvedPlanCommit = (
   if (!workspace.data) return failure("not_found", "workspace not found");
   const matches = listed.data.flatMap((task) => {
     if (task.status !== "active" || task.workspaceId !== workspace.data!.id) return [];
-    if (
-      task.intent.provenance.session?.kind !== "host" ||
-      task.intent.provenance.session.host !== host ||
-      task.intent.provenance.session.handle !== actor
-    )
-      return [];
     return task.decisions.flatMap((entry) => {
       const decision = entry.data;
       if (
@@ -481,12 +474,7 @@ export type ChainStepQuery =
   | { operation: "git.branch_setup"; target: string }
   | { operation: "hosting.pull_request" };
 
-/**
- * Match one branch or PR step of a chain authorization: same session-bound
- * search as plan commits, next unconsumed step of the right kind, lease
- * intact. Commit steps stay on the plan path; this covers the steps plans
- * could never express.
- */
+/** Match the next branch or PR step of an active chain authorization. */
 export const approvedChainStep = (
   store: TaskStore,
   host: string,
@@ -500,12 +488,6 @@ export const approvedChainStep = (
   if (!workspace.data) return failure("not_found", "workspace not found");
   const matches = listed.data.flatMap((task) => {
     if (task.status !== "active" || task.workspaceId !== workspace.data!.id) return [];
-    if (
-      task.intent.provenance.session?.kind !== "host" ||
-      task.intent.provenance.session.host !== host ||
-      task.intent.provenance.session.handle !== actor
-    )
-      return [];
     return task.decisions.flatMap((entry) => {
       const decision = entry.data;
       if (
@@ -751,21 +733,15 @@ export const approvedBranchSetupIntent = (
   operation: string,
 ) => {
   const current = branchSetupIntent(operation);
-  if (!current) return failure("permission_denied", "no approved action is bound to this session");
+  if (!current)
+    return failure("permission_denied", "no approved action is bound to the active task");
   const listed = store.listTasks();
   const workspace = store.readWorkspace();
   if (!listed.ok || !workspace.ok)
     return failure("storage_error", "external action state is unavailable");
   if (!workspace.data) return failure("not_found", "workspace not found");
   const candidates = listed.data.flatMap((task) => {
-    if (
-      task.status !== "active" ||
-      task.workspaceId !== workspace.data!.id ||
-      task.intent.provenance.session?.kind !== "host" ||
-      task.intent.provenance.session.host !== host ||
-      task.intent.provenance.session.handle !== actor
-    )
-      return [];
+    if (task.status !== "active" || task.workspaceId !== workspace.data!.id) return [];
     return task.decisions
       .filter(
         (entry) =>
@@ -789,8 +765,8 @@ export const approvedBranchSetupIntent = (
     return failure(
       "permission_denied",
       matches.length === 0
-        ? "no approved action is bound to this session"
-        : "multiple approved actions match this session",
+        ? "no approved action is bound to the active task"
+        : "multiple approved actions match the active task",
     );
   return success(workspace.data.revision, null, { ...matches[0], workspace: workspace.data });
 };

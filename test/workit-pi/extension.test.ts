@@ -41,9 +41,9 @@ const makePi = () => {
   return pi;
 };
 
-const context = (root: string, hasUI = false, trusted = true) => {
+const context = (root: string, hasUI = false, trusted = true, session = "pi-session") => {
   const sessionManager = {
-    getSessionId: () => "pi-session",
+    getSessionId: () => session,
     getSessionFile: () => "/tmp/pi-session.jsonl",
     getCwd: () => root,
     getEntries: () => [],
@@ -584,6 +584,81 @@ test("Pi requires writer ownership and concise binding questions", async () => {
     );
     expect(recorded.details).toMatchObject({ ok: false, code: "invalid_input" });
     expect(String(recorded.details.error)).toContain("present the item");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Pi lets the resumed writer request a fresh external-action approval", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "workit-pi-resumed-writer-"));
+  try {
+    for (const args of [
+      ["init", "-q"],
+      ["config", "user.email", "test@example.invalid"],
+      ["config", "user.name", "Workit Test"],
+    ])
+      spawnSync("git", args, { cwd: root });
+    writeFileSync(path.join(root, "base.txt"), "base\n");
+    spawnSync("git", ["add", "base.txt"], { cwd: root });
+    spawnSync("git", ["commit", "-qm", "base"], { cwd: root });
+    writeFileSync(path.join(root, "change.txt"), "change\n");
+    spawnSync("git", ["add", "change.txt"], { cwd: root });
+    const active = startedTask(root);
+    const creator = new WorkitCore(active.store, {
+      root,
+      caller: { host: "pi", actor: "pi-session" },
+      callerAttested: true,
+      capabilities: [],
+      constraints: [],
+      now: "2026-01-01T00:00:01Z",
+    });
+    const second = creator.task(
+      taskStartRequest({
+        expectedWorkspaceRevision: active.workspace.revision,
+        intent: {
+          objective: "another active task",
+          scope: active.task.intent.data.scope,
+          authorityRefs: [],
+        },
+      }),
+    );
+    if (!second.ok) throw new Error(second.error);
+    const currentTask = active.store.readTask(active.task.id);
+    const currentWorkspace = active.store.readWorkspace();
+    if (!currentTask.ok || !currentWorkspace.ok || !currentWorkspace.data)
+      throw new Error("current state missing");
+    const resumed = new WorkitCore(active.store, {
+      root,
+      caller: { host: "pi", actor: "pi-resumed" },
+      callerAttested: true,
+      capabilities: [],
+      constraints: [],
+      now: "2026-01-01T00:00:01Z",
+    });
+    expect(
+      resumed.writer({
+        schemaVersion: 1,
+        action: "acquire",
+        taskId: active.task.id,
+        expectedRevision: currentTask.data.revision,
+        expectedWorkspaceRevision: currentWorkspace.data.revision,
+        workerId: null,
+      }),
+    ).toMatchObject({ ok: true });
+    const pi = makePi();
+    await extension(pi as any);
+    const action = pi.tools.find((tool) => tool.name === "workit_external_action");
+    const result = await action.execute(
+      "resumed-writer",
+      { operation: "git.commit", payload: { message: "chore(test): resumed writer" } },
+      undefined,
+      undefined,
+      context(root, true, true, "pi-resumed"),
+    );
+    expect(result.details).toMatchObject({ ok: true });
+    expect(
+      spawnSync("git", ["log", "-1", "--pretty=%s"], { cwd: root, encoding: "utf8" }).stdout.trim(),
+    ).toBe("chore(test): resumed writer");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
