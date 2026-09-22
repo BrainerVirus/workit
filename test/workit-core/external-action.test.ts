@@ -780,6 +780,28 @@ test("hosting reconciliation reads one exact GitHub result and preserves unknown
     })) as unknown as typeof fetch;
     const found = await readHostingAction(root, resolved.data, actionRef);
     expect(found).toMatchObject({ ok: true, data: { outcome: "succeeded", data: { id: 42 } } });
+    const merge = resolveExternalActionRequest(root, {
+      operation: "hosting.merge",
+      payload: { source_branch: "feature/reconcile", target_branch: "main" },
+    });
+    expect(merge).toMatchObject({ ok: true });
+    if (!merge.ok) return;
+    globalThis.fetch = (async () => ({
+      ok: true,
+      json: async () => [
+        {
+          number: 42,
+          body: "",
+          merged_at: "2026-01-01T00:00:00Z",
+          base: { ref: source.target_branch },
+          head: { ref: source.resolved.source_branch, sha: source.resolved.source_commit },
+        },
+      ],
+    })) as unknown as typeof fetch;
+    expect(await readExternalAction(root, merge.data, actionRef)).toMatchObject({
+      ok: true,
+      data: { outcome: "succeeded", data: { provider: "github", id: 42 } },
+    });
     malformed = true;
     expect(await readHostingAction(root, resolved.data, actionRef)).toMatchObject({
       ok: false,

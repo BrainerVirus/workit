@@ -545,8 +545,9 @@ export const readHostingAction = async (
   resolved: ResolvedExternalAction,
   actionRef: Ref,
 ): Promise<Result<HostingReadEvidence>> => {
-  if (resolved.request.operation !== "hosting.pull_request" || !resolved.marker)
-    return unknownHostingEvidence("hosting.pull_request");
+  const operation = resolved.request.operation;
+  if ((operation !== "hosting.pull_request" && operation !== "hosting.merge") || !resolved.marker)
+    return unknownHostingEvidence(operation);
   try {
     const cfg = vcsConfig("load", root);
     if (
@@ -555,7 +556,7 @@ export const readHostingAction = async (
       !cfg.provider ||
       (cfg.provider !== "github" && cfg.provider !== "gitlab")
     )
-      return unknownHostingEvidence("hosting.pull_request");
+      return unknownHostingEvidence(operation);
     const remote = pushRemote(root);
     const repo = remote ? remoteRepo(remote) : null;
     const approved = resolved.descriptorPayload as {
@@ -595,7 +596,7 @@ export const readHostingAction = async (
         remoteProvider(approvedRemote) !== cfg.provider) ||
       remoteParts(approvedRemote)?.host !== apiHost
     )
-      return unknownHostingEvidence("hosting.pull_request");
+      return unknownHostingEvidence(operation);
     const token = fs.readFileSync(cfg.tokenPath, "utf8").trim();
     const headers = { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json" };
     const url =
@@ -605,15 +606,14 @@ export const readHostingAction = async (
     const response = await fetch(url, {
       headers: cfg.provider === "gitlab" ? { "PRIVATE-TOKEN": token } : headers,
     });
-    if (!response.ok) return unknownHostingEvidence("hosting.pull_request");
+    if (!response.ok) return unknownHostingEvidence(operation);
     const values: unknown = await response.json();
     // A full page is intentionally treated as truncated until pagination is added.
-    if (!Array.isArray(values) || values.length >= 100)
-      return unknownHostingEvidence("hosting.pull_request");
+    if (!Array.isArray(values) || values.length >= 100) return unknownHostingEvidence(operation);
     const records: Record<string, unknown>[] = [];
     for (const item of values) {
       if (!item || typeof item !== "object" || Array.isArray(item))
-        return unknownHostingEvidence("hosting.pull_request");
+        return unknownHostingEvidence(operation);
       const record = item as Record<string, unknown>;
       const body = record.body ?? record.description;
       const base = record.base;
@@ -655,7 +655,7 @@ export const readHostingAction = async (
         typeof shaValue !== "string" ||
         (typeof idValue !== "string" && typeof idValue !== "number")
       )
-        return unknownHostingEvidence("hosting.pull_request");
+        return unknownHostingEvidence(operation);
       records.push(record);
     }
     const matches = records.filter((item): item is Record<string, unknown> => {
@@ -671,19 +671,23 @@ export const readHostingAction = async (
       const itemSource =
         cfg.provider === "github" ? head?.ref : (item as Record<string, unknown>).source_branch;
       const itemSha = cfg.provider === "github" ? head?.sha : (item as Record<string, unknown>).sha;
+      const merged =
+        cfg.provider === "github"
+          ? typeof item.merged_at === "string"
+          : item.state === "merged" || typeof item.merged_at === "string";
       return (
-        body.includes(resolved.marker!) &&
+        (operation === "hosting.merge" ? merged : body.includes(resolved.marker!)) &&
         itemTarget === target &&
         itemSource === branch &&
         itemSha === sourceCommit
       );
     });
-    if (matches.length !== 1) return unknownHostingEvidence("hosting.pull_request");
+    if (matches.length !== 1) return unknownHostingEvidence(operation);
     const item = matches[0];
     const id = item.number ?? item.iid ?? item.id;
-    if (typeof id !== "string" && typeof id !== "number")
-      return unknownHostingEvidence("hosting.pull_request");
+    if (typeof id !== "string" && typeof id !== "number") return unknownHostingEvidence(operation);
     const evidenceDigest = sha256({
+      operation,
       provider: cfg.provider,
       id,
       marker: resolved.marker,
@@ -704,7 +708,7 @@ export const readHostingAction = async (
       data: { provider: cfg.provider, id },
     });
   } catch {
-    return unknownHostingEvidence("hosting.pull_request");
+    return unknownHostingEvidence(operation);
   }
 };
 
@@ -961,7 +965,8 @@ export const readExternalAction = async (
   resolved.request.operation === "git.push" ||
   resolved.request.operation === "changelog.apply"
     ? readLocalAction(root, resolved, actionRef)
-    : resolved.request.operation === "hosting.pull_request"
+    : resolved.request.operation === "hosting.pull_request" ||
+        resolved.request.operation === "hosting.merge"
       ? readHostingAction(root, resolved, actionRef)
       : readYouTrackAction(root, resolved, actionRef);
 

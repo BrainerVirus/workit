@@ -240,14 +240,14 @@ export const standingAutoApplies = (
   const listed = store.listTasks();
   const workspace = store.readWorkspace();
   if (!listed.ok || !workspace.ok || !workspace.data) return null;
-  const matches = listed.data.filter(
-    (task) => task.status === "active" && task.workspaceId === workspace.data!.id,
+  const task = listed.data.find((task) =>
+    currentWriterOwnsTask(task, workspace.data!, { host, actor }),
   );
-  if (matches.length !== 1) return null;
+  if (!task) return null;
   const resolved = resolveAutoApproval(store.root);
   if (resolved.status !== "on") return null;
   return {
-    task: matches[0],
+    task,
     workspaceId: workspace.data.id,
     workspaceRevision: workspace.data.revision,
     cls,

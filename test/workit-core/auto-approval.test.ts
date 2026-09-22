@@ -12,6 +12,7 @@ import {
 import {
   autoApproves,
   resolveAutoApproval,
+  standingAutoApplies,
   standingApprovalLive,
   type AutoApproval,
 } from "@/packages/workit-core/src/core/auto-approval";
@@ -325,6 +326,31 @@ test("standing decisions follow the current writer after session resumption", ()
       ok: true,
       data: { provenance: { session: { handle: "resumed" } } },
     });
+  } finally {
+    if (previous === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG_DIR;
+    else process.env.WORKFLOW_TOOLKIT_CONFIG_DIR = previous;
+    rmSync(value.root, { recursive: true, force: true });
+    rmSync(value.configDir, { recursive: true, force: true });
+  }
+});
+
+test("standing auto-approval selects the writer task when another task is active", () => {
+  const value = standingSetup();
+  const previous = process.env.WORKFLOW_TOOLKIT_CONFIG_DIR;
+  process.env.WORKFLOW_TOOLKIT_CONFIG_DIR = value.configDir;
+  try {
+    const other = new WorkitCore(value.store, {
+      root: value.root,
+      caller: { host: "workit_cli", actor: "other" },
+      capabilities: [],
+      constraints: [],
+      now: "2026-01-01T00:00:01Z",
+    });
+    expect(other.task(taskStartRequest({ expectedWorkspaceRevision: undefined })).ok).toBe(true);
+    const operation = JSON.stringify({ operation: "git.commit" });
+    expect(standingAutoApplies(value.store, "workit_cli", value.actor, operation)?.task.id).toBe(
+      value.taskId,
+    );
   } finally {
     if (previous === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG_DIR;
     else process.env.WORKFLOW_TOOLKIT_CONFIG_DIR = previous;
