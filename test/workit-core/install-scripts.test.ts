@@ -222,6 +222,12 @@ function flockAvailable(): boolean {
 // registration helper from src/core, so the stub must mirror it (doctor-check
 // pulls the same core modules).
 function copyCoreSources(stub: string) {
+  mkdirSync(path.join(stub, "node_modules"), { recursive: true });
+  symlinkSync(
+    path.join(repoRoot, "node_modules", "zod"),
+    path.join(stub, "node_modules", "zod"),
+    "dir",
+  );
   for (const name of [
     "registration.ts",
     "doctor.ts",

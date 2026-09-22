@@ -107,6 +107,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- OpenCode worker dispatch now binds only the exact live reserved native task call,
+  follows the current coordinator's worker assignment after session resumption,
+  authorizes the observed child before its own Workit calls and after adapter restarts,
+  persists host-observed completion reports, and denies unmanaged V2 child
+  continuation. Native decision receipts and pending action proposals are
+  committed only after core persistence succeeds, so revision conflicts remain
+  retryable and contradictory V2 answer metadata cannot authorize a decision.
+- Standing auto-approval and local external actions follow the workspace's
+  current writer session across resumed host sessions. Repeated commits and pushes bind their freshly resolved
+  Git target instead of request text, while uncertain branch, commit, push, and
+  changelog effects use deterministic read-only reconciliation before retry;
+  stash reapplication binds and verifies the exact stash commit.
+- Task listing defaults to a bounded compact active/paused projection, supports
+  explicit bounded closed/all history, and no longer recomputes closed tasks
+  against today's checkout or attaches today's writer. `task.inspect` defaults
+  to summary, closure retains the exact final candidate even when it repeats an
+  earlier candidate, and ordinary paused tasks resume without imported-task
+  authority references.
+- Mixed plan reservations accept their documented typed branch and PR steps at
+  the public schema boundary; action help lists the complete chain and context
+  shapes, and worker scope denials identify both conflicting scope fields.
+- Development stale-source detection recursively covers all OpenCode adapter
+  and shared-core TypeScript sources; V2 now emits the same one-time fail-open
+  restart warning as V1.
 - Plan reservations under standing auto-approval: `git.commit` with
   `plan_steps`/`plan_branch` records the listed chain and returns
   `plan_commits` with no question on OpenCode, Pi, and CLI, instead of
