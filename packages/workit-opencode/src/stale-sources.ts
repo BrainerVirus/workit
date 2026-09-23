@@ -1,32 +1,29 @@
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { packageRoot } from "./shared/assets";
 
-/** Files whose later modification means the live process is running stale
- * workit code. Resolved through the layout-stable package root so both the
- * source modules and the bundled plugin watch the same core sources. */
-const packageFiles = [
-  "src/index.ts",
-  "src/plugin.ts",
-  "src/v1/server.ts",
-  "src/v2/plugin.ts",
-  "src/shared/tools.ts",
-  "src/tools/workit.ts",
-].map((file) => path.join(packageRoot(), file));
+const typescriptFiles = (directory: string): string[] => {
+  if (!existsSync(directory)) return [];
+  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const file = path.join(directory, entry.name);
+    return entry.isDirectory()
+      ? typescriptFiles(file)
+      : entry.isFile() && file.endsWith(".ts")
+        ? [file]
+        : [];
+  });
+};
 
-const coreDir = path.join(packageRoot(), "..", "workit-core", "src", "core");
-
+/** All TypeScript sources loaded by a development checkout. Installed bundles
+ * retain the current module marker and simply have no source tree to scan. */
 export const pluginSourceFiles = [
-  fileURLToPath(import.meta.url),
-  ...packageFiles,
-  ...[
-    "task-contract.ts",
-    "task-engine.ts",
-    "task-evaluation.ts",
-    "task-store.ts",
-    "workers.ts",
-    "authority.ts",
-    "methods.ts",
-  ].map((file) => path.join(coreDir, file)),
-].filter((file) => existsSync(file));
+  ...new Set([
+    fileURLToPath(import.meta.url),
+    ...typescriptFiles(path.join(packageRoot(), "src")),
+    path.join(packageRoot(), "..", "workit-core", "src", "core.ts"),
+    ...typescriptFiles(path.join(packageRoot(), "..", "workit-core", "src", "core")),
+  ]),
+]
+  .filter((file) => existsSync(file))
+  .sort();

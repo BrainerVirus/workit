@@ -29,6 +29,7 @@ import {
   type Result,
   type Scope,
   type TaskRecord,
+  type TaskListItem,
   type TaskSummary,
   type TaskView,
   type Utc,
@@ -152,6 +153,7 @@ type WorkerAuthority = {
   expectedWorkspaceRevision: string;
   state: NativeWorkerObservation["state"];
   session: NativeWorkerObservation["session"];
+  report: NativeWorkerObservation["report"] | null;
   provenance: Provenance;
   owner: object;
   store: TaskStore;
@@ -280,6 +282,7 @@ const verifyNativeWorker = (
     expectedWorkspaceRevision: expected.expectedWorkspaceRevision,
     state: expected.state,
     session: expected.session,
+    report: expected.report ?? null,
     provenance: result.data,
     ...binding,
   });
@@ -305,7 +308,8 @@ const takeWorker = (
     value.expectedRevision !== expected.expectedRevision ||
     value.expectedWorkspaceRevision !== expected.expectedWorkspaceRevision ||
     value.state !== expected.state ||
-    !sameValue(value.session, expected.session)
+    !sameValue(value.session, expected.session) ||
+    !sameValue(value.report, expected.report ?? null)
   )
     return null;
   return value;
@@ -361,6 +365,8 @@ const applyWorkerLifecycle = (input: ObserveWorkerLifecycleInput): Result<Entry<
     return failure("invalid_transition", "worker already has an observed session");
   if (notStarted && !["dispatching", "cancelling"].includes(entry.data.state))
     return failure("invalid_transition", "worker launch was not claimed");
+  if (input.report && input.state !== "stopped")
+    return failure("invalid_input", "worker reports require a stopped worker");
   if (
     (input.state === "running" ||
       input.state === "cancelling" ||
@@ -383,6 +389,7 @@ const applyWorkerLifecycle = (input: ObserveWorkerLifecycleInput): Result<Entry<
       ...entry.data,
       state: terminalCancel ? ("cancelling" as const) : input.state,
       session: input.session,
+      report: entry.data.report ?? input.report ?? null,
     },
   } satisfies Entry<Worker>;
   const shouldClear =
@@ -402,6 +409,7 @@ const applyWorkerLifecycle = (input: ObserveWorkerLifecycleInput): Result<Entry<
   if (
     entry.data.state === nextEntry.data.state &&
     sameValue(entry.data.session, input.session) &&
+    sameValue(entry.data.report, nextEntry.data.report) &&
     !shouldClear &&
     !shouldUncertain
   )
@@ -858,7 +866,7 @@ export class WorkitCore {
     });
   }
 
-  task(request: unknown): Result<TaskSummary | TaskSummary[] | TaskView> {
+  task(request: unknown): Result<TaskSummary | TaskListItem[] | TaskView> {
     const root = this.contextRootError();
     if (!root.ok) return root as Result<never>;
     const parsed = parseOperation("task", request);
@@ -887,20 +895,43 @@ export class WorkitCore {
       case "list": {
         const listed = this.store.listTasks();
         if (!listed.ok) return listed as Result<never>;
-        const summaries: TaskSummary[] = [];
-        for (const task of listed.data) {
-          const summary = this.summary(task);
-          if (!summary.ok) return summary;
-          summaries.push(summary.data);
-        }
-        return success(null, null, summaries);
+        const status = input.status ?? "open";
+        const limit = input.limit ?? 20;
+        const selected = listed.data
+          .filter((task) =>
+            status === "all"
+              ? true
+              : status === "closed"
+                ? task.status === "closed"
+                : task.status !== "closed",
+          )
+          .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+          .slice(0, limit);
+        if (selected.length === 0) return success(null, null, []);
+        const workspace = this.store.readWorkspace();
+        if (!workspace.ok) return workspace as Result<never>;
+        if (!workspace.data) return failure("not_found", "workspace not found");
+        const tasks = selected.map((task): TaskListItem => ({
+          id: task.id,
+          revision: task.revision,
+          workspaceRevision: workspace.data!.revision,
+          createdAt: task.createdAt,
+          updatedAt: task.updatedAt,
+          runtime: task.runtime ?? null,
+          objective: task.intent.data.objective,
+          status: task.status,
+          closure: task.closure,
+          progress: task.progress,
+          writer: task.status === "closed" ? null : workspace.data!.writer,
+        }));
+        return success(null, null, tasks);
       }
       case "inspect": {
         const task = this.store.readTask(input.taskId);
         if (!task.ok) return task as Result<never>;
         const helper = this.helperTaskGuard(task.data, true);
         if (!helper.ok) return helper as Result<never>;
-        if (input.view === "summary") return this.summary(task.data);
+        if ((input.view ?? "summary") === "summary") return this.summary(task.data);
         return this.view(task.data);
       }
       case "pause":
@@ -1344,11 +1375,14 @@ export class WorkitCore {
       const evaluations = evaluateEvidence(task.data, current.data);
       const verified = evidence.some((entry) => {
         const evaluation = evaluations.find((item) => item.evidenceId === entry.id);
-        return findingVerificationPasses(finding.data.candidateId, {
-          kind: entry.data.kind,
-          candidateId: entry.data.candidateId,
-          status: evaluation?.status ?? "missing",
-        });
+        return (
+          entry.recordedAt >= finding.recordedAt &&
+          findingVerificationPasses(finding.data.candidateId, {
+            kind: entry.data.kind,
+            candidateId: entry.data.candidateId,
+            status: evaluation?.status ?? "missing",
+          })
+        );
       });
       if (!verified)
         return failure("permission_denied", "fixed findings require passing verification evidence");
@@ -1451,7 +1485,18 @@ export class WorkitCore {
       if (task.data.status !== "active")
         return failure("invalid_transition", "paused or closed tasks cannot assign workers");
       if (!bindingCovers(task.data.intent.data.scope, input.assignment.scope))
-        return failure("permission_denied", "worker assignment is outside task scope");
+        return failure("permission_denied", "worker assignment is outside task scope", {
+          fields: [
+            {
+              path: "assignment.scope",
+              reason: `paths ${JSON.stringify(input.assignment.scope.paths)} must be contained by lead paths ${JSON.stringify(task.data.intent.data.scope.paths)}`,
+            },
+            {
+              path: "task.intent.scope",
+              reason: `lead paths are ${JSON.stringify(task.data.intent.data.scope.paths)}`,
+            },
+          ],
+        });
       if (
         input.assignment.decisionIds.some(
           (id: string) => !task.data.decisions.some((entry) => entry.id === id),
@@ -1739,7 +1784,15 @@ export class WorkitCore {
                   ...item,
                   recordedAt: mutation.now,
                   provenance: attested.data,
-                  data: { ...item.data, state: "dispatching" as const },
+                  data: {
+                    ...item.data,
+                    state: "dispatching" as const,
+                    coordinator: {
+                      kind: "host" as const,
+                      host: this.context.caller.host,
+                      handle: this.context.caller.actor,
+                    },
+                  },
                 }
               : item,
           ),
@@ -1828,6 +1881,7 @@ export class WorkitCore {
         expectedWorkspaceRevision: input.expectedWorkspaceRevision,
         state: "stopped",
         session: null,
+        report: null,
         provenance: attested.data,
         owner: this.authorityOwner,
         store: this.store,
@@ -2205,11 +2259,16 @@ export class WorkitCore {
     const workspace = this.store.readWorkspace();
     if (!workspace.ok) return workspace as Result<never>;
     if (!workspace.data) return failure("not_found", "workspace not found");
-    const current = captureCandidate(this.store.root, task.intent.data.scope, environment());
+    const historical = task.status === "closed" ? task.candidates.at(-1) : undefined;
+    const current = historical
+      ? success(null, null, historical)
+      : captureCandidate(this.store.root, task.intent.data.scope, environment());
     if (!current.ok) return current as Result<never>;
+    const evaluationWorkspace =
+      task.status === "closed" ? { ...workspace.data, writer: null } : workspace.data;
     const requirements = evaluateRequirements(
       task,
-      workspace.data,
+      evaluationWorkspace,
       this.context.capabilities,
       current.data,
       this.store.root,
@@ -2228,7 +2287,7 @@ export class WorkitCore {
       progress: task.progress,
       policy: task.policy,
       requirements,
-      writer: workspace.data.writer,
+      writer: evaluationWorkspace.writer,
     });
   }
 
@@ -2236,11 +2295,16 @@ export class WorkitCore {
     const workspace = this.store.readWorkspace();
     if (!workspace.ok) return workspace as Result<never>;
     if (!workspace.data) return failure("not_found", "workspace not found");
-    const current = captureCandidate(this.store.root, task.intent.data.scope, environment());
+    const historical = task.status === "closed" ? task.candidates.at(-1) : undefined;
+    const current = historical
+      ? success(null, null, historical)
+      : captureCandidate(this.store.root, task.intent.data.scope, environment());
     if (!current.ok) return current as Result<never>;
+    const evaluationWorkspace =
+      task.status === "closed" ? { ...workspace.data, writer: null } : workspace.data;
     const requirements = evaluateRequirements(
       task,
-      workspace.data,
+      evaluationWorkspace,
       this.context.capabilities,
       current.data,
       this.store.root,
@@ -2248,7 +2312,7 @@ export class WorkitCore {
     );
     return success(task.revision, workspace.data.revision, {
       task,
-      workspace: workspace.data,
+      workspace: evaluationWorkspace,
       capabilities: this.context.capabilities,
       requirements,
       evidence: evaluateEvidence(task, current.data),
@@ -2357,8 +2421,6 @@ export class WorkitCore {
       (status === "active" && task.data.status !== "paused")
     )
       return failure("invalid_transition", `cannot transition ${task.data.status} to ${status}`);
-    if (status === "active" && input.authorityRefs.length === 0)
-      return failure("permission_denied", "resuming a task requires authority references");
     const workspace = this.store.readWorkspace();
     if (!workspace.ok) return workspace as Result<never>;
     if (!workspace.data) return failure("not_found", "workspace not found");
@@ -2403,7 +2465,7 @@ export class WorkitCore {
         )
       )
         return failure("recovery_required", "imported task requires resume reconciliation");
-      if (!validResumeApproval(task.data, workspace.data, input.authorityRefs, this.context))
+      if (!validResumeApproval(task.data, workspace.data, input.authorityRefs ?? [], this.context))
         return failure("permission_denied", "imported resume requires native destination approval");
       resumeCandidate = current.data.candidate;
     }
@@ -2552,9 +2614,7 @@ export class WorkitCore {
         success(context.revision, null, {
           ...value,
           status: "closed",
-          candidates: value.candidates.some((item) => item.id === withCandidate.id)
-            ? value.candidates
-            : [...value.candidates, withCandidate],
+          candidates: taskForView.candidates,
           closure: {
             outcome: closure.data.outcome,
             at: context.now,

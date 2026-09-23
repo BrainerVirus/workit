@@ -412,17 +412,15 @@ export const resolveBinding = (
   };
 };
 
-/** One shared verification predicate for fixed findings: a passed
- * check/review counts when the finding is unscoped or the evidence is
- * bound to the finding's candidate. Used by the auto-reopen scan, the
- * resolve gate, and closure — one predicate, one error code each. */
+/** Evidence evaluation establishes freshness against the current tree;
+ * the finding's original candidate identifies where the defect was found. */
 export const findingVerificationPasses = (
   findingCandidateId: string | null | undefined,
   evidence: { kind: string; candidateId: string | null | undefined; status: string },
 ): boolean =>
   evidence.status === "passed" &&
   (evidence.kind === "check" || evidence.kind === "review") &&
-  ((findingCandidateId ?? null) === null || evidence.candidateId === findingCandidateId);
+  ((findingCandidateId ?? null) === null || evidence.candidateId != null);
 const applicableDecision = (
   task: TaskRecord,
   workspace: WorkspaceRecord,

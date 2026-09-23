@@ -14,12 +14,16 @@ import {
 import type { Provenance } from "@/packages/workit-core/src/core/task-contract";
 import { success as contractSuccess } from "@/packages/workit-core/src/core/task-contract";
 import {
+  externalActionState,
   priorExternalAction,
   runAuthorizedExternalAction,
 } from "@/packages/workit-core/src/core/external-action";
 import {
+  approvedResolvedExternalAction,
+  assertLocalExternalActionWriter,
   executeResolvedExternalAction,
   prBabysitNext,
+  readExternalAction,
   readHostingAction,
   readYouTrackAction,
   resolveExternalActionRequest,
@@ -307,6 +311,279 @@ test("local external effects fail closed without the existing writer and do not 
   }
 });
 
+test("local action authority follows the current writer session, not the task creator", async () => {
+  const root = mkdtempSync(join(tmpdir(), "workit-local-writer-session-"));
+  try {
+    const store = new TaskStore(root);
+    const creator = new WorkitCore(store, {
+      root,
+      caller: { host: "opencode", actor: "creator" },
+      capabilities: [],
+      constraints: [],
+      now: "2026-01-01T00:00:00Z",
+      nativeAuthority: verifier("creator", "opencode"),
+    });
+    const started = creator.task(taskStartRequest());
+    if (!started.ok) throw new Error(started.error);
+    const task = store.readTask((started.data as { id: string }).id);
+    const workspace = store.readWorkspace();
+    if (!task.ok || !workspace.ok || !workspace.data) throw new Error("task setup failed");
+    const descriptor = externalActionDescriptor("git.commit", {
+      message: "fix(test): resumed",
+      resolved: { head: "a", branch: "feature/test", staged: "b", paths: ["x"] },
+    });
+    const decision = creator.observeDecision(
+      {
+        schemaVersion: 1,
+        action: "record",
+        taskId: task.data.id,
+        expectedRevision: task.data.revision,
+        purpose: "action",
+        binding: {
+          taskId: task.data.id,
+          workspaceId: workspace.data.id,
+          scope: task.data.intent.data.scope,
+          presented: "approve original action",
+          approvedContent: descriptor,
+          contentRefs: [],
+        },
+        response: "approved",
+        requirementIds: [],
+      },
+      { kind: "decision", actor: "creator" },
+    );
+    if (!decision.ok) throw new Error(decision.error);
+    const approvedTask = store.readTask(task.data.id);
+    const approvedWorkspace = store.readWorkspace();
+    if (!approvedTask.ok || !approvedWorkspace.ok || !approvedWorkspace.data)
+      throw new Error("approval state missing");
+    const resumed = new WorkitCore(store, {
+      root,
+      caller: { host: "opencode", actor: "resumed-session" },
+      capabilities: [],
+      constraints: [],
+      now: "2026-01-01T00:00:01Z",
+      nativeAuthority: verifier("resumed-session", "opencode"),
+    });
+    expect(
+      resumed.writer({
+        schemaVersion: 1,
+        action: "acquire",
+        taskId: task.data.id,
+        expectedRevision: approvedTask.data.revision,
+        expectedWorkspaceRevision: approvedWorkspace.data.revision,
+        workerId: null,
+      }),
+    ).toMatchObject({ ok: true });
+    expect(
+      assertLocalExternalActionWriter(root, { host: "opencode", actor: "resumed-session" }),
+    ).toMatchObject({ ok: true });
+    expect(
+      assertLocalExternalActionWriter(root, { host: "opencode", actor: "creator" }),
+    ).toMatchObject({ ok: false, code: "permission_denied" });
+    expect(externalActionState(store, "opencode", "resumed-session", descriptor)).toMatchObject({
+      ok: true,
+    });
+    expect(
+      await nativeExternalActionRunner(
+        root,
+        "resumed-session",
+        resumed,
+      )(descriptor, async () => success(null, null, "executed")),
+    ).toMatchObject({ ok: true, data: "executed" });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("local Git reconciliation proves an applied commit and rejects an unapplied one", async () => {
+  const root = mkdtempSync(join(tmpdir(), "workit-local-git-reconcile-"));
+  try {
+    spawnSync("git", ["init", "-q"], { cwd: root });
+    spawnSync("git", ["config", "user.email", "test@example.invalid"], { cwd: root });
+    spawnSync("git", ["config", "user.name", "Workit Test"], { cwd: root });
+    writeFileSync(join(root, "initial.txt"), "initial\n");
+    spawnSync("git", ["add", "initial.txt"], { cwd: root });
+    spawnSync("git", ["commit", "-qm", "initial"], { cwd: root });
+    writeFileSync(join(root, "change.txt"), "change\n");
+    spawnSync("git", ["add", "change.txt"], { cwd: root });
+    const message = "fix(test): reconciled\n\nExact multiline body.";
+    const resolved = resolveExternalActionRequest(root, {
+      operation: "git.commit",
+      payload: { message },
+    });
+    if (!resolved.ok) throw new Error(resolved.error);
+    const persisted = approvedResolvedExternalAction(
+      externalActionDescriptor("git.commit", resolved.data.descriptorPayload),
+    );
+    if (!persisted.ok) throw new Error(persisted.error);
+    const actionRef = {
+      kind: "host" as const,
+      host: "workit_cli" as const,
+      handle: "local-git-reconcile",
+    };
+    expect(await readExternalAction(root, persisted.data, actionRef)).toMatchObject({
+      ok: false,
+      code: "external_outcome_unknown",
+    });
+    spawnSync("git", ["commit", "-qm", message], { cwd: root });
+    expect(await readExternalAction(root, persisted.data, actionRef)).toMatchObject({
+      ok: true,
+      data: { outcome: "succeeded" },
+    });
+
+    writeFileSync(join(root, "expected.txt"), "expected\n");
+    spawnSync("git", ["add", "expected.txt"], { cwd: root });
+    const expected = resolveExternalActionRequest(root, {
+      operation: "git.commit",
+      payload: { message: "fix(test): exact content" },
+    });
+    if (!expected.ok) throw new Error(expected.error);
+    const expectedPersisted = approvedResolvedExternalAction(
+      externalActionDescriptor("git.commit", expected.data.descriptorPayload),
+    );
+    if (!expectedPersisted.ok) throw new Error(expectedPersisted.error);
+    spawnSync("git", ["reset", "-q", "expected.txt"], { cwd: root });
+    rmSync(join(root, "expected.txt"));
+    writeFileSync(join(root, "other.txt"), "other\n");
+    spawnSync("git", ["add", "other.txt"], { cwd: root });
+    spawnSync("git", ["commit", "-qm", "fix(test): exact content"], { cwd: root });
+    expect(await readExternalAction(root, expectedPersisted.data, actionRef)).toMatchObject({
+      ok: false,
+      code: "external_outcome_unknown",
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("local Git reconciliation reads the approved push URL, not the fetch URL", async () => {
+  const root = mkdtempSync(join(tmpdir(), "workit-local-push-reconcile-"));
+  const firstRemote = mkdtempSync(join(tmpdir(), "workit-push-first-"));
+  const secondRemote = mkdtempSync(join(tmpdir(), "workit-push-second-"));
+  try {
+    for (const remote of [firstRemote, secondRemote])
+      spawnSync("git", ["init", "--bare", "-q"], { cwd: remote });
+    spawnSync("git", ["init", "-q"], { cwd: root });
+    spawnSync("git", ["config", "user.email", "test@example.invalid"], { cwd: root });
+    spawnSync("git", ["config", "user.name", "Workit Test"], { cwd: root });
+    writeFileSync(join(root, "initial.txt"), "initial\n");
+    spawnSync("git", ["add", "initial.txt"], { cwd: root });
+    spawnSync("git", ["commit", "-qm", "initial"], { cwd: root });
+    spawnSync("git", ["switch", "-qc", "feature/push"], { cwd: root });
+    spawnSync("git", ["remote", "add", "origin", `file://${firstRemote}`], { cwd: root });
+    spawnSync("git", ["push", "-qu", "origin", "feature/push"], { cwd: root });
+    spawnSync("git", ["remote", "set-url", "--push", "origin", `file://${secondRemote}`], {
+      cwd: root,
+    });
+    const resolved = resolveExternalActionRequest(root, {
+      operation: "git.push",
+      payload: { branch: "feature/push" },
+    });
+    if (!resolved.ok) throw new Error(resolved.error);
+    const persisted = approvedResolvedExternalAction(
+      externalActionDescriptor("git.push", resolved.data.descriptorPayload),
+    );
+    if (!persisted.ok) throw new Error(persisted.error);
+    expect(
+      await readExternalAction(root, persisted.data, {
+        kind: "host",
+        host: "workit_cli",
+        handle: "local-push-reconcile",
+      }),
+    ).toMatchObject({ ok: false, code: "external_outcome_unknown" });
+  } finally {
+    for (const path of [root, firstRemote, secondRemote])
+      rmSync(path, { recursive: true, force: true });
+  }
+});
+
+test("local Git reconciliation rejects a changed branch baseline", async () => {
+  const root = mkdtempSync(join(tmpdir(), "workit-local-branch-reconcile-"));
+  try {
+    spawnSync("git", ["init", "-q"], { cwd: root });
+    spawnSync("git", ["config", "user.email", "test@example.invalid"], { cwd: root });
+    spawnSync("git", ["config", "user.name", "Workit Test"], { cwd: root });
+    writeFileSync(join(root, "initial.txt"), "initial\n");
+    spawnSync("git", ["add", "initial.txt"], { cwd: root });
+    spawnSync("git", ["commit", "-qm", "initial"], { cwd: root });
+    spawnSync("git", ["branch", "feature/baseline"], { cwd: root });
+    writeFileSync(join(root, "later.txt"), "later\n");
+    spawnSync("git", ["add", "later.txt"], { cwd: root });
+    spawnSync("git", ["commit", "-qm", "later"], { cwd: root });
+    const resolved = resolveExternalActionRequest(root, {
+      operation: "git.branch_setup",
+      payload: { target_branch: "feature/baseline" },
+    });
+    if (!resolved.ok) throw new Error(resolved.error);
+    const persisted = approvedResolvedExternalAction(
+      externalActionDescriptor("git.branch_setup", resolved.data.descriptorPayload),
+    );
+    if (!persisted.ok) throw new Error(persisted.error);
+    if (resolved.data.request.operation !== "git.branch_setup") throw new Error("wrong operation");
+    spawnSync("git", ["branch", "-f", "feature/baseline", "HEAD"], { cwd: root });
+    spawnSync("git", ["switch", "-q", "feature/baseline"], { cwd: root });
+    const sdd = resolved.data.request.payload.sdd_dir;
+    if (typeof sdd !== "string") throw new Error("missing sdd_dir");
+    mkdirSync(sdd, { recursive: true });
+    writeFileSync(join(sdd, "manifest.json"), '{"branch":"feature/baseline"}\n');
+    expect(
+      await readExternalAction(root, persisted.data, {
+        kind: "host",
+        host: "workit_cli",
+        handle: "local-branch-reconcile",
+      }),
+    ).toMatchObject({ ok: false, code: "external_outcome_unknown" });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("local Git reconciliation proves an exact reapply-stash", async () => {
+  const root = mkdtempSync(join(tmpdir(), "workit-local-stash-reconcile-"));
+  try {
+    spawnSync("git", ["init", "-q"], { cwd: root });
+    spawnSync("git", ["config", "user.email", "test@example.invalid"], { cwd: root });
+    spawnSync("git", ["config", "user.name", "Workit Test"], { cwd: root });
+    writeFileSync(join(root, "tracked.txt"), "initial\n");
+    spawnSync("git", ["add", "tracked.txt"], { cwd: root });
+    spawnSync("git", ["commit", "-qm", "initial"], { cwd: root });
+    writeFileSync(join(root, "tracked.txt"), "stashed\n");
+    spawnSync("git", ["stash", "push", "-qm", "workit test"], { cwd: root });
+    mkdirSync(join(root, "docs"));
+    writeFileSync(
+      join(root, "docs", "manifest.json"),
+      JSON.stringify({ branch: "master", stash_ref: "stash@{0}" }),
+    );
+    const resolved = resolveExternalActionRequest(root, {
+      operation: "git.branch_setup",
+      payload: { action: "reapply_stash", sdd_dir: "docs" },
+    });
+    if (!resolved.ok) throw new Error(resolved.error);
+    const persisted = approvedResolvedExternalAction(
+      externalActionDescriptor("git.branch_setup", resolved.data.descriptorPayload),
+    );
+    if (!persisted.ok) throw new Error(persisted.error);
+    const actionRef = {
+      kind: "host" as const,
+      host: "workit_cli" as const,
+      handle: "local-stash-reconcile",
+    };
+    expect(await readExternalAction(root, persisted.data, actionRef)).toMatchObject({
+      ok: false,
+      code: "external_outcome_unknown",
+    });
+    spawnSync("git", ["stash", "pop", "stash@{0}"], { cwd: root });
+    writeFileSync(join(root, "docs", "manifest.json"), JSON.stringify({ branch: "master" }));
+    expect(await readExternalAction(root, persisted.data, actionRef)).toMatchObject({
+      ok: true,
+      data: { outcome: "succeeded" },
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("local commit checks writer ownership, not scopes", async () => {
   const roots: string[] = [];
   const setupScoped = (assignedScope: ReturnType<typeof scope>) => {
@@ -436,7 +713,14 @@ test("hosting reconciliation reads one exact GitHub result and preserves unknown
     writeFileSync(join(root, "initial.txt"), "initial\n");
     spawnSync("git", ["add", "initial.txt"], { cwd: root });
     spawnSync("git", ["commit", "-qm", "initial"], { cwd: root });
+    const baseBranch = spawnSync("git", ["branch", "--show-current"], {
+      cwd: root,
+      encoding: "utf8",
+    }).stdout.trim();
     spawnSync("git", ["checkout", "-qb", "feature/reconcile"], { cwd: root });
+    writeFileSync(join(root, "feature.txt"), "feature\n");
+    spawnSync("git", ["add", "feature.txt"], { cwd: root });
+    spawnSync("git", ["commit", "-qm", "feature"], { cwd: root });
     spawnSync("git", ["remote", "add", "origin", "https://github.com/org/repo.git"], { cwd: root });
     const tokenPath = join(root, "token");
     const configPath = join(root, "vcs.json");
@@ -503,6 +787,79 @@ test("hosting reconciliation reads one exact GitHub result and preserves unknown
     })) as unknown as typeof fetch;
     const found = await readHostingAction(root, resolved.data, actionRef);
     expect(found).toMatchObject({ ok: true, data: { outcome: "succeeded", data: { id: 42 } } });
+    const merge = resolveExternalActionRequest(root, {
+      operation: "hosting.merge",
+      payload: { source_branch: "feature/reconcile", target_branch: "main" },
+    });
+    expect(merge).toMatchObject({ ok: true });
+    if (!merge.ok) return;
+    globalThis.fetch = (async () => ({
+      ok: true,
+      json: async () => [
+        {
+          number: 42,
+          body: "",
+          merged_at: "2026-01-01T00:00:00Z",
+          base: { ref: source.target_branch },
+          head: { ref: source.resolved.source_branch, sha: source.resolved.source_commit },
+        },
+      ],
+    })) as unknown as typeof fetch;
+    expect(await readExternalAction(root, merge.data, actionRef)).toMatchObject({
+      ok: true,
+      data: { outcome: "succeeded", data: { provider: "github", id: 42 } },
+    });
+    globalThis.fetch = (async () => ({
+      ok: true,
+      json: async () => [
+        {
+          number: 42,
+          body: "",
+          merged_at: "2026-01-01T00:00:00Z",
+          base: { ref: source.target_branch },
+          head: { ref: source.resolved.source_branch, sha: source.resolved.source_commit },
+        },
+        {
+          number: 43,
+          body: "",
+          merged_at: null,
+          base: { ref: source.target_branch },
+          head: { ref: source.resolved.source_branch, sha: "f".repeat(40) },
+        },
+      ],
+    })) as unknown as typeof fetch;
+    expect(await readExternalAction(root, merge.data, actionRef)).toMatchObject({
+      ok: false,
+      code: "external_outcome_unknown",
+    });
+    spawnSync("git", ["checkout", "-q", baseBranch], { cwd: root });
+    const explicitSource = resolveExternalActionRequest(root, {
+      operation: "hosting.merge",
+      payload: { source_branch: "feature/reconcile", target_branch: "main" },
+    });
+    expect(explicitSource).toMatchObject({ ok: true });
+    if (explicitSource.ok)
+      expect(
+        (explicitSource.data.descriptorPayload as { resolved: { source_commit: string } }).resolved
+          .source_commit,
+      ).toBe(source.resolved.source_commit);
+    spawnSync("git", ["checkout", "-q", "feature/reconcile"], { cwd: root });
+    globalThis.fetch = (async () => ({
+      ok: true,
+      json: async () => [
+        {
+          number: 42,
+          body: "",
+          merged_at: null,
+          base: { ref: source.target_branch },
+          head: { ref: source.resolved.source_branch, sha: source.resolved.source_commit },
+        },
+      ],
+    })) as unknown as typeof fetch;
+    expect(await readExternalAction(root, merge.data, actionRef)).toMatchObject({
+      ok: false,
+      code: "external_outcome_unknown",
+    });
     malformed = true;
     expect(await readHostingAction(root, resolved.data, actionRef)).toMatchObject({
       ok: false,
@@ -591,6 +948,52 @@ test("hosting reconciliation reads one exact GitHub result and preserves unknown
     expect(await readHostingAction(root, gitlabResolved.data, actionRef)).toMatchObject({
       ok: true,
       data: { outcome: "succeeded", data: { provider: "gitlab", id: 7 } },
+    });
+    const gitlabMerge = resolveExternalActionRequest(root, {
+      operation: "hosting.merge",
+      payload: { source_branch: "feature/reconcile", target_branch: "main" },
+    });
+    expect(gitlabMerge).toMatchObject({ ok: true });
+    if (!gitlabMerge.ok) return;
+    globalThis.fetch = (async () => ({
+      ok: true,
+      json: async () => [
+        {
+          iid: 7,
+          state: "merged",
+          description: "",
+          target_branch: gitlabSource.target_branch,
+          source_branch: gitlabSource.resolved.source_branch,
+          sha: gitlabSource.resolved.source_commit,
+        },
+      ],
+    })) as unknown as typeof fetch;
+    expect(await readExternalAction(root, gitlabMerge.data, actionRef)).toMatchObject({
+      ok: true,
+      data: { outcome: "succeeded", data: { provider: "gitlab", id: 7 } },
+    });
+    globalThis.fetch = (async () => ({
+      ok: true,
+      json: async () => [
+        {
+          iid: 7,
+          state: "merged",
+          target_branch: gitlabSource.target_branch,
+          source_branch: gitlabSource.resolved.source_branch,
+          sha: gitlabSource.resolved.source_commit,
+        },
+        {
+          iid: 8,
+          state: "opened",
+          target_branch: gitlabSource.target_branch,
+          source_branch: gitlabSource.resolved.source_branch,
+          sha: "f".repeat(40),
+        },
+      ],
+    })) as unknown as typeof fetch;
+    expect(await readExternalAction(root, gitlabMerge.data, actionRef)).toMatchObject({
+      ok: false,
+      code: "external_outcome_unknown",
     });
   } finally {
     globalThis.fetch = previousFetch;

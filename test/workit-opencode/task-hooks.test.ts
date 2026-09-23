@@ -669,15 +669,20 @@ const dispatchFixture = async (root: string, assignments = 1) => {
 const workerState = (
   active: ReturnType<typeof activeTask>,
   workerId: string,
-): { state: string; session: unknown } => {
+): { state: string; session: unknown; coordinator: unknown; report: unknown } => {
   const task = active.store.readTask(active.task.id);
   if (!task.ok) throw new Error(task.error);
   const worker = task.data.workers.find((entry) => entry.id === workerId);
   if (!worker) throw new Error("worker missing");
-  return { state: worker.data.state, session: worker.data.session };
+  return {
+    state: worker.data.state,
+    session: worker.data.session,
+    coordinator: worker.data.coordinator,
+    report: worker.data.report,
+  };
 };
 
-test("a prepared OpenCode dispatch binds the created child session", async () => {
+test("a prepared OpenCode dispatch binds its observed child before the child uses Workit", async () => {
   const root = mkdtempSync(join(tmpdir(), "workit-opencode-dispatch-bind-"));
   try {
     const { active, ids, hooks } = await dispatchFixture(root);
@@ -703,12 +708,100 @@ test("a prepared OpenCode dispatch binds the created child session", async () =>
       state: "running",
       session: { handle: "child-1" },
     });
-    // The launch consumed the reservation, so a late "never started" claim cannot land.
+    const childRead = await hooks.tool?.workit_task.execute(
+      { schemaVersion: 1, action: "inspect", taskId: active.task.id },
+      { directory: root, sessionID: "child-1" } as never,
+    );
+    expect(JSON.parse(childRead as string)).toMatchObject({ ok: true });
     await hooks["tool.execute.after"]?.(
       { tool: "task", sessionID: "coord", callID: "launch", args: {} },
-      { title: "task", output: "cancelled", metadata: { childCreated: false } },
+      {
+        title: "task",
+        output: '<task id="child-1" state="running"></task>',
+        metadata: { sessionId: "child-1", parentSessionId: "coord" },
+      },
     );
-    expect(workerState(active, ids[0]).state).toBe("running");
+    expect(workerState(active, ids[0])).toMatchObject({
+      state: "running",
+      session: { handle: "child-1" },
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a resumed coordinator claims its own assigned worker on an older task", async () => {
+  const root = mkdtempSync(join(tmpdir(), "workit-opencode-dispatch-resumed-"));
+  try {
+    const active = activeTask(root, "creator");
+    const resumed = new WorkitCore(active.store, {
+      root,
+      caller: { host: "opencode", actor: "coord" },
+      capabilities: [],
+      constraints: [],
+      now: () => "2026-01-01T00:00:01Z",
+    });
+    const task = active.store.readTask(active.task.id);
+    const workspace = active.store.readWorkspace();
+    if (!task.ok || !workspace.ok || !workspace.data) throw new Error("state missing");
+    const assigned = workerAssignment(
+      resumed,
+      task.data.id,
+      task.data.revision,
+      workspace.data.revision,
+      "reviewer",
+    );
+    if (!assigned.ok) throw new Error(assigned.error);
+    const hooks = await plugin({
+      directory: root,
+      worktree: root,
+      serverUrl: new URL("http://localhost"),
+      client: coordinatorClient(root),
+    } as never);
+    await hooks["tool.execute.before"]?.(
+      { tool: "task", sessionID: "coord", callID: "launch" },
+      { args: {} },
+    );
+    expect(workerState(active, assigned.data.id)).toMatchObject({
+      state: "dispatching",
+      session: null,
+      coordinator: { kind: "host", host: "opencode", handle: "coord" },
+    });
+    await hooks["tool.execute.after"]?.(
+      { tool: "task", sessionID: "coord", callID: "launch", args: {} },
+      {
+        title: "task",
+        output: '<task id="child" state="running"></task>',
+        metadata: { sessionId: "child", parentSessionId: "coord" },
+      },
+    );
+    const raw = await hooks.tool?.workit_task.execute(
+      { schemaVersion: 1, action: "inspect", taskId: active.task.id },
+      { directory: root, sessionID: "child" } as never,
+    );
+    expect(JSON.parse(raw as string)).toMatchObject({ ok: true });
+
+    const changedParent = await plugin({
+      directory: root,
+      worktree: root,
+      serverUrl: new URL("http://localhost"),
+      client: coordinatorClient(root, "other"),
+    } as never);
+    await changedParent.event?.({
+      event: { type: "session.idle", properties: { sessionID: "child" } },
+    } as never);
+    expect(workerState(active, assigned.data.id)).toMatchObject({ state: "running" });
+
+    const reloaded = await plugin({
+      directory: root,
+      worktree: root,
+      serverUrl: new URL("http://localhost"),
+      client: coordinatorClient(root),
+    } as never);
+    await reloaded.event?.({
+      event: { type: "session.idle", properties: { sessionID: "child" } },
+    } as never);
+    expect(workerState(active, assigned.data.id)).toMatchObject({ state: "stopped" });
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -853,13 +946,10 @@ test("a completed task result stops the bound worker without waiting for end eve
   const root = mkdtempSync(join(tmpdir(), "workit-opencode-dispatch-completed-"));
   try {
     const { active, ids, hooks } = await dispatchFixture(root);
-    await hooks.event?.({
-      event: {
-        type: "session.created",
-        properties: { info: { id: "child", directory: root, parentID: "coord" } },
-      },
-    } as never);
-    expect(workerState(active, ids[0]).state).toBe("running");
+    await hooks["tool.execute.before"]?.(
+      { tool: "task", sessionID: "coord", callID: "launch" },
+      { args: {} },
+    );
     await hooks["tool.execute.after"]?.(
       { tool: "task", sessionID: "coord", callID: "launch", args: {} },
       {
@@ -868,7 +958,10 @@ test("a completed task result stops the bound worker without waiting for end eve
         metadata: { sessionId: "child", parentSessionId: "coord" },
       },
     );
-    expect(workerState(active, ids[0])).toMatchObject({ state: "stopped" });
+    expect(workerState(active, ids[0])).toMatchObject({
+      state: "stopped",
+      report: { outcome: "completed", summary: "done", evidenceIds: [], findingIds: [] },
+    });
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -878,13 +971,10 @@ test("a non-completed task result leaves the bound worker running", async () => 
   const root = mkdtempSync(join(tmpdir(), "workit-opencode-dispatch-error-"));
   try {
     const { active, ids, hooks } = await dispatchFixture(root);
-    await hooks.event?.({
-      event: {
-        type: "session.created",
-        properties: { info: { id: "child", directory: root, parentID: "coord" } },
-      },
-    } as never);
-    expect(workerState(active, ids[0]).state).toBe("running");
+    await hooks["tool.execute.before"]?.(
+      { tool: "task", sessionID: "coord", callID: "launch" },
+      { args: {} },
+    );
     await hooks["tool.execute.after"]?.(
       { tool: "task", sessionID: "coord", callID: "launch", args: {} },
       {
@@ -1165,7 +1255,7 @@ const sessionOf = (root: string, taskId: string, workerId: string) => {
   return { state: worker.data.state, session: worker.data.session };
 };
 
-test("serial session.created events bind successive same-task workers oldest-first", async () => {
+test("serial session.created events never consume assigned workers", async () => {
   const root = mkdtempSync(join(tmpdir(), "workit-dispatch-queue-"));
   try {
     const { store, core, task } = activeTask(root);
@@ -1188,14 +1278,8 @@ test("serial session.created events bind successive same-task workers oldest-fir
     } as never);
     await createdEvent(hooks, root, "child-1", "lead");
     await createdEvent(hooks, root, "child-2", "lead");
-    expect(sessionOf(root, task.id, ordered[0])).toEqual({
-      state: "running",
-      session: { kind: "host", host: "opencode", handle: "child-1" },
-    });
-    expect(sessionOf(root, task.id, ordered[1])).toEqual({
-      state: "running",
-      session: { kind: "host", host: "opencode", handle: "child-2" },
-    });
+    expect(sessionOf(root, task.id, ordered[0])).toEqual({ state: "assigned", session: null });
+    expect(sessionOf(root, task.id, ordered[1])).toEqual({ state: "assigned", session: null });
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

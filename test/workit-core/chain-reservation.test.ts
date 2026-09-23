@@ -10,6 +10,7 @@ import {
   approvedPlanCommit,
   chainStepKey,
   externalActionDescriptor,
+  externalActionRequest,
   normalizeChainSteps,
   success,
   type NativeAuthorityVerifier,
@@ -212,6 +213,15 @@ test("mixed plan validation accepts typed steps and rejects collisions", () => {
       },
     } as never);
     expect(valid.ok).toBe(true);
+    expect(
+      externalActionRequest({
+        operation: "git.commit",
+        payload: {
+          plan_steps: [{ branch: "feature/next" }, "chore(test): one", { pr: true }],
+          plan_branch: "feature/next",
+        },
+      }),
+    ).toMatchObject({ ok: true });
     for (const bad of [
       [{ branch: "feature/next" }, "branch:feature/next"],
       [{ branch: "" }],

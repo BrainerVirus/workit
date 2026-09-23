@@ -163,13 +163,78 @@ test("findingVerificationPasses unifies the fixed-finding predicate", () => {
   ).toBe(true);
   expect(
     findingVerificationPasses("c1", { kind: "check", candidateId: "c2", status: "passed" }),
-  ).toBe(false);
+  ).toBe(true);
   expect(
     findingVerificationPasses(null, { kind: "artifact", candidateId: null, status: "passed" }),
   ).toBe(false);
   expect(
     findingVerificationPasses(null, { kind: "check", candidateId: null, status: "failed" }),
   ).toBe(false);
+});
+
+test("a finding pinned to the broken candidate accepts a fresh check of the fixed candidate", () => {
+  const lead = active();
+  try {
+    const before = lead.core.evidence({
+      schemaVersion: 1,
+      action: "record",
+      taskId: lead.task.id,
+      evidence: {
+        kind: "check",
+        claim: "baseline",
+        requirementIds: [],
+        result: "passed",
+        summary: "baseline captured",
+        refs: [],
+        exitCode: 0,
+        reviewContext: null,
+      },
+    });
+    if (!before.ok) throw new Error(before.error);
+    const finding = lead.core.finding({
+      schemaVersion: 1,
+      action: "record",
+      taskId: lead.task.id,
+      claim: "broken behavior",
+      consequence: "fails on the baseline",
+      scope: scope(),
+      candidateId: before.data.data.candidateId,
+      refs: [{ kind: "file", path: "a.ts", digest: null }],
+    });
+    if (!finding.ok) throw new Error(finding.error);
+    writeFileSync(join(lead.root, "a.ts"), "fixed");
+    const check = lead.core.evidence({
+      schemaVersion: 1,
+      action: "record",
+      taskId: lead.task.id,
+      evidence: {
+        kind: "check",
+        claim: "fixed behavior",
+        requirementIds: [],
+        result: "passed",
+        summary: "fixed behavior checked",
+        refs: [{ kind: "file", path: "a.ts", digest: null }],
+        exitCode: 0,
+        reviewContext: null,
+      },
+    });
+    if (!check.ok) throw new Error(check.error);
+    expect(check.data.data.candidateId).not.toBe(before.data.data.candidateId);
+    expect(
+      lead.core.finding({
+        schemaVersion: 1,
+        action: "resolve",
+        taskId: lead.task.id,
+        findingId: finding.data.id,
+        disposition: "fixed",
+        reason: "verified on the fixed tree",
+        evidenceIds: [check.data.id],
+        decisionIds: [],
+      }),
+    ).toMatchObject({ ok: true });
+  } finally {
+    rmSync(lead.root, { recursive: true, force: true });
+  }
 });
 
 test("dismissal relevance ignores reference key order", () => {

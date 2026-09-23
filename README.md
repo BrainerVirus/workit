@@ -196,6 +196,13 @@ review evidence, with `reviewContext` matching the recording session. Independen
 review requirements still need a session distinct from the task creator and
 other evidence recorders.
 
+`task.list` defaults to the 20 most recently updated active or paused tasks and
+returns a compact projection. Use `status: "closed"` or `status: "all"` with a
+`limit` of 1-50 for bounded history, then `task.inspect` for one task's details;
+omitting its `view` selects `summary`. Closed inspection uses the candidate
+captured at closure and never projects the checkout's current writer onto
+history.
+
 Skills are reachable two ways: model-invoked automatically when the task fits,
 or explicitly via the fourteen `wk-*` aliases (`/wk-challenge`, `/wk-babysit`,
 `/wk-implement`, `/wk-plan`, `/wk-debug`, and the rest) on OpenCode, Cursor, and
@@ -267,7 +274,9 @@ and the worker is recorded as stopped with no session. Ambiguous assignments,
 generic cancellation text, unsettled claims, and claims lost to a restart stay
 unresolved — blocking replacement, closure, and resume instead of being
 guessed — and a fresh managed launch without an attributable worker is denied
-before spawn.
+before spawn. Assignment provenance identifies the current coordinator after a
+session resumes; the task creator's historical session is not an execution
+gate.
 
 </details>
 
@@ -335,6 +344,11 @@ records with no question and returns its commit count. Guardrails are code, not 
 open PRs, or merge sources; push identity must match the area account;
 publish/release stay gated. Product decisions, waivers, and close outcomes
 still require a human.
+
+Plan lists accept commit-message strings plus typed `{ "branch": "name" }` and
+`{ "pr": true }` steps. A later commit with the same message or push of the
+same branch resolves its current Git target and is a new effect; retries of an
+uncertain local Git action reconcile the repository state before running again.
 
 ## Development
 

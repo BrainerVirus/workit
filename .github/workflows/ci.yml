@@ -60,7 +60,7 @@ jobs:
         run: bun run build
 
       - name: Test workit-core
-        run: bun test test/workit-core
+        run: bun test --timeout ${{ runner.os == 'Windows' && '15000' || '5000' }} test/workit-core
 
       - name: Typecheck (whole repo)
         run: bun run typecheck

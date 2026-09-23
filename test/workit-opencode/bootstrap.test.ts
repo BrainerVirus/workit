@@ -121,6 +121,18 @@ describe("stale-source markers", () => {
         file.endsWith(path.join("workit-core", "src", "core", "task-contract.ts")),
       ),
     ).toBe(true);
+    expect(
+      pluginSourceFiles.some((file) => file.endsWith(path.join("workit-core", "src", "core.ts"))),
+    ).toBe(true);
     expect(pluginSourceFiles.some((file) => file.endsWith("plugin.ts"))).toBe(true);
+    expect(pluginSourceFiles.some((file) => file.endsWith("external-action-effects.ts"))).toBe(
+      true,
+    );
+    expect(pluginSourceFiles.some((file) => file.endsWith(path.join("v2", "lifecycle.ts")))).toBe(
+      true,
+    );
+    expect(pluginSourceFiles.some((file) => file.endsWith(path.join("v2", "receipts.ts")))).toBe(
+      true,
+    );
   });
 });

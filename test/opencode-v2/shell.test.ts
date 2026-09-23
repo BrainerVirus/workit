@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import definition from "@/packages/workit-opencode/src/v2/plugin";
+import { normalizeQuestionAnswers } from "@/packages/workit-opencode/src/v2/receipts";
 
 /** The exact 10 registered Workit tool names in registration order. */
 const TOOL_NAMES = [
@@ -406,6 +407,11 @@ const workitQuestion = (presented: string, approved: string) => ({
   ],
 });
 
+test("ambiguous V2 question metadata is never normalized to approval", () => {
+  const answers = { q0: "approved", q1: "rejected" };
+  expect(normalizeQuestionAnswers(answers)).toBe(answers);
+});
+
 test("question results mint one consume-once decision receipt", async () => {
   const root = repository();
   try {
@@ -452,6 +458,11 @@ test("question results mint one consume-once decision receipt", async () => {
       response: "approved",
       requirementIds: [],
     };
+    const failed = await call("workit_decision", {
+      ...record,
+      expectedRevision: "00000000-0000-4000-8000-000000000000",
+    });
+    expect(failed).toMatchObject({ ok: false, code: "revision_conflict" });
     const recorded = await call("workit_decision", record);
     expect(recorded.ok).toBe(true);
     // The receipt is consumed once: a replay finds nothing to bind.

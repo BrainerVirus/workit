@@ -11,6 +11,7 @@ import {
   type Revision,
   type TaskRecord,
   type Worker,
+  type WorkerReport,
   type WorkspaceRecord,
 } from "./task-contract";
 import { TaskStore } from "./task-store";
@@ -31,6 +32,7 @@ export type NativeWorkerObservation = {
   expectedWorkspaceRevision: Revision;
   state: WorkerState;
   session: HostSession | null;
+  report?: WorkerReport;
   observation: unknown;
 };
 
@@ -130,6 +132,21 @@ export type ProductWriteInput = {
   caller: CallerContext;
   paths: string[];
   store?: TaskStore;
+};
+
+export const currentWriterOwnsTask = (
+  task: TaskRecord,
+  workspace: WorkspaceRecord,
+  caller: { host: string; actor: string },
+): boolean => {
+  const owner = workspace.writer?.owner;
+  return (
+    task.status === "active" &&
+    task.workspaceId === workspace.id &&
+    owner?.taskId === task.id &&
+    owner.session.host === caller.host &&
+    owner.session.handle === caller.actor
+  );
 };
 
 /** Check the authoritative workspace owner and the caller's role. File paths
