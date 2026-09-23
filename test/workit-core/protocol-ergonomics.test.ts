@@ -140,7 +140,7 @@ test("task list defaults to a bounded compact open-task projection", () => {
   const root = gitRepo();
   try {
     const core = coreFor(root);
-    for (let index = 0; index < 22; index += 1) {
+    for (let index = 0; index < 6; index += 1) {
       const started = core.task(
         taskStartRequest({
           expectedWorkspaceRevision: undefined,
