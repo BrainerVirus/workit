@@ -122,9 +122,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reconciliation before retry; stash reapplication binds and verifies the
   exact stash commit. Fixed findings accept fresh verification of the repaired
   candidate even when the original finding was pinned to the broken candidate.
-  Merge reconciliation rejects an open PR/MR on the approved source and target
-  instead of mistaking an older merge for the current one, and binds an explicit
-  source branch to its own commit rather than the checked-out branch's HEAD.
+  Merge recovery rejects older matches while a PR/MR remains open and binds
+  explicit source branches to their own commits.
 - Task listing defaults to a bounded compact active/paused projection, supports
   explicit bounded closed/all history, and no longer recomputes closed tasks
   against today's checkout or attaches today's writer. `task.inspect` defaults

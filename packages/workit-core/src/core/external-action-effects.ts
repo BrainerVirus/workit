@@ -658,19 +658,13 @@ export const readHostingAction = async (
         return unknownHostingEvidence(operation);
       records.push(record);
     }
-    const matches = records.filter((item): item is Record<string, unknown> => {
-      const body = String(
-        (item as Record<string, unknown>).body ??
-          (item as Record<string, unknown>).description ??
-          "",
-      );
-      const base = (item as Record<string, unknown>).base as Record<string, unknown> | undefined;
-      const head = (item as Record<string, unknown>).head as Record<string, unknown> | undefined;
-      const itemTarget =
-        cfg.provider === "github" ? base?.ref : (item as Record<string, unknown>).target_branch;
-      const itemSource =
-        cfg.provider === "github" ? head?.ref : (item as Record<string, unknown>).source_branch;
-      const itemSha = cfg.provider === "github" ? head?.sha : (item as Record<string, unknown>).sha;
+    const matches = records.filter((item) => {
+      const body = String(item.body ?? item.description ?? "");
+      const base = item.base as Record<string, unknown> | undefined;
+      const head = item.head as Record<string, unknown> | undefined;
+      const itemTarget = cfg.provider === "github" ? base?.ref : item.target_branch;
+      const itemSource = cfg.provider === "github" ? head?.ref : item.source_branch;
+      const itemSha = cfg.provider === "github" ? head?.sha : item.sha;
       const merged =
         cfg.provider === "github"
           ? typeof item.merged_at === "string"
@@ -877,7 +871,6 @@ export const readYouTrackAction = async (
   }
 };
 
-/** Read-only proof for local effects whose command response was lost. */
 export const readLocalAction = async (
   root: string,
   resolved: ResolvedExternalAction,
