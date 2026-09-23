@@ -1,6 +1,6 @@
 {
   "name": "@brainervirus/workit-cli",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "private": false,
   "description": "Workit CLI — setup wizard, doctor, and task control for agentic coding workflows",
   "keywords": [
