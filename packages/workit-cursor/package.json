@@ -1,6 +1,6 @@
 {
   "name": "@brainervirus/workit-cursor",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "private": false,
   "description": "Workit Cursor plugin — shared MCP transport, native hooks, and fourteen method skills",
   "keywords": [
