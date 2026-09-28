@@ -78,6 +78,50 @@ test("cutover apply rejects malformed --resolution flags", async () => {
   }
 });
 
+test("cutover apply reports missing archive destination as needs_input", async () => {
+  const home = tmp("wk-cut-cmd-");
+  try {
+    const io = capture();
+    const code = await runCutoverCommand(["apply"], {
+      env: cutoverEnv(home),
+      cwd: home,
+      out: io.out,
+      err: io.err,
+      stdinIsTTY: () => false,
+    });
+    expect(code).toBe(2);
+    expect(io.read().stderr).toContain('"code": "needs_input"');
+    expect(io.read().stderr).toContain("--archive-dir");
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("cutover preview rejects duplicate and empty archive destination flags", async () => {
+  for (const args of [
+    ["preview", "--archive-dir=/tmp/a", "--archive-dir=/tmp/b"],
+    ["preview", "--archive-dir"],
+    ["preview", "--archive-dir", "--json"],
+    ["preview", "--archive-dir="],
+    ["preview", "--archive-dir=   "],
+  ]) {
+    const home = tmp("wk-cut-cmd-");
+    try {
+      const io = capture();
+      const code = await runCutoverCommand(args, {
+        env: cutoverEnv(home),
+        cwd: home,
+        out: io.out,
+        err: io.err,
+      });
+      expect(code).toBe(2);
+      expect(io.read().stderr).toContain("malformed --archive-dir flag(s)");
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  }
+});
+
 test("cutover apply --json prints the machine-readable plan", async () => {
   const home = tmp("wk-cut-cmd-");
   try {

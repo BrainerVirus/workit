@@ -70,6 +70,7 @@ export type CutoverInventory = {
 
 export type CutoverPlan = {
   id: Id;
+  archiveDir: string | null;
   managedFiles: { path: string; beforeDigest: Digest | null; afterDigest: Digest }[];
   inventory: CutoverInventory;
   sessions: SessionObservation[];
@@ -81,6 +82,7 @@ export type CutoverPlan = {
 
 export type CutoverReceipt = {
   backupId: Id;
+  archiveDir: string;
   planId: Id;
   generation: "legacy" | "v1";
   hosts: CutoverHost[];
@@ -92,6 +94,7 @@ export type CutoverReceipt = {
 type CutoverJournal = {
   schemaVersion: 1;
   backupId: Id;
+  archiveDir: string;
   planId: Id;
   hosts: CutoverHost[];
   resolutions: Record<string, string>;
@@ -128,6 +131,7 @@ export type CutoverPaths = {
   home?: string;
   configDir?: string;
   stateDir?: string;
+  archiveDir?: string;
   dev?: string | null;
   workspace?: string;
   opencodeConfig?: string;
@@ -827,8 +831,29 @@ const cutoverBackupTargets = (
   hosts: CutoverHost[],
 ): string[] => [...new Set([...managedCutoverFiles(paths), ...hostMutationTargets(paths, hosts)])];
 
-const backupRoot = (stateDir: string, backupId: Id) =>
-  path.join(stateDir, "cutover", "backups", backupId);
+const backupRoot = (archiveDir: string, backupId: Id) => path.join(archiveDir, backupId);
+
+const archiveDestinationError = (
+  archiveDir: string,
+  paths: ReturnType<typeof resolvePaths>,
+): string | null => {
+  const resolved = path.resolve(archiveDir);
+  const scopes = [paths.configDir, paths.stateDir, paths.workspace].map((p) => path.resolve(p));
+  if (
+    scopes.some(
+      (scope) =>
+        resolved === scope ||
+        resolved.startsWith(scope + path.sep) ||
+        scope.startsWith(resolved + path.sep),
+    )
+  ) {
+    return "archive destination must be separate from config, state, and workspace";
+  }
+  if (!noSymlinkAncestor(resolved)) return "archive destination has a symlinked ancestor";
+  const existing = lstatOrNull(resolved);
+  if (existing && !existing.isDirectory()) return "archive destination is not a directory";
+  return null;
+};
 
 const backupRelPath = (file: string, paths: ReturnType<typeof resolvePaths>): string => {
   if (file.startsWith(paths.configDir + path.sep) || file === paths.configDir) {
@@ -841,9 +866,10 @@ type VerifiedBackupFile = { digest: Digest; storagePath: string };
 
 const readBackupFiles = (
   backupId: Id,
+  archiveDir: string,
   paths: ReturnType<typeof resolvePaths>,
 ): { files: Map<string, VerifiedBackupFile>; issues: string[] } => {
-  const root = backupRoot(paths.stateDir, backupId);
+  const root = backupRoot(archiveDir, backupId);
   const manifestPath = path.join(root, "manifest.json");
   const files = new Map<string, VerifiedBackupFile>();
   const issues: string[] = [];
@@ -917,10 +943,11 @@ const readBackupFiles = (
 
 const writeBackup = (
   backupId: Id,
+  archiveDir: string,
   paths: ReturnType<typeof resolvePaths>,
   files: string[],
 ): void => {
-  const root = backupRoot(paths.stateDir, backupId);
+  const root = backupRoot(archiveDir, backupId);
   mkdirSync(root, { recursive: true });
   const manifest: { path: string; digest: Digest }[] = [];
   for (const file of files) {
@@ -957,7 +984,7 @@ const writeReceipt = (receipt: CutoverReceipt, stateDir: string): void => {
 };
 
 const cutoverJournalPath = (stateDir: string, backupId: Id): string =>
-  path.join(backupRoot(stateDir, backupId), "journal.json");
+  path.join(stateDir, "cutover", "journals", `${backupId}.json`);
 
 const writeCutoverJournal = (journal: CutoverJournal, stateDir: string): void => {
   writeFileAtomic(
@@ -985,6 +1012,9 @@ const readCutoverJournal = (backupId: Id, stateDir: string): CutoverJournal | nu
     if (
       value.schemaVersion !== 1 ||
       value.backupId !== backupId ||
+      typeof value.archiveDir !== "string" ||
+      !path.isAbsolute(value.archiveDir) ||
+      path.resolve(value.archiveDir) !== value.archiveDir ||
       typeof value.planId !== "string" ||
       !Array.isArray(value.hosts) ||
       !value.hosts.every(isCutoverHost) ||
@@ -1083,6 +1113,11 @@ export function previewCutover(
 ): CutoverPlan {
   const paths = resolvePaths(options);
   const blocked: string[] = [];
+  const archiveDir = options.archiveDir ? path.resolve(options.archiveDir) : null;
+  if (archiveDir) {
+    const archiveError = archiveDestinationError(archiveDir, paths);
+    if (archiveError) blocked.push(archiveError);
+  }
   const inventory = buildCutoverInventory(paths);
   let conversion: ConversionPreview = { mappings: [], preserved: [], unresolved: [] };
   if (inventory.complete) {
@@ -1149,6 +1184,7 @@ export function previewCutover(
 
   return {
     id: randomUUID(),
+    archiveDir,
     managedFiles,
     inventory,
     sessions: paths.sessions,
@@ -1354,6 +1390,13 @@ export function applyCutover(
   }
 
   const paths = resolvePaths(options);
+  if (!options.archiveDir || !plan.archiveDir)
+    return failure("needs_input", "archive destination is required (--archive-dir)");
+  const archiveDir = path.resolve(options.archiveDir);
+  if (archiveDir !== plan.archiveDir)
+    return failure("revision_conflict", "archive destination changed since preview");
+  const archiveError = archiveDestinationError(archiveDir, paths);
+  if (archiveError) return failure("requirements_unsatisfied", archiveError);
   if (!plan.inventory?.complete) {
     return failure("requirements_unsatisfied", "cutover inventory is incomplete");
   }
@@ -1397,10 +1440,12 @@ export function applyCutover(
     });
   }
   try {
-    writeBackup(backupId, paths, backupInventory.files);
+    mkdirSync(archiveDir, { recursive: true });
+    writeBackup(backupId, archiveDir, paths, backupInventory.files);
     const journal: CutoverJournal = {
       schemaVersion: 1,
       backupId,
+      archiveDir,
       planId: plan.id,
       hosts: [...decision.hosts],
       resolutions: { ...decision.resolutions },
@@ -1527,6 +1572,7 @@ const runCutoverJournal = (
 
   const receipt: CutoverReceipt = {
     backupId: journal.backupId,
+    archiveDir: journal.archiveDir,
     planId: journal.planId,
     generation: partial ? "legacy" : "v1",
     hosts: [...journal.appliedHosts],
@@ -1573,12 +1619,32 @@ export function previewRollback(backupId: Id, options: CutoverPaths = {}): Rollb
       issues: ["invalid cutover backup id"],
     };
   }
-  const root = backupRoot(paths.stateDir, backupId);
   const receipt = readCutoverReceipt(backupId, paths.stateDir);
   const restorable: RollbackPreview["restorable"] = [];
   const conflicts: RollbackPreview["conflicts"] = [];
   const preserved: string[] = [];
   const issues: string[] = [];
+
+  if (
+    !receipt ||
+    receipt.backupId !== backupId ||
+    typeof receipt.archiveDir !== "string" ||
+    !path.isAbsolute(receipt.archiveDir) ||
+    path.resolve(receipt.archiveDir) !== receipt.archiveDir
+  ) {
+    return {
+      backupId,
+      restorable,
+      conflicts,
+      preserved,
+      issues: ["cutover receipt or archive destination is missing"],
+    };
+  }
+  const archiveError = archiveDestinationError(receipt.archiveDir, paths);
+  if (archiveError) {
+    return { backupId, restorable, conflicts, preserved, issues: [archiveError] };
+  }
+  const root = backupRoot(receipt.archiveDir, backupId);
 
   if (!existsSync(root)) {
     return { backupId, restorable, conflicts, preserved, issues: ["backup directory is missing"] };
@@ -1592,7 +1658,7 @@ export function previewRollback(backupId: Id, options: CutoverPaths = {}): Rollb
       issues: ["cutover receipt is missing or unreadable"],
     };
   }
-  const backup = readBackupFiles(backupId, paths);
+  const backup = readBackupFiles(backupId, receipt.archiveDir, paths);
   issues.push(...backup.issues);
 
   const seen = new Set<string>();
@@ -1652,7 +1718,7 @@ export function applyRollback(
   const preview = previewRollback(backupId, options);
   if (preview.issues.length > 0) {
     return failure("recovery_required", "rollback backup failed integrity checks", {
-      path: backupRoot(paths.stateDir, backupId),
+      path: paths.stateDir,
       guidance: preview.issues.join("; "),
     });
   }
@@ -1666,9 +1732,11 @@ export function applyRollback(
     );
   }
 
-  const root = backupRoot(paths.stateDir, backupId);
+  const receipt = readCutoverReceipt(backupId, paths.stateDir);
+  if (!receipt) return failure("not_found", `backup not found: ${backupId}`);
+  const root = backupRoot(receipt.archiveDir, backupId);
   if (!existsSync(root)) return failure("not_found", `backup not found: ${backupId}`);
-  const backup = readBackupFiles(backupId, paths);
+  const backup = readBackupFiles(backupId, receipt.archiveDir, paths);
   if (backup.issues.length > 0) {
     return failure("recovery_required", "rollback backup failed integrity checks", {
       path: root,

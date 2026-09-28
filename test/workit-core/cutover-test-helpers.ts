@@ -25,6 +25,7 @@ export const resolvePathsForTest = (fx: CutoverFixture): CutoverPaths => ({
   home: fx.home,
   configDir: fx.configDir,
   stateDir: fx.stateDir,
+  archiveDir: path.join(fx.root, "archive"),
   dev: fx.dev,
   workspace: fx.workspace,
   opencodeConfig: fx.opencodeConfig,

@@ -162,11 +162,67 @@ test("apply backs up managed digests and reports activation receipt", () => {
     expect(receipt.ok).toBe(true);
     if (!receipt.ok) return;
     expect(receipt.data.backupId).toBeTruthy();
+    expect(receipt.data.archiveDir).toBe(path.join(fx.root, "archive"));
     expect(receipt.data.managedFiles.length).toBeGreaterThan(0);
     expect(receipt.data.partial).toBe(false);
     expect(
       previewRollback(receipt.data.backupId, resolvePathsForTest(fx)).restorable.length,
     ).toBeGreaterThan(0);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test("cutover requires an explicit archive destination before writing anything", () => {
+  const fx = makeFx();
+  try {
+    const paths = resolvePathsForTest(fx);
+    const { archiveDir: _archiveDir, ...withoutArchive } = paths;
+    const result = applyCutover(previewCutover(withoutArchive), approve(), withoutArchive);
+    expect(result).toMatchObject({ ok: false, code: "needs_input" });
+    expect(existsSync(path.join(fx.stateDir, "cutover"))).toBe(false);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test("cutover rejects archive destinations that overlap managed scopes", () => {
+  const fx = makeFx();
+  try {
+    const paths = { ...resolvePathsForTest(fx), archiveDir: fx.configDir };
+    const result = applyCutover(previewCutover(paths), approve(), paths);
+    expect(result).toMatchObject({ ok: false, code: "requirements_unsatisfied" });
+    expect(existsSync(path.join(fx.stateDir, "cutover"))).toBe(false);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test("cutover accepts a home-directory sibling outside managed scopes", () => {
+  const fx = makeFx();
+  try {
+    const archiveDir = path.join(fx.home, "workit-archive");
+    const paths = { ...resolvePathsForTest(fx), archiveDir };
+    const result = applyCutover(previewCutover(paths), approve(), paths);
+    expect(result.ok).toBe(true);
+    expect(existsSync(archiveDir)).toBe(true);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test("cutover rejects a symlinked archive destination", () => {
+  if (process.platform === "win32") return;
+  const fx = makeFx();
+  try {
+    const target = path.join(fx.root, "archive-target");
+    mkdirSync(target);
+    const link = path.join(fx.root, "archive-link");
+    symlinkSync(target, link);
+    const paths = { ...resolvePathsForTest(fx), archiveDir: link };
+    const result = applyCutover(previewCutover(paths), approve(), paths);
+    expect(result).toMatchObject({ ok: false, code: "requirements_unsatisfied" });
+    expect(readdirSync(target)).toEqual([]);
   } finally {
     fx.cleanup();
   }
@@ -199,7 +255,7 @@ test("rollback removes generated integrations and rejects a damaged backup", () 
   const fx = makeFx();
   try {
     const applied = applyFxCutover(fx);
-    const backupRoot = path.join(fx.stateDir, "cutover", "backups", applied.backupId);
+    const backupRoot = path.join(fx.root, "archive", applied.backupId);
     const originalPaths = new Set(
       JSON.parse(readFileSync(path.join(backupRoot, "manifest.json"), "utf8")).files.map(
         (entry: { path: string }) => entry.path,
@@ -466,7 +522,7 @@ test("preview blocks symlink traversal and apply leaves the outside target untou
     expect(applyCutover(plan, approve(["cursor"]), paths).ok).toBe(false);
     expect(readFileSync(outside, "utf8")).toBe("private outside bytes\n");
     expect(readFileSync(fx.cursorSettings, "utf8")).toBe(beforeSettings);
-    expect(existsSync(path.join(fx.stateDir, "cutover", "backups"))).toBe(false);
+    expect(existsSync(path.join(fx.root, "archive"))).toBe(false);
   } finally {
     fx.cleanup();
   }
