@@ -257,7 +257,7 @@ focused question only when one of those choices blocks a concrete slice.
   `0e065fb` reads the workspace result once so TypeScript can narrow its union
   safely. Both focused tests pass.
 - **Adapter checks completed:** `fnm exec --using=24.20.0 -- bun run check`
-  passed build, lint, formatting, 1,581 tests / 8,604 assertions, and
+  passed build, lint, formatting, 1,582 tests / 8,607 assertions, and
   TypeScript. `bun run validate:cursor-marketplace` passed; `bun run knip`
   exited 0 with four configuration hints. React Doctor previously exited 0
   with seven advisory warnings. This qualifies the packaged adapters for the
@@ -272,7 +272,20 @@ focused question only when one of those choices blocks a concrete slice.
   check` gate then passed again: build, lint, format, 1,581 tests / 8,604
   assertions, and TypeScript. A core-suite run with both a symlinked `TMPDIR`
   and Git's default branch set to `main` passed 910 tests / 4,751 assertions.
-  `git diff --check` is clean. The PR rerun is pending the push of these fixes.
+  `git diff --check` is clean. PR run `36373877868` then completed with 13 of
+  14 jobs green: Linux/macOS core and all other platform/artifact jobs passed;
+  Windows core exposed path-string comparison rejecting case/8.3 aliases of
+  the same workspace directory.
+- **Windows core follow-up:** `TaskStore.readWorkspace` now accepts equal
+  directory identities by device/file ID while still failing closed for a
+  different or unverifiable directory. A regression test exercises symlink
+  identity on Unix and case aliases on Windows. Windows-only fixtures no longer
+  assert POSIX group/other mode bits, and two GitLab command-stub tests are
+  skipped on Windows because the production runner intentionally avoids a
+  shell and cannot execute shell-script shims there. Focused tests (62 / 252
+  assertions), the full `bun run check` gate (1,582 / 8,607), TypeScript,
+  formatting, and `git diff --check` pass locally. The updated Windows core
+  matrix is pending.
 - **Next action:** push the checkpoint and portability fixes to existing PR
   #132, verify every required CI check, merge without deleting the remote
   branch, then enable and verify the local OpenCode package pin. Keep the active
