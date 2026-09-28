@@ -173,6 +173,16 @@ const sameMetadataLock = (left: unknown, right: MetadataLock): boolean => {
   const parsed = metadataLockSchema.safeParse(left);
   return parsed.success && canonicalJson(parsed.data) === canonicalJson(right);
 };
+const sameDirectoryIdentity = (left: string, right: string): boolean => {
+  if (!path.isAbsolute(left) || !path.isAbsolute(right)) return false;
+  try {
+    const a = fs.statSync(left, { bigint: true });
+    const b = fs.statSync(right, { bigint: true });
+    return a.isDirectory() && b.isDirectory() && a.dev === b.dev && a.ino !== 0n && a.ino === b.ino;
+  } catch {
+    return false;
+  }
+};
 type LockSnapshot = { raw: string; data: MetadataLock };
 const externalActionLockRoots = new AsyncLocalStorage<ReadonlySet<string>>();
 
@@ -234,7 +244,11 @@ export class TaskStore {
   readWorkspace(): Result<WorkspaceRecord | null> {
     const item = this.readRecord<WorkspaceRecord>(this.workspacePath, workspaceRecordSchema);
     if (!item.exists) return success(null, null, null);
-    if (item.result.ok && item.result.data.root !== this.root)
+    if (
+      item.result.ok &&
+      item.result.data.root !== this.root &&
+      !sameDirectoryIdentity(item.result.data.root, this.root)
+    )
       return failure("recovery_required", "workspace root binding is invalid", {
         path: this.workspacePath,
       });

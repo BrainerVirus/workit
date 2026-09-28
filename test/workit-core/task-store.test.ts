@@ -4,6 +4,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  rmSync,
   symlinkSync,
   utimesSync,
   unlinkSync,
@@ -49,6 +50,30 @@ const startedStore = () => {
   if (!created.ok) throw new Error(created.error);
   return { store, task: created.data };
 };
+
+test("workspace root binding accepts another path to the same directory", () => {
+  const root = fixtureRoot();
+  const store = new TaskStore(root);
+  const created = store.create({
+    expectedWorkspaceRevision: null,
+    provenance,
+    intent: { objective: "test", scope: scope(), authorityRefs: [ref()] },
+  });
+  if (!created.ok) throw new Error(created.error);
+  const workspacePath = join(store.root, ".workit", "workspace.json");
+  const workspace = JSON.parse(readFileSync(workspacePath, "utf8")) as Record<string, unknown>;
+  const alias = `${root}-alias`;
+  try {
+    if (process.platform === "win32") workspace.root = root.toUpperCase();
+    else symlinkSync(root, alias, "dir");
+    if (process.platform !== "win32") workspace.root = alias;
+    writeFileSync(workspacePath, JSON.stringify(workspace));
+    expect(store.readWorkspace().ok).toBe(true);
+  } finally {
+    if (process.platform !== "win32") rmSync(alias, { force: true });
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test("external action lease holds TaskStore writer serialization through async effects", async () => {
   const { store, task } = startedStore();

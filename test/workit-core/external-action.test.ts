@@ -6,6 +6,7 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { spawnSync } from "node:child_process";
@@ -1467,8 +1468,15 @@ test("Git actions without cwd bind the session to its canonical checkout root", 
       payload: { message: "fix(test): nested session target" },
     });
     if (!resolved.ok) throw new Error(resolved.error);
-    expect((resolved.data.descriptorPayload as { cwd: string }).cwd).toBe(root);
-    expect((resolved.data.request.payload as { cwd: string }).cwd).toBe(root);
+    const rootIdentity = statSync(root, { bigint: true });
+    for (const candidate of [
+      (resolved.data.descriptorPayload as { cwd: string }).cwd,
+      (resolved.data.request.payload as { cwd: string }).cwd,
+    ]) {
+      const actual = statSync(candidate, { bigint: true });
+      expect(actual.isDirectory()).toBe(true);
+      expect([actual.dev, actual.ino]).toEqual([rootIdentity.dev, rootIdentity.ino]);
+    }
     expect(
       (resolved.data.descriptorPayload as { resolved: { paths: string[] } }).resolved.paths,
     ).toContain("nested/session/change.txt");
