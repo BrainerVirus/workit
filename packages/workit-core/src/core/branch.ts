@@ -675,6 +675,10 @@ export const branchSetup = ({
     targetExists = false;
   }
   if (!targetExists) {
+    const policy = validateBranchNameFor(cwd, target);
+    if (!policy.ok) return { error: policy.error, phase: "preflight" };
+  }
+  if (!targetExists) {
     const baseResolved = baseBranch(cwd);
     if ("error" in baseResolved) return { error: baseResolved.error, phase: "preflight" };
     base = baseResolved.base;
