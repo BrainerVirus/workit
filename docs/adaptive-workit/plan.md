@@ -314,3 +314,10 @@ focused question only when one of those choices blocks a concrete slice.
   verify every check, merge without deleting the remote branch, then enable
   and verify the local OpenCode package pin. Keep Workit disabled in the
   active host until merge and CI are complete.
+- **Hosted matrix verified:** PR run `36379475341` on code head `1528711` passed
+  all 14 checks, including Windows core (5m3s) and Windows packed artifacts
+  (4m13s). This confirms the path-identity fix on the target platform. The
+  pending plan checkpoint is documentation-only and will receive its own full
+  PR matrix before merge. **Next:** push the checkpoint, verify the new head's
+  checks, merge PR #132 without deleting its branch, then restore the exact
+  local Workit pin and reload OpenCode.
