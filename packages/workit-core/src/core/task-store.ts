@@ -882,7 +882,11 @@ export class TaskStore {
     reentrant = false,
   ): Promise<Result<T>> {
     const activeRoots = externalActionLockRoots.getStore();
-    if (activeRoots?.has(this.root)) return operation();
+    if (
+      activeRoots &&
+      [...activeRoots].some((root) => root === this.root || sameDirectoryIdentity(root, this.root))
+    )
+      return operation();
     try {
       this.initializeMutationStorage();
     } catch (error) {

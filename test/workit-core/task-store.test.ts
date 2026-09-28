@@ -75,6 +75,25 @@ test("workspace root binding accepts another path to the same directory", () => 
   }
 });
 
+test("external action lock is reentrant through another path to the same directory", async () => {
+  const root = fixtureRoot();
+  const alias = `${root}-alias`;
+  try {
+    const outerRoot = process.platform === "win32" ? root.toUpperCase() : alias;
+    if (process.platform !== "win32") symlinkSync(root, alias, "dir");
+    const outerStore = new TaskStore(outerRoot);
+    const nestedStore = new TaskStore(root);
+    const result = await outerStore.withExternalActionLock(
+      () => nestedStore.withExternalActionLock(async () => success(null, null, "nested")),
+      true,
+    );
+    expect(result).toEqual(success(null, null, "nested"));
+  } finally {
+    if (process.platform !== "win32") rmSync(alias, { force: true });
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("external action lease holds TaskStore writer serialization through async effects", async () => {
   const { store, task } = startedStore();
   let enter!: () => void;
