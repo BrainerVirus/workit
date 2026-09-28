@@ -70,21 +70,6 @@ export function mergeOpenCodeConfig(
     changed.push("plugin");
   }
 
-  // Drop share skills.paths — native ~/.config/opencode/skills links avoid
-  // triple-load duplicates. Matched by exact path segment, never substring: an
-  // unrelated dir like `~/projects/my-workflow-toolkit-skills` is preserved (D3).
-  const skills = base.skills;
-  if (isRecord(skills) && Array.isArray(skills.paths)) {
-    const next = skills.paths.filter((p) => {
-      const segment = String(p).split(/[\\/]/);
-      return !segment.some((seg) => named(seg, "workflow-toolkit"));
-    });
-    if (next.length !== skills.paths.length) {
-      base.skills = { ...skills, paths: next };
-      changed.push("skills.paths");
-    }
-  }
-
   return { config: base, changed };
 }
 

@@ -199,7 +199,33 @@ test("cancelled native workers are not silently reassigned", async () => {
 test("session discovery injects one bootstrap and one compact restoration", async () => {
   const root = mkdtempSync(join(tmpdir(), "workit-opencode-context-"));
   try {
-    activeTask(root);
+    const current = activeTask(root);
+    const olderCore = new WorkitCore(current.store, {
+      root,
+      caller: { host: "opencode", actor: "older-session" },
+      capabilities: [],
+      constraints: [],
+      now: () => "2025-12-31T00:00:00Z",
+    });
+    const older = olderCore.task(
+      taskStartRequest({
+        expectedWorkspaceRevision: current.workspace.revision,
+        intent: { objective: "parked historical topic", scope: scope(), authorityRefs: [] },
+      }),
+    );
+    expect(older.ok).toBe(true);
+    if (!older.ok) throw new Error("older task missing");
+    const olderId = (older.data as { id: string }).id;
+    const oldRecord = current.store.readTask(olderId);
+    const oldWorkspace = current.store.readWorkspace();
+    if (!oldRecord.ok || !oldWorkspace.ok || !oldWorkspace.data) throw new Error("state missing");
+    expect(
+      current.store.mutateTask(olderId, oldRecord.data.revision, (task) =>
+        success(task.revision, null, { ...task, status: "paused", pauseReason: "parked" }),
+      ).ok,
+    ).toBe(true);
+    const beforeTasks = current.store.listTasks();
+    const beforeWorkspace = current.store.readWorkspace();
     const hooks = await plugin({
       directory: root,
       worktree: root,
@@ -215,6 +241,16 @@ test("session discovery injects one bootstrap and one compact restoration", asyn
       .join("\n");
     expect(text.match(/<workit-contract>/g)?.length).toBe(1);
     expect(text.match(/<workit-task-context>/g)?.length).toBe(1);
+    expect(text).toContain("<workit-history-offer>");
+    expect(text).toContain("parked historical topic");
+
+    const again = { messages: [userFor("lead")] };
+    await hooks["experimental.chat.messages.transform"]?.({} as never, again as never);
+    expect(again.messages[0].parts.map((part: any) => part.text ?? "").join("\n")).not.toContain(
+      "<workit-history-offer>",
+    );
+    expect(current.store.listTasks()).toEqual(beforeTasks);
+    expect(current.store.readWorkspace()).toEqual(beforeWorkspace);
 
     const compact = { context: [] as string[] };
     await hooks["experimental.session.compacting"]?.(
@@ -1023,7 +1059,7 @@ test("a restarted plugin loses the reservation and stays blocked", async () => {
   }
 });
 
-test("recognized raw branch and PR creation commands are denied with the Workit route", async () => {
+test("compliant raw branch and PR commands pass during tracked work", async () => {
   const root = mkdtempSync(join(tmpdir(), "workit-opencode-route-deny-"));
   try {
     activeTask(root, "owner");
@@ -1037,13 +1073,19 @@ test("recognized raw branch and PR creation commands are denied with the Workit 
         { tool: "bash", sessionID: "lead", callID: "branch" },
         { args: { command: "git switch -c feature/raw" } },
       ),
-    ).rejects.toThrow("git.branch_setup");
+    ).resolves.toBeUndefined();
+    await expect(
+      hooks["tool.execute.before"]?.(
+        { tool: "bash", sessionID: "lead", callID: "protected-branch" },
+        { args: { command: "git switch -c main" } },
+      ),
+    ).rejects.toThrow("branch_policy_denied");
     await expect(
       hooks["tool.execute.before"]?.(
         { tool: "bash", sessionID: "lead", callID: "pr" },
         { args: { command: "gh pr create --fill" } },
       ),
-    ).rejects.toThrow("hosting.pull_request");
+    ).resolves.toBeUndefined();
     await expect(
       hooks["tool.execute.before"]?.(
         { tool: "bash", sessionID: "lead", callID: "other" },

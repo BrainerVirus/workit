@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { initStatus } from "@/packages/workit-core/src/core/init";
@@ -7,10 +7,18 @@ import {
   matchWorkspace,
   readWorkspacesResult,
   resolveWorkspace,
+  resolveWorkspacePolicy,
+  selectReleaseTrack,
   validateWorkspaceGlob,
   workspacesPath,
   type WorkspaceConfig,
 } from "@/packages/workit-core/src/core/workspaces";
+import { readConfigFromDir } from "@/packages/workit-core/src/core/config";
+import {
+  resolveBranchPolicyFor,
+  resolveCommitPolicyFor,
+} from "@/packages/workit-core/src/core/branch";
+import { vcsConfig } from "@/packages/workit-core/src/core/vcs-config";
 import { withIsolatedConfig } from "@/test/shared/helpers/env";
 
 const WORKSPACES = {
@@ -47,7 +55,7 @@ test("resolveWorkspace matches work and personal globs, deep paths included", ()
   });
 });
 
-test("resolveWorkspace returns the first declared match (first-wins)", () => {
+test("overlapping workspace globs require an explicit named match", () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "wf-ws-first-"));
   writeWorkspaces(
     dir,
@@ -59,7 +67,13 @@ test("resolveWorkspace returns the first declared match (first-wins)", () => {
     }),
   );
   withIsolatedConfig(dir, () => {
-    expect(resolveWorkspace("/home/u/Documents/projects/work/x")?.name).toBe("first");
+    expect(() => resolveWorkspace("/home/u/Documents/projects/work/x")).toThrow(
+      /ambiguous workspace.*first, second/,
+    );
+    expect(resolveWorkspace("/home/u/Documents/projects/work/x", "second")?.name).toBe("second");
+    expect(() => resolveWorkspace("/home/u/Documents/projects/work/x", "missing")).toThrow(
+      /matching choices: first, second/,
+    );
   });
 });
 
@@ -78,11 +92,13 @@ test("resolveWorkspace returns null without throwing when workspaces.json is mis
   });
 });
 
-test("resolveWorkspace returns null without throwing on malformed JSON", () => {
+test("resolveWorkspace fails with the config path on malformed JSON", () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "wf-ws-malformed-"));
   writeWorkspaces(dir, "{ not json !!");
   withIsolatedConfig(dir, () => {
-    expect(resolveWorkspace("/home/u/Documents/projects/work/x")).toBeNull();
+    expect(() => resolveWorkspace("/home/u/Documents/projects/work/x")).toThrow(
+      /workspaces\.json is not valid JSON/,
+    );
   });
 });
 
@@ -139,30 +155,34 @@ test("CA-01: resolveWorkspace maps work/personal globs to vcs + branchPolicy pre
   });
 });
 
-test("initStatus reports workspaces.resolved and path for the temp config", () => {
+test("initStatus reports workspace ambiguity and path without choosing by file order", () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "wf-ws-status-"));
   writeWorkspaces(
     dir,
     JSON.stringify({
       workspaces: [
-        { name: "work", glob: "/home/*/Documents/projects/work/**" },
+        { name: "personal", glob: path.join(process.cwd(), "**") },
         { name: "catchall", glob: "**" },
       ],
     }),
   );
   withIsolatedConfig(dir, () => {
+    expect(() => resolveWorkspace(process.cwd())).toThrow(/ambiguous workspace/);
     const status = initStatus();
     expect(status.error).toBeUndefined();
     expect(status.workspaces.path).toBe(path.join(dir, "workspaces.json"));
-    expect(status.workspaces.resolved?.name).toBe("catchall");
+    expect(status.workspaces.resolved).toBeNull();
+    expect(status.workspaces.error).toContain("ambiguous workspace");
   });
 });
 
-test("resolveWorkspace returns null without throwing when workspaces.json is literal null", () => {
+test("resolveWorkspace fails closed when workspaces.json is literal null", () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "wf-ws-null-"));
   writeWorkspaces(dir, "null");
   withIsolatedConfig(dir, () => {
-    expect(resolveWorkspace("/home/u/Documents/projects/work/x")).toBeNull();
+    expect(() => resolveWorkspace("/home/u/Documents/projects/work/x")).toThrow(
+      /workspaces\.json is not a JSON object/,
+    );
   });
 });
 
@@ -173,6 +193,7 @@ test("initStatus survives a literal null workspaces.json", () => {
     const status = initStatus();
     expect(status.error).toBeUndefined();
     expect(status.workspaces.resolved).toBeNull();
+    expect(status.workspaces.error).toContain("workspaces.json is not a JSON object");
   });
 });
 
@@ -188,8 +209,8 @@ test("globstar **/ matches zero or more segments mid-pattern and leading", () =>
     }),
   );
   withIsolatedConfig(dir, () => {
-    expect(resolveWorkspace("/home/u/work/repo")?.name).toBe("mid");
-    expect(resolveWorkspace("/home/u/work/a/b/repo")?.name).toBe("mid");
+    expect(resolveWorkspace("/home/u/work/repo", "mid")?.name).toBe("mid");
+    expect(resolveWorkspace("/home/u/work/a/b/repo", "mid")?.name).toBe("mid");
     expect(resolveWorkspace("/repo")?.name).toBe("lead");
   });
 });
@@ -238,7 +259,7 @@ test("native Windows separators in workspace globs match normalized paths", () =
   });
 });
 
-test("resolveWorkspace skips non-object entries in the workspaces array", () => {
+test("resolveWorkspace rejects non-object entries in the workspaces array", () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "wf-ws-junk-"));
   writeWorkspaces(
     dir,
@@ -247,7 +268,8 @@ test("resolveWorkspace skips non-object entries in the workspaces array", () => 
     }),
   );
   withIsolatedConfig(dir, () => {
-    expect(resolveWorkspace("/home/u/anything")?.name).toBe("ok");
+    expect(readWorkspacesResult().status).toBe("invalid");
+    expect(() => resolveWorkspace("/home/u/anything")).toThrow(/invalid workspace configuration/);
   });
 });
 
@@ -291,24 +313,264 @@ test("RL-08: the unsupported-glob matcher rejects unsupported grammar (write-tim
   }
 });
 
-test("RL-01: readWorkspacesResult distinguishes missing, valid, and malformed with exact paths", () => {
+test("readWorkspacesResult validates typed entries and keeps unrelated JSON metadata", () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "wf-ws-result-"));
   try {
     withIsolatedConfig(dir, () => {
       expect(readWorkspacesResult().status).toBe("missing");
       expect(readWorkspacesResult().path).toBe(path.join(dir, "workspaces.json"));
 
-      writeWorkspaces(dir, JSON.stringify(WORKSPACES, null, 2));
+      writeWorkspaces(dir, JSON.stringify({ ...WORKSPACES, unrelated: { keep: true } }, null, 2));
       const valid = readWorkspacesResult();
       expect(valid.status).toBe("valid");
       expect(valid.entries).toHaveLength(2);
       expect(valid.error).toBeUndefined();
+      expect(valid.document?.unrelated).toEqual({ keep: true });
+
+      writeWorkspaces(
+        dir,
+        JSON.stringify({ workspaces: [{ name: "bad", glob: "**", vcs: { provider: "unknown" } }] }),
+      );
+      const invalid = readWorkspacesResult();
+      expect(invalid.status).toBe("invalid");
+      expect(invalid.error).toContain("vcs.provider");
 
       writeWorkspaces(dir, "{ nope !!");
       const malformed = readWorkspacesResult();
       expect(malformed.status).toBe("malformed");
       expect(malformed.path).toBe(path.join(dir, "workspaces.json"));
       expect(malformed.error).toContain(path.join(dir, "workspaces.json"));
+    });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("workspace policy layers user defaults, matched workspace, and selected profile", () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "wf-ws-policy-"));
+  try {
+    writeFileSync(
+      path.join(dir, "config.json"),
+      JSON.stringify({
+        branchPolicy: { preset: "trunk-based" },
+        commitPolicy: { preset: "freeform" },
+      }),
+    );
+    writeWorkspaces(
+      dir,
+      JSON.stringify({
+        workspaces: [
+          {
+            name: "personal",
+            glob: "/home/*/personal/**",
+            branchPolicy: { preset: "gitflow", integration: "merge" },
+            commitPolicy: { preset: "conventional" },
+            defaultProfile: "modern",
+            profiles: {
+              modern: {
+                branchPolicy: { preset: "github-flow", integration: "pr" },
+              },
+            },
+          },
+        ],
+      }),
+    );
+    withIsolatedConfig(dir, () => {
+      const config = readConfigFromDir(dir);
+      const workspace = resolveWorkspace("/home/u/personal/app");
+      const policy = resolveWorkspacePolicy(config, workspace);
+      expect(policy.status).toBe("resolved");
+      if (policy.status !== "resolved") return;
+      expect(policy.profileName).toBe("modern");
+      expect(policy.branchPolicy.preset).toBe("github-flow");
+      expect(policy.branchPolicy.integration).toBe("pr");
+      expect(policy.commitPolicy.preset).toBe("conventional");
+      expect(policy.provenance).toEqual({
+        branchPolicy: "profile:modern",
+        commitPolicy: "workspace:personal",
+      });
+    });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("default workspace profile drives the shared branch and commit resolvers", () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "wf-ws-runtime-profile-"));
+  try {
+    writeFileSync(
+      path.join(dir, "config.json"),
+      JSON.stringify({
+        branchPolicy: { preset: "trunk-based" },
+        commitPolicy: { preset: "freeform" },
+      }),
+    );
+    writeWorkspaces(
+      dir,
+      JSON.stringify({
+        workspaces: [
+          {
+            name: "personal",
+            glob: "/home/*/personal/**",
+            branchPolicy: { preset: "gitflow" },
+            commitPolicy: { preset: "freeform" },
+            defaultProfile: "modern",
+            profiles: {
+              modern: {
+                branchPolicy: { preset: "github-flow" },
+                commitPolicy: { preset: "conventional" },
+              },
+              legacy: { branchPolicy: { preset: "gitflow" } },
+            },
+          },
+        ],
+      }),
+    );
+    withIsolatedConfig(dir, () => {
+      expect(resolveBranchPolicyFor("/home/u/personal/app").preset).toBe("github-flow");
+      expect(resolveCommitPolicyFor("/home/u/personal/app").preset).toBe("conventional");
+      expect(resolveBranchPolicyFor("/home/u/personal/app", "legacy").preset).toBe("gitflow");
+      expect(() => resolveBranchPolicyFor("/home/u/personal/app", "missing")).toThrow(
+        /has no profile "missing"/,
+      );
+      const changed = JSON.parse(readFileSync(path.join(dir, "workspaces.json"), "utf8"));
+      changed.workspaces[0].defaultProfile = "legacy";
+      writeFileSync(path.join(dir, "workspaces.json"), JSON.stringify(changed));
+      expect(resolveBranchPolicyFor("/home/u/personal/app").preset).toBe("gitflow");
+    });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("runtime policy resolution isolates unrelated invalid workspace settings", () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "wf-ws-policy-scope-"));
+  const file = path.join(dir, "workspaces.json");
+  try {
+    const document = {
+      workspaces: [
+        {
+          name: "personal",
+          glob: "/home/*/personal/**",
+          vcs: { provider: "github" },
+          youtrack: { link_issues: true },
+          branchPolicy: { preset: "custom", allowed: ["feature/*"], protected: ["main"] },
+          commitPolicy: { preset: "conventional" },
+        },
+        {
+          name: "unmatched-invalid-policy",
+          glob: "/srv/other/**",
+          branchPolicy: { preset: "not-a-preset" },
+        },
+      ],
+    };
+    writeWorkspaces(dir, JSON.stringify(document));
+    withIsolatedConfig(dir, () => {
+      expect(readWorkspacesResult().status).toBe("invalid");
+      expect(resolveBranchPolicyFor("/home/u/personal/app").preset).toBe("custom");
+      expect(resolveCommitPolicyFor("/home/u/personal/app").preset).toBe("conventional");
+
+      const workspace = document.workspaces[0];
+      if (!workspace) throw new Error("workspace fixture is missing");
+      writeFileSync(
+        file,
+        JSON.stringify({
+          workspaces: [{ ...workspace, commitPolicy: { preset: "not-a-preset" } }],
+        }),
+      );
+      expect(resolveBranchPolicyFor("/home/u/personal/app").preset).toBe("custom");
+      expect(() => resolveCommitPolicyFor("/home/u/personal/app")).toThrow(
+        /invalid commit policy configuration/,
+      );
+    });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("runtime VCS resolution ignores invalid unrelated workspace settings", () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "wf-ws-vcs-scope-"));
+  try {
+    writeWorkspaces(
+      dir,
+      JSON.stringify({
+        workspaces: [
+          {
+            name: "personal",
+            glob: "/home/*/personal/**",
+            vcs: { provider: "github" },
+            youtrack: { link_issues: true },
+          },
+          {
+            name: "unmatched-invalid",
+            glob: "/srv/other/**",
+            vcs: { provider: "github" },
+            youtrack: { link_issues: true },
+          },
+        ],
+      }),
+    );
+    withIsolatedConfig(dir, () => {
+      expect(readWorkspacesResult().status).toBe("invalid");
+      expect(vcsConfig("resolve", "/home/u/personal/app")).toMatchObject({
+        ok: true,
+        provider: "github",
+        workspace_name: "personal",
+        link_issues: null,
+        youtrack_base_url: null,
+      });
+    });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("multiple release tracks require an explicit selection and preserve each track", () => {
+  const makeTrack = (
+    productionBranch: string,
+    integrationBranch: string,
+    tagNamespace: string,
+  ) => ({
+    strategy: "gitflow",
+    productionBranch,
+    integrationBranch,
+    naming: { feature: "feature/", release: "release/", hotfix: "hotfix/" },
+    baseBranch: integrationBranch,
+    mergeBackBranches: [integrationBranch],
+    pullRequestTarget: productionBranch,
+    tagNamespace,
+    versionSource: { kind: "package-json", path: "package.json", field: "version" },
+    requiredChecks: ["build", "test"],
+  });
+  const dir = mkdtempSync(path.join(os.tmpdir(), "wf-ws-tracks-"));
+  try {
+    writeWorkspaces(
+      dir,
+      JSON.stringify({
+        workspaces: [
+          {
+            name: "dual-track",
+            glob: "/home/*/dual/**",
+            releaseTracks: {
+              standard: makeTrack("main", "develop", ""),
+              nun: makeTrack("nun-main", "nun-develop", "nun/"),
+            },
+          },
+        ],
+      }),
+    );
+    withIsolatedConfig(dir, () => {
+      const workspace = resolveWorkspace("/home/u/dual/repo");
+      expect(workspace).not.toBeNull();
+      const ambiguous = selectReleaseTrack(workspace!);
+      expect(ambiguous).toEqual({ status: "choice_required", choices: ["nun", "standard"] });
+      const selected = selectReleaseTrack(workspace!, "nun");
+      expect(selected.status).toBe("selected");
+      if (selected.status !== "selected") return;
+      expect(selected.track.productionBranch).toBe("nun-main");
+      expect(selected.track.integrationBranch).toBe("nun-develop");
+      expect(selected.track.tagNamespace).toBe("nun/");
+      expect(selectReleaseTrack(workspace!, "missing").status).toBe("invalid");
     });
   } finally {
     rmSync(dir, { recursive: true, force: true });

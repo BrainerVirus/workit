@@ -18,6 +18,11 @@ import {
 import type { Provenance } from "@/packages/workit-core/src/core/task-contract";
 import { actionProposalQuestion } from "@/packages/workit-core/src/core/external-action-effects";
 import { resolveExternalActionRequest } from "@/packages/workit-core/src/core/external-action-effects";
+import {
+  approvedBranchSetupIntent,
+  chainStepBinding,
+  planCommitBinding,
+} from "@/packages/workit-core/src/core/external-action";
 import { taskStartRequest } from "./task-fixtures";
 
 const git = (cwd: string, args: string[]) => spawnSync("git", args, { cwd });
@@ -48,11 +53,18 @@ const provenance = (actor: string): Provenance => ({
   receipts: [{ kind: "host", host: "workit_cli", handle: `receipt:${actor}` }],
 });
 
-const verifier = (actor: string): NativeAuthorityVerifier => ({
-  verifyDecision: () => success(null, null, provenance(actor)),
-  verifyAction: () => success(null, null, provenance(actor)),
-  verifyReconciliation: () => success(null, null, provenance(actor)),
-});
+const verifier = (actor: string): NativeAuthorityVerifier => {
+  let receipt = 0;
+  return {
+    verifyDecision: () =>
+      success(null, null, {
+        ...provenance(actor),
+        receipts: [{ kind: "host", host: "workit_cli", handle: `receipt:${actor}:${++receipt}` }],
+      }),
+    verifyAction: () => success(null, null, provenance(actor)),
+    verifyReconciliation: () => success(null, null, provenance(actor)),
+  };
+};
 
 const setup = (actor = "cli-chain") => {
   const { root, remote } = repo();
@@ -131,12 +143,104 @@ test("chain steps normalize strings and typed entries to unambiguous keys", () =
   expect(normalizeChainSteps("nope")).toBeNull();
 });
 
-test("mixed chains match branch, commit, and pr steps in order", () => {
+test("branch and plan approvals cannot be reused in another checkout", () => {
+  const value = setup();
+  const other = repo();
+  try {
+    const branchRequest = (cwd: string) =>
+      resolveExternalActionRequest(value.root, {
+        operation: "git.branch_setup",
+        payload: { cwd, target_branch: "feature/next" },
+      });
+    const approvedBranch = branchRequest(value.root);
+    const foreignBranch = branchRequest(other.root);
+    if (!approvedBranch.ok || !foreignBranch.ok) throw new Error("branch target unavailable");
+    recordChain(
+      value,
+      externalActionDescriptor("git.branch_setup", approvedBranch.data.descriptorPayload),
+    );
+    expect(
+      approvedBranchSetupIntent(
+        value.store,
+        "workit_cli",
+        value.actor,
+        externalActionDescriptor("git.branch_setup", foreignBranch.data.descriptorPayload),
+      ).ok,
+    ).toBe(false);
+
+    recordChain(value, resolvePlan(value.root, ["chore(test): one"], "feature/chain"));
+    const foreignCommit = resolveExternalActionRequest(value.root, {
+      operation: "git.commit",
+      payload: { cwd: other.root, message: "chore(test): one" },
+    });
+    if (!foreignCommit.ok) throw new Error(foreignCommit.error);
+    expect(
+      planCommitBinding(
+        value.store,
+        "workit_cli",
+        value.actor,
+        externalActionDescriptor("git.commit", foreignCommit.data.descriptorPayload),
+      ),
+    ).toBeNull();
+
+    recordChain(value, resolvePlan(value.root, [{ branch: "feature/next" }], "feature/next"));
+    expect(
+      chainStepBinding(
+        value.store,
+        "workit_cli",
+        value.actor,
+        externalActionDescriptor("git.branch_setup", foreignBranch.data.descriptorPayload),
+      ),
+    ).toBeNull();
+
+    const targetPlan = resolveExternalActionRequest(value.root, {
+      operation: "git.commit",
+      payload: { cwd: other.root, plan_steps: ["chore(test): one"], plan_branch: "feature/chain" },
+    });
+    if (!targetPlan.ok) throw new Error(targetPlan.error);
+    recordChain(value, externalActionDescriptor("git.commit", targetPlan.data.descriptorPayload));
+    expect(
+      planCommitBinding(
+        value.store,
+        "workit_cli",
+        value.actor,
+        externalActionDescriptor("git.commit", foreignCommit.data.descriptorPayload),
+      ),
+    ).not.toBeNull();
+
+    const targetBranchPlan = resolveExternalActionRequest(value.root, {
+      operation: "git.commit",
+      payload: {
+        cwd: other.root,
+        plan_steps: [{ branch: "feature/next" }],
+        plan_branch: "feature/next",
+      },
+    });
+    if (!targetBranchPlan.ok) throw new Error(targetBranchPlan.error);
+    recordChain(
+      value,
+      externalActionDescriptor("git.commit", targetBranchPlan.data.descriptorPayload),
+    );
+    expect(
+      chainStepBinding(
+        value.store,
+        "workit_cli",
+        value.actor,
+        externalActionDescriptor("git.branch_setup", foreignBranch.data.descriptorPayload),
+      ),
+    ).not.toBeNull();
+  } finally {
+    for (const dir of [value.root, value.remote, other.root, other.remote])
+      rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("mixed chains match branch and commit steps in order; PR steps bind only when next", () => {
   const value = setup();
   try {
     const descriptor = resolvePlan(
       value.root,
-      [{ branch: "feature/next" }, "chore(test): one", { pr: true }],
+      [{ branch: "feature/next" }, "chore(test): one"],
       "feature/next",
     );
     recordChain(value, descriptor);
@@ -160,6 +264,41 @@ test("mixed chains match branch, commit, and pr steps in order", () => {
         operation: "hosting.pull_request",
       }).ok,
     ).toBe(false);
+  } finally {
+    rmSync(value.root, { recursive: true, force: true });
+    rmSync(value.remote, { recursive: true, force: true });
+  }
+});
+
+test("PR plan steps reserve and bind under the enabled hosted-create contract", () => {
+  const value = setup();
+  try {
+    // Decision ae03c569 re-enabled hosted PR/MR creation with pre/post provider
+    // SHA verification (the residual non-atomic source-SHA race is accepted),
+    // so a {pr:true} plan step now reserves and resolves like any other step.
+    const resolved = resolveExternalActionRequest(value.root, {
+      operation: "git.commit",
+      payload: {
+        plan_steps: [{ branch: "feature/next" }, "chore(test): one", { pr: true }],
+        plan_branch: "feature/next",
+      },
+    } as never);
+    expect(resolved).toMatchObject({ ok: true });
+    if (!resolved.ok) return;
+    recordChain(value, externalActionDescriptor("git.commit", resolved.data.descriptorPayload));
+    // The PR step is not next yet, so the chain PR query does not match it.
+    expect(
+      approvedChainStep(value.store, "workit_cli", value.actor, {
+        operation: "hosting.pull_request",
+      }).ok,
+    ).toBe(false);
+    // A chain whose next step is the PR step binds through the shared path.
+    recordChain(value, resolvePlan(value.root, [{ pr: true }], "feature/chain"));
+    expect(
+      approvedChainStep(value.store, "workit_cli", value.actor, {
+        operation: "hosting.pull_request",
+      }).ok,
+    ).toBe(true);
   } finally {
     rmSync(value.root, { recursive: true, force: true });
     rmSync(value.remote, { recursive: true, force: true });

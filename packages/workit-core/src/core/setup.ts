@@ -26,10 +26,11 @@ import {
 import { detectBranchPolicy } from "./branch-policy";
 import { readSetupState, type SetupState } from "./setup-state";
 import {
-  loadWorkspacesFrom,
-  matchWorkspace,
   readWorkspacesResult,
+  resolveWorkspaceFrom,
+  validateWorkspacesDocument,
   validateWorkspaceGlob,
+  workspacesRevision,
   type WorkspaceConfig,
 } from "./workspaces";
 import { GITIGNORE_ENTRIES } from "./gitignore";
@@ -86,7 +87,12 @@ export type SetupPreviewInput = {
 export type SetupMutation =
   | { type: "create-file"; path: string; content: string; mode?: number }
   | { type: "merge-json"; path: string; value: unknown }
-  | { type: "update-workspaces"; path: string; entries: WorkspaceConfig[] }
+  | {
+      type: "update-workspaces";
+      path: string;
+      entries: WorkspaceConfig[];
+      expectedRevision: string;
+    }
   | { type: "append-gitignore"; path: string; entries: string[] }
   // AR-09: host registration merges and the adapter package copy are planned
   // during preview so the reviewed mutation set IS the Apply write set.
@@ -170,27 +176,15 @@ function youtrackDraft(values: SetupPreviewInput, tokenPath: string): Record<str
   };
 }
 
-function vcsDraft(
-  provider: VcsProvider,
-  gitlabToken: string,
-  githubToken: string,
-): Record<string, unknown> {
+function vcsDraft(provider: VcsProvider): Record<string, unknown> {
   return {
     provider,
     gitlab: {
       host: "gitlab.com",
       apiUrl: "https://gitlab.com/api/v4",
-      tokenFile: gitlabToken,
     },
-    github: { host: "github.com", tokenFile: githubToken },
+    github: { host: "github.com" },
     pr: { squashOnMerge: true, removeSourceBranch: true, pushBranch: true, confirmSkip: true },
-    tokenDefaults: {
-      name: "workit",
-      description: "OpenCode workit — /wk-pr and glab/gh",
-      gitlabScopes: ["api"],
-      githubPermissions: { pull_requests: "write", contents: "write", metadata: "read" },
-      githubClassicScopes: ["repo"],
-    },
   };
 }
 
@@ -229,17 +223,6 @@ const readConfigRecord = (file: string): Record<string, unknown> | null => {
   } catch {
     return null;
   }
-};
-
-const deleteAtPath = (obj: Record<string, unknown>, keyPath: string): void => {
-  const keys = keyPath.split(".");
-  let cursor = obj;
-  for (const key of keys.slice(0, -1)) {
-    const next = cursor[key];
-    if (!isRecord(next)) return;
-    cursor = next;
-  }
-  delete cursor[keys[keys.length - 1]];
 };
 
 export function buildSetupPreview(
@@ -281,7 +264,8 @@ export function buildSetupPreview(
     // WZ-12 parity: the draft is authoritative but a no-op workspaces section
     // (unchanged vs disk, including the initial seed) must not claim a rewrite.
     // Removing every workspace differs from disk and therefore still writes [].
-    const diskWorkspaces = loadWorkspacesFrom(state.configDir);
+    const diskWorkspaceResult = readWorkspacesResult(state.configDir);
+    const diskWorkspaces = diskWorkspaceResult.entries;
     if (!isDeepStrictEqual(values.workspaces, diskWorkspaces)) {
       // RL-08: unsupported matcher grammar is rejected before any write —
       // same gate the direct writeWorkspaces path and the wizard enforce.
@@ -298,6 +282,7 @@ export function buildSetupPreview(
           type: "update-workspaces",
           path: path.join(state.configDir, "workspaces.json"),
           entries: values.workspaces,
+          expectedRevision: diskWorkspaceResult.revision!,
         });
       }
     }
@@ -340,48 +325,11 @@ export function buildSetupPreview(
 
     if (values.vcsProvider !== "skip") {
       const vcsPath = path.join(state.configDir, "vcs.json");
-      const vcsExisting = readConfigRecord(vcsPath);
-      const glConfigured = configuredTokenPath(vcsExisting, "gitlab", "tokenFile");
-      const ghConfigured = configuredTokenPath(vcsExisting, "github", "tokenFile");
-      const gitlabToken = resolveTokenPath(
-        glConfigured,
-        path.join(state.configDir, "gitlab.token"),
-        values.tokenPaths?.gitlab,
-      );
-      const githubToken = resolveTokenPath(
-        ghConfigured,
-        path.join(state.configDir, "github.token"),
-        values.tokenPaths?.github,
-      );
-      const draft = vcsDraft(values.vcsProvider, gitlabToken, githubToken);
-      for (const [configured, token, key] of [
-        [glConfigured, gitlabToken, "gitlab.tokenFile"],
-        [ghConfigured, githubToken, "github.tokenFile"],
-      ] as const) {
-        if (configured !== null && token !== configured) {
-          deleteAtPath(draft, key);
-          mutations.push({
-            type: "set-token-path",
-            path: vcsPath,
-            key,
-            value: token,
-          });
-        }
-      }
       mutations.push({
         type: "merge-json",
         path: vcsPath,
-        value: draft,
+        value: vcsDraft(values.vcsProvider),
       });
-      const activeToken = values.vcsProvider === "gitlab" ? gitlabToken : githubToken;
-      if (existsSync(activeToken)) preserved.push(activeToken);
-      else
-        mutations.push({
-          type: "create-file",
-          path: activeToken,
-          content: TOKEN_PLACEHOLDER + "\n",
-          mode: 0o600,
-        });
     }
 
     // AR-09: host registrations and the adapter package copy are planned here
@@ -583,6 +531,22 @@ type CoreMutation = Exclude<
   { type: "register-platform" } | { type: "install-adapter" }
 >;
 
+const workspaceEntriesAlreadyMatch = (
+  contents: string | null,
+  file: string,
+  entries: WorkspaceConfig[],
+): boolean => {
+  if (contents === null) return entries.length === 0;
+  try {
+    const current = validateWorkspacesDocument(JSON.parse(contents), file);
+    return (
+      current.status === "valid" && JSON.stringify(current.entries) === JSON.stringify(entries)
+    );
+  } catch {
+    return false;
+  }
+};
+
 function applyMutation(m: CoreMutation): SetupResultEntry {
   const dir = path.dirname(m.path);
   switch (m.type) {
@@ -622,19 +586,65 @@ function applyMutation(m: CoreMutation): SetupResultEntry {
         : { platform: "core", file: m.path, status: "Installed" };
     }
     case "update-workspaces": {
-      // RL-08: a mutation built by a non-wizard caller still cannot write an
-      // unsupported matcher pattern — reported Failed, never silently stored.
-      for (const entry of m.entries) {
-        if (!entry || typeof entry.glob !== "string") continue;
-        const v = validateWorkspaceGlob(entry.glob);
-        if (!v.ok) return { platform: "core", file: m.path, status: "Failed", detail: v.error };
-      }
-      const next = JSON.stringify({ workspaces: m.entries }, null, 2) + "\n";
       const prev = readFileSafe(m.path);
+      if (workspaceEntriesAlreadyMatch(prev, m.path, m.entries))
+        return { platform: "core", file: m.path, status: "Skipped", detail: "already configured" };
+      if (workspacesRevision(prev) !== m.expectedRevision) {
+        return {
+          platform: "core",
+          file: m.path,
+          status: "Failed",
+          detail:
+            "workspace config changed after preview; rebuild the preview and review the new values",
+        };
+      }
+      let document: Record<string, unknown> = {};
+      if (prev !== null) {
+        try {
+          const current = validateWorkspacesDocument(JSON.parse(prev), m.path);
+          if (current.status === "malformed" || current.status === "invalid") {
+            return { platform: "core", file: m.path, status: "Failed", detail: current.error };
+          }
+          document = current.document ?? {};
+        } catch {
+          return {
+            platform: "core",
+            file: m.path,
+            status: "Failed",
+            detail: `${m.path} is not valid JSON`,
+          };
+        }
+      }
+      const proposed = validateWorkspacesDocument({ ...document, workspaces: m.entries }, m.path);
+      if (proposed.status !== "valid") {
+        return { platform: "core", file: m.path, status: "Failed", detail: proposed.error };
+      }
+      const next = JSON.stringify({ ...document, workspaces: m.entries }, null, 2) + "\n";
       if (prev === next)
         return { platform: "core", file: m.path, status: "Skipped", detail: "already configured" };
       mkdirSync(dir, { recursive: true });
-      writeFileSync(m.path, next, "utf8");
+      const tmp = `${m.path}.${process.pid}.tmp`;
+      try {
+        writeFileSync(tmp, next, "utf8");
+        if (workspacesRevision(readFileSafe(m.path)) !== m.expectedRevision) {
+          rmSync(tmp, { force: true });
+          return {
+            platform: "core",
+            file: m.path,
+            status: "Failed",
+            detail: "workspace config changed while applying the preview; rebuild and review it",
+          };
+        }
+        renameSync(tmp, m.path);
+      } catch (error) {
+        rmSync(tmp, { force: true });
+        return {
+          platform: "core",
+          file: m.path,
+          status: "Failed",
+          detail: `failed to write ${m.path}: ${error instanceof Error ? error.message : String(error)}`,
+        };
+      }
       return prev === null
         ? { platform: "core", file: m.path, status: "Installed" }
         : { platform: "core", file: m.path, status: "Configured" };
@@ -1060,6 +1070,38 @@ export function applySetupPreview(
     };
   }
 
+  const workspaceMutation = preview.mutations.find(
+    (mutation): mutation is Extract<SetupMutation, { type: "update-workspaces" }> =>
+      mutation.type === "update-workspaces",
+  );
+  const currentWorkspaceContents = workspaceMutation ? readFileSafe(workspaceMutation.path) : null;
+  if (
+    workspaceMutation &&
+    workspacesRevision(currentWorkspaceContents) !== workspaceMutation.expectedRevision &&
+    !workspaceEntriesAlreadyMatch(
+      currentWorkspaceContents,
+      workspaceMutation.path,
+      workspaceMutation.entries,
+    )
+  ) {
+    return {
+      ok: false,
+      exitCode: 1,
+      entries: [
+        {
+          platform: "core",
+          file: workspaceMutation.path,
+          status: "Failed",
+          detail:
+            "workspace config changed after preview; rebuild the preview and review the new values",
+        },
+      ],
+      preserved: preview.preserved,
+      blocked: [],
+      doctor: [],
+    };
+  }
+
   const res = resolveApply(preview, options);
   const entries: SetupResultEntry[] = [];
   // AR-09/AR-13: Apply dispatches ONLY the reviewed mutation union. The adapter
@@ -1218,8 +1260,16 @@ export function applyWorkspaceBranchPolicy(opts: {
 }): Record<string, any> {
   const { workspace_root, env = process.env } = opts;
   const dir = path.join(env.WORKFLOW_TOOLKIT_CONFIG ?? configDir());
-  const { status, path: wsPath, entries } = readWorkspacesResult(dir);
-  if (status === "malformed") return { ok: false, error: `malformed workspaces.json: ${wsPath}` };
+  const {
+    status,
+    path: wsPath,
+    entries,
+    document,
+    revision,
+    error: workspacesError,
+  } = readWorkspacesResult(dir);
+  if (status === "malformed" || status === "invalid")
+    return { ok: false, error: workspacesError ?? `invalid workspaces.json: ${wsPath}` };
   const detection = detectBranchPolicy(workspace_root);
   const name = String(env.WORKFLOW_BP_NAME ?? path.basename(workspace_root));
   const integration = (env.WORKFLOW_BP_INTEGRATION ?? detection.integration) as "pr" | "merge";
@@ -1234,8 +1284,22 @@ export function applyWorkspaceBranchPolicy(opts: {
   const glob = `${workspace_root.replace(/[\\/]+$/, "")}/**`;
   if (!validateWorkspaceGlob(glob).ok)
     return { ok: false, error: `invalid workspace glob: ${glob}` };
-  const idx = entries.findIndex((w) => matchWorkspace(w.glob, workspace_root));
-  const existing = idx >= 0 ? entries[idx] : null;
+  let existing: WorkspaceConfig | null;
+  try {
+    existing = resolveWorkspaceFrom(workspace_root, dir);
+  } catch (error) {
+    const selectedName = env.WORKFLOW_BP_NAME?.trim();
+    if (!selectedName)
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    try {
+      existing = resolveWorkspaceFrom(workspace_root, dir, selectedName);
+    } catch (selectionError) {
+      return {
+        ok: false,
+        error: selectionError instanceof Error ? selectionError.message : String(selectionError),
+      };
+    }
+  }
   if (existing?.branchPolicy && isDeepStrictEqual(existing.branchPolicy, policy)) {
     return {
       ok: true,
@@ -1246,10 +1310,38 @@ export function applyWorkspaceBranchPolicy(opts: {
     };
   }
   const next = existing
-    ? entries.map((w, i) => (i === idx ? { ...w, branchPolicy: policy } : w))
+    ? entries.map((w) => (w.name === existing?.name ? { ...w, branchPolicy: policy } : w))
     : [...entries, { name, glob, branchPolicy: policy }];
+  if (!existing && entries.some((entry) => entry.name === name))
+    return { ok: false, error: `workspace name ${JSON.stringify(name)} is already configured` };
+  const proposed = validateWorkspacesDocument({ ...document, workspaces: next }, wsPath);
+  if (proposed.status !== "valid") return { ok: false, error: proposed.error };
+  if (workspacesRevision(readFileSafe(wsPath)) !== revision)
+    return {
+      ok: false,
+      error: `workspaces.json changed while applying the branch policy: ${wsPath}`,
+    };
   mkdirSync(path.dirname(wsPath), { recursive: true });
-  writeFileSync(wsPath, JSON.stringify({ workspaces: next }, null, 2) + "\n", "utf8");
+  const tmp = `${wsPath}.${process.pid}.tmp`;
+  try {
+    writeFileSync(tmp, JSON.stringify({ ...document, workspaces: next }, null, 2) + "\n", "utf8");
+    if (workspacesRevision(readFileSafe(wsPath)) !== revision) {
+      rmSync(tmp, { force: true });
+      return {
+        ok: false,
+        error: `workspaces.json changed while applying the branch policy: ${wsPath}`,
+      };
+    }
+    renameSync(tmp, wsPath);
+  } catch (error) {
+    try {
+      rmSync(tmp, { force: true });
+    } catch {}
+    return {
+      ok: false,
+      error: `failed to write ${wsPath}: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
   return {
     ok: true,
     status: existing ? "updated" : "configured",
@@ -1264,6 +1356,7 @@ export function applyWorkspaceBranchPolicy(opts: {
 export {
   applyCutover,
   applyRollback,
+  resumeCutover,
   classifyHostGeneration,
   readCutoverReceipt,
   detectCursorLatest,

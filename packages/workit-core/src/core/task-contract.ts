@@ -588,6 +588,8 @@ export const decisionSchema = z
         state: z.enum(["reserved", "consumed", "uncertain"]),
         at: utc,
         actionRef: refSchema,
+        /** Historical identifier only; never interpreted as native authority. */
+        historicalActionId: text.optional(),
       })
       .strict()
       .nullable(),
@@ -809,7 +811,10 @@ export const taskSummarySchema = z
   })
   .strict();
 export type TaskSummary = z.infer<typeof taskSummarySchema>;
-export const taskListItemSchema = taskSummarySchema.omit({ policy: true, requirements: true });
+export const taskListItemSchema = taskSummarySchema
+  .omit({ policy: true, requirements: true })
+  .extend({ source: provenanceSchema.pick({ host: true, kind: true }) })
+  .strict();
 export type TaskListItem = z.infer<typeof taskListItemSchema>;
 export const exportBundleSchema = z
   .object({
@@ -844,6 +849,7 @@ const taskOperations = {
   list: operation({
     action: z.literal("list"),
     status: z.enum(["open", "closed", "all"]).optional(),
+    query: z.string().trim().min(1).max(200).optional(),
     limit: z.number().int().min(1).max(50).optional(),
   }),
   inspect: operation({

@@ -159,7 +159,7 @@ test("existing token bytes are preserved in the preview (WZ-05)", () => {
   }
 });
 
-test("selected integrations create placeholder tokens only when absent", () => {
+test("selected integrations create only the YouTrack placeholder", () => {
   const dir = tempDir();
   try {
     const preview = buildSetupPreview(
@@ -174,8 +174,7 @@ test("selected integrations create placeholder tokens only when absent", () => {
       content: TOKEN_PLACEHOLDER + "\n",
       mode: 0o600,
     });
-    expect(gl).toBeDefined();
-    expect((gl as Extract<SetupMutation, { type: "create-file" }>).mode).toBe(0o600);
+    expect(gl).toBeUndefined();
   } finally {
     clean(dir);
   }
@@ -559,13 +558,13 @@ test("existing custom token paths are reused in the draft; canary bytes preserve
     );
     expect(preview.ok).toBe(true);
     // the custom files are preserved; the default paths are never written
-    expect(preview.preserved).toEqual(expect.arrayContaining([customYt, customGl]));
+    expect(preview.preserved).toEqual([customYt]);
     for (const def of [path.join(dir, "youtrack.token"), path.join(dir, "gitlab.token")]) {
       expect(preview.mutations.some((m) => m.path === def)).toBe(false);
     }
     // reuse means no path replacement mutation anywhere
     expect(preview.mutations.some((m) => m.type === "set-token-path")).toBe(false);
-    // the drafts keep the custom paths authoritative
+    // YouTrack retains its custom path; legacy VCS paths remain on disk only.
     const yt = preview.mutations.find((m) => m.path === ytJson) as Extract<
       SetupMutation,
       { type: "merge-json" }
@@ -575,9 +574,9 @@ test("existing custom token paths are reused in the draft; canary bytes preserve
       SetupMutation,
       { type: "merge-json" }
     >;
-    const v = vcs.value as { gitlab: { tokenFile: string }; github: { tokenFile: string } };
-    expect(v.gitlab.tokenFile).toBe(customGl);
-    expect(v.github.tokenFile).toBe(customGh);
+    const v = vcs.value as { gitlab: { tokenFile?: string }; github: { tokenFile?: string } };
+    expect(v.gitlab.tokenFile).toBeUndefined();
+    expect(v.github.tokenFile).toBeUndefined();
     // canary bytes untouched by the pure preview
     expect(readFileSync(customYt, "utf8")).toBe("canary-yt\n");
     expect(readFileSync(customGl, "utf8")).toBe("canary-gl\n");

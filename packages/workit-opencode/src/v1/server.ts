@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import type { Plugin } from "@opencode-ai/plugin";
 import {
-  shouldDenyShellRoute,
+  shellBranchPolicyViolation,
   TaskStore,
   WorkitCore,
   workitBindingQuestionIssue,
@@ -33,7 +33,12 @@ import {
   type DispatchGeneration,
 } from "../tools/workit";
 import type { WorkerDispatch } from "@brainervirus/workit-core/src/core";
-import { compactContextFor, loadProvenance, workerContextFor } from "../runtime";
+import {
+  compactContextFor,
+  loadProvenance,
+  unfinishedTaskOfferFor,
+  workerContextFor,
+} from "../runtime";
 
 const root = assetsRoot();
 const skillsPath = path.join(root, "skills");
@@ -148,6 +153,7 @@ const plugin: Plugin = async ({ client, directory }) => {
   // Fallback only for a task result that names no session. Once a trusted
   // session exists, lifecycle authority is persisted in core state.
   const unresolvedTaskLaunches = new Set<string>();
+  const historyOfferSessions = new Set<string>();
   const dispatches = new Map<string, PreparedDispatch>();
   try {
     logger.info(EVENT.initialization, { host: "opencode", plugin_root: root });
@@ -559,11 +565,9 @@ const plugin: Plugin = async ({ client, directory }) => {
       warnStaleSources();
       if (input.tool === "bash") {
         const command = (output?.args as { command?: unknown } | undefined)?.command;
-        const route = typeof command === "string" ? shouldDenyShellRoute(directory, command) : null;
-        if (route)
-          throw new Error(
-            `recovery_required: direct branch or PR creation bypasses the Workit route; ${route.guidance}`,
-          );
+        const policy =
+          typeof command === "string" ? shellBranchPolicyViolation(directory, command) : null;
+        if (policy && !policy.ok) throw new Error(`branch_policy_denied: ${policy.error}`);
         return;
       }
       if (input.tool === "question") {
@@ -689,6 +693,12 @@ const plugin: Plugin = async ({ client, directory }) => {
         : null;
       const bootstrap = session && !session.parentID ? getWorkitBootstrap() : null;
       const context = compactContextFor(directory, sessionID);
+      let offer: string | null = null;
+      if (!historyOfferSessions.has(sessionID)) {
+        historyOfferSessions.add(sessionID);
+        if (session && !session.parentID)
+          offer = unfinishedTaskOfferFor(directory, "opencode", sessionID);
+      }
       if (
         bootstrap &&
         !first.parts.some((part) => part.type === "text" && part.text.includes("<workit-contract>"))
@@ -706,6 +716,14 @@ const plugin: Plugin = async ({ client, directory }) => {
           type: "text",
           text: `<workit-task-context>${context}</workit-task-context>`,
         } as never);
+      }
+      if (
+        offer &&
+        !first.parts.some(
+          (part) => part.type === "text" && part.text.includes("<workit-history-offer>"),
+        )
+      ) {
+        first.parts.unshift({ ...anchor, type: "text", text: offer } as never);
       }
       if (
         workerContext &&

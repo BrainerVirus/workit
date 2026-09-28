@@ -18,7 +18,7 @@ import {
   type WorkspaceRecord,
   type Worker,
 } from "@brainervirus/workit-core/src/core";
-import { piContext, workitContext } from "../src/context";
+import { piContext, unfinishedTaskOffer, workitContext } from "../src/context";
 import { WORKIT_SKILL_ALIASES } from "@brainervirus/workit-core/src/core/skill-manifests";
 import { enforceNativeWriter, registerWorkitTools } from "../src/tools";
 import {
@@ -97,9 +97,9 @@ const runtimeFor = (ctx: ExtensionContext) => ({
   root: ctx.cwd,
 });
 
-const contextMessage = (ctx: ExtensionContext) => ({
+const contextMessage = (ctx: ExtensionContext, offer: string | null = null) => ({
   customType: "workit-context",
-  content: workitContext(ctx),
+  content: `${workitContext(ctx)}${offer ? `\n\n${offer}` : ""}`,
   display: false,
   details: { session: piContext(ctx).caller.actor },
 });
@@ -137,6 +137,7 @@ export const persistUncertainCancel = (
 
 export default function extension(pi: ExtensionAPI): void {
   const sessions = new Set<string>();
+  const historyOfferSessions = new Set<string>();
   const workers = new Map<string, WorkerHandle>();
   const bindings = new Map<string, WorkerLifecycleBinding>();
   const childWorker = process.env.WORKIT_PI_WORKER_ID;
@@ -428,7 +429,9 @@ export default function extension(pi: ExtensionAPI): void {
     const id = ctx.sessionManager.getSessionId();
     if (sessions.has(id)) return;
     sessions.add(id);
-    return { message: contextMessage(ctx) };
+    const offer = historyOfferSessions.has(id) ? null : unfinishedTaskOffer(ctx);
+    historyOfferSessions.add(id);
+    return { message: contextMessage(ctx, offer) };
   });
   pi.on("session_before_compact", () => undefined);
   pi.on("session_compact", (_event, ctx) => {

@@ -1,3 +1,4 @@
+import path from "node:path";
 import {
   applyCutover,
   type CutoverHost,
@@ -24,12 +25,15 @@ export const resolvePathsForTest = (fx: CutoverFixture): CutoverPaths => ({
   home: fx.home,
   configDir: fx.configDir,
   stateDir: fx.stateDir,
+  archiveDir: path.join(fx.root, "archive"),
   dev: fx.dev,
   workspace: fx.workspace,
   opencodeConfig: fx.opencodeConfig,
   cursorSettings: fx.cursorSettings,
   cursorMcp: fx.cursorMcp,
   cursorPluginDir: fx.pluginDir,
+  piConfig: path.join(fx.home, ".pi", "config.json"),
+  piSettings: path.join(fx.home, ".pi", "agent", "settings.json"),
 });
 
 export const applyFxCutover = (fx: CutoverFixture): CutoverReceipt => {

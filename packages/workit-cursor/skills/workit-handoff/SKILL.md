@@ -5,14 +5,8 @@ description: Use when work must continue in another session, host, or agent afte
 
 # Handoff durable task state
 
-Transfer continuity, not live authority. Use this method when assessment selects
-the `durable-handoff` rule.
-
-## Before method work
-
-If there is no active or paused task, run shared `task.start` then `policy.assess`
-before relying on selected policy rules or other product mutations. Assessment
-selects requirements; do not wait for a rule that can only exist after assess.
+Transfer continuity, not live authority. Use this method when a tracked item
+must continue in another session, host, or agent.
 
 ## Method
 

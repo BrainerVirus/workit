@@ -45,7 +45,7 @@ test("Pi session events retain native session identity across startup, reload, r
     ctx,
   );
   expect(first.message.content).toContain("pi-session");
-  expect(first.message.content).toContain("Workit keeps one accountable lead");
+  expect(first.message.content).toContain("Workit is optional coordination");
 });
 
 test("Pi compaction leaves the host summary intact and restores once only after success", async () => {
@@ -54,7 +54,7 @@ test("Pi compaction leaves the host summary intact and restores once only after 
     { type: "before_agent_start", prompt: "", systemPrompt: "", systemPromptOptions: {} },
     ctx,
   );
-  expect(before.message.content).toContain("Workit keeps one accountable lead");
+  expect(before.message.content).toContain("Workit is optional coordination");
   expect(
     await handlers.get("before_agent_start")!(
       { type: "before_agent_start", prompt: "", systemPrompt: "", systemPromptOptions: {} },
@@ -87,7 +87,7 @@ test("Pi compaction leaves the host summary intact and restores once only after 
     { type: "before_agent_start", prompt: "", systemPrompt: "", systemPromptOptions: {} },
     ctx,
   );
-  expect(restored.message.content).toContain("Workit keeps one accountable lead");
+  expect(restored.message.content).toContain("Workit is optional coordination");
   expect(
     await handlers.get("before_agent_start")!(
       { type: "before_agent_start", prompt: "", systemPrompt: "", systemPromptOptions: {} },

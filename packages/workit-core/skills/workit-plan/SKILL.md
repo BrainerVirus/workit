@@ -5,74 +5,41 @@ description: Use when dependencies, sequencing, coordination, or resumption make
 
 # Plan useful coordination
 
-Use a compact plan when assessment selects `artifacts` or `continuity`. A plan
-organizes work; it is not a second lifecycle or a prerequisite for implementation.
-
-## Before method work
-
-If there is no active or paused task, run shared `task.start` then `policy.assess`
-before relying on selected policy rules or other product mutations. Assessment
-selects requirements; do not wait for a rule that can only exist after assess.
+A plan is useful when work has dependent steps, a handoff, concurrent actors, or
+meaningful unresolved choices. It is never a prerequisite for implementation.
 
 ## Method
 
-1. Inspect current task state, scope, decisions, requirements, candidate, workers,
-   findings, and blockers through the shared `task` and `policy` operations.
-2. Record only the useful sequence: objective, dependency, bounded task, evidence
-   needed, owner, and next action. Keep the plan against the existing system.
-3. If policy separately requires a durable specification, record that behavior
-   agreement; otherwise do not invent a spec. A plan without a spec is valid.
-4. Present before asking: show durable artifacts as a complete digest plus the
-   exact path and inline plans as their content. Never ask the user to approve
-   something they have not seen, and keep the question to one short scoped
-   sentence.
-5. Execute an approved plan continuously: one atomic commit per task after its
-   checks pass, no "continue?" prompts. Stop only for a new product decision, a
-   failed safety or verification gate, a conflicting concurrent edit, or missing
-   authority.
-6. Record the plan's commit list once through the plan-scoped action approval
-   (`git.commit` with `plan_steps` and `plan_branch`) so each listed commit runs
-   without a new question; an unlisted message, a branch change, or any change to
-   the plan needs a fresh exact approval.
-7. Update the shared task progress at meaningful boundaries. Reassess when facts,
-   dependencies, or scope change; preserve unresolved blockers and decisions.
-8. On steering (new instructions mid-task): apply `workit-steer` — park state
-   verbatim, classify same-task / new-task / quick-question, handle, re-anchor.
+1. Establish the requested outcome, constraints, dependencies, and important
+   unknowns from the available code, docs, and configuration before asking.
+2. Record only the useful sequence: objective, dependency, bounded outcome,
+   evidence needed, and next action. Reuse the project's existing format.
+3. Start a tracked record only when handoff, dependent steps, coordination, or
+   durable decisions need continuity. Infer observable facts instead of asking
+   the user to fill redundant protocol fields.
+4. Create a spec when a durable behavior contract or interface is requested or
+   will help a future reader. Use an ADR for a consequential trade-off and a
+   glossary for stable terms. A small fix needs no document.
+5. If the user authorized implementation, proceed through the agreed endpoint
+   and applicable checks. Do not ask for a separate plan approval or repeat
+   "continue?". Stop for a new consequential choice, host denial, conflict, or
+   blocker that cannot be resolved safely.
+6. Update a checkpoint at meaningful boundaries when another session may need
+   to resume. Keep settled decisions, changed files, actual checks, blockers,
+   and the next action; omit transcript and process trivia.
 
-Use shared task/progress and evidence operations. Do not create a universal
-spec-and-plan ceremony, duplicate task state, approval chain, or custom status
-machine. A short paragraph is enough when it captures the required continuity.
+## Shape
 
-## Triage (automatic)
-
-Set assessor signals from size facts, not memory (`triageTier` /
-`triageSignals` in policy-resolver):
-
-- **Large → spec + full plan:** new/changed observable behavior, open
-  ambiguity, cross-package/host contract or auth/data/security surface,
-  irreversible migration, or ≥3 subsystems / ≥2 packages touched.
-- **Medium → compact plan-only** (Sequence/Acceptance, ~30-60 lines): known
-  approach, single subsystem, 2-8 steps. Step count alone never escalates
-  a known single-subsystem run to spec.
-- **Small → neither** (progress + evidence only): single bounded mechanical
-  action, no open choices, reversible. Record `Spec: none (reason)`.
-
-`task.start` + `policy.assess` stay mandatory at all sizes. The lead may
-re-tier with the reason recorded in progress (override, never silent).
-
-## Decomposition
-
-Slice tracer bullets, not layers: each plan task crosses the necessary
-layers to a small demoable behavior with its blocking edges declared.
-Wide refactors use expand–contract (add the new seam, migrate callers,
-delete the old). Per task record Files (create/modify/test, exact paths),
-exact commands with expected output, and one commit. No placeholders —
-an implementer must be able to execute a task with zero extra context.
+Plan slices as small end-to-end outcomes with explicit dependencies and checks.
+Keep repo policy and native host authority separate. Preserve the user's branch
+and commit conventions. Do not prescribe one commit per step or create a second
+approval chain unless the user asked for that delivery format.
 
 ## Common mistakes
 
 | Mistake | Correction |
 | --- | --- |
-| Writing a full packet for a small dependency | Capture the next bounded action and its evidence. |
-| Treating the plan as authority | Authority remains in task scope, decisions, revisions, and caller provenance. |
-| Copying a transcript into the plan | Preserve decisions, gaps, blockers, and next action only. |
+| Writing a packet for a bounded reversible change | Leave the change undocumented. |
+| Asking what repository state or code can answer | Inspect it first. |
+| Treating the plan as authority | Follow the user's scope and native host permissions. |
+| Copying a transcript into the plan | Keep decisions, evidence, gaps, and next action only. |

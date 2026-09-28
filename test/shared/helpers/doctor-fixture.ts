@@ -1,4 +1,12 @@
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -29,7 +37,7 @@ const mk = (dir: string, ...parts: string[]): string => {
 };
 
 export const makeDoctorFixture = (): DoctorFixture => {
-  const root = mkdtempSync(path.join(os.tmpdir(), "wk-doctor-"));
+  const root = mkdtempSync(path.join(realpathSync(os.tmpdir()), "wk-doctor-"));
   const home = mk(root, "home");
   const configDir = mk(root, "config");
   const stateDir = mk(root, "state");

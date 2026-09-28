@@ -241,6 +241,8 @@ function copyCoreSources(stub: string) {
     "package-root.ts",
     "config-conversion.ts",
     "cutover.ts",
+    "legacy-ownership.ts",
+    "safe-write.ts",
     "task-contract.ts",
     "runtime-identity.ts",
   ]) {

@@ -1,134 +1,108 @@
-import { expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { afterAll, beforeAll, expect, test } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { TaskStore, WorkitCore, type OperationContext } from "@/packages/workit-core/src/core";
 import {
-  shellRouteIntent,
-  shouldDenyShellRoute,
+  shellBranchPolicyViolation,
+  shellBranchTarget,
 } from "@/packages/workit-core/src/core/route-intent";
-import { caller, taskStartRequest } from "./task-fixtures";
 
-test("direct branch creation routes to git.branch_setup", () => {
-  for (const command of [
-    "git switch -c feature/x",
-    "git switch --create feature/x",
-    "git checkout -b fix/y",
-    "git checkout -B fix/y",
-    "cd repo && git switch -c feature/x",
-    'git switch -c "feature/x"',
-    "FOO=bar git checkout -b fix/y",
+const previous = {
+  config: process.env.WORKFLOW_TOOLKIT_CONFIG,
+  configDir: process.env.WORKFLOW_TOOLKIT_CONFIG_DIR,
+  profile: process.env.WORKFLOW_PROFILE,
+  workspace: process.env.WORKFLOW_WORKSPACE_NAME,
+};
+let configDir: string;
+beforeAll(() => {
+  configDir = mkdtempSync(join(tmpdir(), "workit-shell-policy-config-"));
+  delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+  process.env.WORKFLOW_TOOLKIT_CONFIG_DIR = configDir;
+  delete process.env.WORKFLOW_PROFILE;
+  delete process.env.WORKFLOW_WORKSPACE_NAME;
+  writeFileSync(
+    join(configDir, "config.json"),
+    JSON.stringify({
+      branchPolicy: { preset: "custom", allowed: ["feature/*"], protected: ["main"] },
+    }),
+  );
+});
+afterAll(() => {
+  if (previous.config === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+  else process.env.WORKFLOW_TOOLKIT_CONFIG = previous.config;
+  if (previous.configDir === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG_DIR;
+  else process.env.WORKFLOW_TOOLKIT_CONFIG_DIR = previous.configDir;
+  if (previous.profile === undefined) delete process.env.WORKFLOW_PROFILE;
+  else process.env.WORKFLOW_PROFILE = previous.profile;
+  if (previous.workspace === undefined) delete process.env.WORKFLOW_WORKSPACE_NAME;
+  else process.env.WORKFLOW_WORKSPACE_NAME = previous.workspace;
+  rmSync(configDir, { recursive: true, force: true });
+});
+
+test("recognizes direct literal Git branch-creation forms", () => {
+  for (const [command, target] of [
+    ["git switch -c feature/x", "feature/x"],
+    ["git switch --create feature/x origin/main", "feature/x"],
+    ["git switch -C feature/x", "feature/x"],
+    ["git checkout -b feature/x", "feature/x"],
+    ["git checkout -B feature/x origin/main", "feature/x"],
+    ["git branch feature/x", "feature/x"],
+    ["git branch feature/x origin/main", "feature/x"],
   ]) {
-    expect(shellRouteIntent(command), command).toMatchObject({ route: "git.branch_setup" });
+    expect(shellBranchTarget(command), command).toBe(target);
   }
 });
 
-test("direct pull and merge request creation routes to hosting.pull_request", () => {
+test("leaves unsupported shell syntax and non-branch effects to the host", () => {
   for (const command of [
-    "gh pr create --title t --body b",
-    "glab mr create --title t",
-    "git push -u origin feature/x && gh pr create --fill",
-  ]) {
-    expect(shellRouteIntent(command), command).toMatchObject({ route: "hosting.pull_request" });
-  }
-});
-
-test("unrelated or unparseable commands stay explicitly unenforced", () => {
-  for (const command of [
-    "git commit -m x",
     "git switch main",
-    "git checkout main",
     "git branch --show-current",
-    "gh pr view 5",
-    "glab mr list",
-    "npm test",
-    "echo 'git switch -c fake'",
-    "git switch -c `echo feature`",
-    'git switch -c "unclosed',
+    "git branch -d feature/x",
+    'git switch -c "main"',
+    "git switch -c feature/x && echo done",
+    "cd repo && git switch -c feature/x",
+    "env MODE=x git switch -c feature/x",
+    "/usr/bin/git switch -c feature/x",
+    "echo 'git switch -c main'",
+    "git switch -c $BRANCH",
+    "git switch -c `echo main`",
+    "git worktree add ../feature/x",
+    "gh pr create --fill",
+    "gh pr merge 1",
+    "git status --short",
     "",
   ]) {
-    expect(shellRouteIntent(command), command).toBeNull();
+    expect(shellBranchTarget(command), command).toBeNull();
   }
 });
 
-const scopeContext = (root: string): OperationContext => ({
-  root,
-  caller: caller(),
-  capabilities: [],
-  constraints: [],
-  now: "2026-01-01T00:00:00Z",
-});
-
-const startTask = (root: string) => {
-  const store = new TaskStore(root);
-  const core = new WorkitCore(store, scopeContext(root));
-  const started = core.task(taskStartRequest());
-  if (!started.ok) throw new Error(started.error);
-  return { store, core, id: (started.data as { id: string }).id };
-};
-
-test("session-scoped denial allows outside live work", () => {
-  const root = mkdtempSync(join(tmpdir(), "workit-route-scope-"));
+test("validates the current exact branch policy on each recognized operation", () => {
+  const root = mkdtempSync(join(tmpdir(), "workit-shell-policy-root-"));
   try {
-    expect(shouldDenyShellRoute(root, "git checkout -b feature/x")).toBeNull();
-    expect(shouldDenyShellRoute(root, "gh pr create --fill")).toBeNull();
-    expect(shouldDenyShellRoute(join(root, "missing"), "git checkout -b feature/x")).toBeNull();
-    expect(shouldDenyShellRoute(root, "")).toBeNull();
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
+    expect(shellBranchPolicyViolation(root, "git switch -c feature/ok")).toEqual({ ok: true });
 
-test("session-scoped denial denies inside active and paused tasks", () => {
-  const root = mkdtempSync(join(tmpdir(), "workit-route-scope-"));
-  try {
-    const { store, core, id } = startTask(root);
-    expect(shouldDenyShellRoute(root, "git checkout -b feature/x")).toMatchObject({
-      route: "git.branch_setup",
-    });
-    expect(shouldDenyShellRoute(root, "gh pr create --fill")).toMatchObject({
-      route: "hosting.pull_request",
-    });
-    expect(shouldDenyShellRoute(root, "git status --short")).toBeNull();
-    const task = store.readTask(id);
-    const workspace = store.readWorkspace();
-    if (!task.ok || !workspace.ok || !workspace.data) throw new Error("state missing");
-    const paused = core.task({
-      schemaVersion: 1,
-      action: "pause",
-      taskId: id,
-      expectedRevision: task.data.revision,
-      expectedWorkspaceRevision: workspace.data.revision,
-      reason: "test",
-    });
-    expect(paused.ok).toBe(true);
-    expect(shouldDenyShellRoute(root, "git checkout -b feature/x")).toMatchObject({
-      route: "git.branch_setup",
-    });
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
+    const protectedRef = shellBranchPolicyViolation(root, "git checkout -b main");
+    expect(protectedRef?.ok).toBe(false);
+    if (protectedRef?.ok === false) {
+      expect(protectedRef.rule).toBe("protected_ref");
+      expect(protectedRef.source).toBe("user-default");
+      expect(protectedRef.attempted).toBe("main");
+      expect(protectedRef.correction).toContain("feature");
+    }
 
-test("session-scoped denial allows after the task closes", () => {
-  const root = mkdtempSync(join(tmpdir(), "workit-route-scope-"));
-  try {
-    const { store, core, id } = startTask(root);
-    const task = store.readTask(id);
-    const workspace = store.readWorkspace();
-    if (!task.ok || !workspace.ok || !workspace.data) throw new Error("state missing");
-    const closed = core.task({
-      schemaVersion: 1,
-      action: "close",
-      taskId: id,
-      expectedRevision: task.data.revision,
-      expectedWorkspaceRevision: workspace.data.revision,
-      outcome: "stopped",
-      summary: "test",
-      decisionIds: [],
-    });
-    expect(closed.ok).toBe(true);
-    expect(shouldDenyShellRoute(root, "git checkout -b feature/x")).toBeNull();
+    writeFileSync(
+      join(configDir, "config.json"),
+      JSON.stringify({
+        branchPolicy: { preset: "custom", allowed: ["release/*"], protected: ["main"] },
+      }),
+    );
+    const staleName = shellBranchPolicyViolation(root, "git branch feature/ok");
+    expect(staleName?.ok).toBe(false);
+    if (staleName?.ok === false) {
+      expect(staleName.rule).toBe("allowed_pattern");
+      expect(staleName.attempted).toBe("feature/ok");
+      expect(staleName.error).toContain("release");
+    }
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

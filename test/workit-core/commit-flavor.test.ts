@@ -98,7 +98,7 @@ const withConfig = (preset: string, extra: Record<string, unknown>, run: () => v
   }
 };
 
-test("git.commit resolve honors workspace commitPolicy override over global", () => {
+test("git.commit validates against the matched workspace flavor", () => {
   const root = repoWithStaged(["feat(a): seed"]);
   const dir = mkdtempSync(join(tmpdir(), "workit-commit-config-"));
   const previous = process.env.WORKFLOW_TOOLKIT_CONFIG;
@@ -118,14 +118,17 @@ test("git.commit resolve honors workspace commitPolicy override over global", ()
       resolveExternalActionRequest(root, {
         operation: "git.commit",
         payload: { message: "✨ emoji wins here" },
-      }).ok,
-    ).toBe(true);
-    const bad = resolveExternalActionRequest(root, {
+      }),
+    ).toMatchObject({ ok: true });
+    const other = resolveExternalActionRequest(root, {
       operation: "git.commit",
       payload: { message: "fix(auth): global flavor loses here" },
     });
-    expect(bad.ok).toBe(false);
-    if (!bad.ok) expect((bad as { error: string }).error).toContain("gitmoji");
+    expect(other).toMatchObject({
+      ok: false,
+      code: "permission_denied",
+      error: expect.stringContaining("commit_style"),
+    });
   } finally {
     if (previous === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
     else process.env.WORKFLOW_TOOLKIT_CONFIG = previous;
@@ -142,8 +145,11 @@ test("git.commit resolve rejects messages outside the configured flavor", () => 
         operation: "git.commit",
         payload: { message: "wip stuff" },
       });
-      expect(bad.ok).toBe(false);
-      if (!bad.ok) expect((bad as { error: string }).error).toContain("conventional");
+      expect(bad).toMatchObject({
+        ok: false,
+        code: "permission_denied",
+        error: expect.stringContaining("commit_style"),
+      });
       const good = resolveExternalActionRequest(root, {
         operation: "git.commit",
         payload: { message: "fix(auth): handle empty input" },
@@ -169,8 +175,8 @@ test("git.commit resolve honors ticket-prefix preset and custom patterns", () =>
         resolveExternalActionRequest(root, {
           operation: "git.commit",
           payload: { message: "feat(x): wrong flavor" },
-        }).ok,
-      ).toBe(false);
+        }),
+      ).toMatchObject({ ok: false, code: "permission_denied" });
     });
     withConfig("custom", { pattern: "^JIRA-\\d+" }, () => {
       expect(
@@ -201,7 +207,7 @@ test("git.commit resolve auto-detects repo flavor with conventional fallback", (
           operation: "git.commit",
           payload: { message: "free words" },
         }).ok,
-      ).toBe(false);
+      ).toBe(true);
       expect(
         resolveExternalActionRequest(mixedRoot, {
           operation: "git.commit",

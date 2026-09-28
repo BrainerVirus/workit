@@ -1,7 +1,6 @@
 import fs from "node:fs";
 
-// Dependency-free V2 probe plugin (plain object form; the pinned 2.0.3
-// runtime has no ctx.provider/ctx.model domains, so nothing is imported).
+// Dependency-free V2 probe plugin (plain object form).
 // Observes only: it registers one tool, subscribes to events, and logs
 // hook invocations as JSONL to $V2PROBE_LOG (default /tmp/v2probe-events.log).
 // Permission rules are NEVER set here; tests set them explicitly per session

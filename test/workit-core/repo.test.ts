@@ -57,7 +57,6 @@ type RuntimeCalls = {
   changelogContext: Array<{ root: string; range?: string }>;
   docsContext: Array<{ root: string; range?: string }>;
   releaseContext: Array<{ root: string; range: string }>;
-  prCreate: Array<{ root: string; env: Record<string, string> }>;
   initApply: Array<{ root: string; action: string; env: Record<string, string> }>;
 };
 const calls: RuntimeCalls = {
@@ -67,7 +66,6 @@ const calls: RuntimeCalls = {
   changelogContext: [],
   docsContext: [],
   releaseContext: [],
-  prCreate: [],
   initApply: [],
 };
 const totalCalls = () => Object.values(calls).reduce((n, bucket) => n + bucket.length, 0);
@@ -88,11 +86,6 @@ const outputs: Record<string, string> = {
   "docs-refresh-context.sh":
     '# Context\n\n## Repository\nbranch: feature/native-tools\nrange: HEAD~1..HEAD\n\n## Changed Files\nsrc/plugin.ts\n\n## Documentation Files\nREADME.md\n\n## README Preview\n# Toolkit\n\n## Package Scripts\n{"test":"bun test"}\n',
   "branch/setup-branch.sh": JSON.stringify({ ok: true, branch: "feature/native-tools" }),
-  "pr-create.sh": JSON.stringify({
-    ok: true,
-    provider: "github",
-    output: "https://example.test/pr/1",
-  }),
   "init/apply.sh": JSON.stringify({ ok: true, action: "youtrack_json" }),
 };
 
@@ -125,10 +118,6 @@ const runtime: RepoRuntime = {
   releaseContext: (root: string, range: string) => {
     calls.releaseContext.push({ root, range });
     return { exitCode: 0, stdout: outputs["release-notes-context.sh"], stderr: "", cwd: root };
-  },
-  prCreate: (root: string, env: Record<string, string>) => {
-    calls.prCreate.push({ root, env });
-    return { exitCode: 0, stdout: outputs["pr-create.sh"], stderr: "", cwd: root };
   },
   initApply: (root: string, action: string, env: Record<string, string>) => {
     calls.initApply.push({ root, action, env });
@@ -364,7 +353,7 @@ test(
 );
 
 test(
-  "mutations reject missing confirmation",
+  "mutations reject missing confirmation before any resolution",
   async () => {
     resetCalls();
     const tools = createRepoTools(runtime);
@@ -372,8 +361,8 @@ test(
       "workit_changelog_apply",
       "workit_branch_setup",
       "workit_commit",
-      "workit_pr_create",
       "workit_init_apply",
+      "workit_pr_create",
     ] as const) {
       const raw = await tools[name].execute(
         { confirmed: false } as never,
@@ -457,29 +446,29 @@ test(
 );
 
 test(
-  "PR creation rejects protected and unsupported branches before external work",
+  "hosted PR creation fails closed on an unbound remote without running legacy code",
   async () => {
-    for (const branch of ["main", "master", "develop", "prod", "feature/"]) {
-      let externalCalls = 0;
-      const guarded = createRepoTools({
-        ...runtime,
-        git: (root, args) => ({
-          exitCode: 0,
-          stdout: args[0] === "branch" ? `${branch}\n` : "",
-          stderr: "",
-          cwd: root,
-        }),
-        prCreate: (root) => {
-          externalCalls++;
-          return { exitCode: 0, stdout: "{}", stderr: "", cwd: root };
-        },
+    resetCalls();
+    const root = mkdtempSync(path.join(os.tmpdir(), "workflow-toolkit-pr-target-"));
+    try {
+      spawnSync("git", ["init", "-q", "-b", "feature/pr"], { cwd: root });
+      const raw = await createRepoTools(runtime).workit_pr_create.execute(
+        { confirmed: true, title: "No" },
+        { directory: root, worktree: root } as never,
+      );
+      // Decision ae03c569: creation is enabled, but it still fails closed when
+      // the target has no provider-bound remote to bind the approved SHA to.
+      const result = JSON.parse(raw as string);
+      expect(result).toMatchObject({
+        ok: false,
+        code: "capability_unavailable",
+        details: { capability: "hosting.pull_request", outcome: "not_started" },
       });
-      const raw = await guarded.workit_pr_create.execute({ confirmed: true, title: "No" }, {
-        directory: "/repo",
-        worktree: "/repo",
-      } as never);
-      expect(JSON.parse(raw as string).error).toContain("requires an allowed branch");
-      expect(externalCalls).toBe(0);
+      expect(result.error).toContain("configured remote provider");
+      expect(calls.git).toHaveLength(0);
+      expect(totalCalls()).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
     }
   },
   { timeout: 60_000 },
@@ -622,23 +611,32 @@ test(
 );
 
 test(
-  "confirmed script mutations use package scripts, argument arrays, and scoped environment",
+  "hosted PR creation resolves through the shared contract while init mutations use scoped environment",
   async () => {
     resetCalls();
-    const root = mkdtempSync(path.join(os.tmpdir(), "workflow-toolkit-scripts-"));
-    expect(
-      await execute("workit_pr_create", {
-        confirmed: true,
-        title: "Native tools",
-        body: "Ready",
-        draft: true,
-        target_branch: "develop",
-      }),
-    ).toEqual({
-      ok: true,
-      data: { provider: "github", output: "https://example.test/pr/1", exitCode: 0 },
-      error: null,
-    });
+    const root = mkdtempSync(path.join(os.tmpdir(), "workflow-toolkit-pr-env-"));
+    try {
+      spawnSync("git", ["init", "-q", "-b", "feature/env"], { cwd: root });
+      const raw = await createRepoTools(runtime).workit_pr_create.execute(
+        {
+          confirmed: true,
+          title: "Native tools",
+          body: "Ready",
+          draft: true,
+          target_branch: "develop",
+        },
+        { directory: root, worktree: root } as never,
+      );
+      // The resolver, not the legacy runtime, owns PR resolution; an unbound
+      // remote still fails closed before any provider call.
+      expect(JSON.parse(raw as string)).toMatchObject({
+        ok: false,
+        code: "capability_unavailable",
+        details: { capability: "hosting.pull_request", outcome: "not_started" },
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
     expect(
       await execute("workit_init_apply", {
         confirmed: true,
@@ -647,18 +645,7 @@ test(
       }),
     ).toEqual({ ok: true, data: { action: "youtrack_json", exitCode: 0 }, error: null });
 
-    expect(calls.prCreate).toEqual([
-      {
-        root: "/repo",
-        env: {
-          WF_PR_TITLE: "Native tools",
-          WF_PR_BODY: "Ready",
-          WF_PR_CONFIRMED: "true",
-          WF_PR_DRAFT: "true",
-          WF_PR_TARGET: "develop",
-        },
-      },
-    ]);
+    expect(calls.git).toHaveLength(0);
     expect(calls.initApply).toEqual([
       {
         root: "/repo",
@@ -669,33 +656,27 @@ test(
         },
       },
     ]);
-    rmSync(root, { recursive: true, force: true });
   },
   { timeout: 60_000 },
 );
 
 test(
-  "mutation scripts normalize legacy errors into a failed Result",
+  "hosted PR creation reports an unresolvable target without running legacy code",
   async () => {
+    resetCalls();
     const root = mkdtempSync(path.join(os.tmpdir(), "workflow-toolkit-error-"));
-    const raw = await createRepoTools({
-      ...runtime,
-      prCreate: (root: string) => ({
-        exitCode: 1,
-        stdout: JSON.stringify({ error: "legacy failure" }),
-        stderr: "",
-        cwd: root,
-      }),
-    }).workit_pr_create.execute({ confirmed: true, title: "Broken" }, {
-      directory: root,
-      worktree: root,
-    } as never);
-    expect(JSON.parse(raw as string)).toEqual({
-      ok: false,
-      data: { stdout: JSON.stringify({ error: "legacy failure" }), stderr: "", exitCode: 1 },
-      error: "legacy failure",
-    });
-    rmSync(root, { recursive: true, force: true });
+    try {
+      const raw = await createRepoTools(runtime).workit_pr_create.execute(
+        { confirmed: true, title: "Unavailable" },
+        { directory: root, worktree: root } as never,
+      );
+      const result = JSON.parse(raw as string);
+      expect(result).toMatchObject({ ok: false, code: "capability_unavailable" });
+      expect(result.error).toContain("not a Git repository");
+      expect(totalCalls()).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   },
   { timeout: 60_000 },
 );

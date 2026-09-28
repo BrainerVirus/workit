@@ -13,11 +13,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { configDir } from "@/packages/workit-core/src/core/config";
-import {
-  readVcsConfig,
-  vcsConfig,
-  vcsTokenCreateUrls,
-} from "@/packages/workit-core/src/core/vcs-config";
+import { readVcsConfig, vcsConfig } from "@/packages/workit-core/src/core/vcs-config";
 import { configPath } from "@/packages/workit-core/src/core/youtrack-tools";
 
 const savedEnv = new Map<string, string | undefined>();
@@ -128,14 +124,6 @@ test("CA-05: derived paths resolve under the migrated workit dir", () => {
     const expectedYt = path.join(xdg, "workit", "youtrack.json");
     expect(configPath()).toBe(expectedYt);
     expect(existsSync(expectedYt)).toBe(true);
-
-    const urls = vcsTokenCreateUrls();
-    // No provider configured: nothing preselected (key absent), but both
-    // token URLs stay available for the explicit choice.
-    expect(urls.active).toBeUndefined();
-    expect(urls.activeProvider).toBe(null);
-    expect(urls.gitlab.tokenFile).toBeUndefined();
-    expect(urls.github.createUrlClassic).toContain("github.com/settings/tokens/new");
   });
   rmSync(xdg, { recursive: true, force: true });
 });
@@ -197,7 +185,7 @@ test("CA-06: TS configDir migration matches the legacy bash resolve_config_dir b
       const load = vcsConfig("load");
       expect(load.ok).toBe(true);
       expect(load.provider).toBe("gitlab");
-      expect(load.tokenReady).toBe(false);
+      expect(load.tokenPath).toBeUndefined();
     });
   } finally {
     rmSync(xdg, { recursive: true, force: true });

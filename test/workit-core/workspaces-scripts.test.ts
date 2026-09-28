@@ -174,7 +174,7 @@ test(
 );
 
 test(
-  "config.sh resolve: unmatched cwd falls back to global vcs.json; missing/malformed workspaces.json -> no workspace, no error",
+  "config.sh resolve: unmatched cwd falls back when workspaces are missing, malformed workspaces fail closed",
   () => {
     const unmatched = path.join(os.tmpdir(), `wf-ws-unmatched-${Math.random()}`);
     mkdirSync(unmatched, { recursive: true });
@@ -187,12 +187,13 @@ test(
       expect(noMatch.defaultTargetBranch).toBe("main");
       expect(noMatch.link_issues).toBeNull();
 
-      const malformed = withConfigFiles(
-        { "vcs.json": JSON.stringify(GLOBAL_VCS), "workspaces.json": "{ nope !!" },
-        {},
-        () => vcsConfig("resolve", unmatched),
-      );
-      expect(malformed.workspace_name).toBeNull();
+      expect(() =>
+        withConfigFiles(
+          { "vcs.json": JSON.stringify(GLOBAL_VCS), "workspaces.json": "{ nope !!" },
+          {},
+          () => vcsConfig("resolve", unmatched),
+        ),
+      ).toThrow(/workspaces\.json is not valid JSON/);
     } finally {
       rmSync(unmatched, { recursive: true, force: true });
     }
@@ -313,7 +314,7 @@ test(
       expect(m.issues_provider).toBeNull();
       expect(m.link_on_pr).toBeNull();
       expect(m.defaultTargetBranch).toBe("main"); // workspace has none -> global
-      expect(m.tokenReady).toBe(false);
+      expect(m.tokenPath).toBeUndefined();
 
       const g = withConfigFiles(files, {}, () =>
         vcsConfig("load", path.join(base, "personal", "app")),

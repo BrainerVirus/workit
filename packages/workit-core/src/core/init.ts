@@ -6,7 +6,7 @@ import { PLUGIN_ROOT } from "./scripts";
 import { writeFileExclusive } from "./safe-write";
 import { resolveWorkspace, workspacesPath } from "./workspaces";
 import { applyWorkspaceBranchPolicy } from "./setup";
-import { vcsTokenCreateUrls, vcsVerifyToken } from "./vcs-config";
+import { vcsConfig, vcsVerifyToken } from "./vcs-config";
 import { youTrackTokenCreateUrl, youTrackVerifyToken } from "./youtrack";
 
 const TOKEN_PLACEHOLDER = "YOUR_TOKEN_HERE";
@@ -181,32 +181,28 @@ export function initStatusData(configDirPath = configDir()): Record<string, any>
   items.push(youtrackTokenItem);
 
   let vcsCfg: Record<string, any> | null = null;
-  let tokenCreateUrls: Record<string, any> | null = null;
   const vcsParsed = readJson(vcsJson);
   if (vcsParsed) {
     const rawProvider = vcsParsed.provider;
+    const effective = vcsConfig("resolve", process.env.WORKFLOW_WORKSPACE_ROOT ?? process.cwd());
     const provider =
-      typeof rawProvider === "string" && rawProvider.trim() ? rawProvider.toLowerCase() : null;
-    const tokenFiles: Record<string, string> = {};
-    for (const k of ["gitlab", "github"]) {
-      tokenFiles[k] = String(vcsParsed[k]?.tokenFile ?? path.join(configDirPath, `${k}.token`));
-    }
+      effective?.ok && typeof effective.provider === "string"
+        ? effective.provider
+        : typeof rawProvider === "string" && rawProvider.trim()
+          ? rawProvider.toLowerCase()
+          : null;
     vcsCfg = {
       config_edit_path: resolvePath(vcsJson),
       provider,
-      defaultTargetBranch: vcsParsed.defaultTargetBranch ?? "develop",
+      defaultTargetBranch: effective.ok
+        ? effective.defaultTargetBranch
+        : (vcsParsed.defaultTargetBranch ?? "develop"),
       pr: vcsParsed.pr ?? {},
-      tokenDefaults: vcsParsed.tokenDefaults,
       gitlab: vcsParsed.gitlab,
       github: vcsParsed.github,
       skill: "/wk-pr",
       switchHint: 'Set "provider" to "gitlab" or "github" in vcs.json',
     };
-    tokenCreateUrls = vcsTokenCreateUrls();
-    if (!("error" in vcsCfg)) {
-      vcsCfg.tokenCreate = tokenCreateUrls.active;
-      vcsCfg.tokenCreateUrls = { gitlab: tokenCreateUrls.gitlab, github: tokenCreateUrls.github };
-    }
   } else if (fs.existsSync(vcsJson)) {
     vcsCfg = { config_edit_path: resolvePath(vcsJson), error: "invalid vcs.json" };
   }
@@ -219,54 +215,6 @@ export function initStatusData(configDirPath = configDir()): Record<string, any>
     config_edit_path: resolvePath(vcsJson),
     fix: "workit_init_apply action=vcs_scaffold",
   });
-
-  const provActive = vcsCfg && !("error" in vcsCfg) ? vcsCfg.provider : null;
-  const tokenItem = (tid: string, label: string, rawPath: string, providerKey: string) => {
-    const t = path.isAbsolute(rawPath) ? rawPath : path.resolve(configDirPath, rawPath);
-    const abs = fs.existsSync(t) ? resolvePath(t) : path.resolve(t);
-    const text = fs.existsSync(t) ? fs.readFileSync(t, "utf8").trim() : "";
-    const ph = isPlaceholder(text);
-    const ok = fs.existsSync(t) && modeOk(t) && Boolean(text) && !ph;
-    const item: Record<string, any> = {
-      id: tid,
-      label,
-      ok,
-      path: abs,
-      token_edit_path: abs,
-      placeholder: ph,
-      fix: `Open ${abs} — replace ${TOKEN_PLACEHOLDER}, save, then /wk-status`,
-      required: provActive === providerKey,
-    };
-    if (tokenCreateUrls) {
-      const block = tokenCreateUrls[providerKey] ?? {};
-      if (block.createUrl) item.token_create_url = block.createUrl;
-      if (block.createUrlClassic) item.token_create_url_classic = block.createUrlClassic;
-      if (block.scopes) item.token_scopes = block.scopes;
-      if (block.permissions) item.token_permissions = block.permissions;
-      if (block.name) item.token_name = block.name;
-    }
-    return item;
-  };
-  const vcsTokenFiles: Record<string, string> = {};
-  for (const k of ["gitlab", "github"]) {
-    vcsTokenFiles[k] = String(vcsParsed?.[k]?.tokenFile ?? path.join(configDirPath, `${k}.token`));
-  }
-  items.push(
-    tokenItem(
-      "gitlab_token",
-      "GitLab token (mode 600, not placeholder)",
-      vcsTokenFiles.gitlab,
-      "gitlab",
-    ),
-  );
-  items.push(
-    tokenItem(
-      "github_token",
-      "GitHub token (mode 600, not placeholder)",
-      vcsTokenFiles.github,
-      "github",
-    ),
-  );
 
   return {
     config_dir: configDirPath,
@@ -290,11 +238,6 @@ export async function toolkitStatusData(configDirPath = configDir()): Promise<Re
     typeof vcsCfg.provider === "string" && vcsCfg.provider.trim()
       ? vcsCfg.provider.toLowerCase()
       : null;
-  const vcsTokenId =
-    provider === "gitlab" ? "gitlab_token" : provider === "github" ? "github_token" : null;
-  const vcsTokenItem =
-    (vcsTokenId ? status.items.find((i: Record<string, any>) => i.id === vcsTokenId) : null) ?? {};
-  const vcsPlaceholder = vcsTokenId ? (vcsTokenItem.placeholder ?? true) : true;
   const vcsJsonOk = Boolean(status.items.find((i: Record<string, any>) => i.id === "vcs_json")?.ok);
 
   const verify = placeholder
@@ -306,16 +249,13 @@ export async function toolkitStatusData(configDirPath = configDir()): Promise<Re
           ok: false,
           error: "vcs provider unconfigured — set provider to gitlab or github in vcs.json",
         }
-      : vcsPlaceholder
-        ? { ok: false, error: "vcs token still placeholder YOUR_TOKEN_HERE" }
-        : await vcsVerifyToken();
+      : await vcsVerifyToken();
   const youTrackHealth = ("data" in verify ? verify.data : verify) as Record<string, any>;
 
   status.youtrack_verify = verify;
   status.youtrack_ok = placeholder ? false : Boolean(youTrackHealth.ok);
   status.vcs_verify = vcsVerify;
-  status.vcs_ok =
-    vcsJsonOk && !vcsPlaceholder ? Boolean((vcsVerify as Record<string, any>).ok) : false;
+  status.vcs_ok = vcsJsonOk && Boolean((vcsVerify as Record<string, any>).ok);
 
   const fsReady = status.items.every((i: Record<string, any>) => i.required === false || i.ok);
   status.ready = fsReady && Boolean(status.youtrack_ok) && (!vcsJsonOk || Boolean(status.vcs_ok));
@@ -328,13 +268,10 @@ export async function toolkitStatusData(configDirPath = configDir()): Promise<Re
     status.next_step = createUrl
       ? "Open the YouTrack create-token URL, New token (name workit, scope YouTrack), paste into the token file, save, then run /wk-status"
       : "Open the YouTrack token file, replace YOUR_TOKEN_HERE, save, then run /wk-status";
-  } else if (vcsJsonOk && vcsPlaceholder) {
-    status.vcs_token_edit_path = vcsTokenItem.token_edit_path ?? "";
-    status.next_step = `Open ${vcsTokenItem.token_edit_path ?? ""}, paste your ${provider} token, save, then run /wk-status`;
   } else if (!status.youtrack_ok) {
     status.next_step = "Fix YouTrack token or re-run /wk-init";
   } else if (vcsJsonOk && !status.vcs_ok) {
-    status.next_step = `Fix ${provider} token in vcs config or re-run /wk-init`;
+    status.next_step = `Run ${provider === "gitlab" ? "glab" : "gh"} auth login/switch, then /wk-status`;
   } else if (status.ready) {
     status.next_step = "All checks passed";
   }
@@ -376,31 +313,22 @@ const youtrackJsonContent = (dir: string): Record<string, any> => ({
   },
 });
 
-const vcsJsonContent = (dir: string, cwd?: string): Record<string, any> => {
+const vcsJsonContent = (): Record<string, any> => {
   // Explicit provider at init: env wins, else the checkout's origin remote
   // (same RL-03b rule as vcs-config). Unresolvable means the field is
   // omitted — never a silent assumption downstream.
-  const provider = resolveInitProvider(cwd);
+  const provider = resolveInitProvider();
   return {
     ...(provider ? { provider } : {}),
     defaultTargetBranch: process.env.WORKFLOW_VCS_TARGET_BRANCH ?? "develop",
     gitlab: {
       host: process.env.WORKFLOW_GITLAB_HOST ?? "gitlab.com",
       apiUrl: process.env.WORKFLOW_GITLAB_API_URL ?? "https://gitlab.com/api/v4",
-      tokenFile: path.join(dir, "gitlab.token"),
     },
     github: {
       host: process.env.WORKFLOW_GITHUB_HOST ?? "github.com",
-      tokenFile: path.join(dir, "github.token"),
     },
     pr: { squashOnMerge: true, removeSourceBranch: true, pushBranch: true, confirmSkip: true },
-    tokenDefaults: {
-      name: "workit",
-      description: "OpenCode workit — /wk-pr and glab/gh",
-      gitlabScopes: ["api"],
-      githubPermissions: { pull_requests: "write", contents: "write", metadata: "read" },
-      githubClassicScopes: ["repo"],
-    },
   };
 };
 
@@ -494,15 +422,7 @@ export function initApplyData(
     }
     case "vcs_scaffold": {
       const jsonOut = path.join(dir, "vcs.json");
-      fs.writeFileSync(jsonOut, JSON.stringify(vcsJsonContent(dir), null, 2) + "\n", "utf8");
-      const glPath = path.join(dir, "gitlab.token");
-      const ghPath = path.join(dir, "github.token");
-      const preservedTokens: string[] = [];
-      for (const p of [glPath, ghPath]) {
-        if (writeFileExclusive(p, TOKEN_PLACEHOLDER + "\n", 0o600) === "preserved") {
-          preservedTokens.push(path.resolve(p));
-        }
-      }
+      fs.writeFileSync(jsonOut, JSON.stringify(vcsJsonContent(), null, 2) + "\n", "utf8");
       const configPath = path.resolve(jsonOut);
       const prev = process.env.WORKFLOW_VCS_CONFIG;
       process.env.WORKFLOW_VCS_CONFIG = configPath;
@@ -510,39 +430,23 @@ export function initApplyData(
         const cfg = readJson(configPath) ?? {};
         const rawProvider = cfg.provider;
         const provider = typeof rawProvider === "string" && rawProvider.trim() ? rawProvider : null;
-        const tokenUrls = vcsTokenCreateUrls();
-        const active = tokenUrls.active ?? {};
-        const activePath =
-          provider === "gitlab"
-            ? path.resolve(glPath)
-            : provider === "github"
-              ? path.resolve(ghPath)
-              : null;
         return {
           action,
           ok: true,
           vcs_json: configPath,
           config_edit_path: configPath,
-          gitlab_token: path.resolve(glPath),
-          github_token: path.resolve(ghPath),
-          token_edit_path: activePath,
-          token_create_url: active.createUrl,
-          token_create_urls: tokenUrls,
-          preserved_tokens: preservedTokens,
           vcs_config: {
             config_edit_path: configPath,
             provider,
             defaultTargetBranch: cfg.defaultTargetBranch,
             pr: cfg.pr,
-            tokenCreate: active,
-            tokenCreateUrls: { gitlab: tokenUrls.gitlab, github: tokenUrls.github },
-            switchHint: 'Change "provider" to "github" when you migrate — token files are separate',
+            switchHint: 'Change "provider" to "github" when you migrate; authenticate with gh/glab',
             skill: "/wk-pr",
           },
           instruction:
             provider === null
               ? `No provider resolved — set provider to gitlab or github in ${configPath}, then /wk-status.`
-              : `Open the create-token URL for ${provider}, click Create, paste into ${activePath}, then /wk-status.`,
+              : `Run ${provider === "gitlab" ? "glab" : "gh"} auth login, then /wk-status.`,
         };
       } finally {
         if (prev === undefined) delete process.env.WORKFLOW_VCS_CONFIG;
@@ -565,9 +469,15 @@ export function initApplyData(
 
 export function initStatus(): Record<string, any> {
   const data = initStatusData();
+  const workspaces: Record<string, any> = { path: workspacesPath(), resolved: null };
+  try {
+    workspaces.resolved = resolveWorkspace(process.cwd());
+  } catch (error) {
+    workspaces.error = error instanceof Error ? error.message : String(error);
+  }
   return {
     ...data,
-    workspaces: { resolved: resolveWorkspace(process.cwd()), path: workspacesPath() },
+    workspaces,
   };
 }
 

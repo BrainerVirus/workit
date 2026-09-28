@@ -20,5 +20,7 @@ resolves extension packages in your setup.
 ## Notes
 
 - Only an observed child process may acquire the shared writer; cancellation or restart uncertainty blocks replacement ownership.
-- The extension is a workflow control, not an OS sandbox: shell writes stay agent-guided.
+- The extension is a workflow control, not an OS sandbox: a supported literal
+  branch-creation command is checked against workspace naming policy; other
+  shell forms stay under the host's native permission rules.
 - Approval uses native `ctx.ui.confirm`, or `needs_input` when headless.

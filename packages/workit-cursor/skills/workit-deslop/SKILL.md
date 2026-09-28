@@ -8,11 +8,6 @@ description: Use before opening a PR or after implementation to remove AI slop f
 Throughput without quality is slop. Clean it with a minimal diff — deslop
 never refactors behavior.
 
-## Before method work
-
-If there is no active or paused task, run shared `task.start` then `policy.assess`
-before relying on selected policy rules or other product mutations. Assessment
-selects requirements; do not wait for a rule that can only exist after assess.
 
 ## Method
 

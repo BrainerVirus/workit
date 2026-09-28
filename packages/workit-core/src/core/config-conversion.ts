@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { isConfigObject, mergePreset, type BranchPreset, type ToolkitConfig } from "./config";
+import { writeFileAtomic } from "./safe-write";
 
 export type ConversionInput = {
   configDir: string;
@@ -170,11 +171,10 @@ export function applyConversionConfig(
     delete next.workflowMode;
   }
 
-  mkdirSync(configDir, { recursive: true });
-  writeFileSync(configFile, JSON.stringify(next, null, 2) + "\n");
+  writeFileAtomic(configFile, JSON.stringify(next, null, 2) + "\n");
 
   const choicesPath = path.join(configDir, "cutover-choices.json");
-  writeFileSync(
+  writeFileAtomic(
     choicesPath,
     JSON.stringify({ resolutions, applied_at: new Date().toISOString() }, null, 2) + "\n",
   );

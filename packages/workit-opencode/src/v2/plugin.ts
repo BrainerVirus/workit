@@ -5,36 +5,27 @@ import { define, type Context } from "@opencode/plugin/promise/plugin";
 import {
   TaskStore,
   WorkitCore,
-  canonicalJson,
-  externalActionRequest,
   failure,
   parseOperation,
-  sha256,
-  workitBindingQuestionIssue,
   type OperationFamily,
 } from "@brainervirus/workit-core/src/core";
 import {
   changedSourcesSinceLoad,
   markSourcesLoaded,
 } from "@brainervirus/workit-core/src/core/boundary";
-import {
-  executeResolvedExternalAction,
-  resolveExternalActionRequest,
-} from "@brainervirus/workit-core/src/core/external-action-effects";
-import { decisionContent, isSelfAuthorizingActionContent } from "../shared/decision-content";
 import { executeInitApply, initApplyRuntime } from "../shared/init-apply";
 import { sameWorkspace } from "../shared/session";
 import { WORKIT_TOOL_CATALOG, workitFamilyOf } from "../shared/tools";
 import {
   NativeReceiptStore,
+  createWorkitTools,
   nativeAuthority,
   nativeWorkerFor,
   workerCoordinatorFor,
   type DirectChildren,
-  type Receipt,
 } from "../tools/workit";
 import { createV2Lifecycle } from "./lifecycle";
-import { injectAgentContext, injectCompactionContext } from "./injection";
+import { injectAgentContext, injectCompactionContext, injectHistoryOffer } from "./injection";
 import { evaluateShellPermission } from "./permissions";
 import { normalizeQuestionAnswers } from "./receipts";
 import { registerCommands, registerSkills } from "./registry";
@@ -73,8 +64,7 @@ const resultContent = (value: unknown): { content: string } => ({
   content: JSON.stringify(value, null, 2),
 });
 
-/** V2 host capabilities are declared as each surface is ported; unported
- * surfaces (external action approvals) keep their honest declaration. */
+/** V2 host capabilities are declared as each native surface is ported. */
 const v2Capabilities = () => [
   {
     name: "interactive_decision",
@@ -82,6 +72,16 @@ const v2Capabilities = () => [
     assurance: "enforced" as const,
     reason: "native question answers are observed by tool.execute.after and consumed once",
     refs: [{ kind: "host" as const, host: "opencode" as const, handle: "question" }],
+  },
+  {
+    name: "external_action",
+    surface: "workit_external_action",
+    assurance: "enforced" as const,
+    reason: "native question receipts bind each resolved action descriptor before execution",
+    refs: [
+      { kind: "host" as const, host: "opencode" as const, handle: "question" },
+      { kind: "host" as const, host: "opencode" as const, handle: "workit_external_action" },
+    ],
   },
   {
     name: "known_product_writes",
@@ -135,57 +135,11 @@ const workerIdFor = (
   return matches.length === 1 ? matches[0].id : null;
 };
 
-/** Receipt-backed decision recording, identical to V1: stated choices bypass
- * receipts, everything else consumes exactly one matching native receipt.
- * External-action proposals are not ported on V2, so only exact
- * self-authorizing action content binds without a live proposal. */
-const recordDecision = (
-  core: WorkitCore,
-  receipts: NativeReceiptStore,
-  request: unknown,
-  sessionID: string,
-): unknown => {
-  const decision = request as {
-    response: "approved" | "rejected" | "stated";
-    purpose: Receipt["decisionPurpose"];
-    binding: { presented: string; approvedContent: string; displayed?: string };
-  };
-  if (decision.response === "stated") return core.observeDecision(request, undefined);
-  const content = decisionContent(
-    decision.purpose,
-    decision.binding.presented,
-    decision.binding.approvedContent,
-  );
-  const budgetIssue = workitBindingQuestionIssue([content]);
-  if (budgetIssue) return failure("invalid_input", budgetIssue);
-  const observed = receipts.reserve(sessionID, "decision", {
-    selectedLabel: decision.response,
-    decisionPurpose: decision.purpose,
-    contentDigest: sha256(canonicalJson(content)),
-    question: decision.binding.presented,
-    ...(decision.response === "approved"
-      ? { selectedDescription: decision.binding.approvedContent }
-      : {}),
-  });
-  if (!observed.ok) return failure("permission_denied", observed.error);
-  if (
-    decision.purpose === "action" &&
-    decision.response === "approved" &&
-    !isSelfAuthorizingActionContent(decision.binding.approvedContent)
-  )
-    return failure(
-      "invalid_input",
-      "no matching action proposal; resolve the action through the action tool first",
-    );
-  const result = core.observeDecision(request, observed.observation);
-  if (result.ok) receipts.commit(observed.observation);
-  return result;
-};
-
 const setup = async (ctx: Context): Promise<() => void> => {
   const root = ctx.location.directory;
   const sourceMarker = markSourcesLoaded(pluginSourceFiles);
   let staleSourcesWarned = false;
+  const historyOfferSessions = new Set<string>();
   const receipts = new NativeReceiptStore();
   const lifecycle = createV2Lifecycle({
     root,
@@ -201,6 +155,45 @@ const setup = async (ctx: Context): Promise<() => void> => {
         : null;
     },
   });
+  // Reuse V1's proposal/receipt runner with V2's observed session lookup; both
+  // paths use the same native receipts, lineage map, and shared Workit core.
+  const nativeTools = createWorkitTools({
+    receipts,
+    directChildren: lifecycle.directChildren,
+    client: {
+      session: {
+        get: async ({ path: { id } }: { path: { id: string } }) => {
+          const session = await sessionFacts(ctx, id);
+          if (!session) return {};
+          return {
+            data: {
+              id: session.id,
+              directory: session.directory,
+              ...(session.parentID !== undefined ? { parentID: session.parentID } : {}),
+            },
+          };
+        },
+      },
+    },
+  });
+  const nativeToolMap = nativeTools as unknown as Record<
+    "workit_decision" | "workit_external_action",
+    {
+      execute: (
+        args: unknown,
+        context: { directory: string; sessionID: string },
+      ) => Promise<unknown>;
+    }
+  >;
+  const executeNativeTool = async (
+    name: "workit_decision" | "workit_external_action",
+    input: unknown,
+    sessionID: string,
+  ): Promise<{ content: string }> => {
+    const hostTool = nativeToolMap[name];
+    const result = await hostTool.execute(input, { directory: root, sessionID });
+    return { content: typeof result === "string" ? result : JSON.stringify(result) };
+  };
   const runFamily = (
     family: OperationFamily,
     input: unknown,
@@ -220,8 +213,6 @@ const setup = async (ctx: Context): Promise<() => void> => {
       nativeAuthority: nativeAuthority(receipts, session.id),
       nativeWorker: nativeWorkerFor(lifecycle.directChildren, session.id),
     });
-    if (family === "decision" && (parsed.data as { action?: unknown }).action === "record")
-      return recordDecision(core, receipts, parsed.data, session.id);
     const run = core[family] as unknown as (request: unknown) => unknown;
     return run.call(core, parsed.data);
   };
@@ -255,22 +246,11 @@ const setup = async (ctx: Context): Promise<() => void> => {
               failure("permission_denied", "OpenCode child session has no validated Workit worker"),
             );
           const family = workitFamilyOf(spec.name);
+          if (family === "decision") return executeNativeTool("workit_decision", input, session.id);
           if (family !== null)
             return resultContent(runFamily(family, input, session, store, workerId));
           if (spec.name === "workit_external_action") {
-            const parsed = externalActionRequest(input);
-            if (!parsed.ok) return resultContent(parsed);
-            if (parsed.data.operation !== "context.read")
-              return resultContent(
-                failure(
-                  "capability_unavailable",
-                  "OpenCode V2 external action approvals are not available yet; only context.read is",
-                  { capability: "external_action", outcome: "not_started" },
-                ),
-              );
-            const resolved = resolveExternalActionRequest(root, parsed.data);
-            if (!resolved.ok) return resultContent(resolved);
-            return resultContent(await executeResolvedExternalAction(resolved.data, root));
+            return executeNativeTool("workit_external_action", input, session.id);
           }
           if (spec.name === "workit_init_apply") {
             // The shared executor already returns the contract JSON; prose
@@ -322,6 +302,7 @@ const setup = async (ctx: Context): Promise<() => void> => {
   await ctx.session.hook("context", async (event) => {
     const session = await sessionFacts(ctx, String(event.sessionID));
     injectAgentContext(root, session, lifecycle.directChildren, event.system as never);
+    injectHistoryOffer(root, session, historyOfferSessions, event.system as never);
     if (!staleSourcesWarned) {
       const changed = changedSourcesSinceLoad(sourceMarker);
       if (changed.length > 0) {

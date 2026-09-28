@@ -1,6 +1,7 @@
 import { createInterface } from "node:readline/promises";
 import {
   applyCutover,
+  resumeCutover,
   applyRollback,
   previewCutover,
   previewRollback,
@@ -46,8 +47,14 @@ const writeJSON = (stream: { write: (chunk: string) => void }, value: unknown) =
 
 const usage = (err: { write: (chunk: string) => void }, message: string): number => {
   write(err, message);
-  write(err, "usage: workit cutover preview [--json] [--hosts opencode,cursor,codex,pi]");
-  write(err, "       workit cutover apply [--confirm] [--hosts ...] [--resolution key=value]...");
+  write(
+    err,
+    "usage: workit cutover preview [--json] [--hosts opencode,cursor,codex,pi] [--archive-dir path]",
+  );
+  write(
+    err,
+    "       workit cutover apply --archive-dir path [--confirm] [--hosts ...] [--resolution key=value]...",
+  );
   write(err, "       workit cutover rollback preview <backupId> [--json]");
   write(err, "       workit cutover rollback apply <backupId> [--confirm]");
   return 2;
@@ -84,9 +91,25 @@ const parseResolutions = (
   return { resolutions, malformed };
 };
 
-const cutoverPaths = (deps: CutoverCliDeps): CutoverPaths => ({
+const parseArchiveDir = (argv: string[]): { value?: string; malformed: string[] } => {
+  const indexes = argv.flatMap((token, index) =>
+    token === "--archive-dir" || token.startsWith("--archive-dir=") ? [index] : [],
+  );
+  if (indexes.length > 1) return { malformed: ["duplicate --archive-dir flags"] };
+  if (indexes.length === 0) return { malformed: [] };
+  const index = indexes[0]!;
+  const token = argv[index]!;
+  const value = token === "--archive-dir" ? argv[index + 1] : token.slice("--archive-dir=".length);
+  if (!value?.trim() || value.startsWith("--")) {
+    return { malformed: [token === "--archive-dir" ? "--archive-dir requires a path" : token] };
+  }
+  return { value, malformed: [] };
+};
+
+const cutoverPaths = (deps: CutoverCliDeps, archiveDir?: string): CutoverPaths => ({
   env: deps.env ?? process.env,
   workspace: deps.cwd ?? process.cwd(),
+  archiveDir,
 });
 
 const requireConfirm = async (
@@ -139,17 +162,23 @@ export async function runCutoverCommand(
 
   if (action === "preview") {
     const json = argv.includes("--json");
+    const archive = parseArchiveDir(argv);
+    if (archive.malformed.length > 0)
+      return usage(err, `malformed --archive-dir flag(s): ${archive.malformed.join(", ")}`);
     const { hosts, unknown } = parseHosts(
       argv.find((t) => t.startsWith("--hosts="))?.slice("--hosts=".length),
     );
     if (unknown.length > 0) return usage(err, `unknown cutover host(s): ${unknown.join(", ")}`);
-    const plan = previewCutover(cutoverPaths(deps), hosts);
+    const plan = previewCutover(cutoverPaths(deps, archive.value), hosts);
     printPlan(deps, plan, json);
     return plan.blocked.length > 0 ? 1 : 0;
   }
 
   if (action === "apply") {
     const json = argv.includes("--json");
+    const archive = parseArchiveDir(argv);
+    if (archive.malformed.length > 0)
+      return usage(err, `malformed --archive-dir flag(s): ${archive.malformed.join(", ")}`);
     const { hosts, unknown } = parseHosts(
       argv.find((t) => t.startsWith("--hosts="))?.slice("--hosts=".length),
     );
@@ -157,11 +186,20 @@ export async function runCutoverCommand(
     const { resolutions, malformed } = parseResolutions(argv);
     if (malformed.length > 0)
       return usage(err, `malformed --resolution flag(s): ${malformed.join(", ")}`);
-    const plan = previewCutover(cutoverPaths(deps), hosts);
+    const paths = cutoverPaths(deps, archive.value);
+    const plan = previewCutover(paths, hosts);
     printPlan(deps, plan, json);
     if (plan.blocked.length > 0) {
       write(err, "cutover apply blocked — resolve preview findings first");
       return 1;
+    }
+    if (!paths.archiveDir) {
+      writeJSON(err, {
+        ok: false,
+        code: "needs_input",
+        message: "archive destination is required (--archive-dir)",
+      });
+      return 2;
     }
     if (!(await requireConfirm(argv, deps, "apply"))) return 2;
     const decision: CutoverDecision = {
@@ -169,7 +207,7 @@ export async function runCutoverCommand(
       hosts,
       resolutions: Object.keys(resolutions).length > 0 ? resolutions : undefined,
     };
-    const result = applyCutover(plan, decision, cutoverPaths(deps));
+    const result = applyCutover(plan, decision, paths);
     if (!result.ok) {
       writeJSON(err, result);
       return result.code === "needs_input" ? 2 : 1;
@@ -179,6 +217,26 @@ export async function runCutoverCommand(
       `cutover applied backupId=${result.data.backupId} partial=${result.data.partial}`,
     );
     for (const note of result.data.notes) write(outStream(deps), note);
+    return result.data.partial ? 1 : 0;
+  }
+
+  if (action === "resume") {
+    const backupId = argv.slice(1).find((token) => !token.startsWith("--"));
+    if (!backupId) return usage(err, "resume requires a cutover backup id");
+    if (!(await requireConfirm(argv.slice(1), deps, "resume"))) return 2;
+    const result = resumeCutover(backupId, cutoverPaths(deps));
+    if (!result.ok) {
+      writeJSON(err, result);
+      return 1;
+    }
+    if (argv.includes("--json")) writeJSON(outStream(deps), result.data);
+    else {
+      write(
+        outStream(deps),
+        `cutover resumed backupId=${result.data.backupId} partial=${result.data.partial}`,
+      );
+      for (const note of result.data.notes) write(outStream(deps), note);
+    }
     return result.data.partial ? 1 : 0;
   }
 
@@ -199,11 +257,17 @@ export async function runCutoverCommand(
         write(outStream(deps), `rollback preview ${backupId}`);
         write(outStream(deps), `restorable: ${preview.restorable.length}`);
         write(outStream(deps), `conflicts: ${preview.conflicts.length}`);
+        write(outStream(deps), `issues: ${preview.issues.length}`);
+        for (const issue of preview.issues) write(outStream(deps), issue);
       }
-      return preview.conflicts.length > 0 ? 1 : 0;
+      return preview.conflicts.length > 0 || preview.issues.length > 0 ? 1 : 0;
     }
     if (subaction === "apply") {
       const preview = previewRollback(backupId, cutoverPaths(deps));
+      if (preview.issues.length > 0) {
+        write(err, `rollback blocked — ${preview.issues.join("; ")}`);
+        return 1;
+      }
       if (preview.conflicts.length > 0) {
         write(err, "rollback blocked — managed files changed after cutover");
         return 1;

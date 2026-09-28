@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -35,7 +35,7 @@ test("partial config reports only youtrack_token when scoped, plus vcs ids unsco
     expect(scoped.missing).toEqual(["youtrack_token"]);
     const unscoped = describeConfigGaps();
     expect(unscoped.missing).not.toContain("youtrack_json");
-    for (const id of ["youtrack_token", "vcs_json", "gitlab_token", "github_token"]) {
+    for (const id of ["youtrack_token", "vcs_json"]) {
       expect(unscoped.missing).toContain(id);
     }
   });
@@ -153,7 +153,7 @@ test("youtrack tools honor WORKFLOW_TOOLKIT_CONFIG_DIR-only pointing at the conf
 });
 
 test("RL-01: malformed youtrack.json is reported with its exact path, never treated as valid", async () => {
-  const dir = mkdtempSync(path.join(os.tmpdir(), "wf-guard-malformed-"));
+  const dir = mkdtempSync(path.join(realpathSync(os.tmpdir()), "wf-guard-malformed-"));
   const workit = path.join(dir, "workit");
   mkdirSync(workit, { recursive: true });
   writeFileSync(path.join(workit, "youtrack.json"), "{ broken {{", "utf8");

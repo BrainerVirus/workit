@@ -23,7 +23,8 @@
   },
   "files": [
     "dist/",
-    "assets/"
+    "assets/",
+    "index.ts"
   ],
   "type": "module",
   "main": "./dist/plugin.js",
@@ -42,7 +43,7 @@
   },
   "devDependencies": {
     "@opencode-ai/plugin": "1.18.30",
-    "@opencode/plugin": "2.0.3"
+    "@opencode/plugin": "2.0.18"
   },
   "engines": {
     "node": ">=24"

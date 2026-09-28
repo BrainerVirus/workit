@@ -1,35 +1,209 @@
+import { createHash } from "node:crypto";
 import { readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
-import { configDir, isConfigObject, type BranchPreset } from "./config";
+import { z } from "zod";
+import {
+  COMMIT_PRESETS,
+  PRESETS,
+  configDir,
+  isConfigObject,
+  resolveBranchPolicy as resolveConfiguredBranchPolicy,
+  resolveCommitPolicy as resolveConfiguredCommitPolicy,
+  type BranchPreset,
+  type ToolkitConfig,
+} from "./config";
 import type { CommitFlavorPreset } from "./commit-flavors";
 
 export type VcsProvider = "gitlab" | "github";
 
 export type IntegrationMode = "pr" | "merge";
 
-export type WorkspaceBranchPolicy = {
-  preset: BranchPreset;
-  developBranch?: string;
-  prefixes?: { feature: string; bugfix: string; release: string; hotfix: string };
-  allowed?: string[];
-  protected?: string[];
-  integration: IntegrationMode;
-};
+const nonBlank = z.string().refine((value) => value.trim().length > 0, "must not be blank");
+const branchPreset = z.custom<BranchPreset>(
+  (value) => typeof value === "string" && Object.hasOwn(PRESETS, value),
+  "unsupported branch preset",
+);
+const commitPreset = z.custom<CommitFlavorPreset>(
+  (value) => typeof value === "string" && COMMIT_PRESETS.includes(value),
+  "unsupported commit preset",
+);
+const workspaceBranchPolicySchema = z
+  .object({
+    preset: branchPreset,
+    developBranch: nonBlank.optional(),
+    prefixes: z
+      .object({
+        feature: nonBlank,
+        bugfix: nonBlank,
+        release: nonBlank,
+        hotfix: nonBlank,
+      })
+      .passthrough()
+      .optional(),
+    allowed: z.array(nonBlank).optional(),
+    protected: z.array(nonBlank).optional(),
+    integration: z.enum(["pr", "merge"]).optional(),
+  })
+  .strict();
+const workspaceCommitPolicySchema = z
+  .object({ preset: commitPreset, pattern: z.string().optional() })
+  .strict();
+const workspaceProfileSchema = z
+  .object({
+    branchPolicy: workspaceBranchPolicySchema.optional(),
+    commitPolicy: workspaceCommitPolicySchema.optional(),
+  })
+  .strict()
+  .refine((profile) => profile.branchPolicy !== undefined || profile.commitPolicy !== undefined, {
+    message: "a profile must define branchPolicy or commitPolicy",
+  });
+const versionSourceSchema = z.discriminatedUnion("kind", [
+  z
+    .object({
+      kind: z.literal("package-json"),
+      path: nonBlank,
+      field: nonBlank,
+    })
+    .strict(),
+  z.object({ kind: z.literal("git-tag") }).strict(),
+  z.object({ kind: z.literal("manual") }).strict(),
+]);
+const releaseTrackSchema = z
+  .object({
+    strategy: branchPreset,
+    productionBranch: nonBlank,
+    integrationBranch: nonBlank,
+    naming: z.object({ feature: nonBlank, release: nonBlank, hotfix: nonBlank }).strict(),
+    baseBranch: nonBlank,
+    mergeBackBranches: z.array(nonBlank),
+    pullRequestTarget: nonBlank,
+    tagNamespace: z.string(),
+    versionSource: versionSourceSchema,
+    requiredChecks: z.array(nonBlank),
+  })
+  .strict()
+  .superRefine((track, context) => {
+    for (const [field, values] of [
+      ["mergeBackBranches", track.mergeBackBranches],
+      ["requiredChecks", track.requiredChecks],
+    ] as const) {
+      if (new Set(values).size !== values.length) {
+        context.addIssue({ code: "custom", path: [field], message: "entries must be unique" });
+      }
+    }
+    if (
+      track.versionSource.kind === "package-json" &&
+      (path.posix.isAbsolute(track.versionSource.path.replaceAll("\\", "/")) ||
+        /^[A-Za-z]:\//u.test(track.versionSource.path.replaceAll("\\", "/")) ||
+        track.versionSource.path.replaceAll("\\", "/").split("/").includes(".."))
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["versionSource", "path"],
+        message: "must stay inside the repository",
+      });
+    }
+  });
+const workspaceConfigSchema = z
+  .object({
+    name: nonBlank,
+    glob: nonBlank,
+    vcs: z
+      .object({
+        provider: z.enum(["gitlab", "github"]),
+        defaultTargetBranch: nonBlank.optional(),
+        tokenFile: nonBlank.optional(),
+        account: nonBlank.optional(),
+      })
+      .passthrough()
+      .optional(),
+    autoApprove: z.union([z.boolean(), z.array(nonBlank)]).optional(),
+    youtrack: z
+      .object({ baseUrl: nonBlank.optional(), link_issues: z.boolean().optional() })
+      .passthrough()
+      .optional(),
+    issues: z
+      .object({ provider: z.literal("github").optional(), link_on_pr: z.boolean().optional() })
+      .passthrough()
+      .optional(),
+    branchPolicy: workspaceBranchPolicySchema.optional(),
+    commitPolicy: workspaceCommitPolicySchema.optional(),
+    defaultProfile: nonBlank.optional(),
+    profiles: z.record(nonBlank, workspaceProfileSchema).optional(),
+    releaseTracks: z.record(nonBlank, releaseTrackSchema).optional(),
+  })
+  .passthrough()
+  .superRefine((workspace, context) => {
+    if (workspace.youtrack && workspace.vcs?.provider !== "gitlab") {
+      context.addIssue({
+        code: "custom",
+        path: ["youtrack"],
+        message: `YouTrack issue linking requires the gitlab provider, got ${workspace.vcs?.provider ?? "unset"}`,
+      });
+    }
+    if (workspace.issues && workspace.vcs?.provider !== "github") {
+      context.addIssue({
+        code: "custom",
+        path: ["issues"],
+        message: `GitHub issue linking requires the github provider, got ${workspace.vcs?.provider ?? "unset"}`,
+      });
+    }
+    if (
+      workspace.defaultProfile !== undefined &&
+      !Object.hasOwn(workspace.profiles ?? {}, workspace.defaultProfile)
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["defaultProfile"],
+        message: `does not name a configured profile`,
+      });
+    }
+  });
+const workspacesFileSchema = z
+  .object({ workspaces: z.array(workspaceConfigSchema).optional() })
+  .passthrough()
+  .superRefine((file, context) => {
+    const names = new Set<string>();
+    for (const [index, workspace] of (file.workspaces ?? []).entries()) {
+      if (names.has(workspace.name)) {
+        context.addIssue({
+          code: "custom",
+          path: ["workspaces", index, "name"],
+          message: `duplicate workspace name ${JSON.stringify(workspace.name)}`,
+        });
+      }
+      names.add(workspace.name);
+    }
+  });
 
-export type WorkspaceConfig = {
-  name: string;
-  glob: string;
-  vcs?: {
-    provider: VcsProvider;
-    defaultTargetBranch?: string;
-    tokenFile?: string;
-    account?: string;
-  };
-  autoApprove?: boolean | string[];
-  youtrack?: { baseUrl?: string; link_issues?: boolean };
-  issues?: { provider?: "github"; link_on_pr?: boolean };
-  branchPolicy?: WorkspaceBranchPolicy;
-  commitPolicy?: { preset: CommitFlavorPreset; pattern?: string };
+export type WorkspaceBranchPolicy = z.infer<typeof workspaceBranchPolicySchema>;
+export type WorkspaceCommitPolicy = z.infer<typeof workspaceCommitPolicySchema>;
+export type WorkspaceProfile = z.infer<typeof workspaceProfileSchema>;
+export type ReleaseTrack = z.infer<typeof releaseTrackSchema>;
+export type WorkspaceConfig = z.infer<typeof workspaceConfigSchema>;
+
+export type WorkspaceProfileResolution =
+  | {
+      status: "resolved";
+      profileName: string | null;
+      workspace: WorkspaceConfig;
+      provenance: { branchPolicy: string; commitPolicy: string };
+    }
+  | { status: "invalid"; error: string };
+
+export type ReleaseTrackSelection =
+  | { status: "selected"; name: string; track: ReleaseTrack }
+  | { status: "not_configured" }
+  | { status: "choice_required"; choices: string[] }
+  | { status: "invalid"; error: string };
+
+export type WorkspacePolicyResolution = {
+  status: "resolved";
+  workspace: WorkspaceConfig | null;
+  profileName: string | null;
+  branchPolicy: ReturnType<typeof resolveConfiguredBranchPolicy>;
+  commitPolicy: ReturnType<typeof resolveConfiguredCommitPolicy>;
+  provenance: { branchPolicy: string; commitPolicy: string };
 };
 
 export const workspacesPath = (): string => path.join(configDir(), "workspaces.json");
@@ -38,10 +212,59 @@ export const workspacesPath = (): string => path.join(configDir(), "workspaces.j
 // (empty list); malformed JSON is reported with the exact path so risky
 // consumers (wizard/installer/doctor) can block instead of silently resetting.
 export type WorkspacesResult = {
-  status: "missing" | "valid" | "malformed";
+  status: "missing" | "valid" | "malformed" | "invalid";
   path: string;
   entries: WorkspaceConfig[];
+  document?: Record<string, unknown>;
+  revision?: string;
   error?: string;
+};
+
+export const workspacesRevision = (contents: string | null): string =>
+  createHash("sha256")
+    .update(contents ?? "<missing>")
+    .digest("hex");
+
+export const validateWorkspacesDocument = (parsed: unknown, file: string): WorkspacesResult => {
+  if (!isConfigObject(parsed)) {
+    return { status: "malformed", path: file, entries: [], error: `${file} is not a JSON object` };
+  }
+  const validated = workspacesFileSchema.safeParse(parsed, { reportInput: true });
+  if (!validated.success) {
+    const detail = validated.error.issues
+      .map((issue) => {
+        const field = String(issue.path[issue.path.length - 1] ?? "");
+        const attempted =
+          ["provider", "preset", "strategy"].includes(field) && typeof issue.input === "string"
+            ? ` (${JSON.stringify(issue.input)})`
+            : "";
+        return `${issue.path.map(String).join(".") || "workspaces"}: ${issue.message}${attempted}`;
+      })
+      .join("; ");
+    return {
+      status: "invalid",
+      path: file,
+      entries: [],
+      error: `${file} has invalid workspace configuration: ${detail}`,
+    };
+  }
+  for (const [index, workspace] of (validated.data.workspaces ?? []).entries()) {
+    const glob = validateWorkspaceGlob(workspace.glob);
+    if (!glob.ok) {
+      return {
+        status: "invalid",
+        path: file,
+        entries: [],
+        error: `${file} workspaces.${index}.glob: ${glob.error}`,
+      };
+    }
+  }
+  return {
+    status: "valid",
+    path: file,
+    entries: validated.data.workspaces ?? [],
+    document: parsed as Record<string, unknown>,
+  };
 };
 
 export const readWorkspacesResult = (dir: string = configDir()): WorkspacesResult => {
@@ -49,24 +272,29 @@ export const readWorkspacesResult = (dir: string = configDir()): WorkspacesResul
   let raw: string;
   try {
     raw = readFileSync(file, "utf8");
-  } catch {
-    return { status: "missing", path: file, entries: [] };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT")
+      return { status: "missing", path: file, entries: [], revision: workspacesRevision(null) };
+    return {
+      status: "malformed",
+      path: file,
+      entries: [],
+      error: `${file} could not be read: ${error instanceof Error ? error.message : String(error)}`,
+    };
   }
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch {
-    return { status: "malformed", path: file, entries: [], error: `${file} is not valid JSON` };
+    return {
+      status: "malformed",
+      path: file,
+      entries: [],
+      revision: workspacesRevision(raw),
+      error: `${file} is not valid JSON`,
+    };
   }
-  if (!isConfigObject(parsed)) {
-    return { status: "malformed", path: file, entries: [], error: `${file} is not a JSON object` };
-  }
-  const list = (parsed as { workspaces?: unknown }).workspaces;
-  return {
-    status: "valid",
-    path: file,
-    entries: Array.isArray(list) ? (list as WorkspaceConfig[]) : [],
-  };
+  return { ...validateWorkspacesDocument(parsed, file), revision: workspacesRevision(raw) };
 };
 
 /** Parse the workspaces.json list under an explicit config dir; [] when missing/malformed. */
@@ -182,27 +410,301 @@ const canonicalGlob = (glob: string): string => {
 };
 
 /** Match a cwd against the workspaces.json under an explicit config dir. */
-export const resolveWorkspaceFrom = (cwd: string, dir: string): WorkspaceConfig | null => {
+export const resolveWorkspaceFrom = (
+  cwd: string,
+  dir: string,
+  workspaceName?: string,
+): WorkspaceConfig | null => {
   // macOS/Windows tmpdir symlinks (/var -> /private/var): git's
   // --show-toplevel returns the realpath while config globs are usually
   // written with the logical path, so a workspace would silently stop
   // matching on macOS. Match both forms on each side — same class as the
   // docs-migration escape-guard realpath comparison; on Linux both forms
   // are identical so behavior is unchanged.
+  const result = readWorkspacesResult(dir);
+  if (result.status === "malformed" || result.status === "invalid") throw new Error(result.error);
   const targets = [cwd, realpathOf(cwd)].map((p) => p.replaceAll("\\", "/"));
-  for (const entry of loadWorkspacesFrom(dir)) {
-    if (!entry || typeof entry !== "object") continue;
-    const ws = entry as WorkspaceConfig;
-    if (typeof ws.glob !== "string" || !ws.glob) continue;
+  const matches: WorkspaceConfig[] = [];
+  for (const ws of result.entries) {
     const glob = ws.glob.replaceAll("\\", "/");
     const canonical = canonicalGlob(glob);
+    let matched = false;
     for (const target of targets) {
-      if (matchWorkspace(glob, target)) return ws;
-      if (canonical !== glob && matchWorkspace(canonical, target)) return ws;
+      if (
+        matchWorkspace(glob, target) ||
+        (canonical !== glob && matchWorkspace(canonical, target))
+      ) {
+        matched = true;
+        break;
+      }
     }
+    if (matched) matches.push(ws);
   }
-  return null;
+  if (workspaceName !== undefined) {
+    const selected = matches.find((ws) => ws.name === workspaceName);
+    if (!selected && matches.length > 0) {
+      const matchingNames = matches.map((ws) => ws.name);
+      throw new Error(
+        `workspace ${JSON.stringify(workspaceName)} does not match ${cwd}; matching choices: ${matchingNames.join(", ")}`,
+      );
+    }
+    if (selected) return selected;
+    throw new Error(`workspace ${JSON.stringify(workspaceName)} does not match ${cwd}`);
+  }
+  if (matches.length > 1) {
+    throw new Error(
+      `ambiguous workspace for ${cwd}; choose one of: ${matches.map((ws) => ws.name).join(", ")}`,
+    );
+  }
+  return matches[0] ?? null;
 };
 
-export const resolveWorkspace = (cwd: string): WorkspaceConfig | null =>
-  resolveWorkspaceFrom(cwd, configDir());
+export const resolveWorkspace = (
+  cwd: string,
+  workspaceName = process.env.WORKFLOW_WORKSPACE_NAME?.trim() || undefined,
+): WorkspaceConfig | null => resolveWorkspaceFrom(cwd, configDir(), workspaceName);
+
+type RuntimeWorkspacePolicy = "branch" | "commit" | "vcs";
+type RuntimeWorkspaceCandidate = {
+  name: string;
+  glob: string;
+  defaultProfile?: string;
+  profiles?: Record<string, Record<string, unknown>>;
+  branchPolicy?: WorkspaceBranchPolicy;
+  commitPolicy?: WorkspaceCommitPolicy;
+  vcs?: WorkspaceConfig["vcs"];
+  youtrack?: unknown;
+  issues?: unknown;
+};
+
+const runtimeWorkspacePolicySchema = (kind: RuntimeWorkspacePolicy) => {
+  const key = kind === "branch" ? "branchPolicy" : kind === "commit" ? "commitPolicy" : "vcs";
+  const policySchema =
+    kind === "branch"
+      ? workspaceBranchPolicySchema
+      : kind === "commit"
+        ? workspaceCommitPolicySchema
+        : z
+            .object({
+              provider: z.enum(["gitlab", "github"]),
+              defaultTargetBranch: nonBlank.optional(),
+              account: nonBlank.optional(),
+            })
+            .passthrough();
+  const profileSchema = z.object({ [key]: policySchema.optional() }).passthrough();
+  const entrySchema = z
+    .object({
+      name: nonBlank,
+      glob: nonBlank,
+      [key]: policySchema.optional(),
+      defaultProfile: nonBlank.optional(),
+      profiles: z.record(nonBlank, profileSchema).optional(),
+    })
+    .passthrough();
+  return entrySchema;
+};
+
+export type RuntimeWorkspaceVcs = Pick<
+  RuntimeWorkspaceCandidate,
+  "name" | "branchPolicy" | "vcs" | "youtrack" | "issues"
+>;
+
+export const resolveRuntimeWorkspaceVcs = (cwd: string): RuntimeWorkspaceVcs | null =>
+  resolveRuntimeWorkspaceCandidate(cwd, "vcs");
+
+const runtimeWorkspaceIndexSchema = z
+  .object({
+    workspaces: z.array(z.object({ name: nonBlank, glob: nonBlank }).passthrough()).optional(),
+  })
+  .passthrough();
+
+const resolveRuntimeWorkspaceCandidate = (
+  cwd: string,
+  kind: RuntimeWorkspacePolicy,
+): RuntimeWorkspaceCandidate | null => {
+  const file = path.join(configDir(), "workspaces.json");
+  let raw: string;
+  try {
+    raw = readFileSync(file, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw new Error(
+      `${file} could not be read: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error(`${file} is not valid JSON`);
+  }
+  const validated = runtimeWorkspaceIndexSchema.safeParse(parsed);
+  if (!validated.success) {
+    const detail = validated.error.issues
+      .map((issue) => `${issue.path.map(String).join(".") || "workspaces"}: ${issue.message}`)
+      .join("; ");
+    throw new Error(`${file} has invalid workspace matching data: ${detail}`);
+  }
+  const entries = validated.data.workspaces as RuntimeWorkspaceCandidate[] | undefined;
+  for (const entry of entries ?? []) {
+    const glob = validateWorkspaceGlob(entry.glob);
+    if (!glob.ok) throw new Error(`${file} workspace ${entry.name}: ${glob.error}`);
+  }
+  const targets = [cwd, realpathOf(cwd)].map((value) => value.replaceAll("\\", "/"));
+  const matches = (entries ?? []).filter((entry) => {
+    const glob = entry.glob.replaceAll("\\", "/");
+    const canonical = canonicalGlob(glob);
+    return targets.some(
+      (target) =>
+        matchWorkspace(glob, target) || (canonical !== glob && matchWorkspace(canonical, target)),
+    );
+  });
+  const workspaceName = process.env.WORKFLOW_WORKSPACE_NAME?.trim() || undefined;
+  let selected: RuntimeWorkspaceCandidate | undefined;
+  if (workspaceName) {
+    const named = matches.filter((entry) => entry.name === workspaceName);
+    if (named.length === 1) selected = named[0];
+    else if (named.length > 1)
+      throw new Error(`ambiguous workspace ${JSON.stringify(workspaceName)} for ${cwd}`);
+    else if (matches.length)
+      throw new Error(
+        `workspace ${JSON.stringify(workspaceName)} does not match ${cwd}; matching choices: ${matches.map((entry) => entry.name).join(", ")}`,
+      );
+    else throw new Error(`workspace ${JSON.stringify(workspaceName)} does not match ${cwd}`);
+  } else if (matches.length > 1)
+    throw new Error(
+      `ambiguous workspace for ${cwd}; choose one of: ${matches.map((entry) => entry.name).join(", ")}`,
+    );
+  else selected = matches[0];
+  if (!selected) return null;
+  const policy = runtimeWorkspacePolicySchema(kind).safeParse(selected);
+  if (!policy.success) {
+    const detail = policy.error.issues
+      .map((issue) => `${issue.path.map(String).join(".") || "workspace"}: ${issue.message}`)
+      .join("; ");
+    throw new Error(`${file} has invalid ${kind} policy configuration: ${detail}`);
+  }
+  return policy.data as RuntimeWorkspaceCandidate;
+};
+
+export const resolveRuntimeWorkspacePolicy = (
+  cwd: string,
+  kind: RuntimeWorkspacePolicy,
+  requestedProfile?: string,
+): {
+  policy: WorkspaceBranchPolicy | WorkspaceCommitPolicy | undefined;
+  source: string;
+} => {
+  const candidate = resolveRuntimeWorkspaceCandidate(cwd, kind);
+  if (!candidate) return { policy: undefined, source: "user-default" };
+  const key = kind === "branch" ? "branchPolicy" : "commitPolicy";
+  const profileName = requestedProfile?.trim() || candidate.defaultProfile;
+  if (
+    candidate.defaultProfile &&
+    !Object.hasOwn(candidate.profiles ?? {}, candidate.defaultProfile)
+  )
+    throw new Error(
+      `workspace ${JSON.stringify(candidate.name)} has no profile ${JSON.stringify(candidate.defaultProfile)}`,
+    );
+  const profile = profileName ? candidate.profiles?.[profileName] : undefined;
+  if (profileName && !profile)
+    throw new Error(
+      `workspace ${JSON.stringify(candidate.name)} has no profile ${JSON.stringify(profileName)}`,
+    );
+  const profilePolicy = profile?.[key] as WorkspaceBranchPolicy | WorkspaceCommitPolicy | undefined;
+  const workspacePolicy = candidate[key] as
+    | WorkspaceBranchPolicy
+    | WorkspaceCommitPolicy
+    | undefined;
+  return {
+    policy: profilePolicy ?? workspacePolicy,
+    source: profilePolicy
+      ? `profile:${profileName}`
+      : workspacePolicy
+        ? `workspace:${candidate.name}`
+        : "user-default",
+  };
+};
+
+export const resolveWorkspaceProfile = (
+  workspace: WorkspaceConfig,
+  requestedProfile?: string,
+): WorkspaceProfileResolution => {
+  const profileName = requestedProfile ?? workspace.defaultProfile ?? null;
+  const profile = profileName ? workspace.profiles?.[profileName] : undefined;
+  if (profileName && !profile) {
+    return {
+      status: "invalid",
+      error: `workspace ${JSON.stringify(workspace.name)} has no profile ${JSON.stringify(profileName)}`,
+    };
+  }
+  const effectiveWorkspace = profile
+    ? {
+        ...workspace,
+        ...(profile.branchPolicy ? { branchPolicy: profile.branchPolicy } : {}),
+        ...(profile.commitPolicy ? { commitPolicy: profile.commitPolicy } : {}),
+      }
+    : workspace;
+  return {
+    status: "resolved",
+    profileName,
+    workspace: effectiveWorkspace,
+    provenance: {
+      branchPolicy: profile?.branchPolicy
+        ? `profile:${profileName}`
+        : workspace.branchPolicy
+          ? `workspace:${workspace.name}`
+          : "user-default",
+      commitPolicy: profile?.commitPolicy
+        ? `profile:${profileName}`
+        : workspace.commitPolicy
+          ? `workspace:${workspace.name}`
+          : "user-default",
+    },
+  };
+};
+
+export const resolveWorkspacePolicy = (
+  config: ToolkitConfig,
+  workspace: WorkspaceConfig | null,
+  profileName?: string,
+): WorkspacePolicyResolution | { status: "invalid"; error: string } => {
+  const selected = workspace
+    ? resolveWorkspaceProfile(workspace, profileName)
+    : {
+        status: "resolved" as const,
+        profileName: null,
+        workspace: null,
+        provenance: { branchPolicy: "user-default", commitPolicy: "user-default" },
+      };
+  if (selected.status === "invalid") return selected;
+  return {
+    status: "resolved",
+    workspace: selected.workspace,
+    profileName: selected.profileName,
+    branchPolicy: resolveConfiguredBranchPolicy(config, selected.workspace),
+    commitPolicy: resolveConfiguredCommitPolicy(config, selected.workspace),
+    provenance: selected.provenance,
+  };
+};
+
+export const selectReleaseTrack = (
+  workspace: WorkspaceConfig,
+  requestedTrack?: string,
+): ReleaseTrackSelection => {
+  const tracks = workspace.releaseTracks ?? {};
+  const choices = Object.keys(tracks).sort();
+  if (requestedTrack === undefined) {
+    if (choices.length === 0) return { status: "not_configured" };
+    if (choices.length > 1) return { status: "choice_required", choices };
+    const name = choices[0];
+    return { status: "selected", name, track: tracks[name] };
+  }
+  if (!Object.hasOwn(tracks, requestedTrack)) {
+    return {
+      status: "invalid",
+      error: `workspace ${JSON.stringify(workspace.name)} has no release track ${JSON.stringify(requestedTrack)}`,
+    };
+  }
+  return { status: "selected", name: requestedTrack, track: tracks[requestedTrack] };
+};

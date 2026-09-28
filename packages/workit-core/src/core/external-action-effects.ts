@@ -1,10 +1,21 @@
 import {
+  branchPolicySnapshotFor,
   branchSetup,
   classifyBranchDirt,
+  commitPolicySnapshotFor,
   resolveBranchPolicyFor,
-  resolveCommitPolicyFor,
+  validateBranchNamePolicy,
+  validateCommitMessagePolicy,
 } from "./branch";
-import { hostingCliAvailable, mergePr, prCreate } from "./pr-create";
+import {
+  hostingCliAvailable,
+  mergePr,
+  prCreate,
+  pushRemote,
+  pushRemoteIdentity,
+  pushTargetIsStable,
+  safePushUrl,
+} from "./pr-create";
 import {
   changelogContext,
   docsRefreshContext,
@@ -25,7 +36,9 @@ import {
 } from "./youtrack";
 import fs from "node:fs";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import {
+  canonicalJson,
   failure,
   success,
   sha256,
@@ -36,13 +49,16 @@ import {
 } from "./task-contract";
 import { changelogApply, changelogApplyPreview } from "./changelog";
 import type { ExternalActionRequest } from "./external-action";
-import { externalActionDescriptor, externalActionRequest } from "./external-action";
+import {
+  branchSetupIntent,
+  externalActionDescriptor,
+  externalActionRequest,
+} from "./external-action";
 import { normalizeChainSteps } from "./authority";
 import { resolveInside, run as coreRun } from "../core";
-import { vcsConfig } from "./vcs-config";
-import { detectCommitFlavor, matchCommitFlavor, type CommitFlavor } from "./commit-flavors";
+import { hostingApiHostMatches, vcsCliIdentity, vcsConfig } from "./vcs-config";
 import { assertProductWriteAllowed, currentWriterOwnsTask } from "./workers";
-import { TaskStore } from "./task-store";
+import { sameDirectoryIdentity, TaskStore } from "./task-store";
 
 const run = (root: string, args: string[]) => {
   return coreRun(root, "git", args);
@@ -78,10 +94,6 @@ const stagedPaths = (root: string): string[] | null => {
   return [...new Set(paths)];
 };
 
-const pushRemote = (root: string): string | null =>
-  gitValue(root, ["remote", "get-url", "--push", "origin"]) ??
-  gitValue(root, ["remote", "get-url", "origin"]);
-
 type RemoteParts = { host: string; path: string; protocol: string };
 
 const remoteParts = (value: string): RemoteParts | null => {
@@ -108,10 +120,32 @@ const remoteParts = (value: string): RemoteParts | null => {
   }
 };
 
-const credentialFreeRemote = (value: string): string | null => {
-  const parts = remoteParts(value);
-  return parts ? `${parts.protocol}//${parts.host}${parts.path}` : null;
+const credentialFreeRemote = (value: string): string | null => pushRemoteIdentity(value);
+
+/** The task root stores coordination; a Git effect runs in the checkout named by the action. */
+const actionRoot = (taskRoot: string, request: ExternalActionRequest): Result<string> => {
+  const chosen = "cwd" in request.payload ? request.payload.cwd : undefined;
+  try {
+    const directory = fs.realpathSync(chosen ? path.resolve(taskRoot, chosen) : taskRoot);
+    if (request.operation === "context.read") return success(null, null, directory);
+    const gitAction =
+      request.operation.startsWith("git.") || request.operation.startsWith("hosting.");
+    if (!gitAction) return success(null, null, directory);
+    const checkout = gitValue(directory, ["rev-parse", "--show-toplevel"]);
+    if (!checkout)
+      return failure("capability_unavailable", "action target is not a Git repository", {
+        outcome: "not_started",
+      });
+    return success(null, null, fs.realpathSync(checkout));
+  } catch {
+    return failure("invalid_input", "action target directory cannot be resolved", {
+      outcome: "not_started",
+    });
+  }
 };
+
+const bindsActionTarget = (operation: ExternalActionRequest["operation"]): boolean =>
+  operation === "context.read" || operation.startsWith("git.") || operation.startsWith("hosting.");
 
 const unknown = (operation: string) =>
   failure("external_outcome_unknown", "external action outcome is unknown", { operation });
@@ -210,12 +244,16 @@ const localAction = (operation: ExternalActionRequest["operation"]): boolean =>
   operation === "git.push" ||
   operation === "hosting.pull_request" ||
   operation === "hosting.merge" ||
+  operation === "hosting.delete_branch" ||
   operation === "changelog.apply";
+
+const targetWriterActionLease = Symbol("target-writer-action-lease");
 
 export const assertLocalExternalActionWriter = (
   root: string,
   caller: { host: Caller["host"]; actor: string },
   paths: string[] = ["."],
+  expectedWorkspaceRevision?: string,
 ): Result<Owner> => {
   const store = new TaskStore(root);
   const listed = store.listTasks();
@@ -223,6 +261,14 @@ export const assertLocalExternalActionWriter = (
   if (!listed.ok) return listed as Result<never>;
   if (!workspace.ok) return workspace as Result<never>;
   if (!workspace.data) return failure("not_found", "workspace not found");
+  if (
+    expectedWorkspaceRevision !== undefined &&
+    workspace.data.revision !== expectedWorkspaceRevision
+  )
+    return failure("revision_conflict", "checkout writer generation changed before the effect", {
+      expectedWorkspaceRevision,
+      actualWorkspaceRevision: workspace.data.revision,
+    });
   const candidates = listed.data.filter((task) =>
     currentWriterOwnsTask(task, workspace.data!, caller),
   );
@@ -255,6 +301,7 @@ const branchCreationBaseline = (
 ): {
   base_branch: string;
   target_exists: boolean;
+  local_base: string | null;
   remote_base: string | null;
   target_head: string | null;
 } => {
@@ -264,6 +311,7 @@ const branchCreationBaseline = (
     return {
       base_branch: base,
       target_exists: true,
+      local_base: null,
       remote_base: null,
       target_head: gitValue(root, ["rev-parse", `refs/heads/${target}`]),
     };
@@ -273,6 +321,7 @@ const branchCreationBaseline = (
   return {
     base_branch: base,
     target_exists: false,
+    local_base: gitValue(root, ["rev-parse", "--verify", `refs/heads/${base}`]),
     remote_base: remoteBase,
     target_head: remoteBase,
   };
@@ -281,12 +330,9 @@ const branchCreationBaseline = (
 const shortSha = (value: unknown): string =>
   typeof value === "string" && value ? value.slice(0, 8) : "unknown";
 
-const isProtectedBranch = (root: string, branch: string): boolean =>
-  resolveBranchPolicyFor(root).protected.has(branch.toLowerCase());
-
 /** Concise, user-facing approval text for one resolved action. The exact
  * descriptor stays machine-facing; this is what the native question shows. */
-export const actionProposalQuestion = (
+const actionProposalAtRoot = (
   request: ExternalActionRequest,
   descriptorPayload: unknown,
 ): { presented: string; approvedText: string } => {
@@ -346,14 +392,19 @@ export const actionProposalQuestion = (
               approvedText: `Switch to \`${target}\`.`,
             };
       const base = String(resolved.base_branch ?? "the base branch");
+      const localBase =
+        typeof resolved.local_base === "string"
+          ? `local ${shortSha(resolved.local_base)}`
+          : "no local base";
+      const remoteBase = shortSha(resolved.remote_base);
       return stashes
         ? {
-            presented: `Workit decision: action — Stash the dirty working tree and create branch \`${target}\` from \`${base}\` (currently ${shortSha(resolved.remote_base)})?`,
-            approvedText: `Stash and create \`${target}\` from \`${base}\` at ${shortSha(resolved.remote_base)}.`,
+            presented: `Workit decision: action — Stash and create branch \`${target}\` from \`${base}\` (${localBase}; remote ${remoteBase})?`,
+            approvedText: `Stash and create \`${target}\` from \`${base}\` (${localBase}; remote ${remoteBase}).`,
           }
         : {
-            presented: `Workit decision: action — Create branch \`${target}\` from \`${base}\` (currently ${shortSha(resolved.remote_base)})?`,
-            approvedText: `Create \`${target}\` from \`${base}\` at ${shortSha(resolved.remote_base)}.`,
+            presented: `Workit decision: action — Create branch \`${target}\` from \`${base}\` (${localBase}; remote ${remoteBase})?`,
+            approvedText: `Create \`${target}\` from \`${base}\` (${localBase}; remote ${remoteBase}).`,
           };
     }
     case "git.commit": {
@@ -365,18 +416,29 @@ export const actionProposalQuestion = (
     }
     case "git.push":
       return {
-        presented: `Workit decision: action — Push branch \`${String(payload.branch ?? "")}\` to origin?`,
-        approvedText: `Push \`${String(payload.branch ?? "")}\` to origin.`,
+        presented: `Workit decision: action — Push branch \`${String(payload.branch ?? "")}\` to \`${String(resolved.remote ?? "unknown remote")}\` via \`${String(resolved.apiHost ?? "Git transport")}\`${resolved.account ? ` as ${String(resolved.account)}` : ""}?`,
+        approvedText: `Push \`${String(payload.branch ?? "")}\` to ${String(resolved.remote ?? "unknown remote")} via ${String(resolved.apiHost ?? "Git transport")}${resolved.account ? ` as ${String(resolved.account)}` : ""}.`,
       };
-    case "hosting.pull_request":
+    case "hosting.pull_request": {
+      const sourceCommit = shortSha(resolved.source_commit);
+      const mergeBase =
+        typeof resolved.merge_base_commit === "string"
+          ? ` on local merge base ${shortSha(resolved.merge_base_commit)}`
+          : "";
       return {
-        presented: `Workit decision: action — Open a PR from \`${String(resolved.source_branch ?? "")}\` to \`${payloadTarget}\` titled "${String(request.payload.title)}"?`,
-        approvedText: `Open the PR: ${String(resolved.source_branch ?? "")} → ${payloadTarget}, "${String(request.payload.title)}".`,
+        presented: `Workit decision: action — Open a PR in \`${String(resolved.remote ?? "unknown remote")}\` via \`${String(resolved.apiHost ?? "unknown host")}\`${resolved.account ? ` as ${String(resolved.account)}` : ""} from \`${String(resolved.source_branch ?? "")}\`@${sourceCommit} to \`${payloadTarget}\`${mergeBase} titled "${String(request.payload.title)}"?`,
+        approvedText: `Open the PR in ${String(resolved.remote ?? "unknown remote")} via ${String(resolved.apiHost ?? "unknown host")}${resolved.account ? ` as ${String(resolved.account)}` : ""}: ${String(resolved.source_branch ?? "")}@${sourceCommit} → ${payloadTarget}${mergeBase}, "${String(request.payload.title)}".`,
       };
+    }
     case "hosting.merge":
       return {
-        presented: `Workit decision: action — Merge \`${String(resolved.source_branch ?? "")}\` into \`${payloadTarget}\` (squash, delete branch)?`,
-        approvedText: `Merge ${String(resolved.source_branch ?? "")} → ${payloadTarget}.`,
+        presented: `Workit decision: action — Merge \`${String(resolved.source_branch ?? "")}\` into \`${payloadTarget}\` in \`${String(resolved.remote ?? "unknown remote")}\` via \`${String(resolved.apiHost ?? "unknown host")}\`${resolved.account ? ` as ${String(resolved.account)}` : ""} (squash, delete branch)?`,
+        approvedText: `Merge ${String(resolved.source_branch ?? "")} → ${payloadTarget} in ${String(resolved.remote ?? "unknown remote")} via ${String(resolved.apiHost ?? "unknown host")}${resolved.account ? ` as ${String(resolved.account)}` : ""}.`,
+      };
+    case "hosting.delete_branch":
+      return {
+        presented: `Workit decision: action — Delete merged branch \`${String(payload.branch ?? "")}\` from \`${String(resolved.remote ?? "")}\` via \`${String(resolved.apiHost ?? "unknown host")}\` as \`${String(resolved.account ?? "unknown account")}\` at ${shortSha(resolved.tip)} (PR/MR #${String(resolved.pr ?? "")})?`,
+        approvedText: `Delete merged branch ${String(payload.branch ?? "")} from ${String(resolved.remote ?? "unknown remote")} via ${String(resolved.apiHost ?? "unknown host")} as ${String(resolved.account ?? "unknown account")}.`,
       };
     case "changelog.apply":
       return {
@@ -406,6 +468,17 @@ export const actionProposalQuestion = (
   }
 };
 
+export const actionProposalQuestion = (
+  request: ExternalActionRequest,
+  descriptorPayload: unknown,
+): { presented: string; approvedText: string } => {
+  const proposal = actionProposalAtRoot(request, descriptorPayload);
+  const cwd = (descriptorPayload as { cwd?: unknown })?.cwd;
+  return typeof cwd === "string"
+    ? { ...proposal, presented: `${proposal.presented} Target directory: ${cwd}` }
+    : proposal;
+};
+
 export type ResolvedExternalAction = {
   request: ExternalActionRequest;
   descriptorPayload: unknown;
@@ -430,6 +503,7 @@ export const approvedResolvedExternalAction = (content: string): Result<Resolved
       value.operation !== "git.push" &&
       value.operation !== "hosting.pull_request" &&
       value.operation !== "hosting.merge" &&
+      value.operation !== "hosting.delete_branch" &&
       value.operation !== "changelog.apply" &&
       value.operation !== "youtrack.update" &&
       value.operation !== "youtrack.time" &&
@@ -486,6 +560,13 @@ export const approvedResolvedExternalAction = (content: string): Result<Resolved
     )
       return failure("invalid_input", "approved hosting target is incomplete");
     if (
+      value.operation === "hosting.delete_branch" &&
+      (typeof target.tip !== "string" ||
+        typeof target.remote !== "string" ||
+        typeof target.pr !== "string")
+    )
+      return failure("invalid_input", "approved branch deletion target is incomplete");
+    if (
       value.operation === "changelog.apply" &&
       (typeof target.target !== "string" ||
         typeof target.beforeDigest !== "string" ||
@@ -499,6 +580,7 @@ export const approvedResolvedExternalAction = (content: string): Result<Resolved
       value.operation !== "git.push" &&
       value.operation !== "hosting.pull_request" &&
       value.operation !== "hosting.merge" &&
+      value.operation !== "hosting.delete_branch" &&
       value.operation !== "changelog.apply" &&
       (typeof target.marker !== "string" ||
         typeof target.baseUrl !== "string" ||
@@ -523,14 +605,149 @@ const remoteRepo = (value: string): string | null => {
   return repo.includes("/") ? repo : null;
 };
 
-const remoteIdentity = (value: string): string | null => {
-  const parts = remoteParts(value);
-  return parts ? `${parts.host}${parts.path.replace(/\.git$/, "")}` : null;
-};
+const remoteIdentity = (value: string): string | null => pushRemoteIdentity(value);
 
 const remoteProvider = (value: string): "github" | "gitlab" | null => {
   const host = remoteParts(value)?.host;
   return host === "github.com" ? "github" : host === "gitlab.com" ? "gitlab" : null;
+};
+
+const hostingCliEnv = (provider: "github" | "gitlab", host: string): NodeJS.ProcessEnv => ({
+  ...process.env,
+  PATH: process.env.PATH ?? "",
+  ...(provider === "github" ? { GH_HOST: host } : { GITLAB_HOST: host }),
+});
+
+const hostingProvider = (root: string, remote: string): "github" | "gitlab" | null => {
+  const known = remoteProvider(remote);
+  if (known) return known;
+  const parts = remoteParts(remote);
+  if (!parts?.host || (parts.protocol !== "ssh:" && parts.protocol !== "https:")) return null;
+  const cfg = vcsConfig("load", root);
+  return cfg.ok && (cfg.provider === "github" || cfg.provider === "gitlab") ? cfg.provider : null;
+};
+
+const remoteBranchTip = (
+  root: string,
+  provider: "github" | "gitlab",
+  host: string,
+  repo: string,
+  branch: string,
+): Result<string | null> => {
+  const endpoint =
+    provider === "github"
+      ? `repos/${repo}/git/ref/heads/${branch.split("/").map(encodeURIComponent).join("/")}`
+      : `projects/${encodeURIComponent(repo)}/repository/branches/${encodeURIComponent(branch)}`;
+  const response = spawnSync(provider === "github" ? "gh" : "glab", ["api", endpoint], {
+    cwd: root,
+    encoding: "utf8",
+    env: hostingCliEnv(provider, host),
+  });
+  if (response.status !== 0) {
+    if (/\b404\b/.test(response.stderr ?? "")) {
+      const project =
+        provider === "github" ? `repos/${repo}` : `projects/${encodeURIComponent(repo)}`;
+      const visible = spawnSync(provider === "github" ? "gh" : "glab", ["api", project], {
+        cwd: root,
+        encoding: "utf8",
+        env: hostingCliEnv(provider, host),
+      });
+      try {
+        const record = JSON.parse(visible.stdout ?? "") as { id?: unknown };
+        if (visible.status === 0 && typeof record.id === "number") return success(null, null, null);
+      } catch {}
+    }
+    return failure("capability_unavailable", "remote branch could not be read", {
+      outcome: "not_started",
+    });
+  }
+  try {
+    const parsed = JSON.parse(response.stdout ?? "") as Record<string, any>;
+    const tip = provider === "github" ? parsed.object?.sha : parsed.commit?.id;
+    return typeof tip === "string" && /^[a-f0-9]{40,64}$/.test(tip)
+      ? success(null, null, tip)
+      : failure("capability_unavailable", "remote branch response is incomplete", {
+          outcome: "not_started",
+        });
+  } catch {
+    return failure("capability_unavailable", "remote branch response is invalid", {
+      outcome: "not_started",
+    });
+  }
+};
+
+const mergedBranch = (root: string, branch: string): Result<Record<string, string>> => {
+  if (run(root, ["check-ref-format", "--branch", branch]).exitCode !== 0)
+    return failure("invalid_input", "branch name is invalid", { outcome: "not_started" });
+  const remote = pushRemote(root);
+  const identity = remote ? credentialFreeRemote(remote) : null;
+  const repo = remote ? remoteRepo(remote) : null;
+  const provider = remote ? hostingProvider(root, remote) : null;
+  if (!remote || !identity || !repo || !provider)
+    return failure("capability_unavailable", "branch remote is unavailable", {
+      outcome: "not_started",
+    });
+  const auth = vcsCliIdentity(root);
+  if (!auth.ok || auth.provider !== provider)
+    return failure("capability_unavailable", "hosting CLI identity is unavailable", {
+      outcome: "not_started",
+    });
+  if (!hostingApiHostMatches(remote, auth.host))
+    return failure(
+      "capability_unavailable",
+      "hosting API host does not match the push destination",
+      {
+        outcome: "not_started",
+      },
+    );
+  const live = remoteBranchTip(root, provider, auth.host, repo, branch);
+  if (!live.ok) return live as Result<never>;
+  const tip = live.data;
+  if (!tip)
+    return failure("invalid_input", "remote branch is absent or could not be read", {
+      outcome: "not_started",
+    });
+  const endpoint =
+    provider === "github"
+      ? `repos/${repo}/pulls?state=closed&head=${encodeURIComponent(`${repo.split("/")[0]}:${branch}`)}&per_page=100`
+      : `projects/${encodeURIComponent(repo)}/merge_requests?state=merged&source_branch=${encodeURIComponent(branch)}&per_page=100`;
+  const response = spawnSync(provider === "github" ? "gh" : "glab", ["api", endpoint], {
+    cwd: root,
+    encoding: "utf8",
+    env: hostingCliEnv(provider, auth.host),
+  });
+  if (response.status !== 0)
+    return failure("capability_unavailable", "merged branch evidence is unavailable", {
+      outcome: "not_started",
+    });
+  try {
+    const records = JSON.parse(response.stdout ?? "") as unknown;
+    if (!Array.isArray(records) || records.length >= 100) throw new Error("incomplete PR listing");
+    const match = records.find(
+      (record) =>
+        record &&
+        typeof record === "object" &&
+        (provider === "github" ? record.head?.sha === tip : record.sha === tip) &&
+        typeof record.merged_at === "string" &&
+        (provider === "github" ? record.head?.ref === branch : record.source_branch === branch),
+    );
+    const id = match?.number ?? match?.iid;
+    if (typeof id !== "number") throw new Error("no exact merged head");
+    return success(null, null, {
+      branch,
+      tip,
+      remote: identity,
+      provider,
+      repo,
+      pr: String(id),
+      account: String(auth.username),
+      apiHost: String(auth.host),
+    });
+  } catch {
+    return failure("capability_unavailable", "branch tip does not match a merged PR head", {
+      outcome: "not_started",
+    });
+  }
 };
 
 const unknownHostingEvidence = (operation: string): Result<HostingReadEvidence> =>
@@ -550,13 +767,10 @@ export const readHostingAction = async (
     return unknownHostingEvidence(operation);
   try {
     const cfg = vcsConfig("load", root);
-    if (
-      !cfg.ok ||
-      !cfg.tokenPath ||
-      !cfg.provider ||
-      (cfg.provider !== "github" && cfg.provider !== "gitlab")
-    )
+    if (!cfg.ok || !cfg.provider || (cfg.provider !== "github" && cfg.provider !== "gitlab"))
       return unknownHostingEvidence(operation);
+    const auth = vcsCliIdentity(root);
+    if (!auth.ok || auth.provider !== cfg.provider) return unknownHostingEvidence(operation);
     const remote = pushRemote(root);
     const repo = remote ? remoteRepo(remote) : null;
     const approved = resolved.descriptorPayload as {
@@ -571,18 +785,6 @@ export const readHostingAction = async (
     const currentIdentity = remote ? remoteIdentity(remote) : null;
     const approvedIdentity =
       typeof approvedRemote === "string" ? remoteIdentity(approvedRemote) : null;
-    const apiHost =
-      cfg.provider === "github"
-        ? "github.com"
-        : (() => {
-            try {
-              return new URL(
-                cfg.gitlab?.apiUrl ?? "https://gitlab.com/api/v4",
-              ).hostname.toLowerCase();
-            } catch {
-              return "";
-            }
-          })();
     if (
       !repo ||
       typeof branch !== "string" ||
@@ -592,22 +794,23 @@ export const readHostingAction = async (
       !currentIdentity ||
       currentIdentity !== approvedIdentity ||
       repo !== remoteRepo(approvedRemote) ||
-      (remoteProvider(approvedRemote) !== null &&
-        remoteProvider(approvedRemote) !== cfg.provider) ||
-      remoteParts(approvedRemote)?.host !== apiHost
+      hostingProvider(root, approvedRemote) !== cfg.provider ||
+      !hostingApiHostMatches(approvedRemote, auth.host) ||
+      (typeof source?.apiHost === "string" && source.apiHost !== auth.host)
     )
       return unknownHostingEvidence(operation);
-    const token = fs.readFileSync(cfg.tokenPath, "utf8").trim();
-    const headers = { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json" };
-    const url =
+    const endpoint =
       cfg.provider === "github"
-        ? `https://api.github.com/repos/${repo}/pulls?state=all&head=${encodeURIComponent(`${repo.split("/")[0]}:${branch}`)}&base=${encodeURIComponent(target)}&per_page=100&page=1`
-        : `${cfg.gitlab?.apiUrl ?? "https://gitlab.com/api/v4"}/projects/${encodeURIComponent(repo)}/merge_requests?state=all&source_branch=${encodeURIComponent(branch)}&target_branch=${encodeURIComponent(target)}&per_page=100&page=1`;
-    const response = await fetch(url, {
-      headers: cfg.provider === "gitlab" ? { "PRIVATE-TOKEN": token } : headers,
+        ? `repos/${repo}/pulls?state=all&head=${encodeURIComponent(`${repo.split("/")[0]}:${branch}`)}&base=${encodeURIComponent(target)}&per_page=100&page=1`
+        : `projects/${encodeURIComponent(repo)}/merge_requests?state=all&source_branch=${encodeURIComponent(branch)}&target_branch=${encodeURIComponent(target)}&per_page=100&page=1`;
+    const cli = cfg.provider === "github" ? "gh" : "glab";
+    const response = spawnSync(cli, ["api", endpoint], {
+      cwd: root,
+      encoding: "utf8",
+      env: hostingCliEnv(cfg.provider, auth.host),
     });
-    if (!response.ok) return unknownHostingEvidence(operation);
-    const values: unknown = await response.json();
+    if (response.status !== 0) return unknownHostingEvidence(operation);
+    const values: unknown = JSON.parse(response.stdout ?? "");
     // A full page is intentionally treated as truncated until pagination is added.
     if (!Array.isArray(values) || values.length >= 100) return unknownHostingEvidence(operation);
     const records: Record<string, unknown>[] = [];
@@ -967,16 +1170,56 @@ export const readExternalAction = async (
   root: string,
   resolved: ResolvedExternalAction,
   actionRef: Ref,
-): Promise<Result<HostingReadEvidence>> =>
-  resolved.request.operation === "git.branch_setup" ||
-  resolved.request.operation === "git.commit" ||
-  resolved.request.operation === "git.push" ||
-  resolved.request.operation === "changelog.apply"
+): Promise<Result<HostingReadEvidence>> => {
+  const target = actionRoot(root, resolved.request);
+  if (!target.ok) return unknownHostingEvidence(resolved.request.operation);
+  root = target.data;
+  return resolved.request.operation === "git.branch_setup" ||
+    resolved.request.operation === "git.commit" ||
+    resolved.request.operation === "git.push" ||
+    resolved.request.operation === "changelog.apply"
     ? readLocalAction(root, resolved, actionRef)
-    : resolved.request.operation === "hosting.pull_request" ||
-        resolved.request.operation === "hosting.merge"
-      ? readHostingAction(root, resolved, actionRef)
-      : readYouTrackAction(root, resolved, actionRef);
+    : resolved.request.operation === "hosting.delete_branch"
+      ? readDeletedBranch(root, resolved, actionRef)
+      : resolved.request.operation === "hosting.pull_request" ||
+          resolved.request.operation === "hosting.merge"
+        ? readHostingAction(root, resolved, actionRef)
+        : readYouTrackAction(root, resolved, actionRef);
+};
+
+const readDeletedBranch = async (
+  root: string,
+  resolved: ResolvedExternalAction,
+  actionRef: Ref,
+): Promise<Result<HostingReadEvidence>> => {
+  const details = (resolved.descriptorPayload as { resolved?: Record<string, unknown> }).resolved;
+  if (
+    !details ||
+    typeof details.branch !== "string" ||
+    typeof details.tip !== "string" ||
+    typeof details.remote !== "string" ||
+    credentialFreeRemote(pushRemote(root) ?? "") !== details.remote
+  )
+    return unknownHostingEvidence("hosting.delete_branch");
+  const provider = details.provider;
+  const repo = details.repo;
+  const apiHost = details.apiHost;
+  if (
+    (provider !== "github" && provider !== "gitlab") ||
+    typeof repo !== "string" ||
+    typeof apiHost !== "string" ||
+    !hostingApiHostMatches(pushRemote(root) ?? "", apiHost)
+  )
+    return unknownHostingEvidence("hosting.delete_branch");
+  const live = remoteBranchTip(root, provider, apiHost, repo, details.branch);
+  if (!live.ok || live.data !== null) return unknownHostingEvidence("hosting.delete_branch");
+  const evidenceDigest = sha256(details);
+  return success(null, null, {
+    outcome: "succeeded",
+    evidenceDigest,
+    observation: { kind: "provider_read", actionRef, outcome: "succeeded", evidenceDigest },
+  });
+};
 
 const youTrackBase = (): string | null => {
   try {
@@ -1019,11 +1262,13 @@ export const upgradeBranchSetupForStash = (
   resolved: Result<ResolvedExternalAction>,
 ): Result<ResolvedExternalAction> => {
   if (!resolved.ok || resolved.data.request.operation !== "git.branch_setup") return resolved;
+  const target = actionRoot(root, parsed);
   if (
     (resolved.data.descriptorPayload as { resolved?: { dirty?: unknown } }).resolved?.dirty !==
       true ||
     (resolved.data.descriptorPayload as { stash?: unknown }).stash === "yes" ||
-    classifyBranchDirt(root) !== "stash-required"
+    !target.ok ||
+    classifyBranchDirt(target.data) !== "stash-required"
   )
     return resolved;
   const upgraded = resolveExternalActionRequest(root, {
@@ -1033,7 +1278,7 @@ export const upgradeBranchSetupForStash = (
   return upgraded.ok ? upgraded : resolved;
 };
 
-export const resolveExternalActionRequest = (
+const resolveExternalActionAtRoot = (
   root: string,
   request: ExternalActionRequest,
   preservedDateMs?: number,
@@ -1044,7 +1289,8 @@ export const resolveExternalActionRequest = (
         const sdd_dir = safePath(root, request.payload.sdd_dir ?? "docs");
         if (!sdd_dir) return failure("invalid_input", "sdd_dir must stay inside the workspace");
         const action = request.payload.action ?? "setup";
-        const policy = resolveBranchPolicyFor(root);
+        const policySnapshot = branchPolicySnapshotFor(root);
+        const policy = policySnapshot.branchPolicy;
         const target_branch = request.payload.target_branch;
         if (action !== "reapply_stash" && !target_branch)
           return failure(
@@ -1055,6 +1301,18 @@ export const resolveExternalActionRequest = (
               fields: [{ path: "target_branch", reason: "required for action=setup" }],
             },
           );
+        if (target_branch) {
+          const check = validateBranchNamePolicy(
+            target_branch,
+            policySnapshot.namePolicy,
+            policySnapshot.source,
+          );
+          if (!check.ok)
+            return failure("permission_denied", check.error, {
+              outcome: "not_started",
+              fields: [{ path: "target_branch", reason: check.rule }],
+            });
+        }
         const head = gitValue(root, ["rev-parse", "HEAD"]);
         if (!head) return failure("storage_error", "current Git commit could not be resolved");
         const dirty = Boolean((gitRaw(root, ["status", "--short"]) ?? "").trim());
@@ -1087,24 +1345,52 @@ export const resolveExternalActionRequest = (
           request: normalized,
           descriptorPayload: {
             ...normalized.payload,
-            resolved: { head, dirty, ...creation, ...stashTarget },
+            resolved: {
+              head,
+              dirty,
+              ...creation,
+              ...stashTarget,
+              ...(target_branch ? { branchPolicyFingerprint: policySnapshot.fingerprint } : {}),
+            },
           },
         });
       }
       case "git.push": {
         const branch = request.payload.branch ?? gitValue(root, ["branch", "--show-current"]);
-        if (branch && isProtectedBranch(root, branch))
-          return failure("invalid_input", `cannot push protected branch ${branch}`, {
-            outcome: "not_started",
-            fields: [{ path: "branch", reason: "protected branch" }],
-          });
         const commit = branch ? gitValue(root, ["rev-parse", branch]) : null;
         const remote = pushRemote(root);
         const identity = remote ? credentialFreeRemote(remote) : null;
+        const provider = remote ? hostingProvider(root, remote) : null;
+        const auth = provider ? vcsCliIdentity(root) : null;
+        if (provider && (!auth?.ok || auth.provider !== provider))
+          return failure("capability_unavailable", "hosting CLI identity is unavailable", {
+            outcome: "not_started",
+          });
+        if (provider && auth?.ok && remote && !hostingApiHostMatches(remote, auth.host))
+          return failure(
+            "capability_unavailable",
+            "hosting API host does not match the push destination",
+            {
+              outcome: "not_started",
+            },
+          );
         return branch && commit && identity
           ? success(null, null, {
-              request: { operation: request.operation, payload: { branch } },
-              descriptorPayload: { branch, resolved: { branch, commit, remote: identity } },
+              request: {
+                operation: request.operation,
+                payload: { branch, ...(request.payload.cwd ? { cwd: request.payload.cwd } : {}) },
+              },
+              descriptorPayload: {
+                branch,
+                ...(request.payload.cwd ? { cwd: request.payload.cwd } : {}),
+                resolved: {
+                  branch,
+                  commit,
+                  remote: identity,
+                  ...(auth?.ok ? { account: auth.username } : {}),
+                  ...(auth?.ok ? { apiHost: auth.host } : {}),
+                },
+              },
             })
           : failure("invalid_input", "git push requires a resolvable current branch");
       }
@@ -1125,6 +1411,36 @@ export const resolveExternalActionRequest = (
                 fields: [{ path: "plan_steps", reason: "unique steps" }],
               },
             );
+          const commitSteps = chain.filter((step) => step.kind === "commit");
+          const branchSteps = chain.filter((step) => step.kind === "branch");
+          const commitPolicy = commitSteps.length ? commitPolicySnapshotFor(root) : null;
+          const branchPolicy = branchSteps.length ? branchPolicySnapshotFor(root) : null;
+          for (const step of commitSteps) {
+            if (step.kind !== "commit" || !commitPolicy) continue;
+            const check = validateCommitMessagePolicy(
+              step.message,
+              commitPolicy.policy,
+              commitPolicy.source,
+            );
+            if (!check.ok)
+              return failure("permission_denied", check.error, {
+                outcome: "not_started",
+                fields: [{ path: "plan_steps", reason: check.rule }],
+              });
+          }
+          for (const step of branchSteps) {
+            if (step.kind !== "branch" || !branchPolicy) continue;
+            const check = validateBranchNamePolicy(
+              step.target,
+              branchPolicy.namePolicy,
+              branchPolicy.source,
+            );
+            if (!check.ok)
+              return failure("permission_denied", check.error, {
+                outcome: "not_started",
+                fields: [{ path: "plan_steps", reason: check.rule }],
+              });
+          }
           if (typeof planBranch !== "string" || !planBranch.trim())
             return failure("invalid_input", "plan_branch must name the working branch", {
               outcome: "not_started",
@@ -1150,17 +1466,18 @@ export const resolveExternalActionRequest = (
                 ],
               },
             );
-          if (isProtectedBranch(root, planBranch))
-            return failure("invalid_input", "plan_branch must not be a protected branch", {
-              outcome: "not_started",
-              fields: [{ path: "plan_branch", reason: "protected branch" }],
-            });
           return success(null, null, {
             request,
             descriptorPayload: {
               plan_steps: planSteps,
               plan_branch: planBranch,
-              resolved: { head, branch, steps: planSteps },
+              resolved: {
+                head,
+                branch,
+                steps: planSteps,
+                ...(commitPolicy ? { commitPolicyFingerprint: commitPolicy.fingerprint } : {}),
+                ...(branchPolicy ? { branchPolicyFingerprint: branchPolicy.fingerprint } : {}),
+              },
             },
           });
         }
@@ -1182,31 +1499,28 @@ export const resolveExternalActionRequest = (
           });
         if (staged === null || paths === null)
           return failure("storage_error", "Git state could not be resolved");
-        let policy: { preset: string; pattern?: string };
-        try {
-          policy = resolveCommitPolicyFor(root);
-        } catch (error) {
-          return failure(
-            "invalid_input",
-            `Commit policy config is malformed: ${error instanceof Error ? error.message : error}`,
-          );
-        }
-        let flavor = policy.preset;
-        if (flavor === "auto") {
-          const log = gitRaw(root, ["log", "--format=%s", "-30", "HEAD"]);
-          const detected = detectCommitFlavor((log ?? "").split("\n").filter(Boolean));
-          flavor = detected.flavor ?? "conventional";
-        }
-        if (!matchCommitFlavor(message, flavor as CommitFlavor, policy.pattern))
-          return failure(
-            "invalid_input",
-            `Commit message does not match the ${flavor} flavor (commitPolicy.preset)`,
-          );
+        const commitPolicy = commitPolicySnapshotFor(root);
+        const commitCheck = validateCommitMessagePolicy(
+          message,
+          commitPolicy.policy,
+          commitPolicy.source,
+        );
+        if (!commitCheck.ok)
+          return failure("permission_denied", commitCheck.error, {
+            outcome: "not_started",
+            fields: [{ path: "message", reason: commitCheck.rule }],
+          });
         return success(null, null, {
           request,
           descriptorPayload: {
             ...request.payload,
-            resolved: { head, branch, staged: sha256(staged), paths },
+            resolved: {
+              head,
+              branch,
+              staged: sha256(staged),
+              paths,
+              commitPolicyFingerprint: commitPolicy.fingerprint,
+            },
           },
         });
       }
@@ -1214,45 +1528,45 @@ export const resolveExternalActionRequest = (
         const target_branch =
           request.payload.target_branch ?? resolveBranchPolicyFor(root).defaultTargetBranch;
         const source_branch = gitValue(root, ["branch", "--show-current"]);
-        if (source_branch && isProtectedBranch(root, source_branch))
-          return failure(
-            "invalid_input",
-            `cannot open a PR from protected branch ${source_branch}`,
-            {
-              outcome: "not_started",
-              fields: [{ path: "source_branch", reason: "protected branch" }],
-            },
-          );
-        const source_commit = gitValue(root, ["rev-parse", "HEAD"]);
+        const source_commit = source_branch
+          ? gitValue(root, ["rev-parse", "--verify", `refs/heads/${source_branch}`])
+          : null;
         const remote = pushRemote(root);
         const identity = remote ? credentialFreeRemote(remote) : null;
+        const vcs = vcsConfig("load", root);
+        const provider = remote ? hostingProvider(root, remote) : null;
         if (
           !source_branch ||
           !source_commit ||
           !identity ||
-          (remoteProvider(identity) !== null &&
-            remoteProvider(identity) !== String(vcsConfig("load", root).provider).toLowerCase())
+          !vcs.ok ||
+          !provider ||
+          provider !== vcs.provider
         )
           return failure(
             "capability_unavailable",
             "hosting target is not bound to the configured remote provider",
-            { capability: "hosting.pull_request" },
+            { capability: "hosting.pull_request", outcome: "not_started" },
           );
-        const vcs = vcsConfig("load", root);
-        const policy = resolveBranchPolicyFor(root);
-        if (!vcs.ok || (policy.integration !== "merge" && !vcs.tokenReady))
-          return failure("capability_unavailable", "hosting credentials are unavailable", {
+        const auth = vcsCliIdentity(root);
+        if (!auth.ok || auth.provider !== provider || !hostingCliAvailable(provider))
+          return failure("capability_unavailable", "hosting CLI identity is unavailable", {
             capability: "hosting.pull_request",
             outcome: "not_started",
           });
-        if (policy.integration !== "merge" && !hostingCliAvailable(String(vcs.provider)))
-          return failure("capability_unavailable", "hosting CLI is unavailable", {
-            capability: "hosting.pull_request",
-            outcome: "not_started",
-          });
+        if (!remote || !hostingApiHostMatches(remote, auth.host))
+          return failure(
+            "capability_unavailable",
+            "hosting API host does not match the push destination",
+            { capability: "hosting.pull_request", outcome: "not_started" },
+          );
+        const merge_base_commit =
+          resolveBranchPolicyFor(root).integration === "merge"
+            ? gitValue(root, ["rev-parse", "--verify", `refs/heads/${target_branch}`])
+            : null;
         const normalized = {
           operation: request.operation,
-          payload: { ...request.payload, target_branch, babysit: request.payload.babysit ?? true },
+          payload: { ...request.payload, target_branch },
         } as ExternalActionRequest;
         const marker = `<!-- workit-action:${sha256({ operation: request.operation, payload: normalized.payload, source_commit, remote: identity })} -->`;
         return success(null, null, {
@@ -1260,7 +1574,16 @@ export const resolveExternalActionRequest = (
           marker,
           descriptorPayload: {
             ...normalized.payload,
-            resolved: { source_branch, source_commit, remote: identity, target_branch, marker },
+            resolved: {
+              source_branch,
+              source_commit,
+              remote: identity,
+              target_branch,
+              marker,
+              account: auth.username,
+              apiHost: auth.host,
+              ...(merge_base_commit ? { merge_base_commit } : {}),
+            },
           },
         });
       }
@@ -1269,34 +1592,34 @@ export const resolveExternalActionRequest = (
           request.payload.target_branch ?? resolveBranchPolicyFor(root).defaultTargetBranch;
         const source_branch =
           request.payload.source_branch ?? gitValue(root, ["branch", "--show-current"]);
-        if (source_branch && isProtectedBranch(root, source_branch))
-          return failure("invalid_input", `cannot merge protected branch ${source_branch}`, {
-            outcome: "not_started",
-            fields: [{ path: "source_branch", reason: "protected branch" }],
-          });
         const source_commit = source_branch
           ? gitValue(root, ["rev-parse", "--verify", `refs/heads/${source_branch}`])
           : null;
         const remote = pushRemote(root);
         const identity = remote ? credentialFreeRemote(remote) : null;
-        if (
-          !source_branch ||
-          !source_commit ||
-          !identity ||
-          (remoteProvider(identity) !== null &&
-            remoteProvider(identity) !== String(vcsConfig("load", root).provider).toLowerCase())
-        )
+        const vcs = vcsConfig("load", root);
+        const provider = remote ? hostingProvider(root, remote) : null;
+        if (!source_branch || !source_commit || !identity || !vcs.ok || provider !== vcs.provider)
           return failure(
             "capability_unavailable",
             "hosting target is not bound to the configured remote provider",
             { capability: "hosting.merge" },
           );
-        const vcs = vcsConfig("load", root);
-        if (!vcs.ok || !vcs.tokenReady)
+        const auth = vcsCliIdentity(root);
+        if (!vcs.ok || !auth.ok)
           return failure("capability_unavailable", "hosting credentials are unavailable", {
             capability: "hosting.merge",
             outcome: "not_started",
           });
+        if (!remote || !hostingApiHostMatches(remote, auth.host))
+          return failure(
+            "capability_unavailable",
+            "hosting API host does not match the push destination",
+            {
+              capability: "hosting.merge",
+              outcome: "not_started",
+            },
+          );
         if (!hostingCliAvailable(String(vcs.provider)))
           return failure("capability_unavailable", "hosting CLI is unavailable", {
             capability: "hosting.merge",
@@ -1312,9 +1635,26 @@ export const resolveExternalActionRequest = (
           marker,
           descriptorPayload: {
             ...normalized.payload,
-            resolved: { source_branch, source_commit, remote: identity, target_branch, marker },
+            resolved: {
+              source_branch,
+              source_commit,
+              remote: identity,
+              target_branch,
+              marker,
+              account: auth.username,
+              apiHost: auth.host,
+            },
           },
         });
+      }
+      case "hosting.delete_branch": {
+        const checked = mergedBranch(root, request.payload.branch);
+        return checked.ok
+          ? success(null, null, {
+              request,
+              descriptorPayload: { ...request.payload, resolved: checked.data },
+            })
+          : (checked as Result<never>);
       }
       case "changelog.apply": {
         const preview = changelogApplyPreview({ ...request.payload, workspace_root: root });
@@ -1438,8 +1778,34 @@ export const resolveExternalActionRequest = (
   }
 };
 
+export const resolveExternalActionRequest = (
+  taskRoot: string,
+  request: ExternalActionRequest,
+  preservedDateMs?: number,
+): Result<ResolvedExternalAction> => {
+  const target = actionRoot(taskRoot, request);
+  if (!target.ok) return target as Result<never>;
+  const bindTarget = bindsActionTarget(request.operation);
+  const normalized = bindTarget
+    ? ({ ...request, payload: { ...request.payload, cwd: target.data } } as ExternalActionRequest)
+    : request;
+  const resolved = resolveExternalActionAtRoot(target.data, normalized, preservedDateMs);
+  if (!resolved.ok || !bindTarget) return resolved;
+  return success(null, null, {
+    ...resolved.data,
+    request: {
+      ...resolved.data.request,
+      payload: { ...resolved.data.request.payload, cwd: target.data },
+    } as ExternalActionRequest,
+    descriptorPayload: {
+      ...(resolved.data.descriptorPayload as Record<string, unknown>),
+      cwd: target.data,
+    },
+  });
+};
+
 export const prBabysitNext = (output: string): string =>
-  `Babysit ${output} to merge-ready (drive mode default). Follow skill workit-babysit: declare mode in this turn, work conflicts, review threads, then CI, and record a frontier brief in task progress per pass. Opt out with babysit:false.`;
+  `PR ready: ${output}. Babysitting was explicitly requested. Follow workit-babysit to resolve conflicts, review threads, and get checks green. Stop at PR-ready; a PR or babysit request does not authorize merge or release.`;
 
 export const executeConcreteExternalAction = async (
   request: ExternalActionRequest,
@@ -1451,6 +1817,19 @@ export const executeConcreteExternalAction = async (
   caller?: { host: Caller["host"]; actor: string },
   approvedBeforeDigest?: string,
   approvedBeforeExists?: boolean,
+  coordinationRoot: string = root,
+  approvedTip?: string,
+  approvedRemote?: string,
+  approvedAccount?: string,
+  approvedApiHost?: string,
+  approvedSourceCommit?: string,
+  approvedCommit?: string,
+  approvedRemoteBase?: string,
+  approvedLocalBase?: string | null,
+  writerActionLease?: symbol,
+  approvedSourceBranch?: string,
+  approvedMergeBaseCommit?: string,
+  expectedWorkspaceRevision?: string,
 ): Promise<Result<unknown>> => {
   if (localAction(request.operation)) {
     if (!caller)
@@ -1471,13 +1850,60 @@ export const executeConcreteExternalAction = async (
         "local external action staged paths are unavailable",
         { outcome: "not_started" },
       );
-    const writer = assertLocalExternalActionWriter(root, caller, paths);
+    const writer = assertLocalExternalActionWriter(
+      coordinationRoot,
+      caller,
+      paths,
+      expectedWorkspaceRevision,
+    );
     if (!writer.ok)
       return failure(
         "capability_unavailable",
         "local external action writer authority is unavailable",
         { outcome: "not_started" },
       );
+    if (writerActionLease !== targetWriterActionLease)
+      return new TaskStore(root).withExternalActionLock(() =>
+        executeConcreteExternalAction(
+          request,
+          root,
+          marker,
+          dateMs,
+          step,
+          workText,
+          caller,
+          approvedBeforeDigest,
+          approvedBeforeExists,
+          coordinationRoot,
+          approvedTip,
+          approvedRemote,
+          approvedAccount,
+          approvedApiHost,
+          approvedSourceCommit,
+          approvedCommit,
+          approvedRemoteBase,
+          approvedLocalBase,
+          targetWriterActionLease,
+          approvedSourceBranch,
+          approvedMergeBaseCommit,
+          expectedWorkspaceRevision,
+        ),
+      );
+    if (!sameDirectoryIdentity(root, coordinationRoot)) {
+      const targetWorkspace = new TaskStore(root).readWorkspace();
+      if (!targetWorkspace.ok) return targetWorkspace as Result<never>;
+      const owner = targetWorkspace.data?.writer?.owner;
+      if (
+        owner &&
+        (owner.taskId !== writer.data.taskId ||
+          owner.workerId !== writer.data.workerId ||
+          owner.session.host !== caller.host ||
+          owner.session.handle !== caller.actor)
+      )
+        return failure("writer_conflict", "target checkout is owned by another writer", {
+          outcome: "not_started",
+        });
+    }
   }
   switch (request.operation) {
     case "git.branch_setup": {
@@ -1485,6 +1911,8 @@ export const executeConcreteExternalAction = async (
         ...request.payload,
         sdd_dir: request.payload.sdd_dir ?? "docs",
         workspace_root: root,
+        expected_remote_base: approvedRemoteBase,
+        expected_local_base: approvedLocalBase,
       });
       if ("error" in result) {
         if (result.phase === "preflight")
@@ -1509,13 +1937,76 @@ export const executeConcreteExternalAction = async (
         : unknown(request.operation);
     }
     case "git.push": {
-      const result = run(root, ["push", "origin", request.payload.branch!]);
+      const remote = pushRemote(root);
+      const identity = remote ? pushRemoteIdentity(remote) : null;
+      const target = remote ? safePushUrl(remote) : null;
+      const provider = remote ? hostingProvider(root, remote) : null;
+      const auth = provider ? vcsCliIdentity(root) : null;
+      if (
+        !remote ||
+        !identity ||
+        !target ||
+        !pushTargetIsStable(root, remote) ||
+        (approvedRemote && identity !== approvedRemote)
+      )
+        return failure(
+          "capability_unavailable",
+          "push destination is ambiguous, rewritten, or changed after approval",
+          {
+            outcome: "not_started",
+          },
+        );
+      if (provider && (!auth?.ok || !hostingApiHostMatches(remote, auth.host)))
+        return failure(
+          "capability_unavailable",
+          "hosting API host does not match the push destination",
+          {
+            outcome: "not_started",
+          },
+        );
+      if (
+        approvedAccount &&
+        (!auth?.ok || auth.username?.toLowerCase() !== approvedAccount.toLowerCase())
+      )
+        return failure(
+          "capability_unavailable",
+          "approved hosting account changed before execution",
+          {
+            outcome: "not_started",
+          },
+        );
+      if (approvedApiHost && (!auth?.ok || auth.host !== approvedApiHost))
+        return failure("capability_unavailable", "approved hosting host changed before execution", {
+          outcome: "not_started",
+        });
+      const branch = request.payload.branch!;
+      if (!approvedCommit || !/^[a-f0-9]{40,64}$/i.test(approvedCommit))
+        return failure("capability_unavailable", "approved push commit is unavailable", {
+          outcome: "not_started",
+        });
+      if (run(root, ["check-ref-format", "--branch", branch]).exitCode !== 0)
+        return failure("invalid_input", "push branch name is invalid", { outcome: "not_started" });
+      if (gitValue(root, ["rev-parse", "--verify", `refs/heads/${branch}`]) !== approvedCommit)
+        return failure("capability_unavailable", "approved push branch changed before execution", {
+          outcome: "not_started",
+        });
+      const result = run(root, ["push", target, `${approvedCommit}:refs/heads/${branch}`]);
       return result.exitCode === 0
         ? success(null, null, { stdout: result.stdout.trim() })
         : unknown(request.operation);
     }
     case "hosting.pull_request": {
-      const body = `${request.payload.body ?? ""}${marker ? `${request.payload.body ? "\n\n" : ""}${marker}` : ""}`;
+      if (
+        !approvedSourceCommit ||
+        !approvedSourceBranch ||
+        !approvedRemote ||
+        !approvedAccount ||
+        !approvedApiHost
+      )
+        return failure("capability_unavailable", "approved PR source or target is incomplete", {
+          outcome: "not_started",
+        });
+      const body = appendMarker(request.payload.body ?? "", marker ?? "");
       const result = prCreate(
         {
           ...process.env,
@@ -1524,19 +2015,29 @@ export const executeConcreteExternalAction = async (
           WF_PR_CONFIRMED: "true",
           WF_PR_DRAFT: request.payload.draft ? "true" : "false",
           WF_PR_TARGET: request.payload.target_branch ?? "",
+          WORKIT_EXPECTED_SOURCE_BRANCH: approvedSourceBranch,
+          WORKIT_EXPECTED_SOURCE_COMMIT: approvedSourceCommit,
+          WORKIT_EXPECTED_REMOTE: approvedRemote,
+          WORKIT_EXPECTED_ACCOUNT: approvedAccount,
+          WORKIT_EXPECTED_API_HOST: approvedApiHost,
+          ...(approvedMergeBaseCommit
+            ? { WORKIT_EXPECTED_MERGE_BASE_COMMIT: approvedMergeBaseCommit }
+            : {}),
         },
         root,
       );
-      return result.error || result.ok === false
-        ? unknown(request.operation)
-        : success(null, null, {
-            ...result,
-            babysit: request.payload.babysit ?? true,
-            babysitSkill: "workit-babysit",
-            ...((request.payload.babysit ?? true)
-              ? { next: prBabysitNext(String((result as { output?: unknown }).output ?? "")) }
-              : {}),
-          });
+      if (result.error || result.ok === false) return unknown(request.operation);
+      const babysit = request.payload.babysit === true;
+      return success(null, null, {
+        ...result,
+        ...(request.payload.babysit !== undefined ? { babysit: request.payload.babysit } : {}),
+        ...(babysit
+          ? {
+              babysitSkill: "workit-babysit",
+              next: prBabysitNext(String(result.output ?? "")),
+            }
+          : {}),
+      });
     }
     case "hosting.merge": {
       const target = String(request.payload.target_branch ?? "");
@@ -1546,10 +2047,82 @@ export const executeConcreteExternalAction = async (
           outcome: "not_started",
           fields: [{ path: "target_branch", reason: "required" }],
         });
-      const result = mergePr(root, { target, source });
+      if (!approvedSourceCommit || !approvedRemote || !approvedAccount || !approvedApiHost)
+        return failure("capability_unavailable", "approved merge target is incomplete", {
+          outcome: "not_started",
+        });
+      const result = mergePr(root, {
+        target,
+        source,
+        sourceCommit: approvedSourceCommit,
+        remote: approvedRemote,
+        account: approvedAccount,
+        apiHost: approvedApiHost,
+      });
       return result.error || result.ok === false
         ? unknown(request.operation)
         : success(null, null, result);
+    }
+    case "hosting.delete_branch": {
+      const remote = pushRemote(root);
+      const identity = remote ? pushRemoteIdentity(remote) : null;
+      const target = remote ? safePushUrl(remote) : null;
+      const auth = vcsCliIdentity(root);
+      if (!approvedTip || !/^[a-f0-9]{40,64}$/.test(approvedTip))
+        return failure("invalid_input", "approved branch tip is unavailable", {
+          outcome: "not_started",
+        });
+      if (
+        !remote ||
+        !identity ||
+        !target ||
+        !pushTargetIsStable(root, remote) ||
+        (approvedRemote && identity !== approvedRemote)
+      )
+        return failure(
+          "capability_unavailable",
+          "deletion destination is ambiguous, rewritten, or changed after approval",
+          {
+            outcome: "not_started",
+          },
+        );
+      if (!auth.ok || !hostingApiHostMatches(remote, auth.host))
+        return failure(
+          "capability_unavailable",
+          "hosting API host does not match the deletion destination",
+          {
+            outcome: "not_started",
+          },
+        );
+      if (
+        approvedAccount &&
+        (!auth.ok || auth.username?.toLowerCase() !== approvedAccount.toLowerCase())
+      )
+        return failure(
+          "capability_unavailable",
+          "approved hosting account changed before execution",
+          {
+            outcome: "not_started",
+          },
+        );
+      if (approvedApiHost && (!auth.ok || auth.host !== approvedApiHost))
+        return failure("capability_unavailable", "approved hosting host changed before execution", {
+          outcome: "not_started",
+        });
+      const branch = request.payload.branch;
+      const result = run(root, [
+        "push",
+        `--force-with-lease=refs/heads/${branch}:${approvedTip}`,
+        "--delete",
+        target,
+        branch,
+      ]);
+      if (result.exitCode === 0) return success(null, null, { branch, deletedTip: approvedTip });
+      return /stale info|cannot lock ref|fetch first|non-fast-forward/i.test(result.stderr)
+        ? failure("capability_unavailable", "remote branch tip changed before deletion", {
+            outcome: "not_started",
+          })
+        : unknown(request.operation);
     }
     case "changelog.apply": {
       const preview = changelogApplyPreview({ ...request.payload, workspace_root: root });
@@ -1643,12 +2216,19 @@ export const executeResolvedExternalAction = async (
   root: string,
   step?: string,
   caller?: { host: Caller["host"]; actor: string },
+  expectedWorkspaceRevision?: string,
 ): Promise<Result<unknown>> => {
   const approvedDetails =
     resolved.descriptorPayload && typeof resolved.descriptorPayload === "object"
       ? (
           resolved.descriptorPayload as {
-            resolved?: { dateMs?: unknown; beforeDigest?: unknown; beforeExists?: unknown };
+            resolved?: {
+              dateMs?: unknown;
+              beforeDigest?: unknown;
+              beforeExists?: unknown;
+              branchPolicyFingerprint?: unknown;
+              commitPolicyFingerprint?: unknown;
+            };
           }
         ).resolved
       : undefined;
@@ -1659,23 +2239,79 @@ export const executeResolvedExternalAction = async (
       ? approvedDetails.dateMs
       : undefined;
   const fresh = resolveExternalActionRequest(root, resolved.request, preservedDateMs);
-  if (!fresh.ok)
+  if (!fresh.ok) {
+    if (fresh.code === "permission_denied") return fresh;
     return failure(
       "capability_unavailable",
       "approved external action target changed before execution",
       { outcome: "not_started" },
     );
-  if (
-    externalActionDescriptor(resolved.request.operation, fresh.data.descriptorPayload) !==
-    externalActionDescriptor(resolved.request.operation, resolved.descriptorPayload)
-  )
+  }
+  const currentResolved = (
+    fresh.data.descriptorPayload as {
+      resolved?: {
+        branchPolicyFingerprint?: unknown;
+        commitPolicyFingerprint?: unknown;
+      };
+    }
+  ).resolved;
+  for (const [key, label] of [
+    ["branchPolicyFingerprint", "branch naming policy"],
+    ["commitPolicyFingerprint", "commit style policy"],
+  ] as const) {
+    const approvedFingerprint = approvedDetails?.[key];
+    const currentFingerprint = currentResolved?.[key];
+    if (
+      (typeof approvedFingerprint === "string" || typeof currentFingerprint === "string") &&
+      approvedFingerprint !== currentFingerprint
+    )
+      return failure(
+        "permission_denied",
+        `${label} changed since approval; approve the operation again`,
+        { outcome: "not_started" },
+      );
+  }
+  const freshDescriptor = externalActionDescriptor(
+    resolved.request.operation,
+    fresh.data.descriptorPayload,
+  );
+  const approvedDescriptor = externalActionDescriptor(
+    resolved.request.operation,
+    resolved.descriptorPayload,
+  );
+  const freshBranchIntent =
+    resolved.request.operation === "git.branch_setup" ? branchSetupIntent(freshDescriptor) : null;
+  const approvedBranchIntent =
+    resolved.request.operation === "git.branch_setup"
+      ? branchSetupIntent(approvedDescriptor)
+      : null;
+  const unchangedBranchIntent =
+    freshBranchIntent !== null &&
+    approvedBranchIntent !== null &&
+    canonicalJson(freshBranchIntent) === canonicalJson(approvedBranchIntent);
+  if (freshDescriptor !== approvedDescriptor && !unchangedBranchIntent)
     return failure(
       "capability_unavailable",
       "approved external action target changed before execution",
       { outcome: "not_started" },
     );
   const resolvedDetails = fresh.data.descriptorPayload as {
-    resolved?: { dateMs?: unknown; beforeDigest?: unknown; beforeExists?: unknown };
+    resolved?: {
+      dateMs?: unknown;
+      beforeDigest?: unknown;
+      beforeExists?: unknown;
+      remote_base?: unknown;
+      local_base?: unknown;
+      target_exists?: unknown;
+      tip?: unknown;
+      remote?: unknown;
+      account?: unknown;
+      apiHost?: unknown;
+      source_commit?: unknown;
+      commit?: unknown;
+      source_branch?: unknown;
+      merge_base_commit?: unknown;
+    };
   };
   const resolvedDate =
     typeof resolvedDetails.resolved?.dateMs === "number"
@@ -1691,9 +2327,60 @@ export const executeResolvedExternalAction = async (
     typeof resolvedDetails.resolved?.beforeExists === "boolean"
       ? resolvedDetails.resolved.beforeExists
       : undefined;
+  const approvedTip =
+    typeof resolvedDetails.resolved?.tip === "string" ? resolvedDetails.resolved.tip : undefined;
+  const approvedRemote =
+    typeof resolvedDetails.resolved?.remote === "string"
+      ? resolvedDetails.resolved.remote
+      : undefined;
+  const approvedAccount =
+    typeof resolvedDetails.resolved?.account === "string"
+      ? resolvedDetails.resolved.account
+      : undefined;
+  const approvedApiHost =
+    typeof resolvedDetails.resolved?.apiHost === "string"
+      ? resolvedDetails.resolved.apiHost
+      : undefined;
+  const approvedSourceCommit =
+    typeof resolvedDetails.resolved?.source_commit === "string"
+      ? resolvedDetails.resolved.source_commit
+      : undefined;
+  const approvedCommit =
+    typeof resolvedDetails.resolved?.commit === "string"
+      ? resolvedDetails.resolved.commit
+      : undefined;
+  const approvedRemoteBase =
+    typeof resolvedDetails.resolved?.remote_base === "string"
+      ? resolvedDetails.resolved.remote_base
+      : undefined;
+  const approvedLocalBase =
+    typeof resolvedDetails.resolved?.local_base === "string"
+      ? resolvedDetails.resolved.local_base
+      : resolvedDetails.resolved?.local_base === null
+        ? null
+        : undefined;
+  const approvedSourceBranch =
+    typeof resolvedDetails.resolved?.source_branch === "string"
+      ? resolvedDetails.resolved.source_branch
+      : undefined;
+  const approvedMergeBaseCommit =
+    typeof resolvedDetails.resolved?.merge_base_commit === "string"
+      ? resolvedDetails.resolved.merge_base_commit
+      : undefined;
+  if (
+    fresh.data.request.operation === "git.branch_setup" &&
+    fresh.data.request.payload.action !== "reapply_stash" &&
+    resolvedDetails.resolved?.target_exists === false &&
+    !approvedRemoteBase
+  )
+    return failure("capability_unavailable", "approved remote base SHA could not be resolved", {
+      outcome: "not_started",
+    });
+  const target = actionRoot(root, fresh.data.request);
+  if (!target.ok) return target;
   const result = await executeConcreteExternalAction(
     fresh.data.request,
-    root,
+    target.data,
     fresh.data.marker,
     resolvedDate,
     step,
@@ -1701,9 +2388,36 @@ export const executeResolvedExternalAction = async (
     caller,
     beforeDigest,
     beforeExists,
+    root,
+    approvedTip,
+    approvedRemote,
+    approvedAccount,
+    approvedApiHost,
+    approvedSourceCommit,
+    approvedCommit,
+    approvedRemoteBase,
+    approvedLocalBase,
+    undefined,
+    approvedSourceBranch,
+    approvedMergeBaseCommit,
+    expectedWorkspaceRevision,
   );
+  if (result.ok && fresh.data.request.operation === "hosting.pull_request") {
+    const observed = await readHostingAction(target.data, fresh.data, {
+      kind: "host",
+      host: caller?.host ?? "workit_cli",
+      handle: `post-create:${fresh.data.marker ?? "unknown"}`,
+    });
+    const output = (result.data as { output?: unknown }).output;
+    const id =
+      typeof output === "string"
+        ? /\/(?:pull|merge_requests)\/(\d+)(?:[/?#]|$)/.exec(output)?.[1]
+        : null;
+    if (!observed.ok || !id || String(observed.data.data?.id) !== id)
+      return unknown("hosting.pull_request");
+  }
   if (!result.ok && result.code === "external_outcome_unknown" && caller) {
-    const observed = await readLocalAction(root, fresh.data, {
+    const observed = await readExternalAction(root, fresh.data, {
       kind: "host",
       host: caller.host,
       handle: `local-recovery:${fresh.data.request.operation}`,

@@ -17,7 +17,7 @@ import {
   validateTimezone,
   writeWorkspaces,
 } from "@/packages/workit-cli/src/logic";
-import { resolveWorkspace } from "@/packages/workit-core/src/core/workspaces";
+import { readWorkspacesResult, resolveWorkspace } from "@/packages/workit-core/src/core/workspaces";
 import { PRESETS, type ToolkitConfig } from "@/packages/workit-core/src/core/config";
 import { withTempConfigDir as withConfigDir } from "@/test/shared/helpers/env";
 
@@ -153,19 +153,18 @@ test("scaffoldYouTrack writes youtrack.json + placeholder token + token URL", ()
   }
 });
 
-test("scaffoldVcs writes vcs.json for provider + active placeholder token", () => {
+test("scaffoldVcs configures CLI providers without creating separate token files", () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "wf-cli-logic-"));
   try {
     const s = scaffoldVcs(dir, "github");
     const cfg = JSON.parse(readFileSync(s.vcsJson, "utf8"));
     expect(cfg.provider).toBe("github");
-    expect(s.activeTokenPath).toBe(path.join(dir, "github.token"));
-    expect(readFileSync(s.activeTokenPath, "utf8").trim()).toBe(TOKEN_PLACEHOLDER);
-    expect(s.tokenCreateUrl).toContain("github.com/settings/personal-access-tokens/new");
+    expect(existsSync(path.join(dir, "github.token"))).toBe(false);
+    expect(cfg.github.tokenFile).toBeUndefined();
 
     const gitlab = scaffoldVcs(dir, "gitlab");
-    expect(gitlab.activeTokenPath).toBe(path.join(dir, "gitlab.token"));
-    expect(gitlab.tokenCreateUrl).toContain("gitlab.com/-/user_settings/personal_access_tokens");
+    expect(gitlab.provider).toBe("gitlab");
+    expect(existsSync(path.join(dir, "gitlab.token"))).toBe(false);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -199,8 +198,8 @@ test("scaffoldVcs preserves existing token files byte-for-byte (WZ-05)", () => {
     writeFileSync(gh, "ghp_secret\n", { mode: 0o600 });
     const s = scaffoldVcs(dir, "gitlab");
     expect(s.ok).toBe(true);
-    expect(s.status).toBe("preserved");
-    expect(s.preserved).toEqual([gl, gh]);
+    expect(s.status).toBe("missing");
+    expect(s.preserved).toEqual([]);
     expect(readFileSync(gl, "utf8")).toBe("glpat-secret\n");
     expect(readFileSync(gh, "utf8")).toBe("ghp_secret\n");
   } finally {
@@ -325,12 +324,39 @@ test("writeWorkspaces removes entries when written with fewer", () => {
   });
 });
 
-test("writeWorkspaces succeeds over a malformed existing file (treated as empty)", () => {
+test("writeWorkspaces preserves unrelated metadata and rejects stale revisions", () => {
   withConfigDir((dir) => {
-    writeFileSync(wsFile(dir), "garbage{{", "utf8");
-    const r = writeWorkspaces([entry("work", "/home/**/work/**")]);
+    const original = {
+      futureConfig: { retain: true },
+      workspaces: [entry("work", "/home/**/work/**")],
+    };
+    writeFileSync(wsFile(dir), JSON.stringify(original, null, 2) + "\n", "utf8");
+    const revision = readWorkspacesResult(dir).revision!;
+    const r = writeWorkspaces([entry("work", "/home/**/new-work/**")], {
+      expectedRevision: revision,
+    });
     expect(r.ok).toBe(true);
-    expect(loadWorkspaces()).toEqual([entry("work", "/home/**/work/**")]);
+    expect(JSON.parse(readFileSync(wsFile(dir), "utf8"))).toEqual({
+      futureConfig: { retain: true },
+      workspaces: [entry("work", "/home/**/new-work/**")],
+    });
+    const stale = writeWorkspaces([entry("personal", "/home/**/personal/**")], {
+      expectedRevision: revision,
+    });
+    expect(stale.ok).toBe(false);
+    expect(stale.error).toContain("reload before writing");
+    expect(loadWorkspaces()).toEqual([entry("work", "/home/**/new-work/**")]);
+  });
+});
+
+test("writeWorkspaces refuses to overwrite malformed existing config", () => {
+  withConfigDir((dir) => {
+    const before = "garbage{{";
+    writeFileSync(wsFile(dir), before, "utf8");
+    const r = writeWorkspaces([entry("work", "/home/**/work/**")]);
+    expect(r.ok).toBe(false);
+    expect(r.error).toContain("not valid JSON");
+    expect(readFileSync(wsFile(dir), "utf8")).toBe(before);
   });
 });
 

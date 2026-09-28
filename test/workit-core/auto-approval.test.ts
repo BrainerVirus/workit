@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import {
   TaskStore,
   WorkitCore,
@@ -60,7 +60,7 @@ test("auto-approval honors class lists and rejects unknown classes", () => {
             name: "t",
             glob: `${root}/**`,
             autoApprove: ["commit", "branch"],
-            vcs: { account: "someone" },
+            vcs: { provider: "github", account: "someone" },
           },
         ],
       }),
@@ -132,32 +132,149 @@ test("push identity check enforces the area account", () => {
   }
 });
 
-test("push to a protected branch fails closed at resolve", () => {
+test("push identity probe selects the action target's configured CLI host", () => {
+  const root = repo();
+  const config = mkdtempSync(join(tmpdir(), "workit-target-cli-config-"));
+  const tools = mkdtempSync(join(tmpdir(), "workit-target-cli-tools-"));
+  const log = join(tools, "host.txt");
+  const previous = {
+    PATH: process.env.PATH,
+    WORKFLOW_TOOLKIT_CONFIG: process.env.WORKFLOW_TOOLKIT_CONFIG,
+    WORKFLOW_VCS_CONFIG: process.env.WORKFLOW_VCS_CONFIG,
+  };
+  try {
+    git(root, ["remote", "add", "origin", "git@github-work:org/repo.git"]);
+    writeFileSync(
+      join(config, "vcs.json"),
+      JSON.stringify({ provider: "github", github: { host: "github.enterprise.test" } }),
+    );
+    writeFileSync(
+      join(config, "workspaces.json"),
+      JSON.stringify({
+        workspaces: [
+          { name: "target", glob: `${root}/**`, vcs: { provider: "github", account: "expected" } },
+        ],
+      }),
+    );
+    writeFileSync(
+      join(tools, "gh"),
+      `#!/bin/sh\nprintf '%s\\n' "$GH_HOST" > "${log}"\necho '{"login":"expected"}'\n`,
+      { mode: 0o755 },
+    );
+    writeFileSync(
+      join(tools, "gh.cmd"),
+      `@echo off\r\necho %GH_HOST%>"${log}"\r\necho {"login":"expected"}\r\n`,
+    );
+    process.env.WORKFLOW_TOOLKIT_CONFIG = config;
+    process.env.WORKFLOW_VCS_CONFIG = join(config, "vcs.json");
+    process.env.PATH = `${tools}${delimiter}${previous.PATH ?? ""}`;
+    expect(verifyPushIdentity(root, "github", "expected")).toEqual({ ok: true });
+    expect(readFileSync(log, "utf8").trim()).toBe("github.enterprise.test");
+  } finally {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    for (const dir of [root, config, tools]) rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("git.push checks the configured area account for a custom SSH host alias", () => {
+  const root = repo();
+  const configDir = mkdtempSync(join(tmpdir(), "workit-alias-config-"));
+  const tools = mkdtempSync(join(tmpdir(), "workit-alias-tools-"));
+  const previous = {
+    PATH: process.env.PATH,
+    WORKFLOW_TOOLKIT_CONFIG: process.env.WORKFLOW_TOOLKIT_CONFIG,
+    WORKFLOW_VCS_CONFIG: process.env.WORKFLOW_VCS_CONFIG,
+  };
+  try {
+    git(root, ["remote", "add", "origin", "git@github-work.com:org/repo.git"]);
+    writeFileSync(join(configDir, "vcs.json"), JSON.stringify({ provider: "github" }));
+    writeFileSync(
+      join(configDir, "workspaces.json"),
+      JSON.stringify({
+        workspaces: [
+          { name: "target", glob: `${root}/**`, vcs: { provider: "github", account: "expected" } },
+        ],
+      }),
+    );
+    writeFileSync(join(tools, "gh"), '#!/bin/sh\necho \'{"login":"wrong"}\'\n', { mode: 0o755 });
+    writeFileSync(join(tools, "gh.cmd"), '@echo off\r\necho {"login":"wrong"}\r\n');
+    process.env.WORKFLOW_TOOLKIT_CONFIG = configDir;
+    process.env.WORKFLOW_VCS_CONFIG = join(configDir, "vcs.json");
+    process.env.PATH = `${tools}${delimiter}${previous.PATH ?? ""}`;
+    expect(
+      resolveExternalActionRequest(root, { operation: "git.push", payload: { branch: "main" } }),
+    ).toMatchObject({ ok: false, code: "capability_unavailable" });
+  } finally {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    for (const dir of [root, configDir, tools]) rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("git.push refuses ambiguous origin push destinations", () => {
   const root = repo();
   try {
-    // main is protected by every preset: the push route refuses before any
-    // proposal, question, or auto-approval can bless it.
-    const resolved = resolveExternalActionRequest(root, {
-      operation: "git.push",
-      payload: { branch: "main" },
-    });
-    expect(resolved.ok).toBe(false);
-    if (!resolved.ok) expect(resolved.error).toMatch(/protected/);
+    git(root, ["remote", "add", "origin", "https://github.com/org/repo.git"]);
+    git(root, [
+      "remote",
+      "set-url",
+      "--add",
+      "--push",
+      "origin",
+      "https://github.com/org/repo.git",
+    ]);
+    git(root, [
+      "remote",
+      "set-url",
+      "--add",
+      "--push",
+      "origin",
+      "https://mirror.example/org/repo.git",
+    ]);
+    expect(
+      resolveExternalActionRequest(root, {
+        operation: "git.push",
+        payload: { branch: "main" },
+      }).ok,
+    ).toBe(false);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });
 
-test("PR from a protected branch fails closed at resolve", () => {
+test("push needs a real remote even when the branch is protected by a preset", () => {
   const root = repo();
   try {
-    // On protected main: refused before remote/provider checks run.
+    const resolved = resolveExternalActionRequest(root, {
+      operation: "git.push",
+      payload: { branch: "main" },
+    });
+    expect(resolved.ok).toBe(false);
+    if (!resolved.ok) expect(resolved.error).toMatch(/resolvable current branch/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("PR creation without a provider-bound remote still fails closed", () => {
+  const root = repo();
+  try {
+    // Decision ae03c569: creation is enabled, but a checkout with no remote
+    // (or a non-provider remote) can never bind the approved source SHA.
     const resolved = resolveExternalActionRequest(root, {
       operation: "hosting.pull_request",
       payload: { title: "x" },
     });
-    expect(resolved.ok).toBe(false);
-    if (!resolved.ok) expect(resolved.error).toMatch(/protected/);
+    expect(resolved).toMatchObject({
+      ok: false,
+      code: "capability_unavailable",
+      details: { capability: "hosting.pull_request", outcome: "not_started" },
+    });
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -178,7 +295,7 @@ test("hosting.merge resolves source and target with protections", () => {
   }
 });
 
-test("hosting.merge from a protected source fails closed", () => {
+test("hosting.merge needs a bound remote regardless of source branch", () => {
   const root = repo();
   try {
     const resolved = resolveExternalActionRequest(root, {
@@ -186,7 +303,7 @@ test("hosting.merge from a protected source fails closed", () => {
       payload: { target_branch: "main" },
     });
     expect(resolved.ok).toBe(false);
-    if (!resolved.ok) expect(resolved.error).toMatch(/protected/);
+    if (!resolved.ok) expect(resolved.error).toMatch(/configured remote provider/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -275,6 +392,65 @@ test("standing decisions record without a question and die with the rule", () =>
   } finally {
     if (previous === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG_DIR;
     else process.env.WORKFLOW_TOOLKIT_CONFIG_DIR = previous;
+    rmSync(value.root, { recursive: true, force: true });
+    rmSync(value.configDir, { recursive: true, force: true });
+  }
+});
+
+test("standing approval for an action-time target uses that area's rule", () => {
+  const value = standingSetup();
+  const other = mkdtempSync(join(tmpdir(), "workit-other-area-"));
+  const previous = process.env.WORKFLOW_TOOLKIT_CONFIG_DIR;
+  process.env.WORKFLOW_TOOLKIT_CONFIG_DIR = value.configDir;
+  try {
+    const descriptor = JSON.stringify({
+      operation: "git.commit",
+      payload: { cwd: other, message: "plain message" },
+    });
+    writeFileSync(
+      join(value.configDir, "workspaces.json"),
+      JSON.stringify({
+        workspaces: [
+          { name: "coordinator", glob: `${value.root}/**`, autoApprove: ["commit"] },
+          { name: "target", glob: `${other}/**`, autoApprove: ["push"] },
+        ],
+      }),
+    );
+    expect(standingAutoApplies(value.store, "workit_cli", value.actor, descriptor)).toBeNull();
+    writeFileSync(
+      join(value.configDir, "workspaces.json"),
+      JSON.stringify({
+        workspaces: [
+          { name: "coordinator", glob: `${value.root}/**`, autoApprove: ["commit"] },
+          { name: "target", glob: `${other}/**`, autoApprove: ["commit"] },
+        ],
+      }),
+    );
+    expect(
+      standingAutoApplies(value.store, "workit_cli", value.actor, descriptor)?.workspaceName,
+    ).toBe("target");
+    expect(
+      standingApprovalLive(
+        value.root,
+        { kind: "standing", workspace: "coordinator", class: "commit", configDigest: null },
+        "commit",
+        value.configDir,
+        descriptor,
+      ),
+    ).toBe(false);
+    expect(
+      standingApprovalLive(
+        value.root,
+        { kind: "standing", workspace: "target", class: "commit", configDigest: null },
+        "commit",
+        value.configDir,
+        descriptor,
+      ),
+    ).toBe(true);
+  } finally {
+    if (previous === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG_DIR;
+    else process.env.WORKFLOW_TOOLKIT_CONFIG_DIR = previous;
+    rmSync(other, { recursive: true, force: true });
     rmSync(value.root, { recursive: true, force: true });
     rmSync(value.configDir, { recursive: true, force: true });
   }

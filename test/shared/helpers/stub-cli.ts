@@ -12,14 +12,14 @@ export function stubCli(dir: string, name: string, logFile: string, url: string)
   if (process.platform !== "win32") {
     writeFileSync(
       path.join(dir, name),
-      `#!/bin/sh\nprintf '%s\\n' "$*" >> "${logFile}"\necho "${url}"\n`,
+      `#!/bin/sh\nif [ "$1" = api ] && [ "$2" = user ]; then echo '{"login":"stub","username":"stub"}'; exit 0; fi\nprintf '%s\\n' "$*" >> "${logFile}"\necho "${url}"\n`,
       { mode: 0o755 },
     );
     return;
   }
   writeFileSync(
     path.join(dir, `${name}.cmd`),
-    `@echo off\r\n>>"${logFile}" echo %*\r\necho ${url}\r\n`,
+    `@echo off\r\nif "%1 %2"=="api user" (\r\necho {"login":"stub","username":"stub"}\r\nexit /b 0\r\n)\r\n>>"${logFile}" echo %*\r\necho ${url}\r\n`,
   );
 }
 

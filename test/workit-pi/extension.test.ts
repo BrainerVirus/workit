@@ -677,6 +677,44 @@ test("Pi child registration omits coordinator-only optional actions", async () =
   }
 });
 
+test("Pi session context offers unfinished history once without writing task state", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "workit-pi-history-"));
+  const { store } = startedTask(root);
+  const beforeWorkspace = store.readWorkspace();
+  if (!beforeWorkspace.ok || !beforeWorkspace.data) throw new Error("workspace missing");
+  const collidingSessionTask = new WorkitCore(store, {
+    root,
+    caller: { host: "codex_cli", actor: "new-pi-session" },
+    capabilities: [],
+    constraints: [],
+    now: "2026-01-02T00:00:00Z",
+  }).task(
+    taskStartRequest({
+      expectedWorkspaceRevision: beforeWorkspace.data.revision,
+      intent: {
+        objective: "same handle from Codex",
+        scope: { description: "the checkout", paths: ["."], exclusions: [] },
+        authorityRefs: [],
+      },
+    }),
+  );
+  expect(collidingSessionTask.ok).toBe(true);
+  const beforeTasks = store.listTasks();
+  const finalWorkspace = store.readWorkspace();
+  const pi = makePi();
+  await extension(pi as any);
+  const ctx = context(root, false, true, "new-pi-session");
+  const start = pi.handlers.get("before_agent_start")!;
+  const first = await start({}, ctx);
+  const second = await start({}, ctx);
+  expect((first as any).message.content).toContain("<workit-history-offer>");
+  expect((first as any).message.content).toContain("test task");
+  expect((first as any).message.content).toContain("same handle from Codex");
+  expect(second).toBeUndefined();
+  expect(store.listTasks()).toEqual(beforeTasks);
+  expect(store.readWorkspace()).toEqual(finalWorkspace);
+});
+
 test("Pi documentation context remains available headlessly without mutation approval", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "workit-pi-docs-action-"));
   try {
@@ -855,25 +893,40 @@ test("Pi affected-doc context passes edits through and public evidence captures 
   }
 });
 
-test("Pi blocks recognized raw branch and PR creation routes", async () => {
+test("Pi blocks noncompliant branch targets and leaves other commands to the host", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "workit-pi-route-"));
+  const config = mkdtempSync(path.join(tmpdir(), "workit-pi-route-config-"));
+  const previousConfig = process.env.WORKFLOW_TOOLKIT_CONFIG;
   try {
+    process.env.WORKFLOW_TOOLKIT_CONFIG = config;
+    writeFileSync(
+      path.join(config, "config.json"),
+      JSON.stringify({
+        branchPolicy: { preset: "custom", allowed: ["feature/*"], protected: ["main"] },
+      }),
+    );
     startedTask(root);
     const pi = makePi();
     await extension(pi as any);
     const guard = pi.handlers.get("tool_call");
     expect(
       await guard?.(
-        { toolName: "bash", toolCallId: "branch", input: { command: "git switch -c feature/raw" } },
+        { toolName: "bash", toolCallId: "protected", input: { command: "git switch -c main" } },
         context(root),
       ),
-    ).toMatchObject({ block: true });
+    ).toMatchObject({ block: true, reason: expect.stringContaining("protected_ref") });
     expect(
       await guard?.(
         { toolName: "bash", toolCallId: "pr", input: { command: "glab mr create --title t" } },
         context(root),
       ),
-    ).toMatchObject({ block: true });
+    ).toBeUndefined();
+    expect(
+      await guard?.(
+        { toolName: "bash", toolCallId: "branch", input: { command: "git switch -c feature/raw" } },
+        context(root),
+      ),
+    ).toBeUndefined();
     expect(
       await guard?.(
         { toolName: "bash", toolCallId: "other", input: { command: "git status --short" } },
@@ -881,7 +934,10 @@ test("Pi blocks recognized raw branch and PR creation routes", async () => {
       ),
     ).toBeUndefined();
   } finally {
+    if (previousConfig === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+    else process.env.WORKFLOW_TOOLKIT_CONFIG = previousConfig;
     rmSync(root, { recursive: true, force: true });
+    rmSync(config, { recursive: true, force: true });
   }
 });
 
@@ -1305,19 +1361,22 @@ test("Pi dirty branch setup confirms the stash and executes in one approval", as
   }
 });
 
-test("Pi branch approval carries across base moves inside one confirmation", async () => {
+test("Pi branch approval carries across unrelated current-HEAD moves", async () => {
   const { root, remote } = branchRepo("carry");
   try {
     let confirms = 0;
     const actionContext = context(root, true);
+    const approvedBase = spawnSync("git", ["rev-parse", "refs/remotes/origin/main"], {
+      cwd: root,
+      encoding: "utf8",
+    }).stdout.trim();
     actionContext.ui = {
       confirm: async () => {
         confirms += 1;
-        spawnSync("git", ["checkout", "-q", "develop"], { cwd: root });
+        spawnSync("git", ["checkout", "-qb", "feature/current"], { cwd: root });
         writeFileSync(path.join(root, "later.txt"), "later\n");
         spawnSync("git", ["add", "later.txt"], { cwd: root });
         spawnSync("git", ["commit", "-qm", "later"], { cwd: root });
-        spawnSync("git", ["checkout", "-q", "main"], { cwd: root });
         return true;
       },
     };
@@ -1333,16 +1392,12 @@ test("Pi branch approval carries across base moves inside one confirmation", asy
     );
     expect(result.details).toMatchObject({ ok: true });
     expect(confirms).toBe(1);
-    const head = spawnSync("git", ["rev-parse", "develop"], {
-      cwd: root,
-      encoding: "utf8",
-    }).stdout.trim();
     expect(
       spawnSync("git", ["rev-parse", "feature/pi-carry"], {
         cwd: root,
         encoding: "utf8",
       }).stdout.trim(),
-    ).toBe(head);
+    ).toBe(approvedBase);
   } finally {
     rmSync(root, { recursive: true, force: true });
     rmSync(remote, { recursive: true, force: true });

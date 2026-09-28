@@ -3,6 +3,8 @@ import {
   chmodSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
+  readdirSync,
   rmSync,
   symlinkSync,
   unlinkSync,
@@ -51,6 +53,151 @@ test("a task starts active and inspection is read-only", () => {
   });
   expect(inspected.ok).toBe(true);
   expect(store.readTask(taskId)).toEqual(before);
+});
+
+test("task history search matches summaries and decisions, orders and limits read-only results", () => {
+  const root = mkdtempSync(join(tmpdir(), "workit-history-"));
+  const store = new TaskStore(root);
+  const makeCore = (now: string) => new WorkitCore(store, { ...context(root), now });
+  const start = (now: string, objective: string) => {
+    const workspace = store.readWorkspace();
+    return makeCore(now).task(
+      taskStartRequest({
+        expectedWorkspaceRevision: workspace.ok ? (workspace.data?.revision ?? null) : null,
+        intent: { objective, scope: scope(), authorityRefs: [ref()] },
+      }),
+    );
+  };
+  const older = start("2026-01-01T00:00:00Z", "History search older summary");
+  const newer = start("2026-01-02T00:00:00Z", "History search decision topic");
+  expect(older.ok && newer.ok).toBe(true);
+  if (!older.ok || !newer.ok) throw new Error("tasks missing");
+  const newerId = (newer.data as { id: string }).id;
+  const saved = store.readTask(newerId);
+  if (!saved.ok) throw new Error("task missing");
+  const decision = {
+    purpose: "design" as const,
+    binding: {
+      taskId: newerId,
+      workspaceId: saved.data.workspaceId,
+      scope: scope(),
+      presented: "Retain the violet history marker",
+      approvedContent: "Violet marker",
+      contentRefs: [],
+    },
+    digest: "a".repeat(64),
+    response: "stated" as const,
+    requirementIds: [],
+    revoked: null,
+    consumption: null,
+  };
+  const amended = store.mutateTask(newerId, saved.data.revision, (task) =>
+    success(task.revision, null, {
+      ...task,
+      decisions: [
+        ...task.decisions,
+        {
+          id: "00000000-0000-4000-8000-000000000001",
+          recordedAt: "2026-01-02T00:00:00Z",
+          provenance: {
+            kind: "host_observed",
+            host: "workit_cli",
+            session: null,
+            workerId: null,
+            receipts: [],
+          },
+          data: decision,
+        },
+      ],
+    }),
+  );
+  expect(amended.ok).toBe(true);
+
+  const taskDir = join(root, ".workit", "tasks");
+  const before = readdirSync(taskDir)
+    .sort()
+    .map((name) => [name, readFileSync(join(taskDir, name), "utf8")]);
+  const workspaceBefore = readFileSync(join(root, ".workit", "workspace.json"), "utf8");
+  const hit = makeCore("2026-01-03T00:00:00Z").task({
+    schemaVersion: 1,
+    action: "list",
+    status: "all",
+    query: "violet history",
+    limit: 1,
+  });
+  expect(hit.ok).toBe(true);
+  if (!hit.ok) throw new Error("search failed");
+  expect((hit.data as { id: string }[]).map(({ id }) => id)).toEqual([newerId]);
+  expect(hit.data).toMatchObject([{ source: { host: "workit_cli", kind: "host_observed" } }]);
+  const summaryHit = makeCore("2026-01-03T00:00:00Z").task({
+    schemaVersion: 1,
+    action: "list",
+    status: "all",
+    query: "older summary",
+  });
+  expect(summaryHit.ok && (summaryHit.data as { id: string }[]).length).toBe(1);
+  const miss = makeCore("2026-01-03T00:00:00Z").task({
+    schemaVersion: 1,
+    action: "list",
+    status: "all",
+    query: "no such history",
+  });
+  expect(miss).toMatchObject({ ok: true, data: [] });
+  const taskHit = makeCore("2026-01-03T00:00:00Z").task({
+    schemaVersion: 1,
+    action: "list",
+    status: "all",
+    query: newerId,
+  });
+  expect(taskHit.ok && (taskHit.data as { id: string }[]).map(({ id }) => id)).toEqual([newerId]);
+  const timeHit = makeCore("2026-01-03T00:00:00Z").task({
+    schemaVersion: 1,
+    action: "list",
+    status: "all",
+    query: "2026-01-02",
+  });
+  expect(timeHit.ok && (timeHit.data as { id: string }[]).map(({ id }) => id)).toEqual([newerId]);
+  const sourceHit = makeCore("2026-01-03T00:00:00Z").task({
+    schemaVersion: 1,
+    action: "list",
+    status: "all",
+    query: "workit_cli",
+  });
+  expect(sourceHit.ok && (sourceHit.data as { id: string }[]).length).toBe(2);
+  const project = store.readWorkspace();
+  if (!project.ok || !project.data) throw new Error("workspace missing");
+  const projectHit = makeCore("2026-01-03T00:00:00Z").task({
+    schemaVersion: 1,
+    action: "list",
+    status: "all",
+    query: project.data.id,
+  });
+  expect(projectHit.ok && (projectHit.data as { id: string }[]).length).toBe(2);
+  const ordered = makeCore("2026-01-03T00:00:00Z").task({
+    schemaVersion: 1,
+    action: "list",
+    status: "all",
+    query: "history",
+    limit: 1,
+  });
+  expect(ordered.ok && (ordered.data as { id: string }[]).map(({ id }) => id)).toEqual([newerId]);
+  const orderedAll = makeCore("2026-01-03T00:00:00Z").task({
+    schemaVersion: 1,
+    action: "list",
+    status: "all",
+    query: "history",
+    limit: 2,
+  });
+  expect(orderedAll.ok && (orderedAll.data as { id: string }[]).map(({ id }) => id)).toEqual([
+    newerId,
+    (older.data as { id: string }).id,
+  ]);
+  expect(
+    readdirSync(taskDir)
+      .sort()
+      .map((name) => [name, readFileSync(join(taskDir, name), "utf8")]),
+  ).toEqual(before);
+  expect(readFileSync(join(root, ".workit", "workspace.json"), "utf8")).toBe(workspaceBefore);
 });
 
 test("lifecycle pauses, resumes, and stops without reopening", () => {

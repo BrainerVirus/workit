@@ -1,28 +1,26 @@
 ---
-description: Workit adaptive task contract and truthful Cursor capability limits
+description: Workit coordination boundaries and truthful Cursor capabilities
 alwaysApply: true
 ---
 
-Workit is ambient: inspect the current task state before changing it and use
-the eight shared `workit_*` operations for task, policy, evidence, finding,
-decision, worker, writer, and continuity state.
+Workit is an optional coordinator, not a permission system. Ordinary questions,
+investigation, and reversible edits need no Workit task, assessment, writer,
+reviewer, or close call; follow Cursor's native permissions. Use one compact
+Workit record when handoff, dependent steps, concurrent actors, or important
+decisions make durable continuity useful. Do not duplicate a shared task per
+host or merge distinct intents because their titles look similar.
 
-Cursor's native hooks are evidence only where their documented input and
-blocking behavior support it. AskQuestion answers are policy-only
-(`agent_guided`); `sessionStart` and `preCompact` cannot block; `subagentStop`
-does not expose a stable subagent identity; arbitrary shell writes and Tab
-edits are unavailable. Never claim stronger assurance, and never invent a
-delegation token, receipt, or cross-process caller channel.
+Workit policy may narrow an action, but it never grants host access or overrides
+a host deny. Check the actual target checkout, configured account, branch and
+commit conventions, protected refs, concurrent writers, and expected remote
+state before a managed effect. Report unsupported shell coverage honestly.
 
-Preserve one active task, exact workspace/session bindings, reviewer and
-investigator read-only scope, Cursor's unavailable implementer delegation, and
-the no-worktree rule. Lead implementation stays inline only when policy permits.
-
-When starting a native Cursor subagent during an active Workit task, begin the
-task payload with exactly one bounded role marker: `[workit-role: implementer]`,
-`[workit-role: reviewer]`, or `[workit-role: investigator]`. Cursor's native
-`subagent_type` values describe execution kinds, not Workit authority roles;
-missing, repeated, or invalid markers are denied while a task is active.
-Cursor cannot safely attest MCP writer identity or release a child writer at
-`subagentStop`, so an implementer marker is denied; use reviewer/investigator
-delegation for read-only work only.
+Cursor hooks provide evidence only where their documented input and blocking
+behavior support it. AskQuestion answers are policy-only; `sessionStart` and
+`preCompact` cannot block; `subagentStop` has no stable child identity; arbitrary
+shell writes and Tab edits are unavailable. Never invent a receipt, writer
+identity, or cross-process caller channel. For native subagents in tracked
+Workit work, begin the task payload with exactly one assigned role marker:
+`[workit-role: implementer]`, `[workit-role: reviewer]`, or
+`[workit-role: investigator]`. Cursor cannot safely attest an implementer
+writer, so Workit assignments here remain read-only.

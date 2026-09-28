@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { isConfigObject, resolveConfigDir } from "./config";
+import { readWorkspacesResult } from "./workspaces";
 
 // WZ-06: typed setup-state reader distinguishing missing from malformed
 // configuration. Purely read-only — nothing here ever writes; Apply decision
@@ -41,6 +42,12 @@ export const classifySetupFile = (dir: string, name: string): FileState => {
     }
   } catch {
     return { file, status: "malformed", error: `${file} is not valid JSON` };
+  }
+  if (name === "workspaces.json") {
+    const workspaces = readWorkspacesResult(dir);
+    if (workspaces.status === "malformed" || workspaces.status === "invalid") {
+      return { file, status: "malformed", error: workspaces.error };
+    }
   }
   return { file, status: "valid" };
 };

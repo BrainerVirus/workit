@@ -318,9 +318,9 @@ test("packed CLI: custom credential paths and canary bytes survive preview/apply
     // truthful preview: the host registrations and the adapter copy are listed
     expect(preview.mutations.some((m) => m.type === "register-platform")).toBe(true);
     expect(preview.mutations.some((m) => m.type === "install-adapter")).toBe(true);
-    // custom credential files preserved, no default token paths planned
+    // YouTrack credential is active; legacy VCS bytes stay untouched.
     expect(preview.preserved).toContain(customYt);
-    expect(preview.preserved).toContain(customGl);
+    expect(preview.preserved).not.toContain(customGl);
     for (const def of ["youtrack.token", "gitlab.token"]) {
       expect(preview.mutations.some((m) => m.path === path.join(configDir, def))).toBe(false);
     }
@@ -339,11 +339,13 @@ test("packed CLI: custom credential paths and canary bytes survive preview/apply
     expect(readFileSync(customYt, "utf8")).toBe("canary-yt-packed\n");
     expect(readFileSync(customGl, "utf8")).toBe("canary-gl-packed\n");
 
-    // idempotent second run: tokens still Skipped, bytes still intact
+    // Idempotent rerun never touches either existing secret.
     const again = setup.applySetupPreview(preview, { home, configDir, cwd: install, env });
     expect(again.ok, JSON.stringify(again.entries)).toBe(true);
     for (const p of [customYt, customGl]) {
-      expect(again.entries.some((e) => e.file === p && e.status === "Skipped")).toBe(true);
+      expect(again.entries.some((e) => e.file === p && e.status === "Skipped")).toBe(
+        p === customYt,
+      );
       expect(readFileSync(p, "utf8")).toContain("canary");
     }
   } finally {

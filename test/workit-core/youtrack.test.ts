@@ -418,7 +418,7 @@ test("CA-03: youtrack config read resolves the token file inside the active conf
 });
 
 test("AR-07: non-object youtrack.json shapes fail closed with the exact path", () => {
-  const dir = mkdtempSync(path.join(os.tmpdir(), "wf-yt-shapes-"));
+  const dir = mkdtempSync(path.join(realpathSync(os.tmpdir()), "wf-yt-shapes-"));
   const workit = path.join(dir, "workit");
   mkdirSync(workit, { recursive: true });
   const ytFile = path.join(workit, "youtrack.json");
@@ -474,9 +474,7 @@ test("toolkit status reads YouTrack health from its Result data envelope", async
   const workit = path.join(xdg, "workit");
   mkdirSync(workit, { recursive: true });
   const youTrackToken = path.join(workit, "youtrack.token");
-  const gitLabToken = path.join(workit, "gitlab.token");
   writeFileSync(youTrackToken, "youtrack-token\n", { mode: 0o600 });
-  writeFileSync(gitLabToken, "gitlab-token\n", { mode: 0o600 });
   writeFileSync(
     path.join(workit, "youtrack.json"),
     JSON.stringify({ baseUrl: "https://youtrack.example.test", tokenFile: youTrackToken }),
@@ -485,10 +483,20 @@ test("toolkit status reads YouTrack health from its Result data envelope", async
     path.join(workit, "vcs.json"),
     JSON.stringify({
       provider: "gitlab",
-      gitlab: { apiUrl: "https://gitlab.example.test/api/v4", tokenFile: gitLabToken },
+      gitlab: { apiUrl: "https://gitlab.example.test/api/v4" },
     }),
   );
 
+  const tools = path.join(xdg, "tools");
+  mkdirSync(tools);
+  writeFileSync(path.join(tools, "glab"), '#!/bin/sh\necho \'{"username":"workit"}\'\n', {
+    mode: 0o755,
+  });
+  writeFileSync(path.join(tools, "glab.cmd"), '@echo off\r\necho {"username":"workit"}\r\n');
+  const originalPath = process.env.PATH;
+  const originalRoot = process.env.WORKFLOW_WORKSPACE_ROOT;
+  process.env.PATH = `${tools}${path.delimiter}${originalPath ?? ""}`;
+  process.env.WORKFLOW_WORKSPACE_ROOT = xdg;
   const originalFetch = globalThis.fetch;
   globalThis.fetch = (async (input: string | URL | Request) => {
     const url = String(input);
@@ -511,6 +519,10 @@ test("toolkit status reads YouTrack health from its Result data envelope", async
     });
   } finally {
     globalThis.fetch = originalFetch;
+    if (originalPath === undefined) delete process.env.PATH;
+    else process.env.PATH = originalPath;
+    if (originalRoot === undefined) delete process.env.WORKFLOW_WORKSPACE_ROOT;
+    else process.env.WORKFLOW_WORKSPACE_ROOT = originalRoot;
     rmSync(xdg, { recursive: true, force: true });
   }
 });

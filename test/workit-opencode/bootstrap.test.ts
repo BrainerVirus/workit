@@ -22,11 +22,12 @@ describe("session bootstrap", () => {
     expect(bootstrap).not.toContain("workflow-sdd-reminder");
   });
 
-  test("bootstrap tells lead to start and assess on empty task list", () => {
+  test("bootstrap keeps task tracking optional for explicit objectives", () => {
     const bootstrap = getWorkitBootstrap() ?? "";
-    expect(bootstrap.toLowerCase()).toContain("task.start");
-    expect(bootstrap.toLowerCase()).toContain("policy.assess");
-    expect(bootstrap.toLowerCase()).toMatch(/empty|no session/);
+    expect(bootstrap.toLowerCase()).toContain("ordinary investigation");
+    expect(bootstrap.toLowerCase()).toContain("explicit tracked objective");
+    expect(bootstrap.toLowerCase()).not.toContain("task.start");
+    expect(bootstrap.toLowerCase()).not.toContain("policy.assess");
   });
 
   test("messages.transform injects bootstrap once on first user turn", async () => {

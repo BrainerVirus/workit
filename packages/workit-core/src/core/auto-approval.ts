@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
+import path from "node:path";
 import { resolveWorkspaceFrom, type WorkspaceConfig } from "./workspaces";
 import { configDir } from "./config";
 import { verifyPushIdentity } from "./branch";
@@ -101,6 +102,18 @@ export const autoApproves = (root: string, cls: unknown, dir?: string): boolean 
 const isStandingReceipt = (value: unknown): value is StandingReceipt =>
   typeof value === "object" && value !== null && (value as { kind?: unknown }).kind === "standing";
 
+const targetOf = (root: string, descriptor: unknown): string | null => {
+  try {
+    const parsed = typeof descriptor === "string" ? JSON.parse(descriptor) : descriptor;
+    const cwd = (parsed as { payload?: { cwd?: unknown } })?.payload?.cwd;
+    if (cwd === undefined) return root;
+    if (typeof cwd !== "string" || !path.isAbsolute(cwd)) return null;
+    return realpathSync(cwd);
+  } catch {
+    return null;
+  }
+};
+
 /**
  * A standing receipt authorizes only while the referenced workspace rule
  * still covers the class. Removing the flag (or narrowing the list) fails
@@ -111,11 +124,14 @@ export const standingApprovalLive = (
   receipt: unknown,
   cls: unknown,
   dir?: string,
+  descriptor?: unknown,
 ): boolean => {
   if (!isStandingReceipt(receipt)) return false;
   if (typeof cls !== "string" || !(AUTO_CLASSES as readonly string[]).includes(cls)) return false;
   if (receipt.class !== cls) return false;
-  const resolved = resolveAutoApproval(root, dir);
+  const target = targetOf(root, descriptor);
+  if (!target) return false;
+  const resolved = resolveAutoApproval(target, dir);
   if (resolved.status !== "on") return false;
   if (resolved.workspace !== receipt.workspace) return false;
   return resolved.classes.includes(cls as AutoClass);
@@ -174,7 +190,9 @@ export const verifyStandingApproval = (
   const cls = operationAutoClass(operation);
   if (!cls || cls !== standing.class)
     return failure("permission_denied", "standing approval does not cover this operation");
-  const resolved = resolveAutoApproval(root);
+  const target = targetOf(root, binding.approvedContent);
+  if (!target) return failure("permission_denied", "standing action target is invalid");
+  const resolved = resolveAutoApproval(target);
   if (
     resolved.status !== "on" ||
     resolved.workspace !== standing.workspace ||
@@ -182,7 +200,7 @@ export const verifyStandingApproval = (
   )
     return failure("permission_denied", "standing auto-approval is not live for this operation");
   if (cls === "push") {
-    const workspace = resolveWorkspaceFrom(root, configDir());
+    const workspace = resolveWorkspaceFrom(target, configDir());
     const provider = workspace?.vcs?.provider;
     const account = resolved.account;
     if (!provider || !account)
@@ -190,7 +208,7 @@ export const verifyStandingApproval = (
         "permission_denied",
         "auto-push requires a workspace provider and area account",
       );
-    const identity = verifyPushIdentity(root, provider, account);
+    const identity = verifyPushIdentity(target, provider, account);
     if (!identity.ok) return failure("permission_denied", identity.error);
   }
   return success(null, null, {
@@ -198,7 +216,7 @@ export const verifyStandingApproval = (
     host: caller.host,
     session: { kind: "host", host: caller.host, handle: caller.actor },
     workerId: null,
-    receipts: [standingReceiptFor(root, standing.workspace, cls)],
+    receipts: [standingReceiptFor(target, standing.workspace, cls)],
   } as Provenance);
 };
 
@@ -229,14 +247,15 @@ export const standingAutoApplies = (
   actor: string,
   operation: string,
 ): StandingMatch | null => {
-  let descriptor: { operation?: unknown };
+  let descriptor: { operation?: unknown; payload?: unknown };
   try {
-    descriptor = JSON.parse(operation) as { operation?: unknown };
+    descriptor = JSON.parse(operation) as { operation?: unknown; payload?: unknown };
   } catch {
     return null;
   }
   const cls = operationAutoClass(descriptor.operation);
-  if (!cls || !autoApproves(store.root, cls)) return null;
+  const target = targetOf(store.root, descriptor);
+  if (!cls || !target || !autoApproves(target, cls)) return null;
   const listed = store.listTasks();
   const workspace = store.readWorkspace();
   if (!listed.ok || !workspace.ok || !workspace.data) return null;
@@ -244,7 +263,7 @@ export const standingAutoApplies = (
     currentWriterOwnsTask(task, workspace.data!, { host, actor }),
   );
   if (!task) return null;
-  const resolved = resolveAutoApproval(store.root);
+  const resolved = resolveAutoApproval(target);
   if (resolved.status !== "on") return null;
   return {
     task,
@@ -271,18 +290,19 @@ export const standingAutoBinding = (
   actor: string,
   operation: string,
 ): StandingAutoBinding | null => {
-  let descriptor: { operation?: unknown };
+  let descriptor: { operation?: unknown; payload?: unknown };
   try {
-    descriptor = JSON.parse(operation) as { operation?: unknown };
+    descriptor = JSON.parse(operation) as { operation?: unknown; payload?: unknown };
   } catch {
     return null;
   }
   const cls = operationAutoClass(descriptor.operation);
-  if (!cls || !autoApproves(store.root, cls)) return null;
+  const target = targetOf(store.root, descriptor);
+  if (!cls || !target || !autoApproves(target, cls)) return null;
   const applies = standingAutoApplies(store, host, actor, operation);
   if (!applies) return null;
   const { task } = applies;
-  const resolved = resolveAutoApproval(store.root);
+  const resolved = resolveAutoApproval(target);
   if (resolved.status !== "on") return null;
   const presented =
     `Workit decision: action — auto-approved ${String(descriptor.operation)} ` +

@@ -1,6 +1,15 @@
 import { realpathSync } from "node:fs";
 import { tool } from "@opencode-ai/plugin";
-import { fail, gitRevisionParts, ok, resolveInside, run } from "@brainervirus/workit-core/src/core";
+import {
+  externalActionDescriptor,
+  fail,
+  failure,
+  gitRevisionParts,
+  ok,
+  resolveInside,
+  run,
+  sha256,
+} from "@brainervirus/workit-core/src/core";
 import { changelogApply } from "@brainervirus/workit-core/src/core/changelog";
 import { gitContext } from "@brainervirus/workit-core/src/core/git";
 import {
@@ -17,7 +26,10 @@ import {
   releaseNotesContext,
 } from "@brainervirus/workit-core/src/core/repo-context";
 import { runVerifyProject } from "@brainervirus/workit-core/src/core/verify-project";
-import { prCreate } from "@brainervirus/workit-core/src/core/pr-create";
+import {
+  actionProposalQuestion,
+  resolveExternalActionRequest,
+} from "@brainervirus/workit-core/src/core/external-action-effects";
 import { initStatusData, toolkitStatusData } from "@brainervirus/workit-core/src/core/init";
 import {
   normalizeLegacyResult,
@@ -40,18 +52,6 @@ const defaultRuntime: RepoRuntime = {
   changelogContext: (root, range) => changelogContext(root, range),
   docsContext: (root, range) => docsRefreshContext(root, range),
   releaseContext: (root, range) => releaseNotesContext(root, range),
-  prCreate: (root, env) => {
-    // B6: merge the process env so WORKFLOW_YT_ISSUE/WORKFLOW_GH_ISSUE (and
-    // any other env-driven issue linking) set by the host still reaches
-    // prCreate alongside the 5 explicit WF_PR_* tool arguments.
-    const out = prCreate({ ...process.env, ...env }, root);
-    return {
-      exitCode: out.error || out.ok === false ? 1 : 0,
-      stdout: JSON.stringify(out),
-      stderr: "",
-      cwd: root,
-    };
-  },
   ...initApplyRuntime,
   initStatus: (root) => ({
     exitCode: 0,
@@ -327,7 +327,8 @@ export function createRepoTools(runtime: RepoRuntime = defaultRuntime) {
       },
     }),
     workit_pr_create: tool({
-      description: "Create a confirmed pull or merge request",
+      description:
+        "Resolve a hosted pull/merge request through the shared action contract and hand it to workit_external_action",
       args: {
         confirmed: tool.schema.boolean(),
         title: tool.schema.string(),
@@ -338,29 +339,40 @@ export function createRepoTools(runtime: RepoRuntime = defaultRuntime) {
       execute: async ({ confirmed, title, body, draft, target_branch }, context) => {
         const rejected = requireConfirmed(confirmed);
         if (rejected) return rejected;
-        const branch = runtime.git(context.directory, ["branch", "--show-current"]);
-        if (branch.exitCode !== 0)
-          return output(
-            fail(
-              branch.stderr.trim() || branch.stdout.trim() || "unable to read current branch",
-              diagnostics(branch),
-            ),
-          );
-        const name = branch.stdout.trim();
-        const pol = resolveBranchPolicyFor(context.directory);
-        if (!pol.allowed.some((r) => r.test(name)) || name.endsWith("/")) {
-          return output(fail(`PR creation requires an allowed branch (current: ${name})`));
-        }
+        // Decision ae03c569 re-enabled hosted PR/MR creation with pre/post
+        // provider SHA verification; the residual non-atomic source-SHA race is
+        // accepted. This legacy surface owns no native receipt, reservation, or
+        // writer lease, so it never contacts the provider itself: it resolves
+        // the canonical request through the shared resolver and delegates the
+        // effect to workit_external_action.
+        const resolved = resolveExternalActionRequest(context.directory, {
+          operation: "hosting.pull_request",
+          payload: {
+            title,
+            ...(body === undefined ? {} : { body }),
+            ...(draft === undefined ? {} : { draft }),
+            ...(target_branch === undefined ? {} : { target_branch }),
+          },
+        });
+        if (!resolved.ok) return output(resolved);
+        const proposal = actionProposalQuestion(
+          resolved.data.request,
+          resolved.data.descriptorPayload,
+        );
         return output(
-          legacyScriptResult(
-            runtime.prCreate(context.directory, {
-              WF_PR_TITLE: title,
-              WF_PR_BODY: body ?? "",
-              WF_PR_CONFIRMED: "true",
-              WF_PR_DRAFT: draft ? "true" : "false",
-              WF_PR_TARGET: target_branch ?? "",
-            }),
-          ),
+          failure("needs_input", proposal.presented, {
+            outcome: "not_started",
+            operation: "hosting.pull_request",
+            proposal: {
+              presented: proposal.presented,
+              approvedContent: proposal.approvedText,
+              descriptorDigest: sha256(
+                externalActionDescriptor("hosting.pull_request", resolved.data.descriptorPayload),
+              ),
+            },
+            guidance:
+              "Run workit_external_action with the same hosting.pull_request payload: it records the one-time action reservation behind the native approval question, then verifies the provider PR head before reporting success.",
+          }),
         );
       },
     }),

@@ -16,7 +16,8 @@ import { prCreate } from "@/packages/workit-core/src/core/pr-create";
 import { writeConfig } from "@/packages/workit-core/src/core/config";
 import { stubCli, stubPath } from "@/test/shared/helpers/stub-cli";
 
-const git = (cwd: string, args: string[]) => spawnSync("git", args, { cwd, encoding: "utf8" });
+const git = (cwd: string, args: string[]) =>
+  spawnSync("git", args, { cwd, encoding: "utf8", env: { ...process.env } });
 
 // Isolate from the developer's global config: tests assume gitflow semantics
 // (PRESETS.gitflow in src/core/config.ts), like CI with no global config.
@@ -331,17 +332,21 @@ test(
 );
 
 test(
-  "branch setup guards protected targets, missing targets, and dirty stash flow",
+  "branch setup validates new branch names and guards missing targets and dirty stash flow",
   async () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), "wf-branch-guards-"));
+    const remote = mkdtempSync(path.join(os.tmpdir(), "wf-branch-guards-remote-"));
     try {
       const run = (args: string[]) => spawnSync("git", args, { cwd: dir, encoding: "utf8" });
+      spawnSync("git", ["init", "-q", "--bare"], { cwd: remote });
       run(["init", "-q", "-b", "develop"]);
       run(["config", "user.name", "T"]);
       run(["config", "user.email", "t@t"]);
       writeFileSync(path.join(dir, "r.md"), "x");
       run(["add", "r.md"]);
       run(["commit", "-q", "-m", "base"]);
+      run(["remote", "add", "origin", remote]);
+      run(["push", "-q", "origin", "develop"]);
       run(["branch", "main"]);
       run(["checkout", "-q", "main"]);
 
@@ -357,14 +362,15 @@ test(
           ctx,
         )) as string,
       );
-      expect(protected_.error).toContain("protected branch");
+      expect(protected_.ok).toBe(true);
       const badKind = JSON.parse(
         (await tools.workit_branch_setup.execute(
           { confirmed: true, target_branch: "random/x" },
           ctx,
         )) as string,
       );
-      expect(badKind.error).toContain("not allowed by the branch policy");
+      expect(badKind.error).toContain("allowed_pattern");
+      expect(badKind.error).toContain('branch "random/x" violates user-default policy');
 
       run(["checkout", "-q", "-b", "feature/dirty"]);
       writeFileSync(path.join(dir, "r.md"), "uncommitted change");
@@ -377,6 +383,7 @@ test(
       expect(dirty.error).toContain("dirty working tree");
     } finally {
       rmSync(dir, { recursive: true, force: true });
+      rmSync(remote, { recursive: true, force: true });
     }
   },
   { timeout: 60_000 },
@@ -595,24 +602,24 @@ test(
           expect("error" in db).toBe(false);
           if (!("error" in db)) expect(db.base).toBe(c.target);
 
-          // surface 4 — OpenCode workit_pr_create
+          // surface 4 — OpenCode legacy hosted-create tool resolves through the
+          // shared contract; a local bare origin is not a provider-bound
+          // destination, so it fails closed without contacting a provider
+          // (decision ae03c569 enabled hosted creation with pre/post SHA
+          // verification).
           const raw = await createRepoTools().workit_pr_create.execute(
             { confirmed: true, title: "T" },
             { directory: root, worktree: root } as never,
           );
           const toolResult = JSON.parse(raw as string);
-          expect(toolResult.ok, `${c.preset}: ${JSON.stringify(toolResult)}`).toBe(true);
-          expect(toolResult.data.targetBranch).toBe(c.target);
+          expect(toolResult).toMatchObject({
+            ok: false,
+            code: "capability_unavailable",
+            details: { capability: "hosting.pull_request", outcome: "not_started" },
+          });
 
-          // surface 5 — Cursor workit_pr_create. This calls core prCreate
-          // directly rather than packages/workit-cursor/mcp/server.ts: the MCP
-          // adapter's workit_pr_create handler is a thin passthrough — it
-          // registers the tool, requires confirmed:true, then calls prCreate
-          // with the same 5 WF_PR_* keys (mcp/server.ts) — and exercising it
-          // needs a full stdio MCP client. The adapter wiring is asserted by
-          // source scans in test/workit-cursor/mcp-regressions.test.ts. B1's
-          // override validation lives in prCreate itself, so this surface is
-          // covered here exactly as the adapter would invoke it.
+          // The lower-level helper keeps branch-policy coverage; public
+          // Workit-hosted create entry points are guarded above.
           const p = prCreate({ WF_PR_CONFIRMED: "true", WF_PR_TITLE: "T" }, root);
           expect(p.ok, `${c.preset}: ${JSON.stringify(p)}`).toBe(true);
           expect(p.targetBranch).toBe(c.target);
@@ -874,7 +881,7 @@ test(
 );
 
 test(
-  "workspace preset typo falls back to the global preset without crashing",
+  "invalid branch policy is rejected by the runtime policy resolver",
   async () => {
     const { root, remote } = repoWithDevelop();
     try {
@@ -888,8 +895,9 @@ test(
           workspaces: [{ name: "w", glob: `${root}/**`, branchPolicy: { preset: "gitflo" } }],
         }),
       );
-      expect(() => resolveBranchPolicyFor(root)).not.toThrow();
-      expect(resolveBranchPolicyFor(root).preset).toBe("github-flow");
+      expect(() => resolveBranchPolicyFor(root)).toThrow(
+        /invalid branch policy configuration.*unsupported branch preset/,
+      );
     } finally {
       rmSync(root, { recursive: true, force: true });
       rmSync(remote, { recursive: true, force: true });
@@ -912,10 +920,32 @@ test(
     const cfgDir = mkdtempSync(path.join(os.tmpdir(), "wf-remote-cfg-"));
     const prevConfig = process.env.WORKFLOW_TOOLKIT_CONFIG;
     const prevPath = process.env.PATH;
+    const prevSshCommand = process.env.GIT_SSH_COMMAND;
+    const prevBareRemote = process.env.WORKIT_TEST_BARE_REMOTE;
+    const sshShim = path.join(stubBin, "ssh-push.cjs");
+    writeFileSync(
+      sshShim,
+      `const { spawn } = require("node:child_process");
+const service = process.argv.some((arg) => arg.includes("upload-pack")) ? "upload-pack" : "receive-pack";
+const server = spawn("git", [service, process.env.WORKIT_TEST_BARE_REMOTE], { stdio: "inherit" });
+server.on("error", () => process.exit(1));
+server.on("exit", (code) => process.exit(code ?? 1));
+`,
+    );
+    const shellPath = (value: string) => value.replaceAll("\\", "/");
+    process.env.GIT_SSH_COMMAND = `"${shellPath(process.execPath)}" "${shellPath(sshShim)}"`;
+    writeFileSync(
+      path.join(stubBin, "ssh"),
+      '#!/bin/sh\ncase "$2" in workit-github-host.invalid) echo "hostname github.com";; workit-gitlab-host.invalid) echo "hostname gitlab.com";; *) echo "hostname $2";; esac\n',
+      { mode: 0o755 },
+    );
+    writeFileSync(
+      path.join(stubBin, "ssh.cmd"),
+      '@echo off\r\nif "%2"=="workit-github-host.invalid" (echo hostname github.com & exit /b 0)\r\nif "%2"=="workit-gitlab-host.invalid" (echo hostname gitlab.com & exit /b 0)\r\necho hostname %2\r\n',
+    );
     const writeCfg = (provider: string) => {
-      // pushBranch: false — this test exercises provider reconciliation from the
-      // origin remote URL, not push behavior; the remote is a github.com/gitlab.com
-      // URL with no real endpoint, so no push may be attempted.
+      // pushBranch: false — each source branch is pre-published to a local bare
+      // remote, while PR/MR provider routing remains bound to the fetch origin.
       writeFileSync(
         path.join(cfgDir, "vcs.json"),
         JSON.stringify({ provider, defaultTargetBranch: "main", pr: { pushBranch: false } }),
@@ -925,7 +955,10 @@ test(
     };
     const repoWithRemote = (url: string) => {
       const root = mkdtempSync(path.join(os.tmpdir(), "wf-remote-repo-"));
-      const run = (args: string[]) => spawnSync("git", args, { cwd: root, encoding: "utf8" });
+      const remote = mkdtempSync(path.join(os.tmpdir(), "wf-remote-bare-"));
+      git(remote, ["init", "-q", "--bare"]);
+      const run = (args: string[]) =>
+        spawnSync("git", args, { cwd: root, encoding: "utf8", env: { ...process.env } });
       run(["init", "-q", "-b", "feature/t"]);
       run(["config", "user.name", "T"]);
       run(["config", "user.email", "t@t"]);
@@ -933,18 +966,27 @@ test(
       run(["add", "r.md"]);
       run(["commit", "-q", "-m", "base"]);
       run(["remote", "add", "origin", url]);
-      return root;
+      const host = new URL(url).hostname;
+      const sshHost =
+        host === "github.com" ? "workit-github-host.invalid" : "workit-gitlab-host.invalid";
+      run(["remote", "set-url", "--push", "origin", `git@${sshHost}:acme/workit.git`]);
+      process.env.WORKIT_TEST_BARE_REMOTE = remote;
+      const pushed = run(["push", "-q", "-u", "origin", "feature/t"]);
+      if (pushed.status !== 0) throw new Error(`fixture push failed: ${pushed.stderr}`);
+      return { root, remote };
     };
     try {
       process.env.WORKFLOW_TOOLKIT_CONFIG = cfgDir;
       process.env.PATH = stubPath(stubBin);
-      const ghRoot = repoWithRemote("https://github.com/acme/workit.git");
+      const { root: ghRoot, remote: ghRemote } = repoWithRemote(
+        "https://github.com/acme/workit.git",
+      );
       try {
         writeCfg("gitlab");
         expect(vcsConfig("resolve", ghRoot).provider).toBe("github");
         const loaded = vcsConfig("load", ghRoot);
         expect(loaded.provider).toBe("github");
-        expect(String(loaded.tokenPath)).toEndWith("github.token");
+        expect(loaded.tokenPath).toBeUndefined();
         const p = prCreate(
           { WF_PR_CONFIRMED: "true", WF_PR_TITLE: "T", WF_PR_BODY: "", WF_PR_DRAFT: "false" },
           ghRoot,
@@ -955,10 +997,13 @@ test(
         expect(readFileSync(ghLog, "utf8")).toContain("pr create");
       } finally {
         rmSync(ghRoot, { recursive: true, force: true });
+        rmSync(ghRemote, { recursive: true, force: true });
       }
       rmSync(glabLog, { force: true });
       rmSync(ghLog, { force: true });
-      const glRoot = repoWithRemote("https://gitlab.com/acme/workit.git");
+      const { root: glRoot, remote: glRemote } = repoWithRemote(
+        "https://gitlab.com/acme/workit.git",
+      );
       try {
         writeCfg("github");
         expect(vcsConfig("resolve", glRoot).provider).toBe("gitlab");
@@ -972,12 +1017,17 @@ test(
         expect(readFileSync(glabLog, "utf8")).toContain("mr create");
       } finally {
         rmSync(glRoot, { recursive: true, force: true });
+        rmSync(glRemote, { recursive: true, force: true });
       }
     } finally {
       if (prevConfig === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
       else process.env.WORKFLOW_TOOLKIT_CONFIG = prevConfig;
       if (prevPath === undefined) delete process.env.PATH;
       else process.env.PATH = prevPath;
+      if (prevSshCommand === undefined) delete process.env.GIT_SSH_COMMAND;
+      else process.env.GIT_SSH_COMMAND = prevSshCommand;
+      if (prevBareRemote === undefined) delete process.env.WORKIT_TEST_BARE_REMOTE;
+      else process.env.WORKIT_TEST_BARE_REMOTE = prevBareRemote;
       rmSync(stubBin, { recursive: true, force: true });
       rmSync(cfgDir, { recursive: true, force: true });
     }

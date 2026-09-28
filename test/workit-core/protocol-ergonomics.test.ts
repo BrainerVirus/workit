@@ -76,8 +76,8 @@ test("close accepts omitted decisionIds and writer reason is symmetric", () => {
       taskId: TASK_ID,
     }).ok,
   ).toBe(true);
-  expect(externalActionHelp).toContain("{branch:string}");
-  expect(externalActionHelp).toContain("github_issue");
+  expect(externalActionHelp).toContain("hosting.delete_branch {branch,cwd?}");
+  expect(externalActionHelp).toContain("cwd? for an action-time target repository");
 });
 
 test("ordinary paused tasks resume without imported-task authority refs", () => {

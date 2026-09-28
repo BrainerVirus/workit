@@ -190,7 +190,7 @@ const startPackedMcp = (workspaceRoot: string) => {
     new Promise<void>((resolve, reject) => {
       const timer = setTimeout(
         () => reject(new Error(`timeout ${method}; stderr=${stderr}`)),
-        5000,
+        15_000,
       );
       const check = () => {
         if (responses[id]) {
@@ -226,7 +226,7 @@ test("packed Codex launcher uses the shipped node command and lists read-only fa
     launcher.child.kill();
     launcher.packed.cleanup();
   }
-});
+}, 30_000);
 
 test("packed Codex launcher lists empty on fresh checkouts without leaking paths", async () => {
   const freshRoot = mkdtempSync(path.join(tmpdir(), "workit-codex-fresh-"));

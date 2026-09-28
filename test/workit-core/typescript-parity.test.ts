@@ -289,7 +289,7 @@ test.skipIf(process.platform === "win32")(
       expect(sections["VCS Config"] ?? "").toContain("provider: gitlab");
       // B4: concise shell shape — workspace:/provider: only, no raw summary JSON.
       expect(sections["VCS Config"] ?? "").not.toContain('"defaultTargetBranch"');
-      expect(sections["Merged PR Style"] ?? "").toContain("vcs not configured"); // no token -> no network
+      expect(sections["Merged PR Style"] ?? "").toContain("no origin remote");
     } finally {
       rmSync(repo, { recursive: true, force: true });
     }

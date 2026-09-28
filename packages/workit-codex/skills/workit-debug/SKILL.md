@@ -9,11 +9,6 @@ Debugging is investigation, not a fast symptom patch. Use this method when
 assessment selects `root-cause-investigation` or behavior is failing without an
 established root cause.
 
-## Before method work
-
-If there is no active or paused task, run shared `task.start` then `policy.assess`
-before relying on selected policy rules or other product mutations. Assessment
-selects requirements; do not wait for a rule that can only exist after assess.
 
 ## Method
 
@@ -29,28 +24,11 @@ selects requirements; do not wait for a rule that can only exist after assess.
    candidate, evidence, and findings after the change; investigate sibling paths
    and stale conclusions rather than assuming the first patch worked.
 
-Honor task status, scope, revisions, and native authority gates. Do not bypass
-them for an incident, create a second lifecycle, or claim a fix from a green
-command that did not exercise the affected behavior.
-
-## Red-capable gate
-
-Never hypothesize without a loop that goes red on this exact failure. Build
-the loop first, in this order: failing test → CLI command + fixture →
-request replay → trace. Tighten it until fast, sharp, deterministic, and
-agent-runnable. No loop → stop, list what was tried, ask for the
-environment or artifact; never theorize without it.
-
-Minimise: cut one element at a time until every remainder is load-bearing;
-the minimised case becomes the regression test. State hypotheses ranked and
-falsifiable (`If <X> then changing <Y> removes it`), probe one variable at
-a time, tag debug logs for grep cleanup. Write the regression at the seam
-where the real pattern occurs — no correct seam means the finding is the
-architecture, so flag it instead of patching around it.
-
-When the host reports writer capability unavailable, do not mutate or delegate
-mutation. Continue inline only if policy and lead authority permit it;
-otherwise report the capability gap.
+Respect the user's scope and native authority. For a deterministic failure, make
+one focused reproduction that exercises the affected boundary and add a
+regression check when practical. If no direct reproduction exists, gather the
+available evidence and state what remains uncertain instead of inventing a red
+loop or blocking unrelated work.
 
 ## Common mistakes
 

@@ -19,7 +19,10 @@ import {
   branchSetupIntent,
   priorResolvedDrift,
 } from "@/packages/workit-core/src/core/external-action";
-import { resolveExternalActionRequest } from "@/packages/workit-core/src/core/external-action-effects";
+import {
+  actionProposalQuestion,
+  resolveExternalActionRequest,
+} from "@/packages/workit-core/src/core/external-action-effects";
 import { assessment, taskStartRequest } from "./task-fixtures";
 
 const provenance = (actor: string): Provenance => ({
@@ -39,7 +42,7 @@ const verifier = (actor: string): NativeAuthorityVerifier => ({
 const setup = (actor = "cli-intent") => {
   const root = mkdtempSync(join(tmpdir(), "workit-branch-intent-"));
   for (const args of [
-    ["init", "-q"],
+    ["init", "-q", "-b", "develop"],
     ["config", "user.email", "test@example.invalid"],
     ["config", "user.name", "Workit Test"],
   ])
@@ -71,6 +74,7 @@ const resolveBranch = (root: string, target: string) => {
   return {
     descriptor: externalActionDescriptor("git.branch_setup", resolved.data.descriptorPayload),
     resolved: resolved.data.descriptorPayload as { resolved: Record<string, unknown> },
+    request: resolved.data.request,
   };
 };
 
@@ -107,10 +111,16 @@ const recordApproval = (
   if (!decision.ok) throw new Error(decision.error);
 };
 
-test("branch intent carries across unrelated HEAD moves", () => {
+test("branch intent requires fresh approval when its local base moves", () => {
   const { root, store, core } = setup();
   try {
     const first = resolveBranch(root, "feature/intent");
+    const approvedIntent = branchSetupIntent(first.descriptor);
+    if (!approvedIntent) throw new Error("branch intent missing");
+    expect(approvedIntent.localBase).toBeTruthy();
+    expect(
+      actionProposalQuestion(first.request, JSON.parse(first.descriptor).payload).presented,
+    ).toContain(approvedIntent.localBase!.slice(0, 8));
     const listed = store.listTasks();
     if (!listed.ok) throw new Error("tasks missing");
     recordApproval(core, store, listed.data[0].id, first.descriptor);
@@ -119,15 +129,24 @@ test("branch intent carries across unrelated HEAD moves", () => {
     spawnSync("git", ["commit", "-qm", "later"], { cwd: root });
     const second = resolveBranch(root, "feature/intent");
     expect(second.descriptor).not.toBe(first.descriptor);
-    expect(branchSetupIntent(second.descriptor)).toMatchObject(
-      branchSetupIntent(first.descriptor) ?? {},
-    );
     expect(approvedExternalAction(store, "workit_cli", "cli-intent", second.descriptor).ok).toBe(
-      true,
+      false,
     );
     expect(approvedBranchSetupIntent(store, "workit_cli", "cli-intent", second.descriptor).ok).toBe(
-      true,
+      false,
     );
+    const payload = (JSON.parse(second.descriptor) as { payload: Record<string, unknown> }).payload;
+    delete payload.resolved;
+    expect(
+      priorResolvedDrift(
+        store,
+        "workit_cli",
+        "cli-intent",
+        "git.branch_setup",
+        payload,
+        second.resolved.resolved,
+      ),
+    ).toMatchObject({ ok: false, error: expect.stringContaining("local_base") });
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

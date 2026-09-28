@@ -512,6 +512,21 @@ const portableTask = (task: TaskRecord): TaskRecord => {
   };
   for (const entry of clone.assessments)
     demote(entry.data.facts, entry.data.signals, entry.data.consequences);
+  const sourceDecisions = new Map(task.decisions.map((entry) => [entry.id, entry]));
+  for (const entry of clone.decisions) {
+    const consumption = sourceDecisions.get(entry.id)?.data.consumption;
+    if (!consumption) continue;
+    entry.data.consumption = {
+      ...consumption,
+      state: consumption.state === "reserved" ? "uncertain" : consumption.state,
+      actionRef: { kind: "record", collection: "decisions", id: entry.id },
+      ...(consumption.historicalActionId
+        ? { historicalActionId: consumption.historicalActionId }
+        : consumption.actionRef.kind === "host"
+          ? { historicalActionId: consumption.actionRef.handle }
+          : {}),
+    };
+  }
   // Candidate metadata can contain environment-derived paths and digests. The destination
   // must recapture its own candidate instead of receiving source checkout material.
   clone.candidates = [];
@@ -649,7 +664,13 @@ const importedTask = (
             taskId: "",
             workspaceId: destinationWorkspaceId,
           },
-          consumption: null,
+          consumption: data.consumption
+            ? {
+                ...data.consumption,
+                state: data.consumption.state === "reserved" ? "uncertain" : data.consumption.state,
+                actionRef: { kind: "record", collection: "decisions", id: entry.id },
+              }
+            : null,
         },
       };
     }),
@@ -873,7 +894,7 @@ export class WorkitCore {
     if (!parsed.ok) return parsed as Result<never>;
     const input = parsed.data as any;
     if ((this.context.workerId ?? null) !== null) {
-      if (input.action !== "inspect")
+      if (input.action !== "inspect" && input.action !== "list")
         return failure("permission_denied", "helpers cannot control task lifecycle or scope");
     }
     switch (input.action) {
@@ -897,6 +918,7 @@ export class WorkitCore {
         if (!listed.ok) return listed as Result<never>;
         const status = input.status ?? "open";
         const limit = input.limit ?? 20;
+        const query = input.query?.toLowerCase().split(/\s+/);
         const selected = listed.data
           .filter((task) =>
             status === "all"
@@ -904,6 +926,25 @@ export class WorkitCore {
               : status === "closed"
                 ? task.status === "closed"
                 : task.status !== "closed",
+          )
+          .filter(
+            (task) =>
+              !query ||
+              query.every((term: string) =>
+                JSON.stringify({
+                  id: task.id,
+                  workspaceId: task.workspaceId,
+                  origin: task.origin,
+                  createdAt: task.createdAt,
+                  updatedAt: task.updatedAt,
+                  source: task.intent.provenance,
+                  objective: task.intent.data.objective,
+                  progress: task.progress,
+                  decisions: task.decisions.map(({ data }) => data),
+                })
+                  .toLowerCase()
+                  .includes(term),
+              ),
           )
           .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
           .slice(0, limit);
@@ -923,6 +964,10 @@ export class WorkitCore {
           closure: task.closure,
           progress: task.progress,
           writer: task.status === "closed" ? null : workspace.data!.writer,
+          source: {
+            host: task.intent.provenance.host,
+            kind: task.intent.provenance.kind,
+          },
         }));
         return success(null, null, tasks);
       }

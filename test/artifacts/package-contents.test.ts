@@ -32,16 +32,45 @@ const byName = (packs: ReturnType<typeof packWorkspacePackages>, name: string) =
   packs.find((p) => p.packageName === name)!;
 
 // Files that are allowed to stay in a tarball even though they are `.ts`:
-// vendored upstream skill examples are documented test/vendor data, not runtime
-// entries of this project.
+//
+// - vendored upstream skill examples are documented test/vendor data, not
+//   runtime entries of this project;
+// - exactly one package-root `index.ts` (matched by full path equality, never by
+//   basename or extension) is permitted as OpenCode's V2 directory-loader shim.
+//   It is not a second runtime build: it only re-exports the single packed
+//   bundle via `export { default } from "./dist/plugin.js"` so OpenCode's
+//   directory entry resolves. Any other `.ts` path — a nested `index.ts`,
+//   `dist/index.ts`, `src/index.ts`, anything else — is still rejected.
+const ROOT_LOADER_SHIM = "index.ts";
 const isAllowedTs = (entry: string) =>
-  (entry.startsWith("assets/vendor/") || entry.startsWith("vendor/")) && entry.endsWith(".ts");
+  entry === ROOT_LOADER_SHIM ||
+  ((entry.startsWith("assets/vendor/") || entry.startsWith("vendor/")) && entry.endsWith(".ts"));
 
 const tsEntries = (tarball: string) =>
   listTarball(tarball).filter((e) => e.endsWith(".ts") && !isAllowedTs(e));
 
 const distJs = (tarball: string, prefix = "dist/") =>
   listTarball(tarball).filter((e) => e.startsWith(prefix) && e.endsWith(".js"));
+
+// Guard the `tsEntries` gate above: the root loader shim is the ONLY non-vendor
+// exemption. A nested `index.ts` (or any other TS path) must stay rejected, so
+// a future source tree renamed into the allowlist shape still fails the gate.
+test("runtime TS allowlist permits vendor examples and exactly the root loader shim", () => {
+  expect(isAllowedTs(ROOT_LOADER_SHIM)).toBe(true);
+  expect(isAllowedTs("assets/vendor/example.ts")).toBe(true);
+  expect(isAllowedTs("vendor/example.ts")).toBe(true);
+  for (const rejected of [
+    "dist/index.ts",
+    "src/index.ts",
+    "v2/index.ts",
+    "packages/index.ts",
+    "assets/skills/index.ts",
+    "assets/index.ts",
+    "index.d.ts",
+  ]) {
+    expect(isAllowedTs(rejected), rejected).toBe(false);
+  }
+});
 
 test("opencode tarball ships one bundled dist entry plus fourteen method skills (RR-02/PT-06/PT-07)", () => {
   const packs = packWorkspacePackages();
@@ -69,6 +98,9 @@ test("opencode tarball ships one bundled dist entry plus fourteen method skills 
   expect(entries.some((e) => e.startsWith("assets/templates/"))).toBe(false);
   expect(entries.some((e) => e.startsWith("assets/vendor/"))).toBe(false);
   expect(tsEntries(tarball)).toEqual([]);
+  // The one allowed root `index.ts` is the V2 directory-loader shim, not a
+  // second bundle: it re-exports the single packed dist entry asserted above.
+  expect(readTarballFile(tarball, ROOT_LOADER_SHIM)).toContain('"./dist/plugin.js"');
 
   // CA-07: the SDK helper/schema runtime is bundled, so the packed entry has no
   // unresolved `@opencode-ai/plugin` import to resolve at load time.
@@ -90,6 +122,7 @@ test("cursor tarball ships dist MCP + hook entries, manifests, assets and npm bi
     "mcp.json",
     "assets/logo.svg",
     ".cursor-plugin/plugin.json",
+    "rules/workit-contract.mdc",
     "hooks/hooks-cursor.json",
   ]) {
     expect(entries, required).toContain(required);
@@ -100,6 +133,9 @@ test("cursor tarball ships dist MCP + hook entries, manifests, assets and npm bi
   expect(entries).not.toContain("hooks/session-start");
   expect(entries.some((e) => e.startsWith("assets/templates/"))).toBe(true);
   expect(tsEntries(tarball)).toEqual([]);
+  const cursorRule = readTarballFile(tarball, "rules/workit-contract.mdc");
+  expect(cursorRule).toContain("Ordinary questions,");
+  expect(cursorRule).not.toContain("one active task");
 
   // CA-16: the packed package.json exposes both npm executables at the exact
   // built entry paths (no wrapper files, no source entries).

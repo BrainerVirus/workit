@@ -25,7 +25,7 @@ Local dev variant (absolute path to this repo):
 }
 ```
 
-Requirements: OpenCode 1.18.30+ (V1) or 2.0.3 (V2), Node ≥ 24. The published
+Requirements: OpenCode 1.18.30+ (V1) or 2.0.18 (V2), Node ≥ 24. The published
 plugin is a self-contained Node bundle; its default export is a dual entry
 (`server()` for V1, `setup()` for V2), so the same pin works on both hosts.
 
@@ -49,8 +49,10 @@ The build bundles the `@opencode-ai/plugin` (V1) and `@opencode/plugin` (V2) SDK
 The V2 entry registers the same ten tools with `codemode: false`, the fourteen
 skills and `wk-*` commands (user collisions preserved), question receipts for
 `decision.record`, direct-child subagent lineage with durable dispatch claims,
-shell route and worktree denial through `permission.evaluate`, and the
-bootstrap/task/worker context plus compaction injection.
+and the bootstrap/task/worker context plus compaction injection. Its shell
+permission hook adds branch-name policy denials for direct, unquoted literal
+branch-creation forms only. It leaves compliant branches, PR and worktree
+commands, and unsupported shell syntax to OpenCode's native permission rules.
 
 ## Package scripts
 
