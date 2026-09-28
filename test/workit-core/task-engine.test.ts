@@ -142,6 +142,36 @@ test("task history search matches summaries and decisions, orders and limits rea
     query: "no such history",
   });
   expect(miss).toMatchObject({ ok: true, data: [] });
+  const taskHit = makeCore("2026-01-03T00:00:00Z").task({
+    schemaVersion: 1,
+    action: "list",
+    status: "all",
+    query: newerId,
+  });
+  expect(taskHit.ok && (taskHit.data as { id: string }[]).map(({ id }) => id)).toEqual([newerId]);
+  const timeHit = makeCore("2026-01-03T00:00:00Z").task({
+    schemaVersion: 1,
+    action: "list",
+    status: "all",
+    query: "2026-01-02",
+  });
+  expect(timeHit.ok && (timeHit.data as { id: string }[]).map(({ id }) => id)).toEqual([newerId]);
+  const sourceHit = makeCore("2026-01-03T00:00:00Z").task({
+    schemaVersion: 1,
+    action: "list",
+    status: "all",
+    query: "workit_cli",
+  });
+  expect(sourceHit.ok && (sourceHit.data as { id: string }[]).length).toBe(2);
+  const project = store.readWorkspace();
+  if (!project.ok || !project.data) throw new Error("workspace missing");
+  const projectHit = makeCore("2026-01-03T00:00:00Z").task({
+    schemaVersion: 1,
+    action: "list",
+    status: "all",
+    query: project.data.id,
+  });
+  expect(projectHit.ok && (projectHit.data as { id: string }[]).length).toBe(2);
   const ordered = makeCore("2026-01-03T00:00:00Z").task({
     schemaVersion: 1,
     action: "list",

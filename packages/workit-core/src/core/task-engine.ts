@@ -932,6 +932,12 @@ export class WorkitCore {
               !query ||
               query.every((term: string) =>
                 JSON.stringify({
+                  id: task.id,
+                  workspaceId: task.workspaceId,
+                  origin: task.origin,
+                  createdAt: task.createdAt,
+                  updatedAt: task.updatedAt,
+                  source: task.intent.provenance,
                   objective: task.intent.data.objective,
                   progress: task.progress,
                   decisions: task.decisions.map(({ data }) => data),
