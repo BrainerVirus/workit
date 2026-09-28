@@ -161,7 +161,7 @@ test("initStatus reports workspace ambiguity and path without choosing by file o
     dir,
     JSON.stringify({
       workspaces: [
-        { name: "personal", glob: "/home/*/Documents/projects/personal/**" },
+        { name: "personal", glob: path.join(process.cwd(), "**") },
         { name: "catchall", glob: "**" },
       ],
     }),
