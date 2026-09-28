@@ -1,0 +1,28 @@
+---
+description: Workit adaptive task contract and truthful Cursor capability limits
+alwaysApply: true
+---
+
+Workit is ambient: inspect the current task state before changing it and use
+the eight shared `workit_*` operations for task, policy, evidence, finding,
+decision, worker, writer, and continuity state.
+
+Cursor's native hooks are evidence only where their documented input and
+blocking behavior support it. AskQuestion answers are policy-only
+(`agent_guided`); `sessionStart` and `preCompact` cannot block; `subagentStop`
+does not expose a stable subagent identity; arbitrary shell writes and Tab
+edits are unavailable. Never claim stronger assurance, and never invent a
+delegation token, receipt, or cross-process caller channel.
+
+Preserve one active task, exact workspace/session bindings, reviewer and
+investigator read-only scope, Cursor's unavailable implementer delegation, and
+the no-worktree rule. Lead implementation stays inline only when policy permits.
+
+When starting a native Cursor subagent during an active Workit task, begin the
+task payload with exactly one bounded role marker: `[workit-role: implementer]`,
+`[workit-role: reviewer]`, or `[workit-role: investigator]`. Cursor's native
+`subagent_type` values describe execution kinds, not Workit authority roles;
+missing, repeated, or invalid markers are denied while a task is active.
+Cursor cannot safely attest MCP writer identity or release a child writer at
+`subagentStop`, so an implementer marker is denied; use reviewer/investigator
+delegation for read-only work only.

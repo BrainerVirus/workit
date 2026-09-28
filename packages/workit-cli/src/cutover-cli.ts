@@ -1,6 +1,7 @@
 import { createInterface } from "node:readline/promises";
 import {
   applyCutover,
+  resumeCutover,
   applyRollback,
   previewCutover,
   previewRollback,
@@ -182,6 +183,26 @@ export async function runCutoverCommand(
     return result.data.partial ? 1 : 0;
   }
 
+  if (action === "resume") {
+    const backupId = argv.slice(1).find((token) => !token.startsWith("--"));
+    if (!backupId) return usage(err, "resume requires a cutover backup id");
+    if (!(await requireConfirm(argv.slice(1), deps, "resume"))) return 2;
+    const result = resumeCutover(backupId, cutoverPaths(deps));
+    if (!result.ok) {
+      writeJSON(err, result);
+      return 1;
+    }
+    if (argv.includes("--json")) writeJSON(outStream(deps), result.data);
+    else {
+      write(
+        outStream(deps),
+        `cutover resumed backupId=${result.data.backupId} partial=${result.data.partial}`,
+      );
+      for (const note of result.data.notes) write(outStream(deps), note);
+    }
+    return result.data.partial ? 1 : 0;
+  }
+
   if (action === "rollback") {
     // Flags ride anywhere: the backup id is the first positional after the
     // subaction, so `rollback apply --json <id>` and `rollback apply <id>
@@ -199,11 +220,17 @@ export async function runCutoverCommand(
         write(outStream(deps), `rollback preview ${backupId}`);
         write(outStream(deps), `restorable: ${preview.restorable.length}`);
         write(outStream(deps), `conflicts: ${preview.conflicts.length}`);
+        write(outStream(deps), `issues: ${preview.issues.length}`);
+        for (const issue of preview.issues) write(outStream(deps), issue);
       }
-      return preview.conflicts.length > 0 ? 1 : 0;
+      return preview.conflicts.length > 0 || preview.issues.length > 0 ? 1 : 0;
     }
     if (subaction === "apply") {
       const preview = previewRollback(backupId, cutoverPaths(deps));
+      if (preview.issues.length > 0) {
+        write(err, `rollback blocked — ${preview.issues.join("; ")}`);
+        return 1;
+      }
       if (preview.conflicts.length > 0) {
         write(err, "rollback blocked — managed files changed after cutover");
         return 1;

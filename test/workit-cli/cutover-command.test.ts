@@ -99,6 +99,24 @@ test("cutover apply --json prints the machine-readable plan", async () => {
   }
 });
 
+test("cutover resume requires explicit confirmation in non-interactive mode", async () => {
+  const home = tmp("wk-cut-cmd-");
+  try {
+    const io = capture();
+    const code = await runCutoverCommand(["resume", "missing-id"], {
+      env: cutoverEnv(home),
+      cwd: home,
+      out: io.out,
+      err: io.err,
+      stdinIsTTY: () => false,
+    });
+    expect(code).toBe(2);
+    expect(io.read().stderr).toContain("--confirm required for cutover resume");
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test("rollback parses flags in any position around the backup id", async () => {
   const home = tmp("wk-cut-cmd-");
   try {
