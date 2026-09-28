@@ -332,7 +332,7 @@ export const resolveBranchPolicy = (
   };
 };
 
-const COMMIT_PRESETS: readonly string[] = [
+export const COMMIT_PRESETS: readonly string[] = [
   "conventional",
   "gitmoji",
   "ticket-prefix",

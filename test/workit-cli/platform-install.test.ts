@@ -16,7 +16,6 @@ import { fileURLToPath } from "node:url";
 import {
   applySetupPreview,
   buildSetupPreview,
-  TOKEN_PLACEHOLDER,
   type SetupPreviewInput,
   type SetupResult,
 } from "@/packages/workit-core/src/core/setup";
@@ -457,10 +456,10 @@ test("file-vs-ignore: existing files merged/skipped, new files created (WZ-05/CA
     expect(statusOf(result, ytToken)).toBe("Skipped");
     expect(readFileSync(ytToken, "utf8")).toBe("perm_supersecret\n");
 
-    // absent gitlab token created as a placeholder
+    // VCS authentication uses glab; no new provider token file is created.
     const glToken = path.join(dir, "gitlab.token");
-    expect(statusOf(result, glToken)).toBe("Installed");
-    expect(readFileSync(glToken, "utf8").trim()).toBe(TOKEN_PLACEHOLDER);
+    expect(statusOf(result, glToken)).toBeUndefined();
+    expect(existsSync(glToken)).toBe(false);
   } finally {
     clean(home);
     clean(dir);
@@ -778,13 +777,15 @@ test("custom credential paths and canary bytes survive Apply (AR-10)", () => {
     expect(vcs.gitlab.tokenFile).toBe(customGl);
     expect(vcs.github.tokenFile).toBe(customGh);
 
-    // canary bytes byte-for-byte intact, reported preserved
+    // canary bytes stay intact; only the YouTrack token is an active credential.
     for (const [p, bytes] of [
       [customYt, "canary-yt-123\n"],
       [customGl, "canary-gl-123\n"],
     ] as const) {
       expect(readFileSync(p, "utf8")).toBe(bytes);
-      expect(result.entries.some((e) => e.file === p && e.status === "Skipped")).toBe(true);
+      expect(result.entries.some((e) => e.file === p && e.status === "Skipped")).toBe(
+        p === customYt,
+      );
     }
     // no default token files were created next to the configs
     for (const def of [path.join(dir, "youtrack.token"), path.join(dir, "gitlab.token")]) {

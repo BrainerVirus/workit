@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { isDeepStrictEqual } from "node:util";
 import path from "node:path";
 import {
@@ -10,7 +10,8 @@ import {
 } from "@brainervirus/workit-core/src/core/config.ts";
 import {
   loadWorkspacesFrom,
-  validateWorkspaceGlob,
+  readWorkspacesResult,
+  validateWorkspacesDocument,
   workspacesPath,
   type WorkspaceConfig,
 } from "@brainervirus/workit-core/src/core/workspaces.ts";
@@ -240,44 +241,12 @@ export function scaffoldYouTrack(
 
 export type VcsScaffold = ScaffoldOutcome & {
   vcsJson: string;
-  tokenPaths: string[];
-  activeTokenPath: string;
-  tokenCreateUrl: string;
   provider: VcsProvider;
 };
 
-const TOKEN_DEFAULTS = {
-  name: "workit",
-  description: "OpenCode workit — /wk-pr and glab/gh",
-  gitlabScopes: ["api"],
-  githubPermissions: { pull_requests: "write", contents: "write", metadata: "read" },
-  githubClassicScopes: ["repo"],
-};
-
-// ponytail: mirrors scripts/init/apply.sh write_vcs_json + write_vcs_token_placeholder +
-// scripts/vcs/token-create-urls.sh in TS — same no-bash rationale as scaffoldYouTrack
 export function scaffoldVcs(dir: string, provider: VcsProvider): VcsScaffold {
   mkdirSync(dir, { recursive: true });
   const vcsJson = path.join(dir, "vcs.json");
-  const gitlabToken = path.join(dir, "gitlab.token");
-  const githubToken = path.join(dir, "github.token");
-
-  const gitlabUrl = `https://gitlab.com/-/user_settings/personal_access_tokens?${new URLSearchParams(
-    {
-      name: TOKEN_DEFAULTS.name,
-      description: TOKEN_DEFAULTS.description,
-      scopes: "api",
-    },
-  )}`;
-  const githubUrl = `https://github.com/settings/personal-access-tokens/new?${new URLSearchParams({
-    name: TOKEN_DEFAULTS.name,
-    description: TOKEN_DEFAULTS.description,
-    pull_requests: "write",
-    contents: "write",
-    metadata: "read",
-  })}`;
-  const tokenCreateUrl = provider === "gitlab" ? gitlabUrl : githubUrl;
-  const activeTokenPath = provider === "gitlab" ? gitlabToken : githubToken;
 
   const loaded = loadConfig(vcsJson);
   if (
@@ -290,34 +259,24 @@ export function scaffoldVcs(dir: string, provider: VcsProvider): VcsScaffold {
     return {
       ...malformedBlock(vcsJson, `vcs.json is malformed — refusing to overwrite it: ${vcsJson}`),
       vcsJson,
-      tokenPaths: [gitlabToken, githubToken],
-      activeTokenPath,
-      tokenCreateUrl,
       provider,
     };
   }
   const config = {
     provider,
     defaultTargetBranch: "develop",
-    gitlab: { host: "gitlab.com", apiUrl: "https://gitlab.com/api/v4", tokenFile: gitlabToken },
-    github: { host: "github.com", tokenFile: githubToken },
+    gitlab: { host: "gitlab.com", apiUrl: "https://gitlab.com/api/v4" },
+    github: { host: "github.com" },
     pr: { squashOnMerge: true, removeSourceBranch: true, pushBranch: true, confirmSkip: true },
-    tokenDefaults: TOKEN_DEFAULTS,
   };
   writeFileSync(vcsJson, JSON.stringify(config, null, 2) + "\n", "utf8");
   const outcome: ScaffoldOutcome = { ok: true, status: "missing", created: [], preserved: [] };
   outcome.created.push(vcsJson);
-  for (const p of [gitlabToken, githubToken]) {
-    ensureToken(p, outcome);
-  }
 
   return {
     ...outcome,
     status: finalStatus(outcome),
     vcsJson,
-    tokenPaths: [gitlabToken, githubToken],
-    activeTokenPath,
-    tokenCreateUrl,
     provider,
   };
 }
@@ -335,57 +294,40 @@ export function loadWorkspaces(): WorkspaceConfig[] {
 
 export type WriteWorkspacesResult = { ok: boolean; error?: string; path: string };
 
-const VALID_PROVIDERS: VcsProvider[] = ["gitlab", "github"];
-
-export function writeWorkspaces(entries: WorkspaceConfig[]): WriteWorkspacesResult {
+export function writeWorkspaces(
+  entries: WorkspaceConfig[],
+  options: { expectedRevision?: string } = {},
+): WriteWorkspacesResult {
   const file = workspacesPath();
-  for (const [i, entry] of entries.entries()) {
-    if (!entry || typeof entry !== "object") {
-      return { ok: false, error: `workspace #${i + 1} is null`, path: file };
-    }
-    if (typeof entry.name !== "string" || !entry.name.trim()) {
-      return { ok: false, error: `workspace #${i + 1} missing a name`, path: file };
-    }
-    if (typeof entry.glob !== "string" || !entry.glob.trim()) {
-      return { ok: false, error: `workspace "${entry.name}" missing a glob`, path: file };
-    }
-    const globValidation = validateWorkspaceGlob(entry.glob);
-    if (!globValidation.ok) {
-      return {
-        ok: false,
-        error: `workspace "${entry.name}": ${globValidation.error}`,
-        path: file,
-      };
-    }
-    const provider = entry.vcs?.provider;
-    if (provider && !VALID_PROVIDERS.includes(provider)) {
-      return {
-        ok: false,
-        error: `workspace "${entry.name}" has unknown provider "${provider}"`,
-        path: file,
-      };
-    }
-    if (entry.youtrack && provider !== "gitlab") {
-      return {
-        ok: false,
-        error: `workspace "${entry.name}" links YouTrack issues but provider is "${provider ?? "unset"}" — youtrack linking requires the gitlab provider`,
-        path: file,
-      };
-    }
-    if (entry.issues && provider !== "github") {
-      return {
-        ok: false,
-        error: `workspace "${entry.name}" links GitHub issues but provider is "${provider ?? "unset"}" — github issues require the github provider`,
-        path: file,
-      };
-    }
-  }
+  const current = readWorkspacesResult(path.dirname(file));
+  if (current.status === "malformed" || current.status === "invalid")
+    return { ok: false, error: current.error, path: file };
+  const expectedRevision = options.expectedRevision ?? current.revision!;
+  if (current.revision !== expectedRevision)
+    return {
+      ok: false,
+      error: `workspace config changed; reload before writing ${file}`,
+      path: file,
+    };
+  const document = { ...current.document, workspaces: entries };
+  const validation = validateWorkspacesDocument(document, file);
+  if (validation.status !== "valid") return { ok: false, error: validation.error, path: file };
+  const content = JSON.stringify(document, null, 2) + "\n";
   mkdirSync(path.dirname(file), { recursive: true });
   const tmp = `${file}.${process.pid}.tmp`;
   try {
-    writeFileSync(tmp, JSON.stringify({ workspaces: entries }, null, 2) + "\n", "utf8");
+    writeFileSync(tmp, content, "utf8");
+    if (readWorkspacesResult(path.dirname(file)).revision !== expectedRevision) {
+      try {
+        rmSync(tmp, { force: true });
+      } catch {}
+      return { ok: false, error: `workspace config changed while writing ${file}`, path: file };
+    }
     renameSync(tmp, file);
   } catch (err) {
+    try {
+      rmSync(tmp, { force: true });
+    } catch {}
     return { ok: false, error: `failed to write ${file}: ${(err as Error).message}`, path: file };
   }
   return { ok: true, path: file };
@@ -418,6 +360,7 @@ export {
 export {
   previewCutover,
   applyCutover,
+  resumeCutover,
   previewRollback,
   applyRollback,
   previewConversion,

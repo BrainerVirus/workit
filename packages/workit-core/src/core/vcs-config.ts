@@ -2,12 +2,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { configDir, PRESETS } from "./config";
-import { resolveWorkspace } from "./workspaces";
+import { resolveRuntimeWorkspaceVcs } from "./workspaces";
 import { resolveBranchPolicyFor } from "./branch";
-// Ports of scripts/vcs/config.sh + verify-token.sh + token-create-urls.sh + merged-style.sh.
-// Token never printed.
-
-const TOKEN_PLACEHOLDER = "YOUR_TOKEN_HERE";
+// VCS resolution and CLI-backed identity/style reads.
 
 export const vcsConfigPath = (): string =>
   process.env.WORKFLOW_VCS_CONFIG ?? path.join(configDir(), "vcs.json");
@@ -28,6 +25,95 @@ const remoteProvider = (cwd: string): string | null => {
   if (/github\.com[:/]/.test(url)) return "github";
   if (/gitlab\.com[:/]/.test(url)) return "gitlab";
   return null;
+};
+
+const remoteEndpoint = (
+  remote: string,
+): { host: string; path: string; protocol: string; port: string } | null => {
+  const raw = remote.trim();
+  if (!raw) return null;
+  const scp = /^(?:[^@\s]+@)?([^:]+):(.+)$/u.exec(raw);
+  if (scp && !raw.includes("://"))
+    return {
+      host: scp[1].toLowerCase(),
+      path: scp[2].replace(/^\//u, "").replace(/\.git$/u, ""),
+      protocol: "ssh:",
+      port: "",
+    };
+  try {
+    const url = new URL(raw);
+    return {
+      host: url.hostname.toLowerCase(),
+      path: url.pathname
+        .replace(/^\//u, "")
+        .replace(/\.git$/u, "")
+        .replace(/\/$/u, ""),
+      protocol: url.protocol,
+      port: url.port,
+    };
+  } catch {
+    return null;
+  }
+};
+
+const configuredSshEndpoint = (host: string): { host: string; port: string } | null => {
+  if (host.startsWith("-")) return null;
+  const resolved = spawnSync("ssh", ["-G", host], {
+    encoding: "utf8",
+    timeout: 5000,
+    maxBuffer: 1024 * 1024,
+    env: { ...process.env, PATH: process.env.PATH ?? "" },
+  });
+  if (resolved.status !== 0) return null;
+  const output = resolved.stdout ?? "";
+  const hostname = /^hostname\s+(\S+)/imu.exec(output)?.[1]?.toLowerCase();
+  if (!hostname) return null;
+  return { host: hostname, port: /^port\s+(\d+)/imu.exec(output)?.[1] ?? "22" };
+};
+
+const sshApiHostAliases: Record<string, Array<{ host: string; port: string }>> = {
+  "github.com": [{ host: "ssh.github.com", port: "443" }],
+  "gitlab.com": [{ host: "altssh.gitlab.com", port: "443" }],
+};
+
+/** Confirm that Git transport and authenticated provider API calls target the same host. */
+export const hostingApiHostMatches = (
+  remote: string,
+  apiHost: string,
+  resolveSshEndpoint: (
+    host: string,
+  ) => { host: string; port: string } | null = configuredSshEndpoint,
+): boolean => {
+  const endpoint = remoteEndpoint(remote);
+  if (!endpoint) return false;
+  let expected: { host: string; port: string };
+  try {
+    const url = new URL(`https://${apiHost}`);
+    if (url.pathname !== "/" || url.search || url.hash || url.username || url.password)
+      return false;
+    expected = {
+      host: url.hostname.toLowerCase().replace(/\.$/u, ""),
+      port: url.port,
+    };
+  } catch {
+    return false;
+  }
+  if (endpoint.protocol !== "ssh:") {
+    return endpoint.host.replace(/\.$/u, "") === expected.host && endpoint.port === expected.port;
+  }
+  const resolved = resolveSshEndpoint(endpoint.host);
+  if (!resolved) return false;
+  const hostname = resolved.host.toLowerCase().replace(/\.$/u, "");
+  const port = endpoint.port || resolved.port;
+  if (hostname === expected.host) return port === (expected.port || "22");
+  return Boolean(
+    sshApiHostAliases[expected.host]?.some(
+      (alias) =>
+        alias.host === hostname &&
+        alias.port === port &&
+        (!expected.port || expected.port === port),
+    ),
+  );
 };
 
 // RL-01: typed vcs.json reader. Missing is a legitimate unconfigured state;
@@ -60,14 +146,9 @@ export const readVcsConfig = (): VcsConfigResult => {
   return { status: "malformed", path: file, config: {}, error: `${file} is not a JSON object` };
 };
 
-function readVcsJson(): { config: Record<string, any>; path: string; ok: boolean } {
-  const { status, path: cfgPath, config } = readVcsConfig();
-  return { config, path: cfgPath, ok: status === "valid" };
-}
-
 /** Port of scripts/vcs/config.sh — mode: load | summary | resolve. */
 export function vcsConfig(mode: "load" | "summary" | "resolve", cwd?: string): Record<string, any> {
-  const ws = resolveWorkspace(vcsCwd(cwd));
+  const ws = resolveRuntimeWorkspaceVcs(vcsCwd(cwd));
   const wsVcs = (ws?.vcs ?? {}) as Record<string, any>;
   const wsYt = (ws?.youtrack ?? {}) as Record<string, any>;
   const wsIssues = (ws?.issues ?? {}) as Record<string, any>;
@@ -110,8 +191,10 @@ export function vcsConfig(mode: "load" | "summary" | "resolve", cwd?: string): R
       (hasWorkspacePolicy ? policyDefault : (cfg.defaultTargetBranch ?? policyDefault)) ??
       "develop",
   );
-  const linkIssues = typeof wsYt.link_issues === "boolean" ? wsYt.link_issues : null;
-  const youtrackBaseUrl = typeof wsYt.baseUrl === "string" ? wsYt.baseUrl : null;
+  const linkIssues =
+    provider === "gitlab" && typeof wsYt.link_issues === "boolean" ? wsYt.link_issues : null;
+  const youtrackBaseUrl =
+    provider === "gitlab" && typeof wsYt.baseUrl === "string" ? wsYt.baseUrl : null;
   // github issues path only when BOTH providers are github (mirrors WorkspaceConfig.issues).
   let issuesProvider: string | null = null;
   let linkOnPr: boolean | null = null;
@@ -144,11 +227,9 @@ export function vcsConfig(mode: "load" | "summary" | "resolve", cwd?: string): R
   if (cfgStatus === "malformed") {
     return { ok: false, error: cfgError, configPath: cfgPath };
   }
-  if (cfgStatus === "missing") {
+  if (cfgStatus === "missing" && provider === null)
     return { ok: false, error: `vcs.json is missing: ${cfgPath}`, configPath: cfgPath };
-  }
-  // Credentials cannot resolve without a provider: fail closed instead of
-  // assuming a host. Branch policy (resolve mode above) never needed one.
+  // Hosting cannot resolve without a provider; branch policy still can.
   if (provider === null) {
     return {
       ok: false,
@@ -158,33 +239,12 @@ export function vcsConfig(mode: "load" | "summary" | "resolve", cwd?: string): R
   }
 
   const prov = (cfg[provider] ?? {}) as Record<string, any>;
-  // Workspace-tight tokens: an explicit workspace vcs.tokenFile wins (per-area
-  // accounts without collisions), else the global provider tokenFile, else the
-  // default <provider>.token path. Same order as the per-workspace
-  // commitPolicy/branchPolicy overrides.
-  const wsTokenFile =
-    typeof wsVcs.tokenFile === "string" && wsVcs.tokenFile.trim() !== "" ? wsVcs.tokenFile : null;
-  const tokenFile = String(
-    wsTokenFile ?? prov.tokenFile ?? path.join(configDir(), `${provider}.token`),
-  );
-  const tokenPath = path.resolve(tokenFile);
-  let tokenOk = false;
-  if (fs.existsSync(tokenPath)) {
-    const token = fs.readFileSync(tokenPath, "utf8").trim();
-    const placeholder =
-      !token || token === TOKEN_PLACEHOLDER || token.startsWith(TOKEN_PLACEHOLDER);
-    tokenOk = !placeholder;
-  }
-
   const out: Record<string, any> = {
     ok: true,
     configPath: path.resolve(cfgPath),
     provider,
     defaultTargetBranch: defaultTarget,
     pr: cfg.pr ?? {},
-    tokenPath,
-    tokenPresent: fs.existsSync(tokenPath),
-    tokenReady: tokenOk,
     workspace_name: ws?.name ?? null,
     link_issues: linkIssues,
     youtrack_base_url: youtrackBaseUrl,
@@ -199,159 +259,69 @@ export function vcsConfig(mode: "load" | "summary" | "resolve", cwd?: string): R
   } else if (provider === "github") {
     out.github = { host: prov.host ?? "github.com" };
   }
-  if (mode === "summary") delete out.tokenPath;
   return out;
 }
 
-/** Port of scripts/vcs/verify-token.sh — soft-fail JSON out, always exit 0. */
-export async function vcsVerifyToken(): Promise<Record<string, any>> {
-  const cfg = vcsConfig("load");
+/** Probe the CLI credential actually used for this checkout, never a Workit token file. */
+export function vcsCliIdentity(cwd?: string): Record<string, any> {
+  const root = vcsCwd(cwd);
+  const cfg = vcsConfig("load", root);
   if (!cfg.ok) return { ok: false, error: cfg.error ?? "vcs config not ready" };
   const provider = cfg.provider as string;
-  if (!cfg.tokenReady) {
-    return {
-      ok: false,
-      provider,
-      error: "token file still placeholder YOUR_TOKEN_HERE — edit locally, then /wk-status",
-      path: cfg.tokenPath,
-    };
-  }
-  const token = fs.readFileSync(cfg.tokenPath as string, "utf8").trim();
-
-  if (provider === "gitlab") {
-    const host = (cfg.gitlab as Record<string, any>)?.host ?? "gitlab.com";
-    const api = ((cfg.gitlab as Record<string, any>)?.apiUrl ?? `https://${host}/api/v4`).replace(
-      /\/+$/,
-      "",
-    );
-    let user: Record<string, any>;
-    try {
-      const res = await fetch(`${api}/user`, {
-        headers: { "PRIVATE-TOKEN": token },
-      });
-      if (!res.ok) {
-        return {
-          ok: false,
-          provider,
-          error: "GitLab API rejected token",
-          detail: (await res.text()).slice(0, 200),
-        };
-      }
-      user = JSON.parse(await res.text()) as Record<string, any>;
-    } catch (err) {
-      if (err instanceof SyntaxError) {
-        return { ok: false, provider, error: "invalid JSON from GitLab /user" };
-      }
+  if (provider !== "gitlab" && provider !== "github")
+    return { ok: false, error: `unsupported provider: ${provider}` };
+  const bin = provider === "gitlab" ? "glab" : "gh";
+  const host = String(
+    provider === "github" ? (cfg.github?.host ?? "github.com") : (cfg.gitlab?.host ?? "gitlab.com"),
+  ).toLowerCase();
+  const env = {
+    ...process.env,
+    PATH: process.env.PATH ?? "",
+    ...(provider === "github" ? { GH_HOST: host } : { GITLAB_HOST: host }),
+  };
+  const result = spawnSync(bin, ["api", "user"], {
+    cwd: root,
+    encoding: "utf8",
+    env,
+  });
+  if (result.status !== 0)
+    return { ok: false, provider, error: `${bin} is missing or not authenticated` };
+  try {
+    const user = JSON.parse(result.stdout ?? "") as Record<string, unknown>;
+    const username = provider === "gitlab" ? user.username : user.login;
+    if (typeof username !== "string" || !username)
+      return { ok: false, provider, error: `invalid ${bin} identity response` };
+    const expected = resolveRuntimeWorkspaceVcs(root)?.vcs?.account;
+    if (expected && username.toLowerCase() !== expected.toLowerCase())
       return {
         ok: false,
         provider,
-        error: "GitLab API rejected token",
-        detail: (err instanceof Error ? err.message : "network error").slice(0, 200),
+        error: `${bin} account ${username} does not match ${expected}`,
       };
-    }
-    return { ok: true, provider, username: user.username ?? user.login, name: user.name };
+    return { ok: true, provider, host, username, name: user.name };
+  } catch {
+    return { ok: false, provider, error: `invalid JSON from ${bin} api user` };
   }
-  if (provider === "github") {
-    const result = spawnSync("gh", ["api", "user"], {
-      encoding: "utf8",
-      env: { ...process.env, GH_TOKEN: token },
-    });
-    if (result.status !== 0) {
-      return {
-        ok: false,
-        provider,
-        error: "GitHub API rejected token",
-        detail: (result.stderr ?? result.stdout ?? "").slice(0, 200),
-      };
-    }
-    try {
-      const user = JSON.parse(result.stdout ?? "") as Record<string, any>;
-      return { ok: true, provider, username: user.login, name: user.name };
-    } catch {
-      return { ok: false, provider, error: "invalid JSON from gh api user" };
-    }
-  }
-  return { ok: false, error: `unsupported provider: ${provider}` };
 }
 
-/** Port of scripts/vcs/token-create-urls.sh — provider token-creation deep links. */
-export function vcsTokenCreateUrls(): Record<string, any> {
-  const tokenName = process.env.WORKFLOW_VCS_TOKEN_NAME ?? "workit";
-  const { config: cfg } = readVcsJson();
-  const defaults = (cfg.tokenDefaults ?? {}) as Record<string, any>;
-  const name = String(defaults.name ?? tokenName);
-  const desc = String(defaults.description ?? "OpenCode workit — /wk-pr and glab/gh");
-
-  const gitlab = (cfg.gitlab ?? {}) as Record<string, any>;
-  const host = String(gitlab.host ?? "gitlab.com");
-  const gitlabScopes = Array.isArray(defaults.gitlabScopes) ? defaults.gitlabScopes : ["api"];
-  const gitlabParams = new URLSearchParams({
-    name,
-    description: desc,
-    scopes: gitlabScopes.join(","),
-  });
-  const gitlabUrl = `https://${host}/-/user_settings/personal_access_tokens?${gitlabParams}`;
-
-  const githubPerms = defaults.githubPermissions ?? {
-    pull_requests: "write",
-    contents: "write",
-    metadata: "read",
-  };
-  const ghParams = new URLSearchParams({ name, description: desc, ...githubPerms });
-  const githubFineUrl = `https://github.com/settings/personal-access-tokens/new?${ghParams}`;
-
-  const classicScopes = Array.isArray(defaults.githubClassicScopes)
-    ? defaults.githubClassicScopes
-    : ["repo"];
-  const githubClassicUrl = `https://github.com/settings/tokens/new?${new URLSearchParams({ description: name, scopes: classicScopes.join(",") })}`;
-
-  const rawProvider = cfg.provider;
-  // Display-only URL helper: both providers' URLs are always returned, but
-  // nothing is preselected without an explicit provider — no silent default.
-  const provider =
-    typeof rawProvider === "string" && rawProvider.trim() ? rawProvider.toLowerCase() : null;
-  const active =
-    provider === null
-      ? undefined
-      : ({
-          gitlab: {
-            tokenFile: gitlab.tokenFile ?? path.join(configDir(), "gitlab.token"),
-            createUrl: gitlabUrl,
-            scopes: gitlabScopes,
-            name,
-          },
-          github: {
-            tokenFile:
-              (cfg.github as Record<string, any>)?.tokenFile ??
-              path.join(configDir(), "github.token"),
-            createUrl: githubFineUrl,
-            createUrlClassic: githubClassicUrl,
-            permissions: githubPerms,
-            name,
-          },
-        }[provider] ?? {});
-
-  return {
-    tokenName: name,
-    tokenDescription: desc,
-    activeProvider: provider,
-    active,
-    gitlab: { host, createUrl: gitlabUrl, scopes: gitlabScopes, tokenFile: gitlab.tokenFile },
-    github: {
-      createUrl: githubFineUrl,
-      createUrlClassic: githubClassicUrl,
-      permissions: githubPerms,
-      tokenFile: (cfg.github as Record<string, any>)?.tokenFile,
-    },
-  };
+/** Legacy command name, now verifies native CLI auth rather than a separate token. */
+export async function vcsVerifyToken(): Promise<Record<string, any>> {
+  return vcsCliIdentity();
 }
 
 /** Port of scripts/vcs/merged-style.sh — recent merged MR/PR bodies for style reference. */
 export function mergedPrStyle(limit = 6, cwd?: string): Record<string, any> {
   const cfg = vcsConfig("load", cwd);
-  if (!cfg.ok || !cfg.tokenReady) return { ok: false, error: "vcs not configured" };
+  if (!cfg.ok) return { ok: false, error: "vcs not configured" };
   const provider = cfg.provider as string;
-  const token = fs.readFileSync(cfg.tokenPath as string, "utf8").trim();
+  const host = String(
+    provider === "github" ? (cfg.github?.host ?? "github.com") : (cfg.gitlab?.host ?? "gitlab.com"),
+  ).toLowerCase();
+  const env = {
+    ...process.env,
+    PATH: process.env.PATH ?? "",
+    ...(provider === "github" ? { GH_HOST: host } : { GITLAB_HOST: host }),
+  };
   const examples: Array<Record<string, any>> = [];
 
   const descInfo = (desc: string, caseInsensitiveNotes = false): Record<string, any> => ({
@@ -363,22 +333,32 @@ export function mergedPrStyle(limit = 6, cwd?: string): Record<string, any> {
     descriptionPreview: desc.slice(0, 600),
   });
 
+  const remoteResult = spawnSync("git", ["remote", "get-url", "--push", "--all", "origin"], {
+    cwd,
+    encoding: "utf8",
+  });
+  const remotes = (remoteResult.stdout ?? "")
+    .split(/\r?\n/u)
+    .map((value) => value.trim())
+    .filter(Boolean);
+  if (remotes.length === 0) return { ok: false, error: "no origin remote" };
+  if (remotes.length !== 1) return { ok: false, error: "origin has ambiguous push destinations" };
+  const remote = remotes[0];
+  const endpoint = remoteEndpoint(remote);
+  if (!endpoint?.path) return { ok: false, error: "hosting repository could not be resolved" };
+  if (!hostingApiHostMatches(remote, host))
+    return { ok: false, error: "PR style target does not match the provider host" };
+
   if (provider === "gitlab") {
-    const remote = spawnSync("git", ["remote", "get-url", "origin"], { cwd, encoding: "utf8" });
-    if (remote.status !== 0) return { ok: false, error: "no origin remote" };
-    const url = (remote.stdout ?? "").trim();
-    const m = /gitlab\.com[:/](.+?)(?:\.git)?$/.exec(url);
-    if (!m) return { ok: false, error: "not a gitlab.com origin" };
-    const project = m[1];
-    const env = { ...process.env, GITLAB_TOKEN: token };
     const run = (args: string[]) =>
-      spawnSync("glab", ["api", ...args], { cwd, encoding: "utf8", env });
+      spawnSync("glab", ["api", ...args], {
+        cwd,
+        encoding: "utf8",
+        env,
+      });
     let r = run([
-      `projects/${project.replaceAll("/", "%2F")}/merge_requests?state=merged&per_page=${limit}&order_by=updated_at&sort=desc`,
+      `projects/${endpoint.path.replaceAll("/", "%2F")}/merge_requests?state=merged&per_page=${limit}&order_by=updated_at&sort=desc`,
     ]);
-    if (r.status !== 0) {
-      r = run([`merge_requests?state=merged&per_page=${limit}&order_by=updated_at&sort=desc`]);
-    }
     if (r.status !== 0) return { ok: false, error: "could not list merge requests" };
     for (const mr of JSON.parse(r.stdout ?? "[]") as Array<Record<string, any>>) {
       const desc = String(mr.description ?? "").trim();
@@ -392,8 +372,19 @@ export function mergedPrStyle(limit = 6, cwd?: string): Record<string, any> {
   } else if (provider === "github") {
     const r = spawnSync(
       "gh",
-      ["pr", "list", "--state", "merged", "--limit", String(limit), "--json", "title,url,body"],
-      { cwd, encoding: "utf8", env: { ...process.env, GH_TOKEN: token } },
+      [
+        "pr",
+        "list",
+        "--repo",
+        `${host}/${endpoint.path}`,
+        "--state",
+        "merged",
+        "--limit",
+        String(limit),
+        "--json",
+        "title,url,body",
+      ],
+      { cwd, encoding: "utf8", env },
     );
     if (r.status !== 0) return { ok: false, error: "could not list pull requests" };
     for (const pr of JSON.parse(r.stdout ?? "[]") as Array<Record<string, any>>) {

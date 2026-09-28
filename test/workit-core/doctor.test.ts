@@ -15,8 +15,10 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import {
   checkGithubIdentity,
+  checkGitLabIdentity,
   githubHostFromRemote,
   githubIdentityFinding,
+  gitlabIdentityFinding,
   runDoctor,
   type DoctorCheck,
   type DoctorReport,
@@ -1373,6 +1375,27 @@ test("detects a workspace mismatch and clears once the glob matches", () => {
   expect(check(run(), "workspace_mismatch").status).toBe("pass");
 });
 
+test("doctor surfaces typed workspace errors without throwing through identity checks", () => {
+  const workspacesFile = path.join(fixture.configDir, "workspaces.json");
+  writeConfig(
+    workspacesFile,
+    JSON.stringify({
+      workspaces: [
+        { name: "current", glob: `${fixture.cwd}/**`, branchPolicy: { preset: "not-a-preset" } },
+      ],
+    }),
+  );
+  const report = run();
+  expect(check(report, "workspace_mismatch").status).toBe("fail");
+  expect(check(report, "workspace_mismatch").detail).toContain("unsupported branch preset");
+  const identity = checkGithubIdentity(
+    { cwd: fixture.cwd, configDir: fixture.configDir, env: {} },
+    identityProbes(),
+  );
+  expect(identity.status).toBe("fail");
+  expect(identity.detail).toContain("unsupported branch preset");
+});
+
 test("credential metadata flags missing/unsafe-mode/placeholder token files", () => {
   const youtrackJson = path.join(fixture.configDir, "youtrack.json");
   const tokenFile = path.join(fixture.configDir, "youtrack.token");
@@ -1761,8 +1784,7 @@ test("codex pin passes when absent, warns on drift, passes on match", () => {
 const identityProbes = (overrides: Record<string, () => string | null> = {}) => ({
   origin: () => "git@github.com:owner/repo.git",
   ghLogin: () => "personal",
-  tokenLogin: () => "work",
-  sshLogin: () => "personal",
+  sshLogin: () => "work",
   ...overrides,
 });
 
@@ -1778,8 +1800,7 @@ const identityConfigDir = (): string => {
 test("github_identity warns on divergent surfaces without leaking secrets", () => {
   const found = githubIdentityFinding([
     { surface: "gh CLI", login: "personal" },
-    { surface: "token file /cfg/github.token", login: "work" },
-    { surface: "SSH", login: "personal" },
+    { surface: "SSH", login: "work" },
   ]);
   expect(found).toMatchObject({ id: "github_identity", status: "warn" });
   expect(found.detail).toContain('"personal"');
@@ -1808,13 +1829,150 @@ test("checkGithubIdentity passes without a remote and warns on stubbed divergenc
     expect(noRemote).toMatchObject({ id: "github_identity", status: "pass" });
     const divergent = checkGithubIdentity({ cwd: dir, configDir: dir, env: {} }, identityProbes());
     expect(divergent.status).toBe("warn");
-    expect(divergent.detail).toContain("token file");
+    expect(divergent.detail).toContain("SSH");
     const agreed = checkGithubIdentity(
       { cwd: dir, configDir: dir, env: {} },
-      { ...identityProbes(), tokenLogin: () => "personal" },
+      { ...identityProbes(), sshLogin: () => "personal" },
     );
     expect(agreed.status).toBe("pass");
+    expect(
+      checkGithubIdentity(
+        { cwd: dir, configDir: dir, env: {} },
+        { ...identityProbes(), ghLogin: () => null },
+      ).status,
+    ).toBe("fail");
   } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("GitLab doctor uses glab identity and never probes gh for a GitLab checkout", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "workit-doctor-gitlab-identity-"));
+  const previous = process.env.WORKFLOW_VCS_CONFIG;
+  writeFileSync(
+    path.join(dir, "vcs.json"),
+    JSON.stringify({ provider: "gitlab", gitlab: { host: "gitlab.example.test" } }),
+  );
+  process.env.WORKFLOW_VCS_CONFIG = path.join(dir, "vcs.json");
+  try {
+    let ghCalls = 0;
+    let gitlabHost = "";
+    const probes = {
+      origin: () => "git@gitlab.example.test:group/repo.git",
+      ghLogin: () => {
+        ghCalls += 1;
+        return "wrong-cli";
+      },
+      glabLogin: (env: NodeJS.ProcessEnv) => {
+        gitlabHost = env.GITLAB_HOST ?? "";
+        return "work";
+      },
+      sshLogin: () => "work",
+    };
+    expect(checkGithubIdentity({ cwd: dir, configDir: dir, env: {} }, probes)).toMatchObject({
+      id: "github_identity",
+      status: "pass",
+    });
+    expect(checkGitLabIdentity({ cwd: dir, configDir: dir, env: {} }, probes)).toMatchObject({
+      id: "gitlab_identity",
+      status: "pass",
+    });
+    expect(gitlabHost).toBe("gitlab.example.test");
+    expect(ghCalls).toBe(0);
+    expect(
+      gitlabIdentityFinding([
+        { surface: "glab CLI", login: "work" },
+        { surface: "SSH", login: "personal" },
+      ]),
+    ).toMatchObject({ id: "gitlab_identity", status: "warn" });
+  } finally {
+    if (previous === undefined) delete process.env.WORKFLOW_VCS_CONFIG;
+    else process.env.WORKFLOW_VCS_CONFIG = previous;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("doctor uses a workspace provider for custom SSH-host aliases", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "workit-doctor-workspace-provider-"));
+  const previous = process.env.WORKFLOW_VCS_CONFIG;
+  const configPath = path.join(dir, "vcs.json");
+  writeFileSync(
+    configPath,
+    JSON.stringify({
+      provider: "gitlab",
+      github: { host: "github.com" },
+      gitlab: { host: "gitlab.com" },
+    }),
+  );
+  writeFileSync(
+    path.join(dir, "workspaces.json"),
+    JSON.stringify({
+      workspaces: [{ name: "personal", glob: `${dir}/**`, vcs: { provider: "github" } }],
+    }),
+  );
+  process.env.WORKFLOW_VCS_CONFIG = configPath;
+  try {
+    let githubHost = "";
+    let glabCalls = 0;
+    const probes = {
+      origin: () => "git@github-work:owner/repo.git",
+      ghLogin: (env: NodeJS.ProcessEnv) => {
+        githubHost = env.GH_HOST ?? "";
+        return "work";
+      },
+      glabLogin: () => {
+        glabCalls += 1;
+        return "wrong";
+      },
+      sshLogin: () => "work",
+    };
+    expect(checkGithubIdentity({ cwd: dir, configDir: dir, env: {} }, probes)).toMatchObject({
+      id: "github_identity",
+      status: "pass",
+    });
+    expect(checkGitLabIdentity({ cwd: dir, configDir: dir, env: {} }, probes)).toMatchObject({
+      id: "gitlab_identity",
+      status: "pass",
+    });
+    expect(githubHost).toBe("github.com");
+    expect(glabCalls).toBe(0);
+  } finally {
+    if (previous === undefined) delete process.env.WORKFLOW_VCS_CONFIG;
+    else process.env.WORKFLOW_VCS_CONFIG = previous;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("doctor uses the default GitHub API host when the SSH alias has no host config", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "workit-doctor-github-alias-default-"));
+  const previous = process.env.WORKFLOW_VCS_CONFIG;
+  const configPath = path.join(dir, "vcs.json");
+  writeFileSync(configPath, JSON.stringify({ provider: "github" }));
+  writeFileSync(
+    path.join(dir, "workspaces.json"),
+    JSON.stringify({
+      workspaces: [{ name: "personal", glob: `${dir}/**`, vcs: { provider: "github" } }],
+    }),
+  );
+  process.env.WORKFLOW_VCS_CONFIG = configPath;
+  try {
+    let apiHost = "";
+    const result = checkGithubIdentity(
+      { cwd: dir, configDir: dir, env: {} },
+      {
+        origin: () => "git@github-work:owner/repo.git",
+        ghLogin: (env) => {
+          apiHost = env.GH_HOST ?? "";
+          return "work";
+        },
+        sshLogin: () => "work",
+      },
+    );
+    expect(result).toMatchObject({ id: "github_identity", status: "pass" });
+    expect(apiHost).toBe("github.com");
+  } finally {
+    if (previous === undefined) delete process.env.WORKFLOW_VCS_CONFIG;
+    else process.env.WORKFLOW_VCS_CONFIG = previous;
     rmSync(dir, { recursive: true, force: true });
   }
 });

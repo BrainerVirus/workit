@@ -1,12 +1,6 @@
 import { initStatus } from "./init";
 
-export const ALL_ITEM_IDS = [
-  "youtrack_json",
-  "youtrack_token",
-  "vcs_json",
-  "gitlab_token",
-  "github_token",
-];
+export const ALL_ITEM_IDS = ["youtrack_json", "youtrack_token", "vcs_json"];
 export const CONFIG_GAP_MARKER = "workflow config missing";
 
 export function describeConfigGaps(scope?: string[]): { missing: string[]; ok: boolean } {

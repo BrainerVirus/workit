@@ -2,12 +2,9 @@
 // installed Workit surfaces — pins, versions, assets, launchers, runtimes,
 // utilities, registrations, config, workspace match, credential metadata, and
 // log writability — with no network access except the optional registry probe
-// behind the stale-install comparison (CA-04) and the fail-open identity
-// probes behind github_identity, which fail open. Credential values are never
-// reported: only existence, mode, and a placeholder flag are evaluated, and
-// the identity check reads a token file solely to build an Authorization
-// header for a login lookup — token bytes never enter the report, any fix
-// text, or any log event.
+// behind the stale-install comparison (CA-04) and fail-open provider CLI
+// identity probes. Credentials are handled by gh/glab; token values never enter
+// the report, any fix text, or any log event.
 import { spawnSync } from "node:child_process";
 import {
   existsSync,
@@ -34,7 +31,7 @@ import {
   cursorMcpServerEntry,
   isWorkitPlugin,
 } from "./registration";
-import { resolveWorkspaceFrom } from "./workspaces";
+import { readWorkspacesResult, resolveWorkspaceFrom } from "./workspaces";
 import { validateCursorSkills, WORKIT_METHOD_SKILLS } from "./skill-manifests";
 import {
   classifyHostGeneration,
@@ -66,6 +63,7 @@ export type DoctorCheckId =
   | "workspace_mismatch"
   | "credential_metadata"
   | "github_identity"
+  | "gitlab_identity"
   | "log_writable"
   | "legacy_component"
   | "mixed_generation"
@@ -1166,22 +1164,36 @@ const checkMalformedConfig = (res: Resolved): DoctorCheck => {
 };
 
 const checkWorkspaceMismatch = (res: Resolved): DoctorCheck => {
-  const file = path.join(res.configDir, "workspaces.json");
-  if (!existsSync(file))
+  const result = readWorkspacesResult(res.configDir);
+  const file = result.path;
+  if (result.status === "missing" || (result.status === "valid" && result.entries.length === 0))
     return {
       id: "workspace_mismatch",
       status: "pass",
       detail: "no workspaces configured",
     };
-  const ws = readJson(file);
-  if (!Array.isArray(ws?.workspaces)) {
+  if (result.status === "malformed" || result.status === "invalid")
     return {
       id: "workspace_mismatch",
-      status: "pass",
-      detail: "no workspaces configured",
+      status: "fail",
+      detail: result.error ?? `${file} has invalid workspace configuration`,
+      fix: `Repair workspace configuration in ${file}`,
+    };
+  let match;
+  try {
+    match = resolveWorkspaceFrom(
+      res.cwd,
+      res.configDir,
+      res.env.WORKFLOW_WORKSPACE_NAME?.trim() || undefined,
+    );
+  } catch (error) {
+    return {
+      id: "workspace_mismatch",
+      status: "fail",
+      detail: error instanceof Error ? error.message : String(error),
+      fix: `Choose a matching workspace with WORKFLOW_WORKSPACE_NAME or repair ${file}`,
     };
   }
-  const match = resolveWorkspaceFrom(res.cwd, res.configDir);
   if (match)
     return {
       id: "workspace_mismatch",
@@ -1216,26 +1228,6 @@ const checkCredentialMetadata = (res: Resolved): DoctorCheck => {
     );
   } else if (existsSync(path.join(res.configDir, "youtrack.token"))) {
     tokenPaths.push(path.join(res.configDir, "youtrack.token"));
-  }
-
-  const vcsJson = readJson(path.join(res.configDir, "vcs.json"));
-  // Only the active VCS provider's token is required. vcs.json scaffolds both
-  // github and gitlab blocks for switching later — inactive tokenFile paths
-  // must not fail the doctor when provider is set to the other host.
-  const active =
-    typeof vcsJson?.provider === "string" ? vcsJson.provider.trim().toLowerCase() : null;
-  const vcsKeys =
-    active === "gitlab" || active === "github"
-      ? ([active] as const)
-      : (["gitlab", "github"] as const);
-  for (const key of vcsKeys) {
-    const provider = vcsJson?.[key];
-    if (provider && typeof provider === "object") {
-      const tf = provider.tokenFile;
-      tokenPaths.push(typeof tf === "string" ? tf : path.join(res.configDir, `${key}.token`));
-    } else if (!vcsJson && existsSync(path.join(res.configDir, `${key}.token`))) {
-      tokenPaths.push(path.join(res.configDir, `${key}.token`));
-    }
   }
 
   if (tokenPaths.length === 0) {
@@ -1273,15 +1265,13 @@ const checkCredentialMetadata = (res: Resolved): DoctorCheck => {
   };
 };
 
-// Identity surfaces for the github_identity check. Logins are public
-// usernames (safe to report); the token itself only ever travels as an
-// Authorization header value and never enters details, fixes, or logs.
+// Provider CLI and SSH identities are public usernames; Workit never reads a VCS token file.
 export type IdentitySurface = { surface: string; login: string | null };
 
 export type IdentityProbes = {
   origin: (cwd: string) => string | null;
   ghLogin: (env: NodeJS.ProcessEnv) => string | null;
-  tokenLogin: (tokenFile: string, host: string) => string | null;
+  glabLogin?: (env: NodeJS.ProcessEnv) => string | null;
   sshLogin: (host: string) => string | null;
 };
 
@@ -1298,29 +1288,80 @@ export const githubHostFromRemote = (remote: string): string | null => {
   }
 };
 
-export const githubIdentityFinding = (surfaces: IdentitySurface[]): DoctorCheck => {
+const identityProvider = (
+  host: string,
+  config: Record<string, any> | null,
+  workspaceProvider?: unknown,
+): "github" | "gitlab" | null =>
+  workspaceProvider === "github" || workspaceProvider === "gitlab"
+    ? workspaceProvider
+    : host === "github.com"
+      ? "github"
+      : host === "gitlab.com"
+        ? "gitlab"
+        : config?.provider === "github" || config?.provider === "gitlab"
+          ? config.provider
+          : config?.github
+            ? "github"
+            : config?.gitlab
+              ? "gitlab"
+              : null;
+
+const providerIdentityFinding = (
+  provider: "github" | "gitlab",
+  surfaces: IdentitySurface[],
+): DoctorCheck => {
+  const id = `${provider}_identity` as "github_identity" | "gitlab_identity";
+  const label = provider === "github" ? "GitHub" : "GitLab";
   const resolved = surfaces.filter(
     (entry): entry is { surface: string; login: string } => typeof entry.login === "string",
   );
   const distinct = [...new Set(resolved.map((entry) => entry.login.toLowerCase()))];
   if (distinct.length < 2) {
     return {
-      id: "github_identity",
+      id,
       status: "pass",
       detail:
         resolved.length === 0
-          ? "no GitHub identities configured"
-          : "single GitHub identity across configured surfaces",
+          ? `no ${label} identities configured`
+          : `single ${label} identity across configured surfaces`,
     };
   }
   return {
-    id: "github_identity",
+    id,
     status: "warn",
-    detail: `GitHub identities disagree across configured surfaces: ${resolved
+    detail: `${label} identities disagree across configured surfaces: ${resolved
       .map((entry) => `${entry.surface} reports "${entry.login}"`)
       .join("; ")}. Operations may land under the wrong account.`,
-    fix: "Align every surface on the intended account via your own git/gh configuration (gh auth login/switch plus the vcs token file at mode 0600) — workit never hardcodes accounts",
+    fix:
+      provider === "github"
+        ? "Align the effective gh account and SSH identity via gh auth switch/login and your Git configuration"
+        : "Align the effective glab account and SSH identity via glab auth login and your Git configuration",
   };
+};
+
+export const githubIdentityFinding = (surfaces: IdentitySurface[]): DoctorCheck =>
+  providerIdentityFinding("github", surfaces);
+
+export const gitlabIdentityFinding = (surfaces: IdentitySurface[]): DoctorCheck =>
+  providerIdentityFinding("gitlab", surfaces);
+
+const workspaceProviderForIdentity = (
+  cwd: string,
+  configDir: string,
+  env: NodeJS.ProcessEnv,
+): { provider?: unknown; error?: string } => {
+  try {
+    return {
+      provider: resolveWorkspaceFrom(
+        cwd,
+        configDir,
+        env.WORKFLOW_WORKSPACE_NAME?.trim() || undefined,
+      )?.vcs?.provider,
+    };
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : String(error) };
+  }
 };
 
 const defaultIdentityProbes = (env: NodeJS.ProcessEnv): IdentityProbes => ({
@@ -1345,18 +1386,11 @@ const defaultIdentityProbes = (env: NodeJS.ProcessEnv): IdentityProbes => ({
       return null;
     }
   },
-  tokenLogin: (tokenFile, host) => {
-    let token = "";
+  glabLogin: (e) => {
     try {
-      token = readFileSync(tokenFile, "utf8").trim();
-    } catch {
-      return null;
-    }
-    if (!token || token === TOKEN_PLACEHOLDER || token.startsWith(TOKEN_PLACEHOLDER)) return null;
-    try {
-      const out = spawnSync("gh", ["api", "user", "--jq", ".login"], {
+      const out = spawnSync("glab", ["api", "user", "--jq", ".username"], {
         encoding: "utf8",
-        env: { ...env, GH_TOKEN: token, ...(host === "github.com" ? {} : { GH_HOST: host }) },
+        env: e,
       });
       const login = (out.stdout ?? "").trim();
       return out.status === 0 && login ? login : null;
@@ -1375,7 +1409,7 @@ const defaultIdentityProbes = (env: NodeJS.ProcessEnv): IdentityProbes => ({
         },
       );
       const text = `${out.stdout ?? ""}${out.stderr ?? ""}`;
-      const match = /^Hi ([^!]+)!/.exec(text);
+      const match = /^(?:Hi |Welcome to GitLab, @)([^!]+)!/m.exec(text);
       return match ? match[1].trim() || null : null;
     } catch {
       return null;
@@ -1383,38 +1417,71 @@ const defaultIdentityProbes = (env: NodeJS.ProcessEnv): IdentityProbes => ({
   },
 });
 
-const githubTokenFile = (res: Pick<Resolved, "configDir">): string | null => {
-  const vcsJson = readJson(path.join(res.configDir, "vcs.json"));
-  const provider = vcsJson?.github;
-  if (provider && typeof provider === "object") {
-    const tokenFile = (provider as Record<string, unknown>).tokenFile;
-    const raw =
-      typeof tokenFile === "string" ? tokenFile : path.join(res.configDir, "github.token");
-    return path.isAbsolute(raw) ? raw : path.resolve(res.configDir, raw);
-  }
-  if (!vcsJson) {
-    const fallback = path.join(res.configDir, "github.token");
-    return existsSync(fallback) ? fallback : null;
-  }
-  return null;
-};
-
 export const checkGithubIdentity = (
   res: Pick<Resolved, "cwd" | "configDir" | "env">,
   probes: IdentityProbes = defaultIdentityProbes(res.env),
 ): DoctorCheck => {
-  const host = githubHostFromRemote(probes.origin(res.cwd) ?? "");
-  if (!host)
+  const remoteHost = githubHostFromRemote(probes.origin(res.cwd) ?? "");
+  if (!remoteHost)
     return { id: "github_identity", status: "pass", detail: "no GitHub remote configured" };
-  const surfaces: IdentitySurface[] = [{ surface: "gh CLI", login: probes.ghLogin(res.env) }];
-  const tokenFile = githubTokenFile(res);
-  if (tokenFile)
-    surfaces.push({
-      surface: `token file ${tokenFile}`,
-      login: probes.tokenLogin(tokenFile, host),
-    });
-  surfaces.push({ surface: "SSH", login: probes.sshLogin(host) });
+  const vcsJson = readJson(res.env.WORKFLOW_VCS_CONFIG ?? path.join(res.configDir, "vcs.json"));
+  const workspace = workspaceProviderForIdentity(res.cwd, res.configDir, res.env);
+  if (workspace.error)
+    return {
+      id: "github_identity",
+      status: "fail",
+      detail: workspace.error,
+      fix: "Repair workspace configuration or choose a matching workspace",
+    };
+  const provider = identityProvider(remoteHost, vcsJson, workspace.provider);
+  if (provider !== "github")
+    return { id: "github_identity", status: "pass", detail: "no GitHub remote configured" };
+  const cliHost = String(vcsJson?.github?.host ?? "github.com").toLowerCase();
+  const cliLogin = probes.ghLogin({ ...res.env, GH_HOST: cliHost });
+  if (!cliLogin)
+    return {
+      id: "github_identity",
+      status: "fail",
+      detail: "gh CLI is not authenticated",
+      fix: "Run gh auth login",
+    };
+  const surfaces: IdentitySurface[] = [{ surface: "gh CLI", login: cliLogin }];
+  surfaces.push({ surface: "SSH", login: probes.sshLogin(remoteHost) });
   return githubIdentityFinding(surfaces);
+};
+
+export const checkGitLabIdentity = (
+  res: Pick<Resolved, "cwd" | "configDir" | "env">,
+  probes: IdentityProbes = defaultIdentityProbes(res.env),
+): DoctorCheck => {
+  const remoteHost = githubHostFromRemote(probes.origin(res.cwd) ?? "");
+  if (!remoteHost)
+    return { id: "gitlab_identity", status: "pass", detail: "no GitLab remote configured" };
+  const vcsJson = readJson(res.env.WORKFLOW_VCS_CONFIG ?? path.join(res.configDir, "vcs.json"));
+  const workspace = workspaceProviderForIdentity(res.cwd, res.configDir, res.env);
+  if (workspace.error)
+    return {
+      id: "gitlab_identity",
+      status: "fail",
+      detail: workspace.error,
+      fix: "Repair workspace configuration or choose a matching workspace",
+    };
+  const provider = identityProvider(remoteHost, vcsJson, workspace.provider);
+  if (provider !== "gitlab")
+    return { id: "gitlab_identity", status: "pass", detail: "no GitLab remote configured" };
+  const cliHost = String(vcsJson?.gitlab?.host ?? "gitlab.com").toLowerCase();
+  const cliLogin = probes.glabLogin?.({ ...res.env, GITLAB_HOST: cliHost }) ?? null;
+  if (!cliLogin)
+    return {
+      id: "gitlab_identity",
+      status: "fail",
+      detail: "glab CLI is not authenticated",
+      fix: "Run glab auth login",
+    };
+  return gitlabIdentityFinding([
+    { surface: "glab CLI", login: cliLogin },
+    { surface: "SSH", login: probes.sshLogin(remoteHost) },
+  ]);
 };
 
 const checkLogWritable = (res: Resolved): DoctorCheck => {
@@ -1458,6 +1525,11 @@ const generationPaths = (res: Resolved) => ({
   cursorSettings: res.cursorSettings,
   cursorMcp: res.cursorMcp,
   cursorPluginDir: res.cursorPluginDir,
+  piConfig: path.join(res.home, ".pi", "config.json"),
+  piSettings: path.join(
+    res.env.PI_CODING_AGENT_DIR ?? path.join(res.home, ".pi", "agent"),
+    "settings.json",
+  ),
   sessions: res.sessions,
 });
 
@@ -1627,6 +1699,7 @@ const RUN_CHECKS: Array<(res: Resolved) => DoctorCheck> = [
   checkWorkspaceMismatch,
   checkCredentialMetadata,
   checkGithubIdentity,
+  checkGitLabIdentity,
   checkLogWritable,
   checkMixedGeneration,
   checkLegacyComponent,

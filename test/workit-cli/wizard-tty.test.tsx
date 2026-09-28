@@ -742,9 +742,9 @@ test("backspace-to-empty custom locale surfaces the block on the select screen",
     await tty.keys("other", ENTER); // -> Other
     await tty.keys("en_US"); // invalid BCP-47 stored while editing
     for (let i = 0; i < "en_US".length; i++) await tty.key(BACKSPACE);
-    // Lone ESC leaves a pending byte resolving ~20ms later as cancel, racing
-    // subsequent keys — burst() lands ESC deterministically with no residue.
-    await tty.burst(ESC); // back -> locale select, value now ""
+    // A single ESC at key() boundary lets Ink finish disambiguating it before
+    // the parent select screen is inspected.
+    await tty.key("\x1b"); // back -> locale select, value now ""
     // the parent select screen must surface the block (the empty current value
     // and the validation error) instead of letting Enter commit an empty locale
     const frame = tty.lastFrame();

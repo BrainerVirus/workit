@@ -34,6 +34,8 @@ workit                                     # help
 
 `workit init` guides you through: platform selection (OpenCode/Cursor), global config (locale, timezone, branch policy), YouTrack, VCS, workspaces (path globs → provider), and project hygiene files. The wizard is a TTY application — `workit init` requires an interactive terminal and prints guidance (exiting nonzero) when stdin is not a TTY.
 
+Authenticate GitHub or GitLab with `gh auth login` or `glab auth login` before hosting actions; Workit does not need a second provider token file. `workit action` Git/hosting payloads accept `cwd` to target any checkout while task state stays in the session directory. Non-Git directories can host tasks for OS work; YouTrack keeps its own permanent token.
+
 The platforms step also always lists Codex and Pi with their detected/configured
 status and separate setup instructions. Init registers only OpenCode/Cursor;
 Codex uses plugin/hooks setup and Pi uses `pi install @brainervirus/workit-pi`.

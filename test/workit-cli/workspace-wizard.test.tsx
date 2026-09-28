@@ -376,6 +376,41 @@ test("apply writes workspaces and preserves existing tokens (WZ-12/CA-13)", () =
   }
 });
 
+test("workspace preview preserves unrelated fields and rejects a changed revision before writes", () => {
+  const dir = tmp("wk-ws-revision-");
+  const home = tmp("wk-ws-revision-home-");
+  try {
+    const file = path.join(dir, "workspaces.json");
+    const original = {
+      futureConfig: { retain: true },
+      workspaces: [entry("work", "/work/**")],
+    };
+    writeFileSync(file, JSON.stringify(original, null, 2) + "\n", "utf8");
+    const preview = buildSetupPreview(previewValues({ workspaces: [entry("work", "/other/**")] }), {
+      dir,
+      env: {},
+      home,
+    });
+    expect(preview.ok).toBe(true);
+
+    const concurrent = JSON.parse(readFileSync(file, "utf8"));
+    concurrent.futureConfig = { retain: "concurrent edit" };
+    writeFileSync(file, JSON.stringify(concurrent, null, 2) + "\n", "utf8");
+
+    const result = applySetupPreview(preview, { configDir: dir, home, env: {} });
+    expect(result.ok).toBe(false);
+    expect(result.entries[0]?.detail).toContain("changed after preview");
+    expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({
+      futureConfig: { retain: "concurrent edit" },
+      workspaces: [entry("work", "/work/**")],
+    });
+    expect(existsSync(path.join(dir, "config.json"))).toBe(false);
+  } finally {
+    clean(dir);
+    clean(home);
+  }
+});
+
 // ---------------------------------------------------------------------------
 // Deterministic TTY: workspaces menu, add/edit/remove, current project, and
 // the shared-matcher preview.
@@ -613,9 +648,9 @@ test("back and cancel inside the workspace flow preserve state and write nothing
     // provider is a select screen: 'b' walks back; Esc on a text screen backs up
     await tty.keys("b");
     expect(tty.lastFrame()).toContain("Workspaces · Pattern");
-    // Single-chunk ESC (not keys(ESC)): a lone ESC would leave a pending byte
-    // resolving ~20ms later as cancel, racing the keys after it.
-    await tty.burst(ESC);
+    // A single Escape at key() boundary lets Ink finish disambiguating it
+    // before the text screen returns to the parent selector.
+    await tty.key("\x1b");
     expect(tty.lastFrame()).toContain("Workspaces · Name");
     expect(tty.lastFrame()).toContain("work");
     // Esc alone can only back out of the name editor while the draft lives;
@@ -814,43 +849,47 @@ test("choosing GitHub Issues defaults new workspaces to github with issues linke
 // Step 6 prints the exact hygiene target Apply will touch.
 // ---------------------------------------------------------------------------
 
-test("without env the wizard prompts for the workspace root and blocks invalid input", async () => {
-  const configDir = tmp("wk-ws-root-cfg-");
-  const project = tmp("wk-ws-root-proj-");
-  const previous = process.cwd();
-  const prevRoot = process.env.WORKFLOW_WORKSPACE_ROOT;
-  delete process.env.WORKFLOW_WORKSPACE_ROOT;
-  process.chdir(project);
-  try {
-    withConfigDir(configDir);
-    const tty = await renderInk(<Wizard onExit={noop} />);
-    // platforms SPACE+ENTER, then ENTERs to vcs (locale/timezone/preset/tracker/youtrack)
-    await tty.keys(SPACE, ENTER, ENTER, ENTER, ENTER, ENTER, ENTER); // -> vcs
-    await tty.keys(ENTER); // vcs -> base-path prompt (env unset)
-    expect(tty.lastFrame()).toContain("Workspace root");
-    await tty.keys(ENTER); // empty submit refuses to advance
-    expect(tty.lastFrame()).toContain("required");
-    await tty.keys("relative/path", ENTER);
-    expect(tty.lastFrame()).toContain("existing absolute directory");
-    for (let i = 0; i < "relative/path".length; i++) await tty.key(BACKSPACE);
-    const missing = path.join(project, "missing-dir");
-    await tty.keys(missing, ENTER);
-    expect(tty.lastFrame()).toContain("existing absolute directory");
-    for (let i = 0; i < missing.length; i++) await tty.key(BACKSPACE);
-    await tty.keys(`${project}`, ENTER);
-    const menu = tty.lastFrame();
-    expect(menu).toContain("Use current project");
-    expect(menu).toContain(`${project}`);
-    tty.unmount();
-  } finally {
-    process.chdir(previous);
-    if (prevRoot === undefined) delete process.env.WORKFLOW_WORKSPACE_ROOT;
-    else process.env.WORKFLOW_WORKSPACE_ROOT = prevRoot;
-    delete process.env.WORKFLOW_TOOLKIT_CONFIG;
-    clean(configDir);
-    clean(project);
-  }
-});
+test(
+  "without env the wizard prompts for the workspace root and blocks invalid input",
+  async () => {
+    const configDir = tmp("wk-ws-root-cfg-");
+    const project = tmp("wk-ws-root-proj-");
+    const previous = process.cwd();
+    const prevRoot = process.env.WORKFLOW_WORKSPACE_ROOT;
+    delete process.env.WORKFLOW_WORKSPACE_ROOT;
+    process.chdir(project);
+    try {
+      withConfigDir(configDir);
+      const tty = await renderInk(<Wizard onExit={noop} />);
+      // platforms SPACE+ENTER, then ENTERs to vcs (locale/timezone/preset/tracker/youtrack)
+      await tty.keys(SPACE, ENTER, ENTER, ENTER, ENTER, ENTER, ENTER); // -> vcs
+      await tty.keys(ENTER); // vcs -> base-path prompt (env unset)
+      expect(tty.lastFrame()).toContain("Workspace root");
+      await tty.keys(ENTER); // empty submit refuses to advance
+      expect(tty.lastFrame()).toContain("required");
+      await tty.keys("relative/path", ENTER);
+      expect(tty.lastFrame()).toContain("existing absolute directory");
+      for (let i = 0; i < "relative/path".length; i++) await tty.key(BACKSPACE);
+      const missing = path.join(project, "missing-dir");
+      await tty.keys(missing, ENTER);
+      expect(tty.lastFrame()).toContain("existing absolute directory");
+      for (let i = 0; i < missing.length; i++) await tty.key(BACKSPACE);
+      await tty.keys(`${project}`, ENTER);
+      const menu = tty.lastFrame();
+      expect(menu).toContain("Use current project");
+      expect(menu).toContain(`${project}`);
+      tty.unmount();
+    } finally {
+      process.chdir(previous);
+      if (prevRoot === undefined) delete process.env.WORKFLOW_WORKSPACE_ROOT;
+      else process.env.WORKFLOW_WORKSPACE_ROOT = prevRoot;
+      delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+      clean(configDir);
+      clean(project);
+    }
+  },
+  { timeout: 15_000 },
+);
 
 test("with WORKFLOW_WORKSPACE_ROOT set, current-project and previews derive from it, not cwd", async () => {
   const configDir = tmp("wk-ws-envroot-cfg-");

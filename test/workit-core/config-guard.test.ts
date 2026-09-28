@@ -35,7 +35,7 @@ test("partial config reports only youtrack_token when scoped, plus vcs ids unsco
     expect(scoped.missing).toEqual(["youtrack_token"]);
     const unscoped = describeConfigGaps();
     expect(unscoped.missing).not.toContain("youtrack_json");
-    for (const id of ["youtrack_token", "vcs_json", "gitlab_token", "github_token"]) {
+    for (const id of ["youtrack_token", "vcs_json"]) {
       expect(unscoped.missing).toContain(id);
     }
   });
