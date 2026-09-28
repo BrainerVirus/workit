@@ -811,7 +811,10 @@ export const taskSummarySchema = z
   })
   .strict();
 export type TaskSummary = z.infer<typeof taskSummarySchema>;
-export const taskListItemSchema = taskSummarySchema.omit({ policy: true, requirements: true });
+export const taskListItemSchema = taskSummarySchema
+  .omit({ policy: true, requirements: true })
+  .extend({ source: provenanceSchema.pick({ host: true, kind: true }) })
+  .strict();
 export type TaskListItem = z.infer<typeof taskListItemSchema>;
 export const exportBundleSchema = z
   .object({

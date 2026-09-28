@@ -128,6 +128,7 @@ test("task history search matches summaries and decisions, orders and limits rea
   expect(hit.ok).toBe(true);
   if (!hit.ok) throw new Error("search failed");
   expect((hit.data as { id: string }[]).map(({ id }) => id)).toEqual([newerId]);
+  expect(hit.data).toMatchObject([{ source: { host: "workit_cli", kind: "host_observed" } }]);
   const summaryHit = makeCore("2026-01-03T00:00:00Z").task({
     schemaVersion: 1,
     action: "list",

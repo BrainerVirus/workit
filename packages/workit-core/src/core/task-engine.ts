@@ -964,6 +964,10 @@ export class WorkitCore {
           closure: task.closure,
           progress: task.progress,
           writer: task.status === "closed" ? null : workspace.data!.writer,
+          source: {
+            host: task.intent.provenance.host,
+            kind: task.intent.provenance.kind,
+          },
         }));
         return success(null, null, tasks);
       }
