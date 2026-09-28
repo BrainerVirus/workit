@@ -846,6 +846,7 @@ const taskOperations = {
   list: operation({
     action: z.literal("list"),
     status: z.enum(["open", "closed", "all"]).optional(),
+    query: z.string().trim().min(1).max(200).optional(),
     limit: z.number().int().min(1).max(50).optional(),
   }),
   inspect: operation({

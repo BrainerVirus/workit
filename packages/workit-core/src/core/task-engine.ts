@@ -894,7 +894,7 @@ export class WorkitCore {
     if (!parsed.ok) return parsed as Result<never>;
     const input = parsed.data as any;
     if ((this.context.workerId ?? null) !== null) {
-      if (input.action !== "inspect")
+      if (input.action !== "inspect" && input.action !== "list")
         return failure("permission_denied", "helpers cannot control task lifecycle or scope");
     }
     switch (input.action) {
@@ -918,6 +918,7 @@ export class WorkitCore {
         if (!listed.ok) return listed as Result<never>;
         const status = input.status ?? "open";
         const limit = input.limit ?? 20;
+        const query = input.query?.toLowerCase().split(/\s+/);
         const selected = listed.data
           .filter((task) =>
             status === "all"
@@ -925,6 +926,19 @@ export class WorkitCore {
               : status === "closed"
                 ? task.status === "closed"
                 : task.status !== "closed",
+          )
+          .filter(
+            (task) =>
+              !query ||
+              query.every((term: string) =>
+                JSON.stringify({
+                  objective: task.intent.data.objective,
+                  progress: task.progress,
+                  decisions: task.decisions.map(({ data }) => data),
+                })
+                  .toLowerCase()
+                  .includes(term),
+              ),
           )
           .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
           .slice(0, limit);
