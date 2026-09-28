@@ -173,12 +173,29 @@ const sameMetadataLock = (left: unknown, right: MetadataLock): boolean => {
   const parsed = metadataLockSchema.safeParse(left);
   return parsed.success && canonicalJson(parsed.data) === canonicalJson(right);
 };
-const sameDirectoryIdentity = (left: string, right: string): boolean => {
+export const sameDirectoryIdentity = (left: string, right: string): boolean => {
   if (!path.isAbsolute(left) || !path.isAbsolute(right)) return false;
+  const normalizedLeft = path.resolve(left);
+  const normalizedRight = path.resolve(right);
   try {
-    const a = fs.statSync(left, { bigint: true });
-    const b = fs.statSync(right, { bigint: true });
-    return a.isDirectory() && b.isDirectory() && a.dev === b.dev && a.ino !== 0n && a.ino === b.ino;
+    const a = fs.statSync(normalizedLeft, { bigint: true });
+    const b = fs.statSync(normalizedRight, { bigint: true });
+    if (!a.isDirectory() || !b.isDirectory()) return false;
+    if (
+      process.platform === "win32"
+        ? normalizedLeft.toLowerCase() === normalizedRight.toLowerCase()
+        : normalizedLeft === normalizedRight
+    )
+      return true;
+    const canonicalLeft = fs.realpathSync(normalizedLeft);
+    const canonicalRight = fs.realpathSync(normalizedRight);
+    if (
+      process.platform === "win32"
+        ? canonicalLeft.toLowerCase() === canonicalRight.toLowerCase()
+        : canonicalLeft === canonicalRight
+    )
+      return true;
+    return a.dev === b.dev && a.ino !== 0n && a.ino === b.ino;
   } catch {
     return false;
   }

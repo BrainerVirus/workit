@@ -3,6 +3,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  realpathSync,
   readFileSync,
   rmSync,
   symlinkSync,
@@ -79,15 +80,17 @@ test("external action lock is reentrant through another path to the same directo
   const root = fixtureRoot();
   const alias = `${root}-alias`;
   try {
-    const outerRoot = process.platform === "win32" ? root.toUpperCase() : alias;
+    const outerRoots =
+      process.platform === "win32" ? [root.toUpperCase(), realpathSync(root)] : [alias];
     if (process.platform !== "win32") symlinkSync(root, alias, "dir");
-    const outerStore = new TaskStore(outerRoot);
     const nestedStore = new TaskStore(root);
-    const result = await outerStore.withExternalActionLock(
-      () => nestedStore.withExternalActionLock(async () => success(null, null, "nested")),
-      true,
-    );
-    expect(result).toEqual(success(null, null, "nested"));
+    for (const outerRoot of new Set(outerRoots)) {
+      const result = await new TaskStore(outerRoot).withExternalActionLock(
+        () => nestedStore.withExternalActionLock(async () => success(null, null, "nested")),
+        true,
+      );
+      expect(result).toEqual(success(null, null, "nested"));
+    }
   } finally {
     if (process.platform !== "win32") rmSync(alias, { force: true });
     rmSync(root, { recursive: true, force: true });

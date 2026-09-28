@@ -58,7 +58,7 @@ import { normalizeChainSteps } from "./authority";
 import { resolveInside, run as coreRun } from "../core";
 import { hostingApiHostMatches, vcsCliIdentity, vcsConfig } from "./vcs-config";
 import { assertProductWriteAllowed, currentWriterOwnsTask } from "./workers";
-import { TaskStore } from "./task-store";
+import { sameDirectoryIdentity, TaskStore } from "./task-store";
 
 const run = (root: string, args: string[]) => {
   return coreRun(root, "git", args);
@@ -1889,7 +1889,7 @@ export const executeConcreteExternalAction = async (
           expectedWorkspaceRevision,
         ),
       );
-    if (root !== coordinationRoot) {
+    if (!sameDirectoryIdentity(root, coordinationRoot)) {
       const targetWorkspace = new TaskStore(root).readWorkspace();
       if (!targetWorkspace.ok) return targetWorkspace as Result<never>;
       const owner = targetWorkspace.data?.writer?.owner;

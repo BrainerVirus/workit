@@ -13,7 +13,7 @@ import {
   sha256,
 } from "./task-contract";
 import { WorkitCore } from "./task-engine";
-import { TaskStore } from "./task-store";
+import { sameDirectoryIdentity, TaskStore } from "./task-store";
 import {
   chainStepKey,
   normalizeChainSteps,
@@ -481,7 +481,7 @@ export const approvedPlanCommit = (
         return [];
       const plan = planCommitDescriptor(decision.binding.approvedContent);
       if (!plan) return [];
-      if ((plan.cwd ?? store.root) !== targetRoot) return [];
+      if (!sameDirectoryIdentity(plan.cwd ?? store.root, targetRoot)) return [];
       const completed =
         task.actionProgress?.find((progress) => progress.decisionId === entry.id)?.completedSteps ??
         [];
@@ -541,7 +541,7 @@ export const approvedChainStep = (
       const plan = planCommitDescriptor(decision.binding.approvedContent);
       if (!plan) return [];
       const targetRoot = query.cwd ?? store.root;
-      if ((plan.cwd ?? store.root) !== targetRoot) return [];
+      if (!sameDirectoryIdentity(plan.cwd ?? store.root, targetRoot)) return [];
       const completed =
         task.actionProgress?.find((progress) => progress.decisionId === entry.id)?.completedSteps ??
         [];
@@ -946,10 +946,12 @@ export const createAuthorizedExternalActionRunner =
         return failure("capability_unavailable", "external action target could not be locked", {
           outcome: "not_started",
         });
-      const withActionLock: WithExternalActionLock | undefined =
-        targetRoot !== realpathSync(coordinationRoot)
-          ? (run) => new TaskStore(targetRoot).withExternalActionLock(run, true)
-          : undefined;
+      const withActionLock: WithExternalActionLock | undefined = !sameDirectoryIdentity(
+        targetRoot,
+        coordinationRoot,
+      )
+        ? (run) => new TaskStore(targetRoot).withExternalActionLock(run, true)
+        : undefined;
       const result = await runAuthorizedExternalAction(
         { core, ...(binding as Omit<AuthorizedActionInput, "core">), ...(step ? { step } : {}) },
         (reservation) => effect(step, reservation),
