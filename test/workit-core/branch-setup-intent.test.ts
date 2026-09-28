@@ -42,7 +42,7 @@ const verifier = (actor: string): NativeAuthorityVerifier => ({
 const setup = (actor = "cli-intent") => {
   const root = mkdtempSync(join(tmpdir(), "workit-branch-intent-"));
   for (const args of [
-    ["init", "-q"],
+    ["init", "-q", "-b", "develop"],
     ["config", "user.email", "test@example.invalid"],
     ["config", "user.name", "Workit Test"],
   ])
