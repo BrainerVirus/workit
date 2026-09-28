@@ -32,6 +32,7 @@ const WORKIT_EXTERNAL_ACTION_OPERATIONS = [
   "git.push",
   "hosting.pull_request",
   "hosting.merge",
+  "hosting.delete_branch",
   "youtrack.update",
   "youtrack.time",
   "youtrack.meeting",

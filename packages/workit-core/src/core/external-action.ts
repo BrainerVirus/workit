@@ -14,9 +14,16 @@ import {
 } from "./task-contract";
 import { WorkitCore } from "./task-engine";
 import { TaskStore } from "./task-store";
-import { chainStepKey, normalizeChainSteps, type ChainStep } from "./authority";
+import {
+  chainStepKey,
+  normalizeChainSteps,
+  type ActionReservation,
+  type ChainStep,
+} from "./authority";
 import * as z from "zod";
 import { execFileSync } from "node:child_process";
+import { realpathSync } from "node:fs";
+import path from "node:path";
 
 const chainStepSchema = z.union([
   z.string().min(1),
@@ -45,6 +52,9 @@ export type AuthorizedActionInput = {
 };
 
 export type ExternalActionResult<T> = Result<T>;
+type WithExternalActionLock = <T>(
+  operation: () => Promise<ExternalActionResult<T>>,
+) => Promise<ExternalActionResult<T>>;
 
 const externalActionSchema = z.discriminatedUnion("operation", [
   z
@@ -56,6 +66,7 @@ const externalActionSchema = z.discriminatedUnion("operation", [
           sdd_dir: z.string().optional(),
           target_branch: z.string().optional(),
           stash: z.enum(["yes", "no"]).optional(),
+          cwd: z.string().min(1).optional(),
         })
         .strict(),
     })
@@ -68,6 +79,7 @@ const externalActionSchema = z.discriminatedUnion("operation", [
           message: z.string().min(1).optional(),
           plan_steps: z.array(chainStepSchema).min(1).max(32).optional(),
           plan_branch: z.string().min(1).optional(),
+          cwd: z.string().min(1).optional(),
         })
         .strict(),
     })
@@ -75,7 +87,9 @@ const externalActionSchema = z.discriminatedUnion("operation", [
   z
     .object({
       operation: z.literal("git.push"),
-      payload: z.object({ branch: z.string().min(1).optional() }).strict(),
+      payload: z
+        .object({ branch: z.string().min(1).optional(), cwd: z.string().min(1).optional() })
+        .strict(),
     })
     .strict(),
   z
@@ -88,6 +102,7 @@ const externalActionSchema = z.discriminatedUnion("operation", [
           draft: z.boolean().optional(),
           target_branch: z.string().optional(),
           babysit: z.boolean().optional(),
+          cwd: z.string().min(1).optional(),
         })
         .strict(),
     })
@@ -99,8 +114,15 @@ const externalActionSchema = z.discriminatedUnion("operation", [
         .object({
           target_branch: z.string().min(1).optional(),
           source_branch: z.string().min(1).optional(),
+          cwd: z.string().min(1).optional(),
         })
         .strict(),
+    })
+    .strict(),
+  z
+    .object({
+      operation: z.literal("hosting.delete_branch"),
+      payload: z.object({ branch: z.string().min(1), cwd: z.string().min(1).optional() }).strict(),
     })
     .strict(),
   z
@@ -179,6 +201,7 @@ const externalActionSchema = z.discriminatedUnion("operation", [
           mode: z.string().optional(),
           specPath: z.string().optional(),
           planPath: z.string().optional(),
+          cwd: z.string().min(1).optional(),
         })
         .strict(),
     })
@@ -205,7 +228,10 @@ export type ExternalActionRunner = <T>(
 ) => Promise<ExternalActionResult<T>>;
 export type ExternalActionEffect = <T>(
   operation: string,
-  effect: (step?: string) => T | Result<T> | Promise<T | Result<T>>,
+  effect: (
+    step?: string,
+    reservation?: ActionReservation,
+  ) => T | Result<T> | Promise<T | Result<T>>,
 ) => Promise<ExternalActionResult<T>>;
 export type ExternalActionBinding = (
   operation: string,
@@ -250,7 +276,7 @@ export const planReservationLength = (
 
 /** Compact host-facing help for the fixed optional-action surface. */
 export const externalActionHelp =
-  "Fixed actions: git.branch_setup {action?,sdd_dir?,target_branch(required unless reapply_stash; the working branch to create or switch to),stash?}; git.commit {message?; plan_steps?: (string | {branch:string} | {pr:true})[]; plan_branch?}; git.push {branch?}; hosting.pull_request {title,body?,draft?,target_branch?,babysit?}; hosting.merge {target_branch?,source_branch?}; youtrack.update {issueId,markdown,minutes?}; youtrack.time {issueId,minutes,text?,dateMs?}; youtrack.meeting {issueId,minutes,text}; changelog.apply {entries?,path?,normalize_only?}; context.read {kind: git|pr|youtrack|github_issue|gitlab_issue|changelog|release|affected,range?,issueId?,issueUrl?,issueRef?,mode?,specPath?,planPath?}. context.read is read-only and needs no approval; all other operations require native approval (CLI uses a TTY; caller-unattested MCP cannot mutate).";
+  "Fixed actions: Git/hosting operations accept cwd? for an action-time target repository: git.branch_setup {target_branch,action?,sdd_dir?,stash?,cwd?}; git.commit {message?,plan_steps?,plan_branch?,cwd?}; git.push {branch?,cwd?}; hosting.pull_request {title,body?,draft?,target_branch?,babysit?,cwd?} creates only after pre-verifying the approved source SHA and post-verifies the provider PR head before reporting success (the residual non-atomic source-SHA race is accepted); babysit:true opts into PR-ready follow-up and does not authorize merge or release; omission means no babysitting; hosting.merge {target_branch?,source_branch?,cwd?}; hosting.delete_branch {branch,cwd?} deletes only an exact merged PR head. YouTrack: update {issueId,markdown,minutes?}, time {issueId,minutes,text?,dateMs?}, meeting {issueId,minutes,text}. changelog.apply {entries?,path?,normalize_only?}; context.read {kind,range?,cwd?,issueId?,issueUrl?,issueRef?}. context.read is read-only; all other actions require host-native approval (CLI needs TTY; caller-unattested MCP cannot mutate).";
 
 export const externalActionRef = (
   host: "opencode" | "pi" | "workit_cli",
@@ -351,13 +377,14 @@ export const priorExternalAction = (
 /** Parse a plan-commit authorization descriptor (one approved list per plan). */
 export const planCommitDescriptor = (
   content: string,
-): { steps: ChainStep[]; branch: string; snapshotHead: string | null } | null => {
+): { steps: ChainStep[]; branch: string; snapshotHead: string | null; cwd?: string } | null => {
   try {
     const value = JSON.parse(content) as {
       operation?: unknown;
       payload?: {
         plan_steps?: unknown;
         plan_branch?: unknown;
+        cwd?: unknown;
         resolved?: { head?: unknown; branch?: unknown };
       };
     };
@@ -365,8 +392,15 @@ export const planCommitDescriptor = (
     const steps = normalizeChainSteps(value.payload.plan_steps);
     const branch = value.payload.plan_branch;
     if (!steps || typeof branch !== "string" || !branch) return null;
+    const cwd = value.payload.cwd;
+    if (cwd !== undefined && (typeof cwd !== "string" || !path.isAbsolute(cwd))) return null;
     const head = value.payload.resolved?.head;
-    return { steps, branch, snapshotHead: typeof head === "string" ? head : null };
+    return {
+      steps,
+      branch,
+      snapshotHead: typeof head === "string" ? head : null,
+      ...(typeof cwd === "string" ? { cwd } : {}),
+    };
   } catch {
     return null;
   }
@@ -377,17 +411,21 @@ export const planCommitDescriptor = (
  * HEAD — history only moved forward. Rebase/reset underneath an approved
  * chain invalidates it instead of executing on rewritten history.
  */
-export const chainLeaseValid = (store: TaskStore, snapshotHead: string | null): boolean => {
+export const chainLeaseValid = (
+  store: TaskStore,
+  snapshotHead: string | null,
+  targetRoot = store.root,
+): boolean => {
   if (!snapshotHead) return true;
   try {
     const head = execFileSync("git", ["rev-parse", "HEAD"], {
-      cwd: store.root,
+      cwd: targetRoot,
       encoding: "utf8",
       stdio: ["pipe", "pipe", "pipe"],
     }).trim();
     if (head === snapshotHead) return true;
     execFileSync("git", ["merge-base", "--is-ancestor", snapshotHead, head], {
-      cwd: store.root,
+      cwd: targetRoot,
       encoding: "utf8",
       stdio: ["pipe", "pipe", "pipe"],
     });
@@ -420,6 +458,7 @@ export const approvedPlanCommit = (
   host: string,
   actor: string,
   message: string,
+  targetRoot = store.root,
 ): Result<PlanCommitAuthorization> => {
   if (typeof message !== "string" || !message)
     return failure("invalid_input", "commit message is required");
@@ -442,12 +481,13 @@ export const approvedPlanCommit = (
         return [];
       const plan = planCommitDescriptor(decision.binding.approvedContent);
       if (!plan) return [];
+      if ((plan.cwd ?? store.root) !== targetRoot) return [];
       const completed =
         task.actionProgress?.find((progress) => progress.decisionId === entry.id)?.completedSteps ??
         [];
       const next = plan.steps[completed.length];
       if (!next || next.kind !== "commit" || next.message !== message) return [];
-      if (!chainLeaseValid(store, plan.snapshotHead)) return [];
+      if (!chainLeaseValid(store, plan.snapshotHead, targetRoot)) return [];
       return [
         {
           task,
@@ -471,8 +511,8 @@ export const approvedPlanCommit = (
 };
 
 export type ChainStepQuery =
-  | { operation: "git.branch_setup"; target: string }
-  | { operation: "hosting.pull_request" };
+  | { operation: "git.branch_setup"; target: string; cwd?: string }
+  | { operation: "hosting.pull_request"; cwd?: string };
 
 /** Match the next branch or PR step of an active chain authorization. */
 export const approvedChainStep = (
@@ -500,6 +540,8 @@ export const approvedChainStep = (
         return [];
       const plan = planCommitDescriptor(decision.binding.approvedContent);
       if (!plan) return [];
+      const targetRoot = query.cwd ?? store.root;
+      if ((plan.cwd ?? store.root) !== targetRoot) return [];
       const completed =
         task.actionProgress?.find((progress) => progress.decisionId === entry.id)?.completedSteps ??
         [];
@@ -510,7 +552,7 @@ export const approvedChainStep = (
       } else if (next.kind !== "pr") {
         return [];
       }
-      if (!chainLeaseValid(store, plan.snapshotHead)) return [];
+      if (!chainLeaseValid(store, plan.snapshotHead, targetRoot)) return [];
       return [
         {
           task,
@@ -547,6 +589,17 @@ export const commitMessageFromDescriptor = (operation: string): string | undefin
   }
 };
 
+const descriptorTargetRoot = (store: TaskStore, operation: string): string | null => {
+  try {
+    const descriptor = JSON.parse(operation) as { payload?: { cwd?: unknown } };
+    const cwd = descriptor.payload?.cwd;
+    if (cwd === undefined) return store.root;
+    return typeof cwd === "string" && path.isAbsolute(cwd) ? realpathSync(cwd) : null;
+  } catch {
+    return null;
+  }
+};
+
 /** Resolve a chain authorization into the exact binding an adapter needs
  * to run one branch or PR step under the approved chain. Commit steps stay
  * on the plan path; this covers the steps plans could never express. */
@@ -572,12 +625,18 @@ export const chainStepBinding = (
   } catch {
     return null;
   }
+  const targetRoot = descriptorTargetRoot(store, operation);
+  if (!targetRoot) return null;
   const query: ChainStepQuery | null =
     descriptor.operation === "git.branch_setup" &&
     typeof descriptor.payload?.target_branch === "string"
-      ? { operation: "git.branch_setup", target: descriptor.payload.target_branch as string }
+      ? {
+          operation: "git.branch_setup",
+          target: descriptor.payload.target_branch as string,
+          cwd: targetRoot,
+        }
       : descriptor.operation === "hosting.pull_request"
-        ? { operation: "hosting.pull_request" }
+        ? { operation: "hosting.pull_request", cwd: targetRoot }
         : null;
   if (!query) return null;
   const chain = approvedChainStep(store, host, actor, query);
@@ -587,7 +646,7 @@ export const chainStepBinding = (
     let branch: string;
     try {
       branch = execFileSync("git", ["branch", "--show-current"], {
-        cwd: store.root,
+        cwd: targetRoot,
         encoding: "utf8",
         stdio: ["pipe", "pipe", "pipe"],
       }).trim();
@@ -627,12 +686,14 @@ export const planCommitBinding = (
 } | null => {
   const message = commitMessageFromDescriptor(operation);
   if (!message) return null;
-  const plan = approvedPlanCommit(store, host, actor, message);
+  const targetRoot = descriptorTargetRoot(store, operation);
+  if (!targetRoot) return null;
+  const plan = approvedPlanCommit(store, host, actor, message, targetRoot);
   if (!plan.ok) return null;
   let branch: string;
   try {
     branch = execFileSync("git", ["branch", "--show-current"], {
-      cwd: store.root,
+      cwd: targetRoot,
       encoding: "utf8",
       stdio: ["pipe", "pipe", "pipe"],
     }).trim();
@@ -691,18 +752,26 @@ export const approvedExternalAction = (
   return selected;
 };
 
-/** Intent identity for a branch-setup descriptor: target and base bind the
- * effect; head and dirt are execution-time state that re-resolves. */
+/** Intent identity for branch setup includes the exact remote and local base commits. */
 export const branchSetupIntent = (
   descriptor: string,
-): { target: string; base: string; remoteBase: string | null; targetExists: boolean } | null => {
+): {
+  target: string;
+  base: string;
+  localBase: string | null;
+  remoteBase: string | null;
+  targetExists: boolean;
+  cwd?: string;
+} | null => {
   try {
     const value = JSON.parse(descriptor) as {
       operation?: unknown;
       payload?: {
         target_branch?: unknown;
+        cwd?: unknown;
         resolved?: {
           base_branch?: unknown;
+          local_base?: unknown;
           remote_base?: unknown;
           target_exists?: unknown;
         };
@@ -711,13 +780,20 @@ export const branchSetupIntent = (
     if (value.operation !== "git.branch_setup" || !value.payload) return null;
     const { target_branch, resolved } = value.payload;
     if (typeof target_branch !== "string" || !target_branch || !resolved) return null;
+    if (
+      value.payload.cwd !== undefined &&
+      (typeof value.payload.cwd !== "string" || !path.isAbsolute(value.payload.cwd))
+    )
+      return null;
     if (typeof resolved.base_branch !== "string" || typeof resolved.target_exists !== "boolean")
       return null;
     return {
       target: target_branch,
       base: resolved.base_branch,
+      localBase: typeof resolved.local_base === "string" ? resolved.local_base : null,
       remoteBase: typeof resolved.remote_base === "string" ? resolved.remote_base : null,
       targetExists: resolved.target_exists,
+      ...(typeof value.payload.cwd === "string" ? { cwd: value.payload.cwd } : {}),
     };
   } catch {
     return null;
@@ -755,8 +831,10 @@ export const approvedBranchSetupIntent = (
     const intent = branchSetupIntent(entry.data.binding.approvedContent);
     return (
       intent !== null &&
+      (intent.cwd ?? store.root) === (current.cwd ?? store.root) &&
       intent.target === current.target &&
       intent.base === current.base &&
+      intent.localBase === current.localBase &&
       intent.remoteBase === current.remoteBase &&
       intent.targetExists === current.targetExists
     );
@@ -820,9 +898,11 @@ export const priorResolvedDrift = (
             ? "base_branch"
             : before.remoteBase !== after.remoteBase
               ? "remote_base"
-              : before.targetExists !== after.targetExists
-                ? "target_exists"
-                : null;
+              : before.localBase !== after.localBase
+                ? "local_base"
+                : before.targetExists !== after.targetExists
+                  ? "target_exists"
+                  : null;
       if (moved === null) return success(null, null, null);
       return failure(
         "invalid_input",
@@ -840,10 +920,13 @@ export const priorResolvedDrift = (
 };
 
 export const createAuthorizedExternalActionRunner =
-  (core: WorkitCore, bind: ExternalActionBinding): ExternalActionEffect =>
+  (core: WorkitCore, bind: ExternalActionBinding, coordinationRoot: string): ExternalActionEffect =>
   async <T>(
     operation: string,
-    effect: (step?: string) => T | Result<T> | Promise<T | Result<T>>,
+    effect: (
+      step?: string,
+      reservation?: ActionReservation,
+    ) => T | Result<T> | Promise<T | Result<T>>,
   ) => {
     let steps: string[] = [];
     try {
@@ -858,15 +941,55 @@ export const createAuthorizedExternalActionRunner =
     for (const step of sequence) {
       const binding = bind(operation);
       if ("ok" in binding) return binding as ExternalActionResult<T>;
+      const targetRoot = externalActionTargetRoot(operation, coordinationRoot);
+      if (targetRoot === null)
+        return failure("capability_unavailable", "external action target could not be locked", {
+          outcome: "not_started",
+        });
+      const withActionLock: WithExternalActionLock | undefined =
+        targetRoot !== realpathSync(coordinationRoot)
+          ? (run) => new TaskStore(targetRoot).withExternalActionLock(run, true)
+          : undefined;
       const result = await runAuthorizedExternalAction(
         { core, ...(binding as Omit<AuthorizedActionInput, "core">), ...(step ? { step } : {}) },
-        () => effect(step),
+        (reservation) => effect(step, reservation),
+        withActionLock,
       );
       latest = result;
       if (!result.ok) return result;
     }
     return latest ?? failure("recovery_required", "external action did not execute");
   };
+
+const externalActionTargetRoot = (operation: string, coordinationRoot: string): string | null => {
+  let value: unknown;
+  try {
+    value = JSON.parse(operation);
+  } catch {
+    return realpathSync(coordinationRoot);
+  }
+  if (typeof value !== "object" || value === null) return realpathSync(coordinationRoot);
+  const descriptor = value as { operation?: unknown; payload?: unknown };
+  if (
+    typeof descriptor.operation !== "string" ||
+    typeof descriptor.payload !== "object" ||
+    descriptor.payload === null
+  )
+    return realpathSync(coordinationRoot);
+  if (
+    !descriptor.operation.startsWith("git.") &&
+    !descriptor.operation.startsWith("hosting.") &&
+    descriptor.operation !== "changelog.apply"
+  )
+    return realpathSync(coordinationRoot);
+  const payload = descriptor.payload as Record<string, unknown>;
+  const cwd = typeof payload.cwd === "string" ? payload.cwd : coordinationRoot;
+  try {
+    return realpathSync(path.resolve(coordinationRoot, cwd));
+  } catch {
+    return null;
+  }
+};
 
 export type NativeExternalActionObservation = {
   actor: string;
@@ -946,7 +1069,8 @@ export const matchesNativeExternalAction = (
  */
 export async function runAuthorizedExternalAction<T>(
   input: AuthorizedActionInput,
-  effect: () => T | Result<T> | Promise<T | Result<T>>,
+  effect: (reservation: ActionReservation) => T | Result<T> | Promise<T | Result<T>>,
+  withActionLock?: WithExternalActionLock,
 ): Promise<ExternalActionResult<T>> {
   if (input.core.isDelegatedCaller())
     return failure("permission_denied", "delegated workers cannot run external actions");
@@ -981,7 +1105,7 @@ export async function runAuthorizedExternalAction<T>(
               expectedRevision: reserved.data.taskRevision,
               expectedWorkspaceRevision: reserved.data.workspaceRevision,
             };
-      return input.core.settleAction({
+      const result = input.core.settleAction({
         ...reserved.data,
         taskRevision: revisions.expectedRevision,
         workspaceRevision: revisions.expectedWorkspaceRevision,
@@ -992,6 +1116,7 @@ export async function runAuthorizedExternalAction<T>(
           workspaceRevision: revisions.expectedWorkspaceRevision,
         }),
       });
+      return result;
     } catch {
       return failure("external_outcome_unknown", "external action settlement is unavailable", {
         operation: "external_action",
@@ -1007,43 +1132,67 @@ export async function runAuthorizedExternalAction<T>(
       ? settle(outcome, true)
       : first;
 
-  let effectValue: T | Result<T>;
-  try {
-    effectValue = await effect();
-  } catch {
-    const settled = settleWithRefresh("unknown", settle("unknown"));
+  let effectStarted = false;
+  const runEffect = async (): Promise<ExternalActionResult<T>> => {
+    effectStarted = true;
+    let effectValue: T | Result<T>;
+    try {
+      effectValue = await effect(reserved.data);
+    } catch {
+      const settled = settleWithRefresh("unknown", settle("unknown"));
+      if (!settled.ok) return settled as ExternalActionResult<T>;
+      return failure("external_outcome_unknown", "external action outcome is unknown", {
+        operation: "external_action",
+        outcome: "unknown",
+      });
+    }
+    if (
+      typeof effectValue === "object" &&
+      effectValue !== null &&
+      "ok" in effectValue &&
+      typeof (effectValue as { ok?: unknown }).ok === "boolean"
+    ) {
+      const contract = effectValue as Result<T>;
+      if (!contract.ok) {
+        const preflight =
+          typeof contract.details === "object" &&
+          contract.details !== null &&
+          (contract.details as Record<string, unknown>).outcome === "not_started";
+        const outcome = input.failureOutcome ?? (preflight ? "not_started" : "unknown");
+        const settled = settleWithRefresh(outcome, settle(outcome));
+        if (!settled.ok) return settled as ExternalActionResult<T>;
+        return contract;
+      }
+      effectValue = contract.data;
+    }
+    const settled = settleWithRefresh("succeeded", settle("succeeded"));
     if (!settled.ok) return settled as ExternalActionResult<T>;
-    return failure("external_outcome_unknown", "external action outcome is unknown", {
-      operation: "external_action",
-      outcome: "unknown",
+    return {
+      ok: true,
+      schemaVersion: 1,
+      revision: settled.revision,
+      workspaceRevision: settled.workspaceRevision,
+      data: effectValue as T,
+    };
+  };
+  let result: ExternalActionResult<T>;
+  try {
+    result = withActionLock ? await withActionLock(runEffect) : await runEffect();
+  } catch {
+    if (effectStarted)
+      return failure("external_outcome_unknown", "external action outcome is unknown", {
+        operation: "external_action",
+        outcome: "unknown",
+      });
+    const settled = settleWithRefresh("not_started", settle("not_started"));
+    if (!settled.ok) return settled as ExternalActionResult<T>;
+    return failure("writer_conflict", "target checkout was unavailable before the effect", {
+      outcome: "not_started",
     });
   }
-  if (
-    typeof effectValue === "object" &&
-    effectValue !== null &&
-    "ok" in effectValue &&
-    typeof (effectValue as { ok?: unknown }).ok === "boolean"
-  ) {
-    const contract = effectValue as Result<T>;
-    if (!contract.ok) {
-      const preflight =
-        typeof contract.details === "object" &&
-        contract.details !== null &&
-        (contract.details as Record<string, unknown>).outcome === "not_started";
-      const outcome = input.failureOutcome ?? (preflight ? "not_started" : "unknown");
-      const settled = settleWithRefresh(outcome, settle(outcome));
-      if (!settled.ok) return settled as ExternalActionResult<T>;
-      return contract;
-    }
-    effectValue = contract.data;
+  if (!effectStarted) {
+    const settled = settleWithRefresh("not_started", settle("not_started"));
+    if (!settled.ok) return settled as ExternalActionResult<T>;
   }
-  const settled = settleWithRefresh("succeeded", settle("succeeded"));
-  if (!settled.ok) return settled as ExternalActionResult<T>;
-  return {
-    ok: true,
-    schemaVersion: 1,
-    revision: settled.revision,
-    workspaceRevision: settled.workspaceRevision,
-    data: effectValue as T,
-  };
+  return result;
 }

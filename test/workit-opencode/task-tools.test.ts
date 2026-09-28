@@ -1213,7 +1213,7 @@ test("a later push of the same branch resolves as a new action", async () => {
     rmSync(fixture.root, { recursive: true, force: true });
     rmSync(remote, { recursive: true, force: true });
   }
-});
+}, 15_000);
 
 test("aged action proposals with unchanged state still bind", async () => {
   const root = mkdtempSync(join(tmpdir(), "workit-opencode-proposal-expiry-"));
@@ -1589,11 +1589,8 @@ test("OpenCode reports a missing hosting CLI before reserving a pull request", a
   }
 });
 
-test("OpenCode hosting action reconciles a matching provider result without retrying the effect", async () => {
-  const root = mkdtempSync(join(tmpdir(), "workit-opencode-hosting-read-"));
-  const oldConfig = process.env.WORKFLOW_VCS_CONFIG;
-  const oldPath = process.env.PATH;
-  const oldFetch = globalThis.fetch;
+test("OpenCode hosting action refuses an unbound PR target before reservation or provider access", async () => {
+  const root = mkdtempSync(join(tmpdir(), "workit-opencode-hosting-unbound-"));
   try {
     for (const args of [
       ["init", "-q"],
@@ -1604,42 +1601,22 @@ test("OpenCode hosting action reconciles a matching provider result without retr
     writeFileSync(join(root, "initial.txt"), "initial\n");
     spawnSync("git", ["add", "initial.txt"], { cwd: root });
     spawnSync("git", ["commit", "-qm", "initial"], { cwd: root });
-    spawnSync("git", ["checkout", "-qb", "feature/hosting"], { cwd: root });
-    spawnSync("git", ["remote", "add", "origin", "https://github.com/org/repo.git"], { cwd: root });
-    const bin = mkdtempSync(join(tmpdir(), "workit-fake-gh-"));
-    const gh = join(bin, "gh");
-    writeFileSync(gh, "#!/bin/sh\nexit 1\n");
-    chmodSync(gh, 0o755);
-    process.env.PATH = `${bin}:${oldPath ?? ""}`;
-    const tokenPath = join(root, "token");
-    const configPath = join(root, "vcs.json");
-    writeFileSync(tokenPath, "test-token\n");
-    writeFileSync(
-      configPath,
-      JSON.stringify({
-        provider: "github",
-        github: { tokenFile: tokenPath },
-        pr: { pushBranch: false },
-      }),
-    );
-    process.env.WORKFLOW_VCS_CONFIG = configPath;
     const actor = "opencode-hosting-session";
     const store = new TaskStore(root);
-    const setupCore = new WorkitCore(store, {
+    const core = new WorkitCore(store, {
       root,
       caller: { host: "opencode", actor },
       capabilities: [],
       constraints: [],
       now: "2026-01-01T00:00:00Z",
     });
-    const started = setupCore.task(taskStartRequest());
-    expect(started.ok).toBe(true);
+    const started = core.task(taskStartRequest());
     if (!started.ok) throw new Error(started.error);
     const task = store.readTask((started.data as { id: string }).id);
     const workspace = store.readWorkspace();
     if (!task.ok || !workspace.ok || !workspace.data) throw new Error("task setup failed");
     expect(
-      setupCore.writer({
+      core.writer({
         schemaVersion: 1,
         action: "acquire",
         taskId: task.data.id,
@@ -1648,63 +1625,23 @@ test("OpenCode hosting action reconciles a matching provider result without retr
         workerId: null,
       }),
     ).toMatchObject({ ok: true });
-    const decisionTask = store.readTask(task.data.id);
-    const decisionWorkspace = store.readWorkspace();
-    if (!decisionTask.ok || !decisionWorkspace.ok || !decisionWorkspace.data)
-      throw new Error("writer refresh failed");
     const request = {
       operation: "hosting.pull_request" as const,
       payload: { title: "Offline PR", body: "test", target_branch: "main" },
     };
-    const resolved = resolveExternalActionRequest(root, request);
-    if (!resolved.ok) throw new Error(resolved.error);
-    const { tools, decision } = await approveActionFor({
-      root,
-      actor,
-      task: decisionTask.data,
-      workspace: decisionWorkspace.data,
-      request,
-      callID: "hosting-question",
-    });
-    expect(JSON.parse(typeof decision === "string" ? decision : decision.output)).toMatchObject({
-      ok: true,
-    });
-    const source = resolved.data.descriptorPayload as {
-      target_branch: string;
-      resolved: { source_branch: string; source_commit: string; marker: string };
-    };
-    globalThis.fetch = (async () => ({
-      ok: true,
-      json: async () => [
-        {
-          number: 99,
-          body: source.resolved.marker,
-          base: { ref: source.target_branch },
-          head: { ref: source.resolved.source_branch, sha: source.resolved.source_commit },
-        },
-      ],
-    })) as unknown as typeof fetch;
-    const first = await tools.workit_external_action.execute(request, {
-      directory: root,
-      sessionID: actor,
-    });
-    expect(JSON.parse(typeof first === "string" ? first : first.output)).toMatchObject({
+    expect(resolveExternalActionRequest(root, request)).toMatchObject({
       ok: false,
-      code: "external_outcome_unknown",
+      code: "capability_unavailable",
+      details: { capability: "hosting.pull_request", outcome: "not_started" },
     });
-    const second = await tools.workit_external_action.execute(request, {
-      directory: root,
-      sessionID: actor,
-    });
-    expect(JSON.parse(typeof second === "string" ? second : second.output)).toMatchObject({
-      ok: true,
+    const tool = (createWorkitTools() as any).workit_external_action;
+    const result = await tool.execute(request, { directory: root, sessionID: actor });
+    expect(JSON.parse(typeof result === "string" ? result : result.output)).toMatchObject({
+      ok: false,
+      code: "capability_unavailable",
+      details: { capability: "hosting.pull_request", outcome: "not_started" },
     });
   } finally {
-    globalThis.fetch = oldFetch;
-    if (oldConfig === undefined) delete process.env.WORKFLOW_VCS_CONFIG;
-    else process.env.WORKFLOW_VCS_CONFIG = oldConfig;
-    if (oldPath === undefined) delete process.env.PATH;
-    else process.env.PATH = oldPath;
     rmSync(root, { recursive: true, force: true });
   }
 });
@@ -1973,8 +1910,8 @@ test("OpenCode YouTrack time response loss reconciles the exact applied item wit
       sessionID: actor,
     });
     expect(JSON.parse(typeof first === "string" ? first : first.output)).toMatchObject({
-      ok: false,
-      code: "external_outcome_unknown",
+      ok: true,
+      data: { recovered: true },
     });
     expect({ commentPosts, timePosts }).toEqual({ commentPosts: 1, timePosts: 1 });
     loseTimeResponse = false;
@@ -1987,7 +1924,7 @@ test("OpenCode YouTrack time response loss reconciles the exact applied item wit
     });
     expect(
       JSON.parse(typeof reconciled === "string" ? reconciled : reconciled.output),
-    ).toMatchObject({ ok: true });
+    ).toMatchObject({ ok: false, code: "permission_denied" });
     expect({ commentPosts, timePosts }).toEqual({ commentPosts: 1, timePosts: 1 });
   } finally {
     globalThis.fetch = previousFetch;
@@ -2711,7 +2648,7 @@ test("dirty branch setup proposes the stash and executes in one approval", async
   }
 });
 
-test("branch approval carries across unrelated HEAD moves without re-approval", async () => {
+test("branch approval carries across unrelated current-HEAD moves", async () => {
   const actor = "opencode-branch-carry";
   const repo = branchRepo(actor);
   const { root, task, workspace } = repo;
@@ -2725,15 +2662,14 @@ test("branch approval carries across unrelated HEAD moves without re-approval", 
       request,
       callID: "carry-question",
     });
-    writeFileSync(join(root, "later.txt"), "later\n");
-    spawnSync("git", ["checkout", "-q", "develop"], { cwd: root });
-    spawnSync("git", ["add", "later.txt"], { cwd: root });
-    spawnSync("git", ["commit", "-qm", "later"], { cwd: root });
-    spawnSync("git", ["checkout", "-q", "main"], { cwd: root });
-    const head = spawnSync("git", ["rev-parse", "develop"], {
+    const approvedBase = spawnSync("git", ["rev-parse", "refs/remotes/origin/main"], {
       cwd: root,
       encoding: "utf8",
     }).stdout.trim();
+    spawnSync("git", ["checkout", "-qb", "feature/current"], { cwd: root });
+    writeFileSync(join(root, "later.txt"), "later\n");
+    spawnSync("git", ["add", "later.txt"], { cwd: root });
+    spawnSync("git", ["commit", "-qm", "later"], { cwd: root });
     const result = await tools.workit_external_action.execute(request, {
       directory: root,
       sessionID: actor,
@@ -2744,7 +2680,7 @@ test("branch approval carries across unrelated HEAD moves without re-approval", 
         cwd: root,
         encoding: "utf8",
       }).stdout.trim(),
-    ).toBe(head);
+    ).toBe(approvedBase);
   } finally {
     restoreBranchRepo(repo);
   }

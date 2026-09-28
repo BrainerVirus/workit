@@ -1,18 +1,229 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import path from "node:path";
+import { matchCommitFlavor } from "./commit-flavors";
 import { gitContext } from "./git";
-import { readConfig, resolveBranchPolicy, resolveCommitPolicy } from "./config";
-import { resolveWorkspace } from "./workspaces";
-import { vcsConfig } from "./vcs-config";
+import {
+  readConfig,
+  resolveBranchPolicy as resolveConfiguredBranchPolicy,
+  resolveCommitPolicy as resolveConfiguredCommitPolicy,
+} from "./config";
+import {
+  resolveRuntimeWorkspacePolicy,
+  type WorkspaceBranchPolicy,
+  type WorkspaceCommitPolicy,
+} from "./workspaces";
+import { vcsCliIdentity, vcsConfig } from "./vcs-config";
 
-/** CA-09: the one policy resolver every consumer calls. */
-export const resolveBranchPolicyFor = (workspaceRoot: string) =>
-  resolveBranchPolicy(readConfig(), resolveWorkspace(workspaceRoot));
+function effectiveWorkspacePolicy(
+  workspaceRoot: string,
+  kind: "branch",
+  profileName?: string,
+): {
+  branchPolicy: ReturnType<typeof resolveConfiguredBranchPolicy>;
+  provenance: { branchPolicy: string };
+};
+function effectiveWorkspacePolicy(
+  workspaceRoot: string,
+  kind: "commit",
+  profileName?: string,
+): {
+  commitPolicy: ReturnType<typeof resolveConfiguredCommitPolicy>;
+  provenance: { commitPolicy: string };
+};
+function effectiveWorkspacePolicy(
+  workspaceRoot: string,
+  kind: "branch" | "commit",
+  profileName?: string,
+):
+  | {
+      branchPolicy: ReturnType<typeof resolveConfiguredBranchPolicy>;
+      provenance: { branchPolicy: string };
+    }
+  | {
+      commitPolicy: ReturnType<typeof resolveConfiguredCommitPolicy>;
+      provenance: { commitPolicy: string };
+    } {
+  const selected = resolveRuntimeWorkspacePolicy(
+    workspaceRoot,
+    kind,
+    profileName?.trim() || process.env.WORKFLOW_PROFILE?.trim() || undefined,
+  );
+  const config = readConfig();
+  return kind === "branch"
+    ? {
+        branchPolicy: resolveConfiguredBranchPolicy(
+          config,
+          selected.policy ? { branchPolicy: selected.policy as WorkspaceBranchPolicy } : null,
+        ),
+        provenance: { branchPolicy: selected.source },
+      }
+    : {
+        commitPolicy: resolveConfiguredCommitPolicy(
+          config,
+          selected.policy ? { commitPolicy: selected.policy as WorkspaceCommitPolicy } : null,
+        ),
+        provenance: { commitPolicy: selected.source },
+      };
+}
 
-/** Commit-flavor equivalent: workspace commitPolicy override, else global. */
-export const resolveCommitPolicyFor = (workspaceRoot: string) =>
-  resolveCommitPolicy(readConfig(), resolveWorkspace(workspaceRoot));
+export type BranchNamePolicy = {
+  allowed: readonly RegExp[];
+  protected: ReadonlySet<string>;
+};
+
+export type BranchNamePolicyCheck =
+  | { ok: true }
+  | {
+      ok: false;
+      rule: "protected_ref" | "allowed_pattern" | "policy_unavailable";
+      source: string;
+      attempted: string;
+      correction: string;
+      error: string;
+    };
+
+export type CommitMessagePolicyCheck =
+  | { ok: true }
+  | {
+      ok: false;
+      rule: "commit_style" | "policy_unavailable";
+      source: string;
+      attempted: string;
+      correction: string;
+      error: string;
+    };
+
+export const validateBranchNamePolicy = (
+  name: string,
+  policy: BranchNamePolicy,
+  source: string,
+): BranchNamePolicyCheck => {
+  const allowed = policy.allowed.map((pattern) => `/${pattern.source}/${pattern.flags}`);
+  if (policy.protected.has(name.toLowerCase())) {
+    const correction = `choose a non-protected branch matching one of: ${allowed.join(", ")}`;
+    return {
+      ok: false,
+      rule: "protected_ref",
+      source,
+      attempted: name,
+      correction,
+      error: `protected_ref: branch ${JSON.stringify(name)} is protected by ${source}; ${correction}`,
+    };
+  }
+  if (!policy.allowed.some((pattern) => pattern.test(name))) {
+    const correction = `choose a branch matching one of: ${allowed.join(", ")}`;
+    return {
+      ok: false,
+      rule: "allowed_pattern",
+      source,
+      attempted: name,
+      correction,
+      error: `allowed_pattern: branch ${JSON.stringify(name)} violates ${source} policy; ${correction}`,
+    };
+  }
+  return { ok: true };
+};
+
+export const branchPolicySnapshotFor = (workspaceRoot: string) => {
+  const resolved = effectiveWorkspacePolicy(workspaceRoot, "branch");
+  const branchPolicy = resolved.branchPolicy;
+  const source = resolved.provenance.branchPolicy;
+  const allowed = branchPolicy.allowed
+    .map((pattern) => `${pattern.source}/${pattern.flags}`)
+    .sort();
+  const protectedRefs = [...branchPolicy.protected].map((name) => name.toLowerCase()).sort();
+  const fingerprint = createHash("sha256")
+    .update(JSON.stringify({ allowed, protectedRefs, source }))
+    .digest("hex");
+  return {
+    branchPolicy,
+    namePolicy: { allowed: branchPolicy.allowed, protected: branchPolicy.protected },
+    source,
+    fingerprint,
+  };
+};
+
+export const commitPolicySnapshotFor = (workspaceRoot: string) => {
+  const resolved = effectiveWorkspacePolicy(workspaceRoot, "commit");
+  const policy = resolved.commitPolicy;
+  const source = resolved.provenance.commitPolicy;
+  const fingerprint = createHash("sha256")
+    .update(JSON.stringify({ preset: policy.preset, pattern: policy.pattern ?? null, source }))
+    .digest("hex");
+  return { policy, source, fingerprint };
+};
+
+export const validateCommitMessagePolicy = (
+  message: string,
+  policy: { preset: Parameters<typeof matchCommitFlavor>[1]; pattern?: string },
+  source: string,
+): CommitMessagePolicyCheck => {
+  const attempted = message.split("\n", 1)[0] ?? "";
+  if (matchCommitFlavor(message, policy.preset, policy.pattern)) return { ok: true };
+  const correction =
+    policy.preset === "custom" && policy.pattern
+      ? `use a commit subject matching ${JSON.stringify(policy.pattern)}`
+      : `use a ${policy.preset} commit subject`;
+  return {
+    ok: false,
+    rule: "commit_style",
+    source,
+    attempted,
+    correction,
+    error: `commit_style: commit subject ${JSON.stringify(attempted)} violates ${source} ${policy.preset} policy; ${correction}`,
+  };
+};
+
+export const validateBranchNameFor = (
+  workspaceRoot: string,
+  name: string,
+): BranchNamePolicyCheck => {
+  try {
+    const resolved = branchPolicySnapshotFor(workspaceRoot);
+    return validateBranchNamePolicy(name, resolved.namePolicy, resolved.source);
+  } catch (error) {
+    const correction = "repair or select a valid workspace policy before creating a branch";
+    return {
+      ok: false,
+      rule: "policy_unavailable",
+      source: "workspaces.json",
+      attempted: name,
+      correction,
+      error: `policy_unavailable: cannot validate branch ${JSON.stringify(name)} because ${error instanceof Error ? error.message : String(error)}; ${correction}`,
+    };
+  }
+};
+
+export const validateCommitMessageFor = (
+  workspaceRoot: string,
+  message: string,
+): CommitMessagePolicyCheck => {
+  const attempted = message.split("\n", 1)[0] ?? "";
+  try {
+    const resolved = commitPolicySnapshotFor(workspaceRoot);
+    return validateCommitMessagePolicy(message, resolved.policy, resolved.source);
+  } catch (error) {
+    const correction = "repair or select a valid workspace policy before committing";
+    return {
+      ok: false,
+      rule: "policy_unavailable",
+      source: "workspaces.json",
+      attempted,
+      correction,
+      error: `policy_unavailable: cannot validate commit subject ${JSON.stringify(attempted)} because ${error instanceof Error ? error.message : String(error)}; ${correction}`,
+    };
+  }
+};
+
+/** CA-09: one policy resolver; profiles layer above the matched workspace. */
+export const resolveBranchPolicyFor = (workspaceRoot: string, profileName?: string) =>
+  effectiveWorkspacePolicy(workspaceRoot, "branch", profileName).branchPolicy;
+
+/** Commit-flavor equivalent using the same profile and provenance chain. */
+export const resolveCommitPolicyFor = (workspaceRoot: string, profileName?: string) =>
+  effectiveWorkspacePolicy(workspaceRoot, "commit", profileName).commitPolicy;
 
 const policy = (root: string) => resolveBranchPolicyFor(root);
 const allowedBranch = (root: string, name: string) =>
@@ -40,25 +251,13 @@ export const verifyPushIdentity = (
 ): { ok: true } | { ok: false; error: string } => {
   if (!account || typeof account !== "string")
     return { ok: false, error: "push identity requires a configured area account" };
-  const probe =
-    provider === "gitlab"
-      ? (["api", "user", "--jq", ".username"] as const)
-      : (["api", "user", "--jq", ".login"] as const);
-  const bin = provider === "gitlab" ? "glab" : "gh";
-  let login: string;
-  try {
-    login = execFileSync(bin, [...probe], {
-      cwd: root,
-      encoding: "utf8",
-      stdio: ["pipe", "pipe", "pipe"],
-    }).trim();
-  } catch {
-    return { ok: false, error: `${bin} identity could not be resolved` };
-  }
-  if (!login || login.toLowerCase() !== account.toLowerCase())
+  const identity = vcsCliIdentity(root);
+  if (!identity.ok || identity.provider !== provider)
+    return { ok: false, error: identity.error ?? "hosting CLI identity could not be resolved" };
+  if (identity.username?.toLowerCase() !== account.toLowerCase())
     return {
       ok: false,
-      error: `push identity ${login || "(unknown)"} does not match area account ${account}`,
+      error: `push identity ${identity.username || "(unknown)"} does not match area account ${account}`,
     };
   return { ok: true };
 };
@@ -83,8 +282,7 @@ const readSafe = (p: string): string | null => {
 
 const normalizeBranch = (root: string, name: string): string | null => {
   const n = name.trim().replace(/`/g, "").replace(/\.+$/, "");
-  if (isProtected(root, n)) return null;
-  if (!allowedBranch(root, n)) return null;
+  if (!validateBranchNameFor(root, n).ok) return null;
   const parts = n
     .toLowerCase()
     .split("/")
@@ -155,9 +353,10 @@ export const resolveBranch = ({
     const text = readSafe(file);
     if (!text) continue;
     if (USE_CURRENT_RE.test(text)) {
-      if (!current || !allowedBranch(cwd, current) || isProtected(cwd, current)) {
-        return { error: `use-current but HEAD ${current} is not an allowed branch` };
-      }
+      if (!current) return { error: `use-current but HEAD ${current} is not an allowed branch` };
+      const policyCheck = validateBranchNameFor(cwd, current);
+      if (!policyCheck.ok)
+        return { error: `use-current but HEAD ${current} is not allowed: ${policyCheck.error}` };
       return finish(current, "use-current");
     }
   }
@@ -176,8 +375,11 @@ export const resolveBranch = ({
     }
   }
   if (declaredButInvalid) {
+    const policyCheck = validateBranchNameFor(cwd, declaredButInvalid);
     return {
-      error: `declared branch ${JSON.stringify(declaredButInvalid)} is not allowed by the branch policy`,
+      error: policyCheck.ok
+        ? `declared branch ${JSON.stringify(declaredButInvalid)} is not a valid branch name`
+        : policyCheck.error,
     };
   }
 
@@ -271,7 +473,12 @@ const originBaseReady = (cwd: string, base: string): { ok: boolean; error?: stri
 
 // Mutating half of ensureBaseBranch: fast-forwards the local base (creating
 // it from origin/<base> if needed). Only safe on a clean tree.
-const fastForwardBase = (cwd: string, base: string): { ok: boolean; error?: string } => {
+const fastForwardBase = (
+  cwd: string,
+  base: string,
+  expectedRemoteBase?: string,
+  expectedLocalBase?: string | null,
+): { ok: boolean; error?: string } => {
   const run = (args: string[]) =>
     execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] });
   try {
@@ -284,13 +491,26 @@ const fastForwardBase = (cwd: string, base: string): { ok: boolean; error?: stri
     } catch {
       hasLocalBase = false;
     }
+    if (expectedLocalBase !== undefined) {
+      let localBase: string | null = null;
+      try {
+        localBase = run(["rev-parse", "--verify", `refs/heads/${base}`]).trim();
+      } catch {}
+      if (localBase !== expectedLocalBase)
+        return { ok: false, error: "approved local base changed before branch setup" };
+    }
     if (hasLocalBase) {
       run(["checkout", base]);
+      if (expectedLocalBase && run(["rev-parse", "HEAD"]).trim() !== expectedLocalBase)
+        return { ok: false, error: "approved local base changed before branch setup" };
       try {
-        run(["merge", "--ff-only", `origin/${base}`]);
+        run(["merge", "--ff-only", expectedRemoteBase ?? `origin/${base}`]);
       } catch {
         /* non-fast-forward: keep local */
       }
+    } else if (expectedRemoteBase) {
+      run(["checkout", "-b", base, expectedRemoteBase]);
+      run(["branch", "--set-upstream-to", `origin/${base}`, base]);
     } else {
       run(["checkout", "-b", base, "--track", `origin/${base}`]);
     }
@@ -369,6 +589,8 @@ export const branchSetup = ({
   stash,
   workspace_root,
   log,
+  expected_remote_base,
+  expected_local_base,
 }: {
   action?: string;
   sdd_dir?: string;
@@ -376,6 +598,8 @@ export const branchSetup = ({
   stash?: string;
   workspace_root: string;
   log?: (message: string) => void;
+  expected_remote_base?: string;
+  expected_local_base?: string | null;
 }): BranchSetupResult => {
   const cwd = path.resolve(workspace_root);
   const exec = (args: string[]): string =>
@@ -432,12 +656,13 @@ export const branchSetup = ({
       error: "target_branch (the working branch to create or switch to) is required for setup",
       phase: "preflight",
     };
-  if (isProtected(cwd, target)) return { error: `protected branch ${target}`, phase: "preflight" };
-  if (!allowedBranch(cwd, target))
-    return {
-      error: `target branch ${target} is not allowed by the branch policy`,
-      phase: "preflight",
-    };
+  if (expected_remote_base && !/^[a-f0-9]{40,64}$/i.test(expected_remote_base))
+    return { error: "approved remote base commit is invalid", phase: "preflight" };
+  try {
+    exec(["check-ref-format", "--branch", target]);
+  } catch {
+    return { error: `invalid Git branch name ${target}`, phase: "preflight" };
+  }
 
   // CA-02: resolve the base up front so an unresolvable base fails before
   // any mutation. The origin/<base> validation runs after the stash gate
@@ -491,10 +716,25 @@ export const branchSetup = ({
     // tree untouched. The mutating fast-forward stays below: it checks out
     // the base branch — unsafe on a dirty tree.
     let validatedBase: string | undefined;
+    let validatedRemoteBase: string | undefined;
+    let validatedLocalBase: string | null | undefined;
     if (!targetExists && base !== undefined) {
       const ready = originBaseReady(cwd, base);
       if (!ready.ok)
         return { error: ready.error ?? "ensure-base-branch failed", phase: "preflight" };
+      const fetchedBase = exec(["rev-parse", "--verify", `refs/remotes/origin/${base}`]).trim();
+      if (expected_remote_base && fetchedBase !== expected_remote_base)
+        return { error: "approved remote base changed before branch setup", phase: "preflight" };
+      if (expected_local_base !== undefined) {
+        let localBase: string | null = null;
+        try {
+          localBase = exec(["rev-parse", "--verify", `refs/heads/${base}`]).trim();
+        } catch {}
+        if (localBase !== expected_local_base)
+          return { error: "approved local base changed before branch setup", phase: "preflight" };
+        validatedLocalBase = expected_local_base;
+      }
+      if (expected_remote_base) validatedRemoteBase = expected_remote_base;
       validatedBase = base;
     }
     if (dirty && stash === "yes") {
@@ -531,10 +771,17 @@ export const branchSetup = ({
         // fast-forward mutation remains post-stash.
         const baseResult =
           validatedBase !== undefined
-            ? fastForwardBase(cwd, effectiveBase)
+            ? fastForwardBase(cwd, effectiveBase, validatedRemoteBase, validatedLocalBase)
             : ensureBaseBranch(cwd, effectiveBase);
         if (!baseResult.ok) return failAfterStash(baseResult.error ?? "ensure-base-branch failed");
-        exec(["checkout", "-b", target]);
+        const targetBase = exec(["rev-parse", "HEAD"]).trim();
+        if (
+          validatedRemoteBase &&
+          validatedLocalBase !== undefined &&
+          ![validatedRemoteBase, validatedLocalBase].includes(targetBase)
+        )
+          return failAfterStash("approved branch base changed before branch creation", "preflight");
+        exec(["checkout", "-b", target, targetBase]);
         journal("post-create");
       } catch (createError) {
         return failAfterStash(

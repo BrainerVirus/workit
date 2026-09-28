@@ -219,6 +219,12 @@ test(
   () => {
     const { root, remote } = repoOnMain({ withDevelop: true });
     try {
+      git(root, ["checkout", "-q", "-b", "develop", "origin/develop"]);
+      writeFileSync(path.join(root, "local-base.txt"), "local base\n");
+      git(root, ["add", "local-base.txt"]);
+      git(root, ["commit", "-qm", "local base"]);
+      const localBase = git(root, ["rev-parse", "HEAD"]).stdout.trim();
+      git(root, ["checkout", "-q", "main"]);
       const missing = externalActionRequest({
         operation: "git.branch_setup",
         payload: { action: "setup" },
@@ -247,8 +253,16 @@ test(
         };
         expect(payload.resolved?.base_branch).toBe("develop");
         expect(payload.resolved?.target_exists).toBe(false);
-        expect(String(payload.resolved?.remote_base)).toMatch(/^[0-9a-f]{40}$/);
+        expect(payload.resolved?.local_base).toBe(localBase);
+        const remoteBase = String(payload.resolved?.remote_base);
+        expect(remoteBase).toMatch(/^[0-9a-f]{40}$/);
         expect(payload.resolved?.dirty).toBe(false);
+        const proposal = actionProposalQuestion(
+          resolved.data.request,
+          resolved.data.descriptorPayload,
+        );
+        expect(proposal.presented).toContain(remoteBase.slice(0, 8));
+        expect(proposal.presented).toContain(localBase.slice(0, 8));
       }
       const reapply = externalActionRequest({
         operation: "git.branch_setup",
@@ -305,6 +319,37 @@ test("branch setup binds the remote base so a remote advance changes the descrip
       after.data.descriptorPayload,
     );
     expect(descriptorAfter).not.toBe(descriptorBefore);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(remote, { recursive: true, force: true });
+  }
+});
+
+test("branch setup refuses a fetched base newer than the approved remote SHA", () => {
+  const { root, remote } = repoOnMain({ withDevelop: true });
+  try {
+    const approvedBase = git(root, ["rev-parse", "refs/remotes/origin/develop"]).stdout.trim();
+    git(root, ["checkout", "-q", "-b", "develop", "origin/develop"]);
+    writeFileSync(path.join(root, "advance.txt"), "advance\n");
+    git(root, ["add", "advance.txt"]);
+    git(root, ["commit", "-qm", "advance develop"]);
+    git(root, ["push", "-q", "origin", "develop"]);
+    git(root, ["update-ref", "-d", "refs/remotes/origin/develop"]);
+    git(root, ["checkout", "-q", "main"]);
+
+    const result = branchSetup({
+      target_branch: "feature/pinned-base",
+      workspace_root: root,
+      expected_remote_base: approvedBase,
+    });
+    expect(result).toMatchObject({
+      error: expect.stringContaining("approved remote base changed"),
+      phase: "preflight",
+    });
+    expect(git(root, ["branch", "--show-current"]).stdout.trim()).toBe("main");
+    expect(git(root, ["show-ref", "--verify", "refs/heads/feature/pinned-base"]).status).not.toBe(
+      0,
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
     rmSync(remote, { recursive: true, force: true });

@@ -637,77 +637,81 @@ export const nativeExternalActionRunner = (
   core: WorkitCore,
   step?: string,
 ) =>
-  createAuthorizedExternalActionRunner(core, (operation) => {
-    const store = new TaskStore(root);
-    const selected = approvedExternalAction(store, "opencode", actor, operation);
-    if (!selected.ok) {
-      const plan =
-        planCommitBinding(store, "opencode", actor, operation) ??
-        chainStepBinding(store, "opencode", actor, operation) ??
-        standingAutoBinding(core, store, "opencode", actor, operation);
-      if (plan) {
-        const actionRef = externalActionRef("opencode", actor, operation);
-        return {
-          taskId: plan.taskId,
-          decisionId: plan.decisionId,
-          actionRef,
-          expectedRevision: plan.expectedRevision,
-          expectedWorkspaceRevision: plan.expectedWorkspaceRevision,
-          binding: plan.binding,
-          step: plan.step,
-          refresh: () => {
-            const task = store.readTask(plan.taskId);
-            const freshWorkspace = store.readWorkspace();
-            if (!task.ok || !freshWorkspace.ok || !freshWorkspace.data)
-              throw new Error("external action state changed");
-            return {
-              expectedRevision: task.data.revision,
-              expectedWorkspaceRevision: freshWorkspace.data.revision,
-            };
-          },
-          reserveObservation: nativeExternalActionObservation(actor, actionRef, "reserve"),
-          settleObservation: (outcome: "succeeded" | "not_started" | "unknown", revisions) =>
-            nativeExternalActionObservation(
-              actor,
-              actionRef,
-              outcome,
-              actionRef.kind === "host" ? actionRef.handle : "external-action",
-              revisions,
-            ),
-        };
+  createAuthorizedExternalActionRunner(
+    core,
+    (operation) => {
+      const store = new TaskStore(root);
+      const selected = approvedExternalAction(store, "opencode", actor, operation);
+      if (!selected.ok) {
+        const plan =
+          planCommitBinding(store, "opencode", actor, operation) ??
+          chainStepBinding(store, "opencode", actor, operation) ??
+          standingAutoBinding(core, store, "opencode", actor, operation);
+        if (plan) {
+          const actionRef = externalActionRef("opencode", actor, operation);
+          return {
+            taskId: plan.taskId,
+            decisionId: plan.decisionId,
+            actionRef,
+            expectedRevision: plan.expectedRevision,
+            expectedWorkspaceRevision: plan.expectedWorkspaceRevision,
+            binding: plan.binding,
+            step: plan.step,
+            refresh: () => {
+              const task = store.readTask(plan.taskId);
+              const freshWorkspace = store.readWorkspace();
+              if (!task.ok || !freshWorkspace.ok || !freshWorkspace.data)
+                throw new Error("external action state changed");
+              return {
+                expectedRevision: task.data.revision,
+                expectedWorkspaceRevision: freshWorkspace.data.revision,
+              };
+            },
+            reserveObservation: nativeExternalActionObservation(actor, actionRef, "reserve"),
+            settleObservation: (outcome: "succeeded" | "not_started" | "unknown", revisions) =>
+              nativeExternalActionObservation(
+                actor,
+                actionRef,
+                outcome,
+                actionRef.kind === "host" ? actionRef.handle : "external-action",
+                revisions,
+              ),
+          };
+        }
+        return selected;
       }
-      return selected;
-    }
-    const actionRef = externalActionRef("opencode", actor, operation);
-    return {
-      taskId: selected.data.task.id,
-      decisionId: selected.data.entry.id,
-      actionRef,
-      expectedRevision: selected.data.task.revision,
-      expectedWorkspaceRevision: selected.data.workspace.revision,
-      binding: selected.data.entry.data.binding,
-      ...(step ? { step } : {}),
-      refresh: () => {
-        const task = store.readTask(selected.data.task.id);
-        const workspace = store.readWorkspace();
-        if (!task.ok || !workspace.ok || !workspace.data)
-          throw new Error("external action state changed");
-        return {
-          expectedRevision: task.data.revision,
-          expectedWorkspaceRevision: workspace.data.revision,
-        };
-      },
-      reserveObservation: nativeExternalActionObservation(actor, actionRef, "reserve"),
-      settleObservation: (outcome: "succeeded" | "not_started" | "unknown", revisions) =>
-        nativeExternalActionObservation(
-          actor,
-          actionRef,
-          outcome,
-          actionRef.kind === "host" ? actionRef.handle : "external-action",
-          revisions,
-        ),
-    };
-  });
+      const actionRef = externalActionRef("opencode", actor, operation);
+      return {
+        taskId: selected.data.task.id,
+        decisionId: selected.data.entry.id,
+        actionRef,
+        expectedRevision: selected.data.task.revision,
+        expectedWorkspaceRevision: selected.data.workspace.revision,
+        binding: selected.data.entry.data.binding,
+        ...(step ? { step } : {}),
+        refresh: () => {
+          const task = store.readTask(selected.data.task.id);
+          const workspace = store.readWorkspace();
+          if (!task.ok || !workspace.ok || !workspace.data)
+            throw new Error("external action state changed");
+          return {
+            expectedRevision: task.data.revision,
+            expectedWorkspaceRevision: workspace.data.revision,
+          };
+        },
+        reserveObservation: nativeExternalActionObservation(actor, actionRef, "reserve"),
+        settleObservation: (outcome: "succeeded" | "not_started" | "unknown", revisions) =>
+          nativeExternalActionObservation(
+            actor,
+            actionRef,
+            outcome,
+            actionRef.kind === "host" ? actionRef.handle : "external-action",
+            revisions,
+          ),
+      };
+    },
+    root,
+  );
 
 /** The dispatch coordinator is persisted for restart safety. Records created
  * before that field existed fall back to their original task creator. */
@@ -940,6 +944,7 @@ export const createWorkitTools = ({
           "git.push",
           "hosting.pull_request",
           "hosting.merge",
+          "hosting.delete_branch",
           "youtrack.update",
           "youtrack.time",
           "youtrack.meeting",
@@ -1033,11 +1038,17 @@ export const createWorkitTools = ({
                       context.sessionID,
                       core,
                       "time",
-                    )(prior.data.entry.data.binding.approvedContent, () =>
-                      executeResolvedExternalAction(original.data, context.directory, "time", {
-                        host: "opencode",
-                        actor: context.sessionID,
-                      }),
+                    )(prior.data.entry.data.binding.approvedContent, (_step, reservation) =>
+                      executeResolvedExternalAction(
+                        original.data,
+                        context.directory,
+                        "time",
+                        {
+                          host: "opencode",
+                          actor: context.sessionID,
+                        },
+                        reservation?.workspaceRevision,
+                      ),
                     );
                     return output(remaining);
                   }
@@ -1072,6 +1083,7 @@ export const createWorkitTools = ({
           "git.push",
           "hosting.pull_request",
           "hosting.merge",
+          "hosting.delete_branch",
           "changelog.apply",
         ].includes(resolved.data.request.operation);
         if (localOperation) {
@@ -1100,7 +1112,14 @@ export const createWorkitTools = ({
             resolved.data.descriptorPayload as { resolved?: { branch?: unknown } }
           ).resolved?.branch;
           if (typeof commitMessage === "string" && commitMessage) {
-            const plan = approvedPlanCommit(store, "opencode", context.sessionID, commitMessage);
+            const target = (resolved.data.descriptorPayload as { cwd?: unknown }).cwd;
+            const plan = approvedPlanCommit(
+              store,
+              "opencode",
+              context.sessionID,
+              commitMessage,
+              typeof target === "string" ? target : context.directory,
+            );
             planAuthorized = plan.ok && plan.data.branch === currentBranch;
           }
         }
@@ -1172,11 +1191,17 @@ export const createWorkitTools = ({
           context.directory,
           context.sessionID,
           core,
-        )(descriptor, (step) =>
-          executeResolvedExternalAction(resolved.data, context.directory, step, {
-            host: "opencode",
-            actor: context.sessionID,
-          }),
+        )(descriptor, (step, reservation) =>
+          executeResolvedExternalAction(
+            resolved.data,
+            context.directory,
+            step,
+            {
+              host: "opencode",
+              actor: context.sessionID,
+            },
+            reservation?.workspaceRevision,
+          ),
         );
         return output(result);
       },

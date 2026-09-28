@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import type { Plugin } from "@opencode-ai/plugin";
 import {
-  shouldDenyShellRoute,
+  shellBranchPolicyViolation,
   TaskStore,
   WorkitCore,
   workitBindingQuestionIssue,
@@ -559,11 +559,9 @@ const plugin: Plugin = async ({ client, directory }) => {
       warnStaleSources();
       if (input.tool === "bash") {
         const command = (output?.args as { command?: unknown } | undefined)?.command;
-        const route = typeof command === "string" ? shouldDenyShellRoute(directory, command) : null;
-        if (route)
-          throw new Error(
-            `recovery_required: direct branch or PR creation bypasses the Workit route; ${route.guidance}`,
-          );
+        const policy =
+          typeof command === "string" ? shellBranchPolicyViolation(directory, command) : null;
+        if (policy && !policy.ok) throw new Error(`branch_policy_denied: ${policy.error}`);
         return;
       }
       if (input.tool === "question") {

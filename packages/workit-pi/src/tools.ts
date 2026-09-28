@@ -21,7 +21,7 @@ import {
   OPERATION_SCHEMA_DEPTH,
   OPERATION_FAMILIES,
   parseOperation,
-  shouldDenyShellRoute,
+  shellBranchPolicyViolation,
   success,
   workitBindingQuestionIssue,
   canonicalJson,
@@ -166,77 +166,81 @@ export const nativeExternalActionRunner = (
   core: WorkitCore,
   step?: string,
 ) =>
-  createAuthorizedExternalActionRunner(core, (operation) => {
-    const store = new TaskStore(root);
-    const selected = approvedExternalAction(store, "pi", actor, operation);
-    if (!selected.ok) {
-      const plan =
-        planCommitBinding(store, "pi", actor, operation) ??
-        chainStepBinding(store, "pi", actor, operation) ??
-        standingAutoBinding(core, store, "pi", actor, operation);
-      if (plan) {
-        const actionRef = externalActionRef("pi", actor, operation);
-        return {
-          taskId: plan.taskId,
-          decisionId: plan.decisionId,
-          actionRef,
-          expectedRevision: plan.expectedRevision,
-          expectedWorkspaceRevision: plan.expectedWorkspaceRevision,
-          binding: plan.binding,
-          step: plan.step,
-          refresh: () => {
-            const task = store.readTask(plan.taskId);
-            const freshWorkspace = store.readWorkspace();
-            if (!task.ok || !freshWorkspace.ok || !freshWorkspace.data)
-              throw new Error("external action state changed");
-            return {
-              expectedRevision: task.data.revision,
-              expectedWorkspaceRevision: freshWorkspace.data.revision,
-            };
-          },
-          reserveObservation: nativeExternalActionObservation(actor, actionRef, "reserve"),
-          settleObservation: (outcome: "succeeded" | "not_started" | "unknown", revisions) =>
-            nativeExternalActionObservation(
-              actor,
-              actionRef,
-              outcome,
-              actionRef.kind === "host" ? actionRef.handle : "external-action",
-              revisions,
-            ),
-        };
+  createAuthorizedExternalActionRunner(
+    core,
+    (operation) => {
+      const store = new TaskStore(root);
+      const selected = approvedExternalAction(store, "pi", actor, operation);
+      if (!selected.ok) {
+        const plan =
+          planCommitBinding(store, "pi", actor, operation) ??
+          chainStepBinding(store, "pi", actor, operation) ??
+          standingAutoBinding(core, store, "pi", actor, operation);
+        if (plan) {
+          const actionRef = externalActionRef("pi", actor, operation);
+          return {
+            taskId: plan.taskId,
+            decisionId: plan.decisionId,
+            actionRef,
+            expectedRevision: plan.expectedRevision,
+            expectedWorkspaceRevision: plan.expectedWorkspaceRevision,
+            binding: plan.binding,
+            step: plan.step,
+            refresh: () => {
+              const task = store.readTask(plan.taskId);
+              const freshWorkspace = store.readWorkspace();
+              if (!task.ok || !freshWorkspace.ok || !freshWorkspace.data)
+                throw new Error("external action state changed");
+              return {
+                expectedRevision: task.data.revision,
+                expectedWorkspaceRevision: freshWorkspace.data.revision,
+              };
+            },
+            reserveObservation: nativeExternalActionObservation(actor, actionRef, "reserve"),
+            settleObservation: (outcome: "succeeded" | "not_started" | "unknown", revisions) =>
+              nativeExternalActionObservation(
+                actor,
+                actionRef,
+                outcome,
+                actionRef.kind === "host" ? actionRef.handle : "external-action",
+                revisions,
+              ),
+          };
+        }
+        return selected;
       }
-      return selected;
-    }
-    const actionRef = externalActionRef("pi", actor, operation);
-    return {
-      taskId: selected.data.task.id,
-      decisionId: selected.data.entry.id,
-      actionRef,
-      expectedRevision: selected.data.task.revision,
-      expectedWorkspaceRevision: selected.data.workspace.revision,
-      binding: selected.data.entry.data.binding,
-      ...(step ? { step } : {}),
-      refresh: () => {
-        const task = store.readTask(selected.data.task.id);
-        const workspace = store.readWorkspace();
-        if (!task.ok || !workspace.ok || !workspace.data)
-          throw new Error("external action state changed");
-        return {
-          expectedRevision: task.data.revision,
-          expectedWorkspaceRevision: workspace.data.revision,
-        };
-      },
-      reserveObservation: nativeExternalActionObservation(actor, actionRef, "reserve"),
-      settleObservation: (outcome: "succeeded" | "not_started" | "unknown", revisions) =>
-        nativeExternalActionObservation(
-          actor,
-          actionRef,
-          outcome,
-          actionRef.kind === "host" ? actionRef.handle : "external-action",
-          revisions,
-        ),
-    };
-  });
+      const actionRef = externalActionRef("pi", actor, operation);
+      return {
+        taskId: selected.data.task.id,
+        decisionId: selected.data.entry.id,
+        actionRef,
+        expectedRevision: selected.data.task.revision,
+        expectedWorkspaceRevision: selected.data.workspace.revision,
+        binding: selected.data.entry.data.binding,
+        ...(step ? { step } : {}),
+        refresh: () => {
+          const task = store.readTask(selected.data.task.id);
+          const workspace = store.readWorkspace();
+          if (!task.ok || !workspace.ok || !workspace.data)
+            throw new Error("external action state changed");
+          return {
+            expectedRevision: task.data.revision,
+            expectedWorkspaceRevision: workspace.data.revision,
+          };
+        },
+        reserveObservation: nativeExternalActionObservation(actor, actionRef, "reserve"),
+        settleObservation: (outcome: "succeeded" | "not_started" | "unknown", revisions) =>
+          nativeExternalActionObservation(
+            actor,
+            actionRef,
+            outcome,
+            actionRef.kind === "host" ? actionRef.handle : "external-action",
+            revisions,
+          ),
+      };
+    },
+    root,
+  );
 
 const schemaFor = (family: OperationFamily) =>
   ({ type: "object", ...boundedOperationJsonSchema(family, OPERATION_SCHEMA_DEPTH, true) }) as any;
@@ -356,6 +360,7 @@ export const registerWorkitTools = (
             "git.push",
             "hosting.pull_request",
             "hosting.merge",
+            "hosting.delete_branch",
             "youtrack.update",
             "youtrack.time",
             "youtrack.meeting",
@@ -416,6 +421,7 @@ export const registerWorkitTools = (
         "git.push",
         "hosting.pull_request",
         "hosting.merge",
+        "hosting.delete_branch",
         "changelog.apply",
       ].includes(resolved.data.request.operation);
       let writerTaskId: string | null = null;
@@ -478,11 +484,17 @@ export const registerWorkitTools = (
                   actor,
                   core,
                   "time",
-                )(priorRequest.data.entry.data.binding.approvedContent, () =>
-                  executeResolvedExternalAction(original.data, ctx.cwd, "time", {
-                    host: "pi",
-                    actor,
-                  }),
+                )(priorRequest.data.entry.data.binding.approvedContent, (_step, reservation) =>
+                  executeResolvedExternalAction(
+                    original.data,
+                    ctx.cwd,
+                    "time",
+                    {
+                      host: "pi",
+                      actor,
+                    },
+                    reservation?.workspaceRevision,
+                  ),
                 );
                 return output(remaining);
               }
@@ -524,15 +536,27 @@ export const registerWorkitTools = (
         ).resolved?.branch;
         const plan =
           typeof commitMessage === "string" && commitMessage
-            ? approvedPlanCommit(store, "pi", actor, commitMessage)
+            ? approvedPlanCommit(
+                store,
+                "pi",
+                actor,
+                commitMessage,
+                (resolved.data.descriptorPayload as { cwd?: string }).cwd ?? ctx.cwd,
+              )
             : null;
         if (plan?.ok && plan.data.branch === currentBranch) {
           const result = await nativeExternalActionRunner(
             ctx.cwd,
             actor,
             core,
-          )(descriptor, (step) =>
-            executeResolvedExternalAction(resolved.data, ctx.cwd, step, { host: "pi", actor }),
+          )(descriptor, (step, reservation) =>
+            executeResolvedExternalAction(
+              resolved.data,
+              ctx.cwd,
+              step,
+              { host: "pi", actor },
+              reservation?.workspaceRevision,
+            ),
           );
           return output(result);
         }
@@ -552,8 +576,14 @@ export const registerWorkitTools = (
             ctx.cwd,
             actor,
             core,
-          )(descriptor, (step) =>
-            executeResolvedExternalAction(resolved.data, ctx.cwd, step, { host: "pi", actor }),
+          )(descriptor, (step, reservation) =>
+            executeResolvedExternalAction(
+              resolved.data,
+              ctx.cwd,
+              step,
+              { host: "pi", actor },
+              reservation?.workspaceRevision,
+            ),
           );
           return output(result);
         }
@@ -617,8 +647,14 @@ export const registerWorkitTools = (
         ctx.cwd,
         actor,
         core,
-      )(descriptor, (step) =>
-        executeResolvedExternalAction(resolved.data, ctx.cwd, step, { host: "pi", actor }),
+      )(descriptor, (step, reservation) =>
+        executeResolvedExternalAction(
+          resolved.data,
+          ctx.cwd,
+          step,
+          { host: "pi", actor },
+          reservation?.workspaceRevision,
+        ),
       );
       return output(result);
     },
@@ -631,12 +667,10 @@ export const enforceNativeWriter = (
 ): { block: true; reason: string } | undefined => {
   if (event.toolName === "bash") {
     const command = (event.input as { command?: unknown } | undefined)?.command;
-    const route = typeof command === "string" ? shouldDenyShellRoute(ctx.cwd, command) : null;
-    if (route)
-      return {
-        block: true,
-        reason: `direct branch or PR creation bypasses the Workit route; ${route.guidance}`,
-      };
+    const policy =
+      typeof command === "string" ? shellBranchPolicyViolation(ctx.cwd, command) : null;
+    if (policy && !policy.ok)
+      return { block: true, reason: `branch_policy_denied: ${policy.error}` };
     return undefined;
   }
   if (event.toolName !== "write" && event.toolName !== "edit") return undefined;

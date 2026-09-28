@@ -1023,7 +1023,7 @@ test("a restarted plugin loses the reservation and stays blocked", async () => {
   }
 });
 
-test("recognized raw branch and PR creation commands are denied with the Workit route", async () => {
+test("compliant raw branch and PR commands pass during tracked work", async () => {
   const root = mkdtempSync(join(tmpdir(), "workit-opencode-route-deny-"));
   try {
     activeTask(root, "owner");
@@ -1037,13 +1037,19 @@ test("recognized raw branch and PR creation commands are denied with the Workit 
         { tool: "bash", sessionID: "lead", callID: "branch" },
         { args: { command: "git switch -c feature/raw" } },
       ),
-    ).rejects.toThrow("git.branch_setup");
+    ).resolves.toBeUndefined();
+    await expect(
+      hooks["tool.execute.before"]?.(
+        { tool: "bash", sessionID: "lead", callID: "protected-branch" },
+        { args: { command: "git switch -c main" } },
+      ),
+    ).rejects.toThrow("branch_policy_denied");
     await expect(
       hooks["tool.execute.before"]?.(
         { tool: "bash", sessionID: "lead", callID: "pr" },
         { args: { command: "gh pr create --fill" } },
       ),
-    ).rejects.toThrow("hosting.pull_request");
+    ).resolves.toBeUndefined();
     await expect(
       hooks["tool.execute.before"]?.(
         { tool: "bash", sessionID: "lead", callID: "other" },

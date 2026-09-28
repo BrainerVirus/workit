@@ -10,7 +10,7 @@ type SkillDefinition = {
   id: string;
   name: string;
   description?: string;
-  location: string;
+  path: string;
   content: string;
 };
 
@@ -63,7 +63,7 @@ const parseFrontmatter = (
 };
 
 /**
- * Register the 14 packaged method skills with exact ids, locations,
+ * Register the 14 packaged method skills with exact ids, paths,
  * descriptions, and content. A user skill with the same id is never replaced.
  */
 export const registerSkills = async (ctx: SkillContext): Promise<void> => {
@@ -80,7 +80,7 @@ export const registerSkills = async (ctx: SkillContext): Promise<void> => {
         id,
         name: parsed.name || id,
         ...(parsed.description ? { description: parsed.description } : {}),
-        location: file,
+        path: file,
         content: parsed.body,
       });
     }

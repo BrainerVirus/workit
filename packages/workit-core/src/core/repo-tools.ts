@@ -9,7 +9,6 @@ export type RepoRuntime = {
   changelogContext(root: string, range: string | undefined): RunResult;
   docsContext(root: string, range: string | undefined): RunResult;
   releaseContext(root: string, range: string): RunResult;
-  prCreate(root: string, env: Record<string, string>): RunResult;
   initApply(root: string, action: string, env: Record<string, string>): RunResult;
   initStatus(root: string): RunResult;
   toolkitStatus(root: string): RunResult | Promise<RunResult>;

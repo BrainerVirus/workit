@@ -22,13 +22,47 @@ const official = (event: Record<string, unknown>, root = cwd()) => ({
   transcript_path: null,
   ...event,
 });
+const expectHostPermissionUnchanged = (output: unknown) =>
+  expect(output).toEqual({ hookEventName: "PreToolUse" });
+const withTestBranchPolicy = (run: () => void) => {
+  const previous = {
+    config: process.env.WORKFLOW_TOOLKIT_CONFIG,
+    configDir: process.env.WORKFLOW_TOOLKIT_CONFIG_DIR,
+    profile: process.env.WORKFLOW_PROFILE,
+    workspace: process.env.WORKFLOW_WORKSPACE_NAME,
+  };
+  const configDir = mkdtempSync(path.join(tmpdir(), "workit-codex-policy-"));
+  delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+  process.env.WORKFLOW_TOOLKIT_CONFIG_DIR = configDir;
+  delete process.env.WORKFLOW_PROFILE;
+  delete process.env.WORKFLOW_WORKSPACE_NAME;
+  writeFileSync(
+    path.join(configDir, "config.json"),
+    JSON.stringify({
+      branchPolicy: { preset: "custom", allowed: ["feature/*"], protected: ["main"] },
+    }),
+  );
+  try {
+    run();
+  } finally {
+    if (previous.config === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+    else process.env.WORKFLOW_TOOLKIT_CONFIG = previous.config;
+    if (previous.configDir === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG_DIR;
+    else process.env.WORKFLOW_TOOLKIT_CONFIG_DIR = previous.configDir;
+    if (previous.profile === undefined) delete process.env.WORKFLOW_PROFILE;
+    else process.env.WORKFLOW_PROFILE = previous.profile;
+    if (previous.workspace === undefined) delete process.env.WORKFLOW_WORKSPACE_NAME;
+    else process.env.WORKFLOW_WORKSPACE_NAME = previous.workspace;
+    rmSync(configDir, { recursive: true, force: true });
+  }
+};
 
 test("SessionStart restores one context for startup, resume, and compact", () => {
   for (const source of ["startup", "resume", "compact"] as const) {
     const root = cwd();
     const result = handleCodexHook(official({ hook_event_name: "SessionStart", source }, root));
     expect(result.hookSpecificOutput).toMatchObject({ hookEventName: "SessionStart" });
-    expect(JSON.stringify(result)).toContain("Workit keeps one accountable lead");
+    expect(JSON.stringify(result)).toContain("Workit is optional coordination");
   }
 });
 
@@ -106,10 +140,7 @@ test("official payloads validate and malformed writes deny", () => {
   );
   // No confinement: an outside absolute target passes through, and with no
   // active task the hook stays transparent.
-  expect(outside.hookSpecificOutput).toMatchObject({
-    hookEventName: "PreToolUse",
-    permissionDecision: "allow",
-  });
+  expectHostPermissionUnchanged(outside.hookSpecificOutput);
 });
 
 test("recognized writes stay transparent without controlled active work", () => {
@@ -126,7 +157,7 @@ test("recognized writes stay transparent without controlled active work", () => 
       root,
     ),
   );
-  expect(absent.hookSpecificOutput).toMatchObject({ permissionDecision: "allow" });
+  expectHostPermissionUnchanged(absent.hookSpecificOutput);
 
   const store = new TaskStore(root);
   const context: OperationContext = {
@@ -165,7 +196,7 @@ test("recognized writes stay transparent without controlled active work", () => 
       root,
     ),
   );
-  expect(noActive.hookSpecificOutput).toMatchObject({ permissionDecision: "allow" });
+  expectHostPermissionUnchanged(noActive.hookSpecificOutput);
 });
 
 test("ambiguous controlled state stays transparent for recognized writes", () => {
@@ -203,7 +234,7 @@ test("ambiguous controlled state stays transparent for recognized writes", () =>
     ),
   );
   // File writes are host-policy: several active tasks no longer gate writes.
-  expect(ambiguous.hookSpecificOutput).toMatchObject({ permissionDecision: "allow" });
+  expectHostPermissionUnchanged(ambiguous.hookSpecificOutput);
 });
 
 test("PreToolUse allows recognized product writes without writer ownership", () => {
@@ -235,7 +266,7 @@ test("PreToolUse allows recognized product writes without writer ownership", () 
       root,
     ),
   );
-  expect(allowed.hookSpecificOutput).toMatchObject({ permissionDecision: "allow" });
+  expectHostPermissionUnchanged(allowed.hookSpecificOutput);
   const outside = mkdtempSync(path.join(tmpdir(), "workit-codex-outside-"));
   mkdirSync(path.join(root, "links"));
   symlinkSync(outside, path.join(root, "links", "outside"), "dir");
@@ -253,101 +284,48 @@ test("PreToolUse allows recognized product writes without writer ownership", () 
   );
   // No confinement: the symlink resolves to its canonical absolute target and
   // passes through; with no active task the hook stays transparent.
-  expect(escaped.hookSpecificOutput).toMatchObject({ permissionDecision: "allow" });
+  expectHostPermissionUnchanged(escaped.hookSpecificOutput);
 });
 
-test("PreToolUse denies recognized raw branch and PR creation with the Workit route", () => {
-  const root = cwd();
-  const store = new TaskStore(root);
-  const context: OperationContext = {
-    root,
-    caller: { host: detectCodexSurface(process.env), actor: "session-1" },
-    callerAttested: false,
-    capabilities: [],
-    constraints: [],
-    now: "2026-01-01T00:00:00Z",
-  };
-  const started = new WorkitCore(store, context).task(taskStartRequest());
-  expect(started.ok).toBe(true);
-  const branch = handleCodexHook(
-    official(
-      {
-        hook_event_name: "PreToolUse",
-        turn_id: "turn-1",
-        tool_use_id: "tool-branch",
-        tool_name: "Bash",
-        tool_input: { command: "git checkout -b feature/raw" },
-      },
+test("PreToolUse blocks noncompliant literal branches and leaves other commands to Codex", () => {
+  withTestBranchPolicy(() => {
+    const root = cwd();
+    const store = new TaskStore(root);
+    const context: OperationContext = {
       root,
-    ),
-  );
-  expect(branch.hookSpecificOutput).toMatchObject({ permissionDecision: "deny" });
-  expect(
-    String(
+      caller: { host: detectCodexSurface(process.env), actor: "session-1" },
+      callerAttested: false,
+      capabilities: [],
+      constraints: [],
+      now: "2026-01-01T00:00:00Z",
+    };
+    const started = new WorkitCore(store, context).task(taskStartRequest());
+    expect(started.ok).toBe(true);
+    const branch = bash(root, "git checkout -b main");
+    expect(branch.hookSpecificOutput).toMatchObject({ permissionDecision: "deny" });
+    const reason = String(
       (branch.hookSpecificOutput as { permissionDecisionReason?: string }).permissionDecisionReason,
-    ),
-  ).toContain("git.branch_setup");
-  const pr = handleCodexHook(
-    official(
-      {
-        hook_event_name: "PreToolUse",
-        turn_id: "turn-1",
-        tool_use_id: "tool-pr",
-        tool_name: "bash",
-        tool_input: { command: "gh pr create --fill" },
-      },
-      root,
-    ),
-  );
-  expect(pr.hookSpecificOutput).toMatchObject({ permissionDecision: "deny" });
-  expect(
-    String(
-      (pr.hookSpecificOutput as { permissionDecisionReason?: string }).permissionDecisionReason,
-    ),
-  ).toContain("hosting.pull_request");
-  const other = handleCodexHook(
-    official(
-      {
-        hook_event_name: "PreToolUse",
-        turn_id: "turn-1",
-        tool_use_id: "tool-other",
-        tool_name: "bash",
-        tool_input: { command: "git status --short" },
-      },
-      root,
-    ),
-  );
-  expect(other.hookSpecificOutput).toMatchObject({ permissionDecision: "allow" });
+    );
+    expect(reason).toContain("protected_ref");
+    expect(reason).toContain("main");
+    expect(reason).toContain("choose a non-protected branch");
+    expectHostPermissionUnchanged(bash(root, "git checkout -b feature/raw").hookSpecificOutput);
+    expectHostPermissionUnchanged(bash(root, 'git checkout -b "main"').hookSpecificOutput);
+    expectHostPermissionUnchanged(bash(root, "gh pr create --fill").hookSpecificOutput);
+    expectHostPermissionUnchanged(bash(root, "git worktree add ../other").hookSpecificOutput);
+    expectHostPermissionUnchanged(bash(root, "git status --short").hookSpecificOutput);
+  });
 });
 
-test("PreToolUse allows recognized raw branch and PR creation outside live work", () => {
-  const root = cwd();
-  const branch = handleCodexHook(
-    official(
-      {
-        hook_event_name: "PreToolUse",
-        turn_id: "turn-1",
-        tool_use_id: "tool-branch",
-        tool_name: "Bash",
-        tool_input: { command: "git checkout -b feature/raw" },
-      },
-      root,
-    ),
-  );
-  expect(branch.hookSpecificOutput).toMatchObject({ permissionDecision: "allow" });
-  const pr = handleCodexHook(
-    official(
-      {
-        hook_event_name: "PreToolUse",
-        turn_id: "turn-1",
-        tool_use_id: "tool-pr",
-        tool_name: "bash",
-        tool_input: { command: "gh pr create --fill" },
-      },
-      root,
-    ),
-  );
-  expect(pr.hookSpecificOutput).toMatchObject({ permissionDecision: "allow" });
+test("PreToolUse enforces branch policy without a task", () => {
+  withTestBranchPolicy(() => {
+    const root = cwd();
+    expect(bash(root, "git checkout -b main").hookSpecificOutput).toMatchObject({
+      permissionDecision: "deny",
+    });
+    expectHostPermissionUnchanged(bash(root, "git checkout -b feature/raw").hookSpecificOutput);
+    expectHostPermissionUnchanged(bash(root, "gh pr create --fill").hookSpecificOutput);
+  });
 });
 
 test("SubagentStop is observational and denial exits zero with JSON", () => {
@@ -390,7 +368,7 @@ test("SubagentStop is observational and denial exits zero with JSON", () => {
   expect(child.status).toBe(0);
   // No confinement: an outside absolute target passes through, and with no
   // active task the hook stays transparent while still exiting zero with JSON.
-  expect(JSON.parse(child.stdout).hookSpecificOutput.permissionDecision).toBe("allow");
+  expectHostPermissionUnchanged(JSON.parse(child.stdout).hookSpecificOutput);
 });
 
 test("unknown surface override warns but keeps the CLI fallback", () => {
@@ -447,23 +425,13 @@ test("bash intent passes everything through; host policy owns shell writes", () 
   const outside = path.join(tmpdir(), `wk-codex-outside-${process.pid}.txt`);
   try {
     // No gating by intent, paths, or escapes — host policy owns shell writes.
-    expect(bash(root, 'echo "rm -rf /"').hookSpecificOutput).toMatchObject({
-      permissionDecision: "allow",
-    });
-    expect(bash(root, "echo hi").hookSpecificOutput).toMatchObject({
-      permissionDecision: "allow",
-    });
-    expect(bash(root, "pip install requests").hookSpecificOutput).toMatchObject({
-      permissionDecision: "allow",
-    });
-    expect(bash(root, `tee ${outside}`).hookSpecificOutput).toMatchObject({
-      permissionDecision: "allow",
-    });
+    expectHostPermissionUnchanged(bash(root, 'echo "rm -rf /"').hookSpecificOutput);
+    expectHostPermissionUnchanged(bash(root, "echo hi").hookSpecificOutput);
+    expectHostPermissionUnchanged(bash(root, "pip install requests").hookSpecificOutput);
+    expectHostPermissionUnchanged(bash(root, `tee ${outside}`).hookSpecificOutput);
     writeFileSync(outside, "outside\n");
     symlinkSync(outside, path.join(root, "link"));
-    expect(bash(root, "tee link").hookSpecificOutput).toMatchObject({
-      permissionDecision: "allow",
-    });
+    expectHostPermissionUnchanged(bash(root, "tee link").hookSpecificOutput);
   } finally {
     rmSync(root, { recursive: true, force: true });
     rmSync(outside, { force: true });
@@ -500,7 +468,7 @@ test("any Codex session passes PreToolUse writes through", () => {
   ).toBe(true);
   // Owner session {workit_cli, session-1} and any other session both pass:
   // file writes are host-policy, never hook-gated.
-  expect(
+  expectHostPermissionUnchanged(
     handleCodexHook(
       official(
         {
@@ -513,8 +481,8 @@ test("any Codex session passes PreToolUse writes through", () => {
         root,
       ),
     ).hookSpecificOutput,
-  ).toMatchObject({ permissionDecision: "allow" });
-  expect(
+  );
+  expectHostPermissionUnchanged(
     handleCodexHook(
       official(
         {
@@ -528,7 +496,7 @@ test("any Codex session passes PreToolUse writes through", () => {
         root,
       ),
     ).hookSpecificOutput,
-  ).toMatchObject({ permissionDecision: "allow" });
+  );
   rmSync(root, { recursive: true, force: true });
 });
 
@@ -607,7 +575,7 @@ test("outside absolute paths pass through without an active task", () => {
         root,
       ),
     );
-    expect(first.hookSpecificOutput).toMatchObject({ permissionDecision: "allow" });
+    expectHostPermissionUnchanged(first.hookSpecificOutput);
     const second = handleCodexHook(
       official(
         {
@@ -620,7 +588,7 @@ test("outside absolute paths pass through without an active task", () => {
         root,
       ),
     );
-    expect(second.hookSpecificOutput).toMatchObject({ permissionDecision: "allow" });
+    expectHostPermissionUnchanged(second.hookSpecificOutput);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

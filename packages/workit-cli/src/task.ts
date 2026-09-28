@@ -538,77 +538,81 @@ const cliActionAuthority = (
 });
 
 const nativeExternalActionRunner = (root: string, actor: string, core: WorkitCore, step?: string) =>
-  createAuthorizedExternalActionRunner(core, (operationValue) => {
-    const store = new TaskStore(root);
-    const approved = approvedExternalAction(store, "workit_cli", actor, operationValue);
-    if (!approved.ok) {
-      const plan =
-        planCommitBinding(store, "workit_cli", actor, operationValue) ??
-        chainStepBinding(store, "workit_cli", actor, operationValue) ??
-        standingAutoBinding(core, store, "workit_cli", actor, operationValue);
-      if (plan) {
-        const actionRef = externalActionRef("workit_cli", actor, operationValue);
-        return {
-          taskId: plan.taskId,
-          decisionId: plan.decisionId,
-          actionRef,
-          expectedRevision: plan.expectedRevision,
-          expectedWorkspaceRevision: plan.expectedWorkspaceRevision,
-          binding: plan.binding,
-          step: plan.step,
-          refresh: () => {
-            const task = store.readTask(plan.taskId);
-            const freshWorkspace = store.readWorkspace();
-            if (!task.ok || !freshWorkspace.ok || !freshWorkspace.data)
-              throw new Error("external action state changed");
-            return {
-              expectedRevision: task.data.revision,
-              expectedWorkspaceRevision: freshWorkspace.data.revision,
-            };
-          },
-          reserveObservation: nativeExternalActionObservation(actor, actionRef, "reserve"),
-          settleObservation: (outcome: "succeeded" | "not_started" | "unknown", revisions) =>
-            nativeExternalActionObservation(
-              actor,
-              actionRef,
-              outcome,
-              actionRef.kind === "host" ? actionRef.handle : "external-action",
-              revisions,
-            ),
-        };
+  createAuthorizedExternalActionRunner(
+    core,
+    (operationValue) => {
+      const store = new TaskStore(root);
+      const approved = approvedExternalAction(store, "workit_cli", actor, operationValue);
+      if (!approved.ok) {
+        const plan =
+          planCommitBinding(store, "workit_cli", actor, operationValue) ??
+          chainStepBinding(store, "workit_cli", actor, operationValue) ??
+          standingAutoBinding(core, store, "workit_cli", actor, operationValue);
+        if (plan) {
+          const actionRef = externalActionRef("workit_cli", actor, operationValue);
+          return {
+            taskId: plan.taskId,
+            decisionId: plan.decisionId,
+            actionRef,
+            expectedRevision: plan.expectedRevision,
+            expectedWorkspaceRevision: plan.expectedWorkspaceRevision,
+            binding: plan.binding,
+            step: plan.step,
+            refresh: () => {
+              const task = store.readTask(plan.taskId);
+              const freshWorkspace = store.readWorkspace();
+              if (!task.ok || !freshWorkspace.ok || !freshWorkspace.data)
+                throw new Error("external action state changed");
+              return {
+                expectedRevision: task.data.revision,
+                expectedWorkspaceRevision: freshWorkspace.data.revision,
+              };
+            },
+            reserveObservation: nativeExternalActionObservation(actor, actionRef, "reserve"),
+            settleObservation: (outcome: "succeeded" | "not_started" | "unknown", revisions) =>
+              nativeExternalActionObservation(
+                actor,
+                actionRef,
+                outcome,
+                actionRef.kind === "host" ? actionRef.handle : "external-action",
+                revisions,
+              ),
+          };
+        }
+        return approved;
       }
-      return approved;
-    }
-    const actionRef = externalActionRef("workit_cli", actor, operationValue);
-    return {
-      taskId: approved.data.task.id,
-      decisionId: approved.data.entry.id,
-      actionRef,
-      expectedRevision: approved.data.task.revision,
-      expectedWorkspaceRevision: approved.data.workspace.revision,
-      binding: approved.data.entry.data.binding,
-      ...(step ? { step } : {}),
-      refresh: () => {
-        const freshTask = store.readTask(approved.data.task.id);
-        const freshWorkspace = store.readWorkspace();
-        if (!freshTask.ok || !freshWorkspace.ok || !freshWorkspace.data)
-          throw new Error("external action state changed");
-        return {
-          expectedRevision: freshTask.data.revision,
-          expectedWorkspaceRevision: freshWorkspace.data.revision,
-        };
-      },
-      reserveObservation: nativeExternalActionObservation(actor, actionRef, "reserve"),
-      settleObservation: (outcome: "succeeded" | "not_started" | "unknown", revisions) =>
-        nativeExternalActionObservation(
-          actor,
-          actionRef,
-          outcome,
-          actionRef.kind === "host" ? actionRef.handle : "external-action",
-          revisions,
-        ),
-    };
-  });
+      const actionRef = externalActionRef("workit_cli", actor, operationValue);
+      return {
+        taskId: approved.data.task.id,
+        decisionId: approved.data.entry.id,
+        actionRef,
+        expectedRevision: approved.data.task.revision,
+        expectedWorkspaceRevision: approved.data.workspace.revision,
+        binding: approved.data.entry.data.binding,
+        ...(step ? { step } : {}),
+        refresh: () => {
+          const freshTask = store.readTask(approved.data.task.id);
+          const freshWorkspace = store.readWorkspace();
+          if (!freshTask.ok || !freshWorkspace.ok || !freshWorkspace.data)
+            throw new Error("external action state changed");
+          return {
+            expectedRevision: freshTask.data.revision,
+            expectedWorkspaceRevision: freshWorkspace.data.revision,
+          };
+        },
+        reserveObservation: nativeExternalActionObservation(actor, actionRef, "reserve"),
+        settleObservation: (outcome: "succeeded" | "not_started" | "unknown", revisions) =>
+          nativeExternalActionObservation(
+            actor,
+            actionRef,
+            outcome,
+            actionRef.kind === "host" ? actionRef.handle : "external-action",
+            revisions,
+          ),
+      };
+    },
+    root,
+  );
 
 export async function runActionCommand(argv: string[], deps: TaskCliDeps = {}): Promise<number> {
   const json = argv.includes("--json");
@@ -786,11 +790,17 @@ export async function runActionCommand(argv: string[], deps: TaskCliDeps = {}): 
             actor,
             core,
             "time",
-          )(priorRequest.data.entry.data.binding.approvedContent, () =>
-            executeResolvedExternalAction(original.data, root, "time", {
-              host: "workit_cli",
-              actor,
-            }),
+          )(priorRequest.data.entry.data.binding.approvedContent, (_step, reservation) =>
+            executeResolvedExternalAction(
+              original.data,
+              root,
+              "time",
+              {
+                host: "workit_cli",
+                actor,
+              },
+              reservation?.workspaceRevision,
+            ),
           );
           if (json) jsonResult(outOf(deps), remaining);
           else printHuman(remaining, deps);
@@ -831,6 +841,7 @@ export async function runActionCommand(argv: string[], deps: TaskCliDeps = {}): 
     "git.push",
     "hosting.pull_request",
     "hosting.merge",
+    "hosting.delete_branch",
     "changelog.apply",
   ].includes(normalized.operation);
   if (localOperation) {
@@ -855,7 +866,13 @@ export async function runActionCommand(argv: string[], deps: TaskCliDeps = {}): 
     .resolved?.branch;
   const plan =
     typeof commitMessage === "string" && commitMessage
-      ? approvedPlanCommit(store, "workit_cli", actor, commitMessage)
+      ? approvedPlanCommit(
+          store,
+          "workit_cli",
+          actor,
+          commitMessage,
+          (resolved.data.descriptorPayload as { cwd?: string }).cwd ?? root,
+        )
       : null;
   if (plan?.ok && plan.data.branch === currentBranch) {
     const core = new WorkitCore(store, {
@@ -864,8 +881,14 @@ export async function runActionCommand(argv: string[], deps: TaskCliDeps = {}): 
       workerId: null,
     });
     const runner = nativeExternalActionRunner(root, actor, core);
-    const result = await runner(descriptor, (step) =>
-      executeResolvedExternalAction(resolved.data, root, step, { host: "workit_cli", actor }),
+    const result = await runner(descriptor, (step, reservation) =>
+      executeResolvedExternalAction(
+        resolved.data,
+        root,
+        step,
+        { host: "workit_cli", actor },
+        reservation?.workspaceRevision,
+      ),
     );
     if (json) jsonResult(outOf(deps), result);
     else printHuman(result, deps);
@@ -891,8 +914,14 @@ export async function runActionCommand(argv: string[], deps: TaskCliDeps = {}): 
       return result.ok ? 0 : 1;
     }
     const runner = nativeExternalActionRunner(root, actor, core);
-    const result = await runner(descriptor, (step) =>
-      executeResolvedExternalAction(resolved.data, root, step, { host: "workit_cli", actor }),
+    const result = await runner(descriptor, (step, reservation) =>
+      executeResolvedExternalAction(
+        resolved.data,
+        root,
+        step,
+        { host: "workit_cli", actor },
+        reservation?.workspaceRevision,
+      ),
     );
     if (json) jsonResult(outOf(deps), result);
     else printHuman(result, deps);
@@ -953,8 +982,14 @@ export async function runActionCommand(argv: string[], deps: TaskCliDeps = {}): 
     return 0;
   }
   const runner = nativeExternalActionRunner(root, actor, core);
-  const result = await runner(descriptor, (step) =>
-    executeResolvedExternalAction(resolved.data, root, step, { host: "workit_cli", actor }),
+  const result = await runner(descriptor, (step, reservation) =>
+    executeResolvedExternalAction(
+      resolved.data,
+      root,
+      step,
+      { host: "workit_cli", actor },
+      reservation?.workspaceRevision,
+    ),
   );
   if (json) jsonResult(outOf(deps), result);
   else printHuman(result, deps);

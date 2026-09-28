@@ -3,7 +3,7 @@ import path from "node:path";
 import {
   compactTaskContext,
   invariantBootstrap,
-  shouldDenyShellRoute,
+  shellBranchPolicyViolation,
   TaskStore,
   WorkitCore,
   type Capability,
@@ -351,14 +351,12 @@ export const handleCodexHook = (raw: unknown): Record<string, unknown> => {
     // writer ownership checks.
     if (["bash", "unified-exec"].includes(String(input.tool_name).toLowerCase())) {
       const command = record(input.tool_input) ? input.tool_input.command : undefined;
-      const route = typeof command === "string" ? shouldDenyShellRoute(input.cwd, command) : null;
-      if (route)
-        return denied(
-          "PreToolUse",
-          `direct branch or PR creation bypasses the Workit route; ${route.guidance}`,
-        );
+      const policy =
+        typeof command === "string" ? shellBranchPolicyViolation(input.cwd, command) : null;
+      if (policy && !policy.ok)
+        return denied("PreToolUse", `branch_policy_denied: ${policy.error}`);
     }
-    return output("PreToolUse", { permissionDecision: "allow" });
+    return output("PreToolUse", {});
   }
   if (input.hook_event_name === "SubagentStart")
     return output("SubagentStart", {

@@ -1,5 +1,5 @@
-import { expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { afterAll, beforeAll, expect, test } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { TaskStore, WorkitCore, type OperationContext } from "@/packages/workit-core/src/core";
@@ -7,6 +7,38 @@ import { taskStartRequest } from "@/test/workit-core/task-fixtures";
 import { server as plugin } from "@/packages/workit-opencode/src/index";
 import { enforceNativeWriter } from "@/packages/workit-pi/src/tools";
 import { handleCodexHook } from "@/packages/workit-codex/hooks/workit-hook";
+
+const previousEnv = {
+  config: process.env.WORKFLOW_TOOLKIT_CONFIG,
+  configDir: process.env.WORKFLOW_TOOLKIT_CONFIG_DIR,
+  profile: process.env.WORKFLOW_PROFILE,
+  workspace: process.env.WORKFLOW_WORKSPACE_NAME,
+};
+let configDir: string;
+beforeAll(() => {
+  configDir = mkdtempSync(path.join(tmpdir(), "workit-route-policy-config-"));
+  process.env.WORKFLOW_TOOLKIT_CONFIG_DIR = configDir;
+  delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+  delete process.env.WORKFLOW_PROFILE;
+  delete process.env.WORKFLOW_WORKSPACE_NAME;
+  writeFileSync(
+    path.join(configDir, "config.json"),
+    JSON.stringify({
+      branchPolicy: { preset: "custom", allowed: ["feature/*"], protected: ["main"] },
+    }),
+  );
+});
+afterAll(() => {
+  if (previousEnv.config === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+  else process.env.WORKFLOW_TOOLKIT_CONFIG = previousEnv.config;
+  if (previousEnv.configDir === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG_DIR;
+  else process.env.WORKFLOW_TOOLKIT_CONFIG_DIR = previousEnv.configDir;
+  if (previousEnv.profile === undefined) delete process.env.WORKFLOW_PROFILE;
+  else process.env.WORKFLOW_PROFILE = previousEnv.profile;
+  if (previousEnv.workspace === undefined) delete process.env.WORKFLOW_WORKSPACE_NAME;
+  else process.env.WORKFLOW_WORKSPACE_NAME = previousEnv.workspace;
+  rmSync(configDir, { recursive: true, force: true });
+});
 
 const startTask = (root: string, host: OperationContext["caller"]["host"]) => {
   const store = new TaskStore(root);
@@ -45,7 +77,7 @@ const piDenies = (root: string, command: string): boolean =>
     { cwd: root, isProjectTrusted: () => true } as never,
   ) !== undefined;
 
-const codexDenies = (root: string, command: string): boolean => {
+const codexResult = (root: string, command: string) => {
   const result = handleCodexHook({
     session_id: "session-1",
     cwd: root,
@@ -58,26 +90,33 @@ const codexDenies = (root: string, command: string): boolean => {
     tool_name: "bash",
     tool_input: { command },
   });
-  return (
-    (result.hookSpecificOutput as { permissionDecision?: string })?.permissionDecision === "deny"
-  );
+  return result.hookSpecificOutput as { hookEventName: string; permissionDecision?: string };
 };
 
-test("all hosts deny route commands inside live work and allow them outside", async () => {
-  for (const command of ["git checkout -b feature/raw", "gh pr create --fill"]) {
-    const live = mkdtempSync(path.join(tmpdir(), "workit-parity-live-"));
-    const bare = mkdtempSync(path.join(tmpdir(), "workit-parity-bare-"));
+const codexDenies = (root: string, command: string): boolean => {
+  const result = codexResult(root, command);
+  return result.permissionDecision === "deny";
+};
+
+test("all adapters enforce only recognized noncompliant branch targets", async () => {
+  for (const hasTask of [false, true]) {
+    const root = mkdtempSync(path.join(tmpdir(), "workit-parity-"));
     try {
-      startTask(live, "opencode");
-      expect(await opencodeDenies(live, command), `opencode live ${command}`).toBe(true);
-      expect(await opencodeDenies(bare, command), `opencode bare ${command}`).toBe(false);
-      expect(piDenies(live, command), `pi live ${command}`).toBe(true);
-      expect(piDenies(bare, command), `pi bare ${command}`).toBe(false);
-      expect(codexDenies(live, command), `codex live ${command}`).toBe(true);
-      expect(codexDenies(bare, command), `codex bare ${command}`).toBe(false);
+      if (hasTask) startTask(root, "opencode");
+      for (const [command, denied] of [
+        ["git checkout -b main", true],
+        ["git switch -c feature/raw", false],
+        ["gh pr create --fill", false],
+        ["git worktree add ../other", false],
+        ['git checkout -b "main"', false],
+      ] as const) {
+        expect(await opencodeDenies(root, command), `opencode ${command}`).toBe(denied);
+        expect(piDenies(root, command), `pi ${command}`).toBe(denied);
+        expect(codexDenies(root, command), `codex ${command}`).toBe(denied);
+      }
+      expect(codexResult(root, "git status --short")).toEqual({ hookEventName: "PreToolUse" });
     } finally {
-      rmSync(live, { recursive: true, force: true });
-      rmSync(bare, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
     }
   }
 });

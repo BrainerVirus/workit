@@ -625,7 +625,12 @@ const validateAction = (
       operation = null;
     }
     const cls = operationAutoClass(operation);
-    if (!cls || !standing.some((receipt) => standingApprovalLive(store.root, receipt, cls)))
+    if (
+      !cls ||
+      !standing.some((receipt) =>
+        standingApprovalLive(store.root, receipt, cls, undefined, decision.binding.approvedContent),
+      )
+    )
       return failure("permission_denied", "standing auto-approval is not live for this operation");
   }
   if (decision.revoked) return failure("permission_denied", "decision is revoked");
