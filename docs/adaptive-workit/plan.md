@@ -24,29 +24,28 @@ can resume without redoing discovery.
 
 ## Dirty-tree reconciliation
 
-- **Reusable, pending slice-level checks:** target-bound Git/hosting actions and
-  account/expected-tip checks in `external-action*.ts`, `branch.ts`,
-  `pr-create.ts`, and `vcs-config.ts`; the target metadata lock in
-  `task-store.ts`; shared export/import; and their CLI, Pi, OpenCode, and core
-  tests. The lock is not yet evidence of complete takeover fencing or that all
-  effects use it.
-- **Incomplete:** task/assessment gates remain in the canonical bootstrap and
-  bundled skills; repo/profile configuration still needs strict validation,
-  ambiguity handling, and track support; import still lacks source mapping and
-  idempotency; recovery snapshots remain unbounded; clean upgrade, selective
-  knowledge, and cross-harness discovery are not implemented.
-- **Needs correction against the spec:** `route-intent.ts` adds a quote-aware
-  shell parser but still blocks whole classes of branch/PR commands for a live
-  task. The spec requires policy validation for recognizable supported forms,
-  honest coverage limits, and no requirement to route every compliant shell
-  action through Workit. The current method/skill instructions also make
-  lifecycle and document work mandatory.
-- **Preserve as separate work unless a slice requires a narrow edit:** CLI VCS
-  identity/token migration, YouTrack, doctor, auto-approval, and reliability
-  changes. They have paired tests and are not blanket candidates for removal.
-- Historical agile-workflow docs are superseded. Do not execute their task,
-  approval, formatting-policy removal, cleanup, or remote-delivery instructions.
-  The action-target docs provide useful target-binding history only.
+- **Committed as reusable implementation:** optional direct-work guidance,
+  typed workspace/profile policy, target-bound actions and shared branch
+  checks, idempotent portable imports with managed-writer fencing, resumable
+  fixture-tested host cutover, and V2 OpenCode packaging. These were committed
+  in separate feature slices after reviewing the pre-existing changes.
+- **Corrected before commit:** the legacy direct branch helper now validates
+  policy at the shared setup boundary; tracker reads use the selected CLI
+  identity. The corresponding regression tests pass.
+- **Still incomplete:** task-list search now covers summary, progress, and
+  decision text within the current workspace, but no automatic project-entry
+  resume/history offer or project/time/source index exists. The current list
+  path reads task records before filtering, so the 2 GiB inventory benchmark
+  does not establish bounded-memory conversion or search. Archive destination
+  is being made explicit in the cutover journal; recovery retention limits,
+  legacy ownership coverage beyond published 1.2.1 Cursor assets, and measured
+  conversion/search remain open.
+- **Preserved outside the PR:** the four untracked Agile/action-target draft
+  files remain untouched for the user's later decision. They are historical
+  context only and do not override this plan or the consolidated spec.
+- **Unrelated changes:** prior YouTrack, doctor, VCS identity/token, auto-
+  approval, and reliability work was retained only where it had clear behavior
+  and paired tests; no unrelated dirty files were folded into the new design.
 
 ## Ordered slices
 
@@ -236,16 +235,27 @@ focused question only when one of those choices blocks a concrete slice.
   unresolved; recovery retention is not implemented. Ownership is verified for
   the published 1.2.1 Cursor assets only; unknown/modified assets are preserved
   and must not be reported as removed. The 2 GiB measurement covers inventory,
-  not conversion or history search. Cross-harness import is covered, but a
-  project-entry resume offer and searchable history are not implemented. These
-  migration/history limits do not run at startup; do not execute cutover or
-  prune real history until the inputs and remaining acceptance are settled.
+  not conversion or bounded-memory search. Cross-harness import is covered, but
+  a project-entry resume offer is not implemented. These migration/history
+  limits do not run at startup; do not execute cutover or prune real history
+  until the inputs and remaining acceptance are settled.
+- **Completed after the slice-5 checkpoint:** `task.list` accepts an optional
+  1–200 character query, matches all query terms against task summaries,
+  progress, and decisions in the bound workspace, and preserves newest-first
+  ordering and the existing result cap. Read-only helper actors can list tasks.
+  The list path performs no writes. Regression test: 36 tests / 234 assertions
+  passed in `test/workit-core/task-engine.test.ts`; change committed as
+  `b8d7677` (`feat(history): add bounded task search`). This is not a full
+  project/time/source history index or an automatic entry-time offer, and its
+  memory use has not been measured against a multi-gigabyte task store.
 - **Adapter checks completed:** `bun run check` passed build, lint, formatting,
   1,571 tests / 8,527 assertions, and TypeScript. Cursor marketplace validation
   passed; React Doctor and Knip exited 0 (React Doctor reported seven advisory
   warnings; Knip reported four configuration hints). This qualifies the
   packaged adapters for the local OpenCode pin after remote CI passes.
-- **Next action:** commit the useful Workit changes in coherent slices, push the
-  feature branch, open the PR, resolve required CI findings, merge after green
-  checks, then enable the local OpenCode pin. Leave the four historical draft
-  files outside the PR and report them for the user's later decision.
+- **Next action:** finish and review the explicit archive-path cutover slice,
+  run the full local check against the integrated tree, refresh this checkpoint,
+  push the committed feature branch, open the PR, resolve required CI findings,
+  merge after green checks, then enable and verify the local OpenCode pin.
+  Leave the four historical draft files outside the PR and report them for the
+  user's later decision.
