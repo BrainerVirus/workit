@@ -20,6 +20,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Action-time `cwd` targeting for Git and hosting actions from a task rooted in
+  any directory, including a non-Git OS workspace; no related-repository list
+  is required. Cross-checkout actions hold target writer serialization through
+  settlement; branch proposals bind the local and remote base SHAs, and quoted
+  shell text cannot spoof a directory change. Hosted `hosting.pull_request` is
+  enabled with pre/post provider SHA verification (the residual non-atomic
+  source-SHA race is accepted, decision `ae03c569`). `hosting.delete_branch`
+  requires a live tip matching an already merged PR/MR head and rechecks it
+  before deletion. Hosted merge rechecks its target immediately before the CLI
+  call, with the provider's lack of an atomic target precondition recorded as
+  an accepted limitation.
 - OpenCode V2 dual entry: one `@brainervirus/workit-opencode` artifact serves
   V1 `server()` (floor raised to `1.18.30`) and V2 `2.0.3` `setup()` with the
   exact ten tools (`codemode: false`), fourteen method skills and `wk-*`
@@ -35,8 +46,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   effects execute with no question, each still recording a reservation with
   its exact binding. Standing approvals re-validate live (removal restores
   questions instantly, imported standing receipts are dropped). Guardrails
-  are code: protected branches never push, open PRs, or merge sources; push
-  identity must match the area account; publish/release stay gated. New
+  are code: effective CLI identity must match the target area's configured
+  account and provider-side branch protections apply; publish/release stay gated. New
   `hosting.merge` action (squash + delete branch per config) with the same
   protections, and raw `gh pr merge` / `glab mr merge` route into it.
 - Concise native action approvals: a mutating action call that has no approval
@@ -318,6 +329,12 @@ acquire --actor <id>` binds a writer to a Codex session the hook matches,
 
 ### Changed
 
+- GitHub/GitLab setup, doctor, issues, PRs and merges now use the authenticated
+  `gh`/`glab` CLI rather than separate Workit VCS tokens; existing token files
+  remain untouched. User-selected Git-valid branch names and commit messages
+  are no longer rejected by Workit formatting rules. Doctor checks the
+  configured provider's CLI/SSH identity, and hosting API reads bind to the
+  resolved push host. YouTrack still uses its permanent token.
 - Package payload changes now cut a patch release even when their commit type
   is `docs` or `chore` (skills and metadata live in the tarball, so installed
   users must receive them); the release's own manifest sync is excluded and

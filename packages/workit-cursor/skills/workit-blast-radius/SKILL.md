@@ -8,11 +8,6 @@ description: Use when a small-looking change could break something else, before 
 A small diff is not a small risk. Prove the one fact it is safe because of,
 with runnable proof — not assertion.
 
-## Before method work
-
-If there is no active or paused task, run shared `task.start` then `policy.assess`
-before relying on selected policy rules or other product mutations. Assessment
-selects requirements; do not wait for a rule that can only exist after assess.
 
 ## Method
 

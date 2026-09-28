@@ -1,35 +1,35 @@
 ---
 name: workit-steer
-description: Use when new instructions, interruptions, or forgotten items arrive mid-task
+description: Use when new instructions, interruptions, or forgotten items change substantial ongoing work
 ---
 
-# Steer without losing the thread
+# Steer without forced lifecycle
 
-New context mid-session is normal; losing the thread is not. Park,
-classify, handle, re-anchor — every time.
-
-## Before method work
-
-If there is no active or paused task, run shared `task.start` then `policy.assess`
-before relying on selected policy rules or other product mutations. Assessment
-selects requirements; do not wait for a rule that can only exist after assess.
+Classify new input as a quick question, a same-task adjustment, or a separate
+request. Preserve continuity when it helps; do not manufacture task mutations.
 
 ## Method
 
-1. Park current state to task progress verbatim: summary, nextAction,
-   blockers. Never trust memory across an interruption.
-2. Classify the steering:
-   - same-task: fold into scope (reassess if facts changed), continue.
-   - new-task: `task.pause` the parked lead task, then `task.start` +
-     `policy.assess` for the new one. Keep exactly one active lead per
-     session: external actions bind to that single active task, and a second
-     active lead makes writer authority ambiguous.
-   - quick-question: answer from the parked state, then resume.
-3. Handle it with the same rigor as the parked work (no drive-by edits).
-4. Re-anchor: one-line resume brief (where we were, what changed, what
-   is next), then `task.resume` the parked task before touching it again.
+1. Answer a quick question from current context. Do not pause, resume, create,
+   assess, or close a task just to answer it.
+2. For a same-task adjustment, update only affected constraints and next actions.
+   Keep an existing checkpoint when it helps; reassess policy only when evidence
+   or constraints changed enough to affect a rule.
+3. For a separate request, do not silently resume an old objective. Park a
+   concise checkpoint only when substantial work needs to continue later. Start
+   a distinct tracked record only if the new work benefits from continuity,
+   dependencies, coordination, or durable decisions.
+4. Before resuming a named tracked task, reconcile its checkout, branch, dirty
+   state, current policy, stale evidence, uncertain effects, and ownership. Do
+   not change branches, stash, fetch large histories, or seize ownership just
+   to display a history choice.
+5. Continue to the user's authorized endpoint with applicable checks. Ask only
+   about consequential choices the code and available context cannot resolve.
 
-## Completion
+## Common mistakes
 
-Both the steering and the parked work have an owner, a next action, and
-no silent drops. Interrupted work resumes from the brief, not from recall.
+| Mistake | Correction |
+| --- | --- |
+| Treating a quick question as interruption | Answer without changing task state. |
+| Auto-resuming an old objective | Wait for the user's direction to resume it. |
+| Rebuilding continuity from a transcript | Keep a compact checkpoint with evidence and next action. |

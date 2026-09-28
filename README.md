@@ -26,7 +26,10 @@ npx @brainervirus/workit-cli init
 
 `workit init` is an interactive TTY wizard (locale, timezone, branch policy,
 YouTrack, VCS, workspaces, project hygiene). `workit doctor` verifies any
-install. Project setup defaults to No: press `n` to skip adding files when
+install. GitHub and GitLab use `gh auth login` / `glab auth login`; Workit does
+not create or read separate VCS token files. YouTrack retains its permanent
+token. Existing VCS token files are left untouched during setup. Project setup
+defaults to No: press `n` to skip adding files when
 configuring from a parent folder containing multiple repositories. Press `y`
 only to add hygiene files and gitignore entries to the displayed directory.
 Re-running init preserves existing credentials and files; it does not remove
@@ -208,11 +211,17 @@ or explicitly via the fourteen `wk-*` aliases (`/wk-challenge`, `/wk-babysit`,
 `/wk-implement`, `/wk-plan`, `/wk-debug`, and the rest) on OpenCode, Cursor, and
 Pi. An alias routes through policy to the method skills and never calls another
 alias. Codex CLI has no slash path: invoke skills explicitly as
-`$workit-<name>` or from the `/skills` picker. Creating a PR auto-starts babysit (drive default; opt out with
-`babysit:false`); a PR URL observed from a route Workit did not enforce is
-still driven through `workit-babysit`, without claiming enforcement. Raw
-branch and PR creation commands are denied on OpenCode, Codex, and Pi with the
-exact Workit action to use instead.
+`$workit-<name>` or from the `/skills` picker. Creating a PR does not auto-start
+babysit; `babysit:true` opts into PR-ready follow-up and does not authorize
+merge or release. A PR URL from a route Workit did not enforce can be babysat
+when the user asks, without claiming enforcement. Raw
+branch naming checks run only for direct, unquoted literal forms of
+`git switch -c|--create|-C|--force-create`, `git checkout -b|-B`, and
+`git branch <name>`. A recognized target that violates the current workspace
+policy is denied with a correction; compliant commands pass to the host. PR,
+worktree, compound, quoted, variable-expanded, wrapped, and other shell forms
+remain host-governed. Workit is not an OS sandbox, so use repository or provider
+controls when policy must cover unsupported shell forms.
 
 ## Host surfaces
 
@@ -299,6 +308,37 @@ descriptor and requires an interactive TTY confirmation. A headless CLI call
 caller-unattested MCP surface keeps optional mutations unavailable. Time
 entries require a duration supplied or confirmed by the user.
 
+The task directory holds coordination state; it need not be a Git repository.
+Git and hosting actions accept `cwd` in their payload to select any existing
+checkout for that action, with no prior registration or shared parent required.
+The canonical target, relevant Git/remote state, and effective `gh`/`glab`
+account are checked again before a remote effect. The coordinator owns the
+Workit writer; an independently held writer in the target checkout remains a
+real conflict, and managed actions hold that checkout's Workit metadata lock
+through effect settlement so a writer cannot acquire mid-action. New branch
+setup shows both the existing local base SHA and remote base SHA in its
+approval, rechecks them, and creates only from an approved commit. Workit does
+not reject Git-valid branch names or user commit
+messages on formatting grounds. OS tasks can run from non-Git directories;
+Git-only actions report unavailable when no checkout is selected.
+
+Hosted merge rechecks the approved target immediately before the `gh`/`glab`
+merge call. Those APIs condition on the PR/MR source SHA but do not support an
+atomic target-branch condition, so a retarget after the recheck can still
+redirect the merge.
+
+Workit's hosted `hosting.pull_request` action pre-binds the approved source SHA
+and verifies the provider PR head before reporting success. The provider create
+APIs accept a branch name, so a concurrent push could still create a request
+from a newer commit between the pre-check and the create call; that residual
+non-atomic source-SHA race is accepted (decision `ae03c569`).
+
+`hosting.delete_branch` deletes a remote branch only when its live tip exactly
+matches the head of a merged PR/MR. It binds the branch, remote and merged PR
+to an approved action and uses Git's server-side `--force-with-lease` to refuse
+a changed tip even after the last read; it never guesses from Git
+ancestry after a squash merge.
+
 Examples:
 
 - `context.read` with `{ "kind": "release", "range": "HEAD~1...HEAD" }`
@@ -308,9 +348,9 @@ Examples:
 All native adapters and the CLI also expose the read-only `context.read`
 operation for `git`, `pr`, `youtrack`, `github_issue`, `gitlab_issue`,
 `changelog`, `release`, and `affected` context. The tracker kinds return the
-same title/body/state triple; GitHub reuses the vcs token with `gh` issue-ref
-parsing and GitLab resolves the full project path (subgroups kept), both
-fail-closed without a token. Release context includes a deterministic Markdown
+same title/body/state triple through authenticated `gh` and `glab` (GitLab
+subgroups kept); they fail closed when the CLI is unavailable or not logged in.
+Release context includes a deterministic Markdown
 draft derived from the selected commits and changed files. Affected context
 identifies documentation files; an actual edit still uses the existing native
 editor (for example `changelog.apply`) with writer checks and host-observed

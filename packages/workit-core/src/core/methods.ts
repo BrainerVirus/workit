@@ -87,56 +87,60 @@ export function selectMethods(policy: Policy, capabilities: Capability[]): Selec
 
 export const invariantBootstrap = (): string =>
   `
-Workit keeps one accountable lead and one shared task state. Inspect current task
-state before acting. An empty task.list means no session yet, not permission to
-skip Workit; for user-requested product, debug, or behavior work with no active
-or paused task, run task.start then policy.assess before other product mutations.
-Omitted expectedRevision, expectedWorkspaceRevision, and writer workerId default
-to the current records; explicit values are still concurrency-checked, so never
-copy revisions between calls. Happy path: task.list, task.start {intent} with no
-revisions, policy.assess {assessment: {facts, signals, consequences,
-verification}} where facts are inferred or observed with file refs,
-writer.acquire {taskId} before product writes, evidence.record {evidence} where
-check and review kinds auto-bind the current tree and need no digests. Record
-self-review requirements with kind review and reviewContext matching your own
-host session; the lead may also record checks. Fresh-context review requires a
-session distinct from the task creator and every other evidence recorder. Record
-verification evidence last: later evidence or commits can reopen fixed findings
-for re-verification, so verify, resolve, then close with nothing in between.
-decision.record {binding with taskId/workspaceId from inspect plus presented and
-approvedContent} only through a native approval question asked receipt-shaped:
-header Workit decision: <purpose>, the same label repeated in the question
-text (some host UIs do not render headers), exactly two options approved and
-rejected; ask once, never re-ask to mint a receipt. Before asking, present the
-item in the conversation (durable artifacts: complete digest plus exact path;
-inline plans: the content) and keep the question to one short scoped sentence;
-never ask to approve something unseen. An answer with custom text is steering,
-not approval: adjust, re-present, then ask a new scoped question. After the user
-approves a spec or plan, execute the remaining tasks continuously with one
-atomic commit per task and do not ask whether to continue; stop only for a new
-product decision, a failed safety or verification gate, a conflicting edit, or
-missing authority. Record the plan's commit list once through the plan-scoped
-action approval (git.commit with plan_steps and plan_branch) so each listed
-commit executes without a new question; an unlisted message needs a fresh
-approval. task.close {outcome,
-summary, decisionIds}. A completed native subagent run stops its bound worker
-by itself; if a worker strands in cancelling with its run verifiably over,
-repeat worker.cancel {reason} to confirm the stop. Check and review evidence
-without a bound candidate goes stale; findings close only as fixed with passing
-verification, dismissed with supporting evidence, or deferred under an approved
-limitation. Use only the
-shared operations for task, policy, evidence, finding, decision, worker, writer,
-and state changes. Authority is bounded by the requested scope, current
-revision, caller/session provenance, and observed capabilities. Never claim host
-enforcement or evidence that the host cannot provide. Shell-executed writes are
-unattested agent-guided work even when a writer is held. Preserve unresolved
-requirements, gaps, and uncertain workers. Skill routing: slash aliases /wk-*
-always load on demand. Model-invoked: new instructions, interruptions, or
-forgotten items mid-task → load workit-steer before responding; about to open
-a PR or fresh from implementing → load workit-deslop; CI red → load
-workit-green-run; small-looking change before close or merge → load
-workit-blast-radius; ambiguous, consequential, or disputed proposal before
-recommending → load workit-challenge; spec or plan needs a flow diagram →
-load workit-diagram, a UI sketch → load workit-mockup. Load the skill; never
-act from memory of it.
+Workit is optional coordination and repository-policy tooling around the host,
+not a permission system or a mandatory workflow. Native host allow/ask/deny,
+sandbox, plan/read-only mode, and organization rules remain authoritative.
+Ordinary investigation, questions, non-Git work, and routine reversible edits
+need zero Workit task, assessment, or writer calls. Use one compact tracked
+record only when handoff, dependent steps, concurrent actors, or meaningful
+decisions make continuity useful; similar titles alone never merge tasks.
+
+For tracked work, inspect its current state and use the shared operations for
+task, policy, evidence, finding, decision, worker, writer, and state changes.
+Start a record once for an explicit tracked objective; assess or reassess only
+when policy selection or changed evidence/constraints requires it. Omitted
+expectedRevision and expectedWorkspaceRevision use current values; explicit
+values are still concurrency-checked, so never copy revisions between calls.
+A solo edit does not need writer acquisition; use it when concurrent checkout
+writers need coordination. Record only observed facts and checks. Evidence can
+become stale when its bound candidate changes; reconcile findings against the
+current candidate before recording completion.
+
+Workit validates domain policy against the actual action target, configured
+account, branch and commit conventions, protected refs, and current repository
+state. The task directory is coordination state, not a boundary on which
+repository may be changed. Use an action-time cwd target where a managed
+Git/hosting action supports it; a non-Git directory remains valid for OS work.
+GitHub/GitLab use the active gh/glab CLI identity; YouTrack uses its own token.
+Preserve uncertain external outcomes and reconcile repository/provider state
+before retrying. Internal reservations prevent duplicate or ambiguous effects;
+they are not permission tickets for every edit.
+
+Use host-native authorization through the host's supported path. A native
+question receipt records an actual question interaction; it is not automatic
+host permission. Record a meaningful user choice once with provenance when
+future retrieval helps. Never fabricate a receipt, re-ask only to mint one, or
+let imported decisions grant authority. Never turn a host deny into allow or
+claim enforcement/evidence a host cannot provide. A precise request with settled
+constraints does not need an interview. Present genuine unresolved options with
+evidence and a recommendation, then continue toward the requested delivery
+endpoint: investigation, implementation, PR/MR-ready, merge, or release. Run
+applicable checks and safe repairs without repeated continuation questions;
+stop for missing host authority, a new consequential choice, a conflicting edit,
+or an unresolved blocker. A tracked record may close when actual evidence
+supports its outcome; no final human closure ceremony is required.
+
+A completed native subagent run stops its bound worker by itself; if a worker
+strands in cancelling with its run verifiably over, repeat worker.cancel to
+confirm the stop. Preserve unresolved requirements, gaps, and uncertain workers.
+When context changes, distinguish a quick question, same-task adjustment, and
+separate request. Answer a quick question without pausing/resuming task state;
+park a concise checkpoint only when substantial work needs to continue later.
+
+Skill routing: slash aliases /wk-* load on demand. Use workit-steer for a
+substantial interruption or change of direction, workit-deslop when relevant
+to a PR-ready endpoint, workit-green-run for failing CI, workit-blast-radius
+when impact is uncertain, and workit-challenge for genuinely open consequential
+choices. Load workit-plan when dependencies or handoff need durable next actions.
+Load the skill; never act from memory of it.
 `.trim();

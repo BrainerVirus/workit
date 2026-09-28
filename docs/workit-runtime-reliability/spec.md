@@ -131,18 +131,19 @@ A native child cannot race ahead of the Workit assignment that authorizes it.
 ### 4. Branch and pull-request routes
 
 Workit's optional-action routes remain the policy-aware path for branch setup,
-push, and pull-request creation.
+push, pull request, and merge. Hosted pull-request creation pre-binds the
+approved source SHA and verifies the provider PR head before reporting success;
+the residual non-atomic source-SHA race is accepted (decision ae03c569).
 
 - Where a host exposes a trustworthy shell pre-execution hook, recognizable
   direct `git switch -c` / `git checkout -b`, `gh pr create`, and
   `glab mr create` calls are denied with guidance to use the corresponding
   Workit action. Detection reuses the shared shell-intent boundary and does not
   grow into a general shell parser.
-- Pull requests created through `hosting.pull_request` retain drive-mode
-  auto-babysit by default.
 - If a host cannot block a bypass, its capability remains `agent_guided`. When
-  the agent observes a created PR URL, distributed guidance requires loading
-  `workit-babysit`; it must not claim the route was enforced.
+  the user creates a PR outside Workit and its URL is observed, distributed
+  guidance requires loading `workit-babysit`; it must not claim Workit enforced
+  the creation route.
 - Tests cover direct commands, common flags, quoted arguments, compound commands
   that the parser can classify, and unparseable commands that remain explicitly
   non-enforced.

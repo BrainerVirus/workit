@@ -3,7 +3,7 @@
 ## 1. Goal
 
 One `@brainervirus/workit-opencode` package works on OpenCode V1 `1.18.30` and
-OpenCode V2 `2.0.3`, with the same Workit outcomes:
+OpenCode V2 `2.0.18`, with the same Workit outcomes:
 
 - 10 native tools: 8 core families, `workit_external_action`, and
   `workit_init_apply`;
@@ -41,10 +41,10 @@ as well.
 ## 3. Pinned contracts
 
 - V1 host and SDK: `1.18.30` / `@opencode-ai/plugin@1.18.30`.
-- V2 host and SDK: `2.0.3` / `@opencode/plugin@2.0.3`.
+- V2 host and SDK: `2.0.18` / `@opencode/plugin@2.0.18`.
 - V2 image:
-  `ghcr.io/anomalyco/opencode@sha256:aaf8c5420e10652c520e068532384f6e20cece2922c404db7f89e36720b9f212`
-  (tag `2.0.3`).
+  `ghcr.io/anomalyco/opencode@sha256:aa0e5ac93543f24c99dfcc72a6ea7df335faec131dafc16f7607a2c7d3173d28`
+  (tag `2.0.18`).
 - V1 image:
   `ghcr.io/anomalyco/opencode@sha256:412b37a894bb937a0d5d6a1860789b9fd7d34a109334bec98a3f6ecf812bb442`
   (tag `1.18.30`).
@@ -58,7 +58,7 @@ Primary references:
 - [V1 plugin migration](https://opencode.ai/v2/docs/build/plugins/migrate-v1)
 - [V1 to V2 migration](https://opencode.ai/v2/docs/migrate-v1)
 - [V1 plugin API](https://opencode.ai/docs/plugins/)
-- [OpenCode 2.0.3 source](https://github.com/anomalyco/opencode/tree/v2.0.3)
+- [OpenCode 2.0.18 source](https://github.com/anomalyco/opencode/tree/v2.0.18)
 
 ## 4. Constraints
 
@@ -100,7 +100,7 @@ packages/workit-opencode/
   an export condition because both hosts load the same default object.
 - Keep `src/plugin.ts` so setup, doctor, sync, cutover, root package exports,
   Knip, and checkout `file://` registrations remain valid.
-- Pin `@opencode/plugin` to `2.0.3` as a build-time dependency and bundle the
+- Pin `@opencode/plugin` to `2.0.18` as a build-time dependency and bundle the
   used runtime into `dist/plugin.js`, preserving the current self-contained
   packed artifact. No new runtime dependency is required by default. Effect may
   be added only through the adapter-local adoption gate in section 6 and must be
@@ -164,7 +164,7 @@ uses native platform primitives.
 | `event` session lifecycle                                            | Abortable `ctx.event.subscribe({ signal })` loop using V2 event envelopes                                     | Read `event.data`, not V1 `properties`. Map `session.created` to bind/running; `session.execution.started` to running; `succeeded`, `failed`, and `interrupted` to stopped; and `session.deleted` to stopped. `session.status` and `session.idle` remain delivered compatibility events, but the canonical terminal lifecycle is `session.execution.*`; `session.error` is not part of the V2 stream.                                                       |
 | Volatile V2 event stream                                             | Event-driven settlement plus bounded reconciliation                                                           | The plugin event stream may miss events and is not a delivery guarantee. Before an unresolved worker blocks a launch, reconcile its bound child once through `ctx.session.get`: a successful read with a terminal `outcome` (recorded at `time.idle`) settles stopped, and a completed subagent tool result settles its own child. Failed or inconclusive reads keep the worker unresolved and the veto in place. Never forge stopped from a missing event. |
 | Rich V1 `session.deleted` payload                                    | V2 sparse delete `{ data: { sessionID } }`                                                                    | Trust deletion only for one persisted child binding in this checkout, plus a matching event location when present. Do not call `session.get` after deletion or invent parent/directory fields.                                                                                                                                                                                                                                                              |
-| `config` skill path                                                  | Read 14 packaged manifests/content before `ctx.skill.transform`                                               | Register exact skill IDs, locations, descriptions, and content. Skip an existing user skill ID rather than silently replacing it. Validate active `ctx.skill.list()`, not just asset directory count.                                                                                                                                                                                                                                                       |
+| `config` skill path                                                  | Read 14 packaged manifests/content before `ctx.skill.transform`                                               | Register exact skill IDs, paths, descriptions, and content. Skip an existing user skill ID rather than silently replacing it. Validate active `ctx.skill.list()`, not just asset directory count.                                                                                                                                                                                                                                                       |
 | `config` `wk-*` command aliases                                      | Read `ctx.command.list()`, then `ctx.command.transform(editor.add(...))`                                      | Register all 14 aliases. Preserve existing user commands by skipping names already present. `execute({sessionID,prompt,delivery})` calls `ctx.session.prompt` and preserves prompt attachments, arguments, and delivery.                                                                                                                                                                                                                                    |
 | `config` Bash worktree deny                                          | `ctx.permission.hook("evaluate")`                                                                             | For `action === "shell"`, deny resources matching the existing Git-worktree rule and set the denial message. `permission.rules()` is not called from setup: it requires a session ID and replaces session rules. Explicit configured denies remain final; the hook handles allow/ask decisions.                                                                                                                                                             |
 | `tool.execute.before` bash route deny                                | `ctx.permission.hook("evaluate")` for `action === "shell"`                                                     | Evaluate `shellRouteIntent` on the shell resource before the worktree rule: deny recognized `git switch -c`/`--create`, `git checkout -b`/`-B`, `gh pr create`, and `glab mr create` with the exact Workit route guidance, and let unparseable or unrelated commands keep their configured allow/ask behavior. The spike confirms the V2 shell resource shape; the recognizer and guidance stay core-owned (`shellRouteIntent`).                          |
@@ -233,8 +233,8 @@ entry is implemented.
   model, `tool.execute` ran in-plugin, structured result returned.
   Register the 10 workit tools with `codemode: false` under their existing
   effective names (no V2 namespace, per section 6).
-- Latest docs describe `ctx.provider`/`ctx.model` transforms; the pinned
-  `2.0.3` SDK has neither. Custom providers are config-declared, and model
+- The pinned `2.0.18` SDK exposes `ctx.provider`/`ctx.model` transforms;
+  workit does not use them. Custom providers are config-declared, and model
   entries require `capabilities: { tools, input: [...], output: [...] }` —
   anything less is skipped as malformed (server logs a normalization
   diagnostic). Plain-object plugins (no SDK import) load fine.
@@ -249,7 +249,7 @@ entry is implemented.
   completes concurrently (two children, one turn) with `<subagent
   sessionID state>result</subagent>` envelopes. Prompt `text` edits persist
   (prompt hook); `context`-hook and `compaction`-hook `system` edits both
-  reach the provider in `2.0.3` (corrected by an independent review probe —
+  reach the provider in `2.0.18` (corrected by an independent review probe —
   the earlier spike note claimed otherwise). Compaction validates a fixed
   section template and fires the `compaction` hook. V1-shaped config normalizes in memory (`plugin`→
   `plugins`, `provider`→`providers`, `npm`→`aisdk:`-prefixed `package`,
@@ -268,7 +268,7 @@ Run the packed artifact, not only workspace-linked source.
 1. V1 `1.18.30` loads the dual default export through `server()` from both the
    stable checkout path and packed `dist/plugin.js`, and its existing config
    file is byte-unchanged after the lane.
-2. V2 `2.0.3` loads the same packed artifact through `setup()`, with plugin ID
+2. V2 `2.0.18` loads the same packed artifact through `setup()`, with plugin ID
    `workit` and the expected source in `ctx.plugin.list()`.
 3. Both V2 config lanes from section 8 pass: the unchanged live-shaped V1
    config copy normalizes in memory without rewriting the source file, and the
@@ -322,7 +322,7 @@ Run the packed artifact, not only workspace-linked source.
 ## 11. Remaining risks
 
 - Event and hook ordering under concurrent launches must be verified in the
-  pinned container even though field names are fixed by `2.0.3` source.
+  pinned container even though field names are fixed by `2.0.18` source.
 - V2 exposes no explicit `childCreated:false` result. Conservative unresolved
   handling may require manual recovery; it must never guess that no child
   exists.
@@ -339,7 +339,7 @@ Run the packed artifact, not only workspace-linked source.
 ## 12. Acceptance for this spec revision
 
 - Every confirmed review finding has a concrete requirement or check above.
-- Released `2.0.3` field names are requirements, not Docker unknowns.
+- Released `2.0.18` field names are requirements, not Docker unknowns.
 - The Docker spike is reproducible, credential-isolated, and distinct from the
   post-implementation parity run.
 - `plan.md` records the landed runtime-reliability prerequisite, then sequences

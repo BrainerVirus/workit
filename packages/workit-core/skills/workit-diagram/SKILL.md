@@ -8,11 +8,6 @@ description: Use when a spec or plan needs a flow or architecture diagram
 Tables first, ASCII trees second, mermaid only when a flow or architecture
 needs it. Flowchart, sequence, state, or ER only. No renderer, no network.
 
-## Before method work
-
-If there is no active or paused task, run shared `task.start` then `policy.assess`
-before relying on selected policy rules or other product mutations. Assessment
-selects requirements; do not wait for a rule that can only exist after assess.
 
 ## Syntax rules (mermaid v11)
 

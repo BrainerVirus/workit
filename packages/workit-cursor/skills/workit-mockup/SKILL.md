@@ -8,11 +8,6 @@ description: Use when a UI decision needs sketching before implementation
 Sketch, don't build. Three genuinely different layout hypotheses maximum,
 ASCII only, no code output.
 
-## Before method work
-
-If there is no active or paused task, run shared `task.start` then `policy.assess`
-before relying on selected policy rules or other product mutations. Assessment
-selects requirements; do not wait for a rule that can only exist after assess.
 
 ## Method
 

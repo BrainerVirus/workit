@@ -36,7 +36,7 @@ identity check, and no unattended publish as code.
 | `git.branch_setup` (non-protected targets) | 1 question | automatic under task scope; records reservation as now |
 | `git.commit` (listed or single) | 1 question or plan-list slot | automatic; consents exactly as the chain does today |
 | `git.push` to the task branch | 1 question, no target check | automatic to the task branch only (see §4) |
-| `hosting.pull_request` | 1 question or terminal chain step | automatic; babysit still drives to merge-ready |
+| `hosting.pull_request` | enabled with pre/post provider SHA verification; residual non-atomic source-SHA race accepted (decision ae03c569) | automatic under the configured `pr` class, recording a reservation with its exact binding |
 | PR merge | no workit route (raw shell) | a real gated-then-automatic route honoring branch protections |
 | `pre-pr-cleanup` (deslop) | evidence or waiver | unchanged: still requires the deslop pass or waiver |
 | Design/product choices | receipt-shaped question | UNCHANGED: still human-gated, first occurrence only |

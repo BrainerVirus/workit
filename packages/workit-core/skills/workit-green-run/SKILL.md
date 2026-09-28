@@ -8,11 +8,6 @@ description: Use to drive a red CI pipeline back to green, usually inside babysi
 Watch, classify, fix, push once, re-verify. Host-native (`gh` / GitLab);
 never invent CI APIs.
 
-## Before method work
-
-If there is no active or paused task, run shared `task.start` then `policy.assess`
-before relying on selected policy rules or other product mutations. Assessment
-selects requirements; do not wait for a rule that can only exist after assess.
 
 ## Method
 

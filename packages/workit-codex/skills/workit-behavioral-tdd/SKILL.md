@@ -8,11 +8,6 @@ description: Use when policy identifies behavior, side effects, permissions, or 
 Test the observable behavior at a stable boundary, not the implementation shape.
 Use this method when assessment selects the `testing` dimension.
 
-## Before method work
-
-If there is no active or paused task, run shared `task.start` then `policy.assess`
-before relying on selected policy rules or other product mutations. Assessment
-selects requirements; do not wait for a rule that can only exist after assess.
 
 ## Method
 
