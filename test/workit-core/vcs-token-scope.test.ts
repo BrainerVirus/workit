@@ -6,6 +6,9 @@ import path from "node:path";
 import { mergedPrStyle, vcsConfig } from "@/packages/workit-core/src/core/vcs-config";
 import { initStatusData } from "@/packages/workit-core/src/core/init";
 
+// Keep shell-based CLI stubs off Windows; production invokes native CLI executables without a shell.
+const cli = process.platform === "win32" ? test.skip : test;
+
 // Legacy tokenFile entries are tolerated during migration but never read.
 const setup = () => {
   const cfgDir = mkdtempSync(path.join(tmpdir(), "wk-vctok-cfg-"));
@@ -108,7 +111,7 @@ test("unresolvable provider is explicit: resolve reports null, load fails closed
   }
 });
 
-test("merged PR style reads the configured push host and full GitLab subgroup path", () => {
+cli("merged PR style reads the configured push host and full GitLab subgroup path", () => {
   const t = setup();
   const tools = mkdtempSync(path.join(tmpdir(), "wk-vcs-style-tools-"));
   const previousPath = process.env.PATH;
@@ -150,7 +153,7 @@ test("merged PR style reads the configured push host and full GitLab subgroup pa
   }
 });
 
-test("GitLab style lookup does not fall back to account-wide merge requests", () => {
+cli("GitLab style lookup does not fall back to account-wide merge requests", () => {
   const t = setup();
   const tools = mkdtempSync(path.join(tmpdir(), "wk-vcs-style-scope-tools-"));
   const previousPath = process.env.PATH;

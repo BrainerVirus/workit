@@ -24,7 +24,7 @@ describe("writeFileAtomic", () => {
       writeFileAtomic(file, "after\n");
 
       expect(readFileSync(file, "utf8")).toBe("after\n");
-      expect(lstatSync(file).mode & 0o777).toBe(0o640);
+      if (process.platform !== "win32") expect(lstatSync(file).mode & 0o777).toBe(0o640);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
