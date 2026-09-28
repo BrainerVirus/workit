@@ -25,7 +25,7 @@ import {
   type DirectChildren,
 } from "../tools/workit";
 import { createV2Lifecycle } from "./lifecycle";
-import { injectAgentContext, injectCompactionContext } from "./injection";
+import { injectAgentContext, injectCompactionContext, injectHistoryOffer } from "./injection";
 import { evaluateShellPermission } from "./permissions";
 import { normalizeQuestionAnswers } from "./receipts";
 import { registerCommands, registerSkills } from "./registry";
@@ -139,6 +139,7 @@ const setup = async (ctx: Context): Promise<() => void> => {
   const root = ctx.location.directory;
   const sourceMarker = markSourcesLoaded(pluginSourceFiles);
   let staleSourcesWarned = false;
+  const historyOfferSessions = new Set<string>();
   const receipts = new NativeReceiptStore();
   const lifecycle = createV2Lifecycle({
     root,
@@ -301,6 +302,7 @@ const setup = async (ctx: Context): Promise<() => void> => {
   await ctx.session.hook("context", async (event) => {
     const session = await sessionFacts(ctx, String(event.sessionID));
     injectAgentContext(root, session, lifecycle.directChildren, event.system as never);
+    injectHistoryOffer(root, session, historyOfferSessions, event.system as never);
     if (!staleSourcesWarned) {
       const changed = changedSourcesSinceLoad(sourceMarker);
       if (changed.length > 0) {

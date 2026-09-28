@@ -677,6 +677,44 @@ test("Pi child registration omits coordinator-only optional actions", async () =
   }
 });
 
+test("Pi session context offers unfinished history once without writing task state", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "workit-pi-history-"));
+  const { store } = startedTask(root);
+  const beforeWorkspace = store.readWorkspace();
+  if (!beforeWorkspace.ok || !beforeWorkspace.data) throw new Error("workspace missing");
+  const collidingSessionTask = new WorkitCore(store, {
+    root,
+    caller: { host: "codex_cli", actor: "new-pi-session" },
+    capabilities: [],
+    constraints: [],
+    now: "2026-01-02T00:00:00Z",
+  }).task(
+    taskStartRequest({
+      expectedWorkspaceRevision: beforeWorkspace.data.revision,
+      intent: {
+        objective: "same handle from Codex",
+        scope: { description: "the checkout", paths: ["."], exclusions: [] },
+        authorityRefs: [],
+      },
+    }),
+  );
+  expect(collidingSessionTask.ok).toBe(true);
+  const beforeTasks = store.listTasks();
+  const finalWorkspace = store.readWorkspace();
+  const pi = makePi();
+  await extension(pi as any);
+  const ctx = context(root, false, true, "new-pi-session");
+  const start = pi.handlers.get("before_agent_start")!;
+  const first = await start({}, ctx);
+  const second = await start({}, ctx);
+  expect((first as any).message.content).toContain("<workit-history-offer>");
+  expect((first as any).message.content).toContain("test task");
+  expect((first as any).message.content).toContain("same handle from Codex");
+  expect(second).toBeUndefined();
+  expect(store.listTasks()).toEqual(beforeTasks);
+  expect(store.readWorkspace()).toEqual(finalWorkspace);
+});
+
 test("Pi documentation context remains available headlessly without mutation approval", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "workit-pi-docs-action-"));
   try {

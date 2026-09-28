@@ -66,6 +66,81 @@ test("SessionStart restores one context for startup, resume, and compact", () =>
   }
 });
 
+test("SessionStart offers unfinished history once on startup without writing task state", () => {
+  const root = cwd();
+  const store = new TaskStore(root);
+  const core = new WorkitCore(store, {
+    root,
+    caller: { host: "codex_cli", actor: "old-codex-session" },
+    capabilities: [],
+    constraints: [],
+    now: "2026-01-01T00:00:00Z",
+  });
+  const started = core.task(
+    taskStartRequest({
+      intent: {
+        objective: "parked Codex history",
+        scope: { description: "the checkout", paths: ["."], exclusions: [] },
+        authorityRefs: [],
+      },
+    }),
+  );
+  expect(started.ok).toBe(true);
+  if (!started.ok) throw new Error("task missing");
+  const taskId = (started.data as { id: string }).id;
+  const task = store.readTask(taskId);
+  const workspace = store.readWorkspace();
+  if (!task.ok || !workspace.ok || !workspace.data) throw new Error("state missing");
+  expect(
+    core.task({
+      schemaVersion: 1,
+      action: "pause",
+      taskId,
+      expectedRevision: task.data.revision,
+      expectedWorkspaceRevision: workspace.data.revision,
+      reason: "park for later",
+    }).ok,
+  ).toBe(true);
+  const session = `codex-history-${crypto.randomUUID()}`;
+  const host = detectCodexSurface(process.env);
+  const otherHost = host === "codex_cli" ? "codex_desktop" : "codex_cli";
+  const afterPause = store.readWorkspace();
+  if (!afterPause.ok || !afterPause.data) throw new Error("workspace missing");
+  const otherHostTask = new WorkitCore(store, {
+    root,
+    caller: { host: otherHost, actor: session },
+    capabilities: [],
+    constraints: [],
+    now: "2026-01-02T00:00:00Z",
+  }).task(
+    taskStartRequest({
+      expectedWorkspaceRevision: afterPause.data.revision,
+      intent: {
+        objective: "same handle from other Codex surface",
+        scope: { description: "the checkout", paths: ["."], exclusions: [] },
+        authorityRefs: [],
+      },
+    }),
+  );
+  expect(otherHostTask.ok).toBe(true);
+  const beforeTask = store.readTask(taskId);
+  const beforeWorkspace = store.readWorkspace();
+  const event = official(
+    { hook_event_name: "SessionStart", source: "startup", session_id: session },
+    root,
+  );
+  const first = handleCodexHook(event);
+  const second = handleCodexHook(event);
+  const firstContext = JSON.stringify(first);
+  expect(firstContext).toContain("<workit-history-offer>");
+  expect(firstContext).toContain("parked Codex history");
+  expect(firstContext).toContain("same handle from other Codex surface");
+  expect(firstContext).toContain("inspect history");
+  expect(JSON.stringify(second)).not.toContain("<workit-history-offer>");
+  expect(store.readTask(taskId)).toEqual(beforeTask);
+  expect(store.readWorkspace()).toEqual(beforeWorkspace);
+});
+
 test("official payloads validate and malformed writes deny", () => {
   const root = cwd();
   expect(parseCodexHookInput(official({ hook_event_name: "PreToolUse" }, root))).toMatchObject({

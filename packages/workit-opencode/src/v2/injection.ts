@@ -1,5 +1,5 @@
 import { getWorkitBootstrap } from "../bootstrap";
-import { compactContextFor, workerContextFor } from "../runtime";
+import { compactContextFor, unfinishedTaskOfferFor, workerContextFor } from "../runtime";
 import { sameWorkspace } from "../shared/session";
 
 export type SystemPart = { type?: unknown; text?: unknown };
@@ -40,6 +40,24 @@ export const injectAgentContext = (
     system.unshift(textPart(`<workit-task-context>${taskContext}</workit-task-context>`));
   if (workerContext && !hasMarker(system, "<workit-worker-context>"))
     system.unshift(textPart(`<workit-worker-context>${workerContext}</workit-worker-context>`));
+};
+
+export const injectHistoryOffer = (
+  root: string,
+  session: InjectionSession | null,
+  offeredSessions: Set<string>,
+  system: SystemPart[],
+): void => {
+  if (
+    !session ||
+    session.parentID !== undefined ||
+    !sameWorkspace(root, session.directory) ||
+    offeredSessions.has(session.id)
+  )
+    return;
+  offeredSessions.add(session.id);
+  const offer = unfinishedTaskOfferFor(root, "opencode", session.id);
+  if (offer && !hasMarker(system, "<workit-history-offer>")) system.push(textPart(offer));
 };
 
 /** Compaction keeps its normal model call: task context is appended as a text

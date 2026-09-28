@@ -284,6 +284,79 @@ test("session start remains advisory and restores compact context once", () => {
   expect(result).not.toHaveProperty("permission");
 });
 
+test("session start offers parked history once without changing Workit state", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "workit-cursor-history-"));
+  const store = new TaskStore(root);
+  const core = new WorkitCore(store, {
+    root,
+    caller: caller({ host: "cursor", actor: "old-cursor-session" }),
+    capabilities: [],
+    constraints: [],
+    now: "2026-01-01T00:00:00Z",
+  });
+  const started = core.task(
+    taskStartRequest({
+      intent: {
+        objective: "parked Cursor history",
+        scope: { description: "the checkout", paths: ["."], exclusions: [] },
+        authorityRefs: [],
+      },
+    }),
+  );
+  expect(started.ok).toBe(true);
+  if (!started.ok) throw new Error("task missing");
+  const taskId = (started.data as { id: string }).id;
+  const task = store.readTask(taskId);
+  const workspace = store.readWorkspace();
+  if (!task.ok || !workspace.ok || !workspace.data) throw new Error("state missing");
+  const paused = core.task({
+    schemaVersion: 1,
+    action: "pause",
+    taskId,
+    expectedRevision: task.data.revision,
+    expectedWorkspaceRevision: workspace.data.revision,
+    reason: "park for later",
+  });
+  expect(paused.ok).toBe(true);
+  const session = `cursor-history-${crypto.randomUUID()}`;
+  const afterPause = store.readWorkspace();
+  if (!afterPause.ok || !afterPause.data) throw new Error("workspace missing");
+  const otherHostTask = new WorkitCore(store, {
+    root,
+    caller: caller({ host: "codex_cli", actor: session }),
+    capabilities: [],
+    constraints: [],
+    now: "2026-01-02T00:00:00Z",
+  }).task(
+    taskStartRequest({
+      expectedWorkspaceRevision: afterPause.data.revision,
+      intent: {
+        objective: "same handle from Codex",
+        scope: { description: "the checkout", paths: ["."], exclusions: [] },
+        authorityRefs: [],
+      },
+    }),
+  );
+  expect(otherHostTask.ok).toBe(true);
+  const beforeTask = store.readTask(taskId);
+  const beforeWorkspace = store.readWorkspace();
+  const input = {
+    hook_event_name: "sessionStart" as const,
+    session_id: session,
+    conversation_id: session,
+    workspace_roots: [root],
+  };
+  const first = handleCursorHook(input);
+  const second = handleCursorHook(input);
+  expect(first.additional_context).toContain("<workit-history-offer>");
+  expect(first.additional_context).toContain("parked Cursor history");
+  expect(first.additional_context).toContain("same handle from Codex");
+  expect(first.additional_context).toContain("inspect history");
+  expect(second.additional_context).not.toContain("<workit-history-offer>");
+  expect(store.readTask(taskId)).toEqual(beforeTask);
+  expect(store.readWorkspace()).toEqual(beforeWorkspace);
+});
+
 test("committed preToolUse matcher covers every write-tool guard name", () => {
   const re = new RegExp(`^(?:${CURSOR_PRETOOLUSE_MATCHER})$`, "i");
   expect(CURSOR_WRITE_TOOL_NAMES.length).toBeGreaterThan(8);

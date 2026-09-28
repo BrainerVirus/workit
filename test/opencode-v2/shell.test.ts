@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { TaskStore, WorkitCore } from "@/packages/workit-core/src/core";
 import definition from "@/packages/workit-opencode/src/v2/plugin";
 import { normalizeQuestionAnswers } from "@/packages/workit-opencode/src/v2/receipts";
 import { assessment, taskStartRequest } from "../workit-core/task-fixtures";
@@ -690,21 +691,61 @@ test("permission evaluate validates only literal noncompliant branch targets", a
 test("context injects the bootstrap and task context, compaction appends without result", async () => {
   const root = repository();
   try {
+    const store = new TaskStore(root);
+    const olderCore = new WorkitCore(store, {
+      root,
+      caller: { host: "opencode", actor: "older-v2-session" },
+      capabilities: [],
+      constraints: [],
+      now: "2025-12-31T00:00:00Z",
+    });
+    const older = olderCore.task(
+      taskStartRequest({
+        intent: {
+          objective: "parked V2 history",
+          scope: { description: "probe", paths: ["."], exclusions: [] },
+          authorityRefs: [],
+        },
+      }),
+    );
+    expect(older.ok).toBe(true);
+    if (!older.ok) throw new Error("older task missing");
+    const olderId = (older.data as { id: string }).id;
+    const olderTask = store.readTask(olderId);
+    const olderWorkspace = store.readWorkspace();
+    if (!olderTask.ok || !olderWorkspace.ok || !olderWorkspace.data)
+      throw new Error("state missing");
+    expect(
+      olderCore.task({
+        schemaVersion: 1,
+        action: "pause",
+        taskId: olderId,
+        expectedRevision: olderTask.data.revision,
+        expectedWorkspaceRevision: olderWorkspace.data.revision,
+        reason: "park for later",
+      }).ok,
+    ).toBe(true);
     const { sessionHooks, call } = await harness(root);
     const context = sessionHooks.get("context")!;
     const compaction = sessionHooks.get("compaction")!;
     expect(context).toBeFunction();
     expect(compaction).toBeFunction();
 
+    const beforeTasks = store.listTasks();
+    const beforeWorkspace = store.readWorkspace();
     const empty: Array<{ type: string; text: string }> = [];
     await context({ sessionID: "ses_v2", system: empty });
-    // No live task yet: the lead still gets the contract bootstrap.
+    // The lead gets the contract and a passive history offer.
     expect(empty.some((part) => part.text.includes("<workit-contract>"))).toBe(true);
     expect(empty.some((part) => part.text.includes("<workit-task-context>"))).toBe(false);
+    expect(empty.some((part) => part.text.includes("<workit-history-offer>"))).toBe(true);
+    expect(empty.some((part) => part.text.includes("parked V2 history"))).toBe(true);
 
-    // Markers dedupe within the same event.
-    await context({ sessionID: "ses_v2", system: empty });
-    expect(empty.filter((part) => part.text.includes("<workit-contract>"))).toHaveLength(1);
+    const repeated: Array<{ type: string; text: string }> = [];
+    await context({ sessionID: "ses_v2", system: repeated });
+    expect(repeated.some((part) => part.text.includes("<workit-history-offer>"))).toBe(false);
+    expect(store.listTasks()).toEqual(beforeTasks);
+    expect(store.readWorkspace()).toEqual(beforeWorkspace);
 
     const intent = {
       objective: "context probe",
