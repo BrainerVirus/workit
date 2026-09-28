@@ -16,6 +16,8 @@ import {
 import { stubCli, stubPath as stubPathWith } from "@/test/shared/helpers/stub-cli";
 
 // WF_PR_TARGET is chosen by the caller; the provider decides whether it accepts it.
+// Native host CLIs are executables; shell-script stubs cannot be launched by spawnSync on Windows.
+const t = process.platform === "win32" ? test.skip : test;
 
 const git = (cwd: string, args: string[]) =>
   spawnSync("git", args, { cwd, encoding: "utf8", env: { ...process.env } });
@@ -266,7 +268,7 @@ const customPolicy = {
   protected: ["develop"],
 };
 
-test("merge binds an open request to its target and exact source SHA on both hosts", () => {
+t("merge matches exact target and source SHA on both hosts", () => {
   setupRepo();
   const source = "feature/merge-target";
   git(root, ["checkout", "-q", "-b", source]);

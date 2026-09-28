@@ -475,7 +475,7 @@ test("preview inventories state and history by bytes without exposing file conte
       (entry) => entry.path === path.join(fx.configDir, "config.json"),
     );
     const histories = plan.inventory.entries.filter(
-      (entry) => entry.category === "project-history" && entry.path.endsWith("/flow.json"),
+      (entry) => entry.category === "project-history" && path.basename(entry.path) === "flow.json",
     );
 
     expect(plan.inventory.complete).toBe(true);

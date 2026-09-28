@@ -43,6 +43,8 @@ import { assessment, scope, taskStartRequest } from "./task-fixtures";
 import { stubCli, stubPath } from "@/test/shared/helpers/stub-cli";
 
 const tmpdir = () => realpathSync(systemTmpdir());
+// Native host CLIs are executables; shell-script stubs cannot be launched by spawnSync on Windows.
+const t = process.platform === "win32" ? test.skip : test;
 
 const provenance = (actor: string, host: Provenance["host"] = "workit_cli"): Provenance => ({
   kind: "host_observed",
@@ -1098,15 +1100,10 @@ test("local Git reconciliation reads the approved push URL, not the fetch URL", 
 test("git.push sends the approved commit even if its branch ref advances at push time", async () => {
   const root = mkdtempSync(join(tmpdir(), "workit-push-sha-race-"));
   const remote = mkdtempSync(join(tmpdir(), "workit-push-sha-bare-"));
-  const tools = mkdtempSync(join(tmpdir(), "workit-push-sha-tools-"));
-  const previousPath = process.env.PATH;
   const branch = "feature/push-sha";
-  const mutationFile = join(tools, "advance-ref.json");
-  const realGit = spawnSync(process.platform === "win32" ? "where" : "which", ["git"], {
-    encoding: "utf8",
-  })
-    .stdout.split(/\r?\n/u)[0]
-    .trim();
+  const previousPushRoot = process.env.WORKIT_TEST_PUSH_ROOT;
+  const previousPushBranch = process.env.WORKIT_TEST_PUSH_BRANCH;
+  const previousPushAdvanced = process.env.WORKIT_TEST_PUSH_ADVANCED;
   const git = (cwd: string, args: string[]) =>
     spawnSync("git", args, { cwd, encoding: "utf8", env: { ...process.env } });
   try {
@@ -1160,35 +1157,14 @@ test("git.push sends the approved commit even if its branch ref advances at push
     git(root, ["commit", "-qm", "unapproved later commit"]);
     const advanced = git(root, ["rev-parse", "HEAD"]).stdout.trim();
     git(root, ["update-ref", `refs/heads/${branch}`, approved]);
-    writeFileSync(mutationFile, JSON.stringify({ git: realGit, root, branch, advanced }));
-    const shim = join(tools, "git-shim.cjs");
     writeFileSync(
-      shim,
-      `const { spawnSync } = require("node:child_process");
-const fs = require("node:fs");
-const args = process.argv.slice(2);
-const mutation = process.env.WORKIT_TEST_PUSH_MUTATION;
-if (args[0] === "push" && fs.existsSync(mutation)) {
-  const value = JSON.parse(fs.readFileSync(mutation, "utf8"));
-  const moved = spawnSync(value.git, ["-C", value.root, "update-ref", "refs/heads/" + value.branch, value.advanced]);
-  fs.unlinkSync(mutation);
-  if (moved.status !== 0) process.exit(1);
-}
-const result = spawnSync(process.env.WORKIT_TEST_REAL_GIT, args, { cwd: process.cwd(), env: process.env, encoding: "utf8" });
-process.stdout.write(result.stdout ?? "");
-process.stderr.write(result.stderr ?? "");
-process.exit(result.status ?? 1);
-`,
+      join(root, ".git", "hooks", "pre-push"),
+      `#!/bin/sh\ncat >/dev/null\ngit -C "$WORKIT_TEST_PUSH_ROOT" update-ref "refs/heads/$WORKIT_TEST_PUSH_BRANCH" "$WORKIT_TEST_PUSH_ADVANCED"\n`,
+      { mode: 0o755 },
     );
-    writeFileSync(join(tools, "git"), `#!/bin/sh\nexec "${process.execPath}" "${shim}" "$@"\n`, {
-      mode: 0o755,
-    });
-    writeFileSync(join(tools, "git.cmd"), `@echo off\r\nnode "${shim}" %*\r\n`);
-    const previousRealGit = process.env.WORKIT_TEST_REAL_GIT;
-    const previousMutation = process.env.WORKIT_TEST_PUSH_MUTATION;
-    process.env.WORKIT_TEST_REAL_GIT = realGit;
-    process.env.WORKIT_TEST_PUSH_MUTATION = mutationFile;
-    process.env.PATH = `${tools}${delimiter}${previousPath ?? ""}`;
+    process.env.WORKIT_TEST_PUSH_ROOT = root;
+    process.env.WORKIT_TEST_PUSH_BRANCH = branch;
+    process.env.WORKIT_TEST_PUSH_ADVANCED = advanced;
     try {
       const result = await executeResolvedExternalAction(resolved.data, root, undefined, {
         host: "workit_cli",
@@ -1196,25 +1172,19 @@ process.exit(result.status ?? 1);
       });
       expect(result).toMatchObject({ ok: true });
     } finally {
-      if (previousRealGit === undefined) delete process.env.WORKIT_TEST_REAL_GIT;
-      else process.env.WORKIT_TEST_REAL_GIT = previousRealGit;
-      if (previousMutation === undefined) delete process.env.WORKIT_TEST_PUSH_MUTATION;
-      else process.env.WORKIT_TEST_PUSH_MUTATION = previousMutation;
+      if (previousPushRoot === undefined) delete process.env.WORKIT_TEST_PUSH_ROOT;
+      else process.env.WORKIT_TEST_PUSH_ROOT = previousPushRoot;
+      if (previousPushBranch === undefined) delete process.env.WORKIT_TEST_PUSH_BRANCH;
+      else process.env.WORKIT_TEST_PUSH_BRANCH = previousPushBranch;
+      if (previousPushAdvanced === undefined) delete process.env.WORKIT_TEST_PUSH_ADVANCED;
+      else process.env.WORKIT_TEST_PUSH_ADVANCED = previousPushAdvanced;
     }
+    expect(git(root, ["rev-parse", `refs/heads/${branch}`]).stdout.trim()).toBe(advanced);
     expect(
-      spawnSync(realGit, ["-C", root, "rev-parse", `refs/heads/${branch}`], {
-        encoding: "utf8",
-      }).stdout.trim(),
-    ).toBe(advanced);
-    expect(
-      spawnSync(realGit, ["--git-dir", remote, "rev-parse", `refs/heads/${branch}`], {
-        encoding: "utf8",
-      }).stdout.trim(),
+      git(root, ["--git-dir", remote, "rev-parse", `refs/heads/${branch}`]).stdout.trim(),
     ).toBe(approved);
   } finally {
-    if (previousPath === undefined) delete process.env.PATH;
-    else process.env.PATH = previousPath;
-    for (const dir of [root, remote, tools]) rmSync(dir, { recursive: true, force: true });
+    for (const dir of [root, remote]) rmSync(dir, { recursive: true, force: true });
   }
 });
 
@@ -1407,7 +1377,9 @@ test("local commit checks writer ownership, not scopes", async () => {
       payload: { cwd: other, message: "chore(test): commit in another repository" },
     });
     if (!crossRepo.ok) throw new Error(crossRepo.error);
-    expect(crossRepo.data.descriptorPayload).toMatchObject({ cwd: other });
+    const resolvedCwd = (crossRepo.data.descriptorPayload as { cwd: string }).cwd;
+    expect(statSync(resolvedCwd).dev).toBe(statSync(other).dev);
+    expect(statSync(resolvedCwd).ino).toBe(statSync(other).ino);
     expect(
       await executeResolvedExternalAction(crossRepo.data, narrow.root, undefined, {
         host: "workit_cli",
@@ -1485,7 +1457,7 @@ test("Git actions without cwd bind the session to its canonical checkout root", 
   }
 });
 
-test("hosted create verifies the provider PR head and does not start babysitting by default", async () => {
+t("hosted create binds PR head; babysitting stays opt-in", async () => {
   const coordinator = setup();
   const remote = mkdtempSync(join(tmpdir(), "workit-pr-head-bare-"));
   const config = mkdtempSync(join(tmpdir(), "workit-pr-head-config-"));
@@ -1632,7 +1604,7 @@ server.on("exit", (code) => process.exit(code ?? 1));
   }
 });
 
-test("branch deletion requires a live tip matching a merged PR head", async () => {
+t("branch deletion binds live tip to merged PR head", async () => {
   const coordinator = setup();
   const repo = mkdtempSync(join(tmpdir(), "workit-delete-repo-"));
   const remote = mkdtempSync(join(tmpdir(), "workit-delete-bare-"));
@@ -1811,7 +1783,7 @@ server.on("exit", (code) => process.exit(code ?? 1));
   }
 });
 
-test("hosting merge reconciliation reads one exact provider result and preserves ambiguity", async () => {
+t("merge reconciliation consumes one exact provider result", async () => {
   const root = mkdtempSync(join(tmpdir(), "workit-hosting-read-"));
   const tools = mkdtempSync(join(tmpdir(), "workit-hosting-tools-"));
   const previousConfig = process.env.WORKFLOW_VCS_CONFIG;
@@ -1847,7 +1819,9 @@ test("hosting merge reconciliation reads one exact provider result and preserves
     writeFileSync(join(root, "feature.txt"), "feature\n");
     spawnSync("git", ["add", "feature.txt"], { cwd: root });
     spawnSync("git", ["commit", "-qm", "feature"], { cwd: root });
-    spawnSync("git", ["remote", "add", "origin", "https://github.com/org/repo.git"], { cwd: root });
+    spawnSync("git", ["remote", "add", "origin", "https://github.com/org/repo.git"], {
+      cwd: root,
+    });
     const tokenPath = join(root, "token");
     const configPath = join(root, "vcs.json");
     writeFileSync(tokenPath, "test-token\n");
