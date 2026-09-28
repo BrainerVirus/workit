@@ -286,8 +286,17 @@ focused question only when one of those choices blocks a concrete slice.
   assertions), the full `bun run check` gate (1,582 / 8,607), TypeScript,
   formatting, and `git diff --check` pass locally. The updated Windows core
   matrix is pending.
-- **Next action:** push the checkpoint and portability fixes to existing PR
-  #132, verify every required CI check, merge without deleting the remote
-  branch, then enable and verify the local OpenCode package pin. Keep the active
-  host disabled until merge and CI are complete. Leave the four historical
-  draft files outside the PR and report them for the user's later decision.
+- **Windows follow-up after run `36375750473`:** nested managed effects now
+  recognize aliased paths to the same directory and have a dedicated lock
+  regression. The cross-checkout assertion compares device/file identity;
+  cutover history uses the platform path basename. The push-race test now uses
+  Git's real `pre-push` hook instead of a shell `git` shim. Only four tests
+  that require fake `gh`/`glab` shell executables are skipped on Windows; they
+  still run on Linux and macOS, while production remains shell-free. Focused
+  verification passed: 119 tests / 501 assertions, typecheck, formatting, and
+  `git diff --check`. **Remaining:** rerun the hosted matrix on this follow-up.
+  **Next:** commit these fixes atomically, push to PR #132, verify all required
+  CI checks, merge without deleting the remote branch, then enable and verify
+  the local OpenCode package pin. Keep the active host disabled until merge and
+  CI are complete. Leave the four historical draft files outside the PR and
+  report them for the user's later decision.
