@@ -18,6 +18,7 @@ import {
   type ResumeObservation,
 } from "@/packages/workit-core/src/core/task-context";
 import { captureCandidate } from "@/packages/workit-core/src/core/task-evaluation";
+import { assertLocalExternalActionWriter } from "@/packages/workit-core/src/core/external-action-effects";
 import { caller, ref, scope, taskStartRequest } from "./task-fixtures";
 
 const root = () => mkdtempSync(join(tmpdir(), "workit-continuity-"));
@@ -132,6 +133,226 @@ test("import creates a paused task with fresh destination identity and non-autho
       authorityRefs: [ref()],
     }),
   ).toMatchObject({ ok: false, code: "needs_input" });
+});
+
+test("same-store import reuses the source task", () => {
+  const source = started();
+  const exported = source.core.state({
+    schemaVersion: 1,
+    action: "export",
+    taskId: source.task.id,
+  });
+  expect(exported.ok).toBe(true);
+  if (!exported.ok) throw new Error(exported.error);
+  const imported = source.core.state({
+    schemaVersion: 1,
+    action: "import",
+    expectedWorkspaceRevision: source.workspace.revision,
+    bundle: exported.data as any,
+    authorityRefs: [],
+  });
+  expect(imported).toMatchObject({ ok: true, data: { id: source.task.id } });
+  const tasks = source.store.listTasks();
+  expect(tasks.ok).toBe(true);
+  if (!tasks.ok) throw new Error(tasks.error);
+  expect(tasks.data).toHaveLength(1);
+});
+
+test("portable import retries reuse one mapping and changed exports require reconciliation", () => {
+  const source = started();
+  const exported = source.core.state({
+    schemaVersion: 1,
+    action: "export",
+    taskId: source.task.id,
+  });
+  expect(exported.ok).toBe(true);
+  if (!exported.ok) throw new Error(exported.error);
+  const bundle = exported.data as any;
+  const destinationCheckout = root();
+  const destinationStore = new TaskStore(destinationCheckout);
+  const destinationCore = new WorkitCore(destinationStore, context(destinationCheckout));
+  const request = {
+    schemaVersion: 1,
+    action: "import" as const,
+    expectedWorkspaceRevision: null,
+    bundle,
+    authorityRefs: [],
+  };
+  const first = destinationCore.state(request);
+  expect(first.ok).toBe(true);
+  if (!first.ok) throw new Error(first.error);
+  const firstId = (first.data as { id: string }).id;
+  const retry = destinationCore.state(request);
+  expect(retry).toMatchObject({ ok: true, data: { id: firstId } });
+
+  const changedTask = {
+    ...bundle.task,
+    progress: { ...bundle.task.progress, summary: "new source revision" },
+  };
+  const changedBundle = {
+    ...bundle,
+    task: changedTask,
+    digest: sha256({
+      schemaVersion: bundle.schemaVersion,
+      exportedAt: bundle.exportedAt,
+      sourceWorkspaceId: bundle.sourceWorkspaceId,
+      task: changedTask,
+    }),
+  };
+  const changed = destinationCore.state({ ...request, bundle: changedBundle });
+  expect(changed).toMatchObject({ ok: false, code: "revision_conflict" });
+  if (changed.ok) throw new Error("changed source export must require reconciliation");
+  expect(changed.details.taskId).toBe(firstId);
+  const tasks = destinationStore.listTasks();
+  expect(tasks.ok).toBe(true);
+  if (!tasks.ok) throw new Error(tasks.error);
+  expect(tasks.data.filter((task) => task.origin?.taskId === source.task.id)).toHaveLength(1);
+});
+
+test("portable action history keeps old IDs and outcomes without importing authority", () => {
+  const source = started();
+  const actionId = `external:${"b".repeat(32)}`;
+  const actionDecision = (state: "reserved" | "consumed") => ({
+    id: randomUUID(),
+    recordedAt: "2026-01-01T00:00:00Z",
+    provenance: source.task.intent.provenance,
+    data: {
+      purpose: "action" as const,
+      binding: {
+        taskId: source.task.id,
+        workspaceId: source.workspace.id,
+        scope: scope(),
+        presented: "Create the approved pull request",
+        approvedContent: "hosting.pull_request",
+        contentRefs: [],
+      },
+      digest: "a".repeat(64),
+      response: "approved" as const,
+      requirementIds: [],
+      revoked: null,
+      consumption: {
+        state,
+        at: "2026-01-01T00:00:00Z",
+        actionRef: { kind: "host" as const, host: "opencode" as const, handle: actionId },
+      },
+    },
+  });
+  const decisions = [actionDecision("reserved"), actionDecision("consumed")];
+  const changed = source.store.mutateTask(source.task.id, source.task.revision, (task, mutation) =>
+    success(mutation.revision, null, { ...task, decisions }),
+  );
+  expect(changed.ok).toBe(true);
+
+  const exported = source.core.state({
+    schemaVersion: 1,
+    action: "export",
+    taskId: source.task.id,
+  });
+  expect(exported.ok).toBe(true);
+  if (!exported.ok) throw new Error(exported.error);
+  const bundle = exported.data as any;
+  expect(bundle.task.decisions.map((entry: any) => entry.data.consumption)).toEqual([
+    {
+      state: "uncertain",
+      at: "2026-01-01T00:00:00Z",
+      actionRef: {
+        kind: "record",
+        collection: "decisions",
+        id: decisions[0]!.id,
+      },
+      historicalActionId: actionId,
+    },
+    {
+      state: "consumed",
+      at: "2026-01-01T00:00:00Z",
+      actionRef: {
+        kind: "record",
+        collection: "decisions",
+        id: decisions[1]!.id,
+      },
+      historicalActionId: actionId,
+    },
+  ]);
+
+  const destinationCheckout = root();
+  const destinationStore = new TaskStore(destinationCheckout);
+  const destinationCore = new WorkitCore(destinationStore, context(destinationCheckout));
+  const imported = destinationCore.state({
+    schemaVersion: 1,
+    action: "import",
+    expectedWorkspaceRevision: null,
+    bundle,
+    authorityRefs: [],
+  });
+  expect(imported.ok).toBe(true);
+  if (!imported.ok) throw new Error(imported.error);
+  const task = destinationStore.readTask((imported.data as { id: string }).id);
+  expect(task.ok).toBe(true);
+  if (!task.ok) throw new Error(task.error);
+  expect(task.data.decisions.map((entry) => entry.data.consumption)).toEqual(
+    bundle.task.decisions.map((entry: any, index: number) => ({
+      ...entry.data.consumption,
+      actionRef: {
+        kind: "record",
+        collection: "decisions",
+        id: task.data.decisions[index]!.id,
+      },
+    })),
+  );
+  expect(task.data.decisions.every((entry) => entry.provenance.kind === "imported")).toBe(true);
+});
+
+test("stale workspace revisions fence managed effects after writer handoff", () => {
+  const value = started();
+  const acquired = value.core.writer({
+    schemaVersion: 1,
+    action: "acquire",
+    taskId: value.task.id,
+    expectedRevision: value.task.revision,
+    expectedWorkspaceRevision: value.workspace.revision,
+  });
+  expect(acquired.ok).toBe(true);
+  if (!acquired.ok) throw new Error(acquired.error);
+  const oldFence = acquired.data.revision;
+
+  const task = value.store.readTask(value.task.id);
+  const workspace = value.store.readWorkspace();
+  if (!task.ok || !workspace.ok || !workspace.data) throw new Error("writer state missing");
+  const released = value.core.writer({
+    schemaVersion: 1,
+    action: "release",
+    taskId: task.data.id,
+    expectedRevision: task.data.revision,
+    expectedWorkspaceRevision: workspace.data.revision,
+  });
+  expect(released.ok).toBe(true);
+  if (!released.ok) throw new Error(released.error);
+
+  const releasedTask = value.store.readTask(value.task.id);
+  const releasedWorkspace = value.store.readWorkspace();
+  if (!releasedTask.ok || !releasedWorkspace.ok || !releasedWorkspace.data)
+    throw new Error("released state missing");
+  const reacquired = value.core.writer({
+    schemaVersion: 1,
+    action: "acquire",
+    taskId: releasedTask.data.id,
+    expectedRevision: releasedTask.data.revision,
+    expectedWorkspaceRevision: releasedWorkspace.data.revision,
+  });
+  expect(reacquired.ok).toBe(true);
+  if (!reacquired.ok || !reacquired.data.writer) throw new Error("writer reacquisition failed");
+
+  const currentCaller = {
+    host: reacquired.data.writer.owner.session.host,
+    actor: reacquired.data.writer.owner.session.handle,
+  };
+  expect(
+    assertLocalExternalActionWriter(value.checkout, currentCaller, ["."], oldFence),
+  ).toMatchObject({ ok: false, code: "revision_conflict" });
+  expect(
+    assertLocalExternalActionWriter(value.checkout, currentCaller, ["."], reacquired.data.revision)
+      .ok,
+  ).toBe(true);
 });
 
 test("unknown policy versions require reassessment and resume reports stale evidence and workers", () => {

@@ -588,6 +588,8 @@ export const decisionSchema = z
         state: z.enum(["reserved", "consumed", "uncertain"]),
         at: utc,
         actionRef: refSchema,
+        /** Historical identifier only; never interpreted as native authority. */
+        historicalActionId: text.optional(),
       })
       .strict()
       .nullable(),

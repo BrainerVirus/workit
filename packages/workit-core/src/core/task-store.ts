@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { AsyncLocalStorage } from "node:async_hooks";
 import * as fs from "node:fs";
 import { hostname } from "node:os";
 import path from "node:path";
@@ -76,6 +77,7 @@ export type MetadataLock = {
   processStart: string | null;
   host: string;
   nonce: string;
+  externalAction?: true;
 };
 export type ProcessEvidence = {
   state: "stopped" | "accounted_for";
@@ -100,6 +102,7 @@ const metadataLockSchema = z
     processStart: z.string().nullable(),
     host: z.string().min(1),
     nonce: z.string().min(1),
+    externalAction: z.literal(true).optional(),
   })
   .strict();
 export type RecoveryCandidate = {
@@ -171,6 +174,7 @@ const sameMetadataLock = (left: unknown, right: MetadataLock): boolean => {
   return parsed.success && canonicalJson(parsed.data) === canonicalJson(right);
 };
 type LockSnapshot = { raw: string; data: MetadataLock };
+const externalActionLockRoots = new AsyncLocalStorage<ReadonlySet<string>>();
 
 export class TaskStore {
   readonly root: string;
@@ -355,6 +359,37 @@ export class TaskStore {
     return this.withLock<TaskRecord>(() => {
       const current = this.readWorkspace();
       if (!current.ok) return current;
+      const origin = input.task.origin;
+      if (current.data && origin) {
+        if (origin.workspaceId === current.data.id) {
+          const source = this.readTask(origin.taskId);
+          if (source.ok) return success(source.data.revision, current.data.revision, source.data);
+          if (source.code !== "not_found") return source as Result<never>;
+          return failure("not_found", "source task is not present in this shared workspace");
+        }
+        const tasks = this.listTasks();
+        if (!tasks.ok) return tasks as Result<never>;
+        const prior = tasks.data.filter(
+          (task) =>
+            task.origin?.workspaceId === origin.workspaceId &&
+            task.origin?.taskId === origin.taskId,
+        );
+        if (prior.length > 1)
+          return failure(
+            "recovery_required",
+            `source task has multiple imported mappings: ${prior.map((task) => task.id).join(", ")}`,
+          );
+        if (prior.length === 1) {
+          const existing = prior[0]!;
+          if (existing.origin!.exportDigest !== origin.exportDigest)
+            return failure(
+              "revision_conflict",
+              "source task export changed; reconcile the mapped destination task before importing",
+              { taskId: existing.id },
+            );
+          return success(existing.revision, current.data.revision, existing);
+        }
+      }
       if (
         current.data
           ? input.expectedWorkspaceRevision !== current.data.revision
@@ -822,6 +857,86 @@ export class TaskStore {
     };
   }
 
+  private externalActionLockOptions(): FileLockSyncAcquireOptions<MetadataLock> {
+    const options = this.metadataLockOptions();
+    return { ...options, payload: () => ({ ...options.payload(), externalAction: true }) };
+  }
+
+  /** Hold the workspace metadata lock across a managed effect in this checkout. */
+  async withExternalActionLock<T>(
+    operation: () => Promise<Result<T>>,
+    reentrant = false,
+  ): Promise<Result<T>> {
+    const activeRoots = externalActionLockRoots.getStore();
+    if (activeRoots?.has(this.root)) return operation();
+    try {
+      this.initializeMutationStorage();
+    } catch (error) {
+      return failure("storage_error", `unable to initialize store: ${String(error)}`, {
+        path: this.workitDir,
+      });
+    }
+    let handle: FileLockSyncHandle;
+    try {
+      handle = acquireFileLockSync(this.workspacePath, this.externalActionLockOptions());
+    } catch (error) {
+      return this.lockFailure(error);
+    }
+    let result: Result<T>;
+    try {
+      if (!handle.verifyStillHeld())
+        result = failure("recovery_required", "metadata lock was compromised", {
+          path: this.lockPath,
+        });
+      else {
+        try {
+          const run = () => operation();
+          result = await (reentrant
+            ? externalActionLockRoots.run(new Set([...(activeRoots ?? []), this.root]), run)
+            : run());
+        } catch {
+          result = failure("external_outcome_unknown", "external action outcome is unknown", {
+            outcome: "unknown",
+          });
+        }
+        try {
+          if (!handle.verifyStillHeld())
+            result = failure("external_outcome_unknown", "metadata lock was compromised", {
+              outcome: "unknown",
+              path: this.lockPath,
+            });
+        } catch {
+          result = failure("external_outcome_unknown", "metadata lock could not be verified", {
+            outcome: "unknown",
+            path: this.lockPath,
+          });
+        }
+      }
+    } catch {
+      result = failure("external_outcome_unknown", "external action lock operation failed", {
+        outcome: "unknown",
+        path: this.lockPath,
+      });
+    }
+    try {
+      handle.release();
+    } catch (error) {
+      const released = this.lockFailure(error);
+      const releaseError = released.ok ? "metadata lock release failed" : released.error;
+      return result.ok
+        ? failure(
+            "external_outcome_unknown",
+            "external action metadata lock release is uncertain",
+            {
+              outcome: "unknown",
+              path: this.lockPath,
+            },
+          )
+        : failure("recovery_required", `${result.error}; ${releaseError}`, result.details);
+    }
+    return result;
+  }
+
   private recoveryLockOptions(
     observed: LockSnapshot | null,
     evidence: ProcessEvidence,
@@ -912,6 +1027,14 @@ export class TaskStore {
   private lockFailure(error: unknown): Result<never> {
     const value = error as { code?: unknown; message?: unknown };
     const code = typeof value?.code === "string" ? value.code : "";
+    if (code === "EEXIST" || code === "file_lock_timeout") {
+      const lock = this.readLockSnapshot();
+      if (lock.ok && lock.data?.data.externalAction)
+        return failure("writer_conflict", "workspace is reserved by a managed external action", {
+          outcome: "not_started",
+          path: this.lockPath,
+        });
+    }
     const recovery =
       code === "EEXIST" ||
       code === "file_lock_timeout" ||

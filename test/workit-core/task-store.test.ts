@@ -50,6 +50,45 @@ const startedStore = () => {
   return { store, task: created.data };
 };
 
+test("external action lease holds TaskStore writer serialization through async effects", async () => {
+  const { store, task } = startedStore();
+  let enter!: () => void;
+  let resume!: () => void;
+  const entered = new Promise<void>((resolve) => (enter = resolve));
+  const paused = new Promise<void>((resolve) => (resume = resolve));
+  const lease = store.withExternalActionLock(async () => {
+    enter();
+    await paused;
+    return success(null, null, "settled");
+  });
+  await entered;
+  const workspace = store.readWorkspace();
+  expect(workspace).toMatchObject({ ok: true, data: { writer: null } });
+  if (!workspace.ok || !workspace.data) throw new Error("workspace missing");
+  const setWriter = (revision: string) =>
+    store.mutateWorkspace(revision, (current) =>
+      success(null, null, {
+        ...current,
+        writer: {
+          state: "held",
+          owner: {
+            taskId: task.id,
+            workerId: null,
+            session: { kind: "host", host: "workit_cli", handle: "target-writer" },
+          },
+          acquiredAt: "2026-01-01T00:00:00Z",
+        },
+      }),
+    );
+  const writer = setWriter(workspace.data.revision);
+  expect(writer.ok).toBe(false);
+  resume();
+  expect(await lease).toMatchObject({ ok: true, data: "settled" });
+  const unlocked = store.readWorkspace();
+  if (!unlocked.ok || !unlocked.data) throw new Error("workspace missing after lease");
+  expect(setWriter(unlocked.data.revision).ok).toBe(true);
+});
+
 const identity = (task: TaskRecord) => success(task.revision, null, task);
 const recoveryEvidence = () => () =>
   success(null, null, { state: "stopped" as const, pid: 0, processStart: null, ownerDigest: null });

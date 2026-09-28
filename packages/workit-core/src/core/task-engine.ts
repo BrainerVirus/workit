@@ -512,6 +512,21 @@ const portableTask = (task: TaskRecord): TaskRecord => {
   };
   for (const entry of clone.assessments)
     demote(entry.data.facts, entry.data.signals, entry.data.consequences);
+  const sourceDecisions = new Map(task.decisions.map((entry) => [entry.id, entry]));
+  for (const entry of clone.decisions) {
+    const consumption = sourceDecisions.get(entry.id)?.data.consumption;
+    if (!consumption) continue;
+    entry.data.consumption = {
+      ...consumption,
+      state: consumption.state === "reserved" ? "uncertain" : consumption.state,
+      actionRef: { kind: "record", collection: "decisions", id: entry.id },
+      ...(consumption.historicalActionId
+        ? { historicalActionId: consumption.historicalActionId }
+        : consumption.actionRef.kind === "host"
+          ? { historicalActionId: consumption.actionRef.handle }
+          : {}),
+    };
+  }
   // Candidate metadata can contain environment-derived paths and digests. The destination
   // must recapture its own candidate instead of receiving source checkout material.
   clone.candidates = [];
@@ -649,7 +664,13 @@ const importedTask = (
             taskId: "",
             workspaceId: destinationWorkspaceId,
           },
-          consumption: null,
+          consumption: data.consumption
+            ? {
+                ...data.consumption,
+                state: data.consumption.state === "reserved" ? "uncertain" : data.consumption.state,
+                actionRef: { kind: "record", collection: "decisions", id: entry.id },
+              }
+            : null,
         },
       };
     }),

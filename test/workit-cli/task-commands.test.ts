@@ -501,6 +501,109 @@ test("CLI requires writer ownership and concise binding questions", async () => 
   }
 });
 
+test("CLI checks writer ownership before proposing a branch deletion", async () => {
+  const root = fixture();
+  const configDir = fixture();
+  const tools = fixture();
+  const previous = {
+    PATH: process.env.PATH,
+    WORKFLOW_TOOLKIT_CONFIG: process.env.WORKFLOW_TOOLKIT_CONFIG,
+    WORKFLOW_VCS_CONFIG: process.env.WORKFLOW_VCS_CONFIG,
+  };
+  try {
+    spawnSync("git", ["init", "-q"], { cwd: root });
+    spawnSync("git", ["config", "user.email", "test@example.invalid"], { cwd: root });
+    spawnSync("git", ["config", "user.name", "Workit Test"], { cwd: root });
+    writeFileSync(path.join(root, "base.txt"), "base\n");
+    spawnSync("git", ["add", "base.txt"], { cwd: root });
+    spawnSync("git", ["commit", "-qm", "base"], { cwd: root });
+    spawnSync("git", ["branch", "feature/merged"], { cwd: root });
+    const tip = spawnSync("git", ["rev-parse", "refs/heads/feature/merged"], {
+      cwd: root,
+      encoding: "utf8",
+    }).stdout.trim();
+    spawnSync("git", ["remote", "add", "origin", "https://github.com/org/repo.git"], {
+      cwd: root,
+    });
+    writeFileSync(
+      path.join(configDir, "vcs.json"),
+      JSON.stringify({ provider: "github", github: { host: "github.com" } }),
+    );
+    writeFileSync(
+      path.join(configDir, "workspaces.json"),
+      JSON.stringify({
+        workspaces: [
+          { name: "target", glob: `${root}/**`, vcs: { provider: "github", account: "stub" } },
+        ],
+      }),
+    );
+    const branch = path.join(tools, "branch.json");
+    const prs = path.join(tools, "prs.json");
+    writeFileSync(branch, JSON.stringify({ object: { sha: tip } }));
+    writeFileSync(
+      prs,
+      JSON.stringify([
+        {
+          number: 123,
+          merged_at: "2026-01-01T00:00:00Z",
+          head: { ref: "feature/merged", sha: tip },
+        },
+      ]),
+    );
+    writeFileSync(
+      path.join(tools, "gh"),
+      `#!/bin/sh\nif [ "$1" = api ] && [ "$2" = user ]; then echo '{"login":"stub"}'; exit 0; fi\nif [ "$2" = repos/org/repo/git/ref/heads/feature/merged ]; then cat "${branch}"; exit 0; fi\ncat "${prs}"\n`,
+      { mode: 0o755 },
+    );
+    writeFileSync(
+      path.join(tools, "gh.cmd"),
+      `@echo off\r\nif "%1 %2"=="api user" (echo {"login":"stub"} & exit /b 0)\r\nif "%2"=="repos/org/repo/git/ref/heads/feature/merged" (type "${branch}" & exit /b 0)\r\ntype "${prs}"\r\nexit /b 0\r\n`,
+    );
+    process.env.WORKFLOW_TOOLKIT_CONFIG = configDir;
+    process.env.WORKFLOW_VCS_CONFIG = path.join(configDir, "vcs.json");
+    process.env.PATH = `${tools}${path.delimiter}${previous.PATH ?? ""}`;
+    const actor = "cli-delete-writer";
+    const core = new WorkitCore(new TaskStore(root), {
+      root,
+      caller: { host: "workit_cli", actor },
+      capabilities: [],
+      constraints: [],
+      now: "2026-01-01T00:00:00Z",
+    });
+    expect(core.task(taskStartRequest()).ok).toBe(true);
+    const output = capture();
+    let asked = 0;
+    const code = await runActionCommand(
+      [
+        "hosting.delete_branch",
+        "--payload",
+        JSON.stringify({ branch: "feature/merged" }),
+        "--confirm",
+      ],
+      {
+        cwd: root,
+        actor,
+        out: output.out,
+        err: output.err,
+        stdinIsTTY: () => true,
+        confirm: async () => {
+          asked += 1;
+          return true;
+        },
+      },
+    );
+    expect(code).toBe(1);
+    expect(output.read().stderr).toContain("writer ownership");
+    expect(asked).toBe(0);
+  } finally {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    for (const dir of [root, configDir, tools]) rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("every closed family/action pair reaches the structured core parser", async () => {
   const root = fixture();
   try {
@@ -964,11 +1067,15 @@ test("CLI dirty branch setup names the stash and executes in one confirmation", 
   }
 });
 
-test("CLI branch approval carries across base moves inside one confirmation", async () => {
+test("CLI branch approval carries across unrelated current-HEAD moves", async () => {
   const { root, remote } = branchRepo();
   try {
     let confirms = 0;
     const out = capture();
+    const approvedBase = spawnSync("git", ["rev-parse", "refs/remotes/origin/main"], {
+      cwd: root,
+      encoding: "utf8",
+    }).stdout.trim();
     expect(
       await runActionCommand(
         [
@@ -985,27 +1092,22 @@ test("CLI branch approval carries across base moves inside one confirmation", as
           stdinIsTTY: () => true,
           confirm: async () => {
             confirms += 1;
-            spawnSync("git", ["checkout", "-q", "develop"], { cwd: root });
+            spawnSync("git", ["checkout", "-qb", "feature/current"], { cwd: root });
             writeFileSync(path.join(root, "later.txt"), "later\n");
             spawnSync("git", ["add", "later.txt"], { cwd: root });
             spawnSync("git", ["commit", "-qm", "later"], { cwd: root });
-            spawnSync("git", ["checkout", "-q", "main"], { cwd: root });
             return true;
           },
         },
       ),
     ).toBe(0);
     expect(confirms).toBe(1);
-    const head = spawnSync("git", ["rev-parse", "develop"], {
-      cwd: root,
-      encoding: "utf8",
-    }).stdout.trim();
     expect(
       spawnSync("git", ["rev-parse", "feature/cli-carry"], {
         cwd: root,
         encoding: "utf8",
       }).stdout.trim(),
-    ).toBe(head);
+    ).toBe(approvedBase);
   } finally {
     rmSync(root, { recursive: true, force: true });
     rmSync(remote, { recursive: true, force: true });
