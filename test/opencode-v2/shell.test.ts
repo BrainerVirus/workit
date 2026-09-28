@@ -5,6 +5,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import definition from "@/packages/workit-opencode/src/v2/plugin";
 import { normalizeQuestionAnswers } from "@/packages/workit-opencode/src/v2/receipts";
+import { assessment, taskStartRequest } from "../workit-core/task-fixtures";
 
 /** The exact 10 registered Workit tool names in registration order. */
 const TOOL_NAMES = [
@@ -180,6 +181,7 @@ test("setup registers the exact 10 tools with codemode off and object schemas", 
       "git.push",
       "hosting.pull_request",
       "hosting.merge",
+      "hosting.delete_branch",
       "youtrack.update",
       "youtrack.time",
       "youtrack.meeting",
@@ -234,23 +236,110 @@ test("foreign session locations and child sessions are denied", async () => {
   }
 });
 
-test("workit_external_action runs context.read and refuses unported mutations", async () => {
+test("V2 action-time targets use the shared native-receipt runner", async () => {
   const root = repository();
+  const target = repository("feature/v2-target");
   try {
-    const { call } = await harness(root);
+    const { call, hooks } = await harness(root);
     const read = await call("workit_external_action", {
       operation: "context.read",
       payload: { kind: "git" },
     });
     expect(read.ok).toBe(true);
-    const mutation = await call("workit_external_action", {
-      operation: "git.commit",
-      payload: { message: "chore: probe" },
+    writeFileSync(path.join(target, "change.txt"), "change\n");
+    spawnSync("git", ["add", "change.txt"], { cwd: target });
+    const intent = {
+      objective: "V2 action target",
+      scope: { description: "V2 action target", paths: ["."], exclusions: [] },
+      authorityRefs: [],
+    };
+    const started = await call("workit_task", taskStartRequest({ intent }));
+    expect(started.ok).toBe(true);
+    const taskId = started.data.id as string;
+    expect(
+      await call("workit_policy", {
+        schemaVersion: 1,
+        action: "assess",
+        taskId,
+        assessment: assessment(),
+      }),
+    ).toMatchObject({ ok: true });
+    const initial = await call("workit_task", {
+      schemaVersion: 1,
+      action: "inspect",
+      taskId,
+      view: "full",
     });
-    expect(mutation.ok).toBe(false);
-    expect(mutation.code).toBe("capability_unavailable");
+    expect(
+      await call("workit_writer", {
+        schemaVersion: 1,
+        action: "acquire",
+        taskId,
+        expectedRevision: initial.data.task.revision,
+        expectedWorkspaceRevision: initial.data.workspace.revision,
+        workerId: null,
+      }),
+    ).toMatchObject({ ok: true });
+    const request = {
+      operation: "git.commit",
+      payload: { cwd: target, message: "fix: commit in V2 target" },
+    };
+    const proposal = await call("workit_external_action", request);
+    expect(proposal).toMatchObject({ ok: false, code: "needs_input" });
+    const item = proposal.details.proposal;
+    await hooks.get("execute.after")!({
+      tool: "question",
+      sessionID: "ses_v2",
+      id: "call_v2_action_question",
+      input: {
+        questions: [
+          {
+            header: "Workit decision: action",
+            question: item.presented,
+            options: [
+              { label: "approved", description: item.approvedContent },
+              { label: "rejected", description: "Reject this decision" },
+            ],
+          },
+        ],
+      },
+      status: "completed",
+      result: { metadata: { answers: { q0: "approved" } } },
+    });
+    const current = await call("workit_task", {
+      schemaVersion: 1,
+      action: "inspect",
+      taskId,
+      view: "full",
+    });
+    const recorded = await call("workit_decision", {
+      schemaVersion: 1,
+      action: "record",
+      taskId,
+      expectedRevision: current.data.task.revision,
+      purpose: "action",
+      binding: {
+        taskId,
+        workspaceId: current.data.workspace.id,
+        scope: current.data.task.intent.data.scope,
+        presented: item.presented,
+        approvedContent: item.approvedContent,
+        contentRefs: [],
+      },
+      response: "approved",
+      requirementIds: [],
+    });
+    expect(recorded).toMatchObject({ ok: true });
+    expect(await call("workit_external_action", request)).toMatchObject({ ok: true });
+    expect(
+      spawnSync("git", ["log", "-1", "--pretty=%s"], {
+        cwd: target,
+        encoding: "utf8",
+      }).stdout.trim(),
+    ).toBe("fix: commit in V2 target");
   } finally {
     rmSync(root, { recursive: true, force: true });
+    rmSync(target, { recursive: true, force: true });
   }
 });
 
@@ -306,7 +395,7 @@ test("setup registers the subagent lifecycle hooks and an abortable event stream
   }
 });
 
-test("setup registers 14 method skills with packaged content and locations", async () => {
+test("setup registers 14 method skills with packaged content and paths", async () => {
   const root = repository();
   try {
     const { skills } = await harness(root);
@@ -314,8 +403,8 @@ test("setup registers 14 method skills with packaged content and locations", asy
     for (const skill of skills) {
       expect(skill.content.length, skill.id).toBeGreaterThan(100);
       expect(skill.description?.length, skill.id).toBeGreaterThan(0);
-      expect(existsSync(skill.location), skill.id).toBe(true);
-      expect(skill.location.endsWith(path.join(skill.id, "SKILL.md")), String(skill.id)).toBe(true);
+      expect(existsSync(skill.path), skill.id).toBe(true);
+      expect(skill.path.endsWith(path.join(skill.id, "SKILL.md")), String(skill.id)).toBe(true);
       expect(skill.content.startsWith("---"), String(skill.id)).toBe(false);
     }
     expect(skills.map((skill) => skill.id).sort()).toEqual([
@@ -474,24 +563,60 @@ test("question results mint one consume-once decision receipt", async () => {
   }
 });
 
-test("permission evaluate denies worktrees always and routes only with a live task", async () => {
+test("permission evaluate validates only literal noncompliant branch targets", async () => {
   const root = repository();
+  const configDir = mkdtempSync(path.join(os.tmpdir(), "workit-v2-shell-config-"));
+  const previousEnv = {
+    config: process.env.WORKFLOW_TOOLKIT_CONFIG,
+    configDir: process.env.WORKFLOW_TOOLKIT_CONFIG_DIR,
+    profile: process.env.WORKFLOW_PROFILE,
+    workspace: process.env.WORKFLOW_WORKSPACE_NAME,
+  };
+  delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+  process.env.WORKFLOW_TOOLKIT_CONFIG_DIR = configDir;
+  delete process.env.WORKFLOW_PROFILE;
+  delete process.env.WORKFLOW_WORKSPACE_NAME;
+  writeFileSync(
+    path.join(configDir, "config.json"),
+    JSON.stringify({
+      branchPolicy: { preset: "custom", allowed: ["feature/*"], protected: ["main"] },
+    }),
+  );
   try {
     const { permissionHooks, call } = await harness(root);
     const evaluate = permissionHooks.get("evaluate")!;
     expect(evaluate).toBeFunction();
 
-    // No live task: recognized routes keep their configured decision.
-    const idle = {
+    const valid = {
       action: "shell",
-      resources: ["git switch -c probe"],
+      resources: ["git switch -c feature/probe"],
       effect: "allow",
       message: undefined as string | undefined,
     };
-    await evaluate(idle);
-    expect(idle.effect).toBe("allow");
+    await evaluate(valid);
+    expect(valid.effect).toBe("allow");
 
-    // Worktree commands are denied regardless of task state.
+    const invalid = {
+      action: "shell",
+      resources: ["git switch -c main"],
+      effect: "allow",
+      message: undefined as string | undefined,
+    };
+    await evaluate(invalid);
+    expect(invalid.effect).toBe("deny");
+    expect(invalid.message).toContain("protected_ref");
+    expect(invalid.message).toContain("main");
+    expect(invalid.message).toContain("choose a non-protected branch");
+
+    const pr = {
+      action: "shell",
+      resources: ["gh pr create --fill"],
+      effect: "allow",
+      message: undefined as string | undefined,
+    };
+    await evaluate(pr);
+    expect(pr.effect).toBe("allow");
+
     const worktree = {
       action: "shell",
       resources: ["git worktree add ../x"],
@@ -499,13 +624,12 @@ test("permission evaluate denies worktrees always and routes only with a live ta
       message: undefined as string | undefined,
     };
     await evaluate(worktree);
-    expect(worktree.effect).toBe("deny");
-    expect(worktree.message).toContain("worktrees");
+    expect(worktree.effect).toBe("allow");
 
-    // Explicit configured denies stay final.
+    // A host deny remains final and keeps its existing message.
     const explicit = {
       action: "shell",
-      resources: ["git worktree add ../x"],
+      resources: ["git switch -c main"],
       effect: "deny",
       message: undefined as string | undefined,
     };
@@ -518,33 +642,32 @@ test("permission evaluate denies worktrees always and routes only with a live ta
       authorityRefs: [],
     };
     await call("workit_task", { schemaVersion: 1, action: "start", intent });
-    const route = {
+    const activeTaskValid = {
       action: "shell",
-      resources: ["git switch -c probe"],
+      resources: ["git switch -c feature/active"],
       effect: "allow",
       message: undefined as string | undefined,
     };
-    await evaluate(route);
-    expect(route.effect).toBe("deny");
-    expect(route.message).toContain("git.branch_setup");
+    await evaluate(activeTaskValid);
+    expect(activeTaskValid.effect).toBe("allow");
 
-    // Unrelated and unparseable commands keep their configured behavior.
-    const unrelated = {
+    const unsupported = {
       action: "shell",
-      resources: ["echo hi"],
-      effect: "allow",
-      message: undefined as string | undefined,
-    };
-    await evaluate(unrelated);
-    expect(unrelated.effect).toBe("allow");
-    const unparseable = {
-      action: "shell",
-      resources: ["git switch -c `x`"],
+      resources: ['git checkout -b "main"'],
       effect: "ask",
       message: undefined as string | undefined,
     };
-    await evaluate(unparseable);
-    expect(unparseable.effect).toBe("ask");
+    await evaluate(unsupported);
+    expect(unsupported.effect).toBe("ask");
+
+    const compound = {
+      action: "shell",
+      resources: ["git switch -c main && echo done"],
+      effect: "allow",
+      message: undefined as string | undefined,
+    };
+    await evaluate(compound);
+    expect(compound.effect).toBe("allow");
 
     // Non-shell actions are never touched.
     const edit = { action: "edit", resources: ["file.txt"], effect: "allow" };
@@ -552,6 +675,15 @@ test("permission evaluate denies worktrees always and routes only with a live ta
     expect(edit.effect).toBe("allow");
   } finally {
     rmSync(root, { recursive: true, force: true });
+    if (previousEnv.config === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
+    else process.env.WORKFLOW_TOOLKIT_CONFIG = previousEnv.config;
+    if (previousEnv.configDir === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG_DIR;
+    else process.env.WORKFLOW_TOOLKIT_CONFIG_DIR = previousEnv.configDir;
+    if (previousEnv.profile === undefined) delete process.env.WORKFLOW_PROFILE;
+    else process.env.WORKFLOW_PROFILE = previousEnv.profile;
+    if (previousEnv.workspace === undefined) delete process.env.WORKFLOW_WORKSPACE_NAME;
+    else process.env.WORKFLOW_WORKSPACE_NAME = previousEnv.workspace;
+    rmSync(configDir, { recursive: true, force: true });
   }
 });
 

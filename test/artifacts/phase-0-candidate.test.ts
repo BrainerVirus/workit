@@ -368,7 +368,7 @@ test(
       expect(res.status, res.stderr).toBe(0);
       const out = JSON.parse(res.stdout);
       expect(out.ytStatus).toBe("preserved");
-      expect(out.vcsStatus).toBe("preserved");
+      expect(out.vcsStatus).toBe("missing");
       expect(out.ytToken).toBe("perm_abcdef123456\n");
       expect(out.glToken).toBe("glpat-secret\n");
     } finally {

@@ -6,8 +6,8 @@
  * (needs docker plus the pinned images; pulls them when reachable).
  * Without the opt-in the file passes silently.
  *
- * Deliberately asserted 2.0.3 behaviors that differ from latest docs:
- * - ctx has no provider/model domains (config-declared providers instead);
+ * Deliberately asserted 2.0.18 behaviors:
+ * - ctx has provider/model domains (config-declared providers plus transforms);
  * - plugin-registered tools need `options: { codemode: false }` to reach
  *   model requests;
  * - context/compaction system edits reach the provider like prompt edits
@@ -96,20 +96,20 @@ const waitIdle = async (id: string, timeoutMs = 90_000): Promise<any[]> => {
   }
 };
 
-test("probe plugin loads with the pinned 2.0.3 context shape", async () => {
+test("probe plugin loads with the pinned 2.0.18 context shape", async () => {
   if (!h) return;
   const id = await sessionWithModel("stub-text");
   await prompt(id, "hi");
   await waitIdle(id);
   const evs = lines(h.probeLog());
-  expect(evs.some((e) => e.ev === "setup" && e.version === "2.0.3")).toBe(true);
+  expect(evs.some((e) => e.ev === "setup" && e.version === "2.0.18")).toBe(true);
   const keys = evs.find((e) => e.ev === "ctx.keys")?.keys as string[];
   expect(keys).toContain("tool");
   expect(keys).toContain("event");
   expect(keys).toContain("permission");
   expect(keys).toContain("session");
-  expect(keys).not.toContain("provider");
-  expect(keys).not.toContain("model");
+  expect(keys).toContain("provider");
+  expect(keys).toContain("model");
 }, 180_000);
 
 test("agent loop streams through the stub and reports envelopes with ids", async () => {
@@ -151,7 +151,7 @@ test("shell allow path executes and captures output", async () => {
   const perm = lines(h.probeLog()).find(
     (e) => e.ev === "hook.permission" && e.event?.action === "shell",
   );
-  expect(perm?.event?.resources?.[0]).toContain("git switch -c probe-branch");
+  expect(perm?.event?.resources?.[0]).toContain("git switch -c feature/probe-branch");
 }, 180_000);
 
 test("shell deny rules filter the tool from the offering", async () => {
@@ -202,7 +202,7 @@ test("shell ask path surfaces a request and the reply executes it", async () => 
     await Bun.sleep(2000);
   }
   expect(req.action).toBe("shell");
-  expect(req.resources[0]).toContain("git switch -c probe-branch");
+  expect(req.resources[0]).toContain("git switch -c feature/probe-branch");
   expect(req.source.type).toBe("tool");
   await h.op(
     "v2.session.permission.reply",

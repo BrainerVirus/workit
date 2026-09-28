@@ -174,7 +174,7 @@ test(
       expect(realpathSync(v1Config.skills.paths[0])).toBe(realpathSync(skillsPath));
       expect(existsSync(v1Config.skills.paths[0])).toBe(true);
 
-      const skills: Array<{ id: string; location: string; content: string }> = [];
+      const skills: Array<{ id: string; path: string; content: string }> = [];
       const commands: Array<{ name: string }> = [];
       const fake = {
         location: { directory: packageDir },
@@ -211,10 +211,8 @@ test(
       expect(skills).toHaveLength(14);
       expect(commands).toHaveLength(14);
       for (const skill of skills) {
-        expect(existsSync(skill.location), skill.id).toBe(true);
-        expect(realpathSync(skill.location).startsWith(realpathSync(skillsPath)), skill.id).toBe(
-          true,
-        );
+        expect(existsSync(skill.path), skill.id).toBe(true);
+        expect(realpathSync(skill.path).startsWith(realpathSync(skillsPath)), skill.id).toBe(true);
         expect(skill.content.length, skill.id).toBeGreaterThan(100);
       }
     } finally {
@@ -301,7 +299,9 @@ test(
       expect(code).toBe(0);
       const payload = JSON.parse(stdout);
       expect(payload.additional_context).toContain("<workit-contract>");
-      expect(payload.additional_context).toContain("one accountable lead");
+      expect(payload.additional_context).toContain(
+        "Ordinary investigation, questions, non-Git work",
+      );
     } finally {
       rmSync(install, { recursive: true, force: true });
       rmSync(home, { recursive: true, force: true });
@@ -410,7 +410,9 @@ test.skipIf(!npmRegistryOk)(
       expect(session.status, session.stderr ?? "").toBe(0);
       const payload = JSON.parse(session.stdout);
       expect(payload.additional_context).toContain("<workit-contract>");
-      expect(payload.additional_context).toContain("one accountable lead");
+      expect(payload.additional_context).toContain(
+        "Ordinary investigation, questions, non-Git work",
+      );
     } finally {
       rmSync(install, { recursive: true, force: true });
       rmSync(home, { recursive: true, force: true });

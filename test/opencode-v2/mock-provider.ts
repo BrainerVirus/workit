@@ -98,7 +98,7 @@ const scripts: Record<string, (() => Response)[]> = {
     () =>
       sse([
         toolTurn("call_1", "shell", {
-          command: "git switch -c probe-branch",
+          command: "git switch -c feature/probe-branch",
           description: "probe shell",
         }),
         textTurn("", "tool_calls"),

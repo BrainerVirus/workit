@@ -23,7 +23,7 @@ import { fileURLToPath } from "node:url";
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
 export const V2_IMAGE =
-  "ghcr.io/anomalyco/opencode@sha256:aaf8c5420e10652c520e068532384f6e20cece2922c404db7f89e36720b9f212";
+  "ghcr.io/anomalyco/opencode@sha256:aa0e5ac93543f24c99dfcc72a6ea7df335faec131dafc16f7607a2c7d3173d28";
 export const V1_IMAGE =
   "ghcr.io/anomalyco/opencode@sha256:412b37a894bb937a0d5d6a1860789b9fd7d34a109334bec98a3f6ecf812bb442";
 export const BUN_IMAGE =
@@ -118,7 +118,7 @@ export const boot = async (): Promise<Harness> => {
   mkdirSync(path.join(work, ".opencode", "plugins"), { recursive: true });
   mkdirSync(logDir, { recursive: true });
   // Probe plugin inside the project (location discovery) — no build step,
-  // no SDK dependency (plain object form; 2.0.3 has no ctx.provider/ctx.model).
+  // no SDK dependency (plain object form).
   mkdirSync(path.join(work, ".opencode", "plugins", "v2probe"), { recursive: true });
   await $`cp ${path.join(HERE, "probe-plugin", "index.js")} ${path.join(work, ".opencode", "plugins", "v2probe", "index.js")}`;
   await $`cp ${path.join(HERE, "probe-plugin", "package.json")} ${path.join(work, ".opencode", "plugins", "v2probe", "package.json")}`;
