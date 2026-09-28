@@ -59,15 +59,15 @@ test("task history search matches summaries and decisions, orders and limits rea
   const root = mkdtempSync(join(tmpdir(), "workit-history-"));
   const store = new TaskStore(root);
   const makeCore = (now: string) => new WorkitCore(store, { ...context(root), now });
-  const start = (now: string, objective: string) =>
-    makeCore(now).task(
+  const start = (now: string, objective: string) => {
+    const workspace = store.readWorkspace();
+    return makeCore(now).task(
       taskStartRequest({
-        expectedWorkspaceRevision: store.readWorkspace().ok
-          ? (store.readWorkspace().data?.revision ?? null)
-          : null,
+        expectedWorkspaceRevision: workspace.ok ? (workspace.data?.revision ?? null) : null,
         intent: { objective, scope: scope(), authorityRefs: [ref()] },
       }),
     );
+  };
   const older = start("2026-01-01T00:00:00Z", "History search older summary");
   const newer = start("2026-01-02T00:00:00Z", "History search decision topic");
   expect(older.ok && newer.ok).toBe(true);
