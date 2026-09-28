@@ -1,7 +1,15 @@
 import { expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { spawnSync } from "node:child_process";
-import { tmpdir } from "node:os";
+import { tmpdir as systemTmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import {
   TaskStore,
@@ -32,6 +40,8 @@ import {
 import { nativeExternalActionRunner } from "@/packages/workit-opencode/src/tools/workit";
 import { assessment, scope, taskStartRequest } from "./task-fixtures";
 import { stubCli, stubPath } from "@/test/shared/helpers/stub-cli";
+
+const tmpdir = () => realpathSync(systemTmpdir());
 
 const provenance = (actor: string, host: Provenance["host"] = "workit_cli"): Provenance => ({
   kind: "host_observed",

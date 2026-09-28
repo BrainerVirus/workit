@@ -418,7 +418,7 @@ test("CA-03: youtrack config read resolves the token file inside the active conf
 });
 
 test("AR-07: non-object youtrack.json shapes fail closed with the exact path", () => {
-  const dir = mkdtempSync(path.join(os.tmpdir(), "wf-yt-shapes-"));
+  const dir = mkdtempSync(path.join(realpathSync(os.tmpdir()), "wf-yt-shapes-"));
   const workit = path.join(dir, "workit");
   mkdirSync(workit, { recursive: true });
   const ytFile = path.join(workit, "youtrack.json");

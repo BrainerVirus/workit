@@ -3,6 +3,7 @@ import {
   chmodSync,
   lstatSync,
   mkdtempSync,
+  realpathSync,
   readFileSync,
   rmSync,
   symlinkSync,
@@ -14,7 +15,7 @@ import { writeFileAtomic } from "@/packages/workit-core/src/core/safe-write";
 
 describe("writeFileAtomic", () => {
   test("replaces a regular file and preserves its mode", () => {
-    const root = mkdtempSync(path.join(os.tmpdir(), "workit-safe-write-"));
+    const root = mkdtempSync(path.join(realpathSync(os.tmpdir()), "workit-safe-write-"));
     try {
       const file = path.join(root, "config.json");
       writeFileSync(file, "before");
@@ -30,7 +31,7 @@ describe("writeFileAtomic", () => {
   });
 
   test("refuses symlink targets and ancestors without changing their referents", () => {
-    const root = mkdtempSync(path.join(os.tmpdir(), "workit-safe-write-"));
+    const root = mkdtempSync(path.join(realpathSync(os.tmpdir()), "workit-safe-write-"));
     try {
       const outside = path.join(root, "outside.json");
       const targetLink = path.join(root, "target-link.json");

@@ -4,6 +4,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  realpathSync,
   readFileSync,
   readdirSync,
   rmSync,
@@ -76,7 +77,7 @@ const writeLegacyFlowRecords = (workspace: string, count: number) => {
 export function makeCutoverFixture(
   opts: { legacyFlows?: number; secret?: string } = {},
 ): CutoverFixture {
-  const root = mkdtempSync(path.join(os.tmpdir(), "wk-cutover-"));
+  const root = mkdtempSync(path.join(realpathSync(os.tmpdir()), "wk-cutover-"));
   const home = mk(root, "home");
   const configDir = mk(root, "config");
   const stateDir = mk(root, "state");
