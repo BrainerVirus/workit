@@ -1690,6 +1690,7 @@ test("reports managed_content_conflict when managed bytes drift from cutover rec
       home: fx.home,
       configDir: fx.configDir,
       stateDir: fx.stateDir,
+      archiveDir: path.join(fx.root, "archive"),
       dev: fx.dev,
       workspace: fx.workspace,
       opencodeConfig: fx.opencodeConfig,
