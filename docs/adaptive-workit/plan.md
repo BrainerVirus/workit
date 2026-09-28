@@ -262,7 +262,19 @@ focused question only when one of those choices blocks a concrete slice.
   exited 0 with four configuration hints. React Doctor previously exited 0
   with seven advisory warnings. This qualifies the packaged adapters for the
   local OpenCode pin after remote CI passes.
-- **Next action:** commit this checkpoint, push the feature branch, open the PR,
-  resolve any CI failures, merge after all required checks pass, then enable and
-  verify the local OpenCode pin. Leave the four historical draft files outside
-  the PR and report them for the user's later decision.
+- **CI portability follow-up:** initial PR run `36372553627` exposed three
+  fixture assumptions, not runtime failures: a workspace glob tied to one
+  home-directory layout, a Git fixture inheriting the machine's default branch,
+  and macOS temporary paths retaining the `/var` symlink alias. Commits
+  `13a1a5f`, `b4a29b3`, and `ea93615` make those fixtures checkout-relative,
+  pin the fixture base to `develop`, and canonicalize temporary roots before
+  writes and path assertions. The full `fnm exec --using=24.20.0 -- bun run
+  check` gate then passed again: build, lint, format, 1,581 tests / 8,604
+  assertions, and TypeScript. A core-suite run with both a symlinked `TMPDIR`
+  and Git's default branch set to `main` passed 910 tests / 4,751 assertions.
+  `git diff --check` is clean. The PR rerun is pending the push of these fixes.
+- **Next action:** push the checkpoint and portability fixes to existing PR
+  #132, verify every required CI check, merge without deleting the remote
+  branch, then enable and verify the local OpenCode package pin. Keep the active
+  host disabled until merge and CI are complete. Leave the four historical
+  draft files outside the PR and report them for the user's later decision.
