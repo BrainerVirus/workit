@@ -300,3 +300,17 @@ focused question only when one of those choices blocks a concrete slice.
   the local OpenCode package pin. Keep the active host disabled until merge and
   CI are complete. Leave the four historical draft files outside the PR and
   report them for the user's later decision.
+- **Windows path-identity correction after run `36377702496`:** The remaining
+  failures split between managed-action locks and chain/plan matching. Shared
+  directory identity now resolves case and short/long aliases for target-lock
+  selection, cross-checkout checks, chain approvals, and plan commits while
+  requiring both paths to exist as directories. Lock regression coverage now
+  exercises case and canonical aliases on Windows; the existing foreign-
+  checkout test remains green. Focused tests passed (35 tests / 133
+  assertions). `fnm exec --using=24.20.0 -- bun run check` passed build, lint,
+  formatting, 1,583 tests / 8,609 assertions, and TypeScript; `git diff --check`
+  passed. **Remaining:** hosted CI must verify the Windows aliases. **Next:**
+  commit the code fix and this checkpoint separately, push both to PR #132,
+  verify every check, merge without deleting the remote branch, then enable
+  and verify the local OpenCode package pin. Keep Workit disabled in the
+  active host until merge and CI are complete.
