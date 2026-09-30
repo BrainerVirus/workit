@@ -5,6 +5,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  renameSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -2036,7 +2037,34 @@ test("native receipts retain exact call, label, and content bindings", () => {
       selectedLabel: "approved",
       contentDigest: digest.receipt.contentDigest,
     }).ok,
-  ).toBe(true);
+  ).toBe(false);
+});
+
+test("consumed native call IDs stay deduplicated for the receipt store lifetime", () => {
+  const receipts = new NativeReceiptStore();
+  const input = {
+    sessionID: "long-lived-session",
+    args: {
+      questions: [
+        {
+          header: "Workit decision: action",
+          question: "Workit decision: action — commit?",
+          options: [
+            { label: "approved", description: "Commit the change." },
+            { label: "rejected", description: "Reject this decision" },
+          ],
+        },
+      ],
+    },
+  };
+  for (let index = 0; index < 1025; index += 1) {
+    const callID = `native-call-${index}`;
+    receipts.record({ ...input, callID }, { metadata: { answers: [["approved"]] } });
+    if (!receipts.consume(input.sessionID, "decision", { callID }).ok)
+      throw new Error(`receipt ${callID} did not consume`);
+  }
+  receipts.record({ ...input, callID: "native-call-0" }, { metadata: { answers: [["approved"]] } });
+  expect(receipts.consume(input.sessionID, "decision", { callID: "native-call-0" }).ok).toBe(false);
 });
 
 test("native receipts reject a matching-purpose answer with different content", () => {
@@ -2855,6 +2883,237 @@ test("drifted proposals evict so a fresh resolve never wedges ambiguous", async 
     expect(branchOutput(recovered)).toMatchObject({ ok: true });
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("branch changes keep identical-text proposals distinct from old receipts", async () => {
+  const root = mkdtempSync(join(tmpdir(), "workit-opencode-proposal-branch-"));
+  const sibling = mkdtempSync(join(tmpdir(), "workit-opencode-proposal-sibling-"));
+  try {
+    for (const args of [
+      ["init", "-q"],
+      ["config", "user.email", "test@example.invalid"],
+      ["config", "user.name", "Workit Test"],
+    ])
+      spawnSync("git", args, { cwd: root });
+    writeFileSync(join(root, "base.txt"), "base\n");
+    spawnSync("git", ["add", "base.txt"], { cwd: root });
+    spawnSync("git", ["commit", "-qm", "base"], { cwd: root });
+    spawnSync("git", ["clone", "-q", root, sibling]);
+    spawnSync("git", ["config", "user.email", "test@example.invalid"], { cwd: sibling });
+    spawnSync("git", ["config", "user.name", "Workit Test"], { cwd: sibling });
+    writeFileSync(join(sibling, "change.txt"), "change\n");
+    spawnSync("git", ["add", "change.txt"], { cwd: sibling });
+    const actor = "opencode-proposal-branch";
+    const store = new TaskStore(root);
+    const setupCore = new WorkitCore(store, {
+      root,
+      caller: { host: "opencode", actor },
+      capabilities: [],
+      constraints: [],
+      now: "2026-01-01T00:00:00Z",
+    });
+    const started = setupCore.task(taskStartRequest());
+    if (!started.ok) throw new Error(started.error);
+    const task = store.readTask((started.data as { id: string }).id);
+    const workspace = store.readWorkspace();
+    if (!task.ok || !workspace.ok || !workspace.data) throw new Error("task setup failed");
+    const workspaceId = workspace.data.id;
+    expect(
+      setupCore.writer({
+        schemaVersion: 1,
+        action: "acquire",
+        taskId: task.data.id,
+        expectedRevision: task.data.revision,
+        expectedWorkspaceRevision: workspace.data.revision,
+        workerId: null,
+      }),
+    ).toMatchObject({ ok: true });
+    const receipts = new NativeReceiptStore();
+    const tools = createWorkitTools({
+      receipts,
+      client: { session: { get: async () => ({ data: { id: actor, directory: root } }) } },
+    }) as any;
+    const request = {
+      operation: "git.commit",
+      payload: { message: "chore(test): evict", cwd: sibling },
+    };
+    const resolve = async () => {
+      const resolved = await tools.workit_external_action.execute(request, {
+        directory: root,
+        sessionID: actor,
+      });
+      return branchOutput(resolved).details.proposal;
+    };
+    const record = async (
+      callID: string,
+      proposal: { presented: string; approvedContent: string },
+      mintReceipt = true,
+    ) => {
+      if (mintReceipt)
+        receipts.record(
+          {
+            sessionID: actor,
+            callID,
+            args: {
+              questions: [
+                {
+                  header: "Workit decision: action",
+                  question: proposal.presented,
+                  options: [
+                    { label: "approved", description: proposal.approvedContent },
+                    { label: "rejected", description: "Reject this decision" },
+                  ],
+                },
+              ],
+            },
+          },
+          { metadata: { answers: [["approved"]] } },
+        );
+      const fresh = store.readTask(task.data.id);
+      if (!fresh.ok) throw new Error("task refresh failed");
+      return tools.workit_decision.execute(
+        {
+          schemaVersion: 1,
+          action: "record",
+          taskId: task.data.id,
+          expectedRevision: fresh.data.revision,
+          purpose: "action",
+          binding: {
+            taskId: task.data.id,
+            workspaceId,
+            scope: (task.data as any).intent.data.scope,
+            presented: proposal.presented,
+            approvedContent: proposal.approvedContent,
+            contentRefs: [],
+          },
+          response: "approved",
+          requirementIds: [],
+        },
+        { directory: root, sessionID: actor } as never,
+      );
+    };
+    const stale = await resolve();
+    receipts.recordRequest("asked-before-branch-change", actor, "old-branch-call", [
+      {
+        header: "Workit decision: action",
+        question: stale.presented,
+        options: [
+          { label: "approved", description: stale.approvedContent },
+          { label: "rejected", description: "Reject this decision" },
+        ],
+      },
+    ]);
+    receipts.recordRequest("asked-before-branch-change-2", actor, "old-branch-call-2", [
+      {
+        header: "Workit decision: action",
+        question: stale.presented,
+        options: [
+          { label: "approved", description: stale.approvedContent },
+          { label: "rejected", description: "Reject this decision" },
+        ],
+      },
+    ]);
+    receipts.record(
+      {
+        sessionID: actor,
+        callID: "unresolved-receipt",
+        args: {
+          questions: [
+            {
+              header: "Workit decision: action",
+              question: stale.presented,
+              options: [
+                { label: "approved", description: stale.approvedContent },
+                { label: "rejected", description: "Reject this decision" },
+              ],
+            },
+          ],
+        },
+      },
+      { metadata: { answers: [["approved"]] } },
+    );
+    renameSync(join(sibling, ".git"), join(sibling, "git-unavailable"));
+    expect(branchOutput(await record("unresolved-proposal", stale, false))).toMatchObject({
+      ok: false,
+      code: "invalid_input",
+    });
+    renameSync(join(sibling, "git-unavailable"), join(sibling, ".git"));
+    spawnSync("git", ["branch", "alternate"], { cwd: sibling });
+    spawnSync("git", ["checkout", "-q", "alternate"], { cwd: sibling });
+    const fresh = await resolve();
+    expect(fresh.presented).toBe(stale.presented);
+    expect(fresh.approvedContent).toBe(stale.approvedContent);
+    expect(receipts.recordReply("asked-before-branch-change-2", actor, [["approved"]])).toBe(true);
+    receipts.record(
+      {
+        sessionID: actor,
+        callID: "old-branch-call-2",
+        args: {
+          questions: [
+            {
+              header: "Workit decision: action",
+              question: stale.presented,
+              options: [
+                { label: "approved", description: stale.approvedContent },
+                { label: "rejected", description: "Reject this decision" },
+              ],
+            },
+          ],
+        },
+      },
+      { metadata: { answers: [["approved"]] } },
+    );
+    expect(branchOutput(await record("reply-before-hook", fresh, false))).toMatchObject({
+      ok: false,
+      code: "invalid_input",
+    });
+    receipts.record(
+      {
+        sessionID: actor,
+        callID: "old-branch-call",
+        args: {
+          questions: [
+            {
+              header: "Workit decision: action",
+              question: stale.presented,
+              options: [
+                { label: "approved", description: stale.approvedContent },
+                { label: "rejected", description: "Reject this decision" },
+              ],
+            },
+          ],
+        },
+      },
+      { metadata: { answers: [["approved"]] } },
+    );
+    expect(receipts.recordReply("asked-before-branch-change", actor, [["approved"]])).toBe(true);
+    expect(branchOutput(await record("hook-before-reply", fresh, false))).toMatchObject({
+      ok: false,
+      code: "invalid_input",
+    });
+    expect(branchOutput(await record("fresh-branch-receipt", fresh))).toMatchObject({ ok: true });
+    receipts.recordRequest("fresh-question-reply", actor, "fresh-branch-receipt", [
+      {
+        header: "Workit decision: action",
+        question: fresh.presented,
+        options: [
+          { label: "approved", description: fresh.approvedContent },
+          { label: "rejected", description: "Reject this decision" },
+        ],
+      },
+    ]);
+    expect(receipts.recordReply("fresh-question-reply", actor, [["approved"]])).toBe(true);
+    expect(
+      receipts.consume(actor, "decision", {
+        callID: "fresh-branch-receipt",
+        decisionPurpose: "action",
+        question: fresh.presented,
+      }).ok,
+    ).toBe(false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(sibling, { recursive: true, force: true });
   }
 });
 

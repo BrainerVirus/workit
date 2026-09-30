@@ -95,6 +95,15 @@ need zero Workit task, assessment, or writer calls. Use one compact tracked
 record only when handoff, dependent steps, concurrent actors, or meaningful
 decisions make continuity useful; similar titles alone never merge tasks.
 
+For a routine user-authorized branch or commit, prefer native host Git/shell
+tools from the outset when managed coordination or outcome reconciliation is
+not needed. Inspect the actual target checkout and its configured conventions;
+use Workit's read-only context/policy tools when needed. Do not start a task,
+acquire a writer, or mint a decision receipt solely for a native Git action.
+Native permissions still apply. Never switch execution paths to evade a denial
+or repeat an uncertain managed effect. A local-commit endpoint does not imply
+PR readiness, a fresh review, or post-commit assessment/closure paperwork.
+
 For tracked work, inspect its current state and use the shared operations for
 task, policy, evidence, finding, decision, worker, writer, and state changes.
 Start a record once for an explicit tracked objective; assess or reassess only

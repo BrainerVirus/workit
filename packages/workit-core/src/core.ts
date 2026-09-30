@@ -124,6 +124,8 @@ export {
   externalActionRef,
   externalActionDescriptor,
   externalActionHelp,
+  externalActionJsonSchema,
+  externalActionSchema,
   planReservationLength,
   externalActionRequest,
   matchesNativeExternalAction,

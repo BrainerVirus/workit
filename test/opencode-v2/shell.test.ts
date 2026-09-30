@@ -176,7 +176,8 @@ test("setup registers the exact 10 tools with codemode off and object schemas", 
       expect(tool.description.length, tool.name).toBeGreaterThan(0);
     }
     const external = registered.find((tool) => tool.name === "workit_external_action");
-    expect(external?.input.properties.operation.enum).toEqual([
+    const variants = external?.input.oneOf;
+    expect(variants.map((variant: any) => variant.properties.operation.const)).toEqual([
       "git.branch_setup",
       "git.commit",
       "git.push",
@@ -189,7 +190,11 @@ test("setup registers the exact 10 tools with codemode off and object schemas", 
       "changelog.apply",
       "context.read",
     ]);
-    expect(external?.input.required).toEqual(["operation", "payload"]);
+    for (const variant of variants) {
+      expect(variant.required).toEqual(["operation", "payload"]);
+      expect(variant.additionalProperties).toBe(false);
+      expect(variant.properties.payload.type).toBe("object");
+    }
     const init = registered.find((tool) => tool.name === "workit_init_apply");
     expect(init?.input.required).toEqual(["confirmed", "action"]);
     expect(init?.input.properties.action.enum).toContain("branch_policy");
@@ -288,22 +293,35 @@ test("V2 action-time targets use the shared native-receipt runner", async () => 
     const proposal = await call("workit_external_action", request);
     expect(proposal).toMatchObject({ ok: false, code: "needs_input" });
     const item = proposal.details.proposal;
+    const question = {
+      questions: [
+        {
+          header: "Workit decision: action",
+          question: item.presented,
+          options: [
+            { label: "approved", description: item.approvedContent },
+            { label: "rejected", description: "Reject this decision" },
+          ],
+        },
+      ],
+    };
+    await hooks.get("execute.before")!({
+      tool: "question",
+      sessionID: "ses_v2",
+      id: "call_v2_old_question",
+      input: question,
+    });
+    spawnSync("git", ["branch", "alternate"], { cwd: target });
+    spawnSync("git", ["checkout", "-q", "alternate"], { cwd: target });
+    const freshProposal = await call("workit_external_action", request);
+    expect(freshProposal).toMatchObject({ ok: false, code: "needs_input" });
+    expect(freshProposal.details.proposal.presented).toBe(item.presented);
+    expect(freshProposal.details.proposal.approvedContent).toBe(item.approvedContent);
     await hooks.get("execute.after")!({
       tool: "question",
       sessionID: "ses_v2",
-      id: "call_v2_action_question",
-      input: {
-        questions: [
-          {
-            header: "Workit decision: action",
-            question: item.presented,
-            options: [
-              { label: "approved", description: item.approvedContent },
-              { label: "rejected", description: "Reject this decision" },
-            ],
-          },
-        ],
-      },
+      id: "call_v2_old_question",
+      input: question,
       status: "completed",
       result: { metadata: { answers: { q0: "approved" } } },
     });
@@ -330,7 +348,45 @@ test("V2 action-time targets use the shared native-receipt runner", async () => 
       response: "approved",
       requirementIds: [],
     });
-    expect(recorded).toMatchObject({ ok: true });
+    expect(recorded).toMatchObject({ ok: false, code: "invalid_input" });
+    await hooks.get("execute.before")!({
+      tool: "question",
+      sessionID: "ses_v2",
+      id: "call_v2_fresh_question",
+      input: question,
+    });
+    await hooks.get("execute.after")!({
+      tool: "question",
+      sessionID: "ses_v2",
+      id: "call_v2_fresh_question",
+      input: question,
+      status: "completed",
+      result: { metadata: { answers: { q0: "approved" } } },
+    });
+    const latest = await call("workit_task", {
+      schemaVersion: 1,
+      action: "inspect",
+      taskId,
+      view: "full",
+    });
+    const freshDecision = await call("workit_decision", {
+      schemaVersion: 1,
+      action: "record",
+      taskId,
+      expectedRevision: latest.data.task.revision,
+      purpose: "action",
+      binding: {
+        taskId,
+        workspaceId: latest.data.workspace.id,
+        scope: latest.data.task.intent.data.scope,
+        presented: item.presented,
+        approvedContent: item.approvedContent,
+        contentRefs: [],
+      },
+      response: "approved",
+      requirementIds: [],
+    });
+    expect(freshDecision).toMatchObject({ ok: true });
     expect(await call("workit_external_action", request)).toMatchObject({ ok: true });
     expect(
       spawnSync("git", ["log", "-1", "--pretty=%s"], {

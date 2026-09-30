@@ -14,6 +14,7 @@ import {
   priorExternalAction,
   priorResolvedDrift,
   externalActionRequest,
+  externalActionSchema,
   externalActionRef,
   canonicalJson,
   createAuthorizedExternalActionRunner,
@@ -94,6 +95,7 @@ type Receipt = {
   purpose: "decision" | "worker" | "resume" | "pause" | "complete";
   contentDigest: string;
   recordedAt: number;
+  sequence: number;
 };
 
 const decisionOptions = (options: unknown) =>
@@ -142,17 +144,42 @@ export class NativeReceiptStore {
   #receipts = new Map<string, Receipt[]>();
   #observations = new WeakSet<object>();
   #reservations = new WeakMap<object, Receipt>();
-  #pending = new Map<string, { sessionID: string; callID: string; questions: unknown }>();
+  #pending = new Map<
+    string,
+    { sessionID: string; callID: string; questions: unknown; sequence: number }
+  >();
+  // Call IDs stay recorded until this host receipt store is unloaded.
+  #callSequences = new Map<string, number>();
+  #seenCalls = new Set<string>();
   #now: () => number;
+  #sequence = 0;
 
   constructor(options: { now?: () => number } = {}) {
     this.#now = options.now ?? Date.now;
   }
 
+  get sequence(): number {
+    return this.#sequence;
+  }
+
+  private callKey(sessionID: string, callID: string): string {
+    return `${sessionID.length}:${sessionID}${callID}`;
+  }
+
+  private rememberSequence(key: string, sequence: number): void {
+    if (!this.#callSequences.has(key)) this.#callSequences.set(key, sequence);
+  }
+
   /** Stash an asked native question until its out-of-band reply arrives. */
   recordRequest(requestID: string, sessionID: string, callID: string, questions: unknown): void {
     if (typeof requestID !== "string" || !requestID) return;
-    this.#pending.set(requestID, { sessionID, callID, questions });
+    const key = this.callKey(sessionID, callID);
+    let sequence = this.#callSequences.get(key);
+    if (sequence === undefined) {
+      sequence = ++this.#sequence;
+      this.rememberSequence(key, sequence);
+    }
+    this.#pending.set(requestID, { sessionID, callID, questions, sequence });
     if (this.#pending.size > 16) {
       const oldest = this.#pending.keys().next();
       if (!oldest.done) this.#pending.delete(oldest.value);
@@ -174,10 +201,22 @@ export class NativeReceiptStore {
     this.#pending.delete(requestID);
     if (!pending || pending.sessionID !== sessionID) return false;
     if (!Array.isArray(answers) || answers.length !== 1) return false;
-    return this.mint(pending.sessionID, pending.callID, pending.questions, answers);
+    return this.mint(
+      pending.sessionID,
+      pending.callID,
+      pending.questions,
+      answers,
+      pending.sequence,
+    );
   }
 
-  private mint(sessionID: string, callID: string, questions: unknown, answers: unknown): boolean {
+  private mint(
+    sessionID: string,
+    callID: string,
+    questions: unknown,
+    answers: unknown,
+    sequence?: number,
+  ): boolean {
     const answer =
       Array.isArray(answers) &&
       answers.length === 1 &&
@@ -203,6 +242,11 @@ export class NativeReceiptStore {
         ? question.header.match(/^Workit decision: (design|action|limitation|preference)$/)?.[1]
         : undefined;
     if (!decisionPurpose) return false;
+    const key = this.callKey(sessionID, callID);
+    if (this.#seenCalls.has(key)) return true;
+    const receiptSequence = sequence ?? this.#callSequences.get(key) ?? ++this.#sequence;
+    this.rememberSequence(key, receiptSequence);
+    this.#seenCalls.add(key);
     const content = decisionContent(
       decisionPurpose as Receipt["decisionPurpose"],
       typeof question.question === "string" ? question.question : "",
@@ -218,6 +262,7 @@ export class NativeReceiptStore {
       purpose,
       contentDigest: sha256(canonicalJson(content)),
       recordedAt: this.#now(),
+      sequence: receiptSequence,
     };
     const queue = this.#receipts.get(sessionID) ?? [];
     queue.push(receipt);
@@ -381,9 +426,7 @@ const boundedSchema = (schema: any, depth: number, field: string): any => {
       ]),
     );
     const description =
-      depth >= MAX_OPERATION_OBJECT_DEPTH
-        ? canonicalFieldsDescription(Object.keys(canonicalShape))
-        : undefined;
+      depth >= MAX_OPERATION_OBJECT_DEPTH ? canonicalFieldsDescription(schema) : undefined;
     const object = tool.schema.object(shape).strict();
     return description ? object.describe(description) : object;
   }
@@ -765,6 +808,7 @@ export const createWorkitTools = ({
       presented: string;
       approvedText: string;
       request: ExternalActionRequest;
+      receiptSequence: number;
     }>
   >();
   const make = (family: OperationFamily) =>
@@ -859,45 +903,49 @@ export const createWorkitTools = ({
                 pending.presented === decision.binding.presented &&
                 pending.approvedText === decision.binding.approvedContent,
             );
-            if (
-              textMatches.length > 1 &&
-              new Set(textMatches.map((pending) => pending.descriptor)).size > 1
-            )
-              return output(
-                failure(
-                  "invalid_input",
-                  "multiple action proposals match this approval; resolve the action again",
-                ),
-              );
             let bound = false;
-            const pending = textMatches[0];
-            if (pending) {
-              // Validity is content-bound, never clock-bound: re-resolve from
-              // current repository state and accept only a byte-identical
-              // descriptor. Human latency is not drift.
+            const valid: typeof textMatches = [];
+            const stale = new Set<(typeof textMatches)[number]>();
+            let unresolved = false;
+            for (const pending of textMatches) {
+              // Validity is content-bound, never clock-bound. Re-resolve all
+              // matches before deciding whether identical text is ambiguous.
               const fresh = resolveExternalActionRequest(context.directory, pending.request);
               const freshDescriptor = fresh.ok
                 ? externalActionDescriptor(pending.request.operation, fresh.data.descriptorPayload)
                 : null;
               if (freshDescriptor === pending.descriptor) {
-                proposalToCommit = pending;
-                recordInput = {
-                  ...recordInput,
-                  binding: {
-                    ...(recordInput as { binding: Record<string, unknown> }).binding,
-                    approvedContent: pending.descriptor,
-                    displayed: pending.approvedText,
-                  },
-                };
-                bound = true;
+                valid.push(pending);
+                if (observed.receipt.sequence <= pending.receiptSequence) unresolved = true;
               } else if (fresh.ok) {
-                // Proven drift evicts the stale pending so a fresh resolve
-                // opens exactly one question instead of wedging ambiguous.
-                actionProposals.set(
-                  context.sessionID,
-                  queue.filter((candidate) => candidate !== pending),
-                );
-              }
+                stale.add(pending);
+              } else unresolved = true;
+            }
+            if (stale.size)
+              actionProposals.set(
+                context.sessionID,
+                queue.filter((candidate) => !stale.has(candidate)),
+              );
+            const validDescriptors = new Set(valid.map((pending) => pending.descriptor));
+            if (unresolved || validDescriptors.size > 1)
+              return output(
+                failure(
+                  "invalid_input",
+                  "matching action proposals are ambiguous or this receipt predates a matching proposal; resolve and ask again",
+                ),
+              );
+            if (validDescriptors.size === 1) {
+              const pending = valid[0];
+              proposalToCommit = pending;
+              recordInput = {
+                ...recordInput,
+                binding: {
+                  ...(recordInput as { binding: Record<string, unknown> }).binding,
+                  approvedContent: pending.descriptor,
+                  displayed: pending.approvedText,
+                },
+              };
+              bound = true;
             }
             if (!bound && !isSelfAuthorizingActionContent(decision.binding.approvedContent)) {
               return output(
@@ -938,20 +986,23 @@ export const createWorkitTools = ({
     workit_external_action: tool({
       description: `Run one fixed optional action. ${externalActionHelp}`,
       args: {
-        operation: tool.schema.enum([
-          "git.branch_setup",
-          "git.commit",
-          "git.push",
-          "hosting.pull_request",
-          "hosting.merge",
-          "hosting.delete_branch",
-          "youtrack.update",
-          "youtrack.time",
-          "youtrack.meeting",
-          "changelog.apply",
-          "context.read",
-        ]),
-        payload: tool.schema.record(tool.schema.string(), tool.schema.any()),
+        operation: tool.schema.enum(
+          externalActionSchema.options.map((variant) => variant.shape.operation.value) as [
+            string,
+            ...string[],
+          ],
+        ),
+        payload: tool.schema
+          .union(
+            externalActionSchema.options.map((variant) => variant.shape.payload) as [
+              any,
+              any,
+              ...any[],
+            ],
+          )
+          .describe(
+            "Use the payload variant for the selected operation; Workit validates their exact pairing.",
+          ),
       },
       execute: async (args, context) => {
         const parsed = externalActionRequest(args);
@@ -1165,6 +1216,7 @@ export const createWorkitTools = ({
               // upgrades included), so record-time re-resolution replays
               // the same bytes instead of drifting on its own upgrade.
               request: resolved.data.request,
+              receiptSequence: receipts.sequence,
             };
             if (!existing) {
               pending.push(open);

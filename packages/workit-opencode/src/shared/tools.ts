@@ -2,7 +2,7 @@ import {
   OPERATION_FAMILIES,
   OPERATION_SCHEMA_DEPTH,
   boundedOperationJsonSchema,
-  externalActionHelp,
+  externalActionJsonSchema,
   type OperationFamily,
 } from "@brainervirus/workit-core/src/core";
 
@@ -26,20 +26,6 @@ const objectSchema = (
   additionalProperties: false,
 });
 
-const WORKIT_EXTERNAL_ACTION_OPERATIONS = [
-  "git.branch_setup",
-  "git.commit",
-  "git.push",
-  "hosting.pull_request",
-  "hosting.merge",
-  "hosting.delete_branch",
-  "youtrack.update",
-  "youtrack.time",
-  "youtrack.meeting",
-  "changelog.apply",
-  "context.read",
-] as const;
-
 const familyTools = OPERATION_FAMILIES.map((family): WorkitToolSpec => ({
   name: `workit_${family}`,
   description: `Workit ${family} operations backed by the shared task contract.`,
@@ -50,22 +36,9 @@ export const WORKIT_TOOL_CATALOG: readonly WorkitToolSpec[] = [
   ...familyTools,
   {
     name: "workit_external_action",
-    description: `Run one fixed optional action. ${externalActionHelp}`,
-    input: objectSchema(
-      {
-        operation: {
-          type: "string",
-          enum: [...WORKIT_EXTERNAL_ACTION_OPERATIONS],
-          description: "Fixed optional action to run.",
-        },
-        payload: {
-          type: "object",
-          description: "Operation-specific payload; Workit validates it.",
-          additionalProperties: true,
-        },
-      },
-      ["operation", "payload"],
-    ),
+    description:
+      "Run a Workit-managed external action. context.read is read-only. Mutations require an active coordinator task, checkout writer ownership, and host-native authorization. Routine Git work already permitted by the host can use native tools without a Workit task; never use another route to bypass a host denial or uncertain result.",
+    input: externalActionJsonSchema() as Record<string, unknown>,
   },
   {
     name: "workit_init_apply",
