@@ -8,6 +8,8 @@ import {
   readWorkspacesResult,
   resolveWorkspace,
   resolveWorkspacePolicy,
+  resolveRuntimeWorkspacePolicy,
+  resolveRuntimeWorkspaceVcs,
   selectReleaseTrack,
   validateWorkspaceGlob,
   workspacesPath,
@@ -55,7 +57,7 @@ test("resolveWorkspace matches work and personal globs, deep paths included", ()
   });
 });
 
-test("overlapping workspace globs require an explicit named match", () => {
+test("more-specific workspace globs override broad matches", () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "wf-ws-first-"));
   writeWorkspaces(
     dir,
@@ -67,13 +69,65 @@ test("overlapping workspace globs require an explicit named match", () => {
     }),
   );
   withIsolatedConfig(dir, () => {
-    expect(() => resolveWorkspace("/home/u/Documents/projects/work/x")).toThrow(
-      /ambiguous workspace.*first, second/,
-    );
+    expect(resolveWorkspace("/home/u/Documents/projects/work/x")?.name).toBe("second");
+    expect(resolveWorkspace("/home/u/Documents/projects/work/x", "first")?.name).toBe("first");
     expect(resolveWorkspace("/home/u/Documents/projects/work/x", "second")?.name).toBe("second");
     expect(() => resolveWorkspace("/home/u/Documents/projects/work/x", "missing")).toThrow(
       /matching choices: first, second/,
     );
+  });
+});
+
+test("equally-specific overlapping workspace globs require an explicit name", () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "wf-ws-tie-"));
+  writeWorkspaces(
+    dir,
+    JSON.stringify({
+      workspaces: [
+        { name: "first", glob: "/home/*/Documents/projects/**" },
+        { name: "second", glob: "/home/*/Documents/projects/**" },
+      ],
+    }),
+  );
+  withIsolatedConfig(dir, () => {
+    expect(() => resolveWorkspace("/home/u/Documents/projects/work/x")).toThrow(
+      /ambiguous workspace.*first, second/,
+    );
+    expect(resolveWorkspace("/home/u/Documents/projects/work/x", "second")?.name).toBe("second");
+  });
+});
+
+test("runtime VCS and branch policy resolution use the most-specific workspace", () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "wf-ws-specific-"));
+  const cwd = "/home/u/Documents/projects/work/sixbell/productos/ri/web";
+  writeWorkspaces(
+    dir,
+    JSON.stringify({
+      workspaces: [
+        {
+          name: "work",
+          glob: "/home/*/Documents/projects/work/**",
+          vcs: { provider: "gitlab", defaultTargetBranch: "develop" },
+          branchPolicy: { preset: "gitflow" },
+        },
+        {
+          name: "github-web",
+          glob: "/home/*/Documents/projects/work/sixbell/productos/ri/web/**",
+          vcs: { provider: "github", defaultTargetBranch: "nun-develop" },
+          branchPolicy: { preset: "github-flow" },
+        },
+      ],
+    }),
+  );
+  withIsolatedConfig(dir, () => {
+    expect(resolveRuntimeWorkspaceVcs(cwd)).toMatchObject({
+      name: "github-web",
+      vcs: { provider: "github", defaultTargetBranch: "nun-develop" },
+    });
+    expect(resolveRuntimeWorkspacePolicy(cwd, "branch")).toMatchObject({
+      source: "workspace:github-web",
+      policy: { preset: "github-flow" },
+    });
   });
 });
 
@@ -155,14 +209,14 @@ test("CA-01: resolveWorkspace maps work/personal globs to vcs + branchPolicy pre
   });
 });
 
-test("initStatus reports workspace ambiguity and path without choosing by file order", () => {
+test("initStatus reports equal-specificity ambiguity without choosing by file order", () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "wf-ws-status-"));
   writeWorkspaces(
     dir,
     JSON.stringify({
       workspaces: [
         { name: "personal", glob: path.join(process.cwd(), "**") },
-        { name: "catchall", glob: "**" },
+        { name: "catchall", glob: path.join(process.cwd(), "**") },
       ],
     }),
   );

@@ -409,6 +409,43 @@ const canonicalGlob = (glob: string): string => {
   return real + (prefix.endsWith("/") ? "/" : "") + rest;
 };
 
+const globSpecificity = (glob: string): number =>
+  glob
+    .replaceAll("\\", "/")
+    .split("/")
+    .filter((segment) => segment.length > 0 && !/[*?[\]{]/.test(segment)).length;
+
+const selectWorkspaceMatch = <T extends { name: string; glob: string }>(
+  matches: T[],
+  cwd: string,
+  workspaceName?: string,
+): T | undefined => {
+  if (workspaceName !== undefined) {
+    const named = matches.filter((entry) => entry.name === workspaceName);
+    if (named.length === 1) return named[0];
+    if (named.length > 1)
+      throw new Error(`ambiguous workspace ${JSON.stringify(workspaceName)} for ${cwd}`);
+    if (matches.length > 0) {
+      throw new Error(
+        `workspace ${JSON.stringify(workspaceName)} does not match ${cwd}; matching choices: ${matches.map((entry) => entry.name).join(", ")}`,
+      );
+    }
+    throw new Error(`workspace ${JSON.stringify(workspaceName)} does not match ${cwd}`);
+  }
+
+  if (matches.length < 2) return matches[0];
+  const highestSpecificity = Math.max(...matches.map((entry) => globSpecificity(entry.glob)));
+  const mostSpecific = matches.filter(
+    (entry) => globSpecificity(entry.glob) === highestSpecificity,
+  );
+  if (mostSpecific.length > 1) {
+    throw new Error(
+      `ambiguous workspace for ${cwd}; choose one of: ${mostSpecific.map((entry) => entry.name).join(", ")}`,
+    );
+  }
+  return mostSpecific[0];
+};
+
 /** Match a cwd against the workspaces.json under an explicit config dir. */
 export const resolveWorkspaceFrom = (
   cwd: string,
@@ -440,23 +477,7 @@ export const resolveWorkspaceFrom = (
     }
     if (matched) matches.push(ws);
   }
-  if (workspaceName !== undefined) {
-    const selected = matches.find((ws) => ws.name === workspaceName);
-    if (!selected && matches.length > 0) {
-      const matchingNames = matches.map((ws) => ws.name);
-      throw new Error(
-        `workspace ${JSON.stringify(workspaceName)} does not match ${cwd}; matching choices: ${matchingNames.join(", ")}`,
-      );
-    }
-    if (selected) return selected;
-    throw new Error(`workspace ${JSON.stringify(workspaceName)} does not match ${cwd}`);
-  }
-  if (matches.length > 1) {
-    throw new Error(
-      `ambiguous workspace for ${cwd}; choose one of: ${matches.map((ws) => ws.name).join(", ")}`,
-    );
-  }
-  return matches[0] ?? null;
+  return selectWorkspaceMatch(matches, cwd, workspaceName) ?? null;
 };
 
 export const resolveWorkspace = (
@@ -560,22 +581,7 @@ const resolveRuntimeWorkspaceCandidate = (
     );
   });
   const workspaceName = process.env.WORKFLOW_WORKSPACE_NAME?.trim() || undefined;
-  let selected: RuntimeWorkspaceCandidate | undefined;
-  if (workspaceName) {
-    const named = matches.filter((entry) => entry.name === workspaceName);
-    if (named.length === 1) selected = named[0];
-    else if (named.length > 1)
-      throw new Error(`ambiguous workspace ${JSON.stringify(workspaceName)} for ${cwd}`);
-    else if (matches.length)
-      throw new Error(
-        `workspace ${JSON.stringify(workspaceName)} does not match ${cwd}; matching choices: ${matches.map((entry) => entry.name).join(", ")}`,
-      );
-    else throw new Error(`workspace ${JSON.stringify(workspaceName)} does not match ${cwd}`);
-  } else if (matches.length > 1)
-    throw new Error(
-      `ambiguous workspace for ${cwd}; choose one of: ${matches.map((entry) => entry.name).join(", ")}`,
-    );
-  else selected = matches[0];
+  const selected = selectWorkspaceMatch(matches, cwd, workspaceName);
   if (!selected) return null;
   const policy = runtimeWorkspacePolicySchema(kind).safeParse(selected);
   if (!policy.success) {
