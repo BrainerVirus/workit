@@ -57,6 +57,7 @@ type PreparedDispatch = {
   workerId: string;
   callID: string;
   childID: string | null;
+  completionReport?: { outcome: "completed"; summary: string; evidenceIds: []; findingIds: [] };
 };
 
 export type V2Lifecycle = {
@@ -106,7 +107,6 @@ export const createV2Lifecycle = (deps: V2LifecycleDeps): V2Lifecycle => {
     string,
     { parentID: string; taskId: string; workerId: string }
   >();
-  const unresolvedTaskLaunches = new Set<string>();
   const now = () => new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
 
   const readSession = async (sessionID: string): Promise<V2SessionInfo | null> => {
@@ -250,7 +250,11 @@ export const createV2Lifecycle = (deps: V2LifecycleDeps): V2Lifecycle => {
     return "prepared";
   };
 
-  const commitDispatchStart = (coordinator: string, childID: string): boolean => {
+  const commitDispatchStart = (
+    coordinator: string,
+    childID: string,
+    retainPending = false,
+  ): boolean => {
     const pending = dispatches.get(coordinator);
     if (!pending) return false;
     pending.generation.childCreated = true;
@@ -267,8 +271,10 @@ export const createV2Lifecycle = (deps: V2LifecycleDeps): V2Lifecycle => {
       observation: { event: "running", sessionID: childID },
     });
     if (!committed.ok) return false;
-    dispatches.delete(coordinator);
-    if (inflight.get(coordinator) === pending.callID) inflight.delete(coordinator);
+    if (!retainPending) {
+      dispatches.delete(coordinator);
+      if (inflight.get(coordinator) === pending.callID) inflight.delete(coordinator);
+    }
     lifecycleBindings.set(childID, {
       parentID: coordinator,
       taskId: pending.taskId,
@@ -284,11 +290,11 @@ export const createV2Lifecycle = (deps: V2LifecycleDeps): V2Lifecycle => {
     binding?: { taskId: string; workerId: string },
     deleted = false,
     report?: { outcome: "completed"; summary: string; evidenceIds: []; findingIds: [] },
-  ): Promise<void> => {
+  ): Promise<boolean> => {
     const store = new TaskStore(root);
     const listed = store.listTasks();
     const workspace = store.readWorkspace();
-    if (!listed.ok || !workspace.ok || !workspace.data) return;
+    if (!listed.ok || !workspace.ok || !workspace.data) return false;
     const persisted = listed.data.flatMap((task) =>
       task.status === "active"
         ? task.workers
@@ -301,7 +307,7 @@ export const createV2Lifecycle = (deps: V2LifecycleDeps): V2Lifecycle => {
         : [],
     );
     const matches = persisted.filter(({ entry }) => entry.data.session?.kind === "host");
-    if (binding && matches.length !== 1) return;
+    if (binding && matches.length !== 1) return false;
     const selected = binding
       ? persisted.find(
           ({ task, entry }) => task.id === binding.taskId && entry.id === binding.workerId,
@@ -309,19 +315,19 @@ export const createV2Lifecycle = (deps: V2LifecycleDeps): V2Lifecycle => {
       : matches.length === 1
         ? matches[0]
         : undefined;
-    if (!selected) return;
-    if (selected.entry.data.session?.kind !== "host") return;
-    if (selected.entry.provenance.session?.kind !== "host") return;
-    if (!binding && deleted) return;
+    if (!selected) return false;
+    if (selected.entry.data.session?.kind !== "host") return false;
+    if (selected.entry.provenance.session?.kind !== "host") return false;
+    if (!binding && deleted) return false;
     if (!deleted) {
       const observed = await readSession(sessionID);
       const observedParent = parentOf(observed);
-      if (!observed || !sameWorkspace(root, observed.directory) || !observedParent) return;
+      if (!observed || !sameWorkspace(root, observed.directory) || !observedParent) return false;
       if (!binding) {
         const coordinator = workerCoordinatorFor(selected.task, selected.entry);
-        if (!coordinator || observedParent !== coordinator) return;
+        if (!coordinator || observedParent !== coordinator) return false;
         parentID = coordinator;
-      } else if (observedParent !== parentID) return;
+      } else if (observedParent !== parentID) return false;
     }
     directChildren.set(sessionID, parentID);
     const core = new WorkitCore(store, {
@@ -342,27 +348,66 @@ export const createV2Lifecycle = (deps: V2LifecycleDeps): V2Lifecycle => {
       ...(report ? { report } : {}),
       observation: { event: state, sessionID },
     });
-    if (!result.ok) return;
+    if (!result.ok) return false;
     lifecycleBindings.set(sessionID, {
       parentID,
       taskId: selected.task.id,
       workerId: selected.entry.id,
     });
+    return true;
   };
 
-  /** One bounded read of a pending launch's observed child; a terminal outcome
-   * settles the durable claim so a missed `execute.after` cannot deadlock. */
+  /** Reconcile an observed child or a lead-settled stop before allowing a new launch. */
   const reconcilePending = async (coordinator: string): Promise<void> => {
     const pending = dispatches.get(coordinator);
-    if (!pending?.childID) return;
+    if (!pending) return;
+    const task = new TaskStore(root).readTask(pending.taskId);
+    if (
+      task.ok &&
+      task.data.workers.find((worker) => worker.id === pending.workerId)?.data.state === "stopped"
+    ) {
+      dispatches.delete(coordinator);
+      if (inflight.get(coordinator) === pending.callID) inflight.delete(coordinator);
+      return;
+    }
+    if (!pending.childID) return;
     const info = await readSession(pending.childID);
-    if (!info || info.id !== pending.childID || !info.outcome) return;
-    await observeLifecycle(pending.childID, coordinator, "stopped", {
-      taskId: pending.taskId,
-      workerId: pending.workerId,
-    });
-    dispatches.delete(coordinator);
-    if (inflight.get(coordinator) === pending.callID) inflight.delete(coordinator);
+    if (
+      !info ||
+      info.id !== pending.childID ||
+      parentOf(info) !== coordinator ||
+      !sameWorkspace(root, info.directory)
+    )
+      return;
+    directChildren.set(info.id, coordinator);
+    const alreadyStarted = lifecycleBindings.get(info.id);
+    if (
+      (!alreadyStarted ||
+        alreadyStarted.parentID !== coordinator ||
+        alreadyStarted.taskId !== pending.taskId ||
+        alreadyStarted.workerId !== pending.workerId) &&
+      !commitDispatchStart(coordinator, info.id, Boolean(info.outcome))
+    )
+      return;
+    const terminal = info.outcome !== undefined || pending.completionReport !== undefined;
+    if (!terminal) return;
+    const stopped = await observeLifecycle(
+      info.id,
+      coordinator,
+      "stopped",
+      {
+        taskId: pending.taskId,
+        workerId: pending.workerId,
+      },
+      false,
+      info.outcome === "failed" || info.outcome === "interrupted"
+        ? undefined
+        : pending.completionReport,
+    );
+    if (stopped) {
+      dispatches.delete(coordinator);
+      if (inflight.get(coordinator) === pending.callID) inflight.delete(coordinator);
+    }
   };
 
   const coordinatorVeto = (coordinator: string): string | null => {
@@ -379,8 +424,6 @@ export const createV2Lifecycle = (deps: V2LifecycleDeps): V2Lifecycle => {
       )
     )
       return "recovery_required: a cancelled worker remains uncertain; repeat worker.cancel on the ended worker to confirm its stop, then retry";
-    if (unresolvedTaskLaunches.delete(coordinator))
-      return "recovery_required: a cancelled worker remains uncertain";
     return null;
   };
 
@@ -472,42 +515,73 @@ export const createV2Lifecycle = (deps: V2LifecycleDeps): V2Lifecycle => {
     const coordinator = event.sessionID;
     const pending = dispatches.get(coordinator);
     const generation = pending?.callID === event.id ? pending : undefined;
+    let started = false;
+    let terminalObserved = false;
+    let terminalObservationRequired = false;
+    let childSession: V2SessionInfo | null = null;
     if (event.status === "completed") {
       const metadata = record(event.result.metadata);
       const child = sessionIDOf(metadata.sessionID ?? metadata.sessionId);
+      const output = contentText(event.result.content);
+      const completedOutput = /<subagent\b[^>]*\bstate="completed"/.test(output);
       if (child) {
-        const childSession = await readSession(child);
-        if (parentOf(childSession) === coordinator) {
+        if (generation) generation.childID = child;
+        childSession = await readSession(child);
+        if (
+          parentOf(childSession) === coordinator &&
+          sameWorkspace(root, childSession?.directory)
+        ) {
           directChildren.set(child, coordinator);
-          if (generation) commitDispatchStart(coordinator, child);
+          const terminal = childSession?.outcome !== undefined || completedOutput;
+          terminalObservationRequired = terminal;
+          if (generation) started = commitDispatchStart(coordinator, child, terminal);
         }
       }
-      const output = contentText(event.result.content);
       const completedChild =
-        child && /<subagent\b[^>]*\bstate="completed"/.test(output) && lifecycleBindings.has(child)
+        child &&
+        (childSession?.outcome !== undefined || completedOutput) &&
+        lifecycleBindings.has(child)
           ? child
           : null;
       if (completedChild) {
         const binding = lifecycleBindings.get(completedChild);
-        if (binding)
-          await observeLifecycle(completedChild, coordinator, "stopped", binding, false, {
-            outcome: "completed",
-            summary: output.trim() || "Native worker completed.",
-            evidenceIds: [],
-            findingIds: [],
-          });
+        if (binding) {
+          const canReportCompletion =
+            completedOutput &&
+            childSession?.outcome !== "failed" &&
+            childSession?.outcome !== "interrupted";
+          if (canReportCompletion && generation)
+            generation.completionReport = {
+              outcome: "completed",
+              summary: output.trim() || "Native worker completed.",
+              evidenceIds: [],
+              findingIds: [],
+            };
+          terminalObserved = canReportCompletion
+            ? await observeLifecycle(
+                completedChild,
+                coordinator,
+                "stopped",
+                binding,
+                false,
+                generation?.completionReport ?? {
+                  outcome: "completed",
+                  summary: output.trim() || "Native worker completed.",
+                  evidenceIds: [],
+                  findingIds: [],
+                },
+              )
+            : await observeLifecycle(completedChild, coordinator, "stopped", binding);
+        }
       }
-    } else {
-      const message = String(
-        (event.error as { message?: unknown } | undefined)?.message ?? event.error ?? "",
-      ).toLowerCase();
-      // Only the host's own terminal proof settles a launch as not started;
-      // V2 exposes none, so cancellation text stays conservatively unresolved.
-      if (generation && /(?:cancel|interrupt|unknown|uncertain)/.test(message))
-        unresolvedTaskLaunches.add(coordinator);
     }
-    // The reservation lives for exactly one subagent call: the completed
-    // result or its failure releases the coordinator's fresh-launch slot.
+    // V2's error/result shape does not prove that no child was created. Keep
+    // the correlation until a verified child binds or the lead settles stop.
+    if (
+      generation &&
+      (event.status === "error" || !started || (terminalObservationRequired && !terminalObserved))
+    )
+      return;
     if (generation) {
       dispatches.delete(coordinator);
       if (inflight.get(coordinator) === event.id) inflight.delete(coordinator);

@@ -320,9 +320,225 @@ test("a fresh managed launch with no assigned worker is denied before spawn", as
   }
 });
 
-test("an ambiguous cancelled result vetoes the next launch until it is reconciled", async () => {
+test("unproven subagent outcomes retain correlation until a late child is observed", async () => {
+  for (const outcome of [
+    { status: "error" as const, error: { message: "provider failure" } },
+    { status: "completed" as const, result: { content: "missing child metadata" } },
+  ]) {
+    const value = fixture();
+    try {
+      await value.lifecycle.executeBefore({
+        tool: "subagent",
+        sessionID: "coordinator",
+        id: "call_1",
+        input: {},
+      });
+      await value.lifecycle.executeAfter({
+        tool: "subagent",
+        sessionID: "coordinator",
+        id: "call_1",
+        input: {},
+        ...outcome,
+      });
+      expect(value.worker().data.state).toBe("dispatching");
+      expect(value.lifecycle.pendingLaunch("coordinator")).toBe(true);
+      await expect(
+        value.lifecycle.executeBefore({
+          tool: "subagent",
+          sessionID: "coordinator",
+          id: "call_2",
+          input: {},
+        }),
+      ).rejects.toThrow(/previous fresh subagent launch is unsettled/);
+
+      value.sessions.set("ses_child1", {
+        id: "ses_child1",
+        parentID: "coordinator",
+        directory: value.root,
+      });
+      await value.lifecycle.handleEvent({
+        type: "session.created",
+        data: {
+          sessionID: "ses_child1",
+          parentID: "coordinator",
+          location: { directory: value.root },
+        },
+      });
+      expect(value.worker().data.state).toBe("running");
+      expect(value.lifecycle.pendingLaunch("coordinator")).toBe(false);
+    } finally {
+      value.cleanup();
+    }
+  }
+});
+
+test("a reported child is retried and settled from session evidence", async () => {
   const value = fixture();
   try {
+    value.assignWorker("investigator");
+    await value.lifecycle.executeBefore({
+      tool: "subagent",
+      sessionID: "coordinator",
+      id: "call_1",
+      input: {},
+    });
+    await value.lifecycle.executeAfter({
+      tool: "subagent",
+      sessionID: "coordinator",
+      id: "call_1",
+      input: {},
+      status: "completed",
+      result: { metadata: { sessionID: "ses_child1" }, content: [] },
+    });
+    expect(value.lifecycle.pendingLaunch("coordinator")).toBe(true);
+
+    value.sessions.set("ses_child1", {
+      id: "ses_child1",
+      parentID: "coordinator",
+      directory: value.root,
+      outcome: "succeeded",
+    });
+    await value.lifecycle.executeBefore({
+      tool: "subagent",
+      sessionID: "coordinator",
+      id: "call_2",
+      input: {},
+    });
+    expect(value.worker().data.state).toBe("stopped");
+    expect(value.worker(1).data.state).toBe("dispatching");
+  } finally {
+    value.cleanup();
+  }
+});
+
+test("failed completion observation keeps its launch and report for retry", async () => {
+  const value = fixture();
+  try {
+    value.assignWorker("investigator");
+    await value.lifecycle.executeBefore({
+      tool: "subagent",
+      sessionID: "coordinator",
+      id: "call_1",
+      input: {},
+    });
+    value.sessions.set("ses_child1", {
+      id: "ses_child1",
+      parentID: "coordinator",
+      directory: value.root,
+    });
+    const lookup = value.sessions.get.bind(value.sessions);
+    let childReads = 0;
+    value.sessions.get = (sessionID) => {
+      if (sessionID === "ses_child1" && ++childReads === 2)
+        return {
+          id: sessionID,
+          parentID: "other-coordinator",
+          directory: value.root,
+        };
+      return lookup(sessionID);
+    };
+    await value.lifecycle.executeAfter({
+      tool: "subagent",
+      sessionID: "coordinator",
+      id: "call_1",
+      input: {},
+      status: "completed",
+      result: {
+        metadata: { sessionID: "ses_child1" },
+        content: '<subagent sessionID="ses_child1" state="completed">done</subagent>',
+      },
+    });
+    expect(value.worker().data.state).toBe("running");
+    expect(value.lifecycle.pendingLaunch("coordinator")).toBe(true);
+
+    value.sessions.get = lookup;
+    await value.lifecycle.executeBefore({
+      tool: "subagent",
+      sessionID: "coordinator",
+      id: "call_2",
+      input: {},
+    });
+    expect(value.worker().data.state).toBe("stopped");
+    expect(value.worker().data.report).toEqual({
+      outcome: "completed",
+      summary: '<subagent sessionID="ses_child1" state="completed">done</subagent>',
+      evidenceIds: [],
+      findingIds: [],
+    });
+    expect(value.worker(1).data.state).toBe("dispatching");
+  } finally {
+    value.cleanup();
+  }
+});
+
+test("explicit failed session outcome overrides a completed result marker", async () => {
+  const value = fixture();
+  try {
+    await value.lifecycle.executeBefore({
+      tool: "subagent",
+      sessionID: "coordinator",
+      id: "call_1",
+      input: {},
+    });
+    value.sessions.set("ses_child1", {
+      id: "ses_child1",
+      parentID: "coordinator",
+      directory: value.root,
+      outcome: "failed",
+    });
+    await value.lifecycle.executeAfter({
+      tool: "subagent",
+      sessionID: "coordinator",
+      id: "call_1",
+      input: {},
+      status: "completed",
+      result: {
+        metadata: { sessionID: "ses_child1" },
+        content: '<subagent sessionID="ses_child1" state="completed">done</subagent>',
+      },
+    });
+    expect(value.worker().data.state).toBe("stopped");
+    expect(value.worker().data.report).toBeNull();
+    expect(value.lifecycle.pendingLaunch("coordinator")).toBe(false);
+  } finally {
+    value.cleanup();
+  }
+});
+
+test("a direct child in another workspace is not bound to the task", async () => {
+  const value = fixture();
+  try {
+    await value.lifecycle.executeBefore({
+      tool: "subagent",
+      sessionID: "coordinator",
+      id: "call_1",
+      input: {},
+    });
+    value.sessions.set("ses_other_checkout", {
+      id: "ses_other_checkout",
+      parentID: "coordinator",
+      directory: join(value.root, "other-checkout"),
+    });
+    await value.lifecycle.executeAfter({
+      tool: "subagent",
+      sessionID: "coordinator",
+      id: "call_1",
+      input: {},
+      status: "completed",
+      result: { metadata: { sessionID: "ses_other_checkout" }, content: [] },
+    });
+    expect(value.worker().data.state).toBe("dispatching");
+    expect(value.lifecycle.pendingLaunch("coordinator")).toBe(true);
+    expect(value.lifecycle.directChildren.has("ses_other_checkout")).toBe(false);
+  } finally {
+    value.cleanup();
+  }
+});
+
+test("a lead-settled stop clears an ambiguous dispatch before the next launch", async () => {
+  const value = fixture();
+  try {
+    value.assignWorker("investigator");
     await value.lifecycle.executeBefore({
       tool: "subagent",
       sessionID: "coordinator",
@@ -335,16 +551,25 @@ test("an ambiguous cancelled result vetoes the next launch until it is reconcile
       id: "call_1",
       input: {},
       status: "error",
-      error: { message: "call cancelled" },
+      error: { message: "provider failure" },
     });
-    await expect(
-      value.lifecycle.executeBefore({
-        tool: "subagent",
-        sessionID: "coordinator",
-        id: "call_2",
-        input: {},
-      }),
-    ).rejects.toThrow(/cancelled worker remains uncertain/);
+    const stopped = value.core.worker({
+      schemaVersion: 1,
+      action: "cancel",
+      taskId: value.taskId,
+      ...value.revisions(),
+      workerId: value.worker().id,
+      reason: "confirmed that no child session remains",
+    });
+    expect(stopped.ok).toBe(true);
+    await value.lifecycle.executeBefore({
+      tool: "subagent",
+      sessionID: "coordinator",
+      id: "call_2",
+      input: {},
+    });
+    expect(value.worker(1).data.state).toBe("dispatching");
+    expect(value.lifecycle.pendingLaunch("coordinator")).toBe(true);
   } finally {
     value.cleanup();
   }
