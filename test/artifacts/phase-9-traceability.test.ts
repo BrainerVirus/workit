@@ -105,7 +105,7 @@ const ROWS: Row[] = [
     row: "POST-12",
     requirement: "native-choice evidence is model-forgeable",
     evidence: [
-      "test/workit-opencode/task-tools.test.ts::OpenCode action route consumes the exact native receipt before committing",
+      "test/workit-opencode/task-tools.test.ts::stated design choices need no receipt and never authorize an action",
     ],
   },
   {

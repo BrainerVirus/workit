@@ -6,7 +6,7 @@ import { spawnSync } from "node:child_process";
 import { TaskStore, WorkitCore } from "@/packages/workit-core/src/core";
 import definition from "@/packages/workit-opencode/src/v2/plugin";
 import { normalizeQuestionAnswers } from "@/packages/workit-opencode/src/v2/receipts";
-import { assessment, taskStartRequest } from "../workit-core/task-fixtures";
+import { taskStartRequest } from "../workit-core/task-fixtures";
 
 /** The exact 10 registered Workit tool names in registration order. */
 const TOOL_NAMES = [
@@ -18,7 +18,7 @@ const TOOL_NAMES = [
   "workit_worker",
   "workit_writer",
   "workit_state",
-  "workit_external_action",
+  "workit_context",
   "workit_init_apply",
 ];
 
@@ -170,31 +170,26 @@ test("setup registers the exact 10 tools with codemode off and object schemas", 
   try {
     const { registered, cleanup } = await harness(root);
     expect(registered.map((tool) => tool.name)).toEqual(TOOL_NAMES);
+    expect(registered.some((tool) => tool.name === "workit_external_action")).toBe(false);
     for (const tool of registered) {
       expect(tool.options?.codemode, tool.name).toBe(false);
       expect(tool.input.type, tool.name).toBe("object");
       expect(tool.description.length, tool.name).toBeGreaterThan(0);
     }
-    const external = registered.find((tool) => tool.name === "workit_external_action");
-    const variants = external?.input.oneOf;
-    expect(variants.map((variant: any) => variant.properties.operation.const)).toEqual([
-      "git.branch_setup",
-      "git.commit",
-      "git.push",
-      "hosting.pull_request",
-      "hosting.merge",
-      "hosting.delete_branch",
-      "youtrack.update",
-      "youtrack.time",
-      "youtrack.meeting",
-      "changelog.apply",
-      "context.read",
+    const contextTool = registered.find((tool) => tool.name === "workit_context");
+    expect(contextTool?.input.required).toEqual(["kind"]);
+    expect(contextTool?.input.additionalProperties).toBe(false);
+    expect(contextTool?.input.properties.kind.enum).toEqual([
+      "git",
+      "pr",
+      "youtrack",
+      "github_issue",
+      "gitlab_issue",
+      "changelog",
+      "release",
+      "affected",
     ]);
-    for (const variant of variants) {
-      expect(variant.required).toEqual(["operation", "payload"]);
-      expect(variant.additionalProperties).toBe(false);
-      expect(variant.properties.payload.type).toBe("object");
-    }
+    expect(contextTool?.input.properties).not.toHaveProperty("operation");
     const init = registered.find((tool) => tool.name === "workit_init_apply");
     expect(init?.input.required).toEqual(["confirmed", "action"]);
     expect(init?.input.properties.action.enum).toContain("branch_policy");
@@ -233,6 +228,8 @@ test("foreign session locations and child sessions are denied", async () => {
     expect(denied.error).toContain("session location");
 
     const child = await harness(root, { parentID: "ses_parent" });
+    expect(await child.call("workit_context", { kind: "git" })).toMatchObject({ ok: true });
+    expect(existsSync(path.join(root, ".workit"))).toBe(false);
     const blocked = await child.call("workit_task", { schemaVersion: 1, action: "list" });
     expect(blocked.ok).toBe(false);
     expect(blocked.error).toContain("no validated Workit worker");
@@ -242,161 +239,27 @@ test("foreign session locations and child sessions are denied", async () => {
   }
 });
 
-test("V2 action-time targets use the shared native-receipt runner", async () => {
+test("context rejects mutation-shaped arguments without Git or Workit effects", async () => {
   const root = repository();
-  const target = repository("feature/v2-target");
   try {
-    const { call, hooks } = await harness(root);
-    const read = await call("workit_external_action", {
-      operation: "context.read",
-      payload: { kind: "git" },
-    });
-    expect(read.ok).toBe(true);
-    writeFileSync(path.join(target, "change.txt"), "change\n");
-    spawnSync("git", ["add", "change.txt"], { cwd: target });
-    const intent = {
-      objective: "V2 action target",
-      scope: { description: "V2 action target", paths: ["."], exclusions: [] },
-      authorityRefs: [],
-    };
-    const started = await call("workit_task", taskStartRequest({ intent }));
-    expect(started.ok).toBe(true);
-    const taskId = started.data.id as string;
+    const { call } = await harness(root);
+    const before = spawnSync("git", ["status", "--porcelain=v1"], {
+      cwd: root,
+      encoding: "utf8",
+    }).stdout;
     expect(
-      await call("workit_policy", {
-        schemaVersion: 1,
-        action: "assess",
-        taskId,
-        assessment: assessment(),
+      await call("workit_context", {
+        kind: "git",
+        operation: "git.commit",
+        payload: { message: "must-not-run" },
       }),
-    ).toMatchObject({ ok: true });
-    const initial = await call("workit_task", {
-      schemaVersion: 1,
-      action: "inspect",
-      taskId,
-      view: "full",
-    });
+    ).toMatchObject({ ok: false, code: "invalid_input" });
     expect(
-      await call("workit_writer", {
-        schemaVersion: 1,
-        action: "acquire",
-        taskId,
-        expectedRevision: initial.data.task.revision,
-        expectedWorkspaceRevision: initial.data.workspace.revision,
-        workerId: null,
-      }),
-    ).toMatchObject({ ok: true });
-    const request = {
-      operation: "git.commit",
-      payload: { cwd: target, message: "fix: commit in V2 target" },
-    };
-    const proposal = await call("workit_external_action", request);
-    expect(proposal).toMatchObject({ ok: false, code: "needs_input" });
-    const item = proposal.details.proposal;
-    const question = {
-      questions: [
-        {
-          header: "Workit decision: action",
-          question: item.presented,
-          options: [
-            { label: "approved", description: item.approvedContent },
-            { label: "rejected", description: "Reject this decision" },
-          ],
-        },
-      ],
-    };
-    await hooks.get("execute.before")!({
-      tool: "question",
-      sessionID: "ses_v2",
-      id: "call_v2_old_question",
-      input: question,
-    });
-    spawnSync("git", ["branch", "alternate"], { cwd: target });
-    spawnSync("git", ["checkout", "-q", "alternate"], { cwd: target });
-    const freshProposal = await call("workit_external_action", request);
-    expect(freshProposal).toMatchObject({ ok: false, code: "needs_input" });
-    expect(freshProposal.details.proposal.presented).toBe(item.presented);
-    expect(freshProposal.details.proposal.approvedContent).toBe(item.approvedContent);
-    await hooks.get("execute.after")!({
-      tool: "question",
-      sessionID: "ses_v2",
-      id: "call_v2_old_question",
-      input: question,
-      status: "completed",
-      result: { metadata: { answers: { q0: "approved" } } },
-    });
-    const current = await call("workit_task", {
-      schemaVersion: 1,
-      action: "inspect",
-      taskId,
-      view: "full",
-    });
-    const recorded = await call("workit_decision", {
-      schemaVersion: 1,
-      action: "record",
-      taskId,
-      expectedRevision: current.data.task.revision,
-      purpose: "action",
-      binding: {
-        taskId,
-        workspaceId: current.data.workspace.id,
-        scope: current.data.task.intent.data.scope,
-        presented: item.presented,
-        approvedContent: item.approvedContent,
-        contentRefs: [],
-      },
-      response: "approved",
-      requirementIds: [],
-    });
-    expect(recorded).toMatchObject({ ok: false, code: "invalid_input" });
-    await hooks.get("execute.before")!({
-      tool: "question",
-      sessionID: "ses_v2",
-      id: "call_v2_fresh_question",
-      input: question,
-    });
-    await hooks.get("execute.after")!({
-      tool: "question",
-      sessionID: "ses_v2",
-      id: "call_v2_fresh_question",
-      input: question,
-      status: "completed",
-      result: { metadata: { answers: { q0: "approved" } } },
-    });
-    const latest = await call("workit_task", {
-      schemaVersion: 1,
-      action: "inspect",
-      taskId,
-      view: "full",
-    });
-    const freshDecision = await call("workit_decision", {
-      schemaVersion: 1,
-      action: "record",
-      taskId,
-      expectedRevision: latest.data.task.revision,
-      purpose: "action",
-      binding: {
-        taskId,
-        workspaceId: latest.data.workspace.id,
-        scope: latest.data.task.intent.data.scope,
-        presented: item.presented,
-        approvedContent: item.approvedContent,
-        contentRefs: [],
-      },
-      response: "approved",
-      requirementIds: [],
-    });
-    expect(freshDecision).toMatchObject({ ok: true });
-    expect(await call("workit_external_action", request)).toMatchObject({ ok: true });
-    expect(
-      spawnSync("git", ["log", "-1", "--pretty=%s"], {
-        cwd: target,
-        encoding: "utf8",
-      }).stdout.trim(),
-    ).toBe("fix: commit in V2 target");
+      spawnSync("git", ["status", "--porcelain=v1"], { cwd: root, encoding: "utf8" }).stdout,
+    ).toBe(before);
+    expect(existsSync(path.join(root, ".workit"))).toBe(false);
   } finally {
     rmSync(root, { recursive: true, force: true });
-    rmSync(target, { recursive: true, force: true });
   }
 });
 

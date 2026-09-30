@@ -78,15 +78,12 @@ test("configGuardError contains marker, missing ids, and fix path", () => {
   expect(error).toContain("npx workit init");
 });
 
-test("youtrack tools return structured config-gap error instead of raw ENOENT", async () => {
+test("YouTrack verification returns a structured config-gap error instead of raw ENOENT", async () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "wf-guard-tool-"));
   const tools = createYouTrackTools();
   const ctx = { directory: "/repo", worktree: "/repo" } as never;
   await withIsolatedXDG(dir, async () => {
-    const raw = await tools.workit_youtrack_log_time.execute(
-      { confirmed: true, issueId: "NSR-1", minutes: 30 },
-      ctx,
-    );
+    const raw = await tools.workit_youtrack_verify_token.execute({}, ctx);
     const result = JSON.parse(raw as string);
     expect(result.ok).toBe(false);
     expect(result.error).toContain(CONFIG_GAP_MARKER);

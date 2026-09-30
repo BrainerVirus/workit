@@ -1,5 +1,5 @@
 import path from "node:path";
-import { tool, type ToolContext } from "@opencode-ai/plugin";
+import { tool } from "@opencode-ai/plugin";
 import { fail, ok, resolveInside } from "@brainervirus/workit-core/src/core";
 import {
   configGuardError,
@@ -11,31 +11,17 @@ import {
 } from "@brainervirus/workit-core/src/core/youtrack";
 import {
   defaultOperations,
-  logTimeUpdate,
   message,
   normalizeContext,
-  postUpdate,
   readCredentials,
   redact,
   unwrap,
-  ISSUE_RE,
   type LegacyValue,
   type YouTrackOperations,
 } from "@brainervirus/workit-core/src/core/youtrack-tools";
 
 const output = (value: unknown) => JSON.stringify(value, null, 2);
 type MaybePromise<T> = T | Promise<T>;
-
-const withWriteFlag = async <T>(fn: () => Promise<T>): Promise<T> => {
-  const previous = process.env.WORKFLOW_YT_WRITE;
-  process.env.WORKFLOW_YT_WRITE = "1";
-  try {
-    return await fn();
-  } finally {
-    if (previous === undefined) delete process.env.WORKFLOW_YT_WRITE;
-    else process.env.WORKFLOW_YT_WRITE = previous;
-  }
-};
 
 const standardResult = (value: LegacyValue, token = "") => {
   try {
@@ -60,28 +46,6 @@ const configGap = () => {
   const { missing } = describeConfigGaps(["youtrack_json", "youtrack_token"]);
   return missing.length > 0 ? output(fail(configGuardError(missing))) : null;
 };
-const requireConfirmed = (confirmed: boolean) =>
-  confirmed === true ? null : output(fail("confirmed: true required"));
-
-const rejectedTimeInput = (issueId: string, minutes: number) => {
-  const error = !ISSUE_RE.test(issueId)
-    ? "invalid issueId"
-    : !Number.isFinite(minutes) || minutes <= 0
-      ? "minutes must be positive"
-      : null;
-  return error
-    ? output(
-        fail(error, {
-          issueId,
-          loggedMinutes: 0,
-          outcome: "not_applied",
-          retry: "workit_youtrack_log_time",
-          instructions: "Correct the invalid input, then retry workit_youtrack_log_time once.",
-        }),
-      )
-    : null;
-};
-
 export function createYouTrackTools(operations: YouTrackOperations = defaultOperations) {
   return {
     workit_youtrack_verify_token: tool({
@@ -172,59 +136,6 @@ export function createYouTrackTools(operations: YouTrackOperations = defaultOper
           .optional(),
       },
       execute: async (input) => invoke(() => legacyBuildDraft(input as never)),
-    }),
-    workit_youtrack_log_time: tool({
-      description: "Log confirmed time on an existing YouTrack issue without posting a comment",
-      args: {
-        confirmed: tool.schema.boolean(),
-        issueId: tool.schema.string(),
-        minutes: tool.schema.number(),
-        text: tool.schema.string().optional(),
-        dateMs: tool.schema.number().optional(),
-      },
-      execute: async ({ confirmed, ...input }, context: ToolContext) => {
-        const rejected = requireConfirmed(confirmed);
-        if (rejected) return rejected;
-        const invalid = rejectedTimeInput(input.issueId, input.minutes);
-        if (invalid) return invalid;
-        let token = "";
-        try {
-          token = credentials().token;
-        } catch (error) {
-          const gap = configGap();
-          if (gap) return gap;
-          return output(fail(message(error)));
-        }
-        const result = await withWriteFlag(() =>
-          logTimeUpdate({ ...input, workspace_root: context.directory }, operations),
-        );
-        return output(result.ok ? result : { ...result, error: redact(result.error, token) });
-      },
-    }),
-    workit_youtrack_post: tool({
-      description: "Post a confirmed es-CL comment, then optionally log time",
-      args: {
-        confirmed: tool.schema.boolean(),
-        issueId: tool.schema.string(),
-        markdown: tool.schema.string(),
-        minutes: tool.schema.number().optional(),
-      },
-      execute: async (input, context: ToolContext) => {
-        const rejected = requireConfirmed(input.confirmed);
-        if (rejected) return rejected;
-        let token = "";
-        try {
-          token = credentials().token;
-        } catch (error) {
-          const gap = configGap();
-          if (gap) return gap;
-          return output(fail(message(error)));
-        }
-        const result = await withWriteFlag(() =>
-          postUpdate({ ...input, workspace_root: context.directory }, operations),
-        );
-        return output(result.ok ? result : { ...result, error: redact(result.error, token) });
-      },
     }),
   };
 }

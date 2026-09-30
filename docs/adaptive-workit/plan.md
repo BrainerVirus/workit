@@ -449,3 +449,46 @@ focused question only when one of those choices blocks a concrete slice.
   restart OpenCode once to activate the tested source; inspect new-session
   routing before model-driven qualification. Do not rebuild or reload while
   the current user session is running.
+
+### OpenCode native-effects cutover — 2026-09-30
+
+- Baseline: PR #134 squash-merged, all fourteen PR checks and main CI passed;
+  v1.3.1 published. Started from manifest-synced main `94adf7a` with a clean tree.
+- User selected removal, not disabled managed executors, on both OpenCode V1
+  and V2. The cutover contract in `reliability-spec.md` supersedes OpenCode's
+  old external-mutation tool. Shared Pi/CLI effects remain in use.
+- Slice 1: delete OpenCode mutation registration, proposal/autoapproval runner
+  and obsolete routing; expose strict read-only `workit_context`. Slice 2
+  depends on 1: adapt adapter/acceptance tests, retaining generic decisions,
+  receipts, workers, shell policy and read-only contexts. Slice 3 depends on
+  1–2: docs, full isolated checks, pack checks and installed V2 loader probe.
+- Two Luna workers have disjoint source/test scopes; the coordinator owns
+  guidance, integration and acceptance. No active host build/reload, real-history
+  migration or pending-outcome settlement occurs during development.
+- Acceptance includes absent executor on both versions, mutation-shaped context
+  input rejected without effects, unchanged state/history and remaining-host
+  behavior. Checkpoint and final counts follow after integration.
+- Slice 1 complete: mutation registration, executor/proposal/autoapproval code
+  and retired repo/YouTrack aliases removed. Context uses the canonical payload
+  and existing read helper, without importing the generic effect executor.
+  Production typecheck and scoped adapter lint passed. Independent Luna review
+  found no definite defect; pinned V1 runtime preserves raw inputs for strict
+  handler validation. Shared guidance no longer points to deleted tool aliases.
+  Next: finalize tests and isolated build/pack/native loader checks.
+
+- Slices 2–3 complete: obsolete executor tests removed; strict context, receipt
+  replay protection, worker provenance, native shell policy and shared Pi/CLI
+  effects retained. Updated one historical traceability reference to the current
+  no-action-authorization regression. Full isolated `bun run check` passed:
+  1,531 tests, lint, format, build and typecheck. Seven release-candidate tarballs
+  and marketplace validation passed.
+- Installed V2.0.19 and official Docker V1.18.30 loaded the candidate in private
+  fixtures and registered the same ten tools, with context present and managed
+  executor absent. These are loader checks, not model-driven qualification.
+  The V1 fixture container was stopped; no user session was resumed. Candidate
+  source matches the workspace; active artifact/config hashes remain unchanged.
+  Evidence: `/tmp/workit-native-effects-{full-check,pack,v2-probe,v1-probe}.log`
+  and `/tmp/workit-native-effects-x7cspusr/` source/host hashes and probe results.
+- Remaining: publish PR, babysit CI and squash-merge; then activate the local pin
+  only at a safe restart boundary. No live history migration is required or
+  authorized. Historical unknown outcomes require evidence before native retry.

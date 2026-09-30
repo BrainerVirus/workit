@@ -3,7 +3,6 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { createRepoTools } from "@/packages/workit-opencode/src/tools/repo";
 import {
   hostingApiHostMatches,
   mergePr,
@@ -499,66 +498,6 @@ test(
   { timeout: 60_000 },
 );
 
-const withWrapperConfig = <T>(fn: () => Promise<T>): Promise<T> => {
-  const previousConfig = process.env.WORKFLOW_TOOLKIT_CONFIG;
-  const previousPath = process.env.PATH;
-  process.env.WORKFLOW_TOOLKIT_CONFIG = cfgDir;
-  process.env.PATH = stubPath();
-  return fn().finally(() => {
-    if (previousConfig === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
-    else process.env.WORKFLOW_TOOLKIT_CONFIG = previousConfig;
-    if (previousPath === undefined) delete process.env.PATH;
-    else process.env.PATH = previousPath;
-  });
-};
-
-test(
-  "CA-06: OpenCode wrapper resolves a valid target for the shared action path",
-  async () => {
-    setupRepoWithOrigin();
-    git(root, ["checkout", "-q", "-b", "feature/ca06"]);
-    const raw = await withWrapperConfig(() => {
-      writeConfig({ preset: "gitflow" }, "develop");
-      return createRepoTools().workit_pr_create.execute(
-        { confirmed: true, title: "T", target_branch: "develop" },
-        { directory: root, worktree: root } as never,
-      );
-    });
-    // Decision ae03c569: the legacy wrapper resolves through the shared
-    // contract and delegates; it never performs a raw provider create.
-    const result = JSON.parse(raw as string);
-    expect(result).toMatchObject({
-      ok: false,
-      code: "needs_input",
-      details: { operation: "hosting.pull_request" },
-    });
-    expect(result.details.proposal.presented).toContain("to `develop`");
-    expect(result.details.guidance).toContain("workit_external_action");
-    expect(existsSync(logFile)).toBe(false);
-  },
-  { timeout: 60_000 },
-);
-
-test(
-  "CA-06: OpenCode wrapper resolves the chosen target without contacting a provider",
-  async () => {
-    setupRepoWithOrigin();
-    git(root, ["checkout", "-q", "-b", "feature/ca06"]);
-    const raw = await withWrapperConfig(() => {
-      writeConfig({ preset: "gitflow" }, "develop");
-      return createRepoTools().workit_pr_create.execute(
-        { confirmed: true, title: "T", target_branch: "main" },
-        { directory: root, worktree: root } as never,
-      );
-    });
-    const result = JSON.parse(raw as string);
-    expect(result).toMatchObject({ ok: false, code: "needs_input" });
-    expect(result.details.proposal.presented).toContain("to `main`");
-    expect(existsSync(logFile)).toBe(false);
-  },
-  { timeout: 60_000 },
-);
-
 // The legacy CLI port must never perform a hosted create itself: it returns
 // the same needs_input shape as the headless `workit action` route.
 
@@ -713,49 +652,6 @@ test(
   { timeout: 60_000 },
 );
 
-test(
-  "B6: OpenCode wrapper delegates hosted creation without inspecting issue-linking environment",
-  async () => {
-    setupRepoWithOrigin();
-    git(root, ["checkout", "-q", "-b", "feature/b6"]);
-    const previous = process.env.WORKFLOW_GH_ISSUE;
-    const previousConfig = process.env.WORKFLOW_TOOLKIT_CONFIG;
-    const previousPath = process.env.PATH;
-    process.env.WORKFLOW_TOOLKIT_CONFIG = cfgDir;
-    process.env.WORKFLOW_GH_ISSUE = "42";
-    process.env.PATH = stubPath();
-    try {
-      writeConfig(
-        { preset: "gitflow", allowed: ["feature/*", "bugfix/*"], protected: ["main", "develop"] },
-        "develop",
-      );
-      const raw = await createRepoTools().workit_pr_create.execute(
-        { confirmed: true, title: "T" },
-        {
-          directory: root,
-          worktree: root,
-        } as never,
-      );
-      const result = JSON.parse(raw as string);
-      expect(result).toMatchObject({
-        ok: false,
-        code: "needs_input",
-        details: { operation: "hosting.pull_request" },
-      });
-      expect(JSON.stringify(result)).not.toContain("#42");
-      expect(existsSync(logFile)).toBe(false);
-    } finally {
-      if (previous === undefined) delete process.env.WORKFLOW_GH_ISSUE;
-      else process.env.WORKFLOW_GH_ISSUE = previous;
-      if (previousConfig === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
-      else process.env.WORKFLOW_TOOLKIT_CONFIG = previousConfig;
-      if (previousPath === undefined) delete process.env.PATH;
-      else process.env.PATH = previousPath;
-    }
-  },
-  { timeout: 60_000 },
-);
-
 // Task 2 — GitHub push-before-create honoring pr.pushBranch.
 
 const branchOn = () => {
@@ -850,40 +746,6 @@ test(
     expect(result.mode).toBe("push");
     expect(result.stderr).toContain("empty current branch");
     expect(existsSync(logFile)).toBe(false); // gh never ran
-  },
-  { timeout: 60_000 },
-);
-
-test(
-  "T2: OpenCode wrapper delegates instead of pushing a branch before hosted creation",
-  async () => {
-    setupRepoWithOrigin();
-    branchOn();
-    const previousConfig = process.env.WORKFLOW_TOOLKIT_CONFIG;
-    const previousPath = process.env.PATH;
-    process.env.WORKFLOW_TOOLKIT_CONFIG = cfgDir;
-    process.env.PATH = stubPath();
-    try {
-      writeConfig(customPolicy, "trunk", { pushBranch: true });
-      const raw = await createRepoTools().workit_pr_create.execute(
-        { confirmed: true, title: "T" },
-        {
-          directory: root,
-          worktree: root,
-        } as never,
-      );
-      const result = JSON.parse(raw as string);
-      expect(result).toMatchObject({ ok: false, code: "needs_input" });
-      expect(
-        git(root, ["ls-remote", `file://${bareRemote}`, "refs/heads/feature/t2"]).stdout,
-      ).not.toContain("feature/t2");
-      expect(existsSync(logFile)).toBe(false);
-    } finally {
-      if (previousConfig === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG;
-      else process.env.WORKFLOW_TOOLKIT_CONFIG = previousConfig;
-      if (previousPath === undefined) delete process.env.PATH;
-      else process.env.PATH = previousPath;
-    }
   },
   { timeout: 60_000 },
 );

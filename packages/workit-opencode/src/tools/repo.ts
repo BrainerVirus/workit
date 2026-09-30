@@ -1,24 +1,11 @@
-import { realpathSync } from "node:fs";
 import { tool } from "@opencode-ai/plugin";
-import {
-  externalActionDescriptor,
-  fail,
-  failure,
-  gitRevisionParts,
-  ok,
-  resolveInside,
-  run,
-  sha256,
-} from "@brainervirus/workit-core/src/core";
-import { changelogApply } from "@brainervirus/workit-core/src/core/changelog";
+import { fail, gitRevisionParts, ok, run } from "@brainervirus/workit-core/src/core";
 import { gitContext } from "@brainervirus/workit-core/src/core/git";
 import {
   parseKeyValueLines,
   parseSections,
 } from "@brainervirus/workit-core/src/core/parse-sections";
 import { parseVerifyOutput } from "@brainervirus/workit-core/src/core/verify-parse";
-import { branchSetup, resolveBranchPolicyFor } from "@brainervirus/workit-core/src/core/branch";
-import { getDiagnosticLogger } from "@brainervirus/workit-core/src/core/config";
 import {
   changelogContext,
   docsRefreshContext,
@@ -26,24 +13,10 @@ import {
   releaseNotesContext,
 } from "@brainervirus/workit-core/src/core/repo-context";
 import { runVerifyProject } from "@brainervirus/workit-core/src/core/verify-project";
-import {
-  actionProposalQuestion,
-  resolveExternalActionRequest,
-} from "@brainervirus/workit-core/src/core/external-action-effects";
 import { initStatusData, toolkitStatusData } from "@brainervirus/workit-core/src/core/init";
-import {
-  normalizeLegacyResult,
-  type RepoRuntime,
-  type RunResult,
-} from "@brainervirus/workit-core/src/core/repo-tools";
+import type { RepoRuntime, RunResult } from "@brainervirus/workit-core/src/core/repo-tools";
 import { executeInitApply, initApplyRuntime } from "../shared/init-apply";
-import {
-  diagnostics,
-  legacyScriptResult,
-  output,
-  requireConfirmed,
-  scriptResult,
-} from "../shared/repo-result";
+import { output, scriptResult } from "../shared/repo-result";
 
 const defaultRuntime: RepoRuntime = {
   git: (root, args) => run(root, "git", args),
@@ -224,157 +197,6 @@ export function createRepoTools(runtime: RepoRuntime = defaultRuntime) {
       args: { range: tool.schema.string().optional() },
       execute: async ({ range }, context) =>
         output(scriptResult(runtime.docsContext(context.directory, range), parseDocs)),
-    }),
-    workit_changelog_apply: tool({
-      description: "Apply confirmed Keep a Changelog entries to Unreleased",
-      args: {
-        confirmed: tool.schema.boolean(),
-        entries: tool.schema
-          .union([
-            tool.schema.record(tool.schema.string(), tool.schema.array(tool.schema.string())),
-            tool.schema.array(
-              tool.schema.object({ category: tool.schema.string(), text: tool.schema.string() }),
-            ),
-          ])
-          .optional(),
-        path: tool.schema.string().optional(),
-        normalize_only: tool.schema.boolean().optional(),
-      },
-      execute: async ({ confirmed, entries, path: changelogPath, normalize_only }, context) => {
-        const rejected = requireConfirmed(confirmed);
-        if (rejected) return rejected;
-        try {
-          changelogPath = resolveInside(context.directory, changelogPath ?? "CHANGELOG.md");
-        } catch (error) {
-          return output(fail(error instanceof Error ? error.message : "invalid changelog path"));
-        }
-        return output(
-          normalizeLegacyResult(
-            changelogApply({
-              entries,
-              path: changelogPath,
-              normalize_only,
-              workspace_root: realpathSync(context.directory),
-            }) as Record<string, unknown>,
-          ),
-        );
-      },
-    }),
-    workit_branch_setup: tool({
-      description: "Apply a confirmed in-place feature or bugfix branch setup",
-      args: {
-        confirmed: tool.schema.boolean(),
-        action: tool.schema.enum(["setup", "reapply_stash"]).optional(),
-        sdd_dir: tool.schema.string().optional(),
-        target_branch: tool.schema.string().optional(),
-        stash: tool.schema.enum(["yes", "no"]).optional(),
-      },
-      execute: async ({ confirmed, action, sdd_dir, target_branch, stash }, context) => {
-        const rejected = requireConfirmed(confirmed);
-        if (rejected) return rejected;
-        let resolvedSdd = sdd_dir ?? "docs";
-        try {
-          resolvedSdd = resolveInside(context.directory, resolvedSdd);
-        } catch (error) {
-          return output(fail(error instanceof Error ? error.message : "invalid SDD path"));
-        }
-        // Flow-guard journal rides the plugin's diagnostic logger when the
-        // host installed one; absent logger keeps branchSetup silent.
-        const diagnostic = getDiagnosticLogger();
-        const result = branchSetup({
-          action,
-          sdd_dir: resolvedSdd,
-          target_branch,
-          stash,
-          workspace_root: context.directory,
-          log: diagnostic ? (message) => diagnostic.info(message) : undefined,
-        });
-        return output(
-          legacyScriptResult({
-            stdout: JSON.stringify(result),
-            stderr: "",
-            exitCode: "error" in result ? 1 : 0,
-            cwd: context.directory,
-          }),
-        );
-      },
-    }),
-    workit_commit: tool({
-      description: "Commit the current index on a feature or bugfix branch without staging files",
-      args: { confirmed: tool.schema.boolean(), message: tool.schema.string() },
-      execute: async ({ confirmed, message }, context) => {
-        const rejected = requireConfirmed(confirmed);
-        if (rejected) return rejected;
-        const branch = runtime.git(context.directory, ["branch", "--show-current"]);
-        if (branch.exitCode !== 0)
-          return output(
-            fail(
-              branch.stderr.trim() || branch.stdout.trim() || "unable to read current branch",
-              diagnostics(branch),
-            ),
-          );
-        const name = branch.stdout.trim();
-        const pol = resolveBranchPolicyFor(context.directory);
-        if (pol.protected.has(name.toLowerCase()))
-          return output(fail(`cannot commit on protected branch ${name}`));
-        if (!pol.allowed.some((r) => r.test(name)) || name.endsWith("/"))
-          return output(fail(`commit requires an allowed branch (current: ${name})`));
-        return output(
-          scriptResult(runtime.git(context.directory, ["commit", "-m", message]), (stdout) => ({
-            stdout: stdout.trim(),
-          })),
-        );
-      },
-    }),
-    workit_pr_create: tool({
-      description:
-        "Resolve a hosted pull/merge request through the shared action contract and hand it to workit_external_action",
-      args: {
-        confirmed: tool.schema.boolean(),
-        title: tool.schema.string(),
-        body: tool.schema.string().optional(),
-        draft: tool.schema.boolean().optional(),
-        target_branch: tool.schema.string().optional(),
-      },
-      execute: async ({ confirmed, title, body, draft, target_branch }, context) => {
-        const rejected = requireConfirmed(confirmed);
-        if (rejected) return rejected;
-        // Decision ae03c569 re-enabled hosted PR/MR creation with pre/post
-        // provider SHA verification; the residual non-atomic source-SHA race is
-        // accepted. This legacy surface owns no native receipt, reservation, or
-        // writer lease, so it never contacts the provider itself: it resolves
-        // the canonical request through the shared resolver and delegates the
-        // effect to workit_external_action.
-        const resolved = resolveExternalActionRequest(context.directory, {
-          operation: "hosting.pull_request",
-          payload: {
-            title,
-            ...(body === undefined ? {} : { body }),
-            ...(draft === undefined ? {} : { draft }),
-            ...(target_branch === undefined ? {} : { target_branch }),
-          },
-        });
-        if (!resolved.ok) return output(resolved);
-        const proposal = actionProposalQuestion(
-          resolved.data.request,
-          resolved.data.descriptorPayload,
-        );
-        return output(
-          failure("needs_input", proposal.presented, {
-            outcome: "not_started",
-            operation: "hosting.pull_request",
-            proposal: {
-              presented: proposal.presented,
-              approvedContent: proposal.approvedText,
-              descriptorDigest: sha256(
-                externalActionDescriptor("hosting.pull_request", resolved.data.descriptorPayload),
-              ),
-            },
-            guidance:
-              "Run workit_external_action with the same hosting.pull_request payload: it records the one-time action reservation behind the native approval question, then verifies the provider PR head before reporting success.",
-          }),
-        );
-      },
     }),
     workit_init_apply: tool({
       description: "Apply a confirmed toolkit initialization action",

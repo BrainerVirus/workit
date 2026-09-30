@@ -29,9 +29,10 @@ test("registers the eight native operation tools plus init_apply", async () => {
   const hooks = await plugin(pluginInput as never);
   expect(Object.keys(hooks.tool ?? {})).toEqual([
     ...families.map((family) => `workit_${family}`),
-    "workit_external_action",
+    "workit_context",
     "workit_init_apply",
   ]);
+  expect(hooks.tool).not.toHaveProperty("workit_external_action");
 });
 
 test("config registers only the policy-selected method skills", async () => {

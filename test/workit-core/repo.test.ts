@@ -1,13 +1,5 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  symlinkSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -164,10 +156,6 @@ test(
         "workit_init_status",
         "workit_status",
         "workit_verify",
-        "workit_changelog_apply",
-        "workit_branch_setup",
-        "workit_commit",
-        "workit_pr_create",
         "workit_init_apply",
       ].sort(),
     );
@@ -353,123 +341,16 @@ test(
 );
 
 test(
-  "mutations reject missing confirmation before any resolution",
+  "init_apply rejects missing confirmation before any resolution",
   async () => {
     resetCalls();
     const tools = createRepoTools(runtime);
-    for (const name of [
-      "workit_changelog_apply",
-      "workit_branch_setup",
-      "workit_commit",
-      "workit_init_apply",
-      "workit_pr_create",
-    ] as const) {
-      const raw = await tools[name].execute(
-        { confirmed: false } as never,
-        { directory: "/repo", worktree: "/repo" } as never,
-      );
-      expect(JSON.parse(raw as string).error).toBe("confirmed: true required");
-    }
-    expect(totalCalls()).toBe(0);
-  },
-  { timeout: 60_000 },
-);
-
-test(
-  "commit blocks protected branches",
-  async () => {
-    const protectedRuntime = {
-      ...runtime,
-      git: (_root: string, args: string[]) =>
-        args[0] === "branch"
-          ? { exitCode: 0, stdout: "main\n", stderr: "", cwd: "/repo" }
-          : { exitCode: 0, stdout: "", stderr: "", cwd: "/repo" },
-    };
-    const raw = await createRepoTools(protectedRuntime).workit_commit.execute(
-      { confirmed: true, message: "fix: no" },
+    const raw = await tools.workit_init_apply.execute(
+      { confirmed: false } as never,
       { directory: "/repo", worktree: "/repo" } as never,
     );
-    expect(JSON.parse(raw as string).error).toContain("protected branch main");
-  },
-  { timeout: 60_000 },
-);
-
-test(
-  "commit accepts only feature or bugfix branches and never stages files",
-  async () => {
-    calls.git.length = 0;
-    const result = await execute("workit_commit", {
-      confirmed: true,
-      message: "feat: native mutation",
-    });
-    expect(result).toEqual({
-      ok: true,
-      data: { stdout: "committed", exitCode: 0 },
-      error: null,
-    });
-    expect(calls.git).toEqual([
-      { root: "/repo", args: ["branch", "--show-current"] },
-      { root: "/repo", args: ["commit", "-m", "feat: native mutation"] },
-    ]);
-
-    const raw = await createRepoTools({
-      ...runtime,
-      git: (root: string, args: string[]) => ({
-        exitCode: 0,
-        stdout: args[0] === "branch" ? "chore/random\n" : "",
-        stderr: "",
-        cwd: root,
-      }),
-    }).workit_commit.execute({ confirmed: true, message: "chore: no" }, {
-      directory: "/repo",
-      worktree: "/repo",
-    } as never);
-    const rejected = JSON.parse(raw as string);
-    expect(rejected.ok).toBe(false);
-    expect(rejected.error).toContain("requires an allowed branch");
-
-    const emptySuffix = await createRepoTools({
-      ...runtime,
-      git: (root: string, args: string[]) => ({
-        exitCode: 0,
-        stdout: args[0] === "branch" ? "feature/\n" : "",
-        stderr: "",
-        cwd: root,
-      }),
-    }).workit_commit.execute({ confirmed: true, message: "fix: no empty suffix" }, {
-      directory: "/repo",
-      worktree: "/repo",
-    } as never);
-    expect(JSON.parse(emptySuffix as string).error).toContain("requires an allowed branch");
-  },
-  { timeout: 60_000 },
-);
-
-test(
-  "hosted PR creation fails closed on an unbound remote without running legacy code",
-  async () => {
-    resetCalls();
-    const root = mkdtempSync(path.join(os.tmpdir(), "workflow-toolkit-pr-target-"));
-    try {
-      spawnSync("git", ["init", "-q", "-b", "feature/pr"], { cwd: root });
-      const raw = await createRepoTools(runtime).workit_pr_create.execute(
-        { confirmed: true, title: "No" },
-        { directory: root, worktree: root } as never,
-      );
-      // Decision ae03c569: creation is enabled, but it still fails closed when
-      // the target has no provider-bound remote to bind the approved SHA to.
-      const result = JSON.parse(raw as string);
-      expect(result).toMatchObject({
-        ok: false,
-        code: "capability_unavailable",
-        details: { capability: "hosting.pull_request", outcome: "not_started" },
-      });
-      expect(result.error).toContain("configured remote provider");
-      expect(calls.git).toHaveLength(0);
-      expect(totalCalls()).toBe(0);
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
+    expect(JSON.parse(raw as string).error).toBe("confirmed: true required");
+    expect(totalCalls()).toBe(0);
   },
   { timeout: 60_000 },
 );
@@ -527,161 +408,6 @@ test(
 );
 
 test(
-  "branch setup requires develop remote before creating from main",
-  async () => {
-    const root = mkdtempSync(path.join(os.tmpdir(), "workflow-toolkit-branch-"));
-    const remote = mkdtempSync(path.join(os.tmpdir(), "workflow-toolkit-branch-remote-"));
-    const git = (cwd: string, args: string[]) => spawnSync("git", args, { cwd, encoding: "utf8" });
-    try {
-      git(remote, ["init", "-q", "--bare"]);
-      expect(git(root, ["init", "-q", "-b", "develop"]).status).toBe(0);
-      git(root, ["config", "user.name", "Workflow Test"]);
-      git(root, ["config", "user.email", "workflow@example.test"]);
-      writeFileSync(path.join(root, "README.md"), "base\n");
-      git(root, ["add", "README.md"]);
-      git(root, ["commit", "-q", "-m", "base"]);
-      git(root, ["remote", "add", "origin", remote]);
-      git(root, ["push", "-q", "-u", "origin", "develop"]);
-      git(root, ["branch", "main"]);
-      git(root, ["checkout", "-q", "main"]);
-      const raw = await createRepoTools().workit_branch_setup.execute(
-        {
-          confirmed: true,
-          target_branch: "feature/x",
-          stash: "no",
-        },
-        { directory: root, worktree: root } as never,
-      );
-      expect(JSON.parse(raw as string).ok).toBe(true);
-      expect(git(root, ["branch", "--show-current"]).stdout.trim()).toBe("feature/x");
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-      rmSync(remote, { recursive: true, force: true });
-    }
-  },
-  { timeout: 60_000 },
-);
-
-test(
-  "reapply stash dispatches without a target branch",
-  async () => {
-    const root = mkdtempSync(path.join(os.tmpdir(), "workflow-toolkit-reapply-"));
-    try {
-      spawnSync("git", ["init", "-q", "-b", "feature/x"], { cwd: root });
-      const raw = await createRepoTools().workit_branch_setup.execute(
-        {
-          confirmed: true,
-          action: "reapply_stash",
-        },
-        { directory: root, worktree: root } as never,
-      );
-      const result = JSON.parse(raw as string);
-      expect(result.error).toContain("no stash_ref");
-      expect(result.error).not.toContain("target branch required");
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  },
-  { timeout: 60_000 },
-);
-
-test(
-  "branch setup treats quote-bearing manifest paths as data",
-  async () => {
-    const root = mkdtempSync(path.join(os.tmpdir(), "workflow-toolkit-quote-"));
-    try {
-      spawnSync("git", ["init", "-q", "-b", "feature/x"], { cwd: root });
-      const injected =
-        "docs/sdd/x'); __import__('pathlib').Path('sentinel').write_text('owned'); #";
-      const raw = await createRepoTools().workit_branch_setup.execute(
-        {
-          confirmed: true,
-          action: "reapply_stash",
-          sdd_dir: injected,
-        },
-        { directory: root, worktree: root } as never,
-      );
-      expect(JSON.parse(raw as string).error).toContain("no stash_ref");
-      expect(existsSync(path.join(root, "sentinel"))).toBe(false);
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  },
-  { timeout: 60_000 },
-);
-
-test(
-  "hosted PR creation resolves through the shared contract while init mutations use scoped environment",
-  async () => {
-    resetCalls();
-    const root = mkdtempSync(path.join(os.tmpdir(), "workflow-toolkit-pr-env-"));
-    try {
-      spawnSync("git", ["init", "-q", "-b", "feature/env"], { cwd: root });
-      const raw = await createRepoTools(runtime).workit_pr_create.execute(
-        {
-          confirmed: true,
-          title: "Native tools",
-          body: "Ready",
-          draft: true,
-          target_branch: "develop",
-        },
-        { directory: root, worktree: root } as never,
-      );
-      // The resolver, not the legacy runtime, owns PR resolution; an unbound
-      // remote still fails closed before any provider call.
-      expect(JSON.parse(raw as string)).toMatchObject({
-        ok: false,
-        code: "capability_unavailable",
-        details: { capability: "hosting.pull_request", outcome: "not_started" },
-      });
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-    expect(
-      await execute("workit_init_apply", {
-        confirmed: true,
-        action: "youtrack_json",
-        base_url: "https://youtrack.example.test",
-      }),
-    ).toEqual({ ok: true, data: { action: "youtrack_json", exitCode: 0 }, error: null });
-
-    expect(calls.git).toHaveLength(0);
-    expect(calls.initApply).toEqual([
-      {
-        root: "/repo",
-        action: "youtrack_json",
-        env: {
-          WORKFLOW_YT_BASE_URL: "https://youtrack.example.test",
-          WORKFLOW_WORKSPACE_ROOT: "/repo",
-        },
-      },
-    ]);
-  },
-  { timeout: 60_000 },
-);
-
-test(
-  "hosted PR creation reports an unresolvable target without running legacy code",
-  async () => {
-    resetCalls();
-    const root = mkdtempSync(path.join(os.tmpdir(), "workflow-toolkit-error-"));
-    try {
-      const raw = await createRepoTools(runtime).workit_pr_create.execute(
-        { confirmed: true, title: "Unavailable" },
-        { directory: root, worktree: root } as never,
-      );
-      const result = JSON.parse(raw as string);
-      expect(result).toMatchObject({ ok: false, code: "capability_unavailable" });
-      expect(result.error).toContain("not a Git repository");
-      expect(totalCalls()).toBe(0);
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  },
-  { timeout: 60_000 },
-);
-
-test(
   "legacy ok false values normalize to failures",
   async () => {
     expect(normalizeLegacyResult({ ok: false })).toEqual({
@@ -716,47 +442,6 @@ test(
 );
 
 test(
-  "mutation paths cannot escape ToolContext.directory",
-  async () => {
-    resetCalls();
-    const parent = mkdtempSync(path.join(os.tmpdir(), "workflow-toolkit-boundary-"));
-    try {
-      const root = path.join(parent, "repo");
-      const outside = path.join(parent, "outside");
-      mkdirSync(root);
-      mkdirSync(outside);
-      const branchRaw = await createRepoTools(runtime).workit_branch_setup.execute(
-        {
-          confirmed: true,
-          target_branch: "feature/native-tools",
-          sdd_dir: "../outside",
-        },
-        { directory: root, worktree: root } as never,
-      );
-      expect(JSON.parse(branchRaw as string).error).toBe("path must stay inside repository root");
-      expect(totalCalls()).toBe(0);
-
-      writeFileSync(path.join(outside, "CHANGELOG.md"), "# Outside\n");
-      symlinkSync(path.join(outside, "CHANGELOG.md"), path.join(root, "CHANGELOG.md"));
-      const changelogRaw = await createRepoTools(runtime).workit_changelog_apply.execute(
-        {
-          confirmed: true,
-          entries: { Fixed: ["must stay inside"] },
-        },
-        { directory: root, worktree: root } as never,
-      );
-      expect(JSON.parse(changelogRaw as string).error).toBe(
-        "path must stay inside repository root",
-      );
-      expect(readFileSync(path.join(outside, "CHANGELOG.md"), "utf8")).toBe("# Outside\n");
-    } finally {
-      rmSync(parent, { recursive: true, force: true });
-    }
-  },
-  { timeout: 60_000 },
-);
-
-test(
   "changelog implementation is package-owned",
   () => {
     const expectedRoot = path.resolve(import.meta.dir, "..", "..", "packages", "workit-core");
@@ -765,127 +450,6 @@ test(
     expect(port.startsWith(`${PLUGIN_ROOT}${path.sep}`)).toBe(true);
     expect(port).not.toContain(".cursor/plugins");
     expect(existsSync(port)).toBe(true);
-  },
-  { timeout: 60_000 },
-);
-
-test(
-  "changelog preserves rich Markdown while consolidating categories",
-  async () => {
-    const root = mkdtempSync(path.join(os.tmpdir(), "workflow-toolkit-"));
-    try {
-      const changelog = path.join(root, "CHANGELOG.md");
-      writeFileSync(
-        changelog,
-        `# Changelog
-
-## [Unreleased]
-
-<!-- keep this comment -->
-
-### Added
-
-- Existing feature
-  - nested detail
-  continuation text
-
-### Notes
-
-Keep this custom section.
-
-### Added
-
-- Existing feature
-- Second feature
-  with continuation
-
-## [1.0.0] - 2026-01-01
-
-### Added
-
-- Historical feature
-`,
-      );
-      const raw = await createRepoTools(runtime).workit_changelog_apply.execute(
-        {
-          confirmed: true,
-          entries: { Added: ["New feature", "Existing feature"] },
-        },
-        { directory: root, worktree: root } as never,
-      );
-      expect(JSON.parse(raw as string).ok).toBe(true);
-      const output = readFileSync(changelog, "utf8");
-      const unreleased = output.split("## [1.0.0]")[0];
-      expect((unreleased.match(/^### Added$/gm) ?? []).length).toBe(1);
-      expect((unreleased.match(/^- Existing feature$/gm) ?? []).length).toBe(1);
-      expect((unreleased.match(/^- New feature$/gm) ?? []).length).toBe(1);
-      for (const preserved of [
-        "<!-- keep this comment -->",
-        "  - nested detail",
-        "  continuation text",
-        "### Notes",
-        "Keep this custom section.",
-        "  with continuation",
-        "## [1.0.0] - 2026-01-01",
-        "- Historical feature",
-      ])
-        expect(output).toContain(preserved);
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  },
-  { timeout: 60_000 },
-);
-
-test(
-  "confirmed changelog apply without entries fails without editing",
-  async () => {
-    const root = mkdtempSync(path.join(os.tmpdir(), "workflow-toolkit-empty-changelog-"));
-    try {
-      const changelog = path.join(root, "CHANGELOG.md");
-      const before = "# Changelog\n\n## [Unreleased]\n";
-      writeFileSync(changelog, before);
-      const raw = await createRepoTools(runtime).workit_changelog_apply.execute(
-        {
-          confirmed: true,
-        },
-        { directory: root, worktree: root } as never,
-      );
-      expect(JSON.parse(raw as string)).toEqual({
-        ok: false,
-        data: null,
-        error: "entries required unless normalize_only",
-      });
-      expect(readFileSync(changelog, "utf8")).toBe(before);
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  },
-  { timeout: 60_000 },
-);
-
-test(
-  "changelog apply accepts a symlink-spelled ToolContext directory",
-  async () => {
-    const parent = mkdtempSync(path.join(os.tmpdir(), "workflow-toolkit-linked-root-"));
-    try {
-      const root = path.join(parent, "repo");
-      const linkedRoot = path.join(parent, "repo-link");
-      mkdirSync(root);
-      symlinkSync(root, linkedRoot);
-      writeFileSync(path.join(root, "CHANGELOG.md"), "# Changelog\n\n## [Unreleased]\n");
-      const raw = await createRepoTools(runtime).workit_changelog_apply.execute(
-        {
-          confirmed: true,
-          entries: { Fixed: ["Canonical root"] },
-        },
-        { directory: linkedRoot, worktree: linkedRoot } as never,
-      );
-      expect(JSON.parse(raw as string).ok).toBe(true);
-      expect(readFileSync(path.join(root, "CHANGELOG.md"), "utf8")).toContain("- Canonical root");
-    } finally {
-      rmSync(parent, { recursive: true, force: true });
-    }
   },
   { timeout: 60_000 },
 );

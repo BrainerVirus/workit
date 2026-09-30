@@ -35,10 +35,16 @@ const familyTools = OPERATION_FAMILIES.map((family): WorkitToolSpec => ({
 export const WORKIT_TOOL_CATALOG: readonly WorkitToolSpec[] = [
   ...familyTools,
   {
-    name: "workit_external_action",
+    name: "workit_context",
     description:
-      "Run a Workit-managed external action. context.read is read-only. Mutations require an active coordinator task, checkout writer ownership, and host-native authorization. Routine Git work already permitted by the host can use native tools without a Workit task; never use another route to bypass a host denial or uncertain result.",
-    input: externalActionJsonSchema() as Record<string, unknown>,
+      "Read Git, pull request, YouTrack, issue, changelog, release, or affected-file context.",
+    input: (() => {
+      const variants = (externalActionJsonSchema() as { oneOf: Array<Record<string, any>> }).oneOf;
+      const context = variants.find(
+        (variant) => variant.properties.operation.const === "context.read",
+      )!.properties.payload;
+      return objectSchema(context.properties, context.required ?? []);
+    })(),
   },
   {
     name: "workit_init_apply",

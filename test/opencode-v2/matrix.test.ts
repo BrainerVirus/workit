@@ -38,7 +38,7 @@ const WORKIT_TOOL_NAMES = [
   "workit_worker",
   "workit_writer",
   "workit_state",
-  "workit_external_action",
+  "workit_context",
   "workit_init_apply",
 ];
 

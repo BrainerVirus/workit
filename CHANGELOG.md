@@ -5,18 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-> **Version model.** The repository's package manifests pin a fixed source
-> version (`0.4.0`); [semantic-release](https://semantic-release.gitbook.io)
-> computes the next version from Conventional Commits and rewrites the package
-> versions and internal `workspace:*` dependencies **in CI only**
-> (`packages/workit-core/scripts/rewrite-workspace-deps.ts`), never committing
-> the rewrite back to the repository. This file is maintained by hand and
-> documents through `0.6.0`; releases published after that (for example
-> `0.6.1`, `0.7.0`, `0.7.1`) were created by the release workflow and their
-> notes live in GitHub Releases, not here. The published npm version can
-> therefore run ahead of both the source manifests and this changelog.
+> **Version model.** Semantic-release computes published versions from
+> Conventional Commits. The release workflow rewrites internal dependencies
+> for publishing, then synchronizes source manifests through its manifest PR.
+> GitHub Releases contain the generated release notes; this file records
+> manually maintained changes, including unreleased work.
 
 ## [Unreleased]
+
+### Changed
+
+- OpenCode V1/V2 remove managed external mutations and proposal/approval
+  orchestration. Native host tools execute effects; strict read-only
+  `workit_context` replaces the old combined action/context tool. Existing
+  history and remaining-host action machinery are preserved.
 
 ### Fixed
 

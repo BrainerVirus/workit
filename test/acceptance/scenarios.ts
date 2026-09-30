@@ -1,6 +1,6 @@
 /** Fixed versioned acceptance and release-evaluation scenario fixtures (CA-01..CA-32, E-01..E-06). */
 
-export const FIXTURE_REVISION = "workit-v1-2026-09-09";
+export const FIXTURE_REVISION = "workit-v1-2026-09-30";
 
 export type CaScenarioId = `CA-${string}`;
 export type EvaluationScenarioId = `E-${string}`;
@@ -138,7 +138,7 @@ export const CA_SCENARIOS: ScenarioFixture[] = [
   fixture(
     "CA-24",
     "Optional service unavailable",
-    "Core work remains usable; affected external action is not silently executed or reported successful.",
+    "Core work remains usable; unavailable services and unauthorized external writes produce a clear failure or needs-input result, never a success claim.",
   ),
   fixture(
     "CA-25",

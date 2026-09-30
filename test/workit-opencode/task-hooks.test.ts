@@ -472,8 +472,8 @@ test("OpenCode affected-doc context gates an edit and public evidence captures t
     spawnSync("git", ["add", source], { cwd: root });
     spawnSync("git", ["commit", "-qm", "source change"], { cwd: root });
 
-    const contextResult = await (createWorkitTools() as any).workit_external_action.execute(
-      { operation: "context.read", payload: { kind: "affected", range: "HEAD~1...HEAD" } },
+    const contextResult = await (createWorkitTools() as any).workit_context.execute(
+      { kind: "affected", range: "HEAD~1...HEAD" },
       { directory: root, sessionID: "owner" },
     );
     const affected = JSON.parse(

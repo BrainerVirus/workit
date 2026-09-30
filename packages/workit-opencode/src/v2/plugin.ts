@@ -74,16 +74,6 @@ const v2Capabilities = () => [
     refs: [{ kind: "host" as const, host: "opencode" as const, handle: "question" }],
   },
   {
-    name: "external_action",
-    surface: "workit_external_action",
-    assurance: "enforced" as const,
-    reason: "native question receipts bind each resolved action descriptor before execution",
-    refs: [
-      { kind: "host" as const, host: "opencode" as const, handle: "question" },
-      { kind: "host" as const, host: "opencode" as const, handle: "workit_external_action" },
-    ],
-  },
-  {
     name: "known_product_writes",
     surface: "edit/shell",
     assurance: "unavailable" as const,
@@ -155,8 +145,7 @@ const setup = async (ctx: Context): Promise<() => void> => {
         : null;
     },
   });
-  // Reuse V1's proposal/receipt runner with V2's observed session lookup; both
-  // paths use the same native receipts, lineage map, and shared Workit core.
+  // Reuse V1's native decision receipts and context reader.
   const nativeTools = createWorkitTools({
     receipts,
     directChildren: lifecycle.directChildren,
@@ -177,7 +166,7 @@ const setup = async (ctx: Context): Promise<() => void> => {
     },
   });
   const nativeToolMap = nativeTools as unknown as Record<
-    "workit_decision" | "workit_external_action",
+    "workit_decision" | "workit_context",
     {
       execute: (
         args: unknown,
@@ -186,7 +175,7 @@ const setup = async (ctx: Context): Promise<() => void> => {
     }
   >;
   const executeNativeTool = async (
-    name: "workit_decision" | "workit_external_action",
+    name: "workit_decision" | "workit_context",
     input: unknown,
     sessionID: string,
   ): Promise<{ content: string }> => {
@@ -234,6 +223,8 @@ const setup = async (ctx: Context): Promise<() => void> => {
                 "OpenCode session location does not match the plugin checkout",
               ),
             );
+          if (spec.name === "workit_context")
+            return executeNativeTool("workit_context", input, session.id);
           const store = new TaskStore(root);
           const workerId = workerIdFor(
             store,
@@ -249,9 +240,6 @@ const setup = async (ctx: Context): Promise<() => void> => {
           if (family === "decision") return executeNativeTool("workit_decision", input, session.id);
           if (family !== null)
             return resultContent(runFamily(family, input, session, store, workerId));
-          if (spec.name === "workit_external_action") {
-            return executeNativeTool("workit_external_action", input, session.id);
-          }
           if (spec.name === "workit_init_apply") {
             // The shared executor already returns the contract JSON; prose
             // checking stays core-side.

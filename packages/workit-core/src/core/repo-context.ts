@@ -363,7 +363,7 @@ const CHANGELOG_RULES = `- Use an [Unreleased] section.
 - Entries should be human-readable and user-facing.
 - Do not use raw commit messages as changelog bullets.
 - MERGE into existing ### Category under [Unreleased] — never append a second ### Added / ### Fixed block.
-- Apply with the native workit_changelog_apply tool only (not hand-edits under Unreleased).
+- Apply with the host-native editor, preserving the repository changelog conventions.
 - If Unreleased already has duplicate category headings, normalize_only first.`;
 
 /** Port of changelog-context.sh — changelog update context. */

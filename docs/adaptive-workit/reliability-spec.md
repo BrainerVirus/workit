@@ -1,10 +1,12 @@
 # Workit action reliability
 
-Date: 2026-09-30. Status: implemented and isolated acceptance passed; active-host deployment pending.
+Date: 2026-09-30. Status: native-effects cutover passed isolated acceptance; v1.3.1 baseline retained.
+
+The v1.3.1 proposal-binding work below is historical for OpenCode mutation
+execution. The native-effects cutover at the end supersedes that execution path.
 
 This extends the adaptive spec; it does not authorize live migration or effects
-in the user's running sessions. Existing workspace-resolution changes are a
-separate dirty-tree slice and must remain intact.
+in the user's running sessions. Previously reconciled workspace-resolution changes remain intact.
 
 ## Reproduced problem
 
@@ -18,7 +20,7 @@ rejected the approval before checking which descriptor remained current.
 Changing the commit message escaped the collision and caused another question.
 Task closure then induced an assessment and additional schema retries.
 
-## Required behavior
+## v1.3.1 required behavior (historical mutation adapter)
 
 1. Resolve all proposals matching an observed approval before deciding whether
    they are ambiguous. Evict only descriptors proven stale by successful fresh
@@ -80,7 +82,7 @@ defines native capabilities; questions are not permission grants. These referenc
 guide the implementation but do not prove Workit's reliability. Scenario tests
 and saved host evidence must do that.
 
-## Proactive audit dispositions
+## v1.3.1 proactive audit dispositions
 
 - Approval identity: stale same-text proposals, ask-time ordering, duplicate
   delivery and consumed-receipt replay have regression coverage. V2 must capture
@@ -112,3 +114,43 @@ and saved host evidence must do that.
   loader probe do not establish one-shot reliability across models. A bounded
   model-driven qualification should measure retries and duplicate questions
   before making that claim. Do not run the budgeted 90-run suite implicitly.
+
+## OpenCode native-effects cutover
+
+User decision, 2026-09-30: remove managed external mutations from both OpenCode
+versions rather than retain disabled executors or add a V1-only permission shim.
+Native host tools own Git, hosting, YouTrack and documentation effects. Native
+denials, sandbox rules and target-repository conventions remain authoritative.
+
+Remove `workit_external_action`, its adapter-only proposal queues, standing
+approval orchestration and effect runner. Do not add a compatibility alias that
+can still execute mutations. Retain eight shared operation families, native
+decision receipts for real policy choices, worker/lifecycle support and config
+initialization. Expose the existing read-only contexts through `workit_context`
+with a strict flat payload schema; context reads cannot select a mutation.
+
+Shared core/Pi/CLI effect machinery remains in use and is outside this adapter
+removal. Persisted action history, pending/unknown outcomes, decisions, tasks and
+leases are preserved. Inspection remains available, but an uncertain historical
+effect must be reconciled from actual evidence before any native retry. Do not
+fake settlement or migrate live history during this cutover.
+
+Acceptance slices:
+
+1. Remove both native registrations and OpenCode-only execution/proposal code;
+   verify V1 and V2 expose context, families and init only. No effects alias.
+2. Retain strict read-only context validation and session/worker provenance;
+   reject mutation-shaped input without Git or Workit state writes. Preserve
+   decision receipt replay protection and native shell-policy regression checks.
+3. Replace obsolete execution tests and current guidance. Shared effects and
+   uncertainty tests for the remaining hosts continue to pass. Qualification
+   scripts must not attempt the removed tool or advertise stale capability.
+4. Isolated build/full checks, package acceptance and installed V2 private loader
+   probe. Preserve the running host's artifact/config until a safe restart.
+
+The installed V2.0.19 bundle uses `options.permission ?? toolName` for coarse
+whole-action deny filtering; it does not expose a custom-tool permission assert
+for each subprocess. V1 has an async `ToolContext.ask`, but Workit's existing
+effects are synchronous and would need another command authorization layer.
+Native execution avoids duplicating the host's command scanner and permission
+workflow on either version.

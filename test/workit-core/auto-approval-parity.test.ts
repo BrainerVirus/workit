@@ -8,7 +8,7 @@ import { taskStartRequest } from "./task-fixtures";
 
 /**
  * Auto-approval parity: the same standing rule produces the same outcome —
- * execution with no question — on OpenCode, Pi, and the CLI. Each test
+ * execution with no question — on Pi and the CLI. Each test
  * builds a repo, an active lead task, writer ownership, a staged change,
  * and a matching workspace rule, then drives the host's own external-action
  * surface and asserts the commit lands with zero confirmations.
@@ -16,7 +16,7 @@ import { taskStartRequest } from "./task-fixtures";
 
 const git = (cwd: string, args: string[]) => spawnSync("git", args, { cwd });
 
-const setupTask = (host: "opencode" | "pi" | "workit_cli", actor: string) => {
+const setupTask = (host: "pi" | "workit_cli", actor: string) => {
   const root = mkdtempSync(join(tmpdir(), "workit-auto-parity-"));
   for (const args of [
     ["init", "-q", "-b", "feature/auto"],
@@ -76,29 +76,6 @@ const setupTask = (host: "opencode" | "pi" | "workit_cli", actor: string) => {
 
 const committed = (root: string): string =>
   spawnSync("git", ["log", "-1", "--pretty=%s"], { cwd: root, encoding: "utf8" }).stdout.trim();
-
-test("OpenCode executes a commit with no question under a standing rule", async () => {
-  const actor = "opencode-auto";
-  const value = setupTask("opencode", actor);
-  try {
-    const { NativeReceiptStore, createWorkitTools } =
-      await import("@/packages/workit-opencode/src/tools/workit");
-    const receipts = new NativeReceiptStore();
-    const tools = createWorkitTools({
-      receipts,
-      client: { session: { get: async () => ({ data: { id: actor, directory: value.root } }) } },
-    }) as any;
-    const out = await tools.workit_external_action.execute(
-      { operation: "git.commit", payload: { message: "chore(auto): opencode one" } },
-      { directory: value.root, sessionID: actor },
-    );
-    const parsed = JSON.parse(typeof out === "string" ? out : out.output);
-    expect(parsed.ok).toBe(true);
-    expect(committed(value.root)).toBe("chore(auto): opencode one");
-  } finally {
-    value.cleanup();
-  }
-});
 
 test("Pi executes a commit with zero confirms under a standing rule", async () => {
   const actor = "pi-session";
@@ -189,33 +166,10 @@ test("CLI executes a commit headless with no TTY under a standing rule", async (
   }
 });
 
-test("plan reservations record under a standing rule with no question on every host", async () => {
+test("plan reservations record under a standing rule on Pi and the CLI", async () => {
   const steps = ["chore(auto): plan one", "chore(auto): plan two"];
   const branch = "feature/auto";
   const planPayload = { plan_steps: steps, plan_branch: branch };
-
-  {
-    const actor = "opencode-plan";
-    const value = setupTask("opencode", actor);
-    try {
-      const { createWorkitTools, NativeReceiptStore } =
-        await import("@/packages/workit-opencode/src/tools/workit");
-      const tools = createWorkitTools({
-        receipts: new NativeReceiptStore(),
-        client: { session: { get: async () => ({ data: { id: actor, directory: value.root } }) } },
-      }) as any;
-      const out = await tools.workit_external_action.execute(
-        { operation: "git.commit", payload: planPayload },
-        { directory: value.root, sessionID: actor },
-      );
-      expect(JSON.parse(typeof out === "string" ? out : out.output)).toMatchObject({
-        ok: true,
-        data: { plan_commits: 2 },
-      });
-    } finally {
-      value.cleanup();
-    }
-  }
 
   {
     const actor = "pi-plan";

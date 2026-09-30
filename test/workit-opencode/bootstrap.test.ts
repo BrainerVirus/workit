@@ -30,6 +30,12 @@ describe("session bootstrap", () => {
     expect(bootstrap.toLowerCase()).not.toContain("policy.assess");
   });
 
+  test("bootstrap directs OpenCode mutations to native host tools", () => {
+    const bootstrap = getWorkitBootstrap() ?? "";
+    expect(bootstrap).toContain("workit_context");
+    expect(bootstrap).toContain("no managed external-action executor");
+  });
+
   test("messages.transform injects bootstrap once on first user turn", async () => {
     const hooks = await plugin({
       directory: "/repo",

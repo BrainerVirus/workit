@@ -3,7 +3,7 @@ import type { RunResult } from "@brainervirus/workit-core/src/core/repo-tools";
 
 export const output = (value: unknown) => JSON.stringify(value, null, 2);
 
-export const diagnostics = ({ stdout, stderr, exitCode }: RunResult) => ({
+const diagnostics = ({ stdout, stderr, exitCode }: RunResult) => ({
   stdout,
   stderr,
   exitCode,
