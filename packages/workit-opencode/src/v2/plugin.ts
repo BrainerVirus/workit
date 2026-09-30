@@ -316,8 +316,8 @@ const setup = async (ctx: Context): Promise<() => void> => {
   await ctx.session.hook("compaction", (event) => {
     injectCompactionContext(root, String(event.sessionID), event.system as never);
   });
-  await registerSkills(ctx as never);
-  await registerCommands(ctx as never);
+  const registeredSkills = await registerSkills(ctx as never);
+  await registerCommands(ctx as never, registeredSkills);
   const subscription = new AbortController();
   void (async () => {
     try {

@@ -66,9 +66,10 @@ const parseFrontmatter = (
  * Register the 14 packaged method skills with exact ids, paths,
  * descriptions, and content. A user skill with the same id is never replaced.
  */
-export const registerSkills = async (ctx: SkillContext): Promise<void> => {
+export const registerSkills = async (ctx: SkillContext): Promise<ReadonlySet<string>> => {
   const skillsDir = path.join(assetsRoot(), "skills");
-  if (!existsSync(skillsDir)) return;
+  if (!existsSync(skillsDir)) return new Set();
+  const registered = new Set<string>();
   await ctx.skill.transform((editor) => {
     const existing = new Set(editor.list().map((skill) => skill.id));
     for (const id of WORKIT_METHOD_SKILLS) {
@@ -83,8 +84,10 @@ export const registerSkills = async (ctx: SkillContext): Promise<void> => {
         path: file,
         content: parsed.body,
       });
+      registered.add(id);
     }
   });
+  return registered;
 };
 
 /**
@@ -92,12 +95,15 @@ export const registerSkills = async (ctx: SkillContext): Promise<void> => {
  * name is preserved untouched. Invocations forward the original prompt
  * (attachments, arguments, and delivery) through `session.prompt`.
  */
-export const registerCommands = async (ctx: SkillContext): Promise<void> => {
+export const registerCommands = async (
+  ctx: SkillContext,
+  registeredSkills: ReadonlySet<string>,
+): Promise<void> => {
   const listed = await ctx.command.list();
   const existing = new Set((listed?.data ?? []).map((command) => command.name));
   await ctx.command.transform((editor) => {
     for (const [alias, skill] of Object.entries(WORKIT_SKILL_ALIASES)) {
-      if (existing.has(alias)) continue;
+      if (!registeredSkills.has(skill) || existing.has(alias)) continue;
       editor.add({
         name: alias,
         description: `Apply the ${skill} method skill to the current task.`,

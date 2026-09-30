@@ -389,6 +389,32 @@ test("existing user skills and commands are never replaced", async () => {
   }
 });
 
+test("a Workit alias is omitted when its skill id belongs to a user skill", async () => {
+  const root = repository();
+  try {
+    const { skills, commands } = await harness(root, {
+      existingSkills: [{ id: "workit-debug" }],
+    });
+    expect(skills.some((skill) => skill.id === "workit-debug")).toBe(false);
+    expect(commands.some((command) => command.name === "wk-debug")).toBe(false);
+    expect(commands).toHaveLength(13);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("the implementation skill trigger covers ordinary requested implementation", async () => {
+  const root = repository();
+  try {
+    const { skills } = await harness(root);
+    expect(skills.find((skill) => skill.id === "workit-implement")?.description).toContain(
+      "implementing requested code changes",
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("cleanup aborts the event subscription", async () => {
   const root = repository();
   try {

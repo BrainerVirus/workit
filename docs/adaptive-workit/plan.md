@@ -1,15 +1,16 @@
 # Adaptive Workit implementation plan
 
-Status: post-release follow-up active. Workit v1.3.0 and the earlier host
-recovery are complete; this plan now records the workspace-routing follow-up
-on `main`. It follows [`spec.md`](./spec.md). Keep checkpoints current so
-another session can resume without redoing discovery.
+Status: Workit 2.0.0 is published; the V2 lifecycle and trigger follow-up is
+active on `fix/opencode-v2-lifecycle-routing`. This plan follows
+[`spec.md`](./spec.md) and [`reliability-spec.md`](./reliability-spec.md).
+Keep checkpoints current so another session can resume without redoing
+discovery.
 
 ## Scope and working rules
 
 - Preserve the existing dirty tree. Do not reset, clean, stash, or discard it.
-- Earlier release authorization applied to the merged v1.3.0 work. This
-  follow-up remains uncommitted; do not push or open a PR without a new request.
+- The user authorized atomic commits, push, PR, squash merge, and branch cleanup
+  for this Workit reliability follow-up. Keep unrelated workspace edits out.
 - Workit is enabled in the active OpenCode config from the local checkout; the
   earlier disable-until-acceptance gate is complete. Do not run migration or
   prune history, and never use the real `.workit` history as a destructive
@@ -21,7 +22,26 @@ another session can resume without redoing discovery.
   retention/archive limits, and host authorization for hidden effects need
   evidence or a user decision before their dependent slice ships.
 
-## Current checkpoint — 2026-09-29
+## Current checkpoint — 2026-09-30
+
+- **Changes:** PR #136 removed managed OpenCode mutations on V1/V2; PR #138
+  corrected the breaking-release analyzer; PR #139 synchronized manifests.
+  All merged and Workit 2.0.0 is published. This branch fixes V2 dispatch
+  uncertainty and slash-alias collisions, and aligns the implementation skill
+  trigger description across packaged hosts.
+- **Checks:** OpenCode V2 regression tests passed (34 tests / 236 assertions);
+  full suite passed on pinned Node 24.20.0 (1,539 tests / 8,401 assertions),
+  with typecheck, lint, format, Knip and all seven isolated release-candidate
+  tarballs passing. The candidate packaging and deterministic slice did not
+  modify the active plugin artifact.
+- **Remaining blockers:** no code or policy blockers. PR CI and the automatic
+  v2.0.1 publication/manifest sync remain. Global config and ignored local
+  `dist/plugin.js` still match their pre-change hashes; do not rebuild the
+  active pin during a user session.
+- **Next action:** commit the two bounded fixes, push/open the PR, then monitor
+  checks, merge, release and the generated manifest-sync PR.
+
+## Workspace-routing checkpoint — 2026-09-29
 
 - **Changes:** the narrow `github-web` workspace rule is active again after an
   external backup; runtime VCS/branch resolution selects it over `work`.
