@@ -326,6 +326,11 @@ function resolveRequirements(input: NormalizedResolverInput): Requirement[] {
       }),
     );
 
+  const independentBehaviorReview =
+    input.preferences?.thorough === true ||
+    input.assessment.consequences.some((consequence) =>
+      ["security", "data", "public_contract", "operations"].includes(consequence.area),
+    );
   if (signals.behaviorChange.value === true)
     requirements.push(
       requirement({
@@ -340,15 +345,18 @@ function resolveRequirements(input: NormalizedResolverInput): Requirement[] {
         acceptanceAllowed: false,
       }),
       requirement({
-        ruleId: "fresh-context-review",
+        ruleId: independentBehaviorReview ? "fresh-context-review" : "self-review",
         dimension: "review",
         scope,
-        reason: "A non-mechanical behavior change requires fresh-context review.",
-        satisfaction:
-          "A separate review context examines the current candidate and records its result.",
+        reason: independentBehaviorReview
+          ? "Consequential behavior or the thorough preference requires fresh-context review."
+          : "Bounded behavior changes use self-review unless consequential risks or trusted rules require more.",
+        satisfaction: independentBehaviorReview
+          ? "A separate review context examines the current candidate and records its result."
+          : "The lead reviews the resulting diff and records the relevant scope and checks.",
         before: "close",
         dependentAction: null,
-        acceptanceAllowed: false,
+        acceptanceAllowed: !independentBehaviorReview,
       }),
     );
   else if (signals.mechanicalLowRisk.value === true)

@@ -263,6 +263,17 @@ const setup = async (ctx: Context): Promise<() => void> => {
     }
   });
   await ctx.tool.hook("execute.before", async (event) => {
+    if (event.tool === "question") {
+      const sessionID = String(event.sessionID);
+      const callID = String(event.id);
+      receipts.recordRequest(
+        callID,
+        sessionID,
+        callID,
+        (event.input as { questions?: unknown } | undefined)?.questions,
+      );
+      return;
+    }
     if (event.tool !== "subagent") return;
     await lifecycle.executeBefore({
       tool: event.tool,

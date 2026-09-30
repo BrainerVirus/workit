@@ -56,7 +56,7 @@ type WithExternalActionLock = <T>(
   operation: () => Promise<ExternalActionResult<T>>,
 ) => Promise<ExternalActionResult<T>>;
 
-const externalActionSchema = z.discriminatedUnion("operation", [
+export const externalActionSchema = z.discriminatedUnion("operation", [
   z
     .object({
       operation: z.literal("git.branch_setup"),
@@ -208,6 +208,13 @@ const externalActionSchema = z.discriminatedUnion("operation", [
     .strict(),
 ]);
 export type ExternalActionRequest = z.infer<typeof externalActionSchema>;
+
+/** The complete external-action contract for hosts that register native tools. */
+export const externalActionJsonSchema = (): z.core.JSONSchema.BaseSchema =>
+  ({
+    type: "object",
+    ...z.toJSONSchema(externalActionSchema, { target: "draft-2020-12" }),
+  }) as z.core.JSONSchema.BaseSchema;
 
 export type ExternalActionOperation = ExternalActionRequest["operation"];
 

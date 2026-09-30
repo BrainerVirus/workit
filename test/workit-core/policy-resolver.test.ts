@@ -82,7 +82,7 @@ test("a broad behavior-preserving rename does not escalate by size", () => {
   expect(rules(result)).toEqual(["mechanical-existing-checks", "self-review", "pre-pr-cleanup"]);
 });
 
-test("behavior changes require behavioral verification and fresh-context review", () => {
+test("security behavior changes require behavioral verification and fresh-context review", () => {
   const result = resolvePolicy(
     input({
       assessment: assessment({
@@ -116,6 +116,53 @@ test("behavior changes require behavioral verification and fresh-context review"
     "fresh-context-review",
     "pre-pr-cleanup",
   ]);
+});
+
+test("bounded behavior changes keep testing but do not force independent review", () => {
+  const original = input();
+  const changed = {
+    ...original,
+    assessment: {
+      ...original.assessment,
+      consequences: [],
+      signals: {
+        ...original.assessment.signals,
+        behaviorChange: {
+          value: true as const,
+          basis: "inferred" as const,
+          reason: "sidebar highlighting",
+          refs: [],
+        },
+        mechanicalLowRisk: {
+          value: false as const,
+          basis: "inferred" as const,
+          reason: "observable change",
+          refs: [],
+        },
+      },
+    },
+  };
+  expect(rules(resolvePolicy(changed))).toEqual([
+    "behavioral-verification",
+    "self-review",
+    "pre-pr-cleanup",
+  ]);
+  expect(rules(resolvePolicy({ ...changed, preferences: { thorough: true } }))).toContain(
+    "fresh-context-review",
+  );
+  for (const area of ["security", "data", "public_contract", "operations"] as const) {
+    const consequential = {
+      ...changed,
+      preferences: { fast: true },
+      assessment: {
+        ...changed.assessment,
+        consequences: [
+          { area, fact: { statement: "affected boundary", basis: "inferred" as const, refs: [] } },
+        ],
+      },
+    };
+    expect(rules(resolvePolicy(consequential))).toContain("fresh-context-review");
+  }
 });
 
 test("contradictory mechanical and behavioral signals fail reconciliation", () => {
@@ -295,6 +342,9 @@ test("preferences adjust only the permitted helper/review process", () => {
     constraints: [constrained],
     assessment: assessment({
       ...input().assessment,
+      consequences: [
+        { area: "security", fact: { statement: "authorization", basis: "inferred", refs: [] } },
+      ],
       signals: {
         ...input().assessment.signals,
         approachUnknown: { value: "unknown", basis: "unknown", reason: "scope", refs: [] },

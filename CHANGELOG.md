@@ -18,6 +18,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- OpenCode action approvals revalidate same-text proposals before rejecting
+  ambiguity, so a stale pre-branch proposal cannot wedge a current commit.
+- Distributed guidance chooses native tools for routine authorized Git work
+  without task/writer/decision ceremony or post-commit PR-readiness escalation.
+  Native permissions and managed uncertainty/conflict safeguards remain intact.
+- Bounded behavior changes retain behavioral verification and self-review;
+  fresh-context review remains required for consequential boundaries, thorough
+  preference and explicit project constraints rather than every behavior edit.
+
 ### Added
 
 - Action-time `cwd` targeting for Git and hosting actions from a task rooted in

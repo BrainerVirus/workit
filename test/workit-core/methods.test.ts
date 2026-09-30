@@ -176,6 +176,9 @@ test("bootstrap preserves host authority and keeps Workit coordination optional"
   expect(bootstrap.toLowerCase()).toContain("operation");
   expect(bootstrap).toContain("Native host allow/ask/deny");
   expect(bootstrap).toContain("zero Workit task, assessment, or writer calls");
+  expect(bootstrap).toContain("prefer native host Git/shell");
+  expect(bootstrap).toContain("Never switch execution paths to evade a denial");
+  expect(bootstrap).toContain("A local-commit endpoint does not imply");
   expect(bootstrap.toLowerCase()).toContain("not automatic");
   expect(bootstrap).not.toContain("run task.start then policy.assess");
   expect(bootstrap).not.toContain("workit-behavioral-tdd");

@@ -22,7 +22,8 @@ Out of scope: executing the upgrade now; deleting current data; rewriting all co
 
 Latest user requirements take precedence over older drafts. This spec replaces the future-design direction of `docs/agile-workflow/spec.md` and its plan, and consolidates relevant ideas from `docs/structural-fixes/spec.md` and `docs/workit-v1/spec.md`. Those documents are historical context, not additional cumulative gates. Installed bootstrap, skills, adapters, and tests must be changed explicitly before behavior changes.
 
-Confirmed during read-only inspection:
+Historical observations from the 2026-09-27 recovery inspection, before the
+v1.3.0 implementation. These describe that baseline, not current runtime behavior:
 
 - `packages/workit-core/src/core/methods.ts` still requires task start/assessment before product mutations. Canonical plan and steer skills repeat that requirement.
 - `packages/workit-core/skills/workit-plan/SKILL.md` escalates changed behavior or package/subsystem counts to a spec. This conflicts with selective durable knowledge.
@@ -114,7 +115,7 @@ Verification must match the changed behavior and actual inputs. Reuse CI/local e
 
 An agent must be able to implement an authorized repo-rule change as a typed configuration edit, without modifying Workit source, rebuilding, or reinstalling the plugin. Retain existing workspace matching; add named repo profiles/tracks where a single preset cannot express the repository's reality.
 
-Proposed precedence, subject to mapping the existing resolver: built-in defaults, user defaults, matched workspace, repository overrides, then explicit per-task track selection. Selection chooses a configured profile; it is not permission to override protected organizational policy. Equal-priority ambiguous matches require a named choice, not filesystem ordering. Show effective values and provenance.
+Proposed precedence, subject to mapping the existing resolver: built-in defaults, user defaults, matched workspace, repository overrides, then explicit per-task track selection. When multiple workspace globs match, prefer the entry with the most literal path components; equally specific matches require a named choice, not filesystem ordering. A named selection may deliberately choose a broader matching workspace. Selection chooses a configured profile; it is not permission to override protected organizational policy. Show effective values and provenance.
 
 Keep descriptive workflow config distinct from trusted authority. Repository content cannot grant host access, replace the trusted work account, remove organization restrictions, or authorize publication. Editing a rule to unblock an action must be disclosed as a policy change; never silently weaken policy after a denial. Config writes still use host permissions and user scope.
 

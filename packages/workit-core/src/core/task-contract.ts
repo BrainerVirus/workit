@@ -1140,8 +1140,61 @@ export const OPERATION_SCHEMA_DEPTH = 1;
 /** Provider nesting limit every advertised Workit schema must stay within. */
 export const OPERATION_SCHEMA_MAX_DEPTH = 10;
 
-export const canonicalFieldsDescription = (fields: string[]): string =>
-  `Canonical object fields: ${fields.join(", ")}. Workit validates the complete nested value.`;
+const schemaShapeDescription = (value: unknown, depth = 0): string => {
+  if (!value || typeof value !== "object") return "value";
+  const schema = value as Record<string, unknown>;
+  if (Array.isArray(schema.oneOf) || Array.isArray(schema.anyOf)) {
+    const options = (Array.isArray(schema.oneOf) ? schema.oneOf : schema.anyOf) as unknown[];
+    return `(${options.map((option) => schemaShapeDescription(option, depth)).join("|")})`;
+  }
+  if (schema.const !== undefined) return `=${JSON.stringify(schema.const)}`;
+  if (Array.isArray(schema.enum)) return `[${schema.enum.map(String).join("|")}]`;
+  const type = Array.isArray(schema.type) ? schema.type.join("/") : schema.type;
+  if (type === "array") return `arr<${schemaShapeDescription(schema.items, depth)}>`;
+  if (type === "object" && schema.properties && typeof schema.properties === "object") {
+    if (depth >= 2) return "obj";
+    const required = new Set(Array.isArray(schema.required) ? schema.required : []);
+    const properties = schema.properties as Record<string, unknown>;
+    const fields = Object.entries(properties).map(
+      ([name, child]) =>
+        `${name}${required.has(name) ? "!" : ""}:${schemaShapeDescription(child, depth + 1)}`,
+    );
+    return `obj{${fields.join(",")}}`;
+  }
+  if (typeof type !== "string") return "?";
+  return type
+    .split("/")
+    .map((part) => ({ string: "str", boolean: "bool", number: "num", null: "null" })[part] ?? part)
+    .join("|");
+};
+
+export const canonicalFieldsDescription = (
+  value: string[] | Record<string, unknown> | z.ZodType,
+): string => {
+  if (Array.isArray(value))
+    return `Canonical object fields: ${value.join(", ")}. Workit validates the complete nested value.`;
+  const isZodType = (schema: Record<string, unknown> | z.ZodType): schema is z.ZodType =>
+    "_zod" in schema && typeof schema._zod === "object";
+  const schema = isZodType(value)
+    ? (z.toJSONSchema(value, { target: "draft-2020-12" }) as Record<string, unknown>)
+    : value;
+  if (!schema.properties || typeof schema.properties !== "object") {
+    const variants = Array.isArray(schema.oneOf)
+      ? schema.oneOf
+      : Array.isArray(schema.anyOf)
+        ? schema.anyOf
+        : null;
+    return variants
+      ? `Canonical shapes: ${variants.map((variant) => schemaShapeDescription(variant)).join(" | ")}. Full nested value is validated.`
+      : "Canonical nested value; Workit validates the complete value.";
+  }
+  const properties = schema.properties as Record<string, unknown>;
+  const required = new Set(Array.isArray(schema.required) ? schema.required : []);
+  const fields = Object.entries(properties).map(
+    ([name, child]) => `${name}${required.has(name) ? "!" : ""}:${schemaShapeDescription(child)}`,
+  );
+  return `Fields (! required): ${fields.join(", ")}. Full nested value is validated.`;
+};
 
 /**
  * Provider-safe projection of an operation JSON schema. Objects deeper than
@@ -1178,11 +1231,12 @@ export function boundedOperationJsonSchema(
     if (typeof node !== "object" || node === null) return node;
     const record = node as Record<string, unknown>;
     if (record.properties && typeof record.properties === "object") {
-      const fields = Object.keys(record.properties as Record<string, unknown>);
+      const properties = record.properties as Record<string, unknown>;
+      const fields = Object.keys(properties);
       if (currentDepth >= maxDepth || fields.length === 0) {
         const description = stringifiedObjects
-          ? `${canonicalFieldsDescription(fields)} A JSON-encoded string is also accepted.`
-          : canonicalFieldsDescription(fields);
+          ? `${canonicalFieldsDescription(record)} A JSON-encoded string is also accepted.`
+          : canonicalFieldsDescription(record);
         return tolerate({ type: "object", description });
       }
       return tolerate({

@@ -46,9 +46,10 @@ test("advertised operation schemas stay within provider nesting limits", () => {
 test("collapsed nodes name their canonical fields", () => {
   const bounded = boundedOperationJsonSchema("task") as Record<string, unknown>;
   const descriptions = collectDescriptions(bounded);
-  const collapsed = descriptions.filter((text) => text.startsWith("Canonical object fields:"));
+  const collapsed = descriptions.filter((text) => text.startsWith("Fields (! required):"));
   expect(collapsed.length).toBeGreaterThan(0);
   expect(collapsed.some((text) => text.includes("objective"))).toBe(true);
+  expect(collapsed.some((text) => text.includes("!:") && text.includes("str"))).toBe(true);
   expect(canonicalFieldsDescription(["a", "b"])).toContain("a, b");
 });
 

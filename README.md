@@ -308,6 +308,19 @@ descriptor and requires an interactive TTY confirmation. A headless CLI call
 caller-unattested MCP surface keeps optional mutations unavailable. Time
 entries require a duration supplied or confirmed by the user.
 
+For routine authorized branch and commit work, use native host Git/shell tools
+when managed coordination or outcome reconciliation is unnecessary. Inspect the
+target checkout's conventions first; native permissions apply. There is no need
+to start a Workit task just to commit, and a local commit does not require PR
+readiness or task-closure paperwork. Never switch execution paths to evade a
+denial or retry an uncertain managed effect. Managed actions remain optional for
+their target locking and outcome reconciliation. See the
+[action reliability specification](docs/adaptive-workit/reliability-spec.md).
+Newly assessed bounded behavior changes keep behavioral checks and self-review.
+Security, data, public-contract and operational consequences, the thorough
+preference, and explicit project requirements still require stronger review;
+existing stored policies are not silently changed.
+
 The task directory holds coordination state; it need not be a Git repository.
 Git and hosting actions accept `cwd` in their payload to select any existing
 checkout for that action, with no prior registration or shared parent required.
@@ -369,13 +382,16 @@ retain recursive inventory behavior.
 Branch, commit, push, PR, and merge approvals can run without questions once a
 workspace opts in. Add `autoApprove` (action classes, or `true` for all five)
 and `vcs.account` (required for push) to the workspace entry in
-`~/.config/workit/workit/workspaces.json` — absent means manual as before:
+`~/.config/workit/workspaces.json` — absent means manual as before:
 
 ```json
 { "name": "personal", "glob": "/home/you/projects/personal/**",
   "vcs": { "provider": "github", "account": "you" },
   "autoApprove": ["branch", "commit", "push", "pr", "merge"] }
 ```
+
+When workspace globs overlap, Workit selects the match with the most literal
+path components. Equally specific matches require an explicit workspace name.
 
 Each auto action still records a reservation with the exact binding; the
 standing rule is re-read live, so removing the flag restores questions

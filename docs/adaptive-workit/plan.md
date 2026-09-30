@@ -1,26 +1,39 @@
 # Adaptive Workit implementation plan
 
-Status: active. This plan is grounded in the dirty tree reviewed on 2026-09-27
-and follows [`spec.md`](./spec.md). Keep checkpoints current so another session
-can resume without redoing discovery.
+Status: post-release follow-up active. Workit v1.3.0 and the earlier host
+recovery are complete; this plan now records the workspace-routing follow-up
+on `main`. It follows [`spec.md`](./spec.md). Keep checkpoints current so
+another session can resume without redoing discovery.
 
 ## Scope and working rules
 
 - Preserve the existing dirty tree. Do not reset, clean, stash, or discard it.
-- The user has since authorized atomic commits, a feature-branch push, a PR,
-  and merge after required checks pass. Commit only changes classified as
-  useful and in scope; leave historical/noise files for the user's later
-  decision. Do not delete the remote branch or publish a release.
-- Keep Workit disabled in the active OpenCode host until isolated acceptance
-  checks pass, then enable the local package pin using OpenCode's supported
-  reload mechanism. Do not run migration or prune history, and never use the
-  real `.workit` history as a destructive fixture.
+- Earlier release authorization applied to the merged v1.3.0 work. This
+  follow-up remains uncommitted; do not push or open a PR without a new request.
+- Workit is enabled in the active OpenCode config from the local checkout; the
+  earlier disable-until-acceptance gate is complete. Do not run migration or
+  prune history, and never use the real `.workit` history as a destructive
+  fixture.
 - Implement bounded behavior slices. Native harness permissions remain the
   authority; Workit checks may add restrictions but cannot grant host access.
 - Ask only for choices that affect real policy and cannot be established from
   the repository/configuration. In particular, `nun` release/tag rules,
   retention/archive limits, and host authorization for hidden effects need
   evidence or a user decision before their dependent slice ships.
+
+## Current checkpoint — 2026-09-29
+
+- **Changes:** the narrow `github-web` workspace rule is active again after an
+  external backup; runtime VCS/branch resolution selects it over `work`.
+- **Checks:** the real config resolves GitHub, `nun-develop`, and protects
+  `nun-develop`/`nun-master`; the full repository check passed 1,585 tests and
+  8,614 assertions.
+- **Remaining blockers:** the separate `main`/`develop` track and tag flow are
+  not wired into actions. GitHub workspaces contain YouTrack link settings the
+  current GitLab-only linker ignores, and strict whole-file validation flags
+  those settings.
+- **Next action:** define those track actions and decide whether GitHub PRs
+  should receive YouTrack links before enabling either behavior.
 
 ## Dirty-tree reconciliation
 
@@ -53,7 +66,7 @@ can resume without redoing discovery.
 | Slice | Change and dependencies | Acceptance checks |
 | --- | --- | --- |
 | 1. Direct work and steering | Remove universal task-start/assessment and close requirements from the invariant bootstrap and canonical skills. Make plan/spec creation selective and quick questions lifecycle-free. Keep task operations available for work that benefits from continuity or coordination. Update contradictory project guidance without erasing unrelated dirty edits. | A bounded non-Git edit/investigation needs zero Workit task, assessment, or writer calls; bootstrap and packaged skill tests contain no universal lifecycle gate; quick-question steering preserves no task state; explicit tracked work still has its existing path. Run focused method/skill tests. |
-| 2. Typed repo policy | Map and extend the existing workspace resolver/config schemas. Add named repository profiles and release tracks, strict semantic validation, precedence/provenance, and explicit ambiguity. Reuse current branch/hosting strategies. Depends on slice 1 only for policy wording; no real release is run. | Unit fixtures cover each precedence level, invalid references, duplicate/equal-priority matches, profile selection, two independent tracks, and operation-time reload. Unrelated config content survives edits. Invalid policy blocks only affected mutations. |
+| 2. Typed repo policy | Map and extend the existing workspace resolver/config schemas. Add named repository profiles and release tracks, strict semantic validation, precedence/provenance, and explicit ambiguity. Reuse current branch/hosting strategies. Depends on slice 1 only for policy wording; no real release is run. | Unit fixtures cover each precedence level, invalid references, broad/narrow glob priority and equal-priority ambiguity, profile selection, two independent tracks, and operation-time reload. Unrelated config content survives edits. Invalid policy blocks only affected mutations. |
 | 3. Policy-bound actions | Reuse the dirty target resolver, identity, expected-tip, and lock work after checking call paths. Share pure validators with managed actions and supported pre-execution hooks; replace unconditional shell rerouting with narrow validation and documented unsupported forms. Add operation policy fingerprints and revalidation before effects. Depends on slice 2. | Direct compliant branch/commit work is not forced through Workit. Noncompliant recognized operations name the exact rule, provenance, attempted value, and correction. Wrong account, protected ref, writer conflict, stale tip, and uncertain outcome tests still fail closed. An unrelated policy edit does not duplicate a question. |
 | 4. Selective knowledge and delivery | Update canonical methods/skills for evidence-led brainstorming, proportional docs, steering, and an explicit delivery endpoint. Reuse existing method selection and document tools; avoid new ceremony or duplicate stores. | Tests cover quick question, precise small fix with no document, requested durable contract, genuinely open choice with distinct options, and implementation continuing through authorized checks without a `continue?` prompt. Merge/release remain outside scope absent explicit authority. |
 | 5. Portable continuation | Extend existing export/import with stable source lineage, digest-based idempotency, source-to-destination mapping, outcome reconciliation, and atomic ownership/fencing. Discovery stays cheap and read-only; takeover never imports native receipts, workers, process handles, or leases. Depends on slices 1 and 3. | OpenCode-to-Pi fixture resumes one logical record, preserves decisions/evidence and uncertain action IDs, does not import live authority, deduplicates retry, and blocks a stale owner from managed effects after handoff. History reads need no writer. |
@@ -112,10 +125,11 @@ focused question only when one of those choices blocks a concrete slice.
 ### Completed: slice 2 — typed repo policy
 
 - **Changes:** added strict typed workspace/profile/release-track validation
-  while preserving unrelated file metadata; rejected ambiguous matches unless
-  a matching workspace is named; layered profile values over workspace and
-  user defaults with provenance; routed default/explicit profiles through the
-  shared branch and commit resolvers; added explicit multi-track selection;
+  while preserving unrelated file metadata; workspace resolution now selects
+  the most-specific matching glob and requires a name for equal-specificity
+  matches; layered profile values over workspace and user defaults with
+  provenance; routed default/explicit profiles through the shared branch and
+  commit resolvers; added explicit multi-track selection;
   made CLI/setup workspace writes preserve metadata, validate replacements,
   and reject stale revisions before any previewed write; made doctor report
   typed errors rather than crash.
@@ -126,8 +140,21 @@ focused question only when one of those choices blocks a concrete slice.
   do not ship a real track configuration from the illustrative example. Track
   selection is available as a typed resolver and still needs action-level
   integration in slice 3/4.
-- **Next action:** replace broad shell rerouting with shared validators and
-  operation-time policy revalidation in slice 3.
+
+### Completed: workspace glob precedence follow-up
+
+- **Changes:** added the saved `github-web` workspace rule back to the active
+  user config after saving the previous file outside the config directory.
+  Its runtime VCS and branch policy now win over `work` for the legacy repo.
+- **Checks:** `fnm exec --using=24.20.0 -- bun run check` — build, lint,
+  formatting, TypeScript, 1,585 tests / 8,614 assertions; real config resolves
+  GitHub, `nun-develop`, and protects `nun-develop`/`nun-master`.
+- **Remaining blockers:** this workspace only selects the `nun` default; the
+  `main`/`develop` product track and tag/promotion rules remain undefined and
+  release-track selection is not wired into actions. GitHub workspaces also
+  carry YouTrack link settings the current GitLab-only linker ignores.
+- **Next action:** define the standard/`nun` track actions and decide whether
+  YouTrack links should be supported for GitHub before enabling those paths.
 
 ### Completed: slice 4 — selective knowledge and delivery
 
@@ -321,3 +348,104 @@ focused question only when one of those choices blocks a concrete slice.
   PR matrix before merge. **Next:** push the checkpoint, verify the new head's
   checks, merge PR #132 without deleting its branch, then restore the exact
   local Workit pin and reload OpenCode.
+
+
+### 2026-09-30 reliability review checkpoint
+
+- Read-only evidence: OpenCode 2.0.19; active Workit registration is the local
+  package pin. Inspected saved V2 records without resuming or modifying sessions.
+  Primary reproduction: `ses_f12338d70ffe5maUpR9iR4wujU`, session checkout
+  `web/integration`, managed action target `web/frontend`.
+- The last 130 assistant records contain 33 Workit calls: 12 `invalid_input`,
+  five `needs_input`, and one `requirements_unsatisfied`. These are observations
+  of this bounded transcript, not benchmark results or all installations.
+- Confirmed defect: commit proposals opened before and after branch creation
+  share displayed text but have different resolved descriptors. OpenCode's
+  decision binding rejects multiple text matches before checking freshness
+  (`packages/workit-opencode/src/tools/workit.ts`, proposal matching and queue).
+  Agent changed the commit message to escape the collision and re-asked.
+- First correction: re-resolve matching proposals, evict only proven-stale
+  descriptors, accept a unique current match, and preserve ambiguity/unknown
+  failures. Regression: proposal on develop, branch creation, same-text proposal
+  on feature branch, one approval binds the fresh candidate. Also prove real
+  staged-content drift and multiple valid targets still fail closed.
+- Broader gaps: solo managed commits require task plus writer; post-commit close
+  requires assessment; V2 external-action payload is advertised as an open
+  object, while bounded family schemas hide nested required fields. Transcript
+  retries included stash boolean versus yes/no, decision refs, assessment refs,
+  plan_steps, and blocker shapes. Improve discoverability without weakening
+  runtime validation; move reservations/authorization orchestration out of
+  model-authored lifecycle steps. Preserve native host authority, coordinator
+  attribution, target locks and conflicting-target-writer checks.
+- Gentle AI's pinned trigger rules already match the current optional-method
+  bootstrap. The unresolved mismatch is executable action machinery, not lack
+  of another skill. The spec's historical inspection section needs clear
+  historical labeling; do not treat those old observations as current code.
+- No runtime/config/history changes or live effects were made in this review.
+  Existing workspace resolver edits remain untouched. Next: implement and
+  verify the stale-proposal regression first, then separately design a direct
+  managed-action path and test real cross-checkout sequences with bounded
+  coordination-call counts. Do not reload the user's running session.
+
+
+### Reliability implementation — 2026-09-30
+
+- Contract: `reliability-spec.md` defines the reproduced scenario, authority
+  boundaries, A–D dependencies and checks. Existing workspace resolver work is
+  preserved as a separate slice; the spec baseline observations are historical.
+- Slice C: distributed bootstrap now defaults routine authorized branch/commit
+  work to native tools from the outset, with target convention inspection and
+  no denial/uncertainty evasion. New bounded behavior assessments keep checks
+  and self-review; consequential boundaries, thorough preference and explicit
+  constraints retain stronger review. Stored policies are untouched.
+  Check: methods + policy resolver, 39 tests / 236 assertions passed.
+- Slice A: shared OpenCode V1/V2 proposal binding revalidates every matching
+  descriptor before ambiguity; stale candidates alone are evicted. Native
+  question sequence provenance prevents old or delayed answers binding a newer
+  proposal. Focused adapter suite: 50 tests / 201 assertions passed. Original
+  staged-drift and persistence-retry coverage remains.
+- Slice B: canonical external-action schemas and richer bounded nested shape
+  descriptions are complete. V1 uses canonical operation/payload schemas with
+  strict runtime pairing; V2 advertises the full discriminated schema. Checks
+  cover stash, plan-step shapes, references, blockers and provider nesting depth.
+- Proactive pass: the universal fresh-review policy mismatch was reproduced and
+  corrected. A Luna audit is checking rejected actions, restart uncertainty,
+  cross-checkout conflicts and schema/runtime agreement. Next: finish audit
+  disposition, run all checks in the isolated checkout (path recorded locally
+  in `/tmp/workit-reliability-checkout-path`), and preserve active local-pin
+  artifacts/configuration until a safe restart boundary. No live real-history
+  migration, host reload or publishing is authorized by this checkpoint.
+
+### Reliability acceptance checkpoint — 2026-09-30
+
+- A–C implemented. Proactive pass D found and fixed two additional receipt bugs:
+  V2 now captures provenance in `execute.before`, and call identity/sequence
+  persist for the plugin instance lifetime instead of expiring after 1,024 calls.
+  Regressions cover delayed answers across sibling-checkout branch changes,
+  duplicate hook/event delivery and replay after 1,025 consumed receipts.
+- Final isolated `bun run check`: build, lint, formatting, 1,592 tests / 8,701
+  assertions and TypeScript passed. `verify:release-candidate` verified seven
+  local tarballs and deterministic acceptance; marketplace validation passed.
+- Installed OpenCode 2.0.19 private loader loaded the candidate and registered
+  ten tools with eleven canonical action variants. No model inference or live
+  effect was performed; the deliberately unavailable probe model terminates
+  after registration. This does not prove model-driven one-shot reliability.
+- Audit dispositions are in `reliability-spec.md`: existing serialization,
+  uncertainty and rejection protections retained; no rejected-action execution
+  defect reproduced. Independent final Luna review found no definite remaining
+  defect in proposal binding/receipt ordering. JSON schema size increased;
+  no token or latency reduction is claimed.
+- Remaining boundary: native permissions for plugin-internal subprocess effects
+  are unproven. Do not introduce task-free managed execution on question consent
+  alone. Native tools are the direct path from the outset. A bounded model-driven
+  qualification remains separate from these deterministic checks.
+- Candidate checkout: `/tmp/workit-reliability-_vs8ot7k/checkout`; logs:
+  `/tmp/workit-reliability-{full-check,pack,marketplace,native-final}.log`.
+  Runtime/test files match the source tree; verification hashes are alongside
+  the checkout. Original local-pin artifact and global OpenCode config hashes
+  remain unchanged. Existing workspace-resolver edits are preserved and passed
+  within the full suite. No real-history migration or publishing was performed.
+- Next action: at a safe user session boundary, build the original checkout and
+  restart OpenCode once to activate the tested source; inspect new-session
+  routing before model-driven qualification. Do not rebuild or reload while
+  the current user session is running.
