@@ -39,8 +39,9 @@ test("V1 behavior is unchanged through the dual entry", async () => {
       "workit_worker",
       "workit_writer",
       "workit_state",
-      "workit_external_action",
+      "workit_context",
       "workit_init_apply",
     ].sort(),
   );
+  expect(hooks.tool).not.toHaveProperty("workit_external_action");
 });

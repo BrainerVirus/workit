@@ -1,6 +1,6 @@
 # Workit v1 host capability matrix
 
-Generated from adapter fixtures. Fixture revision: `workit-v1-2026-09-09`.
+Generated from adapter fixtures. Fixture revision: `workit-v1-2026-09-30`.
 
 Unknown or untested cells fail the applicable baseline rather than reading as supported.
 

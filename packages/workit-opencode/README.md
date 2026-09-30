@@ -4,7 +4,7 @@
 [![npm version](https://img.shields.io/npm/v/@brainervirus/workit-opencode.svg)](https://www.npmjs.com/package/@brainervirus/workit-opencode)
 [![license: MIT](https://img.shields.io/badge/license-MIT-green.svg)](../../LICENSE)
 
-OpenCode plugin for workit — workflow rails for agentic coding (specs, plans, YouTrack, CI-gated commits), with host-native approval, delegation, handoff, and diagnostics.
+OpenCode plugin for Workit — optional coordination, policy, delegation, handoff, and read-only context. Native OpenCode tools execute Git, hosting, YouTrack and documentation effects.
 
 ## Install
 
@@ -16,22 +16,25 @@ OpenCode plugin for workit — workflow rails for agentic coding (specs, plans, 
 }
 ```
 
-Local dev variant (absolute path to this repo):
+OpenCode V2 uses `"plugins"`; V1 uses `"plugin"`.
+
+Local dev variant (absolute path to this repo; use `plugins` on V2):
 
 ```jsonc
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugin": ["file:///path/to/workit/packages/workit-opencode/src/plugin.ts"]
+  "plugin": ["file:///path/to/workit/packages/workit-opencode"]
 }
 ```
 
-Requirements: OpenCode 1.18.30+ (V1) or 2.0.18 (V2), Node ≥ 24. The published
+Requirements: OpenCode 1.18.30+ (V1) or 2.0.18+ (V2), Node ≥ 24. The published
 plugin is a self-contained Node bundle; its default export is a dual entry
 (`server()` for V1, `setup()` for V2), so the same pin works on both hosts.
 
 ## What it provides
 
 - **Eight native operation tools** — `workit_task`, `workit_policy`, `workit_evidence`, `workit_finding`, `workit_decision`, `workit_worker`, `workit_writer`, and `workit_state`.
+- **Read-only context and init tools** — `workit_context` accepts `{ "kind": "git" }` and the existing PR/YouTrack/changelog/release/affected context fields; `workit_init_apply` keeps confirmed configuration initialization.
 - **Fourteen policy-selected method skills** — challenge, behavioral TDD, review, plan, implement, debug, handoff,
   babysit, blast-radius, deslop, diagram, mockup, green-run, and steer.
 - **Native lifecycle hooks** — host-observed question receipts, direct-child task workers, compact task bootstrap/restoration, and known-surface writer checks.
@@ -41,6 +44,12 @@ plugin is a self-contained Node bundle; its default export is a dual entry
 - **Receipts** — native `question` answers are purpose-bound, session-bound, fresh, and one-use; unrelated questions fail closed.
 - **Delegation** — native `task` workers are direct-child-only; nested or uncertain lineage is denied (`delegation_lineage_denied`).
 - **Continuity** — compact task context is injected once on session start and once after compaction; unobservable shell surfaces are labeled `agent_guided`.
+
+Workit does not register `workit_external_action` on either OpenCode version.
+Use native tools for mutations under the host permissions and target conventions;
+no Workit task, writer or decision is needed merely to run an ordinary command.
+Old action/decision history is preserved. Inspect and reconcile any uncertain
+effect before retrying; removal does not settle or migrate it.
 
 ## Bundle / runtime model
 

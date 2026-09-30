@@ -14,6 +14,7 @@ export function assertOpencodeWorkitNamespace(): string[] {
     "workit_state",
   ];
   expect(names.filter((name) => core.includes(name))).toEqual(core);
-  expect(names).toContain("workit_external_action");
+  expect(names).toContain("workit_context");
+  expect(names).not.toContain("workit_external_action");
   return names;
 }

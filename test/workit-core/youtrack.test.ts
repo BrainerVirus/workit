@@ -162,7 +162,7 @@ test("explicit not_applied time failure safely retries time only", async () => {
       postedComment: true,
       loggedMinutes: 0,
       outcome: "not_applied",
-      retry: "workit_youtrack_log_time",
+      retry: "youtrack.time",
     },
     error: "rejected before request",
   });
@@ -192,7 +192,7 @@ test("explicit not_applied comment failure safely retries the missing effects", 
       postedComment: false,
       loggedMinutes: 0,
       outcome: "not_applied",
-      retry: "workit_youtrack_post",
+      retry: "youtrack.update",
     },
     error: "rejected before request",
   });
@@ -218,92 +218,6 @@ test("posting requires explicit confirmation before either effect", async () => 
   );
   expect(calls).toBe(0);
   expect(result).toEqual({ ok: false, data: null, error: "confirmed: true required" });
-});
-
-test.skipIf(process.platform === "win32")(
-  "standalone time logging preserves ambiguous and not-applied outcomes",
-  async () => {
-    const xdg = mkdtempSync(path.join(os.tmpdir(), "wf-youtrack-outcome-"));
-    const directory = path.join(xdg, "workflow-toolkit");
-    mkdirSync(directory);
-    const tokenPath = path.join(directory, "youtrack.token");
-    writeFileSync(tokenPath, "dummy-token\n", { mode: 0o600 });
-    writeFileSync(path.join(directory, "youtrack.json"), JSON.stringify({ tokenFile: tokenPath }));
-    await withNeutralXdg(xdg, async () => {
-      for (const [operation, outcome, retry] of [
-        [
-          async () => {
-            throw new Error("transport lost");
-          },
-          "unknown",
-          undefined,
-        ],
-        [
-          async () => ({ ok: false, error: "not sent", outcome: "not_applied" }),
-          "not_applied",
-          "workit_youtrack_log_time",
-        ],
-      ] as const) {
-        const tools = createYouTrackTools({
-          verifyToken: async () => ({}),
-          context: async () => ({}),
-          parseDuration: async () => ({}),
-          postComment: async () => ({}),
-          logTime: operation,
-        });
-        const raw = await tools.workit_youtrack_log_time.execute(
-          { confirmed: true, issueId: "NSR-40", minutes: 30 },
-          { directory: "/repo", worktree: "/repo" } as never,
-        );
-        const result = JSON.parse(raw as string);
-        expect(result.data.outcome).toBe(outcome);
-        expect(result.data.retry).toBe(retry);
-        if (outcome === "unknown") expect(result.data.instructions).toContain("do not retry");
-      }
-    });
-  },
-);
-
-test("bundled standalone time logging rejects invalid inputs before credentials or HTTP", async () => {
-  const root = mkdtempSync(path.join(os.tmpdir(), "wf-youtrack-preflight-"));
-  const bin = path.join(root, "bin");
-  const sentinel = path.join(root, "http-dispatched");
-  mkdirSync(bin);
-  writeFileSync(path.join(bin, "curl"), `#!/bin/sh\ntouch '${sentinel}'\nexit 99\n`, {
-    mode: 0o755,
-  });
-  const previousPath = process.env.PATH;
-  process.env.PATH = `${bin}:${previousPath}`;
-  try {
-    await withNeutralXdg(path.join(root, "missing-config"), async () => {
-      const tools = createYouTrackTools();
-      for (const [input, error] of [
-        [{ confirmed: true, issueId: "bad", minutes: 30 }, "invalid issueId"],
-        [{ confirmed: true, issueId: "NSR-40", minutes: 0 }, "minutes must be positive"],
-        [{ confirmed: true, issueId: "NSR-40", minutes: -1 }, "minutes must be positive"],
-      ] as const) {
-        const raw = await tools.workit_youtrack_log_time.execute(input, {
-          directory: root,
-          worktree: root,
-        } as never);
-        expect(JSON.parse(raw as string)).toEqual({
-          ok: false,
-          data: {
-            issueId: input.issueId,
-            loggedMinutes: 0,
-            outcome: "not_applied",
-            retry: "workit_youtrack_log_time",
-            instructions: "Correct the invalid input, then retry workit_youtrack_log_time once.",
-          },
-          error,
-        });
-      }
-      expect(existsSync(sentinel)).toBe(false);
-    });
-  } finally {
-    process.env.PATH = previousPath;
-    rmSync(root, { recursive: true, force: true });
-  }
 });
 
 test("YouTrack context rejects escaped spec and plan paths before credentials or operations", async () => {
@@ -605,7 +519,7 @@ test("bundled API failures never expose the token or authorization header", asyn
   }
 });
 
-test("registers seven standard tools without workspace_root and guards mutations", async () => {
+test("registers five read-only tools without workspace_root", async () => {
   const tools = createYouTrackTools({
     verifyToken: async () => ({}),
     context: async () => ({}),
@@ -620,19 +534,10 @@ test("registers seven standard tools without workspace_root and guards mutations
       "workit_youtrack_context",
       "workit_youtrack_parse_duration",
       "workit_youtrack_draft",
-      "workit_youtrack_log_time",
-      "workit_youtrack_post",
     ].sort(),
   );
   for (const definition of Object.values(tools)) {
     expect("workspace_root" in definition.args).toBe(false);
-  }
-  for (const name of ["workit_youtrack_log_time", "workit_youtrack_post"] as const) {
-    const raw = await tools[name].execute(
-      { confirmed: false } as never,
-      { directory: "/repo", worktree: "/repo" } as never,
-    );
-    expect(JSON.parse(raw as string).error).toBe("confirmed: true required");
   }
 });
 
@@ -677,46 +582,6 @@ test.skipIf(process.platform === "win32")(
       );
       expect(draft.ok).toBe(true);
       expect(draft.data.markdown).toContain("Avance");
-    }),
-);
-
-test.skipIf(process.platform === "win32")(
-  "log_time and post tools execute with confirmed and redact tokens from errors",
-  async () =>
-    withYouTrackConfig(async () => {
-      const tools = createYouTrackTools({
-        verifyToken: async () => ({}),
-        context: async () => ({}),
-        parseDuration: async () => ({ minutes: 30 }),
-        postComment: async () => ({ data: { ok: true } }),
-        logTime: async () => ({ error: "boom with secret" }),
-      });
-      const ctx = { directory: "/repo", worktree: "/repo" } as never;
-
-      const logged = JSON.parse(
-        (await tools.workit_youtrack_log_time.execute(
-          {
-            confirmed: true,
-            issueId: "NSR-1",
-            minutes: 30,
-          },
-          ctx,
-        )) as string,
-      );
-      expect(logged.ok).toBe(false);
-      expect(logged.error).toContain("boom");
-
-      const posted = JSON.parse(
-        (await tools.workit_youtrack_post.execute(
-          {
-            confirmed: true,
-            issueId: "NSR-1",
-            markdown: "Actualización",
-          },
-          ctx,
-        )) as string,
-      );
-      expect(posted.ok).toBe(true);
     }),
 );
 

@@ -125,6 +125,11 @@ Preserve uncertain external outcomes and reconcile repository/provider state
 before retrying. Internal reservations prevent duplicate or ambiguous effects;
 they are not permission tickets for every edit.
 
+On OpenCode V1 and V2, use native host tools for external mutations. Workit
+provides read-only workit_context; it has no managed external-action executor.
+Do not create proposals or request Workit approvals merely to invoke native
+tools. Old uncertain managed effects still require evidence before any retry.
+
 Use host-native authorization through the host's supported path. A native
 question receipt records an actual question interaction; it is not automatic
 host permission. Record a meaningful user choice once with provenance when

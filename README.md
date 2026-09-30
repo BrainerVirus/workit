@@ -7,7 +7,7 @@ host documents.
 
 | Package     | Purpose                                                                         |
 | ----------- | ------------------------------------------------------------------------------- |
-| OpenCode    | Native plugin with fourteen method skills, ten tools (eight shared families plus external action and init apply), and provider-safe schemas |
+| OpenCode    | Native plugin with fourteen method skills, ten tools (eight shared families plus read-only context and init apply), and provider-safe schemas |
 | Cursor      | MCP transport, one native hook dispatcher, one contract rule, and fourteen skills  |
 | Codex       | Native plugin manifest, shared MCP transport, documented lifecycle hooks, and fourteen skills |
 | Pi          | Native npm extension with nine tools (eight shared families plus external action), fourteen skills, and session continuity |
@@ -296,13 +296,13 @@ MCP provider keeps read-only inspection usable without an attested caller and
 returns `capability_unavailable` for authority-sensitive mutations when the
 host cannot prove the caller boundary.
 
-Optional Git, hosting, YouTrack, and documentation effects use one-time
+On Pi and the CLI, optional Git, hosting, YouTrack, and documentation effects use one-time
 approved action reservations and host-observed settlement on the existing
 host-owned effect surfaces. A concrete call must match the exact canonical
 operation/target/payload approved by the native host; prose or substring
 matches never authorize it. Missing credentials leave unrelated core work
-usable, while an uncertain remote outcome blocks blind retry. OpenCode and Pi
-use native approval receipts; the CLI `workit action` route shows the exact
+usable, while an uncertain remote outcome blocks blind retry. Pi
+uses native approval receipts; the CLI `workit action` route shows the exact
 descriptor and requires an interactive TTY confirmation. A headless CLI call
 (including `--confirm` without a TTY) returns `needs_input`, while the
 caller-unattested MCP surface keeps optional mutations unavailable. Time
@@ -313,8 +313,9 @@ when managed coordination or outcome reconciliation is unnecessary. Inspect the
 target checkout's conventions first; native permissions apply. There is no need
 to start a Workit task just to commit, and a local commit does not require PR
 readiness or task-closure paperwork. Never switch execution paths to evade a
-denial or retry an uncertain managed effect. Managed actions remain optional for
-their target locking and outcome reconciliation. See the
+denial or retry an uncertain managed effect. OpenCode V1 and V2 use native
+host tools for mutations; Workit exposes read-only `workit_context` and shared
+coordination tools, with no managed external-action executor. See the
 [action reliability specification](docs/adaptive-workit/reliability-spec.md).
 Newly assessed bounded behavior changes keep behavioral checks and self-review.
 Security, data, public-contract and operational consequences, the thorough
@@ -358,8 +359,8 @@ Examples:
 - comment-only `youtrack.update` with `{ "issueId": "ABC-1", "markdown": "..." }`
 - `changelog.apply` with `{ "entries": [{ "category": "Added", "text": "..." }] }`
 
-All native adapters and the CLI also expose the read-only `context.read`
-operation for `git`, `pr`, `youtrack`, `github_issue`, `gitlab_issue`,
+OpenCode exposes the read-only `workit_context` tool with a flat payload.
+Pi and the CLI expose the read-only `context.read` operation for `git`, `pr`, `youtrack`, `github_issue`, `gitlab_issue`,
 `changelog`, `release`, and `affected` context. The tracker kinds return the
 same title/body/state triple through authenticated `gh` and `glab` (GitLab
 subgroups kept); they fail closed when the CLI is unavailable or not logged in.

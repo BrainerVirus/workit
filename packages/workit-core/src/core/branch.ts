@@ -711,7 +711,7 @@ export const branchSetup = ({
     if (classifyBranchDirt(cwd) === "stash-required" && stash !== "yes") {
       return {
         error:
-          "dirty working tree — ask with native question, then call workit_branch_setup with stash=yes",
+          "dirty working tree — obtain native host approval before stashing and setting up the branch",
         phase: "preflight",
       };
     }

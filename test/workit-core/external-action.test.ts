@@ -38,7 +38,6 @@ import {
   readYouTrackAction,
   resolveExternalActionRequest,
 } from "@/packages/workit-core/src/core/external-action-effects";
-import { nativeExternalActionRunner } from "@/packages/workit-opencode/src/tools/workit";
 import { assessment, scope, taskStartRequest } from "./task-fixtures";
 import { stubCli, stubPath } from "@/test/shared/helpers/stub-cli";
 
@@ -983,13 +982,6 @@ test("local action authority follows the current writer session, not the task cr
     expect(externalActionState(store, "opencode", "resumed-session", descriptor)).toMatchObject({
       ok: true,
     });
-    expect(
-      await nativeExternalActionRunner(
-        root,
-        "resumed-session",
-        resumed,
-      )(descriptor, async () => success(null, null, "executed")),
-    ).toMatchObject({ ok: true, data: "executed" });
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -2307,67 +2299,6 @@ test("settlement refreshes exact revisions after unrelated task progress", async
     expect(result).toMatchObject({ ok: true, data: "settled after refresh" });
   } finally {
     rmSync(setupState.root, { recursive: true, force: true });
-  }
-});
-
-test("native host action binding requires the exact canonical target and payload", async () => {
-  const root = mkdtempSync(join(tmpdir(), "workit-external-host-binding-"));
-  try {
-    const actor = "opencode-session";
-    const store = new TaskStore(root);
-    const core = new WorkitCore(store, {
-      root,
-      caller: { host: "opencode", actor },
-      capabilities: [],
-      constraints: [],
-      now: "2026-01-01T00:00:00Z",
-      nativeAuthority: verifier(actor, "opencode"),
-    });
-    const started = core.task(taskStartRequest());
-    if (!started.ok) throw new Error(started.error);
-    const task = store.readTask((started.data as { id: string }).id);
-    const workspace = store.readWorkspace();
-    if (!task.ok || !workspace.ok || !workspace.data) throw new Error("host binding setup failed");
-    const descriptor = externalActionDescriptor("git.commit", { message: "approved" });
-    const decision = core.observeDecision(
-      {
-        schemaVersion: 1,
-        action: "record",
-        taskId: task.data.id,
-        expectedRevision: task.data.revision,
-        purpose: "action",
-        binding: {
-          taskId: task.data.id,
-          workspaceId: workspace.data.id,
-          scope: task.data.intent.data.scope,
-          presented: "Approve one commit",
-          approvedContent: descriptor,
-          contentRefs: [],
-        },
-        response: "approved",
-        requirementIds: [],
-      },
-      { kind: "decision", actor },
-    );
-    if (!decision.ok) throw new Error(decision.error);
-    const runner = nativeExternalActionRunner(root, actor, core);
-    let effects = 0;
-    expect(
-      await runner(externalActionDescriptor("git.commit", { message: "different" }), async () => {
-        effects += 1;
-        return "must not run";
-      }),
-    ).toMatchObject({ ok: false, code: "permission_denied" });
-    expect(effects).toBe(0);
-    expect(
-      await runner(descriptor, async () => {
-        effects += 1;
-        return "committed";
-      }),
-    ).toMatchObject({ ok: true, data: "committed" });
-    expect(effects).toBe(1);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
   }
 });
 

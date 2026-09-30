@@ -846,7 +846,7 @@ export async function postUpdate(
         postedComment: true,
         loggedMinutes: 0,
         error: time.error,
-        retry: "workit_youtrack_log_time",
+        retry: "youtrack.time",
       };
     }
     return { ok: true, issueId, postedComment: true, loggedMinutes: minutes };

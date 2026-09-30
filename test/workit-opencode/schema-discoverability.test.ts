@@ -1,146 +1,41 @@
 import { expect, test } from "bun:test";
 import Ajv2020 from "ajv/dist/2020";
-import {
-  OPERATION_SCHEMA_MAX_DEPTH,
-  boundedOperationJsonSchema,
-  externalActionJsonSchema,
-  externalActionRequest,
-} from "@/packages/workit-core/src/core";
 import { WORKIT_TOOL_CATALOG } from "@/packages/workit-opencode/src/shared/tools";
 import { createWorkitTools } from "@/packages/workit-opencode/src/tools/workit";
 
-test("V1 native argument schemas reject the same malformed payload shapes", () => {
+test("V1 and V2 publish the same flat, read-only context arguments", () => {
   const tools = createWorkitTools() as any;
-  const payload = tools.workit_external_action.args.payload;
-  expect(payload.safeParse({ stash: false }).success).toBe(false);
-  expect(payload.safeParse({ stash: "no", target_branch: "feature/example" }).success).toBe(true);
-  expect(payload.safeParse({ plan_steps: [{ message: "not a supported step" }] }).success).toBe(
-    false,
-  );
-  expect(
-    payload.safeParse({
-      plan_steps: ["feat(example): change", { branch: "feature/next" }, { pr: true }],
-    }).success,
-  ).toBe(true);
+  const v1 = tools.workit_context.args;
+  const v2 = WORKIT_TOOL_CATALOG.find((tool) => tool.name === "workit_context")?.input;
+  expect(v2).toBeDefined();
+  const args = {
+    kind: "affected",
+    range: "HEAD~1...HEAD",
+    operation: "git.commit",
+    payload: { message: "must not be available" },
+  };
+  expect(Object.keys(v1).sort()).toEqual(Object.keys((v2 as any).properties).sort());
+  expect(tools).not.toHaveProperty("workit_external_action");
+  const validate = new Ajv2020({ strict: false }).compile(v2 as any);
+  expect(validate({ kind: "affected", range: "HEAD~1...HEAD" })).toBe(true);
+  expect(validate(args)).toBe(false);
+  expect((v2 as any).required).toEqual(["kind"]);
+  expect((v2 as any).additionalProperties).toBe(false);
 });
 
-const record = (value: unknown): Record<string, any> => value as Record<string, any>;
-
-const maximumDepth = (value: unknown, depth = 0): number => {
-  if (Array.isArray(value))
-    return Math.max(depth, ...value.map((child) => maximumDepth(child, depth)));
-  if (!value || typeof value !== "object") return depth;
-  const schema = record(value);
-  const containerDepth = schema.type === "object" || schema.type === "array" ? depth + 1 : depth;
-  const children = [
-    ...(schema.properties && typeof schema.properties === "object"
-      ? Object.values(schema.properties as Record<string, unknown>)
-      : []),
-    ...(schema.items ? [schema.items] : []),
-    ...(Array.isArray(schema.oneOf) ? schema.oneOf : []),
-    ...(Array.isArray(schema.anyOf) ? schema.anyOf : []),
-    ...(Array.isArray(schema.allOf) ? schema.allOf : []),
-  ];
-  return Math.max(containerDepth, ...children.map((child) => maximumDepth(child, containerDepth)));
-};
-
-test("V2 external-action schema advertises the canonical operation payloads", () => {
-  const canonical = externalActionJsonSchema();
-  const advertised = WORKIT_TOOL_CATALOG.find((tool) => tool.name === "workit_external_action");
-  if (!advertised) throw new Error("V2 external-action tool is not registered");
-  expect(advertised?.input).toEqual(canonical);
-  expect(advertised?.input.type).toBe("object");
-  expect(maximumDepth(advertised?.input)).toBeLessThanOrEqual(OPERATION_SCHEMA_MAX_DEPTH);
-
-  const variants = record(advertised?.input).oneOf as Record<string, any>[];
-  const branchSetup = variants.find(
-    (variant) => variant.properties.operation.const === "git.branch_setup",
-  );
-  if (!branchSetup) throw new Error("branch_setup variant is missing");
-  expect(branchSetup.properties.payload.properties.stash.enum).toEqual(["yes", "no"]);
-
-  const commit = variants.find((variant) => variant.properties.operation.const === "git.commit");
-  if (!commit) throw new Error("git.commit variant is missing");
-  expect(commit.properties.payload.properties.plan_steps.items.anyOf).toEqual([
-    expect.objectContaining({ type: "string" }),
-    expect.objectContaining({
-      properties: { branch: expect.objectContaining({ type: "string" }) },
-    }),
-    expect.objectContaining({ properties: { pr: expect.objectContaining({ const: true }) } }),
+test("the context catalog exposes only read context families", () => {
+  const schema = WORKIT_TOOL_CATALOG.find((tool) => tool.name === "workit_context")?.input as any;
+  expect(schema.properties.kind.enum).toEqual([
+    "git",
+    "pr",
+    "youtrack",
+    "github_issue",
+    "gitlab_issue",
+    "changelog",
+    "release",
+    "affected",
   ]);
-  expect(commit.additionalProperties).toBe(false);
-  expect(commit.properties.payload.additionalProperties).toBe(false);
-
-  const validate = new Ajv2020({ strict: false }).compile(advertised.input as any);
-  const samples = [
-    {
-      operation: "git.branch_setup",
-      payload: { action: "setup", target_branch: "feature/sample", stash: "no" },
-    },
-    {
-      operation: "git.branch_setup",
-      payload: { action: "setup", target_branch: "feature/sample", stash: "false" },
-    },
-    {
-      operation: "git.commit",
-      payload: {
-        plan_branch: "feature/sample",
-        plan_steps: ["feat(sample): commit", { branch: "feature/next" }, { pr: true }],
-      },
-    },
-    {
-      operation: "git.commit",
-      payload: {
-        plan_branch: "feature/sample",
-        plan_steps: [{ branch: "feature/next", pr: true }],
-      },
-    },
-  ];
-  for (const sample of samples) expect(validate(sample)).toBe(externalActionRequest(sample).ok);
-});
-
-test("collapsed family schemas describe required fields and nested discriminators", () => {
-  const schema = boundedOperationJsonSchema("decision");
-  const recordDecision = (schema.oneOf as Record<string, any>[]).find(
-    (variant) => variant.properties.action.const === "record",
-  );
-  if (!recordDecision) throw new Error("decision record variant is missing");
-  const description = recordDecision.properties.binding.description as string;
-  expect(description).toContain("taskId!:str");
-  expect(description).toContain('kind!:="file"');
-  expect(recordDecision.properties.response.enum).toEqual(["approved", "rejected", "stated"]);
-  expect(description).toContain("Full nested value is validated.");
-});
-
-test("runtime external-action validation agrees with advertised enum and plan-step shapes", () => {
-  expect(
-    externalActionRequest({
-      operation: "git.branch_setup",
-      payload: { action: "setup", target_branch: "feature/sample", stash: "no" },
-    }).ok,
-  ).toBe(true);
-  expect(
-    externalActionRequest({
-      operation: "git.branch_setup",
-      payload: { action: "setup", target_branch: "feature/sample", stash: "false" },
-    }).ok,
-  ).toBe(false);
-  expect(
-    externalActionRequest({
-      operation: "git.commit",
-      payload: {
-        plan_branch: "feature/sample",
-        plan_steps: ["feat(sample): commit", { branch: "feature/next" }, { pr: true }],
-      },
-    }).ok,
-  ).toBe(true);
-  expect(
-    externalActionRequest({
-      operation: "git.commit",
-      payload: {
-        plan_branch: "feature/sample",
-        plan_steps: [{ branch: "feature/next", pr: true }],
-      },
-    }).ok,
-  ).toBe(false);
+  expect(schema.properties.cwd.type).toBe("string");
+  expect(schema.properties).not.toHaveProperty("operation");
+  expect(schema.properties).not.toHaveProperty("payload");
 });
