@@ -180,6 +180,9 @@ test("bootstrap preserves host authority and keeps Workit coordination optional"
   expect(bootstrap).toContain("Never switch execution paths to evade a denial");
   expect(bootstrap).toContain("A local-commit endpoint does not imply");
   expect(bootstrap.toLowerCase()).toContain("not automatic");
+  expect(bootstrap).toContain("branch/commit/push");
+  expect(bootstrap).toContain("reconcile every requested item");
+  expect(bootstrap).toContain("a local commit alone is not evidence");
   expect(bootstrap).not.toContain("run task.start then policy.assess");
   expect(bootstrap).not.toContain("workit-behavioral-tdd");
   expect(bootstrap).not.toContain("workit-review");
@@ -222,6 +225,9 @@ test("steer stays lifecycle-free and babysit preserves explicit merge evidence",
   const steer = skillText("workit-steer");
   expect(steer).toContain("Answer a quick question");
   expect(steer).toContain("do not silently resume an old objective");
+  expect(steer).toContain("checkout, branch, requested");
+  expect(steer).toContain("Keep explicitly held items parked");
+  expect(steer).toContain("A conversational");
   expect(steer).not.toContain("task.start");
   expect(steer).not.toContain("policy.assess");
   const babysit = skillText("workit-babysit");
@@ -252,7 +258,11 @@ test("planning keeps documentation proportional and continues through the author
   );
   expect(plan).toContain("proceed through the agreed endpoint");
   expect(plan).toContain("Do not ask for a separate plan approval");
-  expect(skillText("workit-implement")).toContain("checks appropriate to the requested");
+  const implement = skillText("workit-implement");
+  expect(implement).toContain("checks appropriate to the requested");
+  expect(implement).toContain("competing plausible targets");
+  expect(implement).toContain("reconcile every named deliverable");
+  expect(implement).toContain("observe the destination remote");
 });
 
 test("compact task context carries selected methods and refreshes with policy", () => {

@@ -387,6 +387,156 @@ test("compact context enforces UTF-8 bounds and redacts credential-like text eve
   expect(compact.match(/nextAction/g)?.length).toBe(1);
 });
 
+test("compact context keeps the newest decisions with deterministic ties and safe choice text", () => {
+  const value = active();
+  const decisions = [
+    ...Array.from({ length: 8 }, (_, index) => ({
+      tag: `old-${index}`,
+      id: `ffffffff-ffff-4fff-8fff-${String(index + 1).padStart(12, "0")}`,
+      recordedAt: `2026-01-0${index + 1}T00:00:00Z`,
+      choice: `old choice ${index}`,
+    })),
+    {
+      tag: "tie-b",
+      id: "00000000-0000-4000-8000-000000000009",
+      recordedAt: "2026-02-01T00:00:00.10Z",
+      choice: "approved fallback",
+    },
+    {
+      tag: "tie-a",
+      id: "00000000-0000-4000-8000-000000000008",
+      recordedAt: "2026-02-01T00:00:00.1Z",
+      choice: "TOKEN=choice-secret",
+    },
+    {
+      tag: "newest",
+      id: "00000000-0000-4000-8000-000000000001",
+      recordedAt: "2026-02-01T00:00:00.2Z",
+      choice: "stated choice",
+    },
+    {
+      tag: "whole-second",
+      id: "00000000-0000-4000-8000-000000000000",
+      recordedAt: "2026-02-01T00:00:00Z",
+      choice: "whole-second choice",
+    },
+  ].map(({ id, recordedAt, choice, ...metadata }) => ({
+    id,
+    recordedAt,
+    provenance: value.task.intent.provenance,
+    data: {
+      purpose: "design" as const,
+      binding: {
+        taskId: value.task.id,
+        workspaceId: value.workspace.id,
+        scope: scope(),
+        presented: "presented fallback",
+        approvedContent:
+          metadata.tag === "tie-b"
+            ? choice
+            : metadata.tag === "whole-second"
+              ? choice
+              : "approved content",
+        ...(metadata.tag === "newest" || metadata.tag === "tie-a"
+          ? { statedChoice: { ref: "choice", text: choice } }
+          : {}),
+        contentRefs: [],
+      },
+      digest: sha256(id),
+      response: "approved" as const,
+      requirementIds: [],
+      revoked: null,
+      consumption: null,
+    },
+  }));
+  const view = {
+    ...viewOf(value),
+    task: { ...value.task, decisions },
+  } as unknown as TaskView;
+
+  const before = JSON.stringify(view.task.decisions);
+  const compact = compactTaskContext(view);
+  expect(JSON.stringify(view.task.decisions)).toBe(before);
+  expect(
+    compactTaskContext({ ...view, task: { ...view.task, decisions: [...decisions].reverse() } }),
+  ).toBe(compact);
+  const { decisions: compactDecisions } = JSON.parse(compact) as {
+    decisions: { id: string; choice: string }[];
+  };
+  expect(compactDecisions.map(({ id }) => id)).toEqual([
+    "00000000-0000-4000-8000-000000000001",
+    "00000000-0000-4000-8000-000000000008",
+    "00000000-0000-4000-8000-000000000009",
+    "00000000-0000-4000-8000-000000000000",
+    "ffffffff-ffff-4fff-8fff-000000000008",
+    "ffffffff-ffff-4fff-8fff-000000000007",
+    "ffffffff-ffff-4fff-8fff-000000000006",
+    "ffffffff-ffff-4fff-8fff-000000000005",
+  ]);
+  expect(compactDecisions[0]?.choice).toBe("stated choice");
+  expect(compactDecisions[1]?.choice).not.toContain("choice-secret");
+  expect(compactDecisions[2]?.choice).toBe("approved fallback");
+  expect(compactDecisions[3]?.choice).toBe("whole-second choice");
+  expect(Buffer.byteLength(compact, "utf8")).toBeLessThanOrEqual(4096);
+});
+
+test("compact context inspects the full task when no actual choice is available", () => {
+  const value = active();
+  const decision = {
+    id: "00000000-0000-4000-8000-000000000001",
+    recordedAt: value.task.createdAt,
+    provenance: value.task.intent.provenance,
+    data: {
+      purpose: "preference" as const,
+      binding: {
+        taskId: value.task.id,
+        workspaceId: value.workspace.id,
+        scope: scope(),
+        presented: "Do you approve option A or option B?",
+        approvedContent: " \t ",
+        statedChoice: { ref: "choice", text: "  " },
+        contentRefs: [],
+      },
+      digest: sha256("presented-fallback"),
+      response: "stated" as const,
+      requirementIds: [],
+      revoked: null,
+      consumption: null,
+    },
+  };
+  const compact = compactTaskContext({
+    ...viewOf(value),
+    task: { ...value.task, decisions: [decision] },
+  } as unknown as TaskView);
+  const { decisions } = JSON.parse(compact) as { decisions: { choice: string }[] };
+  expect(decisions[0]?.choice).toBe(
+    `task.inspect taskId=${value.task.id} view=full; decision=${decision.id}`,
+  );
+  expect(decisions[0]?.choice).not.toContain("option A");
+  for (const response of ["rejected", "stated"] as const) {
+    const context = compactTaskContext({
+      ...viewOf(value),
+      task: {
+        ...value.task,
+        decisions: [
+          {
+            ...decision,
+            data: {
+              ...decision.data,
+              response,
+              binding: { ...decision.data.binding, approvedContent: "Proceed with option A" },
+            },
+          },
+        ],
+      },
+    } as unknown as TaskView);
+    expect(JSON.parse(context).decisions[0].choice).toBe(
+      `task.inspect taskId=${value.task.id} view=full; decision=${decision.id}`,
+    );
+    expect(context).not.toContain("Proceed with option A");
+  }
+});
+
 test("export omits host and external refs throughout portable history", () => {
   const value = active();
   const evidenceId = randomUUID();

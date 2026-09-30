@@ -138,7 +138,8 @@ let imported decisions grant authority. Never turn a host deny into allow or
 claim enforcement/evidence a host cannot provide. A precise request with settled
 constraints does not need an interview. Present genuine unresolved options with
 evidence and a recommendation, then continue toward the requested delivery
-endpoint: investigation, implementation, PR/MR-ready, merge, or release. Run
+endpoint: investigation, implementation, branch/commit/push, PR/MR-ready,
+merge, or release. Run
 applicable checks and safe repairs without repeated continuation questions;
 stop for missing host authority, a new consequential choice, a conflicting edit,
 or an unresolved blocker. A tracked record may close when actual evidence
@@ -150,6 +151,12 @@ confirm the stop. Preserve unresolved requirements, gaps, and uncertain workers.
 When context changes, distinguish a quick question, same-task adjustment, and
 separate request. Answer a quick question without pausing/resuming task state;
 park a concise checkpoint only when substantial work needs to continue later.
+For work spanning repositories, bind each unfinished item to its actual checkout,
+branch, requested deliverables, and delivery endpoint. Preserve held items with
+an explicit resume condition. Resolve competing plausible targets before a
+mutation; ask only when available context cannot settle that consequential choice.
+Before reporting delivery, reconcile every requested item and observe the actual
+target result; a local commit alone is not evidence of a requested remote push.
 
 Skill routing: slash aliases /wk-* load on demand. Use workit-steer for a
 substantial interruption or change of direction, workit-deslop when relevant

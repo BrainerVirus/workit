@@ -18,7 +18,11 @@ request. Preserve continuity when it helps; do not manufacture task mutations.
 3. For a separate request, do not silently resume an old objective. Park a
    concise checkpoint only when substantial work needs to continue later. Start
    a distinct tracked record only if the new work benefits from continuity,
-   dependencies, coordination, or durable decisions.
+   dependencies, coordination, or durable decisions. For work spanning repos,
+   checkpoint each unfinished item with its checkout, branch, requested
+   deliverables, and delivery endpoint. Keep explicitly held items parked with
+   their resume condition until the user resumes them. A conversational
+   checkpoint is sufficient when no task record is needed.
 4. Before resuming a named tracked task, reconcile its checkout, branch, dirty
    state, current policy, stale evidence, uncertain effects, and ownership. Do
    not change branches, stash, fetch large histories, or seize ownership just

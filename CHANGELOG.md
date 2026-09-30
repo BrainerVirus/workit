@@ -22,6 +22,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Compact task context retains the newest decisions and surfaces bounded,
+  redacted choice summaries instead of selecting an arbitrary UUID-ordered set.
+- Distributed cross-repository guidance binds unfinished work to its checkout,
+  branch, deliverables and delivery endpoint, preserves explicit holds, and
+  verifies the requested remote result before reporting completion.
+
 - OpenCode V2 keeps uncertain subagent dispatches correlated through failed
   terminal-state persistence, retries reconciliation, and lets explicit
   `failed`/`interrupted` session outcomes override conflicting completion text.

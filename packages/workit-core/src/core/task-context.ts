@@ -67,6 +67,7 @@ type CompactDecision = {
   purpose: Decision["purpose"];
   status: Decision["response"];
   digest: string;
+  choice: string;
   references: CompactReference[];
 };
 type CompactMethod = Pick<SelectedMethod, "id" | "assurance"> & { reason: string };
@@ -100,6 +101,14 @@ const compactText = (value: string | null, limit: number): string | null =>
         })
         .slice(0, limit);
 const compactBytes = (value: string): number => new TextEncoder().encode(value).byteLength;
+const compactTimestamp = (value: Utc): string =>
+  `${value.slice(0, 19)}.${value.slice(20, -1).padEnd(9, "0")}`;
+const compactDecisionChoice = (entry: TaskView["task"]["decisions"][number]): string | null => {
+  const stated = entry.data.binding.statedChoice?.text;
+  const approved = entry.data.response === "approved" ? entry.data.binding.approvedContent : "";
+  const source = stated?.trim() || approved.trim() || null;
+  return compactText(source, COMPACT_TEXT_BYTES);
+};
 const compactReference = (ref: Ref): CompactReference => {
   if (ref.kind === "file")
     return {
@@ -118,13 +127,21 @@ const compactReference = (ref: Ref): CompactReference => {
 export function compactTaskContext(view: TaskView): string {
   const decisions: CompactDecision[] = view.task.decisions
     .slice()
-    .sort((left, right) => (left.id < right.id ? -1 : left.id > right.id ? 1 : 0))
+    .sort((left, right) => {
+      const leftAt = compactTimestamp(left.recordedAt);
+      const rightAt = compactTimestamp(right.recordedAt);
+      if (leftAt !== rightAt) return leftAt > rightAt ? -1 : 1;
+      return left.id < right.id ? -1 : left.id > right.id ? 1 : 0;
+    })
     .slice(0, COMPACT_MAX_ITEMS)
     .map((entry) => ({
       id: entry.id,
       purpose: entry.data.purpose,
       status: entry.data.response,
       digest: entry.data.digest,
+      choice:
+        compactDecisionChoice(entry) ||
+        `task.inspect taskId=${view.task.id} view=full; decision=${entry.id}`,
       references: entry.data.binding.contentRefs.slice(0, 1).map(compactReference),
     }));
   const methods: CompactMethod[] = view.task.policy

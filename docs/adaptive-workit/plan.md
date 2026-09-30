@@ -539,3 +539,43 @@ focused question only when one of those choices blocks a concrete slice.
 - Next: verify the actual commit resolves to `major`, finish isolated checks,
   publish the corrective PR, watch the major release and manifest-sync PR, then
   activate the local pin at a safe restart boundary.
+
+
+### Decision continuity and cross-repository delivery — 2026-09-30
+
+- Baseline: clean manifest-synced `main` at `bbf7df3`; v2.0.1 published and local
+  pin activated at the user's stopped-session boundary. Latest saved-session
+  audit found no new late-interval Workit rejection; observations predate that
+  activation. No real task, lease, receipt, or host configuration is edited.
+- Slice A (independent): select newest compact decisions with deterministic
+  timestamp/ID ordering; expose bounded redacted choice text or retrieval cue.
+  Acceptance: newest-eight, ties, redaction, UTF-8/4 KiB bound, unchanged storage.
+- Slice B (independent): ship target checkout/branch/deliverables/endpoint and
+  held-item checkpoint guidance in bootstrap and canonical steer/implement
+  skills; verify requested remote delivery before completion. Acceptance:
+  existing guidance/host-copy checks preserve optional tracking/native authority.
+- Integration depends on A and B: focused regressions, lint, format, typecheck,
+  full supported-Node suite and isolated release-candidate packages; atomic
+  commits, PR CI, authorized squash merge, release and manifest sync. Do not
+  rebuild/reload the user's active local pin during a session.
+- Slice B complete: shared bootstrap and canonical steer/implement guidance now
+  bind cross-repo work and held items and require observed remote delivery.
+  All five skill copies match; focused methods checks pass (21 tests). Tracking
+  remains optional and target conventions/native permissions remain authoritative.
+- Slice A complete: newest-first selection handles UTC precision up to nine
+  fractional digits and uses stable ID ties; bounded choice excerpts use existing
+  redaction, with `task.inspect view=full` fallback for missing substance. Stored
+  history/authority are unchanged. Integrated focused checks: 31 tests pass.
+- Integration complete locally: 1,541 tests / 8,426 assertions pass on exact
+  supported Node 24.20.0; typecheck, lint, formatting and Knip pass. Seven
+  isolated tarballs and deterministic release acceptance pass. Final Luna review
+  found no remaining defect after response-gating approved text and including
+  the actual task ID in the inspection cue. The old summary-shape regression now
+  explicitly expects the new choice field while retaining transcript exclusion.
+- Active global config and local bundle hashes still match the pre-change
+  baseline; no local build/reload or real-history mutation occurred. Evidence:
+  `/tmp/workit-context-final-{tests,pack}.log`. Guidance checks establish shipped
+  contracts and copy parity, not actual model-following behavior.
+- Next: commit the runtime and guidance slices atomically, push, follow PR CI,
+  squash merge under existing authorization, then watch release/manifest sync.
+  Update the local pin only at a stopped-session boundary after acceptance.

@@ -660,10 +660,11 @@ test("compact context contains decisions, gaps, and next action once without tra
       purpose: "design",
       status: "approved",
       digest: "a".repeat(64),
+      choice: decisionText,
       references: [],
     },
   ]);
   expect(compact).not.toContain("transcript");
-  expect(compact).not.toContain(decisionText);
+  expect(compact).toContain(decisionText);
   expect(compact.match(/run checks/g)?.length).toBe(1);
 });

@@ -22,6 +22,14 @@ request, and a timeout is not proof that a worker stopped.
    until process exit or explicit recovery.
 4. Reconcile helper reports and run the checks appropriate to the requested
    outcome. If delegation is unavailable, continue inline when useful.
+5. Before a cross-repo mutation, resolve the actual checkout, branch and remote
+   from the request and current context. Ask only if competing plausible targets
+   remain unresolved. Branch, commit, direct push, PR-ready, merge and release
+   are distinct endpoints; perform only the authorized one under target rules.
+   Before saying done, reconcile every named deliverable against that checkout
+   and verify the requested result. For a push, observe the destination remote
+   ref and confirm it contains the delivered commit; report drift or missing
+   items as blockers instead of treating local success as remote delivery.
 
 Do not edit Workit metadata directly, create nested helper trees, widen paths, or
 create a second lifecycle. Read-only investigation and bounded reports do not
