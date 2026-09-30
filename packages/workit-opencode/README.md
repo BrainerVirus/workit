@@ -51,6 +51,13 @@ no Workit task, writer or decision is needed merely to run an ordinary command.
 Old action/decision history is preserved. Inspect and reconcile any uncertain
 effect before retrying; removal does not settle or migrate it.
 
+## Upgrade from Workit 1.x
+
+Workit 2.0 removes the managed external-action tool on both OpenCode versions.
+Use native host tools for mutations and `workit_context` for read-only context.
+Existing task and action history remains untouched; reconcile uncertain effects
+before retrying them.
+
 ## Bundle / runtime model
 
 The build bundles the `@opencode-ai/plugin` (V1) and `@opencode/plugin` (V2) SDK surfaces used by the adapters into `dist/plugin.js`, so the published plugin has **no** runtime dependency on either SDK (both stay development/build-only pins). The plugin loads through its real package entry `dist/plugin.js`; only the fourteen method skills ship under `assets/`.

@@ -463,8 +463,8 @@ focused question only when one of those choices blocks a concrete slice.
   receipts, workers, shell policy and read-only contexts. Slice 3 depends on
   1–2: docs, full isolated checks, pack checks and installed V2 loader probe.
 - Two Luna workers have disjoint source/test scopes; the coordinator owns
-  guidance, integration and acceptance. No active host build/reload, real-history
-  migration or pending-outcome settlement occurs during development.
+  guidance, integration and acceptance. No live-history migration or
+  pending-outcome settlement occurred.
 - Acceptance includes absent executor on both versions, mutation-shaped context
   input rejected without effects, unchanged state/history and remaining-host
   behavior. Checkpoint and final counts follow after integration.
@@ -485,10 +485,37 @@ focused question only when one of those choices blocks a concrete slice.
 - Installed V2.0.19 and official Docker V1.18.30 loaded the candidate in private
   fixtures and registered the same ten tools, with context present and managed
   executor absent. These are loader checks, not model-driven qualification.
-  The V1 fixture container was stopped; no user session was resumed. Candidate
-  source matches the workspace; active artifact/config hashes remain unchanged.
+  The V1 fixture container was stopped; no user session was resumed. At that
+  checkpoint, source matched the candidate and active artifact/config hashes
+  matched baseline.
   Evidence: `/tmp/workit-native-effects-{full-check,pack,v2-probe,v1-probe}.log`
   and `/tmp/workit-native-effects-x7cspusr/` source/host hashes and probe results.
-- Remaining: publish PR, babysit CI and squash-merge; then activate the local pin
-  only at a safe restart boundary. No live history migration is required or
-  authorized. Historical unknown outcomes require evidence before native retry.
+- PR #136 was squash-merged as `d7b06c9`; all fourteen PR checks and main CI
+  passed. Release v1.3.2 and manifest-sync PR #137 also completed. Historical
+  unknown outcomes require evidence before native retry.
+
+### Release-semantics follow-up — 2026-09-30
+
+- PR #136 passed CI and merged; the release workflow published v1.3.2. Post-
+  merge inspection found `analyze-release-scope.ts` only recognized `!` on
+  `fix`/`perf`/`feat`, so `refactor!` fell through to the payload-only patch
+  rule. This was a release-analyzer gap; v1.3.2 is already public and cannot be
+  retroactively relabeled.
+- Fix: honor breaking markers on any conventional type; regression-test
+  `refactor(opencode)!`; document the Workit 2.0 migration in the OpenCode
+  package so selective publishing includes it. The corrective PR must trigger
+  major release and publish the OpenCode package as v2.0.0.
+- Regression test passes; `bun run check` passed with 1,532 tests, lint, format,
+  build and typecheck; an isolated release-candidate pack passed for all seven
+  packages. These tarballs still carry 1.3.2; major-release behavior is checked
+  from the corrective commit before push and again by CI.
+- During that full-check step I mistakenly ran the build from the primary
+  checkout. The ignored local `dist/plugin.js` now has SHA-256
+  `94c198ba283795b8dadb551b4d34edb7c6d0cf6184734cf1910a4513382bae83`; it
+  contains `workit_context` and no `workit_external_action`. The global config
+  hash is still `2a764f56aefcb5554f9ee47c2de04acdd71cbf603746e9e5d06703dd5eaa72cc`.
+  No host reload or restart occurred. Do not reload the active session; activate
+  at a safe restart boundary after the major package is available.
+- Next: verify the actual commit resolves to `major`, finish isolated checks,
+  publish the corrective PR, watch the major release and manifest-sync PR, then
+  activate the local pin at a safe restart boundary.
