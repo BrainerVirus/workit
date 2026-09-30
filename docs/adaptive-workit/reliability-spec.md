@@ -1,6 +1,6 @@
 # Workit action reliability
 
-Date: 2026-09-30. Status: Workit 2.0.0 is published; the V2 lifecycle and trigger fixes are implemented and awaiting PR CI.
+Date: 2026-09-30. Status: Workit 2.0.1 is published; decision-summary and cross-repository delivery follow-up is implemented and awaiting PR CI.
 
 The v1.3.1 proposal-binding work below is historical for OpenCode mutation
 execution. The native-effects cutover at the end supersedes that execution path.
@@ -203,3 +203,48 @@ Audit dispositions:
 - Deterministic tests and host-loader checks do not establish one-shot model
   reliability. Keep that qualification separate and budgeted; do not claim a
   broad reliability rate from these regression tests.
+
+
+## Decision continuity and cross-repository delivery follow-up
+
+The three latest saved top-level sessions by activity were
+`ses_f12338d70ffe5maUpR9iR4wujU`, `ses_f0d273e07ffeCbzWdTIlfgUvwk`, and
+`ses_f0d2c23beffeOCEwqDjajoWp0G`. Their substantive work predates the
+2026-09-30 21:39 UTC local-plugin restart. The two short migration sessions
+succeeded without Workit calls. The long session's later interval (after seq
+17888) had five Workit progress calls and no failed Workit result. Explicit
+holds were respected; the translations request initially targeted frontend,
+then integration after clarification, with its remote push verified. These
+records do not establish a post-upgrade regression or model-driven qualification.
+
+A code audit found that compact context selected eight decisions by random
+UUID order, allowing recent choices to disappear from the injected summary.
+Full durable records remain available. Required behavior:
+
+1. Select the newest eight decision records by `recordedAt`, with a stable ID
+   tie-break. Keep compact context deterministic and within its existing 4 KiB
+   UTF-8 budget; preserve stored records and decision authority.
+2. Surface bounded, redacted choice substance where available, or a clear cue
+   to inspect the full decision. A compact summary never grants permission.
+3. For substantial cross-repository work, checkpoint unfinished items with
+   checkout, branch, named deliverables, and the authorized delivery endpoint.
+   Preserve explicit holds with their resume condition. Conversation is enough
+   when tracking adds no value. Resolve genuinely competing targets before a
+   mutation; ask only if context cannot settle the consequential choice.
+4. Treat branch, commit, direct push, PR-ready, merge and release as distinct
+   endpoints. Reconcile named deliverables and observe the actual target result
+   before reporting completion. For a push, verify that the destination remote
+   ref contains the delivered commit; local success alone is insufficient.
+
+Acceptance: regressions deliberately decouple UUID and timestamp order,
+exercise timestamp ties, retain useful choice text while redacting secrets,
+and enforce deterministic bounded UTF-8 context. Guidance checks cover target
+binding, held items, remote delivery evidence, optional tracking, and all five
+packaged skill copies. Run the full existing check matrix and isolated package
+acceptance. Deterministic text/contract tests are not model-behavior proof.
+
+Current reference comparison: [Engram architecture](https://github.com/Gentleman-Programming/engram/blob/main/docs/ARCHITECTURE.md)
+and [GSD context engineering](https://github.com/open-gsd/gsd-core/blob/next/docs/explanation/context-engineering.md)
+reinforce retrievable decision continuity; [Gentle AI trigger rules](https://github.com/Gentleman-Programming/gentle-ai/blob/main/docs/trigger-rules.md)
+inform situational inline/delegated/explicit-SDD routing and consequential
+questions. Workit reuses its existing store, bounded summary and method skills.

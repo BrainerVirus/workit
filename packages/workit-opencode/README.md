@@ -43,7 +43,7 @@ plugin is a self-contained Node bundle; its default export is a dual entry
 
 - **Receipts** — native `question` answers are purpose-bound, session-bound, fresh, and one-use; unrelated questions fail closed.
 - **Delegation** — native `task` workers are direct-child-only; nested or uncertain lineage is denied (`delegation_lineage_denied`).
-- **Continuity** — compact task context is injected once on session start and once after compaction; unobservable shell surfaces are labeled `agent_guided`.
+- **Continuity** — compact task context carries the newest decisions and bounded redacted choice summaries, injected once on session start and once after compaction; unobservable shell surfaces are labeled `agent_guided`.
 
 Workit does not register `workit_external_action` on either OpenCode version.
 Use native tools for mutations under the host permissions and target conventions;

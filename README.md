@@ -5,6 +5,13 @@ Pi, and the CLI. The hosts share one task contract and eight operation families
 while adapting authority and lifecycle behavior to the native surfaces each
 host documents.
 
+Compact task continuity surfaces the newest decisions with bounded, redacted
+choice summaries; full records remain available through explicit inspection.
+For substantial work across repositories, keep each unfinished item's checkout,
+branch, requested deliverables and delivery endpoint in a concise checkpoint.
+Verify named deliverables and the requested destination result before reporting
+completion; a local commit does not prove a remote push.
+
 | Package     | Purpose                                                                         |
 | ----------- | ------------------------------------------------------------------------------- |
 | OpenCode    | Native plugin with fourteen method skills, ten tools (eight shared families plus read-only context and init apply), and provider-safe schemas |
