@@ -576,6 +576,8 @@ focused question only when one of those choices blocks a concrete slice.
   baseline; no local build/reload or real-history mutation occurred. Evidence:
   `/tmp/workit-context-final-{tests,pack}.log`. Guidance checks establish shipped
   contracts and copy parity, not actual model-following behavior.
-- Next: commit the runtime and guidance slices atomically, push, follow PR CI,
-  squash merge under existing authorization, then watch release/manifest sync.
-  Update the local pin only at a stopped-session boundary after acceptance.
+- Delivery: atomic runtime/guidance commits were pushed and squash merged in
+  PR #142 after all 14 checks passed, with no unresolved review threads. Release
+  workflow succeeded for v2.0.2; manifest sync is PR #143. Remaining: confirm npm
+  registry propagation, finish manifest/main CI, and refresh the local pin only
+  at a stopped-session boundary. No model-driven reliability claim is made.
