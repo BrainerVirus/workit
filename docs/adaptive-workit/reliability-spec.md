@@ -1,6 +1,6 @@
 # Workit action reliability
 
-Date: 2026-09-30. Status: native-effects cutover passed isolated acceptance; v1.3.1 baseline retained.
+Date: 2026-09-30. Status: native-effects cutover passed isolated acceptance and shipped in v1.3.2; release-semantics correction is in progress.
 
 The v1.3.1 proposal-binding work below is historical for OpenCode mutation
 execution. The native-effects cutover at the end supersedes that execution path.

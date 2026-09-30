@@ -39,13 +39,12 @@ const TYPE_LEVEL: Record<string, Level> = { fix: "patch", perf: "patch", feat: "
 
 const subjectLevel = (commit: string): Level | null => {
   const firstLine = commit.split("\n")[0] ?? "";
-  const m = /^(?:fix|perf|feat)(?:\([^)]*\))?!?:/.exec(firstLine);
+  const m = /^([a-z][a-z0-9-]*)(?:\([^)]*\))?(!)?:/.exec(firstLine);
   if (!m) return null;
-  if (m[0].includes("!")) return "major";
+  if (m[2]) return "major";
   const body = commit.split("\n").slice(1).join("\n");
-  return /BREAKING[- ]CHANGE:/.test(body)
-    ? "major"
-    : TYPE_LEVEL[m[0].split("(")[0].replace("!", "")];
+  if (/BREAKING[- ]CHANGE:/.test(body)) return "major";
+  return TYPE_LEVEL[m[1]] ?? null;
 };
 
 // Two-pass collection (sanctioned by the task brief): the single-pass

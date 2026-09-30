@@ -129,6 +129,23 @@ describe("analyzeReleaseScope", () => {
     }
   });
 
+  test("breaking syntax on other conventional types yields major", () => {
+    const r = repo();
+    r.tag("v0.8.11");
+    try {
+      r.commit(
+        "refactor(opencode)!: remove managed actions\n\nBREAKING CHANGE: mutations now use native host tools",
+        { "packages/workit-opencode/src/tools/workit.ts": "export {};\n" },
+      );
+      expect(analyzeReleaseScope(r.root)).toEqual({
+        level: "major",
+        productPkgs: ["workit-opencode"],
+      });
+    } finally {
+      r.cleanup();
+    }
+  });
+
   test("!: inside subject body does not imply breaking", () => {
     const r = repo();
     r.tag("v0.8.11");
