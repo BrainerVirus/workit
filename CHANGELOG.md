@@ -22,6 +22,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- OpenCode V2 keeps uncertain subagent dispatches correlated through failed
+  terminal-state persistence, retries reconciliation, and lets explicit
+  `failed`/`interrupted` session outcomes override conflicting completion text.
+- OpenCode omits a Workit slash alias when a user skill owns its matching Workit
+  skill ID; the implementation-skill trigger now matches its optional tracking
+  guidance across packaged hosts.
 - OpenCode action approvals revalidate same-text proposals before rejecting
   ambiguity, so a stale pre-branch proposal cannot wedge a current commit.
 - Distributed guidance chooses native tools for routine authorized Git work
