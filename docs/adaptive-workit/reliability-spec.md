@@ -1,6 +1,6 @@
 # Workit action reliability
 
-Date: 2026-09-30. Status: native-effects cutover passed isolated acceptance and shipped in v1.3.2; release-semantics correction is in progress.
+Date: 2026-09-30. Status: Workit 2.0.0 is published; the V2 lifecycle and trigger fixes are implemented and awaiting PR CI.
 
 The v1.3.1 proposal-binding work below is historical for OpenCode mutation
 execution. The native-effects cutover at the end supersedes that execution path.
@@ -154,3 +154,52 @@ for each subprocess. V1 has an async `ToolContext.ask`, but Workit's existing
 effects are synchronous and would need another command authorization layer.
 Native execution avoids duplicating the host's command scanner and permission
 workflow on either version.
+
+## V2 trigger and lifecycle follow-up
+
+This audit follows the Workit 2.0.0 release. It addresses confirmed defects
+that could misroute a slash command, strand a durable worker dispatch, or report
+contradictory completion, while preserving intentional host behavior.
+
+1. **Skill collision:** V2 skips a Workit skill when the same ID already exists,
+   but previously still registered its `/wk-*` alias. The alias then requested
+   that exact ID and could load unrelated user instructions. Register each alias
+   only when this plugin successfully installed its corresponding Workit skill.
+   Acceptance: a pre-existing `workit-debug` skill remains untouched and
+   `wk-debug` is absent; other Workit skills and aliases remain available.
+2. **Dispatch uncertainty:** V2's after-hook error and a completed result without
+   a verified child do not prove that no child was created. Previously both
+   released the in-memory correlation while the task worker remained
+   `dispatching`; a late `session.created` could no longer bind it. Retain the
+   correlation and block another fresh launch until a same-workspace direct
+   child is verified or the lead explicitly settles the worker as stopped.
+   Keep that correlation through terminal-stop persistence failures so the next
+   launch can retry reconciliation. Acceptance: generic error and missing-child
+   results keep the slot; a late valid child binds it; a terminal observation
+   that initially fails is retried; an explicit lead stop releases it before
+   the next assigned worker. A child from another workspace is never bound.
+3. **Implement trigger:** the skill body permits ordinary requested
+   implementation and makes tracking/delegation optional, but the description
+   advertised it only for delegation or shared-checkout work. Update every
+   packaged copy to match its actual trigger. Acceptance: the description
+   invites the skill for requested implementation and explicitly keeps tracking
+   optional; host copies remain byte-identical.
+4. **Conflicting child outcomes:** result text can say `state="completed"`
+   while OpenCode's session record says `failed` or `interrupted`. The explicit
+   host terminal outcome wins; do not create a completed report from conflicting
+   result text. Acceptance: failed/interrupted outcomes stop the bound worker
+   without a completed report.
+
+Audit dispositions:
+
+- The apparent V2 skill `path`/`location` mismatch is version-sensitive. The
+  installed OpenCode 2.0.19 private loader returned Workit skills with `path`;
+  keep the pinned runtime field and re-check only with a host upgrade.
+- History offers are deliberately a one-time session-start snapshot in both
+  V1 and V2. Do not add a per-turn store scan to retry an empty first result.
+- Generic operation-family tool descriptions are a discovery concern only; no
+  model-driven misrouting has been reproduced. Defer wording changes until a
+  bounded model-driven case identifies which description needs correction.
+- Deterministic tests and host-loader checks do not establish one-shot model
+  reliability. Keep that qualification separate and budgeted; do not claim a
+  broad reliability rate from these regression tests.

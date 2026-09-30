@@ -63,9 +63,11 @@ before retrying them.
 The build bundles the `@opencode-ai/plugin` (V1) and `@opencode/plugin` (V2) SDK surfaces used by the adapters into `dist/plugin.js`, so the published plugin has **no** runtime dependency on either SDK (both stay development/build-only pins). The plugin loads through its real package entry `dist/plugin.js`; only the fourteen method skills ship under `assets/`.
 
 The V2 entry registers the same ten tools with `codemode: false`, the fourteen
-skills and `wk-*` commands (user collisions preserved), question receipts for
-`decision.record`, direct-child subagent lineage with durable dispatch claims,
-and the bootstrap/task/worker context plus compaction injection. Its shell
+skills and up to fourteen `wk-*` commands. Existing user skills and commands
+are preserved; an alias is added only when its Workit skill is registered. It
+also provides question receipts for `decision.record`, direct-child subagent
+lineage with durable dispatch claims, and bootstrap/task/worker context plus
+compaction injection. Its shell
 permission hook adds branch-name policy denials for direct, unquoted literal
 branch-creation forms only. It leaves compliant branches, PR and worktree
 commands, and unsupported shell syntax to OpenCode's native permission rules.

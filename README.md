@@ -207,10 +207,11 @@ captured at closure and never projects the checkout's current writer onto
 history.
 
 Skills are reachable two ways: model-invoked automatically when the task fits,
-or explicitly via the fourteen `wk-*` aliases (`/wk-challenge`, `/wk-babysit`,
+or explicitly via the available `wk-*` aliases (`/wk-challenge`, `/wk-babysit`,
 `/wk-implement`, `/wk-plan`, `/wk-debug`, and the rest) on OpenCode, Cursor, and
-Pi. An alias routes through policy to the method skills and never calls another
-alias. Codex CLI has no slash path: invoke skills explicitly as
+Pi. On OpenCode, each alias asks the model to load its matching method skill;
+it does not chain to another alias, and a user skill with the same ID suppresses
+that Workit alias. Codex CLI has no slash path: invoke skills explicitly as
 `$workit-<name>` or from the `/skills` picker. Creating a PR does not auto-start
 babysit; `babysit:true` opts into PR-ready follow-up and does not authorize
 merge or release. A PR URL from a route Workit did not enforce can be babysat

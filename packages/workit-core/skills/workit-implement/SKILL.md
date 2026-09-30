@@ -1,6 +1,6 @@
 ---
 name: workit-implement
-description: Use when implementation benefits from bounded delegation or shared checkout coordination
+description: Use when implementing requested code changes in a repository. Follow its rules and host permissions; use Workit tracking and delegation only when continuity or coordination helps.
 ---
 
 # Implement within authority
