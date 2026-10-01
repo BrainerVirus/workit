@@ -1,6 +1,6 @@
 # Workit action reliability
 
-Date: 2026-09-30. Status: Workit 2.0.1 is published; decision-summary and cross-repository delivery follow-up is implemented and awaiting PR CI.
+Date: 2026-09-30. Status: Workit 2.0.2 is published; decision-summary and cross-repository delivery follow-up merged in PR #142, with manifest sync in PR #143. Both PRs and final main CI passed. The local OpenCode pin was rebuilt and activated at a stopped-session boundary; model-driven reliability remains unqualified.
 
 The v1.3.1 proposal-binding work below is historical for OpenCode mutation
 execution. The native-effects cutover at the end supersedes that execution path.

@@ -578,6 +578,13 @@ focused question only when one of those choices blocks a concrete slice.
   contracts and copy parity, not actual model-following behavior.
 - Delivery: atomic runtime/guidance commits were pushed and squash merged in
   PR #142 after all 14 checks passed, with no unresolved review threads. Release
-  workflow succeeded for v2.0.2; manifest sync is PR #143. Remaining: confirm npm
-  registry propagation, finish manifest/main CI, and refresh the local pin only
-  at a stopped-session boundary. No model-driven reliability claim is made.
+  workflow succeeded for v2.0.2; manifest sync PR #143 merged with all checks
+  green. Final main CI and release checks passed at `add4b12`; npm `latest`
+  resolves to 2.0.2. Local bundle rebuilt at a stopped-session boundary and
+  background service restarted; Workit local and CommandCode 0.10.4 registration
+  verified with global config unchanged. Backup:
+  `/tmp/workit-v2.0.2-local.7dKw6w/previous-dist-and-assets.tar`.
+- Remaining qualification: inspect substantive post-activation sessions for
+  concrete failures before proposing more runtime changes. No model-driven
+  reliability claim is made; completed historical checkpoints above remain
+  chronological evidence rather than current pending work.
