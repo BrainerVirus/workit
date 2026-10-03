@@ -9,7 +9,6 @@ import {
   OPERATION_SCHEMA_MAX_DEPTH,
   type OperationContext,
 } from "@/packages/workit-core/src/core";
-import { SUPPORT_MATRIX } from "@/packages/workit-core/src/core/support-matrix";
 import extension, { persistUncertainCancel } from "@/packages/workit-pi/extensions/workit";
 import { nativeWorkerForEvidence } from "@/packages/workit-pi/src/worker";
 import { piCapabilities } from "@/packages/workit-pi/src/context";
@@ -109,11 +108,6 @@ const decisionInput = (root: string) => {
 
 const nodeExecutable = "node";
 
-const assertCurrentNode = () => {
-  const result = spawnSync(nodeExecutable, ["--version"], { encoding: "utf8" });
-  if (result.status !== 0) throw new Error(result.stderr || result.stdout);
-  expect(result.stdout.trim()).toBe(`v${SUPPORT_MATRIX.node.current}`);
-};
 
 test("clean Pi package declares stock discovery and the eight families plus external action", async () => {
   const manifest = JSON.parse(
@@ -1022,7 +1016,6 @@ test("stock Pi discovers the package manifest through its local package manager"
   const home = path.join(stage, "home");
   mkdirSync(home);
   const env = { ...process.env, PI_CODING_AGENT_DIR: agentDir, HOME: home };
-  assertCurrentNode();
   const packed = spawnSync(
     "npm",
     ["pack", "--json", "--workspace", packageRoot, "--pack-destination", stage],

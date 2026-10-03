@@ -80,7 +80,7 @@ const runInstaller = (overrides: { env?: NodeJS.ProcessEnv; cwd?: string } = {})
     installer: true,
   });
 
-const repoRoot = path.resolve(path.dirname(import.meta.dir), "..", "..");
+const repoRoot = path.resolve(import.meta.dir, "..", "..");
 
 // Fix helpers mutate a file then restore the original content at teardown.
 const writeConfig = (p: string, content: string, mode?: number) => {
@@ -1733,12 +1733,10 @@ test("reports managed_content_conflict when managed bytes drift from cutover rec
 test(
   "AR-14: negative fixtures never leak raw git usage/fatal dumps into the suite output",
   () => {
-    const noisy = [
-      "test/workit-core/handoff.test.ts",
-      "test/workit-core/sdd.test.ts",
-      "test/workit-core/repo.test.ts",
-    ];
-    const r = spawnSync("bun", ["test", ...noisy], {
+    // Suites whose fixtures run git against missing revisions and non-repos.
+    const noisy = ["test/workit-core/repo.test.ts", "test/workit-core/typescript-parity.test.ts"];
+    for (const file of noisy) expect(existsSync(path.join(repoRoot, file)), file).toBe(true);
+    const r = spawnSync("bun", ["test", ...noisy.map((file) => `./${file}`)], {
       cwd: repoRoot,
       encoding: "utf8",
       timeout: 300_000,

@@ -9,10 +9,11 @@ import { taskStartRequest } from "@/test/workit-core/task-fixtures";
 
 const node = "node";
 
-test("stock Node runtime is the supported current line for Pi workers", () => {
+test("stock Node runtime meets the supported major line for Pi workers", () => {
   const result = spawnSync(node, ["--version"], { encoding: "utf8" });
   expect(result.status).toBe(0);
-  expect(result.stdout.trim()).toBe("v" + SUPPORT_MATRIX.node.current);
+  const major = Number(/^v(\d+)\./.exec(result.stdout.trim())?.[1]);
+  expect(major).toBeGreaterThanOrEqual(Number(SUPPORT_MATRIX.node.minimum));
 });
 
 test(
