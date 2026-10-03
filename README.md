@@ -208,8 +208,16 @@ workit doctor --fix-lock --force [--yes]  # clear a lock whose owner cannot be v
 workit <family> <action> [--payload <json|@file|->] [--task <id>] [--confirm] [--json]
 workit action <operation> --payload <JSON> [--preview] [--confirm] [--json]
 workit handoff --task <id> [--json]
+workit pr status [--pr <n>] [--json]  # checks + failing log tails, open threads, behind-base, next action
+workit ci wait [--timeout 20m] [--json]  # exit 0 green, 1 red, 4 still pending at the timeout
+workit ci rerun --failed --reason flake|infra [--force]  # once per PR head without --force
 workit uninstall         # remove host registrations (keeps ~/.config/workit)
 ```
+
+`pr status` and `ci` read GitHub through `gh api` and GitLab through
+`glab api`, pick the forge from the push remote host, and return `blocked`
+(exit 3) with the switch command when the `gh`/`glab` login is not the
+workspace `vcs.account`. Every forge and git network call has a timeout.
 
 The packed CLI is a self-contained Node bundle; Node.js 24+ is required.
 

@@ -46,10 +46,7 @@ const SCRIPT_LOADED: Record<string, string> = {
 // Seams a slice lands ahead of its first runtime consumer (design §5 waves).
 // Each line names the slices that will import it; delete the line when the
 // first of them merges, so the file is then policed like any other.
-const AWAITING_CONSUMER: Record<string, string> = {
-  "packages/workit-core/src/git/rev.ts":
-    "S9a seam; first imported by verbs/check.ts (S9b), verbs/pr.ts (S10), verbs/ledger.ts (S13)",
-};
+const AWAITING_CONSUMER: Record<string, string> = {};
 
 const reached = new Set<string>([...Object.keys(SCRIPT_LOADED), ...Object.keys(AWAITING_CONSUMER)]);
 const out = mkdtempSync(path.join(os.tmpdir(), "workit-reachability-"));
