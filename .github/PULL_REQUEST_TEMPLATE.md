@@ -4,14 +4,14 @@
 
 ## Quality gates
 
-- [ ] `bun run check` passes locally (tests + typecheck)
-- [ ] `workit_docs_validate` passes on any touched spec/plan pair
-- [ ] Platform parity verified: behavior tested on the platforms this touches (OpenCode / Cursor), or explicitly marked platform-specific
+- [ ] Applicable tests, typecheck, lint, formatting and isolated release-candidate checks pass. With an active local host pin, run these directly instead of root `check`/`build`.
+- [ ] README/spec/plan describe the shipped behavior and current checkpoints.
+- [ ] Behavior is verified for the affected OpenCode V1/V2, Cursor, Codex, Pi and CLI surfaces; native limitations are explicit.
 
 ## Checklist
 
-- [ ] No changes to `docs/` unless docs are the point of the PR
-- [ ] CHANGELOG entry added if user-facing (Unreleased section)
+- [ ] Existing scoped settings and local/version pins are preserved.
+- [ ] User-facing behavior is described below; semantic-release generates CHANGELOG entries.
 
 <!--
 Release note (if user-facing):
