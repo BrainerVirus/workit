@@ -47,8 +47,8 @@
     // Object.assign(x, ...), which mutates the source objects.
     "oxc/no-map-spread": "off",
     // zod schema introspection reads the documented-but-underscored `_zod`
-    // and `_def` handles.
-    "eslint/no-underscore-dangle": ["warn", { "allow": ["_def", "_zod"] }]
+    // and `_def` handles; GraphQL responses carry `__typename`.
+    "eslint/no-underscore-dangle": ["warn", { "allow": ["_def", "_zod", "__typename"] }]
   },
   "overrides": [
     {

@@ -1,0 +1,37 @@
+{
+  "data": {
+    "repository": {
+      "pullRequests": {
+        "nodes": [
+          {
+            "number": 9,
+            "url": "https://github.com/o/r/pull/9",
+            "state": "CLOSED",
+            "headRefName": "feature/x",
+            "headRepositoryOwner": {
+              "login": "o"
+            }
+          },
+          {
+            "number": 11,
+            "url": "https://github.com/o/r/pull/11",
+            "state": "OPEN",
+            "headRefName": "feature/x",
+            "headRepositoryOwner": {
+              "login": "forker"
+            }
+          },
+          {
+            "number": 12,
+            "url": "https://github.com/o/r/pull/12",
+            "state": "OPEN",
+            "headRefName": "feature/x",
+            "headRepositoryOwner": {
+              "login": "o"
+            }
+          }
+        ]
+      }
+    }
+  }
+}
