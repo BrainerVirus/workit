@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -427,6 +427,59 @@ test(
     expect(youtrack).not.toMatch(/spawnSync\(\s*"curl"/);
     const vcs = readFileSync(path.join(coreSrc, "core/vcs-config.ts"), "utf8");
     expect(vcs).not.toMatch(/spawnSync\(\s*"curl"/);
+  },
+  { timeout: 60_000 },
+);
+
+test(
+  "prReadyContext is read-only even with a remote and upstream",
+  () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "wf-pr-readonly-"));
+    const remote = mkdtempSync(path.join(os.tmpdir(), "wf-pr-remote-"));
+    const git = (cwd: string, args: string[]) => spawnSync("git", args, { cwd, encoding: "utf8" });
+    try {
+      git(remote, ["init", "-q", "--bare"]);
+      git(root, ["init", "-q", "-b", "develop"]);
+      git(root, ["config", "user.name", "Workflow Test"]);
+      git(root, ["config", "user.email", "workflow@example.test"]);
+      writeFileSync(path.join(root, "tracked.txt"), "base\n");
+      git(root, ["add", "tracked.txt"]);
+      git(root, ["commit", "-q", "-m", "base"]);
+      git(root, ["remote", "add", "origin", remote]);
+      git(root, ["push", "-q", "-u", "origin", "develop"]);
+      git(root, ["checkout", "-q", "-b", "feature/read-only"]);
+      writeFileSync(path.join(root, "tracked.txt"), "base\nfeature\n");
+      git(root, ["commit", "-q", "-am", "feature"]);
+      git(root, ["push", "-q", "-u", "origin", "feature/read-only"]);
+      writeFileSync(path.join(root, "tracked.txt"), "base\nfeature\nunstaged\n");
+      writeFileSync(path.join(root, "untracked.txt"), "keep\n");
+      const remoteCalled = path.join(root, "remote-called");
+      const uploadPack = path.join(root, "upload-pack.sh");
+      writeFileSync(uploadPack, `#!/bin/sh\ntouch '${remoteCalled}'\nexec git-upload-pack "$@"\n`, {
+        mode: 0o755,
+      });
+      git(root, ["config", "remote.origin.uploadpack", uploadPack]);
+      const snapshot = () => ({
+        head: git(root, ["rev-parse", "HEAD"]).stdout,
+        refs: git(root, ["show-ref"]).stdout,
+        index: readFileSync(path.join(root, ".git/index")).toString("base64"),
+        status: git(root, ["status", "--porcelain=v1"]).stdout,
+        tracked: readFileSync(path.join(root, "tracked.txt"), "utf8"),
+        untracked: readFileSync(path.join(root, "untracked.txt"), "utf8"),
+      });
+      const before = snapshot();
+      const xdg = mkdtempSync(path.join(os.tmpdir(), "wf-pr-readonly-xdg-"));
+      const result = withEnv({ XDG_CONFIG_HOME: xdg, PATH: process.env.PATH }, () =>
+        prReadyContext(root),
+      );
+      rmSync(xdg, { recursive: true, force: true });
+      expect(result.exitCode, result.stderr).toBe(0);
+      expect(snapshot()).toEqual(before);
+      expect(existsSync(remoteCalled)).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(remote, { recursive: true, force: true });
+    }
   },
   { timeout: 60_000 },
 );
