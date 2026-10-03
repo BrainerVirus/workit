@@ -11,7 +11,7 @@ import { makeDoctorFixture } from "@/test/shared/helpers/doctor-fixture";
 // network is involved (the command completes offline).
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
-const cliEntry = path.join(repoRoot, "packages/workit-cli/src/index.tsx");
+const cliEntry = path.join(repoRoot, "packages/workit-cli/src/main.ts");
 
 const fixture = makeDoctorFixture();
 afterAll(() => fixture.cleanup());

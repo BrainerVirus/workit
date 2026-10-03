@@ -28,7 +28,7 @@ const ENTRIES = [
   "packages/workit-codex/scripts/launch-mcp.ts",
   "packages/workit-pi/extensions/workit.ts",
   "packages/workit-pi/src/worker.ts",
-  "packages/workit-cli/src/index.tsx",
+  "packages/workit-cli/src/main.ts", // workit-cli dist/index.js (wizards via dynamic import)
   ...ts("scripts"),
   ...ts("packages/workit-core/scripts"),
   ...readdirSync(rel("packages"))

@@ -4,10 +4,7 @@ import { useState, type JSX } from "react";
 import { Wizard } from "./steps";
 import type { SetupValues } from "./wizard-state";
 import { resolveBasePath } from "./wizard-state";
-import { createLogger } from "@brainervirus/workit-core/src/core/logger";
-import { EVENT, errorDetail } from "@brainervirus/workit-core/src/core/boundary";
-import { setDiagnosticLogger } from "@brainervirus/workit-core/src/core/config";
-import { runDoctor } from "@brainervirus/workit-core/src/core/doctor";
+import { EVENT } from "@brainervirus/workit-core/src/core/boundary";
 import {
   applySetupPreview,
   buildSetupPreview,
@@ -23,49 +20,11 @@ import {
   type UninstallPlan,
 } from "@brainervirus/workit-core/src/core/uninstall";
 import { applyWizardBranchPolicy } from "./logic";
-import { runCutoverCommand } from "./cutover-cli";
-import { runActionCommand, runTaskCommand, TASK_FAMILIES } from "./task";
-import { externalActionHelp } from "@brainervirus/workit-core/src/core";
-import { runLaunchCommand, runUpgradeCommand } from "./upgrade";
+import { logger } from "./diagnostics";
 
-// Secret-safe diagnostic logger (DG-01-DG-03, DG-05, DG-10). Sink injection
-// only: CLI events mirror to stderr, never the Ink-rendered stdout. Routine
-// debug/info events stay out of the terminal (they live in the JSONL journal);
-// only warn/error surface so interactive sessions stay clean.
-export const logger = createLogger({
-  stderr: (event) => {
-    if (event.level === "debug" || event.level === "info") return;
-    process.stderr.write(`${JSON.stringify(event)}\n`);
-  },
-});
-
-const COMMAND_DESCRIPTIONS: readonly (readonly [string, string])[] = [
-  ["workit <family> <action> [options]", "Inspect and control a Workit task"],
-  ["workit action <operation> --payload <JSON>", "Preview or run one approved external action"],
-  ["workit handoff --task <id>", "Export task state and compact destination context"],
-  [
-    "workit cutover preview|apply|rollback ...",
-    "Preview-first v1 cutover and rollback (apply requires --confirm)",
-  ],
-];
-
-const helpColumn = Math.max(...COMMAND_DESCRIPTIONS.map(([cmd]) => cmd.length)) + 2;
-
-const HELP = `workit — workflow rails for agentic coding
-
-Usage:
-  workit init      Run the interactive setup wizard
-  workit upgrade   Preview upgrades (--apply --confirm; --hosts=a,b; --cli for the CLI)
-  workit launch <host> [--auto-upgrade] [-- args]  Upgrade before host startup
-  workit doctor    Verify the offline installation health (add --json for a machine-readable report)
-  workit uninstall Remove workit host registrations interactively (~/.config/workit is kept)
-  workit cutover   Preview or apply an explicit v1 cutover (apply requires --confirm)
-${COMMAND_DESCRIPTIONS.map(([cmd, desc]) => `  ${cmd.padEnd(helpColumn)}${desc}`).join("\n")}
-  action payloads: ${externalActionHelp}
-  workit           Show this help
-
-Run \`npx @brainervirus/workit-cli init\` to configure platforms, YouTrack, VCS and project hygiene.
-`;
+// The interactive wizards (`workit init`, `workit uninstall`). This is the
+// only module that loads ink/react; the router (main.ts) imports it lazily
+// from verbs/init.ts and verbs/uninstall.ts, so no other verb pays for it.
 
 // WZ-13-WZ-15 / CA-31: Apply prints one line per platform/file (Installed /
 // Configured / Skipped / Failed), the post-apply doctor summary, and the
@@ -306,64 +265,4 @@ export async function runUninstall() {
   }
   console.log(result.ok ? "Uninstall complete." : "Uninstall finished with problems.");
   process.exit(result.ok ? 0 : 1);
-}
-
-// `workit doctor` (DG-07): offline engine, human or --json report, exit code
-// reflects the health. Never writes the report to stderr (the logger owns that).
-function runDoctorCommand(args: string[]) {
-  const report = runDoctor({ host: "cli", cwd: process.cwd() });
-  if (args.includes("--json")) {
-    console.log(JSON.stringify(report, null, 2));
-  } else {
-    console.log(
-      `workit doctor — ${report.ok ? "healthy" : "problems found"} (${report.offline ? "offline" : "online"})`,
-    );
-    for (const check of report.checks) {
-      const mark = check.status === "fail" ? "FAIL" : check.status === "warn" ? "WARN" : "ok  ";
-      console.log(`${mark} ${check.id} — ${check.detail}`);
-      if (check.fix) console.log(`     fix: ${check.fix}`);
-    }
-    console.log(
-      `passed ${report.summary.passed} / warned ${report.summary.warned} / failed ${report.summary.failed}`,
-    );
-  }
-  process.exit(report.exitCode);
-}
-
-if (import.meta.main) {
-  const args = process.argv.slice(2);
-  const [subcommand] = args;
-  setDiagnosticLogger(logger);
-  logger.info(EVENT.initialization, { host: "cli", command: subcommand });
-  // The CLI owns its process: uncaught failures are logged and surfaced with a
-  // nonzero exit instead of a silent crash (DG-04).
-  process.on("unhandledRejection", (reason) =>
-    logger.error(EVENT.uncaughtFailure, { phase: "unhandledRejection", ...errorDetail(reason) }),
-  );
-  process.on("uncaughtException", (err) => {
-    logger.error(EVENT.uncaughtFailure, { phase: "uncaughtException", ...errorDetail(err) });
-    process.exit(1);
-  });
-  if (subcommand === "upgrade") {
-    process.exit(await runUpgradeCommand(args.slice(1)));
-  } else if (subcommand === "launch") {
-    process.exit(await runLaunchCommand(args.slice(1)));
-  } else if (subcommand === "init") {
-    await runInit();
-  } else if (subcommand === "doctor") {
-    runDoctorCommand(args);
-  } else if ((TASK_FAMILIES as readonly string[]).includes(subcommand)) {
-    process.exit(await runTaskCommand(args));
-  } else if (subcommand === "action") {
-    process.exit(await runActionCommand(args.slice(1)));
-  } else if (subcommand === "handoff") {
-    process.exit(await runTaskCommand(args));
-  } else if (subcommand === "uninstall") {
-    await runUninstall();
-  } else if (subcommand === "cutover") {
-    process.exit(await runCutoverCommand(args.slice(1)));
-  } else {
-    console.log(HELP);
-    process.exit(0);
-  }
 }
