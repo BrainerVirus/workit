@@ -7,7 +7,7 @@ import { gitRevisionParts, resolveGitRevision } from "../core";
 // Ports of scripts/_shared/common.sh + the four maintained context generators
 // (pr-ready-context.sh, changelog-context.sh, docs-refresh-context.sh,
 // release-notes-context.sh). Each generator returns the same stdout text shape
-// the shell produced (## sections parsed by parse-sections.ts).
+// the shell produced (## sections).
 
 export type ContextResult = { stdout: string; stderr: string; exitCode: number; cwd: string };
 

@@ -448,8 +448,7 @@ export const resolveWorkspaceFromEntries = <T extends { name: string; glob: stri
   // macOS/Windows tmpdir symlinks (/var -> /private/var): git's
   // --show-toplevel returns the realpath while config globs are usually
   // written with the logical path, so a workspace would silently stop
-  // matching on macOS. Match both forms on each side — same class as the
-  // docs-migration escape-guard realpath comparison; on Linux both forms
+  // matching on macOS. Match both forms on each side; on Linux both forms
   // are identical so behavior is unchanged.
   const targets = [cwd, realpathOf(cwd)].map((p) => p.replaceAll("\\", "/"));
   const matches: T[] = [];

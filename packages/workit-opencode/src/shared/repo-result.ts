@@ -1,5 +1,11 @@
-import { fail, ok } from "@brainervirus/workit-core/src/core";
-import type { RunResult } from "@brainervirus/workit-core/src/core/repo-tools";
+import { fail, ok, type run } from "@brainervirus/workit-core/src/core";
+
+export type RunResult = ReturnType<typeof run>;
+
+/** Host runtime seam for the confirmed `workit_init_apply` action. */
+export type RepoRuntime = {
+  initApply(root: string, action: string, env: Record<string, string>): RunResult;
+};
 
 export const output = (value: unknown) => JSON.stringify(value, null, 2);
 
@@ -13,27 +19,6 @@ export const requireConfirmed = (confirmed: boolean) => {
   if (confirmed === true) return null;
   return output(fail("confirmed: true required"));
 };
-
-export function scriptResult<T extends object>(result: RunResult, parse: (stdout: string) => T) {
-  if (result.exitCode !== 0) {
-    return fail(
-      result.stderr.trim() || result.stdout.trim() || "workflow script failed",
-      diagnostics(result),
-    );
-  }
-  try {
-    return ok({
-      ...parse(result.stdout),
-      exitCode: 0,
-      ...(result.stderr ? { stderr: result.stderr } : {}),
-    });
-  } catch (error) {
-    return fail(
-      error instanceof Error ? error.message : "workflow output parse failed",
-      diagnostics(result),
-    );
-  }
-}
 
 export const legacyScriptResult = (result: RunResult) => {
   let parsed: Record<string, unknown> | null = null;

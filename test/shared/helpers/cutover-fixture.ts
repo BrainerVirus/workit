@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import {
   cpSync,
   existsSync,
@@ -28,9 +27,6 @@ export type CutoverFixture = {
   pluginDir: string;
   cleanup: () => void;
 };
-
-export const digestBytes = (value: string | Buffer): string =>
-  createHash("sha256").update(value).digest("hex");
 
 export const managedBytes = (fixture: CutoverFixture): Record<string, Buffer> => {
   const out: Record<string, Buffer> = {};

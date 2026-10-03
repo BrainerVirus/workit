@@ -1,6 +1,6 @@
 {
   "name": "workit",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "private": true,
   "description": "Workit — workflow rails for agentic coding: one shared task and policy core with native OpenCode, Cursor, Codex, Pi, and CLI surfaces",
   "keywords": [
@@ -32,12 +32,12 @@
     "verify:release-candidate": "bun scripts/verify-release-candidate.ts",
     "test:acceptance": "bun test test/acceptance/deterministic.test.ts",
     "validate:cursor-marketplace": "bun packages/workit-core/scripts/validate-cursor-marketplace.ts",
-    "lint": "oxlint --deny-warnings packages/workit-core/src packages/workit-mcp/src packages/workit-opencode/src packages/workit-cli/src packages/workit-cursor/mcp/server.ts packages/workit-codex/hooks packages/workit-codex/scripts packages/workit-pi/src packages/workit-pi/extensions test",
-    "lint:fix": "oxlint --fix packages/workit-core/src packages/workit-mcp/src packages/workit-opencode/src packages/workit-cli/src packages/workit-cursor/mcp/server.ts packages/workit-codex/hooks packages/workit-codex/scripts packages/workit-pi/src packages/workit-pi/extensions test",
+    "lint": "oxlint --deny-warnings packages/workit-core/src packages/workit-mcp/src packages/workit-opencode/src packages/workit-cli/src packages/workit-cursor/mcp/run-server.ts packages/workit-codex/hooks packages/workit-codex/scripts packages/workit-pi/src packages/workit-pi/extensions test",
+    "lint:fix": "oxlint --fix packages/workit-core/src packages/workit-mcp/src packages/workit-opencode/src packages/workit-cli/src packages/workit-cursor/mcp/run-server.ts packages/workit-codex/hooks packages/workit-codex/scripts packages/workit-pi/src packages/workit-pi/extensions test",
     "doctor": "npx -y react-doctor@latest packages/workit-cli/src -y --no-telemetry --blocking error",
-    "knip": "knip --no-progress",
-    "format": "oxfmt packages/workit-core/src packages/workit-mcp/src packages/workit-opencode/src packages/workit-cli/src packages/workit-cursor/mcp/server.ts packages/workit-codex/hooks packages/workit-codex/scripts packages/workit-pi/src packages/workit-pi/extensions test '!test/fixtures/cursor-schemas/**' package.json packages/*/package.json tsconfig.json",
-    "format:check": "oxfmt --check packages/workit-core/src packages/workit-mcp/src packages/workit-opencode/src packages/workit-cli/src packages/workit-cursor/mcp/server.ts packages/workit-codex/hooks packages/workit-codex/scripts packages/workit-pi/src packages/workit-pi/extensions test '!test/fixtures/cursor-schemas/**' package.json packages/*/package.json tsconfig.json",
+    "knip": "knip --no-progress --no-config-hints && knip --no-progress --production --files && bun scripts/check-reachability.ts",
+    "format": "oxfmt packages/workit-core/src packages/workit-mcp/src packages/workit-opencode/src packages/workit-cli/src packages/workit-cursor/mcp/run-server.ts packages/workit-codex/hooks packages/workit-codex/scripts packages/workit-pi/src packages/workit-pi/extensions test '!test/fixtures/cursor-schemas/**' package.json packages/*/package.json tsconfig.json",
+    "format:check": "oxfmt --check packages/workit-core/src packages/workit-mcp/src packages/workit-opencode/src packages/workit-cli/src packages/workit-cursor/mcp/run-server.ts packages/workit-codex/hooks packages/workit-codex/scripts packages/workit-pi/src packages/workit-pi/extensions test '!test/fixtures/cursor-schemas/**' package.json packages/*/package.json tsconfig.json",
     "test": "bun test",
     "typecheck": "tsc --noEmit",
     "check": "bun run build && bun run lint && bun run format:check && bun test && tsc --noEmit"
@@ -56,6 +56,7 @@
     "ajv": "8.20.0",
     "ajv-formats": "3.0.1",
     "conventional-changelog-conventionalcommits": "8.0.0",
+    "ink": "7.1.1",
     "knip": "6.35.1",
     "oxfmt": "0.66.0",
     "oxlint": "1.81.0",

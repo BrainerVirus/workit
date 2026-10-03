@@ -10,7 +10,7 @@ import {
 } from "@/packages/workit-core/src/core/boundary";
 const REPO_ROOT = path.resolve(import.meta.dir, "..", "..");
 const CORE_SRC = path.join(REPO_ROOT, "packages", "workit-core", "src");
-const CURSOR_SERVER = path.join(REPO_ROOT, "packages", "workit-cursor", "mcp", "server.ts");
+const CURSOR_SERVER = path.join(REPO_ROOT, "packages", "workit-cursor", "mcp", "run-server.ts");
 
 const FORBIDDEN = ["@opencode-ai", "@modelcontextprotocol", "ink", "react"];
 
@@ -89,7 +89,7 @@ test("cursor does not duplicate legacy flow registrations", () => {
 
 test("Cursor publishes only the shared eight operation families", async () => {
   const server = readFileSync(CURSOR_SERVER, "utf8");
-  expect(server).toContain("createMcpServer");
+  expect(server).toContain("runStdioServer");
   const { OPERATION_FAMILIES } = await import("@/packages/workit-core/src/core");
   expect(OPERATION_FAMILIES).toHaveLength(8);
 });

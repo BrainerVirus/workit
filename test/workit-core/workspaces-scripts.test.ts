@@ -13,7 +13,6 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { vcsConfig } from "@/packages/workit-core/src/core/vcs-config";
-import { parseSections } from "@/packages/workit-core/src/core/parse-sections";
 import { prBuildBody, prCreate } from "@/packages/workit-core/src/core/pr-create";
 import { validateWorkspaceGlob } from "@/packages/workit-core/src/core/workspaces";
 import {
@@ -439,7 +438,7 @@ test.skipIf(process.platform === "win32")(
     expect(r.stdout).not.toContain("vcs: not configured");
     // B4: concise shell shape — workspace:/provider: only, no raw summary JSON
     // dumped into the VCS Config section.
-    const vcsSection = parseSections(r.stdout)["VCS Config"] ?? "";
+    const vcsSection = r.stdout.split(/\n## VCS Config\n/)[1]?.split(/\n## /)[0] ?? "";
     expect(vcsSection).not.toContain('"defaultTargetBranch"');
     expect(vcsSection).not.toContain('"ok":');
   },
