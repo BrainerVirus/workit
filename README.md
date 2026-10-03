@@ -65,9 +65,11 @@ YouTrack is optional and everything organization-specific comes from
   means today in the process timezone (honouring `TZ`); an IANA `timezone` in
   `youtrack.json` overrides it. YouTrack context reports the effective zone as
   `workTimezone: { timezone, source }` (`source` is `youtrack.json` or
-  `process`), and resolved `youtrack.update` / `youtrack.meeting` /
-  `youtrack.time` actions carry `workDate: { localDate, timezone,
-  timezoneSource }`. An explicit epoch `dateMs` is labelled with its UTC day.
+  `process`). Resolved `youtrack.update` / `youtrack.meeting` /
+  `youtrack.time` actions (and `workit action --preview`) report
+  `workDate: { localDate, timezone, timezoneSource }` beside the approval
+  descriptor, never inside it, so an approval matches in any process
+  timezone. An explicit epoch `dateMs` is labelled with its UTC day.
 - Workit adds no greeting or `@mention` to comments. The text comes from the
   editable `issue-update` template (`templates/issue-update.md` in the config
   directory overrides the bundled neutral one); placeholders Workit does not

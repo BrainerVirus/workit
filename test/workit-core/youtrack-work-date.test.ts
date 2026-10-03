@@ -130,25 +130,58 @@ test("Given an epoch dateMs, When it is resolved in any timezone, Then localDate
 });
 
 // Guard for the AGENTS.md rule: shipped source must not carry organization
-// specifics — a concrete YouTrack Cloud host or a literal issue id used as a
-// default. Example hosts (example.*) and docs/help URLs are allowed.
-test("Given the shipped package sources, When they are scanned, Then no organization YouTrack host or literal issue-id default remains", () => {
+// specifics. It flags (1) a concrete YouTrack Cloud host (example.* allowed),
+// (2) a literal issue id used as a fallback (`?? "ABC-12"`, `|| "ABC-12"`) or
+// as an issue field value (`meetingIssue: "ABC-12"`), and (3) a hard-coded
+// IANA region zone used as a fallback or timezone field value. Standard
+// identifiers that look like issue ids (UTF-8, SHA-256, ...) are not issues.
+const NOT_ISSUE_KEYS = new Set(["UTF", "SHA", "ISO", "RFC", "AES", "TLS", "SSL", "HTTP", "ES"]);
+const ORG_HOST = /https?:\/\/(?!example\.)[a-z0-9-]+\.youtrack\.cloud/gi;
+const ISSUE_LITERAL =
+  /(?:\?\?|\|\||\b(?:meetingIssue|issue|issueId)\s*:)\s*["'`]([A-Z][A-Z0-9]+)-\d+["'`]/g;
+const ZONE_LITERAL =
+  /(?:\?\?|\|\||\b(?:timezone|timeZone)\s*:)\s*["'`](?:Africa|America|Antarctica|Asia|Atlantic|Australia|Europe|Indian|Pacific)\/[A-Za-z_/+-]+["'`]/g;
+
+const orgSpecificHits = (text: string): string[] => [
+  ...[...text.matchAll(ORG_HOST)].map((m) => m[0]),
+  ...[...text.matchAll(ISSUE_LITERAL)].filter((m) => !NOT_ISSUE_KEYS.has(m[1])).map((m) => m[0]),
+  ...[...text.matchAll(ZONE_LITERAL)].map((m) => m[0]),
+];
+
+test("Given org-specific and look-alike snippets, When the guard checks them, Then only real org specifics are flagged", () => {
+  for (const hit of [
+    'const base = cfg.baseUrl ?? "https://acme.youtrack.cloud";',
+    'const issue = String(config?.meetingIssue || "ABC-12");',
+    "const issue = cfg.meetingIssue ?? 'PROJ-7';",
+    'const defaults = { meetingIssue: "ABC-12" };',
+    'meetingIssues: { general: { issue: "TEAM-3" } }',
+    'const tz = String(config.timezone ?? "America/Santiago");',
+    'const draft = { timezone: "Europe/Madrid" };',
+  ])
+    expect(orgSpecificHits(hit), hit).not.toEqual([]);
+  for (const clean of [
+    'const encoding = opts.encoding ?? "UTF-8";',
+    'const algo = opts.algo || "SHA-256";',
+    'placeholder: "e.g. https://example.youtrack.cloud"',
+    'const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";',
+    'const issue = String(config.meetingIssue ?? "");',
+    'const docs = "https://www.jetbrains.com/help/youtrack/cloud/manage-permanent-token.html";',
+    "const ISSUE_RE = /^[A-Z]+-\\d+$/;",
+  ])
+    expect(orgSpecificHits(clean), clean).toEqual([]);
+});
+
+test("Given the shipped package sources, When they are scanned, Then no organization host, issue-id literal or hard-coded zone remains", () => {
   const root = path.resolve(import.meta.dir, "../../packages");
-  const orgHost = /https?:\/\/(?!example\.)[a-z0-9-]+\.youtrack\.cloud/i;
-  // A quoted ABC-123 literal used as a fallback value (`?? "X-1"`, `|| "X-1"`).
-  const issueDefault = /(?:\?\?|\|\|)\s*["'`][A-Z][A-Z0-9]+-\d+["'`]/;
   const hits: string[] = [];
   const walk = (dir: string): void => {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
       if (["node_modules", "dist", "build"].includes(entry.name)) continue;
       const full = path.join(dir, entry.name);
       if (entry.isDirectory()) walk(full);
-      else if (
-        /\.(?:ts|tsx|md|json)$/.test(entry.name) &&
-        full.includes(`${path.sep}src${path.sep}`)
-      ) {
-        const text = readFileSync(full, "utf8");
-        if (orgHost.test(text) || issueDefault.test(text)) hits.push(path.relative(root, full));
+      else if (/\.(?:ts|tsx)$/.test(entry.name) && full.includes(`${path.sep}src${path.sep}`)) {
+        for (const match of orgSpecificHits(readFileSync(full, "utf8")))
+          hits.push(`${path.relative(root, full)}: ${match}`);
       }
     }
   };
