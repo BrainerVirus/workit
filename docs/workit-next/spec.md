@@ -31,7 +31,7 @@ independently verified PRs.
 | D8 | **Host tiers**: Tier 1 = Claude Code (new) + OpenCode. Tier 2 = Codex, Cursor, Pi as thin mappings onto shared `core/hooks`. Retire the OpenCode V1 adapter |
 | D9 | **Effect 4** only in the CLI I/O layer (subprocess, lock, retry, typed errors), once stable. The core stays plain TS + zod |
 | D10 | **BDD**: acceptance criteria are written Given/When/Then and become test names and seams. Gherkin only where a repo already uses it (e.g. playwright-bdd) |
-| D11 | **YouTrack** stays an optional tracker adapter. Remove the greeting, the hard-coded mention and timezone; fix the date bug |
+| D11 | **YouTrack** stays an optional tracker adapter. Remove the greeting, the hard-coded mention, org-specific defaults and the global timezone setting; work-item dates are UTC-midnight epochs, "auto" = process timezone (surfaced to the agent), `youtrack.json` `timezone` remains an optional override; fix the date bug |
 | D12 | **Skills 14 → 10**: `shape`, `implement`, `review`, `debug`, `ship`, `continue`, `bdd`, `test-audit`, `deslop`, `fanout`. Host copies and Cursor commands are generated at build time, not committed |
 
 ## Target architecture
