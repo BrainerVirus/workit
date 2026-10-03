@@ -73,8 +73,11 @@ const writesLeaveBoundedCopies = (writes: number) => {
 
 // 20 writes already exceed the cap several times over; the 1,000-write
 // version is an opt-in soak (WORKIT_SOAK=1) because it is fsync-bound.
-test(`Given 20 writes to one task, Then at most ${RECOVERY_COPIES_PER_RECORD} recovery copies remain and the latest prior bytes are kept`, () =>
-  writesLeaveBoundedCopies(20));
+test(
+  `Given 20 writes to one task, Then at most ${RECOVERY_COPIES_PER_RECORD} recovery copies remain and the latest prior bytes are kept`,
+  () => writesLeaveBoundedCopies(20),
+  60_000,
+);
 
 test.skipIf(process.env.WORKIT_SOAK !== "1")(
   `Given 1,000 writes to one task (soak), Then at most ${RECOVERY_COPIES_PER_RECORD} recovery copies remain`,

@@ -1075,7 +1075,6 @@ export class TaskStore {
     // One budget for the whole acquisition: a lost reclaim race retries with
     // the remaining time, never a fresh timeout.
     const deadline = Date.now() + (options.timeoutMs ?? 0);
-    let deniedWithoutHolder = 0;
     while (true) {
       try {
         return acquireFileLockSync(this.workspacePath, {
@@ -1091,14 +1090,13 @@ export class TaskStore {
           Date.now() >= deadline
         )
           throw error;
-        // A denial with no lock file is not contention but a permission
-        // problem (read-only attribute, ACL). Allow a couple of attempts for
-        // a holder that was mid-delete, then fail fast instead of burning
-        // the whole budget.
-        if (code !== "file_lock_stale" && !this.lockHolderPresent()) {
-          deniedWithoutHolder += 1;
-          if (deniedWithoutHolder >= 3) throw error;
-        } else deniedWithoutHolder = 0;
+        // Windows also denies the create while a just-released lock is still
+        // pending delete, and that entry is already invisible to lstat. So a
+        // denial with no visible holder is told apart by probing whether the
+        // directory accepts a new file: if it does not, this is a permission
+        // problem (read-only attribute, ACL) and fails fast.
+        if (code !== "file_lock_stale" && !this.lockHolderPresent() && !this.lockDirWritable())
+          throw error;
         if (code !== "file_lock_stale")
           Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
       }
@@ -1284,6 +1282,20 @@ export class TaskStore {
     return result;
   }
 
+  /** Whether the lock's directory accepts a new file right now. */
+  private lockDirWritable(): boolean {
+    const probe = `${this.lockPath}.${process.pid}.${randomUUID()}.probe`;
+    try {
+      fs.closeSync(fs.openSync(probe, "wx", 0o600));
+    } catch {
+      return false;
+    }
+    try {
+      fs.rmSync(probe, { force: true });
+    } catch {}
+    return true;
+  }
+
   /** A lock file (or an entry Windows is still tearing down) exists. */
   private lockHolderPresent(): boolean {
     try {
@@ -1301,7 +1313,7 @@ export class TaskStore {
     const value = error as { code?: unknown; message?: unknown };
     const code = typeof value?.code === "string" ? value.code : "";
     // A sharing-class denial is contention only when someone holds the lock.
-    if (isTransientWindowsError(error) && !this.lockHolderPresent())
+    if (isTransientWindowsError(error) && !this.lockHolderPresent() && !this.lockDirWritable())
       return failure(
         "storage_error",
         `cannot create the workspace metadata lock (${code}); no other Workit call holds it`,
@@ -1578,7 +1590,7 @@ export class TaskStore {
         for (const directory of [this.recoveryDir, this.tasksDir, this.workitDir]) {
           if (!fs.existsSync(directory)) continue;
           for (const name of fs.readdirSync(directory)) {
-            if (!name.endsWith(".tmp")) continue;
+            if (!name.endsWith(".tmp") && !name.endsWith(".probe")) continue;
             const file = path.join(directory, name);
             const stat = fs.lstatSync(file);
             if (!stat.isFile() || nowMs - stat.mtimeMs <= STALE_TEMPORARY_MS) continue;
