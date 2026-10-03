@@ -29,11 +29,18 @@ pass (51 focused tests). Machine config can be validated without editing it.
 Luna workers implement wizard/host setup in separate scopes; coordinator owns
 upgrade/integration. Next: complete advanced editors and isolated host installers.
 
-Status: Workit 2.0.0 is published; the V2 lifecycle and trigger follow-up is
-active on `fix/opencode-v2-lifecycle-routing`. This plan follows
-[`spec.md`](./spec.md) and [`reliability-spec.md`](./reliability-spec.md).
-Keep checkpoints current so another session can resume without redoing
-discovery.
+Checkpoint: package-directory local pins are now recognized without requiring a
+trailing slash, including installed node_modules paths. This prevents setup or
+upgrade from overlooking an existing local registration. Registration checks
+pass (27 tests / 109 assertions). Advanced wizard and native installers are in
+progress; upgrade fixtures pass (6 tests / 32 assertions). The initial full run
+identified obsolete host/tracker expectations and wizard navigation fixtures;
+update those, then rerun with source edits frozen. Active host configs/bundles
+remain untouched.
+
+Status: Workit 2.0.2 is published. This setup/upgrade slice follows
+[setup-spec.md](./setup-spec.md), alongside the existing adaptive and reliability
+contracts. Historical checkpoints below describe their original release state.
 
 ## Scope and working rules
 
