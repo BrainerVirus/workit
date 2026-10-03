@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { withTempConfigDir } from "@/test/shared/helpers/env";
-import { writeTemplate } from "@/packages/workit-core/src/core/templates";
+import { templatePath } from "@/packages/workit-core/src/core/templates";
 import {
   buildDraft,
   context,
@@ -246,10 +246,11 @@ test("buildDraft composes a neutral header, project, notes, and facts", () => {
 
 test("Given a user issue-update template with a legacy {{greetingSection}}, When a draft is built, Then it renders and the unknown placeholder is empty", () => {
   withTempConfigDir(() => {
-    writeTemplate(
-      "issue-update",
+    const file = templatePath("issue-update");
+    mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(
+      file,
       "# Status\n{{greetingSection}}\n{{userNotesSection}}\n{{someFuturePlaceholder}}\n",
-      true,
     );
     const draft = buildDraft({ issueId: "NSR-1", userNotes: "Shipped the fix" });
     expect(draft.markdown).toBe("# Status\n\nShipped the fix");

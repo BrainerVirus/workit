@@ -73,7 +73,7 @@ export type BranchPolicyProposal = {
   };
 };
 
-export type IssueTracker = "youtrack" | "github" | "gitlab" | "none";
+type IssueTracker = "youtrack" | "github" | "gitlab" | "none";
 
 export type SetupValues = {
   platforms: string[];

@@ -335,67 +335,6 @@ export async function youTrackApi(
   return { error: "unknown subcommand" };
 }
 
-/** Port of scripts/youtrack/verify-token.sh — read-only GET /api/users/me. */
-export async function youTrackVerifyToken(): Promise<
-  { data: Record<string, any> } | { error: string; http_status?: number; path?: string }
-> {
-  const cfgPath = youTrackConfigPath();
-  if (!fs.existsSync(cfgPath)) return { error: "missing youtrack.json" };
-  const creds = youTrackToken();
-  if ("error" in creds) return { error: creds.error };
-  const { token, base } = creds;
-
-  const me = await youTrackRequest(`${base}/api/users/me?fields=id,login,name,email`, {
-    method: "GET",
-    token,
-  });
-  if (me.status !== 0) {
-    const err =
-      me.status === 401 || me.status === 403
-        ? "authentication failed (401/403)"
-        : `HTTP error: ${me.stderr.slice(0, 200)}`;
-    return { error: err, http_status: me.status };
-  }
-  let user: Record<string, any>;
-  try {
-    user = JSON.parse(me.stdout) as Record<string, any>;
-  } catch {
-    return { error: "invalid JSON from YouTrack /api/users/me" };
-  }
-  const result: Record<string, any> = {
-    ok: true,
-    method: "GET /api/users/me",
-    baseUrl: base,
-    login: user.login,
-    name: user.name,
-    email: user.email,
-    id: user.id,
-  };
-  const meeting = readYouTrackConfig(false);
-  const meetingIssue = "config" in meeting ? meeting.config.meetingIssue : undefined;
-  if (meetingIssue) {
-    const issue = await youTrackRequest(
-      `${base}/api/issues/${meetingIssue}?fields=id,idReadable,summary`,
-      { method: "GET", token },
-    );
-    if (issue.status === 0) {
-      try {
-        const parsed = JSON.parse(issue.stdout) as Record<string, any>;
-        result.meetingIssue = meetingIssue;
-        result.meetingIssueReadable = true;
-        result.meetingIssueSummary = parsed.summary;
-      } catch {
-        /* unreadable */
-      }
-    } else {
-      result.meetingIssue = meetingIssue;
-      result.meetingIssueReadable = false;
-      result.warning = `token valid but cannot read issue ${meetingIssue}`;
-    }
-  }
-  return { data: result };
-}
-
 /** Port of scripts/youtrack/token-create-url.sh — deep link to Account Security. */
 export function youTrackTokenCreateUrl(): { data: Record<string, any> } {
   const tokenName = process.env.WORKFLOW_YT_TOKEN_NAME ?? "workit";

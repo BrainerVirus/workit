@@ -396,9 +396,9 @@ export function runProjectSetup(
 
 // Shared scaffold outcome envelope (WZ-05/WZ-06): credentials are preserved
 // byte-for-byte unless absent, and malformed config files block every write.
-export type ScaffoldStatus = "missing" | "preserved" | "malformed";
+type ScaffoldStatus = "missing" | "preserved" | "malformed";
 
-export type ScaffoldOutcome = {
+type ScaffoldOutcome = {
   ok: boolean;
   status: ScaffoldStatus;
   /** Blocking diagnostic, set when status === "malformed". */
@@ -628,18 +628,8 @@ export {
   TOKEN_PLACEHOLDER,
   parseList,
   buildSetupPreview,
-  activeSetupOverrides,
-  applySetupPreview,
-  setupCompletionGuidance,
   type SetupPreviewInput,
   type SetupMutation,
-  type SetupOverride,
-  type SetupPreview,
-  type Platform,
-  type SetupResult,
-  type SetupResultEntry,
-  type SetupResultStatus,
-  type ApplySetupOptions,
 } from "@brainervirus/workit-core/src/core/setup.ts";
 export {
   previewCutover,
@@ -647,10 +637,6 @@ export {
   resumeCutover,
   previewRollback,
   applyRollback,
-  previewConversion,
-  readGenerationState,
-  type CutoverPlan,
-  type CutoverReceipt,
   type CutoverDecision,
   type CutoverHost,
   type CutoverPaths,

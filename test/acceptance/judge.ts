@@ -3,7 +3,7 @@
 import type { CodingHost, EvaluationRun } from "./harness";
 import { FIXTURE_REVISION } from "./scenarios";
 
-export type RunDisposition = "pending" | "passed" | "failed" | "discarded" | "missing";
+type RunDisposition = "pending" | "passed" | "failed" | "discarded" | "missing";
 
 export type ObservableMetrics = {
   questions: number;
@@ -32,7 +32,7 @@ export type RunArtifact = {
   reasons: string[];
 };
 
-export const emptyMetrics = (): ObservableMetrics => ({
+const emptyMetrics = (): ObservableMetrics => ({
   questions: 0,
   artifacts: 0,
   testRounds: 0,

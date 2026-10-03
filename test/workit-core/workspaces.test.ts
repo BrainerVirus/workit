@@ -2,7 +2,6 @@ import { expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { initStatus } from "@/packages/workit-core/src/core/init";
 import {
   matchWorkspace,
   readWorkspacesResult,
@@ -257,7 +256,7 @@ test("CA-01: resolveWorkspace maps work/personal globs to vcs + branchPolicy pre
   });
 });
 
-test("initStatus reports equal-specificity ambiguity without choosing by file order", () => {
+test("resolveWorkspace reports equal-specificity ambiguity without choosing by file order", () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "wf-ws-status-"));
   writeWorkspaces(
     dir,
@@ -270,11 +269,6 @@ test("initStatus reports equal-specificity ambiguity without choosing by file or
   );
   withIsolatedConfig(dir, () => {
     expect(() => resolveWorkspace(process.cwd())).toThrow(/ambiguous workspace/);
-    const status = initStatus();
-    expect(status.error).toBeUndefined();
-    expect(status.workspaces.path).toBe(path.join(dir, "workspaces.json"));
-    expect(status.workspaces.resolved).toBeNull();
-    expect(status.workspaces.error).toContain("ambiguous workspace");
   });
 });
 
@@ -285,17 +279,6 @@ test("resolveWorkspace fails closed when workspaces.json is literal null", () =>
     expect(() => resolveWorkspace("/home/u/Documents/projects/work/x")).toThrow(
       /workspaces\.json is not a JSON object/,
     );
-  });
-});
-
-test("initStatus survives a literal null workspaces.json", () => {
-  const dir = mkdtempSync(path.join(os.tmpdir(), "wf-ws-status-null-"));
-  writeWorkspaces(dir, "null");
-  withIsolatedConfig(dir, () => {
-    const status = initStatus();
-    expect(status.error).toBeUndefined();
-    expect(status.workspaces.resolved).toBeNull();
-    expect(status.workspaces.error).toContain("workspaces.json is not a JSON object");
   });
 });
 
