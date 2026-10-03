@@ -14,6 +14,7 @@ Legend: ⟂ = parallel with siblings (branch from `main`) · ↳ = stacked on th
 ## Phase 1 — Stabilize (2.x patches, unblock daily use) ⟂
 - **S1** `bugfix/store-lock-reclaim`: reclaim dead-pid/stale locks; short retry; contention returns retryable `busy`; `workit doctor --fix-lock`.
 - **S2** ↳S1 `bugfix/bounded-recovery`: cap recovery copies (keep last 3); `workit gc` prunes `recovery/` and dedupes candidates; stop advertising `state.recover`.
+- **S2b** ↳S2 `bugfix/engine-revision-retry`: bounded engine retry (re-read, re-check policy/requirements, re-apply) when the caller omits `expectedRevision`, so contention never surfaces `revision_conflict` to agents that didn't ask for CAS.
 - **S3** ⟂ `chore/remove-dead-code`: delete unreachable modules (OpenCode docs-repo/rules/templates/youtrack tools, `docs-*`, `verify-*`, `present`, `ports/*`, `sync-runtime.ts`, `triage*`) and their tests; fix `knip.json` entries so knip guards it.
 - **S4** ⟂ `bugfix/youtrack-timezone`: remove the greeting, mention and timezone config; fix the date off-by-one; keep the YouTrack adapter optional.
 - **S5** ⟂ `bugfix/opencode-hot-path`: task index; cached compact context keyed by mtime; no candidate capture on context injection.
