@@ -56,7 +56,8 @@ const startTask = (root: string, host: OperationContext["caller"]["host"]) => {
   if (!started.ok) throw new Error(started.error);
 };
 
-const opencodeDenies = async (root: string, command: string): Promise<boolean> => {
+// Each adapter returns its denial reason, or null when the command passes.
+const opencodeDenial = async (root: string, command: string): Promise<string | null> => {
   const hooks = await plugin({
     directory: root,
     worktree: root,
@@ -67,17 +68,21 @@ const opencodeDenies = async (root: string, command: string): Promise<boolean> =
       { tool: "bash", sessionID: "lead", callID: command } as never,
       { args: { command } } as never,
     );
-    return false;
-  } catch {
-    return true;
+    return null;
+  } catch (error) {
+    return String(error);
   }
 };
 
-const piDenies = (root: string, command: string): boolean =>
-  enforceNativeWriter(
+const piDenial = (root: string, command: string): string | null => {
+  const result = enforceNativeWriter(
     { toolName: "bash", input: { command } } as never,
     { cwd: root, isProjectTrusted: () => true } as never,
-  ) !== undefined;
+  ) as { block?: boolean; reason?: string } | undefined;
+  if (result === undefined) return null;
+  expect(result.block).toBe(true);
+  return String(result.reason);
+};
 
 const codexResult = (root: string, command: string) => {
   const result = handleCodexHook({
@@ -134,12 +139,20 @@ test("all adapters enforce only recognized noncompliant branch targets", async (
       for (const [command, denied] of [
         ["git checkout -b main", true],
         ["git switch -c feature/raw", false],
+        ["git checkout -b feature/raw", false],
+        ["git status --short", false],
         ["gh pr create --fill", false],
         ["git worktree add ../other", false],
         ['git checkout -b "main"', false],
       ] as const) {
-        expect(await opencodeDenies(root, command), `opencode ${command}`).toBe(denied);
-        expect(piDenies(root, command), `pi ${command}`).toBe(denied);
+        const opencode = await opencodeDenial(root, command);
+        const pi = piDenial(root, command);
+        expect(opencode !== null, `opencode ${command}`).toBe(denied);
+        expect(pi !== null, `pi ${command}`).toBe(denied);
+        if (denied) {
+          expect(opencode, `opencode ${command}`).toContain("protected_ref");
+          expect(pi, `pi ${command}`).toContain("protected_ref");
+        }
         expect(codexDenies(root, command), `codex ${command}`).toBe(denied);
         expect(cursorDenies(root, command), `cursor ${command}`).toBe(denied);
         expect(claudeDenies(root, command), `claude_code ${command}`).toBe(denied);

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -183,3 +183,31 @@ test("native command context routes HOME and host data directories into the inje
     rmSync(home, { recursive: true, force: true });
   }
 });
+
+// Symlinks need privileges on Windows; the layout is the POSIX package-bin one.
+test.skipIf(process.platform === "win32")(
+  "Cursor setup resolves npm-cli.js through a node_modules/.bin/npm symlink",
+  () => {
+    const home = temp("workit-cursor-npm-home-");
+    const project = temp("workit-cursor-npm-project-");
+    try {
+      const nodeBin = path.join(project, "bin");
+      executable(path.join(nodeBin, "node"));
+      const npmCli = path.join(project, "node_modules", "npm", "bin", "npm-cli.js");
+      executable(npmCli);
+      const dotBin = path.join(project, "node_modules", ".bin");
+      mkdirSync(dotBin, { recursive: true });
+      symlinkSync("../npm/bin/npm-cli.js", path.join(dotBin, "npm"));
+      const commands = planHostInstall("cursor", {
+        home,
+        cwd: home,
+        env: { HOME: home, PATH: [dotBin, nodeBin].join(path.delimiter) },
+      });
+      const install = commands.find((command) => command.args.includes("install"));
+      expect(install?.args[0]).toBe(realpathSync(npmCli));
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(project, { recursive: true, force: true });
+    }
+  },
+);

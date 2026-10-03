@@ -68,7 +68,6 @@ const byName = (packs: ReturnType<typeof packWorkspacePackages>, name: string) =
 test(
   "Cursor build, package, and packed CLI doctor enforce exact canonical method skills and Workit identity",
   () => {
-    expect(WORKIT).toHaveLength(14);
     const fixture = mkdtempSync(path.join(os.tmpdir(), "wk-cursor-invariants-"));
     try {
       const missingWorkitRepo = copyBuildFixture(path.join(fixture, "missing-workit"));

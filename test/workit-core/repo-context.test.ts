@@ -18,7 +18,7 @@ import {
 import { gitContext } from "@/packages/workit-core/src/core/git";
 import { youTrackApi } from "@/packages/workit-core/src/core/youtrack";
 
-/** Split context stdout on `## Section` headers (the shell print_section shape). */
+/** Split context stdout on `## Section` headers. */
 const parseSections = (stdout: string): Record<string, string> => {
   const sections: Record<string, string> = {};
   for (const part of stdout.split(/\n## /).slice(1)) {
@@ -36,10 +36,8 @@ const parseKeyValueLines = (text: string, keys: string[]): Record<string, string
   return out;
 };
 
-// Parity between the TS runtime ports and the maintained shell behavior they
-// replaced. Fixtures below were captured from the real scripts before the shell
-// port: the context generators must reproduce the same parsed sections and
-// error text.
+// Behavior of the repository context generators (PR, changelog, docs refresh,
+// release notes) and git context against a real fixture repository.
 
 function buildFixtureRepo(): { repo: string; mergeBase: string } {
   const repo = mkdtempSync(path.join(os.tmpdir(), "wf-parity-repo-"));
@@ -146,7 +144,7 @@ test(
 );
 
 test(
-  "branch classification and current branch match the shell predicates",
+  "branch classification and current branch",
   () => {
     const { repo } = buildFixtureRepo();
     try {
@@ -169,7 +167,7 @@ test(
 );
 
 test.skipIf(process.platform === "win32")(
-  "resolvePrBranchContext yields the branch-exclusive range the shell produced",
+  "resolvePrBranchContext yields the branch-exclusive range against the configured target",
   () => {
     const { repo, mergeBase } = buildFixtureRepo();
     try {
@@ -188,7 +186,7 @@ test.skipIf(process.platform === "win32")(
 );
 
 test.skipIf(process.platform === "win32")(
-  "pr-ready-context sections match the shell output (auto branch-exclusive range)",
+  "pr-ready-context reports repository, commits, files, template and VCS sections (auto branch-exclusive range)",
   () => {
     const { repo } = buildFixtureRepo();
     try {
@@ -221,7 +219,7 @@ test.skipIf(process.platform === "win32")(
       expect(sections.Summary ?? "").toContain("- fix");
       expect(sections["VCS Config"] ?? "").toContain("workspace: work");
       expect(sections["VCS Config"] ?? "").toContain("provider: gitlab");
-      // B4: concise shell shape — workspace:/provider: only, no raw summary JSON.
+      // Concise shape: workspace:/provider: only, no raw summary JSON.
       expect(sections["VCS Config"] ?? "").not.toContain('"defaultTargetBranch"');
       expect(sections["Merged PR Style"] ?? "").toContain("no origin remote");
     } finally {
@@ -254,23 +252,20 @@ test.skipIf(process.platform === "win32")(
   { timeout: 60_000 },
 );
 
-test.skipIf(process.platform === "win32")(
-  "pr-ready-context errors on protected branches with the shell message",
-  () => {
-    const { repo } = buildFixtureRepo();
-    try {
-      spawnSync("git", ["checkout", "-q", "main"], { cwd: repo });
-      const result = withGitLabConfig(() => prReadyContext(repo));
-      expect(result.exitCode).toBe(1);
-      expect(result.stderr).toContain("cannot build PR context on protected branch main");
-    } finally {
-      rmSync(repo, { recursive: true, force: true });
-    }
-  },
-);
+test.skipIf(process.platform === "win32")("pr-ready-context refuses protected branches", () => {
+  const { repo } = buildFixtureRepo();
+  try {
+    spawnSync("git", ["checkout", "-q", "main"], { cwd: repo });
+    const result = withGitLabConfig(() => prReadyContext(repo));
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("cannot build PR context on protected branch main");
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
 
 test(
-  "changelog-context sections match the shell output",
+  "changelog-context reports branch range, rules, existing changelog and changes",
   () => {
     const { repo } = buildFixtureRepo();
     try {
@@ -282,7 +277,7 @@ test(
       expect(repoSection.range).toBe("main...HEAD");
       expect(sections["Keep a Changelog Rules"] ?? "").toContain("Use an [Unreleased] section.");
       // parseSections splits on "## ", so the excerpt ends at the changelog's own
-      // "## [Unreleased]" heading — identical to how the shell output was parsed.
+      // "## [Unreleased]" heading.
       expect(sections["Existing CHANGELOG.md"] ?? "").toBe("# Changelog");
       expect(sections.Commits ?? "").toContain("feature change");
       expect(sections["Changed Files"] ?? "").toBe("feature.txt");
@@ -294,7 +289,7 @@ test(
 );
 
 test(
-  "docs-refresh-context sections match the shell output",
+  "docs-refresh-context reports changed files, doc files and previews",
   () => {
     const { repo } = buildFixtureRepo();
     try {
@@ -317,7 +312,7 @@ test(
 );
 
 test(
-  "release-notes-context requires a range and reproduces the shell sections",
+  "release-notes-context requires a range and reports commits and release files",
   () => {
     const { repo } = buildFixtureRepo();
     try {
@@ -340,7 +335,7 @@ test(
   { timeout: 60_000 },
 );
 
-test("git context exposes the same branch and status fields the shell produced", () => {
+test("git context exposes branch, untracked files and workspace root", () => {
   const { repo } = buildFixtureRepo();
   try {
     writeFileSync(path.join(repo, "untracked.txt"), "keep\n");
@@ -369,20 +364,6 @@ test(
 );
 
 test(
-  "PATH scanning uses path.delimiter (Windows-safe) not a literal colon",
-  () => {
-    const prCreateSource = readFileSync(
-      path.resolve(import.meta.dir, "..", "..", "packages", "workit-core", "src/core/pr-create.ts"),
-      "utf8",
-    );
-    expect(prCreateSource).toContain("split(path.delimiter)");
-    // Functional delimiter coverage lives in workspaces-scripts.test.ts: the
-    // missing-CLI guard runs whichOnPath over a path.delimiter-joined PATH.
-  },
-  { timeout: 60_000 },
-);
-
-test(
   "YouTrack API uses fetch (not the curl binary) and never leaks the token",
   async () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), "wf-parity-fetch-"));
@@ -405,7 +386,7 @@ test(
     process.env.WORKFLOW_YOUTRACK_CONFIG = configPath;
     try {
       const result = await youTrackApi(["post-comment", "NSR-40", "Revisado"], "1");
-      expect(seenAuth).toBe("Bearer secret-token"); // header carried, exactly like curl -H
+      expect(seenAuth).toBe("Bearer secret-token");
       expect("error" in result).toBe(true);
       expect(JSON.stringify(result)).not.toContain("secret-token");
       expect(JSON.stringify(result)).not.toContain("Authorization");
