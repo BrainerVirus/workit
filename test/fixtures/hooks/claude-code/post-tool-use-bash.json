@@ -1,0 +1,20 @@
+{
+  "session_id": "claude-session-1",
+  "transcript_path": "/tmp/claude/transcript.jsonl",
+  "cwd": "__CWD__",
+  "permission_mode": "default",
+  "prompt_id": "prompt-1",
+  "hook_event_name": "PostToolUse",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "workit check -- bun test"
+  },
+  "tool_response": {
+    "stdout": "ok",
+    "stderr": "",
+    "interrupted": false
+  },
+  "tool_use_id": "toolu_03",
+  "agent_id": "agent-1",
+  "agent_type": "implementer"
+}

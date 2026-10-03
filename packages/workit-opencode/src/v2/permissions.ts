@@ -1,4 +1,4 @@
-import { shellBranchPolicyViolation } from "@brainervirus/workit-core/src/core";
+import { shellPolicy } from "@brainervirus/workit-core/hooks";
 
 export type PermissionEvaluationEvent = {
   action: string;
@@ -15,10 +15,10 @@ export const evaluateShellPermission = (root: string, event: PermissionEvaluatio
   if (event.action !== "shell" || event.effect === "deny") return;
   for (const resource of event.resources) {
     if (typeof resource !== "string") continue;
-    const policy = shellBranchPolicyViolation(root, resource);
-    if (policy && !policy.ok) {
+    const decision = shellPolicy(root, resource);
+    if (decision.kind === "deny") {
       event.effect = "deny";
-      event.message = `branch_policy_denied: ${policy.error}`;
+      event.message = decision.reason;
       return;
     }
   }

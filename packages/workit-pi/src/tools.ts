@@ -21,7 +21,6 @@ import {
   OPERATION_SCHEMA_DEPTH,
   OPERATION_FAMILIES,
   parseOperation,
-  shellBranchPolicyViolation,
   success,
   workitBindingQuestionIssue,
   canonicalJson,
@@ -43,6 +42,7 @@ import {
   resolveExternalActionRequest,
   upgradeBranchSetupForStash,
 } from "@brainervirus/workit-core/src/core/external-action-effects";
+import { shellPolicy } from "@brainervirus/workit-core/hooks";
 import type { Provenance } from "@brainervirus/workit-core/src/core/task-contract";
 import type {
   ExtensionContext,
@@ -662,11 +662,8 @@ export const enforceNativeWriter = (
 ): { block: true; reason: string } | undefined => {
   if (event.toolName === "bash") {
     const command = (event.input as { command?: unknown } | undefined)?.command;
-    const policy =
-      typeof command === "string" ? shellBranchPolicyViolation(ctx.cwd, command) : null;
-    if (policy && !policy.ok)
-      return { block: true, reason: `branch_policy_denied: ${policy.error}` };
-    return undefined;
+    const decision = typeof command === "string" ? shellPolicy(ctx.cwd, command) : null;
+    return decision?.kind === "deny" ? { block: true, reason: decision.reason } : undefined;
   }
   if (event.toolName !== "write" && event.toolName !== "edit") return undefined;
   // Pi project trust is host policy and stays enforced. Workit task scopes no

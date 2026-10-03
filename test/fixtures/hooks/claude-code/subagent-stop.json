@@ -1,0 +1,13 @@
+{
+  "session_id": "claude-session-1",
+  "transcript_path": "/tmp/claude/transcript.jsonl",
+  "cwd": "__CWD__",
+  "permission_mode": "default",
+  "prompt_id": "prompt-1",
+  "hook_event_name": "SubagentStop",
+  "agent_id": "agent-1",
+  "agent_type": "reviewer",
+  "agent_transcript_path": "/tmp/claude/agent-1.jsonl",
+  "last_assistant_message": "done",
+  "stop_hook_active": false
+}
