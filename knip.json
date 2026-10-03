@@ -1,7 +1,8 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
   "ignoreBinaries": [
-    "glab"
+    "glab",
+    "workit-cursor-session-start"
   ],
   "ignoreDependencies": [
     "react-devtools-core",
