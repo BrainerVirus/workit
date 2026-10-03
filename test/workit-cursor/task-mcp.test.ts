@@ -68,7 +68,7 @@ test("Cursor MCP refuses authority without a native caller identity", async () =
 });
 
 test("Cursor adapter has no legacy token or embedded schema surface", async () => {
-  const source = await Bun.file("packages/workit-cursor/mcp/server.ts").text();
+  const source = await Bun.file("packages/workit-cursor/mcp/run-server.ts").text();
   expect(source).not.toMatch(
     /modelcontextprotocol\/sdk|from ["']zod["']|delegation_token|mintDelegateToken/,
   );

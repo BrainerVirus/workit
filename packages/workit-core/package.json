@@ -31,8 +31,7 @@
     "skills/",
     "templates/",
     "README.md",
-    "LICENSE",
-    "!scripts/verify-project.sh"
+    "LICENSE"
   ],
   "type": "module",
   "main": "./src/core.ts",

@@ -1,10 +1,7 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
-  "ignoreBinaries": [
-    "glab"
-  ],
+  "ignoreBinaries": ["glab"],
   "ignoreDependencies": [
-    "react-devtools-core",
     "@semantic-release/github",
     "@semantic-release/npm",
     "@semantic-release/release-notes-generator",
@@ -21,46 +18,45 @@
   ],
   "workspaces": {
     ".": {
-      "entry": ["scripts/*.ts"],
-      "project": ["scripts/**/*.ts"]
+      "entry": ["scripts/*.ts!", "test/**/*.test.{ts,tsx}", "test/opencode-v2/mock-provider.ts"],
+      "project": ["scripts/**/*.ts!", "test/**/*.{ts,tsx}"]
     },
     "packages/workit-core": {
-      "entry": [
-        "src/core.ts",
-        "src/core/*.ts",
-        "scripts/doctor-check.ts",
-        "scripts/rewrite-workspace-deps.ts",
-        "scripts/sync-release-manifests.ts"
-      ],
-      "project": ["src/**/*.ts", "scripts/**/*.ts"]
+      "entry": ["scripts/*.ts!"],
+      "project": ["src/**/*.ts!", "scripts/**/*.ts!"]
     },
     "packages/workit-cli": {
-      "entry": ["src/index.tsx", "src/*.ts", "src/*.tsx"],
-      "project": ["src/**/*.{ts,tsx}"],
-      "ignoreUnresolved": ["scripts/build.ts"],
-      "ignoreDependencies": ["@brainervirus/workit-cursor", "@brainervirus/workit-opencode"]
+      "entry": ["src/index.tsx!", "scripts/build.ts!"],
+      "project": ["src/**/*.{ts,tsx}!", "scripts/**/*.ts!"],
+      "ignoreDependencies": ["@brainervirus/workit-cursor", "@brainervirus/workit-opencode"],
+      "ignoreUnresolved": ["scripts/build.ts"]
     },
     "packages/workit-opencode": {
-      "entry": ["src/plugin.ts", "src/tools/*.ts"],
-      "project": ["src/**/*.ts"],
+      "entry": ["src/index.ts!", "index.ts!", "scripts/build.ts!"],
+      "project": ["src/**/*.ts!", "scripts/**/*.ts!"],
       "ignoreUnresolved": ["scripts/build.ts"]
     },
     "packages/workit-cursor": {
-      "entry": ["hooks/workit-hook.ts", "hooks/session-start.ts", "mcp/*.ts"],
-      "project": ["hooks/**/*.ts", "mcp/**/*.ts", "scripts/**/*.ts"]
+      "entry": [
+        "hooks/workit-hook.ts!",
+        "hooks/session-start.ts!",
+        "mcp/run-server.ts!",
+        "scripts/build.ts!"
+      ],
+      "project": ["hooks/**/*.ts!", "mcp/**/*.ts!", "scripts/**/*.ts!"]
     },
     "packages/workit-codex": {
-      "entry": ["hooks/workit-hook.ts"],
-      "project": ["hooks/**/*.ts", "scripts/**/*.ts"]
+      "entry": ["hooks/workit-hook.ts!", "scripts/launch-mcp.ts!", "scripts/build.ts!"],
+      "project": ["hooks/**/*.ts!", "scripts/**/*.ts!"]
     },
     "packages/workit-pi": {
-      "entry": ["src/tools.ts", "src/context.ts", "extensions/workit.ts", "scripts/build.ts"],
-      "project": ["src/**/*.ts", "extensions/**/*.ts", "scripts/**/*.ts"],
+      "entry": ["extensions/workit.ts!", "src/worker.ts!", "scripts/build.ts!"],
+      "project": ["src/**/*.ts!", "extensions/**/*.ts!", "scripts/**/*.ts!"],
       "ignoreDependencies": ["@brainervirus/workit-core"]
     },
     "packages/workit-mcp": {
-      "entry": ["src/server.ts"],
-      "project": ["src/**/*.ts", "scripts/**/*.ts"]
+      "entry": ["scripts/build.ts!"],
+      "project": ["src/**/*.ts!", "scripts/**/*.ts!"]
     }
   }
 }

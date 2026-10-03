@@ -71,7 +71,7 @@ export type BranchPolicyProposal = {
   prefixes: { feature: string; bugfix: string; release: string; hotfix: string };
 };
 
-export type IssueTracker = "youtrack" | "github" | "gitlab" | "none";
+type IssueTracker = "youtrack" | "github" | "gitlab" | "none";
 
 export type SetupValues = {
   platforms: string[];

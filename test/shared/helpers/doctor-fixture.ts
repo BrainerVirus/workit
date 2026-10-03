@@ -221,8 +221,7 @@ export const binDirWithRuntimes = (root: string): string => {
   const bin = mk(root, "path-bin");
   for (const name of ["node", "bun"]) {
     if (process.platform === "win32") {
-      const which = spawnSync("where", [name], { encoding: "utf8" });
-      const target = which.stdout?.split("\n")[0]?.trim();
+      const target = Bun.which(name);
       if (target && existsSync(target)) {
         try {
           require("node:fs").symlinkSync(target, path.join(bin, `${name}.exe`));

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { configDir } from "./config";
 
@@ -41,70 +41,10 @@ export const parseRule = (markdown: string): CanonicalRule | { error: string } =
   return { name, description, platforms, body: fm[2].trim() + "\n" };
 };
 
-export const listRules = (): { name: string; platforms: string[]; source: "config" | "repo" }[] => {
-  const result: { name: string; platforms: string[]; source: "config" | "repo" }[] = [];
-  const dir = rulesDir();
-  if (existsSync(dir)) {
-    for (const entry of readdirSync(dir)) {
-      const file = path.join(dir, entry, "rule.md");
-      if (!existsSync(file)) continue;
-      const parsed = parseRule(readFileSync(file, "utf8"));
-      if ("error" in parsed) continue;
-      result.push({ name: parsed.name, platforms: parsed.platforms, source: "config" });
-    }
-  }
-  return result;
-};
-
-export const readRule = (
-  name: string,
-): { source: "config" | "repo" | "missing"; rule: CanonicalRule } | { error: string } => {
-  const file = path.join(rulesDir(), name, "rule.md");
-  if (existsSync(file)) {
-    const parsed = parseRule(readFileSync(file, "utf8"));
-    if ("error" in parsed) return { error: parsed.error };
-    return { source: "config", rule: parsed };
-  }
-  return { source: "missing", rule: { name, description: "", platforms: [], body: "" } };
-};
-
 const RULE_NAME_RE = /^[a-z0-9][a-z0-9-]*$/;
-
-export const writeRule = (
-  rule: CanonicalRule,
-  confirmed: boolean,
-): { ok: true; path: string } | { ok: false; error: string } => {
-  if (!confirmed) return { ok: false, error: "confirmed: true required" };
-  if (!RULE_NAME_RE.test(rule.name))
-    return { ok: false, error: `invalid rule name: ${JSON.stringify(rule.name)}` };
-  const dir = path.join(rulesDir(), rule.name);
-  mkdirSync(dir, { recursive: true });
-  const file = path.join(dir, "rule.md");
-  const md = `---\nname: ${rule.name}\ndescription: ${rule.description}\nplatforms: [${rule.platforms.join(", ")}]\n---\n${rule.body}`;
-  writeFileSync(file, md, "utf8");
-  return { ok: true, path: file };
-};
 
 export const compileRuleCursor = (rule: CanonicalRule): string =>
   `---\ndescription: ${rule.description}\nalwaysApply: true\n---\n\n${rule.body}`;
-
-export const compileRuleOpenCode = (rule: CanonicalRule): string =>
-  `## ${rule.name}\n\n${rule.body}`;
-
-export const compiledOpenCodeSections = (): string => {
-  const sections: string[] = [];
-  const dir = rulesDir();
-  if (existsSync(dir)) {
-    for (const entry of readdirSync(dir)) {
-      const file = path.join(dir, entry, "rule.md");
-      if (!existsSync(file)) continue;
-      const parsed = parseRule(readFileSync(file, "utf8"));
-      if ("error" in parsed || !parsed.platforms.includes("opencode")) continue;
-      sections.push(compileRuleOpenCode(parsed));
-    }
-  }
-  return sections.join("\n\n");
-};
 
 export const writeCompiledCursorRules = (targetDir: string): string[] => {
   const written: string[] = [];
