@@ -53,7 +53,6 @@ test("writeConfig + readConfig round trip", () => {
     const cfg: ToolkitConfig = {
       locale: "es-CL",
       localeOptions: ["en", "es-CL"],
-      timezone: "America/Santiago",
       branchPolicy: { preset: "custom", allowed: ["feature/*", "codex/*"], protected: ["main"] },
       commitPolicy: { preset: "conventional" },
     };
@@ -117,7 +116,6 @@ test("resolveBranchPolicy honors preset and custom overrides", () => {
     writeConfig({
       locale: "en",
       localeOptions: ["en"],
-      timezone: "UTC",
       branchPolicy: { preset: "custom", allowed: ["codex/*"], protected: ["main"] },
       commitPolicy: { preset: "conventional" },
     });
@@ -226,7 +224,6 @@ test("RL-02/CA-23: mergeConfigValues routes every consumer through mergePreset",
   const current: ToolkitConfig = {
     locale: "en",
     localeOptions: ["en"],
-    timezone: "UTC",
     branchPolicy: { preset: "gitflow", allowed: ["feature/*"], protected: ["main"] },
     commitPolicy: { preset: "conventional" },
   };
@@ -251,4 +248,27 @@ test("RL-02/CA-23: mergeConfigValues routes every consumer through mergePreset",
     allowed: ["codex/*"],
     protected: ["main", "develop"],
   });
+});
+
+test("Given an old config.json that still has a timezone, When it is read, Then it loads and the field is ignored", () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "wf-config-legacy-tz-"));
+  try {
+    writeFileSync(
+      path.join(dir, "config.json"),
+      JSON.stringify({
+        locale: "es-CL",
+        timezone: "America/Santiago",
+        branchPolicy: { preset: "github-flow" },
+      }),
+      "utf8",
+    );
+    const result = readConfigTyped(dir);
+    expect(result.status).toBe("valid");
+    expect(result.config?.locale).toBe("es-CL");
+    expect(result.config?.branchPolicy.preset).toBe("github-flow");
+    expect(result.config).not.toHaveProperty("timezone");
+    expect(readConfigFromDir(dir)).not.toHaveProperty("timezone");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

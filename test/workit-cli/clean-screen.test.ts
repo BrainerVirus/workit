@@ -275,8 +275,7 @@ test("apply path: first chunk clears, exactly one post-exit clear precedes the f
       { waitFor: "OpenCode · detected" },
       ENTER, // accept the detected OpenCode host and enter the wizard
       { waitFor: "Locale" },
-      ENTER, // locale -> timezone
-      ENTER, // timezone -> branchPreset
+      ENTER, // locale -> branchPreset
       ENTER, // branchPreset -> issueTracker
       ENTER, // issueTracker (YouTrack) -> youtrack
       "https://yt.example.com",

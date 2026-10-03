@@ -65,9 +65,6 @@ export function previewConversion(input: ConversionInput): ConversionPreview {
     if (config.locale !== undefined) {
       mappings.push({ key: "locale", from: config.locale, to: config.locale });
     }
-    if (config.timezone !== undefined) {
-      mappings.push({ key: "timezone", from: config.timezone, to: config.timezone });
-    }
     if (config.branchPolicy !== undefined && isConfigObject(config.branchPolicy)) {
       const bp = config.branchPolicy as ToolkitConfig["branchPolicy"] & {
         allowed?: string[];
@@ -142,7 +139,7 @@ export function applyConversionConfig(
   const next: Record<string, unknown> = { ...raw };
 
   for (const mapping of preview.mappings) {
-    if (mapping.key === "locale" || mapping.key === "timezone") {
+    if (mapping.key === "locale") {
       next[mapping.key] = mapping.to;
     }
     if (mapping.key === "branchPolicy" && !resolutions["branchPolicy.allowed"]) {

@@ -66,7 +66,7 @@ test("writeTemplate requires confirmed", () => {
 test("listTemplates reports sources", () => {
   const dir = cfgDir();
   try {
-    writeTemplate("greeting", "hola", true);
+    writeTemplate("greeting", "Hello", true);
     const list = listTemplates();
     const issue = list.find((t) => t.name === "issue-update");
     const greeting = list.find((t) => t.name === "greeting");

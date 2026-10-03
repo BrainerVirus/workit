@@ -50,8 +50,17 @@ or read separate VCS token files. YouTrack retains its permanent token. Existing
 VCS token files and templates stay untouched. Project setup defaults to No:
 press `n` to skip adding files when configuring from a parent folder containing
 multiple repositories. Press `y` only to add hygiene files and gitignore entries
-to the displayed directory. Locale and timezone keep their existing selections
-until changed. `workit doctor` checks the configured installation.
+to the displayed directory. Locale keeps its existing selection until changed.
+`workit doctor` checks the configured installation.
+
+YouTrack is optional. Work-item dates are the calendar day in the process
+timezone (honouring `TZ`), sent as that day's UTC midnight. To pin a different
+zone, add an IANA `timezone` to `youtrack.json`. Workit adds no greeting or
+`@mention` to comments; the comment text comes from the editable
+`issue-update` template (`templates/issue-update.md` in the config directory
+overrides the bundled neutral one). Older configs load unchanged: a `timezone`
+in the global `config.json`, and `defaultMention`, `greetings` or
+`greetingCutoff` in `youtrack.json`, are ignored.
 
 `workit cutover` is for migrating legacy installations.
 

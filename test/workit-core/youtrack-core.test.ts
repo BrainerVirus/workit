@@ -23,7 +23,6 @@ const cfg = (overrides: Record<string, unknown> = {}) => ({
 
 const scripts = (overrides: Partial<YouTrackScripts> = {}): YouTrackScripts => ({
   config: () => ({ data: cfg() }),
-  greeting: () => ({ stdout: "Hola", exitCode: 0, stderr: "" }),
   parseDuration: (text: string) => ({ minutes: text === "30m" ? 30 : 0 }),
   api: (args: string[]) => ({ ok: true, args }),
   ...overrides,
@@ -90,17 +89,11 @@ test("context falls back to meeting issue and spec/plan YouTrack ref", () => {
   }
 });
 
-test("context errors: config failure, greeting failure, missing issue", () => {
+test("context errors: config failure, missing issue", () => {
   expect(
     context({ workspace_root: os.tmpdir() }, scripts({ config: () => ({ error: "cfg down" }) }))
       .error,
   ).toBe("cfg down");
-  expect(
-    context(
-      { workspace_root: os.tmpdir() },
-      scripts({ greeting: () => ({ stdout: "", exitCode: 1, stderr: "no greet" }) }),
-    ).error,
-  ).toContain("no greet");
   expect(
     context(
       { workspace_root: os.tmpdir() },
@@ -175,14 +168,34 @@ test("logTime validates, formats date arg, and delegates", async () => {
   ).toBe("api down");
 });
 
-test("buildDraft composes header, greeting, project, notes, and facts", () => {
+test("Given an old youtrack.json with greeting and mention fields, When context is read, Then it succeeds and emits no greeting or mention", () => {
+  const legacy = cfg({
+    timezone: "America/Santiago",
+    defaultMention: "Some.Person",
+    greetings: { morning: "good morning", afternoon: "good afternoon" },
+    greetingCutoff: "12:00",
+  });
+  const result = context(
+    { issue_id: "NSR-40", workspace_root: os.tmpdir() },
+    scripts({ config: () => ({ data: legacy }) }),
+  );
+  expect(result.error).toBeUndefined();
+  expect(result.issueId).toBe("NSR-40");
+  expect(result).not.toHaveProperty("greeting");
+  const serialized = JSON.stringify(result);
+  for (const banned of ["defaultMention", "Some.Person", "greetings", "greetingCutoff"])
+    expect(serialized, banned).not.toContain(banned);
+  expect(result.config.timezone).toBe("America/Santiago");
+});
+
+test("buildDraft composes a neutral header, optional opener, project, notes, and facts", () => {
   const bare = buildDraft({ issueId: "NSR-1" });
-  expect(bare.markdown).toBe("# Actualización\n\n");
+  expect(bare.markdown).toBe("# Update\n\n");
   const full = buildDraft({
     issueId: "NSR-1",
     projectName: "Tracer",
-    userNotes: "Terminé el modulo",
-    greeting: "Hola equipo",
+    userNotes: "Finished the module",
+    greeting: "Caller-supplied opener",
     includeProjectOpener: true,
     includeFacts: true,
     facts: {
@@ -190,9 +203,10 @@ test("buildDraft composes header, greeting, project, notes, and facts", () => {
       git_commits: ["abc123 fix"],
     },
   });
-  expect(full.markdown).toContain("Hola equipo");
-  expect(full.markdown).toContain("Hoy estuve full con Tracer");
-  expect(full.markdown).toContain("Terminé el modulo");
+  expect(full.markdown.startsWith("# Update\n\nCaller-supplied opener\n\nProject: Tracer")).toBe(
+    true,
+  );
+  expect(full.markdown).toContain("Finished the module");
   expect(full.markdown).toContain("- Task 1: done");
   expect(full.markdown).toContain("- abc123 fix");
 });

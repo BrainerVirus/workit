@@ -100,8 +100,6 @@ export function initStatusData(configDirPath = configDir()): Record<string, any>
       meetingIssue: meeting,
       meetingIssues,
       meetingIssueUrl: base && meeting ? `${base}/issue/${meeting}` : null,
-      defaultMention: ytParsed.defaultMention,
-      timezone: ytParsed.timezone,
       locale: ytParsed.locale,
       tokenFile: resolvedTokenFile,
       tokenDefaults: ytParsed.tokenDefaults,
@@ -279,39 +277,28 @@ export async function toolkitStatusData(configDirPath = configDir()): Promise<Re
 }
 
 // Port of scripts/init/apply.sh write_youtrack_json — env overrides honored.
-const youtrackJsonContent = (dir: string): Record<string, any> => ({
-  baseUrl: process.env.WORKFLOW_YT_BASE_URL ?? "https://enghouseamg.youtrack.cloud",
-  tokenFile: process.env.WORKFLOW_YT_TOKEN_FILE ?? path.join(dir, "youtrack.token"),
-  timezone: process.env.WORKFLOW_YT_TIMEZONE ?? "America/Santiago",
-  locale: "es-CL",
-  defaultMention: process.env.WORKFLOW_YT_MENTION ?? "Alejandra.Flores",
-  greetings: { morning: "buenos días", afternoon: "buenas tardes" },
-  greetingCutoff: "12:00",
-  meetingIssue: process.env.WORKFLOW_YT_MEETING_ISSUE ?? "IRPT-12",
-  meetingIssues: {
-    general: {
-      issue: process.env.WORKFLOW_YT_MEETING_ISSUE ?? "IRPT-12",
-      label: "General meetings (Reuniones internas Team IRP)",
-      workItemText: "Reuniones",
+// Neutral draft (same shape as the setup wizard's): no organization URL, issue
+// IDs, mentions, greetings or timezone. The work-item date uses the process
+// timezone unless the user adds an explicit `timezone` to youtrack.json.
+const youtrackJsonContent = (dir: string): Record<string, any> => {
+  const meetingIssue = process.env.WORKFLOW_YT_MEETING_ISSUE;
+  return {
+    baseUrl: process.env.WORKFLOW_YT_BASE_URL ?? "https://youtrack.example.com",
+    tokenFile: process.env.WORKFLOW_YT_TOKEN_FILE ?? path.join(dir, "youtrack.token"),
+    ...(meetingIssue
+      ? {
+          meetingIssue,
+          meetingIssues: { general: { issue: meetingIssue, label: "General meetings" } },
+        }
+      : {}),
+    tokenDefaults: {
+      name: "workit",
+      description: "OpenCode workit — /wk-issue-update and /wk-meetings",
+      scopes: ["YouTrack"],
+      profileTab: "account-security",
     },
-    web: {
-      issue: process.env.WORKFLOW_YT_WEB_MEETING_ISSUE ?? "NSXFT-21",
-      label: "Web meetings",
-      workItemText: "Reuniones web",
-      url: "https://enghouseamg.youtrack.cloud/projects/NSXFT/issues/NSXFT-21",
-    },
-  },
-  commentHeader: "# Actualización",
-  attachmentsHeaderImages: "## Adjunto capturas",
-  attachmentsHeaderFiles: "## Archivos adjuntos",
-  attachmentsHeaderMixed: "## Adjuntos",
-  tokenDefaults: {
-    name: "workit",
-    description: "OpenCode workit — /wk-issue-update and /wk-meetings",
-    scopes: ["YouTrack"],
-    profileTab: "account-security",
-  },
-});
+  };
+};
 
 const vcsJsonContent = (): Record<string, any> => {
   // Explicit provider at init: env wins, else the checkout's origin remote
@@ -394,8 +381,6 @@ export function initApplyData(
             baseUrl: base,
             meetingIssue: meeting,
             meetingIssueUrl: base && meeting ? `${base}/issue/${meeting}` : null,
-            defaultMention: cfg.defaultMention,
-            timezone: cfg.timezone,
             locale: cfg.locale,
             tokenCreate,
             timeLogging: {

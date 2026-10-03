@@ -21,7 +21,6 @@ import {
   createReleaseTrack,
   validateBaseUrl,
   validateLocale,
-  validateTimezone,
   type VcsProvider,
   type ProfileEditorField,
   type TrackEditorField,
@@ -37,8 +36,6 @@ export type WizardScreen =
   | "platforms"
   | "locale"
   | "localeOther"
-  | "timezone"
-  | "timezoneOther"
   | "branchPreset"
   | "branchAllowed"
   | "branchProtected"
@@ -68,7 +65,12 @@ export type BranchPolicyProposal = {
   integration: "pr" | "merge";
   protected: string[];
   allowed: string[];
-  prefixes: { feature: string; bugfix: string; release: string; hotfix: string };
+  prefixes: {
+    feature: string;
+    bugfix: string;
+    release: string;
+    hotfix: string;
+  };
 };
 
 export type IssueTracker = "youtrack" | "github" | "gitlab" | "none";
@@ -76,7 +78,6 @@ export type IssueTracker = "youtrack" | "github" | "gitlab" | "none";
 export type SetupValues = {
   platforms: string[];
   locale: string;
-  timezone: string;
   branchPreset: BranchPreset;
   branchAllowed: string;
   branchProtected: string;
@@ -129,7 +130,7 @@ export type WizardAction =
   | { type: "set"; field: "branchPolicyDevelop"; value: string }
   | {
       type: "set";
-      field: "locale" | "timezone" | "branchAllowed" | "branchProtected" | "baseUrl" | "basePath";
+      field: "locale" | "branchAllowed" | "branchProtected" | "baseUrl" | "basePath";
       value: string;
     }
   | { type: "pickOther" }
@@ -141,15 +142,32 @@ export type WizardAction =
   | { type: "workspaceDraftName"; value: string }
   | { type: "workspaceDraftGlob"; value: string }
   | { type: "workspaceDraftProvider"; value: string }
-  | { type: "workspaceAdvancedSelect"; field: import("./logic").WorkspaceEditorField }
-  | { type: "workspaceAdvancedSet"; field: import("./logic").WorkspaceEditorField; value: string }
+  | {
+      type: "workspaceAdvancedSelect";
+      field: import("./logic").WorkspaceEditorField;
+    }
+  | {
+      type: "workspaceAdvancedSet";
+      field: import("./logic").WorkspaceEditorField;
+      value: string;
+    }
   | { type: "workspaceProfileCreate"; name: string }
   | { type: "workspaceProfileDelete"; name: string }
   | { type: "workspaceProfileDefault"; name: string }
-  | { type: "workspaceProfileSet"; name: string; field: ProfileEditorField; value: string }
+  | {
+      type: "workspaceProfileSet";
+      name: string;
+      field: ProfileEditorField;
+      value: string;
+    }
   | { type: "workspaceTrackCreate"; name: string }
   | { type: "workspaceTrackDelete"; name: string }
-  | { type: "workspaceTrackSet"; name: string; field: TrackEditorField; value: string }
+  | {
+      type: "workspaceTrackSet";
+      name: string;
+      field: TrackEditorField;
+      value: string;
+    }
   | { type: "workspaceSave" }
   | { type: "branchPolicyEditDevelop" }
   | { type: "next" }
@@ -159,10 +177,8 @@ export type WizardAction =
 
 const NEXT: Record<WizardScreen, WizardScreen | null> = {
   platforms: "locale",
-  locale: "timezone",
-  localeOther: "timezone",
-  timezone: "branchPreset",
-  timezoneOther: "branchPreset",
+  locale: "branchPreset",
+  localeOther: "branchPreset",
   branchPreset: "branchAllowed",
   branchAllowed: "branchProtected",
   branchProtected: "issueTracker",
@@ -189,9 +205,7 @@ const PREV: Record<WizardScreen, WizardScreen | null> = {
   platforms: null,
   locale: "platforms",
   localeOther: "locale",
-  timezone: "locale",
-  timezoneOther: "timezone",
-  branchPreset: "timezone",
+  branchPreset: "locale",
   branchAllowed: "branchPreset",
   branchProtected: "branchAllowed",
   issueTracker: "branchProtected",
@@ -308,29 +322,32 @@ function validateScreen(draft: WizardDraft): { field: string; message: string } 
     case "platforms":
       return values.platforms.length > 0
         ? null
-        : { field: "platforms", message: "Select at least one platform to continue." };
+        : {
+            field: "platforms",
+            message: "Select at least one platform to continue.",
+          };
     // WZ-07: the select screens can carry an empty value only when the custom
     // (Other) input was cleared before walking back — block committing it.
     case "locale":
       return values.locale.trim() ? null : { field: "locale", message: "locale is required" };
-    case "timezone":
-      return values.timezone.trim() ? null : { field: "timezone", message: "timezone is required" };
     case "localeOther": {
       const error = validateLocale(values.locale);
       return error ? { field: "locale", message: error } : null;
     }
-    case "timezoneOther": {
-      const error = validateTimezone(values.timezone);
-      return error ? { field: "timezone", message: error } : null;
-    }
     case "branchAllowed":
       return parseList(values.branchAllowed).length > 0
         ? null
-        : { field: "branchAllowed", message: "at least one allowed branch pattern is required" };
+        : {
+            field: "branchAllowed",
+            message: "at least one allowed branch pattern is required",
+          };
     case "branchProtected":
       return parseList(values.branchProtected).length > 0
         ? null
-        : { field: "branchProtected", message: "at least one protected branch name is required" };
+        : {
+            field: "branchProtected",
+            message: "at least one protected branch name is required",
+          };
     case "youtrack": {
       // WZ-04: YouTrack is optional — an empty base URL means "skip this
       // integration" and produces no youtrack mutations in the preview.
@@ -348,7 +365,11 @@ function validateScreen(draft: WizardDraft): { field: string; message: string } 
         : { field: "workspaceName", message: "workspace name is required" };
     case "workspaceGlob": {
       const glob = (draft.workspaceDraft?.glob ?? "").trim();
-      if (!glob) return { field: "workspaceGlob", message: "workspace pattern is required" };
+      if (!glob)
+        return {
+          field: "workspaceGlob",
+          message: "workspace pattern is required",
+        };
       const v = validateWorkspaceGlob(glob);
       return v.ok ? null : { field: "workspaceGlob", message: v.error };
     }
@@ -374,27 +395,25 @@ const decodeIssueTracker = (value: string, fallback: IssueTracker): IssueTracker
 
 function setTextValue(
   draft: WizardDraft,
-  field: "locale" | "timezone" | "branchAllowed" | "branchProtected" | "baseUrl" | "basePath",
+  field: "locale" | "branchAllowed" | "branchProtected" | "baseUrl" | "basePath",
   value: string,
 ): WizardDraft {
   const message =
     field === "locale"
       ? validateLocale(value)
-      : field === "timezone"
-        ? validateTimezone(value)
-        : field === "branchAllowed"
+      : field === "branchAllowed"
+        ? parseList(value).length > 0
+          ? null
+          : "at least one allowed branch pattern is required"
+        : field === "branchProtected"
           ? parseList(value).length > 0
             ? null
-            : "at least one allowed branch pattern is required"
-          : field === "branchProtected"
-            ? parseList(value).length > 0
+            : "at least one protected branch name is required"
+          : field === "basePath"
+            ? basePathMessage(value)
+            : value.trim() === ""
               ? null
-              : "at least one protected branch name is required"
-            : field === "basePath"
-              ? basePathMessage(value)
-              : value.trim() === ""
-                ? null
-                : validateBaseUrl(value);
+              : validateBaseUrl(value);
   // D-02: an unchanged value whose validation message is also unchanged is a
   // no-op — return the same draft so useReducer bails out instead of re-rendering
   // the control and re-firing its onChange (the update-depth feedback loop).
@@ -424,7 +443,6 @@ export function createInitialDraft(
     values: {
       platforms: opts.platforms ?? [],
       locale: config.locale,
-      timezone: config.timezone,
       branchPreset: config.branchPolicy.preset,
       branchAllowed: policy.allowed.join(", "),
       branchProtected: policy.protected.join(", "),
@@ -456,7 +474,10 @@ export function reducer(draft: WizardDraft, action: WizardAction): WizardDraft {
         case "platforms":
           // D-02: ordered element equality — the same selection is a no-op.
           if (isDeepStrictEqual(action.value, draft.values.platforms)) return draft;
-          return { ...draft, values: { ...draft.values, platforms: action.value } };
+          return {
+            ...draft,
+            values: { ...draft.values, platforms: action.value },
+          };
         case "branchPreset": {
           const next = decodeBranchPreset(action.value, draft.values.branchPreset);
           if (next === draft.values.branchPreset) return draft;
@@ -492,11 +513,17 @@ export function reducer(draft: WizardDraft, action: WizardAction): WizardDraft {
         }
         case "applyProject":
           if (action.value === draft.values.applyProject) return draft;
-          return { ...draft, values: { ...draft.values, applyProject: action.value } };
+          return {
+            ...draft,
+            values: { ...draft.values, applyProject: action.value },
+          };
         // CA-06: branch-policy fields hold objects, never setTextValue — the
         // detected proposal and the accepted policy are stored as-is.
         case "branchPolicyDetected":
-          return { ...draft, values: { ...draft.values, branchPolicyDetected: action.value } };
+          return {
+            ...draft,
+            values: { ...draft.values, branchPolicyDetected: action.value },
+          };
         case "branchPolicy":
           // I1: an already-edited policy wins — edits compose and survive the
           // Accept hop instead of being overwritten by the raw detected proposal.
@@ -551,14 +578,16 @@ export function reducer(draft: WizardDraft, action: WizardAction): WizardDraft {
       }
     case "pickOther":
       if (draft.screen === "locale") return { ...draft, screen: "localeOther" };
-      if (draft.screen === "timezone") return { ...draft, screen: "timezoneOther" };
       return draft;
     case "branchPolicyEditDevelop":
       return { ...draft, screen: "branchPolicyDevelop" };
     case "next": {
       const invalid = validateScreen(draft);
       if (invalid)
-        return { ...draft, errors: { ...draft.errors, [invalid.field]: invalid.message } };
+        return {
+          ...draft,
+          errors: { ...draft.errors, [invalid.field]: invalid.message },
+        };
       return {
         ...draft,
         screen: nextScreen(
@@ -679,7 +708,11 @@ export function reducer(draft: WizardDraft, action: WizardAction): WizardDraft {
       };
     }
     case "workspaceAdvancedSelect":
-      return { ...draft, screen: "workspaceAdvancedValue", workspaceEditorField: action.field };
+      return {
+        ...draft,
+        screen: "workspaceAdvancedValue",
+        workspaceEditorField: action.field,
+      };
     case "workspaceAdvancedSet": {
       if (!draft.workspaceDraft) return draft;
       return {
@@ -721,7 +754,10 @@ export function reducer(draft: WizardDraft, action: WizardAction): WizardDraft {
         ...draft,
         values: {
           ...draft.values,
-          commitPolicy: { ...draft.values.commitPolicy, pattern: action.value || undefined },
+          commitPolicy: {
+            ...draft.values.commitPolicy,
+            pattern: action.value || undefined,
+          },
         },
       };
     case "globalCommitPatternDone":
@@ -733,7 +769,10 @@ export function reducer(draft: WizardDraft, action: WizardAction): WizardDraft {
         ...draft.workspaceDraft.profiles,
         [name]: { commitPolicy: { preset: "conventional" as const } },
       };
-      return { ...draft, workspaceDraft: { ...draft.workspaceDraft, profiles } };
+      return {
+        ...draft,
+        workspaceDraft: { ...draft.workspaceDraft, profiles },
+      };
     }
     case "workspaceProfileDelete": {
       if (!draft.workspaceDraft?.profiles?.[action.name]) return draft;
@@ -753,7 +792,13 @@ export function reducer(draft: WizardDraft, action: WizardAction): WizardDraft {
     }
     case "workspaceProfileDefault": {
       if (!draft.workspaceDraft?.profiles?.[action.name]) return draft;
-      return { ...draft, workspaceDraft: { ...draft.workspaceDraft, defaultProfile: action.name } };
+      return {
+        ...draft,
+        workspaceDraft: {
+          ...draft.workspaceDraft,
+          defaultProfile: action.name,
+        },
+      };
     }
     case "workspaceProfileSet": {
       const profile = draft.workspaceDraft?.profiles?.[action.name];
@@ -780,7 +825,10 @@ export function reducer(draft: WizardDraft, action: WizardAction): WizardDraft {
         ...draft,
         workspaceDraft: {
           ...draft.workspaceDraft,
-          releaseTracks: { ...draft.workspaceDraft.releaseTracks, [name]: createReleaseTrack() },
+          releaseTracks: {
+            ...draft.workspaceDraft.releaseTracks,
+            [name]: createReleaseTrack(),
+          },
         },
       };
     }
@@ -788,7 +836,10 @@ export function reducer(draft: WizardDraft, action: WizardAction): WizardDraft {
       if (!draft.workspaceDraft?.releaseTracks?.[action.name]) return draft;
       const releaseTracks = { ...draft.workspaceDraft.releaseTracks };
       delete releaseTracks[action.name];
-      return { ...draft, workspaceDraft: { ...draft.workspaceDraft, releaseTracks } };
+      return {
+        ...draft,
+        workspaceDraft: { ...draft.workspaceDraft, releaseTracks },
+      };
     }
     case "workspaceTrackSet": {
       const track = draft.workspaceDraft?.releaseTracks?.[action.name];

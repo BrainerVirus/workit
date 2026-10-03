@@ -26,7 +26,6 @@ import {
   buildSetupPreview,
   TOKEN_PLACEHOLDER,
   collectConfigValues,
-  validateTimezone,
   type SetupMutation,
   type SetupPreviewInput,
 } from "@/packages/workit-cli/src/logic";
@@ -41,7 +40,6 @@ import {
   SCREEN_PLACEHOLDERS,
   externalHostGuidance,
   platformOptions,
-  timezonePickerOptions,
 } from "@/packages/workit-cli/src/steps";
 import {
   emptyDetection,
@@ -66,7 +64,6 @@ function clean(dir: string): void {
 const config = (over: Partial<ToolkitConfig["branchPolicy"]> = {}): ToolkitConfig => ({
   locale: "en",
   localeOptions: ["en", "es-CL"],
-  timezone: "UTC",
   branchPolicy: {
     preset: "gitflow",
     allowed: ["feature/*", "bugfix/*", "hotfix/*", "release/*"],
@@ -78,7 +75,6 @@ const config = (over: Partial<ToolkitConfig["branchPolicy"]> = {}): ToolkitConfi
 
 const values = (over: Partial<SetupPreviewInput> = {}): SetupPreviewInput => ({
   locale: "en",
-  timezone: "UTC",
   branchPreset: "gitflow",
   branchAllowed: "feature/*, bugfix/*",
   branchProtected: "main, develop",
@@ -114,7 +110,8 @@ test("wizard defaults contain no organization-specific data (WZ-04/CA-14)", () =
     const serialized = JSON.stringify(draft.values);
     expect(serialized).not.toContain("enghouseamg");
     expect(serialized).not.toContain("IRPT");
-    expect(serialized).not.toContain("Alejandra.Flores");
+    expect(serialized).not.toContain("defaultMention");
+    expect(serialized).not.toContain("timezone");
     expect(serialized).not.toContain("youtrack.cloud");
   } finally {
     delete process.env.WORKFLOW_TOOLKIT_CONFIG;
@@ -385,7 +382,8 @@ test("buildSetupPreview emits exact typed mutations for every section (WZ-08)", 
     expect(ytValue).toContain("https://yt.example.com");
     expect(ytValue).not.toContain("IRPT");
     expect(ytValue).not.toContain("defaultMention");
-    expect(ytValue).not.toContain("Alejandra.Flores");
+    expect(ytValue).not.toContain("greeting");
+    expect(ytValue).not.toContain("timezone");
 
     const ws = byType("update-workspaces").find((m) => m.path.endsWith("workspaces.json"));
     expect((ws as { entries: unknown[] }).entries).toEqual([wsEntry("work", "/work/**")]);
@@ -685,56 +683,18 @@ test("selecting a mapped row commits its BCP-47 locale through the reducer", () 
   d = reducer(d, { type: "set", field: "locale", value: row!.locale });
   expect(d.errors.locale, LOCALE_RE.test(row!.locale) ? undefined : row!.locale).toBeUndefined();
   d = reducer(d, { type: "next" });
-  expect(d.screen).toBe("timezone");
+  expect(d.screen).toBe("branchPreset");
   expect(d.values.locale).toBe("es-419");
 });
 
-// ---------------------------------------------------------------------------
-// Timezone SearchSelect (Task 4): full IANA catalog through filterOptions,
-// catalog consistency with the KNOWN_TIMEZONES guard in logic.ts, and reducer
-// commit. Other… keeps validateTimezone (CA-04) untouched.
-// ---------------------------------------------------------------------------
-
-test('filterOptions("Santiago") caps at 5 rows including America/Santiago', () => {
-  const matches = filterOptions(timezonePickerOptions(), "Santiago");
-  expect(matches.length).toBeGreaterThan(0);
-  expect(matches.length).toBeLessThanOrEqual(5);
-  expect(matches.map((m) => m.value)).toContain("America/Santiago");
-});
-
-test("timezone catalog matches the KNOWN_TIMEZONES guard and contains the detected zone", () => {
-  const options = timezonePickerOptions();
-  expect(options[options.length - 1].value).toBe("other");
-  const detected = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
-  // The detected zone heads the list so its preselection is visible without
-  // typing; the remainder is the runtime's IANA set when supportedValuesOf
-  // exists (validateTimezone enforces membership exactly then — the same
-  // guard shape as logic.ts KNOWN_TIMEZONES), else the static fallback while
-  // validation stays open.
-  expect(options[0].value).toBe(detected);
-  const rest = options.slice(1, -1).map((option) => option.value);
-  if (typeof Intl.supportedValuesOf === "function") {
-    expect([...rest].sort()).toEqual(
-      Intl.supportedValuesOf("timeZone")
-        .filter((tz) => tz !== detected)
-        .sort(),
-    );
-  } else {
-    expect(validateTimezone("Not/AZone")).toBeNull();
-  }
-});
-
-test("committing a searched zone updates the draft through the reducer", () => {
+test("Given the setup wizard, When locale is committed, Then it goes straight to the branch preset with no timezone step", () => {
   let d = createInitialDraft(config());
   d = reducer(d, { type: "set", field: "platforms", value: ["opencode"] });
   d = reducer(d, { type: "next" }); // -> locale
-  d = reducer(d, { type: "next" }); // -> timezone
-  d = reducer(d, { type: "set", field: "timezone", value: "America/Santiago" });
-  expect(validateTimezone("America/Santiago")).toBeNull();
-  expect(d.errors.timezone).toBeUndefined();
   d = reducer(d, { type: "next" });
   expect(d.screen).toBe("branchPreset");
-  expect(d.values.timezone).toBe("America/Santiago");
+  expect(reducer(d, { type: "back" }).screen).toBe("locale");
+  expect(d.values).not.toHaveProperty("timezone");
 });
 
 // ---------------------------------------------------------------------------
@@ -750,7 +710,6 @@ const startCustom = (): ReturnType<typeof createInitialDraft> => {
   );
   d = reducer(d, { type: "set", field: "platforms", value: ["opencode"] });
   d = reducer(d, { type: "next" }); // -> locale
-  d = reducer(d, { type: "next" }); // -> timezone
   d = reducer(d, { type: "next" }); // -> branchPreset
   d = reducer(d, { type: "set", field: "branchPreset", value: "custom" });
   d = reducer(d, { type: "next" }); // -> branchAllowed
@@ -782,7 +741,6 @@ test("none/github skip the youtrack screen in both directions; non-custom preset
   let g = createInitialDraft(config());
   g = reducer(g, { type: "set", field: "platforms", value: ["opencode"] });
   g = reducer(g, { type: "next" }); // -> locale
-  g = reducer(g, { type: "next" }); // -> timezone
   g = reducer(g, { type: "next" }); // -> branchPreset
   g = reducer(g, { type: "next" }); // skips branchAllowed/branchProtected
   expect(g.screen).toBe("issueTracker");
@@ -916,12 +874,12 @@ test("youtrack mode stays byte-identical: preview equals the legacy literal inpu
 // workspace-preview and hygiene-target code path.
 // ---------------------------------------------------------------------------
 
-// gitflow preset walk to the vcs screen: platforms → locale → timezone →
-// branchPreset → issueTracker → youtrack → vcs (six `next`s after platforms).
+// gitflow preset walk to the vcs screen: platforms → locale → branchPreset →
+// issueTracker → youtrack → vcs (five `next`s after platforms).
 const walkToVcs = (): ReturnType<typeof createInitialDraft> => {
   let d = createInitialDraft(config());
   d = reducer(d, { type: "set", field: "platforms", value: ["opencode"] });
-  for (let i = 0; i < 6; i++) d = reducer(d, { type: "next" });
+  for (let i = 0; i < 5; i++) d = reducer(d, { type: "next" });
   return d;
 };
 
@@ -1062,7 +1020,6 @@ test("every wizard TextInput screen carries a non-empty example placeholder (CA-
   for (const screen of [
     "youtrack",
     "localeOther",
-    "timezoneOther",
     "branchAllowed",
     "branchProtected",
     "workspaceName",

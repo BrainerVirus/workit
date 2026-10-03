@@ -29,7 +29,6 @@ beforeAll(() => {
       {
         locale: "en",
         localeOptions: ["en"],
-        timezone: "UTC",
         branchPolicy: {
           preset: "gitflow",
           allowed: ["feature/*", "bugfix/*", "hotfix/*", "release/*"],
@@ -713,7 +712,6 @@ test(
         writeConfig({
           locale: "en",
           localeOptions: ["en"],
-          timezone: "UTC",
           branchPolicy: { preset: "custom", allowed: ["codex/*"], protected: ["main"] },
           commitPolicy: { preset: "conventional" },
         });

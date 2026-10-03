@@ -325,7 +325,6 @@ import { scaffoldYouTrack, scaffoldVcs } from "./logic.ts";
 const cfg = path.join(process.env.HOME!, ".config", "workflow-toolkit");
 const yt = scaffoldYouTrack(cfg, "https://example.youtrack.cloud", {
   locale: "en",
-  timezone: "America/Santiago",
 }, { timeout: 60_000 });
 const vcs = scaffoldVcs(cfg, "gitlab");
 console.log(

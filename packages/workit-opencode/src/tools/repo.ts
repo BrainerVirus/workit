@@ -213,7 +213,6 @@ export function createRepoTools(runtime: RepoRuntime = defaultRuntime) {
           "branch_policy",
         ]),
         base_url: tool.schema.string().optional(),
-        default_mention: tool.schema.string().optional(),
         meeting_issue: tool.schema.string().optional(),
         vcs_provider: tool.schema.enum(["gitlab", "github"]).optional(),
         vcs_target_branch: tool.schema.string().optional(),
@@ -222,7 +221,6 @@ export function createRepoTools(runtime: RepoRuntime = defaultRuntime) {
         integration: tool.schema.enum(["pr", "merge"]).optional(),
         locale: tool.schema.string().optional(),
         locale_options: tool.schema.array(tool.schema.string()).optional(),
-        timezone: tool.schema.string().optional(),
         branch_policy_preset: tool.schema
           .enum(["gitflow", "github-flow", "trunk-based", "custom"])
           .optional(),

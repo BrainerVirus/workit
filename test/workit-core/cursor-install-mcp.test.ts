@@ -24,7 +24,6 @@ const clean = (dir: string) => rmSync(dir, { recursive: true, force: true });
 const values = (over: Partial<SetupPreviewInput> = {}): SetupPreviewInput => ({
   platforms: ["cursor"],
   locale: "en",
-  timezone: "UTC",
   branchPreset: "gitflow",
   branchAllowed: "feature/*, bugfix/*",
   branchProtected: "main, develop",
