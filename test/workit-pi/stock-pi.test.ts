@@ -6,12 +6,28 @@ import path from "node:path";
 import { SUPPORT_MATRIX } from "@/packages/workit-core/src/core/support-matrix";
 import { TaskStore, WorkitCore, type OperationContext } from "@/packages/workit-core/src/core";
 import { taskStartRequest } from "@/test/workit-core/task-fixtures";
+import { packWorkspacePackages } from "@/test/shared/helpers/packages";
 import {
   WORKIT_METHOD_SKILLS,
   WORKIT_SKILL_ALIASES,
 } from "@/packages/workit-core/src/core/skill-manifests";
 
 const node = "node";
+
+const PI = "@brainervirus/workit-pi";
+
+// Unpacks the Pi tarball from a fresh sandbox build of the current source
+// (shared, cached helper) into <stage>/extract/package, so stock Pi never
+// installs a stale local dist/.
+const extractPackedPi = (stage: string): string => {
+  const pack = packWorkspacePackages().find((entry) => entry.packageName === PI);
+  if (!pack) throw new Error(`${PI} missing from the workspace pack`);
+  const extracted = path.join(stage, "extract");
+  mkdirSync(extracted);
+  const unpacked = spawnSync("tar", ["-xzf", pack.tarball, "-C", extracted], { encoding: "utf8" });
+  if (unpacked.status !== 0) throw new Error(unpacked.stderr || unpacked.stdout);
+  return extracted;
+};
 
 test("stock Node runtime meets the supported major line for Pi workers", () => {
   const result = spawnSync(node, ["--version"], { encoding: "utf8" });
@@ -38,26 +54,7 @@ test(
     const home = path.join(stage, "home");
     mkdirSync(home);
     const env = { ...process.env, PI_CODING_AGENT_DIR: agentDir, HOME: home };
-    const packed = spawnSync(
-      "npm",
-      [
-        "pack",
-        "--json",
-        "--workspace",
-        path.join(repoRoot, "packages/workit-pi"),
-        "--pack-destination",
-        stage,
-      ],
-      { cwd: repoRoot, encoding: "utf8" },
-    );
-    if (packed.status !== 0) throw new Error(packed.stderr || packed.stdout);
-    const filename = (JSON.parse(packed.stdout) as Array<{ filename: string }>)[0].filename;
-    const extracted = path.join(stage, "extract");
-    mkdirSync(extracted);
-    const unpacked = spawnSync("tar", ["-xzf", path.join(stage, filename), "-C", extracted], {
-      encoding: "utf8",
-    });
-    if (unpacked.status !== 0) throw new Error(unpacked.stderr || unpacked.stdout);
+    const extracted = extractPackedPi(stage);
     const installed = spawnSync(
       node,
       [piBin, "install", path.join(extracted, "package"), "-l", "--approve"],
@@ -154,26 +151,7 @@ test(
       repoRoot,
       "node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js",
     );
-    const packed = spawnSync(
-      "npm",
-      [
-        "pack",
-        "--json",
-        "--workspace",
-        path.join(repoRoot, "packages/workit-pi"),
-        "--pack-destination",
-        stage,
-      ],
-      { cwd: repoRoot, encoding: "utf8" },
-    );
-    if (packed.status !== 0) throw new Error(packed.stderr || packed.stdout);
-    const filename = (JSON.parse(packed.stdout) as Array<{ filename: string }>)[0].filename;
-    const extracted = path.join(stage, "extract");
-    mkdirSync(extracted);
-    const unpacked = spawnSync("tar", ["-xzf", path.join(stage, filename), "-C", extracted], {
-      encoding: "utf8",
-    });
-    if (unpacked.status !== 0) throw new Error(unpacked.stderr || unpacked.stdout);
+    const extracted = extractPackedPi(stage);
 
     const fakeProvider = path.join(stage, "offline-provider.mjs");
     const piAi = path.join(repoRoot, "node_modules/@earendil-works/pi-ai/dist/index.js");
@@ -348,3 +326,36 @@ export default (pi) => pi.registerProvider("workit-test", {
   },
   { timeout: 30_000 },
 );
+
+test("npm installs the packed package without workspace protocol dependencies", () => {
+  const stage = mkdtempSync(path.join(tmpdir(), "workit-pi-install-"));
+  try {
+    const pack = packWorkspacePackages().find((entry) => entry.packageName === PI);
+    if (!pack) throw new Error(`${PI} missing from the workspace pack`);
+    const consumer = path.join(stage, "consumer");
+    mkdirSync(consumer);
+    const installed = spawnSync(
+      "npm",
+      [
+        "install",
+        "--prefix",
+        consumer,
+        "--legacy-peer-deps",
+        "--ignore-scripts",
+        "--no-audit",
+        "--no-fund",
+        pack.tarball,
+      ],
+      { cwd: stage, encoding: "utf8" },
+    );
+    expect(installed.status, installed.stderr || installed.stdout).toBe(0);
+    expect(
+      readFileSync(
+        path.join(consumer, "node_modules/@brainervirus/workit-pi/package.json"),
+        "utf8",
+      ),
+    ).toContain('"name": "@brainervirus/workit-pi"');
+  } finally {
+    rmSync(stage, { recursive: true, force: true });
+  }
+});
