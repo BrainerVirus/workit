@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, setDefaultTimeout, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import {
   existsSync,
@@ -24,6 +24,10 @@ import {
   type TaskRecord,
 } from "@/packages/workit-core/src/core/task-contract";
 import { ref, scope } from "./task-fixtures";
+
+// Each test makes several fsync'd store writes; a cold windows-latest runner
+// took 8 s for one of them, past bun's 5 s default.
+setDefaultTimeout(30_000);
 
 // Bounded recovery (spec "Bounded state"): recovery copies are capped per
 // record, `workit gc` prunes what older versions left behind, and nothing a
