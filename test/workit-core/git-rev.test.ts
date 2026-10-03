@@ -12,6 +12,7 @@ import {
   patchId,
   pushForge,
   pushRemoteName,
+  redactRemote,
   readSshConfig,
   remoteTip,
   resolveSshHost,
@@ -66,7 +67,8 @@ test("given a dirty worktree, worktreeTree changes when a file changes and HEAD 
   expect(head).toBe(git(root, "rev-parse", "HEAD"));
 
   const clean = worktreeTree(root);
-  expect(clean).toEqual({ tree: git(root, "rev-parse", "HEAD^{tree}"), dirty: false });
+  const headTree = git(root, "rev-parse", "HEAD^{tree}");
+  expect(clean).toEqual({ tree: headTree, key: headTree, dirty: false, skipped: [] });
 
   const indexPath = path.join(root, ".git", "index");
   const indexBefore = readFileSync(indexPath);
@@ -136,8 +138,12 @@ test("remoteTip reads the remote branch and pushRemoteName follows git's precede
   const sha = commit(root, "a.txt", "a\n", "base");
   git(root, "remote", "add", "origin", bare);
   git(root, "push", "-q", "origin", "main");
-  expect(remoteTip(root, "origin", "main")).toBe(sha);
-  expect(remoteTip(root, "origin", "missing")).toBeNull();
+  expect(remoteTip(root, "origin", "main")).toEqual({ ok: true, sha });
+  expect(remoteTip(root, "origin", "missing")).toEqual({ ok: true, sha: null });
+  expect(remoteTip(root, "--upload-pack=x", "main")).toMatchObject({
+    ok: false,
+    code: "invalid_input",
+  });
 
   expect(pushRemoteName(root)).toBe("origin");
   git(root, "remote", "add", "fork", bare);
@@ -221,10 +227,10 @@ test("readSshConfig expands Include relative to ~/.ssh", () => {
     path.join(home, ".ssh", "conf.d", "work.conf"),
     "Host github-work.com\n  HostName github.com\n",
   );
-  const text = readSshConfig(home);
-  expect(resolveSshHost("github-work.com", text).hostname).toBe("github.com");
-  expect(resolveSshHost("x", text).hostname).toBe("x.example");
-  expect(readSshConfig(tmp("wk-rev-empty-"))).toBe("");
+  const config = readSshConfig(home);
+  expect(resolveSshHost("github-work.com", config).hostname).toBe("github.com");
+  expect(resolveSshHost("x", config).hostname).toBe("x.example");
+  expect(readSshConfig(tmp("wk-rev-empty-")).text).toBe("");
 });
 
 test("deriveForge: github-work.com style SSH alias resolves to GitHub at github.com", () => {
@@ -309,4 +315,130 @@ test("pushForge derives the forge from the push remote, not the configured provi
   const conflict = forgeConflict(derived.forge, "GitLab");
   expect(conflict?.code).toBe("blocked");
   expect(conflict?.unblock).toContain('vcs.provider to "github"');
+});
+
+test("given trunk moved and the branch was not rebased, patchId is unchanged", () => {
+  // Kills the `base..head` mutant: a two-dot diff would include the reverse
+  // of trunk's new commit and change the id.
+  const root = repo();
+  commit(root, "a.txt", "a\n", "base");
+  git(root, "checkout", "-qb", "feature/y");
+  commit(root, "feature.txt", "feature\n", "feature work");
+  const before = patchId(root, "main", "feature/y");
+  git(root, "checkout", "-q", "main");
+  commit(root, "trunk.txt", "trunk only\n", "trunk moves");
+  expect(patchId(root, "main", "feature/y")).toBe(before);
+});
+
+test("worktreeTree records oversized untracked files by stat instead of hashing them", () => {
+  const root = repo();
+  commit(root, "a.txt", "a\n", "base");
+  writeFileSync(path.join(root, "big.bin"), Buffer.alloc(2048, 1));
+  writeFileSync(path.join(root, "small.txt"), "small\n");
+  const capped = worktreeTree(root, { maxUntrackedBytes: 1024 })!;
+  expect(capped.skipped).toEqual([{ path: "big.bin", size: 2048, mtimeMs: expect.any(Number) }]);
+  expect(capped.key).toMatch(/^sha256:[0-9a-f]{64}$/u);
+  expect(capped.dirty).toBe(true);
+  // The big file is not in the tree (and was not written as a blob).
+  expect(git(root, "ls-tree", "--name-only", capped.tree)).toBe("a.txt\nsmall.txt");
+  const blob = spawnSync("git", ["hash-object", "big.bin"], { cwd: root, encoding: "utf8" });
+  const exists = spawnSync("git", ["cat-file", "-e", blob.stdout.trim()], { cwd: root });
+  expect(exists.status).not.toBe(0);
+  // Same stat, same key; a size change moves the key, not the tree.
+  expect(worktreeTree(root, { maxUntrackedBytes: 1024 })!.key).toBe(capped.key);
+  writeFileSync(path.join(root, "big.bin"), Buffer.alloc(4096, 1));
+  const grown = worktreeTree(root, { maxUntrackedBytes: 1024 })!;
+  expect(grown.tree).toBe(capped.tree);
+  expect(grown.key).not.toBe(capped.key);
+  // Under the default cap the file is hashed normally.
+  const hashed = worktreeTree(root)!;
+  expect(hashed.skipped).toEqual([]);
+  expect(hashed.key).toBe(hashed.tree);
+});
+
+test("remoteTip on an unreachable SSH host returns unavailable within the timeout", () => {
+  const root = repo();
+  // 10.255.255.1 is unroutable (blackholed); some networks reject it fast,
+  // either way the call must end as `unavailable` well before a hang.
+  git(root, "remote", "add", "dead", "ssh://git@10.255.255.1:22/o/r.git");
+  const started = Date.now();
+  const tip = remoteTip(root, "dead", "main", { timeoutMs: 2_000 });
+  expect(Date.now() - started).toBeLessThan(8_000);
+  expect(tip).toMatchObject({ ok: false, code: "unavailable" });
+  if (!tip.ok) expect(tip.error).toContain("dead");
+}, 15_000);
+
+test("remote URLs are redacted everywhere they are echoed", () => {
+  const secret = "tok3n-s3cret";
+  for (const url of [
+    `https://user:${secret}@github.com/o/r.git`,
+    `git+https://user:${secret}@code.example/o/r.git`,
+    `ftp://user:${secret}@code.example/o/r.git`,
+    `https://code.example/o/r.git?private_token=${secret}`,
+    `ssh://git:${secret}@code.example/o/r.git`,
+    `user:${secret}@code.example:o/r.git`,
+  ]) {
+    expect(redactRemote(url), url).not.toContain(secret);
+    const root = repo();
+    git(root, "remote", "add", "origin", url);
+    const result = pushForge(root, { sshConfig: "" });
+    expect(JSON.stringify(result), url).not.toContain(secret);
+    // Same credentials against a closed local port: fails fast, no network.
+    const offline = url.replace(/github\.com|code\.example/u, "127.0.0.1:9");
+    const tip = remoteTip(root, offline, "main", { timeoutMs: 5_000 });
+    expect(tip.ok, offline).toBe(false);
+    expect(JSON.stringify(tip), url).not.toContain(secret);
+  }
+  expect(redactRemote("git@github.com:o/r.git")).toBe("git@github.com:o/r.git");
+  expect(redactRemote("ssh://git@host:22/o/r")).toBe("ssh://git@host:22/o/r");
+  expect(redactRemote("")).toBe("<unparseable remote>");
+  // A successful derivation reports the redacted URL too.
+  const root = repo();
+  git(root, "remote", "add", "origin", `https://user:${secret}@github.com/o/r.git`);
+  const ok = pushForge(root, { sshConfig: "" });
+  expect(ok).toMatchObject({ ok: true, url: "https://github.com/o/r.git" });
+}, 60_000);
+
+test("SSH aliases keep their case: patterns match case-insensitively, %h keeps the spelling", () => {
+  const config = "Host GitHub-Work\n  HostName %h.example\n";
+  expect(resolveSshHost("github-work", config).hostname).toBe("github-work.example");
+  expect(resolveSshHost("GitHub-Work", config).hostname).toBe("GitHub-Work.example");
+  expect(parseRemoteUrl("git@GitHub-Work:o/r.git")?.host).toBe("GitHub-Work");
+  expect(
+    deriveForge("git@GitHub-Work:o/r.git", {
+      sshConfig: "Host github-work\n HostName GitHub.com\n",
+    }),
+  ).toMatchObject({ kind: "github", host: "GitHub-Work", hostname: "github.com" });
+});
+
+test("SSH Include applies only inside a matching block and the block continues after it", () => {
+  const home = tmp("wk-rev-inc-");
+  mkdirSync(path.join(home, ".ssh"), { recursive: true });
+  writeFileSync(
+    path.join(home, ".ssh", "extra"),
+    "Port 2200\nHost other\n  HostName other.example\n",
+  );
+  writeFileSync(
+    path.join(home, ".ssh", "inactive"),
+    "HostName wrong.example\nHost *\n  HostName wrong2.example\n",
+  );
+  const text = [
+    "Host work",
+    "  Include extra",
+    "  HostName github.com",
+    "Host personal",
+    "  Include inactive",
+    "Host *",
+    "  HostName fallback.example",
+  ].join("\n");
+  const config = { text, home };
+  // The included Port applies; the enclosing block's HostName after the Include still does.
+  expect(resolveSshHost("work", config)).toEqual({ hostname: "github.com", port: "2200" });
+  // An Include inside a non-matching block contributes nothing, even `Host *` inside it.
+  expect(resolveSshHost("unrelated", config)).toEqual({
+    hostname: "fallback.example",
+    port: null,
+  });
+  // Host lines inside an included file still work for their own aliases.
+  expect(resolveSshHost("other", { text: "Include extra\n", home }).hostname).toBe("other.example");
 });

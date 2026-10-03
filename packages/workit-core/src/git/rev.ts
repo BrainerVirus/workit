@@ -3,24 +3,34 @@
 // reads, no zod, so any verb can import this without paying for the engine.
 //
 // - headSha / worktreeTree / mergeBase / patchId / remoteTip key evidence and
-//   verdicts to code state (fresh = same tree, carried = same patch-id).
+//   verdicts to code state (fresh = same tree key, carried = same patch-id).
 // - pushRemoteName / pushUrl / deriveForge / pushForge derive the forge from
 //   the PUSH remote host, honoring ~/.ssh/config Host aliases, instead of the
 //   configured provider (design §0 #6). forgeConflict turns a disagreement
 //   with the workspace provider into a `blocked` result with an unblock hint.
+//
+// Every git call is bounded: local reads time out after GIT_TIMEOUTS.local,
+// worktree hashing after GIT_TIMEOUTS.worktree, and network calls after
+// GIT_TIMEOUTS.network with prompts disabled (GIT_TERMINAL_PROMPT=0, ssh
+// BatchMode). Remote URLs are never echoed raw: messages go through
+// redactRemote, which drops credentials, query and fragment.
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
 const MAX_BUFFER = 256 * 1024 * 1024;
 
-type GitRun = { ok: boolean; stdout: string; stderr: string };
+/** Default bounds (ms) for git subprocesses; every network helper takes an override. */
+export const GIT_TIMEOUTS = { local: 20_000, worktree: 120_000, network: 15_000 } as const;
+
+type GitRun = { ok: boolean; stdout: string; stderr: string; timedOut: boolean };
 
 const git = (
   cwd: string,
   args: string[],
-  options: { env?: NodeJS.ProcessEnv; input?: string } = {},
+  options: { env?: NodeJS.ProcessEnv; input?: string; timeoutMs?: number } = {},
 ): GitRun => {
   const result = spawnSync("git", args, {
     cwd,
@@ -28,12 +38,16 @@ const git = (
     env: options.env ?? process.env,
     input: options.input,
     maxBuffer: MAX_BUFFER,
+    timeout: options.timeoutMs ?? GIT_TIMEOUTS.local,
+    killSignal: "SIGKILL",
     windowsHide: true,
   });
+  const error: NodeJS.ErrnoException | undefined = result.error;
   return {
     ok: result.status === 0,
     stdout: result.stdout ?? "",
     stderr: result.stderr ?? "",
+    timedOut: error?.code === "ETIMEDOUT",
   };
 };
 
@@ -46,6 +60,62 @@ const line = (run: GitRun): string | null => {
 // A ref or remote argument must never be read as an option by git.
 const safeArg = (value: string): boolean => value.length > 0 && !value.startsWith("-");
 
+/**
+ * Environment for git calls that may touch the network: never prompt, and
+ * make ssh fail fast. An existing GIT_SSH_COMMAND or core.sshCommand is kept
+ * and only gets the options appended (ssh takes the first value of each
+ * option, so the user's own BatchMode/ConnectTimeout still win). A bare
+ * GIT_SSH program (e.g. plink) is left alone: it may not accept `-o`.
+ */
+const networkEnv = (cwd: string, timeoutMs: number): NodeJS.ProcessEnv => {
+  const connectTimeout = Math.max(1, Math.min(10, Math.floor(timeoutMs / 1000)));
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    GIT_TERMINAL_PROMPT: "0",
+    GCM_INTERACTIVE: "never",
+  };
+  const base =
+    process.env.GIT_SSH_COMMAND ||
+    line(git(cwd, ["config", "--get", "core.sshCommand"])) ||
+    (process.env.GIT_SSH ? null : "ssh");
+  if (base) env.GIT_SSH_COMMAND = `${base} -o BatchMode=yes -o ConnectTimeout=${connectTimeout}`;
+  return env;
+};
+
+const UNPARSEABLE = "<unparseable remote>";
+
+/**
+ * A remote (URL or name) that is safe to print: userinfo (except an SSH login
+ * name), query and fragment removed. Anything that does not parse as a URL,
+ * an scp-like `user@host:path`, a remote name or a local path prints as
+ * `<unparseable remote>`.
+ */
+export function redactRemote(raw: string): string {
+  const value = raw.trim();
+  if (!value) return UNPARSEABLE;
+  if (/^[A-Za-z]:[\\/]/u.test(value) || value.startsWith("/") || value.startsWith("."))
+    return value;
+  // A remote name (origin) or a relative path carries no userinfo.
+  if (!/[:@]/u.test(value)) return value;
+  if (!value.includes("://")) {
+    // `user:secret@host:path` is not scp syntax; refuse rather than guess.
+    if (/^[^/@]*:[^/]*@/u.test(value)) return UNPARSEABLE;
+    const scp = /^(?:([^@\s/:]+)@)?([^:/\s]+):([^?#]+)/u.exec(value);
+    return scp ? `${scp[1] ? `${scp[1]}@` : ""}${scp[2]}:${scp[3]}` : UNPARSEABLE;
+  }
+  try {
+    const url = new URL(value);
+    const ssh = /^(?:ssh|git\+ssh|ssh\+git):$/u.test(url.protocol);
+    url.password = "";
+    if (!ssh) url.username = "";
+    url.search = "";
+    url.hash = "";
+    return url.toString();
+  } catch {
+    return UNPARSEABLE;
+  }
+}
+
 /** The commit HEAD points at, or null (unborn HEAD, not a repository). */
 export function headSha(cwd: string): string | null {
   return line(git(cwd, ["rev-parse", "--verify", "-q", "HEAD^{commit}"]));
@@ -53,17 +123,44 @@ export function headSha(cwd: string): string | null {
 
 const emptyTree = (cwd: string): string | null => line(git(cwd, ["mktree"], { input: "" }));
 
+/** Default cap for hashing an untracked file into the worktree key. */
+export const MAX_UNTRACKED_BYTES = 5 * 1024 * 1024;
+
+export type WorktreeTree = {
+  /** The git tree of the worktree (tracked + small untracked files). */
+  tree: string;
+  /**
+   * The freshness key: `tree` itself, or `sha256:<hex>` over `tree` plus the
+   * skipped files' path/size/mtime when any untracked file was over the cap.
+   */
+  key: string;
+  dirty: boolean;
+  /** Untracked files over the cap, recorded by stat instead of content. */
+  skipped: Array<{ path: string; size: number; mtimeMs: number }>;
+};
+
 /**
  * The tree the worktree would commit right now, including unstaged and
  * untracked (non-ignored) files. Built in a throwaway index
  * (GIT_INDEX_FILE + `git add -A` + `git write-tree`), so the real index, HEAD
  * and every ref stay untouched. `dirty` is true when that tree differs from
- * HEAD's tree (or from the empty tree on an unborn branch).
+ * HEAD's tree (or from the empty tree on an unborn branch), or when an
+ * oversized untracked file exists.
+ *
+ * Untracked files larger than `maxUntrackedBytes` (default 5 MB: build
+ * output, dumps, media) are not hashed into the object store; they enter the
+ * key by path + size + mtime instead. Touching one changes the key, but an
+ * edit that keeps size and mtime is not seen. Tracked files are always hashed.
  */
-export function worktreeTree(cwd: string): { tree: string; dirty: boolean } | null {
+export function worktreeTree(
+  cwd: string,
+  options: { maxUntrackedBytes?: number; timeoutMs?: number } = {},
+): WorktreeTree | null {
   const top = line(git(cwd, ["rev-parse", "--show-toplevel"]));
   const indexPath = line(git(cwd, ["rev-parse", "--path-format=absolute", "--git-path", "index"]));
   if (!top || !indexPath) return null;
+  const cap = options.maxUntrackedBytes ?? MAX_UNTRACKED_BYTES;
+  const timeoutMs = options.timeoutMs ?? GIT_TIMEOUTS.worktree;
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "workit-tree-"));
   try {
     const tempIndex = path.join(scratch, "index");
@@ -71,11 +168,37 @@ export function worktreeTree(cwd: string): { tree: string; dirty: boolean } | nu
     // rehashes files that actually changed.
     if (fs.existsSync(indexPath)) fs.copyFileSync(indexPath, tempIndex);
     const env = { ...process.env, GIT_INDEX_FILE: tempIndex };
-    if (!git(top, ["add", "-A"], { env }).ok) return null;
-    const tree = line(git(top, ["write-tree"], { env }));
+    const untracked = git(top, ["ls-files", "--others", "--exclude-standard", "-z"], {
+      env,
+      timeoutMs,
+    });
+    if (!untracked.ok) return null;
+    const skipped: WorktreeTree["skipped"] = [];
+    for (const file of untracked.stdout.split("\0").filter(Boolean)) {
+      try {
+        const stat = fs.statSync(path.join(top, file));
+        if (stat.isFile() && stat.size > cap)
+          skipped.push({ path: file, size: stat.size, mtimeMs: Math.trunc(stat.mtimeMs) });
+      } catch {
+        // Vanished between listing and stat: `add -A` decides.
+      }
+    }
+    skipped.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+    const added = skipped.length
+      ? git(top, ["add", "-A", "--pathspec-from-file=-", "--pathspec-file-nul"], {
+          env,
+          timeoutMs,
+          input: [".", ...skipped.map((file) => `:(exclude,literal)${file.path}`)].join("\0"),
+        })
+      : git(top, ["add", "-A"], { env, timeoutMs });
+    if (!added.ok) return null;
+    const tree = line(git(top, ["write-tree"], { env, timeoutMs }));
     if (!tree) return null;
     const base = line(git(top, ["rev-parse", "--verify", "-q", "HEAD^{tree}"])) ?? emptyTree(top);
-    return { tree, dirty: tree !== base };
+    const key = skipped.length
+      ? `sha256:${createHash("sha256").update(JSON.stringify({ tree, skipped })).digest("hex")}`
+      : tree;
+    return { tree, key, dirty: tree !== base || skipped.length > 0, skipped };
   } finally {
     fs.rmSync(scratch, { recursive: true, force: true });
   }
@@ -89,15 +212,23 @@ export function mergeBase(cwd: string, a: string, b: string): string | null {
 
 /**
  * The stable patch-id of `merge-base(base, head)..head`: equal before and
- * after a rebase that only moved the base, different once the change itself
- * differs. Null when the range is empty or a revision does not resolve. Diff
- * options are pinned so user config (renames, prefixes, external diff) cannot
- * change the id between machines.
+ * after a rebase that only moved the base (and while the base moves without a
+ * rebase), different once the change itself differs. Null when the range is
+ * empty or a revision does not resolve.
+ *
+ * Diff options are pinned (3 context lines, myers + indent heuristic, no
+ * renames, no color, external diff or textconv, fixed prefixes) so user
+ * config cannot change the id between machines. Caveat: patch-id hashes the
+ * context lines, so a base change landing within 3 lines of a hunk changes
+ * the id. That reads as stale, the safe direction.
  */
 export function patchId(cwd: string, base: string, head: string): string | null {
   if (!safeArg(base) || !safeArg(head)) return null;
   const diff = git(cwd, [
     "diff",
+    "-U3",
+    "--diff-algorithm=myers",
+    "--indent-heuristic",
     "--no-color",
     "--no-ext-diff",
     "--no-textconv",
@@ -113,17 +244,42 @@ export function patchId(cwd: string, base: string, head: string): string | null 
   return line(id)?.split(/\s+/u)[0] ?? null;
 }
 
-/** The commit a remote branch points at (`git ls-remote`), or null. */
-export function remoteTip(cwd: string, remote: string, branch: string): string | null {
-  if (!safeArg(remote) || !safeArg(branch)) return null;
+export type RemoteTipResult =
+  | { ok: true; sha: string | null }
+  | { ok: false; code: "invalid_input" | "unavailable"; error: string };
+
+/**
+ * The commit a remote branch points at (`git ls-remote`). `sha: null` means
+ * the remote answered and the branch does not exist; an unreachable remote,
+ * an auth prompt or a timeout is `unavailable`, never a hang.
+ */
+export function remoteTip(
+  cwd: string,
+  remote: string,
+  branch: string,
+  options: { timeoutMs?: number } = {},
+): RemoteTipResult {
+  if (!safeArg(remote) || !safeArg(branch))
+    return { ok: false, code: "invalid_input", error: "remote and branch must not start with -" };
+  const timeoutMs = options.timeoutMs ?? GIT_TIMEOUTS.network;
   const ref = `refs/heads/${branch}`;
-  const listed = git(cwd, ["ls-remote", remote, ref]);
-  if (!listed.ok) return null;
+  const listed = git(cwd, ["ls-remote", remote, ref], {
+    env: networkEnv(cwd, timeoutMs),
+    timeoutMs,
+  });
+  if (!listed.ok)
+    return {
+      ok: false,
+      code: "unavailable",
+      error: listed.timedOut
+        ? `git ls-remote ${redactRemote(remote)} timed out after ${timeoutMs} ms`
+        : `git ls-remote ${redactRemote(remote)} failed (unreachable or not authorized)`,
+    };
   for (const row of listed.stdout.split(/\r?\n/u)) {
     const [sha, name] = row.split(/\s+/u);
-    if (name === ref && sha) return sha;
+    if (name === ref && sha) return { ok: true, sha };
   }
-  return null;
+  return { ok: true, sha: null };
 }
 
 const config = (cwd: string, key: string): string | null =>
@@ -173,7 +329,7 @@ export function pushUrl(cwd: string, remote: string): string | null {
 export type RemoteUrl = {
   protocol: "ssh" | "https" | "http" | "git" | "file";
   user: string | null;
-  /** Host as written in the URL (an SSH alias stays unresolved here). */
+  /** Host as written in the URL (an SSH alias stays unresolved, case kept). */
   host: string;
   port: string | null;
   /** Repository path without leading slash, trailing slash or `.git`. */
@@ -195,12 +351,16 @@ export function parseRemoteUrl(raw: string): RemoteUrl | null {
     return { protocol: "file", user: null, host: "", port: null, path: value };
   }
   if (!value.includes("://")) {
-    const scp = /^(?:([^@\s/]+)@)?([^:/\s]+):(.+)$/u.exec(value);
+    // `user:secret@host:path` is not scp syntax (see redactRemote).
+    if (/^[^/@]*:[^/]*@/u.test(value)) return null;
+    const scp = /^(?:([^@\s/:]+)@)?([^:/\s]+):(.+)$/u.exec(value);
     if (!scp) return null;
     return {
       protocol: "ssh",
       user: scp[1] ?? null,
-      host: scp[2].toLowerCase(),
+      // As written: ssh matches Host patterns case-insensitively and expands
+      // %h with the original spelling.
+      host: scp[2],
       port: null,
       path: cleanPath(scp[3]),
     };
@@ -223,17 +383,24 @@ export function parseRemoteUrl(raw: string): RemoteUrl | null {
     protocol,
     // Never keep an HTTPS credential; an SSH user is part of the identity.
     user: protocol === "ssh" && url.username ? decodeURIComponent(url.username) : null,
-    host: url.hostname.toLowerCase().replace(/\.$/u, ""),
+    host: url.hostname.replace(/\.$/u, ""),
     port: url.port || null,
     path: cleanPath(decodeURIComponent(url.pathname)),
   };
 }
 
 // ---------------------------------------------------------------------------
-// ~/.ssh/config Host alias resolution (enough of ssh_config(5) for HostName
-// and Port: first value wins, Host patterns with * ? and !negation, Include
-// expanded in place). `Match` blocks are skipped: they are conditional on
-// runtime state that a static read cannot evaluate.
+// ~/.ssh/config Host alias resolution: enough of ssh_config(5) for HostName
+// and Port, with OpenSSH's semantics.
+// - The first value obtained for each option wins.
+// - Host patterns support `*`, `?` and `!negation`. They match the alias
+//   case-insensitively, and %h expands to the alias as written.
+// - Include is read where it appears. Its directives apply only when the
+//   enclosing block matches (or at top level). Inside an inactive block,
+//   Host lines in the included file never match. After the Include, the
+//   enclosing block's state is restored, so its later directives still apply.
+// - `Match` blocks are treated as non-matching: they depend on runtime state
+//   that a static read cannot evaluate.
 
 const globToRegExp = (pattern: string): RegExp =>
   new RegExp(
@@ -272,82 +439,84 @@ const directives = (text: string): SshDirective[] =>
     return [{ key: match[1].toLowerCase(), args: tokens(match[2]) }];
   });
 
-/**
- * Read the user's SSH client config with `Include` expanded in place
- * (relative includes resolve against ~/.ssh; a `*`/`?` glob is allowed in the
- * last path segment). Missing or unreadable files read as empty.
- */
-export function readSshConfig(home: string = os.homedir()): string {
-  const sshDir = path.join(home, ".ssh");
-  const read = (file: string, depth: number): string => {
-    if (depth > 16) return "";
-    let text: string;
-    try {
-      text = fs.readFileSync(file, "utf8");
-    } catch {
-      return "";
-    }
-    return text
-      .split(/\r?\n/u)
-      .map((raw) => {
-        const match = /^\s*include(?:\s*=\s*|\s+)(.*)$/iu.exec(raw);
-        if (!match) return raw;
-        return tokens(match[1])
-          .flatMap((entry) => {
-            const expanded = entry.startsWith("~") ? path.join(home, entry.slice(1)) : entry;
-            const absolute = path.isAbsolute(expanded) ? expanded : path.join(sshDir, expanded);
-            const dir = path.dirname(absolute);
-            const base = path.basename(absolute);
-            if (!/[*?]/u.test(base)) return [absolute];
-            try {
-              const pattern = globToRegExp(base);
-              return fs
-                .readdirSync(dir)
-                .filter((name) => pattern.test(name))
-                .toSorted()
-                .map((name) => path.join(dir, name));
-            } catch {
-              return [];
-            }
-          })
-          .map((included) => read(included, depth + 1))
-          .join("\n");
-      })
-      .join("\n");
-  };
-  return read(path.join(sshDir, "config"), 0);
+/** An ssh_config text plus the home its relative `Include`s resolve against (~/.ssh). */
+export type SshConfig = { text: string; home: string };
+
+/** The user's ~/.ssh/config (empty when missing); Includes resolve lazily. */
+export function readSshConfig(home: string = os.homedir()): SshConfig {
+  try {
+    return { text: fs.readFileSync(path.join(home, ".ssh", "config"), "utf8"), home };
+  } catch {
+    return { text: "", home };
+  }
 }
 
+const includeFiles = (spec: string, home: string): string[] => {
+  const expanded = spec.startsWith("~") ? path.join(home, spec.slice(1)) : spec;
+  const absolute = path.isAbsolute(expanded) ? expanded : path.join(home, ".ssh", expanded);
+  const dir = path.dirname(absolute);
+  const base = path.basename(absolute);
+  if (!/[*?]/u.test(base)) return [absolute];
+  try {
+    const pattern = globToRegExp(base);
+    return fs
+      .readdirSync(dir)
+      .filter((name) => pattern.test(name))
+      .toSorted()
+      .map((name) => path.join(dir, name));
+  } catch {
+    return [];
+  }
+};
+
 /**
- * Resolve an SSH host alias against an ssh_config text: the effective
- * HostName (with %h / %% expanded) and Port. An alias with no HostName
- * resolves to itself.
+ * Resolve an SSH host alias: the effective HostName (with %h / %% expanded)
+ * and Port. An alias with no HostName resolves to itself. A plain string is
+ * a config text whose relative Includes resolve against the real home.
  */
 export function resolveSshHost(
   alias: string,
-  sshConfig: string,
+  sshConfig: string | SshConfig,
 ): { hostname: string; port: string | null } {
-  let active = true;
+  const source =
+    typeof sshConfig === "string" ? { text: sshConfig, home: os.homedir() } : sshConfig;
   let hostname: string | null = null;
   let port: string | null = null;
-  for (const { key, args } of directives(sshConfig)) {
-    if (key === "host") {
-      active = hostMatches(args, alias);
-      continue;
+  const evaluate = (text: string, initiallyActive: boolean, neverMatch: boolean, depth: number) => {
+    let active = initiallyActive;
+    for (const { key, args } of directives(text)) {
+      if (key === "host") {
+        active = !neverMatch && hostMatches(args, alias);
+        continue;
+      }
+      if (key === "match") {
+        active = false;
+        continue;
+      }
+      if (key === "include") {
+        if (depth >= 16) continue;
+        for (const spec of args)
+          for (const file of includeFiles(spec, source.home)) {
+            let included: string;
+            try {
+              included = fs.readFileSync(file, "utf8");
+            } catch {
+              continue;
+            }
+            // OpenSSH: an Include inside an inactive block can never match,
+            // and the enclosing block's state is restored afterwards.
+            evaluate(included, active, neverMatch || !active, depth + 1);
+          }
+        continue;
+      }
+      if (!active || args.length === 0) continue;
+      if (key === "hostname" && hostname === null)
+        hostname = args[0].replace(/%(%|h)/gu, (_, token: string) => (token === "h" ? alias : "%"));
+      if (key === "port" && port === null) port = args[0];
     }
-    if (key === "match") {
-      active = false;
-      continue;
-    }
-    if (!active || args.length === 0) continue;
-    if (key === "hostname" && hostname === null)
-      hostname = args[0].replace(/%(%|h)/gu, (_, token: string) => (token === "h" ? alias : "%"));
-    if (key === "port" && port === null) port = args[0];
-  }
-  return {
-    hostname: (hostname ?? alias).toLowerCase().replace(/\.$/u, ""),
-    port,
   };
+  evaluate(source.text, true, false, 0);
+  return { hostname: (hostname ?? alias).replace(/\.$/u, ""), port };
 }
 
 // ---------------------------------------------------------------------------
@@ -398,16 +567,17 @@ const normalizeHost = (value: string): string =>
  */
 export function deriveForge(
   url: string,
-  options: { hosts?: ForgeHosts; sshConfig?: string } = {},
+  options: { hosts?: ForgeHosts; sshConfig?: string | SshConfig } = {},
 ): DerivedForge | null {
   const parsed = parseRemoteUrl(url);
   if (!parsed || parsed.protocol === "file" || !parsed.host) return null;
   const segments = parsed.path.split("/").filter(Boolean);
   if (segments.length < 2) return null;
-  const hostname =
+  const hostname = (
     parsed.protocol === "ssh"
       ? resolveSshHost(parsed.host, options.sshConfig ?? readSshConfig()).hostname
-      : parsed.host;
+      : parsed.host
+  ).toLowerCase();
   const withPort =
     parsed.protocol !== "ssh" && parsed.port ? `${hostname}:${parsed.port}` : hostname;
   const base = { host: parsed.host, hostname, repo: segments.join("/") };
@@ -430,7 +600,7 @@ export function deriveForge(
 }
 
 export type PushForgeResult =
-  | { ok: true; remote: string; url: string; forge: DerivedForge }
+  | { ok: true; remote: string; /** Redacted push URL. */ url: string; forge: DerivedForge }
   | { ok: false; code: "not_found" | "unavailable"; error: string; unblock: string };
 
 /**
@@ -440,7 +610,7 @@ export type PushForgeResult =
  */
 export function pushForge(
   cwd: string,
-  options: { branch?: string | null; hosts?: ForgeHosts; sshConfig?: string } = {},
+  options: { branch?: string | null; hosts?: ForgeHosts; sshConfig?: string | SshConfig } = {},
 ): PushForgeResult {
   const remote = pushRemoteName(cwd, options.branch);
   if (!remote)
@@ -460,15 +630,20 @@ export function pushForge(
     };
   const forge = deriveForge(url, options);
   if (!forge) {
-    const host = parseRemoteUrl(url)?.host ?? url;
+    // Never echo the raw URL: it may carry a token (https://user:tok@…).
+    const host = parseRemoteUrl(url)?.host || null;
     return {
       ok: false,
       code: "unavailable",
-      error: `cannot tell whether push host "${host}" is GitHub or GitLab`,
-      unblock: `map the alias in ~/.ssh/config (Host ${host} / HostName github.com|gitlab.com) or set github.host / gitlab.host in ~/.config/workit/vcs.json`,
+      error: host
+        ? `cannot tell whether push host "${host}" is GitHub or GitLab`
+        : `push URL ${redactRemote(url)} of remote "${remote}" is not a GitHub/GitLab URL`,
+      unblock: host
+        ? `map the alias in ~/.ssh/config (Host ${host} / HostName github.com|gitlab.com) or set github.host / gitlab.host in ~/.config/workit/vcs.json`
+        : `git remote set-url --push ${remote} <ssh-or-https-url>`,
     };
   }
-  return { ok: true, remote, url, forge };
+  return { ok: true, remote, url: redactRemote(url), forge };
 }
 
 /**
