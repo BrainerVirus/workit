@@ -188,7 +188,7 @@ const syncEnv = (home: string, lockDir: string, repo: string): Record<string, st
 });
 
 test(
-  "sync-runtime installs the canonical method skills and no legacy vendor tree",
+  "sync-runtime installs the canonical method skills, compiles user rules, and no legacy vendor tree",
   () => {
     if (!syncToolsAvailable) return;
     const fixture = mkdtempSync(path.join(os.tmpdir(), "wk-sync-runtime-"));
@@ -197,6 +197,12 @@ test(
     const plugin = path.join(home, ".cursor/plugins/local/workit");
     mkdirSync(plugin, { recursive: true });
     mkdirSync(lockDir, { recursive: true });
+    const rule = path.join(home, ".config/workit/rules/beta");
+    mkdirSync(rule, { recursive: true });
+    writeFileSync(
+      path.join(rule, "rule.md"),
+      "---\nname: beta\ndescription: Beta rule\nplatforms: [cursor]\n---\n# Beta\n",
+    );
     try {
       const result = spawnSync(
         "bash",
@@ -206,6 +212,9 @@ test(
       expect(result.status, result.stderr).toBe(0);
       expect(skillManifests(path.join(plugin, "skills"))).toEqual(WORKIT);
       expect(existsSync(path.join(plugin, "vendor"))).toBe(false);
+      expect(readFileSync(path.join(plugin, "rules/beta.mdc"), "utf8")).toContain(
+        "description: Beta rule",
+      );
     } finally {
       rmSync(fixture, { recursive: true, force: true });
     }
