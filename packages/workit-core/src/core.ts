@@ -66,7 +66,7 @@ export type {
   RecoveryInput,
   TaskIndexEntry,
 } from "./core/task-store";
-export { sessionCompactContext, unfinishedTaskOffer } from "./core/session-context";
+export { sessionCompactContext, unfinishedTaskOffer } from "./hooks/context";
 export { compactTaskContext, reconcileResume } from "./core/task-context";
 export type {
   CompactTaskContext,

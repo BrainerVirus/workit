@@ -36,6 +36,7 @@
   "type": "module",
   "main": "./src/core.ts",
   "exports": {
+    "./hooks": "./src/hooks/index.ts",
     "./src/*.ts": "./src/*.ts",
     "./src/*": "./src/*.ts",
     "./package.json": "./package.json"
