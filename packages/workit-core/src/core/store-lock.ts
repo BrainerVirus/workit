@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import { hostname } from "node:os";
 import path from "node:path";
@@ -36,8 +37,16 @@ export const FOREIGN_LOCK_TTL_MS = 10 * 60_000;
 export const UNREADABLE_LOCK_TTL_MS = 30_000;
 /** A reclaim guard lives for microseconds; one older than this was abandoned. */
 export const RECLAIM_GUARD_TTL_MS = 30_000;
-/** How long a mutation waits for a live holder before returning `busy`. */
-export const DEFAULT_LOCK_TIMEOUT_MS = 2_000;
+/**
+ * Total time a mutation waits for a live holder before returning `busy`. The
+ * wait blocks the calling thread, so in-process hosts (OpenCode, MCP, Pi) keep
+ * the short default; the CLI raises it for its own process.
+ */
+let defaultLockTimeoutMs = 250;
+export const defaultLockTimeout = (): number => defaultLockTimeoutMs;
+export const setDefaultLockTimeout = (ms: number): void => {
+  defaultLockTimeoutMs = ms;
+};
 
 export const parseMetadataLock = (raw: string): MetadataLock => {
   let value: unknown;
@@ -66,12 +75,67 @@ export const sameMetadataLock = (left: unknown, right: MetadataLock): boolean =>
   return parsed.success && canonicalJson(parsed.data) === canonicalJson(right);
 };
 
+/** Field 22 (starttime) of /proc/<pid>/stat; parsed after the last ")" so a comm with spaces cannot shift it. */
+export const parseProcStatStart = (stat: string): string | null => {
+  const close = stat.lastIndexOf(")");
+  if (close < 0) return null;
+  // After ")": field 3 (state) is index 0, so field 22 is index 19.
+  return (
+    stat
+      .slice(close + 1)
+      .trim()
+      .split(/\s+/)[19] ?? null
+  );
+};
+
 export const processStartOf = (pid: number): string | null => {
+  if (process.platform === "linux") {
+    try {
+      return parseProcStatStart(fs.readFileSync(`/proc/${pid}/stat`, "utf8"));
+    } catch {
+      return null;
+    }
+  }
+  if (process.platform === "darwin" || process.platform === "freebsd") {
+    try {
+      const run = spawnSync("ps", ["-o", "lstart=", "-p", String(pid)], {
+        encoding: "utf8",
+        timeout: 1_000,
+      });
+      const value = run.status === 0 ? run.stdout.trim() : "";
+      return value || null;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+};
+
+const readTrimmed = (file: string): string | null => {
   try {
-    return fs.readFileSync(`/proc/${pid}/stat`, "utf8").split(" ")[21] ?? null;
+    return fs.readFileSync(file, "utf8").trim() || null;
   } catch {
     return null;
   }
+};
+
+/**
+ * Identity of the pid space this process lives in: hostname plus, on Linux,
+ * the pid-namespace inode and boot id. Containers that share the hostname
+ * (`--network host`) but not the pid namespace get a different identity, so
+ * their pids are never checked against this process table. Folded into the
+ * existing `host` string so older Workit versions still parse the lock.
+ */
+let cachedLockHost: string | null = null;
+export const localLockHost = (): string => {
+  if (cachedLockHost !== null) return cachedLockHost;
+  let pidns: string | null = null;
+  try {
+    pidns = /\[(\d+)\]/.exec(fs.readlinkSync("/proc/self/ns/pid"))?.[1] ?? null;
+  } catch {}
+  const boot = readTrimmed("/proc/sys/kernel/random/boot_id");
+  cachedLockHost = pidns || boot ? `${hostname()}#${pidns ?? "?"}:${boot ?? "?"}` : hostname();
+  return cachedLockHost;
 };
 
 const pidAlive = (pid: number): boolean => {
@@ -94,7 +158,7 @@ export type LockOwnerState = {
 export const classifyLockOwner = (
   payload: unknown,
   ageMs: number | null,
-  localHost: string = hostname(),
+  localHost: string = localLockHost(),
 ): LockOwnerState => {
   const lock = metadataLockSchema.safeParse(payload);
   if (!lock.success)
@@ -102,10 +166,12 @@ export const classifyLockOwner = (
       ? { state: "stale", reason: "unreadable lock left behind" }
       : { state: "unknown", reason: "lock is being written" };
   const { pid, processStart, host } = lock.data;
+  // Another host, another pid namespace or boot, or a lock written by an older
+  // Workit without namespace identity: its pid cannot be checked here.
   if (host !== localHost)
     return ageMs !== null && ageMs > FOREIGN_LOCK_TTL_MS
-      ? { state: "stale", reason: `lock from host ${host} is older than its TTL` }
-      : { state: "unknown", reason: `lock is held from host ${host}` };
+      ? { state: "stale", reason: `lock from ${host} is older than its TTL` }
+      : { state: "unknown", reason: `lock is held from ${host}; its pid cannot be checked here` };
   if (!pidAlive(pid)) return { state: "stale", reason: `pid ${pid} is not running` };
   const currentStart = processStartOf(pid);
   if (processStart !== null && currentStart !== null && processStart !== currentStart)
@@ -143,6 +209,8 @@ export type MetadataLockStatus = {
   state: LockOwnerState["state"] | "absent";
   reason: string;
   guard: "absent" | "fresh" | "abandoned";
+  /** Exact lock bytes that were classified (for compare-before-remove). */
+  raw?: string;
 };
 
 /** Read-only inspection of a checkout's metadata lock (doctor surface). */
@@ -166,31 +234,55 @@ export const inspectMetadataLock = (root: string, nowMs = Date.now()): MetadataL
   }
   const owner = parseMetadataLockOrNull(raw);
   const verdict = classifyLockOwner(owner, ageOf(lockPath, nowMs));
-  return { path: lockPath, present: true, owner, ...verdict, guard };
+  return { path: lockPath, present: true, owner, ...verdict, guard, raw };
 };
 
-export type ClearLockOutcome = MetadataLockStatus & { cleared: boolean; guardCleared: boolean };
+export type ClearLockOutcome = MetadataLockStatus & {
+  cleared: boolean;
+  guardCleared: boolean;
+  /** Why the lock was kept, when it was present and not cleared. */
+  skipped?: string;
+};
 
 /**
- * Clear a stale metadata lock and an abandoned reclaim guard. A live or
- * unverifiable lock is never removed; the lock is only deleted when its bytes
- * are unchanged since classification.
+ * Clear a stale metadata lock (or, with `force`, any lock) and an abandoned
+ * reclaim guard. Removal holds the same `.reclaim` guard that writers take
+ * before reclaiming, so no writer can replace the lock between the final
+ * byte check and the unlink; a fresh guard means a reclaim is already in
+ * progress and the lock is left alone.
  */
-export const clearStaleMetadataLock = (root: string, nowMs = Date.now()): ClearLockOutcome => {
+export const clearStaleMetadataLock = (
+  root: string,
+  options: { force?: boolean; nowMs?: number } = {},
+): ClearLockOutcome => {
+  const nowMs = options.nowMs ?? Date.now();
   const status = inspectMetadataLock(root, nowMs);
   const guardCleared = status.guard === "abandoned" && clearAbandonedReclaimGuard(status.path);
-  let cleared = false;
-  if (status.state === "stale") {
-    try {
-      const before = fs.readFileSync(status.path, "utf8");
-      const verdict = classifyLockOwner(parseMetadataLockOrNull(before), ageOf(status.path, nowMs));
-      if (verdict.state === "stale" && fs.readFileSync(status.path, "utf8") === before) {
-        fs.rmSync(status.path);
-        cleared = true;
-      }
-    } catch {
-      cleared = false;
-    }
+  const outcome = { ...status, cleared: false, guardCleared };
+  if (!status.present) return outcome;
+  if (status.state !== "stale" && !options.force) return { ...outcome, skipped: status.reason };
+  const guard = `${status.path}.reclaim`;
+  try {
+    fs.mkdirSync(guard);
+  } catch {
+    return { ...outcome, skipped: "a reclaim is in progress" };
   }
-  return { ...status, cleared, guardCleared };
+  try {
+    const before = fs.readFileSync(status.path, "utf8");
+    if (before !== status.raw) return { ...outcome, skipped: "the lock changed" };
+    if (!options.force) {
+      const verdict = classifyLockOwner(parseMetadataLockOrNull(before), ageOf(status.path, nowMs));
+      if (verdict.state !== "stale") return { ...outcome, skipped: verdict.reason };
+    }
+    if (fs.readFileSync(status.path, "utf8") !== before)
+      return { ...outcome, skipped: "the lock changed" };
+    fs.rmSync(status.path);
+    return { ...outcome, cleared: true };
+  } catch (error) {
+    return { ...outcome, skipped: `could not clear: ${String(error)}` };
+  } finally {
+    try {
+      fs.rmdirSync(guard);
+    } catch {}
+  }
 };

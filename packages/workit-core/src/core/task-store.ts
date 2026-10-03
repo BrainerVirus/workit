@@ -1,7 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
 import * as fs from "node:fs";
-import { hostname } from "node:os";
 import path from "node:path";
 import * as z from "zod";
 import { packageRoot } from "./package-root";
@@ -34,8 +33,9 @@ import {
   type WorkspaceRecord,
 } from "./task-contract";
 import {
-  DEFAULT_LOCK_TIMEOUT_MS,
   classifyLockOwner,
+  defaultLockTimeout,
+  localLockHost,
   clearAbandonedReclaimGuard,
   parseMetadataLock,
   parseMetadataLockOrNull,
@@ -46,7 +46,8 @@ import {
 
 export type { MetadataLock } from "./store-lock";
 export type TaskStoreOptions = {
-  /** How long a mutation retries a lock held by a live writer before `busy`. */
+  /** Total time a mutation retries a lock held by a live writer before `busy`
+   * (default: `defaultLockTimeout()`, short for in-process hosts). */
   lockTimeoutMs?: number;
 };
 
@@ -201,7 +202,7 @@ export class TaskStore {
 
   constructor(root: string, options: TaskStoreOptions = {}) {
     this.root = fs.existsSync(root) ? fs.realpathSync(root) : path.resolve(root);
-    this.lockTimeoutMs = options.lockTimeoutMs ?? DEFAULT_LOCK_TIMEOUT_MS;
+    this.lockTimeoutMs = options.lockTimeoutMs ?? defaultLockTimeout();
   }
 
   readTask(taskId: Id): Result<TaskRecord> {
@@ -894,7 +895,7 @@ export class TaskStore {
       payload: () => ({
         pid: process.pid,
         processStart: processStartOf(process.pid),
-        host: hostname(),
+        host: localLockHost(),
         nonce: randomUUID(),
       }),
     };
@@ -904,10 +905,15 @@ export class TaskStore {
     options: FileLockSyncAcquireOptions<MetadataLock>,
   ): FileLockSyncHandle {
     clearAbandonedReclaimGuard(this.lockPath);
+    // One budget for the whole acquisition: a lost reclaim race retries with
+    // the remaining time, never a fresh timeout.
     const deadline = Date.now() + (options.timeoutMs ?? 0);
     while (true) {
       try {
-        return acquireFileLockSync(this.workspacePath, options);
+        return acquireFileLockSync(this.workspacePath, {
+          ...options,
+          timeoutMs: Math.max(0, deadline - Date.now()),
+        });
       } catch (error) {
         // Losing a reclaim race to another process is contention, not damage.
         const code = (error as { code?: unknown })?.code;

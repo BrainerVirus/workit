@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
-import { hostname } from "node:os";
+import { localLockHost } from "@/packages/workit-core/src/core/store-lock";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { DoctorReport } from "@/packages/workit-core/src/core/doctor";
@@ -17,11 +17,13 @@ const cliEntry = path.join(repoRoot, "packages/workit-cli/src/index.tsx");
 const fixture = makeDoctorFixture();
 afterAll(() => fixture.cleanup());
 
-const runCli = (args: string[], cwd: string) =>
+const runCli = (args: string[], cwd: string, extraEnv: Record<string, string> = {}) =>
   spawnSync("bun", [cliEntry, ...args], {
     cwd,
+    stdio: ["ignore", "pipe", "pipe"],
     env: {
       ...process.env,
+      ...extraEnv,
       HOME: fixture.home,
       WORKFLOW_TOOLKIT_CONFIG: fixture.configDir,
       WORKFLOW_TOOLKIT_STATE: fixture.stateDir,
@@ -78,7 +80,7 @@ test("Given a stale lock left by a dead pid, When workit doctor runs, Then it wa
   mkdirSync(path.dirname(lockPath), { recursive: true });
   writeFileSync(
     lockPath,
-    JSON.stringify({ pid: deadPid(), processStart: "1", host: hostname(), nonce: "n" }),
+    JSON.stringify({ pid: deadPid(), processStart: "1", host: localLockHost(), nonce: "n" }),
   );
   try {
     const result = runCli(["doctor", "--json"], fixture.cwd);
@@ -98,7 +100,7 @@ test("Given a stale lock and an abandoned reclaim guard, When workit doctor --fi
   utimesSync(`${lockPath}.reclaim`, new Date(0), new Date(0));
   writeFileSync(
     lockPath,
-    JSON.stringify({ pid: deadPid(), processStart: "1", host: hostname(), nonce: "n" }),
+    JSON.stringify({ pid: deadPid(), processStart: "1", host: localLockHost(), nonce: "n" }),
   );
   try {
     const result = runCli(["doctor", "--fix-lock"], fixture.cwd);
@@ -118,7 +120,7 @@ test("Given a lock held by a live process, When workit doctor --fix-lock runs, T
   const bytes = JSON.stringify({
     pid: process.pid,
     processStart: null,
-    host: hostname(),
+    host: localLockHost(),
     nonce: "live",
   });
   writeFileSync(lockPath, bytes);
@@ -127,6 +129,44 @@ test("Given a lock held by a live process, When workit doctor --fix-lock runs, T
     const report = JSON.parse(result.stdout) as DoctorReport & { fixLock: { cleared: boolean } };
     expect(report.fixLock.cleared).toBe(false);
     expect(readFileSync(lockPath, "utf8")).toBe(bytes);
+  } finally {
+    rmSync(path.join(fixture.cwd, ".workit"), { recursive: true, force: true });
+  }
+});
+
+test("Given WORKFLOW_WORKSPACE_ROOT points at another checkout, When workit doctor --fix-lock runs, Then it clears that checkout's stale lock", () => {
+  const other = path.join(fixture.root, "other-workspace");
+  const lockPath = path.join(other, ".workit", "metadata.lock");
+  mkdirSync(path.dirname(lockPath), { recursive: true });
+  writeFileSync(
+    lockPath,
+    JSON.stringify({ pid: deadPid(), processStart: "1", host: localLockHost(), nonce: "n" }),
+  );
+  try {
+    const result = runCli(["doctor", "--fix-lock"], fixture.cwd, {
+      WORKFLOW_WORKSPACE_ROOT: other,
+    });
+    expect(result.stdout).toContain(`cleared stale lock ${lockPath}`);
+    expect(existsSync(lockPath)).toBe(false);
+  } finally {
+    rmSync(other, { recursive: true, force: true });
+  }
+});
+
+test("Given a lock whose owner cannot be verified, When workit doctor --fix-lock --force runs without --yes or a TTY, Then it refuses and keeps the lock; with --yes it clears it", () => {
+  const lockPath = path.join(fixture.cwd, ".workit", "metadata.lock");
+  mkdirSync(path.dirname(lockPath), { recursive: true });
+  const bytes = JSON.stringify({ pid: 1, processStart: null, host: "elsewhere", nonce: "n" });
+  writeFileSync(lockPath, bytes);
+  try {
+    const refused = runCli(["doctor", "--fix-lock", "--force"], fixture.cwd);
+    expect(refused.status).toBe(1);
+    expect(refused.stdout).toContain("held by pid 1 on elsewhere");
+    expect(refused.stdout).toContain("refusing without --yes");
+    expect(readFileSync(lockPath, "utf8")).toBe(bytes);
+    const forced = runCli(["doctor", "--fix-lock", "--force", "--yes"], fixture.cwd);
+    expect(forced.stdout).toContain("fix-lock: cleared lock");
+    expect(existsSync(lockPath)).toBe(false);
   } finally {
     rmSync(path.join(fixture.cwd, ".workit"), { recursive: true, force: true });
   }

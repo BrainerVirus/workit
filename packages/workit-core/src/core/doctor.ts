@@ -112,6 +112,8 @@ export type DoctorOptions = {
   /** Checkout containing packages/ (monorepo or share clone). */
   dev?: string;
   cwd?: string;
+  /** Workit store root for the lock check (default: WORKFLOW_WORKSPACE_ROOT, then cwd). */
+  workspaceRoot?: string;
   opencodeConfig?: string;
   /** OpenCode npm `@latest` package cache root (test seam). */
   opencodePackageCacheDir?: string;
@@ -131,6 +133,7 @@ type Resolved = {
   configDir: string;
   stateDir: string;
   cwd: string;
+  workspaceRoot: string;
   dev: string | null;
   opencodeConfig: string;
   opencodePackageCacheDir: string;
@@ -181,6 +184,7 @@ const resolve = (options: DoctorOptions): Resolved => {
     configDir,
     stateDir,
     cwd,
+    workspaceRoot: options.workspaceRoot ?? env.WORKFLOW_WORKSPACE_ROOT ?? cwd,
     dev,
     opencodeConfig:
       options.opencodeConfig ?? path.join(home, ".config", "opencode", "opencode.json"),
@@ -1697,7 +1701,7 @@ const checkManagedContentConflict = (res: Resolved): DoctorCheck => {
 // The checkout's `.workit/metadata.lock`. Writes reclaim a stale lock by
 // themselves, so a stale lock is a warning with an explicit cleanup command.
 const checkWorkspaceLock = (res: Resolved): DoctorCheck => {
-  const lock = inspectMetadataLock(res.cwd);
+  const lock = inspectMetadataLock(res.workspaceRoot);
   const fix = "workit doctor --fix-lock";
   if (lock.guard === "abandoned")
     return {
