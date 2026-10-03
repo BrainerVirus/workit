@@ -244,6 +244,32 @@ test("compact task context carries selected methods and refreshes with policy", 
   ]);
 });
 
+// One meaning-bearing phrase per agent-critical rule. Whitespace is flexible
+// (the prose wraps), the words are not: inverting a rule fails here.
+const phrase = (text: string) => new RegExp(text.trim().split(/\s+/).join("\\s+"));
+
+test("agent-critical delivery rules stay stated", () => {
+  const bootstrap = invariantBootstrap();
+  const rules: Array<[string, string, string]> = [
+    ["bootstrap", bootstrap, "prefer native host Git/shell"],
+    ["bootstrap", bootstrap, "A local-commit endpoint does not imply PR readiness"],
+    ["bootstrap", bootstrap, "reconcile every requested item"],
+    ["bootstrap", bootstrap, "a local commit alone is not evidence of a requested remote push"],
+    ["workit-babysit", skillText("workit-babysit"), "PR creation does not start babysitting"],
+    ["workit-babysit", skillText("workit-babysit"), "Stop at PR-ready"],
+    ["workit-steer", skillText("workit-steer"), "do not silently resume an old objective"],
+    ["workit-plan", skillText("workit-plan"), "Do not ask for a separate plan approval"],
+    ["workit-implement", skillText("workit-implement"), "reconcile every named deliverable"],
+    [
+      "workit-behavioral-tdd",
+      skillText("workit-behavioral-tdd"),
+      "GREEN but no preceding RED evidence stays unsatisfied",
+    ],
+  ];
+  for (const [source, text, rule] of rules)
+    expect(text, `${source}: ${rule}`).toMatch(phrase(rule));
+});
+
 test("method skills impose no task-start preamble and do not wait for policy selection", () => {
   for (const name of WORKIT_METHOD_SKILLS) {
     const skill = skillText(name);
@@ -255,6 +281,9 @@ test("method skills impose no task-start preamble and do not wait for policy sel
 });
 
 test("method manifest matches the canonical skill directories", () => {
+  // Pinned on purpose: a skill-set change (adding or dropping a skill from
+  // both the manifest and the directory) must update this count.
+  expect(WORKIT_METHOD_SKILLS).toHaveLength(14);
   expect(
     skillManifestNames(path.join(import.meta.dir, "../../packages/workit-core/skills")),
   ).toEqual([...WORKIT_METHOD_SKILLS].sort());
