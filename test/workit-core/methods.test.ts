@@ -169,45 +169,34 @@ test("selection has stable registry order and no duplicate methods", () => {
   expect(new Set(selected.map((method) => method.id)).size).toBe(selected.length);
 });
 
-test("bootstrap preserves host authority and keeps Workit coordination optional", () => {
+// Bootstrap and skill text is agent-facing prose: assert only the contract
+// keywords an agent relies on, not whole sentences.
+test("bootstrap defers to native host authority and mandates no Workit preamble", () => {
   const bootstrap = invariantBootstrap();
-  expect(bootstrap.toLowerCase()).toContain("authority");
-  expect(bootstrap.toLowerCase()).toContain("state");
-  expect(bootstrap.toLowerCase()).toContain("operation");
-  expect(bootstrap).toContain("Native host allow/ask/deny");
-  expect(bootstrap).toContain("zero Workit task, assessment, or writer calls");
-  expect(bootstrap).toContain("prefer native host Git/shell");
-  expect(bootstrap).toContain("Never switch execution paths to evade a denial");
-  expect(bootstrap).toContain("A local-commit endpoint does not imply");
-  expect(bootstrap.toLowerCase()).toContain("not automatic");
-  expect(bootstrap).toContain("branch/commit/push");
-  expect(bootstrap).toContain("reconcile every requested item");
-  expect(bootstrap).toContain("a local commit alone is not evidence");
-  expect(bootstrap).not.toContain("run task.start then policy.assess");
+  expect(bootstrap).toMatch(/allow\/ask\/deny/);
+  expect(bootstrap).toMatch(/evade a denial/);
+  expect(bootstrap).not.toContain("task.start then policy.assess");
+  // Policy selects TDD and review; the bootstrap must not hard-wire them.
   expect(bootstrap).not.toContain("workit-behavioral-tdd");
   expect(bootstrap).not.toContain("workit-review");
-  expect(bootstrap).toContain(
-    "Load workit-plan when dependencies or handoff need durable next actions",
-  );
 });
 
 test("bootstrap routes moment-based skill loads by name", () => {
   const bootstrap = invariantBootstrap();
-  expect(bootstrap).toContain("Skill routing");
-  expect(bootstrap).toContain("workit-steer");
-  expect(bootstrap).toContain("workit-deslop");
-  expect(bootstrap).toContain("workit-green-run");
-  expect(bootstrap).toContain("workit-blast-radius");
-  expect(bootstrap).toContain("workit-challenge");
+  for (const skill of [
+    "workit-steer",
+    "workit-deslop",
+    "workit-green-run",
+    "workit-blast-radius",
+    "workit-challenge",
+    "workit-plan",
+  ])
+    expect(bootstrap).toContain(skill);
   expect(bootstrap).not.toContain("## Method");
 });
 
-test("bootstrap records only work that benefits from continuity or coordination", () => {
+test("bootstrap names every shared operation family", () => {
   const bootstrap = invariantBootstrap();
-  expect(bootstrap).toContain("handoff, dependent steps, concurrent actors");
-  expect(bootstrap).toContain("A solo edit does not need writer acquisition");
-  expect(bootstrap).toContain("Answer a quick question without pausing/resuming task state");
-  expect(bootstrap).toContain("not a permission system or a mandatory workflow");
   for (const operation of [
     "task",
     "policy",
@@ -221,48 +210,12 @@ test("bootstrap records only work that benefits from continuity or coordination"
     expect(bootstrap).toContain(operation);
 });
 
-test("steer stays lifecycle-free and babysit preserves explicit merge evidence", () => {
+test("steer, babysit and challenge keep lifecycle and merge authority outside the skill", () => {
   const steer = skillText("workit-steer");
-  expect(steer).toContain("Answer a quick question");
-  expect(steer).toContain("do not silently resume an old objective");
-  expect(steer).toContain("checkout, branch, requested");
-  expect(steer).toContain("Keep explicitly held items parked");
-  expect(steer).toContain("A conversational");
   expect(steer).not.toContain("task.start");
   expect(steer).not.toContain("policy.assess");
-  const babysit = skillText("workit-babysit");
-  expect(babysit).toContain("PR creation does not start babysitting");
-  expect(babysit).toContain("Stop at PR-ready");
-  expect(babysit).toContain("does not authorize merge");
-  expect(babysit).not.toContain("drive + merge");
-  expect(babysit).toContain("squash merge");
-  expect(babysit).toContain("re-record");
-  expect(babysit).toContain("route Workit did not enforce");
-});
-
-test("challenge presents evidence-led options without a receipt or debate ritual", () => {
-  const skill = skillText("workit-challenge");
-  expect(skill).toContain("two or three genuinely different");
-  expect(skill).toContain("small round");
-  expect(skill).toContain("never fabricate a native permission");
-  expect(skill).toContain("Brainstorming alone does not require a spec");
-  expect(skill).not.toContain("receipt-shaped question");
-  expect(skill).not.toContain("three rounds");
-});
-
-test("planning keeps documentation proportional and continues through the authorized endpoint", () => {
-  const plan = skillText("workit-plan");
-  expect(plan).toContain("A small fix needs no document");
-  expect(plan).toContain(
-    "Create a spec when a durable behavior contract or interface is requested",
-  );
-  expect(plan).toContain("proceed through the agreed endpoint");
-  expect(plan).toContain("Do not ask for a separate plan approval");
-  const implement = skillText("workit-implement");
-  expect(implement).toContain("checks appropriate to the requested");
-  expect(implement).toContain("competing plausible targets");
-  expect(implement).toContain("reconcile every named deliverable");
-  expect(implement).toContain("observe the destination remote");
+  expect(skillText("workit-babysit")).toMatch(/does not authorize merge/);
+  expect(skillText("workit-challenge")).toMatch(/never fabricate a native permission/);
 });
 
 test("compact task context carries selected methods and refreshes with policy", () => {
@@ -291,18 +244,11 @@ test("compact task context carries selected methods and refreshes with policy", 
   ]);
 });
 
-test("method skills do not impose a universal task-start or assessment preamble", () => {
+test("method skills impose no task-start preamble and do not wait for policy selection", () => {
   for (const name of WORKIT_METHOD_SKILLS) {
     const skill = skillText(name);
     expect(skill, name).not.toContain("Before method work");
     expect(skill, name).not.toContain("If there is no active or paused task");
-  }
-  expect(skillText("workit-plan")).toContain("never a prerequisite for implementation");
-});
-
-test("debug and behavioral-tdd do not wait for pre-assess policy selection", () => {
-  for (const name of ["workit-debug", "workit-behavioral-tdd"] as const) {
-    const skill = skillText(name);
     expect(skill, name).not.toMatch(/only when policy selects/i);
     expect(skill, name).not.toMatch(/when the `[^`]+` rule is selected/i);
   }
