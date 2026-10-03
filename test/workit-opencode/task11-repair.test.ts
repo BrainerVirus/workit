@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { TaskStore, WorkitCore, success } from "@/packages/workit-core/src/core";
 import { runDoctor } from "@/packages/workit-core/src/core/doctor";
+import { binDirWithRuntimes } from "@/test/shared/helpers/doctor-fixture";
 import { scope, taskStartRequest } from "@/test/workit-core/task-fixtures";
 import { server as plugin } from "@/packages/workit-opencode/src/index";
 import { NativeReceiptStore } from "@/packages/workit-opencode/src/tools/workit";
@@ -1598,11 +1599,15 @@ test("doctor checks the OpenCode SDK pin in devDependencies", () => {
         devDependencies: { "@opencode-ai/plugin": "1.0.0" },
       }),
     );
+    // Offline and hermetic: only node and bun on PATH, so the doctor's
+    // registry (npm view) and provider identity (gh/glab) probes cannot reach
+    // the network and stall the test on a slow runner.
     const report = runDoctor({
       host: "opencode",
       dev: root,
       home: root,
       configDir: join(root, "config"),
+      env: { ...process.env, HOME: root, PATH: binDirWithRuntimes(root) },
     });
     const versions = report.checks.find((check) => check.id === "versions");
     expect(versions?.status).toBe("fail");

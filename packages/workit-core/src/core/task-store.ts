@@ -46,6 +46,23 @@ import {
 } from "./store-lock";
 
 export type { MetadataLock } from "./store-lock";
+/** Recovery copies kept per record (task or workspace); older copies are pruned. */
+export const RECOVERY_COPIES_PER_RECORD = 3;
+/** A temp file older than this was left by a crashed writer. */
+const STALE_TEMPORARY_MS = 60 * 60_000;
+const RECOVERY_NAME = /^(task|workspace)\.([^.]+)\.([0-9a-f]{64})\.json$/;
+export type GarbageReport = {
+  dryRun: boolean;
+  recovery: { removed: number; removedBytes: number; kept: number };
+  temporary: { removed: number };
+  candidates: {
+    removed: number;
+    tasks: Id[];
+    skippedActive: Id[];
+    skippedClosed: Id[];
+    failed: Id[];
+  };
+};
 export type TaskStoreOptions = {
   /** Total time a mutation retries a lock held by a live writer before `busy`
    * (default: `defaultLockTimeout()`, short for in-process hosts). */
@@ -258,15 +275,18 @@ const TRANSIENT_WINDOWS_CODES = new Set(["EPERM", "EACCES", "EBUSY"]);
 /** Windows briefly refuses to replace or open a file that another process is
  * reading or renaming at that instant. That is contention, not damage: retry
  * for about a second before surfacing the error. */
+const isTransientWindowsError = (error: unknown): boolean => {
+  if (process.platform !== "win32") return false;
+  const code = (error as { code?: unknown } | null)?.code;
+  return typeof code === "string" && TRANSIENT_WINDOWS_CODES.has(code);
+};
 const retryTransient = <T>(run: () => T): T => {
   if (process.platform !== "win32") return run();
   for (let attempt = 0; ; attempt += 1) {
     try {
       return run();
     } catch (error) {
-      const code = (error as { code?: unknown } | null)?.code;
-      if (attempt >= 20 || typeof code !== "string" || !TRANSIENT_WINDOWS_CODES.has(code))
-        throw error;
+      if (attempt >= 20 || !isTransientWindowsError(error)) throw error;
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5 * (attempt + 1));
     }
   }
@@ -279,6 +299,12 @@ const dropRoot = (root: string) => {
   const count = (heldInProcess.get(root) ?? 1) - 1;
   if (count > 0) heldInProcess.set(root, count);
   else heldInProcess.delete(root);
+};
+
+/** Drop earlier copies of a repeated candidate ID; content is identical by ID. */
+const dedupeCandidates = (candidates: TaskRecord["candidates"]): TaskRecord["candidates"] => {
+  const last = new Map(candidates.map((candidate, index) => [candidate.id, index]));
+  return candidates.filter((candidate, index) => last.get(candidate.id) === index);
 };
 
 export class TaskStore {
@@ -805,7 +831,7 @@ export class TaskStore {
     try {
       const candidates: RecoveryCandidate[] = [];
       for (const name of fs.readdirSync(this.recoveryDir)) {
-        const match = /^(task|workspace)\.([^.]+)\.([0-9a-f]{64})\.json$/.exec(name);
+        const match = RECOVERY_NAME.exec(name);
         if (match)
           candidates.push({
             target: match[1] as "task" | "workspace",
@@ -1056,9 +1082,23 @@ export class TaskStore {
           timeoutMs: Math.max(0, deadline - Date.now()),
         });
       } catch (error) {
-        // Losing a reclaim race to another process is contention, not damage.
+        // Losing a reclaim race to another process, or Windows refusing the
+        // lock file while another process opens or deletes it, is contention.
         const code = (error as { code?: unknown })?.code;
-        if (code !== "file_lock_stale" || Date.now() >= deadline) throw error;
+        if (
+          (code !== "file_lock_stale" && !isTransientWindowsError(error)) ||
+          Date.now() >= deadline
+        )
+          throw error;
+        // Windows also denies the create while a just-released lock is still
+        // pending delete, and that entry is already invisible to lstat. So a
+        // denial with no visible holder is told apart by probing whether the
+        // directory accepts a new file: if it does not, this is a permission
+        // problem (read-only attribute, ACL) and fails fast.
+        if (code !== "file_lock_stale" && !this.lockHolderPresent() && !this.lockDirWritable())
+          throw error;
+        if (code !== "file_lock_stale")
+          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
       }
     }
   }
@@ -1131,7 +1171,7 @@ export class TaskStore {
     }
     dropRoot(this.root);
     try {
-      handle.release();
+      retryTransient(() => handle.release());
     } catch (error) {
       const released = this.lockFailure(error);
       const releaseError = released.ok ? "metadata lock release failed" : released.error;
@@ -1228,7 +1268,7 @@ export class TaskStore {
     if (handle) {
       dropRoot(this.root);
       try {
-        handle.release();
+        retryTransient(() => handle.release());
       } catch (error) {
         const releaseFailure = this.lockFailure(error);
         const releaseError = releaseFailure.ok
@@ -1242,13 +1282,52 @@ export class TaskStore {
     return result;
   }
 
+  /** Whether the lock's directory accepts a new file right now. */
+  private lockDirWritable(): boolean {
+    const probe = `${this.lockPath}.${process.pid}.${randomUUID()}.probe`;
+    try {
+      fs.closeSync(fs.openSync(probe, "wx", 0o600));
+    } catch {
+      return false;
+    }
+    try {
+      fs.rmSync(probe, { force: true });
+    } catch {}
+    return true;
+  }
+
+  /** A lock file (or an entry Windows is still tearing down) exists. */
+  private lockHolderPresent(): boolean {
+    try {
+      fs.lstatSync(this.lockPath);
+      return true;
+    } catch (error) {
+      return (error as { code?: unknown } | null)?.code !== "ENOENT";
+    }
+  }
+
   private lockFailure(
     error: unknown,
     contention: "busy" | "recovery_required" = "busy",
   ): Result<never> {
     const value = error as { code?: unknown; message?: unknown };
     const code = typeof value?.code === "string" ? value.code : "";
-    if (code === "EEXIST" || code === "file_lock_timeout" || code === "file_lock_stale") {
+    // A sharing-class denial is contention only when someone holds the lock.
+    if (isTransientWindowsError(error) && !this.lockHolderPresent() && !this.lockDirWritable())
+      return failure(
+        "storage_error",
+        `cannot create the workspace metadata lock (${code}); no other Workit call holds it`,
+        {
+          path: this.lockPath,
+          guidance: `Check permissions and the read-only attribute on ${path.dirname(this.lockPath)}.`,
+        },
+      );
+    if (
+      code === "EEXIST" ||
+      code === "file_lock_timeout" ||
+      code === "file_lock_stale" ||
+      isTransientWindowsError(error)
+    ) {
       let lock: MetadataLock | null = null;
       try {
         lock = parseMetadataLockOrNull(fs.readFileSync(this.lockPath, "utf8"));
@@ -1285,9 +1364,16 @@ export class TaskStore {
   }
 
   private initializeMutationStorage() {
-    fs.mkdirSync(this.tasksDir, { recursive: true });
-    fs.mkdirSync(this.recoveryDir, { recursive: true });
-    fs.writeFileSync(this.gitignorePath, "*\n");
+    retryTransient(() => fs.mkdirSync(this.tasksDir, { recursive: true }));
+    retryTransient(() => fs.mkdirSync(this.recoveryDir, { recursive: true }));
+    // Rewriting an unchanged .gitignore on every call makes concurrent
+    // writers collide on it (Windows sharing violations); write it only when
+    // it is missing or different.
+    let current: string | null = null;
+    try {
+      current = retryTransient(() => fs.readFileSync(this.gitignorePath, "utf8"));
+    } catch {}
+    if (current !== "*\n") retryTransient(() => fs.writeFileSync(this.gitignorePath, "*\n"));
   }
 
   private replaceSnapshot(file: string, value: unknown, previous: unknown): Result<any> {
@@ -1389,8 +1475,13 @@ export class TaskStore {
     const id = target === "task" ? path.basename(file, ".json") : "workspace";
     const destination = path.join(this.recoveryDir, `${target}.${id}.${digestBytes(bytes)}.json`);
     if (fs.existsSync(destination)) {
-      if (digestBytes(fs.readFileSync(destination)) === digestBytes(bytes)) return;
-      throw new Error("recovery copy already exists with different bytes");
+      if (digestBytes(retryTransient(() => fs.readFileSync(destination))) !== digestBytes(bytes))
+        throw new Error("recovery copy already exists with different bytes");
+      // Re-saved bytes are the newest copy again for pruning purposes.
+      const stamp = new Date();
+      retryTransient(() => fs.utimesSync(destination, stamp, stamp));
+      this.pruneRecovery(`${target}.${id}.`, destination);
+      return;
     }
     let temporary: string | undefined;
     try {
@@ -1405,12 +1496,151 @@ export class TaskStore {
       retryTransient(() => fs.renameSync(temporary!, destination));
       temporary = undefined;
       this.fsyncDirectory(this.recoveryDir);
+      this.pruneRecovery(`${target}.${id}.`, destination);
     } finally {
       if (temporary)
         try {
           fs.unlinkSync(temporary);
         } catch {}
     }
+  }
+
+  /**
+   * Keep the newest RECOVERY_COPIES_PER_RECORD copies of one record (always
+   * including `keep`, the copy just written). Pruning is best-effort: a
+   * failure never fails the mutation that triggered it.
+   */
+  private pruneRecovery(prefix: string, keep: string) {
+    try {
+      const copies = this.recoveryCopies(prefix);
+      const surplus = this.surplusCopies(copies, path.basename(keep));
+      for (const copy of surplus) fs.rmSync(copy.path, { force: true });
+    } catch {}
+  }
+
+  private recoveryCopies(
+    prefix = "",
+  ): { name: string; path: string; group: string; mtimeNs: bigint }[] {
+    if (!fs.existsSync(this.recoveryDir)) return [];
+    const copies = [];
+    for (const name of fs.readdirSync(this.recoveryDir)) {
+      if (!name.startsWith(prefix)) continue;
+      const match = RECOVERY_NAME.exec(name);
+      if (!match) continue;
+      const file = path.join(this.recoveryDir, name);
+      try {
+        const stat = fs.lstatSync(file, { bigint: true });
+        if (!stat.isFile()) continue;
+        copies.push({ name, path: file, group: `${match[1]}.${match[2]}`, mtimeNs: stat.mtimeNs });
+      } catch {}
+    }
+    return copies;
+  }
+
+  /** Copies of one record beyond the cap, oldest first out; `keep` is never surplus. */
+  private surplusCopies<T extends { name: string; mtimeNs: bigint }>(copies: T[], keep?: string) {
+    const ordered = copies.toSorted((left, right) =>
+      left.name === keep
+        ? -1
+        : right.name === keep
+          ? 1
+          : left.mtimeNs === right.mtimeNs
+            ? left.name.localeCompare(right.name)
+            : left.mtimeNs > right.mtimeNs
+              ? -1
+              : 1,
+    );
+    return ordered.slice(RECOVERY_COPIES_PER_RECORD);
+  }
+
+  /**
+   * `workit gc`: prune recovery copies beyond the per-record cap, remove temp
+   * files left by crashed writers, and collapse duplicate stored candidates in
+   * paused tasks. Live records (tasks/*.json, workspace.json) are never
+   * deleted; candidate dedupe keeps every candidate ID and the latest position.
+   * Closed tasks are history and are never rewritten. A dry run is read-only:
+   * no lock, no directory creation, no .gitignore rewrite.
+   */
+  collectGarbage(options: { dryRun?: boolean } = {}): Result<GarbageReport> {
+    const dryRun = options.dryRun === true;
+    const report: GarbageReport = {
+      dryRun,
+      recovery: { removed: 0, removedBytes: 0, kept: 0 },
+      temporary: { removed: 0 },
+      candidates: { removed: 0, tasks: [], skippedActive: [], skippedClosed: [], failed: [] },
+    };
+    if (!fs.existsSync(this.workitDir)) return success(null, null, report);
+    const sweep = (): Result<null> => {
+      try {
+        const groups = new Map<string, ReturnType<TaskStore["recoveryCopies"]>>();
+        for (const copy of this.recoveryCopies())
+          groups.set(copy.group, [...(groups.get(copy.group) ?? []), copy]);
+        for (const copies of groups.values()) {
+          const surplus = this.surplusCopies(copies);
+          report.recovery.kept += copies.length - surplus.length;
+          for (const copy of surplus) {
+            report.recovery.removed += 1;
+            try {
+              report.recovery.removedBytes += fs.statSync(copy.path).size;
+            } catch {}
+            if (!dryRun) fs.rmSync(copy.path, { force: true });
+          }
+        }
+        const nowMs = Date.now();
+        for (const directory of [this.recoveryDir, this.tasksDir, this.workitDir]) {
+          if (!fs.existsSync(directory)) continue;
+          for (const name of fs.readdirSync(directory)) {
+            if (!name.endsWith(".tmp") && !name.endsWith(".probe")) continue;
+            const file = path.join(directory, name);
+            const stat = fs.lstatSync(file);
+            if (!stat.isFile() || nowMs - stat.mtimeMs <= STALE_TEMPORARY_MS) continue;
+            report.temporary.removed += 1;
+            if (!dryRun) fs.rmSync(file, { force: true });
+          }
+        }
+        return success(null, null, null);
+      } catch (error) {
+        return failure("storage_error", `garbage collection failed: ${String(error)}`, {
+          path: this.recoveryDir,
+        });
+      }
+    };
+    // withLock initializes storage (mkdir, .gitignore); a dry run must not.
+    const pruned = dryRun ? sweep() : this.withLock<null>(sweep);
+    if (!pruned.ok) return pruned;
+    const tasks = this.listTasks();
+    if (!tasks.ok) return tasks;
+    for (const task of tasks.data) {
+      const deduped = dedupeCandidates(task.candidates);
+      const removed = task.candidates.length - deduped.length;
+      if (removed === 0) continue;
+      // An active task belongs to a live session; rewriting it would bump the
+      // revision under that session's feet.
+      if (task.status === "active") {
+        report.candidates.skippedActive.push(task.id);
+        continue;
+      }
+      // Closed records are immutable history (docs/workit-v1/contracts.md).
+      if (task.status === "closed") {
+        report.candidates.skippedClosed.push(task.id);
+        continue;
+      }
+      if (!dryRun) {
+        const written = this.mutateTask(task.id, task.revision, (current) =>
+          success(current.revision, null, {
+            ...current,
+            candidates: dedupeCandidates(current.candidates),
+          }),
+        );
+        if (!written.ok) {
+          report.candidates.failed.push(task.id);
+          continue;
+        }
+      }
+      report.candidates.removed += removed;
+      report.candidates.tasks.push(task.id);
+    }
+    return success(null, null, report);
   }
 
   private findRecovery(
@@ -1479,7 +1709,7 @@ export class TaskStore {
 
   private snapshotBytes(file: string): Buffer | null {
     try {
-      return fs.readFileSync(file);
+      return retryTransient(() => fs.readFileSync(file));
     } catch {
       return null;
     }
