@@ -1734,7 +1734,7 @@ test(
   "AR-14: negative fixtures never leak raw git usage/fatal dumps into the suite output",
   () => {
     // Suites whose fixtures run git against missing revisions and non-repos.
-    const noisy = ["test/workit-core/repo.test.ts", "test/workit-core/typescript-parity.test.ts"];
+    const noisy = ["test/workit-core/repo.test.ts", "test/workit-core/repo-context.test.ts"];
     for (const file of noisy) expect(existsSync(path.join(repoRoot, file)), file).toBe(true);
     const r = spawnSync("bun", ["test", ...noisy.map((file) => `./${file}`)], {
       cwd: repoRoot,
