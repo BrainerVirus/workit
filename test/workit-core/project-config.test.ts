@@ -29,6 +29,6 @@ test("CI enforces lint and format checks", () => {
     "utf8",
   );
 
-  expect(workflow).toContain("run: bun run lint");
-  expect(workflow).toContain("run: bun run format:check");
+  expect(workflow).toContain('"bun run lint"');
+  expect(workflow).toContain('"bun run format:check"');
 });

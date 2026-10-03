@@ -30,6 +30,7 @@
   "scripts": {
     "build": "bun packages/workit-mcp/scripts/build.ts && bun packages/workit-opencode/scripts/build.ts && bun packages/workit-cursor/scripts/build.ts && bun packages/workit-codex/scripts/build.ts && bun packages/workit-pi/scripts/build.ts && bun packages/workit-cli/scripts/build.ts",
     "verify:release-candidate": "bun scripts/verify-release-candidate.ts",
+    "release": "semantic-release",
     "test:acceptance": "bun test test/acceptance/deterministic.test.ts",
     "validate:cursor-marketplace": "bun packages/workit-core/scripts/validate-cursor-marketplace.ts",
     "lint": "oxlint",

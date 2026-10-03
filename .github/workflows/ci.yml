@@ -6,12 +6,14 @@ on:
   pull_request:
     branches: [main]
 
-permissions:
-  contents: read
+permissions: {}
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # PRs: the newest push cancels the previous run. main: one group per commit,
+  # never cancelled, so every merge gets its own CI-gated release attempt
+  # (semantic-release skips a run whose commit is no longer the branch head).
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # Declared support matrix (RR-10/PT-11): single source of truth for the pinned
 # toolchain and host versions. test/artifacts/manifests.test.ts and
@@ -23,281 +25,171 @@ env:
   NODE_CURRENT: "24.20.0"
   OPENCODE_MINIMUM: "1.18.30"
   OPENCODE_CURRENT: "1.18.34"
+  ACTIONLINT_VERSION: "1.7.12"
+  ACTIONLINT_SHA256: "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8"
+  ZIZMOR_VERSION: "1.30.1"
 
+# Branch protection requires these check names: "fast checks",
+# "test (ubuntu-latest)", "test (macos-latest)", "test (windows-latest)".
 jobs:
-  # One check job per package (mirrors test/<package>/), so the checks matrix
-  # shows per-category results. workit-core gets the full 3-OS matrix because
-  # it owns the bash script/portability tests (workspaces-scripts, install-scripts,
-  # hygiene-verify, repo, youtrack); the thin packages run on ubuntu only.
-  core:
-    name: check (workit-core)
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+  # Static gates that need no build: one install, all checks in parallel.
+  fast:
+    name: fast checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Install deps
+        run: bun install --frozen-lockfile
+
+      - name: Install actionlint and zizmor
+        run: |
+          set -euo pipefail
+          bin="$RUNNER_TEMP/bin"
+          mkdir -p "$bin"
+          archive="$RUNNER_TEMP/actionlint.tar.gz"
+          curl -fsSL -o "$archive" \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          echo "${ACTIONLINT_SHA256}  ${archive}" | sha256sum -c -
+          tar -xzf "$archive" -C "$bin" actionlint
+          pipx install --quiet "zizmor==${ZIZMOR_VERSION}"
+          echo "$bin" >> "$GITHUB_PATH"
+
+      # Each gate runs concurrently; logs are printed per gate afterwards so
+      # failures stay readable.
+      - name: Lint, format, knip, typecheck, react-doctor, actionlint, zizmor
+        run: |
+          set -uo pipefail
+          names=(lint format knip typecheck react-doctor actionlint zizmor)
+          cmds=(
+            "bun run lint"
+            "bun run format:check"
+            "bun run knip"
+            "bun run typecheck"
+            "bun run doctor"
+            "actionlint"
+            "zizmor --offline --no-progress .github/workflows"
+          )
+          out="$RUNNER_TEMP/gates"
+          mkdir -p "$out"
+          for i in "${!names[@]}"; do
+            (
+              start=$(date +%s%N)
+              bash -c "${cmds[$i]}" >"$out/${names[$i]}.log" 2>&1
+              rc=$?
+              echo "$rc $(( ($(date +%s%N) - start) / 1000000 ))" >"$out/${names[$i]}.status"
+            ) &
+          done
+          wait
+          failed=0
+          for name in "${names[@]}"; do
+            read -r rc ms <"$out/$name.status"
+            echo "::group::$name (exit $rc, ${ms} ms)"
+            cat "$out/$name.log"
+            echo "::endgroup::"
+            if [[ "$rc" != 0 ]]; then
+              echo "::error::$name failed"
+              failed=1
+            fi
+          done
+          exit "$failed"
+
+  # Every test directory on Linux, so a new suite cannot silently escape CI.
+  test:
+    name: test (ubuntu-latest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
     steps:
       # Shell/context tests resolve real revision ranges (HEAD~1, ranges), so
       # the checkout needs full history rather than the default shallow clone.
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
 
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: ${{ env.BUN_VERSION }}
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: ${{ env.NODE_CURRENT }}
 
       - name: Install deps
         run: bun install --frozen-lockfile
 
-      # The dev-checkout install tests (cursor-install-mcp, setup flows) install
-      # the adapters from this checkout; dist/ and the vendored skills are build
-      # products (gitignored), so the checkout must be built before testing.
+      # The dev-checkout install tests install the adapters from this
+      # checkout; dist/ and the vendored skills are build products
+      # (gitignored), so the checkout must be built before testing.
       - name: Build packages
         run: bun run build
 
-      - name: Test workit-core
-        run: bun test --timeout ${{ runner.os == 'Windows' && '15000' || '5000' }} test/workit-core
-
-      - name: Typecheck (whole repo)
-        run: bun run typecheck
-
-  opencode:
-    name: check (workit-opencode)
-    runs-on: ubuntu-latest
-    steps:
-      # The changelog context test reads real commit ranges from the checkout.
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: ${{ env.BUN_VERSION }}
-
-      - uses: actions/setup-node@v7
-        with:
-          node-version: ${{ env.NODE_CURRENT }}
-
-      - name: Install deps
-        run: bun install --frozen-lockfile
-
-      - name: Test workit-opencode
-        run: bun test test/workit-opencode
-
-      - name: Typecheck (whole repo)
-        run: bun run typecheck
-
-  cursor:
-    name: check (workit-cursor)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: ${{ env.BUN_VERSION }}
-
-      - uses: actions/setup-node@v7
-        with:
-          node-version: ${{ env.NODE_CURRENT }}
-
-      - name: Install deps
-        run: bun install --frozen-lockfile
-
-      - name: Test workit-cursor
-        run: bun test test/workit-cursor
-
-      - name: Typecheck (whole repo)
-        run: bun run typecheck
+      - name: Test (every test directory)
+        run: bun test
 
       # CA-21: the tracked Marketplace artifact validates against the official
-      # Cursor JSON schemas from a clean checkout (no build/dist reliance).
+      # Cursor JSON schemas from a clean checkout.
       - name: Validate Cursor Marketplace artifact
         run: bun run validate:cursor-marketplace
 
-  cli:
-    name: check (workit-cli)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: ${{ env.BUN_VERSION }}
-
-      - uses: actions/setup-node@v7
-        with:
-          node-version: ${{ env.NODE_CURRENT }}
-
-      - name: Install deps
-        run: bun install --frozen-lockfile
-
-      # Dev-checkout install tests (packed-cli, platform-install) install the
-      # adapters from this checkout; dist/ and the vendored skills are build
-      # products (gitignored), so the checkout must be built before testing.
-      - name: Build packages
-        run: bun run build
-
-      - name: Test workit-cli
-        run: bun test test/workit-cli
-
-      - name: Typecheck (whole repo)
-        run: bun run typecheck
-
-  pi:
-    name: check (workit-pi)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: ${{ env.BUN_VERSION }}
-
-      - uses: actions/setup-node@v7
-        with:
-          node-version: ${{ env.NODE_CURRENT }}
-
-      - name: Install deps
-        run: bun install --frozen-lockfile
-
-      - name: Build packages
-        run: bun run build
-
-      - name: Test workit-pi
-        run: bun test test/workit-pi
-
-      - name: Typecheck (whole repo)
-        run: bun run typecheck
-
-  shared:
-    # test/shared/helpers has no standalone tests (helpers are exercised via the
-    # importing packages' jobs); the job guards that the helpers still compile.
-    name: check (shared)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: ${{ env.BUN_VERSION }}
-
-      - name: Install deps
-        run: bun install --frozen-lockfile
-
-      - name: Lint
-        run: bun run lint
-
-      - name: Format check
-        run: bun run format:check
-
-      - name: Typecheck (whole repo)
-        run: bun run typecheck
-
-  # Phase 2 artifact matrix (CA-26): the packed-artifact, registration, and
-  # manifest gates run on every declared OS × Node version combination. Node is
-  # provided explicitly so the packed adapters are exercised on both the
-  # declared minimum and current Node lines.
-  artifacts:
-    name: check (artifacts) ${{ matrix.os }} / node-${{ matrix.node }}
+  # workit-core owns the bash script/portability tests and the packed-artifact
+  # gates (CA-26); both also run on macOS and Windows with the declared Node.
+  portability:
+    name: test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
     strategy:
+      fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [macos-latest, windows-latest]
         node: [24.20.0]
     steps:
-      # The phase-9 traceability gate asserts the DECLARED branch is active;
-      # the default PR checkout is detached at the merge commit, so check out
-      # the head ref (fallback: the default ref, e.g. main pushes).
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.head_ref }}
           fetch-depth: 0
+          persist-credentials: false
 
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: ${{ env.BUN_VERSION }}
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: ${{ matrix.node }}
 
       - name: Install deps
         run: bun install --frozen-lockfile
 
-      - name: Packed artifact, registration, and manifest gates
-        run: bun test test/artifacts
+      - name: Build packages
+        run: bun run build
 
-  candidate:
-    # Phase 0 release-candidate gate (RR-11 / CA-30): pack every workspace
-    # package WITHOUT publishing and verify the corrective candidate installs
-    # and starts in isolation. bun pm pack only writes a local tarball — no
-    # registry, no tags, no marketplace operations.
-    name: release candidate (pack + isolated install)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
+      - name: Test workit-core and artifacts
+        run: bun test --timeout ${{ runner.os == 'Windows' && '15000' || '5000' }} test/workit-core test/artifacts
 
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: ${{ env.BUN_VERSION }}
-
-      - uses: actions/setup-node@v7
-        with:
-          node-version: ${{ env.NODE_CURRENT }}
-
-      - name: Install deps
-        run: bun install --frozen-lockfile
-
-      - name: Pack and gate the corrective candidate
-        run: bun test test/artifacts/phase-0-candidate.test.ts
-
-      # CA-21: official-schema + clean-checkout Marketplace gate runs after the
-      # pack gate so the candidate and the artifact gate are checked together.
-      - name: Validate Cursor Marketplace artifact
-        run: bun run validate:cursor-marketplace
-
-  react-doctor:
-    # React hygiene on the only React surface (the Ink CLI wizard):
-    # error-class diagnostics block, warnings stay advisory.
-    name: react-doctor (Ink wizard)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: ${{ env.BUN_VERSION }}
-
-      - name: React Doctor at latest, errors block
-        run: bun run doctor
-
-  knip:
-    # Dead code and unused dependencies: pinned knip runs on the installed
-    # tree (no extra install), ubuntu-only — static analysis needs no matrix.
-    name: knip (dead code)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: ${{ env.BUN_VERSION }}
-
-      - name: Install deps
-        run: bun install --frozen-lockfile
-
-      - name: Knip gate (exit nonzero on new findings)
-        run: bun run knip
+  # Release only after every gate passed for this exact commit on main.
+  release:
+    needs: [fast, test, portability]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: write # GitHub Release
+      issues: write # semantic-release success comments
+      pull-requests: write # semantic-release success comments, manifest sync PR
+      id-token: write # npm provenance
+    # `$/` self-repository syntax is not understood by actionlint 1.7.12 yet.
+    uses: ./.github/workflows/release.yml # zizmor: ignore[self-repository]
+    secrets:
+      NPMJS: ${{ secrets.NPMJS }}
+      RELEASE_SYNC_TOKEN: ${{ secrets.RELEASE_SYNC_TOKEN }}
