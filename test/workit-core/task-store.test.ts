@@ -231,7 +231,7 @@ test("corrupt current bytes are reported without replacement", () => {
   expect(readFileSync(file, "utf8")).toBe("{broken");
 });
 
-test("unsupported snapshots and leftover locks stay inspectable", () => {
+test("unsupported snapshots stay inspectable and a leftover stale lock no longer blocks writes", () => {
   const { store, task } = startedStore();
   const workit = join(store.root, ".workit");
   const workspaceFile = join(workit, "workspace.json");
@@ -249,11 +249,11 @@ test("unsupported snapshots and leftover locks stay inspectable", () => {
   });
   writeFileSync(lockPath, lockBytes);
   utimesSync(lockPath, new Date(0), new Date(0));
-  expect(store.mutateTask(task.id, task.revision, identity)).toMatchObject({
-    ok: false,
-    code: "recovery_required",
-  });
+  expect(store.readTask(task.id)).toMatchObject({ ok: true });
   expect(readFileSync(lockPath, "utf8")).toBe(lockBytes);
+  // A foreign-host lock past its TTL has no provable owner: the write reclaims it.
+  expect(store.mutateTask(task.id, task.revision, identity)).toMatchObject({ ok: true });
+  expect(existsSync(lockPath)).toBe(false);
 });
 
 test("recovery restores validated bytes with a fresh revision", () => {
