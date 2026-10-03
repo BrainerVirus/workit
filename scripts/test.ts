@@ -6,7 +6,6 @@
 // sandbox), so neither tier needs `bun run build` first. Plain `bun test`
 // still runs everything. Extra arguments pass through to `bun test`.
 import { spawnSync } from "node:child_process";
-import path from "node:path";
 
 const PACKAGING = [
   "test/artifacts/**",
@@ -32,15 +31,5 @@ const selection =
   tier === "packaging"
     ? PACKAGING.map((pattern) => `./${pattern.replace(/\/\*\*$/, "")}`)
     : PACKAGING.map((pattern) => `--path-ignore-patterns=${pattern}`);
-// `bun run` prepends node_modules/.bin to PATH, which exposes the repo's own
-// npm dependency as `npm` to host-install code under test. Give the suite the
-// same PATH a direct `bun test` sees.
-const PATH = (process.env.PATH ?? "")
-  .split(path.delimiter)
-  .filter((dir) => !/[\\/]node_modules[\\/]\.bin[\\/]?$/.test(dir))
-  .join(path.delimiter);
-const run = spawnSync("bun", ["test", ...selection, ...rest], {
-  stdio: "inherit",
-  env: { ...process.env, PATH },
-});
+const run = spawnSync("bun", ["test", ...selection, ...rest], { stdio: "inherit" });
 process.exit(run.status ?? 1);
