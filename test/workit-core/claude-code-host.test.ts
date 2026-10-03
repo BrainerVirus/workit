@@ -203,6 +203,8 @@ test("setup apply reports Claude Code installed only when the plugin registry sh
   }
 });
 
+// Each call runs the whole doctor (runtime, identity and lock probes too),
+// which takes seconds on a CI runner.
 test("doctor warns on a stale or skewed Claude Code plugin install with the native update command", () => {
   const home = temp("workit-claude-doctor-");
   try {
@@ -227,4 +229,4 @@ test("doctor warns on a stale or skewed Claude Code plugin install with the nati
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
-});
+}, 30_000);
