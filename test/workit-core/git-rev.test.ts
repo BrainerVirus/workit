@@ -24,10 +24,7 @@ import {
 
 const dirs: string[] = [];
 afterEach(() => {
-  // Windows: after a timed-out network call, git's ssh child may hold the
-  // repo dir open until its own ConnectTimeout ends, so retry the removal.
-  for (const dir of dirs.splice(0))
-    rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
+  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 const tmp = (prefix: string): string => {
   const dir = mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -361,14 +358,25 @@ test("worktreeTree records oversized untracked files by stat instead of hashing 
 
 test("remoteTip on an unreachable SSH host returns unavailable within the timeout", () => {
   const root = repo();
-  // 10.255.255.1 is unroutable (blackholed); some networks reject it fast,
-  // either way the call must end as `unavailable` well before a hang.
-  git(root, "remote", "add", "dead", "ssh://git@10.255.255.1:22/o/r.git");
-  const started = Date.now();
-  const tip = remoteTip(root, "dead", "main", { timeoutMs: 2_000 });
-  expect(Date.now() - started).toBeLessThan(8_000);
-  expect(tip).toMatchObject({ ok: false, code: "unavailable" });
-  if (!tip.ok) expect(tip.error).toContain("dead");
+  // Windows: killing git on timeout orphans its ssh child, which keeps the
+  // repo dir open for a while; that dir is removed best-effort, not by afterEach.
+  dirs.splice(dirs.indexOf(root), 1);
+  try {
+    // 10.255.255.1 is unroutable (blackholed); some networks reject it fast,
+    // either way the call must end as `unavailable` well before a hang.
+    git(root, "remote", "add", "dead", "ssh://git@10.255.255.1:22/o/r.git");
+    const started = Date.now();
+    const tip = remoteTip(root, "dead", "main", { timeoutMs: 2_000 });
+    expect(Date.now() - started).toBeLessThan(8_000);
+    expect(tip).toMatchObject({ ok: false, code: "unavailable" });
+    if (!tip.ok) expect(tip.error).toContain("dead");
+  } finally {
+    try {
+      rmSync(root, { recursive: true, force: true });
+    } catch {
+      // EBUSY on Windows while the orphaned ssh is still connecting.
+    }
+  }
 }, 15_000);
 
 test("remote URLs are redacted everywhere they are echoed", () => {
