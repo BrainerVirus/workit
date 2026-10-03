@@ -487,8 +487,10 @@ const filledConflict = (result: Result<unknown>, filled: FilledRevisions): boole
  */
 const retryFilledRevisions = <T>(filled: FilledRevisions, run: () => Result<T>): Result<T> => {
   if (!filled.task && !filled.workspace) return run();
-  const deadline = Date.now() + defaultLockTimeout();
   let result = run();
+  // The deadline starts after the first attempt, so a slow first lock wait
+  // still leaves at least one retry.
+  const deadline = Date.now() + defaultLockTimeout();
   for (let attempt = 1; filledConflict(result, filled); attempt += 1) {
     if (attempt >= REVISION_RETRY_ATTEMPTS || Date.now() >= deadline)
       return failure("busy", "records kept changing under concurrent writers; retry the call");
@@ -1379,20 +1381,31 @@ export class WorkitCore {
       const nativeProvenance = native?.ok ? retireNativeAuthority(native.data) : null;
       if (native?.ok && !nativeProvenance)
         return failure("permission_denied", "native decision authority was retired");
-      // A retry repeats the pre-lock checks that depend on the task record;
-      // receipt reuse, content and requirements are re-checked in the lock.
-      const recheck = (fresh: TaskRecord): Result<unknown> =>
-        fresh.status === "closed"
-          ? failure("invalid_transition", "closed task cannot record a decision")
-          : standingApproval
-            ? verifyStandingApproval(this.store.root, fresh, this.context.caller, input.binding)
-            : success(null, null, null);
+      // A retry repeats the pre-lock checks that depend on the task record and
+      // records the provenance of the standing re-verification it passed;
+      // closure, receipt reuse, content and requirements are re-checked in the lock.
+      let standingProvenance = standingApproval?.ok === true ? standingApproval.data : null;
+      const recheck = (fresh: TaskRecord): Result<unknown> => {
+        if (fresh.status === "closed")
+          return failure("invalid_transition", "closed task cannot record a decision");
+        if (!standingProvenance) return success(null, null, null);
+        const again = verifyStandingApproval(
+          this.store.root,
+          fresh,
+          this.context.caller,
+          input.binding,
+        );
+        if (again.ok) standingProvenance = again.data;
+        return again;
+      };
       const changed = this.commitTask(
         task.data.id,
         input.expectedRevision,
         filled,
         recheck,
         (current, mutation) => {
+          if (current.status === "closed")
+            return failure("invalid_transition", "closed task cannot record a decision");
           const latestContent = verifyDecisionContent(this.store, input.binding);
           if (!latestContent.ok) return latestContent;
           const known = new Set(current.policy?.requirements.map((item) => item.id) ?? []);
@@ -1413,9 +1426,7 @@ export class WorkitCore {
             id: newId(),
             recordedAt: mutation.now,
             provenance:
-              standingApproval?.ok === true
-                ? standingApproval.data
-                : (nativeProvenance ?? provenance(this.context, "agent_reported")),
+              standingProvenance ?? nativeProvenance ?? provenance(this.context, "agent_reported"),
             data,
           };
           return success(mutation.revision, null, {

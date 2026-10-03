@@ -1,12 +1,13 @@
 import { expect, test } from "bun:test";
-import { spawn } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
   TaskStore,
   WorkitCore,
   failure,
+  standingReceiptFor,
   sha256,
   success,
   type Assessment,
@@ -211,6 +212,27 @@ test("Given slow competing writes on every attempt, When the lock budget elapses
     // the 8-attempt cap, ends the loop.
     expect(probe.attempts()).toBeLessThan(8);
     expect(elapsed).toBeLessThan(2 * 100 + 150);
+  } finally {
+    setDefaultLockTimeout(budget);
+  }
+});
+
+test("Given a first attempt slower than the lock budget, When it loses the race, Then at least one retry still runs", () => {
+  const { root, store, core, taskId } = started();
+  const competitor = new WorkitCore(new TaskStore(root), context(root));
+  const probe = interleave(
+    store,
+    () => {
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 150);
+      expect(competitor.task(progress(taskId)).ok).toBe(true);
+    },
+    (call) => call === 1,
+  );
+  const budget = defaultLockTimeout();
+  setDefaultLockTimeout(100);
+  try {
+    expect(core.task(progress(taskId))).toMatchObject({ ok: true });
+    expect(probe.attempts()).toBe(2);
   } finally {
     setDefaultLockTimeout(budget);
   }
@@ -437,6 +459,226 @@ test("Given a competing write during a receipted decision, When the caller omitt
   const after = store.readTask(taskId);
   if (!after.ok) throw new Error(after.error);
   expect(after.data.decisions.length).toBe(1);
+});
+
+const closeTask = (root: string, taskId: string) => {
+  const closer = new WorkitCore(new TaskStore(root), context(root));
+  expect(
+    closer.task({
+      schemaVersion: 1,
+      action: "close",
+      taskId,
+      outcome: "stopped",
+      summary: "closed by a competing session",
+      decisionIds: [],
+    }).ok,
+  ).toBe(true);
+};
+
+const decisionRequest = (
+  store: TaskStore,
+  taskId: string,
+  overrides: { purpose?: string; response?: string; binding?: Record<string, unknown> } = {},
+) => {
+  const task = store.readTask(taskId);
+  const workspace = store.readWorkspace();
+  if (!task.ok || !workspace.ok || !workspace.data) throw new Error("state missing");
+  return {
+    schemaVersion: 1,
+    action: "record",
+    taskId,
+    purpose: overrides.purpose ?? "action",
+    binding: {
+      taskId,
+      workspaceId: workspace.data.id,
+      scope: task.data.intent.data.scope,
+      presented: "run the bounded action",
+      approvedContent: "run the bounded action",
+      contentRefs: [],
+      ...overrides.binding,
+    },
+    response: overrides.response ?? "approved",
+    requirementIds: [],
+  };
+};
+
+for (const kind of ["receipted", "stated", "plain"] as const)
+  test(`Given the task closes between attempts, When a ${kind} decision retries, Then it is refused and nothing lands on the closed task`, () => {
+    const { root, store, taskId } = started();
+    const core = new WorkitCore(store, { ...context(root), nativeAuthority: receiptVerifier([]) });
+    const probe = interleave(
+      store,
+      () => closeTask(root, taskId),
+      (call) => call === 1,
+    );
+    const result =
+      kind === "receipted"
+        ? core.observeDecision(decisionRequest(store, taskId), { kind: "decision" })
+        : kind === "stated"
+          ? core.observeDecision(
+              decisionRequest(store, taskId, {
+                purpose: "design",
+                response: "stated",
+                binding: { statedChoice: { ref: "question-call-1", text: "take the second" } },
+              }),
+              undefined,
+            )
+          : core.decision(decisionRequest(store, taskId));
+    expect(result).toMatchObject({ ok: false, code: "invalid_transition" });
+    expect(probe.attempts()).toBe(1);
+    const after = store.readTask(taskId);
+    if (!after.ok) throw new Error(after.error);
+    expect(after.data.status).toBe("closed");
+    expect(after.data.decisions).toEqual([]);
+  });
+
+test("Given a retry whose re-read misses the closure, When the decision commits, Then the in-lock check still refuses the closed task", () => {
+  const { root, store, taskId } = started();
+  const core = new WorkitCore(store, context(root));
+  const request = decisionRequest(store, taskId);
+  const readTask = store.readTask.bind(store);
+  const mutateTask = store.mutateTask.bind(store);
+  let commits = 0;
+  let spoof = false;
+  // The engine's re-read after the lost race reports the task still active
+  // (a check-then-commit gap); only the read under the lock sees the truth.
+  store.readTask = (id: string) => {
+    const value = readTask(id);
+    if (!spoof || !value.ok) return value;
+    spoof = false;
+    return { ...value, data: { ...value.data, status: "active" as const } };
+  };
+  store.mutateTask = (...args: Parameters<TaskStore["mutateTask"]>) => {
+    commits += 1;
+    if (commits === 1) closeTask(root, taskId);
+    const result = mutateTask(...args);
+    if (commits === 1) spoof = true;
+    return result;
+  };
+  expect(core.decision(request)).toMatchObject({ ok: false, code: "invalid_transition" });
+  expect(commits).toBe(2);
+  const after = readTask(taskId);
+  if (!after.ok) throw new Error(after.error);
+  expect(after.data.decisions).toEqual([]);
+});
+
+const gitRepo = () => {
+  const root = mkdtempSync(join(tmpdir(), "workit-retry-standing-"));
+  for (const args of [
+    ["init", "-q", "-b", "main"],
+    ["config", "user.email", "test@example.invalid"],
+    ["config", "user.name", "Workit Test"],
+  ])
+    spawnSync("git", args, { cwd: root });
+  writeFileSync(join(root, "base.txt"), "base\n");
+  spawnSync("git", ["add", "base.txt"], { cwd: root });
+  spawnSync("git", ["commit", "-qm", "base"], { cwd: root });
+  return root;
+};
+
+const withStanding = (
+  run: (value: {
+    root: string;
+    configDir: string;
+    store: TaskStore;
+    core: WorkitCore;
+    taskId: string;
+  }) => void,
+) => {
+  const root = gitRepo();
+  const configDir = mkdtempSync(join(tmpdir(), "workit-retry-cfg-"));
+  const rule = (classes: string[]) =>
+    writeFileSync(
+      join(configDir, "workspaces.json"),
+      JSON.stringify({
+        workspaces: [
+          { name: "t", glob: `${root}/**`, autoApprove: classes, vcs: { provider: "github" } },
+        ],
+      }),
+    );
+  rule(["commit"]);
+  const previous = process.env.WORKFLOW_TOOLKIT_CONFIG_DIR;
+  process.env.WORKFLOW_TOOLKIT_CONFIG_DIR = configDir;
+  try {
+    const store = new TaskStore(root);
+    const core = new WorkitCore(store, context(root));
+    const begun = core.task(taskStartRequest());
+    if (!begun.ok) throw new Error(begun.error);
+    const taskId = (begun.data as { id: string }).id;
+    expect(core.writer({ schemaVersion: 1, action: "acquire", taskId }).ok).toBe(true);
+    run({ root, configDir, store, core, taskId });
+  } finally {
+    if (previous === undefined) delete process.env.WORKFLOW_TOOLKIT_CONFIG_DIR;
+    else process.env.WORKFLOW_TOOLKIT_CONFIG_DIR = previous;
+    rmSync(root, { recursive: true, force: true });
+    rmSync(configDir, { recursive: true, force: true });
+  }
+};
+
+const standingRequest = (store: TaskStore, taskId: string) =>
+  decisionRequest(store, taskId, {
+    binding: {
+      presented: "auto",
+      approvedContent: JSON.stringify({
+        operation: "git.commit",
+        payload: { message: "auto one", resolved: { branch: "main" } },
+      }),
+      standing: { workspace: "t", class: "commit" },
+    },
+  });
+
+test("Given the standing rule is removed between attempts, When a standing decision retries, Then it is re-verified and not recorded", () => {
+  withStanding(({ root, configDir, store, core, taskId }) => {
+    const competitor = new WorkitCore(new TaskStore(root), context(root));
+    const probe = interleave(
+      store,
+      () => {
+        expect(competitor.task(progress(taskId)).ok).toBe(true);
+        writeFileSync(join(configDir, "workspaces.json"), JSON.stringify({ workspaces: [] }));
+      },
+      (call) => call === 1,
+    );
+    const result = core.observeStandingDecision(standingRequest(store, taskId));
+    expect(result).toMatchObject({ ok: false, code: "permission_denied" });
+    expect(probe.attempts()).toBe(1);
+    const after = store.readTask(taskId);
+    if (!after.ok) throw new Error(after.error);
+    expect(after.data.decisions).toEqual([]);
+  });
+});
+
+test("Given the standing rule changes but stays live between attempts, When a standing decision retries, Then it records the re-verified provenance", () => {
+  withStanding(({ root, configDir, store, core, taskId }) => {
+    const competitor = new WorkitCore(new TaskStore(root), context(root));
+    const before = standingReceiptFor(root, "t", "commit");
+    const probe = interleave(
+      store,
+      () => {
+        expect(competitor.task(progress(taskId)).ok).toBe(true);
+        writeFileSync(
+          join(configDir, "workspaces.json"),
+          JSON.stringify({
+            workspaces: [
+              {
+                name: "t",
+                glob: `${root}/**`,
+                autoApprove: ["commit", "branch"],
+                vcs: { provider: "github" },
+              },
+            ],
+          }),
+        );
+      },
+      (call) => call === 1,
+    );
+    const result = core.observeStandingDecision(standingRequest(store, taskId));
+    expect(result).toMatchObject({ ok: true });
+    expect(probe.attempts()).toBe(2);
+    if (!result.ok) throw new Error(result.error);
+    const after = standingReceiptFor(root, "t", "commit");
+    expect(after.configDigest).not.toBe(before.configDigest);
+    expect(result.data.provenance.receipts).toEqual([after]);
+  });
 });
 
 const coreModule = resolve(import.meta.dir, "../../packages/workit-core/src/core.ts");
