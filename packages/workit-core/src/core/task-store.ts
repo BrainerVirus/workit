@@ -166,8 +166,10 @@ const RACY_WINDOW_NS = 2_000_000_000n;
  * window may be rewritten again without changing its signature, so callers
  * must re-read it instead of trusting a cached signature. */
 export const racySignature = (signature: string): boolean => {
-  const modified = BigInt(signature.split(":")[3] ?? "0");
-  return BigInt(Date.now()) * 1_000_000n - modified < RACY_WINDOW_NS;
+  // ctime catches content written with a back-dated mtime (cp -p, touch -d).
+  const [mtime = 0n, ctime = 0n] = signature.split(":").slice(3, 5).map(BigInt);
+  const changed = mtime > ctime ? mtime : ctime;
+  return BigInt(Date.now()) * 1_000_000n - changed < RACY_WINDOW_NS;
 };
 
 export type RecoveryCandidate = {

@@ -11,6 +11,7 @@ import {
   type Assessment,
   type TaskView,
 } from "@/packages/workit-core/src/core";
+import { fileSignature, racySignature } from "@/packages/workit-core/src/core/task-store";
 import * as evaluation from "@/packages/workit-core/src/core/task-evaluation";
 import { compactContextFor, unfinishedTaskOfferFor } from "@/packages/workit-opencode/src/runtime";
 import { assessment, ref, scope, taskStartRequest } from "@/test/workit-core/task-fixtures";
@@ -224,10 +225,10 @@ test("cached context invalidates when a cited decision document or the workspace
   withRoot((root) => {
     const task = start(root, "lead", "cited documents");
     const store = new TaskStore(root);
-    // Back-date the document so it is outside the racy-signature window.
-    const settle = (file: string) => utimesSync(file, new Date(0), new Date(Date.now() - 60_000));
+    // Let the document age past the racy-signature window (ctime cannot be back-dated).
+    const settle = () => Bun.sleepSync(2100);
     writeFileSync(join(root, "decision.md"), "approved design");
-    settle(join(root, "decision.md"));
+    settle();
     const current = store.readTask(task.id);
     if (!current.ok) throw new Error(current.error);
     const injected = store.mutateTask(task.id, current.data.revision, (record) =>
@@ -267,7 +268,10 @@ test("cached context invalidates when a cited decision document or the workspace
       expect(built).toHaveBeenCalledTimes(1);
 
       writeFileSync(join(root, "decision.md"), "edited design document");
-      settle(join(root, "decision.md"));
+      settle();
+      expect(compactContextFor(root, "lead")).not.toBeNull();
+      expect(built).toHaveBeenCalledTimes(2);
+
       expect(compactContextFor(root, "lead")).not.toBeNull();
       expect(built).toHaveBeenCalledTimes(2);
 
@@ -286,7 +290,7 @@ test("cached context invalidates when a cited decision document or the workspace
       built.mockRestore();
     }
   });
-});
+}, 15_000);
 
 test("a document changed within the racy window is never served from cache", () => {
   withRoot((root) => {
@@ -332,5 +336,14 @@ test("a document changed within the racy window is never served from cache", () 
     } finally {
       built.mockRestore();
     }
+  });
+});
+
+test("a back-dated mtime does not hide a recent change (ctime counts)", () => {
+  withRoot((root) => {
+    const file = join(root, "copied.md");
+    writeFileSync(file, "copied with cp -p");
+    utimesSync(file, new Date(0), new Date(Date.now() - 60_000));
+    expect(racySignature(fileSignature(file)!)).toBe(true);
   });
 });
