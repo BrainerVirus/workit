@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { main } from "@/packages/workit-cli/src/main";
-import { appendRow } from "@/packages/workit-core/src/ledger";
+import { appendObserved } from "@/packages/workit-core/src/ledger";
 
 // S13 verbs (design §2.1): `workit ledger …` and the bare `workit handoff`.
 
@@ -41,7 +41,7 @@ const run = async (cwd: string, argv: string[], env: NodeJS.ProcessEnv = {}) => 
   let stderr = "";
   const code = await main(argv, {
     cwd,
-    env: { ...process.env, WORKIT_SESSION_ID: "", ...env },
+    env: { ...process.env, WORKIT_SESSION_ID: "s-reviewer", ...env },
     stdout: (text) => void (stdout += text),
     stderr: (text) => void (stderr += text),
   });
@@ -83,6 +83,34 @@ test("ledger records decisions, rulings and verdicts and lists them, including v
     costIfWrong: "rows reorder",
     branch: "feature/x",
   });
+  // --pr must resolve: unknown → invalid_input; a fetched forge ref → its branch.
+  const unknownPr = await run(root, [
+    "ledger",
+    "verdict",
+    "verified",
+    "--how",
+    "x",
+    "--pr",
+    "7",
+    "--json",
+  ]);
+  expect(unknownPr.code).toBe(2);
+  expect(unknownPr.json().code).toBe("invalid_input");
+  git(root, "update-ref", "refs/pull/7/head", git(root, "rev-parse", "feature/x"));
+  const mismatch = await run(root, [
+    "ledger",
+    "verdict",
+    "verified",
+    "--how",
+    "x",
+    "--pr",
+    "7",
+    "--branch",
+    "main",
+    "--json",
+  ]);
+  expect(mismatch.code).toBe(2);
+  expect(mismatch.json().error).toContain("PR 7 is branch feature/x");
   const verdict = await run(root, [
     "ledger",
     "verdict",
@@ -103,8 +131,8 @@ test("ledger records decisions, rulings and verdicts and lists them, including v
     result: "tests-verified",
     kind: "unit",
     pr: 7,
-    observer: "workit_cli",
-    attestation: null,
+    observer: "agent_asserted",
+    self: false,
     evidenceRefs: ["blobs/logs/x.log"],
   });
 
@@ -130,7 +158,11 @@ test("ledger records decisions, rulings and verdicts and lists them, including v
   ]) {
     const read = await run(root, argv);
     expect(read.code, argv.join(" ")).toBe(0);
-    expect(read.json().data).toMatchObject({ branch: "feature/x", valid: true, basis: "fresh" });
+    expect(read.json().data).toMatchObject({
+      branch: "feature/x",
+      current: { basis: "fresh" },
+      accepted: { accepted: true },
+    });
   }
 });
 
@@ -146,30 +178,24 @@ test("ledger check reports carried after a base-only rebase and stale after a co
   git(root, "checkout", "-q", "feature/x");
   git(root, "rebase", "-q", "main");
   expect((await run(root, ["ledger", "check", "--json"])).json().data).toMatchObject({
-    valid: true,
-    basis: "carried",
+    current: { basis: "carried" },
+    accepted: { accepted: true },
   });
   writeFileSync(path.join(root, "feature.txt"), "changed\n");
   git(root, "commit", "-qam", "change");
   const stale = await run(root, ["ledger", "check"]);
   expect(stale.code).toBe(0);
-  expect(stale.stdout).toContain("no valid verdict (stale)");
+  expect(stale.stdout).toContain("current stale; not accepted (stale)");
 });
 
 test("an author session's verdict is blocked (exit 3) unless --self", async () => {
   const root = featureRepo();
-  appendRow(root, {
+  appendObserved(root, {
     type: "commit.recorded",
     session: "s-author",
-    actor: { host: "cli", session: "s-author", agentId: null, attested: false },
+    actor: { host: "cli", session: "s-author", agentId: null },
     branch: "feature/x",
-    head: null,
-    base: null,
-    baseSha: null,
-    patchId: null,
-    tree: null,
-    dirty: null,
-  } as never);
+  });
   const env = { WORKIT_SESSION_ID: "s-author" };
   const refused = await run(root, ["ledger", "verdict", "verified", "--how", "x", "--json"], env);
   expect(refused.code).toBe(3);
@@ -182,6 +208,12 @@ test("an author session's verdict is blocked (exit 3) unless --self", async () =
   );
   expect(self.code).toBe(0);
   expect(self.json().data).toMatchObject({ self: true, actor: { session: "s-author" } });
+  const check = await run(root, ["ledger", "check", "--json"]);
+  expect(check.json().data.accepted).toMatchObject({ accepted: false });
+  const anonymous = await run(root, ["ledger", "verdict", "verified", "--how", "x", "--json"], {
+    WORKIT_SESSION_ID: "",
+  });
+  expect(anonymous.json().data).toMatchObject({ self: true, selfReason: "no_session" });
 });
 
 test("ledger usage errors exit 2 with an unblock hint", async () => {
@@ -196,6 +228,7 @@ test("ledger usage errors exit 2 with an unblock hint", async () => {
     ["ledger", "add", "list"],
     ["ledger", "list", "--last", "0"],
     ["ledger", "list", "--bogus"],
+    ["ledger", "check", "--pr", "99"],
   ]) {
     const result = await run(root, [...argv, "--json"]);
     expect(result.code, argv.join(" ")).toBe(2);

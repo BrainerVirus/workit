@@ -1,16 +1,20 @@
-// `workit ledger` (design §2.1 S13): record and query the repo-wide run ledger.
+// `workit ledger` (design §2.1 S13, D18): record and query the repo-wide run ledger.
 //
 //   workit ledger decision "<what>" --why "<why>" [--ref <path|url>…]
 //   workit ledger ruling   "<what>" --why "<why>" --cost-if-wrong "<…>" [--ref …]
 //   workit ledger verdict  <result> --how "<method/evidence>" [--kind unit|live|perf|review]
 //                          [--pr n|--branch b] [--base <ref>] [--surface ui|cli|api]
 //                          [--evidence <ref>…] [--self]
-//   workit ledger verdict  [<branch>]                 # effective verdicts after carry-over
+//   workit ledger verdict  [<branch>]                 # current + accepted verdicts
 //   workit ledger list|show [--branch b] [--pr n] [--type t] [--last n]
 //   workit ledger check    [--pr n|--branch b]
 //   workit ledger add decision|ruling|verdict …       # same as the bare forms
 //
-// Every write accepts --supersedes <id>, plus --branch/--pr to key it.
+// Every write accepts --supersedes <id> (same type, same session only), plus
+// --branch/--pr to key it. Verdicts are agent-asserted; the acting session is
+// WORKIT_SESSION_ID, and without one a verdict is recorded as self. `--pr`
+// must resolve to a branch through the CLI's own PR rows or a fetched forge
+// ref; it is never guessed from other rows.
 import { parseArgs } from "node:util";
 import {
   VERDICT_RESULTS,
@@ -24,6 +28,7 @@ import {
   recordVerdict,
   summarizeRow,
   type LedgerResult,
+  type ReadRow,
   type RecordContext,
   type VerdictCheck,
 } from "@brainervirus/workit-core/src/ledger";
@@ -76,22 +81,55 @@ const positiveInt = (value: string | undefined, flag: string): number | undefine
     : new Error(`${flag} must be a positive integer`);
 };
 
+const failed = (io: Io, result: Extract<LedgerResult<unknown>, { ok: false }>): number =>
+  emit(io, fail(result.code, result.error, result.unblock ? { unblock: result.unblock } : {}));
+
 const fromResult = <T>(io: Io, result: LedgerResult<T>, human: (value: T) => string): number =>
-  result.ok
-    ? emit(io, ok(result.value), human)
-    : emit(io, fail(result.code, result.error, result.unblock ? { unblock: result.unblock } : {}));
+  result.ok ? emit(io, ok(result.value), human) : failed(io, result);
 
 const usage = (io: Io, error: string): number =>
   emit(io, fail("invalid_input", error, { unblock: USAGE }));
 
 const verdictLines = (check: VerdictCheck): string[] => {
   const lines = [
-    `${check.branch} @ ${(check.head ?? "no commit").slice(0, 12)}: ${check.valid ? "valid" : "no valid verdict"} (${check.basis})`,
+    `${check.branch} @ ${(check.head ?? "no commit").slice(0, 12)}: current ${check.current.basis}; ${check.accepted.accepted ? "accepted" : `not accepted (${check.accepted.reasons.join(", ")})`}`,
   ];
   for (const entry of check.verdicts)
-    lines.push(`  ${entry.kind}: ${entry.basis}  ${summarizeRow(entry.verdict).summary}`);
+    lines.push(
+      `  ${entry.kind}: ${entry.basis}${entry.accepted ? ", accepted" : ` (${entry.reasons.join(", ")})`}  ${summarizeRow(entry.verdict).summary}`,
+    );
   return lines;
 };
+
+/**
+ * The branch a command targets: --branch, else the branch --pr resolves to
+ * (refused when unknown or when it disagrees with --branch), else HEAD's.
+ */
+function targetBranch(
+  io: Io,
+  rows: readonly ReadRow[],
+  branch: string | undefined,
+  pr: number | undefined,
+): LedgerResult<string | null> {
+  if (pr !== undefined) {
+    const resolved = branchForPr(io.cwd, rows, pr);
+    if (!resolved)
+      return {
+        ok: false,
+        code: "invalid_input",
+        error: `cannot resolve PR ${pr} to a branch: no workit pr row records it and no fetched forge ref (refs/pull/${pr}/head) points at a local branch tip`,
+        unblock: "pass --branch <branch> instead, or fetch the PR ref",
+      };
+    if (branch !== undefined && branch !== resolved)
+      return {
+        ok: false,
+        code: "invalid_input",
+        error: `PR ${pr} is branch ${resolved}, not ${branch}`,
+      };
+    return { ok: true, value: resolved };
+  }
+  return { ok: true, value: branch ?? null };
+}
 
 export async function run(argv: string[], io: Io): Promise<number> {
   let parsed: { values: Values; positionals: string[] };
@@ -112,102 +150,98 @@ export async function run(argv: string[], io: Io): Promise<number> {
   if (pr instanceof Error) return usage(io, pr.message);
   const last = positiveInt(values.last, "--last");
   if (last instanceof Error) return usage(io, last.message);
-  const context: RecordContext = {
-    cwd: io.cwd,
-    actor: actorFromEnv(io.env),
-    branch: values.branch ?? null,
-    base: values.base ?? null,
-    ...(pr === undefined ? {} : { pr }),
-    ...(values.supersedes ? { supersedes: values.supersedes } : {}),
-  };
   const text = rest.join(" ");
+  if (sub === undefined) return usage(io, "missing subcommand");
+  if (!["decision", "ruling", "verdict", "list", "show", "check"].includes(sub))
+    return usage(io, `unknown ledger subcommand "${sub}"`);
 
-  switch (sub) {
-    case "decision":
-      return fromResult(
-        io,
-        recordDecision(context, { what: text, why: values.why, refs: values.ref }),
-        (row) => `recorded decision ${row.id}`,
-      );
-    case "ruling":
-      return fromResult(
-        io,
-        recordRuling(context, {
-          what: text,
-          why: values.why,
-          costIfWrong: values["cost-if-wrong"],
-          refs: values.ref,
-        }),
-        (row) => `recorded ruling ${row.id}`,
-      );
-    case "verdict": {
-      const [first] = rest;
-      const isResult =
-        first !== undefined && (VERDICT_RESULTS as readonly string[]).includes(first);
-      if (!isResult && values.how === undefined) {
-        if (rest.length > 1) return usage(io, "ledger verdict takes at most one <branch>");
-        return showVerdicts(io, first ?? values.branch, pr);
-      }
-      if (rest.length !== 1)
-        return usage(io, `ledger verdict takes one result: ${VERDICT_RESULTS.join("|")}`);
-      return fromResult(
-        io,
-        recordVerdict(context, {
-          result: first,
-          kind: values.kind,
-          how: values.how,
-          surface: values.surface ?? null,
-          self: values.self === true,
-          evidenceRefs: values.evidence,
-        }),
-        (row) =>
-          `recorded verdict ${row.id}: ${row.result} [${row.kind}] for ${row.branch} @ ${(row.head ?? "").slice(0, 12)}${row.self ? " (self)" : ""}`,
-      );
-    }
-    case "list":
-    case "show": {
-      if (rest.length) return usage(io, `unexpected argument: ${rest[0]}`);
-      const ledger = readLedger(io.cwd);
-      const rows = filterRows(ledger.rows, {
-        branch: values.branch,
-        pr,
-        type: values.type,
-        last: last ?? 50,
-      });
-      return emit(io, ok({ path: ledger.path, skipped: ledger.skipped, rows }), (data) =>
+  const ledger = readLedger(io.cwd);
+  if (!ledger.ok) return failed(io, ledger);
+  const { rows } = ledger.value;
+
+  if (sub === "list" || sub === "show") {
+    if (rest.length) return usage(io, `unexpected argument: ${rest[0]}`);
+    const listed = filterRows(rows, {
+      branch: values.branch,
+      pr,
+      type: values.type,
+      last: last ?? 50,
+    });
+    return emit(
+      io,
+      ok({ path: ledger.value.path, skipped: ledger.value.skipped, rows: listed }),
+      (data) =>
         data.rows.length
           ? data.rows.map((row) => {
               const line = summarizeRow(row);
               return `#${line.seq} ${line.at} ${line.type}${line.branch ? ` [${line.branch}]` : ""}${row.superseded ? " (superseded)" : ""}  ${line.summary}`;
             })
           : "ledger is empty",
-      );
-    }
-    case "check":
-      if (rest.length) return usage(io, `unexpected argument: ${rest[0]}`);
-      return showVerdicts(io, values.branch, pr);
-    case undefined:
-      return usage(io, "missing subcommand");
-    default:
-      return usage(io, `unknown ledger subcommand "${sub}"`);
-  }
-}
-
-function showVerdicts(io: Io, branchArg: string | undefined, pr: number | undefined): number {
-  const ledger = readLedger(io.cwd);
-  const branch =
-    branchArg ?? (pr === undefined ? null : branchForPr(ledger.rows, pr)) ?? currentBranch(io.cwd);
-  if (!branch)
-    return emit(
-      io,
-      fail(
-        pr === undefined ? "invalid_input" : "not_found",
-        pr === undefined
-          ? "HEAD is detached; name the branch"
-          : `no ledger row maps PR ${pr} to a branch`,
-        { unblock: "pass --branch <branch>" },
-      ),
     );
-  const check = checkVerdicts(io.cwd, branch, ledger.rows);
-  return emit(io, ok({ ...check, ...(pr === undefined ? {} : { pr }) }), verdictLines);
+  }
+
+  const isRead =
+    sub === "check" ||
+    (sub === "verdict" &&
+      values.how === undefined &&
+      !(VERDICT_RESULTS as readonly string[]).includes(rest[0] ?? ""));
+  if (isRead) {
+    if (rest.length > (sub === "verdict" ? 1 : 0))
+      return usage(io, `unexpected argument: ${rest.at(-1)}`);
+    const target = targetBranch(io, rows, rest[0] ?? values.branch, pr);
+    if (!target.ok) return failed(io, target);
+    const branch = target.value ?? currentBranch(io.cwd);
+    if (!branch)
+      return emit(
+        io,
+        fail("invalid_input", "HEAD is detached; name the branch", {
+          unblock: "pass --branch <branch>",
+        }),
+      );
+    return emit(io, ok(checkVerdicts(io.cwd, branch, rows)), verdictLines);
+  }
+
+  const target = targetBranch(io, rows, values.branch, pr);
+  if (!target.ok) return failed(io, target);
+  const context: RecordContext = {
+    cwd: io.cwd,
+    actor: actorFromEnv(io.env),
+    branch: target.value,
+    base: values.base ?? null,
+    ...(pr === undefined ? {} : { pr }),
+    ...(values.supersedes ? { supersedes: values.supersedes } : {}),
+  };
+
+  if (sub === "decision")
+    return fromResult(
+      io,
+      recordDecision(context, { what: text, why: values.why, refs: values.ref }),
+      (row) => `recorded decision ${row.id}`,
+    );
+  if (sub === "ruling")
+    return fromResult(
+      io,
+      recordRuling(context, {
+        what: text,
+        why: values.why,
+        costIfWrong: values["cost-if-wrong"],
+        refs: values.ref,
+      }),
+      (row) => `recorded ruling ${row.id}`,
+    );
+  if (rest.length !== 1)
+    return usage(io, `ledger verdict takes one result: ${VERDICT_RESULTS.join("|")}`);
+  return fromResult(
+    io,
+    recordVerdict(context, {
+      result: rest[0],
+      kind: values.kind,
+      how: values.how,
+      surface: values.surface ?? null,
+      self: values.self === true,
+      evidenceRefs: values.evidence,
+    }),
+    (row) =>
+      `recorded verdict ${row.id}: ${row.result} [${row.kind}] for ${row.branch} @ ${(row.head ?? "").slice(0, 12)}${row.self ? ` (self${row.selfReason === "no_session" ? ": WORKIT_SESSION_ID unset" : ""}; never accepted)` : ""}`,
+  );
 }

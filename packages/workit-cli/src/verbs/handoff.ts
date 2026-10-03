@@ -39,8 +39,11 @@ function human(brief: HandoffBrief & { recorded: string | null }): string[] {
     );
   if (brief.pr !== null) lines.push(`pr:     #${brief.pr}`);
   lines.push(
-    `verdict: ${brief.verdict.valid ? "valid" : "none valid"} (${brief.verdict.basis})`,
-    ...brief.verdict.verdicts.map((entry) => `  ${entry.kind}: ${entry.basis}  ${entry.summary}`),
+    `verdict: current ${brief.verdict.current}; ${brief.verdict.accepted ? "accepted" : `not accepted (${brief.verdict.reasons.join(", ")})`}`,
+    ...brief.verdict.verdicts.map(
+      (entry) =>
+        `  ${entry.kind}: ${entry.basis}${entry.accepted ? ", accepted" : ` (${entry.reasons.join(", ")})`}  ${entry.summary}`,
+    ),
   );
   if (brief.checks.length)
     lines.push(
@@ -90,7 +93,14 @@ async function resumeBrief(argv: string[], io: Io): Promise<number> {
   const last = values.last === undefined ? 10 : Number(values.last);
   if (!Number.isInteger(last) || last < 1)
     return emit(io, fail("invalid_input", "--last must be a positive integer", { unblock: USAGE }));
-  const data = buildHandoff(io.cwd, { last, note: values.note ?? null, next: values.next ?? null });
+  const built = buildHandoff(io.cwd, {
+    last,
+    note: values.note ?? null,
+    next: values.next ?? null,
+  });
+  if (!built.ok)
+    return emit(io, fail(built.code, built.error, built.unblock ? { unblock: built.unblock } : {}));
+  const data = built.value;
   let recorded: string | null = null;
   if (values.record) {
     const row = recordHandoff(
