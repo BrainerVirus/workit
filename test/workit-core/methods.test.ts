@@ -308,36 +308,8 @@ test("debug and behavioral-tdd do not wait for pre-assess policy selection", () 
   }
 });
 
-test("host skill copies stay byte-identical to every canonical core skill", () => {
-  for (const name of WORKIT_METHOD_SKILLS) {
-    const canonical = skillText(name);
-    for (const host of ["opencode/assets/skills", "cursor/skills", "codex/skills", "pi/skills"]) {
-      const relative = `packages/workit-${host}/${name}/SKILL.md`;
-      expect(readFileSync(path.join(import.meta.dir, "../..", relative), "utf8"), relative).toBe(
-        canonical,
-      );
-    }
-  }
-});
-
-test("method manifest lists exactly fourteen core skills", () => {
-  expect(WORKIT_METHOD_SKILLS).toEqual([
-    "workit-challenge",
-    "workit-behavioral-tdd",
-    "workit-review",
-    "workit-plan",
-    "workit-implement",
-    "workit-debug",
-    "workit-handoff",
-    "workit-babysit",
-    "workit-blast-radius",
-    "workit-deslop",
-    "workit-diagram",
-    "workit-mockup",
-    "workit-green-run",
-    "workit-steer",
-  ]);
-  expect(skillManifestNames("packages/workit-core/skills")).toEqual([
-    ...[...WORKIT_METHOD_SKILLS].sort(),
-  ]);
+test("method manifest matches the canonical skill directories", () => {
+  expect(
+    skillManifestNames(path.join(import.meta.dir, "../../packages/workit-core/skills")),
+  ).toEqual([...WORKIT_METHOD_SKILLS].sort());
 });

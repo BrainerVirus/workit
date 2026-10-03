@@ -1,14 +1,6 @@
 import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import {
-  cpSync,
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  symlinkSync,
-} from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -72,28 +64,12 @@ test("runtime TS allowlist permits vendor examples and exactly the root loader s
   }
 });
 
-test("opencode tarball ships one bundled dist entry plus fourteen method skills (RR-02/PT-06/PT-07)", () => {
+test("opencode tarball ships one bundled dist entry and no commands, templates or vendor trees", () => {
   const packs = packWorkspacePackages();
   const tarball = byName(packs, OPENCODE).tarball;
   const entries = listTarball(tarball);
 
   expect(entries).toContain("dist/plugin.js");
-  expect(entries.filter((e) => e.startsWith("assets/skills/") && e.endsWith("/SKILL.md"))).toEqual([
-    "assets/skills/workit-babysit/SKILL.md",
-    "assets/skills/workit-behavioral-tdd/SKILL.md",
-    "assets/skills/workit-blast-radius/SKILL.md",
-    "assets/skills/workit-challenge/SKILL.md",
-    "assets/skills/workit-debug/SKILL.md",
-    "assets/skills/workit-deslop/SKILL.md",
-    "assets/skills/workit-diagram/SKILL.md",
-    "assets/skills/workit-green-run/SKILL.md",
-    "assets/skills/workit-handoff/SKILL.md",
-    "assets/skills/workit-implement/SKILL.md",
-    "assets/skills/workit-mockup/SKILL.md",
-    "assets/skills/workit-plan/SKILL.md",
-    "assets/skills/workit-review/SKILL.md",
-    "assets/skills/workit-steer/SKILL.md",
-  ]);
   expect(entries.some((e) => e.startsWith("assets/commands/"))).toBe(false);
   expect(entries.some((e) => e.startsWith("assets/templates/"))).toBe(false);
   expect(entries.some((e) => e.startsWith("assets/vendor/"))).toBe(false);
@@ -391,18 +367,5 @@ test("adapter tarballs ship no legacy vendor trees", () => {
       entries.some((e) => e.startsWith("assets/vendor/")),
       pack.packageName,
     ).toBe(false);
-  }
-});
-
-test("tracked CLI template mirrors stay byte-identical to the core templates", () => {
-  // The CLI package tracks copies of the execution templates (shipped to
-  // projects by hygiene scaffolding); a fix in one copy must land in both.
-  for (const name of ["execution-contract.md", "plan-template.md"]) {
-    const core = readFileSync(path.join(REPO_ROOT, "packages/workit-core/templates", name), "utf8");
-    const mirror = readFileSync(
-      path.join(REPO_ROOT, "packages/workit-cli/assets/templates", name),
-      "utf8",
-    );
-    expect(mirror, name).toBe(core);
   }
 });

@@ -23,6 +23,10 @@ import {
   tarballSpec,
   REPO_ROOT,
 } from "@/test/shared/helpers/packages";
+import {
+  WORKIT_METHOD_SKILLS,
+  WORKIT_SKILL_ALIASES,
+} from "@/packages/workit-core/src/core/skill-manifests";
 
 // Task 7 packed-runtime gate: from EXTRACTED tarballs with repository node_modules
 // unavailable, the packaged adapters load/boot under plain Node without Bun or a
@@ -207,8 +211,8 @@ test(
       };
       const cleanup = await mod.default.setup(fake as never);
       if (typeof cleanup === "function") cleanup();
-      expect(skills).toHaveLength(14);
-      expect(commands).toHaveLength(14);
+      expect(skills).toHaveLength(WORKIT_METHOD_SKILLS.length);
+      expect(commands).toHaveLength(Object.keys(WORKIT_SKILL_ALIASES).length);
       for (const skill of skills) {
         expect(existsSync(skill.path), skill.id).toBe(true);
         expect(realpathSync(skill.path).startsWith(realpathSync(skillsPath)), skill.id).toBe(true);

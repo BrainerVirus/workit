@@ -6,6 +6,10 @@ import path from "node:path";
 import { SUPPORT_MATRIX } from "@/packages/workit-core/src/core/support-matrix";
 import { TaskStore, WorkitCore, type OperationContext } from "@/packages/workit-core/src/core";
 import { taskStartRequest } from "@/test/workit-core/task-fixtures";
+import {
+  WORKIT_METHOD_SKILLS,
+  WORKIT_SKILL_ALIASES,
+} from "@/packages/workit-core/src/core/skill-manifests";
 
 const node = "node";
 
@@ -103,26 +107,14 @@ test(
         (message) => message.type === "response" && message.command === "get_commands",
       ) as { data: { commands: Array<{ name: string; source: string }> } };
       const commands = response.data.commands;
-      expect(commands.filter((command) => command.name.startsWith("skill:workit-"))).toHaveLength(
-        14,
-      );
+      expect(
+        commands
+          .filter((command) => command.name.startsWith("skill:workit-"))
+          .map((command) => command.name.slice("skill:".length))
+          .sort(),
+      ).toEqual([...WORKIT_METHOD_SKILLS].sort());
       expect(commands.map((command) => command.name)).toEqual(
-        expect.arrayContaining([
-          "wk-challenge",
-          "wk-babysit",
-          "wk-implement",
-          "wk-plan",
-          "wk-debug",
-          "wk-review",
-          "wk-handoff",
-          "wk-tdd",
-          "wk-blast-radius",
-          "wk-deslop",
-          "wk-diagram",
-          "wk-mockup",
-          "wk-green-run",
-          "wk-steer",
-        ]),
+        expect.arrayContaining(Object.keys(WORKIT_SKILL_ALIASES)),
       );
       expect(
         commands.some(

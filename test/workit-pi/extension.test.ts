@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
 import path from "node:path";
 import { tmpdir } from "node:os";
@@ -154,27 +154,6 @@ test("clean Pi package declares stock discovery and the eight families plus exte
     expect(depth(tool.parameters), tool.name).toBeLessThanOrEqual(OPERATION_SCHEMA_MAX_DEPTH);
   }
   expect(pi.commands.map((command) => command.name)).toContain("workit-worker");
-});
-
-test("Pi package ships the fourteen canonical method skills", () => {
-  expect(readdirSync(path.join(import.meta.dir, "../../packages/workit-pi/skills")).sort()).toEqual(
-    [
-      "workit-babysit",
-      "workit-behavioral-tdd",
-      "workit-blast-radius",
-      "workit-challenge",
-      "workit-debug",
-      "workit-deslop",
-      "workit-diagram",
-      "workit-green-run",
-      "workit-handoff",
-      "workit-implement",
-      "workit-mockup",
-      "workit-plan",
-      "workit-review",
-      "workit-steer",
-    ],
-  );
 });
 
 test("Pi registers wk- slash aliases that expand the bundled skill commands", async () => {

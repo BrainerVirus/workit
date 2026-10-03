@@ -25,6 +25,10 @@ import {
   ensureImages,
   type Harness,
 } from "./harness";
+import {
+  WORKIT_METHOD_SKILLS,
+  WORKIT_SKILL_ALIASES,
+} from "@/packages/workit-core/src/core/skill-manifests";
 
 const ENABLED = process.env.WORKIT_V2_HARNESS === "1";
 const OPENCODE = "@brainervirus/workit-opencode";
@@ -285,41 +289,9 @@ test("V2 native lane loads the packed plugin, registers skills, and executes a f
   const plugins = dataOf(await lane.harness.op("v2.plugin.list"));
   expect(plugins.map((entry) => entry.id)).toContain("workit");
   const skills = dataOf(await lane.harness.op("v2.skill.list")).map((entry) => entry.id);
-  for (const id of [
-    "workit-challenge",
-    "workit-behavioral-tdd",
-    "workit-review",
-    "workit-plan",
-    "workit-implement",
-    "workit-debug",
-    "workit-handoff",
-    "workit-babysit",
-    "workit-blast-radius",
-    "workit-deslop",
-    "workit-diagram",
-    "workit-mockup",
-    "workit-green-run",
-    "workit-steer",
-  ])
-    expect(skills, id).toContain(id);
+  for (const id of WORKIT_METHOD_SKILLS) expect(skills, id).toContain(id);
   const commands = dataOf(await lane.harness.op("v2.command.list")).map((entry) => entry.name);
-  for (const alias of [
-    "wk-challenge",
-    "wk-babysit",
-    "wk-implement",
-    "wk-plan",
-    "wk-debug",
-    "wk-review",
-    "wk-handoff",
-    "wk-tdd",
-    "wk-blast-radius",
-    "wk-deslop",
-    "wk-diagram",
-    "wk-mockup",
-    "wk-green-run",
-    "wk-steer",
-  ])
-    expect(commands, alias).toContain(alias);
+  for (const alias of Object.keys(WORKIT_SKILL_ALIASES)) expect(commands, alias).toContain(alias);
 
   const messages = await runWorkitTool(lane.harness);
   const call = toolCall(messages, "workit_task");
