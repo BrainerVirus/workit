@@ -1,11 +1,7 @@
 import { expect, test } from "bun:test";
 import { OPERATION_SCHEMA_MAX_DEPTH } from "@/packages/workit-core/src/core";
 import { createWorkitTools } from "@/packages/workit-opencode/src/tools/workit";
-import { createDocsRepoTools } from "@/packages/workit-opencode/src/tools/docs-repo";
 import { createRepoTools } from "@/packages/workit-opencode/src/tools/repo";
-import { createRuleTools } from "@/packages/workit-opencode/src/tools/rules";
-import { createTemplateTools } from "@/packages/workit-opencode/src/tools/templates";
-import { createYouTrackTools } from "@/packages/workit-opencode/src/tools/youtrack";
 
 const defOf = (schema: unknown): Record<string, any> =>
   (schema as any)?.def ?? (schema as any)?._def ?? {};
@@ -58,11 +54,7 @@ const depthOf = (schema: unknown, current = 0): number => {
 test("every advertised OpenCode tool stays within the provider nesting limit", () => {
   const tools = {
     ...createWorkitTools({}),
-    ...createDocsRepoTools(),
     ...createRepoTools(),
-    ...createRuleTools(),
-    ...createTemplateTools(),
-    ...createYouTrackTools(),
   };
   expect(Object.keys(tools).length).toBeGreaterThan(8);
   for (const [name, tool] of Object.entries(tools)) {

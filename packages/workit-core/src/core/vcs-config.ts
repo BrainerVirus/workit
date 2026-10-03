@@ -303,10 +303,6 @@ export function vcsCliIdentity(cwd?: string): Record<string, any> {
 }
 
 /** Legacy command name, now verifies native CLI auth rather than a separate token. */
-export async function vcsVerifyToken(): Promise<Record<string, any>> {
-  return vcsCliIdentity();
-}
-
 /** Port of scripts/vcs/merged-style.sh — recent merged MR/PR bodies for style reference. */
 export function mergedPrStyle(limit = 6, cwd?: string): Record<string, any> {
   const cfg = vcsConfig("load", cwd);

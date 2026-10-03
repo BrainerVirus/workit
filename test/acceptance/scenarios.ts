@@ -2,7 +2,7 @@
 
 export const FIXTURE_REVISION = "workit-v1-2026-09-30";
 
-export type CaScenarioId = `CA-${string}`;
+type CaScenarioId = `CA-${string}`;
 export type EvaluationScenarioId = `E-${string}`;
 
 export type ScenarioFixture = {
@@ -220,9 +220,6 @@ export const EVALUATION_SCENARIO_IDS = E_SCENARIOS.map((s) => s.id) as Evaluatio
 
 /** Safety-critical Workit scenarios repeated twice per coding host. */
 export const SAFETY_REPEAT_SCENARIOS: EvaluationScenarioId[] = ["E-02", "E-05", "E-06"];
-
-export const scenarioById = (id: string): ScenarioFixture | undefined =>
-  [...CA_SCENARIOS, ...E_SCENARIOS].find((s) => s.id === id);
 
 export const assertFixturesFrozen = (): void => {
   for (const scenario of [...CA_SCENARIOS, ...E_SCENARIOS]) {

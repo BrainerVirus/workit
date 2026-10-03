@@ -14,27 +14,6 @@ export const requireConfirmed = (confirmed: boolean) => {
   return output(fail("confirmed: true required"));
 };
 
-export function scriptResult<T extends object>(result: RunResult, parse: (stdout: string) => T) {
-  if (result.exitCode !== 0) {
-    return fail(
-      result.stderr.trim() || result.stdout.trim() || "workflow script failed",
-      diagnostics(result),
-    );
-  }
-  try {
-    return ok({
-      ...parse(result.stdout),
-      exitCode: 0,
-      ...(result.stderr ? { stderr: result.stderr } : {}),
-    });
-  } catch (error) {
-    return fail(
-      error instanceof Error ? error.message : "workflow output parse failed",
-      diagnostics(result),
-    );
-  }
-}
-
 export const legacyScriptResult = (result: RunResult) => {
   let parsed: Record<string, unknown> | null = null;
   try {

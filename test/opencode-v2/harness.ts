@@ -26,7 +26,7 @@ export const V2_IMAGE =
   "ghcr.io/anomalyco/opencode@sha256:aa0e5ac93543f24c99dfcc72a6ea7df335faec131dafc16f7607a2c7d3173d28";
 export const V1_IMAGE =
   "ghcr.io/anomalyco/opencode@sha256:412b37a894bb937a0d5d6a1860789b9fd7d34a109334bec98a3f6ecf812bb442";
-export const BUN_IMAGE =
+const BUN_IMAGE =
   "oven/bun@sha256:1d653098bf847813e26adb2435f932b7cfa3c132a7e25dd5216dbb1f67dbd118";
 
 export type Harness = {

@@ -15,7 +15,7 @@ import { legacyScriptResult, output, requireConfirmed } from "./repo-result";
 
 /** The core initApply call in RunResult shape, shared so the V1 repo-tool
  * runtime and the V2 adapter run the identical confirmed action. */
-export const initApplyRuntime: Pick<RepoRuntime, "initApply"> = {
+export const initApplyRuntime: RepoRuntime = {
   initApply: (root, action, env) => {
     const out = initApply({ action, confirmed: true, env });
     return {
@@ -60,7 +60,7 @@ export type InitApplyArgs = {
 export const executeInitApply = (
   args: InitApplyArgs,
   directory: string,
-  runtime: Pick<RepoRuntime, "initApply">,
+  runtime: RepoRuntime,
 ): string => {
   const rejected = requireConfirmed(args.confirmed);
   if (rejected) return rejected;

@@ -1,8 +1,8 @@
 import { expect } from "bun:test";
-import { createTools } from "@/packages/workit-opencode/src/tools";
+import { createWorkitTools } from "@/packages/workit-opencode/src/tools/workit";
 
 export function assertOpencodeWorkitNamespace(): string[] {
-  const names = Object.keys(createTools());
+  const names = Object.keys(createWorkitTools());
   const core = [
     "workit_task",
     "workit_policy",

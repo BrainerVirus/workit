@@ -4,7 +4,6 @@ import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { mergedPrStyle, vcsConfig } from "@/packages/workit-core/src/core/vcs-config";
-import { initStatusData } from "@/packages/workit-core/src/core/init";
 
 // Keep shell-based CLI stubs off Windows; production invokes native CLI executables without a shell.
 const cli = process.platform === "win32" ? test.skip : test;
@@ -69,20 +68,6 @@ test("provider resolution does not require a token file", () => {
     t.writeAll({ provider: "github" });
     expect(vcsConfig("load", t.repo).ok).toBe(true);
   } finally {
-    t.cleanup();
-  }
-});
-
-test("init status reports the effective workspace provider, not a global sibling provider", () => {
-  const t = setup();
-  const previousRoot = process.env.WORKFLOW_WORKSPACE_ROOT;
-  try {
-    t.writeAll({ provider: "gitlab" }); // global vcs.json still says github
-    process.env.WORKFLOW_WORKSPACE_ROOT = t.repo;
-    expect(initStatusData(t.cfgDir).vcs_config.provider).toBe("gitlab");
-  } finally {
-    if (previousRoot === undefined) delete process.env.WORKFLOW_WORKSPACE_ROOT;
-    else process.env.WORKFLOW_WORKSPACE_ROOT = previousRoot;
     t.cleanup();
   }
 });

@@ -13,13 +13,13 @@ End users do **not** install this package directly — install `@brainervirus/wo
 You consume `@brainervirus/workit-core` directly only when:
 
 - Building a new host adapter (e.g. a future `codex/` adapter) that maps a host's native surfaces to the shared `src/core/` logic.
-- Reading the canonical source of workflow behavior: specs/plans, approval flow, commit/PR, changelog, YouTrack, presentation, doctor, and diagnostics.
+- Reading the canonical source of workflow behavior: task and policy engine, approval flow, commit/PR, changelog, YouTrack, doctor, and diagnostics.
 
 ## Layout and ownership
 
 | Path | Contents |
 | --- | --- |
-| `src/core/` | Shared TS logic (setup, registration, doctor, logger, branch, PR, changelog, YouTrack, presentation, docs, SDD, support matrix). |
+| `src/core/` | Shared TS logic (setup, registration, doctor, logger, branch, PR, changelog, YouTrack, task/policy engine, support matrix). |
 | `src/core.ts` | Package entry; adapters import `@brainervirus/workit-core/src/*`. |
 | `skills/` | 14 `workit-*` method skills (single source; adapters ship byte-identical copies). |
 | `scripts/` | Shared shell installers/launchers and the release-time workspace-dep rewrite. |
