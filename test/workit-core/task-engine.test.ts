@@ -115,7 +115,7 @@ test("task history search matches summaries and decisions, orders and limits rea
 
   const taskDir = join(root, ".workit", "tasks");
   const before = readdirSync(taskDir)
-    .sort()
+    .toSorted()
     .map((name) => [name, readFileSync(join(taskDir, name), "utf8")]);
   const workspaceBefore = readFileSync(join(root, ".workit", "workspace.json"), "utf8");
   const hit = makeCore("2026-01-03T00:00:00Z").task({
@@ -194,7 +194,7 @@ test("task history search matches summaries and decisions, orders and limits rea
   ]);
   expect(
     readdirSync(taskDir)
-      .sort()
+      .toSorted()
       .map((name) => [name, readFileSync(join(taskDir, name), "utf8")]),
   ).toEqual(before);
   expect(readFileSync(join(root, ".workit", "workspace.json"), "utf8")).toBe(workspaceBefore);
@@ -554,7 +554,7 @@ test("relevant environment changes stale evidence regardless of file scope", () 
         },
       },
     ],
-  } as any;
+  };
   expect(evaluateEvidence(uncertainTask, after.data)[0]).toMatchObject({ status: "stale" });
 });
 
@@ -1399,7 +1399,7 @@ test("an applicable approved limitation satisfies only its permitted requirement
     revoked: null,
     consumption: null,
   };
-  const decision = { ...decisionBase, digest: decisionDigest(decisionBase as any) } as any;
+  const decision = { ...decisionBase, digest: decisionDigest(decisionBase) } as any;
   const changed = store.mutateTask(task.data.id, task.data.revision, (current, mutation) =>
     success(mutation.revision, null, {
       ...current,
@@ -1485,7 +1485,7 @@ test("a limitation excluding part of a requirement scope cannot bypass that requ
     revoked: null,
     consumption: null,
   };
-  const decision = { ...base, digest: decisionDigest(base as any) } as any;
+  const decision = { ...base, digest: decisionDigest(base) } as any;
   const changed = store.mutateTask(taskId, assessedTask.data.revision, (current, mutation) =>
     success(mutation.revision, null, {
       ...current,

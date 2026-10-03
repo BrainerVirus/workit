@@ -84,7 +84,7 @@ export const defaultOperations: YouTrackOperations = {
         issueId,
         markdown,
         workspace_root: workspaceRoot,
-      } as never),
+      }),
     ),
   logTime: async (input) => unwrap(await legacyLogTime(input as never)),
 };

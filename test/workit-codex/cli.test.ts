@@ -451,10 +451,10 @@ test("SubagentStop is observational and denial exits zero with JSON", () => {
 test("unknown surface override warns but keeps the CLI fallback", () => {
   const prev = process.stderr.write;
   const chunks: string[] = [];
-  process.stderr.write = ((chunk: unknown) => {
+  process.stderr.write = (chunk: unknown) => {
     chunks.push(String(chunk));
     return true;
-  }) as typeof process.stderr.write;
+  };
   try {
     warnOnSurfaceFallback({ CODEX_INTERNAL_ORIGINATOR_OVERRIDE: "bogus" });
     expect(chunks.join("")).toContain("codex_cli");

@@ -23,7 +23,7 @@ const sessionTaskEntry = (
 ): TaskIndexEntry | null =>
   entries
     .filter((entry) => entry.status !== "closed" && boundTo(entry, session))
-    .sort(newestFirst)[0] ?? null;
+    .toSorted(newestFirst)[0] ?? null;
 
 /** Up to `limit` open tasks not bound to `session`, newest first. */
 const unboundOpenTaskEntries = (
@@ -33,7 +33,7 @@ const unboundOpenTaskEntries = (
 ): TaskIndexEntry[] =>
   entries
     .filter((entry) => entry.status !== "closed" && !boundTo(entry, session))
-    .sort(newestFirst)
+    .toSorted(newestFirst)
     .slice(0, limit);
 
 /** The task a session works on: the newest open task bound to it or, for hosts

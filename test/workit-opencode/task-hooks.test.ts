@@ -153,7 +153,7 @@ test("chat transformation does not infer methods from assistant phrases", async 
       user("continue"),
     ],
   };
-  await hooks["experimental.chat.messages.transform"]?.({} as never, output as never);
+  await hooks["experimental.chat.messages.transform"]?.({}, output as never);
   const text = output.messages[2].parts
     .filter((part: any) => part.type === "text")
     .map((part: any) => part.text)
@@ -233,8 +233,8 @@ test("session discovery injects one bootstrap and one compact restoration", asyn
       client: { session: { get: async () => ({ data: { id: "lead", directory: root } }) } },
     } as never);
     const output = { messages: [userFor("lead")] };
-    await hooks["experimental.chat.messages.transform"]?.({} as never, output as never);
-    await hooks["experimental.chat.messages.transform"]?.({} as never, output as never);
+    await hooks["experimental.chat.messages.transform"]?.({}, output as never);
+    await hooks["experimental.chat.messages.transform"]?.({}, output as never);
     const text = output.messages[0].parts
       .filter((part: any) => part.type === "text")
       .map((part: any) => part.text)
@@ -245,7 +245,7 @@ test("session discovery injects one bootstrap and one compact restoration", asyn
     expect(text).toContain("parked historical topic");
 
     const again = { messages: [userFor("lead")] };
-    await hooks["experimental.chat.messages.transform"]?.({} as never, again as never);
+    await hooks["experimental.chat.messages.transform"]?.({}, again as never);
     expect(again.messages[0].parts.map((part: any) => part.text ?? "").join("\n")).not.toContain(
       "<workit-history-offer>",
     );
@@ -253,14 +253,8 @@ test("session discovery injects one bootstrap and one compact restoration", asyn
     expect(current.store.readWorkspace()).toEqual(beforeWorkspace);
 
     const compact = { context: [] as string[] };
-    await hooks["experimental.session.compacting"]?.(
-      { sessionID: "lead" } as never,
-      compact as never,
-    );
-    await hooks["experimental.session.compacting"]?.(
-      { sessionID: "lead" } as never,
-      compact as never,
-    );
+    await hooks["experimental.session.compacting"]?.({ sessionID: "lead" }, compact);
+    await hooks["experimental.session.compacting"]?.({ sessionID: "lead" }, compact);
     expect(compact.context).toHaveLength(1);
     expect(compact.context[0]).toContain("<workit-task-context>");
   } finally {
@@ -313,10 +307,7 @@ test("direct-child reviewer and implementer contexts are exact and lineage-bound
       { title: "task", output: "started", metadata: { sessionID: "reviewer-session" } },
     );
     const reviewerOutput = { messages: [userFor("reviewer-session")] };
-    await reviewerHooks["experimental.chat.messages.transform"]?.(
-      {} as never,
-      reviewerOutput as never,
-    );
+    await reviewerHooks["experimental.chat.messages.transform"]?.({}, reviewerOutput as never);
     const reviewerText = reviewerOutput.messages[0].parts
       .filter((part: any) => part.type === "text")
       .map((part: any) => part.text)
@@ -365,10 +356,7 @@ test("direct-child reviewer and implementer contexts are exact and lineage-bound
       { title: "task", output: "started", metadata: { sessionID: "implementer-session" } },
     );
     const implementerOutput = { messages: [userFor("implementer-session")] };
-    await reviewerHooks["experimental.chat.messages.transform"]?.(
-      {} as never,
-      implementerOutput as never,
-    );
+    await reviewerHooks["experimental.chat.messages.transform"]?.({}, implementerOutput as never);
     const implementerText = implementerOutput.messages[0].parts
       .filter((part: any) => part.type === "text")
       .map((part: any) => part.text)
@@ -391,10 +379,7 @@ test("direct-child reviewer and implementer contexts are exact and lineage-bound
       },
     } as never);
     const mismatchedOutput = { messages: [userFor("reviewer-session")] };
-    await mismatchedHooks["experimental.chat.messages.transform"]?.(
-      {} as never,
-      mismatchedOutput as never,
-    );
+    await mismatchedHooks["experimental.chat.messages.transform"]?.({}, mismatchedOutput as never);
     const mismatchedText = mismatchedOutput.messages[0].parts
       .filter((part: any) => part.type === "text")
       .map((part: any) => part.text)
@@ -946,7 +931,7 @@ test("a cancelled launch settles the oldest slot as not started and frees the ne
     // Bind order mirrors the implementation: oldest recordedAt, id breaks
     // ties (the fixed test clock ties recordedAt).
     const [older, newer] = [...listed.data.workers]
-      .sort((a, b) =>
+      .toSorted((a, b) =>
         a.recordedAt < b.recordedAt ? -1 : a.recordedAt > b.recordedAt ? 1 : a.id < b.id ? -1 : 1,
       )
       .map((entry) => entry.id);
@@ -1221,7 +1206,7 @@ test("worker context names the worker identity for self-references", async () =>
     // and a missing index is rebuilt with it.
     const indexed = new TaskStore(root).listTaskIndex();
     if (!indexed.ok) throw new Error(indexed.error);
-    expect(indexed.data[0]!.sessions).toContainEqual({
+    expect(indexed.data[0].sessions).toContainEqual({
       host: "opencode",
       handle: "child",
       workerId: first.data.id,
@@ -1300,7 +1285,7 @@ const assignReviewer = (core: WorkitCore, store: TaskStore, taskId: string): str
 const createdEvent = (hooks: any, root: string, id: string, parentID: string) =>
   hooks.event?.({
     event: { type: "session.created", properties: { info: { id, directory: root, parentID } } },
-  } as never);
+  });
 
 const sessionOf = (root: string, taskId: string, workerId: string) => {
   const task = new TaskStore(root).readTask(taskId);
@@ -1321,7 +1306,7 @@ test("serial session.created events never consume assigned workers", async () =>
     const listed = store.readTask(task.id);
     if (!listed.ok) throw new Error("task missing");
     const ordered = [...listed.data.workers]
-      .sort((a, b) =>
+      .toSorted((a, b) =>
         a.recordedAt < b.recordedAt ? -1 : a.recordedAt > b.recordedAt ? 1 : a.id < b.id ? -1 : 1,
       )
       .map((entry) => entry.id);

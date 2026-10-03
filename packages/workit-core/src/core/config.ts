@@ -297,7 +297,7 @@ export const resolveBranchPolicy = (
   integration: "pr" | "merge";
   defaultTargetBranch: string;
 } => {
-  const wp = (workspace?.branchPolicy ?? {}) as Record<string, any>;
+  const wp = workspace?.branchPolicy ?? {};
   // An invalid workspace preset (e.g. a typo) falls back to the global preset,
   // preserving resolution order workspace > global > preset, instead of
   // crashing on PRESETS[preset] (mirrors parseConfigResult's Object.hasOwn).
@@ -345,12 +345,12 @@ export const resolveCommitPolicy = (
   config: ToolkitConfig,
   workspace?: { commitPolicy?: Record<string, any> } | null,
 ): { preset: CommitFlavorPreset; pattern?: string } => {
-  const wp = (workspace?.commitPolicy ?? {}) as Record<string, any>;
+  const wp = workspace?.commitPolicy ?? {};
   if (COMMIT_PRESETS.includes(String(wp.preset ?? ""))) {
     return {
       preset: wp.preset as CommitFlavorPreset,
       ...(typeof wp.pattern === "string" ? { pattern: wp.pattern } : {}),
     };
   }
-  return config.commitPolicy ?? ({ preset: "conventional" } as ToolkitConfig["commitPolicy"]);
+  return config.commitPolicy ?? { preset: "conventional" };
 };

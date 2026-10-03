@@ -270,13 +270,13 @@ Bun.serve({
     if (url.pathname === "/v1/chat/completions") {
       const model = String(body?.model ?? "");
       const script = model.startsWith("stub-") ? model.slice("stub-".length) : "model";
-      const turns = scripts[script] ?? scripts.model!;
+      const turns = scripts[script] ?? scripts.model;
       // Client disconnects (interrupt/cancel mid-stream) are logged so tests
       // can assert the provider observed the abort.
       req.signal.addEventListener("abort", () => {
         void log({ aborted: true, model: body?.model });
       });
-      if (isCompaction(body)) return scripts.summary![0]!();
+      if (isCompaction(body)) return scripts.summary[0]();
       const continued = continueSessionId(body);
       if (continued)
         return sse([
@@ -288,7 +288,7 @@ Bun.serve({
           }),
           textTurn("", "tool_calls"),
         ]);
-      return hasToolResult(body) ? turns[turns.length - 1]!() : turns[0]!();
+      return hasToolResult(body) ? turns[turns.length - 1]() : turns[0]();
     }
     return new Response("not found", { status: 404 });
   },

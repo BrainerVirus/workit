@@ -33,7 +33,7 @@ test("OpenCode plugin registers native tools without Cursor assets", async () =>
     } as never);
     const config: Record<string, any> = {};
     await hooks.config?.(config);
-    expect(Object.keys(config.command ?? {}).sort()).toEqual([
+    expect(Object.keys(config.command ?? {}).toSorted()).toEqual([
       "wk-babysit",
       "wk-blast-radius",
       "wk-challenge",

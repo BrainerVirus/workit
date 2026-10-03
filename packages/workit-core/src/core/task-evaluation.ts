@@ -94,7 +94,7 @@ const gitPaths = (root: string): Inventory => {
     return {
       paths: [],
       uncertain: !/not a git repository/i.test(stderr),
-      git: /not a git repository/i.test(stderr) ? false : true,
+      git: !/not a git repository/i.test(stderr),
     };
   }
   const paths = result.stdout
@@ -219,7 +219,7 @@ export function captureCandidate(
 
   const files: Candidate["files"] = [];
   let completeness: Candidate["completeness"] = uncertain ? "uncertain" : "known";
-  for (const item of [...names].sort()) {
+  for (const item of [...names].toSorted()) {
     if (!scopeMatches(item, normalizedScope)) continue;
     const target = path.join(checkout, item);
     try {
@@ -264,7 +264,7 @@ export function captureCandidate(
   )
     return failure("invalid_input", "candidate environment names must be unique and non-empty");
   const values = supplied
-    .sort((left, right) => compareCodeUnits(left.name, right.name))
+    .toSorted((left, right) => compareCodeUnits(left.name, right.name))
     .map(({ name, value }) => ({ name, value, refs: [] }));
   if (values.some(({ value }) => value === null)) completeness = "uncertain";
   const headResult = spawnSync("git", ["rev-parse", "HEAD"], { cwd: checkout, encoding: "utf8" });

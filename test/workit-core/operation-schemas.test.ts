@@ -5,7 +5,6 @@ import {
   OPERATION_FAMILIES,
   OPERATION_SCHEMA_DEPTH,
   operationJsonSchema,
-  type OperationFamily,
 } from "@/packages/workit-core/src/core";
 
 const depth = (node: unknown, current = 0): number => {
@@ -38,13 +37,13 @@ const collectDescriptions = (node: unknown, out: string[] = []): string[] => {
 
 test("advertised operation schemas stay within provider nesting limits", () => {
   for (const family of OPERATION_FAMILIES) {
-    const bounded = boundedOperationJsonSchema(family as OperationFamily);
+    const bounded = boundedOperationJsonSchema(family);
     expect(depth(bounded), family).toBeLessThanOrEqual(8);
   }
 });
 
 test("collapsed nodes name their canonical fields", () => {
-  const bounded = boundedOperationJsonSchema("task") as Record<string, unknown>;
+  const bounded = boundedOperationJsonSchema("task");
   const descriptions = collectDescriptions(bounded);
   const collapsed = descriptions.filter((text) => text.startsWith("Fields (! required):"));
   expect(collapsed.length).toBeGreaterThan(0);
@@ -61,12 +60,12 @@ test("bounded schemas keep routable top-level actions", () => {
 test("stringified mode accepts JSON-encoded strings without growing past the limit", () => {
   let sawTolerantDescription = false;
   for (const family of OPERATION_FAMILIES) {
-    const tolerant = boundedOperationJsonSchema(family as OperationFamily, 1, true);
+    const tolerant = boundedOperationJsonSchema(family, 1, true);
     expect(depth(tolerant), family).toBeLessThanOrEqual(10);
     sawTolerantDescription =
       sawTolerantDescription ||
       JSON.stringify(tolerant).includes("A JSON-encoded string is also accepted");
-    expect(JSON.stringify(boundedOperationJsonSchema(family as OperationFamily))).not.toContain(
+    expect(JSON.stringify(boundedOperationJsonSchema(family))).not.toContain(
       "A JSON-encoded string is also accepted",
     );
   }
@@ -81,7 +80,7 @@ test("shared projection depth matches the documented host bound", () => {
 
 test("full contract schemas stay complete for runtime validation", () => {
   for (const family of OPERATION_FAMILIES) {
-    const full = operationJsonSchema(family as OperationFamily);
+    const full = operationJsonSchema(family);
     expect(JSON.stringify(full)).toContain("properties");
   }
 });

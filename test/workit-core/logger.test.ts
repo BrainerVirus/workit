@@ -51,7 +51,7 @@ const assertJsonValue = (value: unknown): JsonValue => {
     typeof value === "number" ||
     typeof value === "string"
   ) {
-    return value as JsonValue;
+    return value;
   }
   if (Array.isArray(value)) return value.map(assertJsonValue);
   if (typeof value === "object") {
@@ -93,7 +93,7 @@ test("uses a daily JSONL filename per day", () => {
   current = day2;
   logger.info("two");
 
-  const files = readdirSync(logsDir(stateDir)).sort();
+  const files = readdirSync(logsDir(stateDir)).toSorted();
   expect(files).toEqual(["workit-2026-08-10.jsonl", "workit-2026-08-11.jsonl"]);
 });
 
@@ -108,7 +108,7 @@ test("retains the newest seven daily files", () => {
   const logger = createLogger({ stateDir, now: () => new Date(2026, 7, 8) });
   logger.info("today");
 
-  const files = readdirSync(dir).sort();
+  const files = readdirSync(dir).toSorted();
   expect(files.length).toBe(7);
   expect(files).not.toContain("workit-2026-08-01.jsonl");
   expect(files).toContain("workit-2026-08-02.jsonl");

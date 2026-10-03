@@ -72,8 +72,4 @@ export const codexContextProvider = (
   },
 });
 
-if (import.meta.main)
-  await runStdioServer(
-    detectCodexSurface(process.env),
-    codexContextProvider() as Parameters<typeof runStdioServer>[1],
-  );
+if (import.meta.main) await runStdioServer(detectCodexSurface(process.env), codexContextProvider());

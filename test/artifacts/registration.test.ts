@@ -155,7 +155,7 @@ test("mergeOpenCodeConfig dedups plugins and preserves unrelated settings byte-f
   for (const key of ["model", "theme", "$schema"]) {
     expect(JSON.stringify(config[key]), key).toBe(JSON.stringify(input[key]));
   }
-  expect(Object.keys(config).sort()).toEqual(Object.keys(input).sort());
+  expect(Object.keys(config).toSorted()).toEqual(Object.keys(input).toSorted());
 });
 
 test("mergeOpenCodeConfig preserves every skill path without ownership evidence", () => {
@@ -309,7 +309,7 @@ test("mergeCursorMcp replaces the legacy MCP name with one portable server", () 
   };
   const { config, changed } = mergeCursorMcp(input, "workit", portable);
   const servers = config.mcpServers as Record<string, unknown>;
-  expect(Object.keys(servers).sort()).toEqual(["other-server", "workit"]);
+  expect(Object.keys(servers).toSorted()).toEqual(["other-server", "workit"]);
   expect(servers.workit).toEqual(portable);
   expect(JSON.stringify(servers["other-server"])).toBe(
     JSON.stringify(input.mcpServers["other-server"]),

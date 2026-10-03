@@ -18,10 +18,7 @@ import {
   type CursorHookInput,
 } from "@brainervirus/workit-core/hooks";
 
-export {
-  parseCursorHookInput,
-  type CursorHookInput,
-} from "@brainervirus/workit-core/hooks";
+export { parseCursorHookInput, type CursorHookInput } from "@brainervirus/workit-core/hooks";
 
 /** Every tool name the hook treats as a write. The committed preToolUse
  *  matcher must cover all of these (pinned by task-hooks tests) or matching

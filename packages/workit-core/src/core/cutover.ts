@@ -217,8 +217,8 @@ const readDirNamesBounded = (
   try {
     for (;;) {
       const entry = handle.readSync();
-      if (!entry) return { names: names.sort(), truncated: false };
-      if (names.length === limit) return { names: names.sort(), truncated: true };
+      if (!entry) return { names: names.toSorted(), truncated: false };
+      if (names.length === limit) return { names: names.toSorted(), truncated: true };
       names.push(entry.name);
     }
   } finally {
@@ -596,8 +596,8 @@ const cutoverInventoryScopes = (
     category: "project-state",
     disposition: "preserve",
   },
-  ...legacyFlowInventoryTargets(paths.workspace, issues).map((path) => ({
-    path,
+  ...legacyFlowInventoryTargets(paths.workspace, issues).map((target) => ({
+    path: target,
     category: "project-history" as const,
     disposition: "preserve" as const,
   })),
@@ -743,7 +743,7 @@ const buildCutoverInventory = (paths: ReturnType<typeof resolvePaths>): CutoverI
     }
     hash.update(`${entry.path}\0${entry.kind}\0${entry.bytes}\0${entry.digest ?? ""}\n`);
   }
-  const issueList = [...issues].sort();
+  const issueList = [...issues].toSorted();
   for (const issue of issueList) hash.update(`!${issue}\n`);
   return {
     complete: issueList.length === 0,
@@ -936,7 +936,7 @@ const readBackupFiles = (
       issues.push(`backup content failed verification: ${entry.path}`);
       continue;
     }
-    files.set(entry.path, { digest: digest as Digest, storagePath });
+    files.set(entry.path, { digest: digest, storagePath });
   }
   return { files, issues };
 };

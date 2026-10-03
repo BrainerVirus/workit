@@ -79,7 +79,7 @@ test("raw caller-built host provenance cannot authorize resume reconciliation", 
       {
         ...viewOf(value),
         task: { ...value.task, workers: [{ id: workerId } as never] },
-      } as TaskView,
+      },
       [{ observation, authority: forged }],
     ),
   ).toMatchObject({ ok: false, code: "permission_denied" });
@@ -272,7 +272,7 @@ test("verified unknown observations remain a reconciliation blocker", () => {
     },
   } as never;
   const task = { ...value.task, workers: [worker] } as typeof value.task;
-  const view = { ...viewOf(value), task } as TaskView;
+  const view = { ...viewOf(value), task };
   const observation = {
     taskId: task.id,
     workerId,
@@ -458,7 +458,7 @@ test("compact context keeps the newest decisions with deterministic ties and saf
   const compact = compactTaskContext(view);
   expect(JSON.stringify(view.task.decisions)).toBe(before);
   expect(
-    compactTaskContext({ ...view, task: { ...view.task, decisions: [...decisions].reverse() } }),
+    compactTaskContext({ ...view, task: { ...view.task, decisions: [...decisions].toReversed() } }),
   ).toBe(compact);
   const { decisions: compactDecisions } = JSON.parse(compact) as {
     decisions: { id: string; choice: string }[];
@@ -507,7 +507,7 @@ test("compact context inspects the full task when no actual choice is available"
   const compact = compactTaskContext({
     ...viewOf(value),
     task: { ...value.task, decisions: [decision] },
-  } as unknown as TaskView);
+  });
   const { decisions } = JSON.parse(compact) as { decisions: { choice: string }[] };
   expect(decisions[0]?.choice).toBe(
     `task.inspect taskId=${value.task.id} view=full; decision=${decision.id}`,
@@ -529,7 +529,7 @@ test("compact context inspects the full task when no actual choice is available"
           },
         ],
       },
-    } as unknown as TaskView);
+    });
     expect(JSON.parse(context).decisions[0].choice).toBe(
       `task.inspect taskId=${value.task.id} view=full; decision=${decision.id}`,
     );
@@ -684,7 +684,7 @@ test("export omits host and external refs throughout portable history", () => {
   expect(importedTask).toMatchObject({ ok: true });
   if (!importedTask.ok) throw new Error(importedTask.error);
   const importedRecord = importedTask.data.intent.data.authorityRefs.find(
-    (ref) => ref.kind === "record",
+    (authorityRef) => authorityRef.kind === "record",
   );
   expect(importedRecord).toMatchObject({ kind: "record" });
   expect(importedRecord && importedRecord.id).not.toBe(evidenceId);

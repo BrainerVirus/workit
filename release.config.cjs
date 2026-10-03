@@ -6,17 +6,23 @@ module.exports = {
     // release entirely (no tag, no publish, no sync PR). Key is
     // analyzeCommitsCmd: @semantic-release/exec v7 renamed it from analyzeCmd
     // and silently ignores the old name.
-    ["@semantic-release/exec", {
-      analyzeCommitsCmd: "bun packages/workit-core/scripts/analyze-release-scope.ts",
-    }],
+    [
+      "@semantic-release/exec",
+      {
+        analyzeCommitsCmd: "bun packages/workit-core/scripts/analyze-release-scope.ts",
+      },
+    ],
     // Conventional Commits preset formats notes; analyze-release-scope owns
     // bump selection, including `!` and BREAKING CHANGE on any commit type.
     ["@semantic-release/release-notes-generator", { preset: "conventionalcommits" }],
     // AR-02: verify-time rewrite runs FIRST — before any npm plugin's
     // verification — so package verification never sees a workspace:* manifest.
-    ["@semantic-release/exec", {
-      verifyConditionsCmd: "bun packages/workit-core/scripts/rewrite-workspace-deps.ts",
-    }],
+    [
+      "@semantic-release/exec",
+      {
+        verifyConditionsCmd: "bun packages/workit-core/scripts/rewrite-workspace-deps.ts",
+      },
+    ],
     // AR-16: bumpers only — selective publishing is owned by publish-changed
     // below, so identical-content packages stop reaching the registry.
     ["@semantic-release/npm", { pkgRoot: "packages/workit-core", npmPublish: false }],
@@ -27,17 +33,23 @@ module.exports = {
     ["@semantic-release/npm", { pkgRoot: "packages/workit-codex", npmPublish: false }],
     ["@semantic-release/npm", { pkgRoot: "packages/workit-pi", npmPublish: false }],
     // AR-02/RR-01: prepare-time rewrite AFTER version bumps (unchanged).
-    ["@semantic-release/exec", {
-      prepareCmd: "bun packages/workit-core/scripts/rewrite-workspace-deps.ts",
-    }],
+    [
+      "@semantic-release/exec",
+      {
+        prepareCmd: "bun packages/workit-core/scripts/rewrite-workspace-deps.ts",
+      },
+    ],
     // AR-16: publish only packages with payload changes since the PREVIOUS
     // tag. ${lastRelease.gitTag} is mandatory here: semantic-release creates
     // the NEW release tag before publish plugins run, so latestTag() inside
     // the script would resolve to the release being cut and skip everything.
-    ["@semantic-release/exec", {
-      publishCmd:
-        "bun packages/workit-core/scripts/publish-changed-packages.ts ${lastRelease.gitTag}",
-    }],
+    [
+      "@semantic-release/exec",
+      {
+        publishCmd:
+          "bun packages/workit-core/scripts/publish-changed-packages.ts ${lastRelease.gitTag}",
+      },
+    ],
     "@semantic-release/github",
   ],
 };

@@ -26,4 +26,4 @@ export const pluginSourceFiles = [
   ]),
 ]
   .filter((file) => existsSync(file))
-  .sort();
+  .toSorted();

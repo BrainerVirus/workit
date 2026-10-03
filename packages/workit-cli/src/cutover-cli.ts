@@ -97,8 +97,8 @@ const parseArchiveDir = (argv: string[]): { value?: string; malformed: string[] 
   );
   if (indexes.length > 1) return { malformed: ["duplicate --archive-dir flags"] };
   if (indexes.length === 0) return { malformed: [] };
-  const index = indexes[0]!;
-  const token = argv[index]!;
+  const index = indexes[0];
+  const token = argv[index];
   const value = token === "--archive-dir" ? argv[index + 1] : token.slice("--archive-dir=".length);
   if (!value?.trim() || value.startsWith("--")) {
     return { malformed: [token === "--archive-dir" ? "--archive-dir requires a path" : token] };

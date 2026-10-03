@@ -210,11 +210,10 @@ export const externalActionSchema = z.discriminatedUnion("operation", [
 export type ExternalActionRequest = z.infer<typeof externalActionSchema>;
 
 /** The complete external-action contract for hosts that register native tools. */
-export const externalActionJsonSchema = (): z.core.JSONSchema.BaseSchema =>
-  ({
-    type: "object",
-    ...z.toJSONSchema(externalActionSchema, { target: "draft-2020-12" }),
-  }) as z.core.JSONSchema.BaseSchema;
+export const externalActionJsonSchema = (): z.core.JSONSchema.BaseSchema => ({
+  type: "object",
+  ...z.toJSONSchema(externalActionSchema, { target: "draft-2020-12" }),
+});
 
 export type ExternalActionOperation = ExternalActionRequest["operation"];
 
@@ -639,7 +638,7 @@ export const chainStepBinding = (
     typeof descriptor.payload?.target_branch === "string"
       ? {
           operation: "git.branch_setup",
-          target: descriptor.payload.target_branch as string,
+          target: descriptor.payload.target_branch,
           cwd: targetRoot,
         }
       : descriptor.operation === "hosting.pull_request"
@@ -947,7 +946,7 @@ export const createAuthorizedExternalActionRunner =
     let latest: ExternalActionResult<T> | undefined;
     for (const step of sequence) {
       const binding = bind(operation);
-      if ("ok" in binding) return binding as ExternalActionResult<T>;
+      if ("ok" in binding) return binding;
       const targetRoot = externalActionTargetRoot(operation, coordinationRoot);
       if (targetRoot === null)
         return failure("capability_unavailable", "external action target could not be locked", {
@@ -960,7 +959,7 @@ export const createAuthorizedExternalActionRunner =
         ? (run) => new TaskStore(targetRoot).withExternalActionLock(run, true)
         : undefined;
       const result = await runAuthorizedExternalAction(
-        { core, ...(binding as Omit<AuthorizedActionInput, "core">), ...(step ? { step } : {}) },
+        { core, ...binding, ...(step ? { step } : {}) },
         (reservation) => effect(step, reservation),
         withActionLock,
       );
@@ -1039,12 +1038,10 @@ export const readNativeExternalActionObservation = (
     actionRef: candidate.actionRef as Ref,
     outcome: candidate.outcome as NativeExternalActionObservation["outcome"],
     ...(candidate.callId === undefined ? {} : { callId: candidate.callId }),
-    ...(candidate.taskRevision === undefined
-      ? {}
-      : { taskRevision: candidate.taskRevision as Revision }),
+    ...(candidate.taskRevision === undefined ? {} : { taskRevision: candidate.taskRevision }),
     ...(candidate.workspaceRevision === undefined
       ? {}
-      : { workspaceRevision: candidate.workspaceRevision as Revision }),
+      : { workspaceRevision: candidate.workspaceRevision }),
   };
 };
 
@@ -1100,7 +1097,7 @@ export async function runAuthorizedExternalAction<T>(
     ...(input.step ? { step: input.step } : {}),
     observation: input.reserveObservation,
   });
-  if (!reserved.ok) return reserved as ExternalActionResult<T>;
+  if (!reserved.ok) return reserved;
 
   const settle = (
     outcome: "succeeded" | "not_started" | "unknown",
@@ -1149,7 +1146,7 @@ export async function runAuthorizedExternalAction<T>(
       effectValue = await effect(reserved.data);
     } catch {
       const settled = settleWithRefresh("unknown", settle("unknown"));
-      if (!settled.ok) return settled as ExternalActionResult<T>;
+      if (!settled.ok) return settled;
       return failure("external_outcome_unknown", "external action outcome is unknown", {
         operation: "external_action",
         outcome: "unknown",
@@ -1161,7 +1158,7 @@ export async function runAuthorizedExternalAction<T>(
       "ok" in effectValue &&
       typeof (effectValue as { ok?: unknown }).ok === "boolean"
     ) {
-      const contract = effectValue as Result<T>;
+      const contract = effectValue;
       if (!contract.ok) {
         const preflight =
           typeof contract.details === "object" &&
@@ -1169,13 +1166,13 @@ export async function runAuthorizedExternalAction<T>(
           (contract.details as Record<string, unknown>).outcome === "not_started";
         const outcome = input.failureOutcome ?? (preflight ? "not_started" : "unknown");
         const settled = settleWithRefresh(outcome, settle(outcome));
-        if (!settled.ok) return settled as ExternalActionResult<T>;
+        if (!settled.ok) return settled;
         return contract;
       }
       effectValue = contract.data;
     }
     const settled = settleWithRefresh("succeeded", settle("succeeded"));
-    if (!settled.ok) return settled as ExternalActionResult<T>;
+    if (!settled.ok) return settled;
     return {
       ok: true,
       schemaVersion: 1,
@@ -1194,14 +1191,14 @@ export async function runAuthorizedExternalAction<T>(
         outcome: "unknown",
       });
     const settled = settleWithRefresh("not_started", settle("not_started"));
-    if (!settled.ok) return settled as ExternalActionResult<T>;
+    if (!settled.ok) return settled;
     return failure("writer_conflict", "target checkout was unavailable before the effect", {
       outcome: "not_started",
     });
   }
   if (!effectStarted) {
     const settled = settleWithRefresh("not_started", settle("not_started"));
-    if (!settled.ok) return settled as ExternalActionResult<T>;
+    if (!settled.ok) return settled;
   }
   return result;
 }

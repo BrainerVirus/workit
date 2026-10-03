@@ -192,7 +192,7 @@ const plugin: Plugin = async ({ client, directory }) => {
   ): { task: T; entry: E } | null => {
     const tasks = new Set(items.map((item) => item.task.id));
     if (tasks.size !== 1 || items.length === 0) return null;
-    return [...items].sort((a, b) =>
+    return [...items].toSorted((a, b) =>
       a.entry.recordedAt < b.entry.recordedAt
         ? -1
         : a.entry.recordedAt > b.entry.recordedAt
@@ -393,7 +393,7 @@ const plugin: Plugin = async ({ client, directory }) => {
         return;
       }
       parentID = coordinator;
-    } else if (!eventInfo && (observed as SessionInfo).parentID !== parentID) {
+    } else if (!eventInfo && observed.parentID !== parentID) {
       droppedLifecycle(sessionID, "live session parent contradicts the binding");
       return;
     }

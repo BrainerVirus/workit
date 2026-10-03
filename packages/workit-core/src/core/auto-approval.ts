@@ -172,7 +172,7 @@ export const verifyStandingApproval = (
   if (task.status !== "active")
     return failure("invalid_transition", "only active tasks can authorize actions");
   const workspace = new TaskStore(root).readWorkspace();
-  if (!workspace.ok) return workspace as Result<never>;
+  if (!workspace.ok) return workspace;
   if (!workspace.data || !currentWriterOwnsTask(task, workspace.data, caller))
     return failure("permission_denied", "standing approval requires the current writer session");
   const standing = binding.standing;
@@ -200,8 +200,8 @@ export const verifyStandingApproval = (
   )
     return failure("permission_denied", "standing auto-approval is not live for this operation");
   if (cls === "push") {
-    const workspace = resolveWorkspaceFrom(target, configDir());
-    const provider = workspace?.vcs?.provider;
+    const targetWorkspace = resolveWorkspaceFrom(target, configDir());
+    const provider = targetWorkspace?.vcs?.provider;
     const account = resolved.account;
     if (!provider || !account)
       return failure(
@@ -217,7 +217,7 @@ export const verifyStandingApproval = (
     session: { kind: "host", host: caller.host, handle: caller.actor },
     workerId: null,
     receipts: [standingReceiptFor(target, standing.workspace, cls)],
-  } as Provenance);
+  });
 };
 
 export type StandingAutoBinding = {
@@ -259,8 +259,8 @@ export const standingAutoApplies = (
   const listed = store.listTasks();
   const workspace = store.readWorkspace();
   if (!listed.ok || !workspace.ok || !workspace.data) return null;
-  const task = listed.data.find((task) =>
-    currentWriterOwnsTask(task, workspace.data!, { host, actor }),
+  const task = listed.data.find((entry) =>
+    currentWriterOwnsTask(entry, workspace.data!, { host, actor }),
   );
   if (!task) return null;
   const resolved = resolveAutoApproval(target);

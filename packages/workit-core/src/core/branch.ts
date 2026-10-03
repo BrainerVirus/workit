@@ -132,8 +132,8 @@ export const branchPolicySnapshotFor = (workspaceRoot: string) => {
   const source = resolved.provenance.branchPolicy;
   const allowed = branchPolicy.allowed
     .map((pattern) => `${pattern.source}/${pattern.flags}`)
-    .sort();
-  const protectedRefs = [...branchPolicy.protected].map((name) => name.toLowerCase()).sort();
+    .toSorted();
+  const protectedRefs = [...branchPolicy.protected].map((name) => name.toLowerCase()).toSorted();
   const fingerprint = createHash("sha256")
     .update(JSON.stringify({ allowed, protectedRefs, source }))
     .digest("hex");
@@ -675,8 +675,8 @@ export const branchSetup = ({
     targetExists = false;
   }
   if (!targetExists) {
-    const policy = validateBranchNameFor(cwd, target);
-    if (!policy.ok) return { error: policy.error, phase: "preflight" };
+    const namePolicy = validateBranchNameFor(cwd, target);
+    if (!namePolicy.ok) return { error: namePolicy.error, phase: "preflight" };
   }
   if (!targetExists) {
     const baseResolved = baseBranch(cwd);

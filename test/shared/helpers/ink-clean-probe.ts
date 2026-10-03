@@ -15,8 +15,8 @@ import { Text, render } from "ink";
 export function cleanupLiveInkInstances(): void {
   const prevOut = process.stdout.write;
   const prevErr = process.stderr.write;
-  process.stdout.write = (() => true) as typeof process.stdout.write;
-  process.stderr.write = (() => true) as typeof process.stderr.write;
+  process.stdout.write = () => true;
+  process.stderr.write = () => true;
   try {
     const probe = render(createElement(Text, null, "ink-clean-probe"));
     probe.unmount();
