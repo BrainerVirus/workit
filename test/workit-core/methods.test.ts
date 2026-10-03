@@ -246,7 +246,9 @@ test("compact task context carries selected methods and refreshes with policy", 
 
 // One meaning-bearing phrase per agent-critical rule. Whitespace is flexible
 // (the prose wraps), the words are not: inverting a rule fails here.
-const phrase = (text: string) => new RegExp(text.trim().split(/\s+/).join("\\s+"));
+const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const phrase = (text: string) =>
+  new RegExp(text.trim().split(/\s+/).map(escapeRegExp).join("\\s+"));
 
 test("agent-critical delivery rules stay stated", () => {
   const bootstrap = invariantBootstrap();
@@ -260,6 +262,11 @@ test("agent-critical delivery rules stay stated", () => {
     ["workit-steer", skillText("workit-steer"), "do not silently resume an old objective"],
     ["workit-plan", skillText("workit-plan"), "Do not ask for a separate plan approval"],
     ["workit-implement", skillText("workit-implement"), "reconcile every named deliverable"],
+    [
+      "workit-behavioral-tdd",
+      skillText("workit-behavioral-tdd"),
+      "Write one vertical RED slice that fails",
+    ],
     [
       "workit-behavioral-tdd",
       skillText("workit-behavioral-tdd"),
