@@ -1700,6 +1700,7 @@ const checkManagedContentConflict = (res: Resolved): DoctorCheck => {
 
 // The checkout's `.workit/metadata.lock`. Writes reclaim a stale lock by
 // themselves, so a stale lock is a warning with an explicit cleanup command.
+const BLOCKING_LOCK_WARN_MS = 30_000;
 const checkWorkspaceLock = (res: Resolved): DoctorCheck => {
   const lock = inspectMetadataLock(res.workspaceRoot);
   const fix = "workit doctor --fix-lock";
@@ -1718,6 +1719,15 @@ const checkWorkspaceLock = (res: Resolved): DoctorCheck => {
       status: "warn",
       detail: `stale metadata lock at ${lock.path}: ${lock.reason}`,
       fix,
+    };
+  // An unverifiable owner (other host, pid namespace, or an older Workit's
+  // lock) that has blocked writes this long needs an explicit decision.
+  if (lock.state === "unknown" && (lock.ageMs ?? 0) > BLOCKING_LOCK_WARN_MS)
+    return {
+      id: "workspace_lock",
+      status: "warn",
+      detail: `metadata lock at ${lock.path} has blocked writes for ${Math.round((lock.ageMs ?? 0) / 1000)}s and its owner cannot be verified: ${lock.reason}`,
+      fix: "workit doctor --fix-lock --force --yes",
     };
   return {
     id: "workspace_lock",

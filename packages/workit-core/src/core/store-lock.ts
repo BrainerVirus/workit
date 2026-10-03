@@ -166,8 +166,18 @@ export const classifyLockOwner = (
       ? { state: "stale", reason: "unreadable lock left behind" }
       : { state: "unknown", reason: "lock is being written" };
   const { pid, processStart, host } = lock.data;
-  // Another host, another pid namespace or boot, or a lock written by an older
-  // Workit without namespace identity: its pid cannot be checked here.
+  // Same host and pid namespace but another boot: the machine rebooted since
+  // the lock was taken, so its owner cannot still be running.
+  const [lockName, lockSpace] = host.split("#");
+  const [localName, localSpace] = localHost.split("#");
+  if (lockSpace && localSpace && lockName === localName) {
+    const [lockNs, lockBoot] = lockSpace.split(":");
+    const [localNs, localBoot] = localSpace.split(":");
+    if (lockNs === localNs && lockNs !== "?" && lockBoot !== "?" && lockBoot !== localBoot)
+      return { state: "stale", reason: "lock was taken before this machine rebooted" };
+  }
+  // Another host, another pid namespace, or a lock written by an older Workit
+  // without namespace identity: its pid cannot be checked here.
   if (host !== localHost)
     return ageMs !== null && ageMs > FOREIGN_LOCK_TTL_MS
       ? { state: "stale", reason: `lock from ${host} is older than its TTL` }
@@ -211,6 +221,8 @@ export type MetadataLockStatus = {
   guard: "absent" | "fresh" | "abandoned";
   /** Exact lock bytes that were classified (for compare-before-remove). */
   raw?: string;
+  /** Age of the lock file in milliseconds, when present. */
+  ageMs?: number | null;
 };
 
 /** Read-only inspection of a checkout's metadata lock (doctor surface). */
@@ -233,8 +245,9 @@ export const inspectMetadataLock = (root: string, nowMs = Date.now()): MetadataL
     };
   }
   const owner = parseMetadataLockOrNull(raw);
-  const verdict = classifyLockOwner(owner, ageOf(lockPath, nowMs));
-  return { path: lockPath, present: true, owner, ...verdict, guard, raw };
+  const ageMs = ageOf(lockPath, nowMs);
+  const verdict = classifyLockOwner(owner, ageMs);
+  return { path: lockPath, present: true, owner, ...verdict, guard, raw, ageMs };
 };
 
 export type ClearLockOutcome = MetadataLockStatus & {

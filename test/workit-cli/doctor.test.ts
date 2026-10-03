@@ -171,3 +171,25 @@ test("Given a lock whose owner cannot be verified, When workit doctor --fix-lock
     rmSync(path.join(fixture.cwd, ".workit"), { recursive: true, force: true });
   }
 });
+
+test("Given an unverifiable lock that has blocked writes for over 30s, When workit doctor runs, Then it warns with the exact force command; a fresh one passes", () => {
+  const lockPath = path.join(fixture.cwd, ".workit", "metadata.lock");
+  mkdirSync(path.dirname(lockPath), { recursive: true });
+  writeFileSync(
+    lockPath,
+    JSON.stringify({ pid: 1, processStart: null, host: "elsewhere", nonce: "n" }),
+  );
+  try {
+    const fresh = JSON.parse(runCli(["doctor", "--json"], fixture.cwd).stdout) as DoctorReport;
+    expect(fresh.checks.find((c) => c.id === "workspace_lock")?.status).toBe("pass");
+    const minuteAgo = new Date(Date.now() - 60_000);
+    utimesSync(lockPath, minuteAgo, minuteAgo);
+    const blocked = JSON.parse(runCli(["doctor", "--json"], fixture.cwd).stdout) as DoctorReport;
+    expect(blocked.checks.find((c) => c.id === "workspace_lock")).toMatchObject({
+      status: "warn",
+      fix: "workit doctor --fix-lock --force --yes",
+    });
+  } finally {
+    rmSync(path.join(fixture.cwd, ".workit"), { recursive: true, force: true });
+  }
+});

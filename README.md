@@ -384,7 +384,9 @@ lock whose owner is gone (dead or reused pid) is reclaimed by the next write.
 A lock records its host plus, on Linux, its pid namespace and boot id; a lock
 from another host, container namespace, boot, or an older Workit version cannot
 be checked against this process table and is reclaimed only after a 10-minute
-TTL. A write that meets a live holder retries briefly (250 ms inside host
+TTL (a lock from the same host and pid namespace but an earlier boot is
+reclaimed at once). `workit doctor` warns when such an unverifiable lock has
+blocked writes for over 30 s and prints `workit doctor --fix-lock --force --yes`. A write that meets a live holder retries briefly (250 ms inside host
 plugins and the MCP server, 2 s in the CLI) and then returns the retryable
 `busy` code, never `recovery_required`. `workit doctor` warns about a stale
 lock and `workit doctor --fix-lock` clears it under the same reclaim guard

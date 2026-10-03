@@ -25,7 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A `.workit/metadata.lock` left by a dead process (or a reused pid, or a
   foreign-host/namespace lock past its TTL) no longer bricks the store: the next
   write reclaims it. Locks carry the pid namespace and boot id so a container
-  sharing the hostname is never judged by this host's process table.
+  sharing the hostname is never judged by this host's process table, and a
+  lock from before a reboot is reclaimed at once.
   Contention with a live writer retries briefly (250 ms in-process, 2 s in the
   CLI) and returns the retryable `busy` code instead of `recovery_required`.
   `workit doctor` reports a stale lock (`workspace_lock`); `workit doctor
