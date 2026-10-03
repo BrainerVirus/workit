@@ -2,11 +2,8 @@ import { readFileSync } from "node:fs";
 
 import { EVENT, errorDetail } from "@brainervirus/workit-core/src/core/boundary";
 import type { Logger } from "@brainervirus/workit-core/src/core/logger";
-import {
-  sessionCompactContext,
-  TaskStore,
-  unfinishedTaskOffer,
-} from "@brainervirus/workit-core/src/core";
+import { TaskStore } from "@brainervirus/workit-core/src/core";
+import { sessionCompactContext, unfinishedTaskOffer } from "@brainervirus/workit-core/hooks";
 
 export const compactContextFor = (root: string, sessionID: string): string | null => {
   try {

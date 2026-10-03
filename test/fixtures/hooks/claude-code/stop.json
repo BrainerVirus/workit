@@ -1,0 +1,10 @@
+{
+  "session_id": "claude-session-1",
+  "transcript_path": "/tmp/claude/transcript.jsonl",
+  "cwd": "__CWD__",
+  "permission_mode": "default",
+  "prompt_id": "prompt-1",
+  "hook_event_name": "Stop",
+  "stop_hook_active": false,
+  "last_assistant_message": "done"
+}

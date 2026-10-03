@@ -1,0 +1,1600 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`host descriptors match their reviewed snapshots: claude_code 1`] = `
+{
+  "capabilities": [
+    {
+      "assurance": "agent_guided",
+      "name": "interactive_decision",
+      "reason": "Claude Code hooks expose no native question answer receipt",
+      "refs": [
+        {
+          "handle": "AskUserQuestion",
+          "host": "claude_code",
+          "kind": "host",
+        },
+      ],
+      "surface": "AskUserQuestion",
+    },
+    {
+      "assurance": "unavailable",
+      "name": "known_product_writes",
+      "reason": "file writes are host-policy; Claude Code permissions govern them",
+      "refs": [
+        {
+          "handle": "PreToolUse",
+          "host": "claude_code",
+          "kind": "host",
+        },
+      ],
+      "surface": "PreToolUse",
+    },
+    {
+      "assurance": "agent_guided",
+      "name": "native_subagents",
+      "reason": "Claude Code reports stable agent identities, but SubagentStart cannot block or bind",
+      "refs": [
+        {
+          "handle": "SubagentStart",
+          "host": "claude_code",
+          "kind": "host",
+        },
+        {
+          "handle": "SubagentStop",
+          "host": "claude_code",
+          "kind": "host",
+        },
+      ],
+      "surface": "SubagentStart/SubagentStop",
+    },
+    {
+      "assurance": "agent_guided",
+      "name": "fresh-context-review",
+      "reason": "independent review runs as a fresh subagent; evidence evaluation enforces reviewer exclusivity",
+      "refs": [
+        {
+          "handle": "SubagentStart",
+          "host": "claude_code",
+          "kind": "host",
+        },
+      ],
+      "surface": "SubagentStart",
+    },
+    {
+      "assurance": "unavailable",
+      "name": "arbitrary_shell_write",
+      "reason": "Only literal Bash commands are interceptable; arbitrary shell writes are not provable",
+      "refs": [
+        {
+          "handle": "PreToolUse",
+          "host": "claude_code",
+          "kind": "host",
+        },
+      ],
+      "surface": "unobservable_shell",
+    },
+    {
+      "assurance": "agent_guided",
+      "name": "compact_context",
+      "reason": "SessionStart source=compact is the single restore path",
+      "refs": [
+        {
+          "handle": "SessionStart",
+          "host": "claude_code",
+          "kind": "host",
+        },
+      ],
+      "surface": "SessionStart",
+    },
+  ],
+  "descriptor": {
+    "capabilities": [
+      {
+        "assurance": "agent_guided",
+        "name": "interactive_decision",
+        "reason": "Claude Code hooks expose no native question answer receipt",
+        "refs": [
+          "AskUserQuestion",
+        ],
+        "requires": [],
+        "surface": "AskUserQuestion",
+      },
+      {
+        "assurance": "unavailable",
+        "name": "known_product_writes",
+        "reason": "file writes are host-policy; Claude Code permissions govern them",
+        "refs": [
+          "PreToolUse",
+        ],
+        "requires": [],
+        "surface": "PreToolUse",
+      },
+      {
+        "assurance": "agent_guided",
+        "name": "native_subagents",
+        "observed": [
+          "subagent.start",
+          "subagent.stop",
+        ],
+        "reason": "Claude Code reports stable agent identities, but SubagentStart cannot block or bind",
+        "refs": [
+          "SubagentStart",
+          "SubagentStop",
+        ],
+        "requires": [
+          "event:subagent.start",
+          "event:subagent.stop",
+        ],
+        "surface": "SubagentStart/SubagentStop",
+        "unavailableReason": "Claude Code subagent lifecycle hooks are unavailable",
+      },
+      {
+        "assurance": "agent_guided",
+        "name": "fresh-context-review",
+        "observed": [
+          "subagent.start",
+        ],
+        "reason": "independent review runs as a fresh subagent; evidence evaluation enforces reviewer exclusivity",
+        "refs": [
+          "SubagentStart",
+        ],
+        "requires": [
+          "event:subagent.start",
+        ],
+        "surface": "SubagentStart",
+        "unavailableReason": "Claude Code SubagentStart is unavailable for independent review",
+      },
+      {
+        "assurance": "unavailable",
+        "name": "arbitrary_shell_write",
+        "reason": "Only literal Bash commands are interceptable; arbitrary shell writes are not provable",
+        "refs": [
+          "PreToolUse",
+        ],
+        "requires": [],
+        "surface": "unobservable_shell",
+      },
+      {
+        "assurance": "agent_guided",
+        "name": "compact_context",
+        "observed": [
+          "session.start",
+        ],
+        "reason": "SessionStart source=compact is the single restore path",
+        "refs": [
+          "SessionStart",
+        ],
+        "requires": [
+          "context.afterCompact",
+        ],
+        "surface": "SessionStart",
+      },
+    ],
+    "context": {
+      "afterCompact": "native",
+      "perTurn": "native",
+      "sessionStart": "native",
+      "task": "session-bound",
+    },
+    "docs": [
+      "https://code.claude.com/docs/en/hooks",
+    ],
+    "events": {
+      "compact.pre": {
+        "native": "PreCompact",
+        "support": "partial",
+      },
+      "context.turn": {
+        "native": "UserPromptSubmit",
+        "support": "native",
+      },
+      "prompt.submit": {
+        "native": "UserPromptSubmit",
+        "support": "native",
+      },
+      "session.start": {
+        "native": "SessionStart",
+        "support": "native",
+      },
+      "shell.post": {
+        "native": "PostToolUse",
+        "support": "native",
+      },
+      "shell.pre": {
+        "native": "PreToolUse",
+        "support": "native",
+      },
+      "stop": {
+        "native": "Stop",
+        "support": "native",
+      },
+      "subagent.start": {
+        "native": "SubagentStart",
+        "support": "native",
+      },
+      "subagent.stop": {
+        "native": "SubagentStop",
+        "support": "native",
+      },
+      "tool.pre": {
+        "native": "PreToolUse",
+        "support": "native",
+      },
+    },
+    "host": "claude_code",
+    "interaction": {
+      "questions": "undocumented",
+      "writeBoundary": "partial",
+    },
+    "label": "Claude Code",
+    "perEventCost": "low",
+    "provenance": {
+      "agentIdOnTool": "native",
+      "postToolObserve": "native",
+      "sessionId": "native",
+    },
+    "shellAvailable": "native",
+    "shellPolicy": {
+      "channel": "permissionDecision",
+      "deny": "native",
+      "failClosed": false,
+    },
+    "stopControl": "native",
+    "subagents": {
+      "blockStart": "none",
+      "identity": "native",
+      "maxConcurrency": "undocumented",
+      "parentBinding": "partial",
+      "worktreeIsolation": "native",
+    },
+    "transport": "hook-process",
+    "verifiedAgainst": "claude 2.1.288 (hook zod schemas in the binary)",
+  },
+  "unobserved": [
+    {
+      "assurance": "agent_guided",
+      "name": "interactive_decision",
+      "reason": "Claude Code hooks expose no native question answer receipt",
+      "refs": [
+        {
+          "handle": "AskUserQuestion",
+          "host": "claude_code",
+          "kind": "host",
+        },
+      ],
+      "surface": "AskUserQuestion",
+    },
+    {
+      "assurance": "unavailable",
+      "name": "known_product_writes",
+      "reason": "file writes are host-policy; Claude Code permissions govern them",
+      "refs": [
+        {
+          "handle": "PreToolUse",
+          "host": "claude_code",
+          "kind": "host",
+        },
+      ],
+      "surface": "PreToolUse",
+    },
+    {
+      "assurance": "unavailable",
+      "name": "native_subagents",
+      "reason": "Claude Code subagent lifecycle hooks are unavailable",
+      "refs": [
+        {
+          "handle": "SubagentStart",
+          "host": "claude_code",
+          "kind": "host",
+        },
+        {
+          "handle": "SubagentStop",
+          "host": "claude_code",
+          "kind": "host",
+        },
+      ],
+      "surface": "SubagentStart/SubagentStop",
+    },
+    {
+      "assurance": "unavailable",
+      "name": "fresh-context-review",
+      "reason": "Claude Code SubagentStart is unavailable for independent review",
+      "refs": [
+        {
+          "handle": "SubagentStart",
+          "host": "claude_code",
+          "kind": "host",
+        },
+      ],
+      "surface": "SubagentStart",
+    },
+    {
+      "assurance": "unavailable",
+      "name": "arbitrary_shell_write",
+      "reason": "Only literal Bash commands are interceptable; arbitrary shell writes are not provable",
+      "refs": [
+        {
+          "handle": "PreToolUse",
+          "host": "claude_code",
+          "kind": "host",
+        },
+      ],
+      "surface": "unobservable_shell",
+    },
+    {
+      "assurance": "unavailable",
+      "name": "compact_context",
+      "reason": "SessionStart source=compact is the single restore path",
+      "refs": [
+        {
+          "handle": "SessionStart",
+          "host": "claude_code",
+          "kind": "host",
+        },
+      ],
+      "surface": "SessionStart",
+    },
+  ],
+}
+`;
+
+exports[`host descriptors match their reviewed snapshots: codex_cli 1`] = `
+{
+  "capabilities": [
+    {
+      "assurance": "agent_guided",
+      "name": "interactive_decision",
+      "reason": "Codex hooks expose no native arbitrary-question answer receipt",
+      "refs": [
+        {
+          "handle": "Question",
+          "host": "codex_cli",
+          "kind": "host",
+        },
+      ],
+      "surface": "Question",
+    },
+    {
+      "assurance": "unavailable",
+      "name": "known_product_writes",
+      "reason": "file writes are host-policy; PreToolUse allows write tools",
+      "refs": [
+        {
+          "handle": "PreToolUse",
+          "host": "codex_cli",
+          "kind": "host",
+        },
+      ],
+      "surface": "PreToolUse",
+    },
+    {
+      "assurance": "agent_guided",
+      "name": "fresh-context-review",
+      "reason": "independent review runs as a bounded subagent; evidence evaluation enforces reviewer exclusivity, and stops remain untrusted",
+      "refs": [
+        {
+          "handle": "SubagentStart",
+          "host": "codex_cli",
+          "kind": "host",
+        },
+      ],
+      "surface": "SubagentStart",
+    },
+    {
+      "assurance": "agent_guided",
+      "name": "native_subagents",
+      "reason": "Codex reports stable child identities, but cannot block creation or bind a writer",
+      "refs": [
+        {
+          "handle": "SubagentStart",
+          "host": "codex_cli",
+          "kind": "host",
+        },
+        {
+          "handle": "SubagentStop",
+          "host": "codex_cli",
+          "kind": "host",
+        },
+      ],
+      "surface": "SubagentStart/SubagentStop",
+    },
+    {
+      "assurance": "agent_guided",
+      "name": "native_subagent_start",
+      "reason": "SubagentStart supplies identity and bounded read-only guidance; continue:false cannot stop creation",
+      "refs": [
+        {
+          "handle": "SubagentStart",
+          "host": "codex_cli",
+          "kind": "host",
+        },
+      ],
+      "surface": "SubagentStart",
+    },
+    {
+      "assurance": "unavailable",
+      "name": "arbitrary_shell_write",
+      "reason": "Only covered known tool inputs are interceptable; specialized and write_stdin paths are not complete",
+      "refs": [
+        {
+          "handle": "PreToolUse",
+          "host": "codex_cli",
+          "kind": "host",
+        },
+      ],
+      "surface": "unobservable_shell",
+    },
+    {
+      "assurance": "agent_guided",
+      "name": "compact_context",
+      "reason": "SessionStart source=compact is the single restore path",
+      "refs": [
+        {
+          "handle": "SessionStart",
+          "host": "codex_cli",
+          "kind": "host",
+        },
+      ],
+      "surface": "SessionStart",
+    },
+  ],
+  "descriptor": {
+    "capabilities": [
+      {
+        "assurance": "agent_guided",
+        "name": "interactive_decision",
+        "reason": "Codex hooks expose no native arbitrary-question answer receipt",
+        "refs": [
+          "Question",
+        ],
+        "requires": [],
+        "surface": "Question",
+      },
+      {
+        "assurance": "unavailable",
+        "name": "known_product_writes",
+        "reason": "file writes are host-policy; PreToolUse allows write tools",
+        "refs": [
+          "PreToolUse",
+        ],
+        "requires": [],
+        "surface": "PreToolUse",
+      },
+      {
+        "assurance": "agent_guided",
+        "name": "fresh-context-review",
+        "observed": [
+          "subagent.start",
+        ],
+        "reason": "independent review runs as a bounded subagent; evidence evaluation enforces reviewer exclusivity, and stops remain untrusted",
+        "refs": [
+          "SubagentStart",
+        ],
+        "requires": [
+          "event:subagent.start",
+        ],
+        "surface": "SubagentStart",
+        "unavailableReason": "Codex subagent lifecycle hooks are unavailable for independent review",
+      },
+      {
+        "assurance": "agent_guided",
+        "name": "native_subagents",
+        "observed": [
+          "subagent.start",
+          "subagent.stop",
+        ],
+        "reason": "Codex reports stable child identities, but cannot block creation or bind a writer",
+        "refs": [
+          "SubagentStart",
+          "SubagentStop",
+        ],
+        "requires": [
+          "event:subagent.start",
+          "event:subagent.stop",
+        ],
+        "surface": "SubagentStart/SubagentStop",
+        "unavailableReason": "Codex subagent lifecycle hooks are untrusted or incomplete",
+      },
+      {
+        "assurance": "agent_guided",
+        "name": "native_subagent_start",
+        "observed": [
+          "subagent.start",
+        ],
+        "reason": "SubagentStart supplies identity and bounded read-only guidance; continue:false cannot stop creation",
+        "refs": [
+          "SubagentStart",
+        ],
+        "requires": [
+          "event:subagent.start",
+        ],
+        "surface": "SubagentStart",
+        "unavailableReason": "SubagentStart hook is untrusted or unavailable",
+      },
+      {
+        "assurance": "unavailable",
+        "name": "arbitrary_shell_write",
+        "reason": "Only covered known tool inputs are interceptable; specialized and write_stdin paths are not complete",
+        "refs": [
+          "PreToolUse",
+        ],
+        "requires": [],
+        "surface": "unobservable_shell",
+      },
+      {
+        "assurance": "agent_guided",
+        "name": "compact_context",
+        "observed": [
+          "session.start",
+        ],
+        "reason": "SessionStart source=compact is the single restore path",
+        "refs": [
+          "SessionStart",
+        ],
+        "requires": [
+          "context.afterCompact",
+        ],
+        "surface": "SessionStart",
+      },
+    ],
+    "context": {
+      "afterCompact": "native",
+      "perTurn": "undocumented",
+      "sessionStart": "native",
+      "task": "single-active",
+    },
+    "docs": [
+      "https://developers.openai.com/codex/hooks",
+    ],
+    "events": {
+      "compact.pre": {
+        "native": null,
+        "support": "none",
+      },
+      "context.turn": {
+        "native": null,
+        "support": "undocumented",
+      },
+      "prompt.submit": {
+        "native": null,
+        "support": "undocumented",
+      },
+      "session.start": {
+        "native": "SessionStart",
+        "support": "native",
+      },
+      "shell.post": {
+        "native": null,
+        "support": "undocumented",
+      },
+      "shell.pre": {
+        "native": "PreToolUse",
+        "support": "native",
+      },
+      "stop": {
+        "native": null,
+        "support": "undocumented",
+      },
+      "subagent.start": {
+        "native": "SubagentStart",
+        "support": "native",
+      },
+      "subagent.stop": {
+        "native": "SubagentStop",
+        "support": "native",
+      },
+      "tool.pre": {
+        "native": "PreToolUse",
+        "support": "native",
+      },
+    },
+    "host": "codex_cli",
+    "interaction": {
+      "questions": "none",
+      "writeBoundary": "partial",
+    },
+    "label": "Codex",
+    "perEventCost": "low",
+    "provenance": {
+      "agentIdOnTool": "partial",
+      "postToolObserve": "undocumented",
+      "sessionId": "native",
+    },
+    "shellAvailable": "native",
+    "shellPolicy": {
+      "channel": "permissionDecision",
+      "deny": "native",
+      "failClosed": false,
+    },
+    "stopControl": "undocumented",
+    "subagents": {
+      "blockStart": "none",
+      "identity": "native",
+      "maxConcurrency": "undocumented",
+      "parentBinding": "none",
+      "worktreeIsolation": "undocumented",
+    },
+    "transport": "hook-process",
+    "verifiedAgainst": "codex-cli 0.153.4; Codex Desktop 26.901.20858",
+  },
+  "unobserved": [
+    {
+      "assurance": "agent_guided",
+      "name": "interactive_decision",
+      "reason": "Codex hooks expose no native arbitrary-question answer receipt",
+      "refs": [
+        {
+          "handle": "Question",
+          "host": "codex_cli",
+          "kind": "host",
+        },
+      ],
+      "surface": "Question",
+    },
+    {
+      "assurance": "unavailable",
+      "name": "known_product_writes",
+      "reason": "file writes are host-policy; PreToolUse allows write tools",
+      "refs": [
+        {
+          "handle": "PreToolUse",
+          "host": "codex_cli",
+          "kind": "host",
+        },
+      ],
+      "surface": "PreToolUse",
+    },
+    {
+      "assurance": "unavailable",
+      "name": "fresh-context-review",
+      "reason": "Codex subagent lifecycle hooks are unavailable for independent review",
+      "refs": [
+        {
+          "handle": "SubagentStart",
+          "host": "codex_cli",
+          "kind": "host",
+        },
+      ],
+      "surface": "SubagentStart",
+    },
+    {
+      "assurance": "unavailable",
+      "name": "native_subagents",
+      "reason": "Codex subagent lifecycle hooks are untrusted or incomplete",
+      "refs": [
+        {
+          "handle": "SubagentStart",
+          "host": "codex_cli",
+          "kind": "host",
+        },
+        {
+          "handle": "SubagentStop",
+          "host": "codex_cli",
+          "kind": "host",
+        },
+      ],
+      "surface": "SubagentStart/SubagentStop",
+    },
+    {
+      "assurance": "unavailable",
+      "name": "native_subagent_start",
+      "reason": "SubagentStart hook is untrusted or unavailable",
+      "refs": [
+        {
+          "handle": "SubagentStart",
+          "host": "codex_cli",
+          "kind": "host",
+        },
+      ],
+      "surface": "SubagentStart",
+    },
+    {
+      "assurance": "unavailable",
+      "name": "arbitrary_shell_write",
+      "reason": "Only covered known tool inputs are interceptable; specialized and write_stdin paths are not complete",
+      "refs": [
+        {
+          "handle": "PreToolUse",
+          "host": "codex_cli",
+          "kind": "host",
+        },
+      ],
+      "surface": "unobservable_shell",
+    },
+    {
+      "assurance": "unavailable",
+      "name": "compact_context",
+      "reason": "SessionStart source=compact is the single restore path",
+      "refs": [
+        {
+          "handle": "SessionStart",
+          "host": "codex_cli",
+          "kind": "host",
+        },
+      ],
+      "surface": "SessionStart",
+    },
+  ],
+}
+`;
+
+exports[`host descriptors match their reviewed snapshots: cursor 1`] = `
+{
+  "capabilities": [
+    {
+      "assurance": "agent_guided",
+      "name": "interactive_decision",
+      "reason": "Cursor does not expose AskQuestion answers to Workit hooks or MCP",
+      "refs": [
+        {
+          "handle": "AskQuestion",
+          "host": "cursor",
+          "kind": "host",
+        },
+      ],
+      "surface": "AskQuestion",
+    },
+    {
+      "assurance": "unavailable",
+      "name": "known_product_writes",
+      "reason": "file writes are host-policy; the Cursor hook no longer gates write tools or shell commands",
+      "refs": [
+        {
+          "handle": "preToolUse",
+          "host": "cursor",
+          "kind": "host",
+        },
+      ],
+      "surface": "preToolUse",
+    },
+    {
+      "assurance": "agent_guided",
+      "name": "native_subagents",
+      "reason": "reviewer/investigator starts are bounded; Cursor implementer delegation is unavailable and subagentStop lacks a stable child identity",
+      "refs": [
+        {
+          "handle": "subagentStart",
+          "host": "cursor",
+          "kind": "host",
+        },
+        {
+          "handle": "subagentStop",
+          "host": "cursor",
+          "kind": "host",
+        },
+      ],
+      "surface": "subagentStart/subagentStop",
+    },
+    {
+      "assurance": "enforced",
+      "name": "native_subagent_start",
+      "reason": "Cursor subagentStart enforces explicit reviewer/investigator markers; implementer delegation is unavailable",
+      "refs": [
+        {
+          "handle": "subagentStart",
+          "host": "cursor",
+          "kind": "host",
+        },
+      ],
+      "surface": "subagentStart",
+    },
+    {
+      "assurance": "agent_guided",
+      "name": "fresh-context-review",
+      "reason": "independent review runs as a bounded reviewer subagent; stops lack stable identity, so reviewer exclusivity is evaluated from recorded evidence",
+      "refs": [
+        {
+          "handle": "subagentStart",
+          "host": "cursor",
+          "kind": "host",
+        },
+      ],
+      "surface": "subagentStart",
+    },
+    {
+      "assurance": "unavailable",
+      "name": "arbitrary_shell_write",
+      "reason": "Only explicitly parsed shell targets are interceptable; arbitrary shell writes are not provable",
+      "refs": [
+        {
+          "handle": "beforeShellExecution",
+          "host": "cursor",
+          "kind": "host",
+        },
+      ],
+      "surface": "unobservable_shell",
+    },
+    {
+      "assurance": "agent_guided",
+      "name": "compact_context",
+      "reason": "sessionStart injects context; preCompact can only show a bounded user reminder",
+      "refs": [
+        {
+          "handle": "sessionStart",
+          "host": "cursor",
+          "kind": "host",
+        },
+        {
+          "handle": "preCompact",
+          "host": "cursor",
+          "kind": "host",
+        },
+      ],
+      "surface": "sessionStart/preCompact",
+    },
+  ],
+  "descriptor": {
+    "capabilities": [
+      {
+        "assurance": "agent_guided",
+        "name": "interactive_decision",
+        "reason": "Cursor does not expose AskQuestion answers to Workit hooks or MCP",
+        "refs": [
+          "AskQuestion",
+        ],
+        "requires": [],
+        "surface": "AskQuestion",
+      },
+      {
+        "assurance": "unavailable",
+        "name": "known_product_writes",
+        "reason": "file writes are host-policy; the Cursor hook no longer gates write tools or shell commands",
+        "refs": [
+          "preToolUse",
+        ],
+        "requires": [],
+        "surface": "preToolUse",
+      },
+      {
+        "assurance": "agent_guided",
+        "name": "native_subagents",
+        "observed": [
+          "subagent.start",
+          "subagent.stop",
+        ],
+        "reason": "reviewer/investigator starts are bounded; Cursor implementer delegation is unavailable and subagentStop lacks a stable child identity",
+        "refs": [
+          "subagentStart",
+          "subagentStop",
+        ],
+        "requires": [
+          "event:subagent.start",
+          "event:subagent.stop",
+        ],
+        "surface": "subagentStart/subagentStop",
+        "unavailableReason": "Cursor native subagent lifecycle hooks are incomplete",
+      },
+      {
+        "assurance": "enforced",
+        "name": "native_subagent_start",
+        "observed": [
+          "subagent.start",
+        ],
+        "reason": "Cursor subagentStart enforces explicit reviewer/investigator markers; implementer delegation is unavailable",
+        "refs": [
+          "subagentStart",
+        ],
+        "requires": [
+          "event:subagent.start",
+          "subagents.blockStart",
+        ],
+        "surface": "subagentStart",
+        "unavailableReason": "Cursor subagentStart is absent",
+      },
+      {
+        "assurance": "agent_guided",
+        "name": "fresh-context-review",
+        "observed": [
+          "subagent.start",
+        ],
+        "reason": "independent review runs as a bounded reviewer subagent; stops lack stable identity, so reviewer exclusivity is evaluated from recorded evidence",
+        "refs": [
+          "subagentStart",
+        ],
+        "requires": [
+          "event:subagent.start",
+        ],
+        "surface": "subagentStart",
+        "unavailableReason": "Cursor subagentStart is unavailable for independent review",
+      },
+      {
+        "assurance": "unavailable",
+        "name": "arbitrary_shell_write",
+        "reason": "Only explicitly parsed shell targets are interceptable; arbitrary shell writes are not provable",
+        "refs": [
+          "beforeShellExecution",
+        ],
+        "requires": [],
+        "surface": "unobservable_shell",
+      },
+      {
+        "assurance": "agent_guided",
+        "name": "compact_context",
+        "observed": [
+          "session.start",
+        ],
+        "reason": "sessionStart injects context; preCompact can only show a bounded user reminder",
+        "refs": [
+          "sessionStart",
+          "preCompact",
+        ],
+        "requires": [
+          "context.sessionStart",
+        ],
+        "surface": "sessionStart/preCompact",
+      },
+    ],
+    "context": {
+      "afterCompact": "partial",
+      "perTurn": "none",
+      "sessionStart": "native",
+      "task": "single-active",
+    },
+    "docs": [
+      "https://cursor.com/docs/agent/hooks",
+    ],
+    "events": {
+      "compact.pre": {
+        "native": "preCompact",
+        "support": "partial",
+      },
+      "context.turn": {
+        "native": null,
+        "support": "none",
+      },
+      "prompt.submit": {
+        "native": null,
+        "support": "undocumented",
+      },
+      "session.start": {
+        "native": "sessionStart",
+        "support": "native",
+      },
+      "shell.post": {
+        "native": null,
+        "support": "undocumented",
+      },
+      "shell.pre": {
+        "native": "beforeShellExecution",
+        "support": "native",
+      },
+      "stop": {
+        "native": null,
+        "support": "undocumented",
+      },
+      "subagent.start": {
+        "native": "subagentStart",
+        "support": "native",
+      },
+      "subagent.stop": {
+        "native": "subagentStop",
+        "support": "partial",
+      },
+      "tool.pre": {
+        "native": "preToolUse",
+        "support": "native",
+      },
+    },
+    "host": "cursor",
+    "interaction": {
+      "questions": "none",
+      "writeBoundary": "partial",
+    },
+    "label": "Cursor",
+    "perEventCost": "npx-network",
+    "provenance": {
+      "agentIdOnTool": "undocumented",
+      "postToolObserve": "undocumented",
+      "sessionId": "native",
+    },
+    "shellAvailable": "native",
+    "shellPolicy": {
+      "channel": "exit2+json",
+      "deny": "native",
+      "failClosed": true,
+    },
+    "stopControl": "undocumented",
+    "subagents": {
+      "blockStart": "native",
+      "identity": "native",
+      "maxConcurrency": "undocumented",
+      "parentBinding": "native",
+      "worktreeIsolation": "undocumented",
+    },
+    "transport": "hook-process",
+    "verifiedAgainst": "Cursor hooks docs; payloads in test/fixtures/hooks/cursor",
+  },
+  "unobserved": [
+    {
+      "assurance": "agent_guided",
+      "name": "interactive_decision",
+      "reason": "Cursor does not expose AskQuestion answers to Workit hooks or MCP",
+      "refs": [
+        {
+          "handle": "AskQuestion",
+          "host": "cursor",
+          "kind": "host",
+        },
+      ],
+      "surface": "AskQuestion",
+    },
+    {
+      "assurance": "unavailable",
+      "name": "known_product_writes",
+      "reason": "file writes are host-policy; the Cursor hook no longer gates write tools or shell commands",
+      "refs": [
+        {
+          "handle": "preToolUse",
+          "host": "cursor",
+          "kind": "host",
+        },
+      ],
+      "surface": "preToolUse",
+    },
+    {
+      "assurance": "unavailable",
+      "name": "native_subagents",
+      "reason": "Cursor native subagent lifecycle hooks are incomplete",
+      "refs": [
+        {
+          "handle": "subagentStart",
+          "host": "cursor",
+          "kind": "host",
+        },
+        {
+          "handle": "subagentStop",
+          "host": "cursor",
+          "kind": "host",
+        },
+      ],
+      "surface": "subagentStart/subagentStop",
+    },
+    {
+      "assurance": "unavailable",
+      "name": "native_subagent_start",
+      "reason": "Cursor subagentStart is absent",
+      "refs": [
+        {
+          "handle": "subagentStart",
+          "host": "cursor",
+          "kind": "host",
+        },
+      ],
+      "surface": "subagentStart",
+    },
+    {
+      "assurance": "unavailable",
+      "name": "fresh-context-review",
+      "reason": "Cursor subagentStart is unavailable for independent review",
+      "refs": [
+        {
+          "handle": "subagentStart",
+          "host": "cursor",
+          "kind": "host",
+        },
+      ],
+      "surface": "subagentStart",
+    },
+    {
+      "assurance": "unavailable",
+      "name": "arbitrary_shell_write",
+      "reason": "Only explicitly parsed shell targets are interceptable; arbitrary shell writes are not provable",
+      "refs": [
+        {
+          "handle": "beforeShellExecution",
+          "host": "cursor",
+          "kind": "host",
+        },
+      ],
+      "surface": "unobservable_shell",
+    },
+    {
+      "assurance": "unavailable",
+      "name": "compact_context",
+      "reason": "sessionStart injects context; preCompact can only show a bounded user reminder",
+      "refs": [
+        {
+          "handle": "sessionStart",
+          "host": "cursor",
+          "kind": "host",
+        },
+        {
+          "handle": "preCompact",
+          "host": "cursor",
+          "kind": "host",
+        },
+      ],
+      "surface": "sessionStart/preCompact",
+    },
+  ],
+}
+`;
+
+exports[`host descriptors match their reviewed snapshots: opencode 1`] = `
+{
+  "capabilities": [
+    {
+      "assurance": "enforced",
+      "name": "interactive_decision",
+      "reason": "native question answers are observed by tool.execute.after and consumed once",
+      "refs": [
+        {
+          "handle": "question",
+          "host": "opencode",
+          "kind": "host",
+        },
+      ],
+      "surface": "question",
+    },
+    {
+      "assurance": "unavailable",
+      "name": "known_product_writes",
+      "reason": "file writes are host-policy; OpenCode native permissions govern them, workit no longer gates write tools",
+      "refs": [
+        {
+          "handle": "permission.evaluate",
+          "host": "opencode",
+          "kind": "host",
+        },
+      ],
+      "surface": "edit/shell",
+    },
+    {
+      "assurance": "enforced",
+      "name": "direct_child_workers",
+      "reason": "nested subagent launches are denied and observed child sessions are parent-bound before they may own a worker",
+      "refs": [
+        {
+          "handle": "subagent",
+          "host": "opencode",
+          "kind": "host",
+        },
+      ],
+      "surface": "subagent",
+    },
+    {
+      "assurance": "agent_guided",
+      "name": "fresh-context-review",
+      "reason": "independent review runs as a native child session; evidence evaluation enforces creator and duplicate-reviewer exclusion",
+      "refs": [
+        {
+          "handle": "subagent",
+          "host": "opencode",
+          "kind": "host",
+        },
+      ],
+      "surface": "subagent",
+    },
+  ],
+  "descriptor": {
+    "capabilities": [
+      {
+        "assurance": "enforced",
+        "name": "interactive_decision",
+        "reason": "native question answers are observed by tool.execute.after and consumed once",
+        "refs": [
+          "question",
+        ],
+        "requires": [
+          "interaction.questions",
+        ],
+        "surface": "question",
+      },
+      {
+        "assurance": "unavailable",
+        "name": "known_product_writes",
+        "reason": "file writes are host-policy; OpenCode native permissions govern them, workit no longer gates write tools",
+        "refs": [
+          "permission.evaluate",
+        ],
+        "requires": [],
+        "surface": "edit/shell",
+      },
+      {
+        "assurance": "enforced",
+        "name": "direct_child_workers",
+        "reason": "nested subagent launches are denied and observed child sessions are parent-bound before they may own a worker",
+        "refs": [
+          "subagent",
+        ],
+        "requires": [
+          "subagents.parentBinding",
+          "subagents.blockStart",
+        ],
+        "surface": "subagent",
+      },
+      {
+        "assurance": "agent_guided",
+        "name": "fresh-context-review",
+        "reason": "independent review runs as a native child session; evidence evaluation enforces creator and duplicate-reviewer exclusion",
+        "refs": [
+          "subagent",
+        ],
+        "requires": [
+          "event:subagent.start",
+        ],
+        "surface": "subagent",
+      },
+    ],
+    "context": {
+      "afterCompact": "native",
+      "perTurn": "native",
+      "sessionStart": "none",
+      "task": "session-bound",
+    },
+    "docs": [
+      "https://opencode.ai/docs/plugins/",
+    ],
+    "events": {
+      "compact.pre": {
+        "native": "session.hook("compaction")",
+        "support": "native",
+      },
+      "context.turn": {
+        "native": "session.hook("context")",
+        "support": "native",
+      },
+      "prompt.submit": {
+        "native": null,
+        "support": "undocumented",
+      },
+      "session.start": {
+        "native": null,
+        "support": "none",
+      },
+      "shell.post": {
+        "native": "tool.hook("execute.after")",
+        "support": "native",
+      },
+      "shell.pre": {
+        "native": "permission.hook("evaluate")",
+        "support": "native",
+      },
+      "stop": {
+        "native": "session.idle",
+        "support": "partial",
+      },
+      "subagent.start": {
+        "native": "tool.hook("execute.before") subagent",
+        "support": "native",
+      },
+      "subagent.stop": {
+        "native": "tool.hook("execute.after") subagent",
+        "support": "native",
+      },
+      "tool.pre": {
+        "native": "tool.hook("execute.before")",
+        "support": "native",
+      },
+    },
+    "host": "opencode",
+    "interaction": {
+      "questions": "native",
+      "writeBoundary": "partial",
+    },
+    "label": "OpenCode",
+    "perEventCost": "low",
+    "provenance": {
+      "agentIdOnTool": "native",
+      "postToolObserve": "native",
+      "sessionId": "native",
+    },
+    "shellAvailable": "native",
+    "shellPolicy": {
+      "channel": "effect",
+      "deny": "native",
+      "failClosed": false,
+    },
+    "stopControl": "partial",
+    "subagents": {
+      "blockStart": "native",
+      "identity": "native",
+      "maxConcurrency": "undocumented",
+      "parentBinding": "native",
+      "worktreeIsolation": "undocumented",
+    },
+    "transport": "in-process-plugin",
+    "verifiedAgainst": "@opencode-ai/plugin 1.18.30",
+  },
+  "unobserved": [
+    {
+      "assurance": "enforced",
+      "name": "interactive_decision",
+      "reason": "native question answers are observed by tool.execute.after and consumed once",
+      "refs": [
+        {
+          "handle": "question",
+          "host": "opencode",
+          "kind": "host",
+        },
+      ],
+      "surface": "question",
+    },
+    {
+      "assurance": "unavailable",
+      "name": "known_product_writes",
+      "reason": "file writes are host-policy; OpenCode native permissions govern them, workit no longer gates write tools",
+      "refs": [
+        {
+          "handle": "permission.evaluate",
+          "host": "opencode",
+          "kind": "host",
+        },
+      ],
+      "surface": "edit/shell",
+    },
+    {
+      "assurance": "enforced",
+      "name": "direct_child_workers",
+      "reason": "nested subagent launches are denied and observed child sessions are parent-bound before they may own a worker",
+      "refs": [
+        {
+          "handle": "subagent",
+          "host": "opencode",
+          "kind": "host",
+        },
+      ],
+      "surface": "subagent",
+    },
+    {
+      "assurance": "agent_guided",
+      "name": "fresh-context-review",
+      "reason": "independent review runs as a native child session; evidence evaluation enforces creator and duplicate-reviewer exclusion",
+      "refs": [
+        {
+          "handle": "subagent",
+          "host": "opencode",
+          "kind": "host",
+        },
+      ],
+      "surface": "subagent",
+    },
+  ],
+}
+`;
+
+exports[`host descriptors match their reviewed snapshots: pi 1`] = `
+{
+  "capabilities": [
+    {
+      "assurance": "enforced",
+      "name": "product_write_interception",
+      "reason": "Pi exposes a before-tool boundary for known built-in write tools; it enforces project trust while file targets stay host-policy.",
+      "refs": [
+        {
+          "handle": "tool_call",
+          "host": "pi",
+          "kind": "host",
+        },
+      ],
+      "surface": "write/edit tool_call",
+    },
+    {
+      "assurance": "enforced",
+      "name": "interactive_decision",
+      "reason": "Pi supplies a native confirmation receipt when dialog UI is available.",
+      "refs": [
+        {
+          "handle": "ui.confirm",
+          "host": "pi",
+          "kind": "host",
+        },
+      ],
+      "surface": "ui.confirm",
+    },
+    {
+      "assurance": "agent_guided",
+      "name": "arbitrary_shell_write",
+      "reason": "Pi extensions do not sandbox arbitrary shell commands.",
+      "refs": [
+        {
+          "handle": "tool_call",
+          "host": "pi",
+          "kind": "host",
+        },
+      ],
+      "surface": "bash",
+    },
+    {
+      "assurance": "agent_guided",
+      "name": "fresh-context-review",
+      "reason": "independent review runs as a supervised stock-Pi process; evidence evaluation enforces reviewer exclusivity",
+      "refs": [
+        {
+          "handle": "worker",
+          "host": "pi",
+          "kind": "host",
+        },
+      ],
+      "surface": "supervised_worker",
+    },
+  ],
+  "descriptor": {
+    "capabilities": [
+      {
+        "assurance": "enforced",
+        "name": "product_write_interception",
+        "reason": "Pi exposes a before-tool boundary for known built-in write tools; it enforces project trust while file targets stay host-policy.",
+        "refs": [
+          "tool_call",
+        ],
+        "requires": [
+          "interaction.writeBoundary",
+        ],
+        "surface": "write/edit tool_call",
+      },
+      {
+        "assurance": "enforced",
+        "name": "interactive_decision",
+        "observed": [
+          "ui",
+        ],
+        "reason": "Pi supplies a native confirmation receipt when dialog UI is available.",
+        "refs": [
+          "ui.confirm",
+        ],
+        "requires": [
+          "interaction.questions",
+        ],
+        "surface": "ui.confirm",
+        "unavailableReason": "Pi is running without dialog UI, so required decisions need user input.",
+      },
+      {
+        "assurance": "agent_guided",
+        "name": "arbitrary_shell_write",
+        "reason": "Pi extensions do not sandbox arbitrary shell commands.",
+        "refs": [
+          "tool_call",
+        ],
+        "requires": [
+          "shellAvailable",
+        ],
+        "surface": "bash",
+      },
+      {
+        "assurance": "agent_guided",
+        "name": "fresh-context-review",
+        "reason": "independent review runs as a supervised stock-Pi process; evidence evaluation enforces reviewer exclusivity",
+        "refs": [
+          "worker",
+        ],
+        "requires": [],
+        "surface": "supervised_worker",
+      },
+    ],
+    "context": {
+      "afterCompact": "native",
+      "perTurn": "native",
+      "sessionStart": "native",
+      "task": "session-bound",
+    },
+    "docs": [
+      "https://github.com/earendil-works/pi-coding-agent",
+    ],
+    "events": {
+      "compact.pre": {
+        "native": "session_before_compact",
+        "support": "native",
+      },
+      "context.turn": {
+        "native": "before_agent_start",
+        "support": "native",
+      },
+      "prompt.submit": {
+        "native": null,
+        "support": "undocumented",
+      },
+      "session.start": {
+        "native": "session_start",
+        "support": "native",
+      },
+      "shell.post": {
+        "native": "tool_result",
+        "support": "native",
+      },
+      "shell.pre": {
+        "native": "tool_call",
+        "support": "native",
+      },
+      "stop": {
+        "native": null,
+        "support": "none",
+      },
+      "subagent.start": {
+        "native": null,
+        "support": "none",
+      },
+      "subagent.stop": {
+        "native": null,
+        "support": "none",
+      },
+      "tool.pre": {
+        "native": "tool_call",
+        "support": "native",
+      },
+    },
+    "host": "pi",
+    "interaction": {
+      "questions": "native",
+      "writeBoundary": "native",
+    },
+    "label": "Pi",
+    "perEventCost": "low",
+    "provenance": {
+      "agentIdOnTool": "none",
+      "postToolObserve": "native",
+      "sessionId": "native",
+    },
+    "shellAvailable": "native",
+    "shellPolicy": {
+      "channel": "block",
+      "deny": "native",
+      "failClosed": false,
+    },
+    "stopControl": "none",
+    "subagents": {
+      "blockStart": "none",
+      "identity": "none",
+      "maxConcurrency": "undocumented",
+      "parentBinding": "none",
+      "worktreeIsolation": "none",
+    },
+    "transport": "in-process-plugin",
+    "verifiedAgainst": "@earendil-works/pi-coding-agent 0.85.1",
+  },
+  "unobserved": [
+    {
+      "assurance": "enforced",
+      "name": "product_write_interception",
+      "reason": "Pi exposes a before-tool boundary for known built-in write tools; it enforces project trust while file targets stay host-policy.",
+      "refs": [
+        {
+          "handle": "tool_call",
+          "host": "pi",
+          "kind": "host",
+        },
+      ],
+      "surface": "write/edit tool_call",
+    },
+    {
+      "assurance": "unavailable",
+      "name": "interactive_decision",
+      "reason": "Pi is running without dialog UI, so required decisions need user input.",
+      "refs": [
+        {
+          "handle": "ui.confirm",
+          "host": "pi",
+          "kind": "host",
+        },
+      ],
+      "surface": "ui.confirm",
+    },
+    {
+      "assurance": "agent_guided",
+      "name": "arbitrary_shell_write",
+      "reason": "Pi extensions do not sandbox arbitrary shell commands.",
+      "refs": [
+        {
+          "handle": "tool_call",
+          "host": "pi",
+          "kind": "host",
+        },
+      ],
+      "surface": "bash",
+    },
+    {
+      "assurance": "agent_guided",
+      "name": "fresh-context-review",
+      "reason": "independent review runs as a supervised stock-Pi process; evidence evaluation enforces reviewer exclusivity",
+      "refs": [
+        {
+          "handle": "worker",
+          "host": "pi",
+          "kind": "host",
+        },
+      ],
+      "surface": "supervised_worker",
+    },
+  ],
+}
+`;

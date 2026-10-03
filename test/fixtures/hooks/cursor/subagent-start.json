@@ -1,0 +1,14 @@
+{
+  "conversation_id": "cursor-conv-1",
+  "generation_id": "gen-1",
+  "model": "auto",
+  "cursor_version": "1.7.0",
+  "workspace_roots": ["__CWD__"],
+  "user_email": null,
+  "transcript_path": null,
+  "hook_event_name": "subagentStart",
+  "subagent_id": "sub-1",
+  "subagent_type": "generalPurpose",
+  "task": "[workit-role: reviewer] inspect",
+  "parent_conversation_id": "cursor-conv-1"
+}
