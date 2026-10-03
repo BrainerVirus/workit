@@ -187,8 +187,9 @@ claude plugin install workit@workit
 claude plugin marketplace update workit && claude plugin update workit@workit
 ```
 
-`workit doctor` warns (`claude_plugin`) when the installed plugin is behind the
-published package or differs from the `workit` CLI you run.
+`workit doctor` warns (`claude_plugin`) when a newer plugin version is
+published than the one installed. `workit uninstall` previews and runs the
+native `claude plugin uninstall workit@<marketplace>` for each Workit install.
 
 **Local pin to a checkout.** Load the package straight from this repository;
 hooks and `workit` on the Bash tool then run the TypeScript sources with Bun,
@@ -209,13 +210,20 @@ Bun on `PATH`; an installed plugin needs only Node.js 24+.
 
 The plugin ships:
 
-- hooks: `SessionStart` (startup/resume/clear/compact) injects the Workit
+- hooks: `SessionStart` (startup/resume/clear/compact/fork) injects the Workit
   contract and task context and exports `WORKIT_HOST`/`WORKIT_SESSION_ID` to
   the session's shell; `UserPromptSubmit` re-injects task context only when it
-  changed; `PreToolUse` on `Bash`/`PowerShell` `git *` commands denies
-  protected or non-compliant branch operations (it never answers `allow`, so
-  your permission prompts stay in charge); `PreCompact` warns that context
-  may be stale; subagent, post-tool and stop hooks observe only;
+  changed since it was last injected; `PreToolUse` on `Bash`/`PowerShell`
+  `git *` commands denies protected or non-compliant branch operations with a
+  structured `permissionDecision: "deny"` (Claude Code 2.1.288 shows it as
+  `PreToolUse:Bash hook error: <reason>`; it never answers `allow`, so your
+  permission prompts stay in charge); `SubagentStart` tells the `implementer`
+  it works in its own worktree and other subagents that they are read-only.
+  No other events are registered;
+- fail-open: if the hook runtime cannot start (no Bun for a pin, a missing or
+  unloadable `dist/`), the hook answers nothing and prints one
+  `[workit] Claude Code hook unavailable: …` line, and Claude runs as if Workit
+  were not installed;
 - skills: the fourteen method skills, namespaced as `/workit:<name>`
   (`/workit:review`, `/workit:plan`, …);
 - agents: `verifier` and `reviewer` (read-only) and `implementer`
@@ -391,10 +399,11 @@ Claude Code runs one hook process per event (`node bin/workit-hook.mjs`, exec
 form, no shell) through the shared host-hook protocol. Branch policy denies use
 `permissionDecision: "deny"` with the unblock hint in the reason; Workit never
 emits `allow`. `PreCompact` cannot inject context, so the task context is
-restored by `SessionStart` with `source: "compact"`. `SubagentStart` can only
-add context, so subagents are observed as read-only/agent-guided. Implementer
-worktrees are created by Claude with its own branch names; the implementer
-agent switches to a policy-compliant branch before committing.
+restored by `SessionStart` with `source: "compact"` (no `PreCompact` hook is
+registered). `SubagentStart` can only add context, never block or bind: the
+worktree `implementer` is told it may edit and commit in its own worktree after
+switching to a policy-compliant branch (Claude names worktree branches itself),
+and every other subagent is observed as read-only/agent-guided.
 
 </details>
 
