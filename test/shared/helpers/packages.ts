@@ -34,6 +34,7 @@ const WORKSPACE_PACKAGES = [
   "workit-cursor",
   "workit-codex",
   "workit-pi",
+  "workit-claude-code",
 ] as const;
 
 let cached: PackedPackage[] | null = null;
@@ -82,6 +83,7 @@ export function packWorkspacePackages(options: { force?: boolean } = {}): Packed
       "workit-codex",
       "workit-pi",
       "workit-cli",
+      "workit-claude-code",
     ]) {
       const buildScript = path.join(REPO_ROOT, "packages", pkg, "scripts", "build.ts");
       const target = path.join(sandbox, "packages", pkg);

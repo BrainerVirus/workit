@@ -183,6 +183,7 @@ describe("analyzeReleaseScope", () => {
           "workit-cursor",
           "workit-codex",
           "workit-pi",
+          "workit-claude-code",
         ],
       });
     } finally {

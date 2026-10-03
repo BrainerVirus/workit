@@ -15,6 +15,7 @@ export const RELEASE_PACKAGES = [
   "workit-cursor",
   "workit-codex",
   "workit-pi",
+  "workit-claude-code",
 ] as const;
 
 /** The release pipeline's own version-sync commit: never a release trigger. */
