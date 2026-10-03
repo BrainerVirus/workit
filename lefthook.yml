@@ -1,0 +1,21 @@
+# Local git hooks. Opt in once per clone with `bun run hooks:install`
+# (hooks are shared by every worktree of the clone). CI runs the same gates.
+no_auto_install: true
+
+pre-commit:
+  parallel: true
+  jobs:
+    - name: format
+      glob: "*.{ts,tsx,js,cjs,mjs,json,jsonc,yml,yaml}"
+      run: bunx oxfmt --no-error-on-unmatched-pattern {staged_files}
+      stage_fixed: true
+    - name: lint
+      glob: "*.{ts,tsx,js,cjs,mjs}"
+      run: bunx oxlint --no-error-on-unmatched-pattern {staged_files}
+
+# semantic-release derives versions from Conventional Commits, so a malformed
+# message silently changes release behavior.
+commit-msg:
+  jobs:
+    - name: commitlint
+      run: bunx commitlint --edit {1}

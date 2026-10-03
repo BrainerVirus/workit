@@ -20,10 +20,14 @@ Then load the plugin from a local path in your OpenCode config (`~/.config/openc
 ## Checks
 
 ```bash
-bun run check    # bun test + tsc --noEmit
+bun run check          # build + lint + format:check + bun test + tsc --noEmit
+bun run hooks:install  # optional, once per clone: lefthook git hooks
 ```
 
-Always run it before committing; CI runs the same command on push/PR.
+Always run `bun run check` before opening a PR. The opt-in hooks format and lint
+staged files on `pre-commit` (under a second) and run commitlint on
+`commit-msg`; semantic-release reads Conventional Commits, so a malformed
+message changes release behavior. Hooks are shared by every worktree of a clone.
 
 ## Branch policy
 
