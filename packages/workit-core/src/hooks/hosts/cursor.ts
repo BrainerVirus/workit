@@ -1,5 +1,5 @@
 // Cursor: command hooks (hooks/hooks-cursor.json) mapped onto the protocol.
-import { realpathSync } from "node:fs";
+import path from "node:path";
 import type { HostDescriptor } from "../descriptor";
 import type { HookDecision, HookEvent, HookEventKind, HostAdapter } from "../protocol";
 import { existingDirectory, isRecord, nonEmpty } from "./fields";
@@ -163,11 +163,11 @@ export const parseCursorHookInput = (value: unknown): CursorParseResult => {
   if (!isRecord(value) || !Object.hasOwn(EVENTS, String(value.hook_event_name)))
     return { ok: false, error: "hook_event_name is required" };
   const roots = value.workspace_roots;
-  if (!Array.isArray(roots) || roots.length !== 1 || !roots.every(nonEmpty))
-    return { ok: false, error: "exactly one workspace root is required" };
-  const root = roots[0] as string;
-  if (!existingDirectory(root))
-    return { ok: false, error: "workspace root must be an existing absolute path" };
+  if (!Array.isArray(roots) || roots.length === 0 || !roots.every(nonEmpty))
+    return { ok: false, error: "a workspace root is required" };
+  const canonical = roots.map(existingDirectory);
+  if (!canonical.every((root): root is string => root !== null))
+    return { ok: false, error: "workspace roots must be existing absolute paths" };
   const event = value.hook_event_name as CursorHookEvent;
   const conversationId = nonEmpty(value.conversation_id) ? value.conversation_id : undefined;
   const sessionId = nonEmpty(value.session_id) ? value.session_id : undefined;
@@ -189,7 +189,7 @@ export const parseCursorHookInput = (value: unknown): CursorParseResult => {
     ok: true,
     data: {
       hook_event_name: event,
-      workspace_roots: [root],
+      workspace_roots: canonical,
       ...(nonEmpty(value.conversation_id) ? { conversation_id: value.conversation_id } : {}),
       ...(nonEmpty(value.session_id) ? { session_id: value.session_id } : {}),
       ...(nonEmpty(value.tool_name) ? { tool_name: value.tool_name } : {}),
@@ -241,6 +241,22 @@ const protocolEvent = (input: CursorHookInput): HookEvent => {
   }
 };
 
+const within = (root: string, dir: string) =>
+  dir === root || dir.startsWith(root.endsWith(path.sep) ? root : `${root}${path.sep}`);
+
+/**
+ * Where a hook acts. Shell policy follows the command's own `cwd` (in a
+ * multi-root workspace each root is its own repository); everything else
+ * uses the workspace root that contains `cwd`, else the first root.
+ */
+const hookCwd = (input: CursorHookInput): string => {
+  const cwd = existingDirectory(input.cwd);
+  if (cwd && input.hook_event_name === "beforeShellExecution") return cwd;
+  return (
+    (cwd && input.workspace_roots.find((root) => within(root, cwd))) || input.workspace_roots[0]
+  );
+};
+
 /** Cursor's documented deny payload; blocking events also exit 2. */
 export const cursorDeny = (reason: string) => ({
   permission: "deny" as const,
@@ -282,7 +298,7 @@ export const cursorAdapter: HostAdapter = {
       native: input.hook_event_name,
       input: {
         host: "cursor",
-        cwd: realpathSync(input.workspace_roots[0]),
+        cwd: hookCwd(input),
         session: {
           id: input.session_id ?? input.conversation_id ?? "",
           agentId: input.subagent_id ?? null,

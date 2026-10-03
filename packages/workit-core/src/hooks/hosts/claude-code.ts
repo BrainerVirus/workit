@@ -8,7 +8,7 @@ import type {
   HostAdapter,
   SessionSource,
 } from "../protocol";
-import { existingDirectory, isRecord, nonEmpty, optionalText } from "./fields";
+import { commandText, existingDirectory, isRecord, nonEmpty, optionalText } from "./fields";
 
 type ClaudeHookEvent =
   | "SessionStart"
@@ -36,7 +36,7 @@ export const CLAUDE_CODE_DESCRIPTOR: HostDescriptor = {
     "subagent.start": { support: "native", native: "SubagentStart" },
     "subagent.stop": { support: "native", native: "SubagentStop" },
     "prompt.submit": { support: "native", native: "UserPromptSubmit" },
-    // PreCompact has no hookSpecificOutput; restore runs on SessionStart source=compact.
+    // PreCompact cannot inject context (only a systemMessage); restore runs on SessionStart source=compact.
     "compact.pre": { support: "partial", native: "PreCompact" },
     stop: { support: "native", native: "Stop" },
   },
@@ -132,10 +132,10 @@ const SOURCES = new Set<SessionSource>(["startup", "resume", "clear", "compact",
 
 type Parsed = { ok: true; event: HookEvent } | { ok: false; error: string };
 
+/** Claude's shell tools: Bash everywhere, PowerShell on Windows. */
+const SHELL_TOOLS = new Set(["Bash", "PowerShell"]);
 const toolCommand = (value: Record<string, unknown>): string | null =>
-  isRecord(value.tool_input) && nonEmpty(value.tool_input.command)
-    ? value.tool_input.command
-    : null;
+  isRecord(value.tool_input) ? commandText(value.tool_input.command) : null;
 
 const eventOf = (name: ClaudeHookEvent, value: Record<string, unknown>): Parsed => {
   const toolUseId = optionalText(value.tool_use_id);
@@ -148,17 +148,17 @@ const eventOf = (name: ClaudeHookEvent, value: Record<string, unknown>): Parsed 
       return { ok: true, event: { kind: "context.turn" } };
     case "PreToolUse": {
       if (!nonEmpty(value.tool_name)) return { ok: false, error: "tool_name is required" };
-      if (value.tool_name !== "Bash")
+      if (!SHELL_TOOLS.has(value.tool_name))
         return { ok: true, event: { kind: "tool.pre", tool: value.tool_name, toolUseId } };
       const command = toolCommand(value);
       return command
         ? { ok: true, event: { kind: "shell.pre", command, toolUseId } }
-        : { ok: false, error: "tool_input.command is required for Bash" };
+        : { ok: false, error: `tool_input.command is required for ${value.tool_name}` };
     }
     case "PostToolUse": {
       const command = toolCommand(value);
-      if (value.tool_name !== "Bash" || !command)
-        return { ok: false, error: "only Bash PostToolUse is mapped" };
+      if (!SHELL_TOOLS.has(String(value.tool_name)) || !command)
+        return { ok: false, error: "only shell PostToolUse is mapped" };
       const response = isRecord(value.tool_response) ? value.tool_response : {};
       return {
         ok: true,
@@ -231,6 +231,10 @@ const render = (decision: HookDecision, native: string | null) => {
       json: { hookSpecificOutput: { hookEventName: native, additionalContext: decision.text } },
       exitCode: 0,
     };
+  // PreCompact has no hookSpecificOutput; the common systemMessage field
+  // shows the notice to the user.
+  if (decision.kind === "notice")
+    return { json: { systemMessage: decision.userMessage }, exitCode: 0 };
   if (decision.kind === "continue" && (native === "Stop" || native === "SubagentStop"))
     return { json: { decision: "block", reason: decision.reason }, exitCode: 0 };
   return { json: {}, exitCode: 0 };

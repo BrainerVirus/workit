@@ -21,3 +21,28 @@ export const existingDirectory = (value: unknown): string | null => {
     return null;
   }
 };
+
+const SHELLS = new Set(["sh", "bash", "zsh", "dash", "pwsh", "powershell"]);
+const quoteArg = (arg: string) => (/^[\w@%+=:,./-]+$/.test(arg) ? arg : JSON.stringify(arg));
+
+/**
+ * A shell command as one string. Hosts send either a string or an argv array;
+ * `[shell, "-c"|"-lc", script]` yields the script itself, other arrays are
+ * joined with quoting so a single argument never splits.
+ */
+export const commandText = (value: unknown): string | null => {
+  if (nonEmpty(value)) return value;
+  if (!Array.isArray(value) || value.length === 0) return null;
+  const argv: unknown[] = value;
+  if (!argv.every((arg): arg is string => typeof arg === "string")) return null;
+  const shell =
+    argv[0]
+      .split(/[\\/]/)
+      .at(-1)
+      ?.replace(/\.exe$/i, "")
+      .toLowerCase() ?? "";
+  if (argv.length >= 3 && SHELLS.has(shell) && /^-\w*c$/i.test(argv[1]) && nonEmpty(argv[2]))
+    return argv[2];
+  const joined = argv.map(quoteArg).join(" ");
+  return nonEmpty(joined) ? joined : null;
+};

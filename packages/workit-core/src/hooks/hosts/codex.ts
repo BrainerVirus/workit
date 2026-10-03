@@ -1,24 +1,25 @@
 // Codex CLI and Desktop: command hooks (hooks/hooks.json) mapped onto the protocol.
 import type { HostDescriptor } from "../descriptor";
 import type { HookDecision, HookEvent, HookEventKind, HostAdapter } from "../protocol";
-import { existingDirectory, isRecord, nonEmpty } from "./fields";
+import { commandText, existingDirectory, isRecord, nonEmpty, optionalText } from "./fields";
 
 export type CodexHost = "codex_cli" | "codex_desktop";
 export type CodexHookEvent = "SessionStart" | "PreToolUse" | "SubagentStart" | "SubagentStop";
 type SessionSource = "startup" | "resume" | "clear" | "compact";
-type PermissionMode = "default" | "acceptEdits" | "plan" | "dontAsk" | "bypassPermissions";
 
 export type CodexHookInput = {
   hook_event_name: CodexHookEvent;
   session_id: string;
   cwd: string;
-  model: string;
-  permission_mode: PermissionMode;
+  model: string | null;
+  permission_mode: string | null;
   transcript_path: string | null;
   source?: SessionSource;
   turn_id?: string;
   tool_name?: string;
   tool_input?: unknown;
+  /** The shell command as one string; argv arrays are joined. */
+  command?: string;
   tool_use_id?: string;
   agent_id?: string;
   agent_type?: string;
@@ -155,79 +156,53 @@ const EVENTS: Record<CodexHookEvent, HookEventKind> = {
 };
 const SHELL_TOOLS = new Set(["bash", "unified-exec"]);
 const isShellTool = (name: unknown) => SHELL_TOOLS.has(String(name).toLowerCase());
-const PERMISSION_MODES = ["default", "acceptEdits", "plan", "dontAsk", "bypassPermissions"];
-const SOURCES = ["startup", "resume", "clear", "compact"];
+const SOURCES = new Set<string>(["startup", "resume", "clear", "compact"]);
 
 /**
- * Validate the keys each Codex event needs. Unknown keys are ignored: a Codex
- * release that adds a field must never turn into a denial of every tool call.
+ * Read a Codex payload, checking only what each mapping needs (D17): the
+ * event and cwd always, the shell command for shell tools, the tool name for
+ * PreToolUse, and the agent id for SubagentStart. Every other field is
+ * optional, and unknown keys or values (a new permission mode, say) are
+ * ignored, so a Codex release can never turn branch policy off.
  */
 export const parseCodexHookInput = (value: unknown): CodexParseResult => {
   if (!isRecord(value) || !Object.hasOwn(EVENTS, String(value.hook_event_name)))
     return { ok: false, error: "hook_event_name is required" };
   const event = value.hook_event_name as CodexHookEvent;
-  if (!nonEmpty(value.session_id)) return { ok: false, error: "session_id is required" };
-  if (!nonEmpty(value.model)) return { ok: false, error: "model is required" };
-  if (!PERMISSION_MODES.includes(String(value.permission_mode)))
-    return { ok: false, error: "permission_mode is invalid" };
-  if (!(value.transcript_path === null || nonEmpty(value.transcript_path)))
-    return { ok: false, error: "transcript_path must be a string or null" };
   const cwd = existingDirectory(value.cwd);
   if (!cwd) return { ok: false, error: "cwd must be an existing absolute directory" };
-  if (event === "SessionStart" && !SOURCES.includes(String(value.source)))
-    return { ok: false, error: "SessionStart source is required" };
-  if (
-    event === "PreToolUse" &&
-    (!nonEmpty(value.turn_id) ||
-      !nonEmpty(value.tool_name) ||
-      value.tool_input === undefined ||
-      !nonEmpty(value.tool_use_id))
-  )
-    return { ok: false, error: "turn_id, tool_name, tool_input, and tool_use_id are required" };
-  if (
-    event === "PreToolUse" &&
-    isShellTool(value.tool_name) &&
-    (!isRecord(value.tool_input) || !nonEmpty(value.tool_input.command))
-  )
+  if (event === "PreToolUse" && !nonEmpty(value.tool_name))
+    return { ok: false, error: "tool_name is required" };
+  const command = isRecord(value.tool_input) ? commandText(value.tool_input.command) : null;
+  if (event === "PreToolUse" && isShellTool(value.tool_name) && !command)
     return { ok: false, error: "tool_input.command is required for shell tools" };
-  if (
-    event === "SubagentStart" &&
-    (!nonEmpty(value.turn_id) || !nonEmpty(value.agent_id) || !nonEmpty(value.agent_type))
-  )
-    return { ok: false, error: "turn_id, agent_id, and agent_type are required" };
-  if (
-    event === "SubagentStop" &&
-    (!nonEmpty(value.turn_id) ||
-      !nonEmpty(value.agent_id) ||
-      !nonEmpty(value.agent_type) ||
-      !(value.agent_transcript_path === null || nonEmpty(value.agent_transcript_path)) ||
-      !(
-        value.last_assistant_message === null || typeof value.last_assistant_message === "string"
-      ) ||
-      typeof value.stop_hook_active !== "boolean")
-  )
-    return { ok: false, error: "SubagentStop fields are required" };
+  if (event === "SubagentStart" && !nonEmpty(value.agent_id))
+    return { ok: false, error: "agent_id is required" };
   return {
     ok: true,
     data: {
       hook_event_name: event,
-      session_id: value.session_id,
-      model: value.model,
-      permission_mode: value.permission_mode as PermissionMode,
-      transcript_path: value.transcript_path as string | null,
+      session_id: nonEmpty(value.session_id) ? value.session_id : "",
+      model: optionalText(value.model),
+      permission_mode: optionalText(value.permission_mode),
+      transcript_path: optionalText(value.transcript_path),
       cwd,
-      ...(event === "SessionStart" ? { source: value.source as SessionSource } : {}),
+      // An unknown start source restores context but never offers history.
+      ...(event === "SessionStart"
+        ? { source: SOURCES.has(String(value.source)) ? (value.source as SessionSource) : "resume" }
+        : {}),
       ...(nonEmpty(value.turn_id) ? { turn_id: value.turn_id } : {}),
       ...(nonEmpty(value.tool_name) ? { tool_name: value.tool_name } : {}),
       ...(event === "PreToolUse" ? { tool_input: value.tool_input } : {}),
+      ...(command ? { command } : {}),
       ...(nonEmpty(value.tool_use_id) ? { tool_use_id: value.tool_use_id } : {}),
       ...(nonEmpty(value.agent_id) ? { agent_id: value.agent_id } : {}),
       ...(nonEmpty(value.agent_type) ? { agent_type: value.agent_type } : {}),
       ...(event === "SubagentStop"
         ? {
-            agent_transcript_path: value.agent_transcript_path as string | null,
-            last_assistant_message: value.last_assistant_message as string | null,
-            stop_hook_active: value.stop_hook_active as boolean,
+            agent_transcript_path: optionalText(value.agent_transcript_path),
+            last_assistant_message: optionalText(value.last_assistant_message),
+            stop_hook_active: value.stop_hook_active === true,
           }
         : {}),
     },
@@ -243,7 +218,7 @@ const protocolEvent = (input: CodexHookInput): HookEvent => {
       return isShellTool(input.tool_name)
         ? {
             kind: "shell.pre",
-            command: String((input.tool_input as { command: string }).command),
+            command: input.command ?? "",
             toolUseId,
           }
         : { kind: "tool.pre", tool: input.tool_name!, toolUseId };
@@ -252,7 +227,7 @@ const protocolEvent = (input: CodexHookInput): HookEvent => {
       return {
         kind: "subagent.start",
         agentId: input.agent_id!,
-        agentType: input.agent_type!,
+        agentType: input.agent_type ?? "unknown",
         task: null,
       };
     case "SubagentStop":

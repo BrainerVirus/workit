@@ -259,10 +259,10 @@ test("fail policy: pre-tool parse errors deny only on fail-closed hosts; start e
     // Codex is not fail-closed: a broken PreToolUse passes through.
     const codex = dispatchHook(
       codexAdapter,
-      fixture("codex", "pre-tool-use-bash", root, { session_id: "" }),
+      fixture("codex", "pre-tool-use-bash", root, { tool_input: {} }),
       {},
     );
-    expect(codex.error).toBe("session_id is required");
+    expect(codex.error).toBe("tool_input.command is required for shell tools");
     expect(codex.json).toEqual({ hookSpecificOutput: { hookEventName: "PreToolUse" } });
     expect(codex.exitCode).toBe(0);
     // Cursor declares failClosed: the same failure denies with exit 2.
@@ -283,12 +283,20 @@ test("fail policy: pre-tool parse errors deny only on fail-closed hosts; start e
     // A start event keeps a visible diagnostic instead of failing silently.
     const start = dispatchHook(
       codexAdapter,
-      fixture("codex", "session-start", root, { source: undefined }),
+      fixture("codex", "session-start", root, { cwd: `${root}/missing` }),
       {},
     );
     expect(JSON.stringify(start.json)).toContain(
-      "[workit diagnostic: SessionStart source is required]",
+      "[workit diagnostic: cwd must be an existing absolute directory]",
     );
+    // An unknown start source still restores context (D17) but never offers history.
+    const unknownSource = dispatchHook(
+      codexAdapter,
+      fixture("codex", "session-start", root, { source: "teleport" }),
+      {},
+    );
+    expect(unknownSource.error).toBeNull();
+    expect(JSON.stringify(unknownSource.json)).toContain("<workit-contract>");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

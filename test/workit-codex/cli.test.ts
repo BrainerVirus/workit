@@ -202,7 +202,8 @@ test("official payloads validate and malformed writes deny", () => {
         root,
       ),
     ),
-  ).toMatchObject({ ok: false });
+    // A permission mode Codex adds later is not a parse failure (D17).
+  ).toMatchObject({ ok: true });
   const outside = handleCodexHook(
     official(
       {

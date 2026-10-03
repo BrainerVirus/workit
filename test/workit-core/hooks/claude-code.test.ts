@@ -45,6 +45,30 @@ test("given a protected main, a piped Claude PreToolUse branch creation is denie
   });
 });
 
+test("Claude PowerShell commands get the same branch policy as Bash", async () => {
+  await withProtectedMain(() => {
+    const root = tempRoot();
+    try {
+      const shell = (tool_name: string, command: string) =>
+        JSON.stringify(
+          dispatchHook(
+            claudeCodeAdapter,
+            fixture("claude-code", "pre-tool-use-bash", root, {
+              tool_name,
+              tool_input: { command },
+            }),
+            {},
+          ).json,
+        );
+      expect(shell("PowerShell", "git checkout -b main")).toContain('"permissionDecision":"deny"');
+      expect(shell("PowerShell", "git checkout -b feature/ok")).toBe("{}");
+      expect(shell("Bash", "git checkout -b main")).toContain('"permissionDecision":"deny"');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
 test("permissionDecision hosts never receive allow, for any fixture or command", async () => {
   await withProtectedMain(() => {
     const root = tempRoot();
@@ -129,14 +153,13 @@ test("Claude renders context, per-turn context, and silent events in its native 
           "Workit observed Claude Code subagent agent-1 (reviewer) as read-only/agent-guided; writer delegation is unavailable.",
       },
     });
-    // PreCompact has no output channel; Stop, SubagentStop and PostToolUse are no-ops until S9/S15.
-    for (const name of [
-      "pre-compact",
-      "stop",
-      "subagent-stop",
-      "post-tool-use-bash",
-      "pre-tool-use-write",
-    ])
+    // PreCompact cannot inject context; its notice rides the common systemMessage field.
+    expect(render("pre-compact")).toEqual({
+      systemMessage:
+        "Workit context may be stale after compaction; re-run inspection or resume before acting.",
+    });
+    // Stop, SubagentStop and PostToolUse are no-ops until S9/S15.
+    for (const name of ["stop", "subagent-stop", "post-tool-use-bash", "pre-tool-use-write"])
       expect(render(name), name).toEqual({});
   } finally {
     rmSync(root, { recursive: true, force: true });
