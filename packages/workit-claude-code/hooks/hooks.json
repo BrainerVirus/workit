@@ -1,9 +1,9 @@
 {
-  "description": "Workit host hooks: task context on session start and per turn, branch policy on git shell commands, subagent and stop observation.",
+  "description": "Workit host hooks: task context on session start (incl. compaction restore and forks) and when it changes per turn, branch policy on git shell commands, and worktree guidance for subagents. Only events that change Claude's behavior are registered.",
   "hooks": {
     "SessionStart": [
       {
-        "matcher": "startup|resume|clear|compact",
+        "matcher": "startup|resume|clear|compact|fork",
         "hooks": [
           {
             "type": "command",
@@ -52,57 +52,7 @@
         ]
       }
     ],
-    "PostToolUse": [
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "if": "Bash(workit *)",
-            "command": "node",
-            "args": ["${CLAUDE_PLUGIN_ROOT}/bin/workit-hook.mjs"],
-            "timeout": 5
-          }
-        ]
-      }
-    ],
     "SubagentStart": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node",
-            "args": ["${CLAUDE_PLUGIN_ROOT}/bin/workit-hook.mjs"],
-            "timeout": 5
-          }
-        ]
-      }
-    ],
-    "SubagentStop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node",
-            "args": ["${CLAUDE_PLUGIN_ROOT}/bin/workit-hook.mjs"],
-            "timeout": 5
-          }
-        ]
-      }
-    ],
-    "PreCompact": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node",
-            "args": ["${CLAUDE_PLUGIN_ROOT}/bin/workit-hook.mjs"],
-            "timeout": 5
-          }
-        ]
-      }
-    ],
-    "Stop": [
       {
         "hooks": [
           {

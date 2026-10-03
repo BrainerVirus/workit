@@ -5,9 +5,12 @@
 //     the monorepo sources sit next to this package, so the TypeScript entry
 //     runs from source with bun: edits apply without a rebuild;
 //   - installed package (npm/marketplace): dist/workit-hook.js is imported.
-// WORKIT_CLAUDE_RUNTIME=source|dist forces one. A launcher failure fails open
-// (an empty decision plus a stderr diagnostic): a broken hook must never
-// brick the host.
+// WORKIT_CLAUDE_RUNTIME=source|dist forces one.
+// Fail-open: when the runtime cannot start (no bun for the pin, a missing or
+// unloadable dist/), the launcher answers `{}` with exit 0 and one
+// `[workit] Claude Code hook unavailable: …` line on stderr. Claude then
+// proceeds as if no Workit hook were installed (no context, no branch
+// policy): a broken hook must never brick the host.
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import path from "node:path";
@@ -36,8 +39,13 @@ if (fromSource) {
   if (run.error) failOpen(`bun is required for the local pin (${run.error.message})`);
   else process.exitCode = run.status ?? 0;
 } else if (existsSync(dist)) {
-  const { runClaudeHook } = await import(pathToFileURL(dist).href);
-  process.exitCode = await runClaudeHook(process.stdin, process.stdout);
+  let runClaudeHook;
+  try {
+    ({ runClaudeHook } = await import(pathToFileURL(dist).href));
+  } catch (error) {
+    failOpen(`cannot load ${dist} (${error instanceof Error ? error.message : String(error)})`);
+  }
+  if (runClaudeHook) process.exitCode = await runClaudeHook(process.stdin, process.stdout);
 } else {
   failOpen(`${dist} is missing; run \`bun scripts/build.ts\` in ${root}`);
 }

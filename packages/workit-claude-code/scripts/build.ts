@@ -92,13 +92,7 @@ if (!skillsOnly) {
   mkdirSync(dist, { recursive: true });
   // Minified: every hook is a fresh node process, so parse time is startup time.
   bundle(path.join(packageDir, "src", "hook.ts"), path.join(dist, "workit-hook.js"), true);
-  // TODO(S9a, PR #163): bundle workit-cli/src/main.ts unconditionally once it
-  // is on main; until then the current index.tsx entry is the CLI.
-  const cliSrc = path.join(packagesDir, "workit-cli", "src");
-  const cliEntry = existsSync(path.join(cliSrc, "main.ts"))
-    ? path.join(cliSrc, "main.ts")
-    : path.join(cliSrc, "index.tsx");
-  bundle(cliEntry, path.join(dist, "workit.js"));
+  bundle(path.join(packagesDir, "workit-cli", "src", "main.ts"), path.join(dist, "workit.js"));
   const assets = path.join(target, "assets");
   rmSync(assets, { recursive: true, force: true });
   const templates = path.join(coreDir, "templates");

@@ -8,7 +8,15 @@
 //     last injection for the session (each hook is a fresh process, so the
 //     cache lives in ${CLAUDE_PLUGIN_DATA}/ctx/<session>.json).
 import { createHash } from "node:crypto";
-import { appendFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import path from "node:path";
 import { claudeCodeAdapter, dispatchHook, type HostAdapter } from "@brainervirus/workit-core/hooks";
 
@@ -54,6 +62,17 @@ const exportSessionEnv = (env: NodeJS.ProcessEnv, sessionId: string): void => {
   }
 };
 
+const digestOf = (context: string) => createHash("sha256").update(context).digest("hex");
+
+const recordTurnContext = (file: string, digest: string): void => {
+  try {
+    mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(file, `${JSON.stringify({ digest })}\n`);
+  } catch {
+    // Unwritable plugin data dir: context is simply sent every turn.
+  }
+};
+
 /**
  * Per-turn dedup: returns true when `context` equals the last context
  * injected for this session (and records it otherwise). Any cache failure
@@ -61,20 +80,54 @@ const exportSessionEnv = (env: NodeJS.ProcessEnv, sessionId: string): void => {
  */
 const unchangedTurnContext = (file: string | null, context: string): boolean => {
   if (!file) return false;
-  const digest = createHash("sha256").update(context).digest("hex");
+  const digest = digestOf(context);
   try {
     const previous = JSON.parse(readFileSync(file, "utf8")) as { digest?: unknown };
     if (previous.digest === digest) return true;
   } catch {
     // Missing or unreadable cache: treat as changed.
   }
-  try {
-    mkdirSync(path.dirname(file), { recursive: true });
-    writeFileSync(file, `${JSON.stringify({ digest })}\n`);
-  } catch {
-    // Unwritable plugin data dir: context is simply sent every turn.
-  }
+  recordTurnContext(file, digest);
   return false;
+};
+
+const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** Drops per-session caches untouched for a week (sessions that ended). */
+const pruneContextCaches = (dir: string, now: number): void => {
+  try {
+    for (const name of readdirSync(dir)) {
+      const file = path.join(dir, name);
+      try {
+        if (now - statSync(file).mtimeMs > CACHE_TTL_MS) rmSync(file, { force: true });
+      } catch {
+        // Raced with another session: nothing to prune.
+      }
+    }
+  } catch {
+    // No cache dir yet.
+  }
+};
+
+/**
+ * SessionStart already injected the task context (inside the contract), so
+ * the session's cache is seeded with the per-turn context the next prompt
+ * would carry: the first turn after a start, resume or compaction does not
+ * resend it. A session without task context clears the cache instead.
+ */
+const seedTurnContext = (
+  file: string | null,
+  payload: Payload,
+  env: NodeJS.ProcessEnv,
+  now: number,
+): void => {
+  if (!file) return;
+  pruneContextCaches(path.dirname(file), now);
+  const turn = dispatchHook(adapter, { ...payload, hook_event_name: "UserPromptSubmit" }, env);
+  const output = isRecord(turn.json.hookSpecificOutput) ? turn.json.hookSpecificOutput : null;
+  const context = output ? text(output.additionalContext) : null;
+  if (context && !turn.error) recordTurnContext(file, digestOf(context));
+  else rmSync(file, { force: true });
 };
 
 /** Runs one Claude Code hook invocation and returns the process exit code. */
@@ -104,8 +157,7 @@ export async function runClaudeHook(
     const cache = contextCache(env, sessionId);
     if (payload.hook_event_name === "SessionStart") {
       exportSessionEnv(env, sessionId);
-      // A fresh or compacted conversation no longer holds the old context.
-      if (cache) rmSync(cache, { force: true });
+      seedTurnContext(cache, payload, env, Date.now());
     } else if (payload.hook_event_name === "UserPromptSubmit") {
       const output = isRecord(json.hookSpecificOutput) ? json.hookSpecificOutput : null;
       const context = output ? text(output.additionalContext) : null;

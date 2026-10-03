@@ -4,15 +4,13 @@
 # package: run the bundled dist/workit.js with node.
 # WORKIT_CLAUDE_RUNTIME=source|dist forces one; WORKIT_SHIM_TRACE=1 prints
 # the resolved entry on stderr.
-# TODO(S9a, PR #163): once packages/workit-cli/src/main.ts lands on main, drop
-# the index.tsx fallback below.
 set -e
 here=$(dirname "$0")
 root=$(cd "$here/.." && pwd)
-cli="$root/../workit-cli/src"
+main="$root/../workit-cli/src/main.ts"
 entry=""
-if [ "${WORKIT_CLAUDE_RUNTIME:-}" != "dist" ] && [ -f "$root/../workit-core/src/core.ts" ]; then
-  if [ -f "$cli/main.ts" ]; then entry="$cli/main.ts"; elif [ -f "$cli/index.tsx" ]; then entry="$cli/index.tsx"; fi
+if [ "${WORKIT_CLAUDE_RUNTIME:-}" != "dist" ] && [ -f "$root/../workit-core/src/core.ts" ] && [ -f "$main" ]; then
+  entry="$main"
 fi
 if [ "${WORKIT_CLAUDE_RUNTIME:-}" = "source" ] && [ -z "$entry" ]; then
   echo "workit: WORKIT_CLAUDE_RUNTIME=source but no monorepo CLI source next to $root" >&2

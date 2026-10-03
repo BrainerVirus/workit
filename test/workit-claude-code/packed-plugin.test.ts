@@ -88,7 +88,7 @@ test(
       expect(JSON.stringify(run.json)).toContain('"permissionDecision":"deny"');
     });
     if (process.platform !== "win32") {
-      const cli = spawnSync(path.join(plugin, "bin", "workit"), ["--help"], {
+      const cli = spawnSync(path.join(plugin, "bin", "workit"), ["--version"], {
         encoding: "utf8",
         env: { ...process.env, WORKIT_SHIM_TRACE: "1" },
         timeout: 60_000,

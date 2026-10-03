@@ -10,6 +10,7 @@ import { installedPlugin, PLUGIN_DIR } from "./plugin-helpers";
 
 const REPO = path.resolve(PLUGIN_DIR, "..", "..");
 const json = (file: string) => JSON.parse(readFileSync(file, "utf8"));
+const CLI_VERSION = json(path.join(REPO, "packages", "workit-cli", "package.json")).version;
 
 const frontmatter = (file: string): Record<string, string> => {
   const text = readFileSync(file, "utf8");
@@ -59,16 +60,10 @@ test("hooks.json registers the designed events through the exec-form launcher, n
     }>
   >;
   expect(Object.keys(hooks).toSorted()).toEqual(
-    [
-      "PostToolUse",
-      "PreCompact",
-      "PreToolUse",
-      "SessionStart",
-      "Stop",
-      "SubagentStart",
-      "SubagentStop",
-      "UserPromptSubmit",
-    ].toSorted(),
+    // Only events whose hook changes Claude's behavior are registered: Stop,
+    // SubagentStop and PostToolUse are no-ops until the evidence model lands,
+    // and PreCompact cannot inject context (SessionStart compact restores it).
+    ["PreToolUse", "SessionStart", "SubagentStart", "UserPromptSubmit"].toSorted(),
   );
   for (const [event, groups] of Object.entries(hooks))
     for (const group of groups)
@@ -77,13 +72,10 @@ test("hooks.json registers the designed events through the exec-form launcher, n
         expect(hook.command, event).toBe("node");
         expect(hook.args, event).toEqual(["${CLAUDE_PLUGIN_ROOT}/bin/workit-hook.mjs"]);
       }
-  expect(hooks.SessionStart[0].matcher).toBe("startup|resume|clear|compact");
+  expect(hooks.SessionStart[0].matcher).toBe("startup|resume|clear|compact|fork");
   expect(hooks.PreToolUse.map((group) => [group.matcher, group.hooks[0].if])).toEqual([
     ["Bash", "Bash(git *)"],
     ["PowerShell", "PowerShell(git *)"],
-  ]);
-  expect(hooks.PostToolUse.map((group) => [group.matcher, group.hooks[0].if])).toEqual([
-    ["Bash", "Bash(workit *)"],
   ]);
 });
 
@@ -132,24 +124,22 @@ test("skills are generated from workit-core, namespaced without the workit- pref
 });
 
 test.skipIf(process.platform === "win32")(
-  "given the local pin, bin/workit resolves the monorepo source; the installed layout resolves dist/",
+  "given the local pin, bin/workit --version resolves the monorepo source; the installed layout resolves dist/",
   () => {
     const trace = (dir: string) =>
-      spawnSync(path.join(dir, "bin", "workit"), ["--help"], {
+      spawnSync(path.join(dir, "bin", "workit"), ["--version"], {
         encoding: "utf8",
         env: { ...process.env, WORKIT_SHIM_TRACE: "1" },
         timeout: 60_000,
       });
     const pinned = trace(PLUGIN_DIR);
     expect(pinned.status, pinned.stderr).toBe(0);
-    expect(pinned.stderr).toMatch(
-      /workit-shim: source .*workit-cli[\\/]src[\\/](main\.ts|index\.tsx)/,
-    );
-    expect(pinned.stdout).toContain("workit");
+    expect(pinned.stderr).toMatch(/workit-shim: source .*workit-cli[\\/]src[\\/]main\.ts/);
+    expect(pinned.stdout.trim()).toBe(CLI_VERSION);
     const installed = trace(installedPlugin());
     expect(installed.status, installed.stderr).toBe(0);
     expect(installed.stderr).toContain(`workit-shim: dist ${installedPlugin()}/dist/workit.js`);
-    expect(installed.stdout).toContain("workit");
+    expect(installed.stdout.trim()).toBe(CLI_VERSION);
   },
   90_000,
 );

@@ -4,7 +4,17 @@
 // layout (bundled dist/). Outputs must satisfy the hook output schema pinned
 // from Claude Code 2.1.288 and never answer `allow`.
 import { afterAll, expect, test } from "bun:test";
-import { cpSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
@@ -94,25 +104,73 @@ test("given SessionStart source compact, context is restored with the Claude add
   );
 });
 
-test("given an unchanged task, UserPromptSubmit re-injects context only after it changed or the session restarted", () => {
+test("given an unchanged task, UserPromptSubmit re-injects context only when it changed, never right after SessionStart", () => {
   const cwd = root();
   const data = mkdtempSync(path.join(tmpdir(), "workit-claude-data-"));
   roots.push(data);
   const env = { CLAUDE_PLUGIN_DATA: data };
   const turn = () =>
     runHook(PLUGIN_DIR, fixture("claude-code", "user-prompt-submit", cwd), env).json as Specific;
+  const start = (source: string) =>
+    runHook(PLUGIN_DIR, fixture("claude-code", "session-start-compact", cwd, { source }), env)
+      .json as Specific;
   // No task bound: nothing to inject.
   expect(turn()).toEqual({});
   startTask(cwd, { host: "claude_code", actor: "claude-session-1" }, "per-turn task");
+  // The task appeared after the session started: the next turn carries it once.
   expect(turn().hookSpecificOutput?.additionalContext).toContain("per-turn task");
   expect(turn()).toEqual({});
-  // A new session start (or compaction) clears the per-session cache.
-  runHook(
-    PLUGIN_DIR,
-    fixture("claude-code", "session-start-compact", cwd, { source: "startup" }),
-    env,
-  );
-  expect(turn().hookSpecificOutput?.additionalContext).toContain("per-turn task");
+  // SessionStart (startup or compaction restore) injects the context itself,
+  // so the first turn after it does not resend it.
+  for (const source of ["startup", "compact"]) {
+    expect(start(source).hookSpecificOutput?.additionalContext).toContain("per-turn task");
+    expect(turn(), source).toEqual({});
+  }
+  // Caches of sessions untouched for a week are pruned on the next start.
+  const ctx = path.join(data, "ctx");
+  const stale = path.join(ctx, "old-session.json");
+  writeFileSync(stale, '{"digest":"x"}\n');
+  const eightDaysAgo = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000);
+  utimesSync(stale, eightDaysAgo, eightDaysAgo);
+  start("startup");
+  expect(existsSync(stale)).toBe(false);
+  expect(readdirSync(ctx)).toHaveLength(1);
+});
+
+test("a protected-branch deny is structured JSON on stdout with exit 0 and nothing on stderr", async () => {
+  await withProtectedMain(() => {
+    for (const plugin of [PLUGIN_DIR, installedPlugin()]) {
+      const run = runHook(plugin, fixture("claude-code", "pre-tool-use-bash", root()));
+      expect(run.status).toBe(0);
+      expect(run.stderr).toBe("");
+      expect(run.stdout.trim().split("\n")).toHaveLength(1);
+      expect(outputProblem("PreToolUse", run.json)).toBeNull();
+      expect(run.json).toEqual({
+        hookSpecificOutput: {
+          hookEventName: "PreToolUse",
+          permissionDecision: "deny",
+          permissionDecisionReason: expect.stringContaining("branch_policy_denied"),
+        },
+      });
+    }
+  });
+}, 30_000);
+
+test("SubagentStart gives the worktree implementer write guidance and keeps other agents read-only", () => {
+  const cwd = root();
+  const context = (agent_type: string) =>
+    (
+      runHook(PLUGIN_DIR, fixture("claude-code", "subagent-start", cwd, { agent_type }))
+        .json as Specific
+    ).hookSpecificOutput?.additionalContext ?? "";
+  for (const agent of ["workit:implementer", "implementer"]) {
+    const text = context(agent);
+    expect(text, agent).toContain("working in its own git worktree");
+    expect(text, agent).toContain("policy-compliant branch");
+    expect(text, agent).not.toContain("read-only");
+  }
+  for (const agent of ["workit:reviewer", "workit:verifier", "Explore"])
+    expect(context(agent), agent).toContain("read-only/agent-guided");
 });
 
 test("a malformed payload or a missing bundle fails open with an empty decision and a diagnostic", () => {
@@ -128,6 +186,13 @@ test("a malformed payload or a missing bundle fails open with an empty decision 
   expect(missing.status).toBe(0);
   expect(missing.json).toEqual({});
   expect(missing.stderr).toContain("is missing");
+  // A dist/ that cannot be imported (corrupt or truncated bundle).
+  mkdirSync(path.join(broken, "dist"));
+  writeFileSync(path.join(broken, "dist", "workit-hook.js"), "export const = ;\n");
+  const corrupt = runHook(broken, fixture("claude-code", "pre-tool-use-bash", root()));
+  expect(corrupt.status).toBe(0);
+  expect(corrupt.json).toEqual({});
+  expect(corrupt.stderr).toContain("Claude Code hook unavailable: cannot load");
   const noBun = runHook(PLUGIN_DIR, fixture("claude-code", "pre-tool-use-bash", root()), {
     WORKIT_CLAUDE_RUNTIME: "source",
     WORKIT_BUN: path.join(tmpdir(), "definitely-not-bun"),
