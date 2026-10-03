@@ -452,6 +452,20 @@ const refsWithinScope = (refs: Ref[], scope: Scope): boolean =>
       bindingCovers(scope, { description: "", paths: [ref.path], exclusions: [] }),
   );
 
+/** Commit attempts for a call that omitted every revision (see retryOmittedRevisions). */
+const REVISION_RETRY_ATTEMPTS = 8;
+const retryPause = new Int32Array(new SharedArrayBuffer(4));
+const omitsRevisions = (request: unknown): boolean =>
+  typeof request === "object" &&
+  request !== null &&
+  (request as { expectedRevision?: unknown }).expectedRevision === undefined &&
+  (request as { expectedWorkspaceRevision?: unknown }).expectedWorkspaceRevision === undefined;
+/** Only the store's compare-and-swap rejections, which carry the actual revision, are retried. */
+const isCasConflict = (result: Result<unknown>): boolean =>
+  !result.ok &&
+  result.code === "revision_conflict" &&
+  ("actualRevision" in result.details || "actualWorkspaceRevision" in result.details);
+
 const trustedNow = (context: OperationContext): Utc =>
   typeof context.now === "function" ? context.now() : context.now;
 
@@ -747,6 +761,29 @@ export class WorkitCore {
       input.expectedWorkspaceRevision = workspace ? workspace.revision : null;
   }
 
+  /**
+   * A caller that omitted every revision is not asking for compare-and-swap:
+   * when another writer commits between this call's read and its locked
+   * commit, re-run the whole operation — fresh read, policy, requirement and
+   * candidate checks, then commit. Each attempt commits at most once and a
+   * store CAS conflict commits nothing, so a success is applied exactly once
+   * and a re-check that now fails returns that failure. Explicit revisions
+   * keep strict CAS and surface revision_conflict. Persistent contention
+   * ends as retryable busy after a bounded number of attempts.
+   */
+  private retryOmittedRevisions<T>(request: unknown, run: () => Result<T>): Result<T> {
+    if (!omitsRevisions(request)) return run();
+    let result = run();
+    for (let attempt = 1; isCasConflict(result); attempt += 1) {
+      if (attempt >= REVISION_RETRY_ATTEMPTS)
+        return failure("busy", "records kept changing under concurrent writers; retry the call");
+      // Jittered backoff de-synchronizes writers that lost the same race.
+      Atomics.wait(retryPause, 0, 0, Math.floor(Math.random() * 4 * attempt) + 1);
+      result = run();
+    }
+    return result;
+  }
+
   private helperEntry(
     task: TaskRecord,
     requireSession = false,
@@ -786,6 +823,15 @@ export class WorkitCore {
   }
 
   state(request: unknown): Result<ExportBundle | TaskSummary | TaskRecord | WorkspaceRecord> {
+    // Recovery is an operator CAS over snapshot bytes; only import retries.
+    return (request as { action?: unknown } | null)?.action === "import"
+      ? this.retryOmittedRevisions(request, () => this.stateOnce(request))
+      : this.stateOnce(request);
+  }
+
+  private stateOnce(
+    request: unknown,
+  ): Result<ExportBundle | TaskSummary | TaskRecord | WorkspaceRecord> {
     const root = this.contextRootError();
     if (!root.ok) return root;
     if ((this.context.workerId ?? null) !== null)
@@ -890,6 +936,10 @@ export class WorkitCore {
   }
 
   task(request: unknown): Result<TaskSummary | TaskListItem[] | TaskView> {
+    return this.retryOmittedRevisions(request, () => this.taskOnce(request));
+  }
+
+  private taskOnce(request: unknown): Result<TaskSummary | TaskListItem[] | TaskView> {
     const root = this.contextRootError();
     if (!root.ok) return root;
     const parsed = parseOperation("task", request);
@@ -997,6 +1047,10 @@ export class WorkitCore {
   }
 
   policy(request: unknown): Result<Policy | null> {
+    return this.retryOmittedRevisions(request, () => this.policyOnce(request));
+  }
+
+  private policyOnce(request: unknown): Result<Policy | null> {
     const root = this.contextRootError();
     if (!root.ok) return root;
     const parsed = parseOperation("policy", request);
@@ -1049,6 +1103,10 @@ export class WorkitCore {
   }
 
   evidence(request: unknown): Result<Entry<Evidence>> {
+    return this.retryOmittedRevisions(request, () => this.evidenceOnce(request));
+  }
+
+  private evidenceOnce(request: unknown): Result<Entry<Evidence>> {
     const root = this.contextRootError();
     if (!root.ok) return root;
     const parsed = parseOperation("evidence", request);
@@ -1159,10 +1217,11 @@ export class WorkitCore {
   }
 
   decision(request: unknown): Result<Entry<Decision>> {
-    return this.recordDecision(request);
+    return this.retryOmittedRevisions(request, () => this.recordDecision(request));
   }
 
   observeDecision(request: unknown, observation: unknown): Result<Entry<Decision>> {
+    // A native receipt is retired on first use, so this path never retries.
     return this.recordDecision(request, observation, true);
   }
 
@@ -1173,7 +1232,9 @@ export class WorkitCore {
    * removal, which fails the next reserve closed.
    */
   observeStandingDecision(request: unknown): Result<Entry<Decision>> {
-    return this.recordDecision(request, undefined, true, true);
+    return this.retryOmittedRevisions(request, () =>
+      this.recordDecision(request, undefined, true, true),
+    );
   }
 
   private recordDecision(
@@ -1346,6 +1407,10 @@ export class WorkitCore {
   }
 
   finding(request: unknown): Result<Entry<Finding>> {
+    return this.retryOmittedRevisions(request, () => this.findingOnce(request));
+  }
+
+  private findingOnce(request: unknown): Result<Entry<Finding>> {
     const root = this.contextRootError();
     if (!root.ok) return root;
     const parsed = parseOperation("finding", request);
@@ -1515,6 +1580,10 @@ export class WorkitCore {
   }
 
   worker(request: unknown): Result<Entry<Worker>> {
+    return this.retryOmittedRevisions(request, () => this.workerOnce(request));
+  }
+
+  private workerOnce(request: unknown): Result<Entry<Worker>> {
     const root = this.contextRootError();
     if (!root.ok) return root;
     const parsed = parseOperation("worker", request);
@@ -1950,6 +2019,10 @@ export class WorkitCore {
   }
 
   writer(request: unknown): Result<WorkspaceRecord> {
+    return this.retryOmittedRevisions(request, () => this.writerOnce(request));
+  }
+
+  private writerOnce(request: unknown): Result<WorkspaceRecord> {
     const root = this.contextRootError();
     if (!root.ok) return root;
     const parsed = parseOperation("writer", request);
