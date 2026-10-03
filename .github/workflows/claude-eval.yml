@@ -1,0 +1,84 @@
+name: Claude Code plugin eval
+
+# Opt-in behavioral eval of the Claude Code plugin (design S14, §0 #15): it
+# needs a Claude credential, costs money, and is nondeterministic, so it is a
+# nightly / `eval`-label job, never a PR gate. The deterministic PR gate is
+# `claude plugin validate --strict` plus the hook-fixture suite in ci.yml.
+on:
+  schedule:
+    - cron: "17 5 * * *"
+  pull_request:
+    types: [labeled, synchronize]
+    branches: [main]
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: claude-eval-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  BUN_VERSION: "1.4.1"
+  NODE_CURRENT: "24.20.0"
+  CLAUDE_CODE_VERSION: "2.1.288"
+
+jobs:
+  eval:
+    name: claude plugin eval
+    if: >
+      github.event_name != 'pull_request' ||
+      contains(github.event.pull_request.labels.*.name, 'eval')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_CURRENT }}
+
+      - name: Install deps
+        run: bun install --frozen-lockfile
+
+      # The suite runs against the checkout (local-pin layout): the hooks and
+      # bin/workit run from source with bun; only skills are generated.
+      - name: Generate plugin skills
+        run: bun packages/workit-claude-code/scripts/build.ts --skills-only
+
+      - name: Run eval suite
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: | # zizmor: ignore[adhoc-packages] -- exact support-matrix pin
+          set -euo pipefail
+          if [[ -z "${ANTHROPIC_API_KEY}" ]]; then
+            echo "::warning::ANTHROPIC_API_KEY is not configured; skipping the Claude Code eval"
+            exit 0
+          fi
+          # Exact version pinned in the support matrix (no lockfile for a CLI tool).
+          npm install --no-save --prefix "$RUNNER_TEMP/claude" "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
+          export HOME="$RUNNER_TEMP/claude-home" CLAUDE_CONFIG_DIR="$RUNNER_TEMP/claude-home/.claude"
+          mkdir -p "$CLAUDE_CONFIG_DIR"
+          "$RUNNER_TEMP/claude/node_modules/.bin/claude" plugin eval packages/workit-claude-code \
+            --trust-plugin --scaffold --allow-tools Bash \
+            --runs 1 -j 2 --max-cost-usd 2 --threshold 0.8 \
+            --no-publish --json "$RUNNER_TEMP/eval-results.json" \
+            --output-dir "$RUNNER_TEMP/eval-out"
+
+      - name: Upload eval results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: claude-eval
+          path: |
+            ${{ runner.temp }}/eval-results.json
+            ${{ runner.temp }}/eval-out
+          if-no-files-found: ignore
