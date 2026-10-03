@@ -177,6 +177,7 @@ workit upgrade --apply --confirm  # apply a reviewed preview
 workit upgrade --cli --apply --confirm  # also update an existing global CLI
 workit launch pi --auto-upgrade --  # update before starting Pi
 workit doctor            # offline installation health report (--json for machines)
+workit doctor --fix-lock # clear a stale .workit metadata lock in the current directory
 workit <family> <action> [--payload <json|@file|->] [--task <id>] [--confirm] [--json]
 workit action <operation> --payload <JSON> [--preview] [--confirm] [--json]
 workit handoff --task <id> [--json]
@@ -377,7 +378,12 @@ The canonical target, relevant Git/remote state, and effective `gh`/`glab`
 account are checked again before a remote effect. The coordinator owns the
 Workit writer; an independently held writer in the target checkout remains a
 real conflict, and managed actions hold that checkout's Workit metadata lock
-through effect settlement so a writer cannot acquire mid-action. New branch
+through effect settlement so a writer cannot acquire mid-action. A metadata
+lock whose owner is gone (dead or reused pid, or a lock from another host past
+its TTL) is reclaimed by the next write; a write that meets a live holder
+retries for about two seconds and then returns the retryable `busy` code, never
+`recovery_required`. `workit doctor` warns about a stale lock and
+`workit doctor --fix-lock` clears it. New branch
 setup shows both the existing local base SHA and remote base SHA in its
 approval, rechecks them, and creates only from an approved commit. Workit does
 not reject Git-valid branch names or user commit

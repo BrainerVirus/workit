@@ -1048,6 +1048,8 @@ export type ErrorCode =
   | "capability_unavailable"
   | "requirements_unsatisfied"
   | "writer_conflict"
+  /** Retryable: another live Workit call holds the checkout's metadata lock. */
+  | "busy"
   | "recovery_required"
   | "storage_error"
   | "external_outcome_unknown";

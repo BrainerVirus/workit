@@ -8,6 +8,7 @@ import { createLogger } from "@brainervirus/workit-core/src/core/logger";
 import { EVENT, errorDetail } from "@brainervirus/workit-core/src/core/boundary";
 import { setDiagnosticLogger } from "@brainervirus/workit-core/src/core/config";
 import { runDoctor } from "@brainervirus/workit-core/src/core/doctor";
+import { clearStaleMetadataLock } from "@brainervirus/workit-core/src/core/store-lock";
 import {
   applySetupPreview,
   buildSetupPreview,
@@ -58,6 +59,7 @@ Usage:
   workit upgrade   Preview upgrades (--apply --confirm; --hosts=a,b; --cli for the CLI)
   workit launch <host> [--auto-upgrade] [-- args]  Upgrade before host startup
   workit doctor    Verify the offline installation health (add --json for a machine-readable report)
+                   --fix-lock clears a stale .workit metadata lock in the current directory
   workit uninstall Remove workit host registrations interactively (~/.config/workit is kept)
   workit cutover   Preview or apply an explicit v1 cutover (apply requires --confirm)
 ${COMMAND_DESCRIPTIONS.map(([cmd, desc]) => `  ${cmd.padEnd(helpColumn)}${desc}`).join("\n")}
@@ -311,10 +313,23 @@ export async function runUninstall() {
 // `workit doctor` (DG-07): offline engine, human or --json report, exit code
 // reflects the health. Never writes the report to stderr (the logger owns that).
 function runDoctorCommand(args: string[]) {
+  // --fix-lock runs first so the report reflects the cleaned state. It removes
+  // only a lock whose owner is provably gone; a live holder is left alone.
+  const fixLock = args.includes("--fix-lock") ? clearStaleMetadataLock(process.cwd()) : null;
   const report = runDoctor({ host: "cli", cwd: process.cwd() });
   if (args.includes("--json")) {
-    console.log(JSON.stringify(report, null, 2));
+    console.log(JSON.stringify(fixLock ? { ...report, fixLock } : report, null, 2));
   } else {
+    if (fixLock) {
+      const what = fixLock.cleared
+        ? `cleared stale lock ${fixLock.path} (${fixLock.reason})`
+        : fixLock.state === "absent"
+          ? "no metadata lock to clear"
+          : `kept lock ${fixLock.path}: ${fixLock.reason}`;
+      console.log(
+        `fix-lock: ${what}${fixLock.guardCleared ? "; removed abandoned reclaim guard" : ""}`,
+      );
+    }
     console.log(
       `workit doctor — ${report.ok ? "healthy" : "problems found"} (${report.offline ? "offline" : "online"})`,
     );

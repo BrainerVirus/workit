@@ -19,6 +19,7 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { SUPPORT_MATRIX } from "./support-matrix";
+import { inspectMetadataLock } from "./store-lock";
 import { bundleHashOfFile, isEphemeralCachePath } from "./runtime-identity";
 import { EVENT } from "./boundary";
 import { getDiagnosticLogger, isConfigObject } from "./config";
@@ -61,6 +62,7 @@ export type DoctorCheckId =
   | "duplicate_registration"
   | "malformed_config"
   | "workspace_mismatch"
+  | "workspace_lock"
   | "credential_metadata"
   | "github_identity"
   | "gitlab_identity"
@@ -1692,6 +1694,34 @@ const checkManagedContentConflict = (res: Resolved): DoctorCheck => {
   };
 };
 
+// The checkout's `.workit/metadata.lock`. Writes reclaim a stale lock by
+// themselves, so a stale lock is a warning with an explicit cleanup command.
+const checkWorkspaceLock = (res: Resolved): DoctorCheck => {
+  const lock = inspectMetadataLock(res.cwd);
+  const fix = "workit doctor --fix-lock";
+  if (lock.guard === "abandoned")
+    return {
+      id: "workspace_lock",
+      status: "warn",
+      detail: `abandoned lock reclaim guard at ${lock.path}.reclaim`,
+      fix,
+    };
+  if (lock.state === "absent")
+    return { id: "workspace_lock", status: "pass", detail: "no metadata lock held" };
+  if (lock.state === "stale")
+    return {
+      id: "workspace_lock",
+      status: "warn",
+      detail: `stale metadata lock at ${lock.path}: ${lock.reason}`,
+      fix,
+    };
+  return {
+    id: "workspace_lock",
+    status: "pass",
+    detail: `metadata lock ${lock.reason} (writes retry, then report busy)`,
+  };
+};
+
 const RUN_CHECKS: Array<(res: Resolved) => DoctorCheck> = [
   checkRuntime,
   checkVersions,
@@ -1704,6 +1734,7 @@ const RUN_CHECKS: Array<(res: Resolved) => DoctorCheck> = [
   checkDuplicateRegistration,
   checkMalformedConfig,
   checkWorkspaceMismatch,
+  checkWorkspaceLock,
   checkCredentialMetadata,
   checkGithubIdentity,
   checkGitLabIdentity,

@@ -22,6 +22,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A `.workit/metadata.lock` left by a dead process (or a reused pid, or a
+  foreign-host lock past its TTL) no longer bricks the store: the next write
+  reclaims it. Contention with a live writer retries briefly and returns the
+  retryable `busy` code instead of `recovery_required`. `workit doctor` reports
+  a stale lock (`workspace_lock`) and `workit doctor --fix-lock` clears it.
 - Compact task context retains the newest decisions and surfaces bounded,
   redacted choice summaries instead of selecting an arbitrary UUID-ordered set.
 - Distributed cross-repository guidance binds unfinished work to its checkout,

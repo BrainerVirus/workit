@@ -33,6 +33,22 @@ import {
   type Utc,
   type WorkspaceRecord,
 } from "./task-contract";
+import {
+  DEFAULT_LOCK_TIMEOUT_MS,
+  classifyLockOwner,
+  clearAbandonedReclaimGuard,
+  parseMetadataLock,
+  parseMetadataLockOrNull,
+  processStartOf,
+  sameMetadataLock,
+  type MetadataLock,
+} from "./store-lock";
+
+export type { MetadataLock } from "./store-lock";
+export type TaskStoreOptions = {
+  /** How long a mutation retries a lock held by a live writer before `busy`. */
+  lockTimeoutMs?: number;
+};
 
 export type MutationContext = { now: Utc; revision: Revision };
 export type TaskMutation = (task: TaskRecord, context: MutationContext) => Result<TaskRecord>;
@@ -72,13 +88,6 @@ export type RecoveryInput = {
     writer: WorkspaceRecord["writer"],
   ) => Result<ProcessEvidence>;
 };
-export type MetadataLock = {
-  pid: number;
-  processStart: string | null;
-  host: string;
-  nonce: string;
-  externalAction?: true;
-};
 export type ProcessEvidence = {
   state: "stopped" | "accounted_for";
   pid: number;
@@ -94,15 +103,6 @@ const processEvidenceSchema = z
       .string()
       .regex(/^[0-9a-f]{64}$/)
       .nullable(),
-  })
-  .strict();
-const metadataLockSchema = z
-  .object({
-    pid: z.number().int().nonnegative().safe(),
-    processStart: z.string().nullable(),
-    host: z.string().min(1),
-    nonce: z.string().min(1),
-    externalAction: z.literal(true).optional(),
   })
   .strict();
 export type RecoveryCandidate = {
@@ -157,22 +157,6 @@ const isObject = (value: unknown): value is Record<string, unknown> =>
 const validId = (value: string): boolean =>
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value);
 const validDigest = (value: string): boolean => /^[0-9a-f]{64}$/.test(value);
-const parseMetadataLock = (raw: string): MetadataLock => {
-  let value: unknown;
-  try {
-    value = JSON.parse(raw);
-  } catch {
-    throw Object.assign(new Error("metadata lock is invalid"), { code: "metadata_lock_invalid" });
-  }
-  const parsed = metadataLockSchema.safeParse(value);
-  if (!parsed.success)
-    throw Object.assign(new Error("metadata lock is invalid"), { code: "metadata_lock_invalid" });
-  return parsed.data;
-};
-const sameMetadataLock = (left: unknown, right: MetadataLock): boolean => {
-  const parsed = metadataLockSchema.safeParse(left);
-  return parsed.success && canonicalJson(parsed.data) === canonicalJson(right);
-};
 export const sameDirectoryIdentity = (left: string, right: string): boolean => {
   if (!path.isAbsolute(left) || !path.isAbsolute(right)) return false;
   const normalizedLeft = path.resolve(left);
@@ -202,12 +186,22 @@ export const sameDirectoryIdentity = (left: string, right: string): boolean => {
 };
 type LockSnapshot = { raw: string; data: MetadataLock };
 const externalActionLockRoots = new AsyncLocalStorage<ReadonlySet<string>>();
+/** Roots whose metadata lock this process holds; waiting on them can only time out. */
+const heldInProcess = new Map<string, number>();
+const holdRoot = (root: string) => heldInProcess.set(root, (heldInProcess.get(root) ?? 0) + 1);
+const dropRoot = (root: string) => {
+  const count = (heldInProcess.get(root) ?? 1) - 1;
+  if (count > 0) heldInProcess.set(root, count);
+  else heldInProcess.delete(root);
+};
 
 export class TaskStore {
   readonly root: string;
+  private readonly lockTimeoutMs: number;
 
-  constructor(root: string) {
+  constructor(root: string, options: TaskStoreOptions = {}) {
     this.root = fs.existsSync(root) ? fs.realpathSync(root) : path.resolve(root);
+    this.lockTimeoutMs = options.lockTimeoutMs ?? DEFAULT_LOCK_TIMEOUT_MS;
   }
 
   readTask(taskId: Id): Result<TaskRecord> {
@@ -813,6 +807,7 @@ export class TaskStore {
           return replaced.ok ? success(value.revision, null, value) : replaced;
         },
         this.recoveryLockOptions(lock.data, evidence.data, recoveryGate),
+        "recovery_required",
       );
       return result;
     } catch (error) {
@@ -870,22 +865,55 @@ export class TaskStore {
     }
   }
 
+  /**
+   * Mutation lock: a holder that is gone (dead pid, reused pid, or a foreign or
+   * unreadable lock past its TTL) is reclaimed; a live holder is waited on
+   * briefly and then reported as retryable `busy`.
+   */
   private metadataLockOptions(): FileLockSyncAcquireOptions<MetadataLock> {
+    const inProcess = heldInProcess.has(this.root);
     return {
       lockPath: this.lockPath,
       staleMs: Number.MAX_SAFE_INTEGER,
-      timeoutMs: 0,
-      retry: { retries: 0 },
-      staleRecovery: "fail-closed",
-      shouldReclaim: () => false,
-      parsePayload: parseMetadataLock,
+      timeoutMs: inProcess ? 0 : this.lockTimeoutMs,
+      retry: inProcess
+        ? { retries: 0 }
+        : { minTimeout: 5, maxTimeout: 100, factor: 1.5, randomize: true },
+      staleRecovery: "remove-if-unchanged",
+      shouldReclaim: ({ payload, nowMs }) => {
+        let ageMs: number | null = null;
+        try {
+          ageMs = nowMs - fs.lstatSync(this.lockPath).mtimeMs;
+        } catch {}
+        return classifyLockOwner(payload, ageMs).state === "stale";
+      },
+      // The library re-checks the bytes before removal, so a lock replaced
+      // after classification is never deleted.
+      shouldRemoveStaleLock: () => true,
+      parsePayload: parseMetadataLockOrNull,
       payload: () => ({
         pid: process.pid,
-        processStart: this.processStart(process.pid),
+        processStart: processStartOf(process.pid),
         host: hostname(),
         nonce: randomUUID(),
       }),
     };
+  }
+
+  private acquireMetadataLock(
+    options: FileLockSyncAcquireOptions<MetadataLock>,
+  ): FileLockSyncHandle {
+    clearAbandonedReclaimGuard(this.lockPath);
+    const deadline = Date.now() + (options.timeoutMs ?? 0);
+    while (true) {
+      try {
+        return acquireFileLockSync(this.workspacePath, options);
+      } catch (error) {
+        // Losing a reclaim race to another process is contention, not damage.
+        const code = (error as { code?: unknown })?.code;
+        if (code !== "file_lock_stale" || Date.now() >= deadline) throw error;
+      }
+    }
   }
 
   private externalActionLockOptions(): FileLockSyncAcquireOptions<MetadataLock> {
@@ -913,10 +941,11 @@ export class TaskStore {
     }
     let handle: FileLockSyncHandle;
     try {
-      handle = acquireFileLockSync(this.workspacePath, this.externalActionLockOptions());
+      handle = this.acquireMetadataLock(this.externalActionLockOptions());
     } catch (error) {
       return this.lockFailure(error);
     }
+    holdRoot(this.root);
     let result: Result<T>;
     try {
       if (!handle.verifyStillHeld())
@@ -953,6 +982,7 @@ export class TaskStore {
         path: this.lockPath,
       });
     }
+    dropRoot(this.root);
     try {
       handle.release();
     } catch (error) {
@@ -978,6 +1008,9 @@ export class TaskStore {
     gate: { reclaimed: boolean },
   ): FileLockSyncAcquireOptions<MetadataLock> {
     const options = this.metadataLockOptions();
+    options.timeoutMs = 0;
+    options.retry = { retries: 0 };
+    options.parsePayload = parseMetadataLock;
     options.staleRecovery = "remove-if-unchanged";
     options.shouldReclaim = ({ payload }) =>
       Boolean(
@@ -1008,6 +1041,7 @@ export class TaskStore {
   private withLock<T>(
     operation: (handle: FileLockSyncHandle) => Result<T>,
     options: FileLockSyncAcquireOptions<MetadataLock> = this.metadataLockOptions(),
+    contention: "busy" | "recovery_required" = "busy",
   ): Result<T> {
     try {
       this.initializeMutationStorage();
@@ -1022,10 +1056,11 @@ export class TaskStore {
       "metadata lock operation did not produce a result",
     );
     try {
-      handle = acquireFileLockSync(this.workspacePath, options);
+      handle = this.acquireMetadataLock(options);
     } catch (error) {
-      result = this.lockFailure(error);
+      result = this.lockFailure(error, contention);
     }
+    if (handle) holdRoot(this.root);
     if (handle) {
       try {
         if (!handle.verifyStillHeld())
@@ -1044,6 +1079,7 @@ export class TaskStore {
       }
     }
     if (handle) {
+      dropRoot(this.root);
       try {
         handle.release();
       } catch (error) {
@@ -1059,16 +1095,33 @@ export class TaskStore {
     return result;
   }
 
-  private lockFailure(error: unknown): Result<never> {
+  private lockFailure(
+    error: unknown,
+    contention: "busy" | "recovery_required" = "busy",
+  ): Result<never> {
     const value = error as { code?: unknown; message?: unknown };
     const code = typeof value?.code === "string" ? value.code : "";
-    if (code === "EEXIST" || code === "file_lock_timeout") {
-      const lock = this.readLockSnapshot();
-      if (lock.ok && lock.data?.data.externalAction)
+    if (code === "EEXIST" || code === "file_lock_timeout" || code === "file_lock_stale") {
+      let lock: MetadataLock | null = null;
+      try {
+        lock = parseMetadataLockOrNull(fs.readFileSync(this.lockPath, "utf8"));
+      } catch {}
+      if (lock?.externalAction)
         return failure("writer_conflict", "workspace is reserved by a managed external action", {
           outcome: "not_started",
           path: this.lockPath,
         });
+      if (contention === "busy")
+        return failure(
+          "busy",
+          `workspace metadata lock is held by another Workit call${lock ? ` (pid ${lock.pid} on ${lock.host})` : ""}; retry shortly`,
+          {
+            outcome: "not_started",
+            path: this.lockPath,
+            guidance:
+              "Retry the same call. If it stays busy, run `workit doctor --fix-lock` to clear a lock left by a dead process.",
+          },
+        );
     }
     const recovery =
       code === "EEXIST" ||
@@ -1262,14 +1315,6 @@ export class TaskStore {
         `snapshot was written by workit ${writerVersion}; upgrade Workit before mutating this checkout`,
       );
     return failure("recovery_required", "snapshot does not satisfy its schema");
-  }
-
-  private processStart(pid: number): string | null {
-    try {
-      return fs.readFileSync(`/proc/${pid}/stat`, "utf8").split(" ")[21] ?? null;
-    } catch {
-      return null;
-    }
   }
 
   private conflict(expected: Revision, actual: Revision): Result<never> {

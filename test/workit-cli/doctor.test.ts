@@ -1,6 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { hostname } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { DoctorReport } from "@/packages/workit-core/src/core/doctor";
@@ -63,4 +64,70 @@ test("workit doctor (text) prints per-check lines and no JSON to stdout", () => 
   expect(text.stdout).toContain("workit doctor");
   expect(() => JSON.parse(text.stdout)).toThrow();
   expect(text.stdout).toMatch(/stale_pin/);
+});
+
+const deadPid = (): number =>
+  Number(
+    spawnSync(process.execPath, ["-e", "process.stdout.write(String(process.pid))"], {
+      encoding: "utf8",
+    }).stdout,
+  );
+
+test("Given a stale lock left by a dead pid, When workit doctor runs, Then it warns and names --fix-lock", () => {
+  const lockPath = path.join(fixture.cwd, ".workit", "metadata.lock");
+  mkdirSync(path.dirname(lockPath), { recursive: true });
+  writeFileSync(
+    lockPath,
+    JSON.stringify({ pid: deadPid(), processStart: "1", host: hostname(), nonce: "n" }),
+  );
+  try {
+    const result = runCli(["doctor", "--json"], fixture.cwd);
+    const report = JSON.parse(result.stdout) as DoctorReport;
+    const check = report.checks.find((c) => c.id === "workspace_lock");
+    expect(check).toMatchObject({ status: "warn", fix: "workit doctor --fix-lock" });
+    expect(check?.detail).toContain("is not running");
+    expect(existsSync(lockPath)).toBe(true);
+  } finally {
+    rmSync(path.join(fixture.cwd, ".workit"), { recursive: true, force: true });
+  }
+});
+
+test("Given a stale lock and an abandoned reclaim guard, When workit doctor --fix-lock runs, Then both are cleared", () => {
+  const lockPath = path.join(fixture.cwd, ".workit", "metadata.lock");
+  mkdirSync(`${lockPath}.reclaim`, { recursive: true });
+  utimesSync(`${lockPath}.reclaim`, new Date(0), new Date(0));
+  writeFileSync(
+    lockPath,
+    JSON.stringify({ pid: deadPid(), processStart: "1", host: hostname(), nonce: "n" }),
+  );
+  try {
+    const result = runCli(["doctor", "--fix-lock"], fixture.cwd);
+    expect(result.stdout).toContain("fix-lock: cleared stale lock");
+    expect(result.stdout).toContain("removed abandoned reclaim guard");
+    expect(existsSync(lockPath)).toBe(false);
+    expect(existsSync(`${lockPath}.reclaim`)).toBe(false);
+    expect(result.stdout).toMatch(/ok {3}workspace_lock — no metadata lock held/);
+  } finally {
+    rmSync(path.join(fixture.cwd, ".workit"), { recursive: true, force: true });
+  }
+});
+
+test("Given a lock held by a live process, When workit doctor --fix-lock runs, Then the lock is kept", () => {
+  const lockPath = path.join(fixture.cwd, ".workit", "metadata.lock");
+  mkdirSync(path.dirname(lockPath), { recursive: true });
+  const bytes = JSON.stringify({
+    pid: process.pid,
+    processStart: null,
+    host: hostname(),
+    nonce: "live",
+  });
+  writeFileSync(lockPath, bytes);
+  try {
+    const result = runCli(["doctor", "--json", "--fix-lock"], fixture.cwd);
+    const report = JSON.parse(result.stdout) as DoctorReport & { fixLock: { cleared: boolean } };
+    expect(report.fixLock.cleared).toBe(false);
+    expect(readFileSync(lockPath, "utf8")).toBe(bytes);
+  } finally {
+    rmSync(path.join(fixture.cwd, ".workit"), { recursive: true, force: true });
+  }
 });
