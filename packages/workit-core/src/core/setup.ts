@@ -22,6 +22,7 @@ import {
   readConfigFromDir,
   resolveConfigDir,
   type BranchPreset,
+  type ToolkitConfig,
 } from "./config";
 import { detectBranchPolicy } from "./branch-policy";
 import { readSetupState, type SetupState } from "./setup-state";
@@ -38,13 +39,26 @@ import { planHygieneFiles } from "./hygiene";
 import { packageRoot } from "./package-root";
 import {
   cursorMcpServerEntry,
+  CURSOR_RUNTIME_PACKAGE,
+  isWorkitPlugin,
   mergeCursorMcp,
+  mergeOpenCodePlugins,
   mergeCursorSettings,
   mergeOpenCodeConfig,
   OPENCODE_NPM_PIN,
 } from "./registration";
 import { runDoctor, type DoctorReport } from "./doctor";
 import { writeFileExclusive } from "./safe-write";
+import {
+  isCodexWorkitInstalled,
+  isPiWorkitInstalled,
+  planHostInstall,
+  runHostInstall,
+  type HostCommandRunner,
+  type HostId,
+  type HostInstallCommand,
+  runHostCommand,
+} from "./host-install";
 
 // Setup preview + apply (WZ-04-WZ-09, WZ-13-WZ-15; CA-12, CA-14, CA-22, CA-23).
 // buildSetupPreview is a pure reader: it classifies the current setup state and
@@ -82,6 +96,8 @@ export type SetupPreviewInput = {
    *  configured tokenFile, the replacement is planned as its own distinct
    *  reviewed mutation (AR-10). */
   tokenPaths?: { youtrack?: string; gitlab?: string; github?: string };
+  /** Optional global commit policy used as the base for repository overrides. */
+  commitPolicy?: ToolkitConfig["commitPolicy"];
 };
 
 export type SetupMutation =
@@ -98,6 +114,7 @@ export type SetupMutation =
   // during preview so the reviewed mutation set IS the Apply write set.
   | { type: "register-platform"; platform: Platform; path: string }
   | { type: "install-adapter"; platform: "cursor"; path: string }
+  | { type: "install-host"; platform: HostId; path: string; commands: HostInstallCommand[] }
   // AR-10: changing a configured tokenFile path is never hidden inside a
   // generic merge — it is its own reviewed mutation.
   | { type: "set-token-path"; path: string; key: string; value: string };
@@ -249,6 +266,7 @@ export function buildSetupPreview(
         locale: values.locale,
         localeOptions: current.localeOptions,
         timezone: values.timezone,
+        ...(values.commitPolicy === undefined ? {} : { commitPolicy: values.commitPolicy }),
         branchPolicy: mergePreset(
           values.branchPreset,
           {
@@ -344,9 +362,56 @@ export function buildSetupPreview(
         if (platform === "opencode") {
           mutations.push({ type: "register-platform", platform, path: paths.opencodeConfig });
         } else if (platform === "cursor") {
+          const cursorRoot = adapterRoot("cursor", {
+            ...paths,
+            dev: opts.dev ?? env.WORKFLOW_TOOLKIT_DEV ?? null,
+          });
+          if (cursorRoot === null) {
+            const commands = planHostInstall("cursor", {
+              home: paths.home,
+              cwd: paths.cwd,
+              env,
+              packageVersion: "latest",
+              targetDir: paths.cursorPluginDir,
+            });
+            mutations.push({
+              type: "install-host",
+              platform: "cursor",
+              path: path.join(
+                paths.home,
+                ".cursor",
+                "plugins",
+                "local",
+                ".workit-package-bootstrap",
+              ),
+              commands,
+            });
+          }
           mutations.push({ type: "install-adapter", platform, path: paths.cursorPluginDir });
           mutations.push({ type: "register-platform", platform, path: paths.cursorSettings });
           mutations.push({ type: "register-platform", platform, path: paths.cursorMcp });
+        } else if (platform === "codex" || platform === "pi") {
+          const commands = planHostInstall(platform, { home: paths.home, cwd: paths.cwd, env });
+          if (commands.length > 0) {
+            mutations.push({
+              type: "install-host",
+              platform,
+              path:
+                platform === "codex"
+                  ? path.join(
+                      env.CODEX_HOME ?? path.join(paths.home, ".codex"),
+                      "plugins",
+                      "cache",
+                      "workflow-toolkit",
+                      "workit",
+                    )
+                  : path.join(
+                      env.PI_CODING_AGENT_DIR ?? path.join(paths.home, ".pi", "agent"),
+                      "settings.json",
+                    ),
+              commands,
+            });
+          }
         }
       }
     }
@@ -391,7 +456,7 @@ export type Platform = "opencode" | "cursor";
 export type SetupResultStatus = "Installed" | "Configured" | "Skipped" | "Failed";
 
 export type SetupResultEntry = {
-  platform: Platform | "core";
+  platform: HostId | "core";
   file: string;
   status: SetupResultStatus;
   detail?: string;
@@ -422,6 +487,10 @@ export type ApplySetupOptions = {
   cursorMcp?: string;
   cursorPluginDir?: string;
   stateDir?: string;
+  /** Injectable synchronous host runner; defaults to a bounded no-shell spawn. */
+  runHostCommand?: HostCommandRunner;
+  /** Prefer staged npm adapter assets, used by the explicit upgrade flow. */
+  preferInstalledAdapter?: boolean;
 };
 
 type ResolvedApply = {
@@ -528,7 +597,7 @@ const readFileSafe = (p: string): string | null => {
 // adapter resolution (AR-09).
 type CoreMutation = Exclude<
   SetupMutation,
-  { type: "register-platform" } | { type: "install-adapter" }
+  { type: "register-platform" } | { type: "install-adapter" } | { type: "install-host" }
 >;
 
 const workspaceEntriesAlreadyMatch = (
@@ -735,8 +804,23 @@ const isAdapter = (root: string, platform: Platform): boolean => {
   }
 };
 
-function adapterRoot(platform: Platform, res: ResolvedApply): string | null {
+function adapterRoot(
+  platform: Platform,
+  res: ResolvedApply,
+  preferInstalledAdapter = false,
+): string | null {
   const candidates: string[] = [];
+  const stagedCursor = path.join(
+    res.home,
+    ".cursor",
+    "plugins",
+    "local",
+    ".workit-package-bootstrap",
+    "node_modules",
+    "@brainervirus",
+    "workit-cursor",
+  );
+  if (platform === "cursor" && preferInstalledAdapter) candidates.push(stagedCursor);
   if (res.dev) {
     // A dev checkout is the complete source of truth for adapter packages: when
     // WORKFLOW_TOOLKIT_DEV is set, a package missing from it is a real failure,
@@ -757,6 +841,7 @@ function adapterRoot(platform: Platform, res: ResolvedApply): string | null {
   candidates.push(
     path.join(res.home, ".local", "share", "workit", "packages", `workit-${platform}`),
   );
+  if (platform === "cursor") candidates.push(stagedCursor);
   for (const candidate of candidates) {
     if (isAdapter(candidate, platform)) return candidate;
   }
@@ -787,8 +872,8 @@ const opencodePin = (root: string, res: ResolvedApply): string | null =>
   resolveOpenCodePin(root, { dev: res.dev });
 
 function applyOpenCode(root: string, res: ResolvedApply): SetupResultEntry {
-  const pin = opencodePin(root, res);
-  if (!pin) {
+  const resolvedPin = opencodePin(root, res);
+  if (!resolvedPin) {
     return {
       platform: "opencode",
       file: res.opencodeConfig,
@@ -807,7 +892,33 @@ function applyOpenCode(root: string, res: ResolvedApply): SetupResultEntry {
       detail: `cannot merge into malformed config: ${existing.error} — repair or remove the file`,
     };
   }
-  const merged = mergeOpenCodeConfig(existing.kind === "record" ? existing.value : {}, pin);
+  const configuredPlugins =
+    existing.kind === "record"
+      ? Array.isArray(existing.value.plugins)
+        ? existing.value.plugins
+        : typeof existing.value.plugins === "string"
+          ? [existing.value.plugins]
+          : typeof existing.value.plugin === "string"
+            ? [existing.value.plugin]
+            : Array.isArray(existing.value.plugin)
+              ? existing.value.plugin
+              : []
+      : [];
+  const configuredPin = configuredPlugins.find(
+    (entry): entry is string => typeof entry === "string" && isWorkitPlugin(entry),
+  );
+  const pin = configuredPin ?? resolvedPin;
+  const base = existing.kind === "record" ? existing.value : {};
+  const merged =
+    existing.kind === "record" && Object.hasOwn(existing.value, "plugins")
+      ? (() => {
+          const plugins = mergeOpenCodePlugins(existing.value.plugins, pin);
+          return {
+            config: { ...existing.value, plugins: plugins.config },
+            changed: plugins.changed.length > 0 ? ["plugins"] : [],
+          };
+        })()
+      : mergeOpenCodeConfig(base, pin);
   if (merged.changed.length === 0) {
     return {
       platform: "opencode",
@@ -996,11 +1107,21 @@ function applyCursorMcp(root: string, res: ResolvedApply): SetupResultEntry {
       detail: `cannot merge into malformed config: ${mcpExisting.error} — repair or remove the file`,
     };
   }
-  const mcp = mergeCursorMcp(
-    mcpExisting.kind === "record" ? mcpExisting.value : {},
-    "workit",
-    cursorMcpServerEntry(res.cursorPluginDir),
+  const mcpBase = mcpExisting.kind === "record" ? mcpExisting.value : {};
+  const server = cursorMcpServerEntry(res.cursorPluginDir);
+  const servers = isRecord(mcpBase.mcpServers) ? mcpBase.mcpServers : {};
+  const current = isRecord(servers.workit) ? servers.workit : {};
+  const previousArgs = Array.isArray(current.args) ? current.args.map(String) : [];
+  const previousPackage = previousArgs.find(
+    (arg) =>
+      arg.startsWith("--package=@brainervirus/workit-cursor@") &&
+      arg !== `--package=${CURSOR_RUNTIME_PACKAGE}`,
   );
+  if (previousPackage) {
+    const index = server.args.findIndex((arg) => arg.startsWith("--package="));
+    if (index >= 0) server.args[index] = previousPackage;
+  }
+  const mcp = mergeCursorMcp(mcpBase, "workit", server);
   if (mcp.changed.length === 0) {
     return {
       platform: "cursor",
@@ -1117,6 +1238,77 @@ export function applySetupPreview(
   // legacy identity or its registration.
   let cursorCopyOk = false;
   for (const mutation of preview.mutations) {
+    if (mutation.type === "install-host") {
+      const expectedPath =
+        mutation.platform === "cursor"
+          ? path.join(res.home, ".cursor", "plugins", "local", ".workit-package-bootstrap")
+          : mutation.platform === "codex"
+            ? path.join(
+                res.env.CODEX_HOME ?? path.join(res.home, ".codex"),
+                "plugins",
+                "cache",
+                "workflow-toolkit",
+                "workit",
+              )
+            : mutation.platform === "pi"
+              ? path.join(
+                  res.env.PI_CODING_AGENT_DIR ?? path.join(res.home, ".pi", "agent"),
+                  "settings.json",
+                )
+              : "";
+      if (mutation.path !== expectedPath) {
+        entries.push({
+          platform: mutation.platform,
+          file: mutation.path,
+          status: "Failed",
+          detail: `preview/apply path mismatch: apply resolved ${expectedPath}, the previewed host install was ${mutation.path} — rebuild the preview with the same options`,
+        });
+        continue;
+      }
+      const run =
+        options.runHostCommand ??
+        ((step: HostInstallCommand) => runHostCommand(step, { home: res.home, env: res.env }));
+      const installed = runHostInstall(mutation.commands, run);
+      for (const { command, result } of installed.results) {
+        entries.push({
+          platform: mutation.platform,
+          file: command.command,
+          status: result.exitCode === 0 ? "Installed" : "Failed",
+          detail:
+            result.exitCode === 0
+              ? `${command.purpose} (${command.args.join(" ")})`
+              : `${command.purpose} failed (${command.args.join(" ")}): ${result.stderr || `exit ${result.exitCode}`}`,
+        });
+      }
+      if (!installed.ok && installed.results.length === 0) {
+        entries.push({
+          platform: mutation.platform,
+          file: mutation.platform,
+          status: "Failed",
+          detail: "host installation did not run",
+        });
+      }
+      if (!installed.ok) continue;
+      if (mutation.platform === "cursor" && installed.packageRoot) {
+        rootFor.set("cursor", installed.packageRoot);
+      }
+      const verified =
+        mutation.platform === "codex"
+          ? isCodexWorkitInstalled(res.home, res.env)
+          : mutation.platform === "pi"
+            ? isPiWorkitInstalled(res.home, res.env)
+            : true;
+      if (!verified) {
+        entries.push({
+          platform: mutation.platform,
+          file: mutation.platform,
+          status: "Failed",
+          detail:
+            "the host command succeeded, but Workit registration was not found; inspect the host's native package list and retry",
+        });
+      }
+      continue;
+    }
     if (mutation.type !== "register-platform" && mutation.type !== "install-adapter") {
       entries.push(applyMutation(mutation));
       continue;
@@ -1141,7 +1333,7 @@ export function applySetupPreview(
     }
     let root = rootFor.get(platform);
     if (root === undefined) {
-      root = adapterRoot(platform, res);
+      root = adapterRoot(platform, res, options.preferInstalledAdapter);
       rootFor.set(platform, root);
     }
     if (root === null) {

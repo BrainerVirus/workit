@@ -1,0 +1,22 @@
+{
+  "name": "workflow-toolkit",
+  "interface": {
+    "displayName": "Workflow Toolkit"
+  },
+  "plugins": [
+    {
+      "name": "workit",
+      "source": {
+        "source": "npm",
+        "package": "@brainervirus/workit-codex",
+        "version": "latest",
+        "registry": "https://registry.npmjs.org"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}
