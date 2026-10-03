@@ -9,6 +9,12 @@ import { EVENT, errorDetail } from "@brainervirus/workit-core/src/core/boundary"
 import { setDiagnosticLogger } from "@brainervirus/workit-core/src/core/config";
 import { runDoctor } from "@brainervirus/workit-core/src/core/doctor";
 import {
+  clearStaleMetadataLock,
+  inspectMetadataLock,
+  setDefaultLockTimeout,
+} from "@brainervirus/workit-core/src/core/store-lock";
+import { createInterface } from "node:readline/promises";
+import {
   applySetupPreview,
   buildSetupPreview,
   setupCompletionGuidance,
@@ -24,7 +30,7 @@ import {
 } from "@brainervirus/workit-core/src/core/uninstall";
 import { applyWizardBranchPolicy } from "./logic";
 import { runCutoverCommand } from "./cutover-cli";
-import { runActionCommand, runTaskCommand, TASK_FAMILIES } from "./task";
+import { runActionCommand, runTaskCommand, TASK_FAMILIES, workspaceRootFor } from "./task";
 import { externalActionHelp } from "@brainervirus/workit-core/src/core";
 import { runLaunchCommand, runUpgradeCommand } from "./upgrade";
 
@@ -58,6 +64,8 @@ Usage:
   workit upgrade   Preview upgrades (--apply --confirm; --hosts=a,b; --cli for the CLI)
   workit launch <host> [--auto-upgrade] [-- args]  Upgrade before host startup
   workit doctor    Verify the offline installation health (add --json for a machine-readable report)
+                   --fix-lock clears a stale .workit metadata lock in the workspace root
+                   --fix-lock --force [--yes] clears it even when its owner cannot be verified
   workit uninstall Remove workit host registrations interactively (~/.config/workit is kept)
   workit cutover   Preview or apply an explicit v1 cutover (apply requires --confirm)
 ${COMMAND_DESCRIPTIONS.map(([cmd, desc]) => `  ${cmd.padEnd(helpColumn)}${desc}`).join("\n")}
@@ -310,11 +318,54 @@ export async function runUninstall() {
 
 // `workit doctor` (DG-07): offline engine, human or --json report, exit code
 // reflects the health. Never writes the report to stderr (the logger owns that).
-function runDoctorCommand(args: string[]) {
-  const report = runDoctor({ host: "cli", cwd: process.cwd() });
+// Explicit escape hatch for a lock whose owner cannot be verified (no process
+// start time, a foreign pid namespace): show the holder, then require --yes or
+// an interactive confirmation.
+async function confirmForcedLockClear(root: string, args: string[]): Promise<boolean> {
+  const lock = inspectMetadataLock(root);
+  if (!lock.present) return true;
+  const owner = lock.owner
+    ? `pid ${lock.owner.pid} on ${lock.owner.host} (start ${lock.owner.processStart ?? "unknown"})`
+    : "unreadable lock";
+  console.log(`fix-lock --force: ${lock.path} is held by ${owner}: ${lock.reason}`);
+  if (args.includes("--yes")) return true;
+  if (process.stdin.isTTY !== true) {
+    console.log("fix-lock --force: refusing without --yes outside an interactive terminal");
+    return false;
+  }
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    const answer = await rl.question("Remove this lock even if its holder may be alive? [y/N] ");
+    return /^y(es)?$/i.test(answer.trim());
+  } finally {
+    rl.close();
+  }
+}
+
+async function runDoctorCommand(args: string[]) {
+  // --fix-lock runs first so the report reflects the cleaned state. Without
+  // --force it removes only a lock whose owner is provably gone.
+  const root = workspaceRootFor();
+  const force = args.includes("--force");
+  let fixLock: ReturnType<typeof clearStaleMetadataLock> | null = null;
+  if (args.includes("--fix-lock")) {
+    if (force && !(await confirmForcedLockClear(root, args))) process.exit(1);
+    fixLock = clearStaleMetadataLock(root, { force });
+  }
+  const report = runDoctor({ host: "cli", cwd: process.cwd(), workspaceRoot: root });
   if (args.includes("--json")) {
-    console.log(JSON.stringify(report, null, 2));
+    console.log(JSON.stringify(fixLock ? { ...report, fixLock } : report, null, 2));
   } else {
+    if (fixLock) {
+      const what = fixLock.cleared
+        ? `cleared ${force ? "" : "stale "}lock ${fixLock.path} (${fixLock.reason})`
+        : fixLock.state === "absent"
+          ? "no metadata lock to clear"
+          : `kept lock ${fixLock.path}: ${fixLock.skipped ?? fixLock.reason}`;
+      console.log(
+        `fix-lock: ${what}${fixLock.guardCleared ? "; removed abandoned reclaim guard" : ""}`,
+      );
+    }
     console.log(
       `workit doctor — ${report.ok ? "healthy" : "problems found"} (${report.offline ? "offline" : "online"})`,
     );
@@ -334,6 +385,9 @@ if (import.meta.main) {
   const args = process.argv.slice(2);
   const [subcommand] = args;
   setDiagnosticLogger(logger);
+  // The CLI owns its process, so a contended write may wait longer than an
+  // in-process host could afford before reporting busy.
+  setDefaultLockTimeout(2_000);
   logger.info(EVENT.initialization, { host: "cli", command: subcommand });
   // The CLI owns its process: uncaught failures are logged and surfaced with a
   // nonzero exit instead of a silent crash (DG-04).
@@ -351,7 +405,7 @@ if (import.meta.main) {
   } else if (subcommand === "init") {
     await runInit();
   } else if (subcommand === "doctor") {
-    runDoctorCommand(args);
+    await runDoctorCommand(args);
   } else if ((TASK_FAMILIES as readonly string[]).includes(subcommand)) {
     process.exit(await runTaskCommand(args));
   } else if (subcommand === "action") {

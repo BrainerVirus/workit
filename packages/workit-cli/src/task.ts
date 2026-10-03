@@ -46,6 +46,10 @@ import type { Provenance } from "@brainervirus/workit-core/src/core/task-contrac
 import { canonicalJson, type Result } from "@brainervirus/workit-core/src/core/task-contract";
 
 export const TASK_FAMILIES = OPERATION_FAMILIES;
+
+/** The Workit store root for a CLI command: explicit root, WORKFLOW_WORKSPACE_ROOT, then cwd. */
+export const workspaceRootFor = (deps: { root?: string; cwd?: string } = {}): string =>
+  deps.root ?? process.env.WORKFLOW_WORKSPACE_ROOT ?? deps.cwd ?? process.cwd();
 export const TASK_ACTIONS = {
   task: ["start", "list", "inspect", "revise", "progress", "pause", "resume", "close"],
   policy: ["assess", "preview", "explain"],
@@ -390,7 +394,7 @@ export async function runTaskCommand(argv: string[], deps: TaskCliDeps = {}): Pr
       );
     return parsed.usage ? 2 : 1;
   }
-  const root = deps.root ?? process.env.WORKFLOW_WORKSPACE_ROOT ?? deps.cwd ?? process.cwd();
+  const root = workspaceRootFor(deps);
   let observedConfirmation = parsed.parsed.observedConfirmation;
   if (needsConsent(parsed.parsed) && !parsed.parsed.confirmed) {
     const consent = await observeConsent(deps);
@@ -650,7 +654,7 @@ export async function runActionCommand(argv: string[], deps: TaskCliDeps = {}): 
     else printHuman(parsed, deps);
     return 2;
   }
-  const root = deps.root ?? process.env.WORKFLOW_WORKSPACE_ROOT ?? deps.cwd ?? process.cwd();
+  const root = workspaceRootFor(deps);
   let resolved = resolveExternalActionRequest(root, parsed.data);
   if (!resolved.ok) {
     if (json) jsonResult(outOf(deps), resolved);
