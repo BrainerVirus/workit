@@ -129,6 +129,12 @@ jobs:
       - name: Install deps
         run: bun install --frozen-lockfile
 
+      # CA-21: the tracked Marketplace artifact validates against the official
+      # Cursor JSON schemas from a clean checkout, before any build output
+      # exists.
+      - name: Validate Cursor Marketplace artifact
+        run: bun run validate:cursor-marketplace
+
       # The dev-checkout install tests install the adapters from this
       # checkout; dist/ and the vendored skills are build products
       # (gitignored), so the checkout must be built before testing.
@@ -138,10 +144,10 @@ jobs:
       - name: Test (every test directory)
         run: bun test
 
-      # CA-21: the tracked Marketplace artifact validates against the official
-      # Cursor JSON schemas from a clean checkout.
-      - name: Validate Cursor Marketplace artifact
-        run: bun run validate:cursor-marketplace
+      # AR-01/CA-33: the same pack-only release-candidate gate release.yml
+      # runs before publishing, so release breakage shows up pre-merge.
+      - name: Verify release candidate
+        run: bun run verify:release-candidate
 
   # workit-core owns the bash script/portability tests and the packed-artifact
   # gates (CA-26); both also run on macOS and Windows with the declared Node.
