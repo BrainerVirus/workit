@@ -41,14 +41,12 @@ function repo({ tagged = true }: { tagged?: boolean } = {}) {
   };
 }
 
-const ADAPTER_PACKAGES = RELEASE_PACKAGES.filter((pkg) => pkg !== "workit-core");
-
 describe("changedPackages", () => {
   test("lists only packages with payload diffs", () => {
     const r = repo();
     try {
-      r.change("packages/workit-cli/src/i.ts", "c\n");
-      expect(changedPackages(r.root, "v0.8.10")).toEqual(["workit-cli"]);
+      r.change("packages/workit-mcp/src/i.ts", "c\n");
+      expect(changedPackages(r.root, "v0.8.10")).toEqual(["workit-mcp"]);
     } finally {
       r.cleanup();
     }
@@ -56,9 +54,9 @@ describe("changedPackages", () => {
   test("uncommitted working-tree edits are never counted (B1)", () => {
     const r = repo();
     try {
-      r.change("packages/workit-cli/src/i.ts", "c\n");
+      r.change("packages/workit-mcp/src/i.ts", "c\n");
       writeFileSync(path.join(r.root, "packages/workit-opencode/src/i.ts"), "dirty\n");
-      expect(changedPackages(r.root, "v0.8.10")).toEqual(["workit-cli"]);
+      expect(changedPackages(r.root, "v0.8.10")).toEqual(["workit-mcp"]);
     } finally {
       r.cleanup();
     }
@@ -90,7 +88,7 @@ describe("publishChanged", () => {
   test("publishes changed, skips unchanged, exact skip line", () => {
     const r = repo();
     try {
-      r.change("packages/workit-core/src/i.ts", "c\n");
+      r.change("packages/workit-opencode/src/i.ts", "c\n");
       const calls: string[] = [];
       const result = publishChanged({
         root: r.root,
@@ -98,27 +96,52 @@ describe("publishChanged", () => {
           calls.push(`${args.join(" ")} @ ${opts.cwd}`);
         },
       });
-      expect(result.published).toEqual(["workit-core"]);
-      expect(result.skipped).toEqual(ADAPTER_PACKAGES);
+      const others = RELEASE_PACKAGES.filter((pkg) => pkg !== "workit-opencode");
+      expect(result.published).toEqual(["workit-opencode"]);
+      expect(result.skipped).toEqual(others);
       expect(calls[0]).toBe(
-        `publish --access public @ ${path.join(r.root, "packages/workit-core")}`,
+        `publish --access public @ ${path.join(r.root, "packages/workit-opencode")}`,
       );
       const log = spyOn(console, "log");
       publishChanged({ root: r.root, run: () => {} });
-      expect(log.mock.calls.map((c) => c[0])).toEqual([
-        `published workit-core @ ${path.join(r.root, "packages", "workit-core")}`,
-        ...ADAPTER_PACKAGES.map((pkg) => `skip ${pkg} (no payload change since v0.8.10)`),
-      ]);
+      expect(log.mock.calls.map((c) => c[0])).toEqual(
+        RELEASE_PACKAGES.map((pkg) =>
+          pkg === "workit-opencode"
+            ? `published workit-opencode @ ${path.join(r.root, "packages", "workit-opencode")}`
+            : `skip ${pkg} (no payload change since v0.8.10)`,
+        ),
+      );
       log.mockRestore();
     } finally {
       r.cleanup();
     }
   });
-  test("publish failure logs shipped state, names the package, and stops", () => {
+  test("bundling packages republish when the core or CLI sources they bundle change", () => {
     const r = repo();
     try {
       r.change("packages/workit-core/src/i.ts", "c\n");
+      expect(changedPackages(r.root, "v0.8.10")).toEqual([
+        "workit-core",
+        "workit-pi",
+        "workit-claude-code",
+      ]);
+      const r2 = repo();
+      try {
+        r2.change("packages/workit-cli/src/i.ts", "c\n");
+        expect(changedPackages(r2.root, "v0.8.10")).toEqual(["workit-cli", "workit-claude-code"]);
+      } finally {
+        r2.cleanup();
+      }
+    } finally {
+      r.cleanup();
+    }
+  });
+  test("a publish failure does not stop the others; failures throw at the end with a summary", () => {
+    const r = repo();
+    try {
+      r.change("packages/workit-mcp/src/i.ts", "c\n");
       r.change("packages/workit-opencode/src/i.ts", "c\n");
+      r.change("packages/workit-claude-code/src/i.ts", "c\n");
       const log = spyOn(console, "log");
       const ran: string[] = [];
       let err: unknown;
@@ -126,24 +149,21 @@ describe("publishChanged", () => {
         publishChanged({
           root: r.root,
           run: (_cmd, _args, opts) => {
-            ran.push(opts.cwd);
+            ran.push(path.basename(opts.cwd));
             if (opts.cwd.endsWith("workit-opencode")) throw new Error("boom");
           },
         });
       } catch (e) {
         err = e;
       }
-      expect((err as Error).message).toBe("boom");
-      expect(ran).toEqual([
-        path.join(r.root, "packages", "workit-core"),
-        path.join(r.root, "packages", "workit-opencode"),
-      ]);
-      expect(log.mock.calls.map((c) => c[0])).toEqual([
-        `published workit-core @ ${path.join(r.root, "packages", "workit-core")}`,
-        `skip workit-mcp (no payload change since v0.8.10)`,
-        `skip workit-cli (no payload change since v0.8.10)`,
-        `publish failed workit-opencode: boom`,
-      ]);
+      expect(ran).toEqual(["workit-mcp", "workit-opencode", "workit-claude-code"]);
+      const message = (err as Error).message;
+      expect(message).toContain("publish failed for 1 package(s): workit-opencode");
+      expect(message).toContain("published: workit-mcp, workit-claude-code");
+      expect(message).toContain("npm token");
+      const lines = log.mock.calls.map((c) => String(c[0]));
+      expect(lines).toContain("publish failed workit-opencode: boom");
+      expect(lines.at(-1)).toBe(message);
       log.mockRestore();
     } finally {
       r.cleanup();
@@ -179,7 +199,7 @@ describe("publishChanged", () => {
       // Real CI ordering: product changes land, then semantic-release creates
       // the NEW release tag on HEAD before publish plugins run — diffing
       // against latestTag() at that point is always empty.
-      r.change("packages/workit-core/src/i.ts", "c\n");
+      r.change("packages/workit-mcp/src/i.ts", "c\n");
       execFileSync("git", ["tag", "v0.9.0"], { cwd: r.root });
       const calls: string[] = [];
       const result = publishChanged({
@@ -189,11 +209,11 @@ describe("publishChanged", () => {
           calls.push(`${args.join(" ")} @ ${opts.cwd}`);
         },
       });
-      expect(result.published).toEqual(["workit-core"]);
-      expect(result.skipped).toEqual(ADAPTER_PACKAGES);
+      expect(result.published).toEqual(["workit-mcp"]);
+      expect(result.skipped).toEqual(RELEASE_PACKAGES.filter((pkg) => pkg !== "workit-mcp"));
       expect(result.tag).toBe("v0.8.10");
       expect(calls[0]).toBe(
-        `publish --access public @ ${path.join(r.root, "packages/workit-core")}`,
+        `publish --access public @ ${path.join(r.root, "packages/workit-mcp")}`,
       );
     } finally {
       r.cleanup();
@@ -202,7 +222,7 @@ describe("publishChanged", () => {
   test("dryRun records without invoking npm", () => {
     const r = repo();
     try {
-      r.change("packages/workit-cli/src/i.ts", "c\n");
+      r.change("packages/workit-mcp/src/i.ts", "c\n");
       let ran = 0;
       const result = publishChanged({
         root: r.root,
@@ -211,7 +231,7 @@ describe("publishChanged", () => {
           ran++;
         },
       });
-      expect(result.published).toEqual(["workit-cli"]);
+      expect(result.published).toEqual(["workit-mcp"]);
       expect(ran).toBe(0);
     } finally {
       r.cleanup();

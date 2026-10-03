@@ -14,6 +14,7 @@ import {
   runHostInstall,
 } from "@/packages/workit-core/src/core/host-install";
 import { applySetupPreview, buildSetupPreview } from "@/packages/workit-core/src/core/setup";
+import { applyUninstall, planUninstall } from "@/packages/workit-core/src/core/uninstall";
 
 const temp = (prefix: string) => mkdtempSync(path.join(os.tmpdir(), prefix));
 const executable = (file: string) => {
@@ -205,7 +206,7 @@ test("setup apply reports Claude Code installed only when the plugin registry sh
 
 // Each call runs the whole doctor (runtime, identity and lock probes too),
 // which takes seconds on a CI runner.
-test("doctor warns on a stale or skewed Claude Code plugin install with the native update command", () => {
+test("doctor warns only when a newer Claude Code plugin version is published with the native update command", () => {
   const home = temp("workit-claude-doctor-");
   try {
     const check = (env: NodeJS.ProcessEnv) =>
@@ -222,7 +223,9 @@ test("doctor warns on a stale or skewed Claude Code plugin install with the nati
     expect(stale.detail).toContain(
       `stale_install: workit@workit 0.0.1 is behind published ${CORE_VERSION}`,
     );
-    expect(stale.detail).toContain(`differs from this workit CLI ${CORE_VERSION}`);
+    // An older plugin with nothing newer published (or an unreachable registry)
+    // is not a finding, whatever this CLI's version.
+    expect(check({ WORKIT_DOCTOR_STALE_REGISTRY_VERSION: "0.0.1" }).status).toBe("pass");
     expect(stale.fix).toBe(
       "claude plugin marketplace update workit && claude plugin update workit@workit",
     );
@@ -230,3 +233,73 @@ test("doctor warns on a stale or skewed Claude Code plugin install with the nati
     rmSync(home, { recursive: true, force: true });
   }
 }, 30_000);
+
+test("uninstall previews a native `claude plugin uninstall` per Workit install and runs only that argv", () => {
+  const home = temp("workit-claude-uninstall-");
+  try {
+    const env = { HOME: home };
+    expect(planUninstall({ home, env }).hosts.find((h) => h.host === "claude-code")).toEqual({
+      host: "claude-code",
+      installed: false,
+      actions: [],
+    });
+    recordInstall(path.join(home, ".claude"), { id: "workit@workit" });
+    const plan = planUninstall({ home, env });
+    const claude = plan.hosts.find((h) => h.host === "claude-code")!;
+    expect(claude.installed).toBe(true);
+    expect(claude.actions).toEqual([
+      expect.objectContaining({
+        kind: "host-command",
+        command: "claude",
+        args: ["plugin", "uninstall", "workit@workit"],
+        detail: "claude plugin uninstall workit@workit",
+      }),
+    ]);
+    const ran: string[][] = [];
+    const reviewed = { hosts: [claude] };
+    const result = applyUninstall(reviewed, {
+      home,
+      env,
+      runHostCommand: (step) => {
+        ran.push(step.args);
+        rmSync(path.join(home, ".claude", "plugins", "installed_plugins.json"));
+        return { exitCode: 0, stdout: "", stderr: "" };
+      },
+    });
+    expect(ran).toEqual([["plugin", "uninstall", "workit@workit"]]);
+    expect(result.entries).toEqual([
+      expect.objectContaining({ host: "claude-code", status: "removed" }),
+    ]);
+    // Already gone: skipped without running anything.
+    expect(
+      applyUninstall(reviewed, {
+        home,
+        env,
+        runHostCommand: () => {
+          throw new Error("must not run");
+        },
+      }).entries[0].status,
+    ).toBe("skipped");
+    // A tampered plan never runs an arbitrary command.
+    recordInstall(path.join(home, ".claude"));
+    const tampered = {
+      hosts: [
+        {
+          ...claude,
+          actions: [{ ...claude.actions[0], args: ["plugin", "uninstall", "other@x", "--prune"] }],
+        },
+      ],
+    } as typeof reviewed;
+    const refused = applyUninstall(tampered, {
+      home,
+      env,
+      runHostCommand: () => {
+        throw new Error("must not run");
+      },
+    });
+    expect(refused.ok).toBe(false);
+    expect(refused.entries[0].detail).toContain("refusing unreviewed host command");
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});

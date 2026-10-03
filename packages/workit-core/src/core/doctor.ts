@@ -1746,9 +1746,11 @@ const versionBehind = (version: string, latest: string): boolean =>
 
 /**
  * Claude Code installs the marketplace plugin as a snapshot of the published
- * package (auto-update is off by default), so an install can lag the release
- * and skew from the `workit` CLI running this doctor. Both are warnings: the
- * plugin keeps working, and the fix is one native update. A `--plugin-dir`
+ * package (auto-update is off by default), so an install can lag the release.
+ * It warns only when a newer plugin version is actually published: a plugin
+ * older than this CLI is normal when no plugin payload changed since (the
+ * plugin is republished only when its own or its bundled sources change).
+ * The plugin keeps working; the fix is one native update. A `--plugin-dir`
  * local pin is per-session, never recorded, and never checked here.
  */
 const checkClaudePlugin = (res: Resolved): DoctorCheck & { registryProbed?: boolean } => {
@@ -1761,7 +1763,6 @@ const checkClaudePlugin = (res: Resolved): DoctorCheck & { registryProbed?: bool
     };
   const fix = (id: string) =>
     `claude plugin marketplace update ${CLAUDE_MARKETPLACE_NAME} && claude plugin update ${id}`;
-  const cli = readJson(path.join(packageRoot(), "package.json"))?.version;
   const latest = registryLatestVersion(res, CLAUDE_PLUGIN_PACKAGE);
   const problems: string[] = [];
   let repair: string | undefined;
@@ -1769,10 +1770,6 @@ const checkClaudePlugin = (res: Resolved): DoctorCheck & { registryProbed?: bool
     const label = `${install.id} ${install.version ?? "(unknown version)"}`;
     if (latest && install.version && versionBehind(install.version, latest)) {
       problems.push(`stale_install: ${label} is behind published ${latest}`);
-      repair ??= fix(install.id);
-    }
-    if (typeof cli === "string" && install.version && install.version !== cli) {
-      problems.push(`${label} differs from this workit CLI ${cli}`);
       repair ??= fix(install.id);
     }
   }
